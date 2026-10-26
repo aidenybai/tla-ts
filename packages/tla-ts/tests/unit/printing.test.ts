@@ -68,3 +68,42 @@ describe("printing matches TLC", () => {
     );
   });
 });
+
+const NESTED_TUPLE_LINES = Array.from({ length: 10 }, () => "<<1, 2, 3, 4, 5, 6, 7, 8, 9, 10>>");
+
+describe("line breaking matches TLC's pretty printer", () => {
+  it.each([
+    ["[x \\in 1..10 |-> [y \\in 1..10 |-> y]]", `<< ${NESTED_TUPLE_LINES.join(",\n   ")} >>`],
+    [
+      "[x \\in 1..5 |-> [fielda |-> x, fieldb |-> 1..x]]",
+      "<< [fielda |-> 1, fieldb |-> 1..1],\n   [fielda |-> 2, fieldb |-> 1..2],\n   [fielda |-> 3, fieldb |-> 1..3],\n   [fielda |-> 4, fieldb |-> 1..4],\n   [fielda |-> 5, fieldb |-> 1..5] >>",
+    ],
+    [
+      "[x \\in 1..3 |-> [y \\in 1..3 |-> [z \\in 1..3 |-> <<x, y, z>>]]]",
+      "<< << <<<<1, 1, 1>>, <<1, 1, 2>>, <<1, 1, 3>>>>,\n      <<<<1, 2, 1>>, <<1, 2, 2>>, <<1, 2, 3>>>>,\n      <<<<1, 3, 1>>, <<1, 3, 2>>, <<1, 3, 3>>>> >>,\n   << <<<<2, 1, 1>>, <<2, 1, 2>>, <<2, 1, 3>>>>,\n      <<<<2, 2, 1>>, <<2, 2, 2>>, <<2, 2, 3>>>>,\n      <<<<2, 3, 1>>, <<2, 3, 2>>, <<2, 3, 3>>>> >>,\n   << <<<<3, 1, 1>>, <<3, 1, 2>>, <<3, 1, 3>>>>,\n      <<<<3, 2, 1>>, <<3, 2, 2>>, <<3, 2, 3>>>>,\n      <<<<3, 3, 1>>, <<3, 3, 2>>, <<3, 3, 3>>>> >> >>",
+    ],
+    [
+      "[fieldaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa |-> <<1, 2>>]",
+      "[ fieldaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa |->\n      <<1, 2>> ]",
+    ],
+    [
+      "[x \\in 2..9 |-> x * 100000000]",
+      "( 2 :> 200000000 @@\n  3 :> 300000000 @@\n  4 :> 400000000 @@\n  5 :> 500000000 @@\n  6 :> 600000000 @@\n  7 :> 700000000 @@\n  8 :> 800000000 @@\n  9 :> 900000000 )",
+    ],
+    [
+      '<<"a\\"b", "cccccccccccccccccccccccccccccccccccccccccccc", "dddddddddddddddddddddddddddddd">>',
+      '<<"a\\"b", "cccccccccccccccccccccccccccccccccccccccccccc", "dddddddddddddddddddddddddddddd">>',
+    ],
+  ])("prints %s across lines", (expression, text) => {
+    expect(checkPrinting(`ASSUME PrintT(${expression})`).printed).toEqual([text]);
+  });
+
+  it("breaks the value in a failed Assert", () => {
+    expect(
+      checkPrinting("ASSUME Assert(FALSE, [x \\in 1..10 |-> [y \\in 1..10 |-> y]])").result
+        .violation?.message,
+    ).toBe(
+      `The first argument of Assert evaluated to FALSE; the second argument was:\n<< ${NESTED_TUPLE_LINES.join(",\n   ")} >>`,
+    );
+  });
+});

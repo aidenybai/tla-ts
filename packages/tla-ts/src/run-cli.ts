@@ -5,6 +5,7 @@ import { type CheckResult, type CheckStatus } from "./check";
 import { parseConfig } from "./config";
 import { TlaError } from "./errors";
 import { checkInParallel } from "./parallel";
+import { prettyPrint } from "./pretty-print";
 import { formatValue } from "./values";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
@@ -46,7 +47,7 @@ const printResult = (result: CheckResult) => {
     result.violation.trace.forEach((step, index) => {
       console.log(`State ${index + 1}: <${step.action ?? "Initial predicate"}>`);
       Object.entries(step.state).forEach(([name, value]) =>
-        console.log(`/\\ ${name} = ${formatValue(value)}`),
+        console.log(`/\\ ${name} = ${prettyPrint(formatValue(value))}`),
       );
       console.log("");
     });
