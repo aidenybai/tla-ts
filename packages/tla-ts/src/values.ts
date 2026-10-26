@@ -197,6 +197,16 @@ export const compareValues = (left: Value, right: Value): number => {
   );
 };
 
+const modelValues = new Map<string, ModelValue>();
+
+export const createModelValue = (name: string): ModelValue => {
+  const known = modelValues.get(name);
+  if (known) return known;
+  const value: ModelValue = { kind: "ModelValue", name };
+  modelValues.set(name, value);
+  return value;
+};
+
 export const createSortedSet = (elements: Value[]): SetValue => ({
   kind: "Set",
   elements,
@@ -886,61 +896,6 @@ export const getValueFingerprint = (value: Value): number => {
 };
 
 const valueKeys = new WeakMap<ObjectValue, string>();
-
-const KEY_DELIMITERS = new Set([",", ":", ")", "}"]);
-
-export const parseValueKey = (key: string): Value => {
-  const cursor = { index: 0 };
-  const parse = (): Value => {
-    const character = key[cursor.index];
-    if (character === "T" || character === "F") {
-      cursor.index++;
-      return character === "T";
-    }
-    if (character === '"') {
-      const start = cursor.index;
-      cursor.index++;
-      while (key[cursor.index] !== '"') cursor.index += key[cursor.index] === "\\" ? 2 : 1;
-      cursor.index++;
-      return JSON.parse(key.slice(start, cursor.index));
-    }
-    if (character === "@") {
-      const start = ++cursor.index;
-      while (cursor.index < key.length && !KEY_DELIMITERS.has(key[cursor.index])) cursor.index++;
-      return { kind: "ModelValue", name: key.slice(start, cursor.index) };
-    }
-    if (character === "{") {
-      cursor.index++;
-      const elements: Value[] = [];
-      while (key[cursor.index] !== "}") {
-        elements.push(parse());
-        if (key[cursor.index] === ",") cursor.index++;
-      }
-      cursor.index++;
-      return createSortedSet(elements);
-    }
-    if (character === "(") {
-      cursor.index++;
-      const domain: Value[] = [];
-      const range: Value[] = [];
-      while (key[cursor.index] !== ")") {
-        domain.push(parse());
-        cursor.index++;
-        range.push(parse());
-        if (key[cursor.index] === ",") cursor.index++;
-      }
-      cursor.index++;
-      return createSortedFunction(domain, range);
-    }
-    const number = /^-?\d+/.exec(key.slice(cursor.index))?.[0];
-    if (number === undefined) {
-      throw new TlaEvaluationError(`Cannot reconstruct a value from the key ${key}`);
-    }
-    cursor.index += number.length;
-    return Number(number);
-  };
-  return parse();
-};
 
 export const getValueKey = (value: Value): string => {
   if (typeof value === "boolean") return value ? "T" : "F";

@@ -1,4 +1,4 @@
-import { createSortedFunction, createSortedSet, type Value } from "./values";
+import { createModelValue, createSortedFunction, createSortedSet, type Value } from "./values";
 
 const FALSE = 0;
 const TRUE = 1;
@@ -90,14 +90,6 @@ export const createStateEncoder = (): StateEncoder => {
 };
 
 export const createStateDecoder = (width: number) => {
-  const modelValues = new Map<string, Value>();
-  const getModelValue = (name: string) => {
-    const known = modelValues.get(name);
-    if (known !== undefined) return known;
-    const value: Value = { kind: "ModelValue", name };
-    modelValues.set(name, value);
-    return value;
-  };
   return (encoded: EncodedStates): Value[][] => {
     const words = encoded.words;
     const cursor = { index: 0 };
@@ -108,7 +100,7 @@ export const createStateDecoder = (width: number) => {
       if (tag === TRUE) return true;
       if (tag === INTEGER) return words[cursor.index++];
       if (tag === STRING) return encoded.strings[words[cursor.index++]];
-      if (tag === MODEL_VALUE) return getModelValue(encoded.strings[words[cursor.index++]]);
+      if (tag === MODEL_VALUE) return createModelValue(encoded.strings[words[cursor.index++]]);
       const length = words[cursor.index++];
       if (tag === SET) return createSortedSet(decodeElements(length));
       const domain = decodeElements(length);

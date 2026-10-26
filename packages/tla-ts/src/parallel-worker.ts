@@ -111,6 +111,7 @@ const run = (start: StartMessage, parent: Port) => {
   const canonicalize = createCanonicalizer();
   const decode = createStateDecoder(width);
   const table = createFingerprintTable();
+  const known = createFingerprintTable();
   const fingerprint = new Int32Array(2);
   const inbox = createInbox();
   const peers = start.ports.flatMap((port, index) => (port ? [{ port, index }] : []));
@@ -125,13 +126,12 @@ const run = (start: StartMessage, parent: Port) => {
   const send = (index: number, message: PeerMessage, transfer: unknown[]) =>
     start.ports[index]?.postMessage(message, transfer);
 
-  const expand = (states: Value[][]) => {
+  const expand = (states: Value[][], next: Value[][]) => {
     const pending: Pending[] = Array.from({ length: count }, () => ({
       states: [],
       parents: [],
       fingerprints: [],
     }));
-    const levelTable = createFingerprintTable();
     const statistics = { generated: 0 };
     for (const state of states) {
       const successors = getSuccessors(search.spec.next, state, environment);
@@ -142,11 +142,18 @@ const run = (start: StartMessage, parent: Port) => {
         if (!search.satisfiesActionConstraints(state, successor.state)) continue;
         canonicalize(successor.state);
         getStateFingerprint(search.getFingerprintState(successor.state), fingerprint);
-        if (!levelTable.insert(fingerprint[0], fingerprint[1])) continue;
-        const owner = pending[getFingerprintOwner(fingerprint[1], count)];
-        owner.states.push(successor.state);
-        owner.parents.push(state);
-        owner.fingerprints.push(fingerprint[0], fingerprint[1]);
+        const owner = getFingerprintOwner(fingerprint[1], count);
+        if (owner === self) {
+          if (!table.insert(fingerprint[0], fingerprint[1])) continue;
+          if (search.findViolatedInvariant(successor.state, state)) return undefined;
+          if (search.satisfiesConstraints(successor.state, state)) next.push(successor.state);
+          else table.remove(fingerprint[0], fingerprint[1]);
+          continue;
+        }
+        if (!known.insert(fingerprint[0], fingerprint[1])) continue;
+        pending[owner].states.push(successor.state);
+        pending[owner].parents.push(state);
+        pending[owner].fingerprints.push(fingerprint[0], fingerprint[1]);
       }
     }
     return { pending, generated: statistics.generated };
@@ -167,8 +174,12 @@ const run = (start: StartMessage, parent: Port) => {
       const state = pending.states[index];
       const parentState = pending.parents[index];
       if (search.findViolatedInvariant(state, parentState)) return undefined;
-      if (search.satisfiesConstraints(state, parentState)) next.push(state);
-      else unmarks.push(pending.fingerprints[index * 2], pending.fingerprints[index * 2 + 1]);
+      if (search.satisfiesConstraints(state, parentState)) {
+        next.push(state);
+        continue;
+      }
+      known.remove(pending.fingerprints[index * 2], pending.fingerprints[index * 2 + 1]);
+      unmarks.push(pending.fingerprints[index * 2], pending.fingerprints[index * 2 + 1]);
     }
     return Int32Array.from(unmarks);
   };
@@ -200,23 +211,19 @@ const run = (start: StartMessage, parent: Port) => {
   };
 
   const runLevel = async (level: number): Promise<LevelMessage | undefined> => {
-    const expanded = expand(frontier.states);
+    const next: Value[][] = [];
+    const expanded = expand(frontier.states, next);
     if (!expanded) return undefined;
     peers.forEach((peer) => {
       const fingerprints = Int32Array.from(expanded.pending[peer.index].fingerprints);
       send(peer.index, { phase: "query", level, from: self, fingerprints }, [fingerprints.buffer]);
     });
-    const ownBits = answer(expanded.pending[self].fingerprints);
     const queries = await inbox.receive("query", level, peers.length);
     queries.forEach((query) => {
       const bits = answer(query.fingerprints ?? []);
       send(query.from, { phase: "answer", level, from: self, bits }, [bits.buffer]);
     });
     const answers = await inbox.receive("answer", level, peers.length);
-    const next: Value[][] = [];
-    const ownUnmarks = commit(expanded.pending[self], ownBits, next);
-    if (!ownUnmarks) return undefined;
-    removeAll(ownUnmarks);
     for (const reply of answers) {
       const unmarks = commit(expanded.pending[reply.from], reply.bits ?? new Uint8Array(), next);
       if (!unmarks) return undefined;

@@ -7,7 +7,7 @@ import { parseModule } from "./parser";
 import { resolveModule, type Symbols } from "./resolve";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
-import { checkInteger, createSet, type Value } from "./values";
+import { checkInteger, createModelValue, createSet, type Value } from "./values";
 
 export interface EnvironmentOptions {
   loadModule: ((name: string) => string | undefined) | undefined;
@@ -27,7 +27,7 @@ const toValue = (value: ConfigValue): Value => {
     case "Boolean":
       return value.value;
     case "ModelValue":
-      return { kind: "ModelValue", name: value.name };
+      return createModelValue(value.name);
     case "Set":
       return createSet(value.elements.map(toValue));
   }
