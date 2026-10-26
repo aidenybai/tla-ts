@@ -51,4 +51,17 @@ describe("INSTANCE matches TLC", () => {
     expect(result.violation?.trace).toHaveLength(5);
     expect(result.distinctStates).toBe(11);
   });
+
+  it("checks a specification taken from a parameterized instance", () => {
+    const result = checkInstances("ParameterizedSpec.cfg", "ParameterizedSpec");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
+  });
+
+  it("reports violations of a specification taken from a parameterized instance", () => {
+    const result = checkInstances("ParameterizedSpecViolation.cfg", "ParameterizedSpec");
+    expect(result.status).toBe("invariant-violation");
+    expect(result.violation?.trace).toHaveLength(4);
+    expect([result.generatedStates, result.distinctStates]).toEqual([4, 4]);
+  });
 });

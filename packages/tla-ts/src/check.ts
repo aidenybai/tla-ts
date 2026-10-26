@@ -17,6 +17,7 @@ import {
   expandTemporal,
   getLevel,
   TEMPORAL_LEVEL,
+  toUnscopedExpression,
   type LiveSuccessor,
   type ScopedExpression,
   type TemporalProperty,
@@ -140,10 +141,19 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
   const nextActions: Expression[] = [];
   const temporals: ScopedExpression[] = [];
   const body = getDefinitionBody(config.specification, environment);
+  const getUnscoped = (expression: Expression, scope: Scope | undefined) => {
+    const unscoped = toUnscopedExpression(expression, scope);
+    if (!unscoped) {
+      throw new TlaUnsupportedError(
+        `The specification ${config.specification} has an initial predicate or next-state relation inside a quantified formula`,
+      );
+    }
+    return unscoped;
+  };
   expandTemporal(body, undefined, environment).forEach((item) => {
     const conjunct = item.expression;
     if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
-      nextActions.push(conjunct.expression.action);
+      nextActions.push(getUnscoped(conjunct.expression.action, item.scope));
       return;
     }
     if (
@@ -164,12 +174,7 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
         `TLC cannot handle the action-level conjunct of the specification ${config.specification}`,
       );
     }
-    if (item.scope !== undefined) {
-      throw new TlaUnsupportedError(
-        `The specification ${config.specification} has an initial predicate inside a parameterized formula`,
-      );
-    }
-    initConjuncts.push(conjunct);
+    initConjuncts.push(getUnscoped(conjunct, item.scope));
   });
   if (nextActions.length !== 1) {
     throw new TlaConfigError(

@@ -1,4 +1,4 @@
-import type { Definition, Expression } from "./ast";
+import type { Definition, Expression, SourceLocation } from "./ast";
 import { TlaConfigError, TlaEvaluationError } from "./errors";
 import {
   bindDefinitions,
@@ -260,6 +260,52 @@ export const expandTemporal = (
     return expanded;
   }
   return [{ expression, scope }];
+};
+
+const toLiteral = (value: Value, location: SourceLocation): Expression | undefined => {
+  if (typeof value === "number") return { kind: "Number", value, location };
+  if (typeof value === "string") return { kind: "String", value, location };
+  if (typeof value === "boolean") {
+    return { kind: "Identifier", name: value ? "TRUE" : "FALSE", location };
+  }
+  return undefined;
+};
+
+export const toUnscopedExpression = (
+  expression: Expression,
+  scope: Scope | undefined,
+): Expression | undefined => {
+  const definitions: Definition[] = [];
+  for (let current = scope; current; current = current.parent) {
+    const binding = current.binding;
+    const closure =
+      binding.kind === "Operator" && binding.operator.kind === "Closure"
+        ? binding.operator
+        : undefined;
+    const body =
+      binding.kind === "Thunk"
+        ? binding.expression
+        : binding.kind === "Value"
+          ? toLiteral(binding.value, expression.location)
+          : closure?.body;
+    const isUnscoped =
+      binding.kind === "Thunk"
+        ? binding.scope === undefined
+        : binding.kind === "Value" || closure?.scope === undefined;
+    if (!body || !isUnscoped) return undefined;
+    definitions.unshift({
+      kind: "Operator",
+      name: current.name,
+      params: closure?.params ?? [],
+      body,
+      isLocal: true,
+      isRecursive: false,
+      location: body.location,
+    });
+  }
+  return definitions.length === 0
+    ? expression
+    : { kind: "Let", definitions, body: expression, location: expression.location };
 };
 
 const bindLetDefinitions = (
