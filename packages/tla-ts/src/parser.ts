@@ -16,6 +16,7 @@ import type {
   RecordField,
   Selector,
   SourceLocation,
+  SourceRange,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import { tokenize, type Token } from "./lexer";
@@ -203,7 +204,34 @@ export const parseModule = (source: string): Module => {
   const getLocation = (token: Token): SourceLocation => ({
     line: token.line,
     column: token.column,
+    range: undefined,
   });
+
+  const tokenStarts: SourceLocation[] = [];
+  const tokenEnds: SourceLocation[] = [];
+  const tokenRanges: SourceRange[] = [];
+
+  const getRange = (startIndex: number): SourceRange => {
+    const endIndex = cursor.index - 1;
+    const cached = startIndex === endIndex ? tokenRanges[startIndex] : undefined;
+    if (cached) return cached;
+    const last = tokens[endIndex];
+    tokenStarts[startIndex] ??= getLocation(tokens[startIndex]);
+    tokenEnds[endIndex] ??= { line: last.line, column: last.endColumn };
+    const range = {
+      module: openModules[openModules.length - 1].name,
+      start: tokenStarts[startIndex],
+      end: tokenEnds[endIndex],
+    };
+    if (startIndex === endIndex) tokenRanges[startIndex] = range;
+    return range;
+  };
+
+  // Each node gets its own location object from getLocation, so the range can be set in place.
+  const withRange = <Node extends { location: SourceLocation }>(node: Node, startIndex: number) => {
+    node.location.range = getRange(startIndex);
+    return node;
+  };
 
   const peekRaw = (offset = 0) => tokens[Math.min(cursor.index + offset, tokens.length - 1)];
 
@@ -320,7 +348,10 @@ export const parseModule = (source: string): Module => {
     const token = peek();
     if (token.kind === "Identifier") {
       cursor.index++;
-      return { kind: "Identifier", name: token.text, location: getLocation(token) };
+      return withRange(
+        { kind: "Identifier", name: token.text, location: getLocation(token) },
+        cursor.index - 1,
+      );
     }
     if (isAt("<<") || isAt("(")) return parsePrimary();
     throw createError(`Expected a subscript but found ${describe(token)}`);
@@ -335,7 +366,10 @@ export const parseModule = (source: string): Module => {
       (next.text === "," || next.text === ")");
     if (isOperatorAlone) {
       cursor.index++;
-      return { kind: "OperatorReference", operator: token.text, location: getLocation(token) };
+      return withRange(
+        { kind: "OperatorReference", operator: token.text, location: getLocation(token) },
+        cursor.index - 1,
+      );
     }
     const isPrefixAlone =
       OPERATOR_ARGUMENTS.has(token.text) && (next.text === "," || next.text === ")");
@@ -354,10 +388,12 @@ export const parseModule = (source: string): Module => {
       };
     }
     if (isAt("LAMBDA")) {
+      const start = cursor.index;
       advance();
       const params = parseSeparated(expectIdentifier);
       expect(":");
-      return { kind: "Lambda", params, body: parseExpression(), location: getLocation(token) };
+      const body = parseExpression();
+      return withRange({ kind: "Lambda", params, body, location: getLocation(token) }, start);
     }
     return parseExpression();
   };
@@ -696,8 +732,10 @@ export const parseModule = (source: string): Module => {
   };
 
   const parseExpression = (minimumPrecedence = 0): Expression => {
+    const start = cursor.index;
+    const prefix = parsePrefix();
     const state = {
-      left: parsePrefix(),
+      left: prefix.location.range ? prefix : withRange(prefix, start),
       previous: undefined as (InfixOperator & { text: string }) | undefined,
     };
     while (true) {
@@ -706,24 +744,31 @@ export const parseModule = (source: string): Module => {
       const location = getLocation(token);
       if (token.text === "'" && minimumPrecedence <= 15) {
         advance();
-        state.left = { kind: "Prime", expression: state.left, location };
+        state.left = withRange({ kind: "Prime", expression: state.left, location }, start);
         continue;
       }
       if (POSTFIX_OPERATORS.has(token.text) && minimumPrecedence <= 15) {
         advance();
-        state.left = { kind: "Apply", operator: token.text, args: [state.left], location };
+        state.left = withRange(
+          { kind: "Apply", operator: token.text, args: [state.left], location },
+          start,
+        );
         continue;
       }
       if (token.text === "[") {
         advance();
         const args = withoutOffside(() => parseSeparated(() => parseExpression()));
         withoutOffside(() => expect("]"));
-        state.left = { kind: "FunctionApplication", function: state.left, args, location };
+        state.left = withRange(
+          { kind: "FunctionApplication", function: state.left, args, location },
+          start,
+        );
         continue;
       }
       if (token.text === "." && isFieldName(peek(1))) {
         advance();
-        state.left = { kind: "FieldAccess", record: state.left, field: advance().text, location };
+        const field = advance().text;
+        state.left = withRange({ kind: "FieldAccess", record: state.left, field, location }, start);
         continue;
       }
       const infix = INFIX_OPERATORS.get(token.text);
@@ -756,6 +801,7 @@ export const parseModule = (source: string): Module => {
       } else {
         state.left = { kind: "Apply", operator: token.text, args: [left, right], location };
       }
+      state.left = withRange(state.left, start);
       state.previous = { ...infix, text: token.text };
     }
     return state.left;
@@ -777,6 +823,11 @@ export const parseModule = (source: string): Module => {
   };
 
   const parseDefinition = (isLocal: boolean): Definition | Instance => {
+    const start = cursor.index;
+    return withRange(parseDefinitionUnit(isLocal), start);
+  };
+
+  const parseDefinitionUnit = (isLocal: boolean): Definition | Instance => {
     const token = peek();
     const location = getLocation(token);
     if (
@@ -969,6 +1020,12 @@ export const parseModule = (source: string): Module => {
   };
 
   const parseTheorem = (): Definition | undefined => {
+    const start = cursor.index;
+    const theorem = parseTheoremUnit();
+    return theorem && withRange(theorem, start);
+  };
+
+  const parseTheoremUnit = (): Definition | undefined => {
     const start = advance();
     if (peek().kind === "Identifier" && isAt("==", 1)) factNames.add(peek().text);
     const isNamed = peek().kind === "Identifier" && isAt("==", 1) && !isAt("ASSUME", 2);
@@ -998,6 +1055,11 @@ export const parseModule = (source: string): Module => {
   };
 
   const parseAssumption = (): Assumption => {
+    const start = cursor.index;
+    return withRange(parseAssumptionUnit(), start);
+  };
+
+  const parseAssumptionUnit = (): Assumption => {
     const keyword = advance();
     const location = getLocation(keyword);
     const isAxiom = keyword.text === "AXIOM";
@@ -1028,6 +1090,7 @@ export const parseModule = (source: string): Module => {
     };
     openModules.push(module);
     while (true) {
+      const tokenIndex = cursor.index;
       const token = peek();
       if (token.kind === "ModuleEnd" || token.kind === "End") {
         openModules.pop();
@@ -1076,12 +1139,16 @@ export const parseModule = (source: string): Module => {
           parseDeclarations().forEach((declaration) => recursiveNames.add(declaration.name));
           continue;
         case "INSTANCE":
-          module.instances.push(parseInstance(undefined, [], false, getLocation(token)));
+          module.instances.push(
+            withRange(parseInstance(undefined, [], false, getLocation(token)), tokenIndex),
+          );
           continue;
         case "LOCAL": {
           advance();
           if (isAt("INSTANCE")) {
-            module.instances.push(parseInstance(undefined, [], true, getLocation(token)));
+            module.instances.push(
+              withRange(parseInstance(undefined, [], true, getLocation(token)), tokenIndex),
+            );
             continue;
           }
           const unit = parseDefinition(true);
