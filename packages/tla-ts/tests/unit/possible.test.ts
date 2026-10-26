@@ -29,9 +29,9 @@ describe("_POSSIBLE matches TLC", () => {
     expect(
       await Promise.all(
         [
-        "PossibleFailStateTest",
-        "PossibleFailActionTest",
-        "PossibleFailMixedTest",
+          "PossibleFailStateTest",
+          "PossibleFailActionTest",
+          "PossibleFailMixedTest",
           "PossibleFailNoTransTest",
         ].map(checkPossible),
       ),

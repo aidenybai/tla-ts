@@ -60,12 +60,12 @@ const createEmptyCounterExample = () =>
 
 const createBuiltinLocation = () =>
   createRecord([
-  ["beginLine", 0],
-  ["beginColumn", 0],
-  ["endLine", 0],
-  ["endColumn", 0],
-  ["module", "--TLA+ BUILTINS--"],
-]);
+    ["beginLine", 0],
+    ["beginColumn", 0],
+    ["endLine", 0],
+    ["endColumn", 0],
+    ["module", "--TLA+ BUILTINS--"],
+  ]);
 
 // TLC's record for an action it doesn't store, such as every action in breadth-first search.
 export const createActionRecord = (action: string | undefined) =>
@@ -89,7 +89,13 @@ export const createCounterExample = (
       createTuple([states[index], createActionRecord(trace[index + 1].action), state]),
     );
   const closing = loop
-    ? [createTuple([states[states.length - 1], createActionRecord(loop.action), states[loop.start]])]
+    ? [
+        createTuple([
+          states[states.length - 1],
+          createActionRecord(loop.action),
+          states[loop.start],
+        ]),
+      ]
     : [];
   return createRecord([
     ["action", createSet([...steps, ...closing])],
@@ -224,7 +230,10 @@ export const createTlcExtOperators = (
     ),
     defineOperator("ToTrace", 1, (args) => {
       const counterExample = getValue(args, 0, "ToTrace");
-      if (!isFunctionValue(counterExample) || !valuesEqual(getDomain(counterExample), createSet(["action", "state"]))) {
+      if (
+        !isFunctionValue(counterExample) ||
+        !valuesEqual(getDomain(counterExample), createSet(["action", "state"]))
+      ) {
         throw new TlaEvaluationError(
           `The argument of ToTrace should be a CounterExample, but instead it is:\n${formatValue(counterExample)}`,
         );

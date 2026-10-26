@@ -21,7 +21,12 @@ describe("SPECIFICATION matches TLC", () => {
   it.each(["Argument", "Twice", "Instance", "Local"])(
     "takes the initial predicate and next-state relation of %s from operator arguments",
     async (name) => {
-      expect(await getSummary(`SPECIFICATION ${name}\nINVARIANT Inv`)).toEqual(["success", 6, 2, 1]);
+      expect(await getSummary(`SPECIFICATION ${name}\nINVARIANT Inv`)).toEqual([
+        "success",
+        6,
+        2,
+        1,
+      ]);
     },
   );
 
@@ -56,13 +61,16 @@ describe("SPECIFICATION matches TLC", () => {
     );
   });
 
-  it.each(["TemporalExists", "TemporalForall"])("rejects the temporal quantifier of %s", async (name) => {
-    await expect(checkSpecification(`SPECIFICATION ${name}`)).rejects.toThrow(
-      new TlaConfigError(
-        "TLC does not support temporal existential, nor universal, quantification over state variables",
-      ),
-    );
-  });
+  it.each(["TemporalExists", "TemporalForall"])(
+    "rejects the temporal quantifier of %s",
+    async (name) => {
+      await expect(checkSpecification(`SPECIFICATION ${name}`)).rejects.toThrow(
+        new TlaConfigError(
+          "TLC does not support temporal existential, nor universal, quantification over state variables",
+        ),
+      );
+    },
+  );
 
   it.each(["Spec", "SpecNext", "SpecAction"])(
     "passes the formulas of %s through operator parameters",

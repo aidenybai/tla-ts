@@ -18,7 +18,9 @@ const checkCounterExample = async (configName: string) => {
 describe("POSTCONDITION after a violation matches TLC", () => {
   it("binds CounterExample to the behavior that violates an invariant or deadlocks", async () => {
     expect(
-      await Promise.all(["CounterExampleInvariant", "CounterExampleDeadlock"].map(checkCounterExample)),
+      await Promise.all(
+        ["CounterExampleInvariant", "CounterExampleDeadlock"].map(checkCounterExample),
+      ),
     ).toEqual([
       [
         "invariant-violation",

@@ -507,9 +507,9 @@ ASSUME TLCFP(a) = -887695703
         config: `CONSTANT C = FALSE\n${config}`,
       });
     const base = "Spec == Init /\\ [][Next]_x";
-    expect((await checkSpec(`${base} /\\ TRUE /\\ True`, "SPECIFICATION Spec")).generatedStates).toBe(
-      3,
-    );
+    expect(
+      (await checkSpec(`${base} /\\ TRUE /\\ True`, "SPECIFICATION Spec")).generatedStates,
+    ).toBe(3);
     await expect(checkSpec(`${base} /\\ FALSE`, "SPECIFICATION Spec")).rejects.toThrow(
       new TlaConfigError("The spec is trivially false because FALSE is false."),
     );
@@ -692,9 +692,9 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("treats a function as a finite set like TLC", async () => {
-    expect(
-      (await checkModule("ASSUME IsFiniteSet(<<1>>) /\\ IsFiniteSet([a |-> 1])")).status,
-    ).toBe("success");
+    expect((await checkModule("ASSUME IsFiniteSet(<<1>>) /\\ IsFiniteSet([a |-> 1])")).status).toBe(
+      "success",
+    );
   });
 
   it("reports an argument outside the domain of a function construction like TLC", async () => {
@@ -703,12 +703,10 @@ describe("evaluation errors match TLC", () => {
     ]
       .map((key) => `${key} :> ${key} @@\n  `)
       .join("");
-    expect((await checkModule("ASSUME [n \\in -12..12 |-> n][13] = 0"))
-      .violation?.message).toBe(
+    expect((await checkModule("ASSUME [n \\in -12..12 |-> n][13] = 0")).violation?.message).toBe(
       `In applying the function\n( ${pairs}12 :> 12 ),\nthe first argument is:\n13\nwhich is not in its domain.\n`,
     );
-    expect((await checkModule('ASSUME [n \\in {"a"} |-> n]["b"] = 0'))
-      .violation?.message).toBe(
+    expect((await checkModule('ASSUME [n \\in {"a"} |-> n]["b"] = 0')).violation?.message).toBe(
       'In applying the function\n[a |-> "a"],\nthe first argument is:\n"b"\nwhich is not in its domain.\n',
     );
   });
@@ -1081,14 +1079,18 @@ describe("initial predicate and next-state relation match TLC", () => {
   });
 
   it("requires an initial predicate when the spec has variables", async () => {
-    await expect(checkSource("VARIABLE x\nSpec == [][x' = x]_x", "SPECIFICATION Spec")).rejects.toThrow(
-      /did not specify the initial state predicate/,
-    );
+    await expect(
+      checkSource("VARIABLE x\nSpec == [][x' = x]_x", "SPECIFICATION Spec"),
+    ).rejects.toThrow(/did not specify the initial state predicate/);
   });
 
   it("rejects a constant initial predicate or next-state action", async () => {
-    await expect(checkSource("VARIABLE x\nInit == TRUE\nNext == x' = x", "INIT Init\nNEXT Next")).rejects.toThrow(/The initial predicate Init cannot be a constant/);
-    await expect(checkSource("VARIABLE x\nInit == x = 0\nNext == TRUE", "INIT Init\nNEXT Next")).rejects.toThrow(/The next state action Next cannot be a constant/);
+    await expect(
+      checkSource("VARIABLE x\nInit == TRUE\nNext == x' = x", "INIT Init\nNEXT Next"),
+    ).rejects.toThrow(/The initial predicate Init cannot be a constant/);
+    await expect(
+      checkSource("VARIABLE x\nInit == x = 0\nNext == TRUE", "INIT Init\nNEXT Next"),
+    ).rejects.toThrow(/The next state action Next cannot be a constant/);
   });
 
   it("reports initial states without a next-state action", async () => {

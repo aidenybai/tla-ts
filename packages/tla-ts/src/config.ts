@@ -183,7 +183,15 @@ export const parseConfig = (source: string): ModelConfig => {
     return names;
   };
   const setSingle = (
-    key: "init" | "next" | "specification" | "symmetry" | "view" | "alias" | "periodic" | "rlReward",
+    key:
+      | "init"
+      | "next"
+      | "specification"
+      | "symmetry"
+      | "view"
+      | "alias"
+      | "periodic"
+      | "rlReward",
     keyword: string,
   ) => {
     if (config[key] !== undefined) throw new TlaConfigError(`The keyword ${keyword} appears twice`);

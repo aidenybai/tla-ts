@@ -176,9 +176,11 @@ describe("nested module scoping matches SANY", () => {
   });
 
   it("rejects a nested module named after a module loaded before it", async () => {
-    await expect(checkSource("E == INSTANCE Shared\n---- MODULE Shared ----\nA == 2\n====", {
+    await expect(
+      checkSource("E == INSTANCE Shared\n---- MODULE Shared ----\nA == 2\n====", {
         Shared: "---- MODULE Shared ----\nA == 1\n====",
-      })).rejects.toThrow(/Multiply-defined module 'Shared'/);
+      }),
+    ).rejects.toThrow(/Multiply-defined module 'Shared'/);
   });
 
   it("instantiates a nested module inside LET once a top-level instance follows it", async () => {

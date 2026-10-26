@@ -9,7 +9,10 @@ describe("TLCGet revision and configuration match TLC", () => {
   it.each(["TLCSet", "TLCSetPost"])("passes TLC's TLCSet test with %s.cfg", async (name) => {
     const config = parseConfig(readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"));
     config.checkDeadlock = false;
-    const result = await check({ source: readFileSync(join(DIRECTORY, "TLCSet.tla"), "utf8"), config });
+    const result = await check({
+      source: readFileSync(join(DIRECTORY, "TLCSet.tla"), "utf8"),
+      config,
+    });
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([
       4225, 4225, 4225,

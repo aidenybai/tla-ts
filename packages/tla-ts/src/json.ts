@@ -122,10 +122,16 @@ const fromJson = (json: unknown, method: string): Value => {
   if (Array.isArray(json)) return createTuple(json.map((element) => fromJson(element, method)));
   if (json !== null && typeof json === "object") {
     return createRecord(
-      Object.entries(json).map(([key, field]): [string, Value] => [rankString(key), fromJson(field, method)]),
+      Object.entries(json).map(([key, field]): [string, Value] => [
+        rankString(key),
+        fromJson(field, method),
+      ]),
     );
   }
-  throw createJavaOverrideError(method, `Cannot convert value: unsupported JSON value ${String(json)}`);
+  throw createJavaOverrideError(
+    method,
+    `Cannot convert value: unsupported JSON value ${String(json)}`,
+  );
 };
 
 const parseJson = (text: string, method: string): Value => {

@@ -38,9 +38,7 @@ describe("printing matches TLC", () => {
     ["3..1", '"{}"'],
     ["SUBSET (1..7)", '"SUBSET (1..7)"'],
   ])("converts %s to the string %s", async (expression, text) => {
-    expect((await checkPrinting(`ASSUME PrintT(ToString(${expression}))`)).printed).toEqual([
-      text,
-    ]);
+    expect((await checkPrinting(`ASSUME PrintT(ToString(${expression}))`)).printed).toEqual([text]);
   });
 
   it.each(["PrintT(SUBSET Nat)", "Print([Nat -> {1}], TRUE)", 'ToString(Nat \\X {1}) = ""'])(

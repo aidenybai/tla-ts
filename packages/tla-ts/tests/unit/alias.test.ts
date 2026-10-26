@@ -85,7 +85,10 @@ describe("ALIAS matches TLC", () => {
   });
 
   it("keeps the state when the alias is not a record", async () => {
-    const result = await checkModule("Next == x < 1 /\\ x' = x + 1\nAlias == x + 100", "ALIAS Alias");
+    const result = await checkModule(
+      "Next == x < 1 /\\ x' = x + 1\nAlias == x + 100",
+      "ALIAS Alias",
+    );
     expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 1 }]);
   });
 
