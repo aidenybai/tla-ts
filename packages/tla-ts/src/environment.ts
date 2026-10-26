@@ -20,6 +20,7 @@ import {
   withLetInstances,
 } from "./instances";
 import { parseModule } from "./parser";
+import { overrideDefinitions } from "./java-overrides";
 import { KEY_SEPARATOR, resolveModule, resolveSubstitutions, type Symbols } from "./resolve";
 import { createRuntime } from "./runtime";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
@@ -35,6 +36,7 @@ import {
 
 export interface EnvironmentOptions {
   loadModule: ((name: string) => string | undefined) | undefined;
+  loadClass?: (name: string) => Uint8Array | undefined;
   print: (text: string) => void;
   files: FileSystem;
   seed?: bigint;
@@ -419,7 +421,8 @@ export const createEnvironment = (
       return definition ? [{ ...definition, name }] : [];
     });
 
-  const linkModule = (parsed: Module): LinkedModule => {
+  const linkModule = (unlinked: Module): LinkedModule => {
+    const parsed = overrideDefinitions(unlinked, options.loadClass?.(unlinked.name));
     const visible: Symbols = new Map(
       CORE_OPERATORS.map((operator) => [
         operator.name,

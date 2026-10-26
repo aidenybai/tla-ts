@@ -43,6 +43,7 @@ export interface CheckOptions {
   source: string;
   config: string | ModelConfig;
   loadModule?: (name: string) => string | undefined;
+  loadClass?: (name: string) => Uint8Array | undefined;
   onPrint?: (text: string) => void;
   readFile?: (path: string) => string | undefined;
   writeFile?: (path: string, content: string) => void;
@@ -537,6 +538,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   setStringOrder(getTlcStringOrder(options.source, config, options.loadModule));
   const specification = createEnvironment(module, config, {
     loadModule: options.loadModule,
+    loadClass: options.loadClass,
     print,
     files: { readFile: options.readFile, writeFile: options.writeFile },
     seed: options.seed,
