@@ -1,7 +1,7 @@
 import type { Expression } from "./ast";
 import { createCanonicalizer } from "./canonical";
 import {
-  check,
+  checkSequentially,
   createSearch,
   findAssumptionViolation,
   type CheckOptions,
@@ -46,10 +46,6 @@ export interface LevelMessage {
 }
 
 export type WorkerMessage = { type: "ready" } | { type: "abort" } | LevelMessage;
-
-export interface ParallelCheckOptions extends CheckOptions {
-  workers: number;
-}
 
 interface WorkerHandle {
   postMessage: (message: unknown, transfer?: unknown[]) => void;
@@ -98,15 +94,16 @@ const isImpure = (environment: Environment) =>
         definition.bounds.some((bound) => usesImpureBuiltin(bound.set, environment))),
   );
 
-export const checkInParallel = async (options: ParallelCheckOptions): Promise<CheckResult> => {
+export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
-  const checkSequentially = () => check({ ...options, config });
+  const fallBack = () => checkSequentially({ ...options, config });
+  const count = options.workers ?? 1;
   const isSequential =
-    options.workers < 2 ||
+    count < 2 ||
     config.view !== undefined ||
     config.postconditions.length > 0 ||
     config.possible.length > 0;
-  if (isSequential) return checkSequentially();
+  if (isSequential) return fallBack();
   const modules = new Map<string, string | undefined>();
   const loadModule = (name: string) => {
     const source = options.loadModule?.(name);
@@ -122,15 +119,14 @@ export const checkInParallel = async (options: ParallelCheckOptions): Promise<Ch
     files: { readFile: options.readFile, writeFile: options.writeFile },
   });
   const environment = specification.environment;
-  if (findAssumptionViolation(specification.assumptions, environment)) return checkSequentially();
+  if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
   const search = createSearch(config, environment, () =>
     getTlcVariableOrder(options.source, loadModule),
   );
   if (!search || search.properties.liveness.length > 0 || isImpure(environment)) {
-    return checkSequentially();
+    return fallBack();
   }
 
-  const count = options.workers;
   const canonicalize = createCanonicalizer();
   const table = createFingerprintTable();
   const fingerprint = new Int32Array(2);
@@ -145,18 +141,18 @@ export const checkInParallel = async (options: ParallelCheckOptions): Promise<Ch
     getStateFingerprint(search.getFingerprintState(state), fingerprint);
     if (!table.insert(fingerprint[0], fingerprint[1])) continue;
     if (search.findViolatedInvariant(state) || search.findFailedInitialPredicate(state)) {
-      return checkSequentially();
+      return fallBack();
     }
     if (!search.satisfiesConstraints(state)) {
       table.remove(fingerprint[0], fingerprint[1]);
       continue;
     }
     const seed = seeds[getFingerprintOwner(fingerprint[1], count)];
-    if (!seed.encoder.encode(state)) return checkSequentially();
+    if (!seed.encoder.encode(state)) return fallBack();
     seed.fingerprints.push(fingerprint[0], fingerprint[1]);
     statistics.distinctStates++;
   }
-  if (getRankedStringCount() !== startupStrings) return checkSequentially();
+  if (getRankedStringCount() !== startupStrings) return fallBack();
   if (statistics.distinctStates === 0)
     return { status: "success", violation: undefined, ...statistics };
   statistics.depth = 1;
@@ -210,7 +206,7 @@ export const checkInParallel = async (options: ParallelCheckOptions): Promise<Ch
     messages.some((message) => message.type === "abort");
   if (isAborted(await ready)) {
     terminate();
-    return checkSequentially();
+    return fallBack();
   }
   for (let level = 1; ; level++) {
     const reported = waitForReports();
@@ -218,7 +214,7 @@ export const checkInParallel = async (options: ParallelCheckOptions): Promise<Ch
     const messages = await reported;
     if (isAborted(messages)) {
       terminate();
-      return checkSequentially();
+      return fallBack();
     }
     const levels = messages.flatMap((message) => (message.type === "level" ? [message] : []));
     const added = levels.reduce((sum, message) => sum + message.added, 0);

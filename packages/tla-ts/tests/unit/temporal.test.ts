@@ -91,8 +91,8 @@ const checkProperty = (specification: string, property: string) =>
 describe("general temporal formulas match TLC", () => {
   it.each(TLC_VERDICTS.filter((verdict) => verdict[2] !== "error"))(
     "%s with %s is %s",
-    (specification, property, status, counts) => {
-      const result = checkProperty(specification, property);
+    async (specification, property, status, counts) => {
+      const result = await checkProperty(specification, property);
       expect(result.status).toBe(status);
       expect([result.generatedStates, result.distinctStates]).toEqual(counts);
     },
@@ -100,14 +100,14 @@ describe("general temporal formulas match TLC", () => {
 
   it.each(TLC_VERDICTS.filter((verdict) => verdict[2] === "error"))(
     "%s with %s is rejected",
-    (specification, property) => {
-      expect(() => checkProperty(specification, property)).toThrow(TlaError);
-      expect(() => checkProperty(specification, property)).not.toThrow(TlaUnsupportedError);
+    async (specification, property) => {
+      await expect(checkProperty(specification, property)).rejects.toThrow(TlaError);
+      await expect(checkProperty(specification, property)).rejects.not.toThrow(TlaUnsupportedError);
     },
   );
 
-  it("names the violated property and returns a lasso", () => {
-    const result = check({
+  it("names the violated property and returns a lasso", async () => {
+    const result = await check({
       source: SOURCE,
       config: "SPECIFICATION WeakSpec\nPROPERTIES OftenFlipped OftenTop\n",
     });

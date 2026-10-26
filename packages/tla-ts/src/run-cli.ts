@@ -4,7 +4,7 @@ import { availableParallelism } from "node:os";
 import { type CheckResult, type CheckStatus } from "./check";
 import { parseConfig } from "./config";
 import { TlaError } from "./errors";
-import { checkInParallel } from "./parallel";
+import { check } from "./parallel";
 import { formatValue } from "./values";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
@@ -96,7 +96,7 @@ const run = async (args: string[]) => {
   }
   const directory = dirname(specPath);
   console.log(`Checking ${basename(specPath)} with ${basename(configPath)}`);
-  const result = await checkInParallel({
+  const result = await check({
     workers: getWorkerCount(args),
     seed: BigInt(seed),
     source: readFileSync(specPath, "utf8"),

@@ -9,7 +9,7 @@ const loadPackage = (): Promise<typeof import("../../src")> => import(DIST);
 
 const checkFixtureInParallel = async (directory: string, name: string, workers: number) => {
   const tlaTs = await loadPackage();
-  return tlaTs.checkInParallel({
+  return tlaTs.check({
     source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
     config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
     workers,
@@ -22,7 +22,7 @@ const getCounts = (result: { generatedStates: number; distinctStates: number; de
   result.depth,
 ];
 
-describe("checkInParallel matches TLC", () => {
+describe("check with workers matches TLC", () => {
   it.each([2, 3, 4])("explores the commit protocol with %i workers", async (workers) => {
     const result = await checkFixtureInParallel("commit", "Commit", workers);
     expect(result.status).toBe("success");

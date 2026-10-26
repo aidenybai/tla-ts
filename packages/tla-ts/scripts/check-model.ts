@@ -14,7 +14,7 @@ export interface ModelOutcome {
   milliseconds: number;
 }
 
-export const checkModel = (specPath: string, configPath: string): ModelOutcome => {
+export const checkModel = async (specPath: string, configPath: string): Promise<ModelOutcome> => {
   const directory = dirname(specPath);
   const startedAt = performance.now();
   const source = readFileSync(specPath, "utf8");
@@ -24,7 +24,7 @@ export const checkModel = (specPath: string, configPath: string): ModelOutcome =
       `File name ${basename(specPath, ".tla")} does not match the name ${moduleName} of the top level module it contains`,
     );
   }
-  const result = check({
+  const result = await check({
     source,
     config: readFileSync(configPath, "utf8"),
     loadModule: (name) => {
@@ -69,7 +69,7 @@ if (process.argv[1] === import.meta.filename) {
   const startedAt = performance.now();
   const outcome = { value: undefined as ModelOutcome | undefined };
   try {
-    outcome.value = checkModel(process.argv[2], process.argv[3]);
+    outcome.value = await checkModel(process.argv[2], process.argv[3]);
   } catch (error) {
     outcome.value = getErrorOutcome(error, Math.round(performance.now() - startedAt));
   }

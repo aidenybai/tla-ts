@@ -47,6 +47,7 @@ export interface CheckOptions {
   readFile?: (path: string) => string | undefined;
   writeFile?: (path: string, content: string) => void;
   seed?: bigint;
+  workers?: number;
 }
 
 export type CheckStatus =
@@ -445,9 +446,7 @@ export const createSearch = (
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
       const representative =
         symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup, order);
-      return view === undefined
-        ? representative
-        : [getViewValue(view.expression, representative)];
+      return view === undefined ? representative : [getViewValue(view.expression, representative)];
     },
     findViolatedInvariant: (state, parent) =>
       invariants.find(
@@ -531,7 +530,7 @@ export const createSearch = (
   };
 };
 
-export const check = (options: CheckOptions): CheckResult => {
+export const checkSequentially = (options: CheckOptions): CheckResult => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   const print = options.onPrint ?? console.log;
   const module = parseModule(options.source);
