@@ -85,6 +85,19 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([98, 24, 5]);
   });
 
+  it("assigns a primed variable passed as an operator argument", () => {
+    const result = check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x, y\nSend(p, old, new) == new = p\nInit == x = 0 /\\ y = 0\nNext == \\E p \\in {1, 2} : Send(p, x, x') /\\ y' = y\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      7,
+      3,
+    ]);
+  });
+
   it("reduces states under a symmetry set", () => {
     const result = checkFixture("symmetry", "Symmetry");
     expect(result.status).toBe("success");
