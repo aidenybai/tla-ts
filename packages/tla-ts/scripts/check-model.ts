@@ -1,9 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { check, TlaError, TlaSyntaxError, TlaUnsupportedError } from "../src";
-
-// The -seed that record-tlc.ts passes to TLC.
-const TLC_SEED = 4n;
+import { TLC_SEED } from "./corpora";
 
 export interface ModelOutcome {
   status: string;
