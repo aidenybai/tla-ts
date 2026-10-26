@@ -26,6 +26,7 @@ import {
   type TemporalProperty,
 } from "./liveness";
 import { parseModule } from "./parser";
+import { prettyPrint } from "./pretty-print";
 import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
@@ -517,7 +518,7 @@ export const createSearch = (
     return {
       name: unwitnessed.name,
       message: `The _POSSIBLE predicate ${unwitnessed.name}${location} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`,
-      counts: formatValue(getPossibleCounts(runtime), true),
+      counts: prettyPrint(formatValue(getPossibleCounts(runtime), true)),
     };
   };
   return {
