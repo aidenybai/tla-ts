@@ -272,6 +272,8 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
   return character === "\\" ? { text: "\\", length: 1 } : undefined;
 };
 
+const TAB_SIZE = 8;
+
 export const tokenize = (source: string): Token[] => {
   const headerMatch = MODULE_HEADER.exec(source);
   if (!headerMatch)
@@ -285,7 +287,15 @@ export const tokenize = (source: string): Token[] => {
     moduleDepth: 0,
   };
 
-  const getColumn = () => cursor.index - cursor.lineStart + 1;
+  const getColumn = () => {
+    const tab = source.indexOf("\t", cursor.lineStart);
+    if (tab === -1 || tab >= cursor.index) return cursor.index - cursor.lineStart + 1;
+    let column = 0;
+    for (let position = cursor.lineStart; position <= cursor.index; position++) {
+      column = source[position] === "\t" ? column + TAB_SIZE - (column % TAB_SIZE) : column + 1;
+    }
+    return column;
+  };
   const pushToken = (kind: TokenKind, text: string, length: number) => {
     tokens.push({ kind, text, line: cursor.line, column: getColumn() });
     cursor.index += length;
