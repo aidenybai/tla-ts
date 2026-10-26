@@ -19,6 +19,17 @@ describe("INSTANCE matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([244, 27, 4]);
   });
 
+  it("substitutes TLC's infix operators for constant operators of the same name", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nINSTANCE Inner\nInit == x = Merged[2]\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: () =>
+        "---- MODULE Inner ----\nCONSTANTS _ @@ _, _ :> _\nMerged == (1 :> 1) @@ (2 :> 2)\n====",
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
+
   it("reports violations through instantiated operators", async () => {
     const result = await checkInstances("Violation.cfg");
     expect(result.status).toBe("invariant-violation");
