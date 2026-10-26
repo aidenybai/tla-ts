@@ -1,4 +1,4 @@
-import { TlaEvaluationError } from "./errors";
+import { TlaEvaluationError, TlaModuleError } from "./errors";
 
 export interface ModelValue {
   kind: "ModelValue";
@@ -123,7 +123,7 @@ const describeKind = (value: Value) => {
 
 export const checkInteger = (value: number) => {
   if (!Number.isInteger(value) || value > MAXIMUM_INTEGER || value < MINIMUM_INTEGER) {
-    throw new TlaEvaluationError(`Integer overflow: ${value} is outside TLC's 32-bit range`);
+    throw new TlaModuleError(`Integer overflow: ${value} is outside TLC's 32-bit range`);
   }
   return value;
 };

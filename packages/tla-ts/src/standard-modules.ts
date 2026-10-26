@@ -1,4 +1,4 @@
-import { TlaEvaluationError } from "./errors";
+import { TlaEvaluationError, TlaModuleError } from "./errors";
 import {
   defineArithmetic,
   defineBinary,
@@ -149,17 +149,17 @@ const NATURALS_OPERATORS: Builtin[] = [
   defineArithmetic("*", (left, right) => left * right),
   defineArithmetic("^", (base, exponent) => {
     if (exponent < 0 || (base === 0 && exponent === 0)) {
-      throw new TlaEvaluationError(`${base}^${exponent} is undefined`);
+      throw new TlaModuleError(`${base}^${exponent} is undefined`);
     }
     return base ** exponent;
   }),
   defineArithmetic("\\div", (left, right) => {
-    if (right === 0) throw new TlaEvaluationError(`Division by zero in ${left} \\div 0`);
+    if (right === 0) throw new TlaModuleError(`Division by zero in ${left} \\div 0`);
     return Math.floor(left / right);
   }),
   defineArithmetic("%", (left, right) => {
     if (right <= 0)
-      throw new TlaEvaluationError(`The second argument of % must be positive, but was ${right}`);
+      throw new TlaModuleError(`The second argument of % must be positive, but was ${right}`);
     return ((left % right) + right) % right;
   }),
   defineComparison("<", (left, right) => left < right),
@@ -191,7 +191,7 @@ const SEQUENCES_OPERATORS: Builtin[] = [
     const right = getSequenceOrString(args, 1, "\\o");
     if (typeof left === "string" && typeof right === "string") return left + right;
     if (typeof left === "string" || typeof right === "string") {
-      throw new TlaEvaluationError("\\o cannot concatenate a string with a sequence");
+      throw new TlaModuleError("\\o cannot concatenate a string with a sequence");
     }
     return createTuple([...left, ...right]);
   }),
@@ -201,13 +201,13 @@ const SEQUENCES_OPERATORS: Builtin[] = [
   defineOperator("Head", 1, (args) => {
     const elements = getSequence(args, 0, "Head");
     if (elements.length === 0)
-      throw new TlaEvaluationError("Attempted to apply Head to the empty sequence");
+      throw new TlaModuleError("Attempted to apply Head to the empty sequence");
     return elements[0];
   }),
   defineOperator("Tail", 1, (args) => {
     const sequence = getSequenceOrString(args, 0, "Tail");
     if (sequence.length === 0)
-      throw new TlaEvaluationError("Attempted to apply Tail to the empty sequence");
+      throw new TlaModuleError("Attempted to apply Tail to the empty sequence");
     return typeof sequence === "string" ? sequence.slice(1) : createTuple(sequence.slice(1));
   }),
   defineOperator("SubSeq", 3, (args) => {
@@ -216,9 +216,7 @@ const SEQUENCES_OPERATORS: Builtin[] = [
     const end = getNumber(args, 2, "SubSeq");
     if (start > end) return typeof sequence === "string" ? "" : createTuple([]);
     if (start < 1 || end > sequence.length) {
-      throw new TlaEvaluationError(
-        `SubSeq bounds ${start}..${end} are outside 1..${sequence.length}`,
-      );
+      throw new TlaModuleError(`SubSeq bounds ${start}..${end} are outside 1..${sequence.length}`);
     }
     return typeof sequence === "string"
       ? sequence.slice(start - 1, end)
@@ -230,7 +228,7 @@ const SEQUENCES_OPERATORS: Builtin[] = [
       getSequence(args, 0, "SelectSeq").filter((element) => {
         const result = test.call([element]);
         if (typeof result !== "boolean")
-          throw new TlaEvaluationError("The test of SelectSeq must return a boolean");
+          throw new TlaModuleError("The test of SelectSeq must return a boolean");
         return result;
       }),
     );
@@ -243,7 +241,7 @@ const FINITE_SETS_OPERATORS: Builtin[] = [
     const set = getSet(args, 0, "Cardinality");
     if (isEmptySet(set)) return 0;
     if (!isEnumerable(set))
-      throw new TlaEvaluationError(`Cardinality of the infinite set ${formatValue(set)}`);
+      throw new TlaModuleError(`Cardinality of the infinite set ${formatValue(set)}`);
     return getCardinality(set);
   }),
 ];

@@ -12,6 +12,7 @@ import { BUNDLED_MODULES } from "./bundled-modules";
 import type { ConfigValue, ModelConfig } from "./config";
 import type { FileSystem } from "./json";
 import { TlaConfigError, TlaEvaluationError, TlaSyntaxError } from "./errors";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { getChildren, isConstantLevel, type Builtin, type Environment } from "./evaluate";
 import {
   createInstantiation,
@@ -47,7 +48,12 @@ export interface Specification {
 const toValue = (value: ConfigValue): Value => {
   switch (value.kind) {
     case "Number":
-      return checkInteger(value.value);
+      try {
+        return checkInteger(value.value);
+      } catch (error) {
+        // TLC fails with an unexpected exception on a configuration number too big for it.
+        throw setExitCode(error, EXIT_STATUS.error);
+      }
     case "String":
     case "Boolean":
       return value.value;

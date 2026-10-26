@@ -8,6 +8,7 @@ import type {
   RecordField,
 } from "./ast";
 import { TlaEvaluationError } from "./errors";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
@@ -15,7 +16,6 @@ import { mapChildren, substitutedExpressions } from "./instances";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
-  checkInteger,
   createFunction,
   createSet,
   createSortedFunction,
@@ -1328,7 +1328,15 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
   switch (expression.kind) {
     case "Number": {
       const value = expression.value;
-      return isTlcInteger(value) ? () => value : () => checkInteger(value);
+      // TLC rejects such a literal while processing the spec, which exits with 255.
+      return isTlcInteger(value)
+        ? () => value
+        : throwing(() =>
+            setExitCode(
+              new TlaEvaluationError(`TLC can't handle a number this big: ${value}`),
+              EXIT_STATUS.error,
+            ),
+          );
     }
     case "String": {
       const value = expression.value;

@@ -1,5 +1,5 @@
 import { defineStateOperator, getValue } from "./builtins";
-import { TlaEvaluationError } from "./errors";
+import { TlaEvaluationError, TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
 import {
@@ -17,7 +17,7 @@ import {
 } from "./values";
 
 const describeArgument = (position: string, name: string, expected: string, value: string) =>
-  new TlaEvaluationError(
+  new TlaModuleError(
     `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${value}`,
   );
 

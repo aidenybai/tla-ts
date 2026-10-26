@@ -8,7 +8,7 @@ import {
   getThunk,
   getValue,
 } from "./builtins";
-import { TlaEvaluationError } from "./errors";
+import { TlaEvaluationError, TlaModuleError } from "./errors";
 import {
   evaluate,
   getChildren,
@@ -61,7 +61,7 @@ const setRegister = (runtime: CheckerRuntime, key: Value, value: Value) => {
     runtime.namedRegisters.set(key, value);
     return;
   }
-  throw new TlaEvaluationError(
+  throw new TlaModuleError(
     `The first argument of TLCSet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
   );
 };
@@ -168,7 +168,7 @@ export const createTlcExtOperators = (
     defineOperator("TLCModelValue", 1, (args) => {
       const name = getValue(args, 0, "TLCModelValue");
       if (typeof name !== "string") {
-        throw new TlaEvaluationError(
+        throw new TlaModuleError(
           `The argument of ModelValue should be a string, but instead it is:\n${formatValue(name)}`,
         );
       }
@@ -206,12 +206,12 @@ export const createTlcExtOperators = (
       const definition =
         typeof name === "string" && context ? getDefinition(name, context.environment) : undefined;
       if (!definition || typeof name !== "string" || !context) {
-        throw new TlaEvaluationError(
+        throw new TlaModuleError(
           `The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:\n${formatValue(name)}`,
         );
       }
       if (definition.kind === "Operator" && definition.params.length > 0) {
-        throw new TlaEvaluationError(
+        throw new TlaModuleError(
           `The argument of TLCEvalDefinition should be a zero-arity definition, but instead it is:\n${name}`,
         );
       }

@@ -1,5 +1,6 @@
 import type { Bound, Definition, Expression } from "./ast";
 import { TlaEvaluationError } from "./errors";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   bindArgument,
   bindDefinitions,
@@ -79,7 +80,12 @@ const assign = (partial: State, index: number, value: Value) => {
 const holds = (expression: Expression, context: Context) => {
   const value = evaluate(expression, context);
   if (typeof value === "boolean") return value;
-  return expectBoolean(value, `the action at ${describeLocation(expression)}`);
+  try {
+    return expectBoolean(value, `the action at ${describeLocation(expression)}`);
+  } catch (error) {
+    // TLC fails with an unexpected exception when the next-state relation isn't a boolean.
+    throw context.next === undefined ? error : setExitCode(error, EXIT_STATUS.error);
+  }
 };
 
 const isAssignmentOperator = (operator: string) =>
@@ -774,8 +780,13 @@ export const getInitialStates = (expression: Expression, environment: Environmen
     false,
     (partial) => {
       if (!isComplete(partial)) {
-        throw new TlaEvaluationError(
-          `The initial predicate does not assign ${getMissingVariables(partial, environment).join(", ")}`,
+        // TLC reports an initial state that isn't completely specified as an illegal state, not as
+        // an evaluation failure.
+        throw setExitCode(
+          new TlaEvaluationError(
+            `The initial predicate does not assign ${getMissingVariables(partial, environment).join(", ")}`,
+          ),
+          EXIT_STATUS.error,
         );
       }
       states.push(partial);

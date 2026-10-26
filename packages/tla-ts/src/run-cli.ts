@@ -3,7 +3,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
 import { type CheckResult, type CheckStatus } from "./check";
 import { parseConfig } from "./config";
-import { TlaError } from "./errors";
+import { TlaConfigError, TlaError, TlaEvaluationError, TlaSyntaxError } from "./errors";
+import { EXIT_STATUS, getExitCode } from "./exit-codes";
 import { checkInParallel } from "./parallel";
 import { formatValue } from "./values";
 
@@ -16,6 +17,16 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   "liveness-violation": 13,
   "postcondition-violation": 10,
 };
+
+export const getErrorExitCode = (error: TlaError) =>
+  getExitCode(error) ??
+  (error instanceof TlaSyntaxError
+    ? EXIT_STATUS.specParseError
+    : error instanceof TlaConfigError
+      ? EXIT_STATUS.configParseError
+      : error instanceof TlaEvaluationError
+        ? EXIT_STATUS.specEvaluationFailure
+        : EXIT_STATUS.error);
 
 const USAGE = "Usage: tla-ts <Spec.tla> [-config <Spec.cfg>] [-deadlock] [-workers <count|auto>]";
 
@@ -72,11 +83,15 @@ const run = async (args: string[]) => {
     console.error(USAGE);
     return 1;
   }
+  if (!existsSync(specPath)) {
+    console.error(`Cannot find the specification file ${specPath}`);
+    return EXIT_STATUS.configParseError;
+  }
   const configFlag = args.indexOf("-config");
   const configPath = configFlag === -1 ? specPath.replace(/\.tla$/, ".cfg") : args[configFlag + 1];
   if (!configPath || !existsSync(configPath)) {
     console.error(`Cannot find the configuration file ${configPath ?? ""}`);
-    return 1;
+    return EXIT_STATUS.configParseError;
   }
   const config = parseConfig(readFileSync(configPath, "utf8"));
   if (args.includes("-deadlock")) config.checkDeadlock = false;
@@ -107,6 +122,7 @@ export const runCli = async () => {
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     console.error(`${error.name}: ${error.message}`);
+    outcome.code = getErrorExitCode(error);
   }
   process.exitCode = outcome.code;
 };
