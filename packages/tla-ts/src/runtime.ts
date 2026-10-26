@@ -8,6 +8,7 @@ export interface CheckerRuntime {
   getFingerprint: (state: Value[]) => bigint;
   getRandom: () => JavaRandom;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
+  pause: () => void;
   seed: bigint;
   generatedStates: number;
   distinctStates: number;
@@ -54,6 +55,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
         phase.isStartup = wasStartup;
       }
     },
+    pause: () => {},
     seed,
     generatedStates: 0,
     distinctStates: 0,
