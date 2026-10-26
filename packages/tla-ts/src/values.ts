@@ -564,7 +564,7 @@ export const getCardinality = (value: Value): number => {
   }
 };
 
-const findIndex = (sortedValues: Value[], target: Value) => {
+export const findIndex = (sortedValues: Value[], target: Value) => {
   const bounds = { low: 0, high: sortedValues.length - 1 };
   while (bounds.low <= bounds.high) {
     const middle = (bounds.low + bounds.high) >> 1;

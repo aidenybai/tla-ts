@@ -25,7 +25,7 @@ result.status; // "invariant-violation"
 ```
 
 > [!WARNING]
-> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `VIEW`, `POSTCONDITION`, `TLCGet`, `TLCSet`, and the Bags and Reals modules.
+> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `VIEW`, `POSTCONDITION`, `TLCGet`, `TLCSet`, and the Reals module.
 
 ## Install
 
@@ -79,7 +79,7 @@ The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `
 
 `check` supports:
 
-- **Standard modules**: Naturals, Integers, Sequences, FiniteSets, and TLC
+- **Standard modules**: Naturals, Integers, Sequences, FiniteSets, Bags, and TLC
 - **Modules**: `EXTENDS`, nested modules, and `INSTANCE` with `WITH` substitutions, `LAMBDA` substitutions for operator parameters, named instances, parameterized instances, and instances inside `LET`
 - **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, and `CHECK_DEADLOCK`
 - **Properties**: invariants, `[][A]_v`, and every temporal formula TLC accepts, checked through TLC's tableau construction under the fairness and temporal conjuncts of the specification
