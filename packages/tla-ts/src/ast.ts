@@ -157,6 +157,7 @@ export interface FunctionConstructionExpression {
   bounds: Bound[];
   body: Expression;
   location: SourceLocation;
+  isRecursive?: boolean;
 }
 
 export interface FunctionSetExpression {

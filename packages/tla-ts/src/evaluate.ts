@@ -538,6 +538,7 @@ export const bindDefinitions = (definitions: Definition[], context: Context): Sc
           bounds: definition.bounds,
           body: definition.body,
           location: definition.location,
+          isRecursive: true,
         },
         scope: node,
         state: context.state,
@@ -688,7 +689,7 @@ const evaluateFunctionConstruction = (
   context: Context,
 ) => {
   const domain = getBoundsDomain(expression.bounds, context);
-  if (!isEnumerable(domain)) {
+  if (expression.isRecursive || !isEnumerable(domain)) {
     return createLazyFunction(domain, (argument) =>
       evaluate(
         expression.body,

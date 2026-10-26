@@ -82,6 +82,8 @@ ASSUME Sum(1..4) = 10
 
 Factorial[n \in Nat] == IF n = 0 THEN 1 ELSE n * Factorial[n - 1]
 ASSUME Factorial[5] = 120
+ASSUME LET depth[n \in 0..500] == IF n = 0 THEN 0 ELSE depth[n - 1] + 1 IN depth[500] = 500
+ASSUME LET sum[s \in SUBSET (1..4)] == IF s = {} THEN 0 ELSE LET e == CHOOSE e \in s : TRUE IN e + sum[s \ {e}] IN sum[1..4] = 10
 
 Apply(F(_), value) == F(value)
 Increment(n) == n + 1
