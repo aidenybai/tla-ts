@@ -523,7 +523,9 @@ describe("evaluation errors match TLC", () => {
     const result = await checkModule("AXIOM 1 = 2\nASSUME CHOOSE n \\in {} : TRUE");
     expect(result.status).toBe("assumption-violation");
     expect(result.violation?.name).toBe("line 7, column 1");
-    expect(result.violation?.message).toMatch(/^Attempted to compute CHOOSE/);
+    expect(result.violation?.message).toMatch(
+      /^Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P/,
+    );
   });
 
   it("words arithmetic, sequence, and membership errors like TLC", async () => {
@@ -602,6 +604,47 @@ describe("evaluation errors match TLC", () => {
     ];
     const messages = await Promise.all(
       cases.map(async (item) => (await checkModule(`ASSUME ${item[0]}`)).violation?.message),
+    );
+    expect(messages).toEqual(cases.map((item) => item[1]));
+  });
+
+  it("locates IF, CHOOSE, conjunction, DOMAIN, and field errors like TLC", async () => {
+    const cases = [
+      [
+        "ASSUME IF 1 THEN TRUE ELSE FALSE",
+        "A non-boolean expression (an integer) was used as the condition of an IF.\nline 6, col 8 to line 6, col 32 of module M",
+      ],
+      [
+        "ASSUME CHOOSE e \\in {} : TRUE",
+        "Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 6, col 8 to line 6, col 29 of module M",
+      ],
+      [
+        "ASSUME 1 /\\ TRUE",
+        "Attempted to evaluate an expression of form P /\\ Q when P was\nan integer.\nline 6, col 8 to line 6, col 16 of module M",
+      ],
+      [
+        "ASSUME TRUE /\\ 1 /\\ TRUE",
+        "Attempted to evaluate an expression of form P /\\ Q when Q was\nan integer.\nline 6, col 8 to line 6, col 16 of module M",
+      ],
+      [
+        "ASSUME\n    /\\ TRUE\n    /\\ {1}",
+        "A non-boolean expression (a set of the form {e1, ... ,eN}) was used as a formula in a conjunction.\nline 8, col 8 to line 8, col 10 of module M",
+      ],
+      [
+        "ASSUME\n    /\\ TRUE\n    /\\ 1",
+        "A non-boolean expression (an integer) was used as a formula in a conjunction.\n1",
+      ],
+      [
+        "ASSUME DOMAIN 1 = {}",
+        "Attempted to apply the operator DOMAIN to a non-function\n(an integer)\nline 6, col 8 to line 6, col 15 of module M",
+      ],
+      [
+        "ASSUME [a |-> 1].b = 0",
+        'Attempted to select nonexistent field "b" from the record\n[a |-> 1]\nline 6, col 8 to line 6, col 18 of module M',
+      ],
+    ];
+    const messages = await Promise.all(
+      cases.map(async (item) => (await checkModule(item[0])).violation?.message),
     );
     expect(messages).toEqual(cases.map((item) => item[1]));
   });

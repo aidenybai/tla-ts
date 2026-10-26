@@ -218,22 +218,42 @@ const SET_OPERATION_CLASSES = {
   "\\": "SetDiffValue",
 };
 
+const KIND_STRINGS: Record<string, string> = {
+  BoolValue: "a Boolean value",
+  IntValue: "an integer",
+  StringValue: "a string",
+  RecordValue: "a record",
+  SetEnumValue: "a set of the form {e1, ... ,eN}",
+  SetPredValue: "a set of the form {x \\in S : expr}",
+  TupleValue: "a tuple",
+  FcnLambdaValue: "a function of the form  [x \\in S |-> expr]",
+  FcnRcdValue: "a function  of the form (d1 :> e1 @@ ... @@ dN :> eN)",
+  SetOfFcnsValue: "a set of the form [S -> T]",
+  SetOfRcdsValue: "a set of the form [d1 : S1, ... , dN : SN]",
+  SetOfTuplesValue: "a cartesian product",
+  SubsetValue: "a set of the form SUBSET S",
+  SetDiffValue: "a set of the form S \\ T",
+  SetCapValue: "a set of the form S \\cap T",
+  SetCupValue: "a set of the form S \\cup T",
+  ModelValue: "a model value",
+  UserValue: "a special set constant",
+  IntervalValue: "a set of the form i..j",
+};
+
 // TLC stores a function as a TupleValue or a RecordValue when it has that shape, so the
 // shape stands in for how TLC built the value.
-const getJavaClass = (value: Value) => {
-  if (typeof value === "number") return "tlc2.value.impl.IntValue";
-  if (typeof value === "string") return "tlc2.value.impl.StringValue";
-  if (typeof value === "boolean") return "tlc2.value.impl.BoolValue";
-  if (value.kind === "SetOperation") {
-    return `tlc2.value.impl.${SET_OPERATION_CLASSES[value.operator]}`;
-  }
-  if (value.kind !== "Function") return `tlc2.value.impl.${JAVA_CLASSES[value.kind]}`;
+const getJavaClassName = (value: Value) => {
+  if (typeof value === "number") return "IntValue";
+  if (typeof value === "string") return "StringValue";
+  if (typeof value === "boolean") return "BoolValue";
+  if (value.kind === "SetOperation") return SET_OPERATION_CLASSES[value.operator];
+  if (value.kind !== "Function") return JAVA_CLASSES[value.kind];
   const domain = value.domain;
-  if (domain.every((key, index) => key === index + 1)) return "tlc2.value.impl.TupleValue";
-  return domain.every((key) => typeof key === "string")
-    ? "tlc2.value.impl.RecordValue"
-    : "tlc2.value.impl.FcnRcdValue";
+  if (domain.every((key, index) => key === index + 1)) return "TupleValue";
+  return domain.every((key) => typeof key === "string") ? "RecordValue" : "FcnRcdValue";
 };
+
+export const getKindString = (value: Value) => KIND_STRINGS[getJavaClassName(value)];
 
 export const createJavaOverrideError = (signature: string, message: string) =>
   new TlaEvaluationError(
@@ -244,7 +264,7 @@ export const getJavaInteger = (value: Value, signature: string) => {
   if (typeof value !== "number") {
     throw createJavaOverrideError(
       signature,
-      `Cannot cast ${getJavaClass(value)} to tlc2.value.impl.IntValue`,
+      `Cannot cast tlc2.value.impl.${getJavaClassName(value)} to tlc2.value.impl.IntValue`,
     );
   }
   return value;

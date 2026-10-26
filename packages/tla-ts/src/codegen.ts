@@ -6,7 +6,11 @@ import {
   findGlobalName,
   getChildren,
   getEnumeratedElements,
+  getConditionError,
+  getConjunctError,
+  getDomainOperator,
   getEvaluator,
+  getFieldError,
   isClosedConstant,
   isLocallyResolved,
   isValueArgument,
@@ -62,6 +66,14 @@ const describeLocation = (expression: Expression) =>
 
 const createRuntime = () => ({
   bool: expectBoolean,
+  condition: (value: Value, expression: Expression) => {
+    if (typeof value !== "boolean") throw getConditionError(expression, value);
+    return value;
+  },
+  conjunct: (value: Value, expression: Expression & { kind: "And" | "Or" }, index: number) => {
+    if (typeof value !== "boolean") throw getConjunctError(expression, index, value);
+    return value;
+  },
   apply: applyFunction,
   tuple: createTuple,
   set: createSet,
@@ -175,6 +187,10 @@ const generateApply = (
   if (isLocallyResolved(expression)) return generateDelegate(generator, expression, frame);
   const builtin = resolveGlobalOperator(expression.operator, generator.environment);
   if (builtin?.kind !== "Builtin") return generateDelegate(generator, expression, frame);
+  if (builtin.name === "DOMAIN") {
+    const domain = addReference(generator, getDomainOperator(expression));
+    return `${domain}(${generateExpression(generator, args[0], frame)})`;
+  }
   const environment = generator.environment;
   if (builtin.evaluateUnary && args.length === 1 && isValueArgument(args[0], environment)) {
     const operation = addReference(generator, builtin.evaluateUnary);
@@ -220,19 +236,21 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     }
     case "Apply":
       return generateApply(generator, expression, frame);
-    case "And":
-      return `(${expression.operands.map((operand) => `bool(${generate(operand)}, "a conjunct")`).join(" && ")})`;
+    case "And": {
+      const node = addReference(generator, expression);
+      return `(${expression.operands.map((operand, index) => `conjunct(${generate(operand)}, ${node}, ${index})`).join(" && ")})`;
+    }
     case "Or":
       return `(${expression.operands.map((operand) => `bool(${generate(operand)}, "a disjunct")`).join(" || ")})`;
     case "If":
-      return `(bool(${generate(expression.condition)}, "an IF condition") ? ${generate(expression.consequent)} : ${generate(expression.alternative)})`;
+      return `(condition(${generate(expression.condition)}, ${addReference(generator, expression)}) ? ${generate(expression.consequent)} : ${generate(expression.alternative)})`;
     case "FunctionApplication": {
       const fn = generate(expression.function);
       if (expression.args.length === 1) return `apply(${fn}, ${generate(expression.args[0])})`;
       return `apply(${fn}, tuple([${expression.args.map((arg) => generate(arg)).join(", ")}]))`;
     }
     case "FieldAccess":
-      return `apply(${generate(expression.record)}, ${JSON.stringify(expression.field)})`;
+      return `apply(${generate(expression.record)}, ${JSON.stringify(expression.field)}, ${addReference(generator, getFieldError(expression))})`;
     case "Record": {
       const fields = [...expression.fields].sort((left, right) =>
         compareValues(left.name, right.name),

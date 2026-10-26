@@ -813,7 +813,11 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
   throw new TlaEvaluationError(`Expected a function but found ${formatValue(value)}`);
 };
 
-export const applyFunction = (fn: Value, argument: Value): Value => {
+export const applyFunction = (
+  fn: Value,
+  argument: Value,
+  describeMissing?: (fn: FunctionValue) => string,
+): Value => {
   if (typeof fn === "object" && fn.kind === "LazyFunction") {
     if (!isElementOf(argument, fn.domain)) {
       throw new TlaEvaluationError(
@@ -838,7 +842,8 @@ export const applyFunction = (fn: Value, argument: Value): Value => {
   const position = findIndex(domain, argument);
   if (position === -1) {
     throw new TlaEvaluationError(
-      `Attempted to apply function ${formatValue(fn)} to ${formatValue(argument)}, which is not in its domain`,
+      describeMissing?.(fn) ??
+        `Attempted to apply function ${formatValue(fn)} to ${formatValue(argument)}, which is not in its domain`,
     );
   }
   return fn.range[position];
