@@ -375,6 +375,9 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
   return fn.domain.every((key, index) => key === index + 1) ? fn.range : undefined;
 };
 
+const describeMembership = (element: Value, set: Value) =>
+  `Attempted to check if the value ${formatValue(element)} is an element of ${formatValue(set)}`;
+
 export const isElementOf = (element: Value, set: Value): boolean => {
   if (typeof set !== "object")
     throw new TlaEvaluationError(`Expected a set but found ${formatValue(set)}`);
@@ -382,17 +385,25 @@ export const isElementOf = (element: Value, set: Value): boolean => {
     case "Set":
       return findIndex(set.elements, element) !== -1;
     case "Interval":
-      return typeof element === "number" && element >= set.low && element <= set.high;
-    case "InfiniteSet":
-      if (set.name === "STRING") return typeof element === "string";
-      return typeof element === "number" && (set.name === "Int" || element >= 0);
+      if (typeof element === "number") return element >= set.low && element <= set.high;
+      if (set.low <= set.high && !isModelValue(element))
+        throw new TlaEvaluationError(describeMembership(element, set));
+      return false;
+    case "InfiniteSet": {
+      if (isModelValue(element)) return false;
+      const isMemberType =
+        set.name === "STRING" ? typeof element === "string" : typeof element === "number";
+      if (!isMemberType) throw new TlaEvaluationError(describeMembership(element, set));
+      return set.name !== "Nat" || (typeof element === "number" && element >= 0);
+    }
     case "Subset":
-      return (
-        isSetValue(element) &&
-        toFiniteSet(element).elements.every((item) => isElementOf(item, set.base))
-      );
+      if (!isSetValue(element)) throw new TlaEvaluationError(describeMembership(element, set));
+      return toFiniteSet(element).elements.every((item) => isElementOf(item, set.base));
     case "FunctionSet": {
-      if (!isFunctionValue(element)) return false;
+      if (!isFunctionValue(element)) {
+        if (isModelValue(element)) return false;
+        throw new TlaEvaluationError(describeMembership(element, set));
+      }
       const fn = toFiniteFunction(element);
       return (
         valuesEqual(createSortedSet(fn.domain), set.domain) &&
@@ -400,7 +411,10 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       );
     }
     case "RecordSet": {
-      if (!isFunctionValue(element)) return false;
+      if (!isFunctionValue(element)) {
+        if (isModelValue(element)) return false;
+        throw new TlaEvaluationError(describeMembership(element, set));
+      }
       const fn = toFiniteFunction(element);
       return (
         fn.domain.length === set.names.length &&
@@ -411,6 +425,10 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       );
     }
     case "ProductSet": {
+      if (!isFunctionValue(element)) {
+        if (isModelValue(element)) return false;
+        throw new TlaEvaluationError(describeMembership(element, set));
+      }
       const elements = getSequenceElements(element);
       return (
         elements !== undefined &&
@@ -420,7 +438,11 @@ export const isElementOf = (element: Value, set: Value): boolean => {
     }
     case "SequenceSet": {
       const elements = getSequenceElements(element);
-      return elements !== undefined && elements.every((item) => isElementOf(item, set.base));
+      if (elements === undefined) {
+        if (isModelValue(element)) return false;
+        throw new TlaEvaluationError(describeMembership(element, set));
+      }
+      return elements.every((item) => isElementOf(item, set.base));
     }
     default:
       throw new TlaEvaluationError(`Expected a set but found ${formatValue(set)}`);

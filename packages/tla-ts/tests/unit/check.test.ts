@@ -1,9 +1,15 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, formatValue, TlaConfigError } from "../../src";
+import { check, formatValue, TlaConfigError, TlaEvaluationError } from "../../src";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
+
+const checkModule = (body: string, config = "") =>
+  check({
+    source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${body}\n====`,
+    config: `${config}\nINIT Init\nNEXT Next`,
+  });
 
 const checkFixture = (directory: string, name: string) =>
   check({
@@ -66,11 +72,25 @@ describe("check matches TLC", () => {
   });
 
   it("rejects a symmetry that names a constant", () => {
-    expect(() =>
-      check({
-        source: "---- MODULE M ----\nCONSTANT P\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
-        config: "CONSTANT P = {p1, p2}\nINIT Init\nNEXT Next\nSYMMETRY P",
-      }),
-    ).toThrow(TlaConfigError);
+    expect(() => checkModule("CONSTANT P", "CONSTANT P = {p1, p2}\nSYMMETRY P")).toThrow(
+      TlaConfigError,
+    );
   });
+});
+
+describe("evaluation errors match TLC", () => {
+  it("treats untyped model values as outside built-in sets", () => {
+    const result = checkModule(
+      'CONSTANT m\nASSUME ~(m \\in Nat) /\\ ~(m \\in Int) /\\ ~(m \\in STRING) /\\ ~(m \\in 1..3) /\\ ~(m \\in Seq({1}))\nASSUME ~("a" \\in 3..1)',
+      "CONSTANT m = m",
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it.each(['"a" \\in Nat', "1 \\in STRING", "{} \\in 1..4", "FALSE \\in Int"])(
+    "rejects %s",
+    (membership) => {
+      expect(() => checkModule(`ASSUME ${membership}`)).toThrow(TlaEvaluationError);
+    },
+  );
 });
