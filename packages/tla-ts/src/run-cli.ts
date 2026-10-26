@@ -57,6 +57,8 @@ const printResult = (result: CheckResult) => {
         isStuttering ? `State ${loopStart + 2}: Stuttering` : `Back to state ${loopStart + 1}`,
       );
     }
+    const postcondition = result.violation.postcondition;
+    if (postcondition) console.log(`Error: ${postcondition.message}`);
   } else {
     console.log("Model checking completed. No error has been found.");
   }

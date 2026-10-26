@@ -7,6 +7,12 @@ export interface SourceLocation {
   column: number;
 }
 
+export interface SourceRange {
+  module: string;
+  start: SourceLocation;
+  end: SourceLocation;
+}
+
 export interface NumberExpression {
   kind: "Number";
   value: number;
@@ -309,6 +315,7 @@ export interface OperatorDefinition {
   name: string;
   params: OperatorParam[];
   body: Expression;
+  bodyRange?: SourceRange;
   isLocal: boolean;
   isRecursive: boolean;
   location: SourceLocation;

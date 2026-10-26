@@ -27,8 +27,8 @@ import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { createCanonicalizer } from "./canonical";
-import { getPossibleCounts, type CheckerRuntime } from "./runtime";
-import { combineHash, formatValue, getValueHash, isSameValue, type Value } from "./values";
+import type { CheckerRuntime } from "./runtime";
+import { combineHash, getValueHash, isSameValue, type Value } from "./values";
 
 export interface CheckOptions {
   source: string;
@@ -58,6 +58,12 @@ export interface Violation {
   trace: TraceStep[];
   loopStart: number | undefined;
   message?: string;
+  postcondition?: Postcondition;
+}
+
+export interface Postcondition {
+  name: string;
+  message: string;
 }
 
 export interface CheckResult {
@@ -258,6 +264,32 @@ export const getNamedExpressions = (names: string[], environment: Environment): 
     return { name, expression: createIdentifier(name), scope: undefined };
   });
 
+const getBodyRange = (name: string, environment: Environment) => {
+  const definition = getDefinition(name, environment);
+  return definition?.kind === "Operator" ? definition.bodyRange : undefined;
+};
+
+// TLC prints the counts in the order it interned the names, which is the order of their
+// definitions, starting with the root module.
+const formatPossibleCounts = (
+  counts: Map<string, number>,
+  environment: Environment,
+  rootModule: string,
+) => {
+  if (counts.size === 0) return "<<>>";
+  const getRank = (name: string) => {
+    const location = getDefinition(name, environment)?.location;
+    const isRoot = getBodyRange(name, environment)?.module === rootModule;
+    return [isRoot ? 0 : 1, location?.line ?? 0, location?.column ?? 0];
+  };
+  const names = [...counts.keys()].sort((left, right) => {
+    const leftRank = getRank(left);
+    const rightRank = getRank(right);
+    return leftRank[0] - rightRank[0] || leftRank[1] - rightRank[1] || leftRank[2] - rightRank[2];
+  });
+  return `[${names.map((name) => `${name} |-> ${counts.get(name)}`).join(", ")}]`;
+};
+
 const getPossiblePredicates = (names: string[], environment: Environment): NamedExpression[] =>
   names.map((name, index) => {
     if (names.indexOf(name) !== index) {
@@ -309,7 +341,8 @@ export interface Search {
   trackActionPossible: (state: Value[], next: Value[]) => void;
   findPostconditionViolation: (
     print: (text: string) => void,
-  ) => Omit<Violation, "loopStart"> | undefined;
+    rootModule: string,
+  ) => Postcondition | undefined;
 }
 
 const getContext = (
@@ -468,20 +501,23 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
         ? ignorePossible
         : (state, next) =>
             trackPossible(actionPossible, runtime, getContext(environment, state, next)),
-    findPostconditionViolation: (print) => {
+    findPostconditionViolation: (print, rootModule) => {
       const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
       if (unwitnessed) {
-        print(formatValue(getPossibleCounts(runtime), true));
+        print(formatPossibleCounts(runtime.possibleCounts, environment, rootModule));
+        const range = getBodyRange(unwitnessed.name, environment);
+        const location = range
+          ? ` at line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`
+          : "";
         return {
           name: unwitnessed.name,
-          trace: [],
-          message: `The _POSSIBLE predicate ${unwitnessed.name} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`,
+          message: `The _POSSIBLE predicate ${unwitnessed.name}${location} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`,
         };
       }
       for (const name of config.postconditions) {
         const failure = getConstantFailure(createIdentifier(name), environment, "a postcondition");
         if (failure) {
-          return { name, trace: [], message: failure.message ?? `Postcondition ${name} is false.` };
+          return { name, message: failure.message ?? `Postcondition ${name} is false.` };
         }
       }
       return undefined;
@@ -492,7 +528,8 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
 export const check = (options: CheckOptions): CheckResult => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   const print = options.onPrint ?? console.log;
-  const specification = createEnvironment(parseModule(options.source), config, {
+  const root = parseModule(options.source);
+  const specification = createEnvironment(root, config, {
     loadModule: options.loadModule,
     print,
     files: { readFile: options.readFile, writeFile: options.writeFile },
@@ -516,6 +553,13 @@ export const check = (options: CheckOptions): CheckResult => {
 
   const search = createSearch(config, environment);
   if (!search) return createResult("success");
+  const reportViolation = (
+    status: CheckStatus,
+    violation: Omit<Violation, "loopStart"> & { loopStart?: number },
+  ) => {
+    const postcondition = search.findPostconditionViolation(print, root.name);
+    return createResult(status, postcondition ? { ...violation, postcondition } : violation);
+  };
   const properties = search.properties;
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
@@ -636,14 +680,14 @@ export const check = (options: CheckOptions): CheckResult => {
     }
     const violated = search.findViolatedInvariant(state);
     if (violated) {
-      return createResult("invariant-violation", {
+      return reportViolation("invariant-violation", {
         name: violated.name,
         trace: [{ action: undefined, state: toRecord(state) }],
       });
     }
     const failedPredicate = search.findFailedInitialPredicate(state);
     if (failedPredicate) {
-      return createResult("liveness-violation", {
+      return reportViolation("liveness-violation", {
         name: failedPredicate.name,
         trace: [{ action: undefined, state: toRecord(state) }],
       });
@@ -661,7 +705,7 @@ export const check = (options: CheckOptions): CheckResult => {
     const successors = getSuccessors(spec.next, state, environment);
     current.isExpanding = false;
     if (successors.length === 0 && config.checkDeadlock) {
-      return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
+      return reportViolation("deadlock", { name: "deadlock", trace: getTrace(index) });
     }
     const liveSuccessors: LiveSuccessor[] = [];
     for (const successor of successors) {
@@ -687,7 +731,7 @@ export const check = (options: CheckOptions): CheckResult => {
       if (existing === -1) {
         const violated = search.findViolatedInvariant(successor.state, state);
         if (violated) {
-          return createResult("invariant-violation", {
+          return reportViolation("invariant-violation", {
             name: violated.name,
             trace: getTrace(index, successor),
           });
@@ -695,7 +739,7 @@ export const check = (options: CheckOptions): CheckResult => {
       }
       const violatedProperty = search.findViolatedActionProperty(state, successor.state);
       if (violatedProperty) {
-        return createResult("liveness-violation", {
+        return reportViolation("liveness-violation", {
           name: violatedProperty.name,
           trace: getTrace(index, successor),
         });
@@ -708,7 +752,7 @@ export const check = (options: CheckOptions): CheckResult => {
     }
     const accepted = liveness?.addState(index, state, liveSuccessors);
     if (accepted) {
-      return createResult("property-violation", {
+      return reportViolation("property-violation", {
         name: accepted.name,
         trace: getPathTrace(accepted.path),
       });
@@ -719,16 +763,16 @@ export const check = (options: CheckOptions): CheckResult => {
   current.candidate = undefined;
   const lasso = liveness?.findViolation();
   if (lasso) {
-    return createResult("liveness-violation", {
+    return reportViolation("liveness-violation", {
       name: lasso.name,
       trace: getPathTrace([...lasso.prefix, ...lasso.cycle]),
       loopStart: lasso.prefix.length,
     });
   }
 
-  const postconditionViolation = search.findPostconditionViolation(print);
+  const postconditionViolation = search.findPostconditionViolation(print, root.name);
   if (postconditionViolation) {
-    return createResult("postcondition-violation", postconditionViolation);
+    return createResult("postcondition-violation", { ...postconditionViolation, trace: [] });
   }
   return createResult("success");
 };
