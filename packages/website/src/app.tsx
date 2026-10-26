@@ -140,6 +140,13 @@ const Result = ({ response }: { response: CheckResponse }) => {
               </li>
             ))}
           </ol>
+          {response.loopStart !== undefined && (
+            <p className="text-muted-foreground">
+              {response.loopStart === response.trace.length - 1
+                ? "Stutters forever in the last state"
+                : `Back to state ${response.loopStart + 1}`}
+            </p>
+          )}
         </Section>
       )}
     </>

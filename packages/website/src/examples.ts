@@ -2,6 +2,8 @@ import commitConfig from "../../tla-ts/tests/fixtures/commit/Commit.cfg?raw";
 import commitSpec from "../../tla-ts/tests/fixtures/commit/Commit.tla?raw";
 import counterConfig from "../../tla-ts/tests/fixtures/counter/Counter.cfg?raw";
 import counterSpec from "../../tla-ts/tests/fixtures/counter/Counter.tla?raw";
+import livenessConfig from "../../tla-ts/tests/fixtures/liveness/Unfair-Served.cfg?raw";
+import livenessSpec from "../../tla-ts/tests/fixtures/liveness/Liveness.tla?raw";
 import mutexConfig from "../../tla-ts/tests/fixtures/mutex/Mutex.cfg?raw";
 import mutexSpec from "../../tla-ts/tests/fixtures/mutex/Mutex.tla?raw";
 import queueConfig from "../../tla-ts/tests/fixtures/queue/Queue.cfg?raw";
@@ -42,6 +44,13 @@ export const EXAMPLES: Example[] = [
     description: "A bounded producer and consumer over sequences, cut off by a state constraint.",
     spec: queueSpec,
     config: queueConfig,
+  },
+  {
+    name: "Liveness",
+    description:
+      "Processes wait for a token. Without fairness a waiting process can starve, so the checker reports a lasso.",
+    spec: livenessSpec,
+    config: livenessConfig,
   },
   {
     name: "Counter",

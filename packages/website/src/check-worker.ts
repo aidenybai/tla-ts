@@ -16,6 +16,7 @@ export type CheckResponse =
       status: string;
       violation: string | undefined;
       trace: TraceStepSummary[];
+      loopStart: number | undefined;
       generatedStates: number;
       distinctStates: number;
       depth: number;
@@ -46,6 +47,7 @@ self.onmessage = (event: MessageEvent<CheckRequest>) => {
           formatValue(value),
         ]),
       })),
+      loopStart: result.violation?.loopStart,
       generatedStates: result.generatedStates,
       distinctStates: result.distinctStates,
       depth: result.depth,
