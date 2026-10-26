@@ -41,6 +41,7 @@ export interface OperatorValue {
   name: string;
   arity: number;
   call: (args: Value[]) => Value;
+  expression?: Expression;
 }
 
 export type BuiltinArgument = Value | OperatorValue;
@@ -928,6 +929,7 @@ const getLazyArguments = (args: Expression[], context: Context): OperatorValue[]
     name: "argument",
     arity: 0,
     call: () => evaluate(arg, context),
+    expression: arg,
   }));
 
 const compileBuiltinCall = (
