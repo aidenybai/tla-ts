@@ -152,6 +152,7 @@ describe("name resolution matches SANY", () => {
     ["an operator that a standard module only instantiates locally", "EXTENDS TLC\nf == 1 + 1"],
     ["a definition before it is defined", "EXTENDS Naturals\nf == g + 1\ng == 1"],
     ["an operator with the wrong number of arguments", "g(a) == a\nf == g(1, 2)"],
+    ["a record with duplicate fields", "f == [a |-> 1, b |-> 2, a |-> 1]"],
   ])("rejects %s", (_, source) => {
     expect(() => checkSource(source)).toThrow(TlaSyntaxError);
   });

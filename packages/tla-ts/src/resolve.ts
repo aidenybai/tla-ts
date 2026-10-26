@@ -206,6 +206,11 @@ const resolveExpression = (
       return;
     case "Record":
     case "RecordSet":
+      if (new Set(expression.fields.map((field) => field.name)).size < expression.fields.length) {
+        throw new TlaSyntaxError(
+          `Non-unique fields in constructor at line ${expression.location.line}, column ${expression.location.column}`,
+        );
+      }
       resolveAll(expression.fields.map((field) => field.value));
       return;
     case "Except":
