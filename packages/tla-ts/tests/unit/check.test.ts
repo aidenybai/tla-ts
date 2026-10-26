@@ -25,18 +25,20 @@ const checkFixture = (directory: string, name: string) =>
   });
 
 describe("check matches TLC", () => {
-  it("evaluates every assumption in the semantics fixture", () => {
-    const result = checkFixture("semantics", "Semantics");
+  it("evaluates every assumption in the semantics fixture", async () => {
+    const result = await checkFixture("semantics", "Semantics");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([2, 1, 1]);
   });
 
-  it("checks invariants before action properties and constrained states", () => {
-    const results = ["InvariantFirst", "ConstrainedInvariant"].map((name) =>
-      check({
-        source: readFileSync(join(FIXTURES, "ordering", "Ordering.tla"), "utf8"),
-        config: readFileSync(join(FIXTURES, "ordering", `${name}.cfg`), "utf8"),
-      }),
+  it("checks invariants before action properties and constrained states", async () => {
+    const results = await Promise.all(
+      ["InvariantFirst", "ConstrainedInvariant"].map((name) =>
+        check({
+          source: readFileSync(join(FIXTURES, "ordering", "Ordering.tla"), "utf8"),
+          config: readFileSync(join(FIXTURES, "ordering", `${name}.cfg`), "utf8"),
+        }),
+      ),
     );
     expect(
       results.map((result) => [
@@ -52,34 +54,40 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("checks membership in a union of a non-enumerable set against the enumerable side first", () => {
-    expect(checkModule('ASSUME 1 \\in Int \\cup {"none"}').status).toBe("assumption-violation");
-    expect(checkModule("ASSUME 5 \\in UNION {Nat}").status).toBe("success");
+  it("checks membership in a union of a non-enumerable set against the enumerable side first", async () => {
+    expect((await checkModule('ASSUME 1 \\in Int \\cup {"none"}')).status).toBe(
+      "assumption-violation",
+    );
+    expect((await checkModule("ASSUME 5 \\in UNION {Nat}")).status).toBe("success");
   });
 
-  it("compares power sets through their bases", () => {
-    expect(checkModule("ASSUME SUBSET (1..23) \\subseteq SUBSET (1..42)").status).toBe("success");
-    expect(checkModule("ASSUME ~(SUBSET (1..42) \\subseteq SUBSET (2..42))").status).toBe(
+  it("compares power sets through their bases", async () => {
+    expect((await checkModule("ASSUME SUBSET (1..23) \\subseteq SUBSET (1..42)")).status).toBe(
+      "success",
+    );
+    expect((await checkModule("ASSUME ~(SUBSET (1..42) \\subseteq SUBSET (2..42))")).status).toBe(
       "success",
     );
   });
 
-  it("reports a module that cannot be found as a syntax error", () => {
-    expect(() =>
+  it("reports a module that cannot be found as a syntax error", async () => {
+    await expect(
       check({
         source: "---- MODULE M ----\nEXTENDS Missing\n====",
         config: "",
         loadModule: () => undefined,
       }),
-    ).toThrow(TlaSyntaxError);
+    ).rejects.toThrow(TlaSyntaxError);
   });
 
-  it("exposes TLC's level, counters, and registers through TLCGet and TLCSet", () => {
-    const results = ["Runtime", "Distinct", "Generated"].map((name) =>
-      check({
-        source: readFileSync(join(FIXTURES, "runtime", "Runtime.tla"), "utf8"),
-        config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
-      }),
+  it("exposes TLC's level, counters, and registers through TLCGet and TLCSet", async () => {
+    const results = await Promise.all(
+      ["Runtime", "Distinct", "Generated"].map((name) =>
+        check({
+          source: readFileSync(join(FIXTURES, "runtime", "Runtime.tla"), "utf8"),
+          config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
+        }),
+      ),
     );
     expect(
       results.map((result) => [
@@ -96,21 +104,25 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("treats Any as a set containing every value", () => {
+  it("treats Any as a set containing every value", async () => {
     expect(
-      checkModule(
-        'ASSUME <<1, {2}>> \\in Any /\\ [a |-> 1] \\in [a : Any] /\\ ToString(Any) = "ANY"',
+      (
+        await checkModule(
+          'ASSUME <<1, {2}>> \\in Any /\\ [a |-> 1] \\in [a : Any] /\\ ToString(Any) = "ANY"',
+        )
       ).status,
     ).toBe("success");
   });
 
-  it("checks _POSSIBLE predicates and postconditions after the search", () => {
-    const results = ["Holds", "Unwitnessed", "False"].map((name) =>
-      check({
-        source: readFileSync(join(FIXTURES, "postconditions", "Postconditions.tla"), "utf8"),
-        config: readFileSync(join(FIXTURES, "postconditions", `${name}.cfg`), "utf8"),
-        onPrint: () => {},
-      }),
+  it("checks _POSSIBLE predicates and postconditions after the search", async () => {
+    const results = await Promise.all(
+      ["Holds", "Unwitnessed", "False"].map((name) =>
+        check({
+          source: readFileSync(join(FIXTURES, "postconditions", "Postconditions.tla"), "utf8"),
+          config: readFileSync(join(FIXTURES, "postconditions", `${name}.cfg`), "utf8"),
+          onPrint: () => {},
+        }),
+      ),
     );
     expect(
       results.map((result) => [result.status, result.violation?.name, result.distinctStates]),
@@ -121,8 +133,8 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("generates no states for a specification without variables", () => {
-    const result = check({
+  it("generates no states for a specification without variables", async () => {
+    const result = await check({
       source: "---- MODULE M ----\nSpec == [][TRUE]_<<>>\n====",
       config: "SPECIFICATION Spec",
     });
@@ -134,8 +146,8 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("bundles the Reals module, whose Real is not a set TLC can check", () => {
-    const result = check({
+  it("bundles the Reals module, whose Real is not a set TLC can check", async () => {
+    const result = await check({
       source:
         "---- MODULE M ----\nEXTENDS Reals, Toolbox\nVARIABLE x\nASSUME 1 \\in Real\nInit == x = 0\nNext == x' = x\n====",
       config: "INIT Init\nNEXT Next",
@@ -143,8 +155,8 @@ describe("check matches TLC", () => {
     expect(result.status).toBe("assumption-violation");
   });
 
-  it("fingerprints states by their VIEW and keeps the fair steps it hides", () => {
-    const result = checkFixture("view", "View");
+  it("fingerprints states by their VIEW and keeps the fair steps it hides", async () => {
+    const result = await checkFixture("view", "View");
     expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
       "success",
       5,
@@ -153,8 +165,8 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("enumerates subsets for x \\subseteq S in the initial predicate and next-state relation", () => {
-    const result = check({
+  it("enumerates subsets for x \\subseteq S in the initial predicate and next-state relation", async () => {
+    const result = await check({
       source:
         "---- MODULE M ----\nVARIABLE x\nInit == x \\subseteq {1, 2}\nNext == x' \\subseteq {1, 2, 3}\n====",
       config: "INIT Init\nNEXT Next",
@@ -167,8 +179,8 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("assigns operator constants from tables in the configuration", () => {
-    const result = check({
+  it("assigns operator constants from tables in the configuration", async () => {
+    const result = await check({
       source:
         "---- MODULE M ----\nCONSTANT F(_)\nVARIABLE x\nInit == x = 0\nNext == x' = F(x)\nInv == x /= 2\n====",
       config: "INIT Init\nNEXT Next\nCONSTANT\n  F(0) = 1\n  F(1) = 2\n  F(2) = 2\nINVARIANT Inv",
@@ -179,7 +191,7 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("converts values to JSON like TLC's Json module", () => {
+  it("converts values to JSON like TLC's Json module", async () => {
     const assumptions = [
       'ToJson(<<3, 2, 1>>) = "[3,2,1]"',
       'ToJson({3, 2, 1}) = "[1,2,3]"',
@@ -188,19 +200,21 @@ describe("check matches TLC", () => {
       'ToJson([x \\in {3, 2, 1} |-> 2 * x + 1]) = "[3,5,7]"',
       'ToJsonArray({}) = "[]"',
     ];
-    const result = check({
+    const result = await check({
       source: `---- MODULE M ----\nEXTENDS Integers, TLC, Json\nVARIABLE x\n${assumptions.map((assumption) => `ASSUME ${assumption}`).join("\n")}\nInit == x = 0\nNext == x' = x\n====`,
       config: "INIT Init\nNEXT Next",
     });
     expect(result.status).toBe("success");
   });
 
-  it("implements the TLCExt operators", () => {
-    const results = ["Extensions", "ExtensionsShort"].map((name) =>
-      check({
-        source: readFileSync(join(FIXTURES, "runtime", "Extensions.tla"), "utf8"),
-        config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
-      }),
+  it("implements the TLCExt operators", async () => {
+    const results = await Promise.all(
+      ["Extensions", "ExtensionsShort"].map((name) =>
+        check({
+          source: readFileSync(join(FIXTURES, "runtime", "Extensions.tla"), "utf8"),
+          config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
+        }),
+      ),
     );
     expect(
       results.map((result) => [result.status, result.generatedStates, result.distinctStates]),
@@ -210,36 +224,36 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("rejects comparisons of differently-typed model values", () => {
-    expect(() =>
+  it("rejects comparisons of differently-typed model values", async () => {
+    await expect(
       check({
         source:
           '---- MODULE M ----\nEXTENDS TLCExt\nVARIABLE v\nInit == v = {TLCModelValue("A_a"), TLCModelValue("B_a")}\nNext == UNCHANGED v\n====',
         config: "INIT Init\nNEXT Next",
       }),
-    ).toThrow("Attempted to compare the differently-typed model values A_a and B_a");
+    ).rejects.toThrow("Attempted to compare the differently-typed model values A_a and B_a");
   });
 
-  it("explores the mutex state space", () => {
-    const result = checkFixture("mutex", "Mutex");
+  it("explores the mutex state space", async () => {
+    const result = await checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([18, 10, 4]);
   });
 
-  it("explores a commit protocol over model values", () => {
-    const result = checkFixture("commit", "Commit");
+  it("explores a commit protocol over model values", async () => {
+    const result = await checkFixture("commit", "Commit");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([890, 251, 11]);
   });
 
-  it("stops exploring states that fail a constraint", () => {
-    const result = checkFixture("queue", "Queue");
+  it("stops exploring states that fail a constraint", async () => {
+    const result = await checkFixture("queue", "Queue");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([181, 105, 9]);
   });
 
-  it("reports the shortest trace to an invariant violation", () => {
-    const result = checkFixture("water-jugs", "WaterJugs");
+  it("reports the shortest trace to an invariant violation", async () => {
+    const result = await checkFixture("water-jugs", "WaterJugs");
     expect(result.status).toBe("invariant-violation");
     expect(result.violation?.name).toBe("GoalNotReached");
     const trace = result.violation?.trace ?? [];
@@ -249,8 +263,8 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([73, 14, 7]);
   });
 
-  it("reports deadlock with the trace that reaches it", () => {
-    const result = checkFixture("counter", "Counter");
+  it("reports deadlock with the trace that reaches it", async () => {
+    const result = await checkFixture("counter", "Counter");
     expect(result.status).toBe("deadlock");
     expect(result.violation?.trace.map((step) => step.action)).toEqual([
       undefined,
@@ -261,20 +275,20 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
   });
 
-  it("stops branching on initial conjuncts once every variable is assigned", () => {
-    const result = checkFixture("initial-states", "InitialStates");
+  it("stops branching on initial conjuncts once every variable is assigned", async () => {
+    const result = await checkFixture("initial-states", "InitialStates");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([5, 2, 1]);
   });
 
-  it("assigns variables through definitions, parameters, function applications, and <<A>>_v", () => {
-    const result = checkFixture("assignments", "Assignments");
+  it("assigns variables through definitions, parameters, function applications, and <<A>>_v", async () => {
+    const result = await checkFixture("assignments", "Assignments");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([98, 24, 5]);
   });
 
-  it("assigns a primed variable passed as an operator argument", () => {
-    const result = check({
+  it("assigns a primed variable passed as an operator argument", async () => {
+    const result = await check({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x, y\nSend(p, old, new) == new = p\nInit == x = 0 /\\ y = 0\nNext == \\E p \\in {1, 2} : Send(p, x, x') /\\ y' = y\n====",
       config: "INIT Init\nNEXT Next",
@@ -286,14 +300,14 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("reduces states under a symmetry set", () => {
-    const result = checkFixture("symmetry", "Symmetry");
+  it("reduces states under a symmetry set", async () => {
+    const result = await checkFixture("symmetry", "Symmetry");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([42, 10, 7]);
   });
 
-  it("checks liveness on the symmetry-reduced graph", () => {
-    const result = checkFixture("symmetry", "SymmetricLiveness");
+  it("checks liveness on the symmetry-reduced graph", async () => {
+    const result = await checkFixture("symmetry", "SymmetricLiveness");
     expect(result.status).toBe("liveness-violation");
     expect(result.violation?.name).toBe("Live");
     expect(result.violation?.trace.map((step) => step.state.x)).toEqual([
@@ -301,22 +315,24 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("rejects a symmetry that names a constant", () => {
-    expect(() => checkModule("CONSTANT P", "CONSTANT P = {p1, p2}\nSYMMETRY P")).toThrow(
+  it("rejects a symmetry that names a constant", async () => {
+    await expect(checkModule("CONSTANT P", "CONSTANT P = {p1, p2}\nSYMMETRY P")).rejects.toThrow(
       TlaConfigError,
     );
   });
 
-  it("rejects substituting a constant with a state-level definition", () => {
-    expect(() => checkModule("CONSTANT C\nFoo == x", "CONSTANT C <- Foo")).toThrow(TlaConfigError);
-    expect(checkModule("CONSTANT C\nFoo == 1", "CONSTANT C <- Foo").status).toBe("success");
-    expect(() => checkModule('CONSTANT C\nFoo == TLCGet("level")', "CONSTANT C <- Foo")).toThrow(
+  it("rejects substituting a constant with a state-level definition", async () => {
+    await expect(checkModule("CONSTANT C\nFoo == x", "CONSTANT C <- Foo")).rejects.toThrow(
       TlaConfigError,
     );
+    expect((await checkModule("CONSTANT C\nFoo == 1", "CONSTANT C <- Foo")).status).toBe("success");
+    await expect(
+      checkModule('CONSTANT C\nFoo == TLCGet("level")', "CONSTANT C <- Foo"),
+    ).rejects.toThrow(TlaConfigError);
   });
 
-  it("overrides definitions and ignores undeclared names assigned by the configuration", () => {
-    const result = check({
+  it("overrides definitions and ignores undeclared names assigned by the configuration", async () => {
+    const result = await check({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in Nat \\cap {0, 9}\nNext == x' = x\n====",
       config: "CONSTANT Foo = 1\nCONSTANT Nat = {0, 1}\nINIT Init\nNEXT Next",
@@ -328,16 +344,16 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("substitutes infix operator constants", () => {
-    const result = checkModule(
+  it("substitutes infix operator constants", async () => {
+    const result = await checkModule(
       "CONSTANT _++_\nPlusPlus(a, b) == <<a, b>>\nASSUME (1 ++ 2) = <<1, 2>>",
       "CONSTANT ++ <- PlusPlus",
     );
     expect(result.status).toBe("success");
   });
 
-  it("follows definition overrides inside the specification", () => {
-    const result = check({
+  it("follows definition overrides inside the specification", async () => {
+    const result = await check({
       source:
         "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nMCInit == x = 1\nSpec == Init /\\ [][x' = x]_x\nInv == x = 1\n====",
       config: "CONSTANT Init <- MCInit\nSPECIFICATION Spec\nINVARIANT Inv",
@@ -348,39 +364,39 @@ describe("check matches TLC", () => {
 });
 
 describe("evaluation errors match TLC", () => {
-  it("checks only the assumptions of a model without variables or an initial predicate", () => {
-    const result = check({ source: "---- MODULE M ----\nASSUME TRUE\n====", config: "" });
+  it("checks only the assumptions of a model without variables or an initial predicate", async () => {
+    const result = await check({ source: "---- MODULE M ----\nASSUME TRUE\n====", config: "" });
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([0, 0, 0]);
-    expect(() => check({ source: "---- MODULE M ----\nVARIABLE x\n====", config: "" })).toThrow(
-      TlaConfigError,
-    );
+    await expect(
+      check({ source: "---- MODULE M ----\nVARIABLE x\n====", config: "" }),
+    ).rejects.toThrow(TlaConfigError);
   });
 
-  it("reports an assumption that fails to evaluate and skips axioms", () => {
-    const result = checkModule("AXIOM 1 = 2\nASSUME CHOOSE n \\in {} : TRUE");
+  it("reports an assumption that fails to evaluate and skips axioms", async () => {
+    const result = await checkModule("AXIOM 1 = 2\nASSUME CHOOSE n \\in {} : TRUE");
     expect(result.status).toBe("assumption-violation");
     expect(result.violation?.name).toBe("line 7, column 1");
     expect(result.violation?.message).toMatch(/^Attempted to compute CHOOSE/);
   });
 
-  it("reports an overflowing cardinality without enumerating the set", () => {
-    const result = checkModule("ASSUME Cardinality(SUBSET (1..31)) > 0");
+  it("reports an overflowing cardinality without enumerating the set", async () => {
+    const result = await checkModule("ASSUME Cardinality(SUBSET (1..31)) > 0");
     expect(result.violation?.message).toMatch(/^Overflow when computing the number of elements/);
   });
 
-  it("rejects a mistyped membership outside an assumption", () => {
-    expect(() =>
+  it("rejects a mistyped membership outside an assumption", async () => {
+    await expect(
       check({
         source:
           '---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = "a" /\\ x \\in Nat\nNext == x\' = x\n====',
         config: "INIT Init\nNEXT Next",
       }),
-    ).toThrow(TlaEvaluationError);
+    ).rejects.toThrow(TlaEvaluationError);
   });
 
-  it("treats untyped model values as outside built-in sets", () => {
-    const result = checkModule(
+  it("treats untyped model values as outside built-in sets", async () => {
+    const result = await checkModule(
       'CONSTANT m\nASSUME ~(m \\in Nat) /\\ ~(m \\in Int) /\\ ~(m \\in STRING) /\\ ~(m \\in 1..3) /\\ ~(m \\in Seq({1}))\nASSUME ~("a" \\in 3..1)',
       "CONSTANT m = m",
     );
@@ -389,8 +405,8 @@ describe("evaluation errors match TLC", () => {
 
   it.each(['"a" \\in Nat', "1 \\in STRING", "{} \\in 1..4", "FALSE \\in Int"])(
     "rejects %s",
-    (membership) => {
-      const result = checkModule(`ASSUME ${membership}`);
+    async (membership) => {
+      const result = await checkModule(`ASSUME ${membership}`);
       expect(result.status).toBe("assumption-violation");
       expect(result.violation?.message).toMatch(/^Attempted to check if the value/);
     },
@@ -410,33 +426,33 @@ describe("name resolution matches SANY", () => {
     ["a definition before it is defined", "EXTENDS Naturals\nf == g + 1\ng == 1"],
     ["an operator with the wrong number of arguments", "g(a) == a\nf == g(1, 2)"],
     ["a record with duplicate fields", "f == [a |-> 1, b |-> 2, a |-> 1]"],
-  ])("rejects %s", (_, source) => {
-    expect(() => checkSource(source)).toThrow(TlaSyntaxError);
+  ])("rejects %s", async (_, source) => {
+    await expect(checkSource(source)).rejects.toThrow(TlaSyntaxError);
   });
 
-  it("defines prefix, postfix, and <: operators", () => {
-    const result = checkSource(
+  it("defines prefix, postfix, and <: operators", async () => {
+    const result = await checkSource(
       "EXTENDS Naturals\nn ^+ == n + 1\n-. n == 10 - n\na <: b == a - b\nASSUME (2^+) = 3 /\\ -4 = 6 /\\ (5 <: 2) = 3",
     );
     expect(result.status).toBe("success");
   });
 
-  it("applies operators in prefix form and reads keywords as field names", () => {
-    const result = checkSource(
+  it("applies operators in prefix form and reads keywords as field names", async () => {
+    const result = await checkSource(
       'EXTENDS Naturals\nn ^+ == n + 1\nASSUME +(4, 6) = 10 /\\ ^+(2) = 3\nASSUME [[x \\in {"THEN"} |-> 1] EXCEPT !.THEN = 2].THEN = 2',
     );
     expect(result.status).toBe("success");
   });
 
-  it("takes infix operators as parameters", () => {
-    const result = checkSource(
+  it("takes infix operators as parameters", async () => {
+    const result = await checkSource(
       "EXTENDS Naturals\nFoo(a, _--_) == a -- 1\nASSUME Foo(7, +) = 8 /\\ Foo(7, *) = 7",
     );
     expect(result.status).toBe("success");
   });
 
-  it("accepts recursive functions, named assumptions, and operator aliases", () => {
-    const result = checkSource(
+  it("accepts recursive functions, named assumptions, and operator aliases", async () => {
+    const result = await checkSource(
       "EXTENDS Naturals\nRECURSIVE fact\ntwice[n \\in Nat] == fact[n] * 2\nfact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]\nASSUME Positive == twice[3] = 12\nASSUME Positive\na \\oplus b == a + b\nASSUME 1 (+) 2 = 3",
     );
     expect(result.status).toBe("success");

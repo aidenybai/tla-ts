@@ -27,11 +27,11 @@ export type CheckResponse =
 
 const respond = (response: CheckResponse) => self.postMessage(response);
 
-self.onmessage = (event: MessageEvent<CheckRequest>) => {
+self.onmessage = async (event: MessageEvent<CheckRequest>) => {
   const output: string[] = [];
   const startedAt = performance.now();
   try {
-    const result = check({
+    const result = await check({
       source: event.data.spec,
       config: event.data.config,
       onPrint: (text) => output.push(text),

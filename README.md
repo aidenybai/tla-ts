@@ -10,7 +10,7 @@ tla-ts checks TLA+ specs with the same verdicts, error traces, and state counts 
 ```ts
 import { check } from "tla-ts";
 
-const result = check({
+const result = await check({
   source: `---- MODULE Counter ----
 EXTENDS Naturals
 VARIABLE x
@@ -52,12 +52,12 @@ Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` tu
 
 ### `check`
 
-Checks a spec against a TLC configuration and returns the result. It explores every reachable state breadth-first, as TLC does.
+Checks a spec against a TLC configuration and resolves to the result. It explores every reachable state breadth-first, as TLC does.
 
 ```ts
 import { check } from "tla-ts";
 
-const result = check({
+const result = await check({
   source: specSource,
   config: configSource,
   loadModule: (name) => modules[name],
@@ -72,8 +72,11 @@ Options:
 - `loadModule`: maps a module name to its source, for modules other than the standard modules
 - `onPrint`: receives the output of `Print` and `PrintT`, which defaults to `console.log`
 - `readFile` and `writeFile`: let the Json module read and write files. Without them, it has no file access
+- `workers`: the number of worker threads to check on, which defaults to 1. With 1, `check` runs on the calling thread
 
 The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `depth`. `status` is `"success"`, `"assumption-violation"`, `"invariant-violation"`, `"property-violation"`, `"liveness-violation"`, or `"deadlock"`. `violation` holds the name of what failed and the trace that reaches it. For a liveness violation, `violation.loopStart` is the trace index where the lasso loops back.
+
+Workers run in Node, Bun, Deno, and the browser, and deduplicate states by 64-bit fingerprint, as TLC does. When a run finds a violation, or the spec uses liveness properties or impure operators such as `Print`, `check` falls back to the calling thread and returns its exact result and trace.
 
 `check` supports:
 
@@ -83,18 +86,6 @@ The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `
 - **Properties**: invariants, `[][A]_v`, and every temporal formula TLC accepts, checked through TLC's tableau construction under the fairness and temporal conjuncts of the specification
 - **Subexpression references**: selectors such as `F(2)!3`, `Op!<<`, `Op!>>`, `Op!:`, `Op!@`, and `Op!(x)`, labels such as `Op!lab`, and names of `THEOREM` formulas
 - **TLC semantics**: 32-bit integer overflow errors, `ENABLED`, `TLCGet` and `TLCSet` with TLC's counters and registers, and TLC's enumeration order for `CHOOSE` and quantifiers
-
-### `checkInParallel`
-
-Checks a spec on several worker threads and resolves to the same result as `check`. It takes the options of `check` plus `workers`, and runs in Node, Bun, Deno, and the browser.
-
-```ts
-import { checkInParallel } from "tla-ts";
-
-const result = await checkInParallel({ source: specSource, config: configSource, workers: 4 });
-```
-
-Workers deduplicate states by 64-bit fingerprint, as TLC does. When a run finds a violation, or the spec uses liveness properties or impure operators such as `Print`, `checkInParallel` falls back to `check` and returns its exact result and trace.
 
 ### `parseModule`
 
@@ -116,7 +107,7 @@ import { check, parseConfig } from "tla-ts";
 
 const config = parseConfig(configSource);
 config.checkDeadlock = false;
-check({ source: specSource, config });
+await check({ source: specSource, config });
 ```
 
 ### `formatValue`
