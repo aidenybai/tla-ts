@@ -182,23 +182,30 @@ export const CORE_OPERATORS: Builtin[] = [
       if (operator === "\\cup" && isEnumerable(left) && isEnumerable(right)) {
         return unionSorted(toFiniteSet(left), toFiniteSet(right));
       }
-      const set: Value = { kind: "SetOperation", operator, left, right };
+      const isReducible = (value: Value) =>
+        typeof value === "object" && (value.kind === "Set" || value.kind === "Interval");
+      const isSwapped = operator === "\\cup" && !isReducible(left) && isReducible(right);
+      const set: Value = isSwapped
+        ? { kind: "SetOperation", operator, left: right, right: left }
+        : { kind: "SetOperation", operator, left, right };
       return isEnumerable(set) ? toFiniteSet(set) : set;
     }),
   ),
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getSet(args, 0, "SUBSET") })),
-  defineOperator("UNION", 1, (args) =>
-    createSet(
-      getElements(args, 0, "UNION").flatMap((element) => {
-        if (!isSetValue(element)) {
-          throw new TlaEvaluationError(
-            `UNION expects a set of sets but found ${formatValue(element)}`,
-          );
-        }
-        return toFiniteSet(element).elements;
-      }),
-    ),
-  ),
+  defineOperator("UNION", 1, (args) => {
+    const sets = getElements(args, 0, "UNION");
+    sets.forEach((element) => {
+      if (!isSetValue(element)) {
+        throw new TlaEvaluationError(
+          `UNION expects a set of sets but found ${formatValue(element)}`,
+        );
+      }
+    });
+    if (sets.every(isEnumerable)) {
+      return createSet(sets.flatMap((element) => toFiniteSet(element).elements));
+    }
+    return sets.reduce((left, right) => ({ kind: "SetOperation", operator: "\\cup", left, right }));
+  }),
   defineOperator("DOMAIN", 1, (args) => {
     const value = getValue(args, 0, "DOMAIN");
     if (!isFunctionValue(value)) {

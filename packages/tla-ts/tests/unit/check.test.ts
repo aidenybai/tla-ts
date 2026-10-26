@@ -53,6 +53,11 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("checks membership in a union of a non-enumerable set against the enumerable side first", () => {
+    expect(checkModule('ASSUME 1 \\in Int \\cup {"none"}').status).toBe("assumption-violation");
+    expect(checkModule("ASSUME 5 \\in UNION {Nat}").status).toBe("success");
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");
