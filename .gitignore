@@ -1,0 +1,13 @@
+node_modules
+.DS_Store
+.env
+dist
+**/*.tgz
+coverage
+*.tsbuildinfo
+
+# copied into the package by prepack
+packages/tla-ts/README.md
+packages/tla-ts/LICENSE
+packages/tla-ts/tests/conformance/.corpora
+packages/tla-ts/tests/conformance/.results.json

@@ -1,0 +1,77 @@
+{
+  "name": "tla-ts",
+  "version": "0.0.0",
+  "description": "A TLA+ interpreter and model checker in TypeScript, no JVM required",
+  "keywords": [
+    "formal verification",
+    "model checker",
+    "tla",
+    "tla+",
+    "tlaplus",
+    "tlc"
+  ],
+  "homepage": "https://github.com/aidenybai/tla-ts#readme",
+  "bugs": {
+    "url": "https://github.com/aidenybai/tla-ts/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Aiden Bai",
+    "email": "aiden@million.dev"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aidenybai/tla-ts.git"
+  },
+  "bin": {
+    "tla-ts": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "NODE_ENV=production vp pack",
+    "dev": "NODE_ENV=development vp pack --watch",
+    "prepack": "cp ../../README.md ../../LICENSE .",
+    "prepublishOnly": "nr build",
+    "bench": "pnpm build && tsx scripts/benchmark.ts",
+    "conformance": "tsx scripts/conformance.ts",
+    "conformance:fetch": "tsx scripts/fetch-corpora.ts",
+    "conformance:record": "tsx scripts/record-tlc.ts",
+    "publint": "publint",
+    "test": "vp test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "publint": "^0.3.0",
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2",
+    "vite-plus": "latest"
+  }
+}
