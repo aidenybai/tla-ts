@@ -1,0 +1,448 @@
+import type { Definition, Expression, SourceLocation, SourceRange } from "./ast";
+import type { ModelConfig } from "./config";
+import type { InstanceAction } from "./environment";
+import { TlaError } from "./errors";
+import {
+  bindDefinitions,
+  bindOperatorArguments,
+  evaluate,
+  forEachBinding,
+  getDefinition,
+  isConstantLevel,
+  isLocallyResolved,
+  lookupScope,
+  resolveGlobalOperator,
+  type Closure,
+  type Environment,
+  type Scope,
+} from "./evaluate";
+import { getLevel, TEMPORAL_LEVEL } from "./liveness";
+import { createRecord, createSet, createTuple, type Value } from "./values";
+
+interface SpecAction {
+  name: string;
+  location: SourceLocation;
+  parameters: [string, Value][];
+}
+
+interface SpecDescription {
+  inits: SpecAction[];
+  actions: SpecAction[];
+  temporals: SpecAction[];
+  invariants: SpecAction[];
+  impliedInits: SpecAction[];
+  impliedActions: SpecAction[];
+  impliedTemporals: SpecAction[];
+}
+
+const UNNAMED_ACTION = "UnnamedAction";
+
+const BUILTIN_RANGE: SourceRange = {
+  module: "--TLA+ BUILTINS--",
+  start: { line: 0, column: 0 },
+  end: { line: 0, column: 0 },
+};
+
+const toLocationValue = (location: SourceLocation) => {
+  const range = location.range ?? BUILTIN_RANGE;
+  return createRecord([
+    ["beginLine", range.start.line],
+    ["beginColumn", range.start.column],
+    ["endLine", range.end.line],
+    ["endColumn", range.end.column],
+    ["module", range.module],
+  ]);
+};
+
+const toActionValue = (action: SpecAction) => {
+  const fields: [string, Value][] = [
+    ["name", action.name],
+    ["location", toLocationValue(action.location)],
+  ];
+  if (action.parameters.length === 0) return createRecord(fields);
+  return createRecord([
+    ...fields,
+    ["context", createRecord(action.parameters)],
+    ["parameters", createTuple(action.parameters.map((parameter) => parameter[0]))],
+  ]);
+};
+
+const createAction = (name: string, expression: Expression): SpecAction => ({
+  name,
+  location: expression.location,
+  parameters: [],
+});
+
+const getConstantContext = (environment: Environment, scope: Scope | undefined) => ({
+  environment,
+  scope,
+  state: undefined,
+  next: undefined,
+});
+
+const getOperatorName = (expression: Expression) =>
+  expression.kind === "Identifier"
+    ? expression.name
+    : expression.kind === "Apply"
+      ? expression.operator
+      : undefined;
+
+const getArguments = (expression: Expression) =>
+  expression.kind === "Apply" ? expression.args : [];
+
+const resolveClosure = (
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+): Closure | undefined => {
+  const name = getOperatorName(expression);
+  if (name === undefined) return undefined;
+  if (isLocallyResolved(expression)) {
+    const binding = lookupScope(scope, name);
+    return binding?.kind === "Operator" && binding.operator.kind === "Closure"
+      ? binding.operator
+      : undefined;
+  }
+  if (environment.constants.has(name) || environment.variableIndex.has(name)) return undefined;
+  const operator = resolveGlobalOperator(name, environment);
+  return operator?.kind === "Closure" ? operator : undefined;
+};
+
+const isEvaluable = (expression: Expression, environment: Environment) => {
+  try {
+    evaluate(expression, getConstantContext(environment, undefined));
+    return true;
+  } catch (error) {
+    if (error instanceof TlaError) return false;
+    throw error;
+  }
+};
+
+export const isConstantValue = (definition: Definition | undefined, environment: Environment) =>
+  definition?.kind === "Operator" &&
+  definition.params.length === 0 &&
+  definition.body.kind !== "Number" &&
+  definition.body.kind !== "String" &&
+  isConstantLevel(definition, environment) &&
+  isEvaluable(definition.body, environment);
+
+const isConstantDefinition = (closure: Closure, environment: Environment) => {
+  const definition = getDefinition(closure.name, environment);
+  return definition?.body === closure.body && isConstantValue(definition, environment);
+};
+
+const getThunk = (expression: Expression, scope: Scope | undefined) => {
+  if (expression.kind !== "Identifier" || !isLocallyResolved(expression)) return undefined;
+  const binding = lookupScope(scope, expression.name);
+  return binding?.kind === "Thunk" ? binding : undefined;
+};
+
+const getParameters = (closure: Closure | undefined, scope: Scope | undefined) =>
+  (closure?.params ?? []).flatMap((param): [string, Value][] => {
+    const binding = lookupScope(scope, param.name);
+    return binding?.kind === "Value" ? [[param.name, binding.value]] : [];
+  });
+
+const tryCollect = <Item>(collect: () => Item[], fallback: () => Item[]) => {
+  try {
+    return collect();
+  } catch (error) {
+    if (error instanceof TlaError) return fallback();
+    throw error;
+  }
+};
+
+const getActions = (
+  expression: Expression,
+  scope: Scope | undefined,
+  closure: Closure | undefined,
+  environment: Environment,
+  instanceActions: Map<string, InstanceAction>,
+): SpecAction[] => {
+  const createSplitAction = (): SpecAction => ({
+    name: closure?.name ?? UNNAMED_ACTION,
+    location: expression.location,
+    parameters: getParameters(closure, scope),
+  });
+  switch (expression.kind) {
+    case "Let":
+      return getActions(
+        expression.body,
+        bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
+        closure,
+        environment,
+        instanceActions,
+      );
+    case "Label":
+      return getActions(expression.body, scope, closure, environment, instanceActions);
+    case "Or":
+      return expression.operands.flatMap((operand) =>
+        getActions(operand, scope, closure, environment, instanceActions),
+      );
+    case "Exists":
+      return tryCollect(
+        () => {
+          const actions: SpecAction[] = [];
+          forEachBinding(
+            expression.bounds,
+            getConstantContext(environment, scope),
+            (boundScope) => {
+              actions.push(
+                ...getActions(expression.body, boundScope, closure, environment, instanceActions),
+              );
+              return false;
+            },
+          );
+          return actions.length === 0 ? [createSplitAction()] : actions;
+        },
+        () => [createSplitAction()],
+      );
+  }
+  const instanceAction = isLocallyResolved(expression)
+    ? undefined
+    : instanceActions.get(getOperatorName(expression) ?? "");
+  if (instanceAction) return [{ ...instanceAction, parameters: [] }];
+  const called = resolveClosure(expression, scope, environment);
+  if (!called) return [createSplitAction()];
+  const args = getArguments(expression);
+  const callAction = (): SpecAction[] => [
+    { name: called.name, location: expression.location, parameters: [] },
+  ];
+  if (isConstantDefinition(called, environment)) return callAction();
+  if (args.some((arg) => getLevel(arg, scope, environment) !== 0)) return callAction();
+  return tryCollect(() => {
+    const boundScope = args.reduce<Scope | undefined>(
+      (current, arg, index) => ({
+        name: called.params[index].name,
+        binding: {
+          kind: "Value",
+          value: evaluate(arg, getConstantContext(environment, scope)),
+        },
+        parent: current,
+      }),
+      called.scope,
+    );
+    return getActions(called.body, boundScope, called, environment, instanceActions);
+  }, callAction);
+};
+
+const describeSpecification = (
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+  description: SpecDescription,
+  next: { expression: Expression; scope: Scope | undefined }[],
+): void => {
+  const recurse = (inner: Expression, innerScope: Scope | undefined) =>
+    describeSpecification(inner, innerScope, environment, description, next);
+  if (expression.kind === "Let") {
+    recurse(
+      expression.body,
+      bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
+    );
+    return;
+  }
+  const thunk = getThunk(expression, scope);
+  if (thunk) {
+    recurse(thunk.expression, thunk.scope);
+    return;
+  }
+  const called = resolveClosure(expression, scope, environment);
+  if (called && isConstantDefinition(called, environment)) return;
+  if (called && called.params.length === 0) {
+    if (getLevel(called.body, called.scope, environment) === 1) {
+      description.inits.push(createAction(called.name, called.body));
+      return;
+    }
+    recurse(called.body, called.scope);
+    return;
+  }
+  if (called && expression.kind === "Apply" && called.params.length === expression.args.length) {
+    recurse(
+      called.body,
+      bindOperatorArguments(called, expression.args, getConstantContext(environment, scope)),
+    );
+    return;
+  }
+  if (expression.kind === "And") {
+    expression.operands.forEach((operand) => recurse(operand, scope));
+    return;
+  }
+  if (expression.kind === "Always") {
+    if (expression.expression.kind === "BoxAction") {
+      next.push({ expression: expression.expression.action, scope });
+      return;
+    }
+    description.temporals.push(createAction(UNNAMED_ACTION, expression));
+    return;
+  }
+  const level = getLevel(expression, scope, environment);
+  if (level <= 1) description.inits.push(createAction(UNNAMED_ACTION, expression));
+  else if (level === TEMPORAL_LEVEL) {
+    description.temporals.push(createAction(UNNAMED_ACTION, expression));
+  }
+};
+
+const describeProperty = (
+  configName: string,
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+  description: SpecDescription,
+): void => {
+  const recurse = (inner: Expression, innerScope: Scope | undefined) =>
+    describeProperty(configName, inner, innerScope, environment, description);
+  if (expression.kind === "Let") {
+    recurse(
+      expression.body,
+      bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
+    );
+    return;
+  }
+  const thunk = getThunk(expression, scope);
+  if (thunk) {
+    recurse(thunk.expression, thunk.scope);
+    return;
+  }
+  const called = resolveClosure(expression, scope, environment);
+  if (called && isConstantDefinition(called, environment)) return;
+  if (called && called.params.length === getArguments(expression).length) {
+    recurse(
+      called.body,
+      expression.kind === "Apply"
+        ? bindOperatorArguments(called, expression.args, getConstantContext(environment, scope))
+        : called.scope,
+    );
+    return;
+  }
+  if (expression.kind === "Forall") {
+    const isEnumerated = tryCollect(
+      () => {
+        forEachBinding(expression.bounds, getConstantContext(environment, scope), (boundScope) => {
+          recurse(expression.body, boundScope);
+          return false;
+        });
+        return [true];
+      },
+      () => [],
+    );
+    if (isEnumerated.length > 0) return;
+  }
+  if (expression.kind === "And") {
+    expression.operands.forEach((operand) => recurse(operand, scope));
+    return;
+  }
+  if (expression.kind === "Always") {
+    const inner = expression.expression;
+    if (inner.kind === "BoxAction") {
+      description.impliedActions.push(createAction(configName, inner));
+    } else if (getLevel(inner, scope, environment) < 2) {
+      description.invariants.push(createAction(configName, inner));
+    } else {
+      description.impliedTemporals.push(createAction(configName, expression));
+    }
+    return;
+  }
+  const level = getLevel(expression, scope, environment);
+  if (level <= 1) description.impliedInits.push(createAction(configName, expression));
+  else if (level === TEMPORAL_LEVEL) {
+    description.impliedTemporals.push(createAction(configName, expression));
+  }
+};
+
+const getOperatorDefinition = (name: string, environment: Environment) => {
+  const definition = getDefinition(name, environment);
+  return definition?.kind === "Operator" && !isConstantValue(definition, environment)
+    ? definition
+    : undefined;
+};
+
+const describeDefinition = (definition: Definition) =>
+  createRecord([
+    ["name", definition.name],
+    ["location", toLocationValue(definition.location)],
+  ]);
+
+export const getSpecificationValue = (
+  config: ModelConfig,
+  environment: Environment,
+  variableLocations: SourceLocation[],
+  instanceActions: Map<string, InstanceAction>,
+): Value => {
+  const description: SpecDescription = {
+    inits: [],
+    actions: [],
+    temporals: [],
+    invariants: [],
+    impliedInits: [],
+    impliedActions: [],
+    impliedTemporals: [],
+  };
+  const next: { expression: Expression; scope: Scope | undefined }[] = [];
+  const specification =
+    config.specification === undefined
+      ? undefined
+      : getOperatorDefinition(config.specification, environment);
+  if (specification) {
+    describeSpecification(specification.body, undefined, environment, description, next);
+    next.forEach((item) =>
+      description.actions.push(
+        ...getActions(item.expression, item.scope, undefined, environment, instanceActions),
+      ),
+    );
+  }
+  const init =
+    config.init === undefined ? undefined : resolveGlobalOperator(config.init, environment);
+  if (init?.kind === "Closure") description.inits.push(createAction(config.init ?? "", init.body));
+  const nextOperator =
+    config.next === undefined ? undefined : resolveGlobalOperator(config.next, environment);
+  if (nextOperator?.kind === "Closure") {
+    description.actions.push(
+      ...getActions(
+        nextOperator.body,
+        nextOperator.scope,
+        nextOperator,
+        environment,
+        instanceActions,
+      ),
+    );
+  }
+  config.invariants.forEach((name) => {
+    const definition = getOperatorDefinition(name, environment);
+    if (definition) description.invariants.push(createAction(name, definition.body));
+  });
+  config.properties.forEach((name) => {
+    const definition = getOperatorDefinition(name, environment);
+    if (definition) describeProperty(name, definition.body, undefined, environment, description);
+  });
+  const toSet = (actions: SpecAction[]) => createSet(actions.map(toActionValue));
+  const toDefinitionSet = (names: string[]) =>
+    createSet(
+      names.flatMap((name) => {
+        const definition = getOperatorDefinition(name, environment);
+        return definition ? [describeDefinition(definition)] : [];
+      }),
+    );
+  return createRecord([
+    ["inits", toSet(description.inits)],
+    ["actions", toSet(description.actions)],
+    ["temporals", toSet(description.temporals)],
+    ["invariants", toSet(description.invariants)],
+    ["impliedinits", toSet(description.impliedInits)],
+    ["impliedactions", toSet(description.impliedActions)],
+    ["impliedtemporals", toSet(description.impliedTemporals)],
+    [
+      "variables",
+      createSet(
+        environment.variables.map((name, index) =>
+          createRecord([
+            ["name", name],
+            ["location", toLocationValue(variableLocations[index])],
+          ]),
+        ),
+      ),
+    ],
+    ["actionconstraints", toDefinitionSet(config.actionConstraints)],
+    ["constraints", toDefinitionSet(config.constraints)],
+  ]);
+};
