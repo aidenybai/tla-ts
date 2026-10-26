@@ -70,4 +70,14 @@ describe("INSTANCE matches TLC", () => {
     expect(result.violation?.trace).toHaveLength(4);
     expect([result.generatedStates, result.distinctStates]).toEqual([4, 4]);
   });
+
+  it("keeps instance parameters apart from names bound inside the instance", () => {
+    const result = checkInstances("Capture.cfg", "Capture");
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      3,
+      2,
+      2,
+    ]);
+  });
 });

@@ -8,7 +8,7 @@ import type {
   OperatorParam,
   SourceLocation,
 } from "./ast";
-import { TlaUnsupportedError } from "./errors";
+import { TlaSyntaxError } from "./errors";
 import { getChildren, isLocallyResolved } from "./evaluate";
 import { isBefore } from "./resolve";
 
@@ -18,27 +18,25 @@ const getPatternNames = (pattern: BoundPattern) =>
 const getBoundNames = (bounds: Bound[]) =>
   bounds.flatMap((bound) => getPatternNames(bound.pattern));
 
-const getLocalNames = (
+export const renameLocals = (
   expression: Expression,
+  names: Map<string, string>,
   bound = new Set<string>(),
-  names = new Set<string>(),
-): Set<string> => {
-  const name =
-    expression.kind === "Identifier"
-      ? expression.name
-      : expression.kind === "Apply"
-        ? expression.operator
-        : undefined;
-  if (name !== undefined && isLocallyResolved(expression) && !bound.has(name)) names.add(name);
-  mapChildren(expression, (child, childBound) => {
-    getLocalNames(
+): Expression => {
+  const mapped = mapChildren(expression, (child, childBound) =>
+    renameLocals(
       child,
-      childBound.length === 0 ? bound : new Set([...bound, ...childBound]),
       names,
-    );
-    return child;
-  });
-  return names;
+      childBound.length === 0 ? bound : new Set([...bound, ...childBound]),
+    ),
+  );
+  if (mapped.kind === "Identifier" && isLocallyResolved(mapped) && !bound.has(mapped.name)) {
+    return { ...mapped, name: names.get(mapped.name) ?? mapped.name };
+  }
+  if (mapped.kind === "Apply" && isLocallyResolved(mapped) && !bound.has(mapped.operator)) {
+    return { ...mapped, operator: names.get(mapped.operator) ?? mapped.operator };
+  }
+  return mapped;
 };
 
 const mapBounds = (bounds: Bound[], map: (child: Expression) => Expression): Bound[] =>
@@ -212,7 +210,6 @@ type RewriteMode = "Normal" | "Enabled" | "Primed";
 
 interface Rewrite {
   instantiation: Instantiation;
-  substitutedNames: Map<string, Set<string>>;
   copies: Map<string, string>;
   mode: RewriteMode;
   modes: Map<RewriteMode, Rewrite>;
@@ -398,14 +395,6 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
   if (expression.kind === "Identifier" && isFree(expression.name)) {
     const replacement = instantiation.substitutions.get(expression.name);
     if (replacement) {
-      const captured = [...(rewrite.substitutedNames.get(expression.name) ?? [])].filter((name) =>
-        bound.has(name),
-      );
-      if (captured.length > 0) {
-        throw new TlaUnsupportedError(
-          `Substituting ${expression.name} into an instance would capture the bound name ${captured[0]}`,
-        );
-      }
       return replacement;
     }
     const copy = getCopy(rewrite, expression.name);
@@ -458,8 +447,8 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
       };
     }
     if (replacement) {
-      throw new TlaUnsupportedError(
-        `Substituting the operator ${expression.operator} with an expression is not supported yet`,
+      throw new TlaSyntaxError(
+        `The operator ${expression.operator} can only be substituted by an operator at line ${expression.location.line}, column ${expression.location.column}`,
       );
     }
     const copy = getCopy(rewrite, expression.operator);
@@ -525,12 +514,9 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
 };
 
 export const createInstantiation = (instantiation: Instantiation) => {
-  const substitutedNames = new Map(
-    [...instantiation.substitutions].map(([name, expression]) => [name, getLocalNames(expression)]),
-  );
   const modes = new Map<RewriteMode, Rewrite>();
   const createRewrite = (mode: RewriteMode): Rewrite => {
-    const created = { instantiation, substitutedNames, copies: new Map(), mode, modes };
+    const created = { instantiation, copies: new Map(), mode, modes };
     modes.set(mode, created);
     return created;
   };

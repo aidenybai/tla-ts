@@ -11,7 +11,12 @@ import { BUNDLED_MODULES } from "./bundled-modules";
 import type { ConfigValue, ModelConfig } from "./config";
 import { TlaConfigError, TlaEvaluationError, TlaSyntaxError, TlaUnsupportedError } from "./errors";
 import { isConstantLevel, type Builtin, type Environment } from "./evaluate";
-import { createInstantiation, getEnabledVariableName, withLetInstances } from "./instances";
+import {
+  createInstantiation,
+  getEnabledVariableName,
+  renameLocals,
+  withLetInstances,
+} from "./instances";
 import { parseModule } from "./parser";
 import { KEY_SEPARATOR, resolveModule, resolveSubstitutions, type Symbols } from "./resolve";
 import { createRuntime } from "./runtime";
@@ -200,13 +205,18 @@ export const createEnvironment = (
       ...linked.constants,
       ...linked.variables.map((variable) => ({ name: variable, arity: 0 })),
     ];
+    const suffix = `#${copyCount.value++}`;
+    const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
+    const substitutions = resolveSubstitutions(
+      resolveInstanceSubexpressions(instance, module),
+      declarations,
+      module,
+      unit,
+    );
     const instantiation = createInstantiation({
-      params: instance.params,
-      substitutions: resolveSubstitutions(
-        resolveInstanceSubexpressions(instance, module),
-        declarations,
-        module,
-        unit,
+      params: instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` })),
+      substitutions: new Map(
+        [...substitutions].map(([name, expression]) => [name, renameLocals(expression, renamed)]),
       ),
       variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
