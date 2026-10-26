@@ -518,6 +518,12 @@ const BAGS_OPERATORS: Builtin[] = [
   }),
   defineHigherOrderOperator("BagOfAll", 2, (args) => {
     const operator = getOperator(args, 0, "BagOfAll");
+    // TLC passes an operator whose body is a number or string literal to Bags.java as that literal.
+    if (operator.literalBody !== undefined) {
+      throw new TlaEvaluationError(
+        `The first argument of BagOfAll should be an operator, but instead it is: ${formatValue(operator.literalBody)}`,
+      );
+    }
     const value = getValue(args, 1, "BagOfAll");
     const bag = getBag(
       value,

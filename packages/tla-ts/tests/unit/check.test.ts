@@ -283,6 +283,25 @@ describe("the Bags module matches TLC", () => {
     expect(result.status).toBe("assumption-violation");
     expect(result.violation?.message).toBe(message);
   });
+
+  it.each([
+    ['BagOfAll(LAMBDA e : "c", <<1>>)', '"c"'],
+    ["LET H(e) == 1 IN BagOfAll(H, <<1>>)", "1"],
+    ['LET H(e) == "c"\n    G(Op(_)) == BagOfAll(Op, <<1>>)\nIN G(H)', '"c"'],
+  ])("rejects an operator with a literal body in %s", (expression, literal) => {
+    const result = checkBags(`ASSUME PrintT(${expression})`);
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.message).toBe(
+      `The first argument of BagOfAll should be an operator, but instead it is: ${literal}`,
+    );
+  });
+
+  it("applies an operator whose body is not a literal", () => {
+    const result = checkBags(
+      "ASSUME BagOfAll(LAMBDA e : TRUE, <<1>>) = (TRUE :> 1)\nASSUME LET H(e) == -1 IN BagOfAll(H, <<1, 1>>) = (-1 :> 2)\nASSUME BagOfAll(LAMBDA e : C, <<1>>) = (C :> 1)",
+    );
+    expect(result.status).toBe("success");
+  });
 });
 
 describe("name resolution matches SANY", () => {

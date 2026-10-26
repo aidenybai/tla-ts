@@ -39,6 +39,7 @@ export interface OperatorValue {
   kind: "Operator";
   name: string;
   arity: number;
+  literalBody: Value | undefined;
   call: (args: Value[]) => Value;
 }
 
@@ -494,6 +495,11 @@ const toOperatorValue = (operator: Operator, context: Context): OperatorValue =>
         kind: "Operator",
         name: operator.name,
         arity: getArity(operator),
+        literalBody:
+          operator.kind === "Closure" &&
+          (operator.body.kind === "Number" || operator.body.kind === "String")
+            ? operator.body.value
+            : undefined,
         call: (args) => callOperatorWithValues(operator, args, context),
       };
 
