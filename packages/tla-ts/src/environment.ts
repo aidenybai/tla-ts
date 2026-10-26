@@ -6,7 +6,7 @@ import { instantiateModule, withLetInstances, type FlatModule } from "./instance
 import { parseModule } from "./parser";
 import { resolveModule, type Symbols } from "./resolve";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
-import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
+import { CORE_OPERATORS, getStandardModule, REALS_SOURCE } from "./standard-modules";
 import { checkInteger, createSet, type Value } from "./values";
 
 export interface EnvironmentOptions {
@@ -74,7 +74,7 @@ export const createEnvironment = (
   const loadModule = (name: string) => {
     const nested = nestedModules.get(name);
     if (nested) return nested;
-    const source = options.loadModule?.(name);
+    const source = name === "Reals" ? REALS_SOURCE : options.loadModule?.(name);
     if (source === undefined) throw new TlaUnsupportedError(`Module ${name} is not available`);
     return addNestedModules(parseModule(source));
   };

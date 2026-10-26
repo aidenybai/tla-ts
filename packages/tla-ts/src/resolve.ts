@@ -1,5 +1,13 @@
-import type { Bound, BoundPattern, Definition, Expression, Module, SourceLocation } from "./ast";
-import { TlaSyntaxError } from "./errors";
+import type {
+  Bound,
+  BoundPattern,
+  DecimalExpression,
+  Definition,
+  Expression,
+  Module,
+  SourceLocation,
+} from "./ast";
+import { TlaEvaluationError, TlaSyntaxError } from "./errors";
 
 export type Symbols = Map<string, number>;
 
@@ -70,6 +78,11 @@ const getSymbolArity = (
   );
 };
 
+export const createRealNumberError = (expression: DecimalExpression) =>
+  new TlaEvaluationError(
+    `TLC can't handle real numbers: ${expression.text} at line ${expression.location.line}, column ${expression.location.column}`,
+  );
+
 const resolveBounds = (bounds: Bound[], scope: LocalName | undefined, unit: Unit) => {
   bounds.forEach((bound) => resolveExpression(bound.set, scope, unit));
   return bounds.reduce(
@@ -137,6 +150,8 @@ const resolveExpression = (
     case "String":
     case "ExceptAt":
       return;
+    case "Decimal":
+      throw createRealNumberError(expression);
     case "Identifier": {
       const arity = getSymbolArity(expression, expression.name, scope, unit);
       if (arity > 0) {

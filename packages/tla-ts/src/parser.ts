@@ -500,6 +500,7 @@ export const parseModule = (source: string): Module => {
     const token = advance();
     const location = getLocation(token);
     if (token.kind === "Number") return { kind: "Number", value: Number(token.text), location };
+    if (token.kind === "Decimal") return { kind: "Decimal", text: token.text, location };
     if (token.kind === "String") return { kind: "String", value: token.text, location };
     if (token.kind === "Identifier") {
       if (isLabelAhead()) {

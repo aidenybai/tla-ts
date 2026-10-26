@@ -13,6 +13,12 @@ export interface NumberExpression {
   location: SourceLocation;
 }
 
+export interface DecimalExpression {
+  kind: "Decimal";
+  text: string;
+  location: SourceLocation;
+}
+
 export interface StringExpression {
   kind: "String";
   value: string;
@@ -265,6 +271,7 @@ export interface SubexpressionExpression {
 
 export type Expression =
   | NumberExpression
+  | DecimalExpression
   | StringExpression
   | IdentifierExpression
   | ApplyExpression
