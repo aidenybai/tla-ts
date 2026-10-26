@@ -159,3 +159,6 @@ export const getThunk = (args: BuiltinArgument[], index: number, name: string) =
   const argument = getOperator(args, index, name);
   return () => argument.call([]);
 };
+
+export const describeJavaOverride = (method: string, message: string) =>
+  `Attempted to apply the operator overridden by the Java method\n${method},\nbut it produced the following error:\n${message}`;

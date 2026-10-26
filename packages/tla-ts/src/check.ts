@@ -572,6 +572,10 @@ export const check = (options: CheckOptions): CheckResult => {
   };
   const getPath = (index: number): Value[][] =>
     index === -1 ? [] : [...getPath(parents[index]), states[index]];
+  runtime.isSeen = (state) => {
+    const fingerprintState = getFingerprintState(state);
+    return findStateIndex(getStateHash(fingerprintState), fingerprintState) !== -1;
+  };
   runtime.getBehavior = (state) => {
     const index = state === current.candidate ? -1 : states.indexOf(state);
     return index === -1 ? [...getPath(current.index), state] : getPath(index);

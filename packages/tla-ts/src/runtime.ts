@@ -4,6 +4,7 @@ export interface CheckerRuntime {
   getLevel: (state: (Value | undefined)[]) => number;
   getBehavior: (state: Value[]) => Value[][];
   random: () => number;
+  isSeen: (state: Value[]) => boolean;
   generatedStates: number;
   distinctStates: number;
   initialStates: number;
@@ -32,6 +33,7 @@ export const createRuntime = (checkDeadlock: boolean): CheckerRuntime => ({
   getLevel: () => 0,
   getBehavior: () => [],
   random: createRandom(0),
+  isSeen: () => false,
   generatedStates: 0,
   distinctStates: 0,
   initialStates: 0,

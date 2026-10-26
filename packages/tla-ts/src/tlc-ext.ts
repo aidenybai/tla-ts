@@ -4,13 +4,15 @@ import {
   defineLazyOperator,
   defineOperator,
   defineStateOperator,
+  describeJavaOverride,
   getOperator,
   getThunk,
   getValue,
 } from "./builtins";
-import { TlaEvaluationError } from "./errors";
+import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
 import {
   evaluate,
+  expectBoolean,
   getChildren,
   getDefinition,
   isLocallyResolved,
@@ -31,13 +33,26 @@ import {
   createSet,
   createTuple,
   formatValue,
+  getDomain,
   getSequenceElements,
   getValueHash,
   getValueKey,
+  isFunctionValue,
   toFiniteSet,
   valuesEqual,
   type Value,
 } from "./values";
+
+const FIELDS = createSet(["action", "state"]);
+
+const OVERRIDE_PARAMETERS =
+  "tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel";
+
+const ASSERT_ERROR_METHOD = `public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.assertError(${OVERRIDE_PARAMETERS})`;
+
+const TRACE_METHOD = `public static tlc2.value.impl.TupleValue tlc2.module.TLCExt.getTrace(${OVERRIDE_PARAMETERS}) throws java.io.IOException`;
+
+const PICK_SUCCESSOR_METHOD = `public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.pickSuccessor(${OVERRIDE_PARAMETERS})`;
 
 const EMPTY_COUNTER_EXAMPLE = createRecord([
   ["action", createSet([])],
@@ -112,13 +127,22 @@ export const createTlcExtOperators = (
       const right = getValue(args, 1, "AssertEq");
       const isEqual = valuesEqual(left, right);
       if (!isEqual) {
-        print("Assertion failed");
+        print(formatValue("Assertion failed", true));
         print(formatValue(left, true));
         print(formatValue(right, true));
       }
       return isEqual;
     }),
     defineLazyOperator("AssertError", 2, (args) => {
+      const message = getOperator(args, 0, "AssertError").expression;
+      if (message && message.kind !== "String") {
+        throw new TlaEvaluationError(
+          describeJavaOverride(
+            ASSERT_ERROR_METHOD,
+            `In computing AssertError, a non-string expression (line ${message.location.line}, col ${message.location.column}) was used as the err of an AssertError(err, exp).`,
+          ),
+        );
+      }
       const expected = getThunk(args, 0, "AssertError")();
       try {
         getThunk(args, 1, "AssertError")();
@@ -144,9 +168,15 @@ export const createTlcExtOperators = (
     },
     defineStateOperator("Trace", 0, (_, context) => {
       const state = context?.state;
-      if (!state || !isCompleteState(state)) {
+      if (!context || !state || !isCompleteState(state)) {
+        const unassigned = (context?.environment.variables ?? []).filter(
+          (_, index) => state?.[index] === undefined,
+        );
         throw new TlaEvaluationError(
-          "In evaluating TLCExt!Trace, the state is not completely specified yet",
+          describeJavaOverride(
+            TRACE_METHOD,
+            `In evaluating TLCExt!Trace, the state is not completely specified yet (variable${unassigned.length > 1 ? "s" : ""} ${unassigned.join(", ")} undefined).`,
+          ),
         );
       }
       return createTuple(
@@ -156,6 +186,11 @@ export const createTlcExtOperators = (
     defineConstant("CounterExample", EMPTY_COUNTER_EXAMPLE),
     defineOperator("ToTrace", 1, (args) => {
       const counterExample = getValue(args, 0, "ToTrace");
+      if (!isFunctionValue(counterExample) || !valuesEqual(getDomain(counterExample), FIELDS)) {
+        throw new TlaEvaluationError(
+          `The argument of ToTrace should be a CounterExample, but instead it is:\n${formatValue(counterExample)}`,
+        );
+      }
       const states = toFiniteSet(applyFunction(counterExample, "state")).elements.map(
         (pair) => getSequenceElements(pair) ?? [],
       );
@@ -180,10 +215,22 @@ export const createTlcExtOperators = (
     }),
     defineOperator("TLCNoOp", 1, (args) => getValue(args, 0, "TLCNoOp")),
     defineLazyOperator("PickSuccessor", 1, (args, context) => {
-      if (getThunk(args, 0, "PickSuccessor")() === true) return true;
       const next = context?.next;
-      if (!next || !isCompleteState(next)) return true;
-      throw new TlaEvaluationError("PickSuccessor needs interactive input to extend the behavior");
+      if (!next || !isCompleteState(next)) {
+        throw new TlaEvaluationError(
+          describeJavaOverride(
+            PICK_SUCCESSOR_METHOD,
+            'Cannot invoke "tlc2.value.IValue.fingerPrint(long)" because "minVals[i]" is null',
+          ),
+        );
+      }
+      if (runtime.isSeen(next)) return true;
+      if (expectBoolean(getThunk(args, 0, "PickSuccessor")(), "the condition of PickSuccessor")) {
+        return true;
+      }
+      throw new TlaUnsupportedError(
+        "PickSuccessor needs interactive input to extend the behavior with a new state",
+      );
     }),
     defineLazyOperator("TLCCache", 2, (args, context) => {
       const expression = getOperator(args, 0, "TLCCache");
