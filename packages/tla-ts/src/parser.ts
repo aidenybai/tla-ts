@@ -132,6 +132,39 @@ const POSTFIX_OPERATORS = new Set(["^+", "^*", "^#"]);
 
 const PREFIX_OPERATOR_REFERENCES = new Set(["-", "~", "-."]);
 
+const OPERATOR_ARGUMENTS = new Set([
+  "SUBSET",
+  "UNION",
+  "DOMAIN",
+  "ENABLED",
+  "UNCHANGED",
+  "[]",
+  "<>",
+  "'",
+  ...POSTFIX_OPERATORS,
+]);
+
+const getOperatorApplication = (
+  operator: string,
+  argument: Expression,
+  location: SourceLocation,
+): Expression => {
+  switch (operator) {
+    case "ENABLED":
+      return { kind: "Enabled", expression: argument, location };
+    case "UNCHANGED":
+      return { kind: "Unchanged", expression: argument, location };
+    case "[]":
+      return { kind: "Always", expression: argument, location };
+    case "<>":
+      return { kind: "Eventually", expression: argument, location };
+    case "'":
+      return { kind: "Prime", expression: argument, location };
+    default:
+      return { kind: "Apply", operator, args: [argument], location };
+  }
+};
+
 const UNIT_KEYWORDS = new Set([
   "ASSUME",
   "ASSUMPTION",
@@ -291,6 +324,22 @@ export const parseModule = (source: string): Module => {
     if (isOperatorAlone) {
       cursor.index++;
       return { kind: "OperatorReference", operator: token.text, location: getLocation(token) };
+    }
+    const isPrefixAlone =
+      OPERATOR_ARGUMENTS.has(token.text) && (next.text === "," || next.text === ")");
+    if (isPrefixAlone) {
+      cursor.index++;
+      const location = getLocation(token);
+      if (POSTFIX_OPERATORS.has(token.text)) {
+        return { kind: "OperatorReference", operator: token.text, location };
+      }
+      const argument: Expression = { kind: "Identifier", name: "argument", location };
+      return {
+        kind: "Lambda",
+        params: [argument.name],
+        body: getOperatorApplication(token.text, argument, location),
+        location,
+      };
     }
     if (isAt("LAMBDA")) {
       advance();
