@@ -410,8 +410,20 @@ describe("name resolution matches SANY", () => {
     ["a definition before it is defined", "EXTENDS Naturals\nf == g + 1\ng == 1"],
     ["an operator with the wrong number of arguments", "g(a) == a\nf == g(1, 2)"],
     ["a record with duplicate fields", "f == [a |-> 1, b |-> 2, a |-> 1]"],
+    ["an expression as a fact in a HIDE", "THEOREM bar == <<1, 2>>\nUSE bar\nHIDE bar, TRUE"],
+    [
+      "a definition as a fact in a HIDE step",
+      "foo == 1\nTHEOREM T == TRUE\n<1>1. HIDE foo\n<1> QED",
+    ],
   ])("rejects %s", (_, source) => {
     expect(() => checkSource(source)).toThrow(TlaSyntaxError);
+  });
+
+  it("accepts USE and HIDE of theorems, assumptions, steps, and definitions", () => {
+    const result = checkSource(
+      "EXTENDS Naturals\nfoo == 1\nUSE foo, foo > 0 DEF foo\nASSUME A == foo \\in Nat\nHIDE A\nTHEOREM T == foo = 1\nHIDE T DEF foo\nTHEOREM U == ASSUME NEW n \\in Nat PROVE n >= 0\n<1>1. n >= 0\n  OBVIOUS\n<1>2. HIDE <1>1, T\n<1> QED\n  BY <1>1",
+    );
+    expect(result.status).toBe("success");
   });
 
   it("defines prefix, postfix, and <: operators", () => {
