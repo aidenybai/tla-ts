@@ -1,23 +1,42 @@
-import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
-import type { Builtin, BuiltinArgument, OperatorValue } from "./evaluate";
+import { TlaEvaluationError } from "./errors";
+import {
+  defineArithmetic,
+  defineBinary,
+  defineComparison,
+  defineConstant,
+  defineHigherOrderOperator,
+  defineOperator,
+  getBoolean,
+  getElements,
+  getNumber,
+  getOperator,
+  getSequence,
+  getSet,
+  getValue,
+} from "./builtins";
+import type { Builtin, BuiltinArgument } from "./evaluate";
+import type { CheckerRuntime } from "./runtime";
+import { BAGS_OPERATORS } from "./bags";
+import { createJsonOperators, type FileSystem } from "./json";
+import { createRandomizationOperators } from "./randomization";
+import { createPossibleOperators, createTlcExtOperators } from "./tlc-ext";
+import { createTlcOperators } from "./tlc-module";
 import {
   checkInteger,
-  createFunction,
   createSet,
   createSortedSet,
   createTuple,
+  differenceSorted,
   formatValue,
   getCardinality,
   getDomain,
-  getSequenceElements,
+  intersectSorted,
   isElementOf,
+  isEmptySet,
   isEnumerable,
   isFunctionValue,
   isSetValue,
-  toFiniteFunction,
   toFiniteSet,
-  differenceSorted,
-  intersectSorted,
   unionSorted,
   valuesEqual,
   type SetOperationValue,
@@ -29,128 +48,6 @@ interface StandardModule {
   extends: string[];
   operators: Builtin[];
 }
-
-const isOperatorValue = (argument: BuiltinArgument): argument is OperatorValue =>
-  typeof argument === "object" && argument.kind === "Operator";
-
-const getValue = (args: BuiltinArgument[], index: number, name: string): Value => {
-  const argument = args[index];
-  if (argument === undefined || isOperatorValue(argument)) {
-    throw new TlaEvaluationError(`${name} expects a value as argument ${index + 1}`);
-  }
-  return argument;
-};
-
-const getNumber = (args: BuiltinArgument[], index: number, name: string) => {
-  const value = getValue(args, index, name);
-  if (typeof value !== "number") {
-    throw new TlaEvaluationError(`${name} expects an integer but received ${formatValue(value)}`);
-  }
-  return value;
-};
-
-const getBoolean = (args: BuiltinArgument[], index: number, name: string) => {
-  const value = getValue(args, index, name);
-  if (typeof value !== "boolean") {
-    throw new TlaEvaluationError(`${name} expects a boolean but received ${formatValue(value)}`);
-  }
-  return value;
-};
-
-const getSet = (args: BuiltinArgument[], index: number, name: string) => {
-  const value = getValue(args, index, name);
-  if (!isSetValue(value))
-    throw new TlaEvaluationError(`${name} expects a set but received ${formatValue(value)}`);
-  return value;
-};
-
-const getFiniteSet = (args: BuiltinArgument[], index: number, name: string) => {
-  const set = getSet(args, index, name);
-  if (!isEnumerable(set)) {
-    throw new TlaEvaluationError(
-      `${name} cannot enumerate the non-enumerable set ${formatValue(set)}`,
-    );
-  }
-  return toFiniteSet(set);
-};
-
-const getElements = (args: BuiltinArgument[], index: number, name: string) =>
-  getFiniteSet(args, index, name).elements;
-
-const getSequence = (args: BuiltinArgument[], index: number, name: string) => {
-  const value = getValue(args, index, name);
-  const elements = getSequenceElements(value);
-  if (!elements)
-    throw new TlaEvaluationError(`${name} expects a sequence but received ${formatValue(value)}`);
-  return elements;
-};
-
-const getOperator = (args: BuiltinArgument[], index: number, name: string) => {
-  const argument = args[index];
-  if (argument === undefined || !isOperatorValue(argument)) {
-    throw new TlaEvaluationError(`${name} expects an operator as argument ${index + 1}`);
-  }
-  return argument;
-};
-
-const defineConstant = (name: string, value: Value): Builtin => ({
-  kind: "Builtin",
-  name,
-  arity: 0,
-  evaluate: () => value,
-  evaluateUnary: undefined,
-  evaluateBinary: undefined,
-});
-
-const defineOperator = (
-  name: string,
-  arity: number,
-  evaluate: (args: BuiltinArgument[]) => Value,
-): Builtin => ({
-  kind: "Builtin",
-  name,
-  arity,
-  evaluate,
-  evaluateUnary: arity === 1 ? (value) => evaluate([value]) : undefined,
-  evaluateBinary: arity === 2 ? (left, right) => evaluate([left, right]) : undefined,
-});
-
-const defineHigherOrderOperator = (
-  name: string,
-  arity: number,
-  evaluate: (args: BuiltinArgument[]) => Value,
-): Builtin => ({
-  kind: "Builtin",
-  name,
-  arity,
-  evaluate,
-  evaluateUnary: undefined,
-  evaluateBinary: undefined,
-});
-
-const toNumber = (value: Value, name: string) => {
-  if (typeof value !== "number") {
-    throw new TlaEvaluationError(`${name} expects an integer but received ${formatValue(value)}`);
-  }
-  return value;
-};
-
-const defineBinary = (name: string, compute: (left: Value, right: Value) => Value): Builtin => ({
-  kind: "Builtin",
-  name,
-  arity: 2,
-  evaluate: (args) => compute(getValue(args, 0, name), getValue(args, 1, name)),
-  evaluateUnary: undefined,
-  evaluateBinary: compute,
-});
-
-const defineArithmetic = (name: string, compute: (left: number, right: number) => number) =>
-  defineBinary(name, (left, right) =>
-    checkInteger(compute(toNumber(left, name), toNumber(right, name))),
-  );
-
-const defineComparison = (name: string, compare: (left: number, right: number) => boolean) =>
-  defineBinary(name, (left, right) => compare(toNumber(left, name), toNumber(right, name)));
 
 const isSubsetOf = (left: Value[], right: Value) =>
   left.every((element) => isElementOf(element, right));
@@ -169,6 +66,9 @@ export const CORE_OPERATORS: Builtin[] = [
   defineBinary("#", (left, right) => !valuesEqual(left, right)),
   defineOperator("~", 1, (args) => !getBoolean(args, 0, "~")),
   defineOperator("<=>", 2, (args) => getBoolean(args, 0, "<=>") === getBoolean(args, 1, "<=>")),
+  defineOperator("/\\", 2, (args) => getBoolean(args, 0, "/\\") && getBoolean(args, 1, "/\\")),
+  defineOperator("\\/", 2, (args) => getBoolean(args, 0, "\\/") || getBoolean(args, 1, "\\/")),
+  defineOperator("=>", 2, (args) => !getBoolean(args, 0, "=>") || getBoolean(args, 1, "=>")),
   defineOperator("\\in", 2, (args) =>
     isElementOf(getValue(args, 0, "\\in"), getSet(args, 1, "\\in")),
   ),
@@ -177,9 +77,18 @@ export const CORE_OPERATORS: Builtin[] = [
     2,
     (args) => !isElementOf(getValue(args, 0, "\\notin"), getSet(args, 1, "\\notin")),
   ),
-  defineOperator("\\subseteq", 2, (args) =>
-    isSubsetOf(getElements(args, 0, "\\subseteq"), getSet(args, 1, "\\subseteq")),
-  ),
+  defineOperator("\\subseteq", 2, (args) => {
+    const left = getSet(args, 0, "\\subseteq");
+    const right = getSet(args, 1, "\\subseteq");
+    const isPowerSets =
+      typeof left === "object" &&
+      left.kind === "Subset" &&
+      typeof right === "object" &&
+      right.kind === "Subset" &&
+      isEnumerable(left.base);
+    if (isPowerSets) return isSubsetOf(toFiniteSet(left.base).elements, right.base);
+    return isSubsetOf(getElements(args, 0, "\\subseteq"), right);
+  }),
   ...SET_OPERATORS.map((operator) =>
     defineOperator(operator, 2, (args) => {
       const left = getSet(args, 0, operator);
@@ -193,21 +102,33 @@ export const CORE_OPERATORS: Builtin[] = [
               : differenceSorted;
         return merge(toFiniteSet(left), toFiniteSet(right));
       }
-      const set: Value = { kind: "SetOperation", operator, left, right };
+      const isReducible = (value: Value) =>
+        typeof value === "object" && (value.kind === "Set" || value.kind === "Interval");
+      const isSwapped = operator === "\\cup" && !isReducible(left) && isReducible(right);
+      const set: Value = isSwapped
+        ? { kind: "SetOperation", operator, left: right, right: left }
+        : { kind: "SetOperation", operator, left, right };
       return isEnumerable(set) ? toFiniteSet(set) : set;
     }),
   ),
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getSet(args, 0, "SUBSET") })),
-  defineOperator("UNION", 1, (args) =>
-    getElements(args, 0, "UNION").reduce<SetValue>((union, element) => {
+  defineOperator("UNION", 1, (args) => {
+    const sets = getElements(args, 0, "UNION");
+    sets.forEach((element) => {
       if (!isSetValue(element)) {
         throw new TlaEvaluationError(
           `UNION expects a set of sets but found ${formatValue(element)}`,
         );
       }
-      return unionSorted(union, toFiniteSet(element));
-    }, EMPTY_SET),
-  ),
+    });
+    if (sets.every((element) => typeof element === "object" && element.kind === "Set")) {
+      return sets.reduce<SetValue>(
+        (union, element) => unionSorted(union, toFiniteSet(element)),
+        EMPTY_SET,
+      );
+    }
+    return sets.reduce((left, right) => ({ kind: "SetOperation", operator: "\\cup", left, right }));
+  }),
   defineOperator("DOMAIN", 1, (args) => {
     const value = getValue(args, 0, "DOMAIN");
     if (!isFunctionValue(value)) {
@@ -316,96 +237,18 @@ const FINITE_SETS_OPERATORS: Builtin[] = [
   defineOperator("IsFiniteSet", 1, (args) => isEnumerable(getSet(args, 0, "IsFiniteSet"))),
   defineOperator("Cardinality", 1, (args) => {
     const set = getSet(args, 0, "Cardinality");
+    if (isEmptySet(set)) return 0;
     if (!isEnumerable(set))
       throw new TlaEvaluationError(`Cardinality of the infinite set ${formatValue(set)}`);
     return getCardinality(set);
   }),
 ];
 
-const getPermutations = (elements: Value[]): Value[][] =>
-  elements.length === 0
-    ? [[]]
-    : elements.flatMap((element, index) =>
-        getPermutations([...elements.slice(0, index), ...elements.slice(index + 1)]).map((rest) => [
-          element,
-          ...rest,
-        ]),
-      );
-
-export const createTlcOperators = (print: (text: string) => void): Builtin[] => [
-  defineOperator("Print", 2, (args) => {
-    print(`${formatValue(getValue(args, 0, "Print"))}  ${formatValue(getValue(args, 1, "Print"))}`);
-    return getValue(args, 1, "Print");
-  }),
-  defineOperator("PrintT", 1, (args) => {
-    print(formatValue(getValue(args, 0, "PrintT")));
-    return true;
-  }),
-  defineOperator("Assert", 2, (args) => {
-    if (getValue(args, 0, "Assert") !== true) {
-      throw new TlaEvaluationError(
-        `The first argument of Assert evaluated to FALSE; the second argument was: ${formatValue(getValue(args, 1, "Assert"))}`,
-      );
-    }
-    return true;
-  }),
-  defineOperator("JavaTime", 0, () => Math.floor(Date.now() / 1000) & 0x7fffffff),
-  defineOperator(":>", 2, (args) =>
-    createFunction([[getValue(args, 0, ":>"), getValue(args, 1, ":>")]]),
-  ),
-  defineOperator("@@", 2, (args) => {
-    const left = toFiniteFunction(getValue(args, 0, "@@"));
-    const right = toFiniteFunction(getValue(args, 1, "@@"));
-    return createFunction([
-      ...left.domain.map((key, index): [Value, Value] => [key, left.range[index]]),
-      ...right.domain.map((key, index): [Value, Value] => [key, right.range[index]]),
-    ]);
-  }),
-  defineOperator("ToString", 1, (args) => formatValue(getValue(args, 0, "ToString"))),
-  defineOperator("TLCEval", 1, (args) => getValue(args, 0, "TLCEval")),
-  defineOperator("Permutations", 1, (args) => {
-    const elements = getElements(args, 0, "Permutations");
-    return createSet(
-      getPermutations(elements).map((permutation) =>
-        createFunction(
-          elements.map((element, index): [Value, Value] => [element, permutation[index]]),
-        ),
-      ),
-    );
-  }),
-  defineHigherOrderOperator("SortSeq", 2, (args) => {
-    const precedes = getOperator(args, 1, "SortSeq");
-    return createTuple(
-      getSequence(args, 0, "SortSeq").reduce<Value[]>((sorted, element) => {
-        const position = sorted.findIndex(
-          (existing) => precedes.call([element, existing]) === true,
-        );
-        return position === -1
-          ? [...sorted, element]
-          : [...sorted.slice(0, position), element, ...sorted.slice(position)];
-      }, []),
-    );
-  }),
-  ...[
-    { name: "TLCGet", arity: 1 },
-    { name: "TLCSet", arity: 2 },
-    { name: "Any", arity: 0 },
-  ].map((operator): Builtin => ({
-    ...defineOperator(operator.name, operator.arity, () => {
-      throw new TlaUnsupportedError(`${operator.name} is not supported yet`);
-    }),
-    isStateLevel: operator.name !== "Any",
-  })),
-  defineOperator("RandomElement", 1, (args) => {
-    const elements = getElements(args, 0, "RandomElement");
-    if (elements.length === 0) throw new TlaEvaluationError("RandomElement of the empty set");
-    return elements[0];
-  }),
-];
-
 export const getStandardModule = (
   name: string,
   print: (text: string) => void,
+  runtime: CheckerRuntime,
+  files: FileSystem,
 ): StandardModule | undefined => {
   switch (name) {
     case "Naturals":
@@ -417,7 +260,17 @@ export const getStandardModule = (
     case "FiniteSets":
       return { extends: [], operators: FINITE_SETS_OPERATORS };
     case "TLC":
-      return { extends: [], operators: createTlcOperators(print) };
+      return { extends: [], operators: createTlcOperators(print, runtime) };
+    case "Randomization":
+      return { extends: [], operators: createRandomizationOperators(runtime) };
+    case "_Possible":
+      return { extends: [], operators: createPossibleOperators(print, runtime) };
+    case "Json":
+      return { extends: [], operators: createJsonOperators(files) };
+    case "Bags":
+      return { extends: [], operators: BAGS_OPERATORS };
+    case "TLCExt":
+      return { extends: [], operators: createTlcExtOperators(print, runtime) };
     default:
       return undefined;
   }

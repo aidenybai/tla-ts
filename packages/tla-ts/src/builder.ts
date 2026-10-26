@@ -9,8 +9,11 @@ import type {
   SourceLocation,
 } from "./ast";
 import type { ConfigValue, ConstantAssignment, ModelConfig } from "./config";
-import { TlaSyntaxError, TlaUnsupportedError } from "./errors";
+import { BUNDLED_MODULES } from "./bundled-modules";
+import { TlaEvaluationError, TlaSyntaxError, TlaUnsupportedError } from "./errors";
 import { getChildren } from "./evaluate";
+import { parseModule } from "./parser";
+import { createRuntime } from "./runtime";
 import { getStandardModule } from "./standard-modules";
 
 export type TermLike = Term | number | string | boolean;
@@ -26,6 +29,8 @@ export interface SpecDefinition {
   constraints?: Record<string, TermLike>;
   actionConstraints?: Record<string, TermLike>;
   symmetry?: TermLike;
+  view?: TermLike;
+  postconditions?: Record<string, TermLike>;
   assumptions?: Record<string, TermLike>;
   checkDeadlock?: boolean;
 }
@@ -70,18 +75,47 @@ const PARAM = /^([A-Za-z0-9_]+)(?:\((\s*_\s*(?:,\s*_\s*)*)\))?$/;
 
 const STACK_FRAME = /(?:\(|at |@)([^()]*?):(\d+):(\d+)\)?$/;
 
-const STANDARD_MODULES = ["Naturals", "Integers", "Sequences", "FiniteSets", "TLC"].map((name) => ({
-  name,
-  module: getStandardModule(name, () => {}),
-}));
+const BUILTIN_MODULES = [
+  "Naturals",
+  "Integers",
+  "Sequences",
+  "FiniteSets",
+  "TLC",
+  "Randomization",
+  "Json",
+  "Bags",
+  "TLCExt",
+];
 
+const NAME_RUNTIME = createRuntime(true);
+
+const STANDARD_MODULES = [
+  ...BUILTIN_MODULES.map((name) => {
+    const module = getStandardModule(name, () => {}, NAME_RUNTIME, {
+      readFile: undefined,
+      writeFile: undefined,
+    });
+    return {
+      name,
+      operators: module?.operators.map((operator) => operator.name) ?? [],
+      extends: module?.extends ?? [],
+    };
+  }),
+  ...[...BUNDLED_MODULES].map(([name, text]) => {
+    const module = parseModule(text);
+    return {
+      name,
+      operators: module.definitions.map((definition) => definition.name),
+      extends: module.extends,
+    };
+  }),
+];
+
+// The first module that defines a name provides it.
 const STANDARD_OPERATORS = new Map(
   STANDARD_MODULES.flatMap((standard) =>
-    (standard.module?.operators ?? []).map((operator): [string, string] => [
-      operator.name,
-      standard.name,
-    ]),
-  ),
+    standard.operators.map((operator): [string, string] => [operator, standard.name]),
+  ).reverse(),
 );
 
 const boundCount = { value: 0 };
@@ -161,6 +195,10 @@ export class Term {
     return createApply("%", [this, other]);
   }
 
+  divide(other: TermLike) {
+    return createApply("/", [this, other]);
+  }
+
   power(exponent: TermLike) {
     return createApply("^", [this, exponent]);
   }
@@ -215,6 +253,54 @@ export class Term {
 
   randomElement() {
     return createApply("RandomElement", [this]);
+  }
+
+  isABag() {
+    return createApply("IsABag", [this]);
+  }
+
+  bagToSet() {
+    return createApply("BagToSet", [this]);
+  }
+
+  setToBag() {
+    return createApply("SetToBag", [this]);
+  }
+
+  bagIn(bag: TermLike) {
+    return createApply("BagIn", [this, bag]);
+  }
+
+  copiesIn(bag: TermLike) {
+    return createApply("CopiesIn", [this, bag]);
+  }
+
+  bagAdd(bag: TermLike) {
+    return createApply("\\oplus", [this, bag]);
+  }
+
+  bagSubtract(bag: TermLike) {
+    return createApply("\\ominus", [this, bag]);
+  }
+
+  isSubBagOf(bag: TermLike) {
+    return createApply("\\sqsubseteq", [this, bag]);
+  }
+
+  bagUnion() {
+    return createApply("BagUnion", [this]);
+  }
+
+  subBags() {
+    return createApply("SubBag", [this]);
+  }
+
+  bagOfAll(map: (element: Term) => TermLike) {
+    return createApply("BagOfAll", [createLambda(createBoundNames(1), map), this]);
+  }
+
+  bagCardinality() {
+    return createApply("BagCardinality", [this]);
   }
 
   at(...args: TermLike[]) {
@@ -304,8 +390,9 @@ const toExpression = (value: TermLike): Expression => {
   if (typeof value === "string") return { kind: "String", value, location: START };
   if (typeof value === "boolean")
     return { kind: "Identifier", name: value ? "TRUE" : "FALSE", location: START };
+  if (!Number.isFinite(value)) throw new TlaUnsupportedError(`The number ${value} is not finite`);
   if (!Number.isInteger(value))
-    throw new TlaUnsupportedError(`The number ${value} is not an integer`);
+    throw new TlaEvaluationError(`TLC can't handle real numbers: ${value}`);
   const number: Expression = { kind: "Number", value: Math.abs(value), location: START };
   return value < 0 ? { kind: "Apply", operator: "-.", args: [number], location: START } : number;
 };
@@ -481,7 +568,7 @@ const getVisibleModules = (names: string[]): string[] =>
   names.flatMap((name) => [
     name,
     ...getVisibleModules(
-      STANDARD_MODULES.find((standard) => standard.name === name)?.module?.extends ?? [],
+      STANDARD_MODULES.find((standard) => standard.name === name)?.extends ?? [],
     ),
   ]);
 
@@ -623,13 +710,19 @@ const createBuilder = () => {
     Int: createReference("Int"),
     BOOLEAN: createReference("BOOLEAN"),
     STRING: createReference("STRING"),
+    value: (literal: TermLike) => toTerm(literal),
     JavaTime: createReference("JavaTime"),
+    EmptyBag: createReference("EmptyBag"),
+    Real: createReference("Real"),
+    Infinity: createReference("Infinity"),
     seq: (set: TermLike) => createApply("Seq", [set]),
     print: (output: TermLike, value: TermLike) => createApply("Print", [output, value]),
     printT: (output: TermLike) => createApply("PrintT", [output]),
     assert: (condition: TermLike, message: TermLike) => createApply("Assert", [condition, message]),
     toString: (value: TermLike) => createApply("ToString", [value]),
     tlcEval: (value: TermLike) => createApply("TLCEval", [value]),
+    tlcGet: (key: TermLike) => createApply("TLCGet", [key]),
+    tlcSet: (key: TermLike, value: TermLike) => createApply("TLCSet", [key, value]),
     set: (...elements: TermLike[]) =>
       createTerm((location) => ({
         kind: "SetEnumeration",
@@ -895,7 +988,9 @@ const createBuilder = () => {
       checkDeadlock: definition.checkDeadlock ?? true,
       symmetry:
         definition.symmetry === undefined ? undefined : getName("Symmetry", definition.symmetry),
-      view: undefined,
+      view: definition.view === undefined ? undefined : getName("View", definition.view),
+      postconditions: getNames(definition.postconditions),
+      possible: [],
     };
     const assumptions = Object.entries(definition.assumptions ?? {}).map(
       ([name, value]): Assumption => {

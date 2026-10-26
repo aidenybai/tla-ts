@@ -23,23 +23,24 @@ import {
   type TemporalProperty,
 } from "./liveness";
 import { parseModule } from "./parser";
+import type { Spec } from "./builder";
 import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { createCanonicalizer } from "./canonical";
-import { combineHash, getValueHash, isSameValue, type Value } from "./values";
-import type { Spec } from "./builder";
+import { getPossibleCounts, type CheckerRuntime } from "./runtime";
+import { combineHash, formatValue, getValueHash, isSameValue, type Value } from "./values";
 
 export interface CheckOptions {
   source: string;
   config: string | ModelConfig;
   loadModule?: (name: string) => string | undefined;
   onPrint?: (text: string) => void;
+  readFile?: (path: string) => string | undefined;
+  writeFile?: (path: string, content: string) => void;
 }
 
-export interface SpecCheckOptions {
+export interface SpecCheckOptions extends Omit<CheckOptions, "source" | "config"> {
   spec: Spec;
-  loadModule?: (name: string) => string | undefined;
-  onPrint?: (text: string) => void;
 }
 
 export type CheckStatus =
@@ -48,6 +49,7 @@ export type CheckStatus =
   | "invariant-violation"
   | "property-violation"
   | "liveness-violation"
+  | "postcondition-violation"
   | "deadlock";
 
 export interface TraceStep {
@@ -274,6 +276,11 @@ export interface Search {
   findFailedInitialPredicate: (state: Value[]) => NamedExpression | undefined;
   findViolatedActionProperty: (state: Value[], next: Value[]) => ActionProperty | undefined;
   satisfiesActionConstraints: (state: Value[], next: Value[]) => boolean;
+  trackStatePossible: (state: Value[]) => void;
+  trackActionPossible: (state: Value[], next: Value[]) => void;
+  findPostconditionViolation: (
+    print: (text: string) => void,
+  ) => Omit<Violation, "loopStart"> | undefined;
 }
 
 const getContext = (
@@ -286,13 +293,22 @@ const getContext = (
 const holds = (expression: Expression, context: Context, description: string) =>
   expectBoolean(evaluate(expression, context), description);
 
-const getAssumptionError = (assumption: Assumption, environment: Environment) => {
+const ignorePossible = () => {};
+
+const trackPossible = (items: NamedExpression[], runtime: CheckerRuntime, context: Context) =>
+  items.forEach((item) => {
+    const count = runtime.possibleCounts.get(item.name) ?? 0;
+    const isWitnessed = holds(item.expression, context, `_POSSIBLE ${item.name}`);
+    runtime.possibleCounts.set(item.name, isWitnessed ? count + 1 : count);
+  });
+
+const getConstantFailure = (
+  expression: Expression,
+  environment: Environment,
+  description: string,
+) => {
   try {
-    return holds(
-      assumption.expression,
-      getContext(environment, undefined, undefined),
-      "an assumption",
-    )
+    return holds(expression, getContext(environment, undefined, undefined), description)
       ? undefined
       : { message: undefined };
   } catch (error) {
@@ -306,7 +322,7 @@ export const findAssumptionViolation = (
   environment: Environment,
 ): Omit<Violation, "loopStart"> | undefined => {
   for (const assumption of assumptions.filter((candidate) => !candidate.isAxiom)) {
-    const failure = getAssumptionError(assumption, environment);
+    const failure = getConstantFailure(assumption.expression, environment, "an assumption");
     if (failure) {
       const name =
         assumption.name ?? `line ${assumption.location.line}, column ${assumption.location.column}`;
@@ -327,18 +343,33 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
     config.init === undefined &&
     environment.variables.length === 0;
   if (isConstantModel) return undefined;
+  const spec = getSpecification(config, environment);
+  if (environment.variables.length === 0) return undefined;
   const symmetryGroup =
     config.symmetry === undefined ? [] : getSymmetryGroup(config.symmetry, environment);
+  const view =
+    config.view === undefined ? undefined : getNamedExpressions([config.view], environment)[0];
   const constraints = getStateChecks(
     getNamedExpressions(config.constraints, environment),
     environment,
   );
   const actionConstraints = getNamedExpressions(config.actionConstraints, environment);
+  const possible = getNamedExpressions(config.possible, environment);
+  const isActionPossible = (item: NamedExpression) =>
+    getLevel(item.expression, undefined, environment) >= ACTION_LEVEL;
+  const statePossible = possible.filter((item) => !isActionPossible(item));
+  const actionPossible = possible.filter(isActionPossible);
+  const runtime = environment.runtime;
   return {
     properties,
-    spec: getSpecification(config, environment),
-    getFingerprintState: (state) =>
-      symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup),
+    spec,
+    getFingerprintState: (state) => {
+      const representative =
+        symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup);
+      return view === undefined
+        ? representative
+        : [evaluate(view.expression, getContext(environment, representative, undefined))];
+    },
     findViolatedInvariant: (state, parent) =>
       invariants.find(
         (invariant) =>
@@ -390,6 +421,34 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
           `action constraint ${constraint.name}`,
         ),
       ),
+    trackStatePossible:
+      statePossible.length === 0
+        ? ignorePossible
+        : (state) =>
+            trackPossible(statePossible, runtime, getContext(environment, state, undefined)),
+    trackActionPossible:
+      actionPossible.length === 0
+        ? ignorePossible
+        : (state, next) =>
+            trackPossible(actionPossible, runtime, getContext(environment, state, next)),
+    findPostconditionViolation: (print) => {
+      const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
+      if (unwitnessed) {
+        print(formatValue(getPossibleCounts(runtime), true));
+        return {
+          name: unwitnessed.name,
+          trace: [],
+          message: `The _POSSIBLE predicate ${unwitnessed.name} was never witnessed.`,
+        };
+      }
+      for (const name of config.postconditions) {
+        const failure = getConstantFailure(createIdentifier(name), environment, "a postcondition");
+        if (failure) {
+          return { name, trace: [], message: failure.message ?? `Postcondition ${name} is false.` };
+        }
+      }
+      return undefined;
+    },
   };
 };
 
@@ -402,20 +461,24 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
           module: parseModule(options.source),
         };
   const config = model.config;
-  if (config.view !== undefined) throw new TlaUnsupportedError("VIEW is not supported yet");
+  const print = options.onPrint ?? console.log;
   const specification = createEnvironment(model.module, config, {
     loadModule: options.loadModule,
-    print: options.onPrint ?? console.log,
+    print,
+    files: { readFile: options.readFile, writeFile: options.writeFile },
   });
   const environment = specification.environment;
-  const statistics = { generatedStates: 0, distinctStates: 0, depth: 0 };
+  const runtime = environment.runtime;
+  const statistics = { depth: 0 };
   const createResult = (
     status: CheckStatus,
     violation?: Omit<Violation, "loopStart"> & { loopStart?: number },
   ): CheckResult => ({
     status,
     violation: violation && { ...violation, loopStart: violation.loopStart },
-    ...statistics,
+    generatedStates: runtime.generatedStates,
+    distinctStates: runtime.distinctStates,
+    depth: statistics.depth,
   });
 
   const assumptionViolation = findAssumptionViolation(specification.assumptions, environment);
@@ -486,9 +549,10 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
     else if (typeof bucket === "number") buckets.set(hash, [bucket, index]);
     else bucket.push(index);
   };
-  const countViolatingState = (depth: number) => {
-    statistics.distinctStates = states.length + 1;
+  const countDistinctState = (depth: number) => {
+    runtime.distinctStates = states.length + 1;
     statistics.depth = Math.max(statistics.depth, depth);
+    runtime.diameter = Math.max(runtime.diameter, depth);
   };
   const addState = (
     state: Value[],
@@ -502,19 +566,46 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
     parents.push(parent);
     actions.push(action);
     depths.push(depth);
-    statistics.distinctStates = states.length;
-    statistics.depth = Math.max(statistics.depth, depth);
+  };
+
+  const current = {
+    index: -1,
+    isExpanding: false,
+    candidate: undefined as Value[] | undefined,
+    candidateLevel: 0,
+  };
+  const getPath = (index: number): Value[][] =>
+    index === -1 ? [] : [...getPath(parents[index]), states[index]];
+  runtime.getBehavior = (state) => {
+    const index = state === current.candidate ? -1 : states.indexOf(state);
+    return index === -1 ? [...getPath(current.index), state] : getPath(index);
+  };
+  runtime.getLevel = (state) => {
+    if (state === current.candidate) return current.candidateLevel;
+    if (current.index === -1) return 0;
+    if (state === states[current.index]) return depths[current.index];
+    return current.isExpanding ? depths[current.index] + 1 : 0;
   };
 
   for (const state of getInitialStates(spec.init, environment)) {
     canonicalizeState(state);
-    statistics.generatedStates++;
+    runtime.generatedStates++;
+    runtime.initialStates++;
+    current.candidate = state;
+    current.candidateLevel = 1;
     const fingerprintState = getFingerprintState(state);
     const hash = getStateHash(fingerprintState);
-    if (findStateIndex(hash, fingerprintState) !== -1) continue;
+    const isSeen = findStateIndex(hash, fingerprintState) !== -1;
+    const isInModel = isSeen || search.satisfiesConstraints(state);
+    if (isInModel) search.trackStatePossible(state);
+    if (isSeen) continue;
+    if (isInModel) {
+      countDistinctState(1);
+      runtime.queueSize++;
+      liveness?.addInitialState(states.length, state);
+    }
     const violated = search.findViolatedInvariant(state);
     if (violated) {
-      countViolatingState(1);
       return createResult("invariant-violation", {
         name: violated.name,
         trace: [{ action: undefined, state: toRecord(state) }],
@@ -527,21 +618,49 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
         trace: [{ action: undefined, state: toRecord(state) }],
       });
     }
-    if (!search.satisfiesConstraints(state)) continue;
+    if (!isInModel) continue;
     markSeen(hash, states.length);
-    liveness?.addInitialState(states.length, state);
     addState(state, fingerprintState, -1, undefined);
   }
 
-  for (let index = 0; index < states.length; index++) {
+  for (let index = 0; index < states.length && !runtime.isStopped; index++) {
     const state = states[index];
+    current.index = index;
+    runtime.queueSize = states.length - index - 1;
+    current.isExpanding = true;
     const successors = getSuccessors(spec.next, state, environment);
-    statistics.generatedStates += successors.length;
+    current.isExpanding = false;
     if (successors.length === 0 && config.checkDeadlock) {
       return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
     }
     const liveSuccessors: LiveSuccessor[] = [];
     for (const successor of successors) {
+      runtime.generatedStates++;
+      current.candidate = successor.state;
+      current.candidateLevel = depths[index] + 1;
+      canonicalizeState(successor.state);
+      const fingerprintState = getFingerprintState(successor.state);
+      const hash = getStateHash(fingerprintState);
+      const found = findStateIndex(hash, fingerprintState);
+      const isStateInModel = found !== -1 || search.satisfiesConstraints(successor.state, state);
+      if (isStateInModel) search.trackStatePossible(successor.state);
+      const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
+      if (isInModel) search.trackActionPossible(state, successor.state);
+      const existing = isInModel ? found : -1;
+      if (existing !== -1 && liveness) {
+        liveSuccessors.push({ index: existing, state: successor.state });
+      }
+      const isNew = isInModel && existing === -1;
+      if (isNew) countDistinctState(depths[index] + 1);
+      if (existing === -1) {
+        const violated = search.findViolatedInvariant(successor.state, state);
+        if (violated) {
+          return createResult("invariant-violation", {
+            name: violated.name,
+            trace: getTrace(index, successor),
+          });
+        }
+      }
       const violatedProperty = search.findViolatedActionProperty(state, successor.state);
       if (violatedProperty) {
         return createResult("liveness-violation", {
@@ -549,27 +668,11 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
           trace: getTrace(index, successor),
         });
       }
-      if (!search.satisfiesActionConstraints(state, successor.state)) continue;
-      canonicalizeState(successor.state);
-      const fingerprintState = getFingerprintState(successor.state);
-      const hash = getStateHash(fingerprintState);
-      const existing = findStateIndex(hash, fingerprintState);
-      if (existing !== -1) {
-        if (liveness) liveSuccessors.push({ index: existing, state: successor.state });
-        continue;
-      }
-      const violated = search.findViolatedInvariant(successor.state, state);
-      if (violated) {
-        countViolatingState(depths[index] + 1);
-        return createResult("invariant-violation", {
-          name: violated.name,
-          trace: getTrace(index, successor),
-        });
-      }
-      if (!search.satisfiesConstraints(successor.state, state)) continue;
+      if (!isNew) continue;
       markSeen(hash, states.length);
       if (liveness) liveSuccessors.push({ index: states.length, state: successor.state });
       addState(successor.state, fingerprintState, index, successor.action);
+      runtime.queueSize++;
     }
     const accepted = liveness?.addState(index, state, liveSuccessors);
     if (accepted) {
@@ -580,6 +683,8 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
     }
   }
 
+  current.index = -1;
+  current.candidate = undefined;
   const lasso = liveness?.findViolation();
   if (lasso) {
     return createResult("liveness-violation", {
@@ -589,5 +694,9 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
     });
   }
 
+  const postconditionViolation = search.findPostconditionViolation(print);
+  if (postconditionViolation) {
+    return createResult("postcondition-violation", postconditionViolation);
+  }
   return createResult("success");
 };

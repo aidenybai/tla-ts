@@ -243,6 +243,7 @@ export interface FairnessExpression {
   kind: "WeakFairness" | "StrongFairness";
   subscript: Expression;
   action: Expression;
+  enabled?: Expression;
   location: SourceLocation;
 }
 

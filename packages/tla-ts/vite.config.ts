@@ -18,6 +18,7 @@ export default defineConfig({
     entry: {
       index: "./src/index.ts",
       cli: "./src/cli.ts",
+      "parallel-worker": "./src/parallel-worker.ts",
     },
     format: ["esm", "cjs"],
     hash: false,
@@ -29,6 +30,7 @@ export default defineConfig({
     tsconfig: "./tsconfig.build.json",
   } satisfies PackUserConfig,
   test: {
+    globalSetup: ["./tests/setup/build.ts"],
     include: ["tests/unit/**/*.test.ts"],
     passWithNoTests: true,
   },

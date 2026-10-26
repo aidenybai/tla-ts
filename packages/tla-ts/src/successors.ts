@@ -1,4 +1,4 @@
-import { describeLocation, type Bound, type Expression } from "./ast";
+import { describeLocation, type Bound, type Definition, type Expression } from "./ast";
 import { TlaEvaluationError } from "./errors";
 import {
   bindArgument,
@@ -79,6 +79,9 @@ const holds = (expression: Expression, context: Context) => {
   return expectBoolean(value, `the action at ${describeLocation(expression)}`);
 };
 
+const isAssignmentOperator = (operator: string) =>
+  operator === "=" || operator === "\\in" || operator === "\\subseteq";
+
 const getRunner = (expression: Expression, environment: Environment, isInit: boolean): Runner => {
   const runners = isInit ? initRunners : nextRunners;
   const cached = runners.get(expression);
@@ -98,7 +101,7 @@ const getStaticVariableIndex = (
   expression: Expression,
   environment: Environment,
   isPrimed: boolean,
-  visited = new Set<string>(),
+  visited = new Set<Definition>(),
 ): number | undefined => {
   if (expression.kind === "Prime" && isPrimed) {
     return getStaticVariableIndex(expression.expression, environment, false, visited);
@@ -107,8 +110,8 @@ const getStaticVariableIndex = (
   const index = environment.variableIndex.get(expression.name);
   if (index !== undefined) return isPrimed ? undefined : index;
   const definition = getZeroArityBody(expression.name, environment);
-  if (!definition || visited.has(definition.name)) return undefined;
-  visited.add(definition.name);
+  if (!definition || visited.has(definition)) return undefined;
+  visited.add(definition);
   return getStaticVariableIndex(definition.body, environment, isPrimed, visited);
 };
 
@@ -195,7 +198,7 @@ const isGuard = (expression: Expression, environment: Environment, isInit: boole
   }
   if (expression.kind !== "Apply") return true;
   if (expression.operator === "=>") return false;
-  if (expression.operator === "=" || expression.operator === "\\in") {
+  if (isAssignmentOperator(expression.operator)) {
     if (isPossiblyAssignable(expression.args[0], isInit)) return false;
     if (getAssignableIndex(expression.args[0], environment, isInit) !== undefined) return false;
   }
@@ -318,7 +321,9 @@ const compileMembership = (
       if (holds(expression, context)) onComplete(partial, action);
       return;
     }
-    const value = evaluate(set, context);
+    const evaluated = evaluate(set, context);
+    const value: Value =
+      expression.operator === "\\subseteq" ? { kind: "Subset", base: evaluated } : evaluated;
     if (!isEnumerable(value)) {
       throw new TlaEvaluationError(
         `In computing next states, the right side of \\in is not enumerable: ${formatValue(value)} at ${describeLocation(expression)}`,
@@ -363,7 +368,7 @@ const compileDynamicAssignment = (
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
     }
-    if (expression.operator === "\\in") {
+    if (expression.operator !== "=") {
       membership(run, scope, partial, action, isFixed, onComplete);
       return;
     }
@@ -681,10 +686,10 @@ const compileAction = (
       return compileFunctionAction(expression, environment, isInit);
     case "Apply": {
       const args = expression.args;
-      if (expression.operator === "=" || expression.operator === "\\in") {
+      if (isAssignmentOperator(expression.operator)) {
         const index = getAssignableIndex(args[0], environment, isInit);
         if (index !== undefined) {
-          if (expression.operator === "\\in") return compileMembership(expression, () => index);
+          if (expression.operator !== "=") return compileMembership(expression, () => index);
           return compileConjunction([expression], environment, isInit);
         }
         if (isPossiblyAssignable(args[0], isInit)) {

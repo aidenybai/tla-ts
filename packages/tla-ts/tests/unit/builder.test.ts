@@ -401,6 +401,82 @@ describe("defineSpec matches TLC", () => {
     const loadModule = (name: string) => readFileSync(join(INSTANCES, `${name}.tla`), "utf8");
     expect(getCounts({ spec, loadModule })).toEqual(counts);
   });
+
+  it("deduplicates states by VIEW", () => {
+    const spec = defineSpec((tla) => {
+      const producers = tla.constant("P", [tla.modelValue("p1")]);
+      const consumers = tla.constant("C", [tla.modelValue("c1"), tla.modelValue("c2")]);
+      const capacity = tla.constant("K", 1);
+      const buffer = tla.variable("buffer");
+      const waitset = tla.variable("waitset");
+      const pc = tla.variable("pc");
+      const removeLast = tla.operator("RemoveLast", ["seq"], (seq) =>
+        tla.fn(tla.range(1, seq.length().minus(1)), (index) => seq.at(index)),
+      );
+      const processes = tla.define("ProcSet", producers.union(consumers));
+      const notify = tla.ifThenElse(
+        waitset.neq(tla.set()),
+        tla.exists(waitset, (waiter) => waitset.prime().eq(waitset.difference(tla.set(waiter)))),
+        tla.and(true, tla.unchanged(waitset)),
+      );
+      const getStep = (label: string, isWaiting: Term, update: Term) =>
+        tla.operator(label, ["self"], (self) =>
+          tla.and(
+            pc.at(self).eq(label),
+            tla.ifThenElse(
+              isWaiting,
+              tla.and(
+                waitset.prime().eq(waitset.union(tla.set(self))),
+                pc.prime().eq(pc.except(self, label)),
+                tla.unchanged(buffer),
+              ),
+              tla.and(buffer.prime().eq(update), notify, pc.prime().eq(pc.except(self, label))),
+            ),
+          ),
+        );
+      const produce = getStep("lbp", buffer.length().ge(capacity), buffer.append("d"));
+      const producer = tla.operator("p", ["self"], (self) => produce(self));
+      const consume = getStep("lbc", buffer.length().eq(0), removeLast(buffer));
+      const consumer = tla.operator("c", ["self"], (self) => consume(self));
+      return {
+        init: tla.and(
+          buffer.eq(tla.tuple()),
+          waitset.eq(tla.set()),
+          pc.eq(
+            tla.fn(processes, (self) =>
+              tla.cases([
+                [self.in(producers), "lbp"],
+                [self.in(consumers), "lbc"],
+              ]),
+            ),
+          ),
+        ),
+        next: tla.or(
+          tla.exists(producers, (self) => producer(self)),
+          tla.exists(consumers, (self) => consumer(self)),
+          tla.and(
+            tla.forall(processes, (self) => pc.at(self).eq("Done")),
+            tla.unchanged(buffer, waitset, pc),
+          ),
+        ),
+        invariants: { Inv: waitset.neq(processes) },
+        view: tla.tuple(buffer, waitset),
+      };
+    });
+    const result = check({ spec });
+    expect(result.violation?.name).toBe("Inv");
+    expect(result.violation?.trace.map((step) => step.action)).toEqual([
+      undefined,
+      "lbc",
+      "lbc",
+      "lbp",
+      "lbp",
+      "lbc",
+      "lbc",
+      "lbc",
+    ]);
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([43, 14, 8]);
+  });
 });
 
 describe("defineSpec", () => {
@@ -590,6 +666,61 @@ describe("defineSpec", () => {
     const result = check({ spec });
     expect(result.violation?.name).toBe("Small");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([6, 6, 6]);
+  });
+
+  it("evaluates the Bags module", () => {
+    const spec = defineSpec((tla) => {
+      const x = tla.variable("x");
+      const bag = tla.set("a", "b").setToBag().bagAdd(tla.set("a").setToBag());
+      return {
+        init: x.eq(0),
+        next: x.prime().eq(x),
+        assumptions: {
+          Counts: tla.and(
+            tla.value("a").copiesIn(bag).eq(2),
+            bag.bagCardinality().eq(3),
+            bag.bagSubtract(tla.set("a").setToBag()).eq(tla.set("a", "b").setToBag()),
+            tla.EmptyBag.isSubBagOf(bag),
+            bag.bagToSet().eq(tla.set("a", "b")),
+            bag.bagOfAll((element) => element).eq(bag),
+            tla.set(bag, tla.EmptyBag).bagUnion().eq(bag),
+          ),
+        },
+      };
+    });
+    expect(check({ spec }).status).toBe("success");
+  });
+
+  it("evaluates the Reals module like TLC", () => {
+    const getSpec = (value: number) =>
+      defineSpec((tla) => {
+        const x = tla.variable("x");
+        return {
+          init: x.eq(value),
+          next: x.prime().eq(x),
+          assumptions: { RealIsAString: tla.Real.eq("Reals") },
+        };
+      });
+    expect(check({ spec: getSpec(1) }).status).toBe("success");
+    expect(() => check({ spec: getSpec(1.5) })).toThrow(/TLC can't handle real numbers: 1\.5/);
+  });
+
+  it("checks postconditions with TLCGet and TLCSet", () => {
+    const spec = defineSpec((tla) => {
+      const x = tla.variable("x");
+      return {
+        init: x.eq(0),
+        next: tla.and(x.lt(3), x.prime().eq(x.plus(1))),
+        postconditions: {
+          Post1: tla.tlcSet(100, tla.tlcGet("generated")),
+          Post2: tla.tlcSet(101, tla.tlcGet("distinct")),
+          PostFail: tla.tlcGet("distinct").eq(42),
+        },
+        checkDeadlock: false,
+      };
+    });
+    expect(getCounts({ spec })).toEqual(["postcondition-violation", 4, 4, 4]);
+    expect(check({ spec }).violation?.name).toBe("PostFail");
   });
 
   it("reports a false assumption", () => {

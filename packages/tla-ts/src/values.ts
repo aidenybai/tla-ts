@@ -9,6 +9,7 @@ export interface SetValue {
   kind: "Set";
   elements: Value[];
   hash: number;
+  fingerprint: number;
 }
 
 export interface FunctionValue {
@@ -16,6 +17,7 @@ export interface FunctionValue {
   domain: Value[];
   range: Value[];
   hash: number;
+  fingerprint: number;
 }
 
 export interface IntervalValue {
@@ -26,7 +28,7 @@ export interface IntervalValue {
 
 export interface InfiniteSetValue {
   kind: "InfiniteSet";
-  name: "Nat" | "Int" | "STRING";
+  name: "Nat" | "Int" | "STRING" | "Any";
 }
 
 export interface SubsetValue {
@@ -159,6 +161,30 @@ const compareSets = (left: SetValue, right: SetValue): number => {
   return 0;
 };
 
+const getModelValueType = (value: Value) =>
+  isModelValue(value) && value.name.length > 2 && value.name[1] === "_" ? value.name[0] : undefined;
+
+const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) => {
+  const leftType = getModelValueType(left);
+  const rightType = getModelValueType(right);
+  if (leftType === undefined && rightType === undefined) return;
+  const action = isEquality ? "check equality of" : "compare";
+  if (isModelValue(left) && isModelValue(right)) {
+    if (leftType === undefined || rightType === undefined || leftType === rightType) return;
+    throw new TlaEvaluationError(
+      `Attempted to ${action} the differently-typed model values ${formatValue(left)} and ${formatValue(right)}`,
+    );
+  }
+  if (leftType !== undefined) {
+    throw new TlaEvaluationError(
+      `Attempted to ${action}${isEquality ? "" : " the"} typed model value ${formatValue(left)} and non-model value\n${formatValue(right)}`,
+    );
+  }
+  throw new TlaEvaluationError(
+    `Attempted to ${action} the typed model value ${formatValue(right)} and the non-model value\n${formatValue(left)}`,
+  );
+};
+
 export const compareValues = (left: Value, right: Value): number => {
   if (left === right) return 0;
   if (typeof left === "object" && typeof right === "object") {
@@ -167,10 +193,17 @@ export const compareValues = (left: Value, right: Value): number => {
     if (leftKind === "Function" && rightKind === "Function") return compareFunctions(left, right);
     if (leftKind === "Set" && rightKind === "Set") return compareSets(left, right);
     if (leftKind === "ModelValue" || rightKind === "ModelValue") {
+      checkModelValueTypes(left, right, false);
       if (leftKind === "ModelValue" && rightKind === "ModelValue") {
         return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
       }
       return leftKind === "ModelValue" ? -1 : 1;
+    }
+    const isAny = (value: ObjectValue) => value.kind === "InfiniteSet" && value.name === "Any";
+    if (isAny(left) || isAny(right)) {
+      throw new TlaEvaluationError(
+        `Attempted to compare ANY with ${formatValue(isAny(left) ? right : left)}`,
+      );
     }
     if (leftKind === "InfiniteSet" && rightKind === "InfiniteSet") {
       if (left.name === right.name) return 0;
@@ -188,6 +221,7 @@ export const compareValues = (left: Value, right: Value): number => {
   if (typeof left === "number" && typeof right === "number") return left - right;
   if (typeof left === "string" && typeof right === "string") return left < right ? -1 : 1;
   if (typeof left === "boolean" && typeof right === "boolean") return left < right ? -1 : 1;
+  checkModelValueTypes(left, right, false);
   if (isModelValue(left)) return -1;
   if (isModelValue(right)) return 1;
   throw new TlaEvaluationError(
@@ -195,10 +229,21 @@ export const compareValues = (left: Value, right: Value): number => {
   );
 };
 
+const modelValues = new Map<string, ModelValue>();
+
+export const createModelValue = (name: string): ModelValue => {
+  const known = modelValues.get(name);
+  if (known) return known;
+  const value: ModelValue = { kind: "ModelValue", name };
+  modelValues.set(name, value);
+  return value;
+};
+
 export const createSortedSet = (elements: Value[]): SetValue => ({
   kind: "Set",
   elements,
   hash: 0,
+  fingerprint: 0,
 });
 
 export const createSortedFunction = (domain: Value[], range: Value[]): FunctionValue => ({
@@ -206,12 +251,18 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   domain,
   range,
   hash: 0,
+  fingerprint: 0,
 });
 
 export const valuesEqual = (left: Value, right: Value): boolean => {
   if (left === right) return true;
-  if (typeof left !== "object" || typeof right !== "object")
+  if (typeof left !== "object" || typeof right !== "object") {
+    if (typeof left === typeof right) return false;
+    if (typeof left === "object" || typeof right === "object") {
+      checkModelValueTypes(left, right, true);
+    }
     return compareValues(left, right) === 0;
+  }
   const isHashed =
     (left.kind === "Set" || left.kind === "Function") &&
     (right.kind === "Set" || right.kind === "Function") &&
@@ -222,6 +273,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     return compareFunctions(left, right) === 0;
   if (left.kind === "Set" && right.kind === "Set") return compareSets(left, right) === 0;
   if (isModelValue(left) || isModelValue(right)) {
+    checkModelValueTypes(left, right, true);
     return isModelValue(left) && isModelValue(right) && left.name === right.name;
   }
   const isInfiniteComparison =
@@ -352,6 +404,13 @@ export const unionSorted = (left: SetValue, right: SetValue): SetValue => {
       hash = (hash + getElementContribution(added[index])) | 0;
     }
     union.hash = hash;
+  }
+  if (left.fingerprint !== 0) {
+    let fingerprint = left.fingerprint;
+    for (let index = 0; index < added.length; index++) {
+      fingerprint = (fingerprint + getElementFingerprint(added[index])) | 0;
+    }
+    union.fingerprint = fingerprint;
   }
   return union;
 };
@@ -537,10 +596,33 @@ const checkCardinality = (cardinality: number, set: Value) => {
   return cardinality;
 };
 
+export const isEmptySet = (value: Value): boolean => {
+  if (typeof value !== "object") return toFiniteSet(value).elements.length === 0;
+  switch (value.kind) {
+    case "Set":
+      return value.elements.length === 0;
+    case "Interval":
+      return value.low > value.high;
+    case "InfiniteSet":
+    case "Subset":
+    case "SequenceSet":
+      return false;
+    case "ProductSet":
+      return value.factors.some(isEmptySet);
+    case "RecordSet":
+      return value.sets.some(isEmptySet);
+    case "FunctionSet":
+      return isEmptySet(value.range) && !isEmptySet(value.domain);
+    default:
+      return toFiniteSet(value).elements.length === 0;
+  }
+};
+
 const getProductCardinality = (sets: Value[], set: Value) => {
-  const sizes = sets.map(getCardinality);
-  if (sizes.includes(0)) return 0;
-  return sizes.reduce((product, size) => checkCardinality(product * size, set), 1);
+  if (sets.some(isEmptySet)) return 0;
+  return sets
+    .map(getCardinality)
+    .reduce((product, size) => checkCardinality(product * size, set), 1);
 };
 
 export const getCardinality = (value: Value): number => {
@@ -551,6 +633,7 @@ export const getCardinality = (value: Value): number => {
     case "Subset":
       return checkCardinality(2 ** getCardinality(value.base), value);
     case "FunctionSet":
+      if (isEmptySet(value)) return 0;
       return getProductCardinality(
         Array.from({ length: getCardinality(value.domain) }, () => value.range),
         value,
@@ -597,6 +680,7 @@ export const isElementOf = (element: Value, set: Value): boolean => {
         throw new TlaEvaluationError(describeMembership(element, set));
       return false;
     case "InfiniteSet": {
+      if (set.name === "Any") return true;
       if (isModelValue(element)) return false;
       const isMemberType =
         set.name === "STRING" ? typeof element === "string" : typeof element === "number";
@@ -742,6 +826,16 @@ export const updateFunction = (
         ? finite.hash
         : (finite.hash - getEntryContribution(key, previous) + getEntryContribution(key, next)) | 0;
   }
+  if (finite.fingerprint !== 0) {
+    const key = finite.domain[position];
+    updated.fingerprint =
+      previous === next
+        ? finite.fingerprint
+        : (finite.fingerprint -
+            getEntryFingerprint(key, previous) +
+            getEntryFingerprint(key, next)) |
+          0;
+  }
   return updated;
 };
 
@@ -807,62 +901,64 @@ export const getValueHash = (value: Value): number => {
   return hash;
 };
 
-const valueKeys = new WeakMap<ObjectValue, string>();
+const valueFingerprints = new WeakMap<ObjectValue, number>();
 
-const KEY_DELIMITERS = new Set([",", ":", ")", "}"]);
-
-export const parseValueKey = (key: string): Value => {
-  const cursor = { index: 0 };
-  const parse = (): Value => {
-    const character = key[cursor.index];
-    if (character === "T" || character === "F") {
-      cursor.index++;
-      return character === "T";
-    }
-    if (character === '"') {
-      const start = cursor.index;
-      cursor.index++;
-      while (key[cursor.index] !== '"') cursor.index += key[cursor.index] === "\\" ? 2 : 1;
-      cursor.index++;
-      return JSON.parse(key.slice(start, cursor.index));
-    }
-    if (character === "@") {
-      const start = ++cursor.index;
-      while (cursor.index < key.length && !KEY_DELIMITERS.has(key[cursor.index])) cursor.index++;
-      return { kind: "ModelValue", name: key.slice(start, cursor.index) };
-    }
-    if (character === "{") {
-      cursor.index++;
-      const elements: Value[] = [];
-      while (key[cursor.index] !== "}") {
-        elements.push(parse());
-        if (key[cursor.index] === ",") cursor.index++;
-      }
-      cursor.index++;
-      return createSortedSet(elements);
-    }
-    if (character === "(") {
-      cursor.index++;
-      const domain: Value[] = [];
-      const range: Value[] = [];
-      while (key[cursor.index] !== ")") {
-        domain.push(parse());
-        cursor.index++;
-        range.push(parse());
-        if (key[cursor.index] === ",") cursor.index++;
-      }
-      cursor.index++;
-      return createSortedFunction(domain, range);
-    }
-    const number = /^-?\d+/.exec(key.slice(cursor.index))?.[0];
-    if (number === undefined) {
-      throw new TlaEvaluationError(`Cannot reconstruct a value from the key ${key}`);
-    }
-    cursor.index += number.length;
-    return Number(number);
-  };
-  return parse();
+const finalizeFingerprint = (hash: number) => {
+  const first = Math.imul(hash ^ (hash >>> 15), 0x2c1b3c6d);
+  const second = Math.imul(first ^ (first >>> 12), 0x297a2d39);
+  return second ^ (second >>> 15);
 };
+
+const fingerprintString = (value: string) => {
+  let hash = 0x9747b28c;
+  for (let index = 0; index < value.length; index++)
+    hash = Math.imul(hash ^ value.charCodeAt(index), 0x5bd1e995);
+  return finalizeFingerprint(hash);
+};
+
+const getElementFingerprint = (element: Value) =>
+  finalizeFingerprint((getValueFingerprint(element) + 0x7f4a7c15) | 0);
+
+const getEntryFingerprint = (key: Value, value: Value) =>
+  finalizeFingerprint(
+    (Math.imul(getValueFingerprint(key), 0x165667b1) + getValueFingerprint(value)) | 0,
+  );
+
+const computeValueFingerprint = (value: ObjectValue): number => {
+  if (value.kind === "ModelValue") return finalizeFingerprint(fingerprintString(value.name) ^ 0x3c);
+  if (isSetValue(value)) {
+    if (!isEnumerable(value)) return fingerprintString(getValueKey(value));
+    const elements = toFiniteSet(value).elements;
+    let fingerprint = 0x1b873593;
+    for (let index = 0; index < elements.length; index++) {
+      fingerprint = (fingerprint + getElementFingerprint(elements[index])) | 0;
+    }
+    return fingerprint;
+  }
+  const fn = toFiniteFunction(value);
+  let fingerprint = 0x4cf5ad43;
+  for (let index = 0; index < fn.domain.length; index++) {
+    fingerprint = (fingerprint + getEntryFingerprint(fn.domain[index], fn.range[index])) | 0;
+  }
+  return fingerprint;
+};
+
+export const getValueFingerprint = (value: Value): number => {
+  if (typeof value === "number") return finalizeFingerprint(value ^ 0x68e31da4);
+  if (typeof value === "boolean") return value ? 0x3b9aca07 : 0x1f123bb5;
+  if (typeof value === "string") return fingerprintString(value);
+  if (value.kind === "Set" || value.kind === "Function") {
+    if (value.fingerprint === 0) value.fingerprint = computeValueFingerprint(value);
+    return value.fingerprint;
+  }
+  const cached = valueFingerprints.get(value);
+  if (cached !== undefined) return cached;
+  const fingerprint = computeValueFingerprint(value);
+  valueFingerprints.set(value, fingerprint);
+  return fingerprint;
+};
+
+const valueKeys = new WeakMap<ObjectValue, string>();
 
 export const getValueKey = (value: Value): string => {
   if (typeof value === "boolean") return value ? "T" : "F";
@@ -895,7 +991,35 @@ const computeValueKey = (value: ObjectValue): string => {
 const formatString = (value: string) =>
   `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\t/g, "\\t")}"`;
 
-export const formatValue = (value: Value): string => {
+const formatLazySet = (
+  value:
+    | SubsetValue
+    | FunctionSetValue
+    | RecordSetValue
+    | ProductSetValue
+    | SetOperationValue
+    | FilteredSetValue,
+  isExpanded: boolean,
+): string => {
+  const format = (inner: Value) => formatValue(inner, isExpanded);
+  switch (value.kind) {
+    case "Subset":
+      return `SUBSET ${format(value.base)}`;
+    case "FunctionSet":
+      return `[${format(value.domain)} -> ${format(value.range)}]`;
+    case "RecordSet":
+      return `[${value.names.map((name, index) => `${name} : ${format(value.sets[index])}`).join(", ")}]`;
+    case "ProductSet":
+      return value.factors.map(format).join(" \\X ");
+    case "SetOperation":
+      return `${format(value.left)} ${value.operator} ${format(value.right)}`;
+    case "FilteredSet":
+      return `{x \\in ${format(value.base)} : ...}`;
+  }
+};
+
+export const formatValue = (value: Value, isExpanded = false): string => {
+  const format = (inner: Value) => formatValue(inner, isExpanded);
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
   if (typeof value === "number") return String(value);
   if (typeof value === "string") return formatString(value);
@@ -903,36 +1027,34 @@ export const formatValue = (value: Value): string => {
     case "ModelValue":
       return value.name;
     case "Set":
-      return `{${value.elements.map(formatValue).join(", ")}}`;
+      return `{${value.elements.map(format).join(", ")}}`;
     case "Interval":
       return `${value.low}..${value.high}`;
     case "InfiniteSet":
-      return value.name;
+      return value.name === "Any" ? "ANY" : value.name;
     case "Subset":
-      return `SUBSET ${formatValue(value.base)}`;
     case "FunctionSet":
-      return `[${formatValue(value.domain)} -> ${formatValue(value.range)}]`;
     case "RecordSet":
-      return `[${value.names.map((name, index) => `${name} : ${formatValue(value.sets[index])}`).join(", ")}]`;
     case "ProductSet":
-      return value.factors.map(formatValue).join(" \\X ");
-    case "SequenceSet":
-      return `Seq(${formatValue(value.base)})`;
     case "SetOperation":
-      return `${formatValue(value.left)} ${value.operator} ${formatValue(value.right)}`;
     case "FilteredSet":
-      return `{x \\in ${formatValue(value.base)} : ...}`;
+      return isExpanded && isEnumerable(value)
+        ? format(toFiniteSet(value))
+        : formatLazySet(value, isExpanded);
+
+    case "SequenceSet":
+      return `Seq(${format(value.base)})`;
     case "Function":
     case "LazyFunction": {
       if (value.kind === "LazyFunction" && !isEnumerable(value.domain)) return "<function>";
       const fn = toFiniteFunction(value);
       if (fn.domain.every((key, index) => key === index + 1)) {
-        return `<<${fn.range.map(formatValue).join(", ")}>>`;
+        return `<<${fn.range.map(format).join(", ")}>>`;
       }
       if (fn.domain.every((key) => typeof key === "string" && key.length > 0)) {
-        return `[${fn.domain.map((key, index) => `${String(key)} |-> ${formatValue(fn.range[index])}`).join(", ")}]`;
+        return `[${fn.domain.map((key, index) => `${String(key)} |-> ${format(fn.range[index])}`).join(", ")}]`;
       }
-      return `(${fn.domain.map((key, index) => `${formatValue(key)} :> ${formatValue(fn.range[index])}`).join(" @@ ")})`;
+      return `(${fn.domain.map((key, index) => `${format(key)} :> ${format(fn.range[index])}`).join(" @@ ")})`;
     }
   }
 };

@@ -8,7 +8,6 @@ import {
   TlaConfigError,
   TlaEvaluationError,
   TlaSyntaxError,
-  TlaUnsupportedError,
 } from "../../src";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
@@ -30,6 +29,195 @@ describe("check matches TLC", () => {
     const result = checkFixture("semantics", "Semantics");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([2, 1, 1]);
+  });
+
+  it("checks invariants before action properties and constrained states", () => {
+    const results = ["InvariantFirst", "ConstrainedInvariant"].map((name) =>
+      check({
+        source: readFileSync(join(FIXTURES, "ordering", "Ordering.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "ordering", `${name}.cfg`), "utf8"),
+      }),
+    );
+    expect(
+      results.map((result) => [
+        result.status,
+        result.violation?.name,
+        result.generatedStates,
+        result.distinctStates,
+        result.depth,
+      ]),
+    ).toEqual([
+      ["invariant-violation", "Small", 3, 3, 3],
+      ["invariant-violation", "Small", 3, 2, 2],
+    ]);
+  });
+
+  it("checks membership in a union of a non-enumerable set against the enumerable side first", () => {
+    expect(checkModule('ASSUME 1 \\in Int \\cup {"none"}').status).toBe("assumption-violation");
+    expect(checkModule("ASSUME 5 \\in UNION {Nat}").status).toBe("success");
+  });
+
+  it("compares power sets through their bases", () => {
+    expect(checkModule("ASSUME SUBSET (1..23) \\subseteq SUBSET (1..42)").status).toBe("success");
+    expect(checkModule("ASSUME ~(SUBSET (1..42) \\subseteq SUBSET (2..42))").status).toBe(
+      "success",
+    );
+  });
+
+  it("reports a module that cannot be found as a syntax error", () => {
+    expect(() =>
+      check({
+        source: "---- MODULE M ----\nEXTENDS Missing\n====",
+        config: "",
+        loadModule: () => undefined,
+      }),
+    ).toThrow(TlaSyntaxError);
+  });
+
+  it("exposes TLC's level, counters, and registers through TLCGet and TLCSet", () => {
+    const results = ["Runtime", "Distinct", "Generated"].map((name) =>
+      check({
+        source: readFileSync(join(FIXTURES, "runtime", "Runtime.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
+      }),
+    );
+    expect(
+      results.map((result) => [
+        result.status,
+        result.generatedStates,
+        result.distinctStates,
+        result.depth,
+        result.violation?.trace.map((step) => step.state.x),
+      ]),
+    ).toEqual([
+      ["success", 14, 8, 4, undefined],
+      ["invariant-violation", 10, 6, 3, [1, 3, 5]],
+      ["invariant-violation", 8, 5, 3, [0, 2, 4]],
+    ]);
+  });
+
+  it("treats Any as a set containing every value", () => {
+    expect(
+      checkModule(
+        'ASSUME <<1, {2}>> \\in Any /\\ [a |-> 1] \\in [a : Any] /\\ ToString(Any) = "ANY"',
+      ).status,
+    ).toBe("success");
+  });
+
+  it("checks _POSSIBLE predicates and postconditions after the search", () => {
+    const results = ["Holds", "Unwitnessed", "False"].map((name) =>
+      check({
+        source: readFileSync(join(FIXTURES, "postconditions", "Postconditions.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "postconditions", `${name}.cfg`), "utf8"),
+        onPrint: () => {},
+      }),
+    );
+    expect(
+      results.map((result) => [result.status, result.violation?.name, result.distinctStates]),
+    ).toEqual([
+      ["success", undefined, 4],
+      ["postcondition-violation", "AtTen", 4],
+      ["postcondition-violation", "FiveStates", 4],
+    ]);
+  });
+
+  it("generates no states for a specification without variables", () => {
+    const result = check({
+      source: "---- MODULE M ----\nSpec == [][TRUE]_<<>>\n====",
+      config: "SPECIFICATION Spec",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      0,
+      0,
+      0,
+    ]);
+  });
+
+  it("bundles the Reals module, whose Real is not a set TLC can check", () => {
+    const result = check({
+      source:
+        "---- MODULE M ----\nEXTENDS Reals, Toolbox\nVARIABLE x\nASSUME 1 \\in Real\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("assumption-violation");
+  });
+
+  it("fingerprints states by their VIEW and keeps the fair steps it hides", () => {
+    const result = checkFixture("view", "View");
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      5,
+      4,
+      4,
+    ]);
+  });
+
+  it("enumerates subsets for x \\subseteq S in the initial predicate and next-state relation", () => {
+    const result = check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x \\subseteq {1, 2}\nNext == x' \\subseteq {1, 2, 3}\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      68,
+      8,
+      2,
+    ]);
+  });
+
+  it("assigns operator constants from tables in the configuration", () => {
+    const result = check({
+      source:
+        "---- MODULE M ----\nCONSTANT F(_)\nVARIABLE x\nInit == x = 0\nNext == x' = F(x)\nInv == x /= 2\n====",
+      config: "INIT Init\nNEXT Next\nCONSTANT\n  F(0) = 1\n  F(1) = 2\n  F(2) = 2\nINVARIANT Inv",
+    });
+    expect([result.status, result.violation?.trace.map((step) => step.state.x)]).toEqual([
+      "invariant-violation",
+      [0, 1, 2],
+    ]);
+  });
+
+  it("converts values to JSON like TLC's Json module", () => {
+    const assumptions = [
+      'ToJson(<<3, 2, 1>>) = "[3,2,1]"',
+      'ToJson({3, 2, 1}) = "[1,2,3]"',
+      'ToJsonObject([a |-> TRUE, b |-> FALSE]) = "{\\"a\\":true,\\"b\\":false}"',
+      'ToJson(3 :> "c" @@ 2 :> "b" @@ 1 :> "a") = "[\\"a\\",\\"b\\",\\"c\\"]"',
+      'ToJson([x \\in {3, 2, 1} |-> 2 * x + 1]) = "[3,5,7]"',
+      'ToJsonArray({}) = "[]"',
+    ];
+    const result = check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC, Json\nVARIABLE x\n${assumptions.map((assumption) => `ASSUME ${assumption}`).join("\n")}\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("success");
+  });
+
+  it("implements the TLCExt operators", () => {
+    const results = ["Extensions", "ExtensionsShort"].map((name) =>
+      check({
+        source: readFileSync(join(FIXTURES, "runtime", "Extensions.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
+      }),
+    );
+    expect(
+      results.map((result) => [result.status, result.generatedStates, result.distinctStates]),
+    ).toEqual([
+      ["success", 4, 4],
+      ["invariant-violation", 3, 3],
+    ]);
+  });
+
+  it("rejects comparisons of differently-typed model values", () => {
+    expect(() =>
+      check({
+        source:
+          '---- MODULE M ----\nEXTENDS TLCExt\nVARIABLE v\nInit == v = {TLCModelValue("A_a"), TLCModelValue("B_a")}\nNext == UNCHANGED v\n====',
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).toThrow("Attempted to compare the differently-typed model values A_a and B_a");
   });
 
   it("explores the mutex state space", () => {
@@ -102,6 +290,15 @@ describe("check matches TLC", () => {
     const result = checkFixture("symmetry", "Symmetry");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([42, 10, 7]);
+  });
+
+  it("checks liveness on the symmetry-reduced graph", () => {
+    const result = checkFixture("symmetry", "SymmetricLiveness");
+    expect(result.status).toBe("liveness-violation");
+    expect(result.violation?.name).toBe("Live");
+    expect(result.violation?.trace.map((step) => step.state.x)).toEqual([
+      { kind: "ModelValue", name: "m1" },
+    ]);
   });
 
   it("rejects a symmetry that names a constant", () => {
@@ -257,7 +454,8 @@ describe("parseConfig matches TLC", () => {
     expect(config.invariants).toEqual(["1Inv"]);
   });
 
-  it("reports _POSSIBLE as unsupported", () => {
-    expect(() => parseConfig("SPECIFICATION Spec\n_POSSIBLE Done")).toThrow(TlaUnsupportedError);
+  it("reads _POSSIBLE and POSTCONDITION names", () => {
+    const config = parseConfig("SPECIFICATION Spec\n_POSSIBLE Done Started\nPOSTCONDITION Post");
+    expect([config.possible, config.postconditions]).toEqual([["Done", "Started"], ["Post"]]);
   });
 });

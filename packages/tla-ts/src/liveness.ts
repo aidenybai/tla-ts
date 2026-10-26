@@ -477,7 +477,11 @@ const toLiveExpression = (
       case "WeakFairness":
       case "StrongFairness": {
         const step = createAngleAction(expression.action, expression.subscript);
-        const disabled = createUnary("Not", { kind: "Enabled", step, scope });
+        const disabled = createUnary("Not", {
+          kind: "Enabled",
+          step: expression.enabled ?? step,
+          scope,
+        });
         const taken: LiveExpression = {
           kind: "Action",
           expression: expression.action,

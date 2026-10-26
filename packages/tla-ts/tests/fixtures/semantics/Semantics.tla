@@ -114,6 +114,8 @@ ASSUME Labeled
 a (+) b == a + b + 1
 ASSUME 1 (+) 2 = 4
 
+ASSUME [a |-> -1] \in UNION {[a : Int]} /\ 5 \in UNION {Nat} /\ -3 \notin UNION {Nat}
+
 Init == unused = 0
 Next == UNCHANGED unused
 =============================================================================
