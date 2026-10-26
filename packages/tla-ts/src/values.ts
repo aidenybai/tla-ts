@@ -168,6 +168,13 @@ export const getWrittenPairs = (fn: FunctionValue): [Value, Value][] => {
 export const createWrittenRecord = (names: Value[], range: Value[], writtenNames: Value[]) =>
   setWrittenOrder(createSortedFunction(names, range), writtenNames);
 
+const isRecordDomain = (domain: Value[]) => domain.every((key) => typeof key === "string");
+
+// TLC compares a record only with another record, so comparing one with a function of another size
+// can fail before the sizes decide.
+const isRecordMismatch = (left: Value[], right: Value[]) =>
+  left.length > 0 && right.length > 0 && isRecordDomain(left) !== isRecordDomain(right);
+
 const compareFunctions = (left: FunctionValue, right: FunctionValue): number => {
   if (writtenOrderUse.isUsed) {
     writtenOrders.delete(left);
@@ -175,7 +182,11 @@ const compareFunctions = (left: FunctionValue, right: FunctionValue): number => 
   }
   const leftDomain = left.domain;
   const rightDomain = right.domain;
-  if (leftDomain.length !== rightDomain.length) return leftDomain.length - rightDomain.length;
+  if (leftDomain.length !== rightDomain.length) {
+    return isRecordMismatch(leftDomain, rightDomain)
+      ? compareLikeTlc(left, right)
+      : leftDomain.length - rightDomain.length;
+  }
   if (leftDomain !== rightDomain) {
     for (let index = 0; index < leftDomain.length; index++) {
       const keyComparison = compareValues(leftDomain[index], rightDomain[index]);
@@ -1453,17 +1464,21 @@ export const isElementOf = (element: Value, set: Value): boolean => {
         throw new TlaEvaluationError(describeMembership(element, set));
       }
       const fn = toFiniteFunction(element);
-      return (
-        valuesEqual(set.domain, createSortedSet(fn.domain)) &&
-        fn.range.every((item) => isElementOf(item, set.range))
-      );
+      const low = getIntervalLow(fn.domain);
+      const isDomain =
+        low === undefined
+          ? isEqualLikeTlc(set.domain, createSortedSet(fn.domain))
+          : isEqualLikeTlc({ kind: "Interval", low, high: low + fn.domain.length - 1 }, set.domain);
+      return isDomain && fn.range.every((item) => isElementOf(item, set.range));
     }
     case "RecordSet": {
-      if (!isFunctionValue(element)) {
+      const fn = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
+      if (!fn || !isRecordDomain(fn.domain)) {
         if (isModelValue(element)) return false;
-        throw new TlaEvaluationError(describeMembership(element, set));
+        throw new TlaEvaluationError(
+          `Attempted to check if non-record\n${formatValue(element)}\nis in the set of records:\n${formatValue(set)}`,
+        );
       }
-      const fn = toFiniteFunction(element);
       return (
         fn.domain.length === set.names.length &&
         set.names.every((name, index) => {
@@ -1473,13 +1488,17 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       );
     }
     case "ProductSet": {
-      if (!isFunctionValue(element)) {
-        if (isModelValue(element)) return false;
-        throw new TlaEvaluationError(describeMembership(element, set));
+      const elements = isFunctionValue(element) ? getSequenceElements(element) : undefined;
+      if (elements === undefined) {
+        const isFunction =
+          isFunctionValue(element) &&
+          toFiniteFunction(element).domain.every((key) => typeof key === "number");
+        if (isFunction || isModelValue(element)) return false;
+        throw new TlaEvaluationError(
+          `Attempted to check if non-tuple\n${formatValue(element)}\nis in the set of tuples:\n${formatValue(set)}`,
+        );
       }
-      const elements = getSequenceElements(element);
       return (
-        elements !== undefined &&
         elements.length === set.factors.length &&
         elements.every((item, index) => isElementOf(item, set.factors[index]))
       );
