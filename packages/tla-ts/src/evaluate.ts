@@ -1106,7 +1106,9 @@ const compileSetComprehension = (
           predicate(withScope(context, bindPattern(context.scope, pattern, element))),
           "a set filter predicate",
         );
-      if (!isEnumerable(base)) {
+      const isReducible =
+        typeof base === "object" && (base.kind === "Set" || base.kind === "Interval");
+      if (!isReducible) {
         if (isSetValue(base)) return { kind: "FilteredSet", base, test };
         throw new TlaEvaluationError(
           `TLC encountered a non-enumerable quantifier bound ${formatValue(base)} at ${describeLocation(expression.bound.set)}`,

@@ -804,7 +804,35 @@ const computeValueKey = (value: ObjectValue): string => {
 const formatString = (value: string) =>
   `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\t/g, "\\t")}"`;
 
-export const formatValue = (value: Value): string => {
+const formatLazySet = (
+  value:
+    | SubsetValue
+    | FunctionSetValue
+    | RecordSetValue
+    | ProductSetValue
+    | SetOperationValue
+    | FilteredSetValue,
+  isExpanded: boolean,
+): string => {
+  const format = (inner: Value) => formatValue(inner, isExpanded);
+  switch (value.kind) {
+    case "Subset":
+      return `SUBSET ${format(value.base)}`;
+    case "FunctionSet":
+      return `[${format(value.domain)} -> ${format(value.range)}]`;
+    case "RecordSet":
+      return `[${value.names.map((name, index) => `${name} : ${format(value.sets[index])}`).join(", ")}]`;
+    case "ProductSet":
+      return value.factors.map(format).join(" \\X ");
+    case "SetOperation":
+      return `${format(value.left)} ${value.operator} ${format(value.right)}`;
+    case "FilteredSet":
+      return `{x \\in ${format(value.base)} : ...}`;
+  }
+};
+
+export const formatValue = (value: Value, isExpanded = false): string => {
+  const format = (inner: Value) => formatValue(inner, isExpanded);
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
   if (typeof value === "number") return String(value);
   if (typeof value === "string") return formatString(value);
@@ -812,36 +840,34 @@ export const formatValue = (value: Value): string => {
     case "ModelValue":
       return value.name;
     case "Set":
-      return `{${value.elements.map(formatValue).join(", ")}}`;
+      return `{${value.elements.map(format).join(", ")}}`;
     case "Interval":
       return `${value.low}..${value.high}`;
     case "InfiniteSet":
       return value.name;
     case "Subset":
-      return `SUBSET ${formatValue(value.base)}`;
     case "FunctionSet":
-      return `[${formatValue(value.domain)} -> ${formatValue(value.range)}]`;
     case "RecordSet":
-      return `[${value.names.map((name, index) => `${name} : ${formatValue(value.sets[index])}`).join(", ")}]`;
     case "ProductSet":
-      return value.factors.map(formatValue).join(" \\X ");
-    case "SequenceSet":
-      return `Seq(${formatValue(value.base)})`;
     case "SetOperation":
-      return `${formatValue(value.left)} ${value.operator} ${formatValue(value.right)}`;
     case "FilteredSet":
-      return `{x \\in ${formatValue(value.base)} : ...}`;
+      return isExpanded && isEnumerable(value)
+        ? format(toFiniteSet(value))
+        : formatLazySet(value, isExpanded);
+
+    case "SequenceSet":
+      return `Seq(${format(value.base)})`;
     case "Function":
     case "LazyFunction": {
       if (value.kind === "LazyFunction" && !isEnumerable(value.domain)) return "<function>";
       const fn = toFiniteFunction(value);
       if (fn.domain.every((key, index) => key === index + 1)) {
-        return `<<${fn.range.map(formatValue).join(", ")}>>`;
+        return `<<${fn.range.map(format).join(", ")}>>`;
       }
       if (fn.domain.every((key) => typeof key === "string" && key.length > 0)) {
-        return `[${fn.domain.map((key, index) => `${String(key)} |-> ${formatValue(fn.range[index])}`).join(", ")}]`;
+        return `[${fn.domain.map((key, index) => `${String(key)} |-> ${format(fn.range[index])}`).join(", ")}]`;
       }
-      return `(${fn.domain.map((key, index) => `${formatValue(key)} :> ${formatValue(fn.range[index])}`).join(" @@ ")})`;
+      return `(${fn.domain.map((key, index) => `${format(key)} :> ${format(fn.range[index])}`).join(" @@ ")})`;
     }
   }
 };

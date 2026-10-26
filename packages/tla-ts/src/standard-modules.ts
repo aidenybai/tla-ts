@@ -204,7 +204,7 @@ export const CORE_OPERATORS: Builtin[] = [
         );
       }
     });
-    if (sets.every(isEnumerable)) {
+    if (sets.every((element) => typeof element === "object" && element.kind === "Set")) {
       return createSet(sets.flatMap((element) => toFiniteSet(element).elements));
     }
     return sets.reduce((left, right) => ({ kind: "SetOperation", operator: "\\cup", left, right }));
@@ -335,11 +335,13 @@ const getPermutations = (elements: Value[]): Value[][] =>
 
 export const createTlcOperators = (print: (text: string) => void): Builtin[] => [
   defineOperator("Print", 2, (args) => {
-    print(`${formatValue(getValue(args, 0, "Print"))}  ${formatValue(getValue(args, 1, "Print"))}`);
+    print(
+      `${formatValue(getValue(args, 0, "Print"), true)}  ${formatValue(getValue(args, 1, "Print"), true)}`,
+    );
     return getValue(args, 1, "Print");
   }),
   defineOperator("PrintT", 1, (args) => {
-    print(formatValue(getValue(args, 0, "PrintT")));
+    print(formatValue(getValue(args, 0, "PrintT"), true));
     return true;
   }),
   defineOperator("Assert", 2, (args) => {
