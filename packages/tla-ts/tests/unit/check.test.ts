@@ -94,6 +94,19 @@ describe("check matches TLC", () => {
     expect(checkModule("CONSTANT C\nFoo == 1", "CONSTANT C <- Foo").status).toBe("success");
   });
 
+  it("overrides definitions and ignores undeclared names assigned by the configuration", () => {
+    const result = check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in Nat \\cap {0, 9}\nNext == x' = x\n====",
+      config: "CONSTANT Foo = 1\nCONSTANT Nat = {0, 1}\nINIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
+  });
+
   it("follows definition overrides inside the specification", () => {
     const result = check({
       source:

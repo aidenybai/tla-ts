@@ -92,14 +92,9 @@ export const createEnvironment = (
   addModule(root, true);
 
   const constants = new Map<string, Value>();
-  config.constants.forEach((assignment) => {
-    if (!declaredConstants.includes(assignment.name) && !definitions.has(assignment.name)) {
-      throw new TlaConfigError(
-        `The configuration assigns ${assignment.name}, which is not declared in the spec`,
-      );
-    }
-    constants.set(assignment.name, toValue(assignment.value));
-  });
+  config.constants.forEach((assignment) =>
+    constants.set(assignment.name, toValue(assignment.value)),
+  );
   const substitutions = new Map(
     config.substitutions.map((substitution) => [substitution.name, substitution.target]),
   );
