@@ -210,6 +210,8 @@ const JAVA_CLASSES: Record<string, string> = {
   ProductSet: "SetOfTuplesValue",
   FilteredSet: "SetPredValue",
   LazyFunction: "FcnLambdaValue",
+  Union: "UnionValue",
+  MixedSet: "SetEnumValue",
 };
 
 const SET_OPERATION_CLASSES = {
@@ -238,6 +240,7 @@ const KIND_STRINGS: Record<string, string> = {
   ModelValue: "a model value",
   UserValue: "a special set constant",
   IntervalValue: "a set of the form i..j",
+  UnionValue: "a set of the form UNION  S",
 };
 
 // TLC stores a function as a TupleValue or a RecordValue when it has that shape, so the
