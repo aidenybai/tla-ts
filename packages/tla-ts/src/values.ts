@@ -1,4 +1,5 @@
 import { TlaEvaluationError } from "./errors";
+import { prettyPrint } from "./pretty-print";
 
 export interface ModelValue {
   kind: "ModelValue";
@@ -761,11 +762,25 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
   throw new TlaEvaluationError(`Expected a function but found ${formatValue(value)}`);
 };
 
+const lambdaFunctions = new WeakSet<ObjectValue>();
+
+export const markLambdaFunction = <Fn extends FunctionValue | LazyFunctionValue>(fn: Fn) => {
+  lambdaFunctions.add(fn);
+  return fn;
+};
+
+const describeMissingArgument = (fn: Value, argument: Value) =>
+  typeof fn === "object" && lambdaFunctions.has(fn)
+    ? `In applying the function\n${prettyPrint(formatValue(fn))},\nthe first argument is:\n${prettyPrint(formatValue(argument))}\nwhich is not in its domain.\n`
+    : `Attempted to apply function ${formatValue(fn)} to ${formatValue(argument)}, which is not in its domain`;
+
 export const applyFunction = (fn: Value, argument: Value): Value => {
   if (typeof fn === "object" && fn.kind === "LazyFunction") {
     if (!isElementOf(argument, fn.domain)) {
       throw new TlaEvaluationError(
-        `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
+        lambdaFunctions.has(fn)
+          ? describeMissingArgument(fn, argument)
+          : `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
       );
     }
     return fn.apply(argument);
@@ -784,11 +799,7 @@ export const applyFunction = (fn: Value, argument: Value): Value => {
       if (domain[index] === argument) return fn.range[index];
   }
   const position = findIndex(domain, argument);
-  if (position === -1) {
-    throw new TlaEvaluationError(
-      `Attempted to apply function ${formatValue(fn)} to ${formatValue(argument)}, which is not in its domain`,
-    );
-  }
+  if (position === -1) throw new TlaEvaluationError(describeMissingArgument(fn, argument));
   return fn.range[position];
 };
 
