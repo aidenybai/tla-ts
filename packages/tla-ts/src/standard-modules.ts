@@ -175,9 +175,18 @@ export const CORE_OPERATORS: Builtin[] = [
     2,
     (args) => !isElementOf(getValue(args, 0, "\\notin"), getSet(args, 1, "\\notin")),
   ),
-  defineOperator("\\subseteq", 2, (args) =>
-    isSubsetOf(getElements(args, 0, "\\subseteq"), getSet(args, 1, "\\subseteq")),
-  ),
+  defineOperator("\\subseteq", 2, (args) => {
+    const left = getSet(args, 0, "\\subseteq");
+    const right = getSet(args, 1, "\\subseteq");
+    const isPowerSets =
+      typeof left === "object" &&
+      left.kind === "Subset" &&
+      typeof right === "object" &&
+      right.kind === "Subset" &&
+      isEnumerable(left.base);
+    if (isPowerSets) return isSubsetOf(toFiniteSet(left.base).elements, right.base);
+    return isSubsetOf(getElements(args, 0, "\\subseteq"), right);
+  }),
   ...SET_OPERATORS.map((operator) =>
     defineOperator(operator, 2, (args) => {
       const left = getSet(args, 0, operator);

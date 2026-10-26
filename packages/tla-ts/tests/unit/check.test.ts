@@ -58,6 +58,13 @@ describe("check matches TLC", () => {
     expect(checkModule("ASSUME 5 \\in UNION {Nat}").status).toBe("success");
   });
 
+  it("compares power sets through their bases", () => {
+    expect(checkModule("ASSUME SUBSET (1..23) \\subseteq SUBSET (1..42)").status).toBe("success");
+    expect(checkModule("ASSUME ~(SUBSET (1..42) \\subseteq SUBSET (2..42))").status).toBe(
+      "success",
+    );
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");
