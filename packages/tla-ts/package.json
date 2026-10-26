@@ -64,6 +64,7 @@
     "conformance": "tsx scripts/conformance.ts",
     "conformance:fetch": "tsx scripts/fetch-corpora.ts",
     "conformance:record": "tsx scripts/record-tlc.ts",
+    "fuzz": "tsx scripts/fuzz.ts",
     "publint": "publint",
     "test": "vp test",
     "typecheck": "tsc --noEmit"

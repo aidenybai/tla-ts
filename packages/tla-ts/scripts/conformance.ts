@@ -1,9 +1,8 @@
-import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ModelOutcome } from "./check-model";
+import { compareOutcome, runModel, type ModelOutcome } from "./check-model";
 import { CONFORMANCE_DIRECTORY, EXPECTED_PATH, findModels, type CorpusModel } from "./corpora";
-import type { ExpectedResult } from "./record-tlc";
+import type { ExpectedResult } from "./tlc";
 
 type Verdict = "match" | "mismatch" | "unsupported" | "crash";
 
@@ -27,58 +26,6 @@ const getArgument = (name: string) => {
 const maximumTlcMilliseconds = Number(getArgument("--max-tlc-ms") ?? 20000);
 const filter = getArgument("--filter");
 const isUpdate = process.argv.includes("--update");
-
-const EXIT_STATUSES: Record<string, string> = {
-  "postcondition-violation": "assumption-violation",
-};
-
-const getExitStatus = (status: string) => EXIT_STATUSES[status] ?? status;
-
-export const compareOutcome = (
-  expected: ExpectedResult,
-  actual: ModelOutcome,
-): string | undefined => {
-  if (expected.status === "error")
-    return actual.status === "error" ? undefined : `expected an error, got ${actual.status}`;
-  if (getExitStatus(actual.status) !== expected.status) {
-    return `expected ${expected.status}, got ${actual.status}${actual.error ? ` (${actual.error})` : ""}`;
-  }
-  const fields = [
-    "violation",
-    "generatedStates",
-    "distinctStates",
-    "depth",
-    "traceLength",
-  ] as const;
-  const differences = fields
-    .filter((field) => !(field === "traceLength" && expected.status === "liveness-violation"))
-    .filter((field) => expected[field] !== undefined && expected[field] !== actual[field])
-    .map((field) => `${field}: expected ${expected[field]}, got ${actual[field]}`);
-  return differences.length > 0 ? differences.join("; ") : undefined;
-};
-
-const runModel = (specPath: string, configPath: string) =>
-  new Promise<ModelOutcome | undefined>((resolve) => {
-    const child = spawn(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        "--stack-size=8000",
-        "--max-old-space-size=6144",
-        join(import.meta.dirname, "check-model.ts"),
-        specPath,
-        configPath,
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-    const chunks: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-    child.on("close", () => {
-      const output = Buffer.concat(chunks).toString("utf8");
-      resolve(output.startsWith("{") ? JSON.parse(output) : undefined);
-    });
-  });
 
 const expectedResults: ExpectedResult[] = JSON.parse(readFileSync(EXPECTED_PATH, "utf8"));
 const expectedById = new Map(expectedResults.map((result) => [result.id, result]));
