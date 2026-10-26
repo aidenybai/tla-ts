@@ -1,0 +1,64 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { check, TlaError, TlaUnsupportedError } from "../src";
+
+export interface ModelOutcome {
+  status: string;
+  violation?: string;
+  generatedStates?: number;
+  distinctStates?: number;
+  depth?: number;
+  traceLength?: number;
+  error?: string;
+  milliseconds: number;
+}
+
+export const checkModel = (specPath: string, configPath: string): ModelOutcome => {
+  const directory = dirname(specPath);
+  const startedAt = performance.now();
+  const result = check({
+    source: readFileSync(specPath, "utf8"),
+    config: readFileSync(configPath, "utf8"),
+    loadModule: (name) => {
+      const modulePath = join(directory, `${name}.tla`);
+      return existsSync(modulePath) ? readFileSync(modulePath, "utf8") : undefined;
+    },
+    onPrint: () => {},
+  });
+  const milliseconds = Math.round(performance.now() - startedAt);
+  if (result.status === "success") {
+    return {
+      status: result.status,
+      generatedStates: result.generatedStates,
+      distinctStates: result.distinctStates,
+      depth: result.depth,
+      milliseconds,
+    };
+  }
+  return {
+    status: result.status,
+    violation: result.violation?.name,
+    traceLength: result.violation?.trace.length,
+    milliseconds,
+  };
+};
+
+const getErrorOutcome = (error: unknown, milliseconds: number): ModelOutcome => {
+  if (!(error instanceof TlaError)) throw error;
+  return {
+    status: error instanceof TlaUnsupportedError ? "unsupported" : "error",
+    error: `${error.name}: ${error.message}`,
+    milliseconds,
+  };
+};
+
+if (process.argv[1] === import.meta.filename) {
+  const startedAt = performance.now();
+  const outcome = { value: undefined as ModelOutcome | undefined };
+  try {
+    outcome.value = checkModel(process.argv[2], process.argv[3]);
+  } catch (error) {
+    outcome.value = getErrorOutcome(error, Math.round(performance.now() - startedAt));
+  }
+  process.stdout.write(JSON.stringify(outcome.value));
+}

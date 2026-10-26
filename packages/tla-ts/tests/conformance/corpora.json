@@ -1,0 +1,26 @@
+[
+  {
+    "name": "examples",
+    "repository": "https://github.com/tlaplus/Examples.git",
+    "commit": "0cab2b3fbfefc6d48a9f84a432f5bb5498738d46",
+    "paths": ["specifications"]
+  },
+  {
+    "name": "tlc",
+    "repository": "https://github.com/tlaplus/tlaplus.git",
+    "commit": "2ef2af8c767b76e5db5cba2878f027ac07aad36c",
+    "paths": ["tlatools/org.lamport.tlatools/test-model"]
+  },
+  {
+    "name": "spectacle",
+    "repository": "https://github.com/will62794/tla-web.git",
+    "commit": "8193eb02717a90a64cfe5b03f40d90c2b4bc18a2",
+    "paths": ["specs"]
+  },
+  {
+    "name": "tla-rs",
+    "repository": "https://github.com/fabracht/tla-rs.git",
+    "commit": "20dc20f7da178d3ab3c2b48a308270cd640fa355",
+    "paths": ["test_cases"]
+  }
+]
