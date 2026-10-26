@@ -83,6 +83,7 @@ The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `
 - **Properties**: invariants, `[][A]_v`, and every temporal formula TLC accepts, checked through TLC's tableau construction under the fairness and temporal conjuncts of the specification
 - **Subexpression references**: selectors such as `F(2)!3`, `Op!<<`, `Op!>>`, `Op!:`, `Op!@`, and `Op!(x)`, labels such as `Op!lab`, and names of `THEOREM` formulas
 - **TLC semantics**: 32-bit integer overflow errors, `ENABLED`, `TLCGet` and `TLCSet` with TLC's counters and registers, and TLC's enumeration order for `CHOOSE` and quantifiers
+- **`STRING`**: TLC has no Strings module. `STRING` is built in, as TLC's Java `Strings` class implements it. It equals only itself, and comparing it with any other set is an error
 
 ### `checkInParallel`
 
