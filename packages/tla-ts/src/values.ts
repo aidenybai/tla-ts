@@ -93,7 +93,7 @@ export type Value =
   | FilteredSetValue
   | LazyFunctionValue;
 
-type ObjectValue = Exclude<Value, boolean | number | string>;
+export type ObjectValue = Exclude<Value, boolean | number | string>;
 
 const MAXIMUM_INTEGER = 2147483647;
 const MINIMUM_INTEGER = -2147483648;
