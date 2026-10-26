@@ -4,6 +4,7 @@ import {
   checkInteger,
   createFunction,
   createSet,
+  createSortedSet,
   createTuple,
   formatValue,
   getCardinality,
@@ -15,9 +16,12 @@ import {
   isSetValue,
   toFiniteFunction,
   toFiniteSet,
+  differenceSorted,
+  intersectSorted,
   unionSorted,
   valuesEqual,
   type SetOperationValue,
+  type SetValue,
   type Value,
 } from "./values";
 
@@ -152,6 +156,7 @@ const isSubsetOf = (left: Value[], right: Value) =>
   left.every((element) => isElementOf(element, right));
 
 const BOOLEAN_SET = createSet([false, true]);
+const EMPTY_SET = createSortedSet([]);
 
 const SET_OPERATORS: SetOperationValue["operator"][] = ["\\cup", "\\cap", "\\"];
 
@@ -191,8 +196,14 @@ export const CORE_OPERATORS: Builtin[] = [
     defineOperator(operator, 2, (args) => {
       const left = getSet(args, 0, operator);
       const right = getSet(args, 1, operator);
-      if (operator === "\\cup" && isEnumerable(left) && isEnumerable(right)) {
-        return unionSorted(toFiniteSet(left), toFiniteSet(right));
+      if (isEnumerable(left) && isEnumerable(right)) {
+        const merge =
+          operator === "\\cup"
+            ? unionSorted
+            : operator === "\\cap"
+              ? intersectSorted
+              : differenceSorted;
+        return merge(toFiniteSet(left), toFiniteSet(right));
       }
       const isReducible = (value: Value) =>
         typeof value === "object" && (value.kind === "Set" || value.kind === "Interval");
@@ -214,7 +225,10 @@ export const CORE_OPERATORS: Builtin[] = [
       }
     });
     if (sets.every((element) => typeof element === "object" && element.kind === "Set")) {
-      return createSet(sets.flatMap((element) => toFiniteSet(element).elements));
+      return sets.reduce<SetValue>(
+        (union, element) => unionSorted(union, toFiniteSet(element)),
+        EMPTY_SET,
+      );
     }
     return sets.reduce((left, right) => ({ kind: "SetOperation", operator: "\\cup", left, right }));
   }),

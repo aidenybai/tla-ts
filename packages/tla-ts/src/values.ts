@@ -252,8 +252,15 @@ export const isSameValue = (left: Value, right: Value): boolean => {
   return getValueKey(left) === getValueKey(right);
 };
 
+const isStrictlySorted = (elements: Value[]) => {
+  for (let index = 1; index < elements.length; index++) {
+    if (compareValues(elements[index - 1], elements[index]) >= 0) return false;
+  }
+  return true;
+};
+
 export const createSet = (elements: Value[]): SetValue => {
-  if (elements.length < 2) return createSortedSet(elements);
+  if (elements.length < 2 || isStrictlySorted(elements)) return createSortedSet(elements);
   const sorted = [...elements].sort(compareValues);
   const unique = [sorted[0]];
   for (let index = 1; index < sorted.length; index++) {
@@ -263,6 +270,54 @@ export const createSet = (elements: Value[]): SetValue => {
 };
 
 export const EMPTY_SET = createSortedSet([]);
+
+export const differenceSorted = (left: SetValue, right: SetValue): SetValue => {
+  if (left.elements.length === 0 || right.elements.length === 0) return left;
+  const leftElements = left.elements;
+  const rightElements = right.elements;
+  const kept: Value[] = [];
+  let rightIndex = 0;
+  for (let leftIndex = 0; leftIndex < leftElements.length; leftIndex++) {
+    const element = leftElements[leftIndex];
+    while (
+      rightIndex < rightElements.length &&
+      compareValues(rightElements[rightIndex], element) < 0
+    ) {
+      rightIndex++;
+    }
+    if (
+      rightIndex < rightElements.length &&
+      compareValues(rightElements[rightIndex], element) === 0
+    ) {
+      continue;
+    }
+    kept.push(element);
+  }
+  return kept.length === leftElements.length ? left : createSortedSet(kept);
+};
+
+export const intersectSorted = (left: SetValue, right: SetValue): SetValue => {
+  const leftElements = left.elements;
+  const rightElements = right.elements;
+  const kept: Value[] = [];
+  let rightIndex = 0;
+  for (let leftIndex = 0; leftIndex < leftElements.length; leftIndex++) {
+    const element = leftElements[leftIndex];
+    while (
+      rightIndex < rightElements.length &&
+      compareValues(rightElements[rightIndex], element) < 0
+    ) {
+      rightIndex++;
+    }
+    if (
+      rightIndex < rightElements.length &&
+      compareValues(rightElements[rightIndex], element) === 0
+    ) {
+      kept.push(element);
+    }
+  }
+  return kept.length === leftElements.length ? left : createSortedSet(kept);
+};
 
 export const unionSorted = (left: SetValue, right: SetValue): SetValue => {
   if (left.elements.length === 0) return right;
@@ -349,12 +404,44 @@ export const isEnumerable = (value: Value): boolean => {
   }
 };
 
-const getCartesianProduct = (lists: Value[][]): Value[][] =>
-  lists.reduce<Value[][]>(
-    (combinations, list) =>
-      combinations.flatMap((combination) => list.map((item) => [...combination, item])),
-    [[]],
-  );
+const getCartesianProduct = (lists: Value[][]): Value[][] => {
+  const total = lists.reduce((product, list) => product * list.length, 1);
+  const combinations: Value[][] = [];
+  const positions = lists.map(() => 0);
+  for (let count = 0; count < total; count++) {
+    combinations.push(lists.map((list, index) => list[positions[index]]));
+    for (let index = lists.length - 1; index >= 0; index--) {
+      positions[index]++;
+      if (positions[index] < lists[index].length) break;
+      positions[index] = 0;
+    }
+  }
+  return combinations;
+};
+
+const advanceCombination = (indices: number[], length: number) => {
+  for (let position = indices.length - 1; position >= 0; position--) {
+    if (indices[position] < length - indices.length + position) {
+      indices[position]++;
+      for (let next = position + 1; next < indices.length; next++) {
+        indices[next] = indices[next - 1] + 1;
+      }
+      return true;
+    }
+  }
+  return false;
+};
+
+const getSortedSubsets = (base: Value[]): Value[] => {
+  const subsets: Value[] = [];
+  for (let size = 0; size <= base.length; size++) {
+    const indices = Array.from({ length: size }, (_, index) => index);
+    do {
+      subsets.push(createSortedSet(indices.map((index) => base[index])));
+    } while (advanceCombination(indices, base.length));
+  }
+  return subsets;
+};
 
 const enumerateSet = (value: Value): Value[] => {
   if (typeof value !== "object")
@@ -374,9 +461,7 @@ const enumerateSet = (value: Value): Value[] => {
           `SUBSET of a set with ${base.length} elements is too large to enumerate`,
         );
       }
-      return Array.from({ length: 2 ** base.length }, (_, mask) =>
-        createSet(base.filter((_, index) => (mask & (1 << index)) !== 0)),
-      );
+      return getSortedSubsets(base);
     }
     case "FunctionSet": {
       const domain = toFiniteSet(value.domain).elements;
@@ -432,7 +517,12 @@ export const toFiniteSet = (value: Value): SetValue => {
   const elements = enumerateSet(value);
   const isSorted =
     typeof value === "object" &&
-    (value.kind === "Interval" || value.kind === "SetOperation" || value.kind === "FilteredSet");
+    (value.kind === "Interval" ||
+      value.kind === "SetOperation" ||
+      value.kind === "FilteredSet" ||
+      value.kind === "ProductSet" ||
+      value.kind === "FunctionSet" ||
+      value.kind === "Subset");
   const set = isSorted ? createSortedSet(elements) : createSet(elements);
   if (typeof value === "object") finiteSets.set(value, set);
   return set;
@@ -677,7 +767,8 @@ const hashString = (value: string) => {
 const SET_HASH_SEED = 0x73a5c3e1;
 const FUNCTION_HASH_SEED = 0x66d1b4f7;
 
-const getElementContribution = (element: Value) => (getValueHash(element) + 0x9e3779b9) | 0;
+const getElementContribution = (element: Value) =>
+  finalizeHash((getValueHash(element) + 0x9e3779b9) | 0);
 
 const getEntryContribution = (key: Value, value: Value) =>
   finalizeHash((Math.imul(getValueHash(key), 0x27d4eb2d) + getValueHash(value)) | 0);
