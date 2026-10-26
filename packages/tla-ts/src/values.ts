@@ -406,14 +406,10 @@ export const isEnumerable = (value: Value): boolean => {
 
 const getCartesianProduct = (lists: Value[][]): Value[][] => {
   const total = lists.reduce((product, list) => product * list.length, 1);
-  const combinations: Value[][] = new Array(total);
-  const positions: number[] = new Array(lists.length).fill(0);
+  const combinations: Value[][] = [];
+  const positions = lists.map(() => 0);
   for (let count = 0; count < total; count++) {
-    const combination: Value[] = new Array(lists.length);
-    for (let index = 0; index < lists.length; index++) {
-      combination[index] = lists[index][positions[index]];
-    }
-    combinations[count] = combination;
+    combinations.push(lists.map((list, index) => list[positions[index]]));
     for (let index = lists.length - 1; index >= 0; index--) {
       positions[index]++;
       if (positions[index] < lists[index].length) break;
