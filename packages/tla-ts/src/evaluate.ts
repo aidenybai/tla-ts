@@ -700,6 +700,20 @@ export const IMPURE_BUILTINS = new Set([
 export const isImpureBuiltin = (name: string, environment: Environment) =>
   IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;
 
+const usesImpureBuiltin = (expression: Expression, environment: Environment): boolean =>
+  ((expression.kind === "Apply" || expression.kind === "OperatorReference") &&
+    isImpureBuiltin(expression.operator, environment)) ||
+  (expression.kind === "Identifier" && isImpureBuiltin(expression.name, environment)) ||
+  getChildren(expression).some((child) => usesImpureBuiltin(child, environment));
+
+export const isImpure = (environment: Environment) =>
+  [...environment.definitions.values()].some(
+    (definition) =>
+      usesImpureBuiltin(definition.body, environment) ||
+      (definition.kind === "Function" &&
+        definition.bounds.some((bound) => usesImpureBuiltin(bound.set, environment))),
+  );
+
 const closedConstants = new WeakMap<Expression, boolean>();
 
 export const isClosedConstant = (expression: Expression, environment: Environment): boolean => {
