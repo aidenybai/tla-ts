@@ -429,6 +429,11 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([73, 14, 7]);
   });
 
+  it("counts the states left on the queue when a violation stops the search", async () => {
+    const result = await checkFixture("water-jugs", "WaterJugs");
+    expect(result.queuedStates).toBe(1);
+  });
+
   it("reports deadlock with the trace that reaches it", async () => {
     const result = await checkFixture("counter", "Counter");
     expect(result.status).toBe("deadlock");

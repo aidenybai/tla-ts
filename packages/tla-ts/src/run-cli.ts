@@ -84,7 +84,7 @@ const printResult = (result: CheckResult) => {
     console.log("Model checking completed. No error has been found.");
   }
   console.log(
-    `${result.generatedStates} states generated, ${result.distinctStates} distinct states found, 0 states left on queue.`,
+    `${result.generatedStates} states generated, ${result.distinctStates} distinct states found, ${result.queuedStates} states left on queue.`,
   );
   console.log(`The depth of the complete state graph search is ${result.depth}.`);
 };

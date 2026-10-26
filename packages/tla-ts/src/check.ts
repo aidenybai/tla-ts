@@ -99,6 +99,7 @@ export interface CheckResult {
   violation: Violation | undefined;
   generatedStates: number;
   distinctStates: number;
+  queuedStates: number;
   depth: number;
 }
 
@@ -780,6 +781,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     violation: violation && { ...violation, loopStart: violation.loopStart },
     generatedStates: runtime.generatedStates,
     distinctStates: runtime.distinctStates,
+    queuedStates: runtime.queueSize,
     depth: runtime.generatedStates === 0 ? 0 : Math.max(statistics.depth, 1),
   });
 
