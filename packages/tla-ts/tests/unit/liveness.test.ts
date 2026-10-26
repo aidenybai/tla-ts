@@ -44,4 +44,25 @@ describe("liveness matches TLC", () => {
     expect(violation?.loopStart).toBeDefined();
     expect(violation?.loopStart).toBeLessThan(violation?.trace.length ?? 0);
   });
+
+  it("reports the deadlock before the temporal property that fails in the same state", async () => {
+    const checkConfig = async (name: string) => {
+      const directory = join(import.meta.dirname, "../fixtures/github710");
+      const result = await check({
+        source: readFileSync(join(directory, "Github710d.tla"), "utf8"),
+        config: readFileSync(join(directory, `${name}.cfg`), "utf8"),
+      });
+      return [
+        result.status,
+        result.violation?.name,
+        result.violation?.trace.map((step) => step.state.x),
+      ];
+    };
+    expect(await checkConfig("Github710d")).toEqual(["deadlock", "deadlock", [0, 1, 2, 3]]);
+    expect(await checkConfig("Github710dNoDeadlock")).toEqual([
+      "property-violation",
+      "NeverThree",
+      [0, 1, 2, 3],
+    ]);
+  });
 });
