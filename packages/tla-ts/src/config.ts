@@ -31,6 +31,8 @@ export interface ModelConfig {
   checkDeadlock: boolean;
   symmetry: string | undefined;
   view: string | undefined;
+  postconditions: string[];
+  possible: string[];
 }
 
 interface ConfigToken {
@@ -139,6 +141,8 @@ export const parseConfig = (source: string): ModelConfig => {
     checkDeadlock: true,
     symmetry: undefined,
     view: undefined,
+    postconditions: [],
+    possible: [],
   };
 
   const peek = () => tokens[cursor.index];
@@ -257,8 +261,11 @@ export const parseConfig = (source: string): ModelConfig => {
         break;
       case "POSTCONDITION":
       case "POSTCONDITIONS":
+        config.postconditions.push(...parseNames());
+        break;
       case "_POSSIBLE":
-        throw new TlaUnsupportedError(`${token.text} is not supported`);
+        config.possible.push(...parseNames());
+        break;
       case "CHECK_DEADLOCK": {
         const value = advance().text;
         if (value !== "TRUE" && value !== "FALSE") {

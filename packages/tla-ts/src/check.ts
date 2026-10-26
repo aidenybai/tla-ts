@@ -1,4 +1,4 @@
-import type { Assumption, Expression, SourceLocation } from "./ast";
+import type { Definition, Expression, SourceLocation } from "./ast";
 import { parseConfig, type ModelConfig } from "./config";
 import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
@@ -6,7 +6,9 @@ import { TlaConfigError, TlaEvaluationError, TlaUnsupportedError } from "./error
 import {
   evaluate,
   expectBoolean,
+  getChildren,
   getDefinition,
+  isLocallyResolved,
   type Context,
   type Environment,
   type Scope,
@@ -26,7 +28,8 @@ import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { createCanonicalizer } from "./canonical";
-import { combineHash, getValueHash, isSameValue, type Value } from "./values";
+import { getPossibleCounts } from "./runtime";
+import { combineHash, formatValue, getValueHash, isSameValue, type Value } from "./values";
 
 export interface CheckOptions {
   source: string;
@@ -41,6 +44,7 @@ export type CheckStatus =
   | "invariant-violation"
   | "property-violation"
   | "liveness-violation"
+  | "postcondition-violation"
   | "deadlock";
 
 export interface TraceStep {
@@ -107,6 +111,30 @@ const getDefinitionBody = (name: string, environment: Environment) => {
     throw new TlaConfigError(`${name} is not defined as an operator without arguments`);
   }
   return definition.body;
+};
+
+const isActionLevel = (
+  expression: Expression,
+  environment: Environment,
+  visited = new Set<Definition>(),
+): boolean => {
+  if (expression.kind === "Prime" || expression.kind === "Unchanged") return true;
+  if (expression.kind === "Enabled") return false;
+  const name =
+    expression.kind === "Identifier"
+      ? expression.name
+      : expression.kind === "Apply"
+        ? expression.operator
+        : undefined;
+  const definition =
+    name === undefined || isLocallyResolved(expression)
+      ? undefined
+      : getDefinition(name, environment);
+  if (definition && !visited.has(definition)) {
+    visited.add(definition);
+    if (isActionLevel(definition.body, environment, visited)) return true;
+  }
+  return getChildren(expression).some((child) => isActionLevel(child, environment, visited));
 };
 
 const getConjuncts = (expression: Expression, environment: Environment): Expression[] => {
@@ -270,9 +298,10 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
 export const check = (options: CheckOptions): CheckResult => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   if (config.view !== undefined) throw new TlaUnsupportedError("VIEW is not supported yet");
+  const print = options.onPrint ?? console.log;
   const specification = createEnvironment(parseModule(options.source), config, {
     loadModule: options.loadModule,
-    print: options.onPrint ?? console.log,
+    print,
   });
   const environment = specification.environment;
   const getContext = (
@@ -301,9 +330,9 @@ export const check = (options: CheckOptions): CheckResult => {
     depth: statistics.depth,
   });
 
-  const getAssumptionError = (assumption: Assumption) => {
+  const getConstantFailure = (expression: Expression, description: string) => {
     try {
-      return holds(assumption.expression, getContext(undefined, undefined), "an assumption")
+      return holds(expression, getContext(undefined, undefined), description)
         ? undefined
         : { message: undefined };
     } catch (error) {
@@ -312,7 +341,7 @@ export const check = (options: CheckOptions): CheckResult => {
     }
   };
   for (const assumption of specification.assumptions.filter((candidate) => !candidate.isAxiom)) {
-    const failure = getAssumptionError(assumption);
+    const failure = getConstantFailure(assumption.expression, "an assumption");
     if (failure) {
       const name =
         assumption.name ?? `line ${assumption.location.line}, column ${assumption.location.column}`;
@@ -329,6 +358,19 @@ export const check = (options: CheckOptions): CheckResult => {
   const actionConstraints = search.actionConstraints;
   const getFingerprintState = search.getFingerprintState;
   const isRecordingEdges = properties.liveness.length > 0;
+  const possible = config.possible.map((name) => ({
+    name,
+    expression: createIdentifier(name),
+    isAction: isActionLevel(getDefinitionBody(name, environment), environment),
+  }));
+  const statePossible = possible.filter((item) => !item.isAction);
+  const actionPossible = possible.filter((item) => item.isAction);
+  const trackPossible = (items: typeof possible, context: Context) =>
+    items.forEach((item) => {
+      const count = runtime.possibleCounts.get(item.name) ?? 0;
+      const isWitnessed = holds(item.expression, context, `_POSSIBLE ${item.name}`);
+      runtime.possibleCounts.set(item.name, isWitnessed ? count + 1 : count);
+    });
 
   const states: Value[][] = [];
   const fingerprintStates: Value[][] = [];
@@ -424,8 +466,10 @@ export const check = (options: CheckOptions): CheckResult => {
     runtime.levels.set(state, 1);
     const fingerprintState = getFingerprintState(state);
     const hash = getStateHash(fingerprintState);
-    if (findStateIndex(hash, fingerprintState) !== -1) continue;
-    const isInModel = satisfiesConstraints(state);
+    const isSeen = findStateIndex(hash, fingerprintState) !== -1;
+    const isInModel = isSeen || satisfiesConstraints(state);
+    if (isInModel) trackPossible(statePossible, getContext(state, undefined));
+    if (isSeen) continue;
     if (isInModel) {
       countDistinctState(1);
       runtime.queueSize++;
@@ -468,17 +512,21 @@ export const check = (options: CheckOptions): CheckResult => {
       runtime.generatedStates++;
       runtime.levels.set(successor.state, depths[index] + 1);
       const transition = getContext(state, successor.state);
-      const isAllowedAction = actionConstraints.every((constraint) =>
-        holds(constraint.expression, transition, `action constraint ${constraint.name}`),
-      );
       canonicalizeState(successor.state);
       const fingerprintState = getFingerprintState(successor.state);
       const hash = getStateHash(fingerprintState);
-      const existing = isAllowedAction ? findStateIndex(hash, fingerprintState) : -1;
+      const found = findStateIndex(hash, fingerprintState);
+      const isStateInModel = found !== -1 || satisfiesConstraints(successor.state, state);
+      if (isStateInModel) trackPossible(statePossible, getContext(successor.state, undefined));
+      const isInModel =
+        isStateInModel &&
+        actionConstraints.every((constraint) =>
+          holds(constraint.expression, transition, `action constraint ${constraint.name}`),
+        );
+      if (isInModel) trackPossible(actionPossible, transition);
+      const existing = isInModel ? found : -1;
       if (existing !== -1 && isRecordingEdges) edges[index].push(existing);
       if (existing !== -1 && isRecordingEdgeStates) edgeStates[index].push(successor.state);
-      const isInModel =
-        isAllowedAction && (existing !== -1 || satisfiesConstraints(successor.state, state));
       const isNew = isInModel && existing === -1;
       if (isNew) countDistinctState(depths[index] + 1);
       if (existing === -1) {
@@ -547,5 +595,24 @@ export const check = (options: CheckOptions): CheckResult => {
     });
   }
 
+  const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
+  if (unwitnessed) {
+    print(formatValue(getPossibleCounts(runtime), true));
+    return createResult("postcondition-violation", {
+      name: unwitnessed.name,
+      trace: [],
+      message: `The _POSSIBLE predicate ${unwitnessed.name} was never witnessed.`,
+    });
+  }
+  for (const name of config.postconditions) {
+    const failure = getConstantFailure(createIdentifier(name), "a postcondition");
+    if (failure) {
+      return createResult("postcondition-violation", {
+        name,
+        trace: [],
+        message: failure.message ?? `Postcondition ${name} is false.`,
+      });
+    }
+  }
   return createResult("success");
 };

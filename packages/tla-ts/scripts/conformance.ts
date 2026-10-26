@@ -28,8 +28,12 @@ const maximumTlcMilliseconds = Number(getArgument("--max-tlc-ms") ?? 20000);
 const filter = getArgument("--filter");
 const isUpdate = process.argv.includes("--update");
 
-const getExitStatus = (status: string) =>
-  status === "property-violation" ? "liveness-violation" : status;
+const EXIT_STATUSES: Record<string, string> = {
+  "property-violation": "liveness-violation",
+  "postcondition-violation": "assumption-violation",
+};
+
+const getExitStatus = (status: string) => EXIT_STATUSES[status] ?? status;
 
 export const compareOutcome = (
   expected: ExpectedResult,

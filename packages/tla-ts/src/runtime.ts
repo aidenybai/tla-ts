@@ -1,4 +1,4 @@
-import type { Value } from "./values";
+import { createFunction, type Value } from "./values";
 
 export interface CheckerRuntime {
   levels: WeakMap<readonly (Value | undefined)[], number>;
@@ -10,6 +10,7 @@ export interface CheckerRuntime {
   registers: Map<number, Value>;
   namedRegisters: Map<string, Value>;
   properties: Map<string, string>;
+  possibleCounts: Map<string, number>;
   isStopped: boolean;
   checkDeadlock: boolean;
   startedAt: number;
@@ -25,7 +26,18 @@ export const createRuntime = (checkDeadlock: boolean): CheckerRuntime => ({
   registers: new Map(),
   namedRegisters: new Map(),
   properties: new Map(),
+  possibleCounts: new Map(),
   isStopped: false,
   checkDeadlock,
   startedAt: Date.now(),
 });
+
+export const POSSIBLE_REGISTER = "s:_possible";
+
+export const getPossibleCounts = (runtime: CheckerRuntime) =>
+  createFunction([...runtime.possibleCounts].map(([name, count]): [Value, Value] => [name, count]));
+
+export const getNamedRegisters = (runtime: CheckerRuntime): Map<string, Value> =>
+  runtime.possibleCounts.size === 0
+    ? runtime.namedRegisters
+    : new Map([...runtime.namedRegisters, [POSSIBLE_REGISTER, getPossibleCounts(runtime)]]);

@@ -32,6 +32,7 @@ const STATUS_LABELS: Record<string, string> = {
   "invariant-violation": "Invariant violated",
   "property-violation": "Property violated",
   "liveness-violation": "Temporal property violated",
+  "postcondition-violation": "Postcondition is false",
   deadlock: "Deadlock reached",
 };
 

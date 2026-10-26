@@ -12,6 +12,7 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   "invariant-violation": 12,
   "property-violation": 13,
   "liveness-violation": 13,
+  "postcondition-violation": 10,
 };
 
 const USAGE = "Usage: tla-ts <Spec.tla> [-config <Spec.cfg>] [-deadlock]";
@@ -27,6 +28,7 @@ const printResult = (result: CheckResult) => {
       "invariant-violation": `Error: Invariant ${result.violation.name} is violated.`,
       "property-violation": `Error: Property ${result.violation.name} is violated.`,
       "liveness-violation": `Error: Temporal property ${result.violation.name} was violated.`,
+      "postcondition-violation": `Error: ${result.violation.message ?? `Postcondition ${result.violation.name} is false.`}`,
     }[result.status];
     console.log(headline);
     if (result.violation.trace.length > 0) console.log("Error: The behavior up to this point is:");

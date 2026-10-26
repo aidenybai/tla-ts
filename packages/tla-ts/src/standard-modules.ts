@@ -1,6 +1,6 @@
 import { TlaEvaluationError } from "./errors";
 import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
-import type { CheckerRuntime } from "./runtime";
+import { getNamedRegisters, type CheckerRuntime } from "./runtime";
 import {
   checkInteger,
   createFunction,
@@ -212,10 +212,10 @@ const getRuntimeValue = (
     case "all":
       return getRegisterFunction(runtime.registers);
     case "all:named":
-      return getRegisterFunction(runtime.namedRegisters);
+      return getRegisterFunction(getNamedRegisters(runtime));
   }
   if (key.startsWith(NAMED_REGISTER_PREFIX)) {
-    const value = runtime.namedRegisters.get(key);
+    const value = getNamedRegisters(runtime).get(key);
     if (value === undefined) throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
     return value;
   }

@@ -8,7 +8,6 @@ import {
   TlaConfigError,
   TlaEvaluationError,
   TlaSyntaxError,
-  TlaUnsupportedError,
 } from "../../src";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
@@ -339,7 +338,8 @@ describe("parseConfig matches TLC", () => {
     expect(config.invariants).toEqual(["1Inv"]);
   });
 
-  it("reports _POSSIBLE as unsupported", () => {
-    expect(() => parseConfig("SPECIFICATION Spec\n_POSSIBLE Done")).toThrow(TlaUnsupportedError);
+  it("reads _POSSIBLE and POSTCONDITION names", () => {
+    const config = parseConfig("SPECIFICATION Spec\n_POSSIBLE Done Started\nPOSTCONDITION Post");
+    expect([config.possible, config.postconditions]).toEqual([["Done", "Started"], ["Post"]]);
   });
 });
