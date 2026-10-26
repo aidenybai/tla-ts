@@ -1,28 +1,13 @@
 import type {
   Bound,
   BoundPattern,
-  Declaration,
   Definition,
   Expression,
-  Instance,
   OperatorParam,
+  SourceLocation,
 } from "./ast";
 import { TlaUnsupportedError } from "./errors";
-
-export interface FlatModule {
-  name: string;
-  constants: Declaration[];
-  variables: string[];
-  definitions: Definition[];
-}
-
-interface Rewrite {
-  prefix: string;
-  params: OperatorParam[];
-  definitionNames: Set<string>;
-  substitutions: Map<string, Expression>;
-  substitutedNames: Map<string, Set<string>>;
-}
+import { isLocallyResolved } from "./evaluate";
 
 const getPatternNames = (pattern: BoundPattern) =>
   pattern.kind === "Name" ? [pattern.name] : pattern.names;
@@ -191,30 +176,41 @@ export const mapChildren = (
   }
 };
 
-const markParams = (expression: Expression, params: Set<string>): Expression => {
-  const mapped = mapChildren(expression, (child) => markParams(child, params));
-  if (mapped.kind === "Identifier" && params.has(mapped.name)) {
-    return { ...mapped, resolution: { kind: "Local" } };
-  }
-  if (mapped.kind === "Apply" && params.has(mapped.operator)) {
-    return { ...mapped, resolution: { kind: "Local" } };
-  }
-  return mapped;
-};
+export interface Instantiation {
+  params: OperatorParam[];
+  substitutions: Map<string, Expression>;
+  getDefinition: (key: string) => Definition | undefined;
+  isParameterized: (key: string) => boolean;
+  addDefinition: (name: string, create: (key: string) => Definition) => string;
+}
 
-const getParamArguments = (rewrite: Rewrite, location: Expression["location"]): Expression[] =>
-  rewrite.params.map((param) => ({
+interface Rewrite {
+  instantiation: Instantiation;
+  substitutedNames: Map<string, Set<string>>;
+  copies: Map<string, string>;
+}
+
+const getParamArguments = (params: OperatorParam[], location: SourceLocation): Expression[] =>
+  params.map((param) => ({
     kind: "Identifier",
     name: param.name,
     location,
     resolution: { kind: "Local" },
   }));
 
+const getArity = (definition: Definition) =>
+  definition.kind === "Operator" ? definition.params.length : 0;
+
+const getCopy = (rewrite: Rewrite, key: string) =>
+  rewrite.instantiation.isParameterized(key) ? copyDefinition(rewrite, key) : undefined;
+
 const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>): Expression => {
   const recurse = (node: Expression) => substitute(node, rewrite, bound);
-  const isFree = (name: string) => !bound.has(name);
+  const instantiation = rewrite.instantiation;
+  const params = instantiation.params;
+  const isFree = (name: string) => !bound.has(name) && !isLocallyResolved(expression);
   if (expression.kind === "Identifier" && isFree(expression.name)) {
-    const replacement = rewrite.substitutions.get(expression.name);
+    const replacement = instantiation.substitutions.get(expression.name);
     if (replacement) {
       const captured = [...(rewrite.substitutedNames.get(expression.name) ?? [])].filter((name) =>
         bound.has(name),
@@ -226,22 +222,25 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
       }
       return replacement;
     }
-    if (rewrite.definitionNames.has(expression.name) && expression.resolution?.kind !== "Local") {
-      const name = `${rewrite.prefix}${expression.name}`;
-      return rewrite.params.length === 0
-        ? { ...expression, name }
-        : {
-            kind: "Apply",
-            operator: name,
-            args: getParamArguments(rewrite, expression.location),
-            location: expression.location,
-          };
+    const copy = getCopy(rewrite, expression.name);
+    if (copy === undefined) return expression;
+    if (params.length === 0) return { ...expression, name: copy };
+    const definition = instantiation.getDefinition(expression.name);
+    if (definition && getArity(definition) > 0) {
+      throw new TlaUnsupportedError(
+        `Passing ${definition.name} from a parameterized instance as an operator argument is not supported yet`,
+      );
     }
-    return expression;
+    return {
+      kind: "Apply",
+      operator: copy,
+      args: getParamArguments(params, expression.location),
+      location: expression.location,
+    };
   }
   if (expression.kind === "Apply" && isFree(expression.operator)) {
     const args = expression.args.map(recurse);
-    const replacement = rewrite.substitutions.get(expression.operator);
+    const replacement = instantiation.substitutions.get(expression.operator);
     if (replacement?.kind === "Identifier" || replacement?.kind === "OperatorReference") {
       const operator = replacement.kind === "Identifier" ? replacement.name : replacement.operator;
       return {
@@ -256,86 +255,90 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
         `Substituting the operator ${expression.operator} with an expression is not supported yet`,
       );
     }
-    if (
-      rewrite.definitionNames.has(expression.operator) &&
-      expression.resolution?.kind !== "Local"
-    ) {
-      return {
-        ...expression,
-        operator: `${rewrite.prefix}${expression.operator}`,
-        args: [...getParamArguments(rewrite, expression.location), ...args],
-      };
-    }
-    return { ...expression, args };
+    const copy = getCopy(rewrite, expression.operator);
+    if (copy === undefined) return { ...expression, args };
+    return {
+      ...expression,
+      operator: copy,
+      args: [...getParamArguments(params, expression.location), ...args],
+    };
   }
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
-    if (rewrite.definitionNames.has(expression.operator) && rewrite.params.length === 0) {
-      return { ...expression, operator: `${rewrite.prefix}${expression.operator}` };
+    const copy = getCopy(rewrite, expression.operator);
+    if (copy === undefined) return expression;
+    if (params.length > 0) {
+      throw new TlaUnsupportedError(
+        `Passing ${expression.operator} from a parameterized instance as an operator argument is not supported yet`,
+      );
     }
-    return expression;
+    return { ...expression, operator: copy };
   }
   return mapChildren(expression, (child, names) =>
     names.length === 0 ? recurse(child) : substitute(child, rewrite, new Set([...bound, ...names])),
   );
 };
 
-export const instantiateModule = (instance: Instance, flat: FlatModule): Definition[] => {
-  const params = new Set(instance.params.map((param) => param.name));
-  const explicit = new Map(
-    instance.substitutions.map((item) => [item.name, markParams(item.expression, params)]),
-  );
-  const declared = [...flat.constants.map((constant) => constant.name), ...flat.variables];
-  const substitutions = new Map(
-    declared.map((name): [string, Expression] => [
-      name,
-      explicit.get(name) ?? { kind: "Identifier", name, location: instance.location },
-    ]),
-  );
-  const rewrite: Rewrite = {
-    prefix: instance.name === undefined ? "" : `${instance.name}!`,
-    params: instance.params,
-    definitionNames: new Set(flat.definitions.map((definition) => definition.name)),
-    substitutions,
-    substitutedNames: new Map(
-      [...substitutions].map(([name, expression]) => [name, getFreeNames(expression)]),
-    ),
+const withInstanceParams = (
+  definition: Definition,
+  params: OperatorParam[],
+  location: SourceLocation,
+): Definition => {
+  if (params.length === 0) return definition;
+  if (definition.kind === "Operator") {
+    return { ...definition, params: [...params, ...definition.params] };
+  }
+  return {
+    kind: "Operator",
+    name: definition.name,
+    params,
+    body: {
+      kind: "Let",
+      definitions: [definition],
+      body: { kind: "Identifier", name: definition.name, location, resolution: { kind: "Local" } },
+      location,
+    },
+    isLocal: definition.isLocal,
+    isRecursive: false,
+    location: definition.location,
   };
-  return flat.definitions.map((definition): Definition => {
-    const name = `${rewrite.prefix}${definition.name}`;
-    const isLocal = instance.isLocal || definition.isLocal;
-    if (definition.kind === "Function" && instance.params.length > 0) {
-      return {
-        kind: "Operator",
-        name,
-        params: instance.params,
-        body: substitute(
-          {
-            kind: "FunctionConstruction",
-            bounds: definition.bounds,
-            body: definition.body,
-            location: definition.location,
-            isRecursive: true,
-          },
-          rewrite,
-          new Set(),
-        ),
-        isLocal,
-        isRecursive: definition.isRecursive,
-        location: instance.location,
-      };
-    }
+};
+
+const copyDefinition = (rewrite: Rewrite, key: string): string => {
+  const cached = rewrite.copies.get(key);
+  if (cached !== undefined) return cached;
+  const instantiation = rewrite.instantiation;
+  const definition = instantiation.getDefinition(key);
+  if (!definition) return key;
+  return instantiation.addDefinition(definition.name, (copyKey) => {
+    rewrite.copies.set(key, copyKey);
     const mapped = mapDefinition(definition, (child, bound) =>
       substitute(child, rewrite, new Set(bound)),
     );
-    return definition.kind === "Function"
-      ? { ...mapped, name, isLocal, location: instance.location }
-      : {
-          ...mapped,
-          kind: "Operator",
-          name,
-          params: [...instance.params, ...definition.params],
-          isLocal,
-          location: instance.location,
-        };
+    return withInstanceParams(mapped, instantiation.params, definition.location);
   });
+};
+
+export const createInstantiation = (instantiation: Instantiation) => {
+  const rewrite: Rewrite = {
+    instantiation,
+    substitutedNames: new Map(
+      [...instantiation.substitutions].map(([name, expression]) => [
+        name,
+        getFreeNames(expression),
+      ]),
+    ),
+    copies: new Map(),
+  };
+  return {
+    getKey: (key: string) => getCopy(rewrite, key) ?? key,
+    getQualifiedKey: (key: string) => {
+      const copy = getCopy(rewrite, key);
+      if (copy !== undefined) return copy;
+      const definition = instantiation.getDefinition(key);
+      if (!definition) return key;
+      return instantiation.addDefinition(definition.name, () =>
+        withInstanceParams(definition, instantiation.params, definition.location),
+      );
+    },
+  };
 };

@@ -5,9 +5,9 @@ import { check } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/instances");
 
-const checkInstances = (configName: string) =>
+const checkInstances = (configName: string, moduleName = "Instances") =>
   check({
-    source: readFileSync(join(DIRECTORY, "Instances.tla"), "utf8"),
+    source: readFileSync(join(DIRECTORY, `${moduleName}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, configName), "utf8"),
     loadModule: (name) => readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
   });
@@ -24,5 +24,11 @@ describe("INSTANCE matches TLC", () => {
     expect(result.status).toBe("invariant-violation");
     expect(result.violation?.name).toBe("Different");
     expect(result.violation?.trace).toHaveLength(4);
+  });
+
+  it("scopes LOCAL instances per module and overrides definitions shared by instances", () => {
+    const result = checkInstances("Scoping.cfg", "Scoping");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
   });
 });

@@ -1,7 +1,21 @@
-import type { Bound, BoundPattern, Definition, Expression, Module, SourceLocation } from "./ast";
+import type {
+  Bound,
+  BoundPattern,
+  Definition,
+  Expression,
+  Instance,
+  Module,
+  OperatorParam,
+  SourceLocation,
+} from "./ast";
 import { TlaSyntaxError } from "./errors";
 
-export type Symbols = Map<string, number>;
+export interface ModuleSymbol {
+  key: string;
+  arity: number;
+}
+
+export type Symbols = Map<string, ModuleSymbol>;
 
 interface LocalName {
   name: string;
@@ -12,18 +26,18 @@ interface LocalName {
 interface Unit {
   imported: Symbols;
   definitions: Map<string, Definition>;
+  getKey: (definition: Definition) => string;
   location: SourceLocation;
   self: Definition | undefined;
 }
 
 const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
-const CORE_SYMBOLS: [string, number][] = [
-  ["=>", 2],
-  ["~>", 2],
-  ["-+->", 2],
-  ["\\cdot", 2],
-];
+const renamedArities = new WeakMap<Expression, number>();
+
+const CORE_SYMBOLS: Symbols = new Map(
+  ["=>", "~>", "-+->", "\\cdot"].map((name) => [name, { key: name, arity: 2 }]),
+);
 
 const isBefore = (left: SourceLocation, right: SourceLocation) =>
   left.line < right.line || (left.line === right.line && left.column < right.column);
@@ -51,6 +65,8 @@ const getSymbolArity = (
   unit: Unit,
 ) => {
   const location = expression.location;
+  const renamed = renamedArities.get(expression);
+  if (renamed !== undefined) return renamed;
   const local = lookupLocal(scope, name);
   if (local && expression.kind !== "OperatorReference") expression.resolution = LOCAL_RESOLUTION;
   if (local) return local.arity;
@@ -60,9 +76,16 @@ const getSymbolArity = (
     (definition === unit.self
       ? definition.kind === "Function" || definition.isRecursive
       : definition.isRecursive || isBefore(definition.location, unit.location));
-  if (definition && isVisible) return getArity(definition);
-  const imported = unit.imported.get(name);
-  if (imported !== undefined) return imported;
+  const symbol =
+    definition && isVisible
+      ? { key: unit.getKey(definition), arity: getArity(definition) }
+      : unit.imported.get(name);
+  if (symbol) {
+    if (expression.kind === "Identifier") expression.name = symbol.key;
+    else expression.operator = symbol.key;
+    renamedArities.set(expression, symbol.arity);
+    return symbol.arity;
+  }
   throw new TlaSyntaxError(
     `Could not find declaration or definition of symbol ${name} at line ${location.line}, column ${location.column}`,
   );
@@ -74,6 +97,19 @@ const resolveBounds = (bounds: Bound[], scope: LocalName | undefined, unit: Unit
     (current, bound) => bindNames(current, getPatternNames(bound.pattern)),
     scope,
   );
+};
+
+const resolveDefinition = (definition: Definition, scope: LocalName | undefined, unit: Unit) => {
+  const self = bindNames(scope, definition.kind === "Function" ? [definition.name] : []);
+  if (definition.kind === "Function") {
+    resolveExpression(definition.body, resolveBounds(definition.bounds, self, unit), unit);
+    return;
+  }
+  const params = definition.params.reduce<LocalName | undefined>(
+    (parent, param) => ({ name: param.name, arity: param.arity, parent }),
+    self,
+  );
+  resolveExpression(definition.body, params, unit);
 };
 
 const resolveDefinitions = (
@@ -88,16 +124,7 @@ const resolveDefinitions = (
       scope,
     );
   return definitions.reduce((current, definition) => {
-    const self = bindNames(current, definition.kind === "Function" ? [definition.name] : []);
-    if (definition.kind === "Function") {
-      resolveExpression(definition.body, resolveBounds(definition.bounds, self, unit), unit);
-    } else {
-      const params = definition.params.reduce<LocalName | undefined>(
-        (parent, param) => ({ name: param.name, arity: param.arity, parent }),
-        self,
-      );
-      resolveExpression(definition.body, params, unit);
-    }
+    resolveDefinition(definition, current, unit);
     return { name: definition.name, arity: getArity(definition), parent: current };
   }, recursiveScope);
 };
@@ -241,33 +268,69 @@ const resolveExpression = (
   }
 };
 
-export const resolveModule = (module: Module, imported: Symbols): Symbols => {
+interface ModuleUnit {
+  imported: Symbols;
+  definitions: Map<string, Definition>;
+  getKey: (definition: Definition) => string;
+}
+
+const createSymbols = (module: Module, imported: Symbols) => {
   const symbols = new Map([...CORE_SYMBOLS, ...imported]);
-  module.constants.forEach((constant) => symbols.set(constant.name, constant.arity));
-  module.variables.forEach((variable) => symbols.set(variable, 0));
-  const definitions = new Map(
-    module.definitions.map((definition) => [definition.name, definition]),
+  module.constants.forEach((constant) =>
+    symbols.set(constant.name, { key: constant.name, arity: constant.arity }),
   );
-  module.definitions.forEach((definition) =>
-    resolveDefinitions([definition], undefined, {
-      imported: symbols,
-      definitions,
-      location: definition.location,
-      self: definition,
+  module.variables.forEach((variable) => symbols.set(variable, { key: variable, arity: 0 }));
+  return symbols;
+};
+
+export const resolveSubstitutions = (
+  instance: Instance,
+  declarations: OperatorParam[],
+  module: Module,
+  unit: ModuleUnit,
+) => {
+  const scope = bindNames(
+    undefined,
+    instance.params.map((param) => param.name),
+  );
+  const context: Unit = {
+    imported: createSymbols(module, unit.imported),
+    definitions: unit.definitions,
+    getKey: unit.getKey,
+    location: instance.location,
+    self: undefined,
+  };
+  const explicit = new Map(instance.substitutions.map((item) => [item.name, item.expression]));
+  return new Map(
+    declarations.map((declaration): [string, Expression] => {
+      const expression: Expression = explicit.get(declaration.name) ?? {
+        kind: "Identifier",
+        name: declaration.name,
+        location: instance.location,
+      };
+      if (declaration.arity > 0 && expression.kind === "Identifier") {
+        getSymbolArity(expression, expression.name, scope, context);
+      } else {
+        resolveExpression(expression, scope, context);
+      }
+      return [declaration.name, expression];
     }),
+  );
+};
+
+export const resolveModule = (module: Module, unit: ModuleUnit) => {
+  const symbols = createSymbols(module, unit.imported);
+  const resolveIn = (location: SourceLocation, self: Definition | undefined) => ({
+    imported: symbols,
+    definitions: unit.definitions,
+    getKey: unit.getKey,
+    location,
+    self,
+  });
+  module.definitions.forEach((definition) =>
+    resolveDefinition(definition, undefined, resolveIn(definition.location, definition)),
   );
   module.assumptions.forEach((assumption) =>
-    resolveExpression(assumption.expression, undefined, {
-      imported: symbols,
-      definitions,
-      location: assumption.location,
-      self: undefined,
-    }),
+    resolveExpression(assumption.expression, undefined, resolveIn(assumption.location, undefined)),
   );
-  return new Map([
-    ...symbols,
-    ...module.definitions
-      .filter((definition) => !definition.isLocal)
-      .map((definition): [string, number] => [definition.name, getArity(definition)]),
-  ]);
 };

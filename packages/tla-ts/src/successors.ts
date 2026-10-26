@@ -1,4 +1,4 @@
-import type { Bound, Expression } from "./ast";
+import type { Bound, Definition, Expression } from "./ast";
 import { TlaEvaluationError } from "./errors";
 import {
   bindArgument,
@@ -101,7 +101,7 @@ const getStaticVariableIndex = (
   expression: Expression,
   environment: Environment,
   isPrimed: boolean,
-  visited = new Set<string>(),
+  visited = new Set<Definition>(),
 ): number | undefined => {
   if (expression.kind === "Prime" && isPrimed) {
     return getStaticVariableIndex(expression.expression, environment, false, visited);
@@ -110,8 +110,8 @@ const getStaticVariableIndex = (
   const index = environment.variableIndex.get(expression.name);
   if (index !== undefined) return isPrimed ? undefined : index;
   const definition = getZeroArityBody(expression.name, environment);
-  if (!definition || visited.has(definition.name)) return undefined;
-  visited.add(definition.name);
+  if (!definition || visited.has(definition)) return undefined;
+  visited.add(definition);
   return getStaticVariableIndex(definition.body, environment, isPrimed, visited);
 };
 
