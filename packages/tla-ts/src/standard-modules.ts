@@ -91,6 +91,8 @@ const defineConstant = (name: string, value: Value): Builtin => ({
   name,
   arity: 0,
   evaluate: () => value,
+  evaluateUnary: undefined,
+  evaluateBinary: undefined,
 });
 
 const defineOperator = (
@@ -102,15 +104,46 @@ const defineOperator = (
   name,
   arity,
   evaluate,
+  evaluateUnary: arity === 1 ? (value) => evaluate([value]) : undefined,
+  evaluateBinary: arity === 2 ? (left, right) => evaluate([left, right]) : undefined,
+});
+
+const defineHigherOrderOperator = (
+  name: string,
+  arity: number,
+  evaluate: (args: BuiltinArgument[]) => Value,
+): Builtin => ({
+  kind: "Builtin",
+  name,
+  arity,
+  evaluate,
+  evaluateUnary: undefined,
+  evaluateBinary: undefined,
+});
+
+const toNumber = (value: Value, name: string) => {
+  if (typeof value !== "number") {
+    throw new TlaEvaluationError(`${name} expects an integer but received ${formatValue(value)}`);
+  }
+  return value;
+};
+
+const defineBinary = (name: string, compute: (left: Value, right: Value) => Value): Builtin => ({
+  kind: "Builtin",
+  name,
+  arity: 2,
+  evaluate: (args) => compute(getValue(args, 0, name), getValue(args, 1, name)),
+  evaluateUnary: undefined,
+  evaluateBinary: compute,
 });
 
 const defineArithmetic = (name: string, compute: (left: number, right: number) => number) =>
-  defineOperator(name, 2, (args) =>
-    checkInteger(compute(getNumber(args, 0, name), getNumber(args, 1, name))),
+  defineBinary(name, (left, right) =>
+    checkInteger(compute(toNumber(left, name), toNumber(right, name))),
   );
 
 const defineComparison = (name: string, compare: (left: number, right: number) => boolean) =>
-  defineOperator(name, 2, (args) => compare(getNumber(args, 0, name), getNumber(args, 1, name)));
+  defineBinary(name, (left, right) => compare(toNumber(left, name), toNumber(right, name)));
 
 const isSubsetOf = (left: Value[], right: Value) =>
   left.every((element) => isElementOf(element, right));
@@ -122,8 +155,8 @@ export const CORE_OPERATORS: Builtin[] = [
   defineConstant("FALSE", false),
   defineConstant("BOOLEAN", BOOLEAN_SET),
   defineConstant("STRING", { kind: "InfiniteSet", name: "STRING" }),
-  defineOperator("=", 2, (args) => valuesEqual(getValue(args, 0, "="), getValue(args, 1, "="))),
-  defineOperator("#", 2, (args) => !valuesEqual(getValue(args, 0, "#"), getValue(args, 1, "#"))),
+  defineBinary("=", valuesEqual),
+  defineBinary("#", (left, right) => !valuesEqual(left, right)),
   defineOperator("~", 1, (args) => !getBoolean(args, 0, "~")),
   defineOperator("<=>", 2, (args) => getBoolean(args, 0, "<=>") === getBoolean(args, 1, "<=>")),
   defineOperator("\\in", 2, (args) =>
@@ -271,7 +304,7 @@ const SEQUENCES_OPERATORS: Builtin[] = [
     }
     return createTuple(elements.slice(start - 1, end));
   }),
-  defineOperator("SelectSeq", 2, (args) => {
+  defineHigherOrderOperator("SelectSeq", 2, (args) => {
     const test = getOperator(args, 1, "SelectSeq");
     return createTuple(
       getSequence(args, 0, "SelectSeq").filter((element) => {
@@ -345,7 +378,7 @@ export const createTlcOperators = (print: (text: string) => void): Builtin[] => 
       ),
     );
   }),
-  defineOperator("SortSeq", 2, (args) => {
+  defineHigherOrderOperator("SortSeq", 2, (args) => {
     const precedes = getOperator(args, 1, "SortSeq");
     return createTuple(
       getSequence(args, 0, "SortSeq").reduce<Value[]>((sorted, element) => {

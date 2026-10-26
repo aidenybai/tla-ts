@@ -2,18 +2,18 @@ import type {
   Bound,
   BoundPattern,
   Definition,
-  ExceptPathStep,
   Expression,
   FunctionDefinition,
   OperatorParam,
+  RecordField,
 } from "./ast";
 import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
 import {
   applyFunction,
   checkInteger,
   createFunction,
-  createRecord,
   createSet,
+  createSortedFunction,
   createTuple,
   formatValue,
   getSequenceElements,
@@ -42,6 +42,8 @@ export interface Builtin {
   name: string;
   arity: number;
   evaluate: (args: BuiltinArgument[]) => Value;
+  evaluateUnary: ((value: Value) => Value) | undefined;
+  evaluateBinary: ((left: Value, right: Value) => Value) | undefined;
 }
 
 export interface Closure {
@@ -74,14 +76,6 @@ export interface Scope {
   parent: Scope | undefined;
 }
 
-export type GlobalName =
-  | { kind: "Local" }
-  | { kind: "Variable"; index: number }
-  | { kind: "Value"; value: Value }
-  | { kind: "Definition"; definition: Definition };
-
-export type GlobalOperator = { kind: "Local" } | { kind: "Global"; operator: Operator };
-
 export interface Environment {
   definitions: Map<string, Definition>;
   builtins: Map<string, Builtin>;
@@ -91,6 +85,7 @@ export interface Environment {
   variableIndex: Map<string, number>;
   definitionValues: Map<Definition, Value>;
   constantLevels: Map<Definition, boolean>;
+  evaluators: WeakMap<Expression, Evaluator>;
 }
 
 export interface Context {
@@ -100,7 +95,19 @@ export interface Context {
   next: State | undefined;
 }
 
+type Evaluator = (context: Context) => Value;
+
+type ArgumentBinder = (context: Context) => Binding;
+
+type GlobalName =
+  | { kind: "Variable"; index: number }
+  | { kind: "Value"; value: Value }
+  | { kind: "Definition"; definition: Definition };
+
 const EXCEPT_AT = "@";
+
+const describeLocation = (expression: Expression) =>
+  `line ${expression.location.line}, column ${expression.location.column}`;
 
 export const lookupScope = (scope: Scope | undefined, name: string): Binding | undefined => {
   for (let current = scope; current; current = current.parent) {
@@ -265,23 +272,23 @@ export const isConstantLevel = (definition: Definition, environment: Environment
   return isConstant;
 };
 
-const getBoundSets = (bounds: Bound[], context: Context) =>
-  bounds.map((bound) => {
-    const set = evaluate(bound.set, context);
-    if (!isEnumerable(set)) {
-      throw new TlaEvaluationError(
-        `TLC encountered a non-enumerable quantifier bound ${formatValue(set)} at line ${bound.set.location.line}, column ${bound.set.location.column}`,
-      );
-    }
-    return toFiniteSet(set).elements;
-  });
+const getEnumeratedElements = (set: Value, expression: Expression) => {
+  if (!isEnumerable(set)) {
+    throw new TlaEvaluationError(
+      `TLC encountered a non-enumerable quantifier bound ${formatValue(set)} at ${describeLocation(expression)}`,
+    );
+  }
+  return toFiniteSet(set).elements;
+};
 
 export const forEachBinding = (
   bounds: Bound[],
   context: Context,
   visit: (scope: Scope | undefined) => boolean,
 ): boolean => {
-  const sets = getBoundSets(bounds, context);
+  const sets = bounds.map((bound) =>
+    getEnumeratedElements(evaluate(bound.set, context), bound.set),
+  );
   const visitBound = (index: number, scope: Scope | undefined): boolean => {
     if (index < 0) return visit(scope);
     return sets[index].some((element) =>
@@ -378,29 +385,34 @@ const getDefinitionClosure = (definition: Definition & { kind: "Operator" }) => 
   return closure;
 };
 
-export const resolveOperator = (name: string, context: Context): Operator | undefined => {
-  const binding = lookupScope(context.scope, name);
-  if (binding?.kind === "Operator") return binding.operator;
-  if (binding) return undefined;
-  const target = context.environment.substitutions.get(name);
-  if (target !== undefined) return resolveOperator(target, context);
-  const definition = context.environment.definitions.get(name);
+const resolveGlobalOperator = (name: string, environment: Environment): Operator | undefined => {
+  const target = environment.substitutions.get(name);
+  if (target !== undefined) return resolveGlobalOperator(target, environment);
+  const definition = environment.definitions.get(name);
   if (definition?.kind === "Operator") return getDefinitionClosure(definition);
-  return context.environment.builtins.get(name);
+  return environment.builtins.get(name);
 };
 
-const LOCAL_OPERATOR: GlobalOperator = { kind: "Local" };
+const globalApplyOperators = new WeakMap<Expression, Operator | null>();
 
 export const resolveApplyOperator = (
   expression: Expression & { kind: "Apply" },
   context: Context,
 ): Operator | undefined => {
-  const cached = expression.resolution;
-  if (cached?.kind === "Global") return cached.operator;
-  if (cached?.kind === "Local") return resolveOperator(expression.operator, context);
-  const global = resolveOperator(expression.operator, withScope(context, undefined));
-  expression.resolution = global ? { kind: "Global", operator: global } : LOCAL_OPERATOR;
+  const cached = globalApplyOperators.get(expression);
+  const global =
+    cached === undefined
+      ? (resolveGlobalOperator(expression.operator, context.environment) ?? null)
+      : cached;
+  if (cached === undefined) globalApplyOperators.set(expression, global);
   return global ?? resolveOperator(expression.operator, context);
+};
+
+export const resolveOperator = (name: string, context: Context): Operator | undefined => {
+  const binding = lookupScope(context.scope, name);
+  if (binding?.kind === "Operator") return binding.operator;
+  if (binding) return undefined;
+  return resolveGlobalOperator(name, context.environment);
 };
 
 const getArity = (operator: Operator) =>
@@ -425,7 +437,7 @@ const evaluateOperatorArgument = (expression: Expression, context: Context): Ope
   const operator = name === undefined ? undefined : resolveOperator(name, context);
   if (!operator) {
     throw new TlaEvaluationError(
-      `Expected an operator argument at line ${expression.location.line}, column ${expression.location.column}`,
+      `Expected an operator argument at ${describeLocation(expression)}`,
     );
   }
   return operator;
@@ -455,19 +467,67 @@ const toOperatorValue = (operator: Operator, context: Context): OperatorValue =>
         call: (args) => callOperatorWithValues(operator, args, context),
       };
 
-const globalOperatorArguments = new WeakMap<Expression, boolean>();
-
 const isOperatorArgument = (expression: Expression, context: Context) => {
   if (expression.kind === "Lambda" || expression.kind === "OperatorReference") return true;
   if (expression.kind !== "Identifier") return false;
-  const binding = lookupScope(context.scope, expression.name);
-  if (binding) return binding.kind === "Operator" && getArity(binding.operator) > 0;
-  const cached = globalOperatorArguments.get(expression);
-  if (cached !== undefined) return cached;
   const operator = resolveOperator(expression.name, context);
-  const isOperator = operator !== undefined && getArity(operator) > 0;
-  globalOperatorArguments.set(expression, isOperator);
-  return isOperator;
+  return operator !== undefined && getArity(operator) > 0;
+};
+
+const createThunk = (expression: Expression, context: Context): Thunk => ({
+  kind: "Thunk",
+  expression,
+  scope: context.scope,
+  state: context.state,
+  next: context.next,
+  cache: undefined,
+});
+
+const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
+  const variableIndex = environment.variableIndex.get(name);
+  if (variableIndex !== undefined) return { kind: "Variable", index: variableIndex };
+  const constant = environment.constants.get(name);
+  if (constant !== undefined) return { kind: "Value", value: constant };
+  const target = environment.substitutions.get(name);
+  if (target !== undefined) return findGlobalName(target, environment);
+  const definition = environment.definitions.get(name);
+  if (definition) return { kind: "Definition", definition };
+  const builtin = environment.builtins.get(name);
+  if (builtin && builtin.arity === 0) return { kind: "Value", value: builtin.evaluate([]) };
+  return undefined;
+};
+
+const compileArgumentBinder = (argument: Expression, environment: Environment): ArgumentBinder => {
+  const isLiteral =
+    argument.kind === "String" || (argument.kind === "Number" && isTlcInteger(argument.value));
+  if (isLiteral) {
+    const binding: Binding = { kind: "Value", value: argument.value };
+    return () => binding;
+  }
+  if (argument.kind === "Identifier") {
+    const global = findGlobalName(argument.name, environment);
+    if (global?.kind === "Value") {
+      const binding: Binding = { kind: "Value", value: global.value };
+      return () => binding;
+    }
+    if (global === undefined) {
+      return (context) => {
+        const binding = lookupScope(context.scope, argument.name);
+        return binding?.kind === "Value" ? binding : createThunk(argument, context);
+      };
+    }
+  }
+  return (context) => createThunk(argument, context);
+};
+
+const argumentBinders = new WeakMap<Expression, ArgumentBinder>();
+
+const getArgumentBinder = (argument: Expression, environment: Environment) => {
+  const cached = argumentBinders.get(argument);
+  if (cached) return cached;
+  const binder = compileArgumentBinder(argument, environment);
+  argumentBinders.set(argument, binder);
+  return binder;
 };
 
 export const bindOperatorArguments = (
@@ -480,27 +540,16 @@ export const bindOperatorArguments = (
       `Operator ${closure.name} expects ${closure.params.length} arguments but received ${args.length}`,
     );
   }
-  return closure.params.reduce<Scope | undefined>((scope, param, index): Scope => {
-    if (param.arity > 0) {
-      return {
-        name: param.name,
-        binding: { kind: "Operator", operator: evaluateOperatorArgument(args[index], context) },
-        parent: scope,
-      };
-    }
-    return {
-      name: param.name,
-      binding: {
-        kind: "Thunk",
-        expression: args[index],
-        scope: context.scope,
-        state: context.state,
-        next: context.next,
-        cache: undefined,
-      },
-      parent: scope,
-    };
-  }, closure.scope);
+  let scope = closure.scope;
+  for (let index = 0; index < args.length; index++) {
+    const param = closure.params[index];
+    const binding: Binding =
+      param.arity > 0
+        ? { kind: "Operator", operator: evaluateOperatorArgument(args[index], context) }
+        : getArgumentBinder(args[index], context.environment)(context);
+    scope = { name: param.name, binding, parent: scope };
+  }
+  return scope;
 };
 
 const callOperator = (operator: Operator, args: Expression[], context: Context): Value => {
@@ -567,142 +616,219 @@ export const bindDefinitions = (definitions: Definition[], context: Context): Sc
     return node;
   }, context.scope);
 
-const LOCAL_NAME: GlobalName = { kind: "Local" };
-
-const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
-  const variableIndex = environment.variableIndex.get(name);
-  if (variableIndex !== undefined) return { kind: "Variable", index: variableIndex };
-  const constant = environment.constants.get(name);
-  if (constant !== undefined) return { kind: "Value", value: constant };
-  const target = environment.substitutions.get(name);
-  if (target !== undefined) return findGlobalName(target, environment);
-  const definition = environment.definitions.get(name);
-  if (definition) return { kind: "Definition", definition };
-  const builtin = environment.builtins.get(name);
-  if (builtin && builtin.arity === 0) return { kind: "Value", value: builtin.evaluate([]) };
-  return undefined;
-};
-
-const evaluateName = (
-  name: string,
-  expression: Expression & { kind: "Identifier" },
-  context: Context,
-): Value => {
-  const cached = expression.resolution;
-  const resolution = cached ?? findGlobalName(name, context.environment) ?? LOCAL_NAME;
-  if (cached === undefined) expression.resolution = resolution;
-  if (resolution.kind === "Variable") {
-    const value = context.state?.[resolution.index];
-    if (value === undefined) {
-      throw new TlaEvaluationError(
-        `The variable ${name} is not assigned at line ${expression.location.line}, column ${expression.location.column}`,
-      );
-    }
-    return value;
-  }
-  if (resolution.kind === "Value") return resolution.value;
-  if (resolution.kind === "Definition" && resolution.definition.kind === "Operator") {
-    return evaluateDefinitionValue(resolution.definition, context);
-  }
-  return evaluateIdentifier(name, expression, context);
-};
-
-const evaluateIdentifier = (name: string, expression: Expression, context: Context): Value => {
+const evaluateLocalIdentifier = (name: string, expression: Expression, context: Context): Value => {
   const binding = lookupScope(context.scope, name);
   if (binding?.kind === "Value") return binding.value;
   if (binding?.kind === "Thunk") return forceThunk(binding, context);
   if (binding?.kind === "Operator") {
-    if (getArity(binding.operator) === 0)
+    if (getArity(binding.operator) === 0) {
       return callOperatorWithValues(binding.operator, [], context);
+    }
     throw new TlaEvaluationError(`Operator ${name} is used without arguments`);
   }
-  const environment = context.environment;
-  const variableIndex = environment.variableIndex.get(name);
-  if (variableIndex !== undefined) {
-    const value = context.state?.[variableIndex];
+  const global = findGlobalName(name, context.environment);
+  if (global?.kind === "Variable") {
+    const value = context.state?.[global.index];
     if (value === undefined) {
       throw new TlaEvaluationError(
-        `The variable ${name} is not assigned at line ${expression.location.line}, column ${expression.location.column}`,
+        `The variable ${name} is not assigned at ${describeLocation(expression)}`,
       );
     }
     return value;
   }
-  const constant = environment.constants.get(name);
-  if (constant !== undefined) return constant;
-  const target = environment.substitutions.get(name);
-  if (target !== undefined) return evaluateIdentifier(target, expression, context);
-  const definition = environment.definitions.get(name);
-  if (definition) return evaluateDefinitionValue(definition, context);
-  const builtin = environment.builtins.get(name);
-  if (builtin && builtin.arity === 0) return builtin.evaluate([]);
-  throw new TlaEvaluationError(
-    `Unknown identifier ${name} at line ${expression.location.line}, column ${expression.location.column}`,
-  );
+  if (global?.kind === "Value") return global.value;
+  if (global?.kind === "Definition") return evaluateDefinitionValue(global.definition, context);
+  throw new TlaEvaluationError(`Unknown identifier ${name} at ${describeLocation(expression)}`);
 };
 
-const evaluateApply = (expression: Expression & { kind: "Apply" }, context: Context): Value => {
-  if (expression.operator === "=>") {
-    return (
-      !expectBoolean(evaluate(expression.args[0], context), "the left side of =>") ||
-      expectBoolean(evaluate(expression.args[1], context), "the right side of =>")
-    );
+const isTlcInteger = (value: number) =>
+  Number.isInteger(value) && value <= 2147483647 && value >= -2147483648;
+
+const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
+  const cached = environment.evaluators.get(expression);
+  if (cached) return cached;
+  const evaluator = compile(expression, environment);
+  environment.evaluators.set(expression, evaluator);
+  return evaluator;
+};
+
+export const evaluate = (expression: Expression, context: Context): Value =>
+  getEvaluator(expression, context.environment)(context);
+
+const compileIdentifier = (
+  expression: Expression & { kind: "Identifier" },
+  environment: Environment,
+): Evaluator => {
+  const name = expression.name;
+  const global = findGlobalName(name, environment);
+  if (global?.kind === "Variable") {
+    const index = global.index;
+    return (context) => {
+      const value = context.state?.[index];
+      if (value === undefined) {
+        throw new TlaEvaluationError(
+          `The variable ${name} is not assigned at ${describeLocation(expression)}`,
+        );
+      }
+      return value;
+    };
   }
-  if (expression.operator === "~>") {
-    throw new TlaUnsupportedError("Temporal formulas such as ~> cannot be evaluated in a state");
+  if (global?.kind === "Value") {
+    const value = global.value;
+    return () => value;
   }
-  const operator = resolveApplyOperator(expression, context);
-  if (operator) return callOperator(operator, expression.args, context);
-  const definition = context.environment.definitions.get(expression.operator);
-  if (definition?.kind === "Function") {
-    throw new TlaEvaluationError(`${expression.operator} is a function; apply it with brackets`);
+  if (global?.kind === "Definition" && global.definition.kind === "Operator") {
+    const definition = global.definition;
+    if (definition.params.length === 0 && isConstantLevel(definition, environment)) {
+      return (context) => evaluateDefinitionValue(definition, context);
+    }
+    if (definition.params.length === 0) {
+      const compiled = { body: undefined as Evaluator | undefined };
+      return (context) => {
+        compiled.body ??= getEvaluator(definition.body, environment);
+        return compiled.body(withScope(context, undefined));
+      };
+    }
+    return (context) => evaluateDefinitionValue(definition, context);
   }
-  throw new TlaEvaluationError(
-    `Unknown operator ${expression.operator} at line ${expression.location.line}, column ${expression.location.column}`,
-  );
+  return (context) => evaluateLocalIdentifier(name, expression, context);
 };
 
-const getExceptKey = (step: ExceptPathStep, context: Context): Value => {
-  if (step.kind === "Field") return step.name;
-  const args = step.args.map((arg) => evaluate(arg, context));
-  return args.length === 1 ? args[0] : createTuple(args);
+const isOperatorName = (name: string, environment: Environment) => {
+  const operator = resolveGlobalOperator(name, environment);
+  return operator !== undefined && getArity(operator) > 0;
 };
 
-const applyExceptUpdate = (
-  value: Value,
-  path: ExceptPathStep[],
-  context: Context,
-  computeValue: (previous: Value) => Value,
-): Value => {
-  if (path.length === 0) return computeValue(value);
-  const key = getExceptKey(path[0], context);
-  return updateFunction(value, key, (previous) =>
-    applyExceptUpdate(previous, path.slice(1), context, computeValue),
-  );
-};
+const isValueArgument = (argument: Expression, environment: Environment) =>
+  argument.kind !== "Lambda" &&
+  argument.kind !== "OperatorReference" &&
+  !(argument.kind === "Identifier" && isOperatorName(argument.name, environment));
 
-const evaluateFunctionConstruction = (
-  expression: Expression & { kind: "FunctionConstruction" },
-  context: Context,
-) => {
-  const domain = getBoundsDomain(expression.bounds, context);
-  if (!isEnumerable(domain)) {
-    return createLazyFunction(domain, (argument) =>
-      evaluate(
-        expression.body,
-        withScope(context, bindArgument(expression.bounds, context.scope, argument)),
+const compileBuiltinCall = (
+  builtin: Builtin,
+  args: Expression[],
+  environment: Environment,
+): Evaluator => {
+  const unary = builtin.evaluateUnary;
+  if (unary && args.length === 1 && isValueArgument(args[0], environment)) {
+    const operand = getEvaluator(args[0], environment);
+    return (context) => unary(operand(context));
+  }
+  const binary = builtin.evaluateBinary;
+  const isBinary =
+    args.length === 2 &&
+    isValueArgument(args[0], environment) &&
+    isValueArgument(args[1], environment);
+  if (binary && isBinary) {
+    const left = getEvaluator(args[0], environment);
+    const right = getEvaluator(args[1], environment);
+    return (context) => binary(left(context), right(context));
+  }
+  return (context) =>
+    builtin.evaluate(
+      args.map((arg) =>
+        isOperatorArgument(arg, context)
+          ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
+          : evaluate(arg, context),
       ),
     );
+};
+
+const compileClosureCall = (
+  closure: Closure,
+  args: Expression[],
+  environment: Environment,
+): Evaluator => {
+  if (args.length !== closure.params.length) {
+    return () => {
+      throw new TlaEvaluationError(
+        `Operator ${closure.name} expects ${closure.params.length} arguments but received ${args.length}`,
+      );
+    };
   }
-  const pairs: [Value, Value][] = [];
-  forEachBinding(expression.bounds, context, (scope) => {
-    const key =
-      expression.bounds.length === 1
-        ? (lookupKey(expression.bounds[0].pattern, scope) ?? false)
-        : createTuple(expression.bounds.map((bound) => lookupKey(bound.pattern, scope) ?? false));
-    pairs.push([key, evaluate(expression.body, withScope(context, scope))]);
-    return false;
-  });
-  return createFunction(pairs);
+  const params = closure.params;
+  const binders = args.map((arg, index) =>
+    params[index].arity > 0 ? undefined : getArgumentBinder(arg, environment),
+  );
+  const compiled = { body: undefined as Evaluator | undefined };
+  return (context) => {
+    let scope = closure.scope;
+    for (let index = 0; index < args.length; index++) {
+      const binder = binders[index];
+      const binding: Binding = binder
+        ? binder(context)
+        : { kind: "Operator", operator: evaluateOperatorArgument(args[index], context) };
+      scope = { name: params[index].name, binding, parent: scope };
+    }
+    compiled.body ??= getEvaluator(closure.body, environment);
+    return compiled.body({ environment, scope, state: context.state, next: context.next });
+  };
+};
+
+const compileApply = (
+  expression: Expression & { kind: "Apply" },
+  environment: Environment,
+): Evaluator => {
+  const args = expression.args;
+  if (expression.operator === "=>") {
+    const left = getEvaluator(args[0], environment);
+    const right = getEvaluator(args[1], environment);
+    return (context) =>
+      !expectBoolean(left(context), "the left side of =>") ||
+      expectBoolean(right(context), "the right side of =>");
+  }
+  if (expression.operator === "~>") {
+    return () => {
+      throw new TlaUnsupportedError("Temporal formulas such as ~> cannot be evaluated in a state");
+    };
+  }
+  const global = resolveGlobalOperator(expression.operator, environment);
+  if (global?.kind === "Closure") return compileClosureCall(global, args, environment);
+  if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
+  return (context) => {
+    const operator = resolveOperator(expression.operator, context);
+    if (operator) return callOperator(operator, args, context);
+    const definition = environment.definitions.get(expression.operator);
+    if (definition?.kind === "Function") {
+      throw new TlaEvaluationError(`${expression.operator} is a function; apply it with brackets`);
+    }
+    throw new TlaEvaluationError(
+      `Unknown operator ${expression.operator} at ${describeLocation(expression)}`,
+    );
+  };
+};
+
+const compileQuantifier = (
+  expression: Expression & { kind: "Forall" | "Exists" },
+  environment: Environment,
+): Evaluator => {
+  const isForall = expression.kind === "Forall";
+  const description = isForall ? "the body of \\A" : "the body of \\E";
+  const body = getEvaluator(expression.body, environment);
+  const bound = expression.bounds[0];
+  if (expression.bounds.length === 1 && bound.pattern.kind === "Name") {
+    const name = bound.pattern.name;
+    const set = getEvaluator(bound.set, environment);
+    return (context) => {
+      const elements = getEnumeratedElements(set(context), bound.set);
+      for (let index = 0; index < elements.length; index++) {
+        const result = expectBoolean(
+          body(withScope(context, bindValue(context.scope, name, elements[index]))),
+          description,
+        );
+        if (result !== isForall) return result;
+      }
+      return isForall;
+    };
+  }
+  return (context) => {
+    const isFound = forEachBinding(
+      expression.bounds,
+      context,
+      (scope) => expectBoolean(body(withScope(context, scope)), description) !== isForall,
+    );
+    return isFound ? !isForall : isForall;
+  };
 };
 
 const lookupKey = (pattern: BoundPattern, scope: Scope | undefined): Value | undefined => {
@@ -718,215 +844,362 @@ const lookupKey = (pattern: BoundPattern, scope: Scope | undefined): Value | und
   return binding?.kind === "Value" ? binding.value : undefined;
 };
 
-export const evaluate = (expression: Expression, context: Context): Value => {
-  const kind = expression.kind;
-  if (kind === "Identifier") return evaluateName(expression.name, expression, context);
-  if (kind === "Apply") return evaluateApply(expression, context);
-  if (kind === "String") return expression.value;
-  if (kind === "FunctionApplication") {
-    const fn = evaluate(expression.function, context);
-    if (expression.args.length === 1)
-      return applyFunction(fn, evaluate(expression.args[0], context));
-    return applyFunction(fn, createTuple(expression.args.map((arg) => evaluate(arg, context))));
-  }
-  if (kind === "Record") {
-    return createRecord(
-      expression.fields.map((field): [string, Value] => [
-        field.name,
-        evaluate(field.value, context),
-      ]),
+const compileFunctionConstruction = (
+  expression: Expression & { kind: "FunctionConstruction" },
+  environment: Environment,
+): Evaluator => {
+  const body = getEvaluator(expression.body, environment);
+  const bounds = expression.bounds;
+  const bound = bounds[0];
+  const isSingleName = bounds.length === 1 && bound.pattern.kind === "Name";
+  const set = getEvaluator(bound.set, environment);
+  return (context) => {
+    const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
+    if (!isEnumerable(domain)) {
+      return createLazyFunction(domain, (argument) =>
+        body(withScope(context, bindArgument(bounds, context.scope, argument))),
+      );
+    }
+    if (isSingleName && bound.pattern.kind === "Name") {
+      const name = bound.pattern.name;
+      const keys = toFiniteSet(domain).elements;
+      const range: Value[] = Array.from({ length: keys.length });
+      for (let index = 0; index < keys.length; index++) {
+        range[index] = body(withScope(context, bindValue(context.scope, name, keys[index])));
+      }
+      return createSortedFunction(keys, range);
+    }
+    const pairs: [Value, Value][] = [];
+    forEachBinding(bounds, context, (scope) => {
+      const key =
+        bounds.length === 1
+          ? (lookupKey(bound.pattern, scope) ?? false)
+          : createTuple(bounds.map((item) => lookupKey(item.pattern, scope) ?? false));
+      pairs.push([key, body(withScope(context, scope))]);
+      return false;
+    });
+    return createFunction(pairs);
+  };
+};
+
+const compileExcept = (
+  expression: Expression & { kind: "Except" },
+  environment: Environment,
+): Evaluator => {
+  const fn = getEvaluator(expression.function, environment);
+  const updates = expression.updates.map((update) => ({
+    path: update.path.map((step) =>
+      step.kind === "Field"
+        ? { kind: "Field" as const, name: step.name, args: [] as Evaluator[] }
+        : {
+            kind: "Index" as const,
+            name: "",
+            args: step.args.map((arg) => getEvaluator(arg, environment)),
+          },
+    ),
+    value: getEvaluator(update.value, environment),
+  }));
+  type CompiledStep = (typeof updates)[number]["path"][number];
+  const getKey = (step: CompiledStep, context: Context): Value => {
+    if (step.kind === "Field") return step.name;
+    if (step.args.length === 1) return step.args[0](context);
+    return createTuple(step.args.map((arg) => arg(context)));
+  };
+  const update = (
+    current: Value,
+    path: CompiledStep[],
+    depth: number,
+    context: Context,
+    value: Evaluator,
+  ): Value => {
+    if (depth === path.length) {
+      return value(withScope(context, bindValue(context.scope, EXCEPT_AT, current)));
+    }
+    return updateFunction(current, getKey(path[depth], context), (previous) =>
+      update(previous, path, depth + 1, context, value),
     );
-  }
-  switch (kind) {
-    case "Number":
-      return checkInteger(expression.value);
-    case "OperatorReference":
-    case "Lambda":
-      throw new TlaEvaluationError(
-        `An operator cannot be used as a value at line ${expression.location.line}, column ${expression.location.column}`,
-      );
-    case "And":
-      return expression.operands.every((operand) =>
-        expectBoolean(evaluate(operand, context), "a conjunct"),
-      );
-    case "Or":
-      return expression.operands.some((operand) =>
-        expectBoolean(evaluate(operand, context), "a disjunct"),
-      );
-    case "Prime": {
-      if (!context.next) {
-        throw new TlaEvaluationError(
-          `A primed expression appears outside an action at line ${expression.location.line}, column ${expression.location.column}`,
-        );
-      }
-      return evaluate(expression.expression, {
-        environment: context.environment,
-        scope: context.scope,
-        state: context.next,
-        next: undefined,
-      });
-    }
-    case "Unchanged":
-      return valuesEqual(
-        evaluate(
-          { kind: "Prime", expression: expression.expression, location: expression.location },
-          context,
-        ),
-        evaluate(expression.expression, context),
-      );
-    case "If":
-      return expectBoolean(evaluate(expression.condition, context), "an IF condition")
-        ? evaluate(expression.consequent, context)
-        : evaluate(expression.alternative, context);
-    case "Case": {
-      const arm = expression.arms.find((candidate) =>
-        expectBoolean(evaluate(candidate.condition, context), "a CASE guard"),
-      );
-      if (arm) return evaluate(arm.body, context);
-      if (expression.other) return evaluate(expression.other, context);
-      throw new TlaEvaluationError(
-        `No CASE guard is true at line ${expression.location.line}, column ${expression.location.column}`,
-      );
-    }
-    case "Let":
-      return evaluate(
-        expression.body,
-        withScope(context, bindDefinitions(expression.definitions, context)),
-      );
-    case "Forall":
-      return !forEachBinding(
-        expression.bounds,
-        context,
-        (scope) =>
-          !expectBoolean(evaluate(expression.body, withScope(context, scope)), "the body of \\A"),
-      );
-    case "Exists":
-      return forEachBinding(expression.bounds, context, (scope) =>
-        expectBoolean(evaluate(expression.body, withScope(context, scope)), "the body of \\E"),
-      );
-    case "UnboundedQuantifier":
-      throw new TlaEvaluationError(
-        `TLC cannot evaluate an unbounded quantifier at line ${expression.location.line}, column ${expression.location.column}`,
-      );
-    case "Choose": {
-      if (!expression.set) {
-        throw new TlaEvaluationError(
-          `TLC cannot evaluate an unbounded CHOOSE at line ${expression.location.line}, column ${expression.location.column}`,
-        );
-      }
-      const bound = { pattern: expression.pattern, set: expression.set };
-      const chosen = { value: undefined as Value | undefined };
-      forEachBinding([bound], context, (scope) => {
-        if (
-          !expectBoolean(evaluate(expression.body, withScope(context, scope)), "the body of CHOOSE")
-        )
-          return false;
-        chosen.value = lookupKey(expression.pattern, scope);
-        return true;
-      });
-      if (chosen.value === undefined) {
-        throw new TlaEvaluationError(
-          `Attempted to compute CHOOSE x \\in S : P, but no element of S satisfies P at line ${expression.location.line}, column ${expression.location.column}`,
-        );
-      }
-      return chosen.value;
-    }
-    case "SetEnumeration":
-      return createSet(expression.elements.map((element) => evaluate(element, context)));
-    case "SetFilter": {
+  };
+  return (context) => {
+    let current = fn(context);
+    for (const item of updates) current = update(current, item.path, 0, context, item.value);
+    return current;
+  };
+};
+
+const compileSetComprehension = (
+  expression: Expression & { kind: "SetFilter" | "SetMap" | "Choose" },
+  environment: Environment,
+): Evaluator => {
+  if (expression.kind === "SetFilter") {
+    const predicate = getEvaluator(expression.predicate, environment);
+    const bound = expression.bound;
+    return (context) => {
       const elements: Value[] = [];
-      forEachBinding([expression.bound], context, (scope) => {
-        if (
-          expectBoolean(
-            evaluate(expression.predicate, withScope(context, scope)),
-            "a set filter predicate",
-          )
-        ) {
-          elements.push(lookupKey(expression.bound.pattern, scope) ?? false);
+      forEachBinding([bound], context, (scope) => {
+        if (expectBoolean(predicate(withScope(context, scope)), "a set filter predicate")) {
+          elements.push(lookupKey(bound.pattern, scope) ?? false);
         }
         return false;
       });
       return createSet(elements);
-    }
-    case "SetMap": {
+    };
+  }
+  if (expression.kind === "SetMap") {
+    const mapped = getEvaluator(expression.expression, environment);
+    return (context) => {
       const elements: Value[] = [];
       forEachBinding(expression.bounds, context, (scope) => {
-        elements.push(evaluate(expression.expression, withScope(context, scope)));
+        elements.push(mapped(withScope(context, scope)));
         return false;
       });
       return createSet(elements);
+    };
+  }
+  const set = expression.set;
+  if (!set) {
+    return () => {
+      throw new TlaEvaluationError(
+        `TLC cannot evaluate an unbounded CHOOSE at ${describeLocation(expression)}`,
+      );
+    };
+  }
+  const body = getEvaluator(expression.body, environment);
+  const bound = { pattern: expression.pattern, set };
+  return (context) => {
+    const chosen = { value: undefined as Value | undefined };
+    forEachBinding([bound], context, (scope) => {
+      if (!expectBoolean(body(withScope(context, scope)), "the body of CHOOSE")) return false;
+      chosen.value = lookupKey(expression.pattern, scope);
+      return true;
+    });
+    if (chosen.value === undefined) {
+      throw new TlaEvaluationError(
+        `Attempted to compute CHOOSE x \\in S : P, but no element of S satisfies P at ${describeLocation(expression)}`,
+      );
     }
-    case "Tuple":
-      return createTuple(expression.elements.map((element) => evaluate(element, context)));
-    case "FunctionConstruction":
-      return evaluateFunctionConstruction(expression, context);
-    case "FunctionSet":
-      return {
-        kind: "FunctionSet",
-        domain: evaluate(expression.domain, context),
-        range: evaluate(expression.range, context),
+    return chosen.value;
+  };
+};
+
+const compileRecord = (recordFields: RecordField[], environment: Environment): Evaluator => {
+  const fields = [...recordFields].sort((left, right) => (left.name < right.name ? -1 : 1));
+  const hasDuplicates = fields.some(
+    (field, index) => index > 0 && fields[index - 1].name === field.name,
+  );
+  const values = fields.map((field) => getEvaluator(field.value, environment));
+  if (hasDuplicates) {
+    return (context) =>
+      createFunction(
+        fields.map((field, index): [Value, Value] => [field.name, values[index](context)]),
+      );
+  }
+  const names: Value[] = fields.map((field) => field.name);
+  return (context) => {
+    const range: Value[] = Array.from({ length: values.length });
+    for (let index = 0; index < values.length; index++) range[index] = values[index](context);
+    return createSortedFunction(names, range);
+  };
+};
+
+const createUnchanged = (expression: Expression, location: Expression["location"]): Expression => ({
+  kind: "Unchanged",
+  expression,
+  location,
+});
+
+const throwing =
+  (createError: () => Error): Evaluator =>
+  () => {
+    throw createError();
+  };
+
+const compile = (expression: Expression, environment: Environment): Evaluator => {
+  const child = (node: Expression) => getEvaluator(node, environment);
+  switch (expression.kind) {
+    case "Number": {
+      const value = expression.value;
+      return isTlcInteger(value) ? () => value : () => checkInteger(value);
+    }
+    case "String": {
+      const value = expression.value;
+      return () => value;
+    }
+    case "Identifier":
+      return compileIdentifier(expression, environment);
+    case "Apply":
+      return compileApply(expression, environment);
+    case "OperatorReference":
+    case "Lambda":
+      return throwing(
+        () =>
+          new TlaEvaluationError(
+            `An operator cannot be used as a value at ${describeLocation(expression)}`,
+          ),
+      );
+    case "And": {
+      const operands = expression.operands.map(child);
+      return (context) => {
+        for (let index = 0; index < operands.length; index++) {
+          if (!expectBoolean(operands[index](context), "a conjunct")) return false;
+        }
+        return true;
       };
+    }
+    case "Or": {
+      const operands = expression.operands.map(child);
+      return (context) => {
+        for (let index = 0; index < operands.length; index++) {
+          if (expectBoolean(operands[index](context), "a disjunct")) return true;
+        }
+        return false;
+      };
+    }
+    case "Prime": {
+      const inner = child(expression.expression);
+      return (context) => {
+        if (!context.next) {
+          throw new TlaEvaluationError(
+            `A primed expression appears outside an action at ${describeLocation(expression)}`,
+          );
+        }
+        return inner({
+          environment: context.environment,
+          scope: context.scope,
+          state: context.next,
+          next: undefined,
+        });
+      };
+    }
+    case "Unchanged": {
+      const primed = child({
+        kind: "Prime",
+        expression: expression.expression,
+        location: expression.location,
+      });
+      const current = child(expression.expression);
+      return (context) => valuesEqual(primed(context), current(context));
+    }
+    case "If": {
+      const condition = child(expression.condition);
+      const consequent = child(expression.consequent);
+      const alternative = child(expression.alternative);
+      return (context) =>
+        expectBoolean(condition(context), "an IF condition")
+          ? consequent(context)
+          : alternative(context);
+    }
+    case "Case": {
+      const arms = expression.arms.map((arm) => ({
+        condition: child(arm.condition),
+        body: child(arm.body),
+      }));
+      const other = expression.other ? child(expression.other) : undefined;
+      return (context) => {
+        for (const arm of arms) {
+          if (expectBoolean(arm.condition(context), "a CASE guard")) return arm.body(context);
+        }
+        if (other) return other(context);
+        throw new TlaEvaluationError(`No CASE guard is true at ${describeLocation(expression)}`);
+      };
+    }
+    case "Let": {
+      const body = child(expression.body);
+      return (context) =>
+        body(withScope(context, bindDefinitions(expression.definitions, context)));
+    }
+    case "Forall":
+    case "Exists":
+      return compileQuantifier(expression, environment);
+    case "UnboundedQuantifier":
+      return throwing(
+        () =>
+          new TlaEvaluationError(
+            `TLC cannot evaluate an unbounded quantifier at ${describeLocation(expression)}`,
+          ),
+      );
+    case "Choose":
+    case "SetFilter":
+    case "SetMap":
+      return compileSetComprehension(expression, environment);
+    case "SetEnumeration": {
+      const elements = expression.elements.map(child);
+      return (context) => createSet(elements.map((element) => element(context)));
+    }
+    case "Tuple": {
+      const elements = expression.elements.map(child);
+      return (context) => createTuple(elements.map((element) => element(context)));
+    }
+    case "FunctionConstruction":
+      return compileFunctionConstruction(expression, environment);
+    case "FunctionSet": {
+      const domain = child(expression.domain);
+      const range = child(expression.range);
+      return (context) => ({ kind: "FunctionSet", domain: domain(context), range: range(context) });
+    }
+    case "Record":
+      return compileRecord(expression.fields, environment);
     case "RecordSet": {
       const fields = [...expression.fields].sort((left, right) =>
         left.name < right.name ? -1 : 1,
       );
-      return {
-        kind: "RecordSet",
-        names: fields.map((field) => field.name),
-        sets: fields.map((field) => evaluate(field.value, context)),
-      };
+      const names = fields.map((field) => field.name);
+      const sets = fields.map((field) => child(field.value));
+      return (context) => ({ kind: "RecordSet", names, sets: sets.map((set) => set(context)) });
     }
     case "Except":
-      return expression.updates.reduce(
-        (current, update) =>
-          applyExceptUpdate(current, update.path, context, (previous) =>
-            evaluate(
-              update.value,
-              withScope(context, bindValue(context.scope, EXCEPT_AT, previous)),
-            ),
-          ),
-        evaluate(expression.function, context),
-      );
-    case "ExceptAt": {
-      const binding = lookupScope(context.scope, EXCEPT_AT);
-      if (binding?.kind !== "Value") {
-        throw new TlaEvaluationError(
-          `@ appears outside an EXCEPT at line ${expression.location.line}, column ${expression.location.column}`,
-        );
-      }
-      return binding.value;
-    }
-    case "FieldAccess":
-      return applyFunction(evaluate(expression.record, context), expression.field);
-    case "Product":
-      return {
-        kind: "ProductSet",
-        factors: expression.factors.map((factor) => evaluate(factor, context)),
+      return compileExcept(expression, environment);
+    case "ExceptAt":
+      return (context) => {
+        const binding = lookupScope(context.scope, EXCEPT_AT);
+        if (binding?.kind !== "Value") {
+          throw new TlaEvaluationError(
+            `@ appears outside an EXCEPT at ${describeLocation(expression)}`,
+          );
+        }
+        return binding.value;
       };
+    case "FunctionApplication": {
+      const fn = child(expression.function);
+      const args = expression.args.map(child);
+      if (args.length === 1) {
+        const argument = args[0];
+        return (context) => applyFunction(fn(context), argument(context));
+      }
+      return (context) => applyFunction(fn(context), createTuple(args.map((arg) => arg(context))));
+    }
+    case "FieldAccess": {
+      const record = child(expression.record);
+      const field = expression.field;
+      return (context) => applyFunction(record(context), field);
+    }
+    case "Product": {
+      const factors = expression.factors.map(child);
+      return (context) => ({
+        kind: "ProductSet",
+        factors: factors.map((factor) => factor(context)),
+      });
+    }
     case "BoxAction":
-      return (
-        expectBoolean(evaluate(expression.action, context), "an action") ||
-        evaluate(
-          { kind: "Unchanged", expression: expression.subscript, location: expression.location },
-          context,
-        )
-      );
-    case "AngleAction":
-      return (
-        expectBoolean(evaluate(expression.action, context), "an action") &&
-        !evaluate(
-          { kind: "Unchanged", expression: expression.subscript, location: expression.location },
-          context,
-        )
-      );
+    case "AngleAction": {
+      const action = child(expression.action);
+      const unchanged = child(createUnchanged(expression.subscript, expression.location));
+      const isBox = expression.kind === "BoxAction";
+      return (context) =>
+        isBox
+          ? expectBoolean(action(context), "an action") || unchanged(context)
+          : expectBoolean(action(context), "an action") && !unchanged(context);
+    }
     case "Enabled":
-      throw new TlaUnsupportedError("ENABLED is not supported yet");
+      return throwing(() => new TlaUnsupportedError("ENABLED is not supported yet"));
     case "Always":
     case "Eventually":
     case "WeakFairness":
     case "StrongFairness":
-      throw new TlaUnsupportedError(
-        `Temporal formulas cannot be evaluated in a state (line ${expression.location.line}, column ${expression.location.column})`,
+      return throwing(
+        () =>
+          new TlaUnsupportedError(
+            `Temporal formulas cannot be evaluated in a state (${describeLocation(expression)})`,
+          ),
       );
   }
 };
