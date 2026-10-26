@@ -458,4 +458,43 @@ describe("parseConfig matches TLC", () => {
     const config = parseConfig("SPECIFICATION Spec\n_POSSIBLE Done Started\nPOSTCONDITION Post");
     expect([config.possible, config.postconditions]).toEqual([["Done", "Started"], ["Post"]]);
   });
+
+  it("reads _PERIODIC and _RL_REWARD names and checks their definitions", () => {
+    const config = parseConfig("INIT Init\n_PERIODIC Periodic\n_RL_REWARD Reward");
+    expect([config.periodic, config.rlReward]).toEqual(["Periodic", "Reward"]);
+    [
+      [
+        "_PERIODIC Nope",
+        "The periodic Nope specified in the configuration file\nis not defined in the specification.",
+      ],
+      [
+        "_RL_REWARD Argument",
+        "TLC requires rlreward not to take any argument, but one was given: Argument",
+      ],
+    ].forEach(([config, message]) =>
+      expect(() => checkModule("Argument(n) == n", config)).toThrow(new TlaConfigError(message)),
+    );
+    expect(
+      checkModule("Periodic == x < 100\nReward == 1", "_PERIODIC Periodic\n_RL_REWARD Reward")
+        .status,
+    ).toBe("success");
+  });
+
+  it("rejects keywords that appear twice", () => {
+    ["CHECK_DEADLOCK", "_PERIODIC", "_RL_REWARD"].forEach((keyword) =>
+      expect(() => parseConfig(`${keyword} FALSE\n${keyword} TRUE`)).toThrow(
+        new TlaConfigError(`The keyword ${keyword} appears twice`),
+      ),
+    );
+  });
+
+  it("reads values the way TLC does", () => {
+    expect(parseConfig('CONSTANT S = "a\\"b\\\\n"').constants[0].value).toEqual({
+      kind: "String",
+      value: 'a\\"b\\\\n',
+    });
+    ["CONSTANT N = -1", "CONSTANT S = {1,}"].forEach((source) =>
+      expect(() => parseConfig(source)).toThrow(TlaConfigError),
+    );
+  });
 });

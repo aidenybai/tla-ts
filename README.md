@@ -84,6 +84,8 @@ The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `
 - **Subexpression references**: selectors such as `F(2)!3`, `Op!<<`, `Op!>>`, `Op!:`, `Op!@`, and `Op!(x)`, labels such as `Op!lab`, and names of `THEOREM` formulas
 - **TLC semantics**: 32-bit integer overflow errors, `ENABLED`, `TLCGet` and `TLCSet` with TLC's counters and registers, and TLC's enumeration order for `CHOOSE` and quantifiers
 
+`check` also accepts `_PERIODIC` and `_RL_REWARD` and, like TLC, requires each to name an operator without arguments. It does not evaluate them. TLC evaluates `_PERIODIC` on its progress interval, which is 60 seconds by default, and `_RL_REWARD` only in its reinforcement learning simulation mode.
+
 ### `checkInParallel`
 
 Checks a spec on several worker threads and resolves to the same result as `check`. It takes the options of `check` plus `workers`, and runs in Node, Bun, Deno, and the browser.

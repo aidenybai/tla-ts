@@ -327,7 +327,28 @@ export const findAssumptionViolation = (
   return undefined;
 };
 
+const checkUnevaluatedOperator = (
+  kind: string,
+  name: string | undefined,
+  environment: Environment,
+) => {
+  if (name === undefined) return;
+  const definition = getDefinition(name, environment);
+  if (!definition) {
+    throw new TlaConfigError(
+      `The ${kind} ${name} specified in the configuration file\nis not defined in the specification.`,
+    );
+  }
+  if (definition.kind === "Operator" && definition.params.length > 0) {
+    throw new TlaConfigError(
+      `TLC requires ${kind} not to take any argument, but one was given: ${name}`,
+    );
+  }
+};
+
 export const createSearch = (config: ModelConfig, environment: Environment): Search | undefined => {
+  checkUnevaluatedOperator("periodic", config.periodic, environment);
+  checkUnevaluatedOperator("rlreward", config.rlReward, environment);
   const properties = getProperties(config, environment);
   const invariants = getStateChecks(
     [...getNamedExpressions(config.invariants, environment), ...properties.invariants],
