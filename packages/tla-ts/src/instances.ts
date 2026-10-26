@@ -78,6 +78,7 @@ export const mapChildren = (
   const plain = (child: Expression) => map(child, []);
   switch (expression.kind) {
     case "Number":
+    case "Decimal":
     case "String":
     case "Identifier":
     case "OperatorReference":

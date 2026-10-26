@@ -3,6 +3,7 @@ import { TlaSyntaxError } from "./errors";
 export type TokenKind =
   | "Identifier"
   | "Number"
+  | "Decimal"
   | "String"
   | "Operator"
   | "Keyword"
@@ -385,7 +386,8 @@ export const tokenize = (source: string): Token[] => {
     if (isIdentifierCharacter(character)) {
       const word = /^[A-Za-z0-9_]+/.exec(source.slice(cursor.index))?.[0] ?? "";
       if (/^\d+$/.test(word)) {
-        pushToken("Number", word, word.length);
+        const number = /^\d+(\.\d+)?/.exec(source.slice(cursor.index))?.[0] ?? word;
+        pushToken(number.includes(".") ? "Decimal" : "Number", number, number.length);
         continue;
       }
       if (word.startsWith("WF_") || word.startsWith("SF_")) {
