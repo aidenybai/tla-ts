@@ -97,8 +97,8 @@ export type Value =
 
 export type ObjectValue = Exclude<Value, boolean | number | string>;
 
-const MAXIMUM_INTEGER = 2147483647;
-const MINIMUM_INTEGER = -2147483648;
+export const MAXIMUM_INTEGER = 2147483647;
+export const MINIMUM_INTEGER = -2147483648;
 const MAXIMUM_ENUMERATED_SUBSET_BASE = 30;
 
 export const isSetValue = (value: Value) =>
@@ -700,23 +700,43 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
 const describeMembership = (element: Value, set: Value) =>
   `Attempted to check if the value ${formatValue(element)} is an element of ${formatValue(set)}`;
 
+const describeNonSetMembership = (element: Value, value: Value) => {
+  const prefix = `Attempted to check if the value:\n${formatValue(element)}\nis an element of the`;
+  if (!isFunctionValue(value)) return `${prefix} ${describeKind(value)} ${formatValue(value)}`;
+  const domain =
+    value.kind === "Function" || isEnumerable(value.domain) ? toFiniteFunction(value).domain : [];
+  if (domain.length > 0 && domain.every((key) => typeof key === "string")) {
+    return `Attempted to check if element:\n${formatValue(element)}\nis in the record:\n${formatValue(value)}`;
+  }
+  if (domain.every((key, index) => key === index + 1)) {
+    return "Attempted to check set membership in a tuple value.";
+  }
+  return `${prefix} function ${formatValue(value)}`;
+};
+
 export const isElementOf = (element: Value, set: Value): boolean => {
-  if (typeof set !== "object")
-    throw new TlaEvaluationError(`Expected a set but found ${formatValue(set)}`);
+  if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":
       return findIndex(set.elements, element) !== -1;
     case "Interval":
       if (typeof element === "number") return element >= set.low && element <= set.high;
-      if (set.low <= set.high && !isModelValue(element))
-        throw new TlaEvaluationError(describeMembership(element, set));
+      if (set.low <= set.high && !isModelValue(element)) {
+        throw new TlaEvaluationError(
+          `Attempted to check if the value:\n${formatValue(element)}\nis in the integer interval ${formatValue(set)}`,
+        );
+      }
       return false;
     case "InfiniteSet": {
       if (set.name === "Any") return true;
       if (isModelValue(element)) return false;
       const isMemberType =
         set.name === "STRING" ? typeof element === "string" : typeof element === "number";
-      if (!isMemberType) throw new TlaEvaluationError(describeMembership(element, set));
+      if (!isMemberType) {
+        throw new TlaEvaluationError(
+          `Attempted to check if the value:\n${formatValue(element)}\nis an element of ${set.name}.`,
+        );
+      }
       return set.name !== "Nat" || (typeof element === "number" && element >= 0);
     }
     case "Subset":
