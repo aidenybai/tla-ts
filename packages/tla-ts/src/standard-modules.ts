@@ -15,6 +15,8 @@ import {
   isSetValue,
   toFiniteFunction,
   toFiniteSet,
+  differenceSorted,
+  intersectSorted,
   unionSorted,
   valuesEqual,
   type SetOperationValue,
@@ -179,8 +181,14 @@ export const CORE_OPERATORS: Builtin[] = [
     defineOperator(operator, 2, (args) => {
       const left = getSet(args, 0, operator);
       const right = getSet(args, 1, operator);
-      if (operator === "\\cup" && isEnumerable(left) && isEnumerable(right)) {
-        return unionSorted(toFiniteSet(left), toFiniteSet(right));
+      if (isEnumerable(left) && isEnumerable(right)) {
+        const merge =
+          operator === "\\cup"
+            ? unionSorted
+            : operator === "\\cap"
+              ? intersectSorted
+              : differenceSorted;
+        return merge(toFiniteSet(left), toFiniteSet(right));
       }
       const set: Value = { kind: "SetOperation", operator, left, right };
       return isEnumerable(set) ? toFiniteSet(set) : set;

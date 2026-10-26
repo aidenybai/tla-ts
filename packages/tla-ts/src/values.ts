@@ -264,6 +264,54 @@ export const createSet = (elements: Value[]): SetValue => {
 
 export const EMPTY_SET = createSortedSet([]);
 
+export const differenceSorted = (left: SetValue, right: SetValue): SetValue => {
+  if (left.elements.length === 0 || right.elements.length === 0) return left;
+  const leftElements = left.elements;
+  const rightElements = right.elements;
+  const kept: Value[] = [];
+  let rightIndex = 0;
+  for (let leftIndex = 0; leftIndex < leftElements.length; leftIndex++) {
+    const element = leftElements[leftIndex];
+    while (
+      rightIndex < rightElements.length &&
+      compareValues(rightElements[rightIndex], element) < 0
+    ) {
+      rightIndex++;
+    }
+    if (
+      rightIndex < rightElements.length &&
+      compareValues(rightElements[rightIndex], element) === 0
+    ) {
+      continue;
+    }
+    kept.push(element);
+  }
+  return kept.length === leftElements.length ? left : createSortedSet(kept);
+};
+
+export const intersectSorted = (left: SetValue, right: SetValue): SetValue => {
+  const leftElements = left.elements;
+  const rightElements = right.elements;
+  const kept: Value[] = [];
+  let rightIndex = 0;
+  for (let leftIndex = 0; leftIndex < leftElements.length; leftIndex++) {
+    const element = leftElements[leftIndex];
+    while (
+      rightIndex < rightElements.length &&
+      compareValues(rightElements[rightIndex], element) < 0
+    ) {
+      rightIndex++;
+    }
+    if (
+      rightIndex < rightElements.length &&
+      compareValues(rightElements[rightIndex], element) === 0
+    ) {
+      kept.push(element);
+    }
+  }
+  return kept.length === leftElements.length ? left : createSortedSet(kept);
+};
+
 export const unionSorted = (left: SetValue, right: SetValue): SetValue => {
   if (left.elements.length === 0) return right;
   if (right.elements.length === 0) return left;
