@@ -2840,7 +2840,7 @@
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github710d.cfg",
     "status": "deadlock",
-    "traceLength": 8,
+    "traceLength": 4,
     "tlcMilliseconds": 505
   },
   {

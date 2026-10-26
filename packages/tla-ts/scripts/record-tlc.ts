@@ -62,6 +62,12 @@ const getStatus = (exitCode: number | null, output: string) => {
   return "error";
 };
 
+const getFirstTraceLength = (output: string) => {
+  const numbers = [...output.matchAll(/^State (\d+):/gm)].map((match) => Number(match[1]));
+  const restart = numbers.indexOf(1, 1);
+  return restart === -1 ? numbers.length : restart;
+};
+
 const runTlc = (model: CorpusModel) =>
   new Promise<ExpectedResult>((resolve) => {
     const metadataDirectory = mkdtempSync(join(tmpdir(), "tla-ts-tlc-"));
@@ -110,7 +116,7 @@ const runTlc = (model: CorpusModel) =>
           ? {
               traceLength: output.includes("is violated by the initial state")
                 ? 1
-                : [...output.matchAll(/^State \d+:/gm)].length,
+                : getFirstTraceLength(output),
             }
           : {}),
         tlcMilliseconds: Math.round(performance.now() - startedAt),
