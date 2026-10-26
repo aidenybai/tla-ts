@@ -195,6 +195,21 @@ describe("check matches TLC", () => {
     expect(result.status).toBe("success");
   });
 
+  it("implements the TLCExt operators", () => {
+    const results = ["Extensions", "ExtensionsShort"].map((name) =>
+      check({
+        source: readFileSync(join(FIXTURES, "runtime", "Extensions.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
+      }),
+    );
+    expect(
+      results.map((result) => [result.status, result.generatedStates, result.distinctStates]),
+    ).toEqual([
+      ["success", 4, 4],
+      ["invariant-violation", 3, 3],
+    ]);
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");

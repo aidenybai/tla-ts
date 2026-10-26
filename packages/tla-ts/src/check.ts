@@ -550,6 +550,14 @@ export const check = (options: CheckOptions): CheckResult => {
     stateIndices.set(state, states.length - 1);
   };
 
+  const expanding = { index: -1 };
+  const getPath = (index: number): Value[][] =>
+    index === -1 ? [] : [...getPath(parents[index]), states[index]];
+  runtime.getBehavior = (state) => {
+    const index = stateIndices.get(state);
+    return index === undefined ? [...getPath(expanding.index), state] : getPath(index);
+  };
+
   for (const state of getInitialStates(spec.init, environment)) {
     canonicalizeState(state);
     runtime.generatedStates++;
@@ -584,14 +592,6 @@ export const check = (options: CheckOptions): CheckResult => {
     markSeen(hash, states.length);
     addState(state, fingerprintState, -1, undefined);
   }
-
-  const expanding = { index: -1 };
-  const getPath = (index: number): Value[][] =>
-    index === -1 ? [] : [...getPath(parents[index]), states[index]];
-  runtime.getBehavior = (state) => {
-    const index = stateIndices.get(state);
-    return index === undefined ? [...getPath(expanding.index), state] : getPath(index);
-  };
 
   for (let index = 0; index < states.length && !runtime.isStopped; index++) {
     const state = states[index];
