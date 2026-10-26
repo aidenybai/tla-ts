@@ -522,12 +522,12 @@ export const check = (options: CheckOptions): CheckResult => {
   for (let index = 0; index < states.length; index++) {
     const state = states[index];
     const successors = getSuccessors(spec.next, state, environment);
-    statistics.generatedStates += successors.length;
     if (successors.length === 0 && config.checkDeadlock) {
       return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
     }
     const liveSuccessors: LiveSuccessor[] = [];
     for (const successor of successors) {
+      statistics.generatedStates++;
       const violatedProperty = search.findViolatedActionProperty(state, successor.state);
       if (violatedProperty) {
         return createResult("liveness-violation", {
