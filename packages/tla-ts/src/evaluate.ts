@@ -14,11 +14,13 @@ import {
   createFunction,
   createRecord,
   createSet,
+  createSortedSet,
   createTuple,
   formatValue,
   getSequenceElements,
   getValueKey,
   isEnumerable,
+  isSetValue,
   toFiniteSet,
   updateFunction,
   valuesEqual,
@@ -838,19 +840,23 @@ export const evaluate = (expression: Expression, context: Context): Value => {
     case "SetEnumeration":
       return createSet(expression.elements.map((element) => evaluate(element, context)));
     case "SetFilter": {
-      const elements: Value[] = [];
-      forEachBinding([expression.bound], context, (scope) => {
-        if (
-          expectBoolean(
-            evaluate(expression.predicate, withScope(context, scope)),
-            "a set filter predicate",
-          )
-        ) {
-          elements.push(lookupKey(expression.bound.pattern, scope) ?? false);
-        }
-        return false;
-      });
-      return createSet(elements);
+      const base = evaluate(expression.bound.set, context);
+      const pattern = expression.bound.pattern;
+      const test = (element: Value) =>
+        expectBoolean(
+          evaluate(
+            expression.predicate,
+            withScope(context, bindPattern(context.scope, pattern, element)),
+          ),
+          "a set filter predicate",
+        );
+      if (!isEnumerable(base)) {
+        if (isSetValue(base)) return { kind: "FilteredSet", base, test };
+        throw new TlaEvaluationError(
+          `TLC encountered a non-enumerable quantifier bound ${formatValue(base)} at line ${expression.bound.set.location.line}, column ${expression.bound.set.location.column}`,
+        );
+      }
+      return createSortedSet(toFiniteSet(base).elements.filter(test));
     }
     case "SetMap": {
       const elements: Value[] = [];

@@ -63,6 +63,12 @@ export interface SetOperationValue {
   right: Value;
 }
 
+export interface FilteredSetValue {
+  kind: "FilteredSet";
+  base: Value;
+  test: (element: Value) => boolean;
+}
+
 export interface LazyFunctionValue {
   kind: "LazyFunction";
   domain: Value;
@@ -84,6 +90,7 @@ export type Value =
   | ProductSetValue
   | SequenceSetValue
   | SetOperationValue
+  | FilteredSetValue
   | LazyFunctionValue;
 
 type ObjectValue = Exclude<Value, boolean | number | string>;
@@ -304,6 +311,7 @@ export const isEnumerable = (value: Value): boolean => {
     case "SequenceSet":
       return false;
     case "Subset":
+    case "FilteredSet":
       return isEnumerable(value.base);
     case "FunctionSet":
       return isEnumerable(value.domain) && isEnumerable(value.range);
@@ -367,6 +375,8 @@ const enumerateSet = (value: Value): Value[] => {
       return getCartesianProduct(value.factors.map((factor) => toFiniteSet(factor).elements)).map(
         createTuple,
       );
+    case "FilteredSet":
+      return toFiniteSet(value.base).elements.filter(value.test);
     case "SetOperation": {
       if (!isEnumerable(value)) {
         throw new TlaEvaluationError(
@@ -396,7 +406,8 @@ const enumerateSet = (value: Value): Value[] => {
 export const toFiniteSet = (value: Value): SetValue => {
   if (typeof value === "object" && value.kind === "Set") return value;
   const elements = enumerateSet(value);
-  return typeof value === "object" && (value.kind === "Interval" || value.kind === "SetOperation")
+  return typeof value === "object" &&
+    (value.kind === "Interval" || value.kind === "SetOperation" || value.kind === "FilteredSet")
     ? createSortedSet(elements)
     : createSet(elements);
 };
@@ -516,6 +527,8 @@ export const isElementOf = (element: Value, set: Value): boolean => {
         elements.every((item, index) => isElementOf(item, set.factors[index]))
       );
     }
+    case "FilteredSet":
+      return isElementOf(element, set.base) && set.test(element);
     case "SetOperation":
       if (set.operator === "\\cup")
         return isElementOf(element, set.left) || isElementOf(element, set.right);
@@ -667,6 +680,11 @@ const computeValueKey = (value: ObjectValue): string => {
   if (value.kind === "ModelValue") return `@${value.name}`;
   if (value.kind === "InfiniteSet") return `<${value.name}>`;
   if (value.kind === "SequenceSet") return `<Seq ${getValueKey(value.base)}>`;
+  if (value.kind === "FilteredSet" && !isEnumerable(value)) {
+    throw new TlaEvaluationError(
+      `Attempted to compare the non-enumerable set ${formatValue(value)} with another value`,
+    );
+  }
   if (isSetValue(value)) {
     if (!isEnumerable(value)) return `<${value.kind} ${formatValue(value)}>`;
     return `{${toFiniteSet(value).elements.map(getValueKey).join(",")}}`;
@@ -703,6 +721,8 @@ export const formatValue = (value: Value): string => {
       return `Seq(${formatValue(value.base)})`;
     case "SetOperation":
       return `${formatValue(value.left)} ${value.operator} ${formatValue(value.right)}`;
+    case "FilteredSet":
+      return `{x \\in ${formatValue(value.base)} : ...}`;
     case "Function":
     case "LazyFunction": {
       if (value.kind === "LazyFunction" && !isEnumerable(value.domain)) return "<function>";

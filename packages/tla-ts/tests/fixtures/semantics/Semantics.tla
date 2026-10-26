@@ -31,6 +31,8 @@ ASSUME Cardinality([a : 1..3, b : 1..5]) = 15 /\ Cardinality((1..3) \X {} \X (1.
 ASSUME Cardinality(SUBSET SUBSET (1..4)) = 65536
 ASSUME {x * x : x \in 1..3} = {1, 4, 9}
 ASSUME {x \in 1..10 : x % 3 = 0} = {3, 6, 9}
+ASSUME 3 \in {n \in Nat : n > 2} /\ 2 \notin {n \in Nat : n > 2}
+ASSUME [j \in {1} |-> 4] \in [{1} -> {n \in Int : n % 2 = 0}]
 ASSUME {<<x, y>> : x \in 1..2, y \in {"a"}} = {<<1, "a">>, <<2, "a">>}
 ASSUME (1..2) \X {"a", "b"} = {<<1, "a">>, <<1, "b">>, <<2, "a">>, <<2, "b">>}
 ASSUME \A x \in 1..3 : x > 0
