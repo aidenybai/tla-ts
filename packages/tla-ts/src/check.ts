@@ -28,6 +28,7 @@ import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { createCanonicalizer } from "./canonical";
 import type { CheckerRuntime } from "./runtime";
+import { createCounterExample } from "./tlc-ext";
 import { combineHash, getValueHash, isSameValue, type Value } from "./values";
 
 export interface CheckOptions {
@@ -552,13 +553,6 @@ export const check = (options: CheckOptions): CheckResult => {
 
   const search = createSearch(config, environment);
   if (!search) return createResult("success");
-  const reportViolation = (
-    status: CheckStatus,
-    violation: Omit<Violation, "loopStart"> & { loopStart?: number },
-  ) => {
-    const postcondition = search.findPostconditionViolation(root.name);
-    return createResult(status, postcondition ? { ...violation, postcondition } : violation);
-  };
   const properties = search.properties;
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
@@ -658,6 +652,21 @@ export const check = (options: CheckOptions): CheckResult => {
     if (current.index === -1) return 0;
     if (state === states[current.index]) return depths[current.index];
     return current.isExpanding ? depths[current.index] + 1 : 0;
+  };
+  const hasPostconditions = config.postconditions.length > 0 || config.possible.length > 0;
+  const reportViolation = (
+    status: CheckStatus,
+    violation: Omit<Violation, "loopStart"> & { loopStart?: number },
+    getLoopAction?: () => string | undefined,
+  ) => {
+    if (!hasPostconditions) return createResult(status, violation);
+    const start = violation.loopStart;
+    runtime.counterExample = createCounterExample(
+      violation.trace,
+      start === undefined || !getLoopAction ? undefined : { start, action: getLoopAction() },
+    );
+    const postcondition = search.findPostconditionViolation(root.name);
+    return createResult(status, postcondition ? { ...violation, postcondition } : violation);
   };
 
   for (const state of getInitialStates(spec.init, environment)) {
@@ -762,11 +771,20 @@ export const check = (options: CheckOptions): CheckResult => {
   current.candidate = undefined;
   const lasso = liveness?.findViolation();
   if (lasso) {
-    return reportViolation("liveness-violation", {
-      name: lasso.name,
-      trace: getPathTrace([...lasso.prefix, ...lasso.cycle]),
-      loopStart: lasso.prefix.length,
-    });
+    const path = [...lasso.prefix, ...lasso.cycle];
+    const trace = getPathTrace(path);
+    const back = path[lasso.prefix.length];
+    const last = path[path.length - 1];
+    return reportViolation(
+      "liveness-violation",
+      { name: lasso.name, trace, loopStart: lasso.prefix.length },
+      () =>
+        back === last
+          ? trace[trace.length - 1].action
+          : getSuccessors(spec.next, states[last], environment).find((successor) =>
+              isSameState(successor.state, states[back]),
+            )?.action,
+    );
   }
 
   const postconditionViolation = search.findPostconditionViolation(root.name);

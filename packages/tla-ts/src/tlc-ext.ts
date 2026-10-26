@@ -1,5 +1,4 @@
 import {
-  defineConstant,
   defineHigherOrderOperator,
   defineLazyOperator,
   defineOperator,
@@ -18,6 +17,7 @@ import {
   type Environment,
 } from "./evaluate";
 import type { Definition, Expression } from "./ast";
+import type { TraceStep } from "./check";
 import {
   getNamedRegisters,
   getPossibleCounts,
@@ -43,6 +43,43 @@ const EMPTY_COUNTER_EXAMPLE = createRecord([
   ["action", createSet([])],
   ["state", createSet([])],
 ]);
+
+const BUILTIN_LOCATION = createRecord([
+  ["beginLine", 0],
+  ["beginColumn", 0],
+  ["endLine", 0],
+  ["endColumn", 0],
+  ["module", "--TLA+ BUILTINS--"],
+]);
+
+const toActionRecord = (action: string | undefined) =>
+  createRecord([
+    ["name", action ?? "UnnamedAction"],
+    ["location", BUILTIN_LOCATION],
+  ]);
+
+// TLC's CounterExample is a graph of the violating behavior: the states numbered from 1, an edge
+// for each step, and for a lasso an edge from the last state back to where the loop starts.
+export const createCounterExample = (
+  trace: TraceStep[],
+  loop: { start: number; action: string | undefined } | undefined,
+) => {
+  const states = trace.map((step, index) =>
+    createTuple([index + 1, createRecord(Object.entries(step.state))]),
+  );
+  const steps = states
+    .slice(1)
+    .map((state, index) =>
+      createTuple([states[index], toActionRecord(trace[index + 1].action), state]),
+    );
+  const closing = loop
+    ? [createTuple([states[states.length - 1], toActionRecord(loop.action), states[loop.start]])]
+    : [];
+  return createRecord([
+    ["action", createSet([...steps, ...closing])],
+    ["state", createSet(states)],
+  ]);
+};
 
 const getRegister = (runtime: CheckerRuntime, key: Value) => {
   if (typeof key === "number") return runtime.registers.get(key);
@@ -153,7 +190,7 @@ export const createTlcExtOperators = (
         runtime.getBehavior(state).map((step) => toStateRecord(step, context.environment)),
       );
     }),
-    defineConstant("CounterExample", EMPTY_COUNTER_EXAMPLE),
+    defineStateOperator("CounterExample", 0, () => runtime.counterExample ?? EMPTY_COUNTER_EXAMPLE),
     defineOperator("ToTrace", 1, (args) => {
       const counterExample = getValue(args, 0, "ToTrace");
       const states = toFiniteSet(applyFunction(counterExample, "state")).elements.map(
