@@ -59,7 +59,7 @@ export interface Violation {
   loopStart: number | undefined;
   message?: string;
   counts?: string;
-  postcondition?: Postcondition;
+  unwitnessed?: Postcondition;
 }
 
 export interface Postcondition {
@@ -341,6 +341,7 @@ export interface Search {
   satisfiesActionConstraints: (state: Value[], next: Value[]) => boolean;
   trackStatePossible: (state: Value[]) => void;
   trackActionPossible: (state: Value[], next: Value[]) => void;
+  findUnwitnessedPossible: (rootModule: string) => Postcondition | undefined;
   findPostconditionViolation: (rootModule: string) => Postcondition | undefined;
 }
 
@@ -429,6 +430,19 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
   const statePossible = possible.filter((item) => !isActionPossible(item));
   const actionPossible = possible.filter(isActionPossible);
   const runtime = environment.runtime;
+  const findUnwitnessedPossible = (rootModule: string): Postcondition | undefined => {
+    const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
+    if (!unwitnessed) return undefined;
+    const range = getBodyRange(unwitnessed.name, environment);
+    const location = range
+      ? ` at line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`
+      : "";
+    return {
+      name: unwitnessed.name,
+      message: `The _POSSIBLE predicate ${unwitnessed.name}${location} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`,
+      counts: formatPossibleCounts(runtime.possibleCounts, environment, rootModule),
+    };
+  };
   return {
     properties,
     spec,
@@ -500,19 +514,10 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
         ? ignorePossible
         : (state, next) =>
             trackPossible(actionPossible, runtime, getContext(environment, state, next)),
+    findUnwitnessedPossible,
     findPostconditionViolation: (rootModule) => {
-      const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
-      if (unwitnessed) {
-        const range = getBodyRange(unwitnessed.name, environment);
-        const location = range
-          ? ` at line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`
-          : "";
-        return {
-          name: unwitnessed.name,
-          message: `The _POSSIBLE predicate ${unwitnessed.name}${location} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`,
-          counts: formatPossibleCounts(runtime.possibleCounts, environment, rootModule),
-        };
-      }
+      const unwitnessed = findUnwitnessedPossible(rootModule);
+      if (unwitnessed) return unwitnessed;
       for (const name of config.postconditions) {
         const failure = getConstantFailure(createIdentifier(name), environment, "a postcondition");
         if (failure) {
@@ -556,8 +561,8 @@ export const check = (options: CheckOptions): CheckResult => {
     status: CheckStatus,
     violation: Omit<Violation, "loopStart"> & { loopStart?: number },
   ) => {
-    const postcondition = search.findPostconditionViolation(root.name);
-    return createResult(status, postcondition ? { ...violation, postcondition } : violation);
+    const unwitnessed = search.findUnwitnessedPossible(root.name);
+    return createResult(status, unwitnessed ? { ...violation, unwitnessed } : violation);
   };
   const properties = search.properties;
   const spec = search.spec;

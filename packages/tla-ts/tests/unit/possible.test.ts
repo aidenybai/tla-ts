@@ -69,7 +69,7 @@ describe("_POSSIBLE matches TLC", () => {
       "Unreachable == x = 5\nInv == x < 2",
       "_POSSIBLE Unreachable\nINVARIANT Inv",
     );
-    expect([result.status, result.violation?.postcondition]).toEqual([
+    expect([result.status, result.violation?.unwitnessed]).toEqual([
       "invariant-violation",
       {
         name: "Unreachable",
