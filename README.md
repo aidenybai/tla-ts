@@ -27,20 +27,36 @@ Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` tu
 ```ts
 import { check, formatValue } from "tla-ts";
 
-const result = check({
-  source: specSource,
-  config: configSource,
-  loadModule: (name) => modules[name],
-});
+const source = `
+---- MODULE Clock ----
+EXTENDS Naturals
 
-if (result.violation) {
-  for (const step of result.violation.trace) {
-    console.log(step.action, formatValue(step.state.count));
-  }
+VARIABLE hour
+
+Init == hour = 1
+
+Next == hour' = IF hour = 12 THEN 1 ELSE hour + 1
+
+BeforeMidnight == hour < 12
+====
+`;
+
+const config = `
+INIT Init
+NEXT Next
+INVARIANT BeforeMidnight
+`;
+
+const result = check({ source, config });
+
+console.log(result.status); // "invariant-violation"
+console.log(result.violation?.name); // "BeforeMidnight"
+for (const step of result.violation?.trace ?? []) {
+  console.log(step.action ?? "Init", formatValue(step.state.hour)); // "Init 1", "Next 2", …, "Next 12"
 }
 ```
 
-`check` returns the status, the violation and its trace, and the generated, distinct, and depth counts. `loadModule` supplies the source of modules that the spec extends, other than the standard modules.
+`check` returns the status, the violation and its trace, and the generated, distinct, and depth counts. When the spec extends a module other than the standard modules, pass `loadModule`, which takes a module name and returns its source.
 
 | Export                    | Purpose                                                           |
 | ------------------------- | ----------------------------------------------------------------- |
