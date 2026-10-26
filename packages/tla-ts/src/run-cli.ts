@@ -41,6 +41,7 @@ const printResult = (result: CheckResult) => {
       "liveness-violation": `Error: Temporal property ${result.violation.name} was violated.`,
       "postcondition-violation": `Error: ${result.violation.message ?? `Postcondition ${result.violation.name} is false.`}`,
     }[result.status];
+    if (result.violation.counts) console.log(result.violation.counts);
     console.log(headline);
     if (result.violation.trace.length > 0) console.log("Error: The behavior up to this point is:");
     result.violation.trace.forEach((step, index) => {
@@ -58,6 +59,7 @@ const printResult = (result: CheckResult) => {
       );
     }
     const postcondition = result.violation.postcondition;
+    if (postcondition?.counts) console.log(postcondition.counts);
     if (postcondition) console.log(`Error: ${postcondition.message}`);
   } else {
     console.log("Model checking completed. No error has been found.");
