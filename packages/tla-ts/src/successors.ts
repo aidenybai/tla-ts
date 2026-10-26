@@ -4,11 +4,13 @@ import {
   bindDefinitions,
   bindOperatorArguments,
   bindValue,
+  compileArgumentScope,
   evaluate,
   expectBoolean,
   forEachBinding,
   lookupScope,
   resolveApplyOperator,
+  resolveGlobalOperator,
   type Context,
   type Environment,
   type Scope,
@@ -297,6 +299,23 @@ const compileCall = (
 ): Runner => {
   const name = expression.operator;
   const guard = compileGuard(expression);
+  const global = resolveGlobalOperator(name, environment);
+  if (global?.kind === "Builtin") return guard;
+  if (global?.kind === "Closure") {
+    const bindArguments = compileArgumentScope(global, expression.args, environment);
+    const compiled = { body: undefined as Runner | undefined };
+    return (run, scope, partial, action, isFixed, onComplete) => {
+      compiled.body ??= getRunner(global.body, environment, isInit);
+      compiled.body(
+        run,
+        bindArguments(getContext(run, scope, partial)),
+        partial,
+        isFixed ? action : name,
+        isFixed,
+        onComplete,
+      );
+    };
+  }
   return (run, scope, partial, action, isFixed, onComplete) => {
     const context = getContext(run, scope, partial);
     const operator = resolveApplyOperator(expression, context);
@@ -322,6 +341,7 @@ const compileIdentifier = (
 ): Runner => {
   const guard = compileGuard(expression);
   const definition = getZeroArityBody(expression.name, environment);
+  const compiled = { body: undefined as Runner | undefined };
   return (run, scope, partial, action, isFixed, onComplete) => {
     const binding = lookupScope(scope, expression.name);
     if (binding?.kind === "Thunk") {
@@ -339,14 +359,8 @@ const compileIdentifier = (
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
     }
-    getRunner(definition.body, environment, isInit)(
-      run,
-      undefined,
-      partial,
-      isFixed ? action : definition.name,
-      isFixed,
-      onComplete,
-    );
+    compiled.body ??= getRunner(definition.body, environment, isInit);
+    compiled.body(run, undefined, partial, isFixed ? action : definition.name, isFixed, onComplete);
   };
 };
 

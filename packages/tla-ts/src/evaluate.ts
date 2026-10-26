@@ -846,11 +846,11 @@ const compileBuiltinCall = (
     );
 };
 
-const compileClosureCall = (
+export const compileArgumentScope = (
   closure: Closure,
   args: Expression[],
   environment: Environment,
-): Evaluator => {
+): ((context: Context) => Scope | undefined) => {
   if (args.length !== closure.params.length) {
     return () => {
       throw new TlaEvaluationError(
@@ -862,7 +862,6 @@ const compileClosureCall = (
   const binders = args.map((arg, index) =>
     params[index].arity > 0 ? undefined : getArgumentBinder(arg, environment),
   );
-  const compiled = { body: undefined as Evaluator | undefined };
   return (context) => {
     let scope = closure.scope;
     for (let index = 0; index < args.length; index++) {
@@ -872,6 +871,19 @@ const compileClosureCall = (
         : { kind: "Operator", operator: evaluateOperatorArgument(args[index], context) };
       scope = { name: params[index].name, binding, parent: scope };
     }
+    return scope;
+  };
+};
+
+const compileClosureCall = (
+  closure: Closure,
+  args: Expression[],
+  environment: Environment,
+): Evaluator => {
+  const bindArguments = compileArgumentScope(closure, args, environment);
+  const compiled = { body: undefined as Evaluator | undefined };
+  return (context) => {
+    const scope = bindArguments(context);
     compiled.body ??= getEntryEvaluator(closure.body, environment);
     return compiled.body({ environment, scope, state: context.state, next: context.next });
   };
