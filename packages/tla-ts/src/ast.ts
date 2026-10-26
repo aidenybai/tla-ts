@@ -1,3 +1,7 @@
+export interface LocalResolution {
+  kind: "Local";
+}
+
 export interface SourceLocation {
   line: number;
   column: number;
@@ -19,6 +23,7 @@ export interface IdentifierExpression {
   kind: "Identifier";
   name: string;
   location: SourceLocation;
+  resolution?: LocalResolution;
 }
 
 export interface ApplyExpression {
@@ -26,7 +31,7 @@ export interface ApplyExpression {
   operator: string;
   args: Expression[];
   location: SourceLocation;
-  assignableIndex?: number;
+  resolution?: LocalResolution;
 }
 
 export interface OperatorReferenceExpression {
@@ -153,6 +158,7 @@ export interface FunctionConstructionExpression {
   bounds: Bound[];
   body: Expression;
   location: SourceLocation;
+  isRecursive?: boolean;
 }
 
 export interface FunctionSetExpression {
@@ -278,6 +284,7 @@ export interface OperatorDefinition {
   params: OperatorParam[];
   body: Expression;
   isLocal: boolean;
+  isRecursive: boolean;
   location: SourceLocation;
 }
 
@@ -287,6 +294,7 @@ export interface FunctionDefinition {
   bounds: Bound[];
   body: Expression;
   isLocal: boolean;
+  isRecursive: boolean;
   location: SourceLocation;
 }
 
@@ -300,6 +308,7 @@ export interface Declaration {
 export interface Assumption {
   name: string | undefined;
   expression: Expression;
+  isAxiom: boolean;
   location: SourceLocation;
 }
 

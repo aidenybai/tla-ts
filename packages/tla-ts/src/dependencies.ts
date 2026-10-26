@@ -29,7 +29,9 @@ export const getReadVariables = (
   const visit = (node: Expression): boolean => {
     if (STATE_INDEPENDENT_KINDS.has(node.kind)) return false;
     const name = getReferencedName(node);
-    if (name !== undefined && !environment.constants.has(name)) {
+    const isLocal =
+      (node.kind === "Identifier" || node.kind === "Apply") && node.resolution?.kind === "Local";
+    if (name !== undefined && !isLocal && !environment.constants.has(name)) {
       const target = environment.substitutions.get(name) ?? name;
       const definition = environment.definitions.get(target);
       if (!definition && IMPURE_BUILTINS.has(target) && environment.builtins.has(target))

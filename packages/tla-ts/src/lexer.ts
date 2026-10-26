@@ -117,6 +117,11 @@ const BACKSLASH_OPERATORS = new Map([
 const SYMBOL_ALIASES = new Map([
   ["/=", "#"],
   ["=<", "<="],
+  ["(+)", "\\oplus"],
+  ["(-)", "\\ominus"],
+  ["(.)", "\\odot"],
+  ["(/)", "\\oslash"],
+  ["(\\X)", "\\otimes"],
 ]);
 
 const SYMBOL_OPERATORS = [
@@ -234,9 +239,36 @@ const UNICODE_OPERATORS = new Map([
   ["⋅", "\\cdot"],
 ]);
 
+const BASED_NUMBER = /^\\([bB][01]+|[oO][0-7]+|[hH][0-9a-fA-F]+)/;
+
+const NUMBER_BASES = new Map([
+  ["b", 2],
+  ["o", 8],
+  ["h", 16],
+]);
+
 const MODULE_HEADER = /-{4,}[ \t]*MODULE\b/;
 
 const isIdentifierCharacter = (character: string) => /[A-Za-z0-9_]/.test(character);
+
+interface OperatorMatch {
+  text: string;
+  length: number;
+}
+
+export const matchOperator = (source: string, index: number): OperatorMatch | undefined => {
+  const character = source[index];
+  if (character === "\\" && /[A-Za-z]/.test(source[index + 1] ?? "")) {
+    const word = /^[A-Za-z]+/.exec(source.slice(index + 1))?.[0] ?? "";
+    const operator = BACKSLASH_OPERATORS.get(word);
+    return operator === undefined ? undefined : { text: operator, length: word.length + 1 };
+  }
+  const unicodeOperator = UNICODE_OPERATORS.get(character);
+  if (unicodeOperator) return { text: unicodeOperator, length: character.length };
+  const symbol = SYMBOL_OPERATORS.find((candidate) => source.startsWith(candidate, index));
+  if (symbol) return { text: SYMBOL_ALIASES.get(symbol) ?? symbol, length: symbol.length };
+  return character === "\\" ? { text: "\\", length: 1 } : undefined;
+};
 
 export const tokenize = (source: string): Token[] => {
   const headerMatch = MODULE_HEADER.exec(source);
@@ -339,6 +371,12 @@ export const tokenize = (source: string): Token[] => {
       tokens.push({ kind: "String", text: characters.join(""), line, column });
       continue;
     }
+    const basedNumber = BASED_NUMBER.exec(source.slice(cursor.index, cursor.index + 64));
+    if (basedNumber) {
+      const base = NUMBER_BASES.get(basedNumber[1][0].toLowerCase());
+      pushToken("Number", String(parseInt(basedNumber[1].slice(1), base)), basedNumber[0].length);
+      continue;
+    }
     if (isIdentifierCharacter(character)) {
       const word = /^[A-Za-z0-9_]+/.exec(source.slice(cursor.index))?.[0] ?? "";
       if (/^\d+$/.test(word)) {
@@ -352,26 +390,14 @@ export const tokenize = (source: string): Token[] => {
       pushToken(KEYWORDS.has(word) ? "Keyword" : "Identifier", word, word.length);
       continue;
     }
-    if (character === "\\" && /[A-Za-z]/.test(source[cursor.index + 1] ?? "")) {
-      const word = /^[A-Za-z]+/.exec(source.slice(cursor.index + 1))?.[0] ?? "";
-      const operator = BACKSLASH_OPERATORS.get(word);
-      if (!operator) throw createError(`Unknown operator \\${word}`);
-      pushToken("Operator", operator, word.length + 1);
-      continue;
-    }
-    const unicodeOperator = UNICODE_OPERATORS.get(character);
-    if (unicodeOperator) {
-      pushToken("Operator", unicodeOperator, character.length);
-      continue;
-    }
-    const symbol = SYMBOL_OPERATORS.find((candidate) => source.startsWith(candidate, cursor.index));
-    if (symbol) {
-      pushToken("Operator", SYMBOL_ALIASES.get(symbol) ?? symbol, symbol.length);
+    const operator = matchOperator(source, cursor.index);
+    if (operator) {
+      pushToken("Operator", operator.text, operator.length);
       continue;
     }
     if (character === "\\") {
-      pushToken("Operator", "\\", 1);
-      continue;
+      const word = /^[A-Za-z]+/.exec(source.slice(cursor.index + 1))?.[0] ?? "";
+      throw createError(`Unknown operator \\${word}`);
     }
     throw createError(`Unexpected character ${JSON.stringify(character)}`);
   }

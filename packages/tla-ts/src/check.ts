@@ -1,9 +1,16 @@
-import type { Expression, SourceLocation } from "./ast";
+import type { Assumption, Expression, SourceLocation } from "./ast";
 import { parseConfig, type ModelConfig } from "./config";
 import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
-import { TlaConfigError, TlaUnsupportedError } from "./errors";
-import { evaluate, expectBoolean, type Context, type Environment, type Scope } from "./evaluate";
+import { TlaConfigError, TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import {
+  evaluate,
+  expectBoolean,
+  getDefinition,
+  type Context,
+  type Environment,
+  type Scope,
+} from "./evaluate";
 import {
   expandTemporal,
   findLivenessViolation,
@@ -17,7 +24,8 @@ import {
 } from "./liveness";
 import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
-import { combineHash, getValueHash, valuesEqual, type Value } from "./values";
+import { getRepresentative, getSymmetryGroup } from "./symmetry";
+import { combineHash, getValueHash, isSameValue, type Value } from "./values";
 
 export interface CheckOptions {
   source: string;
@@ -43,6 +51,7 @@ export interface Violation {
   name: string;
   trace: TraceStep[];
   loopStart: number | undefined;
+  message?: string;
 }
 
 export interface CheckResult {
@@ -92,7 +101,7 @@ const createIdentifier = (name: string): Expression => ({
 });
 
 const getDefinitionBody = (name: string, environment: Environment) => {
-  const definition = environment.definitions.get(name);
+  const definition = getDefinition(name, environment);
   if (definition?.kind !== "Operator" || definition.params.length > 0) {
     throw new TlaConfigError(`${name} is not defined as an operator without arguments`);
   }
@@ -103,7 +112,7 @@ const getConjuncts = (expression: Expression, environment: Environment): Express
   if (expression.kind === "And")
     return expression.operands.flatMap((operand) => getConjuncts(operand, environment));
   if (expression.kind === "Identifier" && !environment.constants.has(expression.name)) {
-    const definition = environment.definitions.get(expression.name);
+    const definition = getDefinition(expression.name, environment);
     if (definition?.kind === "Operator" && definition.params.length === 0) {
       return getConjuncts(definition.body, environment);
     }
@@ -114,7 +123,9 @@ const getConjuncts = (expression: Expression, environment: Environment): Express
 const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
   if (config.specification === undefined) {
     if (config.init === undefined)
-      throw new TlaConfigError("The configuration specifies neither INIT nor SPECIFICATION");
+      throw new TlaConfigError(
+        "The configuration file did not specify the initial state predicate",
+      );
     if (config.next === undefined)
       throw new TlaConfigError("The configuration does not specify NEXT");
     getDefinitionBody(config.init, environment);
@@ -249,31 +260,49 @@ export const check = (options: CheckOptions): CheckResult => {
     ...statistics,
   });
 
-  const failedAssumption = specification.assumptions.find(
-    (assumption) =>
-      !holds(assumption.expression, getContext(undefined, undefined), "an assumption"),
-  );
-  if (failedAssumption) {
-    const name =
-      failedAssumption.name ??
-      `line ${failedAssumption.location.line}, column ${failedAssumption.location.column}`;
-    return createResult("assumption-violation", { name, trace: [] });
+  const getAssumptionError = (assumption: Assumption) => {
+    try {
+      return holds(assumption.expression, getContext(undefined, undefined), "an assumption")
+        ? undefined
+        : { message: undefined };
+    } catch (error) {
+      if (error instanceof TlaEvaluationError) return { message: error.message };
+      throw error;
+    }
+  };
+  for (const assumption of specification.assumptions.filter((candidate) => !candidate.isAxiom)) {
+    const failure = getAssumptionError(assumption);
+    if (failure) {
+      const name =
+        assumption.name ?? `line ${assumption.location.line}, column ${assumption.location.column}`;
+      return createResult("assumption-violation", { name, trace: [], message: failure.message });
+    }
   }
 
-  const spec = getSpecification(config, environment);
   const properties = getProperties(config, environment);
   const invariants = getStateChecks(
     [...getNamedExpressions(config.invariants, environment), ...properties.invariants],
     environment,
   );
+  const isConstantModel =
+    config.specification === undefined &&
+    config.init === undefined &&
+    environment.variables.length === 0;
+  if (isConstantModel) return createResult("success");
+  const spec = getSpecification(config, environment);
   const constraints = getStateChecks(
     getNamedExpressions(config.constraints, environment),
     environment,
   );
   const actionConstraints = getNamedExpressions(config.actionConstraints, environment);
   const isRecordingEdges = properties.liveness.length > 0;
+  const symmetryGroup =
+    config.symmetry === undefined ? [] : getSymmetryGroup(config.symmetry, environment);
+  const getFingerprintState = (state: Value[]) =>
+    symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup);
 
   const states: Value[][] = [];
+  const fingerprintStates: Value[][] = [];
   const parents: number[] = [];
   const actions: (string | undefined)[] = [];
   const depths: number[] = [];
@@ -291,12 +320,12 @@ export const check = (options: CheckOptions): CheckResult => {
       return value;
     }
     if (!Array.isArray(bucket)) {
-      if (bucket === value || valuesEqual(bucket, value)) return bucket;
+      if (isSameValue(bucket, value)) return bucket;
       canonicalValues.set(hash, [bucket, value]);
       return value;
     }
     for (let index = 0; index < bucket.length; index++) {
-      if (bucket[index] === value || valuesEqual(bucket[index], value)) return bucket[index];
+      if (isSameValue(bucket[index], value)) return bucket[index];
     }
     bucket.push(value);
     return value;
@@ -326,16 +355,17 @@ export const check = (options: CheckOptions): CheckResult => {
   };
   const isSameState = (stored: Value[], state: Value[]) => {
     for (let position = 0; position < state.length; position++) {
-      if (stored[position] !== state[position] && !valuesEqual(stored[position], state[position]))
-        return false;
+      if (!isSameValue(stored[position], state[position])) return false;
     }
     return true;
   };
   const findStateIndex = (hash: number, state: Value[]) => {
     const bucket = buckets.get(hash);
     if (bucket === undefined) return -1;
-    if (typeof bucket === "number") return isSameState(states[bucket], state) ? bucket : -1;
-    return bucket.find((index) => isSameState(states[index], state)) ?? -1;
+    if (typeof bucket === "number") {
+      return isSameState(fingerprintStates[bucket], state) ? bucket : -1;
+    }
+    return bucket.find((index) => isSameState(fingerprintStates[index], state)) ?? -1;
   };
   const markSeen = (hash: number, index: number) => {
     const bucket = buckets.get(hash);
@@ -363,9 +393,15 @@ export const check = (options: CheckOptions): CheckResult => {
     statistics.distinctStates = states.length + 1;
     statistics.depth = Math.max(statistics.depth, depth);
   };
-  const addState = (state: Value[], parent: number, action: string | undefined) => {
+  const addState = (
+    state: Value[],
+    fingerprintState: Value[],
+    parent: number,
+    action: string | undefined,
+  ) => {
     const depth = parent === -1 ? 1 : depths[parent] + 1;
     states.push(state);
+    fingerprintStates.push(fingerprintState);
     parents.push(parent);
     actions.push(action);
     depths.push(depth);
@@ -377,8 +413,9 @@ export const check = (options: CheckOptions): CheckResult => {
   for (const state of getInitialStates(spec.init, environment)) {
     canonicalizeState(state);
     statistics.generatedStates++;
-    const hash = getStateHash(state);
-    if (findStateIndex(hash, state) !== -1) continue;
+    const fingerprintState = getFingerprintState(state);
+    const hash = getStateHash(fingerprintState);
+    if (findStateIndex(hash, fingerprintState) !== -1) continue;
     const violated = findViolatedInvariant(state);
     if (violated) {
       countViolatingState(1);
@@ -404,7 +441,7 @@ export const check = (options: CheckOptions): CheckResult => {
     if (!satisfiesConstraints(state)) continue;
     markSeen(hash, states.length);
     initial.push(states.length);
-    addState(state, -1, undefined);
+    addState(state, fingerprintState, -1, undefined);
   }
 
   for (let index = 0; index < states.length; index++) {
@@ -443,8 +480,9 @@ export const check = (options: CheckOptions): CheckResult => {
         continue;
       }
       canonicalizeState(successor.state);
-      const hash = getStateHash(successor.state);
-      const existing = findStateIndex(hash, successor.state);
+      const fingerprintState = getFingerprintState(successor.state);
+      const hash = getStateHash(fingerprintState);
+      const existing = findStateIndex(hash, fingerprintState);
       if (existing !== -1) {
         if (isRecordingEdges) edges[index].push(existing);
         continue;
@@ -460,7 +498,7 @@ export const check = (options: CheckOptions): CheckResult => {
       if (!satisfiesConstraints(successor.state, state)) continue;
       markSeen(hash, states.length);
       if (isRecordingEdges) edges[index].push(states.length);
-      addState(successor.state, index, successor.action);
+      addState(successor.state, fingerprintState, index, successor.action);
     }
   }
 

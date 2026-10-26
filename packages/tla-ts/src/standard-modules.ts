@@ -1,10 +1,9 @@
-import { TlaEvaluationError } from "./errors";
+import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
 import type { Builtin, BuiltinArgument, OperatorValue } from "./evaluate";
 import {
   checkInteger,
   createFunction,
   createSet,
-  createSortedSet,
   createTuple,
   formatValue,
   getCardinality,
@@ -18,6 +17,7 @@ import {
   toFiniteSet,
   unionSorted,
   valuesEqual,
+  type SetOperationValue,
   type Value,
 } from "./values";
 
@@ -153,6 +153,8 @@ const isSubsetOf = (left: Value[], right: Value) =>
 
 const BOOLEAN_SET = createSet([false, true]);
 
+const SET_OPERATORS: SetOperationValue["operator"][] = ["\\cup", "\\cap", "\\"];
+
 export const CORE_OPERATORS: Builtin[] = [
   defineConstant("TRUE", true),
   defineConstant("FALSE", false),
@@ -173,38 +175,17 @@ export const CORE_OPERATORS: Builtin[] = [
   defineOperator("\\subseteq", 2, (args) =>
     isSubsetOf(getElements(args, 0, "\\subseteq"), getSet(args, 1, "\\subseteq")),
   ),
-  defineOperator(
-    "\\subset",
-    2,
-    (args) =>
-      isSubsetOf(getElements(args, 0, "\\subset"), getSet(args, 1, "\\subset")) &&
-      !valuesEqual(getSet(args, 0, "\\subset"), getSet(args, 1, "\\subset")),
+  ...SET_OPERATORS.map((operator) =>
+    defineOperator(operator, 2, (args) => {
+      const left = getSet(args, 0, operator);
+      const right = getSet(args, 1, operator);
+      if (operator === "\\cup" && isEnumerable(left) && isEnumerable(right)) {
+        return unionSorted(toFiniteSet(left), toFiniteSet(right));
+      }
+      const set: Value = { kind: "SetOperation", operator, left, right };
+      return isEnumerable(set) ? toFiniteSet(set) : set;
+    }),
   ),
-  defineOperator("\\supseteq", 2, (args) =>
-    isSubsetOf(getElements(args, 1, "\\supseteq"), getSet(args, 0, "\\supseteq")),
-  ),
-  defineOperator(
-    "\\supset",
-    2,
-    (args) =>
-      isSubsetOf(getElements(args, 1, "\\supset"), getSet(args, 0, "\\supset")) &&
-      !valuesEqual(getSet(args, 0, "\\supset"), getSet(args, 1, "\\supset")),
-  ),
-  defineOperator("\\cup", 2, (args) =>
-    unionSorted(getFiniteSet(args, 0, "\\cup"), getFiniteSet(args, 1, "\\cup")),
-  ),
-  defineOperator("\\cap", 2, (args) => {
-    const right = getSet(args, 1, "\\cap");
-    return createSortedSet(
-      getElements(args, 0, "\\cap").filter((element) => isElementOf(element, right)),
-    );
-  }),
-  defineOperator("\\", 2, (args) => {
-    const right = getSet(args, 1, "\\");
-    return createSortedSet(
-      getElements(args, 0, "\\").filter((element) => !isElementOf(element, right)),
-    );
-  }),
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getSet(args, 0, "SUBSET") })),
   defineOperator("UNION", 1, (args) =>
     createSet(
@@ -394,6 +375,15 @@ export const createTlcOperators = (print: (text: string) => void): Builtin[] => 
       }, []),
     );
   }),
+  ...[
+    { name: "TLCGet", arity: 1 },
+    { name: "TLCSet", arity: 2 },
+    { name: "Any", arity: 0 },
+  ].map((operator) =>
+    defineOperator(operator.name, operator.arity, () => {
+      throw new TlaUnsupportedError(`${operator.name} is not supported yet`);
+    }),
+  ),
   defineOperator("RandomElement", 1, (args) => {
     const elements = getElements(args, 0, "RandomElement");
     if (elements.length === 0) throw new TlaEvaluationError("RandomElement of the empty set");
@@ -411,14 +401,11 @@ export const getStandardModule = (
     case "Integers":
       return { extends: ["Naturals"], operators: INTEGERS_OPERATORS };
     case "Sequences":
-      return { extends: ["Naturals"], operators: SEQUENCES_OPERATORS };
+      return { extends: [], operators: SEQUENCES_OPERATORS };
     case "FiniteSets":
-      return { extends: ["Naturals", "Sequences"], operators: FINITE_SETS_OPERATORS };
+      return { extends: [], operators: FINITE_SETS_OPERATORS };
     case "TLC":
-      return {
-        extends: ["Naturals", "Sequences", "FiniteSets"],
-        operators: createTlcOperators(print),
-      };
+      return { extends: [], operators: createTlcOperators(print) };
     default:
       return undefined;
   }

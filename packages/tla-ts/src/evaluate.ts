@@ -16,11 +16,13 @@ import {
   createFunction,
   createSet,
   createSortedFunction,
+  createSortedSet,
   createTuple,
   formatValue,
   getSequenceElements,
   getValueKey,
   isEnumerable,
+  isSetValue,
   toFiniteSet,
   updateFunction,
   valuesEqual,
@@ -239,6 +241,13 @@ export const getChildren = (expression: Expression): Expression[] => {
   }
 };
 
+export const isLocallyResolved = (expression: Expression) =>
+  (expression.kind === "Identifier" || expression.kind === "Apply") &&
+  expression.resolution?.kind === "Local";
+
+export const getDefinition = (name: string, environment: Environment) =>
+  environment.definitions.get(environment.substitutions.get(name) ?? name);
+
 const isStateDependent = (expression: Expression, environment: Environment): boolean => {
   if (
     expression.kind === "Prime" ||
@@ -255,7 +264,7 @@ const isStateDependent = (expression: Expression, environment: Environment): boo
         : undefined;
   if (name !== undefined) {
     if (environment.variableIndex.has(name)) return true;
-    const definition = environment.definitions.get(name);
+    const definition = getDefinition(name, environment);
     if (definition && !environment.constants.has(name) && !isConstantLevel(definition, environment))
       return true;
   }
@@ -300,12 +309,12 @@ export const forEachBinding = (
   return visitBound(bounds.length - 1, context.scope);
 };
 
-const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
+export const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
   const sets = bounds.map((bound) => evaluate(bound.set, context));
   return sets.length === 1 ? sets[0] : { kind: "ProductSet", factors: sets };
 };
 
-const bindArgument = (bounds: Bound[], scope: Scope | undefined, argument: Value) => {
+export const bindArgument = (bounds: Bound[], scope: Scope | undefined, argument: Value) => {
   if (bounds.length === 1) return bindPattern(scope, bounds[0].pattern, argument);
   const components = getSequenceElements(argument) ?? [];
   return bounds.reduce<Scope | undefined>(
@@ -404,6 +413,7 @@ export const resolveApplyOperator = (
   expression: Expression & { kind: "Apply" },
   context: Context,
 ): Operator | undefined => {
+  if (isLocallyResolved(expression)) return resolveOperator(expression.operator, context);
   const cached = globalApplyOperators.get(expression);
   const global =
     cached === undefined
@@ -510,7 +520,9 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
     return () => binding;
   }
   if (argument.kind === "Identifier") {
-    const global = findGlobalName(argument.name, environment);
+    const global = isLocallyResolved(argument)
+      ? undefined
+      : findGlobalName(argument.name, environment);
     if (global?.kind === "Value") {
       const binding: Binding = { kind: "Value", value: global.value };
       return () => binding;
@@ -589,6 +601,7 @@ export const bindDefinitions = (definitions: Definition[], context: Context): Sc
           bounds: definition.bounds,
           body: definition.body,
           location: definition.location,
+          isRecursive: true,
         },
         scope: node,
         state: context.state,
@@ -689,7 +702,7 @@ const CLOSED_KINDS = new Set([
 ]);
 
 const computeIsClosedConstant = (expression: Expression, environment: Environment): boolean => {
-  if (!CLOSED_KINDS.has(expression.kind)) return false;
+  if (!CLOSED_KINDS.has(expression.kind) || isLocallyResolved(expression)) return false;
   if (expression.kind === "Identifier") {
     const global = findGlobalName(expression.name, environment);
     if (global?.kind === "Value") return true;
@@ -772,7 +785,7 @@ const compileIdentifier = (
   environment: Environment,
 ): Evaluator => {
   const name = expression.name;
-  const global = findGlobalName(name, environment);
+  const global = isLocallyResolved(expression) ? undefined : findGlobalName(name, environment);
   if (global?.kind === "Variable") {
     const index = global.index;
     return (context) => {
@@ -814,7 +827,11 @@ const isOperatorName = (name: string, environment: Environment) => {
 export const isValueArgument = (argument: Expression, environment: Environment) =>
   argument.kind !== "Lambda" &&
   argument.kind !== "OperatorReference" &&
-  !(argument.kind === "Identifier" && isOperatorName(argument.name, environment));
+  !(
+    argument.kind === "Identifier" &&
+    !isLocallyResolved(argument) &&
+    isOperatorName(argument.name, environment)
+  );
 
 const compileBuiltinCall = (
   builtin: Builtin,
@@ -906,7 +923,9 @@ const compileApply = (
       throw new TlaUnsupportedError("Temporal formulas such as ~> cannot be evaluated in a state");
     };
   }
-  const global = resolveGlobalOperator(expression.operator, environment);
+  const global = isLocallyResolved(expression)
+    ? undefined
+    : resolveGlobalOperator(expression.operator, environment);
   if (global?.kind === "Closure") return compileClosureCall(global, args, environment);
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
   return (context) => {
@@ -1000,7 +1019,7 @@ const compileFunctionConstruction = (
   const set = getEvaluator(bound.set, environment);
   return (context) => {
     const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
-    if (!isEnumerable(domain)) {
+    if (expression.isRecursive || !isEnumerable(domain)) {
       return createLazyFunction(domain, (argument) =>
         body(withScope(context, bindArgument(bounds, context.scope, argument))),
       );
@@ -1076,16 +1095,22 @@ const compileSetComprehension = (
 ): Evaluator => {
   if (expression.kind === "SetFilter") {
     const predicate = getEvaluator(expression.predicate, environment);
-    const bound = expression.bound;
+    const set = getEvaluator(expression.bound.set, environment);
+    const pattern = expression.bound.pattern;
     return (context) => {
-      const elements: Value[] = [];
-      forEachBinding([bound], context, (scope) => {
-        if (expectBoolean(predicate(withScope(context, scope)), "a set filter predicate")) {
-          elements.push(lookupKey(bound.pattern, scope) ?? false);
-        }
-        return false;
-      });
-      return createSet(elements);
+      const base = set(context);
+      const test = (element: Value) =>
+        expectBoolean(
+          predicate(withScope(context, bindPattern(context.scope, pattern, element))),
+          "a set filter predicate",
+        );
+      if (!isEnumerable(base)) {
+        if (isSetValue(base)) return { kind: "FilteredSet", base, test };
+        throw new TlaEvaluationError(
+          `TLC encountered a non-enumerable quantifier bound ${formatValue(base)} at ${describeLocation(expression.bound.set)}`,
+        );
+      }
+      return createSortedSet(toFiniteSet(base).elements.filter(test));
     };
   }
   if (expression.kind === "SetMap") {

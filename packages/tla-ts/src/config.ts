@@ -1,4 +1,5 @@
 import { TlaConfigError, TlaUnsupportedError } from "./errors";
+import { matchOperator } from "./lexer";
 
 export type ConfigValue =
   | { kind: "Number"; value: number }
@@ -58,6 +59,7 @@ const KEYWORDS = new Set([
   "ALIAS",
   "POSTCONDITION",
   "POSTCONDITIONS",
+  "_POSSIBLE",
 ]);
 
 const SYMBOLS = ["<-", "<<", ">>", "=", "{", "}", ",", "[", "]", "(", ")"];
@@ -85,7 +87,7 @@ const tokenizeConfig = (source: string): ConfigToken[] => {
       cursor.index += end + 2;
       continue;
     }
-    const number = /^-?\d+/.exec(rest)?.[0];
+    const number = /^-?\d+(?![A-Za-z_])/.exec(rest)?.[0];
     if (number) {
       tokens.push({ kind: "Number", text: number, line: cursor.line });
       cursor.index += number.length;
@@ -104,12 +106,18 @@ const tokenizeConfig = (source: string): ConfigToken[] => {
       continue;
     }
     const symbol = SYMBOLS.find((candidate) => rest.startsWith(candidate));
-    if (!symbol)
+    if (symbol) {
+      tokens.push({ kind: "Symbol", text: symbol, line: cursor.line });
+      cursor.index += symbol.length;
+      continue;
+    }
+    const operator = matchOperator(source, cursor.index);
+    if (!operator)
       throw new TlaConfigError(
         `Unexpected character ${JSON.stringify(rest[0])} at line ${cursor.line}`,
       );
-    tokens.push({ kind: "Symbol", text: symbol, line: cursor.line });
-    cursor.index += symbol.length;
+    tokens.push({ kind: "Word", text: operator.text, line: cursor.line });
+    cursor.index += operator.length;
   }
   tokens.push({ kind: "End", text: "", line: cursor.line });
   return tokens;
@@ -249,7 +257,8 @@ export const parseConfig = (source: string): ModelConfig => {
         break;
       case "POSTCONDITION":
       case "POSTCONDITIONS":
-        throw new TlaUnsupportedError("POSTCONDITION is not supported");
+      case "_POSSIBLE":
+        throw new TlaUnsupportedError(`${token.text} is not supported`);
       case "CHECK_DEADLOCK": {
         const value = advance().text;
         if (value !== "TRUE" && value !== "FALSE") {

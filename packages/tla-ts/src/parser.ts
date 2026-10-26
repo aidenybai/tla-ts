@@ -153,6 +153,7 @@ const NO_OFFSIDE = -1;
 export const parseModule = (source: string): Module => {
   const tokens = tokenize(source);
   const cursor = { index: 0, offsideColumns: [] as number[] };
+  const recursiveNames = new Set<string>();
 
   const getLocation = (token: Token): SourceLocation => ({
     line: token.line,
@@ -235,6 +236,19 @@ export const parseModule = (source: string): Module => {
       offset.value += 2;
     }
     return false;
+  };
+
+  const isLabelAhead = () => {
+    if (isAt("::")) return true;
+    if (!isAt("(")) return false;
+    const offset = { value: 1 };
+    while (peek(offset.value).kind === "Identifier" && isAt(",", offset.value + 1))
+      offset.value += 2;
+    return (
+      peek(offset.value).kind === "Identifier" &&
+      isAt(")", offset.value + 1) &&
+      isAt("::", offset.value + 2)
+    );
   };
 
   const parsePattern = (): BoundPattern => {
@@ -438,6 +452,10 @@ export const parseModule = (source: string): Module => {
     if (token.kind === "Number") return { kind: "Number", value: Number(token.text), location };
     if (token.kind === "String") return { kind: "String", value: token.text, location };
     if (token.kind === "Identifier") {
+      if (isLabelAhead()) {
+        while (!accept("::")) advance();
+        return parseExpression();
+      }
       if (isAt("("))
         return { kind: "Apply", operator: token.text, args: parseArguments(), location };
       if (isAt("!") && peek(1).kind === "Identifier") {
@@ -480,7 +498,7 @@ export const parseModule = (source: string): Module => {
         const definitions: Definition[] = [];
         while (!accept("IN")) {
           if (accept("RECURSIVE")) {
-            parseDeclarations();
+            parseDeclarations().forEach((declaration) => recursiveNames.add(declaration.name));
             continue;
           }
           definitions.push(parseDefinition(false));
@@ -655,6 +673,7 @@ export const parseModule = (source: string): Module => {
           ],
           body: parseExpression(),
           isLocal,
+          isRecursive: recursiveNames.has(operator),
           location,
         };
       }
@@ -667,18 +686,44 @@ export const parseModule = (source: string): Module => {
       const bounds = withoutOffside(() => parseBounds());
       expect("]");
       expect("==");
-      return { kind: "Function", name, bounds, body: parseExpression(), isLocal, location };
+      return {
+        kind: "Function",
+        name,
+        bounds,
+        body: parseExpression(),
+        isLocal,
+        isRecursive: recursiveNames.has(name),
+        location,
+      };
     }
     const params = parseParams();
     expect("==");
     if (isAt("INSTANCE")) {
       throw new TlaUnsupportedError(`Named instance ${name} is not supported yet`);
     }
-    return { kind: "Operator", name, params, body: parseExpression(), isLocal, location };
+    return {
+      kind: "Operator",
+      name,
+      params,
+      body: parseExpression(),
+      isLocal,
+      isRecursive: recursiveNames.has(name),
+      location,
+    };
   };
 
   const parseDeclarations = (): Declaration[] =>
     parseSeparated(() => {
+      if (isAt("_") && peek(1).kind === "Operator") {
+        advance();
+        const operator = advance().text;
+        return accept("_") ? { name: operator, arity: 2 } : { name: operator, arity: 1 };
+      }
+      if (peek().kind === "Operator" && isAt("_", 1)) {
+        const operator = advance().text;
+        advance();
+        return { name: operator === "-" ? "-." : operator, arity: 1 };
+      }
       const name = expectIdentifier();
       if (!accept("(")) return { name, arity: 0 };
       const placeholders = parseSeparated(() => expect("_"));
@@ -706,13 +751,15 @@ export const parseModule = (source: string): Module => {
   };
 
   const parseAssumption = (): Assumption => {
-    const location = getLocation(advance());
+    const keyword = advance();
+    const location = getLocation(keyword);
+    const isAxiom = keyword.text === "AXIOM";
     if (peek().kind === "Identifier" && isAt("==", 1)) {
       const name = expectIdentifier();
       advance();
-      return { name, expression: parseExpression(), location };
+      return { name, expression: parseExpression(), isAxiom, location };
     }
-    return { name: undefined, expression: parseExpression(), location };
+    return { name: undefined, expression: parseExpression(), isAxiom, location };
   };
 
   const parseModuleBody = (): Module => {
@@ -750,12 +797,25 @@ export const parseModule = (source: string): Module => {
           continue;
         case "ASSUME":
         case "ASSUMPTION":
-        case "AXIOM":
-          module.assumptions.push(parseAssumption());
+        case "AXIOM": {
+          const assumption = parseAssumption();
+          module.assumptions.push(assumption);
+          if (assumption.name !== undefined) {
+            module.definitions.push({
+              kind: "Operator",
+              name: assumption.name,
+              params: [],
+              body: assumption.expression,
+              isLocal: false,
+              isRecursive: false,
+              location: assumption.location,
+            });
+          }
           continue;
+        }
         case "RECURSIVE":
           advance();
-          parseDeclarations();
+          parseDeclarations().forEach((declaration) => recursiveNames.add(declaration.name));
           continue;
         case "INSTANCE":
           throw new TlaUnsupportedError("INSTANCE is not supported yet");

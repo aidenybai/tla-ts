@@ -1,8 +1,9 @@
 import type { Assumption, Definition, Module } from "./ast";
 import type { ConfigValue, ModelConfig } from "./config";
 import { TlaConfigError, TlaUnsupportedError } from "./errors";
-import type { Builtin, Environment } from "./evaluate";
+import { isConstantLevel, type Builtin, type Environment } from "./evaluate";
 import { parseModule } from "./parser";
+import { resolveModule, type Symbols } from "./resolve";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
 import { checkInteger, createSet, type Value } from "./values";
 
@@ -42,45 +43,58 @@ export const createEnvironment = (
   const declaredConstants: string[] = [];
   const variables: string[] = [];
   const assumptions: Assumption[] = [];
-  const visited = new Set<string>();
+  const moduleExports = new Map<string, Symbols>();
 
   const addStandardModule = (name: string) => {
-    if (visited.has(name)) return true;
     const standardModule = getStandardModule(name, options.print);
-    if (!standardModule) return false;
-    visited.add(name);
-    standardModule.extends.forEach(addStandardModule);
-    standardModule.operators.forEach((operator) => builtins.set(operator.name, operator));
-    return true;
+    if (!standardModule) return undefined;
+    const exported: Symbols = new Map();
+    standardModule.extends.forEach((extended) =>
+      addStandardModule(extended)?.forEach((arity, symbol) => exported.set(symbol, arity)),
+    );
+    standardModule.operators.forEach((operator) => {
+      builtins.set(operator.name, operator);
+      exported.set(operator.name, operator.arity);
+    });
+    moduleExports.set(name, exported);
+    return exported;
   };
 
-  const addModule = (module: Module, isRoot: boolean) => {
-    visited.add(module.name);
-    module.extends.forEach((name) => {
-      if (visited.has(name) || addStandardModule(name)) return;
-      const source = options.loadModule?.(name);
-      if (source === undefined) throw new TlaUnsupportedError(`Module ${name} is not available`);
-      addModule(parseModule(source), false);
-    });
+  const loadModule = (name: string) => {
+    const source = options.loadModule?.(name);
+    if (source === undefined) throw new TlaUnsupportedError(`Module ${name} is not available`);
+    return parseModule(source);
+  };
+
+  const addModule = (module: Module, isRoot: boolean): Symbols => {
+    moduleExports.set(module.name, new Map());
+    const imported: Symbols = new Map(
+      CORE_OPERATORS.map((operator) => [operator.name, operator.arity]),
+    );
+    module.extends.forEach((name) =>
+      (
+        moduleExports.get(name) ??
+        addStandardModule(name) ??
+        addModule(loadModule(name), false)
+      ).forEach((arity, symbol) => imported.set(symbol, arity)),
+    );
+    const exported = resolveModule(module, imported);
     module.definitions
       .filter((definition) => isRoot || !definition.isLocal)
       .forEach((definition) => definitions.set(definition.name, definition));
     declaredConstants.push(...module.constants.map((constant) => constant.name));
     variables.push(...module.variables);
     assumptions.push(...module.assumptions);
+    moduleExports.set(module.name, exported);
+    return exported;
   };
 
   addModule(root, true);
 
   const constants = new Map<string, Value>();
-  config.constants.forEach((assignment) => {
-    if (!declaredConstants.includes(assignment.name) && !definitions.has(assignment.name)) {
-      throw new TlaConfigError(
-        `The configuration assigns ${assignment.name}, which is not declared in the spec`,
-      );
-    }
-    constants.set(assignment.name, toValue(assignment.value));
-  });
+  config.constants.forEach((assignment) =>
+    constants.set(assignment.name, toValue(assignment.value)),
+  );
   const substitutions = new Map(
     config.substitutions.map((substitution) => [substitution.name, substitution.target]),
   );
@@ -90,18 +104,28 @@ export const createEnvironment = (
     }
   });
 
-  return {
-    environment: {
-      definitions,
-      builtins,
-      constants,
-      substitutions,
-      variables,
-      variableIndex: new Map(variables.map((name, index) => [name, index])),
-      definitionValues: new Map(),
-      constantLevels: new Map(),
-      evaluators: new WeakMap(),
-    },
-    assumptions,
+  const environment: Environment = {
+    definitions,
+    builtins,
+    constants,
+    substitutions,
+    variables,
+    variableIndex: new Map(variables.map((name, index) => [name, index])),
+    definitionValues: new Map(),
+    constantLevels: new Map(),
+    evaluators: new WeakMap(),
   };
+  substitutions.forEach((target, name) => {
+    const definition = definitions.get(target);
+    if (
+      declaredConstants.includes(name) &&
+      definition &&
+      !isConstantLevel(definition, environment)
+    ) {
+      throw new TlaConfigError(
+        `The configuration file substitutes constant ${name} with non-constant ${target}`,
+      );
+    }
+  });
+  return { environment, assumptions };
 };

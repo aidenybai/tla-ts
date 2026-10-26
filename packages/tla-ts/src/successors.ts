@@ -1,6 +1,7 @@
-import type { Expression } from "./ast";
+import type { Bound, Expression } from "./ast";
 import { TlaEvaluationError } from "./errors";
 import {
+  bindArgument,
   bindDefinitions,
   bindOperatorArguments,
   bindValue,
@@ -8,15 +9,26 @@ import {
   evaluate,
   expectBoolean,
   forEachBinding,
+  getBoundsDomain,
+  getDefinition,
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,
+  isLocallyResolved,
   type Context,
   type Environment,
   type Scope,
   type State,
 } from "./evaluate";
-import { formatValue, isEnumerable, toFiniteSet, valuesEqual, type Value } from "./values";
+import {
+  createTuple,
+  formatValue,
+  isElementOf,
+  isEnumerable,
+  toFiniteSet,
+  valuesEqual,
+  type Value,
+} from "./values";
 
 export interface Successor {
   state: Value[];
@@ -40,11 +52,12 @@ type Runner = (
   onComplete: Continuation,
 ) => void;
 
-type Conjunct =
-  | { kind: "Guard"; expression: Expression }
+type Conjunct = { expression: Expression } & (
+  | { kind: "Guard" }
   | { kind: "Assign"; index: number; value: Expression }
   | { kind: "Unchanged"; indices: number[] }
-  | { kind: "Branch"; runner: Runner };
+  | { kind: "Branch"; runner: Runner }
+);
 
 const initRunners = new WeakMap<Expression, Runner>();
 const nextRunners = new WeakMap<Expression, Runner>();
@@ -78,19 +91,62 @@ const getRunner = (expression: Expression, environment: Environment, isInit: boo
   return runner;
 };
 
-const getVariableIndex = (expression: Expression, environment: Environment) =>
-  expression.kind === "Identifier" ? environment.variableIndex.get(expression.name) : undefined;
-
-const getAssignableIndex = (target: Expression, environment: Environment, isInit: boolean) => {
-  if (isInit) return getVariableIndex(target, environment);
-  return target.kind === "Prime" ? getVariableIndex(target.expression, environment) : undefined;
-};
-
 const getZeroArityBody = (name: string, environment: Environment) => {
   if (environment.constants.has(name)) return undefined;
-  const definition = environment.definitions.get(environment.substitutions.get(name) ?? name);
+  const definition = getDefinition(name, environment);
   return definition?.kind === "Operator" && definition.params.length === 0 ? definition : undefined;
 };
+
+const getStaticVariableIndex = (
+  expression: Expression,
+  environment: Environment,
+  isPrimed: boolean,
+  visited = new Set<string>(),
+): number | undefined => {
+  if (expression.kind === "Prime" && isPrimed) {
+    return getStaticVariableIndex(expression.expression, environment, false, visited);
+  }
+  if (expression.kind !== "Identifier" || isLocallyResolved(expression)) return undefined;
+  const index = environment.variableIndex.get(expression.name);
+  if (index !== undefined) return isPrimed ? undefined : index;
+  const definition = getZeroArityBody(expression.name, environment);
+  if (!definition || visited.has(definition.name)) return undefined;
+  visited.add(definition.name);
+  return getStaticVariableIndex(definition.body, environment, isPrimed, visited);
+};
+
+const getAssignableIndex = (target: Expression, environment: Environment, isInit: boolean) =>
+  getStaticVariableIndex(target, environment, !isInit);
+
+const getRuntimeVariableIndex = (
+  expression: Expression,
+  scope: Scope | undefined,
+  partial: State,
+  run: Run,
+  isPrimed: boolean,
+): number | undefined => {
+  if (expression.kind === "Prime" && isPrimed) {
+    return getRuntimeVariableIndex(expression.expression, scope, partial, run, false);
+  }
+  if (expression.kind === "Let") {
+    const letScope = bindDefinitions(expression.definitions, getContext(run, scope, partial));
+    return getRuntimeVariableIndex(expression.body, letScope, partial, run, isPrimed);
+  }
+  if (expression.kind !== "Identifier") return undefined;
+  const binding = lookupScope(scope, expression.name);
+  if (binding?.kind === "Thunk") {
+    return getRuntimeVariableIndex(binding.expression, binding.scope, partial, run, isPrimed);
+  }
+  if (binding) return undefined;
+  const index = run.environment.variableIndex.get(expression.name);
+  if (index !== undefined) return isPrimed ? undefined : index;
+  const definition = getZeroArityBody(expression.name, run.environment);
+  if (!definition) return undefined;
+  return getRuntimeVariableIndex(definition.body, undefined, partial, run, isPrimed);
+};
+
+const isPossiblyAssignable = (target: Expression, isInit: boolean) =>
+  isInit ? target.kind === "Identifier" || target.kind === "Let" : target.kind === "Prime";
 
 const getUnchangedIndices = (
   expression: Expression,
@@ -122,6 +178,8 @@ const ACTION_KINDS = new Set([
   "Let",
   "Unchanged",
   "BoxAction",
+  "AngleAction",
+  "FunctionApplication",
 ]);
 
 const isGuard = (expression: Expression, environment: Environment, isInit: boolean): boolean => {
@@ -138,8 +196,10 @@ const isGuard = (expression: Expression, environment: Environment, isInit: boole
   if (expression.kind !== "Apply") return true;
   if (expression.operator === "=>") return false;
   if (expression.operator === "=" || expression.operator === "\\in") {
+    if (isPossiblyAssignable(expression.args[0], isInit)) return false;
     if (getAssignableIndex(expression.args[0], environment, isInit) !== undefined) return false;
   }
+  if (isLocallyResolved(expression)) return false;
   const definition = environment.definitions.get(
     environment.substitutions.get(expression.operator) ?? expression.operator,
   );
@@ -153,14 +213,16 @@ const toConjunct = (
 ): Conjunct => {
   if (expression.kind === "Apply" && expression.operator === "=") {
     const index = getAssignableIndex(expression.args[0], environment, isInit);
-    if (index !== undefined) return { kind: "Assign", index, value: expression.args[1] };
+    if (index !== undefined) {
+      return { kind: "Assign", expression, index, value: expression.args[1] };
+    }
   }
   if (!isInit && expression.kind === "Unchanged") {
     const indices = getUnchangedIndices(expression.expression, environment);
-    if (indices) return { kind: "Unchanged", indices };
+    if (indices) return { kind: "Unchanged", expression, indices };
   }
   if (isGuard(expression, environment, isInit)) return { kind: "Guard", expression };
-  return { kind: "Branch", runner: getRunner(expression, environment, isInit) };
+  return { kind: "Branch", expression, runner: getRunner(expression, environment, isInit) };
 };
 
 const compileConjunction = (
@@ -180,6 +242,14 @@ const compileConjunction = (
     let current = partial;
     let context: Context | undefined;
     for (let index = start; index < conjuncts.length; index++) {
+      if (index > 0 && run.isInit && isComplete(current)) {
+        context ??= getContext(run, scope, current);
+        for (let rest = index; rest < conjuncts.length; rest++) {
+          if (!holdsInInit(conjuncts[rest].expression, context)) return;
+        }
+        onComplete(current, action);
+        return;
+      }
       const conjunct = conjuncts[index];
       if (conjunct.kind === "Guard") {
         context ??= getContext(run, scope, current);
@@ -224,15 +294,25 @@ const compileConjunction = (
     runFrom(0, run, scope, partial, action, onComplete);
 };
 
+const holdsInInit = (expression: Expression, context: Context) =>
+  expectBoolean(
+    evaluate(expression, context),
+    `the initial predicate at ${describeLocation(expression)}`,
+  );
+
 const compileGuard =
   (expression: Expression): Runner =>
   (run, scope, partial, action, _isFixed, onComplete) => {
     if (holds(expression, getContext(run, scope, partial))) onComplete(partial, action);
   };
 
-const compileMembership = (expression: Expression & { kind: "Apply" }, index: number): Runner => {
+const compileMembership = (
+  expression: Expression & { kind: "Apply" },
+  getIndex: (run: Run, scope: Scope | undefined, partial: State) => number,
+): Runner => {
   const set = expression.args[1];
   return (run, scope, partial, action, _isFixed, onComplete) => {
+    const index = getIndex(run, scope, partial);
     const context = getContext(run, scope, partial);
     if (partial[index] !== undefined) {
       if (holds(expression, context)) onComplete(partial, action);
@@ -268,6 +348,92 @@ const getUnchangedWrapper = (expression: Expression): Expression => {
   return wrapper;
 };
 
+const compileDynamicAssignment = (
+  expression: Expression & { kind: "Apply" },
+  isInit: boolean,
+): Runner => {
+  const target = expression.args[0];
+  const guard = compileGuard(expression);
+  const getIndex = (run: Run, scope: Scope | undefined, partial: State) =>
+    getRuntimeVariableIndex(target, scope, partial, run, !isInit) ?? -1;
+  const membership = compileMembership(expression, getIndex);
+  return (run, scope, partial, action, isFixed, onComplete) => {
+    const index = getIndex(run, scope, partial);
+    if (index === -1 || partial[index] !== undefined) {
+      guard(run, scope, partial, action, isFixed, onComplete);
+      return;
+    }
+    if (expression.operator === "\\in") {
+      membership(run, scope, partial, action, isFixed, onComplete);
+      return;
+    }
+    const value = evaluate(expression.args[1], getContext(run, scope, partial));
+    onComplete(assign(partial, index, value), action);
+  };
+};
+
+interface FunctionAction {
+  bounds: Bound[];
+  body: Expression;
+  scope: Scope | undefined;
+}
+
+const getFunctionAction = (
+  expression: Expression,
+  scope: Scope | undefined,
+  partial: State,
+  run: Run,
+): FunctionAction | undefined => {
+  if (expression.kind === "FunctionConstruction") {
+    return { bounds: expression.bounds, body: expression.body, scope };
+  }
+  if (expression.kind !== "Identifier") return undefined;
+  const binding = lookupScope(scope, expression.name);
+  if (binding?.kind === "Thunk") {
+    return getFunctionAction(binding.expression, binding.scope, partial, run);
+  }
+  const definition = binding ? undefined : getDefinition(expression.name, run.environment);
+  if (definition?.kind !== "Function") return undefined;
+  const self = evaluate(expression, getContext(run, undefined, partial));
+  return {
+    bounds: definition.bounds,
+    body: definition.body,
+    scope: bindValue(undefined, definition.name, self),
+  };
+};
+
+const compileFunctionAction = (
+  expression: Expression & { kind: "FunctionApplication" },
+  environment: Environment,
+  isInit: boolean,
+): Runner => {
+  const guard = compileGuard(expression);
+  return (run, scope, partial, action, isFixed, onComplete) => {
+    const lambda = getFunctionAction(expression.function, scope, partial, run);
+    if (!lambda) {
+      guard(run, scope, partial, action, isFixed, onComplete);
+      return;
+    }
+    const context = getContext(run, scope, partial);
+    const args = expression.args.map((arg) => evaluate(arg, context));
+    const argument = args.length === 1 ? args[0] : createTuple(args);
+    const domain = getBoundsDomain(lambda.bounds, getContext(run, lambda.scope, partial));
+    if (!isElementOf(argument, domain)) {
+      throw new TlaEvaluationError(
+        `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain at ${describeLocation(expression)}`,
+      );
+    }
+    getRunner(lambda.body, environment, isInit)(
+      run,
+      bindArgument(lambda.bounds, lambda.scope, argument),
+      partial,
+      action,
+      isFixed,
+      onComplete,
+    );
+  };
+};
+
 const compileUnchanged = (expression: Expression, environment: Environment): Runner => {
   const indices = getUnchangedIndices(expression, environment);
   if (indices) return compileConjunction([getUnchangedWrapper(expression)], environment, false);
@@ -299,7 +465,9 @@ const compileCall = (
 ): Runner => {
   const name = expression.operator;
   const guard = compileGuard(expression);
-  const global = resolveGlobalOperator(name, environment);
+  const global = isLocallyResolved(expression)
+    ? undefined
+    : resolveGlobalOperator(name, environment);
   if (global?.kind === "Builtin") return guard;
   if (global?.kind === "Closure") {
     const bindArguments = compileArgumentScope(global, expression.args, environment);
@@ -340,7 +508,9 @@ const compileIdentifier = (
   isInit: boolean,
 ): Runner => {
   const guard = compileGuard(expression);
-  const definition = getZeroArityBody(expression.name, environment);
+  const definition = isLocallyResolved(expression)
+    ? undefined
+    : getZeroArityBody(expression.name, environment);
   const compiled = { body: undefined as Runner | undefined };
   return (run, scope, partial, action, isFixed, onComplete) => {
     const binding = lookupScope(scope, expression.name);
@@ -414,14 +584,24 @@ const compileAction = (
     case "Forall": {
       const body = child(expression.body);
       return (run, scope, partial, action, _isFixed, onComplete) => {
-        const scopes: (Scope | undefined)[] = [];
+        const boundScopes: (Scope | undefined)[] = [];
         forEachBinding(expression.bounds, getContext(run, scope, partial), (boundScope) => {
-          scopes.push(boundScope);
+          boundScopes.push(boundScope);
           return false;
         });
+        const scopes = [...boundScopes.slice(0, 1), ...boundScopes.slice(1).reverse()];
         const visit = (index: number, nextPartial: State, nextAction: string | undefined): void => {
           if (index === scopes.length) {
             onComplete(nextPartial, nextAction);
+            return;
+          }
+          if (index > 0 && run.isInit && isComplete(nextPartial)) {
+            const isSatisfied = scopes
+              .slice(index)
+              .every((boundScope) =>
+                holdsInInit(expression.body, getContext(run, boundScope, nextPartial)),
+              );
+            if (isSatisfied) onComplete(nextPartial, nextAction);
             return;
           }
           body(run, scopes[index], nextPartial, nextAction, true, (afterPartial, afterAction) =>
@@ -495,13 +675,18 @@ const compileAction = (
       });
     case "Identifier":
       return compileIdentifier(expression, environment, isInit);
+    case "FunctionApplication":
+      return compileFunctionAction(expression, environment, isInit);
     case "Apply": {
       const args = expression.args;
       if (expression.operator === "=" || expression.operator === "\\in") {
         const index = getAssignableIndex(args[0], environment, isInit);
         if (index !== undefined) {
-          if (expression.operator === "\\in") return compileMembership(expression, index);
+          if (expression.operator === "\\in") return compileMembership(expression, () => index);
           return compileConjunction([expression], environment, isInit);
+        }
+        if (isPossiblyAssignable(args[0], isInit)) {
+          return compileDynamicAssignment(expression, isInit);
         }
       }
       if (expression.operator === "=>") {

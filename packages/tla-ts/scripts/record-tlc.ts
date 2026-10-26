@@ -107,7 +107,11 @@ const runTlc = (model: CorpusModel) =>
           : {}),
         ...(status === "success" && depth ? { depth: Number(depth[1]) } : {}),
         ...(status !== "success" && status !== "error"
-          ? { traceLength: [...output.matchAll(/^State \d+:/gm)].length }
+          ? {
+              traceLength: output.includes("is violated by the initial state")
+                ? 1
+                : [...output.matchAll(/^State \d+:/gm)].length,
+            }
           : {}),
         tlcMilliseconds: Math.round(performance.now() - startedAt),
       });

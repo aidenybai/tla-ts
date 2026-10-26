@@ -56,6 +56,19 @@ export interface SequenceSetValue {
   base: Value;
 }
 
+export interface SetOperationValue {
+  kind: "SetOperation";
+  operator: "\\cup" | "\\cap" | "\\";
+  left: Value;
+  right: Value;
+}
+
+export interface FilteredSetValue {
+  kind: "FilteredSet";
+  base: Value;
+  test: (element: Value) => boolean;
+}
+
 export interface LazyFunctionValue {
   kind: "LazyFunction";
   domain: Value;
@@ -76,6 +89,8 @@ export type Value =
   | RecordSetValue
   | ProductSetValue
   | SequenceSetValue
+  | SetOperationValue
+  | FilteredSetValue
   | LazyFunctionValue;
 
 type ObjectValue = Exclude<Value, boolean | number | string>;
@@ -157,6 +172,10 @@ export const compareValues = (left: Value, right: Value): number => {
       }
       return leftKind === "ModelValue" ? -1 : 1;
     }
+    if (leftKind === "InfiniteSet" && rightKind === "InfiniteSet") {
+      if (left.name === right.name) return 0;
+      if (left.name !== "STRING" && right.name !== "STRING") return left.name === "Nat" ? -1 : 1;
+    }
     const leftIsSet = isSetValue(left);
     if (leftIsSet !== isSetValue(right)) {
       throw new TlaEvaluationError(
@@ -209,6 +228,28 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     isSetValue(left) && isSetValue(right) && !(isEnumerable(left) && isEnumerable(right));
   if (isInfiniteComparison) return getValueKey(left) === getValueKey(right);
   return compareValues(left, right) === 0;
+};
+
+const areSameValues = (left: Value[], right: Value[]) =>
+  left === right ||
+  (left.length === right.length &&
+    left.every((element, index) => isSameValue(element, right[index])));
+
+export const isSameValue = (left: Value, right: Value): boolean => {
+  if (left === right) return true;
+  if (typeof left !== "object" || typeof right !== "object") return false;
+  if (left.kind === "Set" && right.kind === "Set")
+    return (
+      (left.hash === 0 || right.hash === 0 || left.hash === right.hash) &&
+      areSameValues(left.elements, right.elements)
+    );
+  if (left.kind === "Function" && right.kind === "Function")
+    return (
+      (left.hash === 0 || right.hash === 0 || left.hash === right.hash) &&
+      areSameValues(left.domain, right.domain) &&
+      areSameValues(left.range, right.range)
+    );
+  return getValueKey(left) === getValueKey(right);
 };
 
 export const createSet = (elements: Value[]): SetValue => {
@@ -291,6 +332,7 @@ export const isEnumerable = (value: Value): boolean => {
     case "SequenceSet":
       return false;
     case "Subset":
+    case "FilteredSet":
       return isEnumerable(value.base);
     case "FunctionSet":
       return isEnumerable(value.domain) && isEnumerable(value.range);
@@ -298,6 +340,10 @@ export const isEnumerable = (value: Value): boolean => {
       return value.sets.every(isEnumerable);
     case "ProductSet":
       return value.factors.every(isEnumerable);
+    case "SetOperation":
+      if (value.operator === "\\cup") return isEnumerable(value.left) && isEnumerable(value.right);
+      if (value.operator === "\\cap") return isEnumerable(value.left) || isEnumerable(value.right);
+      return isEnumerable(value.left);
     default:
       return false;
   }
@@ -350,6 +396,23 @@ const enumerateSet = (value: Value): Value[] => {
       return getCartesianProduct(value.factors.map((factor) => toFiniteSet(factor).elements)).map(
         createTuple,
       );
+    case "FilteredSet":
+      return toFiniteSet(value.base).elements.filter(value.test);
+    case "SetOperation": {
+      if (!isEnumerable(value)) {
+        throw new TlaEvaluationError(
+          `Attempted to enumerate the non-enumerable set ${formatValue(value)}`,
+        );
+      }
+      if (value.operator === "\\cup")
+        return unionSorted(toFiniteSet(value.left), toFiniteSet(value.right)).elements;
+      const isLeftEnumerated = value.operator === "\\" || isEnumerable(value.left);
+      const enumerated = isLeftEnumerated ? value.left : value.right;
+      const other = isLeftEnumerated ? value.right : value.left;
+      return toFiniteSet(enumerated).elements.filter(
+        (element) => isElementOf(element, other) === (value.operator === "\\cap"),
+      );
+    }
     case "InfiniteSet":
     case "SequenceSet":
       throw new TlaEvaluationError(
@@ -367,18 +430,48 @@ export const toFiniteSet = (value: Value): SetValue => {
   const cached = typeof value === "object" ? finiteSets.get(value) : undefined;
   if (cached) return cached;
   const elements = enumerateSet(value);
-  const set =
-    typeof value === "object" && value.kind === "Interval"
-      ? createSortedSet(elements)
-      : createSet(elements);
+  const isSorted =
+    typeof value === "object" &&
+    (value.kind === "Interval" || value.kind === "SetOperation" || value.kind === "FilteredSet");
+  const set = isSorted ? createSortedSet(elements) : createSet(elements);
   if (typeof value === "object") finiteSets.set(value, set);
   return set;
 };
 
-export const getCardinality = (value: Value) => {
-  if (typeof value === "object" && value.kind === "Interval")
-    return Math.max(0, value.high - value.low + 1);
-  return toFiniteSet(value).elements.length;
+const checkCardinality = (cardinality: number, set: Value) => {
+  if (cardinality > MAXIMUM_INTEGER) {
+    throw new TlaEvaluationError(
+      `Overflow when computing the number of elements in ${formatValue(set)}`,
+    );
+  }
+  return cardinality;
+};
+
+const getProductCardinality = (sets: Value[], set: Value) => {
+  const sizes = sets.map(getCardinality);
+  if (sizes.includes(0)) return 0;
+  return sizes.reduce((product, size) => checkCardinality(product * size, set), 1);
+};
+
+export const getCardinality = (value: Value): number => {
+  if (typeof value !== "object") return toFiniteSet(value).elements.length;
+  switch (value.kind) {
+    case "Interval":
+      return Math.max(0, value.high - value.low + 1);
+    case "Subset":
+      return checkCardinality(2 ** getCardinality(value.base), value);
+    case "FunctionSet":
+      return getProductCardinality(
+        Array.from({ length: getCardinality(value.domain) }, () => value.range),
+        value,
+      );
+    case "RecordSet":
+      return getProductCardinality(value.sets, value);
+    case "ProductSet":
+      return getProductCardinality(value.factors, value);
+    default:
+      return toFiniteSet(value).elements.length;
+  }
 };
 
 const findIndex = (sortedValues: Value[], target: Value) => {
@@ -399,6 +492,9 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
   return fn.domain.every((key, index) => key === index + 1) ? fn.range : undefined;
 };
 
+const describeMembership = (element: Value, set: Value) =>
+  `Attempted to check if the value ${formatValue(element)} is an element of ${formatValue(set)}`;
+
 export const isElementOf = (element: Value, set: Value): boolean => {
   if (typeof set !== "object")
     throw new TlaEvaluationError(`Expected a set but found ${formatValue(set)}`);
@@ -406,17 +502,25 @@ export const isElementOf = (element: Value, set: Value): boolean => {
     case "Set":
       return findIndex(set.elements, element) !== -1;
     case "Interval":
-      return typeof element === "number" && element >= set.low && element <= set.high;
-    case "InfiniteSet":
-      if (set.name === "STRING") return typeof element === "string";
-      return typeof element === "number" && (set.name === "Int" || element >= 0);
+      if (typeof element === "number") return element >= set.low && element <= set.high;
+      if (set.low <= set.high && !isModelValue(element))
+        throw new TlaEvaluationError(describeMembership(element, set));
+      return false;
+    case "InfiniteSet": {
+      if (isModelValue(element)) return false;
+      const isMemberType =
+        set.name === "STRING" ? typeof element === "string" : typeof element === "number";
+      if (!isMemberType) throw new TlaEvaluationError(describeMembership(element, set));
+      return set.name !== "Nat" || (typeof element === "number" && element >= 0);
+    }
     case "Subset":
-      return (
-        isSetValue(element) &&
-        toFiniteSet(element).elements.every((item) => isElementOf(item, set.base))
-      );
+      if (!isSetValue(element)) throw new TlaEvaluationError(describeMembership(element, set));
+      return toFiniteSet(element).elements.every((item) => isElementOf(item, set.base));
     case "FunctionSet": {
-      if (!isFunctionValue(element)) return false;
+      if (!isFunctionValue(element)) {
+        if (isModelValue(element)) return false;
+        throw new TlaEvaluationError(describeMembership(element, set));
+      }
       const fn = toFiniteFunction(element);
       return (
         valuesEqual(createSortedSet(fn.domain), set.domain) &&
@@ -424,7 +528,10 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       );
     }
     case "RecordSet": {
-      if (!isFunctionValue(element)) return false;
+      if (!isFunctionValue(element)) {
+        if (isModelValue(element)) return false;
+        throw new TlaEvaluationError(describeMembership(element, set));
+      }
       const fn = toFiniteFunction(element);
       return (
         fn.domain.length === set.names.length &&
@@ -435,6 +542,10 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       );
     }
     case "ProductSet": {
+      if (!isFunctionValue(element)) {
+        if (isModelValue(element)) return false;
+        throw new TlaEvaluationError(describeMembership(element, set));
+      }
       const elements = getSequenceElements(element);
       return (
         elements !== undefined &&
@@ -442,9 +553,22 @@ export const isElementOf = (element: Value, set: Value): boolean => {
         elements.every((item, index) => isElementOf(item, set.factors[index]))
       );
     }
+    case "FilteredSet":
+      return isElementOf(element, set.base) && set.test(element);
+    case "SetOperation":
+      if (set.operator === "\\cup")
+        return isElementOf(element, set.left) || isElementOf(element, set.right);
+      return (
+        isElementOf(element, set.left) &&
+        isElementOf(element, set.right) === (set.operator === "\\cap")
+      );
     case "SequenceSet": {
       const elements = getSequenceElements(element);
-      return elements !== undefined && elements.every((item) => isElementOf(item, set.base));
+      if (elements === undefined) {
+        if (isModelValue(element)) return false;
+        throw new TlaEvaluationError(describeMembership(element, set));
+      }
+      return elements.every((item) => isElementOf(item, set.base));
     }
     default:
       throw new TlaEvaluationError(`Expected a set but found ${formatValue(set)}`);
@@ -504,6 +628,15 @@ export const updateFunction = (
   argument: Value,
   update: (previous: Value) => Value,
 ): Value => {
+  if (typeof fn === "object" && fn.kind === "LazyFunction" && !isEnumerable(fn.domain)) {
+    if (!isElementOf(argument, fn.domain)) return fn;
+    const updated = update(fn.apply(argument));
+    return {
+      kind: "LazyFunction",
+      domain: fn.domain,
+      apply: (key) => (valuesEqual(key, argument) ? updated : fn.apply(key)),
+    };
+  }
   const finite = toFiniteFunction(fn);
   const position = findIndex(finite.domain, argument);
   if (position === -1) return finite;
@@ -600,6 +733,11 @@ const computeValueKey = (value: ObjectValue): string => {
   if (value.kind === "ModelValue") return `@${value.name}`;
   if (value.kind === "InfiniteSet") return `<${value.name}>`;
   if (value.kind === "SequenceSet") return `<Seq ${getValueKey(value.base)}>`;
+  if (value.kind === "FilteredSet" && !isEnumerable(value)) {
+    throw new TlaEvaluationError(
+      `Attempted to compare the non-enumerable set ${formatValue(value)} with another value`,
+    );
+  }
   if (isSetValue(value)) {
     if (!isEnumerable(value)) return `<${value.kind} ${formatValue(value)}>`;
     return `{${toFiniteSet(value).elements.map(getValueKey).join(",")}}`;
@@ -634,6 +772,10 @@ export const formatValue = (value: Value): string => {
       return value.factors.map(formatValue).join(" \\X ");
     case "SequenceSet":
       return `Seq(${formatValue(value.base)})`;
+    case "SetOperation":
+      return `${formatValue(value.left)} ${value.operator} ${formatValue(value.right)}`;
+    case "FilteredSet":
+      return `{x \\in ${formatValue(value.base)} : ...}`;
     case "Function":
     case "LazyFunction": {
       if (value.kind === "LazyFunction" && !isEnumerable(value.domain)) return "<function>";

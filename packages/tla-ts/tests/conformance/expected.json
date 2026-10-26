@@ -2532,14 +2532,14 @@
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorInvariant.cfg",
     "status": "invariant-violation",
     "violation": "NotNine",
-    "traceLength": 0,
+    "traceLength": 1,
     "tlcMilliseconds": 530
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorInvariantContinue.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
-    "traceLength": 0,
+    "traceLength": 1,
     "tlcMilliseconds": 461
   },
   {
@@ -2680,7 +2680,7 @@
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1145b.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
-    "traceLength": 0,
+    "traceLength": 1,
     "tlcMilliseconds": 431
   },
   {
@@ -2935,7 +2935,7 @@
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github746.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
-    "traceLength": 0,
+    "traceLength": 1,
     "tlcMilliseconds": 331
   },
   {
@@ -3006,7 +3006,7 @@
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/ModuleOverwrites/ModuleOverwrites.cfg",
     "status": "invariant-violation",
     "violation": "InvAsModuleOverwrite",
-    "traceLength": 0,
+    "traceLength": 1,
     "tlcMilliseconds": 467
   },
   {
@@ -4739,7 +4739,7 @@
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test57.cfg",
     "status": "invariant-violation",
     "violation": "Invariant1",
-    "traceLength": 0,
+    "traceLength": 1,
     "tlcMilliseconds": 449
   },
   {

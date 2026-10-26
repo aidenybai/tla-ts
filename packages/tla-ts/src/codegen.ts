@@ -8,6 +8,7 @@ import {
   getEnumeratedElements,
   getEvaluator,
   isClosedConstant,
+  isLocallyResolved,
   isValueArgument,
   isWorthCaching,
   resolveGlobalOperator,
@@ -170,6 +171,7 @@ const generateApply = (
     const right = generateExpression(generator, args[1], frame);
     return `(bool(${left}, "the left side of =>") ? bool(${right}, "the right side of =>") : true)`;
   }
+  if (isLocallyResolved(expression)) return generateDelegate(generator, expression, frame);
   const builtin = resolveGlobalOperator(expression.operator, generator.environment);
   if (builtin?.kind !== "Builtin") return generateDelegate(generator, expression, frame);
   const environment = generator.environment;
@@ -205,6 +207,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "Identifier": {
       const local = frame.locals.get(expression.name);
       if (local) return local;
+      if (isLocallyResolved(expression)) return generateDelegate(generator, expression, frame);
       const global = findGlobalName(expression.name, generator.environment);
       if (global?.kind === "Variable") {
         const name = JSON.stringify(expression.name);
