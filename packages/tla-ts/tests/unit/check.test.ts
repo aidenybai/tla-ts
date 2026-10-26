@@ -104,6 +104,23 @@ describe("check matches TLC", () => {
     ).toBe("success");
   });
 
+  it("checks _POSSIBLE predicates and postconditions after the search", () => {
+    const results = ["Holds", "Unwitnessed", "False"].map((name) =>
+      check({
+        source: readFileSync(join(FIXTURES, "postconditions", "Postconditions.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "postconditions", `${name}.cfg`), "utf8"),
+        onPrint: () => {},
+      }),
+    );
+    expect(
+      results.map((result) => [result.status, result.violation?.name, result.distinctStates]),
+    ).toEqual([
+      ["success", undefined, 4],
+      ["postcondition-violation", "AtTen", 4],
+      ["postcondition-violation", "FiveStates", 4],
+    ]);
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");
