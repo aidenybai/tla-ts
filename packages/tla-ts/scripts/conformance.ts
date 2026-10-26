@@ -29,7 +29,6 @@ const filter = getArgument("--filter");
 const isUpdate = process.argv.includes("--update");
 
 const EXIT_STATUSES: Record<string, string> = {
-  "property-violation": "liveness-violation",
   "postcondition-violation": "assumption-violation",
 };
 

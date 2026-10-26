@@ -174,6 +174,7 @@ const getUnchangedIndices = (
 };
 
 const ACTION_KINDS = new Set([
+  "Label",
   "And",
   "Or",
   "Exists",
@@ -680,6 +681,8 @@ const compileAction = (
         operands: [expression.action, getUnchangedWrapper(expression.subscript)],
         location: expression.location,
       });
+    case "Label":
+      return child(expression.body);
     case "Identifier":
       return compileIdentifier(expression, environment, isInit);
     case "FunctionApplication":

@@ -11,11 +11,13 @@ export type ConfigValue =
 export interface ConstantAssignment {
   name: string;
   value: ConfigValue;
+  module?: string;
 }
 
 export interface Substitution {
   name: string;
   target: string;
+  module?: string;
 }
 
 export interface ModelConfig {
@@ -199,6 +201,14 @@ export const parseConfig = (source: string): ModelConfig => {
     );
   };
 
+  const parseModuleScope = () => {
+    if (peek().text !== "[") return undefined;
+    advance();
+    const module = expectName();
+    expect("]");
+    return module;
+  };
+
   const parseConstants = () => {
     while (peek().kind === "Word" && !isKeyword(peek())) {
       const name = advance().text;
@@ -206,15 +216,13 @@ export const parseConfig = (source: string): ModelConfig => {
         throw new TlaUnsupportedError(`Assigning operator constant ${name} is not supported`);
       if (peek().text === "<-") {
         advance();
-        if (peek().text === "[")
-          throw new TlaUnsupportedError("Module-scoped substitutions are not supported");
-        config.substitutions.push({ name, target: expectName() });
+        const module = parseModuleScope();
+        config.substitutions.push({ name, target: expectName(), ...(module && { module }) });
         continue;
       }
       expect("=");
-      if (peek().text === "[")
-        throw new TlaUnsupportedError("Module-scoped constant values are not supported");
-      config.constants.push({ name, value: parseValue() });
+      const module = parseModuleScope();
+      config.constants.push({ name, value: parseValue(), ...(module && { module }) });
     }
   };
 

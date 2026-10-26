@@ -36,15 +36,19 @@ const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
 const renamedArities = new WeakMap<Expression, number>();
 
+export const KEY_SEPARATOR = "@";
+
 const CORE_SYMBOLS: Symbols = new Map(
   ["~>", "-+->", "\\cdot"].map((name) => [name, { key: name, arity: 2 }]),
 );
 
-const isBefore = (left: SourceLocation, right: SourceLocation) =>
+export const isBefore = (left: SourceLocation, right: SourceLocation) =>
   left.line < right.line || (left.line === right.line && left.column < right.column);
 
 const getArity = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params.length : 0;
+
+const isInstantiated = (definition: Definition) => definition.name.includes("!");
 
 const lookupLocal = (scope: LocalName | undefined, name: string) => {
   for (let current = scope; current; current = current.parent) {
@@ -68,6 +72,7 @@ const getSymbolArity = (
   const location = expression.location;
   const renamed = renamedArities.get(expression);
   if (renamed !== undefined) return renamed;
+  if (name.includes(KEY_SEPARATOR)) return expression.kind === "Apply" ? expression.args.length : 0;
   const local = lookupLocal(scope, name);
   if (local && expression.kind !== "OperatorReference") expression.resolution = LOCAL_RESOLUTION;
   if (local) return local.arity;
@@ -137,7 +142,7 @@ const resolveDefinitions = (
       scope,
     );
   return definitions.reduce((current, definition) => {
-    resolveDefinition(definition, current, unit);
+    if (!isInstantiated(definition)) resolveDefinition(definition, current, unit);
     return { name: definition.name, arity: getArity(definition), parent: current };
   }, recursiveScope);
 };
@@ -278,6 +283,14 @@ const resolveExpression = (
     case "WeakFairness":
     case "StrongFairness":
       resolveAll([expression.subscript, expression.action]);
+      return;
+    case "Label":
+      resolveExpression(expression.body, scope, unit);
+      return;
+    case "Subexpression":
+      resolveAll(
+        expression.selectors.flatMap((selector) => ("args" in selector ? selector.args : [])),
+      );
   }
 };
 

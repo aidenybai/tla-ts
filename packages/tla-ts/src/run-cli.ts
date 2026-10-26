@@ -10,7 +10,7 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   "assumption-violation": 10,
   deadlock: 11,
   "invariant-violation": 12,
-  "property-violation": 13,
+  "property-violation": 12,
   "liveness-violation": 13,
   "postcondition-violation": 10,
 };

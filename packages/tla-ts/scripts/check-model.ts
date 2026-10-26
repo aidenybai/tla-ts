@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { check, TlaError, TlaUnsupportedError } from "../src";
+import { basename, dirname, join } from "node:path";
+import { check, TlaError, TlaSyntaxError, TlaUnsupportedError } from "../src";
 
 export interface ModelOutcome {
   status: string;
@@ -16,8 +16,15 @@ export interface ModelOutcome {
 export const checkModel = (specPath: string, configPath: string): ModelOutcome => {
   const directory = dirname(specPath);
   const startedAt = performance.now();
+  const source = readFileSync(specPath, "utf8");
+  const moduleName = /-{4,}\s*MODULE\s+(\w+)/.exec(source)?.[1];
+  if (moduleName !== basename(specPath, ".tla")) {
+    throw new TlaSyntaxError(
+      `File name ${basename(specPath, ".tla")} does not match the name ${moduleName} of the top level module it contains`,
+    );
+  }
   const result = check({
-    source: readFileSync(specPath, "utf8"),
+    source,
     config: readFileSync(configPath, "utf8"),
     loadModule: (name) => {
       const modulePath = join(directory, `${name}.tla`);

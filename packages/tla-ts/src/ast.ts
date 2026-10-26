@@ -94,6 +94,7 @@ export interface CaseExpression {
 export interface LetExpression {
   kind: "Let";
   definitions: Definition[];
+  instances?: Instance[];
   body: Expression;
   location: SourceLocation;
 }
@@ -115,6 +116,7 @@ export interface QuantifierExpression {
 export interface UnboundedQuantifierExpression {
   kind: "UnboundedQuantifier";
   names: string[];
+  isTemporal?: boolean;
   body: Expression;
   location: SourceLocation;
 }
@@ -237,6 +239,28 @@ export interface FairnessExpression {
   kind: "WeakFairness" | "StrongFairness";
   subscript: Expression;
   action: Expression;
+  enabled?: Expression;
+  location: SourceLocation;
+}
+
+export interface LabelExpression {
+  kind: "Label";
+  name: string;
+  params: string[];
+  body: Expression;
+  location: SourceLocation;
+}
+
+export type Selector =
+  | { kind: "Name"; name: string; args: Expression[] }
+  | { kind: "Operand"; operand: number | "<<" | ">>" }
+  | { kind: "Bound"; args: Expression[] }
+  | { kind: "At" }
+  | { kind: "Colon" };
+
+export interface SubexpressionExpression {
+  kind: "Subexpression";
+  selectors: Selector[];
   location: SourceLocation;
 }
 
@@ -271,7 +295,9 @@ export type Expression =
   | ProductExpression
   | TemporalExpression
   | ActionExpression
-  | FairnessExpression;
+  | FairnessExpression
+  | LabelExpression
+  | SubexpressionExpression;
 
 export interface OperatorParam {
   name: string;
@@ -327,8 +353,15 @@ export interface Instance {
   location: SourceLocation;
 }
 
+export interface OuterScope {
+  extends: string[];
+  symbols: Declaration[];
+}
+
 export interface Module {
   name: string;
+  outer: OuterScope | undefined;
+  modules: Module[];
   extends: string[];
   constants: Declaration[];
   variables: string[];
