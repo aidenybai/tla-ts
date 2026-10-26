@@ -362,7 +362,10 @@ export const createEnvironment = (
     linked.exported.forEach((symbol, name) => {
       if (declared.has(name)) return;
       if (instance.name === undefined) {
-        symbols.set(name, { key: instantiation.getKey(symbol.key), arity: symbol.arity });
+        const key = instantiation.getKey(symbol.key);
+        if (declarations.length > 0)
+          instanceActions.set(key, { name, location: instance.location });
+        symbols.set(name, { key, arity: symbol.arity });
         return;
       }
       const key = instantiation.getQualifiedKey(symbol.key);
