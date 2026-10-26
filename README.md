@@ -1,8 +1,13 @@
 # tla-ts
 
+[![version](https://img.shields.io/npm/v/tla-ts?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
+[![downloads](https://img.shields.io/npm/dt/tla-ts.svg?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
+[![CI](https://img.shields.io/github/actions/workflow/status/aidenybai/tla-ts/ci.yml?branch=main&style=flat&colorA=000000&colorB=000000&label=ci)](https://github.com/aidenybai/tla-ts/actions/workflows/ci.yml)
+[![license](https://img.shields.io/github/license/aidenybai/tla-ts?style=flat&colorA=000000&colorB=000000)](LICENSE)
+
 A TLA+ model checker in TypeScript, **2× faster than TLC**.
 
-tla-ts checks TLA+ specs with the same verdicts, error traces, and state counts as TLC. It runs in Node and in the browser without a JVM.
+tla-ts checks TLA+ specs with the same verdicts, error traces, and state counts as TLC. It runs in Node and in the browser without a JVM. Try it in the [playground](https://tla-ts.aidenybai.com).
 
 ```ts
 import { check } from "tla-ts";
