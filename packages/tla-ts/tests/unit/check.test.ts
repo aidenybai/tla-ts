@@ -143,6 +143,16 @@ describe("check matches TLC", () => {
     expect(result.status).toBe("assumption-violation");
   });
 
+  it("fingerprints states by their VIEW and keeps the fair steps it hides", () => {
+    const result = checkFixture("view", "View");
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      5,
+      4,
+      4,
+    ]);
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");

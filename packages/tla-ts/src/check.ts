@@ -2,7 +2,7 @@ import type { Assumption, Definition, Expression, SourceLocation } from "./ast";
 import { parseConfig, type ModelConfig } from "./config";
 import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
-import { TlaConfigError, TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import { TlaConfigError, TlaEvaluationError } from "./errors";
 import {
   evaluate,
   expectBoolean,
@@ -340,6 +340,8 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
   if (environment.variables.length === 0) return undefined;
   const symmetryGroup =
     config.symmetry === undefined ? [] : getSymmetryGroup(config.symmetry, environment);
+  const view =
+    config.view === undefined ? undefined : getNamedExpressions([config.view], environment)[0];
   const constraints = getStateChecks(
     getNamedExpressions(config.constraints, environment),
     environment,
@@ -354,8 +356,13 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
   return {
     properties,
     spec,
-    getFingerprintState: (state) =>
-      symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup),
+    getFingerprintState: (state) => {
+      const representative =
+        symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup);
+      return view === undefined
+        ? representative
+        : [evaluate(view.expression, getContext(environment, representative, undefined))];
+    },
     findViolatedInvariant: (state, parent) =>
       invariants.find(
         (invariant) =>
@@ -434,7 +441,6 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
 
 export const check = (options: CheckOptions): CheckResult => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
-  if (config.view !== undefined) throw new TlaUnsupportedError("VIEW is not supported yet");
   const print = options.onPrint ?? console.log;
   const specification = createEnvironment(parseModule(options.source), config, {
     loadModule: options.loadModule,
@@ -472,7 +478,8 @@ export const check = (options: CheckOptions): CheckResult => {
   const edges: number[][] = [];
   const edgeStates: Value[][][] = [];
   const stateIndices = new WeakMap<Value[], number>();
-  const isRecordingEdgeStates = isRecordingEdges && config.symmetry !== undefined;
+  const isRecordingEdgeStates =
+    isRecordingEdges && (config.symmetry !== undefined || config.view !== undefined);
   const initial: number[] = [];
   const buckets = new Map<number, number | number[]>();
   const canonicalizeState = createCanonicalizer();
