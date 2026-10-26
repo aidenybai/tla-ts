@@ -16,6 +16,7 @@ import { isEnabled } from "./successors";
 import {
   applyFunction,
   checkInteger,
+  compareValues,
   createFunction,
   createSet,
   createSortedFunction,
@@ -1292,7 +1293,7 @@ const compileSetComprehension = (
 };
 
 const compileRecord = (recordFields: RecordField[], environment: Environment): Evaluator => {
-  const fields = [...recordFields].sort((left, right) => (left.name < right.name ? -1 : 1));
+  const fields = [...recordFields].sort((left, right) => compareValues(left.name, right.name));
   const hasDuplicates = fields.some(
     (field, index) => index > 0 && fields[index - 1].name === field.name,
   );
@@ -1450,7 +1451,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       return compileRecord(expression.fields, environment);
     case "RecordSet": {
       const fields = [...expression.fields].sort((left, right) =>
-        left.name < right.name ? -1 : 1,
+        compareValues(left.name, right.name),
       );
       const names = fields.map((field) => field.name);
       const sets = fields.map((field) => child(field.value));

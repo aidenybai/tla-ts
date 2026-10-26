@@ -39,10 +39,11 @@ import {
   type Value,
 } from "./values";
 
-const EMPTY_COUNTER_EXAMPLE = createRecord([
-  ["action", createSet([])],
-  ["state", createSet([])],
-]);
+const createEmptyCounterExample = () =>
+  createRecord([
+    ["action", createSet([])],
+    ["state", createSet([])],
+  ]);
 
 const getRegister = (runtime: CheckerRuntime, key: Value) => {
   if (typeof key === "number") return runtime.registers.get(key);
@@ -153,7 +154,7 @@ export const createTlcExtOperators = (
         runtime.getBehavior(state).map((step) => toStateRecord(step, context.environment)),
       );
     }),
-    defineConstant("CounterExample", EMPTY_COUNTER_EXAMPLE),
+    defineConstant("CounterExample", createEmptyCounterExample()),
     defineOperator("ToTrace", 1, (args) => {
       const counterExample = getValue(args, 0, "ToTrace");
       const states = toFiniteSet(applyFunction(counterExample, "state")).elements.map(

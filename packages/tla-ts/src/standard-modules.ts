@@ -42,6 +42,7 @@ import {
   type SetOperationValue,
   type SetValue,
   type Value,
+  rankString,
 } from "./values";
 
 interface StandardModule {
@@ -189,7 +190,7 @@ const SEQUENCES_OPERATORS: Builtin[] = [
   defineOperator("\\o", 2, (args) => {
     const left = getSequenceOrString(args, 0, "\\o");
     const right = getSequenceOrString(args, 1, "\\o");
-    if (typeof left === "string" && typeof right === "string") return left + right;
+    if (typeof left === "string" && typeof right === "string") return rankString(left + right);
     if (typeof left === "string" || typeof right === "string") {
       throw new TlaEvaluationError("\\o cannot concatenate a string with a sequence");
     }
@@ -208,20 +209,22 @@ const SEQUENCES_OPERATORS: Builtin[] = [
     const sequence = getSequenceOrString(args, 0, "Tail");
     if (sequence.length === 0)
       throw new TlaEvaluationError("Attempted to apply Tail to the empty sequence");
-    return typeof sequence === "string" ? sequence.slice(1) : createTuple(sequence.slice(1));
+    return typeof sequence === "string"
+      ? rankString(sequence.slice(1))
+      : createTuple(sequence.slice(1));
   }),
   defineOperator("SubSeq", 3, (args) => {
     const sequence = getSequenceOrString(args, 0, "SubSeq");
     const start = getNumber(args, 1, "SubSeq");
     const end = getNumber(args, 2, "SubSeq");
-    if (start > end) return typeof sequence === "string" ? "" : createTuple([]);
+    if (start > end) return typeof sequence === "string" ? rankString("") : createTuple([]);
     if (start < 1 || end > sequence.length) {
       throw new TlaEvaluationError(
         `SubSeq bounds ${start}..${end} are outside 1..${sequence.length}`,
       );
     }
     return typeof sequence === "string"
-      ? sequence.slice(start - 1, end)
+      ? rankString(sequence.slice(start - 1, end))
       : createTuple(sequence.slice(start - 1, end));
   }),
   defineHigherOrderOperator("SelectSeq", 2, (args) => {

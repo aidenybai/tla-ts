@@ -18,6 +18,7 @@ import {
 } from "./evaluate";
 import {
   applyFunction,
+  compareValues,
   createSet,
   createSortedFunction,
   createTuple,
@@ -234,7 +235,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
       return `apply(${generate(expression.record)}, ${JSON.stringify(expression.field)})`;
     case "Record": {
       const fields = [...expression.fields].sort((left, right) =>
-        left.name < right.name ? -1 : 1,
+        compareValues(left.name, right.name),
       );
       const hasDuplicates = fields.some(
         (field, index) => index > 0 && fields[index - 1].name === field.name,
