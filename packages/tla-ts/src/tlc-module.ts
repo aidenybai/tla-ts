@@ -36,15 +36,12 @@ const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
 const getRuntimeValue = (
   runtime: CheckerRuntime,
   key: string,
-  state: readonly (Value | undefined)[] | undefined,
+  state: (Value | undefined)[] | undefined,
 ): Value => {
   const duration = Math.floor((Date.now() - runtime.startedAt) / 1000);
   switch (key) {
     case "level":
-      return state === undefined
-        ? 0
-        : (runtime.levels.get(state) ??
-            (runtime.expandingLevel === undefined ? 0 : runtime.expandingLevel + 1));
+      return state === undefined ? 0 : runtime.getLevel(state);
     case "diameter":
       return runtime.diameter;
     case "generated":

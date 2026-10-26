@@ -1,8 +1,7 @@
 import { createFunction, type Value } from "./values";
 
 export interface CheckerRuntime {
-  levels: WeakMap<readonly (Value | undefined)[], number>;
-  expandingLevel: number | undefined;
+  getLevel: (state: (Value | undefined)[]) => number;
   getBehavior: (state: Value[]) => Value[][];
   random: () => number;
   generatedStates: number;
@@ -30,8 +29,7 @@ const createRandom = (seed: number) => {
 };
 
 export const createRuntime = (checkDeadlock: boolean): CheckerRuntime => ({
-  levels: new WeakMap(),
-  expandingLevel: undefined,
+  getLevel: () => 0,
   getBehavior: () => [],
   random: createRandom(0),
   generatedStates: 0,

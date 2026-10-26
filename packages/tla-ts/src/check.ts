@@ -288,6 +288,8 @@ const getContext = (
 const holds = (expression: Expression, context: Context, description: string) =>
   expectBoolean(evaluate(expression, context), description);
 
+const ignorePossible = () => {};
+
 const trackPossible = (items: NamedExpression[], runtime: CheckerRuntime, context: Context) =>
   items.forEach((item) => {
     const count = runtime.possibleCounts.get(item.name) ?? 0;
@@ -414,10 +416,16 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
           `action constraint ${constraint.name}`,
         ),
       ),
-    trackStatePossible: (state) =>
-      trackPossible(statePossible, runtime, getContext(environment, state, undefined)),
-    trackActionPossible: (state, next) =>
-      trackPossible(actionPossible, runtime, getContext(environment, state, next)),
+    trackStatePossible:
+      statePossible.length === 0
+        ? ignorePossible
+        : (state) =>
+            trackPossible(statePossible, runtime, getContext(environment, state, undefined)),
+    trackActionPossible:
+      actionPossible.length === 0
+        ? ignorePossible
+        : (state, next) =>
+            trackPossible(actionPossible, runtime, getContext(environment, state, next)),
     findPostconditionViolation: (print) => {
       const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
       if (unwitnessed) {
@@ -476,7 +484,6 @@ export const check = (options: CheckOptions): CheckResult => {
   const parents: number[] = [];
   const actions: (string | undefined)[] = [];
   const depths: number[] = [];
-  const stateIndices = new WeakMap<Value[], number>();
   const buckets = new Map<number, number | number[]>();
   const canonicalizeState = createCanonicalizer();
 
@@ -547,22 +554,33 @@ export const check = (options: CheckOptions): CheckResult => {
     parents.push(parent);
     actions.push(action);
     depths.push(depth);
-    stateIndices.set(state, states.length - 1);
   };
 
-  const expanding = { index: -1 };
+  const current = {
+    index: -1,
+    isExpanding: false,
+    candidate: undefined as Value[] | undefined,
+    candidateLevel: 0,
+  };
   const getPath = (index: number): Value[][] =>
     index === -1 ? [] : [...getPath(parents[index]), states[index]];
   runtime.getBehavior = (state) => {
-    const index = stateIndices.get(state);
-    return index === undefined ? [...getPath(expanding.index), state] : getPath(index);
+    const index = state === current.candidate ? -1 : states.indexOf(state);
+    return index === -1 ? [...getPath(current.index), state] : getPath(index);
+  };
+  runtime.getLevel = (state) => {
+    if (state === current.candidate) return current.candidateLevel;
+    if (current.index === -1) return 0;
+    if (state === states[current.index]) return depths[current.index];
+    return current.isExpanding ? depths[current.index] + 1 : 0;
   };
 
   for (const state of getInitialStates(spec.init, environment)) {
     canonicalizeState(state);
     runtime.generatedStates++;
     runtime.initialStates++;
-    runtime.levels.set(state, 1);
+    current.candidate = state;
+    current.candidateLevel = 1;
     const fingerprintState = getFingerprintState(state);
     const hash = getStateHash(fingerprintState);
     const isSeen = findStateIndex(hash, fingerprintState) !== -1;
@@ -595,18 +613,19 @@ export const check = (options: CheckOptions): CheckResult => {
 
   for (let index = 0; index < states.length && !runtime.isStopped; index++) {
     const state = states[index];
-    expanding.index = index;
+    current.index = index;
     runtime.queueSize = states.length - index - 1;
-    runtime.expandingLevel = depths[index];
+    current.isExpanding = true;
     const successors = getSuccessors(spec.next, state, environment);
-    runtime.expandingLevel = undefined;
+    current.isExpanding = false;
     if (successors.length === 0 && config.checkDeadlock) {
       return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
     }
     const liveSuccessors: LiveSuccessor[] = [];
     for (const successor of successors) {
       runtime.generatedStates++;
-      runtime.levels.set(successor.state, depths[index] + 1);
+      current.candidate = successor.state;
+      current.candidateLevel = depths[index] + 1;
       canonicalizeState(successor.state);
       const fingerprintState = getFingerprintState(successor.state);
       const hash = getStateHash(fingerprintState);
@@ -652,7 +671,8 @@ export const check = (options: CheckOptions): CheckResult => {
     }
   }
 
-  runtime.expandingLevel = undefined;
+  current.index = -1;
+  current.candidate = undefined;
   const lasso = liveness?.findViolation();
   if (lasso) {
     return createResult("liveness-violation", {
