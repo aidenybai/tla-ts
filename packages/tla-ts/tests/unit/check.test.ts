@@ -179,6 +179,22 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("converts values to JSON like TLC's Json module", () => {
+    const assumptions = [
+      'ToJson(<<3, 2, 1>>) = "[3,2,1]"',
+      'ToJson({3, 2, 1}) = "[1,2,3]"',
+      'ToJsonObject([a |-> TRUE, b |-> FALSE]) = "{\\"a\\":true,\\"b\\":false}"',
+      'ToJson(3 :> "c" @@ 2 :> "b" @@ 1 :> "a") = "[\\"a\\",\\"b\\",\\"c\\"]"',
+      'ToJson([x \\in {3, 2, 1} |-> 2 * x + 1]) = "[3,5,7]"',
+      'ToJsonArray({}) = "[]"',
+    ];
+    const result = check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC, Json\nVARIABLE x\n${assumptions.map((assumption) => `ASSUME ${assumption}`).join("\n")}\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("success");
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");

@@ -10,6 +10,7 @@ import type {
 } from "./ast";
 import { BUNDLED_MODULES } from "./bundled-modules";
 import type { ConfigValue, ModelConfig } from "./config";
+import type { FileSystem } from "./json";
 import { TlaConfigError, TlaEvaluationError, TlaSyntaxError } from "./errors";
 import { getChildren, isConstantLevel, type Builtin, type Environment } from "./evaluate";
 import {
@@ -28,6 +29,7 @@ import { checkInteger, createSet, formatValue, valuesEqual, type Value } from ".
 export interface EnvironmentOptions {
   loadModule: ((name: string) => string | undefined) | undefined;
   print: (text: string) => void;
+  files: FileSystem;
 }
 
 export interface Specification {
@@ -136,7 +138,7 @@ export const createEnvironment = (
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
     if (cached) return cached;
-    const standardModule = getStandardModule(name, options.print, runtime);
+    const standardModule = getStandardModule(name, options.print, runtime, options.files);
     if (!standardModule) return undefined;
     const exported: Symbols = new Map();
     standardModule.extends.forEach((extended) =>

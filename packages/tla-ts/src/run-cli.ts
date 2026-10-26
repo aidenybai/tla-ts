@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { check, type CheckResult, type CheckStatus } from "./check";
 import { parseConfig } from "./config";
 import { TlaError } from "./errors";
@@ -77,6 +77,11 @@ const run = (args: string[]) => {
     loadModule: (name) => {
       const modulePath = join(directory, `${name}.tla`);
       return existsSync(modulePath) ? readFileSync(modulePath, "utf8") : undefined;
+    },
+    readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
+    writeFile: (path, content) => {
+      mkdirSync(dirname(resolve(path)), { recursive: true });
+      writeFileSync(path, content);
     },
   });
   printResult(result);

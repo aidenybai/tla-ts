@@ -17,6 +17,7 @@ import {
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
 import { BAGS_OPERATORS } from "./bags";
+import { createJsonOperators, type FileSystem } from "./json";
 import { createRandomizationOperators } from "./randomization";
 import { createPossibleOperators, createTlcExtOperators } from "./tlc-ext";
 import { createTlcOperators } from "./tlc-module";
@@ -247,6 +248,7 @@ export const getStandardModule = (
   name: string,
   print: (text: string) => void,
   runtime: CheckerRuntime,
+  files: FileSystem,
 ): StandardModule | undefined => {
   switch (name) {
     case "Naturals":
@@ -263,6 +265,8 @@ export const getStandardModule = (
       return { extends: [], operators: createRandomizationOperators(runtime) };
     case "_Possible":
       return { extends: [], operators: createPossibleOperators(print, runtime) };
+    case "Json":
+      return { extends: [], operators: createJsonOperators(files) };
     case "Bags":
       return { extends: [], operators: BAGS_OPERATORS };
     case "TLCExt":
