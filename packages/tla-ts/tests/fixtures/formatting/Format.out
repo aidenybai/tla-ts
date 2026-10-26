@@ -1,0 +1,22 @@
+<<"record", [a |-> 1, b |-> 2]>>
+<<"colon", [a |-> 1]>>
+<<"colon-two", [a |-> 1, b |-> 2]>>
+<<"construct", [a |-> 1, b |-> 1]>>
+<<"construct-odd", ("b" :> 1 @@ "s:x" :> 1)>>
+<<"colon-odd", ("s:x" :> 1)>>
+<<"except-record", [a |-> 3, b |-> 2]>>
+<<"except-function", [a |-> 2]>>
+<<"record-set", [a |-> 1, b |-> 2]>>
+<<"merge-record", [a |-> 1, b |-> 2, c |-> 3]>>
+<<"merge-into-record", [a |-> 1, b |-> 2, c |-> 3]>>
+<<"tuple", <<1, 2>>, <<1, 2>>>>
+<<"int-colon", <<"a">>, <<"a", "b">>>>
+<<"empty", <<>>, <<>>>>
+<<"seq-append", <<1>>>>
+<<"model-domain", (TRUE :> 1)>>
+<<"record-in-set", {[a |-> 1, b |-> 2]}>>
+<<"equal", TRUE>>
+<<"set-of-colon", {[a |-> 1]}>>
+<<"tostring", "[a |-> 1]", "[a |-> 1, b |-> 2]">>
+<<"except-colon-record", [a |-> 5]>>
+<<"domain-restrict", [a |-> 1, b |-> 2]>>
