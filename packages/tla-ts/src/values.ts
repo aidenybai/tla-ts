@@ -543,10 +543,33 @@ const checkCardinality = (cardinality: number, set: Value) => {
   return cardinality;
 };
 
+export const isEmptySet = (value: Value): boolean => {
+  if (typeof value !== "object") return toFiniteSet(value).elements.length === 0;
+  switch (value.kind) {
+    case "Set":
+      return value.elements.length === 0;
+    case "Interval":
+      return value.low > value.high;
+    case "InfiniteSet":
+    case "Subset":
+    case "SequenceSet":
+      return false;
+    case "ProductSet":
+      return value.factors.some(isEmptySet);
+    case "RecordSet":
+      return value.sets.some(isEmptySet);
+    case "FunctionSet":
+      return isEmptySet(value.range) && !isEmptySet(value.domain);
+    default:
+      return toFiniteSet(value).elements.length === 0;
+  }
+};
+
 const getProductCardinality = (sets: Value[], set: Value) => {
-  const sizes = sets.map(getCardinality);
-  if (sizes.includes(0)) return 0;
-  return sizes.reduce((product, size) => checkCardinality(product * size, set), 1);
+  if (sets.some(isEmptySet)) return 0;
+  return sets
+    .map(getCardinality)
+    .reduce((product, size) => checkCardinality(product * size, set), 1);
 };
 
 export const getCardinality = (value: Value): number => {
@@ -557,6 +580,7 @@ export const getCardinality = (value: Value): number => {
     case "Subset":
       return checkCardinality(2 ** getCardinality(value.base), value);
     case "FunctionSet":
+      if (isEmptySet(value)) return 0;
       return getProductCardinality(
         Array.from({ length: getCardinality(value.domain) }, () => value.range),
         value,

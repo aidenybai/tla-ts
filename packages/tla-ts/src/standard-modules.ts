@@ -30,6 +30,7 @@ import {
   getDomain,
   intersectSorted,
   isElementOf,
+  isEmptySet,
   isEnumerable,
   isFunctionValue,
   isSetValue,
@@ -234,6 +235,7 @@ const FINITE_SETS_OPERATORS: Builtin[] = [
   defineOperator("IsFiniteSet", 1, (args) => isEnumerable(getSet(args, 0, "IsFiniteSet"))),
   defineOperator("Cardinality", 1, (args) => {
     const set = getSet(args, 0, "Cardinality");
+    if (isEmptySet(set)) return 0;
     if (!isEnumerable(set))
       throw new TlaEvaluationError(`Cardinality of the infinite set ${formatValue(set)}`);
     return getCardinality(set);
