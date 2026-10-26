@@ -142,7 +142,7 @@ const getDefinitionBody = (name: string, environment: Environment) => {
   return definition.body;
 };
 
-const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
+const getConfigOperator = (kind: string, name: string, environment: Environment) => {
   const definition = getDefinition(name, environment);
   if (!definition) {
     throw new TlaConfigError(
@@ -154,6 +154,11 @@ const getConfigDefinition = (kind: string, name: string, environment: Environmen
       `TLC requires ${kind} not to take any argument, but one was given: ${name}`,
     );
   }
+  return definition;
+};
+
+const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
+  const definition = getConfigOperator(kind, name, environment);
   if (isConstantLevel(definition, environment)) {
     throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
   }
@@ -466,6 +471,8 @@ export const createSearch = (
   environment: Environment,
   getVariableOrder: () => string[],
 ): Search | undefined => {
+  if (config.periodic !== undefined) getConfigOperator("periodic", config.periodic, environment);
+  if (config.rlReward !== undefined) getConfigOperator("rlreward", config.rlReward, environment);
   const properties = getProperties(config, environment);
   const invariants = getStateChecks(
     [...getNamedExpressions(config.invariants, environment), ...properties.invariants],

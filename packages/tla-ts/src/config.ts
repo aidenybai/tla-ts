@@ -37,6 +37,8 @@ export interface ModelConfig {
   alias: string | undefined;
   postconditions: string[];
   possible: string[];
+  periodic: string | undefined;
+  rlReward: string | undefined;
 }
 
 interface ConfigToken {
@@ -66,6 +68,8 @@ const KEYWORDS = new Set([
   "POSTCONDITION",
   "POSTCONDITIONS",
   "_POSSIBLE",
+  "_PERIODIC",
+  "_RL_REWARD",
 ]);
 
 const SYMBOLS = ["<-", "<<", ">>", "=", "{", "}", ",", "[", "]", "(", ")"];
@@ -93,7 +97,7 @@ const tokenizeConfig = (source: string): ConfigToken[] => {
       cursor.index += end + 2;
       continue;
     }
-    const number = /^-?\d+(?![A-Za-z_])/.exec(rest)?.[0];
+    const number = /^\d+(?![A-Za-z_])/.exec(rest)?.[0];
     if (number) {
       tokens.push({ kind: "Number", text: number, line: cursor.line });
       cursor.index += number.length;
@@ -107,7 +111,7 @@ const tokenizeConfig = (source: string): ConfigToken[] => {
     }
     const string = /^"((?:[^"\\]|\\.)*)"/.exec(rest);
     if (string) {
-      tokens.push({ kind: "String", text: JSON.parse(`"${string[1]}"`), line: cursor.line });
+      tokens.push({ kind: "String", text: string[1], line: cursor.line });
       cursor.index += string[0].length;
       continue;
     }
@@ -148,8 +152,11 @@ export const parseConfig = (source: string): ModelConfig => {
     alias: undefined,
     postconditions: [],
     possible: [],
+    periodic: undefined,
+    rlReward: undefined,
   };
 
+  const deadlock = { isSet: false };
   const peek = () => tokens[cursor.index];
   const advance = () => tokens[cursor.index++];
   const isKeyword = (token: ConfigToken) => token.kind === "Word" && KEYWORDS.has(token.text);
@@ -176,7 +183,7 @@ export const parseConfig = (source: string): ModelConfig => {
     return names;
   };
   const setSingle = (
-    key: "init" | "next" | "specification" | "symmetry" | "view" | "alias",
+    key: "init" | "next" | "specification" | "symmetry" | "view" | "alias" | "periodic" | "rlReward",
     keyword: string,
   ) => {
     if (config[key] !== undefined) throw new TlaConfigError(`The keyword ${keyword} appears twice`);
@@ -191,11 +198,12 @@ export const parseConfig = (source: string): ModelConfig => {
       return { kind: "Boolean", value: token.text === "TRUE" };
     if (token.text === "{") {
       const elements: ConfigValue[] = [];
-      while (peek().text !== "}") {
+      if (peek().text !== "}") elements.push(parseValue());
+      while (peek().text === ",") {
+        advance();
         elements.push(parseValue());
-        if (peek().text !== "}") expect(",");
       }
-      advance();
+      expect("}");
       return { kind: "Set", elements };
     }
     if (token.kind === "Word" && !isKeyword(token)) return { kind: "ModelValue", name: token.text };
@@ -287,7 +295,15 @@ export const parseConfig = (source: string): ModelConfig => {
       case "_POSSIBLE":
         config.possible.push(...parseNames());
         break;
+      case "_PERIODIC":
+        setSingle("periodic", token.text);
+        break;
+      case "_RL_REWARD":
+        setSingle("rlReward", token.text);
+        break;
       case "CHECK_DEADLOCK": {
+        if (deadlock.isSet) throw new TlaConfigError("The keyword CHECK_DEADLOCK appears twice");
+        deadlock.isSet = true;
         const value = advance().text;
         if (value !== "TRUE" && value !== "FALSE") {
           throw new TlaConfigError(
