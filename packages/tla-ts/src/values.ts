@@ -113,7 +113,7 @@ export const isFunctionValue = (value: Value): value is FunctionValue | LazyFunc
 export const isModelValue = (value: Value): value is ModelValue =>
   typeof value === "object" && value.kind === "ModelValue";
 
-const describeKind = (value: Value) => {
+export const describeKind = (value: Value) => {
   if (typeof value === "boolean") return "boolean";
   if (typeof value === "number") return "integer";
   if (typeof value === "string") return "string";

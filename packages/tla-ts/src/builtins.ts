@@ -181,16 +181,6 @@ export const defineStateOperator = (
   isStateLevel: true,
 });
 
-export const toNumber = (value: Value, name: string) => {
-  if (typeof value !== "number") {
-    throw createArgumentError(
-      name,
-      `${name} expects an integer but received ${formatValue(value)}`,
-    );
-  }
-  return value;
-};
-
 export const defineBinary = (
   name: string,
   compute: (left: Value, right: Value) => Value,
@@ -208,14 +198,75 @@ export const isOutOfRange = (value: number) => value > MAXIMUM_INTEGER || value 
 export const createOverflowError = (computation: string) =>
   new TlaModuleError(`Overflow when computing ${computation}`);
 
-export const defineArithmetic = (name: string, compute: (left: number, right: number) => number) =>
-  defineBinary(name, (left, right) => {
-    const leftNumber = toNumber(left, name);
-    const rightNumber = toNumber(right, name);
+const JAVA_CLASSES: Record<string, string> = {
+  ModelValue: "ModelValue",
+  Set: "SetEnumValue",
+  Interval: "IntervalValue",
+  InfiniteSet: "UserValue",
+  SequenceSet: "UserValue",
+  Subset: "SubsetValue",
+  FunctionSet: "SetOfFcnsValue",
+  RecordSet: "SetOfRcdsValue",
+  ProductSet: "SetOfTuplesValue",
+  FilteredSet: "SetPredValue",
+  LazyFunction: "FcnLambdaValue",
+};
+
+const SET_OPERATION_CLASSES = {
+  "\\cup": "SetCupValue",
+  "\\cap": "SetCapValue",
+  "\\": "SetDiffValue",
+};
+
+// TLC stores a function as a TupleValue or a RecordValue when it has that shape, so the
+// shape stands in for how TLC built the value.
+const getJavaClass = (value: Value) => {
+  if (typeof value === "number") return "tlc2.value.impl.IntValue";
+  if (typeof value === "string") return "tlc2.value.impl.StringValue";
+  if (typeof value === "boolean") return "tlc2.value.impl.BoolValue";
+  if (value.kind === "SetOperation") {
+    return `tlc2.value.impl.${SET_OPERATION_CLASSES[value.operator]}`;
+  }
+  if (value.kind !== "Function") return `tlc2.value.impl.${JAVA_CLASSES[value.kind]}`;
+  const domain = value.domain;
+  if (domain.every((key, index) => key === index + 1)) return "tlc2.value.impl.TupleValue";
+  return domain.every((key) => typeof key === "string")
+    ? "tlc2.value.impl.RecordValue"
+    : "tlc2.value.impl.FcnRcdValue";
+};
+
+export const createJavaOverrideError = (signature: string, message: string) =>
+  new TlaEvaluationError(
+    `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${message}`,
+  );
+
+export const getJavaInteger = (value: Value, signature: string) => {
+  if (typeof value !== "number") {
+    throw createJavaOverrideError(
+      signature,
+      `Cannot cast ${getJavaClass(value)} to tlc2.value.impl.IntValue`,
+    );
+  }
+  return value;
+};
+
+export const getIntegersSignature = (method: string, result: string, arity: number) =>
+  `public static tlc2.value.impl.${result} tlc2.module.Integers.${method}(${Array.from({ length: arity }, () => "tlc2.value.impl.IntValue").join(",")})`;
+
+export const defineArithmetic = (
+  name: string,
+  method: string,
+  compute: (left: number, right: number) => number,
+) => {
+  const signature = getIntegersSignature(method, "IntValue", 2);
+  return defineBinary(name, (left, right) => {
+    const leftNumber = getJavaInteger(left, signature);
+    const rightNumber = getJavaInteger(right, signature);
     const result = compute(leftNumber, rightNumber);
     if (isOutOfRange(result)) throw createOverflowError(`${leftNumber}${name}${rightNumber}`);
     return result;
   });
+};
 
 const getIntegerArgument = (value: Value, position: string, name: string) => {
   if (typeof value !== "number") {
