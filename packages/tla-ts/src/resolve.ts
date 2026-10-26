@@ -36,7 +36,7 @@ const LOCAL_RESOLUTION = { kind: "Local" } as const;
 const renamedArities = new WeakMap<Expression, number>();
 
 const CORE_SYMBOLS: Symbols = new Map(
-  ["=>", "~>", "-+->", "\\cdot"].map((name) => [name, { key: name, arity: 2 }]),
+  ["~>", "-+->", "\\cdot"].map((name) => [name, { key: name, arity: 2 }]),
 );
 
 const isBefore = (left: SourceLocation, right: SourceLocation) =>

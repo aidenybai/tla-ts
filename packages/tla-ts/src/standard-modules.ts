@@ -164,6 +164,9 @@ export const CORE_OPERATORS: Builtin[] = [
   defineBinary("#", (left, right) => !valuesEqual(left, right)),
   defineOperator("~", 1, (args) => !getBoolean(args, 0, "~")),
   defineOperator("<=>", 2, (args) => getBoolean(args, 0, "<=>") === getBoolean(args, 1, "<=>")),
+  defineOperator("/\\", 2, (args) => getBoolean(args, 0, "/\\") && getBoolean(args, 1, "/\\")),
+  defineOperator("\\/", 2, (args) => getBoolean(args, 0, "\\/") || getBoolean(args, 1, "\\/")),
+  defineOperator("=>", 2, (args) => !getBoolean(args, 0, "=>") || getBoolean(args, 1, "=>")),
   defineOperator("\\in", 2, (args) =>
     isElementOf(getValue(args, 0, "\\in"), getSet(args, 1, "\\in")),
   ),
