@@ -842,16 +842,17 @@ export const createLivenessChecker = (
   const addState = (index: number, state: Value[], successors: LiveSuccessor[]) => {
     states[index] = state;
     const edges: LiveSuccessor[] = [];
-    const seenTargets = new Set<number>();
+    const edgesByTarget = new Map<number, LiveSuccessor[]>();
     for (const successor of [...successors, { index, state }]) {
+      const sameTarget = edgesByTarget.get(successor.index);
       const isDuplicate =
-        (successor.index < index && seenTargets.has(successor.index)) ||
-        edges.some(
-          (edge) => edge.index === successor.index && isSameState(edge.state, successor.state),
-        );
+        sameTarget !== undefined &&
+        (successor.index < index ||
+          sameTarget.some((edge) => isSameState(edge.state, successor.state)));
       if (isDuplicate) continue;
       edges.push(successor);
-      seenTargets.add(successor.index);
+      if (sameTarget) sameTarget.push(successor);
+      else edgesByTarget.set(successor.index, [successor]);
     }
     targets[index] = edges.map((edge) => edge.index);
     const stateCache = new Map<LiveExpression, boolean>();
