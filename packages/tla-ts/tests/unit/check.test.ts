@@ -345,6 +345,60 @@ describe("check matches TLC", () => {
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates]).toEqual([2, 1]);
   });
+
+  it("checks the Github687spec configs from TLC's tests", () => {
+    const checkConfig = (name: string) =>
+      check({
+        source: readFileSync(join(FIXTURES, "github687", "Github687spec.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "github687", `Github687spec${name}.cfg`), "utf8"),
+      });
+    expect(
+      ["A", "B", "C", "InitNext", "Prime"].map((name) => {
+        const result = checkConfig(name);
+        return [result.status, result.generatedStates, result.distinctStates];
+      }),
+    ).toEqual([
+      ["success", 21, 7],
+      ["success", 14, 7],
+      ["success", 21, 7],
+      ["success", 21, 7],
+      ["liveness-violation", 14, 7],
+    ]);
+    expect(() => checkConfig("D")).toThrow(
+      new TlaConfigError("The spec is trivially false because ModInsanityCheck is false."),
+    );
+  });
+
+  it("rejects constant conjuncts of the specification and properties that aren't TRUE", () => {
+    const checkSpec = (definitions: string, config: string) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nTrue == 1 < 2\nFalse == 1 > 2\nFive == 5\n${definitions}\n====`,
+        config: `CONSTANT C = FALSE\n${config}`,
+      });
+    const base = "Spec == Init /\\ [][Next]_x";
+    expect(checkSpec(`${base} /\\ TRUE /\\ True`, "SPECIFICATION Spec").generatedStates).toBe(3);
+    expect(() => checkSpec(`${base} /\\ FALSE`, "SPECIFICATION Spec")).toThrow(
+      new TlaConfigError("The spec is trivially false because FALSE is false."),
+    );
+    expect(() => checkSpec(`${base} /\\ C`, "SPECIFICATION Spec")).toThrow(
+      new TlaConfigError("The spec is trivially false because C is false."),
+    );
+    expect(() => checkSpec(`${base} /\\ Five`, "SPECIFICATION Spec")).toThrow(
+      new TlaConfigError("The operator Five, which equals 5,\ncannot be used as a spec"),
+    );
+    const checkProperty = (property: string) =>
+      checkSpec(
+        `${base}\nProp == [](x \\in {0, 1}) /\\ ${property}`,
+        "SPECIFICATION Spec\nPROPERTY Prop",
+      );
+    expect(checkProperty("True").status).toBe("success");
+    expect(() => checkProperty("False")).toThrow(
+      new TlaConfigError("The spec is trivially false because False is false."),
+    );
+    expect(() => checkProperty("Five")).toThrow(
+      new TlaConfigError("The operator Five, which equals 5,\ncannot be used as a property"),
+    );
+  });
 });
 
 describe("evaluation errors match TLC", () => {
