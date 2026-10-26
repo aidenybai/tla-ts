@@ -243,7 +243,10 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
 export const valuesEqual = (left: Value, right: Value): boolean => {
   if (left === right) return true;
   if (typeof left !== "object" || typeof right !== "object") {
-    checkModelValueTypes(left, right, true);
+    if (typeof left === typeof right) return false;
+    if (typeof left === "object" || typeof right === "object") {
+      checkModelValueTypes(left, right, true);
+    }
     return compareValues(left, right) === 0;
   }
   const isHashed =
