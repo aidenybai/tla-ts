@@ -1,4 +1,4 @@
-import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import { TlaEvaluationError } from "./errors";
 import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
 import {
@@ -548,11 +548,7 @@ export const createTlcOperators = (
       `The first argument of TLCSet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
     );
   }),
-  {
-    ...defineOperator("Any", 0, () => {
-      throw new TlaUnsupportedError("Any is not supported yet");
-    }),
-  },
+  defineConstant("Any", { kind: "InfiniteSet", name: "Any" }),
   defineOperator("RandomElement", 1, (args) => {
     const elements = getElements(args, 0, "RandomElement");
     if (elements.length === 0) throw new TlaEvaluationError("RandomElement of the empty set");

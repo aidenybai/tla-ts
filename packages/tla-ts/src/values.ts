@@ -26,7 +26,7 @@ export interface IntervalValue {
 
 export interface InfiniteSetValue {
   kind: "InfiniteSet";
-  name: "Nat" | "Int" | "STRING";
+  name: "Nat" | "Int" | "STRING" | "Any";
 }
 
 export interface SubsetValue {
@@ -171,6 +171,12 @@ export const compareValues = (left: Value, right: Value): number => {
         return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
       }
       return leftKind === "ModelValue" ? -1 : 1;
+    }
+    const isAny = (value: ObjectValue) => value.kind === "InfiniteSet" && value.name === "Any";
+    if (isAny(left) || isAny(right)) {
+      throw new TlaEvaluationError(
+        `Attempted to compare ANY with ${formatValue(isAny(left) ? right : left)}`,
+      );
     }
     if (leftKind === "InfiniteSet" && rightKind === "InfiniteSet") {
       if (left.name === right.name) return 0;
@@ -597,6 +603,7 @@ export const isElementOf = (element: Value, set: Value): boolean => {
         throw new TlaEvaluationError(describeMembership(element, set));
       return false;
     case "InfiniteSet": {
+      if (set.name === "Any") return true;
       if (isModelValue(element)) return false;
       const isMemberType =
         set.name === "STRING" ? typeof element === "string" : typeof element === "number";
@@ -935,7 +942,7 @@ export const formatValue = (value: Value, isExpanded = false): string => {
     case "Interval":
       return `${value.low}..${value.high}`;
     case "InfiniteSet":
-      return value.name;
+      return value.name === "Any" ? "ANY" : value.name;
     case "Subset":
     case "FunctionSet":
     case "RecordSet":

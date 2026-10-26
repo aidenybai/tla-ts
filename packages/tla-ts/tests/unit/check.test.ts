@@ -97,6 +97,14 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("treats Any as a set containing every value", () => {
+    expect(
+      checkModule(
+        'ASSUME <<1, {2}>> \\in Any /\\ [a |-> 1] \\in [a : Any] /\\ ToString(Any) = "ANY"',
+      ).status,
+    ).toBe("success");
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");
