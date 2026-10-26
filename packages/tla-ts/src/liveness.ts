@@ -594,6 +594,25 @@ const evaluateOnLasso = (
   }
 };
 
+const liveKeys = new WeakMap<LiveExpression, string>();
+
+const atomCount = { value: 0 };
+
+const getLiveKey = (expression: LiveExpression): string => {
+  const cached = liveKeys.get(expression);
+  if (cached !== undefined) return cached;
+  const key =
+    expression.kind === "Boolean"
+      ? String(expression.value)
+      : "body" in expression
+        ? `${expression.kind}(${getLiveKey(expression.body)})`
+        : "operands" in expression
+          ? `${expression.kind}(${expression.operands.map(getLiveKey).join(",")})`
+          : `${expression.kind}#${atomCount.value++}`;
+  liveKeys.set(expression, key);
+  return key;
+};
+
 const isSameState = (left: Value[], right: Value[]) =>
   left.every((value, position) => isSameValue(value, right[position]));
 
@@ -832,6 +851,8 @@ export const createLivenessChecker = (
     }
     targets[index] = edges.map((edge) => edge.index);
     const stateCache = new Map<LiveExpression, boolean>();
+    const actionCaches = edges.map(() => new Map<string, boolean>());
+    const successorCaches = edges.map(() => new Map<LiveExpression, boolean>());
     for (const check of checks) {
       const solution = check.solution;
       check.stateResults[index] = Uint8Array.from(solution.stateChecks, (predicate) =>
@@ -841,7 +862,11 @@ export const createLivenessChecker = (
       const actions = new Uint8Array(edges.length * actionCount);
       edges.forEach((edge, edgeIndex) =>
         solution.actionChecks.forEach((predicate, position) => {
-          const isTrue = evaluateLive(predicate, state, edge.state, environment, stateCache);
+          const key = getLiveKey(predicate);
+          const cache = actionCaches[edgeIndex];
+          const isTrue =
+            cache.get(key) ?? evaluateLive(predicate, state, edge.state, environment, stateCache);
+          cache.set(key, isTrue);
           actions[edgeIndex * actionCount + position] = isTrue ? 1 : 0;
         }),
       );
@@ -852,9 +877,8 @@ export const createLivenessChecker = (
       const nodeCount = tableau.nodes.length;
       const consistency = new Uint8Array(edges.length * nodeCount);
       edges.forEach((edge, edgeIndex) => {
-        const cache = new Map<LiveExpression, boolean>();
         tableau.nodes.forEach((node, nodeIndex) => {
-          const isTrue = isConsistent(node.statePredicates, edge.state, cache);
+          const isTrue = isConsistent(node.statePredicates, edge.state, successorCaches[edgeIndex]);
           consistency[edgeIndex * nodeCount + nodeIndex] = isTrue ? 1 : 0;
         });
       });
