@@ -1,8 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { check, type CheckResult, type CheckStatus } from "./check";
+import { availableParallelism } from "node:os";
+import { type CheckResult, type CheckStatus } from "./check";
 import { parseConfig } from "./config";
 import { TlaError } from "./errors";
+import { checkInParallel } from "./parallel";
 import { formatValue } from "./values";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
@@ -15,7 +17,16 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   "postcondition-violation": 10,
 };
 
-const USAGE = "Usage: tla-ts <Spec.tla> [-config <Spec.cfg>] [-deadlock]";
+const USAGE = "Usage: tla-ts <Spec.tla> [-config <Spec.cfg>] [-deadlock] [-workers <count|auto>]";
+
+const getWorkerCount = (args: string[]) => {
+  const flag = args.indexOf("-workers");
+  if (flag === -1) return 1;
+  const value = args[flag + 1];
+  return value === "auto"
+    ? availableParallelism()
+    : Math.max(1, Number.parseInt(value ?? "1", 10) || 1);
+};
 
 const printResult = (result: CheckResult) => {
   if (result.violation) {
@@ -55,7 +66,7 @@ const printResult = (result: CheckResult) => {
   console.log(`The depth of the complete state graph search is ${result.depth}.`);
 };
 
-const run = (args: string[]) => {
+const run = async (args: string[]) => {
   const specPath = args.find((arg, index) => arg.endsWith(".tla") && args[index - 1] !== "-config");
   if (!specPath) {
     console.error(USAGE);
@@ -71,7 +82,8 @@ const run = (args: string[]) => {
   if (args.includes("-deadlock")) config.checkDeadlock = false;
   const directory = dirname(specPath);
   console.log(`Checking ${basename(specPath)} with ${basename(configPath)}`);
-  const result = check({
+  const result = await checkInParallel({
+    workers: getWorkerCount(args),
     source: readFileSync(specPath, "utf8"),
     config,
     loadModule: (name) => {
@@ -88,10 +100,10 @@ const run = (args: string[]) => {
   return EXIT_CODES[result.status];
 };
 
-export const runCli = () => {
+export const runCli = async () => {
   const outcome = { code: 1 };
   try {
-    outcome.code = run(process.argv.slice(2));
+    outcome.code = await run(process.argv.slice(2));
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     console.error(`${error.name}: ${error.message}`);

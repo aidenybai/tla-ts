@@ -26,6 +26,7 @@ import {
 } from "./runtime";
 import {
   applyFunction,
+  createModelValue,
   createRecord,
   createSet,
   createTuple,
@@ -171,7 +172,7 @@ export const createTlcExtOperators = (
           `The argument of ModelValue should be a string, but instead it is:\n${formatValue(name)}`,
         );
       }
-      return { kind: "ModelValue", name };
+      return createModelValue(name);
     }),
     defineLazyOperator("TLCDefer", 1, (args) => {
       getThunk(args, 0, "TLCDefer")();

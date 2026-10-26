@@ -24,7 +24,14 @@ import { KEY_SEPARATOR, resolveModule, resolveSubstitutions, type Symbols } from
 import { createRuntime } from "./runtime";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
-import { checkInteger, createSet, formatValue, valuesEqual, type Value } from "./values";
+import {
+  checkInteger,
+  createModelValue,
+  createSet,
+  formatValue,
+  valuesEqual,
+  type Value,
+} from "./values";
 
 export interface EnvironmentOptions {
   loadModule: ((name: string) => string | undefined) | undefined;
@@ -45,7 +52,7 @@ const toValue = (value: ConfigValue): Value => {
     case "Boolean":
       return value.value;
     case "ModelValue":
-      return { kind: "ModelValue", name: value.name };
+      return createModelValue(value.name);
     case "Set":
       return createSet(value.elements.map(toValue));
   }

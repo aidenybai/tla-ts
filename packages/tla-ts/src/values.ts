@@ -9,6 +9,7 @@ export interface SetValue {
   kind: "Set";
   elements: Value[];
   hash: number;
+  fingerprint: number;
 }
 
 export interface FunctionValue {
@@ -16,6 +17,7 @@ export interface FunctionValue {
   domain: Value[];
   range: Value[];
   hash: number;
+  fingerprint: number;
 }
 
 export interface IntervalValue {
@@ -227,10 +229,21 @@ export const compareValues = (left: Value, right: Value): number => {
   );
 };
 
+const modelValues = new Map<string, ModelValue>();
+
+export const createModelValue = (name: string): ModelValue => {
+  const known = modelValues.get(name);
+  if (known) return known;
+  const value: ModelValue = { kind: "ModelValue", name };
+  modelValues.set(name, value);
+  return value;
+};
+
 export const createSortedSet = (elements: Value[]): SetValue => ({
   kind: "Set",
   elements,
   hash: 0,
+  fingerprint: 0,
 });
 
 export const createSortedFunction = (domain: Value[], range: Value[]): FunctionValue => ({
@@ -238,6 +251,7 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   domain,
   range,
   hash: 0,
+  fingerprint: 0,
 });
 
 export const valuesEqual = (left: Value, right: Value): boolean => {
@@ -390,6 +404,13 @@ export const unionSorted = (left: SetValue, right: SetValue): SetValue => {
       hash = (hash + getElementContribution(added[index])) | 0;
     }
     union.hash = hash;
+  }
+  if (left.fingerprint !== 0) {
+    let fingerprint = left.fingerprint;
+    for (let index = 0; index < added.length; index++) {
+      fingerprint = (fingerprint + getElementFingerprint(added[index])) | 0;
+    }
+    union.fingerprint = fingerprint;
   }
   return union;
 };
@@ -805,6 +826,16 @@ export const updateFunction = (
         ? finite.hash
         : (finite.hash - getEntryContribution(key, previous) + getEntryContribution(key, next)) | 0;
   }
+  if (finite.fingerprint !== 0) {
+    const key = finite.domain[position];
+    updated.fingerprint =
+      previous === next
+        ? finite.fingerprint
+        : (finite.fingerprint -
+            getEntryFingerprint(key, previous) +
+            getEntryFingerprint(key, next)) |
+          0;
+  }
   return updated;
 };
 
@@ -870,62 +901,64 @@ export const getValueHash = (value: Value): number => {
   return hash;
 };
 
-const valueKeys = new WeakMap<ObjectValue, string>();
+const valueFingerprints = new WeakMap<ObjectValue, number>();
 
-const KEY_DELIMITERS = new Set([",", ":", ")", "}"]);
-
-export const parseValueKey = (key: string): Value => {
-  const cursor = { index: 0 };
-  const parse = (): Value => {
-    const character = key[cursor.index];
-    if (character === "T" || character === "F") {
-      cursor.index++;
-      return character === "T";
-    }
-    if (character === '"') {
-      const start = cursor.index;
-      cursor.index++;
-      while (key[cursor.index] !== '"') cursor.index += key[cursor.index] === "\\" ? 2 : 1;
-      cursor.index++;
-      return JSON.parse(key.slice(start, cursor.index));
-    }
-    if (character === "@") {
-      const start = ++cursor.index;
-      while (cursor.index < key.length && !KEY_DELIMITERS.has(key[cursor.index])) cursor.index++;
-      return { kind: "ModelValue", name: key.slice(start, cursor.index) };
-    }
-    if (character === "{") {
-      cursor.index++;
-      const elements: Value[] = [];
-      while (key[cursor.index] !== "}") {
-        elements.push(parse());
-        if (key[cursor.index] === ",") cursor.index++;
-      }
-      cursor.index++;
-      return createSortedSet(elements);
-    }
-    if (character === "(") {
-      cursor.index++;
-      const domain: Value[] = [];
-      const range: Value[] = [];
-      while (key[cursor.index] !== ")") {
-        domain.push(parse());
-        cursor.index++;
-        range.push(parse());
-        if (key[cursor.index] === ",") cursor.index++;
-      }
-      cursor.index++;
-      return createSortedFunction(domain, range);
-    }
-    const number = /^-?\d+/.exec(key.slice(cursor.index))?.[0];
-    if (number === undefined) {
-      throw new TlaEvaluationError(`Cannot reconstruct a value from the key ${key}`);
-    }
-    cursor.index += number.length;
-    return Number(number);
-  };
-  return parse();
+const finalizeFingerprint = (hash: number) => {
+  const first = Math.imul(hash ^ (hash >>> 15), 0x2c1b3c6d);
+  const second = Math.imul(first ^ (first >>> 12), 0x297a2d39);
+  return second ^ (second >>> 15);
 };
+
+const fingerprintString = (value: string) => {
+  let hash = 0x9747b28c;
+  for (let index = 0; index < value.length; index++)
+    hash = Math.imul(hash ^ value.charCodeAt(index), 0x5bd1e995);
+  return finalizeFingerprint(hash);
+};
+
+const getElementFingerprint = (element: Value) =>
+  finalizeFingerprint((getValueFingerprint(element) + 0x7f4a7c15) | 0);
+
+const getEntryFingerprint = (key: Value, value: Value) =>
+  finalizeFingerprint(
+    (Math.imul(getValueFingerprint(key), 0x165667b1) + getValueFingerprint(value)) | 0,
+  );
+
+const computeValueFingerprint = (value: ObjectValue): number => {
+  if (value.kind === "ModelValue") return finalizeFingerprint(fingerprintString(value.name) ^ 0x3c);
+  if (isSetValue(value)) {
+    if (!isEnumerable(value)) return fingerprintString(getValueKey(value));
+    const elements = toFiniteSet(value).elements;
+    let fingerprint = 0x1b873593;
+    for (let index = 0; index < elements.length; index++) {
+      fingerprint = (fingerprint + getElementFingerprint(elements[index])) | 0;
+    }
+    return fingerprint;
+  }
+  const fn = toFiniteFunction(value);
+  let fingerprint = 0x4cf5ad43;
+  for (let index = 0; index < fn.domain.length; index++) {
+    fingerprint = (fingerprint + getEntryFingerprint(fn.domain[index], fn.range[index])) | 0;
+  }
+  return fingerprint;
+};
+
+export const getValueFingerprint = (value: Value): number => {
+  if (typeof value === "number") return finalizeFingerprint(value ^ 0x68e31da4);
+  if (typeof value === "boolean") return value ? 0x3b9aca07 : 0x1f123bb5;
+  if (typeof value === "string") return fingerprintString(value);
+  if (value.kind === "Set" || value.kind === "Function") {
+    if (value.fingerprint === 0) value.fingerprint = computeValueFingerprint(value);
+    return value.fingerprint;
+  }
+  const cached = valueFingerprints.get(value);
+  if (cached !== undefined) return cached;
+  const fingerprint = computeValueFingerprint(value);
+  valueFingerprints.set(value, fingerprint);
+  return fingerprint;
+};
+
+const valueKeys = new WeakMap<ObjectValue, string>();
 
 export const getValueKey = (value: Value): string => {
   if (typeof value === "boolean") return value ? "T" : "F";

@@ -38,9 +38,10 @@ npm install tla-ts
 ```shell
 npx tla-ts Spec.tla
 npx tla-ts Spec.tla -config Other.cfg -deadlock
+npx tla-ts Spec.tla -workers auto
 ```
 
-Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` turns off deadlock checking. Output and exit codes follow TLC:
+Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` turns off deadlock checking. `-workers` checks on several threads, one per core with `auto`. Output and exit codes follow TLC:
 
 | Exit code | Meaning                      |
 | --------: | ---------------------------- |
@@ -84,6 +85,18 @@ The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `
 - **Properties**: invariants, `[][A]_v`, and every temporal formula TLC accepts, checked through TLC's tableau construction under the fairness and temporal conjuncts of the specification
 - **Subexpression references**: selectors such as `F(2)!3`, `Op!<<`, `Op!>>`, `Op!:`, `Op!@`, and `Op!(x)`, labels such as `Op!lab`, and names of `THEOREM` formulas
 - **TLC semantics**: 32-bit integer overflow errors, `ENABLED`, and TLC's enumeration order for `CHOOSE` and quantifiers
+
+### `checkInParallel`
+
+Checks a spec on several worker threads and resolves to the same result as `check`. It takes the options of `check` plus `workers`, and runs in Node, Bun, Deno, and the browser.
+
+```ts
+import { checkInParallel } from "tla-ts";
+
+const result = await checkInParallel({ source: specSource, config: configSource, workers: 4 });
+```
+
+Workers deduplicate states by 64-bit fingerprint, as TLC does. When a run finds a violation, or the spec uses liveness properties or impure operators such as `Print`, `checkInParallel` falls back to `check` and returns its exact result and trace.
 
 ### `parseModule`
 
