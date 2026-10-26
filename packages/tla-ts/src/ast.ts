@@ -5,6 +5,7 @@ export interface LocalResolution {
 export interface SourceLocation {
   line: number;
   column: number;
+  range?: SourceRange;
 }
 
 export interface SourceRange {
