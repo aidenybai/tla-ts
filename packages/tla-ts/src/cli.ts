@@ -20,7 +20,9 @@ const printResult = (result: CheckResult) => {
   if (result.violation) {
     const headline = {
       success: "",
-      "assumption-violation": `Error: Assumption ${result.violation.name} is false.`,
+      "assumption-violation": result.violation.message
+        ? `Error: Evaluating assumption ${result.violation.name} failed.\n${result.violation.message}`
+        : `Error: Assumption ${result.violation.name} is false.`,
       deadlock: "Error: Deadlock reached.",
       "invariant-violation": `Error: Invariant ${result.violation.name} is violated.`,
       "property-violation": `Error: Action property ${result.violation.name} is violated.`,

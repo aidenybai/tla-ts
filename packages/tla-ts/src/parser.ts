@@ -724,13 +724,15 @@ export const parseModule = (source: string): Module => {
   };
 
   const parseAssumption = (): Assumption => {
-    const location = getLocation(advance());
+    const keyword = advance();
+    const location = getLocation(keyword);
+    const isAxiom = keyword.text === "AXIOM";
     if (peek().kind === "Identifier" && isAt("==", 1)) {
       const name = expectIdentifier();
       advance();
-      return { name, expression: parseExpression(), location };
+      return { name, expression: parseExpression(), isAxiom, location };
     }
-    return { name: undefined, expression: parseExpression(), location };
+    return { name: undefined, expression: parseExpression(), isAxiom, location };
   };
 
   const parseModuleBody = (): Module => {

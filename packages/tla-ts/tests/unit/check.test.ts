@@ -100,6 +100,23 @@ describe("check matches TLC", () => {
 });
 
 describe("evaluation errors match TLC", () => {
+  it("reports an assumption that fails to evaluate and skips axioms", () => {
+    const result = checkModule("AXIOM 1 = 2\nASSUME CHOOSE n \\in {} : TRUE");
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.name).toBe("line 7, column 1");
+    expect(result.violation?.message).toMatch(/^Attempted to compute CHOOSE/);
+  });
+
+  it("rejects a mistyped membership outside an assumption", () => {
+    expect(() =>
+      check({
+        source:
+          '---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = "a" /\\ x \\in Nat\nNext == x\' = x\n====',
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).toThrow(TlaEvaluationError);
+  });
+
   it("treats untyped model values as outside built-in sets", () => {
     const result = checkModule(
       'CONSTANT m\nASSUME ~(m \\in Nat) /\\ ~(m \\in Int) /\\ ~(m \\in STRING) /\\ ~(m \\in 1..3) /\\ ~(m \\in Seq({1}))\nASSUME ~("a" \\in 3..1)',
@@ -111,7 +128,9 @@ describe("evaluation errors match TLC", () => {
   it.each(['"a" \\in Nat', "1 \\in STRING", "{} \\in 1..4", "FALSE \\in Int"])(
     "rejects %s",
     (membership) => {
-      expect(() => checkModule(`ASSUME ${membership}`)).toThrow(TlaEvaluationError);
+      const result = checkModule(`ASSUME ${membership}`);
+      expect(result.status).toBe("assumption-violation");
+      expect(result.violation?.message).toMatch(/^Attempted to check if the value/);
     },
   );
 });

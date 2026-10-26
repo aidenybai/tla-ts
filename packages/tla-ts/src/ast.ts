@@ -307,6 +307,7 @@ export interface Declaration {
 export interface Assumption {
   name: string | undefined;
   expression: Expression;
+  isAxiom: boolean;
   location: SourceLocation;
 }
 

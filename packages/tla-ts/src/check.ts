@@ -1,7 +1,7 @@
-import type { Expression, SourceLocation } from "./ast";
+import type { Assumption, Expression, SourceLocation } from "./ast";
 import { parseConfig, type ModelConfig } from "./config";
 import { createEnvironment } from "./environment";
-import { TlaConfigError, TlaUnsupportedError } from "./errors";
+import { TlaConfigError, TlaEvaluationError, TlaUnsupportedError } from "./errors";
 import { evaluate, expectBoolean, getDefinition, type Context, type Environment } from "./evaluate";
 import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
@@ -30,6 +30,7 @@ export interface TraceStep {
 export interface Violation {
   name: string;
   trace: TraceStep[];
+  message?: string;
 }
 
 export interface CheckResult {
@@ -200,15 +201,23 @@ export const check = (options: CheckOptions): CheckResult => {
     ...statistics,
   });
 
-  const failedAssumption = specification.assumptions.find(
-    (assumption) =>
-      !holds(assumption.expression, getContext(undefined, undefined), "an assumption"),
-  );
-  if (failedAssumption) {
-    const name =
-      failedAssumption.name ??
-      `line ${failedAssumption.location.line}, column ${failedAssumption.location.column}`;
-    return createResult("assumption-violation", { name, trace: [] });
+  const getAssumptionError = (assumption: Assumption) => {
+    try {
+      return holds(assumption.expression, getContext(undefined, undefined), "an assumption")
+        ? undefined
+        : { message: undefined };
+    } catch (error) {
+      if (error instanceof TlaEvaluationError) return { message: error.message };
+      throw error;
+    }
+  };
+  for (const assumption of specification.assumptions.filter((candidate) => !candidate.isAxiom)) {
+    const failure = getAssumptionError(assumption);
+    if (failure) {
+      const name =
+        assumption.name ?? `line ${assumption.location.line}, column ${assumption.location.column}`;
+      return createResult("assumption-violation", { name, trace: [], message: failure.message });
+    }
   }
 
   const spec = getSpecification(config, environment);
