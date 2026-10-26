@@ -739,6 +739,16 @@ export const createLivenessChecker = (
     productNodes: new Map(),
     nodesByState: new Map(),
   }));
+  const actionKeys = new Map<string, number>();
+  const actionIds = checks.map((check) =>
+    check.solution.actionChecks.map((predicate) => {
+      const key = getLiveKey(predicate);
+      const known = actionKeys.get(key);
+      if (known !== undefined) return known;
+      actionKeys.set(key, actionKeys.size);
+      return actionKeys.size - 1;
+    }),
+  );
   const states: Value[][] = [];
   const targets: number[][] = [];
   const edgeStates: Value[][][] = [];
@@ -885,9 +895,10 @@ export const createLivenessChecker = (
   const computeActionResults = (source: number) => {
     const state = states[source];
     const successors = edgeStates[source];
-    const caches = successors.map(() => new Map<string, boolean>());
-    for (const check of checks) {
+    const values = successors.map(() => new Int8Array(actionKeys.size).fill(-1));
+    checks.forEach((check, checkIndex) => {
       const solution = check.solution;
+      const ids = actionIds[checkIndex];
       const stateResults = check.stateResults[source];
       const stateCache = new Map(
         solution.stateChecks.map((predicate, position) => [
@@ -898,17 +909,18 @@ export const createLivenessChecker = (
       const actionCount = solution.actionChecks.length;
       const actions = new Uint8Array(successors.length * actionCount);
       successors.forEach((successor, edgeIndex) => {
-        const cache = caches[edgeIndex];
-        solution.actionChecks.forEach((predicate, position) => {
-          const key = getLiveKey(predicate);
-          const isTrue =
-            cache.get(key) ?? evaluateLive(predicate, state, successor, environment, stateCache);
-          cache.set(key, isTrue);
-          actions[edgeIndex * actionCount + position] = isTrue ? 1 : 0;
-        });
+        const known = values[edgeIndex];
+        for (let position = 0; position < actionCount; position++) {
+          const id = ids[position];
+          if (known[id] === -1) {
+            const predicate = solution.actionChecks[position];
+            known[id] = evaluateLive(predicate, state, successor, environment, stateCache) ? 1 : 0;
+          }
+          actions[edgeIndex * actionCount + position] = known[id];
+        }
       });
       check.actionResults[source] = actions;
-    }
+    });
   };
 
   const getActionResults = (check: Check, source: number) => {
