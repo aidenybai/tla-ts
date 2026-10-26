@@ -53,6 +53,7 @@ export interface Builtin {
   evaluateUnary: ((value: Value) => Value) | undefined;
   evaluateBinary: ((left: Value, right: Value) => Value) | undefined;
   isStateLevel?: boolean;
+  isLazy?: boolean;
 }
 
 export interface Closure {
@@ -590,6 +591,7 @@ const callOperator = (operator: Operator, args: Expression[], context: Context):
     );
   }
   if (operator.kind === "Operator") return operator.call(args.map((arg) => evaluate(arg, context)));
+  if (operator.isLazy) return operator.evaluate(getLazyArguments(args, context), context);
   return operator.evaluate(
     args.map((arg) =>
       isOperatorArgument(arg, context)
@@ -907,11 +909,22 @@ export const isValueArgument = (argument: Expression, environment: Environment) 
     isOperatorName(argument.name, environment)
   );
 
+const getLazyArguments = (args: Expression[], context: Context): OperatorValue[] =>
+  args.map((arg) => ({
+    kind: "Operator",
+    name: "argument",
+    arity: 0,
+    call: () => evaluate(arg, context),
+  }));
+
 const compileBuiltinCall = (
   builtin: Builtin,
   args: Expression[],
   environment: Environment,
 ): Evaluator => {
+  if (builtin.isLazy) {
+    return (context) => builtin.evaluate(getLazyArguments(args, context), context);
+  }
   const unary = builtin.evaluateUnary;
   if (unary && args.length === 1 && isValueArgument(args[0], environment)) {
     const operand = getEvaluator(args[0], environment);

@@ -148,3 +148,14 @@ export const defineArithmetic = (name: string, compute: (left: number, right: nu
 
 export const defineComparison = (name: string, compare: (left: number, right: number) => boolean) =>
   defineBinary(name, (left, right) => compare(toNumber(left, name), toNumber(right, name)));
+
+export const defineLazyOperator = (
+  name: string,
+  arity: number,
+  evaluate: (args: BuiltinArgument[], context: Context | undefined) => Value,
+): Builtin => ({ ...defineStateOperator(name, arity, evaluate), isLazy: true });
+
+export const getThunk = (args: BuiltinArgument[], index: number, name: string) => {
+  const argument = getOperator(args, index, name);
+  return () => argument.call([]);
+};

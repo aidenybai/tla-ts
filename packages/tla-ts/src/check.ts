@@ -469,6 +469,7 @@ export const check = (options: CheckOptions): CheckResult => {
   const depths: number[] = [];
   const edges: number[][] = [];
   const edgeStates: Value[][][] = [];
+  const stateIndices = new WeakMap<Value[], number>();
   const isRecordingEdgeStates = isRecordingEdges && config.symmetry !== undefined;
   const initial: number[] = [];
   const buckets = new Map<number, number | number[]>();
@@ -529,6 +530,7 @@ export const check = (options: CheckOptions): CheckResult => {
     parents.push(parent);
     actions.push(action);
     depths.push(depth);
+    stateIndices.set(state, states.length - 1);
     if (isRecordingEdges) edges.push([]);
     if (isRecordingEdgeStates) edgeStates.push([]);
   };
@@ -568,8 +570,17 @@ export const check = (options: CheckOptions): CheckResult => {
     addState(state, fingerprintState, -1, undefined);
   }
 
+  const expanding = { index: -1 };
+  const getPath = (index: number): Value[][] =>
+    index === -1 ? [] : [...getPath(parents[index]), states[index]];
+  runtime.getBehavior = (state) => {
+    const index = stateIndices.get(state);
+    return index === undefined ? [...getPath(expanding.index), state] : getPath(index);
+  };
+
   for (let index = 0; index < states.length && !runtime.isStopped; index++) {
     const state = states[index];
+    expanding.index = index;
     runtime.queueSize = states.length - index - 1;
     runtime.expandingLevel = depths[index];
     const successors = getSuccessors(spec.next, state, environment);

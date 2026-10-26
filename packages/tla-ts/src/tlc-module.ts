@@ -10,7 +10,7 @@ import {
   getSequence,
   getValue,
 } from "./builtins";
-import { getNamedRegisters, type CheckerRuntime } from "./runtime";
+import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "./runtime";
 import {
   createFunction,
   createRecord,
@@ -20,8 +20,6 @@ import {
   toFiniteFunction,
   type Value,
 } from "./values";
-
-const NAMED_REGISTER_PREFIX = "s:";
 
 const createLocationRecord = () =>
   createRecord([
