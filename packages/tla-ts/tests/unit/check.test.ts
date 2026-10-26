@@ -76,6 +76,11 @@ describe("check matches TLC", () => {
       TlaConfigError,
     );
   });
+
+  it("rejects substituting a constant with a state-level definition", () => {
+    expect(() => checkModule("CONSTANT C\nFoo == x", "CONSTANT C <- Foo")).toThrow(TlaConfigError);
+    expect(checkModule("CONSTANT C\nFoo == 1", "CONSTANT C <- Foo").status).toBe("success");
+  });
 });
 
 describe("evaluation errors match TLC", () => {

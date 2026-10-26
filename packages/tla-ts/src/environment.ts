@@ -1,7 +1,7 @@
 import type { Assumption, Definition, Module } from "./ast";
 import type { ConfigValue, ModelConfig } from "./config";
 import { TlaConfigError, TlaUnsupportedError } from "./errors";
-import type { Builtin, Environment } from "./evaluate";
+import { isConstantLevel, type Builtin, type Environment } from "./evaluate";
 import { parseModule } from "./parser";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
 import { checkInteger, createSet, type Value } from "./values";
@@ -90,17 +90,27 @@ export const createEnvironment = (
     }
   });
 
-  return {
-    environment: {
-      definitions,
-      builtins,
-      constants,
-      substitutions,
-      variables,
-      variableIndex: new Map(variables.map((name, index) => [name, index])),
-      definitionValues: new Map(),
-      constantLevels: new Map(),
-    },
-    assumptions,
+  const environment = {
+    definitions,
+    builtins,
+    constants,
+    substitutions,
+    variables,
+    variableIndex: new Map(variables.map((name, index) => [name, index])),
+    definitionValues: new Map(),
+    constantLevels: new Map(),
   };
+  substitutions.forEach((target, name) => {
+    const definition = definitions.get(target);
+    if (
+      declaredConstants.includes(name) &&
+      definition &&
+      !isConstantLevel(definition, environment)
+    ) {
+      throw new TlaConfigError(
+        `The configuration file substitutes constant ${name} with non-constant ${target}`,
+      );
+    }
+  });
+  return { environment, assumptions };
 };
