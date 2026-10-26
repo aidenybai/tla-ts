@@ -80,4 +80,13 @@ describe("INSTANCE matches TLC", () => {
       2,
     ]);
   });
+
+  it("instantiates parameterized modules inside LET", () => {
+    const result = checkInstances("LetParameters.cfg", "LetParameters");
+    expect([result.status, result.violation?.trace.length, result.distinctStates]).toEqual([
+      "invariant-violation",
+      4,
+      4,
+    ]);
+  });
 });

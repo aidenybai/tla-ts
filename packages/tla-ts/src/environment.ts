@@ -5,12 +5,13 @@ import type {
   Expression,
   Instance,
   Module,
+  OperatorParam,
   SourceLocation,
 } from "./ast";
 import { BUNDLED_MODULES } from "./bundled-modules";
 import type { ConfigValue, ModelConfig } from "./config";
-import { TlaConfigError, TlaEvaluationError, TlaSyntaxError, TlaUnsupportedError } from "./errors";
-import { isConstantLevel, type Builtin, type Environment } from "./evaluate";
+import { TlaConfigError, TlaEvaluationError, TlaSyntaxError } from "./errors";
+import { getChildren, isConstantLevel, type Builtin, type Environment } from "./evaluate";
 import {
   createInstantiation,
   getEnabledVariableName,
@@ -100,6 +101,11 @@ const createOperatorConstant = (name: string, rows: [Value[], Value][]): Builtin
   evaluateUnary: undefined,
   evaluateBinary: undefined,
 });
+
+const mentionsName = (expression: Expression, names: Set<string>): boolean =>
+  (expression.kind === "Identifier" && names.has(expression.name)) ||
+  (expression.kind === "Apply" && names.has(expression.operator)) ||
+  getChildren(expression).some((child) => mentionsName(child, names));
 
 const getArity = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params.length : 0;
@@ -244,42 +250,77 @@ export const createEnvironment = (
     return symbols;
   };
 
-  const createLocalAlias = (name: string, key: string, arity: number, location: SourceLocation) => {
-    const params = Array.from({ length: arity }, (_, index) => ({
-      name: `argument${index}`,
-      arity: 0,
-    }));
-    const args = params.map((param): Expression => ({
+  const getLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
+    params.map((param): Expression => ({
       kind: "Identifier",
       name: param.name,
       location,
       resolution: LOCAL_RESOLUTION,
     }));
+
+  const createLocalAlias = (
+    name: string,
+    key: string,
+    params: OperatorParam[],
+    forwarded: OperatorParam[],
+    location: SourceLocation,
+  ): Definition => ({
+    kind: "Operator",
+    name,
+    params,
+    body:
+      forwarded.length === 0
+        ? { kind: "Identifier", name: key, location }
+        : { kind: "Apply", operator: key, args: getLocalArguments(forwarded, location), location },
+    isLocal: true,
+    isRecursive: false,
+    location,
+  });
+
+  const getArguments = (arity: number) =>
+    Array.from({ length: arity }, (_, index) => ({ name: `argument${index}`, arity: 0 }));
+
+  const getSubstitutionBody = (
+    replacement: Expression,
+    declaration: Declaration,
+    location: SourceLocation,
+  ): { params: OperatorParam[]; body: Expression } => {
+    if (declaration.arity === 0) return { params: [], body: replacement };
+    if (replacement.kind === "Lambda") {
+      return {
+        params: replacement.params.map((name) => ({ name, arity: 0 })),
+        body: replacement.body,
+      };
+    }
+    const params = getArguments(declaration.arity);
+    const operator =
+      replacement.kind === "Identifier"
+        ? replacement.name
+        : replacement.kind === "OperatorReference"
+          ? replacement.operator
+          : declaration.name;
     return {
-      kind: "Operator" as const,
-      name,
       params,
-      body:
-        arity === 0
-          ? { kind: "Identifier" as const, name: key, location }
-          : { kind: "Apply" as const, operator: key, args, location },
-      isLocal: true,
-      isRecursive: false,
-      location,
+      body: { kind: "Apply", operator, args: getLocalArguments(params, location), location },
     };
   };
 
   const instantiateLocally = (instance: Instance): Definition[] => {
     const location = instance.location;
+    const instanceParams = instance.params;
     const standardSymbols = addStandardModule(instance.module);
     if (standardSymbols) {
       if (instance.name === undefined) return [];
-      return [...standardSymbols].map(([name, symbol]) =>
-        createLocalAlias(`${instance.name}!${name}`, symbol.key, symbol.arity, location),
-      );
-    }
-    if (instance.params.length > 0) {
-      throw new TlaUnsupportedError("Parameterized instances inside LET are not supported yet");
+      return [...standardSymbols].map(([name, symbol]) => {
+        const forwarded = getArguments(symbol.arity);
+        return createLocalAlias(
+          `${instance.name}!${name}`,
+          symbol.key,
+          [...instanceParams, ...forwarded],
+          forwarded,
+          location,
+        );
+      });
     }
     const linked = getLinkedModule(instance.module);
     const suffix = `#${copyCount.value++}`;
@@ -288,46 +329,46 @@ export const createEnvironment = (
       ...linked.constants,
       ...linked.variables.map((variable) => ({ name: variable, arity: 0 })),
     ];
+    const getReplacement = (declaration: Declaration): Expression =>
+      explicit.get(declaration.name) ?? { kind: "Identifier", name: declaration.name, location };
+    const instanceNames = new Set(instanceParams.map((param) => param.name));
+    const isParameterDependent = (declaration: Declaration) =>
+      mentionsName(getReplacement(declaration), instanceNames);
     const substitutionDefinitions = declarations.map((declaration): Definition => {
-      const replacement = explicit.get(declaration.name) ?? {
-        kind: "Identifier",
-        name: declaration.name,
+      const substitution = getSubstitutionBody(getReplacement(declaration), declaration, location);
+      return {
+        kind: "Operator",
+        name: `${declaration.name}${suffix}`,
+        params: [
+          ...(isParameterDependent(declaration) ? instanceParams : []),
+          ...substitution.params,
+        ],
+        body: substitution.body,
+        isLocal: true,
+        isRecursive: false,
         location,
       };
-      const alias = createLocalAlias(
-        `${declaration.name}${suffix}`,
-        declaration.name,
-        declaration.arity,
-        location,
-      );
-      if (declaration.arity === 0) return { ...alias, body: replacement };
-      if (replacement.kind === "Lambda") {
-        return {
-          ...alias,
-          params: replacement.params.map((name) => ({ name, arity: 0 })),
-          body: replacement.body,
-        };
-      }
-      const operator =
-        replacement.kind === "Identifier"
-          ? replacement.name
-          : replacement.kind === "OperatorReference"
-            ? replacement.operator
-            : declaration.name;
-      return alias.body.kind === "Apply" ? { ...alias, body: { ...alias.body, operator } } : alias;
     });
     const copies: Definition[] = [];
     const instantiation = createInstantiation({
-      params: [],
+      params: instanceParams,
       substitutions: new Map(
         declarations.map((declaration): [string, Expression] => [
           declaration.name,
-          {
-            kind: "Identifier",
-            name: `${declaration.name}${suffix}`,
-            location,
-            resolution: LOCAL_RESOLUTION,
-          },
+          !isParameterDependent(declaration)
+            ? {
+                kind: "Identifier",
+                name: `${declaration.name}${suffix}`,
+                location,
+                resolution: LOCAL_RESOLUTION,
+              }
+            : {
+                kind: "Apply",
+                operator: `${declaration.name}${suffix}`,
+                args: getLocalArguments(instanceParams, location),
+                location,
+                resolution: LOCAL_RESOLUTION,
+              },
         ]),
       ),
       variables: new Set(linked.variables),
@@ -347,14 +388,18 @@ export const createEnvironment = (
     const declared = new Set(declarations.map((declaration) => declaration.name));
     const aliases = [...linked.exported]
       .filter(([name]) => !declared.has(name))
-      .map(([name, symbol]) =>
-        createLocalAlias(
+      .map(([name, symbol]) => {
+        const key = instantiation.getKey(symbol.key);
+        const own = getArguments(symbol.arity);
+        const params = [...instanceParams, ...own];
+        return createLocalAlias(
           instance.name === undefined ? name : `${instance.name}!${name}`,
-          instantiation.getKey(symbol.key),
-          symbol.arity,
+          key,
+          params,
+          key === symbol.key ? own : params,
           location,
-        ),
-      );
+        );
+      });
     return [...substitutionDefinitions, ...copies, ...aliases];
   };
 

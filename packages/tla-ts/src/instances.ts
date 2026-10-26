@@ -423,6 +423,14 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
         resolution: replacement.kind === "Identifier" ? replacement.resolution : undefined,
       };
     }
+    if (replacement?.kind === "Apply") {
+      return {
+        ...expression,
+        operator: replacement.operator,
+        args: [...replacement.args, ...args],
+        resolution: replacement.resolution,
+      };
+    }
     if (replacement?.kind === "Lambda") {
       return {
         kind: "Let",
