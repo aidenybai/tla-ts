@@ -30,6 +30,7 @@ export default defineConfig({
     tsconfig: "./tsconfig.build.json",
   } satisfies PackUserConfig,
   test: {
+    globalSetup: ["./tests/setup/build.ts"],
     include: ["tests/unit/**/*.test.ts"],
     passWithNoTests: true,
   },
