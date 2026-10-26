@@ -37,6 +37,7 @@ export type LivenessProperty =
 export interface StateGraph {
   states: Value[][];
   successors: number[][];
+  successorStates: Value[][][] | undefined;
   initial: number[];
   parents: number[];
 }
@@ -272,16 +273,26 @@ export const findLivenessViolation = (
       }),
       "a temporal property predicate",
     );
+  const getNextStates = (from: number, to: number) => {
+    const successorStates = graph.successorStates?.[from];
+    if (successorStates === undefined) return from === to ? [] : [graph.states[to]];
+    return successorStates.filter((_, position) => graph.successors[from][position] === to);
+  };
   const stepHolds = (step: Expression, scope: Scope | undefined, from: number, to: number) =>
-    from !== to &&
-    expectBoolean(
-      evaluate(step, {
-        environment,
-        scope,
-        state: graph.states[from],
-        next: graph.states[to],
-      }),
-      "a step predicate",
+    getNextStates(from, to).some((next) =>
+      expectBoolean(
+        evaluate(step, { environment, scope, state: graph.states[from], next }),
+        "a step predicate",
+      ),
+    );
+  const stepFails = (step: Expression, scope: Scope | undefined, from: number, to: number) =>
+    from === to ||
+    getNextStates(from, to).some(
+      (next) =>
+        !expectBoolean(
+          evaluate(step, { environment, scope, state: graph.states[from], next }),
+          "a step predicate",
+        ),
     );
   const enabledCache = fairness.map(() => new Map<number, boolean>());
   const isConditionEnabled = (conditionIndex: number, state: number) => {
@@ -520,7 +531,7 @@ export const findLivenessViolation = (
       const step = property.step;
       const restriction: Restriction = {
         isAllowedState: everyState,
-        isAllowedEdge: (from, to) => !stepHolds(step.expression, step.scope, from, to),
+        isAllowedEdge: (from, to) => stepFails(step.expression, step.scope, from, to),
       };
       const reachable =
         property.kind === "EventuallyStep"

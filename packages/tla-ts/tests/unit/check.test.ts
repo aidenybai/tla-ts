@@ -125,6 +125,15 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([42, 10, 7]);
   });
 
+  it("checks liveness on the symmetry-reduced graph", () => {
+    const result = checkFixture("symmetry", "SymmetricLiveness");
+    expect(result.status).toBe("liveness-violation");
+    expect(result.violation?.name).toBe("Live");
+    expect(result.violation?.trace.map((step) => step.state.x)).toEqual([
+      { kind: "ModelValue", name: "m1" },
+    ]);
+  });
+
   it("rejects a symmetry that names a constant", () => {
     expect(() => checkModule("CONSTANT P", "CONSTANT P = {p1, p2}\nSYMMETRY P")).toThrow(
       TlaConfigError,

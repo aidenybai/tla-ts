@@ -333,6 +333,8 @@ export const check = (options: CheckOptions): CheckResult => {
   const actions: (string | undefined)[] = [];
   const depths: number[] = [];
   const edges: number[][] = [];
+  const edgeStates: Value[][][] = [];
+  const isRecordingEdgeStates = isRecordingEdges && config.symmetry !== undefined;
   const initial: number[] = [];
   const buckets = new Map<number, number | number[]>();
   const canonicalizeState = createCanonicalizer();
@@ -409,6 +411,7 @@ export const check = (options: CheckOptions): CheckResult => {
     actions.push(action);
     depths.push(depth);
     if (isRecordingEdges) edges.push([]);
+    if (isRecordingEdgeStates) edgeStates.push([]);
     statistics.distinctStates = states.length;
     statistics.depth = Math.max(statistics.depth, depth);
   };
@@ -466,6 +469,7 @@ export const check = (options: CheckOptions): CheckResult => {
       const hash = getStateHash(fingerprintState);
       const existing = isAllowedAction ? findStateIndex(hash, fingerprintState) : -1;
       if (existing !== -1 && isRecordingEdges) edges[index].push(existing);
+      if (existing !== -1 && isRecordingEdgeStates) edgeStates[index].push(successor.state);
       const isInModel =
         isAllowedAction && (existing !== -1 || satisfiesConstraints(successor.state, state));
       const isNew = isInModel && existing === -1;
@@ -502,11 +506,18 @@ export const check = (options: CheckOptions): CheckResult => {
       if (!isNew) continue;
       markSeen(hash, states.length);
       if (isRecordingEdges) edges[index].push(states.length);
+      if (isRecordingEdgeStates) edgeStates[index].push(successor.state);
       addState(successor.state, fingerprintState, index, successor.action);
     }
   }
 
-  const graph = { states, successors: edges, initial, parents };
+  const graph = {
+    states,
+    successors: edges,
+    successorStates: isRecordingEdgeStates ? edgeStates : undefined,
+    initial,
+    parents,
+  };
   for (const property of properties.liveness) {
     const lasso = findLivenessViolation(graph, property, spec.fairness, environment);
     if (!lasso) continue;
