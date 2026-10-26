@@ -1,7 +1,15 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, formatValue, TlaConfigError, TlaEvaluationError, TlaSyntaxError } from "../../src";
+import {
+  check,
+  formatValue,
+  parseConfig,
+  TlaConfigError,
+  TlaEvaluationError,
+  TlaSyntaxError,
+  TlaUnsupportedError,
+} from "../../src";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -190,5 +198,21 @@ describe("name resolution matches SANY", () => {
       "EXTENDS Naturals\nRECURSIVE fact\ntwice[n \\in Nat] == fact[n] * 2\nfact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]\nASSUME Positive == twice[3] = 12\nASSUME Positive\na \\oplus b == a + b\nASSUME 1 (+) 2 = 3",
     );
     expect(result.status).toBe("success");
+  });
+});
+
+describe("parseConfig matches TLC", () => {
+  it("reads operator symbols and names that start with digits", () => {
+    const config = parseConfig("CONSTANT ++ <- PlusPlus\n  Plus <- +\n  \\o <- +\nINVARIANT 1Inv");
+    expect(config.substitutions).toEqual([
+      { name: "++", target: "PlusPlus" },
+      { name: "Plus", target: "+" },
+      { name: "\\o", target: "+" },
+    ]);
+    expect(config.invariants).toEqual(["1Inv"]);
+  });
+
+  it("reports _POSSIBLE as unsupported", () => {
+    expect(() => parseConfig("SPECIFICATION Spec\n_POSSIBLE Done")).toThrow(TlaUnsupportedError);
   });
 });

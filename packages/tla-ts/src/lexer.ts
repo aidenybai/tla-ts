@@ -243,6 +243,25 @@ const MODULE_HEADER = /-{4,}[ \t]*MODULE\b/;
 
 const isIdentifierCharacter = (character: string) => /[A-Za-z0-9_]/.test(character);
 
+interface OperatorMatch {
+  text: string;
+  length: number;
+}
+
+export const matchOperator = (source: string, index: number): OperatorMatch | undefined => {
+  const character = source[index];
+  if (character === "\\" && /[A-Za-z]/.test(source[index + 1] ?? "")) {
+    const word = /^[A-Za-z]+/.exec(source.slice(index + 1))?.[0] ?? "";
+    const operator = BACKSLASH_OPERATORS.get(word);
+    return operator === undefined ? undefined : { text: operator, length: word.length + 1 };
+  }
+  const unicodeOperator = UNICODE_OPERATORS.get(character);
+  if (unicodeOperator) return { text: unicodeOperator, length: character.length };
+  const symbol = SYMBOL_OPERATORS.find((candidate) => source.startsWith(candidate, index));
+  if (symbol) return { text: SYMBOL_ALIASES.get(symbol) ?? symbol, length: symbol.length };
+  return character === "\\" ? { text: "\\", length: 1 } : undefined;
+};
+
 export const tokenize = (source: string): Token[] => {
   const headerMatch = MODULE_HEADER.exec(source);
   if (!headerMatch)
@@ -357,26 +376,14 @@ export const tokenize = (source: string): Token[] => {
       pushToken(KEYWORDS.has(word) ? "Keyword" : "Identifier", word, word.length);
       continue;
     }
-    if (character === "\\" && /[A-Za-z]/.test(source[cursor.index + 1] ?? "")) {
-      const word = /^[A-Za-z]+/.exec(source.slice(cursor.index + 1))?.[0] ?? "";
-      const operator = BACKSLASH_OPERATORS.get(word);
-      if (!operator) throw createError(`Unknown operator \\${word}`);
-      pushToken("Operator", operator, word.length + 1);
-      continue;
-    }
-    const unicodeOperator = UNICODE_OPERATORS.get(character);
-    if (unicodeOperator) {
-      pushToken("Operator", unicodeOperator, character.length);
-      continue;
-    }
-    const symbol = SYMBOL_OPERATORS.find((candidate) => source.startsWith(candidate, cursor.index));
-    if (symbol) {
-      pushToken("Operator", SYMBOL_ALIASES.get(symbol) ?? symbol, symbol.length);
+    const operator = matchOperator(source, cursor.index);
+    if (operator) {
+      pushToken("Operator", operator.text, operator.length);
       continue;
     }
     if (character === "\\") {
-      pushToken("Operator", "\\", 1);
-      continue;
+      const word = /^[A-Za-z]+/.exec(source.slice(cursor.index + 1))?.[0] ?? "";
+      throw createError(`Unknown operator \\${word}`);
     }
     throw createError(`Unexpected character ${JSON.stringify(character)}`);
   }
