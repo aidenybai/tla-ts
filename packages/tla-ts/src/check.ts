@@ -266,6 +266,7 @@ export interface Search {
   properties: Properties;
   spec: Specification;
   getFingerprintState: (state: Value[]) => Value[];
+  isSymmetric: boolean;
   findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
   satisfiesConstraints: (state: Value[], parent?: Value[]) => boolean;
   findFailedInitialPredicate: (state: Value[]) => NamedExpression | undefined;
@@ -366,6 +367,7 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
   return {
     properties,
     spec,
+    isSymmetric: symmetryGroup.length > 0,
     getFingerprintState: (state) => {
       const representative =
         symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup);
@@ -486,6 +488,7 @@ export const check = (options: CheckOptions): CheckResult => {
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
   const liveness = createLivenessChecker(properties.liveness, spec.temporals, environment);
+  const isCanonicalizedFirst = search.isSymmetric || liveness !== undefined;
 
   const states: Value[][] = [];
   const fingerprintStates: Value[][] = [];
@@ -634,7 +637,7 @@ export const check = (options: CheckOptions): CheckResult => {
       runtime.generatedStates++;
       current.candidate = successor.state;
       current.candidateLevel = depths[index] + 1;
-      canonicalizeState(successor.state);
+      if (isCanonicalizedFirst) canonicalizeState(successor.state);
       const fingerprintState = getFingerprintState(successor.state);
       const hash = getStateHash(fingerprintState);
       const found = findStateIndex(hash, fingerprintState);
@@ -667,6 +670,7 @@ export const check = (options: CheckOptions): CheckResult => {
         });
       }
       if (!isNew) continue;
+      if (!isCanonicalizedFirst) canonicalizeState(successor.state);
       markSeen(hash, states.length);
       if (liveness) liveSuccessors.push({ index: states.length, state: successor.state });
       addState(successor.state, fingerprintState, index, successor.action);
