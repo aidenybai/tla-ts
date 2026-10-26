@@ -107,8 +107,6 @@ Wall time on one worker, including JVM and Node startup. Both checkers report th
 | [Bounded queue](packages/tla-ts/benchmarks/queue)              |          44,044 |  0.68 s |  0.22 s |    3.1× |
 | 390 conformance models                                         |                 | 251.3 s | 119.6 s |    2.1× |
 
-The conformance models come from [tlaplus/Examples](https://github.com/tlaplus/Examples), TLC's test suite, [Spectacle](https://github.com/will62794/tla-web), and [tla-rs](https://github.com/fabracht/tla-rs).
-
 ## License
 
 MIT
