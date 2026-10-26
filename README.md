@@ -71,6 +71,7 @@ Options:
 - `config`: a TLC configuration, as source text or as the result of `parseConfig`
 - `loadModule`: maps a module name to its source, for modules other than the standard modules
 - `onPrint`: receives the output of `Print` and `PrintT`, which defaults to `console.log`
+- `onPause`: runs when `TLCSet("pause", TRUE)` pauses checking, and checking resumes when it returns. The CLI waits for a line on standard input, as TLC does
 - `readFile` and `writeFile`: let the Json module read and write files. Without them, it has no file access
 
 The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `depth`. `status` is `"success"`, `"assumption-violation"`, `"invariant-violation"`, `"property-violation"`, `"liveness-violation"`, or `"deadlock"`. `violation` holds the name of what failed and the trace that reaches it. For a liveness violation, `violation.loopStart` is the trace index where the lasso loops back.

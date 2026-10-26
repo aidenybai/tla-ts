@@ -34,6 +34,7 @@ export interface CheckOptions {
   config: string | ModelConfig;
   loadModule?: (name: string) => string | undefined;
   onPrint?: (text: string) => void;
+  onPause?: () => void;
   readFile?: (path: string) => string | undefined;
   writeFile?: (path: string, content: string) => void;
 }
@@ -465,6 +466,7 @@ export const check = (options: CheckOptions): CheckResult => {
   });
   const environment = specification.environment;
   const runtime = environment.runtime;
+  runtime.pause = options.onPause ?? (() => {});
   const statistics = { depth: 0 };
   const createResult = (
     status: CheckStatus,

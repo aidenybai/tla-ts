@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
 import { type CheckResult, type CheckStatus } from "./check";
@@ -86,6 +86,7 @@ const run = async (args: string[]) => {
     workers: getWorkerCount(args),
     source: readFileSync(specPath, "utf8"),
     config,
+    onPause: () => readSync(0, Buffer.alloc(1)),
     loadModule: (name) => {
       const modulePath = join(directory, `${name}.tla`);
       return existsSync(modulePath) ? readFileSync(modulePath, "utf8") : undefined;
