@@ -413,6 +413,13 @@ describe("the Reals module matches TLC", () => {
     expect(result.distinctStates).toBe(1);
   });
 
+  it("exports Integers through named and unnamed instances", () => {
+    const result = checkSource(
+      'VARIABLE x\nINSTANCE Reals\nR == INSTANCE Reals\nInit == x = R!+(1, 0) + 1 /\\ Real = "Reals"',
+    );
+    expect(result.status).toBe("success");
+  });
+
   it("fails to check membership in Real", () => {
     const result = checkSource("EXTENDS Reals\nVARIABLE x\nASSUME 1 \\in Real\nInit == x = 0");
     expect(result.status).toBe("assumption-violation");
