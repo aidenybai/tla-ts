@@ -383,7 +383,9 @@ export const parseModule = (source: string): Module => {
       );
     }
     const isPrefixAlone =
-      OPERATOR_ARGUMENTS.has(token.text) && (next.text === "," || next.text === ")");
+      token.kind !== "String" &&
+      OPERATOR_ARGUMENTS.has(token.text) &&
+      (next.text === "," || next.text === ")");
     if (isPrefixAlone) {
       cursor.index++;
       const location = getLocation(token);
