@@ -370,7 +370,7 @@ describe("defineSpec matches TLC", () => {
       const values = tla.define("Values", tla.range(0, 2));
       const leftChannel = tla.instance("Left", "Channel", { Data: values, channel: left });
       const rightChannel = tla.instance("Right", "Channel", { Data: values, channel: right });
-      const sharedChannel = tla.instance("Shared", "Channel", { Data: values, channel: shared });
+      const sharedChannel = tla.unnamedInstance("Channel", { Data: values, channel: shared });
       const pair = tla.parameterizedInstance("Pair", ["target"], "Channel", (target) => ({
         Data: values,
         channel: target,
@@ -553,6 +553,26 @@ describe("defineSpec", () => {
       };
     });
     expect(getCounts({ spec })).toEqual(["success", 3, 3, 3]);
+  });
+
+  it("evaluates recursive LET operators", () => {
+    const spec = defineSpec((tla) => {
+      const x = tla.variable("x");
+      return {
+        init: x.eq(0),
+        next: tla.and(x.lt(10), x.prime().eq(x.plus(1))),
+        invariants: {
+          Small: tla.letOperator(
+            ["n"],
+            (n, sum) => tla.ifThenElse(n.eq(0), 0, n.plus(sum(n.minus(1)))),
+            (sum) => sum(x).lt(10),
+          ),
+        },
+      };
+    });
+    const result = check({ spec });
+    expect(result.violation?.name).toBe("Small");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([5, 5, 5]);
   });
 
   it("evaluates recursive function definitions", () => {

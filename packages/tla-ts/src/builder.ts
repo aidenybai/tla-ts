@@ -441,7 +441,7 @@ const createDefinition = (
 });
 
 const createInstance = (
-  name: string,
+  name: string | undefined,
   params: OperatorParam[],
   module: string,
   substitutions: Record<string, TermLike>,
@@ -591,6 +591,11 @@ const createBuilder = () => {
       instances.push(() => createInstance(name, [], module, substitutions, location));
       return (operator: string, ...args: ApplyArgument[]) =>
         createApply(`${name}!${operator}`, args);
+    },
+    unnamedInstance: (module: string, substitutions: Record<string, TermLike> = {}) => {
+      const location = getCallSite();
+      instances.push(() => createInstance(undefined, [], module, substitutions, location));
+      return (operator: string, ...args: ApplyArgument[]) => createApply(operator, args);
     },
     parameterizedInstance: <const Names extends readonly string[]>(
       name: string,
@@ -743,22 +748,20 @@ const createBuilder = () => {
     },
     letOperator: <const Names extends readonly string[]>(
       params: Names,
-      definition: (...params: Params<Names>) => TermLike,
+      definition: (
+        ...params: [...Params<Names>, self: (...args: Arguments<Names>) => Term]
+      ) => TermLike,
       body: (operator: (...args: Arguments<Names>) => Term) => TermLike,
     ) => {
       const name = createBoundNames(1)[0];
+      const operator = createOperatorHandle(name) as (...args: Arguments<Names>) => Term;
       const bound = bindParams(params);
-      const definitionBody = toTerm(definition(...(bound.references as Params<Names>)));
-      const result = toTerm(
-        body(createOperatorHandle(name) as (...args: Arguments<Names>) => Term),
-      );
+      const definitionBody = toTerm(definition(...(bound.references as Params<Names>), operator));
+      const result = toTerm(body(operator));
       return createTerm((location) => ({
         kind: "Let",
         definitions: [
-          {
-            ...createDefinition(name, checkParams(bound.params), definitionBody.build(), location),
-            isRecursive: false,
-          },
+          createDefinition(name, checkParams(bound.params), definitionBody.build(), location),
         ],
         body: result.build(),
         location,
