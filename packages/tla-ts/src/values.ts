@@ -668,9 +668,18 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
 const describeMembership = (element: Value, set: Value) =>
   `Attempted to check if the value ${formatValue(element)} is an element of ${formatValue(set)}`;
 
+const describeNonSetMembership = (element: Value, value: Value) => {
+  if (typeof value === "object" && value.kind === "Function") {
+    if (getSequenceElements(value)) return "Attempted to check set membership in a tuple value.";
+    if (value.domain.every((key) => typeof key === "string")) {
+      return `Attempted to check if element:\n${formatValue(element)}\nis in the record:\n${formatValue(value)}`;
+    }
+  }
+  return `Attempted to check if the value:\n${formatValue(element)}\nis an element of the ${describeKind(value)} ${formatValue(value)}`;
+};
+
 export const isElementOf = (element: Value, set: Value): boolean => {
-  if (typeof set !== "object")
-    throw new TlaEvaluationError(`Expected a set but found ${formatValue(set)}`);
+  if (typeof set !== "object") throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":
       return findIndex(set.elements, element) !== -1;
@@ -745,7 +754,7 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       return elements.every((item) => isElementOf(item, set.base));
     }
     default:
-      throw new TlaEvaluationError(`Expected a set but found ${formatValue(set)}`);
+      throw new TlaEvaluationError(describeNonSetMembership(element, set));
   }
 };
 
