@@ -7,7 +7,7 @@ import type {
   OperatorParam,
   RecordField,
 } from "./ast";
-import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import { TlaEvaluationError } from "./errors";
 import { generateEvaluator } from "./codegen";
 import { isEnabled } from "./successors";
 import {
@@ -922,7 +922,7 @@ const compileApply = (
   }
   if (expression.operator === "~>") {
     return () => {
-      throw new TlaUnsupportedError("Temporal formulas such as ~> cannot be evaluated in a state");
+      throw new TlaEvaluationError("TLC cannot evaluate a temporal formula such as ~> in a state");
     };
   }
   const global = isLocallyResolved(expression)
@@ -1370,8 +1370,8 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "StrongFairness":
       return throwing(
         () =>
-          new TlaUnsupportedError(
-            `Temporal formulas cannot be evaluated in a state (${describeLocation(expression)})`,
+          new TlaEvaluationError(
+            `TLC cannot evaluate a temporal formula in a state at ${describeLocation(expression)}`,
           ),
       );
   }
