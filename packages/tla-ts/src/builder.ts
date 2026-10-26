@@ -12,7 +12,7 @@ import type { ConfigValue, ConstantAssignment, ModelConfig } from "./config";
 import { TlaSyntaxError, TlaUnsupportedError } from "./errors";
 import { getChildren } from "./evaluate";
 import { parseModule } from "./parser";
-import { getStandardModule, REALS_SOURCE } from "./standard-modules";
+import { createTlcOperators, getStandardModule, REALS_SOURCE } from "./standard-modules";
 
 export type TermLike = Term | number | string | boolean;
 
@@ -28,6 +28,7 @@ export interface SpecDefinition {
   actionConstraints?: Record<string, TermLike>;
   symmetry?: TermLike;
   view?: TermLike;
+  postconditions?: Record<string, TermLike>;
   assumptions?: Record<string, TermLike>;
   checkDeadlock?: boolean;
 }
@@ -74,6 +75,15 @@ const STACK_FRAME = /(?:\(|at |@)([^()]*?):(\d+):(\d+)\)?$/;
 
 const REALS = parseModule(REALS_SOURCE);
 
+// HACK: TLC's operators read the runtime only when they are evaluated, and the builder reads only their names
+const TLC_OPERATORS = createTlcOperators({
+  print: () => {},
+  checkDeadlock: true,
+  getLevel: () => 0,
+  getStatistics: () => ({ queue: 0, distinct: 0, initial: 0, generated: 0, diameter: 0 }),
+  exit: () => {},
+});
+
 const STANDARD_MODULES = [
   "Naturals",
   "Integers",
@@ -83,7 +93,7 @@ const STANDARD_MODULES = [
   "Bags",
   "TLC",
 ].map((name) => {
-  const module = getStandardModule(name, () => {});
+  const module = getStandardModule(name, TLC_OPERATORS);
   return name === "Reals"
     ? {
         name,
@@ -706,6 +716,8 @@ const createBuilder = () => {
     assert: (condition: TermLike, message: TermLike) => createApply("Assert", [condition, message]),
     toString: (value: TermLike) => createApply("ToString", [value]),
     tlcEval: (value: TermLike) => createApply("TLCEval", [value]),
+    tlcGet: (key: TermLike) => createApply("TLCGet", [key]),
+    tlcSet: (key: TermLike, value: TermLike) => createApply("TLCSet", [key, value]),
     set: (...elements: TermLike[]) =>
       createTerm((location) => ({
         kind: "SetEnumeration",
@@ -972,6 +984,7 @@ const createBuilder = () => {
       symmetry:
         definition.symmetry === undefined ? undefined : getName("Symmetry", definition.symmetry),
       view: definition.view === undefined ? undefined : getName("View", definition.view),
+      postconditions: getNames(definition.postconditions),
     };
     const assumptions = Object.entries(definition.assumptions ?? {}).map(
       ([name, value]): Assumption => {

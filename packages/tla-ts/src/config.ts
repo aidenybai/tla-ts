@@ -28,6 +28,7 @@ export interface ModelConfig {
   properties: string[];
   constraints: string[];
   actionConstraints: string[];
+  postconditions: string[];
   constants: ConstantAssignment[];
   substitutions: Substitution[];
   checkDeadlock: boolean;
@@ -136,6 +137,7 @@ export const parseConfig = (source: string): ModelConfig => {
     properties: [],
     constraints: [],
     actionConstraints: [],
+    postconditions: [],
     constants: [],
     substitutions: [],
     checkDeadlock: true,
@@ -265,6 +267,8 @@ export const parseConfig = (source: string): ModelConfig => {
         break;
       case "POSTCONDITION":
       case "POSTCONDITIONS":
+        config.postconditions.push(...parseNames());
+        break;
       case "_POSSIBLE":
         throw new TlaUnsupportedError(`${token.text} is not supported`);
       case "CHECK_DEADLOCK": {

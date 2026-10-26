@@ -7,6 +7,7 @@ import {
   evaluate,
   expectBoolean,
   getDefinition,
+  isConstantLevel,
   type Context,
   type Environment,
   type Scope,
@@ -48,7 +49,8 @@ export type CheckStatus =
   | "invariant-violation"
   | "property-violation"
   | "liveness-violation"
-  | "deadlock";
+  | "deadlock"
+  | "postcondition-violation";
 
 export interface TraceStep {
   action: string | undefined;
@@ -265,6 +267,15 @@ export const isUnchangedFor = (
   return true;
 };
 
+interface Progress {
+  initial: number;
+  expanded: number;
+  pendingDepth: number;
+  current: Value[] | undefined;
+  level: number;
+  isExiting: boolean;
+}
+
 export interface Search {
   properties: Properties;
   spec: Specification;
@@ -286,13 +297,13 @@ const getContext = (
 const holds = (expression: Expression, context: Context, description: string) =>
   expectBoolean(evaluate(expression, context), description);
 
-const getAssumptionError = (assumption: Assumption, environment: Environment) => {
+const getConstantError = (
+  expression: Expression,
+  environment: Environment,
+  description: string,
+) => {
   try {
-    return holds(
-      assumption.expression,
-      getContext(environment, undefined, undefined),
-      "an assumption",
-    )
+    return holds(expression, getContext(environment, undefined, undefined), description)
       ? undefined
       : { message: undefined };
   } catch (error) {
@@ -306,12 +317,31 @@ export const findAssumptionViolation = (
   environment: Environment,
 ): Omit<Violation, "loopStart"> | undefined => {
   for (const assumption of assumptions.filter((candidate) => !candidate.isAxiom)) {
-    const failure = getAssumptionError(assumption, environment);
+    const failure = getConstantError(assumption.expression, environment, "an assumption");
     if (failure) {
       const name =
         assumption.name ?? `line ${assumption.location.line}, column ${assumption.location.column}`;
       return { name, trace: [], message: failure.message };
     }
+  }
+  return undefined;
+};
+
+const findPostconditionViolation = (
+  names: string[],
+  environment: Environment,
+): Omit<Violation, "loopStart"> | undefined => {
+  for (const postcondition of getNamedExpressions(names, environment)) {
+    const definition = getDefinition(postcondition.name, environment);
+    if (definition && isConstantLevel(definition, environment)) {
+      throw new TlaConfigError(`The post condition ${postcondition.name} cannot be a constant`);
+    }
+    const failure = getConstantError(
+      postcondition.expression,
+      environment,
+      `postcondition ${postcondition.name}`,
+    );
+    if (failure) return { name: postcondition.name, trace: [], message: failure.message };
   }
   return undefined;
 };
@@ -412,12 +442,38 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
           module: parseModule(options.source),
         };
   const config = model.config;
+  const statistics = { generatedStates: 0, distinctStates: 0, depth: 0 };
+  const states: Value[][] = [];
+  const progress: Progress = {
+    initial: 0,
+    expanded: 0,
+    pendingDepth: 0,
+    current: undefined,
+    level: -1,
+    isExiting: false,
+  };
   const specification = createEnvironment(model.module, config, {
     loadModule: options.loadModule,
-    print: options.onPrint ?? console.log,
+    runtime: {
+      print: options.onPrint ?? console.log,
+      checkDeadlock: config.checkDeadlock,
+      getLevel: (state) => {
+        if (state === undefined) return 0;
+        return state === progress.current ? progress.level : progress.level + 1;
+      },
+      getStatistics: () => ({
+        queue: states.length - progress.expanded,
+        distinct: states.length + (progress.pendingDepth === 0 ? 0 : 1),
+        initial: progress.initial,
+        generated: statistics.generatedStates,
+        diameter: Math.max(1, statistics.depth, progress.pendingDepth),
+      }),
+      exit: () => {
+        progress.isExiting = true;
+      },
+    },
   });
   const environment = specification.environment;
-  const statistics = { generatedStates: 0, distinctStates: 0, depth: 0 };
   const createResult = (
     status: CheckStatus,
     violation?: Omit<Violation, "loopStart"> & { loopStart?: number },
@@ -437,7 +493,6 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
   const getFingerprintState = search.getFingerprintState;
   const liveness = createLivenessChecker(properties.liveness, spec.temporals, environment);
 
-  const states: Value[][] = [];
   const fingerprintStates: Value[][] = [];
   const parents: number[] = [];
   const actions: (string | undefined)[] = [];
@@ -461,12 +516,20 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
     const pathStates = [states[path[0]]];
     const trace: TraceStep[] = [{ action: undefined, state: toRecord(pathStates[0]) }];
     for (let position = 1; position < path.length; position++) {
+      const previousIndex = path[position - 1];
       const previous = pathStates[position - 1];
-      if (path[position - 1] === path[position]) {
+      if (previousIndex === path[position]) {
         pathStates.push(previous);
         trace.push({ action: "Stuttering", state: toRecord(previous) });
         continue;
       }
+      if (parents[path[position]] === previousIndex && previous === states[previousIndex]) {
+        pathStates.push(states[path[position]]);
+        trace.push({ action: actions[path[position]], state: toRecord(states[path[position]]) });
+        continue;
+      }
+      progress.current = previous;
+      progress.level = depths[previousIndex];
       const successor = getSuccessors(spec.next, previous, environment).find((candidate) =>
         isSameState(getFingerprintState(candidate.state), fingerprintStates[path[position]]),
       );
@@ -522,15 +585,22 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
     statistics.depth = Math.max(statistics.depth, depth);
   };
 
-  for (const state of getInitialStates(spec.init, environment)) {
+  const initialStates = getInitialStates(spec.init, environment);
+  progress.level = 0;
+  for (const state of initialStates) {
     canonicalizeState(state);
     statistics.generatedStates++;
+    progress.initial++;
     const fingerprintState = getFingerprintState(state);
     const hash = getStateHash(fingerprintState);
     if (findStateIndex(hash, fingerprintState) !== -1) continue;
+    if (search.satisfiesConstraints(state)) {
+      markSeen(hash, states.length);
+      liveness?.addInitialState(states.length, state);
+      addState(state, fingerprintState, -1, undefined);
+    }
     const violated = search.findViolatedInvariant(state);
     if (violated) {
-      countViolatingState(1);
       return createResult("invariant-violation", {
         name: violated.name,
         trace: [{ action: undefined, state: toRecord(state) }],
@@ -543,21 +613,20 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
         trace: [{ action: undefined, state: toRecord(state) }],
       });
     }
-    if (!search.satisfiesConstraints(state)) continue;
-    markSeen(hash, states.length);
-    liveness?.addInitialState(states.length, state);
-    addState(state, fingerprintState, -1, undefined);
   }
 
-  for (let index = 0; index < states.length; index++) {
+  for (let index = 0; index < states.length && !progress.isExiting; index++) {
     const state = states[index];
+    progress.expanded = index + 1;
+    progress.current = state;
+    progress.level = depths[index];
     const successors = getSuccessors(spec.next, state, environment);
-    statistics.generatedStates += successors.length;
     if (successors.length === 0 && config.checkDeadlock) {
       return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
     }
     const liveSuccessors: LiveSuccessor[] = [];
     for (const successor of successors) {
+      statistics.generatedStates++;
       const violatedProperty = search.findViolatedActionProperty(state, successor.state);
       if (violatedProperty) {
         return createResult("liveness-violation", {
@@ -574,14 +643,16 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
         if (liveness) liveSuccessors.push({ index: existing, state: successor.state });
         continue;
       }
+      progress.pendingDepth = depths[index] + 1;
       const violated = search.findViolatedInvariant(successor.state, state);
       if (violated) {
-        countViolatingState(depths[index] + 1);
+        countViolatingState(progress.pendingDepth);
         return createResult("invariant-violation", {
           name: violated.name,
           trace: getTrace(index, successor),
         });
       }
+      progress.pendingDepth = 0;
       if (!search.satisfiesConstraints(successor.state, state)) continue;
       markSeen(hash, states.length);
       if (liveness) liveSuccessors.push({ index: states.length, state: successor.state });
@@ -605,5 +676,8 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
     });
   }
 
+  const postconditionViolation = findPostconditionViolation(config.postconditions, environment);
+  if (postconditionViolation)
+    return createResult("postcondition-violation", postconditionViolation);
   return createResult("success");
 };

@@ -706,6 +706,24 @@ describe("defineSpec", () => {
     expect(() => check({ spec: getSpec(1.5) })).toThrow(/TLC can't handle real numbers: 1\.5/);
   });
 
+  it("checks postconditions with TLCGet and TLCSet", () => {
+    const spec = defineSpec((tla) => {
+      const x = tla.variable("x");
+      return {
+        init: x.eq(0),
+        next: tla.and(x.lt(3), x.prime().eq(x.plus(1))),
+        postconditions: {
+          Post1: tla.tlcSet(100, tla.tlcGet("generated")),
+          Post2: tla.tlcSet(101, tla.tlcGet("distinct")),
+          PostFail: tla.tlcGet("distinct").eq(42),
+        },
+        checkDeadlock: false,
+      };
+    });
+    expect(getCounts({ spec })).toEqual(["postcondition-violation", 4, 4, 4]);
+    expect(check({ spec }).violation?.name).toBe("PostFail");
+  });
+
   it("reports a false assumption", () => {
     const spec = defineSpec((tla) => {
       const limit = tla.constant("Limit", 3);

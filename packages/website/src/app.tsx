@@ -33,6 +33,7 @@ const STATUS_LABELS: Record<string, string> = {
   "property-violation": "Property violated",
   "liveness-violation": "Temporal property violated",
   deadlock: "Deadlock reached",
+  "postcondition-violation": "Postcondition is false",
 };
 
 const useSystemTheme = () => {

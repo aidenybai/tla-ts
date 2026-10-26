@@ -25,7 +25,7 @@ result.status; // "invariant-violation"
 ```
 
 > [!WARNING]
-> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `POSTCONDITION`, `TLCGet`, and `TLCSet`.
+> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `TLCGet("spec")` and `TLCGet("revision")`.
 
 ## Install
 
@@ -42,13 +42,13 @@ npx tla-ts Spec.tla -config Other.cfg -deadlock
 
 Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` turns off deadlock checking. Output and exit codes follow TLC:
 
-| Exit code | Meaning                      |
-| --------: | ---------------------------- |
-|         0 | No error found               |
-|        10 | An assumption is false       |
-|        11 | Deadlock                     |
-|        12 | Invariant or property broken |
-|        13 | Liveness violation           |
+| Exit code | Meaning                                 |
+| --------: | --------------------------------------- |
+|         0 | No error found                          |
+|        10 | An assumption or postcondition is false |
+|        11 | Deadlock                                |
+|        12 | Invariant or property broken            |
+|        13 | Liveness violation                      |
 
 ## API reference
 
@@ -75,13 +75,13 @@ Options:
 - `loadModule`: maps a module name to its source, for modules other than the standard modules
 - `onPrint`: receives the output of `Print` and `PrintT`, which defaults to `console.log`
 
-The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `depth`. `status` is `"success"`, `"assumption-violation"`, `"invariant-violation"`, `"property-violation"`, `"liveness-violation"`, or `"deadlock"`. `violation` holds the name of what failed and the trace that reaches it. For a liveness violation, `violation.loopStart` is the trace index where the lasso loops back.
+The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `depth`. `status` is `"success"`, `"assumption-violation"`, `"invariant-violation"`, `"property-violation"`, `"liveness-violation"`, `"deadlock"`, or `"postcondition-violation"`. `violation` holds the name of what failed and the trace that reaches it. For a liveness violation, `violation.loopStart` is the trace index where the lasso loops back.
 
 `check` supports:
 
 - **Standard modules**: Naturals, Integers, Reals, Sequences, FiniteSets, Bags, and TLC. Reals matches TLC, which has no real arithmetic. `Real` is the string `"Reals"`, and `/` and `Infinity` fail to evaluate. A decimal literal such as `1.5` anywhere in the spec throws `TlaEvaluationError` before checking starts.
 - **Modules**: `EXTENDS`, nested modules, and `INSTANCE` with `WITH` substitutions, `LAMBDA` substitutions for operator parameters, named instances, parameterized instances, and instances inside `LET`
-- **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, `VIEW`, and `CHECK_DEADLOCK`
+- **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `POSTCONDITIONS`, `SYMMETRY`, `VIEW`, and `CHECK_DEADLOCK`
 - **Properties**: invariants, `[][A]_v`, and every temporal formula TLC accepts, checked through TLC's tableau construction under the fairness and temporal conjuncts of the specification
 - **Subexpression references**: selectors such as `F(2)!3`, `Op!<<`, `Op!>>`, `Op!:`, `Op!@`, and `Op!(x)`, labels such as `Op!lab`, and names of `THEOREM` formulas
 - **TLC semantics**: 32-bit integer overflow errors, `ENABLED`, and TLC's enumeration order for `CHOOSE` and quantifiers
@@ -116,13 +116,14 @@ check({ spec: counter }).status; // "success"
 - `tla.define` adds a named definition. `tla.operator(name, params, body)` adds an operator, such as `tla.operator("Send", ["item"], (item) => ...)`. Named actions appear in error traces.
 - A parameter such as `"F(_)"` takes an operator. Pass it a `tla.lambda` or the function that `tla.operator` returns.
 - `tla.function(name, sets, body)` defines a recursive function, such as `Fib[n \in Nat] == ...`.
-- Terms have methods for the standard operators, such as `eq`, `plus`, `in`, `union`, `at`, `except`, `append`, `selectSeq`, and `permutations`.
+- Terms have methods for the standard operators, such as `eq`, `plus`, `in`, `union`, `at`, `except`, `append`, `selectSeq`, `permutations`, `divide`, `copiesIn`, and `bagAdd`. `tla.value(literal)` turns a number, string, or boolean into a term.
+- `tla.tlcGet(key)` and `tla.tlcSet(key, value)` build `TLCGet` and `TLCSet`. `tla.EmptyBag`, `tla.Real`, and `tla.Infinity` are the constants of the Bags and Reals modules. A number that is not an integer becomes a decimal literal, which TLC rejects.
 - `tla.forall`, `tla.exists`, `tla.fn`, and `tla.map` take a set, or an array of sets for several bound variables, and a callback that receives the bound variables. `tla.choose` and `tla.filter` take one set.
 - `tla.unboundedForall`, `tla.unboundedExists`, and `tla.unboundedChoose` take only a callback. TLC cannot evaluate them, so they throw `TlaEvaluationError` like TLC does.
 - `tla.let(value, (name) => body)` and `tla.letOperator(params, definition, (operator) => body)` build `LET`. The definition callback receives the operator after its parameters, so it can call itself.
 - `tla.product` builds `\X`, and `tla.lambda(params, body)` builds `LAMBDA`.
 - `tla.instance(name, module, substitutions)` instantiates a module from `loadModule` and returns a function that applies its operators, such as `channel("Send", item)`. `tla.parameterizedInstance(name, params, module, getSubstitutions)` adds instance parameters, such as `pair(right)("TypeOK")`. `tla.unnamedInstance(module, substitutions)` adds the module's definitions without a prefix.
-- The return value sets `init`, `next`, `fairness`, `invariants`, `properties`, `constraints`, `actionConstraints`, `symmetry`, `assumptions`, and `checkDeadlock`. Each record key names a definition.
+- The return value sets `init`, `next`, `fairness`, `invariants`, `properties`, `constraints`, `actionConstraints`, `symmetry`, `view`, `postconditions`, `assumptions`, and `checkDeadlock`. Each record key names a definition.
 
 TypeScript checks the number of bound variables and operator arguments. A recursive operator or function needs a return type on its callback, such as `(n): Term => ...`. A TypeScript spec extends only the standard modules that it uses. Error messages point to the line and column in the TypeScript file that built the failing expression.
 

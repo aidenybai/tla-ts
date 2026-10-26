@@ -63,6 +63,16 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([73, 14, 7]);
   });
 
+  it("counts generated states up to the successor that violates an invariant", () => {
+    const result = check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' \\in {1, 2, 3, 4}\nInv == x # 2\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.status).toBe("invariant-violation");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([3, 3, 2]);
+  });
+
   it("reports deadlock with the trace that reaches it", () => {
     const result = checkFixture("counter", "Counter");
     expect(result.status).toBe("deadlock");
