@@ -144,12 +144,12 @@ Every error extends `TlaError`:
 
 Wall time on one worker, including JVM and Node startup. Both checkers report the same state counts on every model.
 
-| Spec                                                           | Distinct states |      TLC |  tla-ts | Speedup |
-| -------------------------------------------------------------- | --------------: | -------: | ------: | ------: |
-| [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |   4.32 s |  2.01 s |    2.2× |
-| [Dining philosophers](packages/tla-ts/benchmarks/philosophers) |         128,889 |   1.06 s |  0.71 s |    1.5× |
-| [Bounded queue](packages/tla-ts/benchmarks/queue)              |          44,044 |   0.37 s |  0.17 s |    2.2× |
-| 542 conformance models                                         |                 | 1148.0 s | 486.1 s |    2.4× |
+| Spec                                                           | Distinct states |     TLC |  tla-ts | Speedup |
+| -------------------------------------------------------------- | --------------: | ------: | ------: | ------: |
+| [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |  4.32 s |  2.01 s |    2.2× |
+| [Dining philosophers](packages/tla-ts/benchmarks/philosophers) |         128,889 |  1.06 s |  0.71 s |    1.5× |
+| [Bounded queue](packages/tla-ts/benchmarks/queue)              |          44,044 |  0.37 s |  0.17 s |    2.2× |
+| 542 conformance models                                         |                 | 986.6 s | 403.3 s |    2.4× |
 
 ## Development
 
