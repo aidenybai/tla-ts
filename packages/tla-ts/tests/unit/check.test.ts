@@ -155,6 +155,25 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates]).toEqual([13, 3]);
   });
 
+  it("reports a depth of 1 when the constraint excludes every initial state", async () => {
+    const results = await Promise.all(
+      [1, 2].map((workers) =>
+        check({
+          source:
+            "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 1\nNext == x' = x\nConstraint == x = 0\n====",
+          config: "INIT Init\nNEXT Next\nCONSTRAINT Constraint",
+          workers,
+        }),
+      ),
+    );
+    expect(
+      results.map((result) => [result.generatedStates, result.distinctStates, result.depth]),
+    ).toEqual([
+      [1, 0, 1],
+      [1, 0, 1],
+    ]);
+  });
+
   it("bundles the Reals module, whose Real is not a set TLC can check", async () => {
     const result = await check({
       source:
