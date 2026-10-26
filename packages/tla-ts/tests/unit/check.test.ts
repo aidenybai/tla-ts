@@ -100,6 +100,9 @@ describe("check matches TLC", () => {
   it("rejects substituting a constant with a state-level definition", () => {
     expect(() => checkModule("CONSTANT C\nFoo == x", "CONSTANT C <- Foo")).toThrow(TlaConfigError);
     expect(checkModule("CONSTANT C\nFoo == 1", "CONSTANT C <- Foo").status).toBe("success");
+    expect(() => checkModule('CONSTANT C\nFoo == TLCGet("level")', "CONSTANT C <- Foo")).toThrow(
+      TlaConfigError,
+    );
   });
 
   it("overrides definitions and ignores undeclared names assigned by the configuration", () => {

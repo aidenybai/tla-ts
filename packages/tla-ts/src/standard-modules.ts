@@ -344,11 +344,12 @@ export const createTlcOperators = (print: (text: string) => void): Builtin[] => 
     { name: "TLCGet", arity: 1 },
     { name: "TLCSet", arity: 2 },
     { name: "Any", arity: 0 },
-  ].map((operator) =>
-    defineOperator(operator.name, operator.arity, () => {
+  ].map((operator): Builtin => ({
+    ...defineOperator(operator.name, operator.arity, () => {
       throw new TlaUnsupportedError(`${operator.name} is not supported yet`);
     }),
-  ),
+    isStateLevel: operator.name !== "Any",
+  })),
   defineOperator("RandomElement", 1, (args) => {
     const elements = getElements(args, 0, "RandomElement");
     if (elements.length === 0) throw new TlaEvaluationError("RandomElement of the empty set");

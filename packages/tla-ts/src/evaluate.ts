@@ -44,6 +44,7 @@ export interface Builtin {
   name: string;
   arity: number;
   evaluate: (args: BuiltinArgument[]) => Value;
+  isStateLevel?: boolean;
 }
 
 export interface Closure {
@@ -250,7 +251,8 @@ const isStateDependent = (expression: Expression, environment: Environment): boo
         ? expression.operator
         : undefined;
   if (name !== undefined) {
-    if (environment.variableIndex.has(name)) return true;
+    if (environment.variableIndex.has(name) || environment.builtins.get(name)?.isStateLevel)
+      return true;
     const definition = getDefinition(name, environment);
     if (definition && !environment.constants.has(name) && !isConstantLevel(definition, environment))
       return true;
