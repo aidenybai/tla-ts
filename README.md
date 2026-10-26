@@ -72,6 +72,17 @@ Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` tu
 - **Properties**: invariants, `[][A]_v`, and the liveness forms `<>P`, `[]<>P`, `<>[]P`, `P ~> Q`, `<><<A>>_v`, and `[]<><<A>>_v` under `WF` and `SF` fairness
 - **TLC semantics**: 32-bit integer overflow errors, `ENABLED`, and TLC's enumeration order for `CHOOSE` and quantifiers
 
+## Benchmarks
+
+Wall time on one worker, including JVM and Node startup. Both checkers report the same state counts on every model.
+
+| Spec                                                           | Distinct states |     TLC |  tla-ts | Speedup |
+| -------------------------------------------------------------- | --------------: | ------: | ------: | ------: |
+| [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |  4.49 s |  2.65 s |    1.7× |
+| [Dining philosophers](packages/tla-ts/benchmarks/philosophers) |         128,889 |  1.67 s |  1.08 s |    1.5× |
+| [Bounded queue](packages/tla-ts/benchmarks/queue)              |          44,044 |  0.68 s |  0.22 s |    3.1× |
+| 390 conformance models                                         |                 | 251.3 s | 119.6 s |    2.1× |
+
 ## Development
 
 ```shell
@@ -95,17 +106,6 @@ Rerun the benchmarks with `TLA2TOOLS_JAR` set to the path of `tla2tools.jar`:
 pnpm --filter tla-ts bench
 pnpm --filter tla-ts bench:corpus
 ```
-
-## Benchmarks
-
-Wall time on one worker, including JVM and Node startup. Both checkers report the same state counts on every model.
-
-| Spec                                                           | Distinct states |     TLC |  tla-ts | Speedup |
-| -------------------------------------------------------------- | --------------: | ------: | ------: | ------: |
-| [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |  4.49 s |  2.65 s |    1.7× |
-| [Dining philosophers](packages/tla-ts/benchmarks/philosophers) |         128,889 |  1.67 s |  1.08 s |    1.5× |
-| [Bounded queue](packages/tla-ts/benchmarks/queue)              |          44,044 |  0.68 s |  0.22 s |    3.1× |
-| 390 conformance models                                         |                 | 251.3 s | 119.6 s |    2.1× |
 
 ## License
 
