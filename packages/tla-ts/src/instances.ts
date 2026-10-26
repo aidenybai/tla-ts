@@ -179,6 +179,7 @@ export const mapChildren = (
 export interface Instantiation {
   params: OperatorParam[];
   substitutions: Map<string, Expression>;
+  variables: Set<string>;
   getDefinition: (key: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
   addDefinition: (name: string, create: (key: string) => Definition) => string;
@@ -188,7 +189,66 @@ interface Rewrite {
   instantiation: Instantiation;
   substitutedNames: Map<string, Set<string>>;
   copies: Map<string, string>;
+  enabled: Rewrite | undefined;
 }
+
+export const getEnabledVariableName = (name: string) => `${name}@ENABLED`;
+
+const getUnchangedVariables = (
+  expression: Expression,
+  rewrite: Rewrite,
+  bound: Set<string>,
+): string[] | undefined => {
+  if (expression.kind === "Tuple") {
+    const names = expression.elements.map((element) =>
+      getUnchangedVariables(element, rewrite, bound),
+    );
+    return names.every((element) => element !== undefined) ? names.flat() : undefined;
+  }
+  return expression.kind === "Identifier" &&
+    !bound.has(expression.name) &&
+    rewrite.instantiation.variables.has(expression.name)
+    ? [expression.name]
+    : undefined;
+};
+
+const getEnabledVariable = (name: string, location: SourceLocation): Expression => ({
+  kind: "Prime",
+  expression: { kind: "Identifier", name: getEnabledVariableName(name), location },
+  location,
+});
+
+const substituteInEnabled = (
+  expression: Expression,
+  rewrite: Rewrite,
+  bound: Set<string>,
+): Expression | undefined => {
+  if (rewrite.enabled !== undefined) return undefined;
+  if (
+    expression.kind === "Prime" &&
+    expression.expression.kind === "Identifier" &&
+    !bound.has(expression.expression.name) &&
+    rewrite.instantiation.variables.has(expression.expression.name)
+  ) {
+    return getEnabledVariable(expression.expression.name, expression.location);
+  }
+  if (expression.kind !== "Unchanged") return undefined;
+  const names = getUnchangedVariables(expression.expression, rewrite, bound);
+  if (names === undefined) return undefined;
+  return {
+    kind: "And",
+    operands: names.map((name) => ({
+      kind: "Apply",
+      operator: "=",
+      args: [
+        getEnabledVariable(name, expression.location),
+        substitute({ kind: "Identifier", name, location: expression.location }, rewrite, bound),
+      ],
+      location: expression.location,
+    })),
+    location: expression.location,
+  };
+};
 
 const getParamArguments = (params: OperatorParam[], location: SourceLocation): Expression[] =>
   params.map((param) => ({
@@ -209,6 +269,14 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
   const instantiation = rewrite.instantiation;
   const params = instantiation.params;
   const isFree = (name: string) => !bound.has(name) && !isLocallyResolved(expression);
+  if (expression.kind === "Enabled" && rewrite.enabled !== undefined) {
+    return {
+      ...expression,
+      expression: substitute(expression.expression, rewrite.enabled, bound),
+    };
+  }
+  const enabled = substituteInEnabled(expression, rewrite, bound);
+  if (enabled) return enabled;
   if (expression.kind === "Identifier" && isFree(expression.name)) {
     const replacement = instantiation.substitutions.get(expression.name);
     if (replacement) {
@@ -319,15 +387,14 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
 };
 
 export const createInstantiation = (instantiation: Instantiation) => {
+  const substitutedNames = new Map(
+    [...instantiation.substitutions].map(([name, expression]) => [name, getFreeNames(expression)]),
+  );
   const rewrite: Rewrite = {
     instantiation,
-    substitutedNames: new Map(
-      [...instantiation.substitutions].map(([name, expression]) => [
-        name,
-        getFreeNames(expression),
-      ]),
-    ),
+    substitutedNames,
     copies: new Map(),
+    enabled: { instantiation, substitutedNames, copies: new Map(), enabled: undefined },
   };
   return {
     getKey: (key: string) => getCopy(rewrite, key) ?? key,

@@ -221,7 +221,11 @@ export const getStateChecks = (named: NamedExpression[], environment: Environmen
     })),
   );
 
-export const isUnchangedFor = (stateCheck: StateCheck, state: Value[], parent: Value[] | undefined) => {
+export const isUnchangedFor = (
+  stateCheck: StateCheck,
+  state: Value[],
+  parent: Value[] | undefined,
+) => {
   const variables = stateCheck.variables;
   if (!parent || !variables) return false;
   for (let index = 0; index < variables.length; index++) {

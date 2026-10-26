@@ -2,7 +2,7 @@ import type { Assumption, Declaration, Definition, Instance, Module } from "./as
 import type { ConfigValue, ModelConfig } from "./config";
 import { TlaConfigError, TlaUnsupportedError } from "./errors";
 import { isConstantLevel, type Builtin, type Environment } from "./evaluate";
-import { createInstantiation } from "./instances";
+import { createInstantiation, getEnabledVariableName } from "./instances";
 import { parseModule } from "./parser";
 import { resolveModule, resolveSubstitutions, type Symbols } from "./resolve";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
@@ -42,6 +42,14 @@ interface LinkedModule {
 
 const getArity = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params.length : 0;
+
+const getVariableIndex = (variables: string[], declared: string[]) => {
+  const index = new Map(variables.map((name, position) => [name, position]));
+  new Set(declared).forEach((name) =>
+    index.set(getEnabledVariableName(name), index.get(name) ?? index.size),
+  );
+  return index;
+};
 
 export const createEnvironment = (
   root: Module,
@@ -110,6 +118,7 @@ export const createEnvironment = (
     const instantiation = createInstantiation({
       params: instance.params,
       substitutions: resolveSubstitutions(instance, declarations, module, unit),
+      variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (name, create) => {
@@ -239,7 +248,10 @@ export const createEnvironment = (
     constants,
     substitutions,
     variables,
-    variableIndex: new Map(variables.map((name, index) => [name, index])),
+    variableIndex: getVariableIndex(
+      variables,
+      [...linkedModules.values()].flatMap((linked) => linked.module.variables),
+    ),
     definitionValues: new Map(),
     constantLevels: new Map(),
     evaluators: new WeakMap(),
