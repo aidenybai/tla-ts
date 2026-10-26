@@ -9,6 +9,7 @@ import type {
   SourceLocation,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
+import { getChildren, isLocallyResolved } from "./evaluate";
 
 export interface ModuleSymbol {
   key: string;
@@ -99,10 +100,22 @@ const resolveBounds = (bounds: Bound[], scope: LocalName | undefined, unit: Unit
   );
 };
 
+const isReferenced = (expression: Expression, name: string): boolean =>
+  (expression.kind === "Identifier" && expression.name === name && isLocallyResolved(expression)) ||
+  getChildren(expression).some((child) => isReferenced(child, name));
+
+const markRecursiveConstructions = (expression: Expression, name: string): void => {
+  if (expression.kind === "FunctionConstruction" && isReferenced(expression.body, name)) {
+    expression.isRecursive = true;
+  }
+  getChildren(expression).forEach((child) => markRecursiveConstructions(child, name));
+};
+
 const resolveDefinition = (definition: Definition, scope: LocalName | undefined, unit: Unit) => {
   const self = bindNames(scope, definition.kind === "Function" ? [definition.name] : []);
   if (definition.kind === "Function") {
     resolveExpression(definition.body, resolveBounds(definition.bounds, self, unit), unit);
+    markRecursiveConstructions(definition.body, definition.name);
     return;
   }
   const params = definition.params.reduce<LocalName | undefined>(
