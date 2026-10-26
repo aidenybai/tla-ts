@@ -50,17 +50,27 @@ const assign = (partial: State, index: number, value: Value) => {
 };
 
 const getAssignableIndex = (
-  expression: Expression,
+  expression: Expression & { kind: "Apply" },
   exploration: Exploration,
   scope: Scope | undefined,
 ) => {
+  const cached = expression.assignableIndex;
+  if (cached === -1) return undefined;
   const target = exploration.isInit
-    ? expression
-    : expression.kind === "Prime"
-      ? expression.expression
+    ? expression.args[0]
+    : expression.args[0].kind === "Prime"
+      ? expression.args[0].expression
       : undefined;
+  if (cached === undefined) {
+    const index =
+      target?.kind === "Identifier"
+        ? exploration.environment.variableIndex.get(target.name)
+        : undefined;
+    expression.assignableIndex = index ?? -1;
+    if (index === undefined) return undefined;
+  }
   if (target?.kind !== "Identifier" || lookupScope(scope, target.name)) return undefined;
-  return exploration.environment.variableIndex.get(target.name);
+  return expression.assignableIndex;
 };
 
 const describeLocation = (expression: Expression) =>
@@ -160,7 +170,7 @@ const exploreApply = (
 ) => {
   const args = expression.args;
   if (expression.operator === "=" || expression.operator === "\\in") {
-    const index = getAssignableIndex(args[0], exploration, scope);
+    const index = getAssignableIndex(expression, exploration, scope);
     if (index !== undefined && partial[index] === undefined) {
       const value = evaluate(args[1], getContext(exploration, scope, partial));
       if (expression.operator === "=") {

@@ -16,6 +16,7 @@ import {
   isSetValue,
   toFiniteFunction,
   toFiniteSet,
+  unionSorted,
   valuesEqual,
   type Value,
 } from "./values";
@@ -154,7 +155,7 @@ export const CORE_OPERATORS: Builtin[] = [
       !valuesEqual(getSet(args, 0, "\\supset"), getSet(args, 1, "\\supset")),
   ),
   defineOperator("\\cup", 2, (args) =>
-    createSet([...getElements(args, 0, "\\cup"), ...getElements(args, 1, "\\cup")]),
+    unionSorted(getElements(args, 0, "\\cup"), getElements(args, 1, "\\cup")),
   ),
   defineOperator("\\cap", 2, (args) => {
     const right = getSet(args, 1, "\\cap");

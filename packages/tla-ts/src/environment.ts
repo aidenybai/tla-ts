@@ -100,8 +100,6 @@ export const createEnvironment = (
       variableIndex: new Map(variables.map((name, index) => [name, index])),
       definitionValues: new Map(),
       constantLevels: new Map(),
-      globalNames: new WeakMap(),
-      globalOperators: new WeakMap(),
     },
     assumptions,
   };

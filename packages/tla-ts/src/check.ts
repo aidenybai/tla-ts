@@ -224,6 +224,31 @@ export const check = (options: CheckOptions): CheckResult => {
   const actions: (string | undefined)[] = [];
   const depths: number[] = [];
   const buckets = new Map<number, number | number[]>();
+  const canonicalValues = new Map<number, Value | Value[]>();
+  const canonicalize = (value: Value): Value => {
+    if (typeof value !== "object" || (value.kind !== "Set" && value.kind !== "Function"))
+      return value;
+    const hash = getValueHash(value);
+    const bucket = canonicalValues.get(hash);
+    if (bucket === undefined) {
+      canonicalValues.set(hash, value);
+      return value;
+    }
+    if (!Array.isArray(bucket)) {
+      if (bucket === value || valuesEqual(bucket, value)) return bucket;
+      canonicalValues.set(hash, [bucket, value]);
+      return value;
+    }
+    for (let index = 0; index < bucket.length; index++) {
+      if (bucket[index] === value || valuesEqual(bucket[index], value)) return bucket[index];
+    }
+    bucket.push(value);
+    return value;
+  };
+  const canonicalizeState = (state: Value[]) => {
+    for (let index = 0; index < state.length; index++) state[index] = canonicalize(state[index]);
+    return state;
+  };
 
   const toRecord = (state: Value[]) =>
     Object.fromEntries(environment.variables.map((name, index) => [name, state[index]]));
@@ -246,7 +271,8 @@ export const check = (options: CheckOptions): CheckResult => {
   const isSameState = (index: number, state: Value[]) => {
     const stored = states[index];
     for (let position = 0; position < state.length; position++) {
-      if (!valuesEqual(stored[position], state[position])) return false;
+      if (stored[position] !== state[position] && !valuesEqual(stored[position], state[position]))
+        return false;
     }
     return true;
   };
@@ -286,6 +312,7 @@ export const check = (options: CheckOptions): CheckResult => {
   };
 
   for (const state of getInitialStates(spec.init, environment)) {
+    canonicalizeState(state);
     statistics.generatedStates++;
     const hash = getStateHash(state);
     if (isSeen(hash, state)) continue;
@@ -333,6 +360,7 @@ export const check = (options: CheckOptions): CheckResult => {
       ) {
         continue;
       }
+      canonicalizeState(successor.state);
       const hash = getStateHash(successor.state);
       if (isSeen(hash, successor.state)) continue;
       const violated = findViolatedInvariant(successor.state);

@@ -74,13 +74,13 @@ export interface Scope {
   parent: Scope | undefined;
 }
 
-type GlobalName =
+export type GlobalName =
   | { kind: "Local" }
   | { kind: "Variable"; index: number }
   | { kind: "Value"; value: Value }
   | { kind: "Definition"; definition: Definition };
 
-type GlobalOperator = { kind: "Local" } | { kind: "Global"; operator: Operator };
+export type GlobalOperator = { kind: "Local" } | { kind: "Global"; operator: Operator };
 
 export interface Environment {
   definitions: Map<string, Definition>;
@@ -91,8 +91,6 @@ export interface Environment {
   variableIndex: Map<string, number>;
   definitionValues: Map<Definition, Value>;
   constantLevels: Map<Definition, boolean>;
-  globalNames: WeakMap<Expression, GlobalName>;
-  globalOperators: WeakMap<Expression, GlobalOperator>;
 }
 
 export interface Context {
@@ -397,15 +395,11 @@ export const resolveApplyOperator = (
   expression: Expression & { kind: "Apply" },
   context: Context,
 ): Operator | undefined => {
-  const environment = context.environment;
-  const cached = environment.globalOperators.get(expression);
+  const cached = expression.resolution;
   if (cached?.kind === "Global") return cached.operator;
   if (cached?.kind === "Local") return resolveOperator(expression.operator, context);
-  const global = resolveOperator(expression.operator, { ...context, scope: undefined });
-  environment.globalOperators.set(
-    expression,
-    global ? { kind: "Global", operator: global } : LOCAL_OPERATOR,
-  );
+  const global = resolveOperator(expression.operator, withScope(context, undefined));
+  expression.resolution = global ? { kind: "Global", operator: global } : LOCAL_OPERATOR;
   return global ?? resolveOperator(expression.operator, context);
 };
 
@@ -461,11 +455,19 @@ const toOperatorValue = (operator: Operator, context: Context): OperatorValue =>
         call: (args) => callOperatorWithValues(operator, args, context),
       };
 
+const globalOperatorArguments = new WeakMap<Expression, boolean>();
+
 const isOperatorArgument = (expression: Expression, context: Context) => {
   if (expression.kind === "Lambda" || expression.kind === "OperatorReference") return true;
   if (expression.kind !== "Identifier") return false;
+  const binding = lookupScope(context.scope, expression.name);
+  if (binding) return binding.kind === "Operator" && getArity(binding.operator) > 0;
+  const cached = globalOperatorArguments.get(expression);
+  if (cached !== undefined) return cached;
   const operator = resolveOperator(expression.name, context);
-  return operator !== undefined && getArity(operator) > 0;
+  const isOperator = operator !== undefined && getArity(operator) > 0;
+  globalOperatorArguments.set(expression, isOperator);
+  return isOperator;
 };
 
 export const bindOperatorArguments = (
@@ -581,11 +583,14 @@ const findGlobalName = (name: string, environment: Environment): GlobalName | un
   return undefined;
 };
 
-const evaluateName = (name: string, expression: Expression, context: Context): Value => {
-  const environment = context.environment;
-  const cached = environment.globalNames.get(expression);
-  const resolution = cached ?? findGlobalName(name, environment) ?? LOCAL_NAME;
-  if (cached === undefined) environment.globalNames.set(expression, resolution);
+const evaluateName = (
+  name: string,
+  expression: Expression & { kind: "Identifier" },
+  context: Context,
+): Value => {
+  const cached = expression.resolution;
+  const resolution = cached ?? findGlobalName(name, context.environment) ?? LOCAL_NAME;
+  if (cached === undefined) expression.resolution = resolution;
   if (resolution.kind === "Variable") {
     const value = context.state?.[resolution.index];
     if (value === undefined) {
@@ -714,15 +719,27 @@ const lookupKey = (pattern: BoundPattern, scope: Scope | undefined): Value | und
 };
 
 export const evaluate = (expression: Expression, context: Context): Value => {
-  switch (expression.kind) {
+  const kind = expression.kind;
+  if (kind === "Identifier") return evaluateName(expression.name, expression, context);
+  if (kind === "Apply") return evaluateApply(expression, context);
+  if (kind === "String") return expression.value;
+  if (kind === "FunctionApplication") {
+    const fn = evaluate(expression.function, context);
+    if (expression.args.length === 1)
+      return applyFunction(fn, evaluate(expression.args[0], context));
+    return applyFunction(fn, createTuple(expression.args.map((arg) => evaluate(arg, context))));
+  }
+  if (kind === "Record") {
+    return createRecord(
+      expression.fields.map((field): [string, Value] => [
+        field.name,
+        evaluate(field.value, context),
+      ]),
+    );
+  }
+  switch (kind) {
     case "Number":
       return checkInteger(expression.value);
-    case "String":
-      return expression.value;
-    case "Identifier":
-      return evaluateName(expression.name, expression, context);
-    case "Apply":
-      return evaluateApply(expression, context);
     case "OperatorReference":
     case "Lambda":
       throw new TlaEvaluationError(
@@ -849,13 +866,6 @@ export const evaluate = (expression: Expression, context: Context): Value => {
         domain: evaluate(expression.domain, context),
         range: evaluate(expression.range, context),
       };
-    case "Record":
-      return createRecord(
-        expression.fields.map((field): [string, Value] => [
-          field.name,
-          evaluate(field.value, context),
-        ]),
-      );
     case "RecordSet": {
       const fields = [...expression.fields].sort((left, right) =>
         left.name < right.name ? -1 : 1,
@@ -885,11 +895,6 @@ export const evaluate = (expression: Expression, context: Context): Value => {
         );
       }
       return binding.value;
-    }
-    case "FunctionApplication": {
-      const fn = evaluate(expression.function, context);
-      const args = expression.args.map((arg) => evaluate(arg, context));
-      return applyFunction(fn, args.length === 1 ? args[0] : createTuple(args));
     }
     case "FieldAccess":
       return applyFunction(evaluate(expression.record, context), expression.field);

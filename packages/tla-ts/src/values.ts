@@ -111,57 +111,69 @@ export const checkInteger = (value: number) => {
   return value;
 };
 
-const getKindRank = (value: Value) => {
-  if (typeof value === "boolean") return 0;
-  if (typeof value === "number") return 1;
-  if (typeof value === "string") return 2;
-  return isSetValue(value) ? 3 : 4;
+const compareFunctions = (left: FunctionValue, right: FunctionValue): number => {
+  const leftDomain = left.domain;
+  const rightDomain = right.domain;
+  if (leftDomain.length !== rightDomain.length) return leftDomain.length - rightDomain.length;
+  if (leftDomain !== rightDomain) {
+    for (let index = 0; index < leftDomain.length; index++) {
+      const keyComparison = compareValues(leftDomain[index], rightDomain[index]);
+      if (keyComparison !== 0) return keyComparison;
+    }
+  }
+  const leftRange = left.range;
+  const rightRange = right.range;
+  if (leftRange === rightRange) return 0;
+  for (let index = 0; index < leftRange.length; index++) {
+    const valueComparison = compareValues(leftRange[index], rightRange[index]);
+    if (valueComparison !== 0) return valueComparison;
+  }
+  return 0;
+};
+
+const compareSets = (left: SetValue, right: SetValue): number => {
+  const leftElements = left.elements;
+  const rightElements = right.elements;
+  if (leftElements.length !== rightElements.length)
+    return leftElements.length - rightElements.length;
+  if (leftElements === rightElements) return 0;
+  for (let index = 0; index < leftElements.length; index++) {
+    const comparison = compareValues(leftElements[index], rightElements[index]);
+    if (comparison !== 0) return comparison;
+  }
+  return 0;
 };
 
 export const compareValues = (left: Value, right: Value): number => {
   if (left === right) return 0;
+  if (typeof left === "object" && typeof right === "object") {
+    const leftKind = left.kind;
+    const rightKind = right.kind;
+    if (leftKind === "Function" && rightKind === "Function") return compareFunctions(left, right);
+    if (leftKind === "Set" && rightKind === "Set") return compareSets(left, right);
+    if (leftKind === "ModelValue" || rightKind === "ModelValue") {
+      if (leftKind === "ModelValue" && rightKind === "ModelValue") {
+        return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
+      }
+      return leftKind === "ModelValue" ? -1 : 1;
+    }
+    const leftIsSet = isSetValue(left);
+    if (leftIsSet !== isSetValue(right)) {
+      throw new TlaEvaluationError(
+        `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
+      );
+    }
+    if (leftIsSet) return compareSets(toFiniteSet(left), toFiniteSet(right));
+    return compareFunctions(toFiniteFunction(left), toFiniteFunction(right));
+  }
   if (typeof left === "number" && typeof right === "number") return left - right;
   if (typeof left === "string" && typeof right === "string") return left < right ? -1 : 1;
-  if (isModelValue(left) || isModelValue(right)) {
-    if (isModelValue(left) && isModelValue(right))
-      return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
-    return isModelValue(left) ? -1 : 1;
-  }
-  const leftRank = getKindRank(left);
-  const rightRank = getKindRank(right);
-  if (leftRank !== rightRank) {
-    throw new TlaEvaluationError(
-      `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
-    );
-  }
-  if (typeof left === "boolean" || typeof left === "number" || typeof left === "string") {
-    return left < right ? -1 : 1;
-  }
-  if (isSetValue(left)) {
-    const leftElements = toFiniteSet(left).elements;
-    const rightElements = toFiniteSet(right).elements;
-    if (leftElements.length !== rightElements.length)
-      return leftElements.length - rightElements.length;
-    for (let index = 0; index < leftElements.length; index++) {
-      const comparison = compareValues(leftElements[index], rightElements[index]);
-      if (comparison !== 0) return comparison;
-    }
-    return 0;
-  }
-  const leftFunction = toFiniteFunction(left);
-  const rightFunction = toFiniteFunction(right);
-  if (leftFunction.domain.length !== rightFunction.domain.length) {
-    return leftFunction.domain.length - rightFunction.domain.length;
-  }
-  for (let index = 0; index < leftFunction.domain.length; index++) {
-    const keyComparison = compareValues(leftFunction.domain[index], rightFunction.domain[index]);
-    if (keyComparison !== 0) return keyComparison;
-  }
-  for (let index = 0; index < leftFunction.range.length; index++) {
-    const valueComparison = compareValues(leftFunction.range[index], rightFunction.range[index]);
-    if (valueComparison !== 0) return valueComparison;
-  }
-  return 0;
+  if (typeof left === "boolean" && typeof right === "boolean") return left < right ? -1 : 1;
+  if (isModelValue(left)) return -1;
+  if (isModelValue(right)) return 1;
+  throw new TlaEvaluationError(
+    `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
+  );
 };
 
 export const createSortedSet = (elements: Value[]): SetValue => ({
@@ -187,6 +199,9 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     left.hash !== 0 &&
     right.hash !== 0;
   if (isHashed && left.hash !== right.hash) return false;
+  if (left.kind === "Function" && right.kind === "Function")
+    return compareFunctions(left, right) === 0;
+  if (left.kind === "Set" && right.kind === "Set") return compareSets(left, right) === 0;
   if (isModelValue(left) || isModelValue(right)) {
     return isModelValue(left) && isModelValue(right) && left.name === right.name;
   }
@@ -207,6 +222,26 @@ export const createSet = (elements: Value[]): SetValue => {
 };
 
 export const EMPTY_SET = createSortedSet([]);
+
+export const unionSorted = (left: Value[], right: Value[]): SetValue => {
+  if (left.length === 0) return createSortedSet(right);
+  if (right.length === 0) return createSortedSet(left);
+  const merged: Value[] = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    const comparison = compareValues(left[leftIndex], right[rightIndex]);
+    if (comparison < 0) merged.push(left[leftIndex++]);
+    else if (comparison > 0) merged.push(right[rightIndex++]);
+    else {
+      merged.push(left[leftIndex++]);
+      rightIndex++;
+    }
+  }
+  while (leftIndex < left.length) merged.push(left[leftIndex++]);
+  while (rightIndex < right.length) merged.push(right[rightIndex++]);
+  return createSortedSet(merged);
+};
 
 export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
   const sorted =
@@ -416,9 +451,15 @@ export const applyFunction = (fn: Value, argument: Value): Value => {
   if (typeof fn !== "object" || fn.kind !== "Function") {
     throw new TlaEvaluationError(`Attempted to apply ${formatValue(fn)}, which is not a function`);
   }
-  const isSequenceIndex =
-    typeof argument === "number" && fn.domain[argument - 1] === argument && fn.domain[0] === 1;
-  const position = isSequenceIndex ? argument - 1 : findIndex(fn.domain, argument);
+  const domain = fn.domain;
+  if (typeof argument === "number" && domain[argument - 1] === argument && domain[0] === 1) {
+    return fn.range[argument - 1];
+  }
+  if (domain.length <= 8) {
+    for (let index = 0; index < domain.length; index++)
+      if (domain[index] === argument) return fn.range[index];
+  }
+  const position = findIndex(domain, argument);
   if (position === -1) {
     throw new TlaEvaluationError(
       `Attempted to apply function ${formatValue(fn)} to ${formatValue(argument)}, which is not in its domain`,

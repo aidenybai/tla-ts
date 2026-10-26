@@ -1,3 +1,5 @@
+import type { GlobalName, GlobalOperator } from "./evaluate";
+
 export interface SourceLocation {
   line: number;
   column: number;
@@ -19,6 +21,7 @@ export interface IdentifierExpression {
   kind: "Identifier";
   name: string;
   location: SourceLocation;
+  resolution?: GlobalName;
 }
 
 export interface ApplyExpression {
@@ -26,6 +29,8 @@ export interface ApplyExpression {
   operator: string;
   args: Expression[];
   location: SourceLocation;
+  resolution?: GlobalOperator;
+  assignableIndex?: number;
 }
 
 export interface OperatorReferenceExpression {
