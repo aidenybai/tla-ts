@@ -5,9 +5,12 @@ import type {
   Definition,
   Expression,
   Instance,
+  Module,
   OperatorParam,
 } from "./ast";
 import { TlaUnsupportedError } from "./errors";
+import { getChildren } from "./evaluate";
+import { isBefore } from "./resolve";
 
 export interface FlatModule {
   name: string;
@@ -379,4 +382,58 @@ export const instantiateModule = (
           location: instance.location,
         };
   });
+};
+
+const expandLetInstances = (
+  expression: Expression,
+  locals: Set<string>,
+  getFlatModule: (name: string) => FlatModule,
+): Expression => {
+  const mapped = mapChildren(expression, (child, bound) =>
+    expandLetInstances(
+      child,
+      bound.length === 0 ? locals : new Set([...locals, ...bound]),
+      getFlatModule,
+    ),
+  );
+  if (mapped.kind !== "Let" || !mapped.instances) return mapped;
+  const definitions = [...mapped.definitions];
+  mapped.instances.forEach((instance) => {
+    const position = definitions.findIndex((definition) =>
+      isBefore(instance.location, definition.location),
+    );
+    const visible = new Set([
+      ...locals,
+      ...definitions.slice(0, position === -1 ? undefined : position).map((item) => item.name),
+    ]);
+    const instantiated = instantiateModule(instance, getFlatModule(instance.module), visible);
+    definitions.splice(position === -1 ? definitions.length : position, 0, ...instantiated);
+  });
+  return { kind: "Let", definitions, body: mapped.body, location: mapped.location };
+};
+
+const hasLetInstance = (expression: Expression): boolean =>
+  (expression.kind === "Let" && expression.instances !== undefined) ||
+  getChildren(expression).some(hasLetInstance);
+
+export const withLetInstances = (
+  module: Module,
+  getFlatModule: (name: string) => FlatModule,
+): Module => {
+  const isExpanded =
+    module.definitions.some((definition) => hasLetInstance(definition.body)) ||
+    module.assumptions.some((assumption) => hasLetInstance(assumption.expression));
+  if (!isExpanded) return module;
+  return {
+    ...module,
+    definitions: module.definitions.map((definition) =>
+      mapDefinition(definition, (child, bound) =>
+        expandLetInstances(child, new Set(bound), getFlatModule),
+      ),
+    ),
+    assumptions: module.assumptions.map((assumption) => ({
+      ...assumption,
+      expression: expandLetInstances(assumption.expression, new Set(), getFlatModule),
+    })),
+  };
 };
