@@ -329,6 +329,7 @@ export type Definition = OperatorDefinition | FunctionDefinition;
 export interface Declaration {
   name: string;
   arity: number;
+  location: SourceLocation;
 }
 
 export interface Assumption {
@@ -355,7 +356,7 @@ export interface Instance {
 
 export interface OuterScope {
   extends: string[];
-  symbols: Declaration[];
+  symbols: OperatorParam[];
 }
 
 export interface Module {
@@ -364,7 +365,7 @@ export interface Module {
   modules: Module[];
   extends: string[];
   constants: Declaration[];
-  variables: string[];
+  variables: Declaration[];
   definitions: Definition[];
   instances: Instance[];
   assumptions: Assumption[];

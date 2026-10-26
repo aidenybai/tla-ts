@@ -858,21 +858,22 @@ export const parseModule = (source: string): Module => {
 
   const parseDeclarations = (): Declaration[] =>
     parseSeparated(() => {
+      const location = getLocation(peek());
       if (isAt("_") && peek(1).kind === "Operator") {
         advance();
-        const operator = advance().text;
-        return accept("_") ? { name: operator, arity: 2 } : { name: operator, arity: 1 };
+        const name = advance().text;
+        return { name, arity: accept("_") ? 2 : 1, location };
       }
       if (peek().kind === "Operator" && isAt("_", 1)) {
         const operator = advance().text;
         advance();
-        return { name: operator === "-" ? "-." : operator, arity: 1 };
+        return { name: operator === "-" ? "-." : operator, arity: 1, location };
       }
       const name = expectIdentifier();
-      if (!accept("(")) return { name, arity: 0 };
+      if (!accept("(")) return { name, arity: 0, location };
       const placeholders = parseSeparated(() => expect("_"));
       expect(")");
-      return { name, arity: placeholders.length };
+      return { name, arity: placeholders.length, location };
     });
 
   const isUnitStart = (token: Token, next: Token) => {
@@ -976,7 +977,12 @@ export const parseModule = (source: string): Module => {
         case "VARIABLE":
         case "VARIABLES":
           advance();
-          module.variables.push(...parseSeparated(expectIdentifier));
+          module.variables.push(
+            ...parseSeparated(() => {
+              const location = getLocation(peek());
+              return { name: expectIdentifier(), arity: 0, location };
+            }),
+          );
           continue;
         case "ASSUME":
         case "ASSUMPTION":
@@ -1031,7 +1037,7 @@ export const parseModule = (source: string): Module => {
     symbols: [
       ...(module.outer?.symbols ?? []),
       ...module.constants,
-      ...module.variables.map((variable) => ({ name: variable, arity: 0 })),
+      ...module.variables,
       ...module.definitions.map((definition) => ({
         name: definition.name,
         arity: definition.kind === "Operator" ? definition.params.length : 0,

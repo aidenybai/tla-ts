@@ -20,7 +20,13 @@ import {
   withLetInstances,
 } from "./instances";
 import { parseModule } from "./parser";
-import { KEY_SEPARATOR, resolveModule, resolveSubstitutions, type Symbols } from "./resolve";
+import {
+  checkRedefinitions,
+  KEY_SEPARATOR,
+  resolveModule,
+  resolveSubstitutions,
+  type Symbols,
+} from "./resolve";
 import { createRuntime } from "./runtime";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
@@ -191,8 +197,9 @@ export const createEnvironment = (
     if (outer.definitions.some((definition) => definition.name === name)) {
       return getDefinitionKey(outer, name);
     }
-    const isDeclared =
-      outer.constants.some((constant) => constant.name === name) || outer.variables.includes(name);
+    const isDeclared = [...outer.constants, ...outer.variables].some(
+      (declaration) => declaration.name === name,
+    );
     return isDeclared ? name : getOuterKey(outer, name);
   };
 
@@ -203,6 +210,7 @@ export const createEnvironment = (
     module: Module,
     unit: {
       imported: Symbols;
+      importedAt: Map<string, SourceLocation>;
       definitions: Map<string, Definition>;
       getKey: (definition: Definition) => string;
     },
@@ -291,7 +299,7 @@ export const createEnvironment = (
 
   const getSubstitutionBody = (
     replacement: Expression,
-    declaration: Declaration,
+    declaration: OperatorParam,
     location: SourceLocation,
   ): { params: OperatorParam[]; body: Expression } => {
     if (declaration.arity === 0) return { params: [], body: replacement };
@@ -338,10 +346,10 @@ export const createEnvironment = (
       ...linked.constants,
       ...linked.variables.map((variable) => ({ name: variable, arity: 0 })),
     ];
-    const getReplacement = (declaration: Declaration): Expression =>
+    const getReplacement = (declaration: OperatorParam): Expression =>
       explicit.get(declaration.name) ?? { kind: "Identifier", name: declaration.name, location };
     const instanceNames = new Set(instanceParams.map((param) => param.name));
-    const isParameterDependent = (declaration: Declaration) =>
+    const isParameterDependent = (declaration: OperatorParam) =>
       mentionsName(getReplacement(declaration), instanceNames);
     const substitutionDefinitions = declarations.map((declaration): Definition => {
       const substitution = getSubstitutionBody(getReplacement(declaration), declaration, location);
@@ -427,7 +435,7 @@ export const createEnvironment = (
     );
     const exported: Symbols = new Map();
     const constants = [...parsed.constants];
-    const variables = [...parsed.variables];
+    const variables = parsed.variables.map((variable) => variable.name);
     const addSymbols = (symbols: Symbols, isExported: boolean) =>
       symbols.forEach((symbol, name) => {
         visible.set(name, symbol);
@@ -457,20 +465,26 @@ export const createEnvironment = (
     parsed.constants.forEach((constant) =>
       exported.set(constant.name, { key: constant.name, arity: constant.arity }),
     );
-    parsed.variables.forEach((variable) => exported.set(variable, { key: variable, arity: 0 }));
+    parsed.variables.forEach((variable) =>
+      exported.set(variable.name, { key: variable.name, arity: 0 }),
+    );
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const getKey = (definition: Definition) => getDefinitionKey(parsed, definition.name);
+    const importedAt = new Map<string, SourceLocation>();
     const getUnit = (module: Module) => ({
       imported: visible,
+      importedAt,
       definitions: new Map(module.definitions.map((definition) => [definition.name, definition])),
       getKey,
     });
-    parsed.instances.forEach((instance) =>
-      addSymbols(
-        instantiate(instance, parsed, getUnit(parsed), isParameterFree),
-        !instance.isLocal,
-      ),
-    );
+    parsed.instances.forEach((instance) => {
+      const symbols = instantiate(instance, parsed, getUnit(parsed), isParameterFree);
+      symbols.forEach((_, name) => {
+        if (!visible.has(name)) importedAt.set(name, instance.location);
+      });
+      addSymbols(symbols, !instance.isLocal);
+    });
+    checkRedefinitions(parsed, getUnit(parsed));
     const module = resolveModuleSubexpressions(
       withLetInstances(parsed, instantiateLocally),
       getAvailableDefinitions(visible),
@@ -561,7 +575,9 @@ export const createEnvironment = (
     variables,
     variableIndex: getVariableIndex(
       variables,
-      [...linkedModules.values()].flatMap((linked) => linked.module.variables),
+      [...linkedModules.values()].flatMap((linked) =>
+        linked.module.variables.map((variable) => variable.name),
+      ),
     ),
     definitionValues: new Map(),
     constantLevels: new Map(),
