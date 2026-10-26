@@ -9,6 +9,8 @@ import type {
   ExceptUpdate,
   Expression,
   Module,
+  Instance,
+  InstanceSubstitution,
   OperatorParam,
   RecordField,
   SourceLocation,
@@ -456,14 +458,24 @@ export const parseModule = (source: string): Module => {
         while (!accept("::")) advance();
         return parseExpression();
       }
-      if (isAt("("))
-        return { kind: "Apply", operator: token.text, args: parseArguments(), location };
-      if (isAt("!") && peek(1).kind === "Identifier") {
-        throw new TlaUnsupportedError(
-          `Instance references such as ${token.text}!${peek(1).text} are not supported yet`,
-        );
+      const hasArguments = isAt("(");
+      const args = hasArguments ? parseArguments() : [];
+      if (!(isAt("!") && peek(1).kind === "Identifier")) {
+        return hasArguments
+          ? { kind: "Apply", operator: token.text, args, location }
+          : { kind: "Identifier", name: token.text, location };
       }
-      return { kind: "Identifier", name: token.text, location };
+      const names = [token.text];
+      const qualifiedArgs = [...args];
+      while (isAt("!") && peek(1).kind === "Identifier") {
+        advance();
+        names.push(expectIdentifier());
+        if (isAt("(")) qualifiedArgs.push(...parseArguments());
+      }
+      const operator = names.join("!");
+      return qualifiedArgs.length > 0 || isAt("(")
+        ? { kind: "Apply", operator, args: qualifiedArgs, location }
+        : { kind: "Identifier", name: operator, location };
     }
     switch (token.text) {
       case "(": {
@@ -501,7 +513,11 @@ export const parseModule = (source: string): Module => {
             parseDeclarations().forEach((declaration) => recursiveNames.add(declaration.name));
             continue;
           }
-          definitions.push(parseDefinition(false));
+          const unit = parseDefinition(false);
+          if (unit.kind === "Instance") {
+            throw new TlaUnsupportedError("INSTANCE inside LET is not supported yet");
+          }
+          definitions.push(unit);
         }
         return { kind: "Let", definitions, body: parseExpression(), location };
       }
@@ -651,7 +667,7 @@ export const parseModule = (source: string): Module => {
     return params;
   };
 
-  const parseDefinition = (isLocal: boolean): Definition => {
+  const parseDefinition = (isLocal: boolean): Definition | Instance => {
     const token = peek();
     const location = getLocation(token);
     if (
@@ -698,9 +714,7 @@ export const parseModule = (source: string): Module => {
     }
     const params = parseParams();
     expect("==");
-    if (isAt("INSTANCE")) {
-      throw new TlaUnsupportedError(`Named instance ${name} is not supported yet`);
-    }
+    if (isAt("INSTANCE")) return parseInstance(name, params, isLocal, location);
     return {
       kind: "Operator",
       name,
@@ -710,6 +724,24 @@ export const parseModule = (source: string): Module => {
       isRecursive: recursiveNames.has(name),
       location,
     };
+  };
+
+  const parseInstance = (
+    name: string | undefined,
+    params: OperatorParam[],
+    isLocal: boolean,
+    location: SourceLocation,
+  ): Instance => {
+    expect("INSTANCE");
+    const module = expectIdentifier();
+    const substitutions = accept("WITH")
+      ? parseSeparated((): InstanceSubstitution => {
+          const target = advance().text;
+          expect("<-");
+          return { name: target, expression: parseArgument() };
+        })
+      : [];
+    return { kind: "Instance", name, params, module, substitutions, isLocal, location };
   };
 
   const parseDeclarations = (): Declaration[] =>
@@ -773,6 +805,7 @@ export const parseModule = (source: string): Module => {
       constants: [],
       variables: [],
       definitions: [],
+      instances: [],
       assumptions: [],
     };
     while (true) {
@@ -818,18 +851,27 @@ export const parseModule = (source: string): Module => {
           parseDeclarations().forEach((declaration) => recursiveNames.add(declaration.name));
           continue;
         case "INSTANCE":
-          throw new TlaUnsupportedError("INSTANCE is not supported yet");
-        case "LOCAL":
-          advance();
-          if (isAt("INSTANCE")) throw new TlaUnsupportedError("INSTANCE is not supported yet");
-          module.definitions.push(parseDefinition(true));
+          module.instances.push(parseInstance(undefined, [], false, getLocation(token)));
           continue;
+        case "LOCAL": {
+          advance();
+          if (isAt("INSTANCE")) {
+            module.instances.push(parseInstance(undefined, [], true, getLocation(token)));
+            continue;
+          }
+          const unit = parseDefinition(true);
+          if (unit.kind === "Instance") module.instances.push(unit);
+          else module.definitions.push(unit);
+          continue;
+        }
       }
       if (token.kind === "Keyword" && THEOREM_KEYWORDS.has(token.text)) {
         skipTheorem();
         continue;
       }
-      module.definitions.push(parseDefinition(false));
+      const unit = parseDefinition(false);
+      if (unit.kind === "Instance") module.instances.push(unit);
+      else module.definitions.push(unit);
     }
   };
 

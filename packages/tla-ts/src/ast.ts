@@ -312,11 +312,27 @@ export interface Assumption {
   location: SourceLocation;
 }
 
+export interface InstanceSubstitution {
+  name: string;
+  expression: Expression;
+}
+
+export interface Instance {
+  kind: "Instance";
+  name: string | undefined;
+  params: OperatorParam[];
+  module: string;
+  substitutions: InstanceSubstitution[];
+  isLocal: boolean;
+  location: SourceLocation;
+}
+
 export interface Module {
   name: string;
   extends: string[];
   constants: Declaration[];
   variables: string[];
   definitions: Definition[];
+  instances: Instance[];
   assumptions: Assumption[];
 }

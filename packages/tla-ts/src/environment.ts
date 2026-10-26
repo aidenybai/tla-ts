@@ -1,7 +1,8 @@
-import type { Assumption, Definition, Module } from "./ast";
+import type { Assumption, Definition, Instance, Module } from "./ast";
 import type { ConfigValue, ModelConfig } from "./config";
 import { TlaConfigError, TlaUnsupportedError } from "./errors";
 import { isConstantLevel, type Builtin, type Environment } from "./evaluate";
+import { instantiateModule, type FlatModule } from "./instances";
 import { parseModule } from "./parser";
 import { resolveModule, type Symbols } from "./resolve";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
@@ -66,6 +67,71 @@ export const createEnvironment = (
     return parseModule(source);
   };
 
+  const flatModules = new Map<string, FlatModule & { symbols: Symbols }>();
+
+  const getArity = (definition: Definition) =>
+    definition.kind === "Operator" ? definition.params.length : 0;
+
+  const instantiate = (instance: Instance): { definitions: Definition[]; symbols: Symbols } => {
+    const standardSymbols = addStandardModule(instance.module);
+    if (standardSymbols) {
+      if (instance.name === undefined) return { definitions: [], symbols: standardSymbols };
+      const symbols: Symbols = new Map();
+      standardSymbols.forEach((arity, symbol) => {
+        const builtin = builtins.get(symbol);
+        if (!builtin) return;
+        const alias = `${instance.name}!${symbol}`;
+        builtins.set(alias, { ...builtin, name: alias });
+        symbols.set(alias, arity);
+      });
+      return { definitions: [], symbols };
+    }
+    const instantiated = instantiateModule(instance, getFlatModule(instance.module));
+    return {
+      definitions: instantiated,
+      symbols: new Map(
+        instantiated.map((definition): [string, number] => [definition.name, getArity(definition)]),
+      ),
+    };
+  };
+
+  const getFlatModule = (name: string): FlatModule & { symbols: Symbols } => {
+    const cached = flatModules.get(name);
+    if (cached) return cached;
+    const module = loadModule(name);
+    const imported: Symbols = new Map(
+      CORE_OPERATORS.map((operator) => [operator.name, operator.arity]),
+    );
+    const flat = {
+      name,
+      constants: [...module.constants],
+      variables: [...module.variables],
+      definitions: [] as Definition[],
+      symbols: new Map() as Symbols,
+    };
+    module.extends.forEach((extended) => {
+      const standardSymbols = addStandardModule(extended);
+      if (standardSymbols) {
+        standardSymbols.forEach((arity, symbol) => imported.set(symbol, arity));
+        return;
+      }
+      const inner = getFlatModule(extended);
+      flat.constants.push(...inner.constants);
+      flat.variables.push(...inner.variables);
+      flat.definitions.push(...inner.definitions.filter((definition) => !definition.isLocal));
+      inner.symbols.forEach((arity, symbol) => imported.set(symbol, arity));
+    });
+    module.instances.forEach((instance) => {
+      const instantiated = instantiate(instance);
+      flat.definitions.push(...instantiated.definitions);
+      instantiated.symbols.forEach((arity, symbol) => imported.set(symbol, arity));
+    });
+    flat.symbols = resolveModule(module, imported);
+    flat.definitions.push(...module.definitions);
+    flatModules.set(name, flat);
+    return flat;
+  };
+
   const addModule = (module: Module, isRoot: boolean): Symbols => {
     moduleExports.set(module.name, new Map());
     const imported: Symbols = new Map(
@@ -78,7 +144,18 @@ export const createEnvironment = (
         addModule(loadModule(name), false)
       ).forEach((arity, symbol) => imported.set(symbol, arity)),
     );
+    const instantiated = module.instances.map(instantiate);
+    instantiated.forEach((item) =>
+      item.symbols.forEach((arity, symbol) => imported.set(symbol, arity)),
+    );
     const exported = resolveModule(module, imported);
+    instantiated
+      .flatMap((item) => item.definitions)
+      .filter((definition) => isRoot || !definition.isLocal)
+      .forEach((definition) => {
+        definitions.set(definition.name, definition);
+        if (!definition.isLocal) exported.set(definition.name, getArity(definition));
+      });
     module.definitions
       .filter((definition) => isRoot || !definition.isLocal)
       .forEach((definition) => definitions.set(definition.name, definition));
