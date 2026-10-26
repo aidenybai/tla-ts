@@ -15,6 +15,7 @@ export interface Token {
   text: string;
   line: number;
   column: number;
+  endColumn: number;
 }
 
 const KEYWORDS = new Set([
@@ -303,7 +304,8 @@ export const tokenize = (source: string): Token[] => {
     return getWidthAfter(scan.width, source[cursor.index]);
   };
   const pushToken = (kind: TokenKind, text: string, length: number) => {
-    tokens.push({ kind, text, line: cursor.line, column: getColumn() });
+    const column = getColumn();
+    tokens.push({ kind, text, line: cursor.line, column, endColumn: column + length - 1 });
     cursor.index += length;
   };
   const advanceOver = (length: number) => {
@@ -389,7 +391,13 @@ export const tokenize = (source: string): Token[] => {
         advanceOver(1);
       }
       advanceOver(1);
-      tokens.push({ kind: "String", text: characters.join(""), line, column });
+      tokens.push({
+        kind: "String",
+        text: characters.join(""),
+        line,
+        column,
+        endColumn: getColumn() - 1,
+      });
       continue;
     }
     const basedNumber = BASED_NUMBER.exec(source.slice(cursor.index, cursor.index + 64));
@@ -423,6 +431,7 @@ export const tokenize = (source: string): Token[] => {
     throw createError(`Unexpected character ${JSON.stringify(character)}`);
   }
 
-  tokens.push({ kind: "End", text: "", line: cursor.line, column: getColumn() });
+  const endColumn = getColumn();
+  tokens.push({ kind: "End", text: "", line: cursor.line, column: endColumn, endColumn });
   return tokens;
 };

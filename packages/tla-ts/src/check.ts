@@ -9,6 +9,7 @@ import {
   expectBoolean,
   getChildren,
   getDefinition,
+  isConstantLevel,
   type Context,
   type Environment,
   type Scope,
@@ -71,6 +72,14 @@ export interface Violation {
   trace: TraceStep[];
   loopStart: number | undefined;
   message?: string;
+  counts?: string;
+  unwitnessed?: Postcondition;
+}
+
+export interface Postcondition {
+  name: string;
+  message: string;
+  counts?: string;
 }
 
 export interface CheckResult {
@@ -125,6 +134,24 @@ const getDefinitionBody = (name: string, environment: Environment) => {
     throw new TlaConfigError(`${name} is not defined as an operator without arguments`);
   }
   return definition.body;
+};
+
+const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
+  const definition = getDefinition(name, environment);
+  if (!definition) {
+    throw new TlaConfigError(
+      `The ${kind} ${name} specified in the configuration file\nis not defined in the specification.`,
+    );
+  }
+  if (definition.kind === "Operator" && definition.params.length > 0) {
+    throw new TlaConfigError(
+      `TLC requires ${kind} not to take any argument, but one was given: ${name}`,
+    );
+  }
+  if (isConstantLevel(definition, environment)) {
+    throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
+  }
+  return definition;
 };
 
 const getConjuncts = (expression: Expression, environment: Environment): Expression[] => {
@@ -275,6 +302,26 @@ export const getNamedExpressions = (names: string[], environment: Environment): 
     return { name, expression: createIdentifier(name), scope: undefined };
   });
 
+const getBodyRange = (name: string, environment: Environment) => {
+  const definition = getDefinition(name, environment);
+  return definition?.kind === "Operator" ? definition.bodyRange : undefined;
+};
+
+const getPossiblePredicates = (names: string[], environment: Environment): NamedExpression[] =>
+  names.map((name, index) => {
+    if (names.indexOf(name) !== index) {
+      throw new TlaConfigError(`_POSSIBLE lists ${name} more than once`);
+    }
+    getConfigDefinition("possible", name, environment);
+    const expression = createIdentifier(name);
+    if (getLevel(expression, undefined, environment) === TEMPORAL_LEVEL) {
+      throw new TlaConfigError(
+        `The possible of ${name} is equal to a temporal formula; only state- and action-level predicates are supported`,
+      );
+    }
+    return { name, expression, scope: undefined };
+  });
+
 export const getStateChecks = (named: NamedExpression[], environment: Environment): StateCheck[] =>
   named.flatMap((item) =>
     getConjuncts(item.expression, environment).map((expression) => ({
@@ -339,9 +386,8 @@ export interface Search {
   satisfiesActionConstraints: (state: Value[], next: Value[]) => boolean;
   trackStatePossible: (state: Value[]) => void;
   trackActionPossible: (state: Value[], next: Value[]) => void;
-  findPostconditionViolation: (
-    print: (text: string) => void,
-  ) => Omit<Violation, "loopStart"> | undefined;
+  findUnwitnessedPossible: () => Postcondition | undefined;
+  findPostconditionViolation: () => Postcondition | undefined;
 }
 
 const getContext = (
@@ -427,7 +473,7 @@ export const createSearch = (
     };
     return { ...property, unchanged };
   });
-  const possible = getNamedExpressions(config.possible, environment);
+  const possible = getPossiblePredicates(config.possible, environment);
   const isActionPossible = (item: NamedExpression) =>
     getLevel(item.expression, undefined, environment) >= ACTION_LEVEL;
   const statePossible = possible.filter((item) => !isActionPossible(item));
@@ -461,6 +507,19 @@ export const createSearch = (
   };
   const isFingerprintedLikeTlc = hasWideString(config, environment);
   runtime.getFingerprint = getTlcStateFingerprint;
+  const findUnwitnessedPossible = (): Postcondition | undefined => {
+    const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
+    if (!unwitnessed) return undefined;
+    const range = getBodyRange(unwitnessed.name, environment);
+    const location = range
+      ? ` at line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`
+      : "";
+    return {
+      name: unwitnessed.name,
+      message: `The _POSSIBLE predicate ${unwitnessed.name}${location} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`,
+      counts: formatValue(getPossibleCounts(runtime), true),
+    };
+  };
   return {
     properties,
     spec,
@@ -539,20 +598,14 @@ export const createSearch = (
         ? ignorePossible
         : (state, next) =>
             trackPossible(actionPossible, runtime, getContext(environment, state, next)),
-    findPostconditionViolation: (print) => {
-      const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
-      if (unwitnessed) {
-        print(formatValue(getPossibleCounts(runtime), true));
-        return {
-          name: unwitnessed.name,
-          trace: [],
-          message: `The _POSSIBLE predicate ${unwitnessed.name} was never witnessed.`,
-        };
-      }
+    findUnwitnessedPossible,
+    findPostconditionViolation: () => {
+      const unwitnessed = findUnwitnessedPossible();
+      if (unwitnessed) return unwitnessed;
       for (const name of config.postconditions) {
         const failure = getConstantFailure(createIdentifier(name), environment, "a postcondition");
         if (failure) {
-          return { name, trace: [], message: failure.message ?? `Postcondition ${name} is false.` };
+          return { name, message: failure.message ?? `Postcondition ${name} is false.` };
         }
       }
       return undefined;
@@ -594,6 +647,13 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     getTlcVariableOrder(options.source, options.loadModule),
   );
   if (!search) return createResult("success");
+  const reportViolation = (
+    status: CheckStatus,
+    violation: Omit<Violation, "loopStart"> & { loopStart?: number },
+  ) => {
+    const unwitnessed = search.findUnwitnessedPossible();
+    return createResult(status, unwitnessed ? { ...violation, unwitnessed } : violation);
+  };
   const properties = search.properties;
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
@@ -726,14 +786,14 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     }
     const violated = search.findViolatedInvariant(state);
     if (violated) {
-      return createResult("invariant-violation", {
+      return reportViolation("invariant-violation", {
         name: violated.name,
         trace: [{ action: undefined, state: toRecord(state) }],
       });
     }
     const failedPredicate = search.findFailedInitialPredicate(state);
     if (failedPredicate) {
-      return createResult("liveness-violation", {
+      return reportViolation("liveness-violation", {
         name: failedPredicate.name,
         trace: [{ action: undefined, state: toRecord(state) }],
       });
@@ -752,7 +812,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     const successors = getSuccessors(spec.next, state, environment);
     current.isExpanding = false;
     if (successors.length === 0 && config.checkDeadlock) {
-      return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
+      return reportViolation("deadlock", { name: "deadlock", trace: getTrace(index) });
     }
     const liveSuccessors: LiveSuccessor[] = [];
     for (const successor of successors) {
@@ -778,7 +838,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       if (existing === -1) {
         const violated = search.findViolatedInvariant(successor.state, state);
         if (violated) {
-          return createResult("invariant-violation", {
+          return reportViolation("invariant-violation", {
             name: violated.name,
             trace: getTrace(index, successor),
           });
@@ -786,7 +846,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       }
       const violatedProperty = search.findViolatedActionProperty(state, successor.state);
       if (violatedProperty) {
-        return createResult("liveness-violation", {
+        return reportViolation("liveness-violation", {
           name: violatedProperty.name,
           trace: getTrace(index, successor),
         });
@@ -801,7 +861,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     const accepted = liveness?.addState(index, state, liveSuccessors);
     current.livenessSource = -1;
     if (accepted) {
-      return createResult("property-violation", {
+      return reportViolation("property-violation", {
         name: accepted.name,
         trace: getPathTrace(accepted.path),
       });
@@ -813,16 +873,16 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   const lasso = liveness?.findViolation();
   current.livenessSource = -1;
   if (lasso) {
-    return createResult("liveness-violation", {
+    return reportViolation("liveness-violation", {
       name: lasso.name,
       trace: getPathTrace([...lasso.prefix, ...lasso.cycle]),
       loopStart: lasso.prefix.length,
     });
   }
 
-  const postconditionViolation = search.findPostconditionViolation(print);
+  const postconditionViolation = search.findPostconditionViolation();
   if (postconditionViolation) {
-    return createResult("postcondition-violation", postconditionViolation);
+    return createResult("postcondition-violation", { ...postconditionViolation, trace: [] });
   }
   return createResult("success");
 };
