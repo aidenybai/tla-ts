@@ -239,6 +239,14 @@ const UNICODE_OPERATORS = new Map([
   ["⋅", "\\cdot"],
 ]);
 
+const BASED_NUMBER = /^\\([bB][01]+|[oO][0-7]+|[hH][0-9a-fA-F]+)/;
+
+const NUMBER_BASES = new Map([
+  ["b", 2],
+  ["o", 8],
+  ["h", 16],
+]);
+
 const MODULE_HEADER = /-{4,}[ \t]*MODULE\b/;
 
 const isIdentifierCharacter = (character: string) => /[A-Za-z0-9_]/.test(character);
@@ -361,6 +369,12 @@ export const tokenize = (source: string): Token[] => {
       }
       advanceOver(1);
       tokens.push({ kind: "String", text: characters.join(""), line, column });
+      continue;
+    }
+    const basedNumber = BASED_NUMBER.exec(source.slice(cursor.index, cursor.index + 64));
+    if (basedNumber) {
+      const base = NUMBER_BASES.get(basedNumber[1][0].toLowerCase());
+      pushToken("Number", String(parseInt(basedNumber[1].slice(1), base)), basedNumber[0].length);
       continue;
     }
     if (isIdentifierCharacter(character)) {
