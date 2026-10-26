@@ -81,6 +81,16 @@ describe("check matches TLC", () => {
     expect(() => checkModule("CONSTANT C\nFoo == x", "CONSTANT C <- Foo")).toThrow(TlaConfigError);
     expect(checkModule("CONSTANT C\nFoo == 1", "CONSTANT C <- Foo").status).toBe("success");
   });
+
+  it("follows definition overrides inside the specification", () => {
+    const result = check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nMCInit == x = 1\nSpec == Init /\\ [][x' = x]_x\nInv == x = 1\n====",
+      config: "CONSTANT Init <- MCInit\nSPECIFICATION Spec\nINVARIANT Inv",
+    });
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates]).toEqual([2, 1]);
+  });
 });
 
 describe("evaluation errors match TLC", () => {

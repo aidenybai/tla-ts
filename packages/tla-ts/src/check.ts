@@ -2,7 +2,7 @@ import type { Expression, SourceLocation } from "./ast";
 import { parseConfig, type ModelConfig } from "./config";
 import { createEnvironment } from "./environment";
 import { TlaConfigError, TlaUnsupportedError } from "./errors";
-import { evaluate, expectBoolean, type Context, type Environment } from "./evaluate";
+import { evaluate, expectBoolean, getDefinition, type Context, type Environment } from "./evaluate";
 import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
@@ -65,7 +65,7 @@ const createIdentifier = (name: string): Expression => ({
 });
 
 const getDefinitionBody = (name: string, environment: Environment) => {
-  const definition = environment.definitions.get(name);
+  const definition = getDefinition(name, environment);
   if (definition?.kind !== "Operator" || definition.params.length > 0) {
     throw new TlaConfigError(`${name} is not defined as an operator without arguments`);
   }
@@ -76,7 +76,7 @@ const getConjuncts = (expression: Expression, environment: Environment): Express
   if (expression.kind === "And")
     return expression.operands.flatMap((operand) => getConjuncts(operand, environment));
   if (expression.kind === "Identifier") {
-    const definition = environment.definitions.get(expression.name);
+    const definition = getDefinition(expression.name, environment);
     if (definition?.kind === "Operator" && definition.params.length === 0) {
       return getConjuncts(definition.body, environment);
     }
@@ -102,7 +102,7 @@ const isTemporal = (
   if (expression.kind === "Apply" && expression.operator === "~>") return true;
   if (expression.kind === "Identifier" && !visited.has(expression.name)) {
     visited.add(expression.name);
-    const definition = environment.definitions.get(expression.name);
+    const definition = getDefinition(expression.name, environment);
     if (definition?.kind === "Operator") return isTemporal(definition.body, environment, visited);
   }
   if (expression.kind === "And" || expression.kind === "Or") {

@@ -6,6 +6,7 @@ import {
   evaluate,
   expectBoolean,
   forEachBinding,
+  getDefinition,
   lookupScope,
   resolveApplyOperator,
   type Context,
@@ -144,7 +145,7 @@ const exploreUnchanged = (
     }
     const definition = binding
       ? undefined
-      : exploration.environment.definitions.get(expression.name);
+      : getDefinition(expression.name, exploration.environment);
     if (definition?.kind === "Operator" && definition.params.length === 0) {
       exploreUnchanged(definition.body, undefined, partial, label, exploration, onComplete);
       return;

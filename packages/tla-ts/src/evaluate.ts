@@ -230,6 +230,9 @@ const getChildren = (expression: Expression): Expression[] => {
   }
 };
 
+export const getDefinition = (name: string, environment: Environment) =>
+  environment.definitions.get(environment.substitutions.get(name) ?? name);
+
 const isStateDependent = (expression: Expression, environment: Environment): boolean => {
   if (
     expression.kind === "Prime" ||
@@ -246,7 +249,7 @@ const isStateDependent = (expression: Expression, environment: Environment): boo
         : undefined;
   if (name !== undefined) {
     if (environment.variableIndex.has(name)) return true;
-    const definition = environment.definitions.get(name);
+    const definition = getDefinition(name, environment);
     if (definition && !environment.constants.has(name) && !isConstantLevel(definition, environment))
       return true;
   }
