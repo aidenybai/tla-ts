@@ -27,7 +27,7 @@ const createLocationRecord = () =>
     ["beginColumn", 0],
     ["endLine", 0],
     ["endColumn", 0],
-    ["module", "--unknown--"],
+    ["module", "--TLA+ BUILTINS--"],
   ]);
 
 const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
