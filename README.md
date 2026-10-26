@@ -73,7 +73,7 @@ Options:
 - `onPrint`: receives the output of `Print` and `PrintT`, which defaults to `console.log`
 - `readFile` and `writeFile`: let the Json module read and write files. Without them, it has no file access
 
-The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `depth`. `status` is `"success"`, `"assumption-violation"`, `"invariant-violation"`, `"property-violation"`, `"liveness-violation"`, or `"deadlock"`. `violation` holds the name of what failed and the trace that reaches it. For a liveness violation, `violation.loopStart` is the trace index where the lasso loops back.
+The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `depth`. `status` is `"success"`, `"assumption-violation"`, `"invariant-violation"`, `"property-violation"`, `"liveness-violation"`, `"postcondition-violation"`, or `"deadlock"`. A `"postcondition-violation"` means a `POSTCONDITION` is false or a `_POSSIBLE` predicate never held during the search. `violation` holds the name of what failed and the trace that reaches it. For a liveness violation, `violation.loopStart` is the trace index where the lasso loops back.
 
 `check` supports:
 
