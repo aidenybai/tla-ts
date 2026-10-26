@@ -11,7 +11,6 @@ import { parseConfig, type ModelConfig } from "./config";
 import { createEnvironment } from "./environment";
 import { getChildren, isImpureBuiltin, type Environment } from "./evaluate";
 import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from "./fingerprints";
-import { parseModule } from "./parser";
 import { getInitialStates } from "./successors";
 import { createStateEncoder, type EncodedStates } from "./transfer";
 
@@ -106,7 +105,8 @@ export const checkInParallel = async (options: ParallelCheckOptions): Promise<Ch
     config.possible.length > 0;
   if (isSequential) return checkSequentially();
   const modules = new Map<string, string | undefined>();
-  const specification = createEnvironment(parseModule(options.source), config, {
+  const specification = createEnvironment(config, {
+    source: options.source,
     loadModule: (name) => {
       const source = options.loadModule?.(name);
       modules.set(name, source);

@@ -63,6 +63,18 @@ const bindNames = (scope: LocalName | undefined, names: string[], arity = 0) =>
 const getPatternNames = (pattern: BoundPattern) =>
   pattern.kind === "Name" ? [pattern.name] : pattern.names;
 
+const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
+  const definition = unit.definitions.get(name);
+  const isVisible =
+    definition !== undefined &&
+    (definition === unit.self
+      ? definition.kind === "Function" || definition.isRecursive
+      : definition.isRecursive || isBefore(definition.location, unit.location));
+  return definition && isVisible
+    ? { key: unit.getKey(definition), arity: getArity(definition) }
+    : unit.imported.get(name);
+};
+
 const getSymbolArity = (
   expression: Expression & { kind: "Identifier" | "Apply" | "OperatorReference" },
   name: string,
@@ -76,16 +88,7 @@ const getSymbolArity = (
   const local = lookupLocal(scope, name);
   if (local && expression.kind !== "OperatorReference") expression.resolution = LOCAL_RESOLUTION;
   if (local) return local.arity;
-  const definition = unit.definitions.get(name);
-  const isVisible =
-    definition !== undefined &&
-    (definition === unit.self
-      ? definition.kind === "Function" || definition.isRecursive
-      : definition.isRecursive || isBefore(definition.location, unit.location));
-  const symbol =
-    definition && isVisible
-      ? { key: unit.getKey(definition), arity: getArity(definition) }
-      : unit.imported.get(name);
+  const symbol = findSymbol(name, unit);
   if (symbol) {
     if (expression.kind === "Identifier") expression.name = symbol.key;
     else expression.operator = symbol.key;
@@ -305,7 +308,9 @@ const createSymbols = (module: Module, imported: Symbols) => {
   module.constants.forEach((constant) =>
     symbols.set(constant.name, { key: constant.name, arity: constant.arity }),
   );
-  module.variables.forEach((variable) => symbols.set(variable, { key: variable, arity: 0 }));
+  module.variables.forEach((variable) =>
+    symbols.set(variable.name, { key: variable.name, arity: 0 }),
+  );
   return symbols;
 };
 
@@ -315,9 +320,9 @@ export const resolveSubstitutions = (
   module: Module,
   unit: ModuleUnit,
 ) => {
-  const scope = bindNames(
+  const scope = instance.params.reduce<LocalName | undefined>(
+    (parent, param) => ({ name: param.name, arity: param.arity, parent }),
     undefined,
-    instance.params.map((param) => param.name),
   );
   const context: Unit = {
     imported: createSymbols(module, unit.imported),
@@ -327,19 +332,35 @@ export const resolveSubstitutions = (
     self: undefined,
   };
   const explicit = new Map(instance.substitutions.map((item) => [item.name, item.expression]));
+  const position = `in the instance of ${instance.module} at line ${instance.location.line}, column ${instance.location.column}`;
+  explicit.forEach((_, name) => {
+    if (declarations.every((declaration) => declaration.name !== name)) {
+      throw new TlaSyntaxError(
+        `Identifier '${name}' is not a legal target of a substitution ${position}`,
+      );
+    }
+  });
   return new Map(
     declarations.map((declaration): [string, Expression] => {
-      const expression: Expression = explicit.get(declaration.name) ?? {
+      const name = declaration.name;
+      if (!explicit.has(name) && !lookupLocal(scope, name) && !findSymbol(name, context)) {
+        throw new TlaSyntaxError(`Substitution missing for symbol ${name} ${position}`);
+      }
+      const expression: Expression = explicit.get(name) ?? {
         kind: "Identifier",
-        name: declaration.name,
+        name,
         location: instance.location,
       };
-      if (declaration.arity > 0 && expression.kind === "Identifier") {
-        getSymbolArity(expression, expression.name, scope, context);
-      } else {
+      if (declaration.arity === 0 || expression.kind !== "Identifier") {
         resolveExpression(expression, scope, context);
+        return [name, expression];
       }
-      return [declaration.name, expression];
+      if (getSymbolArity(expression, expression.name, scope, context) !== declaration.arity) {
+        throw new TlaSyntaxError(
+          `An operator must be substituted for symbol '${name}', and it must have arity ${declaration.arity} ${position}`,
+        );
+      }
+      return [name, expression];
     }),
   );
 };

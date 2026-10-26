@@ -248,6 +248,19 @@ const FINITE_SETS_OPERATORS: Builtin[] = [
   }),
 ];
 
+// The modules that each standard module loads through EXTENDS and LOCAL INSTANCE in TLC.
+export const STANDARD_DEPENDENCIES = new Map([
+  ["Integers", ["Naturals"]],
+  ["Sequences", ["Naturals"]],
+  ["FiniteSets", ["Naturals", "Sequences"]],
+  ["TLC", ["Naturals", "Sequences", "FiniteSets"]],
+  ["Randomization", ["Naturals", "FiniteSets", "Sequences"]],
+  ["_Possible", ["TLC", "TLCExt", "Naturals", "Sequences", "FiniteSets", "Integers"]],
+  ["Json", ["Sequences", "FiniteSets", "TLC", "Naturals"]],
+  ["Bags", ["Naturals"]],
+  ["TLCExt", ["TLC", "Integers", "Naturals", "Sequences", "FiniteSets"]],
+]);
+
 export const getStandardModule = (
   name: string,
   print: (text: string) => void,

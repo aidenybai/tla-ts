@@ -22,7 +22,6 @@ import {
   type ScopedExpression,
   type TemporalProperty,
 } from "./liveness";
-import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { createCanonicalizer } from "./canonical";
@@ -458,7 +457,8 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
 export const check = (options: CheckOptions): CheckResult => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   const print = options.onPrint ?? console.log;
-  const specification = createEnvironment(parseModule(options.source), config, {
+  const specification = createEnvironment(config, {
+    source: options.source,
     loadModule: options.loadModule,
     print,
     files: { readFile: options.readFile, writeFile: options.writeFile },

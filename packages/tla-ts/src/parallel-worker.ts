@@ -3,7 +3,6 @@ import { createSearch } from "./check";
 import { createEnvironment } from "./environment";
 import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from "./fingerprints";
 import type { LevelMessage, Port, StartMessage, WorkerMessage } from "./parallel";
-import { parseModule } from "./parser";
 import { getSuccessors } from "./successors";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
 import type { Value } from "./values";
@@ -98,7 +97,8 @@ const createInbox = () => {
 
 const run = (start: StartMessage, parent: Port) => {
   const modules = new Map(start.modules);
-  const specification = createEnvironment(parseModule(start.source), start.config, {
+  const specification = createEnvironment(start.config, {
+    source: start.source,
     loadModule: (name) => modules.get(name),
     print: () => {},
     files: { readFile: undefined, writeFile: undefined },
