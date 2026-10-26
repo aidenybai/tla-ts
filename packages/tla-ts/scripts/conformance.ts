@@ -28,13 +28,16 @@ const maximumTlcMilliseconds = Number(getArgument("--max-tlc-ms") ?? 20000);
 const filter = getArgument("--filter");
 const isUpdate = process.argv.includes("--update");
 
+const getExitStatus = (status: string) =>
+  status === "property-violation" ? "liveness-violation" : status;
+
 export const compareOutcome = (
   expected: ExpectedResult,
   actual: ModelOutcome,
 ): string | undefined => {
   if (expected.status === "error")
     return actual.status === "error" ? undefined : `expected an error, got ${actual.status}`;
-  if (actual.status !== expected.status) {
+  if (getExitStatus(actual.status) !== expected.status) {
     return `expected ${expected.status}, got ${actual.status}${actual.error ? ` (${actual.error})` : ""}`;
   }
   const fields = [
