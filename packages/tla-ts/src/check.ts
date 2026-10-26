@@ -5,6 +5,7 @@ import { TlaConfigError, TlaUnsupportedError } from "./errors";
 import { evaluate, expectBoolean, type Context, type Environment } from "./evaluate";
 import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
+import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { combineHash, getValueHash, valuesEqual, type Value } from "./values";
 
 export interface CheckOptions {
@@ -218,8 +219,13 @@ export const check = (options: CheckOptions): CheckResult => {
   ];
   const constraints = getNamedExpressions(config.constraints, environment);
   const actionConstraints = getNamedExpressions(config.actionConstraints, environment);
+  const symmetryGroup =
+    config.symmetry === undefined ? [] : getSymmetryGroup(config.symmetry, environment);
+  const getFingerprintState = (state: Value[]) =>
+    symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup);
 
   const states: Value[][] = [];
+  const fingerprintStates: Value[][] = [];
   const parents: number[] = [];
   const actions: (string | undefined)[] = [];
   const depths: number[] = [];
@@ -269,7 +275,7 @@ export const check = (options: CheckOptions): CheckResult => {
     return hash & 0x3fffffff;
   };
   const isSameState = (index: number, state: Value[]) => {
-    const stored = states[index];
+    const stored = fingerprintStates[index];
     for (let position = 0; position < state.length; position++) {
       if (stored[position] !== state[position] && !valuesEqual(stored[position], state[position]))
         return false;
@@ -301,9 +307,15 @@ export const check = (options: CheckOptions): CheckResult => {
     statistics.distinctStates = states.length + 1;
     statistics.depth = Math.max(statistics.depth, depth);
   };
-  const addState = (state: Value[], parent: number, action: string | undefined) => {
+  const addState = (
+    state: Value[],
+    fingerprintState: Value[],
+    parent: number,
+    action: string | undefined,
+  ) => {
     const depth = parent === -1 ? 1 : depths[parent] + 1;
     states.push(state);
+    fingerprintStates.push(fingerprintState);
     parents.push(parent);
     actions.push(action);
     depths.push(depth);
@@ -314,8 +326,9 @@ export const check = (options: CheckOptions): CheckResult => {
   for (const state of getInitialStates(spec.init, environment)) {
     canonicalizeState(state);
     statistics.generatedStates++;
-    const hash = getStateHash(state);
-    if (isSeen(hash, state)) continue;
+    const fingerprintState = getFingerprintState(state);
+    const hash = getStateHash(fingerprintState);
+    if (isSeen(hash, fingerprintState)) continue;
     const violated = findViolatedInvariant(state);
     if (violated) {
       countViolatingState(1);
@@ -326,7 +339,7 @@ export const check = (options: CheckOptions): CheckResult => {
     }
     if (!satisfiesConstraints(state)) continue;
     markSeen(hash, states.length);
-    addState(state, -1, undefined);
+    addState(state, fingerprintState, -1, undefined);
   }
 
   for (let index = 0; index < states.length; index++) {
@@ -361,8 +374,9 @@ export const check = (options: CheckOptions): CheckResult => {
         continue;
       }
       canonicalizeState(successor.state);
-      const hash = getStateHash(successor.state);
-      if (isSeen(hash, successor.state)) continue;
+      const fingerprintState = getFingerprintState(successor.state);
+      const hash = getStateHash(fingerprintState);
+      if (isSeen(hash, fingerprintState)) continue;
       const violated = findViolatedInvariant(successor.state);
       if (violated) {
         countViolatingState(depths[index] + 1);
@@ -373,7 +387,7 @@ export const check = (options: CheckOptions): CheckResult => {
       }
       if (!satisfiesConstraints(successor.state)) continue;
       markSeen(hash, states.length);
-      addState(successor.state, index, successor.action);
+      addState(successor.state, fingerprintState, index, successor.action);
     }
   }
 

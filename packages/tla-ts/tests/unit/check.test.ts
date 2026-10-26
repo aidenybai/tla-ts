@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, formatValue } from "../../src";
+import { check, formatValue, TlaConfigError } from "../../src";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -57,5 +57,20 @@ describe("check matches TLC", () => {
       "Increment",
     ]);
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
+  });
+
+  it("reduces states under a symmetry set", () => {
+    const result = checkFixture("symmetry", "Symmetry");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([42, 10, 7]);
+  });
+
+  it("rejects a symmetry that names a constant", () => {
+    expect(() =>
+      check({
+        source: "---- MODULE M ----\nCONSTANT P\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+        config: "CONSTANT P = {p1, p2}\nINIT Init\nNEXT Next\nSYMMETRY P",
+      }),
+    ).toThrow(TlaConfigError);
   });
 });
