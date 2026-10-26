@@ -7,6 +7,7 @@ import {
   evaluate,
   expectBoolean,
   getDefinition,
+  isConstantLevel,
   type Context,
   type Environment,
   type Scope,
@@ -27,7 +28,15 @@ import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { createCanonicalizer } from "./canonical";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
-import { combineHash, formatValue, getValueHash, isSameValue, type Value } from "./values";
+import {
+  combineHash,
+  formatValue,
+  getValueHash,
+  isFunctionValue,
+  isSameValue,
+  toFiniteFunction,
+  type Value,
+} from "./values";
 
 export interface CheckOptions {
   source: string;
@@ -97,6 +106,11 @@ export interface Properties {
   liveness: TemporalProperty[];
 }
 
+interface StateStep {
+  action: string | undefined;
+  state: Value[];
+}
+
 const START: SourceLocation = { line: 0, column: 0 };
 
 const createIdentifier = (name: string): Expression => ({
@@ -111,6 +125,37 @@ const getDefinitionBody = (name: string, environment: Environment) => {
     throw new TlaConfigError(`${name} is not defined as an operator without arguments`);
   }
   return definition.body;
+};
+
+const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
+  const definition = getDefinition(name, environment);
+  if (!definition) {
+    throw new TlaConfigError(
+      `The ${kind} ${name} specified in the configuration file\nis not defined in the specification.`,
+    );
+  }
+  if (definition.kind === "Operator" && definition.params.length > 0) {
+    throw new TlaConfigError(
+      `TLC requires ${kind} not to take any argument, but one was given: ${name}`,
+    );
+  }
+  if (isConstantLevel(definition, environment)) {
+    throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
+  }
+  return definition;
+};
+
+const toAliasRecord = (value: Value, fieldOrder: string[]) => {
+  if (!isFunctionValue(value)) return undefined;
+  const record = toFiniteFunction(value);
+  if (!record.domain.every((key) => typeof key === "string")) return undefined;
+  const entries = record.domain.map((key, index): [string, Value] => [
+    String(key),
+    record.range[index],
+  ]);
+  return Object.fromEntries(
+    entries.sort((left, right) => fieldOrder.indexOf(left[0]) - fieldOrder.indexOf(right[0])),
+  );
 };
 
 const getConjuncts = (expression: Expression, environment: Environment): Expression[] => {
@@ -495,21 +540,49 @@ export const check = (options: CheckOptions): CheckResult => {
   const buckets = new Map<number, number | number[]>();
   const canonicalizeState = createCanonicalizer();
 
-  const toRecord = (state: Value[]) =>
+  const toRecord = (state: Value[]): Record<string, Value> =>
     Object.fromEntries(environment.variables.map((name, index) => [name, state[index]]));
-  const getTrace = (
-    index: number,
-    last?: { state: Value[]; action: string | undefined },
-  ): TraceStep[] => {
-    const steps: TraceStep[] = last ? [{ action: last.action, state: toRecord(last.state) }] : [];
+  const getAliasState = (
+    alias: string,
+    steps: StateStep[],
+    position: number,
+    loopStart: number | undefined,
+  ) => {
+    const state = steps[position].state;
+    const next = (steps[position + 1] ?? steps[loopStart ?? position]).state;
+    // TLC evaluates TLCGet("level") and Trace in an alias at the state's position in the trace.
+    runtime.getLevel = () => position + 1;
+    runtime.getBehavior = () => steps.slice(0, position + 1).map((step) => step.state);
+    try {
+      const body = getConfigDefinition("alias", alias, environment).body;
+      const value = evaluate(createIdentifier(alias), getContext(environment, state, next));
+      const fieldOrder = body.kind === "Record" ? body.fields.map((field) => field.name) : [];
+      return toAliasRecord(value, fieldOrder) ?? toRecord(state);
+    } catch (error) {
+      if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
+      return { ...toRecord(state), _ALIASEvalError: error.message };
+    }
+  };
+  const toTrace = (steps: StateStep[], loopStart?: number): TraceStep[] => {
+    const alias = config.alias;
+    return steps.map((step, position) => ({
+      action: step.action,
+      state:
+        alias === undefined
+          ? toRecord(step.state)
+          : getAliasState(alias, steps, position, loopStart),
+    }));
+  };
+  const getSteps = (index: number, last?: StateStep): StateStep[] => {
+    const steps = last ? [last] : [];
     for (let current = index; current !== -1; current = parents[current]) {
-      steps.push({ action: actions[current], state: toRecord(states[current]) });
+      steps.push({ action: actions[current], state: states[current] });
     }
     return steps.reverse();
   };
-  const getPathTrace = (path: number[]) =>
-    path.map((stateIndex, position): TraceStep => {
-      if (position === 0) return { action: undefined, state: toRecord(states[stateIndex]) };
+  const getPathSteps = (path: number[]) =>
+    path.map((stateIndex, position): StateStep => {
+      if (position === 0) return { action: undefined, state: states[stateIndex] };
       const previous = path[position - 1];
       const action =
         previous === stateIndex
@@ -517,7 +590,7 @@ export const check = (options: CheckOptions): CheckResult => {
           : getSuccessors(spec.next, states[previous], environment).find((successor) =>
               isSameState(successor.state, states[stateIndex]),
             )?.action;
-      return { action, state: toRecord(states[stateIndex]) };
+      return { action, state: states[stateIndex] };
     });
   const getStateHash = (state: Value[]) => {
     let hash = 0x811c9dc5;
@@ -604,14 +677,14 @@ export const check = (options: CheckOptions): CheckResult => {
     if (violated) {
       return createResult("invariant-violation", {
         name: violated.name,
-        trace: [{ action: undefined, state: toRecord(state) }],
+        trace: toTrace([{ action: undefined, state }]),
       });
     }
     const failedPredicate = search.findFailedInitialPredicate(state);
     if (failedPredicate) {
       return createResult("liveness-violation", {
         name: failedPredicate.name,
-        trace: [{ action: undefined, state: toRecord(state) }],
+        trace: toTrace([{ action: undefined, state }]),
       });
     }
     if (!isInModel) continue;
@@ -627,7 +700,12 @@ export const check = (options: CheckOptions): CheckResult => {
     const successors = getSuccessors(spec.next, state, environment);
     current.isExpanding = false;
     if (successors.length === 0 && config.checkDeadlock) {
-      return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
+      // TLC prints a deadlocked initial state without evaluating the alias.
+      const trace =
+        parents[index] === -1
+          ? [{ action: undefined, state: toRecord(state) }]
+          : toTrace(getSteps(index));
+      return createResult("deadlock", { name: "deadlock", trace });
     }
     const liveSuccessors: LiveSuccessor[] = [];
     for (const successor of successors) {
@@ -655,7 +733,7 @@ export const check = (options: CheckOptions): CheckResult => {
         if (violated) {
           return createResult("invariant-violation", {
             name: violated.name,
-            trace: getTrace(index, successor),
+            trace: toTrace(getSteps(index, successor)),
           });
         }
       }
@@ -663,7 +741,7 @@ export const check = (options: CheckOptions): CheckResult => {
       if (violatedProperty) {
         return createResult("liveness-violation", {
           name: violatedProperty.name,
-          trace: getTrace(index, successor),
+          trace: toTrace(getSteps(index, successor)),
         });
       }
       if (!isNew) continue;
@@ -676,7 +754,7 @@ export const check = (options: CheckOptions): CheckResult => {
     if (accepted) {
       return createResult("property-violation", {
         name: accepted.name,
-        trace: getPathTrace(accepted.path),
+        trace: toTrace(getPathSteps(accepted.path)),
       });
     }
   }
@@ -687,7 +765,7 @@ export const check = (options: CheckOptions): CheckResult => {
   if (lasso) {
     return createResult("liveness-violation", {
       name: lasso.name,
-      trace: getPathTrace([...lasso.prefix, ...lasso.cycle]),
+      trace: toTrace(getPathSteps([...lasso.prefix, ...lasso.cycle]), lasso.prefix.length),
       loopStart: lasso.prefix.length,
     });
   }
