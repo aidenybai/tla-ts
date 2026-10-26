@@ -10,7 +10,6 @@ import type {
   Expression,
   Module,
   Instance,
-  OuterScope,
   InstanceSubstitution,
   OperatorParam,
   RecordField,
@@ -193,6 +192,18 @@ const PROOF_WORDS = new Set(["BY", "OBVIOUS", "OMITTED", "QED", "USE", "HIDE"]);
 const BUILTIN_CONSTANTS = new Set(["TRUE", "FALSE", "BOOLEAN", "STRING"]);
 
 const NO_OFFSIDE = -1;
+
+const getModuleHeader = (name: string) => new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
+
+// The text of a module that starts on its own line in a file, as TLC's monolith extractor reads
+// modules that follow the root module.
+export const extractModule = (source: string, name: string) => {
+  const lines = source.split(/\r?\n/);
+  const start = lines.findIndex((line) => getModuleHeader(name).test(line));
+  if (start === -1) return undefined;
+  const end = lines.findIndex((line, index) => index > start && line.startsWith("===="));
+  return lines.slice(start, end === -1 ? undefined : end + 1).join("\n");
+};
 
 export const parseModule = (source: string): Module => {
   const tokens = tokenize(source);
@@ -921,21 +932,22 @@ export const parseModule = (source: string): Module => {
 
   const parseDeclarations = (): Declaration[] =>
     parseSeparated(() => {
+      const location = getLocation(peek());
       if (isAt("_") && peek(1).kind === "Operator") {
         advance();
-        const operator = advance().text;
-        return accept("_") ? { name: operator, arity: 2 } : { name: operator, arity: 1 };
+        const name = advance().text;
+        return { name, arity: accept("_") ? 2 : 1, location };
       }
       if (peek().kind === "Operator" && isAt("_", 1)) {
         const operator = advance().text;
         advance();
-        return { name: operator === "-" ? "-." : operator, arity: 1 };
+        return { name: operator === "-" ? "-." : operator, arity: 1, location };
       }
       const name = expectIdentifier();
-      if (!accept("(")) return { name, arity: 0 };
+      if (!accept("(")) return { name, arity: 0, location };
       const placeholders = parseSeparated(() => expect("_"));
       expect(")");
-      return { name, arity: placeholders.length };
+      return { name, arity: placeholders.length, location };
     });
 
   const isUnitStart = (token: Token, next: Token) => {
@@ -958,7 +970,7 @@ export const parseModule = (source: string): Module => {
     openModules.some(
       (module) =>
         module.constants.some((constant) => constant.name === name) ||
-        module.variables.includes(name) ||
+        module.variables.some((variable) => variable.name === name) ||
         module.definitions.some((definition) => definition.name === name),
     );
 
@@ -1072,14 +1084,13 @@ export const parseModule = (source: string): Module => {
     return { name: undefined, expression: parseExpression(), isAxiom, location };
   };
 
-  const parseModuleBody = (outer?: OuterScope): Module => {
-    expect("----");
+  const parseModuleBody = (): Module => {
+    const location = getLocation(expect("----"));
     expect("MODULE");
     const name = expectIdentifier();
     expect("----");
     const module: Module = {
       name,
-      outer,
       modules: [],
       extends: accept("EXTENDS") ? parseSeparated(expectIdentifier) : [],
       constants: [],
@@ -1087,6 +1098,7 @@ export const parseModule = (source: string): Module => {
       definitions: [],
       instances: [],
       assumptions: [],
+      location,
     };
     openModules.push(module);
     while (true) {
@@ -1097,8 +1109,10 @@ export const parseModule = (source: string): Module => {
         return module;
       }
       if (token.kind === "Separator") {
-        if (isAt("MODULE", 1)) module.modules.push(parseNestedModule(getOuterScope(module)));
-        else advance();
+        if (isAt("MODULE", 1)) {
+          module.modules.push(parseModuleBody());
+          expect("====");
+        } else advance();
         continue;
       }
       switch (token.text) {
@@ -1110,7 +1124,12 @@ export const parseModule = (source: string): Module => {
         case "VARIABLE":
         case "VARIABLES":
           advance();
-          module.variables.push(...parseSeparated(expectIdentifier));
+          module.variables.push(
+            ...parseSeparated(() => {
+              const location = getLocation(peek());
+              return { name: expectIdentifier(), arity: 0, location };
+            }),
+          );
           continue;
         case "ASSUME":
         case "ASSUMPTION":
@@ -1168,27 +1187,5 @@ export const parseModule = (source: string): Module => {
     }
   };
 
-  const getOuterScope = (module: Module): OuterScope => ({
-    extends: [...(module.outer?.extends ?? []), ...module.extends],
-    symbols: [
-      ...(module.outer?.symbols ?? []),
-      ...module.constants,
-      ...module.variables.map((variable) => ({ name: variable, arity: 0 })),
-      ...module.definitions.map((definition) => ({
-        name: definition.name,
-        arity: definition.kind === "Operator" ? definition.params.length : 0,
-      })),
-    ],
-  });
-
-  const parseNestedModule = (outer?: OuterScope) => {
-    const nested = parseModuleBody(outer);
-    accept("====");
-    return nested;
-  };
-
-  const root = parseModuleBody();
-  accept("====");
-  while (peekRaw().kind === "Separator") root.modules.push(parseNestedModule());
-  return root;
+  return parseModuleBody();
 };

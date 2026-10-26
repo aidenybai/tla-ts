@@ -20,10 +20,17 @@ import {
   renameLocals,
   withLetInstances,
 } from "./instances";
-import { parseModule } from "./parser";
-import { KEY_SEPARATOR, resolveModule, resolveSubstitutions, type Symbols } from "./resolve";
+import { extractModule, parseModule } from "./parser";
+import {
+  isBefore,
+  KEY_SEPARATOR,
+  resolveModule,
+  resolveSubstitutions,
+  type ModuleSymbol,
+  type Symbols,
+} from "./resolve";
 import { createRuntime } from "./runtime";
-import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
+import { CORE_OPERATORS, getStandardModule, STANDARD_DEPENDENCIES } from "./standard-modules";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { checkInstances, type InstanceCheck, type ModuleContext } from "./substitution-levels";
 import {
@@ -36,6 +43,7 @@ import {
 } from "./values";
 
 export interface EnvironmentOptions {
+  source: string;
   loadModule: ((name: string) => string | undefined) | undefined;
   print: (text: string) => void;
   files: FileSystem;
@@ -72,7 +80,21 @@ interface LinkedModule {
   variables: string[];
   visible: Symbols;
   exported: Symbols;
+  modules: Map<string, LinkedModule>;
+  extended: LinkedModule[];
 }
+
+interface ModuleScope {
+  id: string;
+  symbols: Symbols;
+  modules: Map<string, LinkedModule>;
+  nested: Module[];
+}
+
+const createModuleRedefinedError = (module: Module) =>
+  new TlaSyntaxError(
+    `Multiply-defined module '${module.name}' at line ${module.location.line}, column ${module.location.column}`,
+  );
 
 const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
@@ -136,10 +158,10 @@ const getVariableIndex = (variables: string[], declared: string[]) => {
 };
 
 export const createEnvironment = (
-  root: Module,
   config: ModelConfig,
   options: EnvironmentOptions,
 ): Specification => {
+  const root = parseModule(options.source);
   const definitions = new Map<string, Definition>();
   const parameterized = new Map<string, boolean>();
   const builtins = new Map<string, Builtin>(
@@ -148,6 +170,16 @@ export const createEnvironment = (
   const standardExports = new Map<string, Symbols>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
   const linkedModules = new Map<string, LinkedModule>();
+  const nestedModules = new Map<string, LinkedModule>();
+  const linkedList: LinkedModule[] = [];
+  const dependencies = new Map<string, Set<string>>();
+  const loading: Set<string>[] = [];
+
+  const useModule = (name: string, used: Iterable<string>) =>
+    loading.forEach((closure) => {
+      closure.add(name);
+      [...used].forEach((dependency) => closure.add(dependency));
+    });
   const copyCount = { value: 0 };
   const createName = (name: string) => `${name}#${copyCount.value++}`;
   const instanceChecks: InstanceCheck[] = [];
@@ -171,42 +203,53 @@ export const createEnvironment = (
     return exported;
   };
 
-  const nestedModules = new Map<string, Module>();
-  const outerModules = new Map<string, Module>();
-  const addNestedModules = (module: Module): Module => {
-    module.modules.forEach((nested) => {
-      if (nestedModules.has(nested.name)) return;
-      outerModules.set(nested.name, module);
-      nestedModules.set(nested.name, addNestedModules(nested));
-    });
-    return module;
+  const getStandardSymbols = (name: string) => {
+    const symbols = addStandardModule(name);
+    if (symbols) useModule(name, STANDARD_DEPENDENCIES.get(name) ?? []);
+    return symbols;
   };
-  addNestedModules(root);
 
   const loadModule = (name: string) => {
-    const nested = nestedModules.get(name);
-    if (nested) return nested;
-    const source = options.loadModule?.(name) ?? BUNDLED_MODULES.get(name);
+    const source =
+      options.loadModule?.(name) ??
+      BUNDLED_MODULES.get(name) ??
+      extractModule(options.source, name);
     if (source === undefined)
       throw new TlaSyntaxError(`Cannot find source file for module ${name}`);
-    return addNestedModules(parseModule(source));
+    return parseModule(source);
   };
 
-  const getDefinitionKey = (module: Module, name: string) =>
-    module === root ? name : `${name}${KEY_SEPARATOR}${module.name}`;
+  const getDefinitionKey = (module: Module, id: string, name: string) =>
+    module === root ? name : `${name}${KEY_SEPARATOR}${id}`;
 
-  const getOuterKey = (module: Module, name: string): string => {
-    const outer = outerModules.get(module.name);
-    if (!outer || !module.outer) return name;
-    if (outer.definitions.some((definition) => definition.name === name)) {
-      return getDefinitionKey(outer, name);
+  const linkTopLevel = (parsed: Module) => {
+    const closure = new Set<string>();
+    const nested: Module[] = [];
+    loading.push(closure);
+    const linked = linkModule(parsed, {
+      id: parsed.name,
+      symbols: new Map(),
+      modules: new Map(),
+      nested,
+    });
+    loading.pop();
+    const duplicate = nested.find((module) => closure.has(module.name));
+    if (duplicate) throw createModuleRedefinedError(duplicate);
+    return { linked, closure };
+  };
+
+  const getLinkedModule = (name: string): LinkedModule => {
+    const cached = linkedModules.get(name);
+    if (cached) {
+      useModule(name, dependencies.get(name) ?? []);
+      return cached;
     }
-    const isDeclared =
-      outer.constants.some((constant) => constant.name === name) || outer.variables.includes(name);
-    return isDeclared ? name : getOuterKey(outer, name);
+    const top = linkTopLevel(loadModule(name));
+    linkedModules.set(name, top.linked);
+    dependencies.set(name, top.closure);
+    useModule(name, top.closure);
+    return top.linked;
   };
-
-  const getLinkedModule = (name: string) => linkedModules.get(name) ?? linkModule(loadModule(name));
 
   const instantiate = (
     instance: Instance,
@@ -217,15 +260,16 @@ export const createEnvironment = (
       getKey: (definition: Definition) => string;
     },
     isParameterFree: boolean,
+    nested: LinkedModule | undefined,
   ): Symbols => {
-    const standardSymbols = addStandardModule(instance.module);
+    const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
     if (standardSymbols) {
       if (instance.name === undefined) return standardSymbols;
       return new Map(
         [...standardSymbols].map(([name, symbol]) => [`${instance.name}!${name}`, symbol]),
       );
     }
-    const linked = getLinkedModule(instance.module);
+    const linked = nested ?? getLinkedModule(instance.module);
     const declarations = [
       ...linked.constants,
       ...linked.variables.map((variable) => ({ name: variable, arity: 0 })),
@@ -309,7 +353,7 @@ export const createEnvironment = (
 
   const getSubstitutionBody = (
     replacement: Expression,
-    declaration: Declaration,
+    declaration: OperatorParam,
     location: SourceLocation,
   ): { params: OperatorParam[]; body: Expression } => {
     if (declaration.arity === 0) return { params: [], body: replacement };
@@ -336,10 +380,11 @@ export const createEnvironment = (
     instance: Instance,
     lets: Definition[],
     instancer: string,
+    nested: LinkedModule | undefined,
   ): Definition[] => {
     const location = instance.location;
     const instanceParams = instance.params;
-    const standardSymbols = addStandardModule(instance.module);
+    const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
     if (standardSymbols) {
       if (instance.name === undefined) return [];
       return [...standardSymbols].map(([name, symbol]) => {
@@ -353,14 +398,14 @@ export const createEnvironment = (
         );
       });
     }
-    const linked = getLinkedModule(instance.module);
+    const linked = nested ?? getLinkedModule(instance.module);
     const suffix = `#${copyCount.value++}`;
     const explicit = new Map(instance.substitutions.map((item) => [item.name, item.expression]));
     const declarations = [
       ...linked.constants,
       ...linked.variables.map((variable) => ({ name: variable, arity: 0 })),
     ];
-    const getReplacement = (declaration: Declaration): Expression =>
+    const getReplacement = (declaration: OperatorParam): Expression =>
       explicit.get(declaration.name) ?? { kind: "Identifier", name: declaration.name, location };
     instanceChecks.push({
       module: instance.module,
@@ -372,7 +417,7 @@ export const createEnvironment = (
       location,
     });
     const instanceNames = new Set(instanceParams.map((param) => param.name));
-    const isParameterDependent = (declaration: Declaration) =>
+    const isParameterDependent = (declaration: OperatorParam) =>
       mentionsName(getReplacement(declaration), instanceNames);
     const substitutionDefinitions = declarations.map((declaration): Definition => {
       const substitution = getSubstitutionBody(getReplacement(declaration), declaration, location);
@@ -450,34 +495,32 @@ export const createEnvironment = (
       return definition ? [{ ...definition, name }] : [];
     });
 
-  const linkModule = (parsed: Module): LinkedModule => {
-    const visible: Symbols = new Map(
-      CORE_OPERATORS.map((operator) => [
+  const linkModule = (parsed: Module, scope: ModuleScope): LinkedModule => {
+    const visible: Symbols = new Map([
+      ...CORE_OPERATORS.map((operator): [string, ModuleSymbol] => [
         operator.name,
         { key: operator.name, arity: operator.arity },
       ]),
-    );
+      ...scope.symbols,
+    ]);
     const exported: Symbols = new Map();
+    const modules = new Map<string, LinkedModule>();
+    const extended: LinkedModule[] = [];
     const constants = [...parsed.constants];
-    const variables = [...parsed.variables];
+    const variables = parsed.variables.map((variable) => variable.name);
     const addSymbols = (symbols: Symbols, isExported: boolean) =>
       symbols.forEach((symbol, name) => {
         visible.set(name, symbol);
         if (isExported) exported.set(name, symbol);
       });
-    parsed.outer?.extends.forEach((name) =>
-      addSymbols(addStandardModule(name) ?? getLinkedModule(name).exported, false),
-    );
-    parsed.outer?.symbols.forEach((symbol) =>
-      visible.set(symbol.name, { key: getOuterKey(parsed, symbol.name), arity: symbol.arity }),
-    );
     parsed.extends.forEach((name) => {
-      const standardSymbols = addStandardModule(name);
+      const nested = scope.modules.get(name);
+      const standardSymbols = nested ? undefined : getStandardSymbols(name);
       if (standardSymbols) {
         addSymbols(standardSymbols, true);
         return;
       }
-      const linked = getLinkedModule(name);
+      const linked = nested ?? getLinkedModule(name);
       constants.push(
         ...linked.constants.filter((constant) =>
           constants.every((existing) => existing.name !== constant.name),
@@ -485,26 +528,87 @@ export const createEnvironment = (
       );
       variables.push(...linked.variables.filter((variable) => !variables.includes(variable)));
       addSymbols(linked.exported, true);
+      linked.modules.forEach((module, moduleName) => modules.set(moduleName, module));
+      extended.push(linked);
     });
     parsed.constants.forEach((constant) =>
       exported.set(constant.name, { key: constant.name, arity: constant.arity }),
     );
-    parsed.variables.forEach((variable) => exported.set(variable, { key: variable, arity: 0 }));
+    parsed.variables.forEach((variable) =>
+      exported.set(variable.name, { key: variable.name, arity: 0 }),
+    );
     const isParameterFree = constants.length === 0 && variables.length === 0;
-    const getKey = (definition: Definition) => getDefinitionKey(parsed, definition.name);
+    const getKey = (definition: Definition) => getDefinitionKey(parsed, scope.id, definition.name);
     const getUnit = (module: Module) => ({
       imported: visible,
       definitions: new Map(module.definitions.map((definition) => [definition.name, definition])),
       getKey,
     });
-    parsed.instances.forEach((instance) =>
-      addSymbols(
-        instantiate(instance, parsed, getUnit(parsed), isParameterFree),
-        !instance.isLocal,
-      ),
-    );
+    const getVisibleModules = () => new Map([...scope.modules, ...modules]);
+    const getSymbolsBefore = (location: SourceLocation): Symbols =>
+      new Map([
+        ...visible,
+        ...[...parsed.constants, ...parsed.variables]
+          .filter((declaration) => isBefore(declaration.location, location))
+          .map((declaration): [string, ModuleSymbol] => [
+            declaration.name,
+            { key: declaration.name, arity: declaration.arity },
+          ]),
+        ...parsed.definitions
+          .filter((definition) => isBefore(definition.location, location))
+          .map((definition): [string, ModuleSymbol] => [
+            definition.name,
+            { key: getKey(definition), arity: getArity(definition) },
+          ]),
+      ]);
+    const linkNested = (nested: Module) => {
+      const visibleModules = getVisibleModules();
+      if (visibleModules.has(nested.name)) throw createModuleRedefinedError(nested);
+      scope.nested.push(nested);
+      const linked = linkModule(nested, {
+        id: `${scope.id}/${nested.name}`,
+        symbols: getSymbolsBefore(nested.location),
+        modules: visibleModules,
+        nested: scope.nested,
+      });
+      modules.set(nested.name, linked);
+      if (!nestedModules.has(nested.name)) nestedModules.set(nested.name, linked);
+    };
+    [
+      ...parsed.instances.map((instance) => ({
+        location: instance.location,
+        link: () =>
+          addSymbols(
+            instantiate(
+              instance,
+              parsed,
+              getUnit(parsed),
+              isParameterFree,
+              getVisibleModules().get(instance.module),
+            ),
+            !instance.isLocal,
+          ),
+      })),
+      ...parsed.modules.map((nested) => ({
+        location: nested.location,
+        link: () => linkNested(nested),
+      })),
+    ]
+      .sort((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
+      .forEach((unit) => unit.link());
+    const isInstancedAfterDefinition = (nested: Module) => {
+      const first = parsed.instances.find((instance) => instance.module === nested.name);
+      return first !== undefined && isBefore(nested.location, first.location);
+    };
+    const getLetModule = (instance: Instance) => {
+      const own = parsed.modules.find((nested) => nested.name === instance.module);
+      if (!own) return getVisibleModules().get(instance.module);
+      return isInstancedAfterDefinition(own) ? modules.get(own.name) : undefined;
+    };
     const module = resolveModuleSubexpressions(
-      withLetInstances(parsed, (instance, lets) => instantiateLocally(instance, lets, parsed.name)),
+      withLetInstances(parsed, (instance, lets) =>
+        instantiateLocally(instance, lets, parsed.name, getLetModule(instance)),
+      ),
       getAvailableDefinitions(visible),
     );
     resolveModule(module, getUnit(module));
@@ -516,12 +620,12 @@ export const createEnvironment = (
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });
-    const linked = { module, constants, variables, visible, exported };
-    linkedModules.set(parsed.name, linked);
+    const linked = { module, constants, variables, visible, exported, modules, extended };
+    linkedList.push(linked);
     return linked;
   };
 
-  const linkedRoot = linkModule(root);
+  const linkedRoot = linkTopLevel(root).linked;
   const getRootKey = (name: string) => linkedRoot.visible.get(name)?.key ?? name;
   linkedRoot.visible.forEach((symbol, name) => {
     const definition = definitions.get(symbol.key);
@@ -529,23 +633,21 @@ export const createEnvironment = (
   });
 
   const assumptions: Assumption[] = [];
-  const addAssumptions = (module: Module, visited: Set<string>) => {
-    if (visited.has(module.name)) return;
-    visited.add(module.name);
-    module.extends.forEach((name) => {
-      const linked = linkedModules.get(name);
-      if (linked) addAssumptions(linked.module, visited);
-    });
-    assumptions.push(...module.assumptions);
+  const addAssumptions = (linked: LinkedModule, visited: Set<LinkedModule>) => {
+    if (visited.has(linked)) return;
+    visited.add(linked);
+    linked.extended.forEach((extended) => addAssumptions(extended, visited));
+    assumptions.push(...linked.module.assumptions);
   };
-  addAssumptions(linkedRoot.module, new Set());
+  addAssumptions(linkedRoot, new Set());
   const declaredConstants = linkedRoot.constants.map((constant) => constant.name);
   const variables = linkedRoot.variables;
 
   const getScopedKeys = (item: { name: string; module?: string }): string[] => {
     if (item.module === undefined) return [item.name, getRootKey(item.name)];
     if (item.module === root.name || declaredConstants.includes(item.name)) return [];
-    return [linkedModules.get(item.module)?.visible.get(item.name)?.key ?? item.name];
+    const linked = linkedModules.get(item.module) ?? nestedModules.get(item.module);
+    return [linked?.visible.get(item.name)?.key ?? item.name];
   };
   const constants = new Map<string, Value>();
   config.constants
@@ -593,14 +695,14 @@ export const createEnvironment = (
     variables,
     variableIndex: getVariableIndex(
       variables,
-      [...linkedModules.values()].flatMap((linked) => linked.module.variables),
+      linkedList.flatMap((linked) => linked.module.variables.map((variable) => variable.name)),
     ),
     definitionValues: new Map(),
     constantLevels: new Map(),
     evaluators: new WeakMap(),
   };
   checkInstances(instanceChecks, (name): ModuleContext => {
-    const linked = linkedModules.get(name) ?? linkedRoot;
+    const linked = linkedModules.get(name) ?? nestedModules.get(name) ?? linkedRoot;
     const getKey = (symbol: string) => linked.visible.get(symbol)?.key ?? symbol;
     return {
       constants: linked.constants,

@@ -3,7 +3,7 @@
 import type { Module, SourceLocation } from "./ast";
 import type { ConfigValue, ModelConfig } from "./config";
 import { tokenize, type Token } from "./lexer";
-import { parseModule } from "./parser";
+import { extractModule, parseModule } from "./parser";
 import {
   SANY_BUILTINS,
   SANY_NODE_NAMES,
@@ -228,17 +228,22 @@ const findModule = (modules: Module[], name: string): Module | undefined =>
   modules.find((module) => module.name === name) ??
   modules.map((module) => findModule(module.modules, name)).find(Boolean);
 
-// The modules TLC reads for a spec: the root module, the inner and trailing modules in its file,
-// TLC's standard modules, and the files the loader returns. A module without a source has no
-// tokens.
+// The modules TLC reads for a spec: the root module, TLC's standard modules, the files the loader
+// returns, the modules that follow the root module, and the modules nested in any of these. A
+// module without a source has no tokens.
 const createModuleSet = (source: string, loadModule: ModuleLoader) => {
   const files = new Map<string, ParsedModule>();
+  const nestedModules = new Map<string, ParsedModule>();
   const getFile = (name: string | undefined): ParsedModule => {
     const cached = files.get(name ?? "");
     if (cached) return cached;
-    const text = name === undefined ? source : (TLC_MODULE_SOURCES.get(name) ?? loadModule?.(name));
+    const text =
+      name === undefined
+        ? source
+        : (TLC_MODULE_SOURCES.get(name) ?? loadModule?.(name) ?? extractModule(source, name));
     const tokens = text === undefined ? [] : tokenize(text);
-    const range = getRanges(tokens).get(tokens[2]?.text ?? "") ?? { start: 0, end: 0 };
+    const ranges = getRanges(tokens);
+    const range = ranges.get(tokens[2]?.text ?? "") ?? { start: 0, end: 0 };
     const parsed = { module: undefined as Module | undefined };
     const file = {
       tokens,
@@ -246,21 +251,19 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
       getModule: () => (parsed.module ??= parseModule(text ?? "")),
     };
     files.set(name ?? "", file);
+    ranges.forEach((nestedRange, nestedName) => {
+      if (nestedRange.start === range.start || nestedModules.has(nestedName)) return;
+      nestedModules.set(nestedName, {
+        tokens,
+        ...nestedRange,
+        getModule: () => findModule(file.getModule().modules, nestedName) ?? file.getModule(),
+      });
+    });
     return file;
   };
-  const root = getFile(undefined);
-  const rootRanges = getRanges(root.tokens);
-  return (name: string | undefined): ParsedModule => {
-    const range = name === undefined ? undefined : rootRanges.get(name);
-    if (name === undefined || !range || root.tokens[root.start + 2]?.text === name) {
-      return getFile(name);
-    }
-    return {
-      tokens: root.tokens,
-      ...range,
-      getModule: () => findModule(root.getModule().modules, name) ?? root.getModule(),
-    };
-  };
+  getFile(undefined);
+  return (name: string | undefined): ParsedModule =>
+    (name === undefined ? undefined : nestedModules.get(name)) ?? getFile(name);
 };
 
 // The variables in the order TLC compares them: the reverse of the root module's context

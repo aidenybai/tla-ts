@@ -10,7 +10,6 @@ import { parseConfig, type ModelConfig } from "./config";
 import { createEnvironment } from "./environment";
 import { isImpure } from "./evaluate";
 import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from "./fingerprints";
-import { parseModule } from "./parser";
 import { getInitialStates } from "./successors";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { createStateEncoder, type EncodedStates } from "./transfer";
@@ -95,10 +94,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     modules.set(name, source);
     return source;
   };
-  const module = parseModule(options.source);
   setStringOrder(getTlcStringOrder(options.source, config, loadModule));
   const startupStrings = getRankedStringCount();
-  const specification = createEnvironment(module, config, {
+  const specification = createEnvironment(config, {
+    source: options.source,
     loadModule,
     print: options.onPrint ?? console.log,
     files: { readFile: options.readFile, writeFile: options.writeFile },
