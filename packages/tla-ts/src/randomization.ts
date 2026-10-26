@@ -7,6 +7,7 @@ import {
   createSet,
   createSortedFunction,
   createTuple,
+  getFunctionDomain,
   formatValue,
   getCardinality,
   isEmptySet,
@@ -58,7 +59,7 @@ const getElementAt = (set: Value, index: number): Value => {
     );
   }
   if (typeof set === "object" && set.kind === "FunctionSet") {
-    const domain = toFiniteSet(set.domain).elements;
+    const domain = getFunctionDomain(set.domain);
     return createSortedFunction(
       domain,
       getMixedRadixElement(
