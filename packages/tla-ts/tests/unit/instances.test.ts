@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
+import { check, TlaSyntaxError } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/instances");
 
@@ -88,5 +88,91 @@ describe("INSTANCE matches TLC", () => {
       4,
       4,
     ]);
+  });
+});
+
+const INNER_MODULES: Record<string, string> = {
+  Stateful: "EXTENDS Naturals\nCONSTANT c, Op(_)\nVARIABLE v\nUse == Op(v) + c",
+  Pure: "EXTENDS Naturals\nCONSTANT c, Op(_)\nUse == Op(c) + c",
+  Primed: "EXTENDS Naturals\nCONSTANT c, Op(_)\nUse == Op(c)' + c",
+  Vars: "EXTENDS Naturals\nVARIABLE v, w\nUse == v + w",
+};
+
+const checkSubstitution = (body: string) =>
+  check({
+    source: `---- MODULE Main ----\nEXTENDS Naturals\nVARIABLE x\n${body}\nInit == x = 0\nNext == x' = x\n====`,
+    config: "INIT Init\nNEXT Next",
+    loadModule: (name) => `---- MODULE ${name} ----\n${INNER_MODULES[name]}\n====`,
+  });
+
+const getLevelError = (module: string, name: string, level: number) =>
+  `Level error in instantiating module '${module}': the level of the expression or operator substituted for '${name}' must be at most ${level}`;
+
+const getLeibnizError = (module: string) =>
+  `Error in instantiating module '${module}': a non-Leibniz operator substituted for 'Op'`;
+
+describe("substitution levels match SANY", () => {
+  it.each([
+    [
+      "I == INSTANCE Stateful WITH c <- 1, Op <- LAMBDA a : a + x, v <- x",
+      getLevelError("Stateful", "Op", 0),
+    ],
+    [
+      "I == INSTANCE Stateful WITH c <- x, Op <- LAMBDA a : a, v <- x",
+      getLevelError("Stateful", "c", 0),
+    ],
+    [
+      "I == INSTANCE Stateful WITH c <- x', Op <- LAMBDA a : a, v <- x",
+      getLevelError("Stateful", "c", 0),
+    ],
+    [
+      "INSTANCE Stateful WITH c <- x, Op <- LAMBDA a : a, v <- x",
+      getLevelError("Stateful", "c", 0),
+    ],
+    [
+      "F(a) == a + x\nI == INSTANCE Stateful WITH c <- 1, Op <- F, v <- x",
+      getLevelError("Stateful", "Op", 0),
+    ],
+    ["I == INSTANCE Vars WITH v <- x', w <- x", getLevelError("Vars", "v", 1)],
+    ["I == INSTANCE Vars WITH v <- [](x = 1), w <- x", getLevelError("Vars", "v", 1)],
+    ["I == INSTANCE Primed WITH c <- 1, Op <- LAMBDA a : a + x", getLevelError("Primed", "Op", 0)],
+    [
+      "Foo == LET I == INSTANCE Stateful WITH c <- x, Op <- LAMBDA a : a, v <- x IN I!Use",
+      getLevelError("Stateful", "c", 0),
+    ],
+    ["F(a) == a'\nI == INSTANCE Pure WITH c <- 1, Op <- F", getLeibnizError("Pure")],
+    ["I == INSTANCE Pure WITH c <- 1, Op <- LAMBDA a : ENABLED a", getLeibnizError("Pure")],
+    ["I == INSTANCE Pure WITH c <- 1, Op <- LAMBDA a : UNCHANGED a", getLeibnizError("Pure")],
+    [
+      "G(b) == b'\nF(a) == G(a) + 1\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+      getLeibnizError("Pure"),
+    ],
+    [
+      "a ++ b == a' + b\nF(a) == a ++ 1\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+      getLeibnizError("Pure"),
+    ],
+    [
+      "F(a) == \\E k \\in {1} : a' = k\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+      getLeibnizError("Pure"),
+    ],
+    ["F(a) == [a = 1]_a\nI == INSTANCE Pure WITH c <- 1, Op <- F", getLeibnizError("Pure")],
+  ])("rejects %s", (body, message) => {
+    expect(() => checkSubstitution(body)).toThrow(TlaSyntaxError);
+    expect(() => checkSubstitution(body)).toThrow(message);
+  });
+
+  it.each([
+    "I == INSTANCE Stateful WITH c <- 1, Op <- LAMBDA a : a + 1, v <- x",
+    "I == INSTANCE Pure WITH c <- x, Op <- LAMBDA a : a + x",
+    "I == INSTANCE Vars WITH v <- ENABLED (x' = 1), w <- x",
+    "P(k) == INSTANCE Stateful WITH c <- k, Op <- LAMBDA a : a + k, v <- x",
+    "F(a) == x' + a\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "F(a) == LET G == a' IN G\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "F(a) == LET G == 1 IN a' + G\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "F(a) == LET G(b) == b' IN G(a)\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == K(1)\nF(a) == H(LAMBDA b : a') + 1\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nUse == P(F)!Use",
+  ])("accepts %s", (body) => {
+    expect(checkSubstitution(body).status).toBe("success");
   });
 });

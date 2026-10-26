@@ -24,6 +24,7 @@ import { KEY_SEPARATOR, resolveModule, resolveSubstitutions, type Symbols } from
 import { createRuntime } from "./runtime";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
+import { checkSubstitutions, type SubstitutionCheck } from "./substitution-levels";
 import {
   checkInteger,
   createModelValue,
@@ -141,6 +142,7 @@ export const createEnvironment = (
   const runtime = createRuntime(config.checkDeadlock);
   const linkedModules = new Map<string, LinkedModule>();
   const copyCount = { value: 0 };
+  const substitutionChecks: SubstitutionCheck[] = [];
 
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
@@ -198,6 +200,31 @@ export const createEnvironment = (
 
   const getLinkedModule = (name: string) => linkedModules.get(name) ?? linkModule(loadModule(name));
 
+  const addSubstitutionChecks = (
+    instance: Instance,
+    linked: LinkedModule,
+    substitutions: Map<string, Expression>,
+  ) => {
+    const keys = [...linked.visible.values()].map((symbol) => symbol.key);
+    const hasVariables = linked.variables.length > 0;
+    const add = (declaration: Declaration, maximumLevel: number) => {
+      const expression = substitutions.get(declaration.name);
+      if (!expression) return;
+      substitutionChecks.push({
+        module: instance.module,
+        name: declaration.name,
+        arity: declaration.arity,
+        maximumLevel,
+        expression,
+        location: instance.location,
+        keys,
+        hasVariables,
+      });
+    };
+    linked.constants.forEach((constant) => add(constant, 0));
+    linked.variables.forEach((variable) => add({ name: variable, arity: 0 }, 1));
+  };
+
   const instantiate = (
     instance: Instance,
     module: Module,
@@ -228,6 +255,7 @@ export const createEnvironment = (
       module,
       unit,
     );
+    addSubstitutionChecks(instance, linked, substitutions);
     const instantiation = createInstantiation({
       params: instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` })),
       substitutions: new Map(
@@ -340,6 +368,11 @@ export const createEnvironment = (
     ];
     const getReplacement = (declaration: Declaration): Expression =>
       explicit.get(declaration.name) ?? { kind: "Identifier", name: declaration.name, location };
+    addSubstitutionChecks(
+      instance,
+      linked,
+      new Map(declarations.map((declaration) => [declaration.name, getReplacement(declaration)])),
+    );
     const instanceNames = new Set(instanceParams.map((param) => param.name));
     const isParameterDependent = (declaration: Declaration) =>
       mentionsName(getReplacement(declaration), instanceNames);
@@ -567,6 +600,7 @@ export const createEnvironment = (
     constantLevels: new Map(),
     evaluators: new WeakMap(),
   };
+  checkSubstitutions(substitutionChecks, environment);
   substitutions.forEach((target, name) => {
     const definition = definitions.get(target);
     if (
