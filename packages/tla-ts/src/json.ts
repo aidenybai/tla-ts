@@ -1,8 +1,7 @@
-import { defineStateOperator, getValue } from "./builtins";
+import { defineStateOperator, describeJavaOverride, getValue } from "./builtins";
 import { TlaEvaluationError } from "./errors";
 import type { Builtin } from "./evaluate";
 import {
-  checkInteger,
   createRecord,
   createTuple,
   formatValue,
@@ -19,91 +18,205 @@ export interface FileSystem {
   writeFile: ((path: string, content: string) => void) | undefined;
 }
 
-type JsonValue = boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+interface ParseContext {
+  source?: string;
+}
 
-const toArray = (value: Value): JsonValue[] => {
-  if (isSetValue(value)) return toFiniteSet(value).elements.map(toJson);
-  const elements = getSequenceElements(value);
-  if (elements) return elements.map(toJson);
-  return Object.values(toObject(value));
+const TO_JSON =
+  "public static tlc2.value.impl.StringValue tlc2.module.Json.toJson(tlc2.value.IValue) throws java.io.IOException";
+const TO_JSON_ARRAY =
+  "public static tlc2.value.impl.StringValue tlc2.module.Json.toJsonArray(tlc2.value.IValue) throws java.io.IOException";
+const TO_JSON_OBJECT =
+  "public static tlc2.value.impl.StringValue tlc2.module.Json.toJsonObject(tlc2.value.IValue) throws java.io.IOException";
+const SERIALIZE =
+  "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.serialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException";
+const ND_SERIALIZE =
+  "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.ndSerialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException";
+const DESERIALIZE =
+  "public static tlc2.value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException";
+const ND_DESERIALIZE =
+  "public static tlc2.value.IValue tlc2.module.Json.ndDeserialize(tlc2.value.impl.StringValue) throws java.io.IOException";
+
+const isRecord = (value: Value) => {
+  if (!isFunctionValue(value)) return false;
+  const domain = toFiniteFunction(value).domain;
+  return domain.length > 0 && domain.every((key) => typeof key === "string");
 };
 
-const toObject = (value: Value): { [key: string]: JsonValue } => {
-  if (!isFunctionValue(value)) {
-    throw new TlaEvaluationError(`Cannot convert ${formatValue(value)} to a JSON object`);
+const getJavaClass = (value: Value) => {
+  if (typeof value === "number") return "IntValue";
+  if (typeof value === "boolean") return "BoolValue";
+  if (typeof value === "string") return "StringValue";
+  switch (value.kind) {
+    case "ModelValue":
+      return "ModelValue";
+    case "Set":
+      return "SetEnumValue";
+    case "Interval":
+      return "IntervalValue";
+    case "InfiniteSet":
+    case "SequenceSet":
+      return "UserValue";
+    case "Subset":
+      return "SubsetValue";
+    case "FunctionSet":
+      return "SetOfFcnsValue";
+    case "RecordSet":
+      return "SetOfRcdsValue";
+    case "ProductSet":
+      return "SetOfTuplesValue";
+    case "SetOperation":
+      return value.operator === "\\cup"
+        ? "SetCupValue"
+        : value.operator === "\\cap"
+          ? "SetCapValue"
+          : "SetDiffValue";
+    case "FilteredSet":
+      return "SetPredValue";
+    case "LazyFunction":
+      return "FcnLambdaValue";
+    case "Function":
+      return isRecord(value)
+        ? "RecordValue"
+        : getSequenceElements(value)
+          ? "TupleValue"
+          : "FcnRcdValue";
   }
+};
+
+const createUnsupportedError = (method: string, value: Value) =>
+  new TlaEvaluationError(
+    describeJavaOverride(
+      method,
+      `Cannot convert value: unsupported value type tlc2.value.impl.${getJavaClass(value)}`,
+    ),
+  );
+
+const createCastError = (method: string, value: Value) =>
+  new TlaEvaluationError(
+    describeJavaOverride(
+      method,
+      `Cannot cast tlc2.value.impl.${getJavaClass(value)} to tlc2.value.impl.StringValue`,
+    ),
+  );
+
+const toJsonString = (text: string) =>
+  JSON.stringify(text).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+
+const toSetJson = (value: Value, method: string) => {
+  if (typeof value === "object" && (value.kind === "InfiniteSet" || value.kind === "SequenceSet")) {
+    throw createUnsupportedError(method, value);
+  }
+  return `[${toFiniteSet(value)
+    .elements.map((element) => toJson(element, method))
+    .join(",")}]`;
+};
+
+const toFunctionJson = (value: Value, method: string) => {
   const fn = toFiniteFunction(value);
-  return Object.fromEntries(
-    fn.domain.map((key, index): [string, JsonValue] => [
-      typeof key === "string" ? key : formatValue(key),
-      toJson(fn.range[index]),
-    ]),
+  const elements = getSequenceElements(fn);
+  if (elements) return `[${elements.map((element) => toJson(element, method)).join(",")}]`;
+  return `{${fn.domain
+    .map(
+      (key, index) =>
+        `${toJsonString(typeof key === "string" ? key : formatValue(key))}:${toJson(fn.range[index], method)}`,
+    )
+    .join(",")}}`;
+};
+
+const toJson = (value: Value, method: string): string => {
+  if (typeof value === "string") return toJsonString(value);
+  if (typeof value !== "object") return String(value);
+  if (value.kind === "ModelValue") return toJsonString(value.name);
+  if (isSetValue(value)) return toSetJson(value, method);
+  return toFunctionJson(value, method);
+};
+
+const toJsonArray = (value: Value) => {
+  if (isSetValue(value)) return toSetJson(value, TO_JSON_ARRAY);
+  if (!isFunctionValue(value) || isRecord(value))
+    throw createUnsupportedError(TO_JSON_ARRAY, value);
+  return toFunctionJson(value, TO_JSON_ARRAY);
+};
+
+const toJsonObject = (value: Value) => {
+  if (!isFunctionValue(value)) throw createUnsupportedError(TO_JSON_OBJECT, value);
+  return toFunctionJson(value, TO_JSON_OBJECT);
+};
+
+// TLC reads a JSON number with Gson's intValue, which truncates the exact decimal toward zero and
+// keeps its low 32 bits, so 3000000000 becomes -1294967296 and 1.5 becomes 1.
+const toInteger = (source: string) => {
+  const [, sign, whole = "0", fraction = "", exponent = "0"] =
+    /^(-?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(source) ?? [];
+  const digits = BigInt(whole + fraction);
+  const shift = Number(exponent) - fraction.length;
+  const magnitude = shift >= 0 ? digits * 10n ** BigInt(shift) : digits / 10n ** BigInt(-shift);
+  return Number(BigInt.asIntN(32, sign === "-" ? -magnitude : magnitude));
+};
+
+const fromJson = (json: unknown, method: string): Value => {
+  if (typeof json === "boolean" || typeof json === "string" || typeof json === "number") {
+    return json;
+  }
+  if (Array.isArray(json)) return createTuple(json.map((element) => fromJson(element, method)));
+  if (json !== null && typeof json === "object") {
+    return createRecord(
+      Object.entries(json).map(([key, field]): [string, Value] => [key, fromJson(field, method)]),
+    );
+  }
+  throw new TlaEvaluationError(
+    describeJavaOverride(method, `Cannot convert value: unsupported JSON value ${String(json)}`),
   );
 };
 
-const toJson = (value: Value): JsonValue => {
-  if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
-    return value;
-  }
-  if (value.kind === "ModelValue") return value.name;
-  if (isSetValue(value)) return toArray(value);
-  if (getSequenceElements(value)) return toArray(value);
-  return toObject(value);
-};
-
-const serialize = (json: JsonValue) =>
-  JSON.stringify(json).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
-
-const fromJson = (json: unknown): Value => {
-  if (typeof json === "boolean" || typeof json === "string") return json;
-  if (typeof json === "number") return checkInteger(Math.trunc(json));
-  if (Array.isArray(json)) return createTuple(json.map(fromJson));
-  if (json !== null && typeof json === "object") {
-    return createRecord(
-      Object.entries(json).map(([key, field]): [string, Value] => [key, fromJson(field)]),
+const parseJson = (text: string, method: string): Value => {
+  if (text.trim() === "") return fromJson(null, method);
+  try {
+    return fromJson(
+      JSON.parse(text, (_, value: unknown, context?: ParseContext) =>
+        typeof value === "number" ? toInteger(context?.source ?? String(value)) : value,
+      ),
+      method,
     );
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new TlaEvaluationError(describeJavaOverride(method, error.message), error);
   }
-  throw new TlaEvaluationError(`Cannot convert value: unsupported JSON value ${String(json)}`);
 };
 
-const getPath = (value: Value, name: string) => {
-  if (typeof value !== "string") {
-    throw new TlaEvaluationError(`${name} expects a file name but received ${formatValue(value)}`);
-  }
+const getPath = (value: Value, method: string) => {
+  if (typeof value !== "string") throw createCastError(method, value);
   return value;
 };
 
-const parseJson = (text: string): unknown => {
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    throw new TlaEvaluationError(`Cannot parse JSON: ${text}`, error);
-  }
-};
-
-const readText = (files: FileSystem, path: string) => {
+const readText = (files: FileSystem, path: string, method: string) => {
   const text = files.readFile?.(path);
-  if (text === undefined) throw new TlaEvaluationError(`Cannot read the file ${path}`);
+  if (text === undefined) {
+    throw new TlaEvaluationError(
+      describeJavaOverride(method, `${path} (No such file or directory)`),
+    );
+  }
   return text;
 };
 
 export const createJsonOperators = (files: FileSystem): Builtin[] => [
-  defineStateOperator("ToJson", 1, (args) => serialize(toJson(getValue(args, 0, "ToJson")))),
-  defineStateOperator("ToJsonArray", 1, (args) =>
-    serialize(toArray(getValue(args, 0, "ToJsonArray"))),
-  ),
-  defineStateOperator("ToJsonObject", 1, (args) => {
-    const value = getValue(args, 0, "ToJsonObject");
-    return serialize(getSequenceElements(value) ? toArray(value) : toObject(value));
-  }),
+  defineStateOperator("ToJson", 1, (args) => toJson(getValue(args, 0, "ToJson"), TO_JSON)),
+  defineStateOperator("ToJsonArray", 1, (args) => toJsonArray(getValue(args, 0, "ToJsonArray"))),
+  defineStateOperator("ToJsonObject", 1, (args) => toJsonObject(getValue(args, 0, "ToJsonObject"))),
   defineStateOperator("JsonSerialize", 2, (args) => {
-    files.writeFile?.(
-      getPath(getValue(args, 0, "JsonSerialize"), "JsonSerialize"),
-      serialize(toJson(getValue(args, 1, "JsonSerialize"))),
-    );
+    const path = getPath(getValue(args, 0, "JsonSerialize"), SERIALIZE);
+    const value = getValue(args, 1, "JsonSerialize");
+    if (!getSequenceElements(value) && !isRecord(value)) {
+      throw new TlaEvaluationError(
+        `The second argument of JsonSerialize should be a sequence or record, but instead it is:\n${formatValue(value)}`,
+      );
+    }
+    files.writeFile?.(path, toJson(value, SERIALIZE));
     return true;
   }),
   defineStateOperator("ndJsonSerialize", 2, (args) => {
+    const path = getPath(getValue(args, 0, "ndJsonSerialize"), ND_SERIALIZE);
     const value = getValue(args, 1, "ndJsonSerialize");
     const elements = getSequenceElements(value);
     if (!elements) {
@@ -112,23 +225,23 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
       );
     }
     files.writeFile?.(
-      getPath(getValue(args, 0, "ndJsonSerialize"), "ndJsonSerialize"),
-      elements.map((element) => `${serialize(toJson(element))}\n`).join(""),
+      path,
+      elements.map((element) => `${toJson(element, ND_SERIALIZE)}\n`).join(""),
     );
     return true;
   }),
-  defineStateOperator("JsonDeserialize", 1, (args) =>
-    fromJson(
-      parseJson(readText(files, getPath(getValue(args, 0, "JsonDeserialize"), "JsonDeserialize"))),
-    ),
-  ),
-  defineStateOperator("ndJsonDeserialize", 1, (args) =>
-    createTuple(
-      readText(files, getPath(getValue(args, 0, "ndJsonDeserialize"), "ndJsonDeserialize"))
-        .split("\n")
+  defineStateOperator("JsonDeserialize", 1, (args) => {
+    const path = getPath(getValue(args, 0, "JsonDeserialize"), DESERIALIZE);
+    return parseJson(readText(files, path, DESERIALIZE), DESERIALIZE);
+  }),
+  defineStateOperator("ndJsonDeserialize", 1, (args) => {
+    const path = getPath(getValue(args, 0, "ndJsonDeserialize"), ND_DESERIALIZE);
+    return createTuple(
+      readText(files, path, ND_DESERIALIZE)
+        .split(/\r\n|\r|\n/)
         .map((line) => line.trim())
         .filter((line) => line !== "")
-        .map((line) => fromJson(parseJson(line))),
-    ),
-  ),
+        .map((line) => parseJson(line, ND_DESERIALIZE)),
+    );
+  }),
 ];
