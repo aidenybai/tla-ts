@@ -23,6 +23,7 @@ import {
   createTuple,
   formatValue,
   getSequenceElements,
+  getValueHash,
   toFiniteSet,
   valuesEqual,
   type Value,
@@ -142,6 +143,7 @@ export const createTlcExtOperators = (
     throw new TlaEvaluationError("PickSuccessor needs interactive input to extend the behavior");
   }),
   defineOperator("TLCCache", 2, (args) => getValue(args, 0, "TLCCache")),
+  defineOperator("TLCFP", 1, (args) => getValueHash(getValue(args, 0, "TLCFP")) | 0),
   defineStateOperator("TLCEvalDefinition", 1, (args, context) => {
     const name = getValue(args, 0, "TLCEvalDefinition");
     const definition =
