@@ -16,6 +16,8 @@ interface Unit {
   self: Definition | undefined;
 }
 
+const LOCAL_RESOLUTION = { kind: "Local" } as const;
+
 const CORE_SYMBOLS: [string, number][] = [
   ["=>", 2],
   ["~>", 2],
@@ -43,12 +45,14 @@ const getPatternNames = (pattern: BoundPattern) =>
   pattern.kind === "Name" ? [pattern.name] : pattern.names;
 
 const getSymbolArity = (
+  expression: Expression & { kind: "Identifier" | "Apply" | "OperatorReference" },
   name: string,
-  location: SourceLocation,
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
+  const location = expression.location;
   const local = lookupLocal(scope, name);
+  if (local && expression.kind !== "OperatorReference") expression.resolution = LOCAL_RESOLUTION;
   if (local) return local.arity;
   const definition = unit.definitions.get(name);
   const isVisible =
@@ -103,7 +107,7 @@ const resolveApply = (
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  const arity = getSymbolArity(expression.operator, expression.location, scope, unit);
+  const arity = getSymbolArity(expression, expression.operator, scope, unit);
   if (arity !== expression.args.length) {
     throw new TlaSyntaxError(
       `The operator ${expression.operator} requires ${arity} arguments at line ${expression.location.line}, column ${expression.location.column}`,
@@ -111,7 +115,7 @@ const resolveApply = (
   }
   expression.args.forEach((arg) =>
     arg.kind === "Identifier"
-      ? getSymbolArity(arg.name, arg.location, scope, unit)
+      ? getSymbolArity(arg, arg.name, scope, unit)
       : resolveExpression(arg, scope, unit),
   );
 };
@@ -129,7 +133,7 @@ const resolveExpression = (
     case "ExceptAt":
       return;
     case "Identifier": {
-      const arity = getSymbolArity(expression.name, expression.location, scope, unit);
+      const arity = getSymbolArity(expression, expression.name, scope, unit);
       if (arity > 0) {
         throw new TlaSyntaxError(
           `The operator ${expression.name} requires ${arity} arguments at line ${expression.location.line}, column ${expression.location.column}`,
@@ -138,7 +142,7 @@ const resolveExpression = (
       return;
     }
     case "OperatorReference":
-      getSymbolArity(expression.operator, expression.location, scope, unit);
+      getSymbolArity(expression, expression.operator, scope, unit);
       return;
     case "Apply":
       resolveApply(expression, scope, unit);
