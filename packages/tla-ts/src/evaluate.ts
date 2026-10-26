@@ -15,7 +15,7 @@ import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
-import { mapChildren, substitutedExpressions } from "./instances";
+import { contextualApplications, mapChildren, substitutedExpressions } from "./instances";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
@@ -1374,6 +1374,15 @@ const compileApply = (
     const operand = getEvaluator(args[0], environment);
     const domain = getDomainOperator(expression);
     return (context) => domain(operand(context));
+  }
+  // TLC sorts the value of a constant TLCEval argument only where no context binds a name.
+  if (global?.kind === "Builtin" && global.name === "TLCEval" && args.length === 1) {
+    const operand = getEvaluator(args[0], environment);
+    if (contextualApplications.has(expression) || isStateDependent(args[0], environment)) {
+      return operand;
+    }
+    return (context) =>
+      context.scope === undefined ? global.evaluate([operand(context)]) : operand(context);
   }
   if (global?.kind === "Builtin" && global.name === "\\subseteq" && args.length === 2) {
     const left = getEvaluator(args[0], environment);
