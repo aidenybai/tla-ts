@@ -253,6 +253,24 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
         resolution: replacement.kind === "Identifier" ? replacement.resolution : undefined,
       };
     }
+    if (replacement?.kind === "Lambda") {
+      return {
+        kind: "Let",
+        definitions: [
+          {
+            kind: "Operator",
+            name: replacement.kind,
+            params: replacement.params.map((name) => ({ name, arity: 0 })),
+            body: replacement.body,
+            isLocal: true,
+            isRecursive: false,
+            location: replacement.location,
+          },
+        ],
+        body: { ...expression, operator: replacement.kind, args, resolution: { kind: "Local" } },
+        location: expression.location,
+      };
+    }
     if (replacement) {
       throw new TlaUnsupportedError(
         `Substituting the operator ${expression.operator} with an expression is not supported yet`,
