@@ -961,10 +961,11 @@ export const createWrittenFunction = (pairs: [Value, Value][]) => {
 
 const intervalDomains: Value[][] = [];
 const intervalValues: IntervalValue[] = [];
+const intervalArrays = new WeakMap<Value[], IntervalValue>();
 
-// TLC keeps the domain of a tuple, or of a function built over 1..n, as an interval. Every
-// such function shares one domain array per length, so the array's identity records it.
-// Callers must not mutate the returned array.
+// TLC keeps the domain of a tuple, or of a function built over an interval, as an interval. Every
+// function over 1..n shares one domain array per length, and the elements of any other interval
+// map to it, so the array's identity records it. Callers must not mutate the returned array.
 export const getIntervalDomain = (length: number): Value[] => {
   const cached = intervalDomains[length];
   if (cached) return cached;
@@ -974,7 +975,7 @@ export const getIntervalDomain = (length: number): Value[] => {
 };
 
 const isIntervalDomain = (domain: Value[]) =>
-  domain.length > 0 && domain === intervalDomains[domain.length];
+  domain.length > 0 && (domain === intervalDomains[domain.length] || intervalArrays.has(domain));
 
 // TLC keeps an interval domain only for a function built over an interval itself, so a set
 // such as (1..2) \cap S, whose elements are the shared array, gets a copy.
@@ -1143,6 +1144,7 @@ const enumerateSet = (value: Value): Value[] => {
       if (value.low === 1 && value.high >= 1) return getIntervalDomain(value.high);
       const elements: number[] = [];
       for (let element = value.low; element <= value.high; element++) elements.push(element);
+      intervalArrays.set(elements, value);
       return elements;
     }
     case "Subset": {
@@ -1674,7 +1676,8 @@ export const applyFunction = (
 export const getDomain = (fn: Value): Value => {
   if (typeof fn === "object" && fn.kind === "LazyFunction") return fn.domain;
   const domain = toFiniteFunction(fn).domain;
-  return isIntervalDomain(domain) ? getIntervalValue(domain.length) : createSortedSet(domain);
+  if (!isIntervalDomain(domain)) return createSortedSet(domain);
+  return intervalArrays.get(domain) ?? getIntervalValue(domain.length);
 };
 
 export const updateFunction = (

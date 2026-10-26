@@ -30,6 +30,10 @@ describe("printing matches TLC", () => {
     ["<<SUBSET (1..7)>>", "<<SUBSET (1..7)>>"],
     ["{} \\cup (0..0)", "0..0"],
     ["(0..1) \\cup {}", "{0, 1}"],
+    ["DOMAIN [i \\in 0..1 |-> 0]", "0..1"],
+    ["DOMAIN [[i \\in 0..1 |-> 0] EXCEPT ![0] = 1]", "0..1"],
+    ["{DOMAIN f : f \\in [0..1 -> {0, 1}]}", "{0..1}"],
+    ["DOMAIN RandomElement([1..2 -> {0}])", "{1, 2}"],
   ])("prints %s as %s", async (expression, text) => {
     expect((await checkPrinting(`ASSUME PrintT(${expression})`)).printed).toEqual([text]);
   });
