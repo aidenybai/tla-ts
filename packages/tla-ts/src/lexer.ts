@@ -117,6 +117,11 @@ const BACKSLASH_OPERATORS = new Map([
 const SYMBOL_ALIASES = new Map([
   ["/=", "#"],
   ["=<", "<="],
+  ["(+)", "\\oplus"],
+  ["(-)", "\\ominus"],
+  ["(.)", "\\odot"],
+  ["(/)", "\\oslash"],
+  ["(\\X)", "\\otimes"],
 ]);
 
 const SYMBOL_OPERATORS = [
