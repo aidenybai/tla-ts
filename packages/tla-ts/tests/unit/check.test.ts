@@ -134,6 +134,15 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("bundles the Reals module, whose Real is not a set TLC can check", () => {
+    const result = check({
+      source:
+        "---- MODULE M ----\nEXTENDS Reals, Toolbox\nVARIABLE x\nASSUME 1 \\in Real\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("assumption-violation");
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");

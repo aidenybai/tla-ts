@@ -1,4 +1,5 @@
 import type { Assumption, Declaration, Definition, Instance, Module } from "./ast";
+import { BUNDLED_MODULES } from "./bundled-modules";
 import type { ConfigValue, ModelConfig } from "./config";
 import { TlaConfigError, TlaSyntaxError } from "./errors";
 import { isConstantLevel, type Builtin, type Environment } from "./evaluate";
@@ -87,7 +88,7 @@ export const createEnvironment = (
   };
 
   const loadModule = (name: string) => {
-    const source = options.loadModule?.(name);
+    const source = options.loadModule?.(name) ?? BUNDLED_MODULES.get(name);
     if (source === undefined)
       throw new TlaSyntaxError(`Cannot find source file for module ${name}`);
     return parseModule(source);
