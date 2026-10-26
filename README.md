@@ -77,7 +77,7 @@ The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `
 
 `check` supports:
 
-- **Standard modules**: Naturals, Integers, Sequences, FiniteSets, TLC, Bags, Reals, RealTime, Toolbox, and the community modules TLCExt, Json, and Randomization
+- **Standard modules**: Naturals, Integers, Sequences, FiniteSets, TLC, Bags, Reals, RealTime, Toolbox, and the community modules TLCExt, Json, and Randomization. Reals matches TLC, which has no real arithmetic. `Real` is the string `"Reals"`, and `/` and `Infinity` fail to evaluate. A decimal literal such as `1.5` anywhere in the spec throws `TlaEvaluationError` before checking starts.
 - **Modules**: `EXTENDS`, nested modules, and `INSTANCE` with `WITH` substitutions, `LAMBDA` substitutions for operator parameters, named instances, parameterized instances, and instances inside `LET`
 - **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, `VIEW`, `POSTCONDITION`, `CHECK_DEADLOCK`, and `_POSSIBLE` properties
 - **Properties**: invariants, `[][A]_v`, and every temporal formula TLC accepts, checked through TLC's tableau construction under the fairness and temporal conjuncts of the specification

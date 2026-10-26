@@ -5,6 +5,7 @@ import {
   check,
   formatValue,
   parseConfig,
+  parseModule,
   TlaConfigError,
   TlaEvaluationError,
   TlaSyntaxError,
@@ -395,6 +396,73 @@ describe("evaluation errors match TLC", () => {
       expect(result.violation?.message).toMatch(/^Attempted to check if the value/);
     },
   );
+});
+
+describe("the Reals module matches TLC", () => {
+  const checkSource = (source: string) =>
+    check({
+      source: `---- MODULE M ----\n${source}\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+
+  it("extends Integers and defines Real as a string", () => {
+    const result = checkSource(
+      'EXTENDS Reals\nVARIABLE x\nASSUME (-7) \\div 2 = -4 /\\ (-7) % 2 = 1 /\\ -1 \\in Int\nASSUME Real = "Reals"\nInit == x = Real',
+    );
+    expect(result.status).toBe("success");
+    expect(result.distinctStates).toBe(1);
+  });
+
+  it("fails to check membership in Real", () => {
+    const result = checkSource("EXTENDS Reals\nVARIABLE x\nASSUME 1 \\in Real\nInit == x = 0");
+    expect(result.status).toBe("assumption-violation");
+  });
+
+  it("fails to choose a quotient before evaluating its operands", () => {
+    const divide = () => checkSource("EXTENDS Reals\nVARIABLE x\nInit == x = 1 / (1 \\div 0)");
+    expect(divide).toThrow(TlaEvaluationError);
+    expect(divide).toThrow(/non-enumerable quantifier bound "Reals" at line 16/);
+  });
+
+  it("fails to evaluate Infinity as an unbounded CHOOSE", () => {
+    expect(() => checkSource("EXTENDS Reals\nVARIABLE x\nInit == x = Infinity")).toThrow(
+      /unbounded CHOOSE at line 17, column 13/,
+    );
+  });
+
+  it("parses decimal literals", () => {
+    const module = parseModule("---- MODULE M ----\nHalf == 1.5\nRange == 1..2\n====");
+    expect(module.definitions.map((definition) => definition.body.kind)).toEqual([
+      "Decimal",
+      "Apply",
+    ]);
+  });
+
+  it.each([
+    ["an evaluated decimal", "EXTENDS Reals\nVARIABLE x\nInit == x = 1.5"],
+    ["a decimal that is never evaluated", "VARIABLE x\nHalf == 1.5\nInit == x = 0"],
+    ["a decimal in an unused LET", "VARIABLE x\nF == LET h == 1.5 IN 0\nInit == x = 0"],
+    ["a decimal in an unnamed theorem", "VARIABLE x\nTHEOREM 1.5 = 1.5\nInit == x = 0"],
+    [
+      "a decimal in an instance substitution",
+      "---- MODULE Inner ----\nCONSTANT c\n====\nVARIABLE x\nI == INSTANCE Inner WITH c <- 1.5\nInit == x = 0",
+    ],
+    [
+      "a decimal in an unused nested module",
+      "VARIABLE x\n---- MODULE Inner ----\nHalf == 1.5\n====\nInit == x = 0",
+    ],
+  ])("rejects %s before checking", (_, source) => {
+    const run = () => checkSource(source);
+    expect(run).toThrow(TlaEvaluationError);
+    expect(run).toThrow(/^TLC can't handle real numbers: 1\.5/);
+  });
+
+  it("accepts decimals in proofs and ASSUME PROVE theorems", () => {
+    const result = checkSource(
+      "VARIABLE x\nTHEOREM TRUE\n<1>1. 1.5 = 1.5\n  OBVIOUS\n<1>2. QED\n  BY <1>1\nTHEOREM ASSUME NEW c PROVE c = 1.5\nInit == x = 0",
+    );
+    expect(result.status).toBe("success");
+  });
 });
 
 describe("name resolution matches SANY", () => {

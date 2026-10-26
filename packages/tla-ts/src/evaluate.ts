@@ -1,6 +1,7 @@
 import type {
   Bound,
   BoundPattern,
+  DecimalExpression,
   Definition,
   Expression,
   FunctionDefinition,
@@ -121,6 +122,11 @@ const EXCEPT_AT = "@";
 const describeLocation = (expression: Expression) =>
   `line ${expression.location.line}, column ${expression.location.column}`;
 
+export const createRealNumberError = (expression: DecimalExpression) =>
+  new TlaEvaluationError(
+    `TLC can't handle real numbers: ${expression.text} at ${describeLocation(expression)}`,
+  );
+
 export const lookupScope = (scope: Scope | undefined, name: string): Binding | undefined => {
   for (let current = scope; current; current = current.parent) {
     if (current.name === name) return current.binding;
@@ -171,6 +177,7 @@ export const expectBoolean = (value: Value, description: string) => {
 export const getChildren = (expression: Expression): Expression[] => {
   switch (expression.kind) {
     case "Number":
+    case "Decimal":
     case "String":
     case "Identifier":
     case "OperatorReference":
@@ -1294,6 +1301,8 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const value = expression.value;
       return isTlcInteger(value) ? () => value : () => checkInteger(value);
     }
+    case "Decimal":
+      return throwing(() => createRealNumberError(expression));
     case "String": {
       const value = expression.value;
       return () => value;
