@@ -11,6 +11,7 @@ import {
   forEachBinding,
   getBoundsDomain,
   getDefinition,
+  getReevaluatedDefinitions,
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,
@@ -647,10 +648,11 @@ const compileAction = (
     }
     case "Let": {
       const body = child(expression.body);
+      const reevaluated = getReevaluatedDefinitions(expression.definitions, environment);
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(
           run,
-          bindDefinitions(expression.definitions, getContext(run, scope, partial)),
+          bindDefinitions(expression.definitions, getContext(run, scope, partial), reevaluated),
           partial,
           action,
           isFixed,
