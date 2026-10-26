@@ -1,6 +1,6 @@
 import type { Assumption, Declaration, Definition, Instance, Module } from "./ast";
 import type { ConfigValue, ModelConfig } from "./config";
-import { TlaConfigError, TlaUnsupportedError } from "./errors";
+import { TlaConfigError, TlaSyntaxError } from "./errors";
 import { isConstantLevel, type Builtin, type Environment } from "./evaluate";
 import { createInstantiation, getEnabledVariableName } from "./instances";
 import { parseModule } from "./parser";
@@ -86,7 +86,8 @@ export const createEnvironment = (
 
   const loadModule = (name: string) => {
     const source = options.loadModule?.(name);
-    if (source === undefined) throw new TlaUnsupportedError(`Module ${name} is not available`);
+    if (source === undefined)
+      throw new TlaSyntaxError(`Cannot find source file for module ${name}`);
     return parseModule(source);
   };
 

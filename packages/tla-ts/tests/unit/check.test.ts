@@ -65,6 +65,16 @@ describe("check matches TLC", () => {
     );
   });
 
+  it("reports a module that cannot be found as a syntax error", () => {
+    expect(() =>
+      check({
+        source: "---- MODULE M ----\nEXTENDS Missing\n====",
+        config: "",
+        loadModule: () => undefined,
+      }),
+    ).toThrow(TlaSyntaxError);
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");
