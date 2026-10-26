@@ -315,8 +315,12 @@ export const parseModule = (source: string): Module => {
   const parseSubscript = (): Expression => {
     const token = peek();
     if (token.kind === "Identifier") {
-      cursor.index++;
-      return { kind: "Identifier", name: token.text, location: getLocation(token) };
+      const names = [expectIdentifier()];
+      while (isAt("!") && peek(1).kind === "Identifier") {
+        advance();
+        names.push(expectIdentifier());
+      }
+      return { kind: "Identifier", name: names.join("!"), location: getLocation(token) };
     }
     if (isAt("<<") || isAt("(")) return parsePrimary();
     throw createError(`Expected a subscript but found ${describe(token)}`);

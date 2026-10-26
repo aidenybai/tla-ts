@@ -482,6 +482,19 @@ describe("name resolution matches SANY", () => {
     expect(() => checkSource(source)).toThrow(TlaSyntaxError);
   });
 
+  it("reads instance-qualified subscripts", () => {
+    const result = check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE x\nvars == <<x>>\nNext == x' = (x + 1) % 3\n====\nI == INSTANCE Inner\nSpec == x = 0 /\\ [][I!Next]_I!vars /\\ WF_I!vars(I!Next)\nProp == <>(x = 2)\nTHEOREM Spec => WF_I!vars(I!Next)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      4,
+      3,
+    ]);
+  });
+
   it("defines prefix, postfix, and <: operators", () => {
     const result = checkSource(
       "EXTENDS Naturals\nn ^+ == n + 1\n-. n == 10 - n\na <: b == a - b\nASSUME (2^+) = 3 /\\ -4 = 6 /\\ (5 <: 2) = 3",
