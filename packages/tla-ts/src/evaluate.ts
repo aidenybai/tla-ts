@@ -8,8 +8,10 @@ import {
   type OperatorParam,
   type RecordField,
 } from "./ast";
-import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import { TlaEvaluationError } from "./errors";
 import { generateEvaluator } from "./codegen";
+import { getReadVariables } from "./dependencies";
+import { mapChildren } from "./instances";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
@@ -21,8 +23,9 @@ import {
   createTuple,
   formatValue,
   getSequenceElements,
-  getValueKey,
+  getValueHash,
   isEnumerable,
+  isSameValue,
   isSetValue,
   toFiniteSet,
   updateFunction,
@@ -237,6 +240,10 @@ export const getChildren = (expression: Expression): Expression[] => {
     case "WeakFairness":
     case "StrongFairness":
       return [expression.subscript, expression.action];
+    case "Label":
+      return [expression.body];
+    case "Subexpression":
+      return expression.selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
   }
 };
 
@@ -327,16 +334,22 @@ const createLazyFunction = (
   domain: Value,
   compute: (argument: Value, self: LazyFunctionValue) => Value,
 ): LazyFunctionValue => {
-  const memo = new Map<string, Value>();
+  const memo = new Map<number, Value[]>();
   const self: LazyFunctionValue = {
     kind: "LazyFunction",
     domain,
     apply: (argument) => {
-      const key = getValueKey(argument);
-      const cached = memo.get(key);
-      if (cached !== undefined) return cached;
+      const hash = getValueHash(argument);
+      const bucket = memo.get(hash);
+      if (bucket !== undefined) {
+        for (let index = 0; index < bucket.length; index += 2) {
+          if (isSameValue(bucket[index], argument)) return bucket[index + 1];
+        }
+      }
       const value = compute(argument, self);
-      memo.set(key, value);
+      const current = memo.get(hash);
+      if (current === undefined) memo.set(hash, [argument, value]);
+      else current.push(argument, value);
       return value;
     },
   };
@@ -677,7 +690,7 @@ const closedConstants = new WeakMap<Expression, boolean>();
 export const isClosedConstant = (expression: Expression, environment: Environment): boolean => {
   const cached = closedConstants.get(expression);
   if (cached !== undefined) return cached;
-  const isClosed = computeIsClosedConstant(expression, environment);
+  const isClosed = computeIsClosedConstant(expression, environment, NO_BOUND_NAMES);
   closedConstants.set(expression, isClosed);
   return isClosed;
 };
@@ -699,10 +712,36 @@ const CLOSED_KINDS = new Set([
   "FunctionApplication",
   "FieldAccess",
   "Product",
+  "SetFilter",
+  "SetMap",
+  "Forall",
+  "Exists",
+  "Choose",
+  "FunctionConstruction",
+  "Let",
 ]);
 
-const computeIsClosedConstant = (expression: Expression, environment: Environment): boolean => {
-  if (!CLOSED_KINDS.has(expression.kind) || isLocallyResolved(expression)) return false;
+const NO_BOUND_NAMES: ReadonlySet<string> = new Set();
+
+const isClosedIn = (
+  expression: Expression,
+  environment: Environment,
+  bound: ReadonlySet<string>,
+): boolean =>
+  bound.size === 0
+    ? isClosedConstant(expression, environment)
+    : computeIsClosedConstant(expression, environment, bound);
+
+const computeIsClosedConstant = (
+  expression: Expression,
+  environment: Environment,
+  bound: ReadonlySet<string>,
+): boolean => {
+  if (!CLOSED_KINDS.has(expression.kind)) return false;
+  if (expression.kind === "Identifier" && isLocallyResolved(expression)) {
+    return bound.has(expression.name);
+  }
+  if (isLocallyResolved(expression)) return false;
   if (expression.kind === "Identifier") {
     const global = findGlobalName(expression.name, environment);
     if (global?.kind === "Value") return true;
@@ -733,10 +772,19 @@ const computeIsClosedConstant = (expression: Expression, environment: Environmen
       (arg) =>
         arg.kind !== "Lambda" &&
         arg.kind !== "OperatorReference" &&
-        isClosedConstant(arg, environment),
+        isClosedIn(arg, environment, bound),
     );
   }
-  return getChildren(expression).every((child) => isClosedConstant(child, environment));
+  const isClosed = { value: true };
+  mapChildren(expression, (child, names) => {
+    isClosed.value &&= isClosedIn(
+      child,
+      environment,
+      names.length === 0 ? bound : new Set([...bound, ...names]),
+    );
+    return child;
+  });
+  return isClosed.value;
 };
 
 export const isWorthCaching = (expression: Expression) =>
@@ -816,7 +864,32 @@ const compileIdentifier = (
     }
     return (context) => evaluateDefinitionValue(definition, context);
   }
+  if (global?.kind === "Definition") {
+    const definition = global.definition;
+    const evaluator: Evaluator = (context) => evaluateDefinitionValue(definition, context);
+    return isConstantLevel(definition, environment) || !isStatePure(definition, environment)
+      ? evaluator
+      : cacheStateValue(evaluator);
+  }
   return (context) => evaluateLocalIdentifier(name, expression, context);
+};
+
+const isStatePure = (definition: Definition, environment: Environment) =>
+  getReadVariables(definition.body, environment) !== undefined &&
+  (definition.kind === "Operator" ||
+    definition.bounds.every((bound) => getReadVariables(bound.set, environment) !== undefined));
+
+const cacheStateValue = (evaluator: Evaluator): Evaluator => {
+  const cache = { state: undefined as Context["state"], value: undefined as Value | undefined };
+  return (context) => {
+    if (context.state !== undefined && cache.state === context.state && cache.value !== undefined) {
+      return cache.value;
+    }
+    const value = evaluator(context);
+    cache.state = context.state;
+    cache.value = value;
+    return value;
+  };
 };
 
 const isOperatorName = (name: string, environment: Environment) => {
@@ -920,7 +993,7 @@ const compileApply = (
   }
   if (expression.operator === "~>") {
     return () => {
-      throw new TlaUnsupportedError("Temporal formulas such as ~> cannot be evaluated in a state");
+      throw new TlaEvaluationError("TLC cannot evaluate a temporal formula such as ~> in a state");
     };
   }
   const global = isLocallyResolved(expression)
@@ -1362,14 +1435,23 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const action = expression.expression;
       return (context) => isEnabled(action, context);
     }
+    case "Label":
+      return child(expression.body);
+    case "Subexpression":
+      return throwing(
+        () =>
+          new TlaEvaluationError(
+            `The subexpression reference at ${describeLocation(expression)} does not name a subexpression`,
+          ),
+      );
     case "Always":
     case "Eventually":
     case "WeakFairness":
     case "StrongFairness":
       return throwing(
         () =>
-          new TlaUnsupportedError(
-            `Temporal formulas cannot be evaluated in a state (${describeLocation(expression)})`,
+          new TlaEvaluationError(
+            `TLC cannot evaluate a temporal formula in a state at ${describeLocation(expression)}`,
           ),
       );
   }

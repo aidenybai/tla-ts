@@ -347,7 +347,10 @@ export const tokenize = (source: string): Token[] => {
       const length = /^=+/.exec(source.slice(cursor.index))?.[0].length ?? 0;
       pushToken("ModuleEnd", "====", length);
       cursor.moduleDepth--;
-      if (cursor.moduleDepth <= 0) break;
+      if (cursor.moduleDepth > 0) continue;
+      const nextHeader = MODULE_HEADER.exec(source.slice(cursor.index));
+      if (!nextHeader) break;
+      advanceOver(nextHeader.index);
       continue;
     }
     if (character === '"') {

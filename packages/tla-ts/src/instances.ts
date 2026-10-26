@@ -5,9 +5,12 @@ import type {
   Definition,
   Expression,
   Instance,
+  Module,
   OperatorParam,
 } from "./ast";
 import { TlaUnsupportedError } from "./errors";
+import { getChildren } from "./evaluate";
+import { isBefore } from "./resolve";
 
 export interface FlatModule {
   name: string;
@@ -18,11 +21,14 @@ export interface FlatModule {
 
 interface Rewrite {
   prefix: string;
+  isLocal: boolean;
   params: OperatorParam[];
   definitionNames: Set<string>;
   substitutions: Map<string, Expression>;
   substitutedNames: Map<string, Set<string>>;
 }
+
+const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
 const getPatternNames = (pattern: BoundPattern) =>
   pattern.kind === "Name" ? [pattern.name] : pattern.names;
@@ -30,13 +36,15 @@ const getPatternNames = (pattern: BoundPattern) =>
 const getBoundNames = (bounds: Bound[]) =>
   bounds.flatMap((bound) => getPatternNames(bound.pattern));
 
-const getFreeNames = (expression: Expression, names = new Set<string>()): Set<string> => {
-  if (expression.kind === "Identifier") names.add(expression.name);
-  if (expression.kind === "Apply" || expression.kind === "OperatorReference") {
+const getLocalNames = (expression: Expression, names = new Set<string>()): Set<string> => {
+  if (expression.kind === "Identifier" && expression.resolution?.kind === "Local") {
+    names.add(expression.name);
+  }
+  if (expression.kind === "Apply" && expression.resolution?.kind === "Local") {
     names.add(expression.operator);
   }
   mapChildren(expression, (child) => {
-    getFreeNames(child, names);
+    getLocalNames(child, names);
     return child;
   });
   return names;
@@ -45,7 +53,7 @@ const getFreeNames = (expression: Expression, names = new Set<string>()): Set<st
 const mapBounds = (bounds: Bound[], map: (child: Expression) => Expression): Bound[] =>
   bounds.map((bound) => ({ pattern: bound.pattern, set: map(bound.set) }));
 
-const mapDefinition = (
+export const mapDefinition = (
   definition: Definition,
   map: (child: Expression, bound: string[]) => Expression,
 ): Definition =>
@@ -188,6 +196,15 @@ export const mapChildren = (
         subscript: plain(expression.subscript),
         action: plain(expression.action),
       };
+    case "Label":
+      return { ...expression, body: plain(expression.body) };
+    case "Subexpression":
+      return {
+        ...expression,
+        selectors: expression.selectors.map((selector) =>
+          "args" in selector ? { ...selector, args: selector.args.map(plain) } : selector,
+        ),
+      };
   }
 };
 
@@ -228,13 +245,15 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
     }
     if (rewrite.definitionNames.has(expression.name) && expression.resolution?.kind !== "Local") {
       const name = `${rewrite.prefix}${expression.name}`;
+      const resolution = rewrite.isLocal ? LOCAL_RESOLUTION : undefined;
       return rewrite.params.length === 0
-        ? { ...expression, name }
+        ? { ...expression, name, resolution }
         : {
             kind: "Apply",
             operator: name,
             args: getParamArguments(rewrite, expression.location),
             location: expression.location,
+            resolution,
           };
     }
     return expression;
@@ -251,6 +270,24 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
         resolution: replacement.kind === "Identifier" ? replacement.resolution : undefined,
       };
     }
+    if (replacement?.kind === "Lambda") {
+      return {
+        kind: "Let",
+        definitions: [
+          {
+            kind: "Operator",
+            name: replacement.kind,
+            params: replacement.params.map((name) => ({ name, arity: 0 })),
+            body: replacement.body,
+            isLocal: true,
+            isRecursive: false,
+            location: replacement.location,
+          },
+        ],
+        body: { ...expression, operator: replacement.kind, args, resolution: LOCAL_RESOLUTION },
+        location: expression.location,
+      };
+    }
     if (replacement) {
       throw new TlaUnsupportedError(
         `Substituting the operator ${expression.operator} with an expression is not supported yet`,
@@ -264,6 +301,7 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
         ...expression,
         operator: `${rewrite.prefix}${expression.operator}`,
         args: [...getParamArguments(rewrite, expression.location), ...args],
+        resolution: rewrite.isLocal ? LOCAL_RESOLUTION : undefined,
       };
     }
     return { ...expression, args };
@@ -279,8 +317,12 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
   );
 };
 
-export const instantiateModule = (instance: Instance, flat: FlatModule): Definition[] => {
-  const params = new Set(instance.params.map((param) => param.name));
+export const instantiateModule = (
+  instance: Instance,
+  flat: FlatModule,
+  locals?: Set<string>,
+): Definition[] => {
+  const params = new Set([...(locals ?? []), ...instance.params.map((param) => param.name)]);
   const explicit = new Map(
     instance.substitutions.map((item) => [item.name, markParams(item.expression, params)]),
   );
@@ -288,16 +330,18 @@ export const instantiateModule = (instance: Instance, flat: FlatModule): Definit
   const substitutions = new Map(
     declared.map((name): [string, Expression] => [
       name,
-      explicit.get(name) ?? { kind: "Identifier", name, location: instance.location },
+      explicit.get(name) ??
+        markParams({ kind: "Identifier", name, location: instance.location }, params),
     ]),
   );
   const rewrite: Rewrite = {
     prefix: instance.name === undefined ? "" : `${instance.name}!`,
+    isLocal: locals !== undefined,
     params: instance.params,
     definitionNames: new Set(flat.definitions.map((definition) => definition.name)),
     substitutions,
     substitutedNames: new Map(
-      [...substitutions].map(([name, expression]) => [name, getFreeNames(expression)]),
+      [...substitutions].map(([name, expression]) => [name, getLocalNames(expression)]),
     ),
   };
   return flat.definitions.map((definition): Definition => {
@@ -338,4 +382,58 @@ export const instantiateModule = (instance: Instance, flat: FlatModule): Definit
           location: instance.location,
         };
   });
+};
+
+const expandLetInstances = (
+  expression: Expression,
+  locals: Set<string>,
+  getFlatModule: (name: string) => FlatModule,
+): Expression => {
+  const mapped = mapChildren(expression, (child, bound) =>
+    expandLetInstances(
+      child,
+      bound.length === 0 ? locals : new Set([...locals, ...bound]),
+      getFlatModule,
+    ),
+  );
+  if (mapped.kind !== "Let" || !mapped.instances) return mapped;
+  const definitions = [...mapped.definitions];
+  mapped.instances.forEach((instance) => {
+    const position = definitions.findIndex((definition) =>
+      isBefore(instance.location, definition.location),
+    );
+    const visible = new Set([
+      ...locals,
+      ...definitions.slice(0, position === -1 ? undefined : position).map((item) => item.name),
+    ]);
+    const instantiated = instantiateModule(instance, getFlatModule(instance.module), visible);
+    definitions.splice(position === -1 ? definitions.length : position, 0, ...instantiated);
+  });
+  return { kind: "Let", definitions, body: mapped.body, location: mapped.location };
+};
+
+const hasLetInstance = (expression: Expression): boolean =>
+  (expression.kind === "Let" && expression.instances !== undefined) ||
+  getChildren(expression).some(hasLetInstance);
+
+export const withLetInstances = (
+  module: Module,
+  getFlatModule: (name: string) => FlatModule,
+): Module => {
+  const isExpanded =
+    module.definitions.some((definition) => hasLetInstance(definition.body)) ||
+    module.assumptions.some((assumption) => hasLetInstance(assumption.expression));
+  if (!isExpanded) return module;
+  return {
+    ...module,
+    definitions: module.definitions.map((definition) =>
+      mapDefinition(definition, (child, bound) =>
+        expandLetInstances(child, new Set(bound), getFlatModule),
+      ),
+    ),
+    assumptions: module.assumptions.map((assumption) => ({
+      ...assumption,
+      expression: expandLetInstances(assumption.expression, new Set(), getFlatModule),
+    })),
+  };
 };

@@ -923,6 +923,8 @@ const createBuilder = () => {
     });
     const module: Module = {
       name: "Spec",
+      outer: undefined,
+      modules: [],
       extends: standardExtends,
       constants: constants.map((constant) => ({ name: constant.name, arity: 0 })),
       variables,

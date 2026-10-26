@@ -4,6 +4,7 @@ import {
   checkInteger,
   createFunction,
   createSet,
+  createSortedSet,
   createTuple,
   formatValue,
   getCardinality,
@@ -15,9 +16,12 @@ import {
   isSetValue,
   toFiniteFunction,
   toFiniteSet,
+  differenceSorted,
+  intersectSorted,
   unionSorted,
   valuesEqual,
   type SetOperationValue,
+  type SetValue,
   type Value,
 } from "./values";
 
@@ -152,6 +156,7 @@ const isSubsetOf = (left: Value[], right: Value) =>
   left.every((element) => isElementOf(element, right));
 
 const BOOLEAN_SET = createSet([false, true]);
+const EMPTY_SET = createSortedSet([]);
 
 const SET_OPERATORS: SetOperationValue["operator"][] = ["\\cup", "\\cap", "\\"];
 
@@ -179,8 +184,14 @@ export const CORE_OPERATORS: Builtin[] = [
     defineOperator(operator, 2, (args) => {
       const left = getSet(args, 0, operator);
       const right = getSet(args, 1, operator);
-      if (operator === "\\cup" && isEnumerable(left) && isEnumerable(right)) {
-        return unionSorted(toFiniteSet(left), toFiniteSet(right));
+      if (isEnumerable(left) && isEnumerable(right)) {
+        const merge =
+          operator === "\\cup"
+            ? unionSorted
+            : operator === "\\cap"
+              ? intersectSorted
+              : differenceSorted;
+        return merge(toFiniteSet(left), toFiniteSet(right));
       }
       const set: Value = { kind: "SetOperation", operator, left, right };
       return isEnumerable(set) ? toFiniteSet(set) : set;
@@ -188,16 +199,14 @@ export const CORE_OPERATORS: Builtin[] = [
   ),
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getSet(args, 0, "SUBSET") })),
   defineOperator("UNION", 1, (args) =>
-    createSet(
-      getElements(args, 0, "UNION").flatMap((element) => {
-        if (!isSetValue(element)) {
-          throw new TlaEvaluationError(
-            `UNION expects a set of sets but found ${formatValue(element)}`,
-          );
-        }
-        return toFiniteSet(element).elements;
-      }),
-    ),
+    getElements(args, 0, "UNION").reduce<SetValue>((union, element) => {
+      if (!isSetValue(element)) {
+        throw new TlaEvaluationError(
+          `UNION expects a set of sets but found ${formatValue(element)}`,
+        );
+      }
+      return unionSorted(union, toFiniteSet(element));
+    }, EMPTY_SET),
   ),
   defineOperator("DOMAIN", 1, (args) => {
     const value = getValue(args, 0, "DOMAIN");
