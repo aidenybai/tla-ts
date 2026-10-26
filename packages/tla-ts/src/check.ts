@@ -3,6 +3,7 @@ import { parseConfig, type ConfigValue, type ModelConfig } from "./config";
 import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
 import { TlaConfigError, TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import { EXIT_STATUS, setExitCode, setNextStatePhase, withLivenessExitCode } from "./exit-codes";
 import {
   evaluate,
   expectBoolean,
@@ -145,7 +146,10 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
         "The configuration file did not specify the initial state predicate",
       );
     if (config.next === undefined)
-      throw new TlaConfigError("The configuration does not specify NEXT");
+      throw setExitCode(
+        new TlaConfigError("The configuration does not specify NEXT"),
+        EXIT_STATUS.specEvaluationFailure,
+      );
     getDefinitionBody(config.init, environment);
     getDefinitionBody(config.next, environment);
     return {
@@ -449,16 +453,22 @@ export const createSearch = (
         symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup, order);
       return view === undefined ? representative : [getViewValue(view.expression, representative)];
     },
-    findViolatedInvariant: (state, parent) =>
-      invariants.find(
-        (invariant) =>
-          !isUnchangedFor(invariant, state, parent) &&
-          !holds(
-            invariant.expression,
-            getContext(environment, state, undefined, invariant.scope),
-            `invariant ${invariant.name}`,
-          ),
-      ),
+    findViolatedInvariant: (state, parent) => {
+      try {
+        return invariants.find(
+          (invariant) =>
+            !isUnchangedFor(invariant, state, parent) &&
+            !holds(
+              invariant.expression,
+              getContext(environment, state, undefined, invariant.scope),
+              `invariant ${invariant.name}`,
+            ),
+        );
+      } catch (error) {
+        // TLC reports a failure only on a state after the initial states as an invariant failure.
+        throw parent ? setExitCode(error, EXIT_STATUS.safetyEvaluationFailure) : error;
+      }
+    },
     satisfiesConstraints: (state, parent) =>
       constraints.every(
         (constraint) =>
@@ -532,6 +542,7 @@ export const createSearch = (
 };
 
 export const checkSequentially = (options: CheckOptions): CheckResult => {
+  setNextStatePhase(false);
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   const print = options.onPrint ?? console.log;
   const module = parseModule(options.source);
@@ -567,7 +578,9 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   const properties = search.properties;
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
-  const liveness = createLivenessChecker(properties.liveness, spec.temporals, environment);
+  const liveness = withLivenessExitCode(() =>
+    createLivenessChecker(properties.liveness, spec.temporals, environment),
+  );
   const isCanonicalizedFirst = search.isSymmetric || liveness !== undefined;
 
   const states: Value[][] = [];
@@ -711,6 +724,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     addState(state, fingerprintState, -1, undefined);
   }
 
+  setNextStatePhase(true);
   for (let index = 0; index < states.length && !runtime.isStopped; index++) {
     const state = states[index];
     current.index = index;
