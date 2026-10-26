@@ -250,6 +250,12 @@ const NUMBER_BASES = new Map([
   ["h", 16],
 ]);
 
+// A numeral token keeps its text as typed, such as \hFF, so errors can quote it as TLC does.
+export const getNumeralValue = (text: string) =>
+  text.startsWith("\\")
+    ? parseInt(text.slice(2), NUMBER_BASES.get(text[1].toLowerCase()))
+    : Number(text);
+
 const MODULE_HEADER = /-{4,}[ \t]*MODULE\b/;
 
 const isIdentifierCharacter = (character: string) => /[A-Za-z0-9_]/.test(character);
@@ -389,8 +395,7 @@ export const tokenize = (source: string): Token[] => {
     }
     const basedNumber = BASED_NUMBER.exec(source.slice(cursor.index, cursor.index + 64));
     if (basedNumber) {
-      const base = NUMBER_BASES.get(basedNumber[1][0].toLowerCase());
-      pushToken("Number", String(parseInt(basedNumber[1].slice(1), base)), basedNumber[0].length);
+      pushToken("Number", basedNumber[0], basedNumber[0].length);
       continue;
     }
     if (isIdentifierCharacter(character)) {

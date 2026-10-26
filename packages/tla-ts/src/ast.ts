@@ -10,6 +10,7 @@ export interface SourceLocation {
 export interface NumberExpression {
   kind: "Number";
   value: number;
+  text?: string;
   location: SourceLocation;
 }
 

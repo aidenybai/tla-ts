@@ -135,7 +135,7 @@ export const createRealNumberError = (expression: DecimalExpression) =>
 export const createBigNumberError = (expression: NumberExpression) =>
   setExitCode(
     new TlaEvaluationError(
-      `TLC can't handle a number this big: ${expression.value} at ${describeLocation(expression)}`,
+      `TLC can't handle a number this big: ${expression.text ?? expression.value} at ${describeLocation(expression)}`,
     ),
     EXIT_STATUS.error,
   );

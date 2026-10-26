@@ -18,7 +18,7 @@ import type {
   SourceLocation,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { tokenize, type Token } from "./lexer";
+import { getNumeralValue, tokenize, type Token } from "./lexer";
 
 interface InfixOperator {
   low: number;
@@ -531,7 +531,7 @@ export const parseModule = (source: string): Module => {
 
   const parseSelector = (): Selector => {
     const token = advance();
-    if (token.kind === "Number") return { kind: "Operand", operand: Number(token.text) };
+    if (token.kind === "Number") return { kind: "Operand", operand: getNumeralValue(token.text) };
     switch (token.text) {
       case "<<":
       case ">>":
@@ -551,7 +551,9 @@ export const parseModule = (source: string): Module => {
   const parsePrimary = (): Expression => {
     const token = advance();
     const location = getLocation(token);
-    if (token.kind === "Number") return { kind: "Number", value: Number(token.text), location };
+    if (token.kind === "Number") {
+      return { kind: "Number", value: getNumeralValue(token.text), text: token.text, location };
+    }
     if (token.kind === "Decimal") return { kind: "Decimal", text: token.text, location };
     if (token.kind === "String") return { kind: "String", value: token.text, location };
     if (token.kind === "Identifier") {

@@ -453,6 +453,19 @@ describe("rejecting literals matches TLC", () => {
     expect(run).toThrow(/^TLC can't handle a number this big: 2147483648/);
   });
 
+  it.each(["\\hFFFFFFFFF", "99999999999999999999"])("quotes %s as typed", (literal) => {
+    expect(() => checkSource(`VARIABLE x\nBig == ${literal}\nInit == x = 0`)).toThrow(
+      `TLC can't handle a number this big: ${literal} at line 3, column 8`,
+    );
+  });
+
+  it("reads based numerals", () => {
+    const result = checkSource(
+      "VARIABLE x\nASSUME \\h1F = 31 /\\ \\b101 = 5 /\\ \\o17 = 15\nInit == x = 0",
+    );
+    expect(result.status).toBe("success");
+  });
+
   it("accepts the largest integer literal and big literals in proofs", () => {
     const result = checkSource(
       "VARIABLE x\nTHEOREM TRUE\n<1>1. 2147483648 > 0\n  OBVIOUS\n<1>2. QED\n  BY <1>1\nInit == x = 2147483647",
