@@ -200,6 +200,91 @@ describe("evaluation errors match TLC", () => {
   );
 });
 
+describe("the Bags module matches TLC", () => {
+  const checkBags = (body: string) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC, Bags\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${body}\n====`,
+      config: "CONSTANT C = C\nINIT Init\nNEXT Next",
+    });
+
+  it("evaluates every assumption in TLC's BagsTest", () => {
+    expect(checkFixture("bags", "BagsTest").status).toBe("success");
+  });
+
+  const getPassedLines = (numbers: number[]) =>
+    numbers.map((number) => `"Test ${number} OK"  TRUE`);
+
+  it.each([
+    [
+      "test36",
+      [
+        ...getPassedLines([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+        '"TLC Fails Tests 11 & 12 because SubBag not implemented"  TRUE',
+        ...getPassedLines([13, 14, 15, 16]),
+      ],
+    ],
+    ["test50", getPassedLines([1, 2, 3, 4, 5, 6, 7])],
+  ])("prints what TLC prints for its %s suite test", (name, lines) => {
+    const printed: string[] = [];
+    const result = check({
+      source: readFileSync(join(FIXTURES, "bags", `${name}.tla`), "utf8"),
+      config: readFileSync(join(FIXTURES, "bags", `${name}.cfg`), "utf8"),
+      onPrint: (text) => printed.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([2, 1, 1]);
+    expect(printed).toEqual(lines);
+  });
+
+  it("evaluates SubBag by its TLA+ definition", () => {
+    const result = checkBags(
+      'Bag1 == SetToBag({"a", "b"})\nBag2 == Bag1 (+) SetToBag({"a"})\nASSUME Bag1 \\in SubBag(Bag2) /\\ Cardinality(SubBag(Bag2)) = 6\nASSUME Cardinality(SubBag(<<2, 1, 3>>)) = 24 /\\ SubBag(EmptyBag) = {EmptyBag}\nASSUME SubBag(<<2, 1>>) = {<<>>, <<1>>, <<2>>, (2 :> 1), <<1, 1>>, <<2, 1>>}',
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it("accepts the values that TLC's Java overrides accept", () => {
+    const result = checkBags(
+      'ASSUME ~IsABag(C) /\\ ~IsABag("abc") /\\ ~IsABag({1})\nASSUME <<0, -1, 2>> (-) EmptyBag = (3 :> 2)\nASSUME BagUnion({1}) = 1 /\\ BagUnion({<<0>>, <<1>>}) = <<1>>\nASSUME <<0>> \\sqsubseteq EmptyBag /\\ ~(<<1>> \\sqsubseteq <<-3>>)\nASSUME BagOfAll(LAMBDA n : n \\div 2, <<1, 2, 3, 4>>) = (0 :> 1 @@ 1 :> 5 @@ 2 :> 4)\nASSUME ~BagIn(C, <<1>>) /\\ ~BagIn(1, <<0>>) /\\ CopiesIn(2, <<1, 0>>) = 0',
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it.each([
+    [
+      "BagCardinality(<<0>>)",
+      "Applying BagCardinality to the following value, which is not a bag: <<0>>",
+    ],
+    ["<<0>> (+) EmptyBag", "The first argument of (+) should be a bag, but instead it is: <<0>>"],
+    ["EmptyBag (-) 1", "The second argument of (-) should be a bag, but instead it is: 1"],
+    [
+      'BagIn(1, <<"a">>)',
+      'The second argument of BagIn should be a bag, but instead it is: <<"a">>',
+    ],
+    [
+      "BagUnion({1, 2})",
+      "Attempted to apply BagUnion to the following set, whose element is not a bag: {1, 2}",
+    ],
+    [
+      "SetToBag(Nat)",
+      "Applying BagToSet to the following value, which is not a function with a finite domain: Nat",
+    ],
+    [
+      "1 \\sqsubseteq EmptyBag",
+      "Applying \\sqsubseteq to the following value, which is not a function with a finite domain: 1",
+    ],
+    [
+      "BagOfAll(LAMBDA n : n, 1)",
+      "The second argument of BagOfAll should be a function with a finite domain, but instead it is: 1",
+    ],
+    ["<<2147483647>> (+) <<1>>", "Overflow when computing 2147483647+1"],
+  ])("rejects %s", (expression, message) => {
+    const result = checkBags(`ASSUME PrintT(${expression})`);
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.message).toBe(message);
+  });
+});
+
 describe("name resolution matches SANY", () => {
   const checkSource = (source: string) =>
     check({
