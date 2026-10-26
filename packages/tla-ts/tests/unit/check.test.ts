@@ -146,6 +146,15 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("generates a successor for each witness of an existential under a universal action", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nWitness(i) == \\E j \\in 1..3 : j >= i\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ \\A i \\in {1, 2} : Witness(i)\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    });
+    expect([result.generatedStates, result.distinctStates]).toEqual([13, 3]);
+  });
+
   it("bundles the Reals module, whose Real is not a set TLC can check", async () => {
     const result = await check({
       source:
