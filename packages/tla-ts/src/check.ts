@@ -25,9 +25,17 @@ import {
 import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
+import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { createCanonicalizer } from "./canonical";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
-import { combineHash, formatValue, getValueHash, isSameValue, type Value } from "./values";
+import {
+  combineHash,
+  formatValue,
+  getValueHash,
+  isSameValue,
+  setStringOrder,
+  type Value,
+} from "./values";
 
 export interface CheckOptions {
   source: string;
@@ -329,7 +337,11 @@ export const findAssumptionViolation = (
   return undefined;
 };
 
-export const createSearch = (config: ModelConfig, environment: Environment): Search | undefined => {
+export const createSearch = (
+  config: ModelConfig,
+  environment: Environment,
+  variableOrder?: string[],
+): Search | undefined => {
   const properties = getProperties(config, environment);
   const invariants = getStateChecks(
     [...getNamedExpressions(config.invariants, environment), ...properties.invariants],
@@ -365,13 +377,22 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
   const statePossible = possible.filter((item) => !isActionPossible(item));
   const actionPossible = possible.filter(isActionPossible);
   const runtime = environment.runtime;
+  const getTlcPosition = (index: number) => {
+    const position = variableOrder?.indexOf(environment.variables[index]) ?? -1;
+    return position === -1 ? environment.variables.length : position;
+  };
+  const order =
+    variableOrder &&
+    environment.variables
+      .map((_, index) => index)
+      .sort((left, right) => getTlcPosition(left) - getTlcPosition(right));
   return {
     properties,
     spec,
     isSymmetric: symmetryGroup.length > 0,
     getFingerprintState: (state) => {
       const representative =
-        symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup);
+        symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup, order);
       return view === undefined
         ? representative
         : [evaluate(view.expression, getContext(environment, representative, undefined))];
@@ -461,7 +482,9 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
 export const check = (options: CheckOptions): CheckResult => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   const print = options.onPrint ?? console.log;
-  const specification = createEnvironment(parseModule(options.source), config, {
+  const module = parseModule(options.source);
+  setStringOrder(getTlcStringOrder(options.source, config, options.loadModule));
+  const specification = createEnvironment(module, config, {
     loadModule: options.loadModule,
     print,
     files: { readFile: options.readFile, writeFile: options.writeFile },
@@ -484,7 +507,11 @@ export const check = (options: CheckOptions): CheckResult => {
   const assumptionViolation = findAssumptionViolation(specification.assumptions, environment);
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
 
-  const search = createSearch(config, environment);
+  const variableOrder =
+    config.view !== undefined && config.symmetry !== undefined
+      ? getTlcVariableOrder(options.source, options.loadModule)
+      : undefined;
+  const search = createSearch(config, environment, variableOrder);
   if (!search) return createResult("success");
   const properties = search.properties;
   const spec = search.spec;

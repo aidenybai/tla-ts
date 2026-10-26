@@ -153,6 +153,62 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("evaluates a VIEW on the symmetry representative TLC picks by its variable order", () => {
+    const result = checkFixture("view", "ViewSymmetry");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([7, 4, 4]);
+  });
+
+  it("orders model values, strings, and record fields like TLC when picking a representative", () => {
+    const result = checkFixture("view", "ViewSymmetryOrder");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([139, 14, 3]);
+  });
+
+  it("orders strings, record fields, and model values by when TLC interns them", () => {
+    const printed: string[] = [];
+    const result = check({
+      source: readFileSync(join(FIXTURES, "strings", "StringOrder.tla"), "utf8"),
+      config: readFileSync(join(FIXTURES, "strings", "StringOrder.cfg"), "utf8"),
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual([
+      '"zzq"',
+      '{"zzq", "aaq", "mmq"}',
+      "[zz |-> 1, aa |-> 2]",
+      "{[zz |-> 1], [aa |-> 1]}",
+      "{p2, m, b}",
+      "p2",
+      '{"7", "3"}',
+      '{"zzb", "zza"}',
+    ]);
+    expect(result.status).toBe("invariant-violation");
+    expect(result.violation?.trace.map((step) => formatValue(step.state.pick))).toEqual([
+      '"zzq"',
+      '"aaq"',
+    ]);
+  });
+
+  it("explores states that depend on the order of strings in CHOOSE", () => {
+    const result = checkFixture("strings", "StringSets");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([76, 31, 5]);
+  });
+
+  it("ranks strings created while checking in the order they are created", () => {
+    const result = checkFixture("strings", "RuntimeStrings");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([115, 97, 6]);
+  });
+
+  it("does not carry one check's string order into the next", () => {
+    const earlier = checkModule(
+      'Picked == CHOOSE s \\in {"zzq", "aaq"} : TRUE\nASSUME Picked = "zzq"',
+    );
+    expect(earlier.status).toBe("success");
+    const reversed = checkModule(
+      'ASSUME "aaq" # "zzq"\nASSUME (CHOOSE s \\in {"zzq", "aaq"} : TRUE) = "aaq"',
+    );
+    expect(reversed.status).toBe("success");
+    expect(checkFixture("strings", "StringSets").distinctStates).toBe(31);
+  });
+
   it("enumerates subsets for x \\subseteq S in the initial predicate and next-state relation", () => {
     const result = check({
       source:

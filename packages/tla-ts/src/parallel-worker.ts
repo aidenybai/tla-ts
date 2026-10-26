@@ -5,8 +5,9 @@ import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from
 import type { LevelMessage, Port, StartMessage, WorkerMessage } from "./parallel";
 import { parseModule } from "./parser";
 import { getSuccessors } from "./successors";
+import { getTlcStringOrder } from "./tlc-order";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
-import type { Value } from "./values";
+import { getRankedStringCount, setStringOrder, type Value } from "./values";
 
 const WORKER_THREADS_MODULE = "node:worker_threads";
 
@@ -98,8 +99,12 @@ const createInbox = () => {
 
 const run = (start: StartMessage, parent: Port) => {
   const modules = new Map(start.modules);
-  const specification = createEnvironment(parseModule(start.source), start.config, {
-    loadModule: (name) => modules.get(name),
+  const loadModule = (name: string) => modules.get(name);
+  const module = parseModule(start.source);
+  setStringOrder(getTlcStringOrder(start.source, start.config, loadModule));
+  const startupStrings = getRankedStringCount();
+  const specification = createEnvironment(module, start.config, {
+    loadModule,
     print: () => {},
     files: { readFile: undefined, writeFile: undefined },
   });
@@ -214,7 +219,7 @@ const run = (start: StartMessage, parent: Port) => {
   const runLevel = async (level: number): Promise<LevelMessage | undefined> => {
     const next: Value[][] = [];
     const expanded = expand(frontier.states, next);
-    if (!expanded) return undefined;
+    if (!expanded || getRankedStringCount() !== startupStrings) return undefined;
     peers.forEach((peer) => {
       const fingerprints = Int32Array.from(expanded.pending[peer.index].fingerprints);
       send(peer.index, { phase: "query", level, from: self, fingerprints }, [fingerprints.buffer]);
@@ -241,6 +246,7 @@ const run = (start: StartMessage, parent: Port) => {
       if (message.unmarks) removeAll(message.unmarks);
       else sizes[message.from] = message.size ?? 0;
     });
+    if (getRankedStringCount() !== startupStrings) return undefined;
     if (!(await balance(level, next, sizes))) return undefined;
     frontier.states = next;
     return { type: "level", level, generated: expanded.generated, added };
