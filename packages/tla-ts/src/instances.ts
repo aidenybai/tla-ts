@@ -30,13 +30,15 @@ const getPatternNames = (pattern: BoundPattern) =>
 const getBoundNames = (bounds: Bound[]) =>
   bounds.flatMap((bound) => getPatternNames(bound.pattern));
 
-const getFreeNames = (expression: Expression, names = new Set<string>()): Set<string> => {
-  if (expression.kind === "Identifier") names.add(expression.name);
-  if (expression.kind === "Apply" || expression.kind === "OperatorReference") {
+const getLocalNames = (expression: Expression, names = new Set<string>()): Set<string> => {
+  if (expression.kind === "Identifier" && expression.resolution?.kind === "Local") {
+    names.add(expression.name);
+  }
+  if (expression.kind === "Apply" && expression.resolution?.kind === "Local") {
     names.add(expression.operator);
   }
   mapChildren(expression, (child) => {
-    getFreeNames(child, names);
+    getLocalNames(child, names);
     return child;
   });
   return names;
@@ -297,7 +299,7 @@ export const instantiateModule = (instance: Instance, flat: FlatModule): Definit
     definitionNames: new Set(flat.definitions.map((definition) => definition.name)),
     substitutions,
     substitutedNames: new Map(
-      [...substitutions].map(([name, expression]) => [name, getFreeNames(expression)]),
+      [...substitutions].map(([name, expression]) => [name, getLocalNames(expression)]),
     ),
   };
   return flat.definitions.map((definition): Definition => {
