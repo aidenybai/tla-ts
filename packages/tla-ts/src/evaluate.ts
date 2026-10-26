@@ -1,11 +1,12 @@
-import type {
-  Bound,
-  BoundPattern,
-  Definition,
-  Expression,
-  FunctionDefinition,
-  OperatorParam,
-  RecordField,
+import {
+  describeLocation,
+  type Bound,
+  type BoundPattern,
+  type Definition,
+  type Expression,
+  type FunctionDefinition,
+  type OperatorParam,
+  type RecordField,
 } from "./ast";
 import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
 import { generateEvaluator } from "./codegen";
@@ -110,9 +111,6 @@ type GlobalName =
   | { kind: "Definition"; definition: Definition };
 
 const EXCEPT_AT = "@";
-
-const describeLocation = (expression: Expression) =>
-  `line ${expression.location.line}, column ${expression.location.column}`;
 
 export const lookupScope = (scope: Scope | undefined, name: string): Binding | undefined => {
   for (let current = scope; current; current = current.parent) {

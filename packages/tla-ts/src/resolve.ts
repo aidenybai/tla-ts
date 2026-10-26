@@ -1,4 +1,12 @@
-import type { Bound, BoundPattern, Definition, Expression, Module, SourceLocation } from "./ast";
+import {
+  describeLocation,
+  type Bound,
+  type BoundPattern,
+  type Definition,
+  type Expression,
+  type Module,
+  type SourceLocation,
+} from "./ast";
 import { TlaSyntaxError } from "./errors";
 
 export type Symbols = Map<string, number>;
@@ -50,7 +58,6 @@ const getSymbolArity = (
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  const location = expression.location;
   const local = lookupLocal(scope, name);
   if (local && expression.kind !== "OperatorReference") expression.resolution = LOCAL_RESOLUTION;
   if (local) return local.arity;
@@ -64,7 +71,7 @@ const getSymbolArity = (
   const imported = unit.imported.get(name);
   if (imported !== undefined) return imported;
   throw new TlaSyntaxError(
-    `Could not find declaration or definition of symbol ${name} at line ${location.line}, column ${location.column}`,
+    `Could not find declaration or definition of symbol ${name} at ${describeLocation(expression)}`,
   );
 };
 
@@ -110,7 +117,7 @@ const resolveApply = (
   const arity = getSymbolArity(expression, expression.operator, scope, unit);
   if (arity !== expression.args.length) {
     throw new TlaSyntaxError(
-      `The operator ${expression.operator} requires ${arity} arguments at line ${expression.location.line}, column ${expression.location.column}`,
+      `The operator ${expression.operator} requires ${arity} arguments at ${describeLocation(expression)}`,
     );
   }
   expression.args.forEach((arg) =>
@@ -136,7 +143,7 @@ const resolveExpression = (
       const arity = getSymbolArity(expression, expression.name, scope, unit);
       if (arity > 0) {
         throw new TlaSyntaxError(
-          `The operator ${expression.name} requires ${arity} arguments at line ${expression.location.line}, column ${expression.location.column}`,
+          `The operator ${expression.name} requires ${arity} arguments at ${describeLocation(expression)}`,
         );
       }
       return;
@@ -208,7 +215,7 @@ const resolveExpression = (
     case "RecordSet":
       if (new Set(expression.fields.map((field) => field.name)).size < expression.fields.length) {
         throw new TlaSyntaxError(
-          `Non-unique fields in constructor at line ${expression.location.line}, column ${expression.location.column}`,
+          `Non-unique fields in constructor at ${describeLocation(expression)}`,
         );
       }
       resolveAll(expression.fields.map((field) => field.value));
