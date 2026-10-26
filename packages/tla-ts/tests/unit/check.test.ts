@@ -347,6 +347,23 @@ describe("check matches TLC", () => {
   });
 });
 
+describe("formatValue matches TLC", () => {
+  it("prints functions as records only when every key is a field name", () => {
+    const printed: string[] = [];
+    const result = check({
+      source: readFileSync(join(FIXTURES, "formatting", "Format.tla"), "utf8"),
+      config: readFileSync(join(FIXTURES, "formatting", "Format.cfg"), "utf8"),
+      onPrint: (text) => printed.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(printed).toEqual(
+      readFileSync(join(FIXTURES, "formatting", "Format.out"), "utf8")
+        .trim()
+        .split("\n"),
+    );
+  });
+});
+
 describe("evaluation errors match TLC", () => {
   it("checks only the assumptions of a model without variables or an initial predicate", () => {
     const result = check({ source: "---- MODULE M ----\nASSUME TRUE\n====", config: "" });
