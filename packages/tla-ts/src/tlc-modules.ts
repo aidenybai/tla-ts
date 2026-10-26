@@ -920,3 +920,103 @@ _PrintCounts == PrintT(_Counts)
 `,
   ],
 ]);
+
+// The Java methods that override standard module operators, as java.lang.reflect.Method prints
+// them in TLC's errors.
+export const TLC_JAVA_METHODS = new Map([
+  [
+    "FiniteSets",
+    new Map([
+      [
+        "IsFiniteSet",
+        "public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value)",
+      ],
+      [
+        "Cardinality",
+        "public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)",
+      ],
+    ]),
+  ],
+  [
+    "Sequences",
+    new Map([
+      [
+        "Seq",
+        "public static tlc2.value.impl.Value tlc2.module.Sequences.Seq(tlc2.value.impl.Value)",
+      ],
+      [
+        "Len",
+        "public static tlc2.value.impl.IntValue tlc2.module.Sequences.Len(tlc2.value.impl.Value)",
+      ],
+      [
+        "Head",
+        "public static tlc2.value.impl.Value tlc2.module.Sequences.Head(tlc2.value.impl.Value)",
+      ],
+      [
+        "Tail",
+        "public static tlc2.value.impl.Value tlc2.module.Sequences.Tail(tlc2.value.impl.Value)",
+      ],
+      [
+        "Append",
+        "public static tlc2.value.impl.Value tlc2.module.Sequences.Append(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "\\o",
+        "public static tlc2.value.impl.Value tlc2.module.Sequences.Concat(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "SubSeq",
+        "public static tlc2.value.impl.Value tlc2.module.Sequences.SubSeq(tlc2.value.impl.Value,tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "SelectSeq",
+        "public static tlc2.value.impl.Value tlc2.module.Sequences.SelectSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+    ]),
+  ],
+  [
+    "TLC",
+    new Map([
+      [
+        "Print",
+        "public static tlc2.value.impl.Value tlc2.module.TLC.Print(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "PrintT",
+        "public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value)",
+      ],
+      [
+        "ToString",
+        "public static tlc2.value.impl.Value tlc2.module.TLC.ToString(tlc2.value.impl.Value)",
+      ],
+      [
+        "Assert",
+        "public static tlc2.value.impl.Value tlc2.module.TLC.Assert(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        ":>",
+        "public static tlc2.value.impl.Value tlc2.module.TLC.MakeFcn(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "@@",
+        "public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "SortSeq",
+        "public static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "Permutations",
+        "public static tlc2.value.impl.Value tlc2.module.TLC.Permutations(tlc2.value.impl.Value)",
+      ],
+      [
+        "RandomElement",
+        "public static tlc2.value.impl.Value tlc2.module.TLC.RandomElement(tlc2.value.impl.Value)",
+      ],
+      [
+        "TLCEval",
+        "public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+      ],
+    ]),
+  ],
+]);

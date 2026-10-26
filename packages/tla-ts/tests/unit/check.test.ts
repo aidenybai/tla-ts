@@ -766,7 +766,18 @@ describe("evaluation errors match TLC", () => {
 
   it("reports an overflowing cardinality without enumerating the set", async () => {
     const result = await checkModule("ASSUME Cardinality(SUBSET (1..31)) > 0");
-    expect(result.violation?.message).toMatch(/^Overflow when computing the number of elements/);
+    expect(result.violation?.message).toBe(
+      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),\nbut it produced the following error:\nOverflow when computing the number of elements in:\nSUBSET (1..31)",
+    );
+  });
+
+  it("wraps a failure inside an operator that another operator's Java method calls", async () => {
+    const result = await checkModule(
+      "ASSUME SelectSeq(<<1>>, LAMBDA e : Cardinality(SUBSET (1..31)) > e) = <<>>",
+    );
+    expect(result.violation?.message).toBe(
+      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.Sequences.SelectSeq(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),\nbut it produced the following error:\nOverflow when computing the number of elements in:\nSUBSET (1..31)",
+    );
   });
 
   it("rejects a mistyped membership outside an assumption", async () => {
