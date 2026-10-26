@@ -1280,6 +1280,33 @@ export const toFiniteSet = (value: Value): SetValue => {
   return set;
 };
 
+// TLC's Enumerator for a lazy set streams the sets it combines until the set caches its elements,
+// so an element that two of them share comes up once for each.
+export const getStreamedElements = (value: Value): Value[] => {
+  if (typeof value !== "object" || finiteSets.has(value)) return toFiniteSet(value).elements;
+  if (value.kind === "Union") {
+    return getUnionSets(value).flatMap((set, index) =>
+      getStreamedElements(getUnionSet(set, index, value)),
+    );
+  }
+  if (value.kind === "FilteredSet" && !isOverriddenSet(value.base)) {
+    return getStreamedElements(value.base).filter(value.test);
+  }
+  if (value.kind !== "SetOperation") return toFiniteSet(value).elements;
+  if (value.operator === "\\cup") {
+    return isOverriddenSet(value.left) || isOverriddenSet(value.right)
+      ? toFiniteSet(value).elements
+      : [...getStreamedElements(value.left), ...getStreamedElements(value.right)];
+  }
+  const isLeftEnumerated = value.operator === "\\" || isEnumerable(value.left);
+  const enumerated = isLeftEnumerated ? value.left : value.right;
+  const other = isLeftEnumerated ? value.right : value.left;
+  if (isOverriddenSet(enumerated)) return toFiniteSet(value).elements;
+  return getStreamedElements(enumerated).filter(
+    (element) => isElementOf(element, other) === (value.operator === "\\cap"),
+  );
+};
+
 export const isEmptySet = (value: Value): boolean => {
   if (typeof value !== "object" || !isSetValue(value)) {
     throw new TlaEvaluationError(`Shouldn't call isEmpty() on value ${formatValue(value)}`);

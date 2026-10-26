@@ -29,9 +29,9 @@ import { mapChildren } from "./instances";
 import {
   createTuple,
   formatValue,
+  getStreamedElements,
   isElementOf,
   isEnumerable,
-  toFiniteSet,
   valuesEqual,
   type Value,
 } from "./values";
@@ -394,7 +394,7 @@ const compileMembership = (
         `In computing next states, the right side of \\in is not enumerable: ${formatValue(value)} at ${describeLocation(expression)}`,
       );
     }
-    const elements = toFiniteSet(value).elements;
+    const elements = getStreamedElements(value);
     for (let position = 0; position < elements.length && !run.isStopped; position++) {
       onComplete(assign(partial, index, elements[position]), action);
     }

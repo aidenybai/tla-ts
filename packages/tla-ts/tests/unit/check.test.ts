@@ -1240,6 +1240,15 @@ describe("initial predicate and next-state relation match TLC", () => {
     );
   });
 
+  it("binds a variable once for each time a lazy UNION streams an element", async () => {
+    const set = "UNION {SUBSET {1}, {{}}}";
+    const result = await checkSource(
+      `VARIABLE x\nInit == x \\in ${set}\nNext == x' \\in ${set}`,
+      "INIT Init\nNEXT Next",
+    );
+    expect([result.generatedStates, result.distinctStates]).toEqual([9, 2]);
+  });
+
   it("reports initial states without a next-state action", async () => {
     await expect(checkSource("VARIABLE x\nInit == x \\in {1, 2}", "INIT Init")).rejects.toThrow(
       /No next state actions defined to generate successor states from/,
