@@ -13,6 +13,7 @@ export interface CheckerRuntime {
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
   pause: () => void;
   seed: bigint;
+  isSeen: (state: Value[]) => boolean;
   generatedStates: number;
   distinctStates: number;
   initialStates: number;
@@ -40,6 +41,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     getBehavior: () => [],
     getSpecification: () => createRecord([]),
     counterExample: undefined,
+    isSeen: () => false,
     setLivenessSource: () => {},
     getCurrentState: () => undefined,
     getFingerprint: getTlcFingerprint,
