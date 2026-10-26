@@ -153,6 +153,20 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("enumerates subsets for x \\subseteq S in the initial predicate and next-state relation", () => {
+    const result = check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x \\subseteq {1, 2}\nNext == x' \\subseteq {1, 2, 3}\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      68,
+      8,
+      2,
+    ]);
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");
