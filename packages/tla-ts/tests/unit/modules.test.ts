@@ -1,13 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
+import { check, TlaConfigError } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/modules");
 
-const checkNested = (configName: string) =>
+const checkNested = (configName: string, moduleName = "Nested") =>
   check({
-    source: readFileSync(join(DIRECTORY, "Nested.tla"), "utf8"),
+    source: readFileSync(join(DIRECTORY, `${moduleName}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, configName), "utf8"),
   });
 
@@ -23,5 +23,23 @@ describe("nested and trailing modules match TLC", () => {
     expect(result.status).toBe("invariant-violation");
     expect(result.violation?.name).toBe("TooSmall");
     expect(result.violation?.trace).toHaveLength(4);
+  });
+
+  it("overrides definitions of other modules but not of the root module for scoped overrides", () => {
+    ["Scoped.cfg", "ScopedRoot.cfg"].forEach((configName) => {
+      const result = checkNested(configName, "Scoped");
+      expect(result.status).toBe("invariant-violation");
+      expect(result.violation?.trace).toHaveLength(5);
+      expect([result.generatedStates, result.distinctStates]).toEqual([5, 5]);
+    });
+  });
+
+  it("does not assign constants through scoped values", () => {
+    expect(() =>
+      check({
+        source: readFileSync(join(DIRECTORY, "Nested.tla"), "utf8"),
+        config: "CONSTANT Limit = [Nested]3\nSPECIFICATION Spec\n",
+      }),
+    ).toThrow(TlaConfigError);
   });
 });

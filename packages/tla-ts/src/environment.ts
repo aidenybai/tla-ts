@@ -241,11 +241,16 @@ export const createEnvironment = (
   addModule(root, true);
 
   const constants = new Map<string, Value>();
-  config.constants.forEach((assignment) =>
-    constants.set(assignment.name, toValue(assignment.value)),
-  );
+  const isOverride = (item: { name: string; module?: string }) =>
+    item.module === undefined ||
+    (item.module !== root.name && !declaredConstants.includes(item.name));
+  config.constants
+    .filter(isOverride)
+    .forEach((assignment) => constants.set(assignment.name, toValue(assignment.value)));
   const substitutions = new Map(
-    config.substitutions.map((substitution) => [substitution.name, substitution.target]),
+    config.substitutions
+      .filter(isOverride)
+      .map((substitution) => [substitution.name, substitution.target]),
   );
   declaredConstants.forEach((name) => {
     if (!constants.has(name) && !substitutions.has(name)) {
