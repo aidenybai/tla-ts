@@ -115,6 +115,14 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("substitutes infix operator constants", () => {
+    const result = checkModule(
+      "CONSTANT _++_\nPlusPlus(a, b) == <<a, b>>\nASSUME (1 ++ 2) = <<1, 2>>",
+      "CONSTANT ++ <- PlusPlus",
+    );
+    expect(result.status).toBe("success");
+  });
+
   it("follows definition overrides inside the specification", () => {
     const result = check({
       source:

@@ -714,6 +714,16 @@ export const parseModule = (source: string): Module => {
 
   const parseDeclarations = (): Declaration[] =>
     parseSeparated(() => {
+      if (isAt("_") && peek(1).kind === "Operator") {
+        advance();
+        const operator = advance().text;
+        return accept("_") ? { name: operator, arity: 2 } : { name: operator, arity: 1 };
+      }
+      if (peek().kind === "Operator" && isAt("_", 1)) {
+        const operator = advance().text;
+        advance();
+        return { name: operator === "-" ? "-." : operator, arity: 1 };
+      }
       const name = expectIdentifier();
       if (!accept("(")) return { name, arity: 0 };
       const placeholders = parseSeparated(() => expect("_"));
