@@ -85,6 +85,19 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([98, 24, 5]);
   });
 
+  it("assigns a primed variable passed as an operator argument", () => {
+    const result = check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x, y\nSend(p, old, new) == new = p\nInit == x = 0 /\\ y = 0\nNext == \\E p \\in {1, 2} : Send(p, x, x') /\\ y' = y\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      7,
+      3,
+    ]);
+  });
+
   it("reduces states under a symmetry set", () => {
     const result = checkFixture("symmetry", "Symmetry");
     expect(result.status).toBe("success");
@@ -100,6 +113,9 @@ describe("check matches TLC", () => {
   it("rejects substituting a constant with a state-level definition", () => {
     expect(() => checkModule("CONSTANT C\nFoo == x", "CONSTANT C <- Foo")).toThrow(TlaConfigError);
     expect(checkModule("CONSTANT C\nFoo == 1", "CONSTANT C <- Foo").status).toBe("success");
+    expect(() => checkModule('CONSTANT C\nFoo == TLCGet("level")', "CONSTANT C <- Foo")).toThrow(
+      TlaConfigError,
+    );
   });
 
   it("overrides definitions and ignores undeclared names assigned by the configuration", () => {
@@ -199,6 +215,27 @@ describe("name resolution matches SANY", () => {
     ["a record with duplicate fields", "f == [a |-> 1, b |-> 2, a |-> 1]"],
   ])("rejects %s", (_, source) => {
     expect(() => checkSource(source)).toThrow(TlaSyntaxError);
+  });
+
+  it("defines prefix, postfix, and <: operators", () => {
+    const result = checkSource(
+      "EXTENDS Naturals\nn ^+ == n + 1\n-. n == 10 - n\na <: b == a - b\nASSUME (2^+) = 3 /\\ -4 = 6 /\\ (5 <: 2) = 3",
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it("applies operators in prefix form and reads keywords as field names", () => {
+    const result = checkSource(
+      'EXTENDS Naturals\nn ^+ == n + 1\nASSUME +(4, 6) = 10 /\\ ^+(2) = 3\nASSUME [[x \\in {"THEN"} |-> 1] EXCEPT !.THEN = 2].THEN = 2',
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it("takes infix operators as parameters", () => {
+    const result = checkSource(
+      "EXTENDS Naturals\nFoo(a, _--_) == a -- 1\nASSUME Foo(7, +) = 8 /\\ Foo(7, *) = 7",
+    );
+    expect(result.status).toBe("success");
   });
 
   it("accepts recursive functions, named assumptions, and operator aliases", () => {

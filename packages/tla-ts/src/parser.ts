@@ -79,6 +79,7 @@ const INFIX_OPERATORS = new Map<string, InfixOperator>([
   ["\\cdot", createInfix(5, 14, true)],
   ["@@", createInfix(6, 6, true)],
   [":>", createInfix(7, 7, false)],
+  ["<:", createInfix(7, 7, false)],
   ["\\cup", createInfix(8, 8, true)],
   ["\\cap", createInfix(8, 8, true)],
   ["\\", createInfix(8, 8, false)],
@@ -178,6 +179,8 @@ export const parseModule = (source: string): Module => {
 
   const createError = (message: string, token = peekRaw()) =>
     new TlaSyntaxError(`${message} at line ${token.line}, column ${token.column}`);
+
+  const isFieldName = (token: Token) => token.kind === "Identifier" || token.kind === "Keyword";
 
   const isAt = (text: string, offset = 0) => {
     const token = peek(offset);
@@ -354,7 +357,9 @@ export const parseModule = (source: string): Module => {
           const path: ExceptPathStep[] = [];
           while (isAt(".") || isAt("[")) {
             if (accept(".")) {
-              path.push({ kind: "Field", name: expectIdentifier() });
+              if (!isFieldName(peek()))
+                throw createError(`Expected a field name but found ${describe(peek())}`);
+              path.push({ kind: "Field", name: advance().text });
               continue;
             }
             expect("[");
@@ -477,6 +482,10 @@ export const parseModule = (source: string): Module => {
         ? { kind: "Apply", operator, args: qualifiedArgs, location }
         : { kind: "Identifier", name: operator, location };
     }
+    const isOperatorName =
+      INFIX_OPERATORS.has(token.text) || POSTFIX_OPERATORS.has(token.text) || token.text === "-.";
+    if (token.kind === "Operator" && isOperatorName && isAt("("))
+      return { kind: "Apply", operator: token.text, args: parseArguments(), location };
     switch (token.text) {
       case "(": {
         const expression = withoutOffside(() => parseExpression());
@@ -609,14 +618,9 @@ export const parseModule = (source: string): Module => {
         state.left = { kind: "FunctionApplication", function: state.left, args, location };
         continue;
       }
-      if (token.text === "." && peek(1).kind === "Identifier") {
+      if (token.text === "." && isFieldName(peek(1))) {
         advance();
-        state.left = {
-          kind: "FieldAccess",
-          record: state.left,
-          field: expectIdentifier(),
-          location,
-        };
+        state.left = { kind: "FieldAccess", record: state.left, field: advance().text, location };
         continue;
       }
       const infix = INFIX_OPERATORS.get(token.text);
@@ -656,13 +660,7 @@ export const parseModule = (source: string): Module => {
 
   const parseParams = (): OperatorParam[] => {
     if (!accept("(")) return [];
-    const params = parseSeparated((): OperatorParam => {
-      const name = expectIdentifier();
-      if (!accept("(")) return { name, arity: 0 };
-      const placeholders = parseSeparated(() => expect("_"));
-      expect(")");
-      return { name, arity: placeholders.length };
-    });
+    const params = parseDeclarations();
     expect(")");
     return params;
   };
@@ -694,8 +692,23 @@ export const parseModule = (source: string): Module => {
         };
       }
     }
-    if (token.kind === "Operator" && token.text === "-" && isAt(".", 1)) {
-      throw new TlaUnsupportedError("Prefix operator definitions are not supported");
+    const isPrefixDefinition = token.kind === "Operator" && token.text === "-.";
+    const isPostfixDefinition =
+      token.kind === "Identifier" && POSTFIX_OPERATORS.has(peek(1).text) && isAt("==", 2);
+    if (isPrefixDefinition || isPostfixDefinition) {
+      const operator = isPrefixDefinition ? token.text : peek(1).text;
+      cursor.index += isPrefixDefinition ? 1 : 2;
+      const param = isPrefixDefinition ? expectIdentifier() : token.text;
+      expect("==");
+      return {
+        kind: "Operator",
+        name: operator,
+        params: [{ name: param, arity: 0 }],
+        body: parseExpression(),
+        isLocal,
+        isRecursive: recursiveNames.has(operator),
+        location,
+      };
     }
     const name = expectIdentifier();
     if (accept("[")) {

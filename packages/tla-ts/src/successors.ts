@@ -146,7 +146,9 @@ const getRuntimeVariableIndex = (
 };
 
 const isPossiblyAssignable = (target: Expression, isInit: boolean) =>
-  isInit ? target.kind === "Identifier" || target.kind === "Let" : target.kind === "Prime";
+  target.kind === "Let" ||
+  (target.kind === "Identifier" && (isInit || isLocallyResolved(target))) ||
+  (!isInit && target.kind === "Prime");
 
 const getUnchangedIndices = (
   expression: Expression,

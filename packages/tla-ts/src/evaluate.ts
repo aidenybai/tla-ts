@@ -48,6 +48,7 @@ export interface Builtin {
   evaluate: (args: BuiltinArgument[]) => Value;
   evaluateUnary: ((value: Value) => Value) | undefined;
   evaluateBinary: ((left: Value, right: Value) => Value) | undefined;
+  isStateLevel?: boolean;
 }
 
 export interface Closure {
@@ -263,7 +264,8 @@ const isStateDependent = (expression: Expression, environment: Environment): boo
         ? expression.operator
         : undefined;
   if (name !== undefined) {
-    if (environment.variableIndex.has(name)) return true;
+    if (environment.variableIndex.has(name) || environment.builtins.get(name)?.isStateLevel)
+      return true;
     const definition = getDefinition(name, environment);
     if (definition && !environment.constants.has(name) && !isConstantLevel(definition, environment))
       return true;
