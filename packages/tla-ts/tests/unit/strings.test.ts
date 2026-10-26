@@ -14,6 +14,14 @@ describe("STRING matches TLC's Strings class", () => {
     expect(result.status).toBe("success");
   });
 
+  it("compares Nat, Int, and Seq(S) like TLC's Java classes", () => {
+    const result = check({
+      source: readFileSync(join(DIRECTORY, "OverriddenSets.tla"), "utf8"),
+      config: readFileSync(join(DIRECTORY, "OverriddenSets.cfg"), "utf8"),
+    });
+    expect(result.status).toBe("success");
+  });
+
   it("fails to compare STRING with another set instead of answering FALSE", () => {
     const result = check({
       source:
