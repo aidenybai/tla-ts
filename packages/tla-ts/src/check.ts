@@ -929,9 +929,9 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     current.candidateLevel = 1;
     const fingerprintState = getFingerprintState(state);
     const hash = getStateHash(fingerprintState);
-    const isSeen = findStateIndex(hash, fingerprintState) !== -1;
-    const isInModel = isSeen || search.satisfiesConstraints(state);
+    const isInModel = search.satisfiesConstraints(state);
     if (isInModel) search.trackStatePossible(state);
+    const isSeen = isInModel && findStateIndex(hash, fingerprintState) !== -1;
     if (isSeen) continue;
     if (isInModel) {
       countDistinctState(1);
@@ -990,7 +990,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       const fingerprintState = getFingerprintState(successor.state);
       const hash = getStateHash(fingerprintState);
       const found = findStateIndex(hash, fingerprintState);
-      const isStateInModel = found !== -1 || search.satisfiesConstraints(successor.state, state);
+      const isStateInModel = search.satisfiesConstraints(successor.state, state);
       if (isStateInModel) search.trackStatePossible(successor.state);
       const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
       if (isInModel) search.trackActionPossible(state, successor.state);
