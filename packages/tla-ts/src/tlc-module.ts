@@ -1,6 +1,7 @@
 import { TlaModuleError } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
 import type { Builtin } from "./evaluate";
+import { prettyPrint } from "./pretty-print";
 import {
   defineConstant,
   defineHigherOrderOperator,
@@ -119,18 +120,18 @@ export const createTlcOperators = (
 ): Builtin[] => [
   defineOperator("Print", 2, (args) => {
     print(
-      `${formatValue(getValue(args, 0, "Print"), true)}  ${formatValue(getValue(args, 1, "Print"), true)}`,
+      `${prettyPrint(formatValue(getValue(args, 0, "Print"), true))}  ${prettyPrint(formatValue(getValue(args, 1, "Print"), true))}`,
     );
     return getValue(args, 1, "Print");
   }),
   defineOperator("PrintT", 1, (args) => {
-    print(formatValue(getValue(args, 0, "PrintT"), true));
+    print(prettyPrint(formatValue(getValue(args, 0, "PrintT"), true)));
     return true;
   }),
   defineOperator("Assert", 2, (args) => {
     if (getValue(args, 0, "Assert") !== true) {
       throw new TlaModuleError(
-        `The first argument of Assert evaluated to FALSE; the second argument was:\n${formatValue(getValue(args, 1, "Assert"))}`,
+        `The first argument of Assert evaluated to FALSE; the second argument was:\n${prettyPrint(formatValue(getValue(args, 1, "Assert")))}`,
         EXIT_STATUS.assertViolation,
       );
     }
