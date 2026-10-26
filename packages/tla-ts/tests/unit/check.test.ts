@@ -153,6 +153,12 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("fails like TLC when a lasso under VIEW cannot be rebuilt from fingerprints", () => {
+    expect(() => checkFixture("view", "Recover")).toThrow(
+      new TlaEvaluationError("Failed to recover the next state from its fingerprint."),
+    );
+  });
+
   it("enumerates subsets for x \\subseteq S in the initial predicate and next-state relation", () => {
     const result = check({
       source:
