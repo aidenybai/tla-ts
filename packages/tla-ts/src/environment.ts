@@ -141,6 +141,7 @@ export const createEnvironment = (
   const runtime = createRuntime(config.checkDeadlock);
   const linkedModules = new Map<string, LinkedModule>();
   const copyCount = { value: 0 };
+  const createName = (name: string) => `${name}#${copyCount.value++}`;
 
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
@@ -242,6 +243,7 @@ export const createEnvironment = (
         parameterized.set(key, !isParameterFree);
         return key;
       },
+      createName,
     });
     const declared = new Set(declarations.map((declaration) => declaration.name));
     const symbols: Symbols = new Map();
@@ -393,6 +395,7 @@ export const createEnvironment = (
         );
         return key;
       },
+      createName,
     });
     const declared = new Set(declarations.map((declaration) => declaration.name));
     const aliases = [...linked.exported]

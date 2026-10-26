@@ -81,6 +81,25 @@ describe("INSTANCE matches TLC", () => {
     ]);
   });
 
+  it("renames names bound inside an instance that would capture substituted names", () => {
+    const result = checkInstances("Binders.cfg", "Binders");
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      4,
+      3,
+      3,
+    ]);
+  });
+
+  it("reports violations through substitutions that bound names would capture", () => {
+    const result = checkInstances("BindersViolation.cfg", "Binders");
+    expect([result.status, result.violation?.trace.length, result.distinctStates]).toEqual([
+      "invariant-violation",
+      2,
+      2,
+    ]);
+  });
+
   it("instantiates parameterized modules inside LET", () => {
     const result = checkInstances("LetParameters.cfg", "LetParameters");
     expect([result.status, result.violation?.trace.length, result.distinctStates]).toEqual([
