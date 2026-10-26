@@ -167,6 +167,14 @@ pnpm --filter tla-ts conformance:fetch
 pnpm --filter tla-ts conformance
 ```
 
+Fuzz tla-ts against TLC with `TLA2TOOLS_JAR` set to the path of `tla2tools.jar`:
+
+```shell
+pnpm --filter tla-ts fuzz --count 200 --seed 5000
+```
+
+The fuzzer generates random expressions and small bounded models, then checks each one with TLC and tla-ts. It reports a case when the two disagree on the outcome, the state counts, or a printed value. It also reports a case when tla-ts takes more than twice as long as TLC. Each finding is shrunk to a smaller case that still shows the difference, then saved to `packages/tla-ts/.fuzz/<seed>/`. To replay a case, pass its seed with `--count 1`.
+
 Rerun the benchmarks with `TLA2TOOLS_JAR` set to the path of `tla2tools.jar`:
 
 ```shell
