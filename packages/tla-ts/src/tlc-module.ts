@@ -12,6 +12,7 @@ import {
 } from "./builtins";
 import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "./runtime";
 import {
+  ANY_SET,
   createFunction,
   createRecord,
   createSet,
@@ -205,7 +206,7 @@ export const createTlcOperators = (
       `The first argument of TLCSet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
     );
   }),
-  defineConstant("Any", { kind: "InfiniteSet", name: "Any" }),
+  defineConstant("Any", ANY_SET),
   defineOperator("RandomElement", 1, (args) => {
     const elements = getElements(args, 0, "RandomElement");
     if (elements.length === 0) throw new TlaEvaluationError("RandomElement of the empty set");

@@ -185,8 +185,14 @@ const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) =>
   );
 };
 
+export const ANY_SET: InfiniteSetValue = { kind: "InfiniteSet", name: "Any" };
+
+const compareAny = (other: Value): never => {
+  throw new TlaEvaluationError(`Attempted to compare ANY with the value\n${formatValue(other)}`);
+};
+
 export const compareValues = (left: Value, right: Value): number => {
-  if (left === right) return 0;
+  if (left === right) return left === ANY_SET ? compareAny(left) : 0;
   if (typeof left === "object" && typeof right === "object") {
     const leftKind = left.kind;
     const rightKind = right.kind;
@@ -199,12 +205,7 @@ export const compareValues = (left: Value, right: Value): number => {
       }
       return leftKind === "ModelValue" ? -1 : 1;
     }
-    const isAny = (value: ObjectValue) => value.kind === "InfiniteSet" && value.name === "Any";
-    if (isAny(left) || isAny(right)) {
-      throw new TlaEvaluationError(
-        `Attempted to compare ANY with ${formatValue(isAny(left) ? right : left)}`,
-      );
-    }
+    if (left === ANY_SET || right === ANY_SET) return compareAny(left === ANY_SET ? right : left);
     if (leftKind === "InfiniteSet" && rightKind === "InfiniteSet") {
       if (left.name === right.name) return 0;
       if (left.name !== "STRING" && right.name !== "STRING") return left.name === "Nat" ? -1 : 1;
@@ -255,7 +256,7 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
 });
 
 export const valuesEqual = (left: Value, right: Value): boolean => {
-  if (left === right) return true;
+  if (left === right) return left !== ANY_SET || compareAny(left);
   if (typeof left !== "object" || typeof right !== "object") {
     if (typeof left === typeof right) return false;
     if (typeof left === "object" || typeof right === "object") {
