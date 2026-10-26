@@ -1,5 +1,6 @@
 import type { Expression, SourceLocation } from "./ast";
 import { parseConfig, type ModelConfig } from "./config";
+import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
 import { TlaConfigError, TlaUnsupportedError } from "./errors";
 import { evaluate, expectBoolean, type Context, type Environment } from "./evaluate";
@@ -44,6 +45,12 @@ interface NamedExpression {
   expression: Expression;
 }
 
+interface StateCheck {
+  name: string;
+  expression: Expression;
+  variables: number[] | undefined;
+}
+
 interface ActionProperty {
   name: string;
   action: Expression;
@@ -74,7 +81,7 @@ const getDefinitionBody = (name: string, environment: Environment) => {
 const getConjuncts = (expression: Expression, environment: Environment): Expression[] => {
   if (expression.kind === "And")
     return expression.operands.flatMap((operand) => getConjuncts(operand, environment));
-  if (expression.kind === "Identifier") {
+  if (expression.kind === "Identifier" && !environment.constants.has(expression.name)) {
     const definition = environment.definitions.get(expression.name);
     if (definition?.kind === "Operator" && definition.params.length === 0) {
       return getConjuncts(definition.body, environment);
@@ -175,6 +182,24 @@ const getNamedExpressions = (names: string[], environment: Environment): NamedEx
     return { name, expression: createIdentifier(name) };
   });
 
+const getStateChecks = (named: NamedExpression[], environment: Environment): StateCheck[] =>
+  named.flatMap((item) =>
+    getConjuncts(item.expression, environment).map((expression) => ({
+      name: item.name,
+      expression,
+      variables: getReadVariables(expression, environment),
+    })),
+  );
+
+const isUnchangedFor = (stateCheck: StateCheck, state: Value[], parent: Value[] | undefined) => {
+  const variables = stateCheck.variables;
+  if (!parent || !variables) return false;
+  for (let index = 0; index < variables.length; index++) {
+    if (state[variables[index]] !== parent[variables[index]]) return false;
+  }
+  return true;
+};
+
 export const check = (options: CheckOptions): CheckResult => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   if (config.view !== undefined) throw new TlaUnsupportedError("VIEW is not supported yet");
@@ -212,11 +237,14 @@ export const check = (options: CheckOptions): CheckResult => {
 
   const spec = getSpecification(config, environment);
   const properties = getProperties(config, environment);
-  const invariants = [
-    ...getNamedExpressions(config.invariants, environment),
-    ...properties.invariants,
-  ];
-  const constraints = getNamedExpressions(config.constraints, environment);
+  const invariants = getStateChecks(
+    [...getNamedExpressions(config.invariants, environment), ...properties.invariants],
+    environment,
+  );
+  const constraints = getStateChecks(
+    getNamedExpressions(config.constraints, environment),
+    environment,
+  );
   const actionConstraints = getNamedExpressions(config.actionConstraints, environment);
 
   const states: Value[][] = [];
@@ -288,14 +316,17 @@ export const check = (options: CheckOptions): CheckResult => {
     else if (typeof bucket === "number") buckets.set(hash, [bucket, index]);
     else bucket.push(index);
   };
-  const findViolatedInvariant = (state: Value[]) =>
+  const findViolatedInvariant = (state: Value[], parent?: Value[]) =>
     invariants.find(
       (invariant) =>
+        !isUnchangedFor(invariant, state, parent) &&
         !holds(invariant.expression, getContext(state, undefined), `invariant ${invariant.name}`),
     );
-  const satisfiesConstraints = (state: Value[]) =>
-    constraints.every((constraint) =>
-      holds(constraint.expression, getContext(state, undefined), `constraint ${constraint.name}`),
+  const satisfiesConstraints = (state: Value[], parent?: Value[]) =>
+    constraints.every(
+      (constraint) =>
+        isUnchangedFor(constraint, state, parent) ||
+        holds(constraint.expression, getContext(state, undefined), `constraint ${constraint.name}`),
     );
   const countViolatingState = (depth: number) => {
     statistics.distinctStates = states.length + 1;
@@ -363,7 +394,7 @@ export const check = (options: CheckOptions): CheckResult => {
       canonicalizeState(successor.state);
       const hash = getStateHash(successor.state);
       if (isSeen(hash, successor.state)) continue;
-      const violated = findViolatedInvariant(successor.state);
+      const violated = findViolatedInvariant(successor.state, state);
       if (violated) {
         countViolatingState(depths[index] + 1);
         return createResult("invariant-violation", {
@@ -371,7 +402,7 @@ export const check = (options: CheckOptions): CheckResult => {
           trace: getTrace(index, successor),
         });
       }
-      if (!satisfiesConstraints(successor.state)) continue;
+      if (!satisfiesConstraints(successor.state, state)) continue;
       markSeen(hash, states.length);
       addState(successor.state, index, successor.action);
     }

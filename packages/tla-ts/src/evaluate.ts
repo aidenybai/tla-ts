@@ -156,7 +156,7 @@ export const expectBoolean = (value: Value, description: string) => {
   return value;
 };
 
-const getChildren = (expression: Expression): Expression[] => {
+export const getChildren = (expression: Expression): Expression[] => {
   switch (expression.kind) {
     case "Number":
     case "String":
@@ -644,7 +644,7 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
 const isTlcInteger = (value: number) =>
   Number.isInteger(value) && value <= 2147483647 && value >= -2147483648;
 
-const IMPURE_BUILTINS = new Set([
+export const IMPURE_BUILTINS = new Set([
   "Print",
   "PrintT",
   "Assert",

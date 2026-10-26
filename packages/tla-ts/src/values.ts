@@ -459,8 +459,10 @@ export const applyFunction = (fn: Value, argument: Value): Value => {
     throw new TlaEvaluationError(`Attempted to apply ${formatValue(fn)}, which is not a function`);
   }
   const domain = fn.domain;
-  if (typeof argument === "number" && domain[argument - 1] === argument && domain[0] === 1) {
-    return fn.range[argument - 1];
+  const first = domain[0];
+  if (typeof argument === "number" && typeof first === "number") {
+    const offset = argument - first;
+    if (domain[offset] === argument) return fn.range[offset];
   }
   if (domain.length <= 8) {
     for (let index = 0; index < domain.length; index++)
