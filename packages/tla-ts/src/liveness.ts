@@ -1,4 +1,4 @@
-import type { Definition, Expression, SourceLocation } from "./ast";
+import type { Definition, Expression } from "./ast";
 import { TlaConfigError, TlaEvaluationError } from "./errors";
 import {
   bindDefinitions,
@@ -203,20 +203,26 @@ export const expandTemporal = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
+  isUnrollingForall: boolean,
   expanding = new Set<Definition>(),
 ): ScopedExpression[] => {
+  const expand = (
+    child: Expression,
+    childScope: Scope | undefined,
+    childExpanding = expanding,
+  ): ScopedExpression[] =>
+    expandTemporal(child, childScope, environment, isUnrollingForall, childExpanding);
   if (expression.kind === "And") {
-    return expression.operands.flatMap((operand) =>
-      expandTemporal(operand, scope, environment, expanding),
-    );
+    return expression.operands.flatMap((operand) => expand(operand, scope));
   }
-  if (expression.kind === "Label") {
-    return expandTemporal(expression.body, scope, environment, expanding);
+  if (expression.kind === "Label") return expand(expression.body, scope);
+  if (expression.kind === "Let") {
+    return expand(expression.body, bindLetDefinitions(expression, scope, environment));
   }
   if (expression.kind === "Identifier") {
     const binding = isLocallyResolved(expression) ? lookupScope(scope, expression.name) : undefined;
     if (binding?.kind === "Thunk") {
-      return expandTemporal(binding.expression, binding.scope, environment, expanding);
+      return expand(binding.expression, binding.scope);
     }
     const definition = environment.constants.has(expression.name)
       ? undefined
@@ -225,12 +231,7 @@ export const expandTemporal = (
       if (expanding.has(definition)) {
         throw new TlaConfigError(`The definition of ${expression.name} refers to itself`);
       }
-      return expandTemporal(
-        definition.body,
-        undefined,
-        environment,
-        new Set([...expanding, definition]),
-      );
+      return expand(definition.body, undefined, new Set([...expanding, definition]));
     }
   }
   const context = getConstantContext(environment, scope);
@@ -240,73 +241,23 @@ export const expandTemporal = (
       ? undefined
       : getDefinition(expression.operator, environment);
     if (operator?.kind === "Closure" && !definition?.isRecursive) {
-      return expandTemporal(
-        operator.body,
-        bindOperatorArguments(operator, expression.args, context),
-        environment,
-        expanding,
-      );
+      return expand(operator.body, bindOperatorArguments(operator, expression.args, context));
     }
   }
   const isUnrolled =
+    isUnrollingForall &&
     expression.kind === "Forall" &&
     getLevel(expression.body, scope, environment) === TEMPORAL_LEVEL &&
     expression.bounds.every((bound) => getLevel(bound.set, scope, environment) === 0);
   if (expression.kind === "Forall" && isUnrolled) {
     const expanded: ScopedExpression[] = [];
     forEachBinding(expression.bounds, context, (boundScope) => {
-      expanded.push(...expandTemporal(expression.body, boundScope, environment, expanding));
+      expanded.push(...expand(expression.body, boundScope));
       return false;
     });
     return expanded;
   }
   return [{ expression, scope }];
-};
-
-const toLiteral = (value: Value, location: SourceLocation): Expression | undefined => {
-  if (typeof value === "number") return { kind: "Number", value, location };
-  if (typeof value === "string") return { kind: "String", value, location };
-  if (typeof value === "boolean") {
-    return { kind: "Identifier", name: value ? "TRUE" : "FALSE", location };
-  }
-  return undefined;
-};
-
-export const toUnscopedExpression = (
-  expression: Expression,
-  scope: Scope | undefined,
-): Expression | undefined => {
-  const definitions: Definition[] = [];
-  for (let current = scope; current; current = current.parent) {
-    const binding = current.binding;
-    const closure =
-      binding.kind === "Operator" && binding.operator.kind === "Closure"
-        ? binding.operator
-        : undefined;
-    const body =
-      binding.kind === "Thunk"
-        ? binding.expression
-        : binding.kind === "Value"
-          ? toLiteral(binding.value, expression.location)
-          : closure?.body;
-    const isUnscoped =
-      binding.kind === "Thunk"
-        ? binding.scope === undefined
-        : binding.kind === "Value" || closure?.scope === undefined;
-    if (!body || !isUnscoped) return undefined;
-    definitions.unshift({
-      kind: "Operator",
-      name: current.name,
-      params: closure?.params ?? [],
-      body,
-      isLocal: true,
-      isRecursive: false,
-      location: body.location,
-    });
-  }
-  return definitions.length === 0
-    ? expression
-    : { kind: "Let", definitions, body: expression, location: expression.location };
 };
 
 const bindLetDefinitions = (

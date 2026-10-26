@@ -131,7 +131,7 @@ export const checkInParallel = async (options: ParallelCheckOptions): Promise<Ch
     fingerprints: [] as number[],
   }));
   const statistics = { generatedStates: 0, distinctStates: 0, depth: 0 };
-  for (const state of getInitialStates(search.spec.init, environment)) {
+  for (const state of getInitialStates(search.spec.init, environment, search.spec.scope)) {
     canonicalize(state);
     statistics.generatedStates++;
     getStateFingerprint(search.getFingerprintState(state), fingerprint);

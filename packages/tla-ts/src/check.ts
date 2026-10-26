@@ -2,7 +2,7 @@ import type { Assumption, Expression, SourceLocation } from "./ast";
 import { parseConfig, type ModelConfig } from "./config";
 import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
-import { TlaConfigError, TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import { TlaConfigError, TlaEvaluationError } from "./errors";
 import {
   evaluate,
   expectBoolean,
@@ -17,7 +17,6 @@ import {
   expandTemporal,
   getLevel,
   TEMPORAL_LEVEL,
-  toUnscopedExpression,
   type LiveSuccessor,
   type ScopedExpression,
   type TemporalProperty,
@@ -87,6 +86,7 @@ export interface ActionProperty {
 export interface Specification {
   init: Expression;
   next: Expression;
+  scope: Scope | undefined;
   temporals: ScopedExpression[];
 }
 
@@ -138,26 +138,23 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
     return {
       init: createIdentifier(config.init),
       next: createIdentifier(config.next),
+      scope: undefined,
       temporals: [],
     };
   }
-  const initConjuncts: Expression[] = [];
-  const nextActions: Expression[] = [];
+  const initConjuncts: ScopedExpression[] = [];
+  const nextActions: ScopedExpression[] = [];
   const temporals: ScopedExpression[] = [];
   const body = getDefinitionBody(config.specification, environment);
-  const getUnscoped = (expression: Expression, scope: Scope | undefined) => {
-    const unscoped = toUnscopedExpression(expression, scope);
-    if (!unscoped) {
-      throw new TlaUnsupportedError(
-        `The specification ${config.specification} has an initial predicate or next-state relation inside a quantified formula`,
+  expandTemporal(body, undefined, environment, false).forEach((item) => {
+    const conjunct = item.expression;
+    if (conjunct.kind === "UnboundedQuantifier" && conjunct.isTemporal) {
+      throw new TlaConfigError(
+        "TLC does not support temporal existential, nor universal, quantification over state variables",
       );
     }
-    return unscoped;
-  };
-  expandTemporal(body, undefined, environment).forEach((item) => {
-    const conjunct = item.expression;
     if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
-      nextActions.push(getUnscoped(conjunct.expression.action, item.scope));
+      nextActions.push({ expression: conjunct.expression.action, scope: item.scope });
       return;
     }
     if (
@@ -178,16 +175,46 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
         `TLC cannot handle the action-level conjunct of the specification ${config.specification}`,
       );
     }
-    initConjuncts.push(getUnscoped(conjunct, item.scope));
+    initConjuncts.push(item);
   });
   if (nextActions.length !== 1) {
     throw new TlaConfigError(
       `The specification ${config.specification} must contain exactly one [][Next]_vars`,
     );
   }
+  const items = [...initConjuncts, ...nextActions];
+  const getName = (index: number) => `$specification${index}`;
+  const scope = items.reduce<Scope | undefined>(
+    (parent, item, index) =>
+      item.scope === undefined
+        ? parent
+        : {
+            name: getName(index),
+            binding: {
+              kind: "Thunk",
+              expression: item.expression,
+              scope: item.scope,
+              state: undefined,
+              next: undefined,
+              cache: undefined,
+            },
+            parent,
+          },
+    undefined,
+  );
+  const getReference = (item: ScopedExpression, index: number): Expression =>
+    item.scope === undefined
+      ? item.expression
+      : {
+          kind: "Identifier",
+          name: getName(index),
+          location: item.expression.location,
+          resolution: { kind: "Local" },
+        };
   return {
-    init: { kind: "And", operands: initConjuncts, location: START },
-    next: nextActions[0],
+    init: { kind: "And", operands: initConjuncts.map(getReference), location: START },
+    next: getReference(nextActions[0], initConjuncts.length),
+    scope,
     temporals,
   };
 };
@@ -201,7 +228,7 @@ export const getProperties = (config: ModelConfig, environment: Environment): Pr
   };
   config.properties.forEach((name) => {
     const body = getDefinitionBody(name, environment);
-    expandTemporal(body, undefined, environment).forEach((item) => {
+    expandTemporal(body, undefined, environment, true).forEach((item) => {
       const conjunct = item.expression;
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
         properties.actionProperties.push({
@@ -514,7 +541,7 @@ export const check = (options: CheckOptions): CheckResult => {
       const action =
         previous === stateIndex
           ? "Stuttering"
-          : getSuccessors(spec.next, states[previous], environment).find((successor) =>
+          : getSuccessors(spec.next, states[previous], environment, spec.scope).find((successor) =>
               isSameState(successor.state, states[stateIndex]),
             )?.action;
       return { action, state: toRecord(states[stateIndex]) };
@@ -583,7 +610,7 @@ export const check = (options: CheckOptions): CheckResult => {
     return current.isExpanding ? depths[current.index] + 1 : 0;
   };
 
-  for (const state of getInitialStates(spec.init, environment)) {
+  for (const state of getInitialStates(spec.init, environment, spec.scope)) {
     canonicalizeState(state);
     runtime.generatedStates++;
     runtime.initialStates++;
@@ -624,7 +651,7 @@ export const check = (options: CheckOptions): CheckResult => {
     current.index = index;
     runtime.queueSize = states.length - index - 1;
     current.isExpanding = true;
-    const successors = getSuccessors(spec.next, state, environment);
+    const successors = getSuccessors(spec.next, state, environment, spec.scope);
     current.isExpanding = false;
     if (successors.length === 0 && config.checkDeadlock) {
       return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
