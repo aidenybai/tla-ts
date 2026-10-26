@@ -6,7 +6,7 @@ import { evaluate, expectBoolean, type Context, type Environment } from "./evalu
 import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
-import { combineHash, getValueHash, valuesEqual, type Value } from "./values";
+import { combineHash, getValueHash, isSameValue, type Value } from "./values";
 
 export interface CheckOptions {
   source: string;
@@ -241,12 +241,12 @@ export const check = (options: CheckOptions): CheckResult => {
       return value;
     }
     if (!Array.isArray(bucket)) {
-      if (bucket === value || valuesEqual(bucket, value)) return bucket;
+      if (isSameValue(bucket, value)) return bucket;
       canonicalValues.set(hash, [bucket, value]);
       return value;
     }
     for (let index = 0; index < bucket.length; index++) {
-      if (bucket[index] === value || valuesEqual(bucket[index], value)) return bucket[index];
+      if (isSameValue(bucket[index], value)) return bucket[index];
     }
     bucket.push(value);
     return value;
@@ -277,8 +277,7 @@ export const check = (options: CheckOptions): CheckResult => {
   const isSameState = (index: number, state: Value[]) => {
     const stored = fingerprintStates[index];
     for (let position = 0; position < state.length; position++) {
-      if (stored[position] !== state[position] && !valuesEqual(stored[position], state[position]))
-        return false;
+      if (!isSameValue(stored[position], state[position])) return false;
     }
     return true;
   };

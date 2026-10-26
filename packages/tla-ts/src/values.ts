@@ -211,6 +211,28 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   return compareValues(left, right) === 0;
 };
 
+const areSameValues = (left: Value[], right: Value[]) =>
+  left === right ||
+  (left.length === right.length &&
+    left.every((element, index) => isSameValue(element, right[index])));
+
+export const isSameValue = (left: Value, right: Value): boolean => {
+  if (left === right) return true;
+  if (typeof left !== "object" || typeof right !== "object") return false;
+  if (left.kind === "Set" && right.kind === "Set")
+    return (
+      (left.hash === 0 || right.hash === 0 || left.hash === right.hash) &&
+      areSameValues(left.elements, right.elements)
+    );
+  if (left.kind === "Function" && right.kind === "Function")
+    return (
+      (left.hash === 0 || right.hash === 0 || left.hash === right.hash) &&
+      areSameValues(left.domain, right.domain) &&
+      areSameValues(left.range, right.range)
+    );
+  return getValueKey(left) === getValueKey(right);
+};
+
 export const createSet = (elements: Value[]): SetValue => {
   if (elements.length < 2) return createSortedSet(elements);
   const sorted = [...elements].sort(compareValues);
