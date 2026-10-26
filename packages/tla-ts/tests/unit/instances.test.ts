@@ -100,6 +100,18 @@ describe("INSTANCE matches TLC", () => {
     ]);
   });
 
+  it.each(["Selection", "SelectionOuter"])(
+    "selects renamed LET definitions by their names in %s",
+    (moduleName) => {
+      const result = checkInstances("Selection.cfg", moduleName);
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "success",
+        4,
+        3,
+      ]);
+    },
+  );
+
   it("instantiates parameterized modules inside LET", () => {
     const result = checkInstances("LetParameters.cfg", "LetParameters");
     expect([result.status, result.violation?.trace.length, result.distinctStates]).toEqual([

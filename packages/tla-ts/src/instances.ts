@@ -44,23 +44,36 @@ export const renameLocals = (
 const mapBounds = (bounds: Bound[], map: (child: Expression) => Expression): Bound[] =>
   bounds.map((bound) => ({ pattern: bound.pattern, set: map(bound.set) }));
 
+const sourceNames = new WeakMap<Definition, string>();
+
+export const getSourceName = (definition: Definition) =>
+  sourceNames.get(definition) ?? definition.name;
+
+const withSourceName = (definition: Definition, source: Definition) => {
+  if (getSourceName(source) !== definition.name) sourceNames.set(definition, getSourceName(source));
+  return definition;
+};
+
 export const mapDefinition = (
   definition: Definition,
   map: (child: Expression, bound: string[]) => Expression,
 ): Definition =>
-  definition.kind === "Function"
-    ? {
-        ...definition,
-        bounds: mapBounds(definition.bounds, (child) => map(child, [])),
-        body: map(definition.body, getBoundNames(definition.bounds)),
-      }
-    : {
-        ...definition,
-        body: map(
-          definition.body,
-          definition.params.map((param) => param.name),
-        ),
-      };
+  withSourceName(
+    definition.kind === "Function"
+      ? {
+          ...definition,
+          bounds: mapBounds(definition.bounds, (child) => map(child, [])),
+          body: map(definition.body, getBoundNames(definition.bounds)),
+        }
+      : {
+          ...definition,
+          body: map(
+            definition.body,
+            definition.params.map((param) => param.name),
+          ),
+        },
+    definition,
+  );
 
 export const mapChildren = (
   expression: Expression,
@@ -290,10 +303,12 @@ const renameNames = (
     case "Let":
       return {
         ...expression,
-        definitions: expression.definitions.map((definition) => ({
-          ...renameParams(definition, rename),
-          name: rename(definition.name),
-        })),
+        definitions: expression.definitions.map((definition) =>
+          withSourceName(
+            { ...renameParams(definition, rename), name: rename(definition.name) },
+            definition,
+          ),
+        ),
       };
     case "Forall":
     case "Exists":
