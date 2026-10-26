@@ -54,6 +54,7 @@ const isSubsetOf = (left: Value[], right: Value) =>
 
 const BOOLEAN_SET = createSet([false, true]);
 const EMPTY_SET = createSortedSet([]);
+const MERGED_UNION_LIMIT = 8;
 
 const SET_OPERATORS: SetOperationValue["operator"][] = ["\\cup", "\\cap", "\\"];
 
@@ -122,6 +123,9 @@ export const CORE_OPERATORS: Builtin[] = [
       }
     });
     if (sets.every((element) => typeof element === "object" && element.kind === "Set")) {
+      if (sets.length > MERGED_UNION_LIMIT) {
+        return createSet(sets.flatMap((element) => toFiniteSet(element).elements));
+      }
       return sets.reduce<SetValue>(
         (union, element) => unionSorted(union, toFiniteSet(element)),
         EMPTY_SET,
