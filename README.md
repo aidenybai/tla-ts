@@ -36,9 +36,10 @@ npm install tla-ts
 npx tla-ts Spec.tla
 npx tla-ts Spec.tla -config Other.cfg -deadlock
 npx tla-ts Spec.tla -workers auto
+npx tla-ts Spec.tla -seed 42
 ```
 
-Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` turns off deadlock checking. `-workers` checks on several threads, one per core with `auto`. Output and exit codes follow TLC:
+Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` turns off deadlock checking. `-seed` sets the seed of `RandomElement` and the Randomization module, which defaults to 0. `-workers` checks on several threads, one per core with `auto`. Output and exit codes follow TLC:
 
 | Exit code | Meaning                      |
 | --------: | ---------------------------- |
@@ -72,6 +73,7 @@ Options:
 - `loadModule`: maps a module name to its source, for modules other than the standard modules
 - `onPrint`: receives the output of `Print` and `PrintT`, which defaults to `console.log`
 - `readFile` and `writeFile`: let the Json module read and write files. Without them, it has no file access
+- `seed`: a `bigint` that seeds `RandomElement` and the Randomization module, which defaults to `0n`. tla-ts makes the same choices as TLC run with `-seed` set to the same value and `-fp 0`
 
 The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `depth`. `status` is `"success"`, `"assumption-violation"`, `"invariant-violation"`, `"property-violation"`, `"liveness-violation"`, or `"deadlock"`. `violation` holds the name of what failed and the trace that reaches it. For a liveness violation, `violation.loopStart` is the trace index where the lasso loops back.
 

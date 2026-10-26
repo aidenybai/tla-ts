@@ -6,11 +6,13 @@ import {
   defineOperator,
   defineStateOperator,
   getElements,
+  getEnumerableSet,
   getOperator,
   getSequence,
   getValue,
 } from "./builtins";
 import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "./runtime";
+import { getRandomElement } from "./tlc-random";
 import {
   createFunction,
   createRecord,
@@ -67,7 +69,7 @@ const getRuntimeValue = (
         ["mode", "bfs"],
         ["deadlock", runtime.checkDeadlock],
         ["worker", 1],
-        ["seed", "0"],
+        ["seed", String(runtime.seed)],
         ["fingerprint", "0"],
         ["install", ""],
       ]);
@@ -206,9 +208,7 @@ export const createTlcOperators = (
     );
   }),
   defineConstant("Any", { kind: "InfiniteSet", name: "Any" }),
-  defineOperator("RandomElement", 1, (args) => {
-    const elements = getElements(args, 0, "RandomElement");
-    if (elements.length === 0) throw new TlaEvaluationError("RandomElement of the empty set");
-    return elements[Math.floor(runtime.random() * elements.length)];
-  }),
+  defineOperator("RandomElement", 1, (args) =>
+    getRandomElement(getEnumerableSet(args, 0, "RandomElement"), runtime.getRandom()),
+  ),
 ];

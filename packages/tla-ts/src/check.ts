@@ -36,6 +36,7 @@ export interface CheckOptions {
   onPrint?: (text: string) => void;
   readFile?: (path: string) => string | undefined;
   writeFile?: (path: string, content: string) => void;
+  seed?: bigint;
 }
 
 export type CheckStatus =
@@ -462,6 +463,7 @@ export const check = (options: CheckOptions): CheckResult => {
     loadModule: options.loadModule,
     print,
     files: { readFile: options.readFile, writeFile: options.writeFile },
+    seed: options.seed,
   });
   const environment = specification.environment;
   const runtime = environment.runtime;
@@ -576,6 +578,7 @@ export const check = (options: CheckOptions): CheckResult => {
     const index = state === current.candidate ? -1 : states.indexOf(state);
     return index === -1 ? [...getPath(current.index), state] : getPath(index);
   };
+  runtime.getCurrentState = () => (current.index === -1 ? undefined : states[current.index]);
   runtime.getLevel = (state) => {
     if (state === current.candidate) return current.candidateLevel;
     if (current.index === -1) return 0;
