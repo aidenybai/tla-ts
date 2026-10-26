@@ -357,6 +357,18 @@ const createBuilder = () => {
         location: START,
       }));
     },
+    product: (...sets: TermLike[]) =>
+      new Term(() => ({ kind: "Product", factors: sets.map(toExpression), location: START })),
+    let: (value: TermLike, body: (name: Term) => TermLike) => {
+      const name = createBoundNames(1)[0];
+      const result = toTerm(body(createReference(name)));
+      return new Term(() => ({
+        kind: "Let",
+        definitions: [{ ...createDefinition(name, [], toExpression(value)), isRecursive: false }],
+        body: result.build(),
+        location: START,
+      }));
+    },
     and: (...operands: TermLike[]) => createJunction("And", operands),
     or: (...operands: TermLike[]) => createJunction("Or", operands),
     not: (operand: TermLike) => createApply("~", [operand]),

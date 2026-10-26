@@ -379,6 +379,21 @@ describe("defineSpec", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([6, 6, 6]);
   });
 
+  it("evaluates LET and cartesian products", () => {
+    const spec = defineSpec((tla) => {
+      const pair = tla.variable("pair");
+      const pairs = tla.product(tla.range(1, 2), tla.set("a", "b"));
+      return {
+        init: pair.in(pairs),
+        next: tla.let(pair.at(1), (first) =>
+          tla.and(first.lt(2), pair.prime().eq(tla.tuple(first.plus(1), pair.at(2)))),
+        ),
+        checkDeadlock: false,
+      };
+    });
+    expect(getCounts({ spec })).toEqual(["success", 6, 4, 1]);
+  });
+
   it("reuses a defined term as a named invariant", () => {
     const spec = defineSpec((tla) => {
       const x = tla.variable("x");
