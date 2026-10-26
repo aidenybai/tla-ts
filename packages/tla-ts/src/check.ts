@@ -8,6 +8,7 @@ import {
   expectBoolean,
   getDefinition,
   isConstantLevel,
+  isConstantValue,
   type Context,
   type Environment,
   type Scope,
@@ -267,6 +268,13 @@ export const getNamedExpressions = (names: string[], environment: Environment): 
     return { name, expression: createIdentifier(name), scope: undefined };
   });
 
+const describePredicate = (expression: Expression) => {
+  const range = expression.location.range;
+  if (expression.kind === "Number") return String(expression.value);
+  if (!range) return `line ${expression.location.line}, col ${expression.location.column}`;
+  return `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
+};
+
 const getBodyRange = (name: string, environment: Environment) => {
   const definition = getDefinition(name, environment);
   return definition?.kind === "Operator" ? definition.bodyRange : undefined;
@@ -342,7 +350,10 @@ export interface Search {
   satisfiesActionConstraints: (state: Value[], next: Value[]) => boolean;
   trackStatePossible: (state: Value[]) => void;
   trackActionPossible: (state: Value[], next: Value[]) => void;
-  findPostconditionViolation: (rootModule: string) => Postcondition | undefined;
+  findPostconditionViolation: (
+    rootModule: string,
+    isAfterViolation: boolean,
+  ) => Postcondition | undefined;
 }
 
 const getContext = (
@@ -501,7 +512,14 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
         ? ignorePossible
         : (state, next) =>
             trackPossible(actionPossible, runtime, getContext(environment, state, next)),
-    findPostconditionViolation: (rootModule) => {
+    findPostconditionViolation: (rootModule, isAfterViolation) => {
+      const constant = config.postconditions.find((name) =>
+        isConstantValue(getDefinition(name, environment), environment),
+      );
+      if (constant !== undefined && isAfterViolation) return undefined;
+      if (constant !== undefined) {
+        throw new TlaConfigError(`The post condition ${constant} cannot be a constant.`);
+      }
       const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
       if (unwitnessed) {
         const range = getBodyRange(unwitnessed.name, environment);
@@ -516,9 +534,16 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
       }
       for (const name of config.postconditions) {
         const failure = getConstantFailure(createIdentifier(name), environment, "a postcondition");
-        if (failure) {
-          return { name, message: failure.message ?? `Postcondition ${name} is false.` };
-        }
+        if (!failure) continue;
+        const definition = getDefinition(name, environment);
+        const location = definition ? describePredicate(definition.body) : name;
+        return {
+          name,
+          message:
+            failure.message === undefined
+              ? `Postcondition ${name} at ${location} is false.`
+              : `Evaluating postcondition ${name} at ${location} failed.\n${failure.message}`,
+        };
       }
       return undefined;
     },
@@ -665,7 +690,7 @@ export const check = (options: CheckOptions): CheckResult => {
       violation.trace,
       start === undefined || !getLoopAction ? undefined : { start, action: getLoopAction() },
     );
-    const postcondition = search.findPostconditionViolation(root.name);
+    const postcondition = search.findPostconditionViolation(root.name, true);
     return createResult(status, postcondition ? { ...violation, postcondition } : violation);
   };
 
@@ -787,7 +812,7 @@ export const check = (options: CheckOptions): CheckResult => {
     );
   }
 
-  const postconditionViolation = search.findPostconditionViolation(root.name);
+  const postconditionViolation = search.findPostconditionViolation(root.name, false);
   if (postconditionViolation) {
     return createResult("postcondition-violation", { ...postconditionViolation, trace: [] });
   }

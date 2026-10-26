@@ -7,7 +7,7 @@ import type {
   OperatorParam,
   RecordField,
 } from "./ast";
-import { TlaEvaluationError } from "./errors";
+import { TlaError, TlaEvaluationError } from "./errors";
 import { generateEvaluator } from "./codegen";
 import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
@@ -295,6 +295,24 @@ export const isConstantLevel = (definition: Definition, environment: Environment
   environment.constantLevels.set(definition, isConstant);
   return isConstant;
 };
+
+const isEvaluable = (expression: Expression, environment: Environment) => {
+  try {
+    evaluate(expression, { environment, scope: undefined, state: undefined, next: undefined });
+    return true;
+  } catch (error) {
+    if (error instanceof TlaError) return false;
+    throw error;
+  }
+};
+
+export const isConstantValue = (definition: Definition | undefined, environment: Environment) =>
+  definition?.kind === "Operator" &&
+  definition.params.length === 0 &&
+  definition.body.kind !== "Number" &&
+  definition.body.kind !== "String" &&
+  isConstantLevel(definition, environment) &&
+  isEvaluable(definition.body, environment);
 
 export const getEnumeratedElements = (set: Value, expression: Expression) => {
   if (!isEnumerable(set)) {
