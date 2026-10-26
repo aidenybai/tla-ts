@@ -117,7 +117,9 @@ const isTemporal = (
 const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
   if (config.specification === undefined) {
     if (config.init === undefined)
-      throw new TlaConfigError("The configuration specifies neither INIT nor SPECIFICATION");
+      throw new TlaConfigError(
+        "The configuration file did not specify the initial state predicate",
+      );
     if (config.next === undefined)
       throw new TlaConfigError("The configuration does not specify NEXT");
     getDefinitionBody(config.init, environment);
@@ -220,12 +222,17 @@ export const check = (options: CheckOptions): CheckResult => {
     }
   }
 
-  const spec = getSpecification(config, environment);
   const properties = getProperties(config, environment);
   const invariants = [
     ...getNamedExpressions(config.invariants, environment),
     ...properties.invariants,
   ];
+  const isConstantModel =
+    config.specification === undefined &&
+    config.init === undefined &&
+    environment.variables.length === 0;
+  if (isConstantModel) return createResult("success");
+  const spec = getSpecification(config, environment);
   const constraints = getNamedExpressions(config.constraints, environment);
   const actionConstraints = getNamedExpressions(config.actionConstraints, environment);
   const symmetryGroup =

@@ -100,6 +100,15 @@ describe("check matches TLC", () => {
 });
 
 describe("evaluation errors match TLC", () => {
+  it("checks only the assumptions of a model without variables or an initial predicate", () => {
+    const result = check({ source: "---- MODULE M ----\nASSUME TRUE\n====", config: "" });
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([0, 0, 0]);
+    expect(() => check({ source: "---- MODULE M ----\nVARIABLE x\n====", config: "" })).toThrow(
+      TlaConfigError,
+    );
+  });
+
   it("reports an assumption that fails to evaluate and skips axioms", () => {
     const result = checkModule("AXIOM 1 = 2\nASSUME CHOOSE n \\in {} : TRUE");
     expect(result.status).toBe("assumption-violation");
