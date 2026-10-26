@@ -223,24 +223,41 @@ export const createSet = (elements: Value[]): SetValue => {
 
 export const EMPTY_SET = createSortedSet([]);
 
-export const unionSorted = (left: Value[], right: Value[]): SetValue => {
-  if (left.length === 0) return createSortedSet(right);
-  if (right.length === 0) return createSortedSet(left);
+export const unionSorted = (left: SetValue, right: SetValue): SetValue => {
+  if (left.elements.length === 0) return right;
+  if (right.elements.length === 0) return left;
+  const leftElements = left.elements;
+  const rightElements = right.elements;
   const merged: Value[] = [];
+  const added: Value[] = [];
   let leftIndex = 0;
   let rightIndex = 0;
-  while (leftIndex < left.length && rightIndex < right.length) {
-    const comparison = compareValues(left[leftIndex], right[rightIndex]);
-    if (comparison < 0) merged.push(left[leftIndex++]);
-    else if (comparison > 0) merged.push(right[rightIndex++]);
-    else {
-      merged.push(left[leftIndex++]);
+  while (leftIndex < leftElements.length && rightIndex < rightElements.length) {
+    const comparison = compareValues(leftElements[leftIndex], rightElements[rightIndex]);
+    if (comparison < 0) merged.push(leftElements[leftIndex++]);
+    else if (comparison > 0) {
+      added.push(rightElements[rightIndex]);
+      merged.push(rightElements[rightIndex++]);
+    } else {
+      merged.push(leftElements[leftIndex++]);
       rightIndex++;
     }
   }
-  while (leftIndex < left.length) merged.push(left[leftIndex++]);
-  while (rightIndex < right.length) merged.push(right[rightIndex++]);
-  return createSortedSet(merged);
+  while (leftIndex < leftElements.length) merged.push(leftElements[leftIndex++]);
+  while (rightIndex < rightElements.length) {
+    added.push(rightElements[rightIndex]);
+    merged.push(rightElements[rightIndex++]);
+  }
+  if (added.length === 0) return left;
+  const union = createSortedSet(merged);
+  if (left.hash !== 0) {
+    let hash = left.hash;
+    for (let index = 0; index < added.length; index++) {
+      hash = (hash + getElementContribution(added[index])) | 0;
+    }
+    union.hash = hash;
+  }
+  return union;
 };
 
 export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
@@ -491,8 +508,18 @@ export const updateFunction = (
   const position = findIndex(finite.domain, argument);
   if (position === -1) return finite;
   const range = [...finite.range];
-  range[position] = update(finite.range[position]);
-  return createSortedFunction(finite.domain, range);
+  const previous = finite.range[position];
+  const next = update(previous);
+  range[position] = next;
+  const updated = createSortedFunction(finite.domain, range);
+  if (finite.hash !== 0) {
+    const key = finite.domain[position];
+    updated.hash =
+      previous === next
+        ? finite.hash
+        : (finite.hash - getEntryContribution(key, previous) + getEntryContribution(key, next)) | 0;
+  }
+  return updated;
 };
 
 const valueHashes = new WeakMap<ObjectValue, number>();
@@ -514,25 +541,31 @@ const hashString = (value: string) => {
   return finalizeHash(hash);
 };
 
+const SET_HASH_SEED = 0x73a5c3e1;
+const FUNCTION_HASH_SEED = 0x66d1b4f7;
+
+const getElementContribution = (element: Value) => (getValueHash(element) + 0x9e3779b9) | 0;
+
+const getEntryContribution = (key: Value, value: Value) =>
+  finalizeHash((Math.imul(getValueHash(key), 0x27d4eb2d) + getValueHash(value)) | 0);
+
 const computeValueHash = (value: ObjectValue): number => {
   if (value.kind === "ModelValue") return finalizeHash(combineHash(hashString(value.name), 0x6d));
   if (isSetValue(value)) {
     if (!isEnumerable(value)) return hashString(getValueKey(value));
     const elements = toFiniteSet(value).elements;
-    let hash = combineHash(HASH_SEED, 0x73);
-    for (let index = 0; index < elements.length; index++)
-      hash = combineHash(hash, getValueHash(elements[index]));
-    return finalizeHash(hash);
+    let hash = SET_HASH_SEED;
+    for (let index = 0; index < elements.length; index++) {
+      hash = (hash + getElementContribution(elements[index])) | 0;
+    }
+    return hash;
   }
   const fn = toFiniteFunction(value);
-  let hash = combineHash(HASH_SEED, 0x66);
+  let hash = FUNCTION_HASH_SEED;
   for (let index = 0; index < fn.domain.length; index++) {
-    hash = combineHash(
-      combineHash(hash, getValueHash(fn.domain[index])),
-      getValueHash(fn.range[index]),
-    );
+    hash = (hash + getEntryContribution(fn.domain[index], fn.range[index])) | 0;
   }
-  return finalizeHash(hash);
+  return hash;
 };
 
 export const getValueHash = (value: Value): number => {

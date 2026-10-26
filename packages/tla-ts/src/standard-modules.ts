@@ -60,15 +60,18 @@ const getSet = (args: BuiltinArgument[], index: number, name: string) => {
   return value;
 };
 
-const getElements = (args: BuiltinArgument[], index: number, name: string) => {
+const getFiniteSet = (args: BuiltinArgument[], index: number, name: string) => {
   const set = getSet(args, index, name);
   if (!isEnumerable(set)) {
     throw new TlaEvaluationError(
       `${name} cannot enumerate the non-enumerable set ${formatValue(set)}`,
     );
   }
-  return toFiniteSet(set).elements;
+  return toFiniteSet(set);
 };
+
+const getElements = (args: BuiltinArgument[], index: number, name: string) =>
+  getFiniteSet(args, index, name).elements;
 
 const getSequence = (args: BuiltinArgument[], index: number, name: string) => {
   const value = getValue(args, index, name);
@@ -188,7 +191,7 @@ export const CORE_OPERATORS: Builtin[] = [
       !valuesEqual(getSet(args, 0, "\\supset"), getSet(args, 1, "\\supset")),
   ),
   defineOperator("\\cup", 2, (args) =>
-    unionSorted(getElements(args, 0, "\\cup"), getElements(args, 1, "\\cup")),
+    unionSorted(getFiniteSet(args, 0, "\\cup"), getFiniteSet(args, 1, "\\cup")),
   ),
   defineOperator("\\cap", 2, (args) => {
     const right = getSet(args, 1, "\\cap");
