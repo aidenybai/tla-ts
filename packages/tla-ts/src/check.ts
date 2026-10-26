@@ -3,7 +3,18 @@ import { parseConfig, type ModelConfig } from "./config";
 import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
 import { TlaConfigError, TlaUnsupportedError } from "./errors";
-import { evaluate, expectBoolean, type Context, type Environment } from "./evaluate";
+import { evaluate, expectBoolean, type Context, type Environment, type Scope } from "./evaluate";
+import {
+  expandTemporal,
+  findLivenessViolation,
+  isTemporal,
+  resolveTemporal,
+  toFairnessCondition,
+  toLivenessProperty,
+  unsupportedTemporal,
+  type FairnessCondition,
+  type LivenessProperty,
+} from "./liveness";
 import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
 import { combineHash, getValueHash, valuesEqual, type Value } from "./values";
@@ -20,6 +31,7 @@ export type CheckStatus =
   | "assumption-violation"
   | "invariant-violation"
   | "property-violation"
+  | "liveness-violation"
   | "deadlock";
 
 export interface TraceStep {
@@ -30,6 +42,7 @@ export interface TraceStep {
 export interface Violation {
   name: string;
   trace: TraceStep[];
+  loopStart: number | undefined;
 }
 
 export interface CheckResult {
@@ -43,11 +56,10 @@ export interface CheckResult {
 interface NamedExpression {
   name: string;
   expression: Expression;
+  scope: Scope | undefined;
 }
 
-interface StateCheck {
-  name: string;
-  expression: Expression;
+interface StateCheck extends NamedExpression {
   variables: number[] | undefined;
 }
 
@@ -55,11 +67,20 @@ interface ActionProperty {
   name: string;
   action: Expression;
   subscript: Expression;
+  scope: Scope | undefined;
 }
 
 interface Specification {
   init: Expression;
   next: Expression;
+  fairness: FairnessCondition[];
+}
+
+interface Properties {
+  initialPredicates: NamedExpression[];
+  invariants: NamedExpression[];
+  actionProperties: ActionProperty[];
+  liveness: LivenessProperty[];
 }
 
 const START: SourceLocation = { line: 0, column: 0 };
@@ -90,35 +111,6 @@ const getConjuncts = (expression: Expression, environment: Environment): Express
   return [expression];
 };
 
-const TEMPORAL_KINDS = new Set([
-  "Always",
-  "Eventually",
-  "WeakFairness",
-  "StrongFairness",
-  "BoxAction",
-  "AngleAction",
-]);
-
-const isTemporal = (
-  expression: Expression,
-  environment: Environment,
-  visited = new Set<string>(),
-): boolean => {
-  if (TEMPORAL_KINDS.has(expression.kind)) return true;
-  if (expression.kind === "Apply" && expression.operator === "~>") return true;
-  if (expression.kind === "Identifier" && !visited.has(expression.name)) {
-    visited.add(expression.name);
-    const definition = environment.definitions.get(expression.name);
-    if (definition?.kind === "Operator") return isTemporal(definition.body, environment, visited);
-  }
-  if (expression.kind === "And" || expression.kind === "Or") {
-    return expression.operands.some((operand) => isTemporal(operand, environment, visited));
-  }
-  if (expression.kind === "Apply")
-    return expression.args.some((arg) => isTemporal(arg, environment, visited));
-  return false;
-};
-
 const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
   if (config.specification === undefined) {
     if (config.init === undefined)
@@ -127,19 +119,32 @@ const getSpecification = (config: ModelConfig, environment: Environment): Specif
       throw new TlaConfigError("The configuration does not specify NEXT");
     getDefinitionBody(config.init, environment);
     getDefinitionBody(config.next, environment);
-    return { init: createIdentifier(config.init), next: createIdentifier(config.next) };
+    return {
+      init: createIdentifier(config.init),
+      next: createIdentifier(config.next),
+      fairness: [],
+    };
   }
   const initConjuncts: Expression[] = [];
   const nextActions: Expression[] = [];
-  getConjuncts(getDefinitionBody(config.specification, environment), environment).forEach(
-    (conjunct) => {
-      if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
-        nextActions.push(conjunct.expression.action);
-        return;
-      }
-      if (!isTemporal(conjunct, environment)) initConjuncts.push(conjunct);
-    },
-  );
+  const fairness: FairnessCondition[] = [];
+  const body = getDefinitionBody(config.specification, environment);
+  expandTemporal(body, undefined, environment).forEach((item) => {
+    const conjunct = resolveTemporal(item.expression, environment);
+    if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
+      nextActions.push(conjunct.expression.action);
+      return;
+    }
+    const condition = toFairnessCondition(item, environment);
+    if (condition) {
+      fairness.push(condition);
+      return;
+    }
+    if (isTemporal(item.expression, environment) || item.scope !== undefined) {
+      throw unsupportedTemporal(config.specification ?? "");
+    }
+    initConjuncts.push(item.expression);
+  });
   if (nextActions.length !== 1) {
     throw new TlaConfigError(
       `The specification ${config.specification} must contain exactly one [][Next]_vars`,
@@ -148,38 +153,50 @@ const getSpecification = (config: ModelConfig, environment: Environment): Specif
   return {
     init: { kind: "And", operands: initConjuncts, location: START },
     next: nextActions[0],
+    fairness,
   };
 };
 
-const getProperties = (config: ModelConfig, environment: Environment) => {
-  const invariants: NamedExpression[] = [];
-  const actionProperties: ActionProperty[] = [];
+const getProperties = (config: ModelConfig, environment: Environment): Properties => {
+  const properties: Properties = {
+    initialPredicates: [],
+    invariants: [],
+    actionProperties: [],
+    liveness: [],
+  };
   config.properties.forEach((name) => {
-    getConjuncts(getDefinitionBody(name, environment), environment).forEach((conjunct) => {
+    const body = getDefinitionBody(name, environment);
+    expandTemporal(body, undefined, environment).forEach((item) => {
+      const conjunct = resolveTemporal(item.expression, environment);
+      if (!isTemporal(conjunct, environment)) {
+        properties.initialPredicates.push({ name, expression: conjunct, scope: item.scope });
+        return;
+      }
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
-        actionProperties.push({
+        properties.actionProperties.push({
           name,
           action: conjunct.expression.action,
           subscript: conjunct.expression.subscript,
+          scope: item.scope,
         });
         return;
       }
       if (conjunct.kind === "Always" && !isTemporal(conjunct.expression, environment)) {
-        invariants.push({ name, expression: conjunct.expression });
+        properties.invariants.push({ name, expression: conjunct.expression, scope: item.scope });
         return;
       }
-      throw new TlaUnsupportedError(
-        `Property ${name} needs liveness checking, which is not supported yet`,
-      );
+      const liveness = toLivenessProperty(name, item, environment);
+      if (!liveness) throw unsupportedTemporal(name);
+      properties.liveness.push(liveness);
     });
   });
-  return { invariants, actionProperties };
+  return properties;
 };
 
 const getNamedExpressions = (names: string[], environment: Environment): NamedExpression[] =>
   names.map((name) => {
     getDefinitionBody(name, environment);
-    return { name, expression: createIdentifier(name) };
+    return { name, expression: createIdentifier(name), scope: undefined };
   });
 
 const getStateChecks = (named: NamedExpression[], environment: Environment): StateCheck[] =>
@@ -187,6 +204,7 @@ const getStateChecks = (named: NamedExpression[], environment: Environment): Sta
     getConjuncts(item.expression, environment).map((expression) => ({
       name: item.name,
       expression,
+      scope: item.scope,
       variables: getReadVariables(expression, environment),
     })),
   );
@@ -208,9 +226,13 @@ export const check = (options: CheckOptions): CheckResult => {
     print: options.onPrint ?? console.log,
   });
   const environment = specification.environment;
-  const getContext = (state: Value[] | undefined, next: Value[] | undefined): Context => ({
+  const getContext = (
+    state: Value[] | undefined,
+    next: Value[] | undefined,
+    scope?: Scope,
+  ): Context => ({
     environment,
-    scope: undefined,
+    scope,
     state,
     next,
   });
@@ -218,9 +240,12 @@ export const check = (options: CheckOptions): CheckResult => {
     expectBoolean(evaluate(expression, context), description);
 
   const statistics = { generatedStates: 0, distinctStates: 0, depth: 0 };
-  const createResult = (status: CheckStatus, violation?: Violation): CheckResult => ({
+  const createResult = (
+    status: CheckStatus,
+    violation?: Omit<Violation, "loopStart"> & { loopStart?: number },
+  ): CheckResult => ({
     status,
-    violation,
+    violation: violation && { ...violation, loopStart: violation.loopStart },
     ...statistics,
   });
 
@@ -246,11 +271,14 @@ export const check = (options: CheckOptions): CheckResult => {
     environment,
   );
   const actionConstraints = getNamedExpressions(config.actionConstraints, environment);
+  const isRecordingEdges = properties.liveness.length > 0;
 
   const states: Value[][] = [];
   const parents: number[] = [];
   const actions: (string | undefined)[] = [];
   const depths: number[] = [];
+  const edges: number[][] = [];
+  const initial: number[] = [];
   const buckets = new Map<number, number | number[]>();
   const canonicalValues = new Map<number, Value | Value[]>();
   const canonicalize = (value: Value): Value => {
@@ -296,19 +324,18 @@ export const check = (options: CheckOptions): CheckResult => {
       hash = combineHash(hash, getValueHash(state[index]));
     return hash & 0x3fffffff;
   };
-  const isSameState = (index: number, state: Value[]) => {
-    const stored = states[index];
+  const isSameState = (stored: Value[], state: Value[]) => {
     for (let position = 0; position < state.length; position++) {
       if (stored[position] !== state[position] && !valuesEqual(stored[position], state[position]))
         return false;
     }
     return true;
   };
-  const isSeen = (hash: number, state: Value[]) => {
+  const findStateIndex = (hash: number, state: Value[]) => {
     const bucket = buckets.get(hash);
-    if (bucket === undefined) return false;
-    if (typeof bucket === "number") return isSameState(bucket, state);
-    return bucket.some((index) => isSameState(index, state));
+    if (bucket === undefined) return -1;
+    if (typeof bucket === "number") return isSameState(states[bucket], state) ? bucket : -1;
+    return bucket.find((index) => isSameState(states[index], state)) ?? -1;
   };
   const markSeen = (hash: number, index: number) => {
     const bucket = buckets.get(hash);
@@ -320,7 +347,11 @@ export const check = (options: CheckOptions): CheckResult => {
     invariants.find(
       (invariant) =>
         !isUnchangedFor(invariant, state, parent) &&
-        !holds(invariant.expression, getContext(state, undefined), `invariant ${invariant.name}`),
+        !holds(
+          invariant.expression,
+          getContext(state, undefined, invariant.scope),
+          `invariant ${invariant.name}`,
+        ),
     );
   const satisfiesConstraints = (state: Value[], parent?: Value[]) =>
     constraints.every(
@@ -338,6 +369,7 @@ export const check = (options: CheckOptions): CheckResult => {
     parents.push(parent);
     actions.push(action);
     depths.push(depth);
+    if (isRecordingEdges) edges.push([]);
     statistics.distinctStates = states.length;
     statistics.depth = Math.max(statistics.depth, depth);
   };
@@ -346,7 +378,7 @@ export const check = (options: CheckOptions): CheckResult => {
     canonicalizeState(state);
     statistics.generatedStates++;
     const hash = getStateHash(state);
-    if (isSeen(hash, state)) continue;
+    if (findStateIndex(hash, state) !== -1) continue;
     const violated = findViolatedInvariant(state);
     if (violated) {
       countViolatingState(1);
@@ -355,8 +387,23 @@ export const check = (options: CheckOptions): CheckResult => {
         trace: [{ action: undefined, state: toRecord(state) }],
       });
     }
+    const failedPredicate = properties.initialPredicates.find(
+      (predicate) =>
+        !holds(
+          predicate.expression,
+          getContext(state, undefined, predicate.scope),
+          `property ${predicate.name}`,
+        ),
+    );
+    if (failedPredicate) {
+      return createResult("property-violation", {
+        name: failedPredicate.name,
+        trace: [{ action: undefined, state: toRecord(state) }],
+      });
+    }
     if (!satisfiesConstraints(state)) continue;
     markSeen(hash, states.length);
+    initial.push(states.length);
     addState(state, -1, undefined);
   }
 
@@ -368,13 +415,16 @@ export const check = (options: CheckOptions): CheckResult => {
       return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
     }
     for (const successor of successors) {
-      const transition = getContext(state, successor.state);
       const violatedProperty = properties.actionProperties.find(
         (property) =>
-          !holds(property.action, transition, `property ${property.name}`) &&
+          !holds(
+            property.action,
+            getContext(state, successor.state, property.scope),
+            `property ${property.name}`,
+          ) &&
           !holds(
             { kind: "Unchanged", expression: property.subscript, location: START },
-            transition,
+            getContext(state, successor.state, property.scope),
             "a subscript",
           ),
       );
@@ -384,6 +434,7 @@ export const check = (options: CheckOptions): CheckResult => {
           trace: getTrace(index, successor),
         });
       }
+      const transition = getContext(state, successor.state);
       if (
         !actionConstraints.every((constraint) =>
           holds(constraint.expression, transition, `action constraint ${constraint.name}`),
@@ -393,7 +444,11 @@ export const check = (options: CheckOptions): CheckResult => {
       }
       canonicalizeState(successor.state);
       const hash = getStateHash(successor.state);
-      if (isSeen(hash, successor.state)) continue;
+      const existing = findStateIndex(hash, successor.state);
+      if (existing !== -1) {
+        if (isRecordingEdges) edges[index].push(existing);
+        continue;
+      }
       const violated = findViolatedInvariant(successor.state, state);
       if (violated) {
         countViolatingState(depths[index] + 1);
@@ -404,8 +459,32 @@ export const check = (options: CheckOptions): CheckResult => {
       }
       if (!satisfiesConstraints(successor.state, state)) continue;
       markSeen(hash, states.length);
+      if (isRecordingEdges) edges[index].push(states.length);
       addState(successor.state, index, successor.action);
     }
+  }
+
+  const graph = { states, successors: edges, initial, parents };
+  for (const property of properties.liveness) {
+    const lasso = findLivenessViolation(graph, property, spec.fairness, environment);
+    if (!lasso) continue;
+    const path = [...lasso.prefix, ...lasso.cycle];
+    const trace = path.map((stateIndex, position): TraceStep => {
+      if (position === 0) return { action: undefined, state: toRecord(states[stateIndex]) };
+      const previous = path[position - 1];
+      const action =
+        previous === stateIndex
+          ? "Stuttering"
+          : getSuccessors(spec.next, states[previous], environment).find((successor) =>
+              isSameState(successor.state, states[stateIndex]),
+            )?.action;
+      return { action, state: toRecord(states[stateIndex]) };
+    });
+    return createResult("liveness-violation", {
+      name: property.name,
+      trace,
+      loopStart: lasso.prefix.length,
+    });
   }
 
   return createResult("success");

@@ -464,6 +464,15 @@ const compileAction = (
         };
       }
       return compileUnchanged(expression.expression, environment);
+    case "AngleAction": {
+      const body = child(expression.action);
+      const unchanged = getUnchangedWrapper(expression.subscript);
+      return (run, scope, partial, action, isFixed, onComplete) =>
+        body(run, scope, partial, action, isFixed, (nextPartial, nextAction) => {
+          if (!holds(unchanged, getContext(run, scope, nextPartial)))
+            onComplete(nextPartial, nextAction);
+        });
+    }
     case "BoxAction":
       return child({
         kind: "Or",
@@ -521,6 +530,28 @@ const isComplete = (partial: State): partial is Value[] => {
     if (partial[index] === undefined) return false;
   }
   return true;
+};
+
+export const isEnabled = (expression: Expression, context: Context): boolean => {
+  const state = context.state;
+  if (!state || !isComplete(state)) {
+    throw new TlaEvaluationError(
+      `ENABLED needs a complete state at ${describeLocation(expression)}`,
+    );
+  }
+  const environment = context.environment;
+  const found = { value: false };
+  getRunner(expression, environment, false)(
+    { environment, isInit: false, current: state },
+    context.scope,
+    getEmptyState(environment),
+    undefined,
+    false,
+    () => {
+      found.value = true;
+    },
+  );
+  return found.value;
 };
 
 export const getInitialStates = (expression: Expression, environment: Environment): Value[][] => {

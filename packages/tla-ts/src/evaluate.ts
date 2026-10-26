@@ -8,6 +8,7 @@ import type {
   RecordField,
 } from "./ast";
 import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import { isEnabled } from "./successors";
 import {
   applyFunction,
   checkInteger,
@@ -1303,8 +1304,10 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
           ? expectBoolean(action(context), "an action") || unchanged(context)
           : expectBoolean(action(context), "an action") && !unchanged(context);
     }
-    case "Enabled":
-      return throwing(() => new TlaUnsupportedError("ENABLED is not supported yet"));
+    case "Enabled": {
+      const action = expression.expression;
+      return (context) => isEnabled(action, context);
+    }
     case "Always":
     case "Eventually":
     case "WeakFairness":

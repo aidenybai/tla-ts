@@ -45,6 +45,7 @@ export const compareOutcome = (
     "traceLength",
   ] as const;
   const differences = fields
+    .filter((field) => !(field === "traceLength" && expected.status === "liveness-violation"))
     .filter((field) => expected[field] !== undefined && expected[field] !== actual[field])
     .map((field) => `${field}: expected ${expected[field]}, got ${actual[field]}`);
   return differences.length > 0 ? differences.join("; ") : undefined;

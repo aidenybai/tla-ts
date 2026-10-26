@@ -11,6 +11,7 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   deadlock: 11,
   "invariant-violation": 12,
   "property-violation": 12,
+  "liveness-violation": 13,
 };
 
 const USAGE = "Usage: tla-ts <Spec.tla> [-config <Spec.cfg>] [-deadlock]";
@@ -22,7 +23,8 @@ const printResult = (result: CheckResult) => {
       "assumption-violation": `Error: Assumption ${result.violation.name} is false.`,
       deadlock: "Error: Deadlock reached.",
       "invariant-violation": `Error: Invariant ${result.violation.name} is violated.`,
-      "property-violation": `Error: Action property ${result.violation.name} is violated.`,
+      "property-violation": `Error: Property ${result.violation.name} is violated.`,
+      "liveness-violation": `Error: Temporal property ${result.violation.name} was violated.`,
     }[result.status];
     console.log(headline);
     if (result.violation.trace.length > 0) console.log("Error: The behavior up to this point is:");
@@ -33,6 +35,13 @@ const printResult = (result: CheckResult) => {
       );
       console.log("");
     });
+    const loopStart = result.violation.loopStart;
+    if (loopStart !== undefined) {
+      const isStuttering = loopStart === result.violation.trace.length - 1;
+      console.log(
+        isStuttering ? `State ${loopStart + 2}: Stuttering` : `Back to state ${loopStart + 1}`,
+      );
+    }
   } else {
     console.log("Model checking completed. No error has been found.");
   }
