@@ -472,15 +472,15 @@ export const check = (options: CheckOptions): CheckResult => {
     path.map((stateIndex, position): TraceStep => {
       if (position === 0) return { action: undefined, state: toRecord(states[stateIndex]) };
       const previous = path[position - 1];
+      const state = toRecord(states[stateIndex]);
+      if (previous === stateIndex) return { action: "Stuttering", state };
+      if (parents[stateIndex] === previous) return { action: actions[stateIndex], state };
       progress.current = states[previous];
       progress.level = depths[previous];
-      const action =
-        previous === stateIndex
-          ? "Stuttering"
-          : getSuccessors(spec.next, states[previous], environment).find((successor) =>
-              isSameState(successor.state, states[stateIndex]),
-            )?.action;
-      return { action, state: toRecord(states[stateIndex]) };
+      const action = getSuccessors(spec.next, states[previous], environment).find((successor) =>
+        isSameState(successor.state, states[stateIndex]),
+      )?.action;
+      return { action, state };
     });
   const getStateHash = (state: Value[]) => {
     let hash = 0x811c9dc5;

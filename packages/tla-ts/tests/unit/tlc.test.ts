@@ -56,6 +56,23 @@ describe("TLCGet and TLCSet match TLC", () => {
     expect(printed).toEqual(Array.from({ length: 9 }, () => '"TLCSet works."'));
   });
 
+  it("names the actions of a liveness trace whose registers changed", () => {
+    const result = checkFixture("tlc-get-non-determinism", "TLCGetNonDeterminism");
+    expect(result.status).toBe("liveness-violation");
+    expect(result.violation?.trace.map((step) => formatValue(step.state.y))).toEqual([
+      "0",
+      "1",
+      "2",
+      "3",
+    ]);
+    expect(result.violation?.trace.map((step) => step.action)).toEqual([
+      undefined,
+      "Next",
+      "Next",
+      "Next",
+    ]);
+  });
+
   it("rejects substituting a constant with a statistic", () => {
     expect(() => checkFixture("tlc-get-named-undefined", "TLCGetNamedUndefined")).toThrow(
       TlaConfigError,
