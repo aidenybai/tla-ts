@@ -13,7 +13,15 @@ import type { ConfigValue, ModelConfig } from "./config";
 import type { FileSystem } from "./json";
 import { TlaConfigError, TlaEvaluationError, TlaSyntaxError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import { getChildren, isConstantLevel, type Builtin, type Environment } from "./evaluate";
+import {
+  createBigNumberError,
+  createRealNumberError,
+  getChildren,
+  isConstantLevel,
+  isTlcInteger,
+  type Builtin,
+  type Environment,
+} from "./evaluate";
 import {
   createInstantiation,
   getEnabledVariableName,
@@ -157,6 +165,24 @@ const getVariableIndex = (variables: string[], declared: string[]) => {
   return index;
 };
 
+const getSubstitutions = (instances: Instance[]) =>
+  instances.flatMap((instance) =>
+    instance.substitutions.map((substitution) => substitution.expression),
+  );
+
+const rejectLiterals = (expressions: Expression[]): void =>
+  expressions.forEach((expression) => {
+    if (expression.kind === "Decimal") throw createRealNumberError(expression);
+    if (expression.kind === "Number" && !isTlcInteger(expression.value)) {
+      throw createBigNumberError(expression);
+    }
+    rejectLiterals(
+      expression.kind === "Let"
+        ? [...getChildren(expression), ...getSubstitutions(expression.instances ?? [])]
+        : getChildren(expression),
+    );
+  });
+
 export const createEnvironment = (
   config: ModelConfig,
   options: EnvironmentOptions,
@@ -209,6 +235,23 @@ export const createEnvironment = (
     return symbols;
   };
 
+  // Like TLC, reject a decimal or a big integer anywhere in a module, even where nothing evaluates it.
+  const rejectModuleLiterals = (module: Module): Module => {
+    rejectLiterals([
+      ...module.definitions.flatMap((definition) =>
+        definition.kind === "Function"
+          ? [...definition.bounds.map((bound) => bound.set), definition.body]
+          : [definition.body],
+      ),
+      ...module.assumptions.map((assumption) => assumption.expression),
+      ...module.theorems,
+      ...getSubstitutions(module.instances),
+    ]);
+    module.modules.forEach(rejectModuleLiterals);
+    return module;
+  };
+  rejectModuleLiterals(root);
+
   const loadModule = (name: string) => {
     const source =
       options.loadModule?.(name) ??
@@ -216,7 +259,7 @@ export const createEnvironment = (
       extractModule(options.source, name);
     if (source === undefined)
       throw new TlaSyntaxError(`Cannot find source file for module ${name}`);
-    return parseModule(source);
+    return rejectModuleLiterals(parseModule(source));
   };
 
   const getDefinitionKey = (module: Module, id: string, name: string) =>
