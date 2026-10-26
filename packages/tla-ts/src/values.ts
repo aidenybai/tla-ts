@@ -159,6 +159,30 @@ const compareSets = (left: SetValue, right: SetValue): number => {
   return 0;
 };
 
+const getModelValueType = (value: Value) =>
+  isModelValue(value) && value.name.length > 2 && value.name[1] === "_" ? value.name[0] : undefined;
+
+const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) => {
+  const leftType = getModelValueType(left);
+  const rightType = getModelValueType(right);
+  if (leftType === undefined && rightType === undefined) return;
+  const action = isEquality ? "check equality of" : "compare";
+  if (isModelValue(left) && isModelValue(right)) {
+    if (leftType === undefined || rightType === undefined || leftType === rightType) return;
+    throw new TlaEvaluationError(
+      `Attempted to ${action} the differently-typed model values ${formatValue(left)} and ${formatValue(right)}`,
+    );
+  }
+  if (leftType !== undefined) {
+    throw new TlaEvaluationError(
+      `Attempted to ${action}${isEquality ? "" : " the"} typed model value ${formatValue(left)} and non-model value\n${formatValue(right)}`,
+    );
+  }
+  throw new TlaEvaluationError(
+    `Attempted to ${action} the typed model value ${formatValue(right)} and the non-model value\n${formatValue(left)}`,
+  );
+};
+
 export const compareValues = (left: Value, right: Value): number => {
   if (left === right) return 0;
   if (typeof left === "object" && typeof right === "object") {
@@ -167,6 +191,7 @@ export const compareValues = (left: Value, right: Value): number => {
     if (leftKind === "Function" && rightKind === "Function") return compareFunctions(left, right);
     if (leftKind === "Set" && rightKind === "Set") return compareSets(left, right);
     if (leftKind === "ModelValue" || rightKind === "ModelValue") {
+      checkModelValueTypes(left, right, false);
       if (leftKind === "ModelValue" && rightKind === "ModelValue") {
         return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
       }
@@ -194,6 +219,7 @@ export const compareValues = (left: Value, right: Value): number => {
   if (typeof left === "number" && typeof right === "number") return left - right;
   if (typeof left === "string" && typeof right === "string") return left < right ? -1 : 1;
   if (typeof left === "boolean" && typeof right === "boolean") return left < right ? -1 : 1;
+  checkModelValueTypes(left, right, false);
   if (isModelValue(left)) return -1;
   if (isModelValue(right)) return 1;
   throw new TlaEvaluationError(
@@ -216,8 +242,10 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
 
 export const valuesEqual = (left: Value, right: Value): boolean => {
   if (left === right) return true;
-  if (typeof left !== "object" || typeof right !== "object")
+  if (typeof left !== "object" || typeof right !== "object") {
+    checkModelValueTypes(left, right, true);
     return compareValues(left, right) === 0;
+  }
   const isHashed =
     (left.kind === "Set" || left.kind === "Function") &&
     (right.kind === "Set" || right.kind === "Function") &&
@@ -228,6 +256,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     return compareFunctions(left, right) === 0;
   if (left.kind === "Set" && right.kind === "Set") return compareSets(left, right) === 0;
   if (isModelValue(left) || isModelValue(right)) {
+    checkModelValueTypes(left, right, true);
     return isModelValue(left) && isModelValue(right) && left.name === right.name;
   }
   const isInfiniteComparison =

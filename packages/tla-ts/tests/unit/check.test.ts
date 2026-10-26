@@ -210,6 +210,16 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("rejects comparisons of differently-typed model values", () => {
+    expect(() =>
+      check({
+        source:
+          '---- MODULE M ----\nEXTENDS TLCExt\nVARIABLE v\nInit == v = {TLCModelValue("A_a"), TLCModelValue("B_a")}\nNext == UNCHANGED v\n====',
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).toThrow("Attempted to compare the differently-typed model values A_a and B_a");
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");
