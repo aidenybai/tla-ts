@@ -48,7 +48,7 @@ const printState = (state: Record<string, Value>) => {
 const printTrace = (trace: TraceStep[]) => {
   if (trace.length > 0) console.log("Error: The behavior up to this point is:");
   trace.forEach((step, index) => {
-    console.log(`State ${index + 1}: <${step.action ?? "Initial predicate"}>`);
+    console.log(`State ${index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>`);
     printState(step.state);
   });
 };

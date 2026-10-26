@@ -34,7 +34,12 @@ import {
   getSuccessors,
   type Successor,
 } from "./successors";
-import { getSpecificationValue } from "./spec-description";
+import {
+  getActionLabel,
+  getNextActions,
+  getSpecificationValue,
+  type SpecAction,
+} from "./spec-description";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { getTlcFingerprint } from "./tlc-random";
@@ -77,6 +82,8 @@ export type CheckStatus =
 
 export interface TraceStep {
   action: string | undefined;
+  // TLC's name, parameters and location for the action that took this step.
+  label: string | undefined;
   state: Record<string, Value>;
 }
 
@@ -777,7 +784,13 @@ const withHeadline = (error: unknown, headline: string) =>
 export const checkSequentially = (options: CheckOptions): CheckResult => {
   setNextStatePhase(false);
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
-  const print = options.onPrint ?? console.log;
+  const onPrint = options.onPrint ?? console.log;
+  // TLC prints again while it rebuilds a trace, between the states it prints. Printing those lines
+  // before the trace would misplace them, so rebuilding a trace prints nothing.
+  const output = { isMuted: false };
+  const print = (text: string) => {
+    if (!output.isMuted) onPrint(text);
+  };
   setStringOrder(getTlcStringOrder(options.source, config, options.loadModule));
   const specification = createEnvironment(config, {
     source: options.source,
@@ -838,6 +851,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   const properties = search.properties;
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
+  const nextActions = { value: undefined as SpecAction[] | undefined };
   const isReducing = config.view !== undefined || config.symmetry !== undefined;
   const liveness = withLivenessExitCode(() =>
     createLivenessChecker(properties.liveness, spec.temporals, environment),
@@ -877,10 +891,36 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       return { ...toRecord(state), _ALIASEvalError: error.message };
     }
   };
-  const toTrace = (steps: Successor[], loopStart?: number): TraceStep[] => {
+  // TLC labels a step with the first action that takes it, evaluated as when the search expanded
+  // the previous state.
+  const getLabel = (index: number, previous: Value[], state: Value[]) => {
+    nextActions.value ??= getNextActions(config, environment, specification.instanceActions);
+    const expanding = { ...current };
+    Object.assign(current, { index, isExpanding: true, candidate: undefined });
+    const fingerprintState = getFingerprintState(state);
+    const action = nextActions.value.find((item) =>
+      getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
+        isSameState(getFingerprintState(successor.state), fingerprintState),
+      ),
+    );
+    Object.assign(current, expanding);
+    return action && getActionLabel(action);
+  };
+  const toTrace = (steps: Successor[], path: number[], loopStart?: number): TraceStep[] => {
     const alias = config.alias;
+    output.isMuted = true;
+    // TLC rebuilds a trace from the initial predicate, which can reset what TLCSet stored.
+    if (steps.length > 1 && isImpure(environment)) getSpecInitialStates();
+    // TLC finds the action that takes each step before it evaluates the alias.
+    const labels = steps.map((step, position) =>
+      position === 0 || step.action === "Stuttering"
+        ? undefined
+        : getLabel(path[position - 1], steps[position - 1].state, step.state),
+    );
+    output.isMuted = false;
     return steps.map((step, position) => ({
       action: step.action,
+      label: labels[position],
       state:
         alias === undefined
           ? toRecord(step.state)
@@ -921,18 +961,18 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       isReducing && path.length > 1
         ? getPathStates(path, INITIAL_RECOVERY_FAILURE)
         : path.map((current) => ({ state: states[current], action: actions[current] }));
-    if (!last) return toTrace(steps);
+    if (!last) return toTrace(steps, path);
     const action = isReducing
       ? getTraceSuccessors(states[index]).find((successor) =>
           isSameState(successor.state, last.state),
         )?.action
       : last.action;
-    return toTrace([...steps, { state: last.state, action }]);
+    return toTrace([...steps, { state: last.state, action }], path);
   };
   // TLC prints an initial state on its own without evaluating the alias.
   const getStateTrace = (index: number) =>
     parents[index] === -1
-      ? [{ action: undefined, state: toRecord(states[index]) }]
+      ? [{ action: undefined, label: undefined, state: toRecord(states[index]) }]
       : getTrace(index);
   // TLC names the initial state it was checking unless a standard module's Java code failed.
   const toFailure = (error: unknown, trace: TraceStep[], initialState?: Value[]) => {
@@ -954,7 +994,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       loopStart === path.length - 1 ||
       findSuccessorWithFingerprint(last, path[loopStart]) !== undefined;
     if (!isClosed) throw new TlaEvaluationError(NEXT_RECOVERY_FAILURE);
-    return toTrace(steps, loopStart);
+    return toTrace(steps, path, loopStart);
   };
   const getStateHash = (state: Value[]) => {
     let hash = 0x811c9dc5;
@@ -1052,14 +1092,14 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     if (violated) {
       return reportViolation("invariant-violation", {
         name: violated.name,
-        trace: toTrace([{ action: undefined, state }]),
+        trace: toTrace([{ action: undefined, state }], []),
       });
     }
     const failedPredicate = search.findFailedInitialPredicate(state);
     if (failedPredicate) {
       return reportViolation("liveness-violation", {
         name: failedPredicate.name,
-        trace: toTrace([{ action: undefined, state }]),
+        trace: toTrace([{ action: undefined, state }], []),
       });
     }
     if (!isInModel) return undefined;

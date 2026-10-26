@@ -431,6 +431,40 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([73, 14, 7]);
   });
 
+  it("labels each step with the action TLC splits the next-state relation into", async () => {
+    const getLabels = async (definitions: string, config = "INIT Init\nNEXT Next") => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\n${definitions}\nInv == x < 2\n====`,
+        config: `${config}\nINVARIANT Inv`,
+      });
+      return result.violation?.trace.map((step) => step.label);
+    };
+    expect(await getLabels("A(i) == x' = x + i\nNext == \\E i \\in {1, 2} : A(i)")).toEqual([
+      undefined,
+      "A(2) line 5, col 9 to line 5, col 18 of module M",
+    ]);
+    expect(await getLabels("Next == x' = x + 1 \\/ x' = x + 2")).toEqual([
+      undefined,
+      "Next line 5, col 23 to line 5, col 32 of module M",
+    ]);
+    expect(await getLabels("Spec == Init /\\ [][x' = x + 1]_x", "SPECIFICATION Spec")).toEqual([
+      undefined,
+      "Action line 5, col 20 to line 5, col 29 of module M",
+      "Action line 5, col 20 to line 5, col 29 of module M",
+    ]);
+  });
+
+  it("labels steps after evaluating the initial predicate again like TLC", async () => {
+    const result = await checkFixture("tlc-get-non-determinism", "TLCGetNonDeterminism");
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([
+      undefined,
+      ...Array.from(
+        { length: 3 },
+        () => "Next line 23, col 9 to line 26, col 25 of module TLCGetNonDeterminism",
+      ),
+    ]);
+  });
+
   it("counts the states left on the queue when a violation stops the search", async () => {
     const result = await checkFixture("water-jugs", "WaterJugs");
     expect(result.queuedStates).toBe(1);
