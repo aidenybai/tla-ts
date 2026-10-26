@@ -780,6 +780,21 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("shows a record in the order the spec writes it until TLC sorts it", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC\nASSUME PrintT([fld2 |-> 0])\nASSUME PrintT(ToString([fld1 |-> 1, fld2 |-> 2]))\nASSUME PrintT(ToString(("fld1" :> 1) @@ ("fld3" :> 3) @@ ("fld2" :> 2)))\nASSUME PrintT([fld1 |-> 1, fld2 |-> 2])\n====',
+      config: "",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints.slice(1)).toEqual([
+      '"[fld1 |-> 1, fld2 |-> 2]"',
+      '"[fld1 |-> 1, fld3 |-> 3, fld2 |-> 2]"',
+      "[fld2 |-> 2, fld1 |-> 1]",
+    ]);
+  });
+
   it("rejects a mistyped membership outside an assumption", async () => {
     await expect(
       check({

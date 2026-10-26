@@ -148,7 +148,31 @@ export const checkInteger = (value: number) => {
   return value;
 };
 
+// TLC keeps a record, or a function with string keys that @@ builds, in the order the spec writes
+// it until it sorts the value to compare or fingerprint it. ToString, Assert, and error messages
+// show that order.
+const writtenOrders = new WeakMap<FunctionValue, Value[]>();
+const writtenOrderUse = { isUsed: false };
+
+const setWrittenOrder = (fn: FunctionValue, keys: Value[]) => {
+  writtenOrderUse.isUsed = true;
+  writtenOrders.set(fn, keys);
+  return fn;
+};
+
+export const getWrittenPairs = (fn: FunctionValue): [Value, Value][] => {
+  const keys = writtenOrders.get(fn) ?? fn.domain;
+  return keys.map((key) => [key, fn.range[findIndex(fn.domain, key)]]);
+};
+
+export const createWrittenRecord = (names: Value[], range: Value[], writtenNames: Value[]) =>
+  setWrittenOrder(createSortedFunction(names, range), writtenNames);
+
 const compareFunctions = (left: FunctionValue, right: FunctionValue): number => {
+  if (writtenOrderUse.isUsed) {
+    writtenOrders.delete(left);
+    writtenOrders.delete(right);
+  }
   const leftDomain = left.domain;
   const rightDomain = right.domain;
   if (leftDomain.length !== rightDomain.length) return leftDomain.length - rightDomain.length;
@@ -903,6 +927,20 @@ export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
   return createSortedFunction(domain, range);
 };
 
+export const createWrittenFunction = (pairs: [Value, Value][]) => {
+  const fn = createFunction(pairs);
+  const isWrittenSorted =
+    fn.domain.length !== pairs.length ||
+    pairs.some((pair) => typeof pair[0] !== "string") ||
+    pairs.every((pair, index) => pair[0] === fn.domain[index]);
+  return isWrittenSorted
+    ? fn
+    : setWrittenOrder(
+        fn,
+        pairs.map((pair) => pair[0]),
+      );
+};
+
 const intervalDomains: Value[][] = [];
 const intervalValues: IntervalValue[] = [];
 
@@ -1561,6 +1599,8 @@ export const updateFunction = (
   const next = update(previous);
   range[position] = next;
   const updated = createSortedFunction(finite.domain, range);
+  const writtenOrder = writtenOrderUse.isUsed ? writtenOrders.get(finite) : undefined;
+  if (writtenOrder) writtenOrders.set(updated, writtenOrder);
   if (finite.hash !== 0) {
     const key = finite.domain[position];
     updated.hash =
@@ -1815,8 +1855,8 @@ const isTlcName = (text: string) => {
   );
 };
 
-export const formatValue = (value: Value, isStrict = false): string => {
-  const format = (inner: Value) => formatValue(inner, isStrict);
+export const formatValue = (value: Value, isStrict = false, isNormalized = false): string => {
+  const format = (inner: Value) => formatValue(inner, isStrict, isNormalized);
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
   if (typeof value === "number") return String(value);
   if (typeof value === "string") return formatString(value);
@@ -1858,7 +1898,11 @@ export const formatValue = (value: Value, isStrict = false): string => {
         return `<<${fn.range.map(format).join(", ")}>>`;
       }
       if (fn.domain.every((key) => typeof key === "string" && isTlcName(key))) {
-        return `[${fn.domain.map((key, index) => `${String(key)} |-> ${format(fn.range[index])}`).join(", ")}]`;
+        const isSorted = isNormalized || fn.hash !== 0 || fn.fingerprint !== 0;
+        const pairs = isSorted
+          ? fn.domain.map((key, index) => [key, fn.range[index]])
+          : getWrittenPairs(fn);
+        return `[${pairs.map((pair) => `${String(pair[0])} |-> ${format(pair[1])}`).join(", ")}]`;
       }
       return `(${fn.domain.map((key, index) => `${format(key)} :> ${format(fn.range[index])}`).join(" @@ ")})`;
     }
