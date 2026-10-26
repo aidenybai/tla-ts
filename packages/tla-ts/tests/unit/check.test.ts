@@ -259,6 +259,12 @@ ASSUME TLCFP(a) = -887695703
     expect((await checkFixture("strings", "StringSets")).distinctStates).toBe(31);
   });
 
+  it("fails like TLC when a lasso under VIEW cannot be rebuilt from fingerprints", async () => {
+    await expect(checkFixture("view", "Recover")).rejects.toThrow(
+      new TlaEvaluationError("Failed to recover the next state from its fingerprint."),
+    );
+  });
+
   it("enumerates subsets for x \\subseteq S in the initial predicate and next-state relation", async () => {
     const result = await check({
       source:
