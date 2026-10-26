@@ -15,6 +15,7 @@ import {
   isLocallyResolved,
   isValueArgument,
   isWorthCaching,
+  keepLazy,
   resolveGlobalOperator,
   type Context,
   type Environment,
@@ -245,6 +246,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "If":
       return `(condition(${generate(expression.condition)}, ${addReference(generator, expression)}) ? ${generate(expression.consequent)} : ${generate(expression.alternative)})`;
     case "FunctionApplication": {
+      keepLazy(expression.function);
       const fn = generate(expression.function);
       if (expression.args.length === 1) return `apply(${fn}, ${generate(expression.args[0])})`;
       return `apply(${fn}, tuple([${expression.args.map((arg) => generate(arg)).join(", ")}]))`;

@@ -45,6 +45,10 @@ import {
   toFiniteSet,
   unionSorted,
   isEqualLikeTlc,
+  createEnumeratedSet,
+  isEmptySet,
+  type IntervalValue,
+  type MixedSetValue,
   type SetOperationValue,
   type SetValue,
   type Value,
@@ -64,6 +68,40 @@ const EMPTY_SET = createSortedSet([]);
 const MERGED_UNION_LIMIT = 8;
 
 const SET_OPERATORS: SetOperationValue["operator"][] = ["\\cup", "\\cap", "\\"];
+
+type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
+
+const isReducible = (value: Value): value is ReducibleSet =>
+  typeof value === "object" &&
+  (value.kind === "Set" || value.kind === "MixedSet" || value.kind === "Interval");
+
+const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
+
+const isSetEnumeration = (value: Value): value is SetValue | MixedSetValue =>
+  typeof value === "object" && (value.kind === "Set" || value.kind === "MixedSet");
+
+const getReducibleElements = (set: ReducibleSet) =>
+  set.kind === "Interval" ? toFiniteSet(set).elements : set.elements;
+
+// TLC combines a set enumeration or an interval with another set element by element, testing each
+// element for membership in the other set.
+const combineReducible = (
+  operator: SetOperationValue["operator"],
+  set: ReducibleSet,
+  other: Value,
+): Value => {
+  const elements = getReducibleElements(set);
+  if (operator !== "\\cup") {
+    const isKept = operator === "\\cap";
+    return createEnumeratedSet(
+      elements.filter((element) => isElementOf(element, other) === isKept),
+    );
+  }
+  if (elements.length === 0) return other;
+  if (!isReducible(other)) return { kind: "SetOperation", operator, left: set, right: other };
+  const added = toFiniteSet(other).elements.filter((element) => !isElementOf(element, set));
+  return createEnumeratedSet([...elements, ...added]);
+};
 
 export const CORE_OPERATORS: Builtin[] = [
   defineConstant("TRUE", true),
@@ -101,6 +139,15 @@ export const CORE_OPERATORS: Builtin[] = [
     defineOperator(operator, 2, (args) => {
       const left = getSet(args, 0, operator);
       const right = getSet(args, 1, operator);
+      if (isMixedSet(left) || isMixedSet(right)) {
+        if (isReducible(left)) return combineReducible(operator, left, right);
+        if (operator !== "\\" && isReducible(right)) return combineReducible(operator, right, left);
+        return { kind: "SetOperation", operator, left, right };
+      }
+      if (operator === "\\cup" && isReducible(left) && isEmptySet(left)) return right;
+      if (operator === "\\cup" && !isReducible(left) && isReducible(right) && isEmptySet(right)) {
+        return left;
+      }
       if (isEnumerable(left) && isEnumerable(right)) {
         const merge =
           operator === "\\cup"
@@ -110,8 +157,6 @@ export const CORE_OPERATORS: Builtin[] = [
               : differenceSorted;
         return merge(toFiniteSet(left), toFiniteSet(right));
       }
-      const isReducible = (value: Value) =>
-        typeof value === "object" && (value.kind === "Set" || value.kind === "Interval");
       const isSwapped = operator === "\\cup" && !isReducible(left) && isReducible(right);
       const set: Value = isSwapped
         ? { kind: "SetOperation", operator, left: right, right: left }
@@ -121,6 +166,20 @@ export const CORE_OPERATORS: Builtin[] = [
   ),
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getSet(args, 0, "SUBSET") })),
   defineOperator("UNION", 1, (args) => {
+    const outer = getSet(args, 0, "UNION");
+    if (isSetEnumeration(outer)) {
+      const sets = outer.elements.filter(isSetEnumeration);
+      const isMixed = isMixedSet(outer) || sets.some(isMixedSet);
+      if (isMixed && sets.length === outer.elements.length) {
+        const union: MixedSetValue = { kind: "MixedSet", elements: [] };
+        sets.forEach((set) =>
+          set.elements.forEach((member) => {
+            if (!isElementOf(member, union)) union.elements.push(member);
+          }),
+        );
+        return createEnumeratedSet(union.elements);
+      }
+    }
     const sets = getElements(args, 0, "UNION");
     sets.forEach((element) => {
       if (!isSetValue(element)) {
