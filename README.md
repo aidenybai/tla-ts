@@ -25,7 +25,7 @@ result.status; // "invariant-violation"
 ```
 
 > [!WARNING]
-> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `VIEW`, `POSTCONDITION`, `TLCGet`, `TLCSet`, and the Bags and Reals modules.
+> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `POSTCONDITION`, `TLCGet`, `TLCSet`, and the Bags and Reals modules.
 
 ## Install
 
@@ -80,7 +80,7 @@ The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `
 
 - **Standard modules**: Naturals, Integers, Sequences, FiniteSets, and TLC
 - **Modules**: `EXTENDS`, nested modules, and `INSTANCE` with `WITH` substitutions, `LAMBDA` substitutions for operator parameters, named instances, parameterized instances, and instances inside `LET`
-- **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, and `CHECK_DEADLOCK`
+- **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, `VIEW`, and `CHECK_DEADLOCK`
 - **Properties**: invariants, `[][A]_v`, and every temporal formula TLC accepts, checked through TLC's tableau construction under the fairness and temporal conjuncts of the specification
 - **Subexpression references**: selectors such as `F(2)!3`, `Op!<<`, `Op!>>`, `Op!:`, `Op!@`, and `Op!(x)`, labels such as `Op!lab`, and names of `THEOREM` formulas
 - **TLC semantics**: 32-bit integer overflow errors, `ENABLED`, and TLC's enumeration order for `CHOOSE` and quantifiers

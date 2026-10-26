@@ -327,11 +327,21 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
     environment,
   );
   const actionConstraints = getNamedExpressions(config.actionConstraints, environment);
+  const view =
+    config.view === undefined ? undefined : getNamedExpressions([config.view], environment)[0];
+  const getRepresentativeState = (state: Value[]) =>
+    symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup);
   return {
     properties,
     spec: getSpecification(config, environment),
-    getFingerprintState: (state) =>
-      symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup),
+    getFingerprintState: view
+      ? (state) => [
+          evaluate(
+            view.expression,
+            getContext(environment, getRepresentativeState(state), undefined),
+          ),
+        ]
+      : getRepresentativeState,
     findViolatedInvariant: (state, parent) =>
       invariants.find(
         (invariant) =>
@@ -388,7 +398,6 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
 
 export const check = (options: CheckOptions): CheckResult => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
-  if (config.view !== undefined) throw new TlaUnsupportedError("VIEW is not supported yet");
   const specification = createEnvironment(parseModule(options.source), config, {
     loadModule: options.loadModule,
     print: options.onPrint ?? console.log,
@@ -434,18 +443,25 @@ export const check = (options: CheckOptions): CheckResult => {
     }
     return steps.reverse();
   };
-  const getPathTrace = (path: number[]) =>
-    path.map((stateIndex, position): TraceStep => {
-      if (position === 0) return { action: undefined, state: toRecord(states[stateIndex]) };
-      const previous = path[position - 1];
-      const action =
-        previous === stateIndex
-          ? "Stuttering"
-          : getSuccessors(spec.next, states[previous], environment).find((successor) =>
-              isSameState(successor.state, states[stateIndex]),
-            )?.action;
-      return { action, state: toRecord(states[stateIndex]) };
-    });
+  const getPathTrace = (path: number[]) => {
+    const pathStates = [states[path[0]]];
+    const trace: TraceStep[] = [{ action: undefined, state: toRecord(pathStates[0]) }];
+    for (let position = 1; position < path.length; position++) {
+      const previous = pathStates[position - 1];
+      if (path[position - 1] === path[position]) {
+        pathStates.push(previous);
+        trace.push({ action: "Stuttering", state: toRecord(previous) });
+        continue;
+      }
+      const successor = getSuccessors(spec.next, previous, environment).find((candidate) =>
+        isSameState(getFingerprintState(candidate.state), fingerprintStates[path[position]]),
+      );
+      const state = successor?.state ?? states[path[position]];
+      pathStates.push(state);
+      trace.push({ action: successor?.action, state: toRecord(state) });
+    }
+    return trace;
+  };
   const getStateHash = (state: Value[]) => {
     let hash = 0x811c9dc5;
     for (let index = 0; index < state.length; index++)
