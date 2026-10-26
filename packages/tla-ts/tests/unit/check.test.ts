@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, formatValue, TlaConfigError, TlaEvaluationError } from "../../src";
+import { check, formatValue, TlaConfigError, TlaEvaluationError, TlaSyntaxError } from "../../src";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -114,4 +114,28 @@ describe("evaluation errors match TLC", () => {
       expect(() => checkModule(`ASSUME ${membership}`)).toThrow(TlaEvaluationError);
     },
   );
+});
+
+describe("name resolution matches SANY", () => {
+  const checkSource = (source: string) =>
+    check({
+      source: `---- MODULE M ----\n${source}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+
+  it.each([
+    ["an operator from a module that is not extended", "EXTENDS Naturals\nf == 1 :> 2"],
+    ["an operator that a standard module only instantiates locally", "EXTENDS TLC\nf == 1 + 1"],
+    ["a definition before it is defined", "EXTENDS Naturals\nf == g + 1\ng == 1"],
+    ["an operator with the wrong number of arguments", "g(a) == a\nf == g(1, 2)"],
+  ])("rejects %s", (_, source) => {
+    expect(() => checkSource(source)).toThrow(TlaSyntaxError);
+  });
+
+  it("accepts recursive functions, named assumptions, and operator aliases", () => {
+    const result = checkSource(
+      "EXTENDS Naturals\nRECURSIVE fact\ntwice[n \\in Nat] == fact[n] * 2\nfact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]\nASSUME Positive == twice[3] = 12\nASSUME Positive\na \\oplus b == a + b\nASSUME 1 (+) 2 = 3",
+    );
+    expect(result.status).toBe("success");
+  });
 });

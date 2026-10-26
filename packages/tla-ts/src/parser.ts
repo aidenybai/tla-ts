@@ -153,6 +153,7 @@ const NO_OFFSIDE = -1;
 export const parseModule = (source: string): Module => {
   const tokens = tokenize(source);
   const cursor = { index: 0, offsideColumns: [] as number[] };
+  const recursiveNames = new Set<string>();
 
   const getLocation = (token: Token): SourceLocation => ({
     line: token.line,
@@ -480,7 +481,7 @@ export const parseModule = (source: string): Module => {
         const definitions: Definition[] = [];
         while (!accept("IN")) {
           if (accept("RECURSIVE")) {
-            parseDeclarations();
+            parseDeclarations().forEach((declaration) => recursiveNames.add(declaration.name));
             continue;
           }
           definitions.push(parseDefinition(false));
@@ -655,6 +656,7 @@ export const parseModule = (source: string): Module => {
           ],
           body: parseExpression(),
           isLocal,
+          isRecursive: recursiveNames.has(operator),
           location,
         };
       }
@@ -667,14 +669,30 @@ export const parseModule = (source: string): Module => {
       const bounds = withoutOffside(() => parseBounds());
       expect("]");
       expect("==");
-      return { kind: "Function", name, bounds, body: parseExpression(), isLocal, location };
+      return {
+        kind: "Function",
+        name,
+        bounds,
+        body: parseExpression(),
+        isLocal,
+        isRecursive: recursiveNames.has(name),
+        location,
+      };
     }
     const params = parseParams();
     expect("==");
     if (isAt("INSTANCE")) {
       throw new TlaUnsupportedError(`Named instance ${name} is not supported yet`);
     }
-    return { kind: "Operator", name, params, body: parseExpression(), isLocal, location };
+    return {
+      kind: "Operator",
+      name,
+      params,
+      body: parseExpression(),
+      isLocal,
+      isRecursive: recursiveNames.has(name),
+      location,
+    };
   };
 
   const parseDeclarations = (): Declaration[] =>
@@ -750,12 +768,25 @@ export const parseModule = (source: string): Module => {
           continue;
         case "ASSUME":
         case "ASSUMPTION":
-        case "AXIOM":
-          module.assumptions.push(parseAssumption());
+        case "AXIOM": {
+          const assumption = parseAssumption();
+          module.assumptions.push(assumption);
+          if (assumption.name !== undefined) {
+            module.definitions.push({
+              kind: "Operator",
+              name: assumption.name,
+              params: [],
+              body: assumption.expression,
+              isLocal: false,
+              isRecursive: false,
+              location: assumption.location,
+            });
+          }
           continue;
+        }
         case "RECURSIVE":
           advance();
-          parseDeclarations();
+          parseDeclarations().forEach((declaration) => recursiveNames.add(declaration.name));
           continue;
         case "INSTANCE":
           throw new TlaUnsupportedError("INSTANCE is not supported yet");

@@ -282,6 +282,7 @@ export interface OperatorDefinition {
   params: OperatorParam[];
   body: Expression;
   isLocal: boolean;
+  isRecursive: boolean;
   location: SourceLocation;
 }
 
@@ -291,6 +292,7 @@ export interface FunctionDefinition {
   bounds: Bound[];
   body: Expression;
   isLocal: boolean;
+  isRecursive: boolean;
   location: SourceLocation;
 }
 
