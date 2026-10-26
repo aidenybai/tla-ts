@@ -32,8 +32,8 @@ import {
   getDomain,
   intersectSorted,
   isElementOf,
-  isEmptySet,
   isEnumerable,
+  isFiniteSet,
   isFunctionValue,
   isSetValue,
   toFiniteSet,
@@ -238,12 +238,14 @@ const SEQUENCES_OPERATORS: Builtin[] = [
 ];
 
 const FINITE_SETS_OPERATORS: Builtin[] = [
-  defineOperator("IsFiniteSet", 1, (args) => isEnumerable(getSet(args, 0, "IsFiniteSet"))),
+  defineOperator("IsFiniteSet", 1, (args) => isFiniteSet(getSet(args, 0, "IsFiniteSet"))),
   defineOperator("Cardinality", 1, (args) => {
     const set = getSet(args, 0, "Cardinality");
-    if (isEmptySet(set)) return 0;
-    if (!isEnumerable(set))
-      throw new TlaEvaluationError(`Cardinality of the infinite set ${formatValue(set)}`);
+    if (typeof set === "object" && (set.kind === "InfiniteSet" || set.kind === "SequenceSet")) {
+      throw new TlaEvaluationError(
+        `Attempted to compute cardinality of the value\n${formatValue(set)}`,
+      );
+    }
     return getCardinality(set);
   }),
 ];

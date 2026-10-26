@@ -31,6 +31,12 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([2, 1, 1]);
   });
 
+  it("decides sets of functions, records, and tuples from an empty argument", () => {
+    const result = checkFixture("empty-sets", "EmptySets");
+    expect(result.violation?.message).toBeUndefined();
+    expect(result.status).toBe("success");
+  });
+
   it("checks invariants before action properties and constrained states", () => {
     const results = ["InvariantFirst", "ConstrainedInvariant"].map((name) =>
       check({
