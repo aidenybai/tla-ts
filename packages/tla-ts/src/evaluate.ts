@@ -7,7 +7,7 @@ import type {
   OperatorParam,
   RecordField,
 } from "./ast";
-import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import { TlaEvaluationError } from "./errors";
 import { generateEvaluator } from "./codegen";
 import { getReadVariables } from "./dependencies";
 import { mapChildren } from "./instances";
@@ -242,6 +242,10 @@ export const getChildren = (expression: Expression): Expression[] => {
     case "WeakFairness":
     case "StrongFairness":
       return [expression.subscript, expression.action];
+    case "Label":
+      return [expression.body];
+    case "Subexpression":
+      return expression.selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
   }
 };
 
@@ -991,7 +995,7 @@ const compileApply = (
   }
   if (expression.operator === "~>") {
     return () => {
-      throw new TlaUnsupportedError("Temporal formulas such as ~> cannot be evaluated in a state");
+      throw new TlaEvaluationError("TLC cannot evaluate a temporal formula such as ~> in a state");
     };
   }
   const global = isLocallyResolved(expression)
@@ -1433,14 +1437,23 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const action = expression.expression;
       return (context) => isEnabled(action, context);
     }
+    case "Label":
+      return child(expression.body);
+    case "Subexpression":
+      return throwing(
+        () =>
+          new TlaEvaluationError(
+            `The subexpression reference at ${describeLocation(expression)} does not name a subexpression`,
+          ),
+      );
     case "Always":
     case "Eventually":
     case "WeakFairness":
     case "StrongFairness":
       return throwing(
         () =>
-          new TlaUnsupportedError(
-            `Temporal formulas cannot be evaluated in a state (${describeLocation(expression)})`,
+          new TlaEvaluationError(
+            `TLC cannot evaluate a temporal formula in a state at ${describeLocation(expression)}`,
           ),
       );
   }
