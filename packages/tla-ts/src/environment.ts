@@ -173,12 +173,14 @@ export const createEnvironment = (
   };
   addNestedModules(root);
 
-  const loadModule = (name: string) => {
+  const loadModule = (name: string, importer: string) => {
     const nested = nestedModules.get(name);
     if (nested) return nested;
     const source = options.loadModule?.(name) ?? BUNDLED_MODULES.get(name);
     if (source === undefined)
-      throw new TlaSyntaxError(`Cannot find source file for module ${name}`);
+      throw new TlaSyntaxError(
+        `Cannot find source file for module ${name} imported in module ${importer}.`,
+      );
     return addNestedModules(parseModule(source));
   };
 
@@ -196,7 +198,8 @@ export const createEnvironment = (
     return isDeclared ? name : getOuterKey(outer, name);
   };
 
-  const getLinkedModule = (name: string) => linkedModules.get(name) ?? linkModule(loadModule(name));
+  const getLinkedModule = (name: string, importer: string) =>
+    linkedModules.get(name) ?? linkModule(loadModule(name, importer));
 
   const instantiate = (
     instance: Instance,
@@ -215,7 +218,7 @@ export const createEnvironment = (
         [...standardSymbols].map(([name, symbol]) => [`${instance.name}!${name}`, symbol]),
       );
     }
-    const linked = getLinkedModule(instance.module);
+    const linked = getLinkedModule(instance.module, module.name);
     const declarations = [
       ...linked.constants,
       ...linked.variables.map((variable) => ({ name: variable, arity: 0 })),
@@ -314,7 +317,7 @@ export const createEnvironment = (
     };
   };
 
-  const instantiateLocally = (instance: Instance): Definition[] => {
+  const instantiateLocally = (instance: Instance, importer: string): Definition[] => {
     const location = instance.location;
     const instanceParams = instance.params;
     const standardSymbols = addStandardModule(instance.module);
@@ -331,7 +334,7 @@ export const createEnvironment = (
         );
       });
     }
-    const linked = getLinkedModule(instance.module);
+    const linked = getLinkedModule(instance.module, importer);
     const suffix = `#${copyCount.value++}`;
     const explicit = new Map(instance.substitutions.map((item) => [item.name, item.expression]));
     const declarations = [
@@ -434,7 +437,7 @@ export const createEnvironment = (
         if (isExported) exported.set(name, symbol);
       });
     parsed.outer?.extends.forEach((name) =>
-      addSymbols(addStandardModule(name) ?? getLinkedModule(name).exported, false),
+      addSymbols(addStandardModule(name) ?? getLinkedModule(name, parsed.name).exported, false),
     );
     parsed.outer?.symbols.forEach((symbol) =>
       visible.set(symbol.name, { key: getOuterKey(parsed, symbol.name), arity: symbol.arity }),
@@ -445,7 +448,7 @@ export const createEnvironment = (
         addSymbols(standardSymbols, true);
         return;
       }
-      const linked = getLinkedModule(name);
+      const linked = getLinkedModule(name, parsed.name);
       constants.push(
         ...linked.constants.filter((constant) =>
           constants.every((existing) => existing.name !== constant.name),
@@ -472,7 +475,7 @@ export const createEnvironment = (
       ),
     );
     const module = resolveModuleSubexpressions(
-      withLetInstances(parsed, instantiateLocally),
+      withLetInstances(parsed, (instance) => instantiateLocally(instance, parsed.name)),
       getAvailableDefinitions(visible),
     );
     resolveModule(module, getUnit(module));

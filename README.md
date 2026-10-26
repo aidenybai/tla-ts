@@ -47,6 +47,7 @@ Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` tu
 |        11 | Deadlock                     |
 |        12 | Invariant or property broken |
 |        13 | Liveness violation           |
+|       150 | The spec doesn't parse       |
 
 ## API reference
 

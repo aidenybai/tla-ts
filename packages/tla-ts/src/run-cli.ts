@@ -3,9 +3,12 @@ import { basename, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
 import { type CheckResult, type CheckStatus } from "./check";
 import { parseConfig } from "./config";
-import { TlaError } from "./errors";
+import { TlaError, TlaSyntaxError } from "./errors";
 import { checkInParallel } from "./parallel";
 import { formatValue } from "./values";
+
+// TLC exits with 150 when SANY fails to parse or resolve the spec.
+const PARSE_FAILURE = 150;
 
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: 0,
@@ -107,6 +110,7 @@ export const runCli = async () => {
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     console.error(`${error.name}: ${error.message}`);
+    if (error instanceof TlaSyntaxError) outcome.code = PARSE_FAILURE;
   }
   process.exitCode = outcome.code;
 };
