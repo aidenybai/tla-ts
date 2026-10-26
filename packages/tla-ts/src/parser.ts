@@ -644,13 +644,7 @@ export const parseModule = (source: string): Module => {
 
   const parseParams = (): OperatorParam[] => {
     if (!accept("(")) return [];
-    const params = parseSeparated((): OperatorParam => {
-      const name = expectIdentifier();
-      if (!accept("(")) return { name, arity: 0 };
-      const placeholders = parseSeparated(() => expect("_"));
-      expect(")");
-      return { name, arity: placeholders.length };
-    });
+    const params = parseDeclarations();
     expect(")");
     return params;
   };

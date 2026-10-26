@@ -218,6 +218,13 @@ describe("name resolution matches SANY", () => {
     expect(result.status).toBe("success");
   });
 
+  it("takes infix operators as parameters", () => {
+    const result = checkSource(
+      "EXTENDS Naturals\nFoo(a, _--_) == a -- 1\nASSUME Foo(7, +) = 8 /\\ Foo(7, *) = 7",
+    );
+    expect(result.status).toBe("success");
+  });
+
   it("accepts recursive functions, named assumptions, and operator aliases", () => {
     const result = checkSource(
       "EXTENDS Naturals\nRECURSIVE fact\ntwice[n \\in Nat] == fact[n] * 2\nfact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]\nASSUME Positive == twice[3] = 12\nASSUME Positive\na \\oplus b == a + b\nASSUME 1 (+) 2 = 3",
