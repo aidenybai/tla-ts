@@ -8,6 +8,7 @@ import type {
   RecordField,
 } from "./ast";
 import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import { generateEvaluator } from "./codegen";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
@@ -96,7 +97,7 @@ export interface Context {
   next: State | undefined;
 }
 
-type Evaluator = (context: Context) => Value;
+export type Evaluator = (context: Context) => Value;
 
 type ArgumentBinder = (context: Context) => Binding;
 
@@ -273,7 +274,7 @@ export const isConstantLevel = (definition: Definition, environment: Environment
   return isConstant;
 };
 
-const getEnumeratedElements = (set: Value, expression: Expression) => {
+export const getEnumeratedElements = (set: Value, expression: Expression) => {
   if (!isEnumerable(set)) {
     throw new TlaEvaluationError(
       `TLC encountered a non-enumerable quantifier bound ${formatValue(set)} at ${describeLocation(expression)}`,
@@ -386,7 +387,10 @@ const getDefinitionClosure = (definition: Definition & { kind: "Operator" }) => 
   return closure;
 };
 
-const resolveGlobalOperator = (name: string, environment: Environment): Operator | undefined => {
+export const resolveGlobalOperator = (
+  name: string,
+  environment: Environment,
+): Operator | undefined => {
   const target = environment.substitutions.get(name);
   if (target !== undefined) return resolveGlobalOperator(target, environment);
   const definition = environment.definitions.get(name);
@@ -484,7 +488,7 @@ const createThunk = (expression: Expression, context: Context): Thunk => ({
   cache: undefined,
 });
 
-const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
+export const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
   const variableIndex = environment.variableIndex.get(name);
   if (variableIndex !== undefined) return { kind: "Variable", index: variableIndex };
   const constant = environment.constants.get(name);
@@ -657,7 +661,7 @@ export const IMPURE_BUILTINS = new Set([
 
 const closedConstants = new WeakMap<Expression, boolean>();
 
-const isClosedConstant = (expression: Expression, environment: Environment): boolean => {
+export const isClosedConstant = (expression: Expression, environment: Environment): boolean => {
   const cached = closedConstants.get(expression);
   if (cached !== undefined) return cached;
   const isClosed = computeIsClosedConstant(expression, environment);
@@ -722,7 +726,7 @@ const computeIsClosedConstant = (expression: Expression, environment: Environmen
   return getChildren(expression).every((child) => isClosedConstant(child, environment));
 };
 
-const isWorthCaching = (expression: Expression) =>
+export const isWorthCaching = (expression: Expression) =>
   expression.kind !== "Number" && expression.kind !== "String" && expression.kind !== "Identifier";
 
 const cacheFirstValue = (evaluator: Evaluator): Evaluator => {
@@ -735,7 +739,7 @@ const cacheFirstValue = (evaluator: Evaluator): Evaluator => {
   };
 };
 
-const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
+export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
   const cached = environment.evaluators.get(expression);
   if (cached) return cached;
   const compiled = compile(expression, environment);
@@ -747,8 +751,21 @@ const getEvaluator = (expression: Expression, environment: Environment): Evaluat
   return evaluator;
 };
 
+const entryEvaluators = new WeakMap<Expression, Evaluator>();
+
+const getEntryEvaluator = (expression: Expression, environment: Environment): Evaluator => {
+  const cached = entryEvaluators.get(expression);
+  if (cached) return cached;
+  const evaluator =
+    (isWorthCaching(expression) && isClosedConstant(expression, environment)
+      ? undefined
+      : generateEvaluator(expression, environment)) ?? getEvaluator(expression, environment);
+  entryEvaluators.set(expression, evaluator);
+  return evaluator;
+};
+
 export const evaluate = (expression: Expression, context: Context): Value =>
-  getEvaluator(expression, context.environment)(context);
+  getEntryEvaluator(expression, context.environment)(context);
 
 const compileIdentifier = (
   expression: Expression & { kind: "Identifier" },
@@ -780,7 +797,7 @@ const compileIdentifier = (
     if (definition.params.length === 0) {
       const compiled = { body: undefined as Evaluator | undefined };
       return (context) => {
-        compiled.body ??= getEvaluator(definition.body, environment);
+        compiled.body ??= getEntryEvaluator(definition.body, environment);
         return compiled.body(withScope(context, undefined));
       };
     }
@@ -794,7 +811,7 @@ const isOperatorName = (name: string, environment: Environment) => {
   return operator !== undefined && getArity(operator) > 0;
 };
 
-const isValueArgument = (argument: Expression, environment: Environment) =>
+export const isValueArgument = (argument: Expression, environment: Environment) =>
   argument.kind !== "Lambda" &&
   argument.kind !== "OperatorReference" &&
   !(argument.kind === "Identifier" && isOperatorName(argument.name, environment));
@@ -855,7 +872,7 @@ const compileClosureCall = (
         : { kind: "Operator", operator: evaluateOperatorArgument(args[index], context) };
       scope = { name: params[index].name, binding, parent: scope };
     }
-    compiled.body ??= getEvaluator(closure.body, environment);
+    compiled.body ??= getEntryEvaluator(closure.body, environment);
     return compiled.body({ environment, scope, state: context.state, next: context.next });
   };
 };
