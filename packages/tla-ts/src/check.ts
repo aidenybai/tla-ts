@@ -24,7 +24,8 @@ import {
 } from "./liveness";
 import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
-import { getRepresentative, getSymmetryGroup } from "./symmetry";
+import { getOrderedRepresentative, getRepresentative, getSymmetryGroup } from "./symmetry";
+import { createTlcOrder, getTlcStateComparator, type TlcOrder } from "./tlc-order";
 import { createCanonicalizer } from "./canonical";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { combineHash, formatValue, getValueHash, isSameValue, type Value } from "./values";
@@ -327,7 +328,11 @@ export const findAssumptionViolation = (
   return undefined;
 };
 
-export const createSearch = (config: ModelConfig, environment: Environment): Search | undefined => {
+export const createSearch = (
+  config: ModelConfig,
+  environment: Environment,
+  order?: TlcOrder,
+): Search | undefined => {
   const properties = getProperties(config, environment);
   const invariants = getStateChecks(
     [...getNamedExpressions(config.invariants, environment), ...properties.invariants],
@@ -363,12 +368,17 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
   const statePossible = possible.filter((item) => !isActionPossible(item));
   const actionPossible = possible.filter(isActionPossible);
   const runtime = environment.runtime;
+  const compareStates = order && getTlcStateComparator(order, environment.variableIndex);
   return {
     properties,
     spec,
     getFingerprintState: (state) => {
       const representative =
-        symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup);
+        symmetryGroup.length === 0
+          ? state
+          : compareStates
+            ? getOrderedRepresentative(state, symmetryGroup, compareStates)
+            : getRepresentative(state, symmetryGroup);
       return view === undefined
         ? representative
         : [evaluate(view.expression, getContext(environment, representative, undefined))];
@@ -480,7 +490,11 @@ export const check = (options: CheckOptions): CheckResult => {
   const assumptionViolation = findAssumptionViolation(specification.assumptions, environment);
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
 
-  const search = createSearch(config, environment);
+  const order =
+    config.view !== undefined && config.symmetry !== undefined
+      ? createTlcOrder(options.source, config, options.loadModule)
+      : undefined;
+  const search = createSearch(config, environment, order);
   if (!search) return createResult("success");
   const properties = search.properties;
   const spec = search.spec;

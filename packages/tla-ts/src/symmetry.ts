@@ -190,3 +190,13 @@ export const getRepresentative = (state: Value[], group: Permutation[]): Value[]
     (minimum, permutation) => getSmallerPermutation(state, minimum, permutation) ?? minimum,
     state,
   );
+
+export const getOrderedRepresentative = (
+  state: Value[],
+  group: Permutation[],
+  compareStates: (left: Value[], right: Value[]) => number,
+): Value[] =>
+  group.reduce((minimum, permutation) => {
+    const permuted = state.map((value) => permuteValue(value, permutation));
+    return compareStates(permuted, minimum) < 0 ? permuted : minimum;
+  }, state);
