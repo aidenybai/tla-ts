@@ -12,15 +12,14 @@ import {
   type Scope,
 } from "./evaluate";
 import {
+  ACTION_LEVEL,
+  createLivenessChecker,
   expandTemporal,
-  findLivenessViolation,
-  isTemporal,
-  resolveTemporal,
-  toFairnessCondition,
-  toLivenessProperty,
-  unsupportedTemporal,
-  type FairnessCondition,
-  type LivenessProperty,
+  getLevel,
+  TEMPORAL_LEVEL,
+  type LiveSuccessor,
+  type ScopedExpression,
+  type TemporalProperty,
 } from "./liveness";
 import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
@@ -83,14 +82,14 @@ export interface ActionProperty {
 export interface Specification {
   init: Expression;
   next: Expression;
-  fairness: FairnessCondition[];
+  temporals: ScopedExpression[];
 }
 
 export interface Properties {
   initialPredicates: NamedExpression[];
   invariants: NamedExpression[];
   actionProperties: ActionProperty[];
-  liveness: LivenessProperty[];
+  liveness: TemporalProperty[];
 }
 
 const START: SourceLocation = { line: 0, column: 0 };
@@ -134,28 +133,43 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
     return {
       init: createIdentifier(config.init),
       next: createIdentifier(config.next),
-      fairness: [],
+      temporals: [],
     };
   }
   const initConjuncts: Expression[] = [];
   const nextActions: Expression[] = [];
-  const fairness: FairnessCondition[] = [];
+  const temporals: ScopedExpression[] = [];
   const body = getDefinitionBody(config.specification, environment);
   expandTemporal(body, undefined, environment).forEach((item) => {
-    const conjunct = resolveTemporal(item.expression, environment);
+    const conjunct = item.expression;
     if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
       nextActions.push(conjunct.expression.action);
       return;
     }
-    const condition = toFairnessCondition(item, environment);
-    if (condition) {
-      fairness.push(condition);
+    if (
+      conjunct.kind === "Always" &&
+      getLevel(conjunct.expression, item.scope, environment) < ACTION_LEVEL
+    ) {
+      throw new TlaConfigError(
+        `TLC cannot handle []P in the specification ${config.specification} when P is a state predicate`,
+      );
+    }
+    const level = getLevel(conjunct, item.scope, environment);
+    if (level === TEMPORAL_LEVEL) {
+      temporals.push(item);
       return;
     }
-    if (isTemporal(item.expression, environment) || item.scope !== undefined) {
-      throw unsupportedTemporal(config.specification ?? "");
+    if (level === ACTION_LEVEL) {
+      throw new TlaConfigError(
+        `TLC cannot handle the action-level conjunct of the specification ${config.specification}`,
+      );
     }
-    initConjuncts.push(item.expression);
+    if (item.scope !== undefined) {
+      throw new TlaUnsupportedError(
+        `The specification ${config.specification} has an initial predicate inside a parameterized formula`,
+      );
+    }
+    initConjuncts.push(conjunct);
   });
   if (nextActions.length !== 1) {
     throw new TlaConfigError(
@@ -165,7 +179,7 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
   return {
     init: { kind: "And", operands: initConjuncts, location: START },
     next: nextActions[0],
-    fairness,
+    temporals,
   };
 };
 
@@ -179,11 +193,7 @@ export const getProperties = (config: ModelConfig, environment: Environment): Pr
   config.properties.forEach((name) => {
     const body = getDefinitionBody(name, environment);
     expandTemporal(body, undefined, environment).forEach((item) => {
-      const conjunct = resolveTemporal(item.expression, environment);
-      if (!isTemporal(conjunct, environment)) {
-        properties.initialPredicates.push({ name, expression: conjunct, scope: item.scope });
-        return;
-      }
+      const conjunct = item.expression;
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
         properties.actionProperties.push({
           name,
@@ -193,13 +203,22 @@ export const getProperties = (config: ModelConfig, environment: Environment): Pr
         });
         return;
       }
-      if (conjunct.kind === "Always" && !isTemporal(conjunct.expression, environment)) {
+      if (
+        conjunct.kind === "Always" &&
+        getLevel(conjunct.expression, item.scope, environment) <= 1
+      ) {
         properties.invariants.push({ name, expression: conjunct.expression, scope: item.scope });
         return;
       }
-      const liveness = toLivenessProperty(name, item, environment);
-      if (!liveness) throw unsupportedTemporal(name);
-      properties.liveness.push(liveness);
+      const level = getLevel(conjunct, item.scope, environment);
+      if (level < ACTION_LEVEL) {
+        properties.initialPredicates.push({ name, expression: conjunct, scope: item.scope });
+        return;
+      }
+      if (level === ACTION_LEVEL) {
+        throw new TlaConfigError(`The property ${name} is an action-level formula`);
+      }
+      properties.liveness.push({ name, expression: conjunct, scope: item.scope });
     });
   });
   return properties;
@@ -325,15 +344,13 @@ export const check = (options: CheckOptions): CheckResult => {
   const constraints = search.constraints;
   const actionConstraints = search.actionConstraints;
   const getFingerprintState = search.getFingerprintState;
-  const isRecordingEdges = properties.liveness.length > 0;
+  const liveness = createLivenessChecker(properties.liveness, spec.temporals, environment);
 
   const states: Value[][] = [];
   const fingerprintStates: Value[][] = [];
   const parents: number[] = [];
   const actions: (string | undefined)[] = [];
   const depths: number[] = [];
-  const edges: number[][] = [];
-  const initial: number[] = [];
   const buckets = new Map<number, number | number[]>();
   const canonicalizeState = createCanonicalizer();
 
@@ -349,6 +366,18 @@ export const check = (options: CheckOptions): CheckResult => {
     }
     return steps.reverse();
   };
+  const getPathTrace = (path: number[]) =>
+    path.map((stateIndex, position): TraceStep => {
+      if (position === 0) return { action: undefined, state: toRecord(states[stateIndex]) };
+      const previous = path[position - 1];
+      const action =
+        previous === stateIndex
+          ? "Stuttering"
+          : getSuccessors(spec.next, states[previous], environment).find((successor) =>
+              isSameState(successor.state, states[stateIndex]),
+            )?.action;
+      return { action, state: toRecord(states[stateIndex]) };
+    });
   const getStateHash = (state: Value[]) => {
     let hash = 0x811c9dc5;
     for (let index = 0; index < state.length; index++)
@@ -407,7 +436,6 @@ export const check = (options: CheckOptions): CheckResult => {
     parents.push(parent);
     actions.push(action);
     depths.push(depth);
-    if (isRecordingEdges) edges.push([]);
     statistics.distinctStates = states.length;
     statistics.depth = Math.max(statistics.depth, depth);
   };
@@ -435,14 +463,14 @@ export const check = (options: CheckOptions): CheckResult => {
         ),
     );
     if (failedPredicate) {
-      return createResult("property-violation", {
+      return createResult("liveness-violation", {
         name: failedPredicate.name,
         trace: [{ action: undefined, state: toRecord(state) }],
       });
     }
     if (!satisfiesConstraints(state)) continue;
     markSeen(hash, states.length);
-    initial.push(states.length);
+    liveness?.addInitialState(states.length, state);
     addState(state, fingerprintState, -1, undefined);
   }
 
@@ -453,6 +481,7 @@ export const check = (options: CheckOptions): CheckResult => {
     if (successors.length === 0 && config.checkDeadlock) {
       return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
     }
+    const liveSuccessors: LiveSuccessor[] = [];
     for (const successor of successors) {
       const violatedProperty = properties.actionProperties.find(
         (property) =>
@@ -468,7 +497,7 @@ export const check = (options: CheckOptions): CheckResult => {
           ),
       );
       if (violatedProperty) {
-        return createResult("property-violation", {
+        return createResult("liveness-violation", {
           name: violatedProperty.name,
           trace: getTrace(index, successor),
         });
@@ -486,7 +515,7 @@ export const check = (options: CheckOptions): CheckResult => {
       const hash = getStateHash(fingerprintState);
       const existing = findStateIndex(hash, fingerprintState);
       if (existing !== -1) {
-        if (isRecordingEdges) edges[index].push(existing);
+        if (liveness) liveSuccessors.push({ index: existing, state: successor.state });
         continue;
       }
       const violated = findViolatedInvariant(successor.state, state);
@@ -499,30 +528,23 @@ export const check = (options: CheckOptions): CheckResult => {
       }
       if (!satisfiesConstraints(successor.state, state)) continue;
       markSeen(hash, states.length);
-      if (isRecordingEdges) edges[index].push(states.length);
+      if (liveness) liveSuccessors.push({ index: states.length, state: successor.state });
       addState(successor.state, fingerprintState, index, successor.action);
+    }
+    const accepted = liveness?.addState(index, state, liveSuccessors);
+    if (accepted) {
+      return createResult("property-violation", {
+        name: accepted.name,
+        trace: getPathTrace(accepted.path),
+      });
     }
   }
 
-  const graph = { states, successors: edges, initial, parents };
-  for (const property of properties.liveness) {
-    const lasso = findLivenessViolation(graph, property, spec.fairness, environment);
-    if (!lasso) continue;
-    const path = [...lasso.prefix, ...lasso.cycle];
-    const trace = path.map((stateIndex, position): TraceStep => {
-      if (position === 0) return { action: undefined, state: toRecord(states[stateIndex]) };
-      const previous = path[position - 1];
-      const action =
-        previous === stateIndex
-          ? "Stuttering"
-          : getSuccessors(spec.next, states[previous], environment).find((successor) =>
-              isSameState(successor.state, states[stateIndex]),
-            )?.action;
-      return { action, state: toRecord(states[stateIndex]) };
-    });
+  const lasso = liveness?.findViolation();
+  if (lasso) {
     return createResult("liveness-violation", {
-      name: property.name,
-      trace,
+      name: lasso.name,
+      trace: getPathTrace([...lasso.prefix, ...lasso.cycle]),
       loopStart: lasso.prefix.length,
     });
   }
