@@ -5,7 +5,7 @@ A TLA+ interpreter and model checker in TypeScript, no JVM required.
 tla-ts parses a TLA+ module and a TLC configuration file, then explores every reachable state breadth-first, the way TLC does. It reports the same verdicts, error traces, and state counts as TLC, and it runs in Node and in the browser.
 
 > [!WARNING]
-> tla-ts is in early development. It checks safety properties only. Liveness properties, `INSTANCE`, and `ENABLED` throw `TlaUnsupportedError`.
+> tla-ts is in early development. Features it does not support yet throw `TlaUnsupportedError` instead of returning a result: `VIEW`, `POSTCONDITION`, nested modules, `INSTANCE` inside `LET`, subexpression references such as `F(2)!3`, `TLCGet`, `TLCSet`, and the Bags and Reals modules.
 
 ## Install
 
@@ -54,8 +54,10 @@ console.log(result.status, result.violation?.trace.length); // "invariant-violat
 ## What it supports
 
 - **Standard modules**: Naturals, Integers, Sequences, FiniteSets, and TLC.
-- **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS` with model values and `<-` substitutions, `INVARIANTS`, `PROPERTIES` of the form `[]P` and `[][A]_v`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, and `CHECK_DEADLOCK`.
-- **TLC semantics**: 32-bit integers with overflow errors, call-by-name operator arguments, TLC's enumeration order for `CHOOSE` and quantifiers, and TLC's rules for comparing values of different kinds.
+- **Modules**: `EXTENDS`, and `INSTANCE` with `WITH` substitutions, named instances such as `N == INSTANCE M`, and parameterized instances such as `N(p) == INSTANCE M`.
+- **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS` with model values and `<-` substitutions, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, and `CHECK_DEADLOCK`.
+- **Properties**: invariants `[]P`, action properties `[][A]_v`, and the liveness forms `<>P`, `[]<>P`, `<>[]P`, `P ~> Q`, `<><<A>>_v`, and `[]<><<A>>_v`, including quantified ones. Liveness is checked under the spec's `WF` and `SF` fairness conditions, and a violation reports a lasso.
+- **TLC semantics**: 32-bit integers with overflow errors, call-by-name operator arguments, `ENABLED`, TLC's enumeration order for `CHOOSE` and quantifiers, and TLC's rules for comparing values of different kinds.
 
 ## Development
 
