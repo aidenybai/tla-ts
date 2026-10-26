@@ -5,6 +5,7 @@ import type {
   Definition,
   Expression,
   FunctionDefinition,
+  NumberExpression,
   OperatorParam,
   RecordField,
 } from "./ast";
@@ -122,9 +123,21 @@ const EXCEPT_AT = "@";
 const describeLocation = (expression: Expression) =>
   `line ${expression.location.line}, column ${expression.location.column}`;
 
+// TLC rejects a decimal, or an integer literal too big for it, while it processes the spec.
 export const createRealNumberError = (expression: DecimalExpression) =>
-  new TlaEvaluationError(
-    `TLC can't handle real numbers: ${expression.text} at ${describeLocation(expression)}`,
+  setExitCode(
+    new TlaEvaluationError(
+      `TLC can't handle real numbers: ${expression.text} at ${describeLocation(expression)}`,
+    ),
+    EXIT_STATUS.configParseError,
+  );
+
+export const createBigNumberError = (expression: NumberExpression) =>
+  setExitCode(
+    new TlaEvaluationError(
+      `TLC can't handle a number this big: ${expression.value} at ${describeLocation(expression)}`,
+    ),
+    EXIT_STATUS.error,
   );
 
 export const lookupScope = (scope: Scope | undefined, name: string): Binding | undefined => {
@@ -691,7 +704,7 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
   throw new TlaEvaluationError(`Unknown identifier ${name} at ${describeLocation(expression)}`);
 };
 
-const isTlcInteger = (value: number) =>
+export const isTlcInteger = (value: number) =>
   Number.isInteger(value) && value <= 2147483647 && value >= -2147483648;
 
 export const IMPURE_BUILTINS = new Set([
@@ -1335,15 +1348,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
   switch (expression.kind) {
     case "Number": {
       const value = expression.value;
-      // TLC rejects such a literal while processing the spec, which exits with 255.
-      return isTlcInteger(value)
-        ? () => value
-        : throwing(() =>
-            setExitCode(
-              new TlaEvaluationError(`TLC can't handle a number this big: ${value}`),
-              EXIT_STATUS.error,
-            ),
-          );
+      return isTlcInteger(value) ? () => value : throwing(() => createBigNumberError(expression));
     }
     case "Decimal":
       return throwing(() => createRealNumberError(expression));

@@ -14,9 +14,11 @@ import type { FileSystem } from "./json";
 import { TlaConfigError, TlaEvaluationError, TlaSyntaxError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
+  createBigNumberError,
   createRealNumberError,
   getChildren,
   isConstantLevel,
+  isTlcInteger,
   type Builtin,
   type Environment,
 } from "./evaluate";
@@ -144,10 +146,13 @@ const getSubstitutions = (instances: Instance[]) =>
     instance.substitutions.map((substitution) => substitution.expression),
   );
 
-const rejectRealNumbers = (expressions: Expression[]): void =>
+const rejectLiterals = (expressions: Expression[]): void =>
   expressions.forEach((expression) => {
     if (expression.kind === "Decimal") throw createRealNumberError(expression);
-    rejectRealNumbers(
+    if (expression.kind === "Number" && !isTlcInteger(expression.value)) {
+      throw createBigNumberError(expression);
+    }
+    rejectLiterals(
       expression.kind === "Let"
         ? [...getChildren(expression), ...getSubstitutions(expression.instances ?? [])]
         : getChildren(expression),
@@ -190,9 +195,9 @@ export const createEnvironment = (
 
   const nestedModules = new Map<string, Module>();
   const outerModules = new Map<string, Module>();
-  // Like TLC, reject a decimal anywhere in a module, even where nothing evaluates it.
+  // Like TLC, reject a decimal or a big integer anywhere in a module, even where nothing evaluates it.
   const addParsedModule = (module: Module): Module => {
-    rejectRealNumbers([
+    rejectLiterals([
       ...module.definitions.flatMap((definition) =>
         definition.kind === "Function"
           ? [...definition.bounds.map((bound) => bound.set), definition.body]

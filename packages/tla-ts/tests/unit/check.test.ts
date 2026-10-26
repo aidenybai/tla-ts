@@ -398,7 +398,7 @@ describe("evaluation errors match TLC", () => {
   );
 });
 
-describe("decimal literals match TLC", () => {
+describe("rejecting literals matches TLC", () => {
   const checkSource = (source: string) =>
     check({
       source: `---- MODULE M ----\n${source}\nNext == x' = x\n====`,
@@ -435,6 +435,27 @@ describe("decimal literals match TLC", () => {
   it("accepts decimals in proofs and ASSUME PROVE theorems", () => {
     const result = checkSource(
       "VARIABLE x\nTHEOREM TRUE\n<1>1. 1.5 = 1.5\n  OBVIOUS\n<1>2. QED\n  BY <1>1\nTHEOREM ASSUME NEW c PROVE c = 1.5\nInit == x = 0",
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it.each([
+    ["an unused definition", "VARIABLE x\nBig == 2147483648\nInit == x = 0"],
+    ["an assumption", "VARIABLE x\nASSUME 2147483648 > 0\nInit == x = 0"],
+    ["a negated literal", "EXTENDS Integers\nVARIABLE x\nInit == x = -2147483648"],
+    [
+      "an unused nested module",
+      "VARIABLE x\n---- MODULE Inner ----\nBig == 2147483648\n====\nInit == x = 0",
+    ],
+  ])("rejects an integer literal too big for TLC in %s", (_, source) => {
+    const run = () => checkSource(source);
+    expect(run).toThrow(TlaEvaluationError);
+    expect(run).toThrow(/^TLC can't handle a number this big: 2147483648/);
+  });
+
+  it("accepts the largest integer literal and big literals in proofs", () => {
+    const result = checkSource(
+      "VARIABLE x\nTHEOREM TRUE\n<1>1. 2147483648 > 0\n  OBVIOUS\n<1>2. QED\n  BY <1>1\nInit == x = 2147483647",
     );
     expect(result.status).toBe("success");
   });

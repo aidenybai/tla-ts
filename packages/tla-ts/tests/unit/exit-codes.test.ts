@@ -24,6 +24,8 @@ describe("CLI exit codes match TLC", () => {
     ["an unresolved symbol", "Init == x = y\nNext == x' = x", 150],
     ["a constant without a value", "CONSTANT C\nInit == x = 0\nNext == x' = x", 151],
     ["a literal too big for TLC", "Init == x = 3000000000\nNext == x' = x", 255],
+    ["an unused literal too big for TLC", "Big == 3000000000\nInit == x = 0\nNext == x' = x", 255],
+    ["an unused decimal literal", "Half == 1.5\nInit == x = 0\nNext == x' = x", 151],
     ["a failure in the initial predicate", "Init == x = 1 \\div 0\nNext == x' = x", 75],
     [
       "an Assert in the initial predicate",
