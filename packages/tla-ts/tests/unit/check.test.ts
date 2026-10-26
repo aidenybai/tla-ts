@@ -655,6 +655,22 @@ describe("evaluation errors match TLC", () => {
     ).toBe("success");
   });
 
+  it("reports an argument outside the domain of a function construction like TLC", async () => {
+    const pairs = [
+      -12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    ]
+      .map((key) => `${key} :> ${key} @@\n  `)
+      .join("");
+    expect((await checkModule("ASSUME [n \\in -12..12 |-> n][13] = 0"))
+      .violation?.message).toBe(
+      `In applying the function\n( ${pairs}12 :> 12 ),\nthe first argument is:\n13\nwhich is not in its domain.\n`,
+    );
+    expect((await checkModule('ASSUME [n \\in {"a"} |-> n]["b"] = 0'))
+      .violation?.message).toBe(
+      'In applying the function\n[a |-> "a"],\nthe first argument is:\n"b"\nwhich is not in its domain.\n',
+    );
+  });
+
   it("reports an overflowing cardinality without enumerating the set", async () => {
     const result = await checkModule("ASSUME Cardinality(SUBSET (1..31)) > 0");
     expect(result.violation?.message).toMatch(/^Overflow when computing the number of elements/);
