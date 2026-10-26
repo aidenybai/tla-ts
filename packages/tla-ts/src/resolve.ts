@@ -25,11 +25,13 @@ const CORE_SYMBOLS: [string, number][] = [
   ["\\cdot", 2],
 ];
 
-const isBefore = (left: SourceLocation, right: SourceLocation) =>
+export const isBefore = (left: SourceLocation, right: SourceLocation) =>
   left.line < right.line || (left.line === right.line && left.column < right.column);
 
 const getArity = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params.length : 0;
+
+const isInstantiated = (definition: Definition) => definition.name.includes("!");
 
 const lookupLocal = (scope: LocalName | undefined, name: string) => {
   for (let current = scope; current; current = current.parent) {
@@ -89,6 +91,9 @@ const resolveDefinitions = (
     );
   return definitions.reduce((current, definition) => {
     const self = bindNames(current, definition.kind === "Function" ? [definition.name] : []);
+    if (isInstantiated(definition)) {
+      return { name: definition.name, arity: getArity(definition), parent: current };
+    }
     if (definition.kind === "Function") {
       resolveExpression(definition.body, resolveBounds(definition.bounds, self, unit), unit);
     } else {
@@ -238,6 +243,14 @@ const resolveExpression = (
     case "WeakFairness":
     case "StrongFairness":
       resolveAll([expression.subscript, expression.action]);
+      return;
+    case "Label":
+      resolveExpression(expression.body, scope, unit);
+      return;
+    case "Subexpression":
+      resolveAll(
+        expression.selectors.flatMap((selector) => ("args" in selector ? selector.args : [])),
+      );
   }
 };
 
