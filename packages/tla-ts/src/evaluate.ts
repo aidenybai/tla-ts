@@ -242,6 +242,10 @@ export const getChildren = (expression: Expression): Expression[] => {
     case "WeakFairness":
     case "StrongFairness":
       return [expression.subscript, expression.action];
+    case "Label":
+      return [expression.body];
+    case "Subexpression":
+      return expression.selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
   }
 };
 
@@ -1433,6 +1437,15 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const action = expression.expression;
       return (context) => isEnabled(action, context);
     }
+    case "Label":
+      return child(expression.body);
+    case "Subexpression":
+      return throwing(
+        () =>
+          new TlaEvaluationError(
+            `The subexpression reference at ${describeLocation(expression)} does not name a subexpression`,
+          ),
+      );
     case "Always":
     case "Eventually":
     case "WeakFairness":

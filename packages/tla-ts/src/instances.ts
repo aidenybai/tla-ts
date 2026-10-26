@@ -193,6 +193,15 @@ export const mapChildren = (
         subscript: plain(expression.subscript),
         action: plain(expression.action),
       };
+    case "Label":
+      return { ...expression, body: plain(expression.body) };
+    case "Subexpression":
+      return {
+        ...expression,
+        selectors: expression.selectors.map((selector) =>
+          "args" in selector ? { ...selector, args: selector.args.map(plain) } : selector,
+        ),
+      };
   }
 };
 

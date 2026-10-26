@@ -209,6 +209,9 @@ export const expandTemporal = (
       expandTemporal(operand, scope, environment, expanding),
     );
   }
+  if (expression.kind === "Label") {
+    return expandTemporal(expression.body, scope, environment, expanding);
+  }
   if (expression.kind === "Identifier") {
     const binding = isLocallyResolved(expression) ? lookupScope(scope, expression.name) : undefined;
     if (binding?.kind === "Thunk") {
@@ -372,6 +375,8 @@ const toLiveExpression = (
     const level = getLevel(expression, scope, environment);
     if (level <= ACTION_LEVEL) return toAtom(expression, scope, level);
     switch (expression.kind) {
+      case "Label":
+        return convert(expression.body, scope);
       case "Let":
         return convert(expression.body, bindLetDefinitions(expression, scope, environment));
       case "Identifier":

@@ -243,6 +243,14 @@ const resolveExpression = (
     case "WeakFairness":
     case "StrongFairness":
       resolveAll([expression.subscript, expression.action]);
+      return;
+    case "Label":
+      resolveExpression(expression.body, scope, unit);
+      return;
+    case "Subexpression":
+      resolveAll(
+        expression.selectors.flatMap((selector) => ("args" in selector ? selector.args : [])),
+      );
   }
 };
 

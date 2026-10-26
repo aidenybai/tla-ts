@@ -14,6 +14,7 @@ import type {
   InstanceSubstitution,
   OperatorParam,
   RecordField,
+  Selector,
   SourceLocation,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
@@ -133,6 +134,8 @@ const POSTFIX_OPERATORS = new Set(["^+", "^*", "^#"]);
 
 const PREFIX_OPERATOR_REFERENCES = new Set(["-", "~", "-."]);
 
+const SELECTOR_SYMBOLS = new Set(["<<", ">>", ":", "@", "("]);
+
 const UNIT_KEYWORDS = new Set([
   "ASSUME",
   "ASSUMPTION",
@@ -152,11 +155,13 @@ const UNIT_KEYWORDS = new Set([
 
 const THEOREM_KEYWORDS = new Set(["THEOREM", "LEMMA", "COROLLARY", "PROPOSITION"]);
 
+const PROOF_WORDS = new Set(["BY", "OBVIOUS", "OMITTED", "QED", "USE", "HIDE"]);
+
 const NO_OFFSIDE = -1;
 
 export const parseModule = (source: string): Module => {
   const tokens = tokenize(source);
-  const cursor = { index: 0, offsideColumns: [] as number[] };
+  const cursor = { index: 0, limit: tokens.length, offsideColumns: [] as number[] };
   const recursiveNames = new Set<string>();
 
   const getLocation = (token: Token): SourceLocation => ({
@@ -167,7 +172,10 @@ export const parseModule = (source: string): Module => {
   const peekRaw = (offset = 0) => tokens[Math.min(cursor.index + offset, tokens.length - 1)];
 
   const peek = (offset = 0) => {
-    const token = peekRaw(offset);
+    const token =
+      cursor.index + offset >= cursor.limit
+        ? { ...peekRaw(offset), kind: "End" as const, text: "" }
+        : peekRaw(offset);
     const offsideColumn = cursor.offsideColumns[cursor.offsideColumns.length - 1];
     if (offsideColumn === undefined || offsideColumn === NO_OFFSIDE || token.kind === "End") {
       return token;
@@ -455,6 +463,39 @@ export const parseModule = (source: string): Module => {
     return { kind: "Case", arms, other: other.value, location: getLocation(start) };
   };
 
+  const isSelectorAhead = () => {
+    const next = peek(1);
+    return (
+      isAt("!") &&
+      (next.kind === "Identifier" ||
+        next.kind === "Number" ||
+        SELECTOR_SYMBOLS.has(next.text) ||
+        (next.kind === "Operator" &&
+          (INFIX_OPERATORS.has(next.text) ||
+            POSTFIX_OPERATORS.has(next.text) ||
+            PREFIX_OPERATOR_REFERENCES.has(next.text))))
+    );
+  };
+
+  const parseSelector = (): Selector => {
+    const token = advance();
+    if (token.kind === "Number") return { kind: "Operand", operand: Number(token.text) };
+    switch (token.text) {
+      case "<<":
+      case ">>":
+        return { kind: "Operand", operand: token.text };
+      case ":":
+        return { kind: "Colon" };
+      case "@":
+        return { kind: "At" };
+      case "(": {
+        cursor.index--;
+        return { kind: "Bound", args: parseArguments() };
+      }
+    }
+    return { kind: "Name", name: token.text, args: isAt("(") ? parseArguments() : [] };
+  };
+
   const parsePrimary = (): Expression => {
     const token = advance();
     const location = getLocation(token);
@@ -462,25 +503,32 @@ export const parseModule = (source: string): Module => {
     if (token.kind === "String") return { kind: "String", value: token.text, location };
     if (token.kind === "Identifier") {
       if (isLabelAhead()) {
-        while (!accept("::")) advance();
-        return parseExpression();
+        const params = accept("(") ? parseSeparated(expectIdentifier) : [];
+        if (params.length > 0) expect(")");
+        expect("::");
+        return { kind: "Label", name: token.text, params, body: parseExpression(), location };
       }
       const hasArguments = isAt("(");
       const args = hasArguments ? parseArguments() : [];
-      if (!(isAt("!") && peek(1).kind === "Identifier")) {
+      if (!isSelectorAhead()) {
         return hasArguments
           ? { kind: "Apply", operator: token.text, args, location }
           : { kind: "Identifier", name: token.text, location };
       }
-      const names = [token.text];
-      const qualifiedArgs = [...args];
-      while (isAt("!") && peek(1).kind === "Identifier") {
+      const selectors: Selector[] = [{ kind: "Name", name: token.text, args }];
+      while (isSelectorAhead()) {
         advance();
-        names.push(expectIdentifier());
-        if (isAt("(")) qualifiedArgs.push(...parseArguments());
+        selectors.push(parseSelector());
       }
+      const names = selectors.flatMap((selector) =>
+        selector.kind === "Name" ? [selector.name] : [],
+      );
+      if (names.length < selectors.length) return { kind: "Subexpression", selectors, location };
       const operator = names.join("!");
-      return qualifiedArgs.length > 0 || isAt("(")
+      const qualifiedArgs = selectors.flatMap((selector) =>
+        "args" in selector ? selector.args : [],
+      );
+      return qualifiedArgs.length > 0
         ? { kind: "Apply", operator, args: qualifiedArgs, location }
         : { kind: "Identifier", name: operator, location };
     }
@@ -789,13 +837,50 @@ export const parseModule = (source: string): Module => {
     );
   };
 
-  const skipTheorem = () => {
-    const start = advance();
+  const skipUnit = (start: Token) => {
     while (peekRaw().kind !== "End") {
       const token = peekRaw();
       if (token.line > start.line && isUnitStart(token, peekRaw(1))) return;
       cursor.index++;
     }
+  };
+
+  const isProofStart = (index: number, start: Token) => {
+    const token = tokens[index];
+    if (token.kind === "End") return true;
+    if (token.line > start.line && isUnitStart(token, tokens[index + 1])) return true;
+    if (token.text === "PROOF" || PROOF_WORDS.has(token.text)) return true;
+    return (
+      token.text === "<" && tokens[index + 1]?.kind === "Number" && tokens[index + 2]?.text === ">"
+    );
+  };
+
+  const parseTheorem = (): Definition | undefined => {
+    const start = advance();
+    const isNamed = peek().kind === "Identifier" && isAt("==", 1) && !isAt("ASSUME", 2);
+    if (!isNamed) {
+      skipUnit(start);
+      return undefined;
+    }
+    const name = expectIdentifier();
+    advance();
+    const end = { value: cursor.index };
+    while (!isProofStart(end.value, start)) end.value++;
+    cursor.limit = end.value;
+    const body = parseExpression();
+    const isComplete = cursor.index === end.value;
+    cursor.limit = tokens.length;
+    skipUnit(start);
+    if (!isComplete) return undefined;
+    return {
+      kind: "Operator",
+      name,
+      params: [],
+      body,
+      isLocal: false,
+      isRecursive: false,
+      location: getLocation(start),
+    };
   };
 
   const parseAssumption = (): Assumption => {
@@ -883,7 +968,8 @@ export const parseModule = (source: string): Module => {
         }
       }
       if (token.kind === "Keyword" && THEOREM_KEYWORDS.has(token.text)) {
-        skipTheorem();
+        const theorem = parseTheorem();
+        if (theorem) module.definitions.push(theorem);
         continue;
       }
       const unit = parseDefinition(false);

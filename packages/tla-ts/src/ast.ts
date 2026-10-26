@@ -242,6 +242,27 @@ export interface FairnessExpression {
   location: SourceLocation;
 }
 
+export interface LabelExpression {
+  kind: "Label";
+  name: string;
+  params: string[];
+  body: Expression;
+  location: SourceLocation;
+}
+
+export type Selector =
+  | { kind: "Name"; name: string; args: Expression[] }
+  | { kind: "Operand"; operand: number | "<<" | ">>" }
+  | { kind: "Bound"; args: Expression[] }
+  | { kind: "At" }
+  | { kind: "Colon" };
+
+export interface SubexpressionExpression {
+  kind: "Subexpression";
+  selectors: Selector[];
+  location: SourceLocation;
+}
+
 export type Expression =
   | NumberExpression
   | StringExpression
@@ -273,7 +294,9 @@ export type Expression =
   | ProductExpression
   | TemporalExpression
   | ActionExpression
-  | FairnessExpression;
+  | FairnessExpression
+  | LabelExpression
+  | SubexpressionExpression;
 
 export interface OperatorParam {
   name: string;

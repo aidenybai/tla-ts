@@ -5,6 +5,7 @@ import { getChildren, isConstantLevel, type Builtin, type Environment } from "./
 import { instantiateModule, mapChildren, mapDefinition, type FlatModule } from "./instances";
 import { parseModule } from "./parser";
 import { isBefore, resolveModule, type Symbols } from "./resolve";
+import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
 import { checkInteger, createSet, type Value } from "./values";
 
@@ -159,19 +160,19 @@ export const createEnvironment = (
   const getFlatModule = (name: string): FlatModule & { symbols: Symbols } => {
     const cached = flatModules.get(name);
     if (cached) return cached;
-    const module = withLetInstances(loadModule(name));
+    const loaded = withLetInstances(loadModule(name));
     const imported: Symbols = new Map(
       CORE_OPERATORS.map((operator) => [operator.name, operator.arity]),
     );
-    addOuterSymbols(module, imported);
+    addOuterSymbols(loaded, imported);
     const flat = {
       name,
-      constants: [...module.constants],
-      variables: [...module.variables],
+      constants: [...loaded.constants],
+      variables: [...loaded.variables],
       definitions: [] as Definition[],
       symbols: new Map() as Symbols,
     };
-    module.extends.forEach((extended) => {
+    loaded.extends.forEach((extended) => {
       const standardSymbols = addStandardModule(extended);
       if (standardSymbols) {
         standardSymbols.forEach((arity, symbol) => imported.set(symbol, arity));
@@ -183,11 +184,12 @@ export const createEnvironment = (
       flat.definitions.push(...inner.definitions.filter((definition) => !definition.isLocal));
       inner.symbols.forEach((arity, symbol) => imported.set(symbol, arity));
     });
-    module.instances.forEach((instance) => {
-      const instantiated = instantiate(instance);
+    loaded.instances.forEach((instance) => {
+      const instantiated = instantiate(resolveInstanceSubexpressions(instance, loaded));
       flat.definitions.push(...instantiated.definitions);
       instantiated.symbols.forEach((arity, symbol) => imported.set(symbol, arity));
     });
+    const module = resolveModuleSubexpressions(loaded, flat.definitions);
     flat.symbols = resolveModule(module, imported);
     flat.definitions.push(...module.definitions);
     flatModules.set(name, flat);
@@ -195,23 +197,29 @@ export const createEnvironment = (
   };
 
   const addModule = (parsed: Module, isRoot: boolean): Symbols => {
-    const module = withLetInstances(parsed);
-    moduleExports.set(module.name, new Map());
+    const loaded = withLetInstances(parsed);
+    moduleExports.set(loaded.name, new Map());
     const imported: Symbols = new Map(
       CORE_OPERATORS.map((operator) => [operator.name, operator.arity]),
     );
-    addOuterSymbols(module, imported);
-    module.extends.forEach((name) =>
+    addOuterSymbols(loaded, imported);
+    loaded.extends.forEach((name) =>
       (
         moduleExports.get(name) ??
         addStandardModule(name) ??
         addModule(loadModule(name), false)
       ).forEach((arity, symbol) => imported.set(symbol, arity)),
     );
-    const instantiated = module.instances.map(instantiate);
+    const instantiated = loaded.instances.map((instance) =>
+      instantiate(resolveInstanceSubexpressions(instance, loaded)),
+    );
     instantiated.forEach((item) =>
       item.symbols.forEach((arity, symbol) => imported.set(symbol, arity)),
     );
+    const module = resolveModuleSubexpressions(loaded, [
+      ...definitions.values(),
+      ...instantiated.flatMap((item) => item.definitions),
+    ]);
     const exported = resolveModule(module, imported);
     instantiated
       .flatMap((item) => item.definitions)
