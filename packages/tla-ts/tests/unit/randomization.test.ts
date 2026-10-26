@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
+import { check, formatValue } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/randomization");
 
@@ -91,6 +91,19 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
       ["success", 1332, 36],
       ["success", 4160, 64],
       ["success", 90, 9],
+    ]);
+  });
+
+  it("reseeds from the tokens TLC interns model values with", () => {
+    const result = checkWithSeed("RandomModelValue", 1n);
+    expect(result.violation?.trace.map((step) => formatValue(step.state.owner))).toEqual([
+      "p1",
+      "p3",
+      "p2",
+      "p1",
+      "p1",
+      "p2",
+      "p3",
     ]);
   });
 

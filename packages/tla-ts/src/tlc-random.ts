@@ -3,6 +3,7 @@ import {
   createRecord,
   createSortedFunction,
   createTuple,
+  getStringRank,
   isEmptySet,
   isFunctionValue,
   isModelValue,
@@ -83,8 +84,8 @@ const SET_ENUM_VALUE = 5;
 const FCN_RCD_VALUE = 9;
 const MODEL_VALUE = 21;
 
-// Value#fingerPrint for each of TLC's value classes. TLC extends a model value's fingerprint
-// with its UniqueString token, which tla-ts doesn't have, so it uses the name instead.
+// Value#fingerPrint for each of TLC's value classes. A model value extends the fingerprint with
+// its UniqueString token, and TLC numbers tokens from 1 in intern order.
 const extendValue = (fingerprint: bigint, value: Value): bigint => {
   if (typeof value === "boolean") {
     return extendByte(extendByte(fingerprint, BOOL_VALUE), value ? 116 : 102);
@@ -93,7 +94,9 @@ const extendValue = (fingerprint: bigint, value: Value): bigint => {
   if (typeof value === "string") {
     return extendString(extendInt(extendByte(fingerprint, STRING_VALUE), value.length), value);
   }
-  if (isModelValue(value)) return extendString(extendByte(fingerprint, MODEL_VALUE), value.name);
+  if (isModelValue(value)) {
+    return extendInt(extendByte(fingerprint, MODEL_VALUE), getStringRank(value.name) + 1);
+  }
   if (isFunctionValue(value)) {
     const fn = toFiniteFunction(value);
     return fn.domain.reduce(
@@ -108,7 +111,7 @@ const extendValue = (fingerprint: bigint, value: Value): bigint => {
   );
 };
 
-// TLCStateMut#fingerPrint without VIEW or SYMMETRY.
+// TLCStateMut#fingerPrint of variable values in TLC's variable order.
 export const getTlcFingerprint = (state: Value[]) =>
   state.reduce(extendValue, IRREDUCIBLE_POLYNOMIAL);
 
