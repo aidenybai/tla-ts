@@ -1,4 +1,4 @@
-import { TlaConfigError, TlaUnsupportedError } from "./errors";
+import { TlaConfigError } from "./errors";
 import { matchOperator } from "./lexer";
 
 export type ConfigValue =
@@ -11,6 +11,7 @@ export type ConfigValue =
 export interface ConstantAssignment {
   name: string;
   value: ConfigValue;
+  args?: ConfigValue[];
   module?: string;
 }
 
@@ -33,6 +34,8 @@ export interface ModelConfig {
   checkDeadlock: boolean;
   symmetry: string | undefined;
   view: string | undefined;
+  postconditions: string[];
+  possible: string[];
 }
 
 interface ConfigToken {
@@ -141,6 +144,8 @@ export const parseConfig = (source: string): ModelConfig => {
     checkDeadlock: true,
     symmetry: undefined,
     view: undefined,
+    postconditions: [],
+    possible: [],
   };
 
   const peek = () => tokens[cursor.index];
@@ -208,8 +213,18 @@ export const parseConfig = (source: string): ModelConfig => {
   const parseConstants = () => {
     while (peek().kind === "Word" && !isKeyword(peek())) {
       const name = advance().text;
-      if (peek().text === "(")
-        throw new TlaUnsupportedError(`Assigning operator constant ${name} is not supported`);
+      if (peek().text === "(") {
+        advance();
+        const args: ConfigValue[] = [];
+        while (peek().text !== ")") {
+          args.push(parseValue());
+          if (peek().text !== ")") expect(",");
+        }
+        advance();
+        expect("=");
+        config.constants.push({ name, value: parseValue(), args });
+        continue;
+      }
       if (peek().text === "<-") {
         advance();
         const module = parseModuleScope();
@@ -265,8 +280,11 @@ export const parseConfig = (source: string): ModelConfig => {
         break;
       case "POSTCONDITION":
       case "POSTCONDITIONS":
+        config.postconditions.push(...parseNames());
+        break;
       case "_POSSIBLE":
-        throw new TlaUnsupportedError(`${token.text} is not supported`);
+        config.possible.push(...parseNames());
+        break;
       case "CHECK_DEADLOCK": {
         const value = advance().text;
         if (value !== "TRUE" && value !== "FALSE") {

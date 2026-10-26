@@ -1,34 +1,16 @@
 import type {
   Bound,
   BoundPattern,
-  Declaration,
   Definition,
   Expression,
   Instance,
   Module,
   OperatorParam,
+  SourceLocation,
 } from "./ast";
-import { TlaUnsupportedError } from "./errors";
-import { getChildren } from "./evaluate";
+import { TlaSyntaxError } from "./errors";
+import { getChildren, isLocallyResolved } from "./evaluate";
 import { isBefore } from "./resolve";
-
-export interface FlatModule {
-  name: string;
-  constants: Declaration[];
-  variables: string[];
-  definitions: Definition[];
-}
-
-interface Rewrite {
-  prefix: string;
-  isLocal: boolean;
-  params: OperatorParam[];
-  definitionNames: Set<string>;
-  substitutions: Map<string, Expression>;
-  substitutedNames: Map<string, Set<string>>;
-}
-
-const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
 const getPatternNames = (pattern: BoundPattern) =>
   pattern.kind === "Name" ? [pattern.name] : pattern.names;
@@ -36,18 +18,27 @@ const getPatternNames = (pattern: BoundPattern) =>
 const getBoundNames = (bounds: Bound[]) =>
   bounds.flatMap((bound) => getPatternNames(bound.pattern));
 
-const getLocalNames = (expression: Expression, names = new Set<string>()): Set<string> => {
-  if (expression.kind === "Identifier" && expression.resolution?.kind === "Local") {
-    names.add(expression.name);
+export const substitutedExpressions = new WeakSet<Expression>();
+
+export const renameLocals = (
+  expression: Expression,
+  names: Map<string, string>,
+  bound = new Set<string>(),
+): Expression => {
+  const mapped = mapChildren(expression, (child, childBound) =>
+    renameLocals(
+      child,
+      names,
+      childBound.length === 0 ? bound : new Set([...bound, ...childBound]),
+    ),
+  );
+  if (mapped.kind === "Identifier" && isLocallyResolved(mapped) && !bound.has(mapped.name)) {
+    return { ...mapped, name: names.get(mapped.name) ?? mapped.name };
   }
-  if (expression.kind === "Apply" && expression.resolution?.kind === "Local") {
-    names.add(expression.operator);
+  if (mapped.kind === "Apply" && isLocallyResolved(mapped) && !bound.has(mapped.operator)) {
+    return { ...mapped, operator: names.get(mapped.operator) ?? mapped.operator };
   }
-  mapChildren(expression, (child) => {
-    getLocalNames(child, names);
-    return child;
-  });
-  return names;
+  return mapped;
 };
 
 const mapBounds = (bounds: Bound[], map: (child: Expression) => Expression): Bound[] =>
@@ -208,59 +199,224 @@ export const mapChildren = (
   }
 };
 
-const markParams = (expression: Expression, params: Set<string>): Expression => {
-  const mapped = mapChildren(expression, (child) => markParams(child, params));
-  if (mapped.kind === "Identifier" && params.has(mapped.name)) {
-    return { ...mapped, resolution: { kind: "Local" } };
+export interface Instantiation {
+  params: OperatorParam[];
+  substitutions: Map<string, Expression>;
+  variables: Set<string>;
+  getDefinition: (key: string) => Definition | undefined;
+  isParameterized: (key: string) => boolean;
+  addDefinition: (name: string, create: (key: string) => Definition) => string;
+}
+
+type RewriteMode = "Normal" | "Enabled" | "Primed";
+
+interface Rewrite {
+  instantiation: Instantiation;
+  copies: Map<string, string>;
+  mode: RewriteMode;
+  modes: Map<RewriteMode, Rewrite>;
+}
+
+export const getEnabledVariableName = (name: string) => `${name}@ENABLED`;
+
+const getMode = (rewrite: Rewrite, mode: RewriteMode) => rewrite.modes.get(mode) ?? rewrite;
+
+const isVariable = (expression: Expression, rewrite: Rewrite, bound: Set<string>) =>
+  expression.kind === "Identifier" &&
+  !bound.has(expression.name) &&
+  !isLocallyResolved(expression) &&
+  rewrite.instantiation.variables.has(expression.name);
+
+const getUnchangedVariables = (
+  expression: Expression,
+  rewrite: Rewrite,
+  bound: Set<string>,
+): string[] | undefined => {
+  if (expression.kind === "Tuple") {
+    const names = expression.elements.map((element) =>
+      getUnchangedVariables(element, rewrite, bound),
+    );
+    return names.every((element) => element !== undefined) ? names.flat() : undefined;
   }
-  if (mapped.kind === "Apply" && params.has(mapped.operator)) {
-    return { ...mapped, resolution: { kind: "Local" } };
-  }
-  return mapped;
+  if (expression.kind !== "Identifier") return undefined;
+  if (isVariable(expression, rewrite, bound)) return [expression.name];
+  const definition = isLocallyResolved(expression)
+    ? undefined
+    : rewrite.instantiation.getDefinition(expression.name);
+  return definition?.kind === "Operator" && definition.params.length === 0
+    ? getUnchangedVariables(definition.body, rewrite, new Set())
+    : undefined;
 };
 
-const getParamArguments = (rewrite: Rewrite, location: Expression["location"]): Expression[] =>
-  rewrite.params.map((param) => ({
+const substituteInEnabled = (
+  expression: Expression,
+  rewrite: Rewrite,
+  bound: Set<string>,
+): Expression | undefined => {
+  if (rewrite.mode === "Normal") return undefined;
+  if (rewrite.mode === "Primed") {
+    return isVariable(expression, rewrite, bound) && expression.kind === "Identifier"
+      ? {
+          kind: "Identifier",
+          name: getEnabledVariableName(expression.name),
+          location: expression.location,
+        }
+      : undefined;
+  }
+  if (expression.kind === "Prime") {
+    return {
+      ...expression,
+      expression: substitute(expression.expression, getMode(rewrite, "Primed"), bound),
+    };
+  }
+  if (expression.kind === "AngleAction") {
+    const location = expression.location;
+    return {
+      kind: "And",
+      operands: [
+        substitute(expression.action, rewrite, bound),
+        {
+          kind: "Apply",
+          operator: "#",
+          args: [
+            {
+              kind: "Prime",
+              expression: substitute(expression.subscript, getMode(rewrite, "Primed"), bound),
+              location,
+            },
+            substitute(expression.subscript, rewrite, bound),
+          ],
+          location,
+        },
+      ],
+      location,
+    };
+  }
+  if (expression.kind !== "Unchanged") return undefined;
+  const names = getUnchangedVariables(expression.expression, rewrite, bound);
+  if (names === undefined) return undefined;
+  return {
+    kind: "And",
+    operands: names.map((name) => ({
+      kind: "Apply",
+      operator: "=",
+      args: [
+        {
+          kind: "Prime",
+          expression: {
+            kind: "Identifier",
+            name: getEnabledVariableName(name),
+            location: expression.location,
+          },
+          location: expression.location,
+        },
+        substitute({ kind: "Identifier", name, location: expression.location }, rewrite, bound),
+      ],
+      location: expression.location,
+    })),
+    location: expression.location,
+  };
+};
+
+const getParamArguments = (params: OperatorParam[], location: SourceLocation): Expression[] =>
+  params.map((param) => ({
     kind: "Identifier",
     name: param.name,
     location,
     resolution: { kind: "Local" },
   }));
 
+const getArity = (definition: Definition) =>
+  definition.kind === "Operator" ? definition.params.length : 0;
+
+const getInstanceOperator = (
+  key: string,
+  params: OperatorParam[],
+  arity: number,
+  location: SourceLocation,
+): Expression => {
+  const names = Array.from({ length: arity }, (_, index) => `argument${index}`);
+  return {
+    kind: "Lambda",
+    params: names,
+    body: {
+      kind: "Apply",
+      operator: key,
+      args: [
+        ...getParamArguments(params, location),
+        ...names.map((name): Expression => ({
+          kind: "Identifier",
+          name,
+          location,
+          resolution: { kind: "Local" },
+        })),
+      ],
+      location,
+    },
+    location,
+  };
+};
+
+const getCopy = (rewrite: Rewrite, key: string) =>
+  rewrite.instantiation.isParameterized(key) ? copyDefinition(rewrite, key) : undefined;
+
 const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>): Expression => {
   const recurse = (node: Expression) => substitute(node, rewrite, bound);
-  const isFree = (name: string) => !bound.has(name);
+  const instantiation = rewrite.instantiation;
+  const params = instantiation.params;
+  const isFree = (name: string) => !bound.has(name) && !isLocallyResolved(expression);
+  if (expression.kind === "Enabled" && rewrite.mode === "Normal") {
+    return {
+      ...expression,
+      expression: substitute(expression.expression, getMode(rewrite, "Enabled"), bound),
+    };
+  }
+  if (
+    (expression.kind === "WeakFairness" || expression.kind === "StrongFairness") &&
+    rewrite.mode === "Normal"
+  ) {
+    const enabled = getMode(rewrite, "Enabled");
+    return {
+      ...expression,
+      subscript: recurse(expression.subscript),
+      action: recurse(expression.action),
+      enabled: substitute(
+        expression.enabled ?? {
+          kind: "AngleAction",
+          action: expression.action,
+          subscript: expression.subscript,
+          location: expression.location,
+        },
+        enabled,
+        bound,
+      ),
+    };
+  }
+  const enabled = substituteInEnabled(expression, rewrite, bound);
+  if (enabled) return enabled;
   if (expression.kind === "Identifier" && isFree(expression.name)) {
-    const replacement = rewrite.substitutions.get(expression.name);
+    const replacement = instantiation.substitutions.get(expression.name);
     if (replacement) {
-      const captured = [...(rewrite.substitutedNames.get(expression.name) ?? [])].filter((name) =>
-        bound.has(name),
-      );
-      if (captured.length > 0) {
-        throw new TlaUnsupportedError(
-          `Substituting ${expression.name} into an instance would capture the bound name ${captured[0]}`,
-        );
-      }
+      substitutedExpressions.add(replacement);
       return replacement;
     }
-    if (rewrite.definitionNames.has(expression.name) && expression.resolution?.kind !== "Local") {
-      const name = `${rewrite.prefix}${expression.name}`;
-      const resolution = rewrite.isLocal ? LOCAL_RESOLUTION : undefined;
-      return rewrite.params.length === 0
-        ? { ...expression, name, resolution }
-        : {
-            kind: "Apply",
-            operator: name,
-            args: getParamArguments(rewrite, expression.location),
-            location: expression.location,
-            resolution,
-          };
+    const copy = getCopy(rewrite, expression.name);
+    if (copy === undefined) return expression;
+    if (params.length === 0) return { ...expression, name: copy };
+    const definition = instantiation.getDefinition(expression.name);
+    if (definition && getArity(definition) > 0) {
+      return getInstanceOperator(copy, params, getArity(definition), expression.location);
     }
-    return expression;
+    return {
+      kind: "Apply",
+      operator: copy,
+      args: getParamArguments(params, expression.location),
+      location: expression.location,
+    };
   }
   if (expression.kind === "Apply" && isFree(expression.operator)) {
     const args = expression.args.map(recurse);
-    const replacement = rewrite.substitutions.get(expression.operator);
+    const replacement = instantiation.substitutions.get(expression.operator);
     if (replacement?.kind === "Identifier" || replacement?.kind === "OperatorReference") {
       const operator = replacement.kind === "Identifier" ? replacement.name : replacement.operator;
       return {
@@ -268,6 +424,14 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
         operator,
         args,
         resolution: replacement.kind === "Identifier" ? replacement.resolution : undefined,
+      };
+    }
+    if (replacement?.kind === "Apply") {
+      return {
+        ...expression,
+        operator: replacement.operator,
+        args: [...replacement.args, ...args],
+        resolution: replacement.resolution,
       };
     }
     if (replacement?.kind === "Lambda") {
@@ -284,141 +448,129 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
             location: replacement.location,
           },
         ],
-        body: { ...expression, operator: replacement.kind, args, resolution: LOCAL_RESOLUTION },
+        body: {
+          ...expression,
+          operator: replacement.kind,
+          args,
+          resolution: { kind: "Local" },
+        },
         location: expression.location,
       };
     }
     if (replacement) {
-      throw new TlaUnsupportedError(
-        `Substituting the operator ${expression.operator} with an expression is not supported yet`,
+      throw new TlaSyntaxError(
+        `The operator ${expression.operator} can only be substituted by an operator at line ${expression.location.line}, column ${expression.location.column}`,
       );
     }
-    if (
-      rewrite.definitionNames.has(expression.operator) &&
-      expression.resolution?.kind !== "Local"
-    ) {
-      return {
-        ...expression,
-        operator: `${rewrite.prefix}${expression.operator}`,
-        args: [...getParamArguments(rewrite, expression.location), ...args],
-        resolution: rewrite.isLocal ? LOCAL_RESOLUTION : undefined,
-      };
-    }
-    return { ...expression, args };
+    const copy = getCopy(rewrite, expression.operator);
+    if (copy === undefined) return { ...expression, args };
+    return {
+      ...expression,
+      operator: copy,
+      args: [...getParamArguments(params, expression.location), ...args],
+    };
   }
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
-    if (rewrite.definitionNames.has(expression.operator) && rewrite.params.length === 0) {
-      return { ...expression, operator: `${rewrite.prefix}${expression.operator}` };
+    const copy = getCopy(rewrite, expression.operator);
+    if (copy === undefined) return expression;
+    const definition = instantiation.getDefinition(expression.operator);
+    if (params.length > 0 && definition) {
+      return getInstanceOperator(copy, params, getArity(definition), expression.location);
     }
-    return expression;
+    return { ...expression, operator: copy };
   }
   return mapChildren(expression, (child, names) =>
     names.length === 0 ? recurse(child) : substitute(child, rewrite, new Set([...bound, ...names])),
   );
 };
 
-export const instantiateModule = (
-  instance: Instance,
-  flat: FlatModule,
-  locals?: Set<string>,
-): Definition[] => {
-  const params = new Set([...(locals ?? []), ...instance.params.map((param) => param.name)]);
-  const explicit = new Map(
-    instance.substitutions.map((item) => [item.name, markParams(item.expression, params)]),
-  );
-  const declared = [...flat.constants.map((constant) => constant.name), ...flat.variables];
-  const substitutions = new Map(
-    declared.map((name): [string, Expression] => [
-      name,
-      explicit.get(name) ??
-        markParams({ kind: "Identifier", name, location: instance.location }, params),
-    ]),
-  );
-  const rewrite: Rewrite = {
-    prefix: instance.name === undefined ? "" : `${instance.name}!`,
-    isLocal: locals !== undefined,
-    params: instance.params,
-    definitionNames: new Set(flat.definitions.map((definition) => definition.name)),
-    substitutions,
-    substitutedNames: new Map(
-      [...substitutions].map(([name, expression]) => [name, getLocalNames(expression)]),
-    ),
+const withInstanceParams = (
+  definition: Definition,
+  params: OperatorParam[],
+  location: SourceLocation,
+): Definition => {
+  if (params.length === 0) return definition;
+  if (definition.kind === "Operator") {
+    return { ...definition, params: [...params, ...definition.params] };
+  }
+  return {
+    kind: "Operator",
+    name: definition.name,
+    params,
+    body: {
+      kind: "Let",
+      definitions: [definition],
+      body: { kind: "Identifier", name: definition.name, location, resolution: { kind: "Local" } },
+      location,
+    },
+    isLocal: definition.isLocal,
+    isRecursive: false,
+    location: definition.location,
   };
-  return flat.definitions.map((definition): Definition => {
-    const name = `${rewrite.prefix}${definition.name}`;
-    const isLocal = instance.isLocal || definition.isLocal;
-    if (definition.kind === "Function" && instance.params.length > 0) {
-      return {
-        kind: "Operator",
-        name,
-        params: instance.params,
-        body: substitute(
-          {
-            kind: "FunctionConstruction",
-            bounds: definition.bounds,
-            body: definition.body,
-            location: definition.location,
-            isRecursive: true,
-          },
-          rewrite,
-          new Set(),
-        ),
-        isLocal,
-        isRecursive: definition.isRecursive,
-        location: instance.location,
-      };
-    }
+};
+
+const copyDefinition = (rewrite: Rewrite, key: string): string => {
+  const cached = rewrite.copies.get(key);
+  if (cached !== undefined) return cached;
+  const instantiation = rewrite.instantiation;
+  const definition = instantiation.getDefinition(key);
+  if (!definition) return key;
+  return instantiation.addDefinition(definition.name, (copyKey) => {
+    rewrite.copies.set(key, copyKey);
     const mapped = mapDefinition(definition, (child, bound) =>
       substitute(child, rewrite, new Set(bound)),
     );
-    return definition.kind === "Function"
-      ? { ...mapped, name, isLocal, location: instance.location }
-      : {
-          ...mapped,
-          kind: "Operator",
-          name,
-          params: [...instance.params, ...definition.params],
-          isLocal,
-          location: instance.location,
-        };
+    return withInstanceParams(mapped, instantiation.params, definition.location);
   });
 };
 
-const expandLetInstances = (
-  expression: Expression,
-  locals: Set<string>,
-  getFlatModule: (name: string) => FlatModule,
-): Expression => {
-  const mapped = mapChildren(expression, (child, bound) =>
-    expandLetInstances(
-      child,
-      bound.length === 0 ? locals : new Set([...locals, ...bound]),
-      getFlatModule,
-    ),
-  );
-  if (mapped.kind !== "Let" || !mapped.instances) return mapped;
-  const definitions = [...mapped.definitions];
-  mapped.instances.forEach((instance) => {
-    const position = definitions.findIndex((definition) =>
-      isBefore(instance.location, definition.location),
-    );
-    const visible = new Set([
-      ...locals,
-      ...definitions.slice(0, position === -1 ? undefined : position).map((item) => item.name),
-    ]);
-    const instantiated = instantiateModule(instance, getFlatModule(instance.module), visible);
-    definitions.splice(position === -1 ? definitions.length : position, 0, ...instantiated);
-  });
-  return { kind: "Let", definitions, body: mapped.body, location: mapped.location };
+export const createInstantiation = (instantiation: Instantiation) => {
+  const modes = new Map<RewriteMode, Rewrite>();
+  const createRewrite = (mode: RewriteMode): Rewrite => {
+    const created = { instantiation, copies: new Map(), mode, modes };
+    modes.set(mode, created);
+    return created;
+  };
+  const rewrite = createRewrite("Normal");
+  createRewrite("Enabled");
+  createRewrite("Primed");
+  return {
+    getKey: (key: string) => getCopy(rewrite, key) ?? key,
+    getQualifiedKey: (key: string) => {
+      const copy = getCopy(rewrite, key);
+      if (copy !== undefined) return copy;
+      const definition = instantiation.getDefinition(key);
+      if (!definition) return key;
+      return instantiation.addDefinition(definition.name, () =>
+        withInstanceParams(definition, instantiation.params, definition.location),
+      );
+    },
+  };
 };
 
 const hasLetInstance = (expression: Expression): boolean =>
   (expression.kind === "Let" && expression.instances !== undefined) ||
   getChildren(expression).some(hasLetInstance);
 
+const expandLetInstances = (
+  expression: Expression,
+  instantiate: (instance: Instance) => Definition[],
+): Expression => {
+  const mapped = mapChildren(expression, (child) => expandLetInstances(child, instantiate));
+  if (mapped.kind !== "Let" || !mapped.instances) return mapped;
+  const definitions = mapped.instances.reduce((current, instance) => {
+    const position = current.findIndex((definition) =>
+      isBefore(instance.location, definition.location),
+    );
+    const index = position === -1 ? current.length : position;
+    return [...current.slice(0, index), ...instantiate(instance), ...current.slice(index)];
+  }, mapped.definitions);
+  return { kind: "Let", definitions, body: mapped.body, location: mapped.location };
+};
+
 export const withLetInstances = (
   module: Module,
-  getFlatModule: (name: string) => FlatModule,
+  instantiate: (instance: Instance) => Definition[],
 ): Module => {
   const isExpanded =
     module.definitions.some((definition) => hasLetInstance(definition.body)) ||
@@ -427,13 +579,11 @@ export const withLetInstances = (
   return {
     ...module,
     definitions: module.definitions.map((definition) =>
-      mapDefinition(definition, (child, bound) =>
-        expandLetInstances(child, new Set(bound), getFlatModule),
-      ),
+      mapDefinition(definition, (child) => expandLetInstances(child, instantiate)),
     ),
     assumptions: module.assumptions.map((assumption) => ({
       ...assumption,
-      expression: expandLetInstances(assumption.expression, new Set(), getFlatModule),
+      expression: expandLetInstances(assumption.expression, instantiate),
     })),
   };
 };

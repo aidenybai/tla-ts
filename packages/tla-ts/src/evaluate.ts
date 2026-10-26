@@ -9,8 +9,9 @@ import type {
 } from "./ast";
 import { TlaEvaluationError } from "./errors";
 import { generateEvaluator } from "./codegen";
+import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
-import { mapChildren } from "./instances";
+import { mapChildren, substitutedExpressions } from "./instances";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
@@ -40,6 +41,7 @@ export interface OperatorValue {
   name: string;
   arity: number;
   call: (args: Value[]) => Value;
+  expression?: Expression;
 }
 
 export type BuiltinArgument = Value | OperatorValue;
@@ -48,10 +50,11 @@ export interface Builtin {
   kind: "Builtin";
   name: string;
   arity: number;
-  evaluate: (args: BuiltinArgument[]) => Value;
+  evaluate: (args: BuiltinArgument[], context?: Context) => Value;
   evaluateUnary: ((value: Value) => Value) | undefined;
   evaluateBinary: ((left: Value, right: Value) => Value) | undefined;
   isStateLevel?: boolean;
+  isLazy?: boolean;
 }
 
 export interface Closure {
@@ -85,6 +88,7 @@ export interface Scope {
 }
 
 export interface Environment {
+  runtime: CheckerRuntime;
   definitions: Map<string, Definition>;
   builtins: Map<string, Builtin>;
   constants: Map<string, Value>;
@@ -478,7 +482,7 @@ export const callOperatorWithValues = (
   args: Value[],
   context: Context,
 ): Value => {
-  if (operator.kind === "Builtin") return operator.evaluate(args);
+  if (operator.kind === "Builtin") return operator.evaluate(args, context);
   if (operator.kind === "Operator") return operator.call(args);
   const scope = operator.params.reduce<Scope | undefined>(
     (current, param, index) => bindValue(current, param.name, args[index]),
@@ -523,7 +527,9 @@ export const findGlobalName = (name: string, environment: Environment): GlobalNa
   const definition = environment.definitions.get(name);
   if (definition) return { kind: "Definition", definition };
   const builtin = environment.builtins.get(name);
-  if (builtin && builtin.arity === 0) return { kind: "Value", value: builtin.evaluate([]) };
+  if (builtin && builtin.arity === 0 && !builtin.isStateLevel) {
+    return { kind: "Value", value: builtin.evaluate([]) };
+  }
   return undefined;
 };
 
@@ -592,12 +598,14 @@ const callOperator = (operator: Operator, args: Expression[], context: Context):
     );
   }
   if (operator.kind === "Operator") return operator.call(args.map((arg) => evaluate(arg, context)));
+  if (operator.isLazy) return operator.evaluate(getLazyArguments(args, context), context);
   return operator.evaluate(
     args.map((arg) =>
       isOperatorArgument(arg, context)
         ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
         : evaluate(arg, context),
     ),
+    context,
   );
 };
 
@@ -671,6 +679,8 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
   }
   if (global?.kind === "Value") return global.value;
   if (global?.kind === "Definition") return evaluateDefinitionValue(global.definition, context);
+  const builtin = context.environment.builtins.get(name);
+  if (builtin?.arity === 0) return builtin.evaluate([], context);
   throw new TlaEvaluationError(`Unknown identifier ${name} at ${describeLocation(expression)}`);
 };
 
@@ -686,6 +696,9 @@ export const IMPURE_BUILTINS = new Set([
   "TLCGet",
   "TLCSet",
 ]);
+
+export const isImpureBuiltin = (name: string, environment: Environment) =>
+  IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;
 
 const closedConstants = new WeakMap<Expression, boolean>();
 
@@ -755,7 +768,9 @@ const computeIsClosedConstant = (
     );
   }
   if (expression.kind === "Apply") {
-    if (IMPURE_BUILTINS.has(expression.operator) || expression.operator === "~>") return false;
+    if (isImpureBuiltin(expression.operator, environment) || expression.operator === "~>") {
+      return false;
+    }
     const operator = resolveGlobalOperator(expression.operator, environment);
     const isPure =
       operator?.kind === "Builtin" ||
@@ -802,6 +817,28 @@ const cacheFirstValue = (evaluator: Evaluator): Evaluator => {
   };
 };
 
+const hasFreeLocals = (expression: Expression, bound: ReadonlySet<string>): boolean => {
+  if (expression.kind === "Identifier" && isLocallyResolved(expression)) {
+    return !bound.has(expression.name);
+  }
+  if (isLocallyResolved(expression)) return true;
+  const isFree = { value: false };
+  mapChildren(expression, (child, names) => {
+    isFree.value ||= hasFreeLocals(
+      child,
+      names.length === 0 ? bound : new Set([...bound, ...names]),
+    );
+    return child;
+  });
+  return isFree.value;
+};
+
+const isStateCached = (expression: Expression, environment: Environment) =>
+  substitutedExpressions.has(expression) &&
+  isWorthCaching(expression) &&
+  getReadVariables(expression, environment) !== undefined &&
+  !hasFreeLocals(expression, NO_BOUND_NAMES);
+
 export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
   const cached = environment.evaluators.get(expression);
   if (cached) return cached;
@@ -809,7 +846,9 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
   const evaluator =
     isWorthCaching(expression) && isClosedConstant(expression, environment)
       ? cacheFirstValue(compiled)
-      : compiled;
+      : isStateCached(expression, environment)
+        ? cacheStateValue(compiled)
+        : compiled;
   environment.evaluators.set(expression, evaluator);
   return evaluator;
 };
@@ -859,10 +898,11 @@ const compileIdentifier = (
     }
     if (definition.params.length === 0) {
       const compiled = { body: undefined as Evaluator | undefined };
-      return (context) => {
+      const evaluator: Evaluator = (context) => {
         compiled.body ??= getEntryEvaluator(definition.body, environment);
         return compiled.body(withScope(context, undefined));
       };
+      return isStatePure(definition, environment) ? cacheStateValue(evaluator) : evaluator;
     }
     return (context) => evaluateDefinitionValue(definition, context);
   }
@@ -882,14 +922,25 @@ const isStatePure = (definition: Definition, environment: Environment) =>
     definition.bounds.every((bound) => getReadVariables(bound.set, environment) !== undefined));
 
 const cacheStateValue = (evaluator: Evaluator): Evaluator => {
-  const cache = { state: undefined as Context["state"], value: undefined as Value | undefined };
+  const cache = {
+    recent: undefined as Context["state"],
+    recentValue: undefined as Value | undefined,
+    previous: undefined as Context["state"],
+    previousValue: undefined as Value | undefined,
+  };
   return (context) => {
-    if (context.state !== undefined && cache.state === context.state && cache.value !== undefined) {
-      return cache.value;
+    const state = context.state;
+    if (state !== undefined && cache.recent === state && cache.recentValue !== undefined) {
+      return cache.recentValue;
+    }
+    if (state !== undefined && cache.previous === state && cache.previousValue !== undefined) {
+      return cache.previousValue;
     }
     const value = evaluator(context);
-    cache.state = context.state;
-    cache.value = value;
+    cache.previous = cache.recent;
+    cache.previousValue = cache.recentValue;
+    cache.recent = state;
+    cache.recentValue = value;
     return value;
   };
 };
@@ -908,11 +959,23 @@ export const isValueArgument = (argument: Expression, environment: Environment) 
     isOperatorName(argument.name, environment)
   );
 
+const getLazyArguments = (args: Expression[], context: Context): OperatorValue[] =>
+  args.map((arg) => ({
+    kind: "Operator",
+    name: "argument",
+    arity: 0,
+    call: () => evaluate(arg, context),
+    expression: arg,
+  }));
+
 const compileBuiltinCall = (
   builtin: Builtin,
   args: Expression[],
   environment: Environment,
 ): Evaluator => {
+  if (builtin.isLazy) {
+    return (context) => builtin.evaluate(getLazyArguments(args, context), context);
+  }
   const unary = builtin.evaluateUnary;
   if (unary && args.length === 1 && isValueArgument(args[0], environment)) {
     const operand = getEvaluator(args[0], environment);
@@ -935,6 +998,7 @@ const compileBuiltinCall = (
           ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
           : evaluate(arg, context),
       ),
+      context,
     );
 };
 
@@ -1179,7 +1243,9 @@ const compileSetComprehension = (
           predicate(withScope(context, bindPattern(context.scope, pattern, element))),
           "a set filter predicate",
         );
-      if (!isEnumerable(base)) {
+      const isReducible =
+        typeof base === "object" && (base.kind === "Set" || base.kind === "Interval");
+      if (!isReducible) {
         if (isSetValue(base)) return { kind: "FilteredSet", base, test };
         throw new TlaEvaluationError(
           `TLC encountered a non-enumerable quantifier bound ${formatValue(base)} at ${describeLocation(expression.bound.set)}`,

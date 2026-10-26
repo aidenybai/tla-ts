@@ -28,6 +28,7 @@ import {
   getSolutions,
   isFulfilling,
   TRUE,
+  type LiveEnabled,
   type LiveExpression,
   type Solution,
   type Tableau,
@@ -480,7 +481,8 @@ const toLiveExpression = (
       case "WeakFairness":
       case "StrongFairness": {
         const step = createAngleAction(expression.action, expression.subscript);
-        const disabled = createUnary("Not", { kind: "Enabled", step, scope });
+        const enabled: LiveEnabled = { kind: "Enabled", step: expression.enabled ?? step, scope };
+        const disabled = createUnary("Not", enabled);
         const taken: LiveExpression = {
           kind: "Action",
           expression: expression.action,
@@ -490,6 +492,7 @@ const toLiveExpression = (
             location: step.location,
           },
           scope,
+          enabled,
         };
         if (expression.kind === "WeakFairness") {
           return createUnary(
@@ -536,6 +539,7 @@ const evaluateLive = (
       return result;
     }
     case "Action": {
+      if (expression.enabled && stateCache.get(expression.enabled) === false) return false;
       const context = { environment, scope: expression.scope, state, next };
       if (
         expression.unchanged &&
@@ -737,6 +741,7 @@ export const createLivenessChecker = (
   }));
   const states: Value[][] = [];
   const targets: number[][] = [];
+  const edgeStates: Value[][][] = [];
   const initial: number[] = [];
 
   const isConsistent = (
@@ -851,27 +856,14 @@ export const createLivenessChecker = (
       else edgesByTarget.set(successor.index, [successor]);
     }
     targets[index] = edges.map((edge) => edge.index);
+    edgeStates[index] = edges.map((edge) => edge.state);
     const stateCache = new Map<LiveExpression, boolean>();
-    const actionCaches = edges.map(() => new Map<string, boolean>());
     const successorCaches = edges.map(() => new Map<LiveExpression, boolean>());
     for (const check of checks) {
       const solution = check.solution;
       check.stateResults[index] = Uint8Array.from(solution.stateChecks, (predicate) =>
         evaluateLive(predicate, state, undefined, environment, stateCache) ? 1 : 0,
       );
-      const actionCount = solution.actionChecks.length;
-      const actions = new Uint8Array(edges.length * actionCount);
-      edges.forEach((edge, edgeIndex) =>
-        solution.actionChecks.forEach((predicate, position) => {
-          const key = getLiveKey(predicate);
-          const cache = actionCaches[edgeIndex];
-          const isTrue =
-            cache.get(key) ?? evaluateLive(predicate, state, edge.state, environment, stateCache);
-          cache.set(key, isTrue);
-          actions[edgeIndex * actionCount + position] = isTrue ? 1 : 0;
-        }),
-      );
-      check.actionResults[index] = actions;
       const tableau = solution.tableau;
       const product = check.product;
       if (!tableau || !product) continue;
@@ -888,6 +880,40 @@ export const createLivenessChecker = (
       if (accepted) return accepted;
     }
     return undefined;
+  };
+
+  const computeActionResults = (source: number) => {
+    const state = states[source];
+    const successors = edgeStates[source];
+    const caches = successors.map(() => new Map<string, boolean>());
+    for (const check of checks) {
+      const solution = check.solution;
+      const stateResults = check.stateResults[source];
+      const stateCache = new Map(
+        solution.stateChecks.map((predicate, position) => [
+          predicate,
+          stateResults[position] === 1,
+        ]),
+      );
+      const actionCount = solution.actionChecks.length;
+      const actions = new Uint8Array(successors.length * actionCount);
+      successors.forEach((successor, edgeIndex) => {
+        const cache = caches[edgeIndex];
+        solution.actionChecks.forEach((predicate, position) => {
+          const key = getLiveKey(predicate);
+          const isTrue =
+            cache.get(key) ?? evaluateLive(predicate, state, successor, environment, stateCache);
+          cache.set(key, isTrue);
+          actions[edgeIndex * actionCount + position] = isTrue ? 1 : 0;
+        });
+      });
+      check.actionResults[source] = actions;
+    }
+  };
+
+  const getActionResults = (check: Check, source: number) => {
+    if (check.actionResults[source] === undefined) computeActionResults(source);
+    return check.actionResults[source];
   };
 
   const getGraph = (check: Check): BehaviorGraph =>
@@ -926,7 +952,7 @@ export const createLivenessChecker = (
     const graph = getGraph(check);
     const actionCount = solution.actionChecks.length;
     const getAction = (node: number, edgeIndex: number, position: number) =>
-      check.actionResults[graph.states[node]][edgeIndex * actionCount + position] === 1;
+      getActionResults(check, graph.states[node])[edgeIndex * actionCount + position] === 1;
     for (const model of solution.models) {
       const isAllowed = (node: number, edgeIndex: number) =>
         model.eventuallyAlways.every((position) => getAction(node, edgeIndex, position));

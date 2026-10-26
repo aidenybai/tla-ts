@@ -30,6 +30,10 @@ export const checkModel = (specPath: string, configPath: string): ModelOutcome =
       const modulePath = join(directory, `${name}.tla`);
       return existsSync(modulePath) ? readFileSync(modulePath, "utf8") : undefined;
     },
+    readFile: (path) => {
+      const filePath = join(directory, path);
+      return existsSync(filePath) ? readFileSync(filePath, "utf8") : undefined;
+    },
     onPrint: () => {},
   });
   const milliseconds = Math.round(performance.now() - startedAt);

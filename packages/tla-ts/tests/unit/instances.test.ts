@@ -26,6 +26,12 @@ describe("INSTANCE matches TLC", () => {
     expect(result.violation?.trace).toHaveLength(4);
   });
 
+  it("scopes LOCAL instances per module and overrides definitions shared by instances", () => {
+    const result = checkInstances("Scoping.cfg", "Scoping");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
+  });
+
   it("substitutes operator parameters with LAMBDA expressions without capturing bound names", () => {
     const result = checkInstances("Operators.cfg", "Operators");
     expect(result.status).toBe("success");
@@ -63,5 +69,24 @@ describe("INSTANCE matches TLC", () => {
     expect(result.status).toBe("invariant-violation");
     expect(result.violation?.trace).toHaveLength(4);
     expect([result.generatedStates, result.distinctStates]).toEqual([4, 4]);
+  });
+
+  it("keeps instance parameters apart from names bound inside the instance", () => {
+    const result = checkInstances("Capture.cfg", "Capture");
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      3,
+      2,
+      2,
+    ]);
+  });
+
+  it("instantiates parameterized modules inside LET", () => {
+    const result = checkInstances("LetParameters.cfg", "LetParameters");
+    expect([result.status, result.violation?.trace.length, result.distinctStates]).toEqual([
+      "invariant-violation",
+      4,
+      4,
+    ]);
   });
 });

@@ -24,6 +24,7 @@ export interface LiveAction {
   expression: Expression;
   unchanged: Expression | undefined;
   scope: Scope | undefined;
+  enabled?: LiveEnabled;
 }
 
 export interface LiveUnary {
