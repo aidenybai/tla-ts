@@ -453,6 +453,18 @@ export const parseModule = (source: string): Module => {
     return { kind: "Case", arms, other: other.value, location: getLocation(start) };
   };
 
+  const isQualifiedNameAhead = () => {
+    const token = peek(1);
+    return (
+      isAt("!") &&
+      (token.kind === "Identifier" ||
+        (token.kind === "Operator" &&
+          (INFIX_OPERATORS.has(token.text) ||
+            POSTFIX_OPERATORS.has(token.text) ||
+            PREFIX_OPERATOR_REFERENCES.has(token.text))))
+    );
+  };
+
   const parsePrimary = (): Expression => {
     const token = advance();
     const location = getLocation(token);
@@ -465,16 +477,16 @@ export const parseModule = (source: string): Module => {
       }
       const hasArguments = isAt("(");
       const args = hasArguments ? parseArguments() : [];
-      if (!(isAt("!") && peek(1).kind === "Identifier")) {
+      if (!isQualifiedNameAhead()) {
         return hasArguments
           ? { kind: "Apply", operator: token.text, args, location }
           : { kind: "Identifier", name: token.text, location };
       }
       const names = [token.text];
       const qualifiedArgs = [...args];
-      while (isAt("!") && peek(1).kind === "Identifier") {
+      while (isQualifiedNameAhead()) {
         advance();
-        names.push(expectIdentifier());
+        names.push(advance().text);
         if (isAt("(")) qualifiedArgs.push(...parseArguments());
       }
       const operator = names.join("!");
