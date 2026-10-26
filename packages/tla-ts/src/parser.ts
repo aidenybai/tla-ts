@@ -195,6 +195,7 @@ export const parseModule = (source: string): Module => {
   const tokens = tokenize(source);
   const cursor = { index: 0, limit: tokens.length, offsideColumns: [] as number[] };
   const recursiveNames = new Set<string>();
+  const current = { module: "" };
 
   const getLocation = (token: Token): SourceLocation => ({
     line: token.line,
@@ -764,6 +765,14 @@ export const parseModule = (source: string): Module => {
     return params;
   };
 
+  const parseBody = () => {
+    const start = getLocation(peek());
+    const body = parseExpression();
+    const last = tokens[cursor.index - 1];
+    const end = { line: last.line, column: last.endColumn };
+    return { body, bodyRange: { module: current.module, start, end } };
+  };
+
   const parseDefinition = (isLocal: boolean): Definition | Instance => {
     const token = peek();
     const location = getLocation(token);
@@ -784,7 +793,7 @@ export const parseModule = (source: string): Module => {
             { name: left, arity: 0 },
             { name: right, arity: 0 },
           ],
-          body: parseExpression(),
+          ...parseBody(),
           isLocal,
           isRecursive: recursiveNames.has(operator),
           location,
@@ -803,7 +812,7 @@ export const parseModule = (source: string): Module => {
         kind: "Operator",
         name: operator,
         params: [{ name: param, arity: 0 }],
-        body: parseExpression(),
+        ...parseBody(),
         isLocal,
         isRecursive: recursiveNames.has(operator),
         location,
@@ -831,7 +840,7 @@ export const parseModule = (source: string): Module => {
       kind: "Operator",
       name,
       params,
-      body: parseExpression(),
+      ...parseBody(),
       isLocal,
       isRecursive: recursiveNames.has(name),
       location,
@@ -948,6 +957,8 @@ export const parseModule = (source: string): Module => {
     expect("MODULE");
     const name = expectIdentifier();
     expect("----");
+    const outerModule = current.module;
+    current.module = name;
     const module: Module = {
       name,
       outer,
@@ -961,7 +972,10 @@ export const parseModule = (source: string): Module => {
     };
     while (true) {
       const token = peek();
-      if (token.kind === "ModuleEnd" || token.kind === "End") return module;
+      if (token.kind === "ModuleEnd" || token.kind === "End") {
+        current.module = outerModule;
+        return module;
+      }
       if (token.kind === "Separator") {
         if (isAt("MODULE", 1)) module.modules.push(parseNestedModule(getOuterScope(module)));
         else advance();
