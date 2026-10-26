@@ -1,9 +1,13 @@
+import { createJavaRandom, getTlcFingerprint, type JavaRandom } from "./tlc-random";
 import { createFunction, type Value } from "./values";
 
 export interface CheckerRuntime {
   getLevel: (state: (Value | undefined)[]) => number;
   getBehavior: (state: Value[]) => Value[][];
-  random: () => number;
+  getCurrentState: () => Value[] | undefined;
+  getRandom: () => JavaRandom;
+  evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
+  seed: bigint;
   generatedStates: number;
   distinctStates: number;
   initialStates: number;
@@ -18,33 +22,52 @@ export interface CheckerRuntime {
   startedAt: number;
 }
 
-const createRandom = (seed: number) => {
-  const state = { value: seed >>> 0 };
-  return () => {
-    state.value = (state.value + 0x6d2b79f5) >>> 0;
-    const mixed = Math.imul(state.value ^ (state.value >>> 15), state.value | 1);
-    const shifted = mixed ^ (mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61));
-    return ((shifted ^ (shifted >>> 14)) >>> 0) / 4294967296;
+// TLC's RandomEnumerableValues keeps one java.util.Random per thread, seeded with -seed. The
+// main thread evaluates constants, assumptions, and initial states with it. A worker reseeds
+// its Random with the fingerprint of each state it expands, XORed with the seed, so a state's
+// successors are the same whatever order the workers expand states in.
+export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime => {
+  const startup = createJavaRandom(seed);
+  const worker = { random: createJavaRandom(seed), state: undefined as Value[] | undefined };
+  const phase = { isStartup: false };
+  const runtime: CheckerRuntime = {
+    getLevel: () => 0,
+    getBehavior: () => [],
+    getCurrentState: () => undefined,
+    getRandom: () => {
+      const state = phase.isStartup ? undefined : runtime.getCurrentState();
+      if (state === undefined) return startup;
+      if (state !== worker.state) {
+        worker.random.setSeed(getTlcFingerprint(state) ^ BigInt.asUintN(64, seed));
+        worker.state = state;
+      }
+      return worker.random;
+    },
+    evaluateAtStartup: (evaluate) => {
+      const wasStartup = phase.isStartup;
+      phase.isStartup = true;
+      try {
+        return evaluate();
+      } finally {
+        phase.isStartup = wasStartup;
+      }
+    },
+    seed,
+    generatedStates: 0,
+    distinctStates: 0,
+    initialStates: 0,
+    queueSize: 0,
+    diameter: 1,
+    registers: new Map(),
+    namedRegisters: new Map(),
+    properties: new Map(),
+    possibleCounts: new Map(),
+    isStopped: false,
+    checkDeadlock,
+    startedAt: Date.now(),
   };
+  return runtime;
 };
-
-export const createRuntime = (checkDeadlock: boolean): CheckerRuntime => ({
-  getLevel: () => 0,
-  getBehavior: () => [],
-  random: createRandom(0),
-  generatedStates: 0,
-  distinctStates: 0,
-  initialStates: 0,
-  queueSize: 0,
-  diameter: 1,
-  registers: new Map(),
-  namedRegisters: new Map(),
-  properties: new Map(),
-  possibleCounts: new Map(),
-  isStopped: false,
-  checkDeadlock,
-  startedAt: Date.now(),
-});
 
 export const NAMED_REGISTER_PREFIX = "s:";
 

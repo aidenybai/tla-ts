@@ -17,7 +17,11 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   "postcondition-violation": 10,
 };
 
-const USAGE = "Usage: tla-ts <Spec.tla> [-config <Spec.cfg>] [-deadlock] [-workers <count|auto>]";
+const USAGE =
+  "Usage: tla-ts <Spec.tla> [-config <Spec.cfg>] [-deadlock] [-seed <num>] [-workers <count|auto>]";
+
+const isJavaLong = (text: string) =>
+  /^[+-]?\d+$/.test(text) && BigInt.asIntN(64, BigInt(text)) === BigInt(text);
 
 const getWorkerCount = (args: string[]) => {
   const flag = args.indexOf("-workers");
@@ -80,10 +84,21 @@ const run = async (args: string[]) => {
   }
   const config = parseConfig(readFileSync(configPath, "utf8"));
   if (args.includes("-deadlock")) config.checkDeadlock = false;
+  const seedFlag = args.indexOf("-seed");
+  const seed = seedFlag === -1 ? "0" : args[seedFlag + 1];
+  if (seed === undefined) {
+    console.error("Error: seed required.");
+    return 1;
+  }
+  if (!isJavaLong(seed)) {
+    console.error(`Error: An integer for seed required. But encountered ${seed}`);
+    return 1;
+  }
   const directory = dirname(specPath);
   console.log(`Checking ${basename(specPath)} with ${basename(configPath)}`);
   const result = await checkInParallel({
     workers: getWorkerCount(args),
+    seed: BigInt(seed),
     source: readFileSync(specPath, "utf8"),
     config,
     loadModule: (name) => {
