@@ -211,6 +211,13 @@ describe("name resolution matches SANY", () => {
     expect(result.status).toBe("success");
   });
 
+  it("applies operators in prefix form and reads keywords as field names", () => {
+    const result = checkSource(
+      'EXTENDS Naturals\nn ^+ == n + 1\nASSUME +(4, 6) = 10 /\\ ^+(2) = 3\nASSUME [[x \\in {"THEN"} |-> 1] EXCEPT !.THEN = 2].THEN = 2',
+    );
+    expect(result.status).toBe("success");
+  });
+
   it("accepts recursive functions, named assumptions, and operator aliases", () => {
     const result = checkSource(
       "EXTENDS Naturals\nRECURSIVE fact\ntwice[n \\in Nat] == fact[n] * 2\nfact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]\nASSUME Positive == twice[3] = 12\nASSUME Positive\na \\oplus b == a + b\nASSUME 1 (+) 2 = 3",

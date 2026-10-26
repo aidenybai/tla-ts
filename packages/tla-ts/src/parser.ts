@@ -178,6 +178,8 @@ export const parseModule = (source: string): Module => {
   const createError = (message: string, token = peekRaw()) =>
     new TlaSyntaxError(`${message} at line ${token.line}, column ${token.column}`);
 
+  const isFieldName = (token: Token) => token.kind === "Identifier" || token.kind === "Keyword";
+
   const isAt = (text: string, offset = 0) => {
     const token = peek(offset);
     return token.text === text && token.kind !== "String" && token.kind !== "End";
@@ -353,7 +355,9 @@ export const parseModule = (source: string): Module => {
           const path: ExceptPathStep[] = [];
           while (isAt(".") || isAt("[")) {
             if (accept(".")) {
-              path.push({ kind: "Field", name: expectIdentifier() });
+              if (!isFieldName(peek()))
+                throw createError(`Expected a field name but found ${describe(peek())}`);
+              path.push({ kind: "Field", name: advance().text });
               continue;
             }
             expect("[");
@@ -466,6 +470,10 @@ export const parseModule = (source: string): Module => {
       }
       return { kind: "Identifier", name: token.text, location };
     }
+    const isOperatorName =
+      INFIX_OPERATORS.has(token.text) || POSTFIX_OPERATORS.has(token.text) || token.text === "-.";
+    if (token.kind === "Operator" && isOperatorName && isAt("("))
+      return { kind: "Apply", operator: token.text, args: parseArguments(), location };
     switch (token.text) {
       case "(": {
         const expression = withoutOffside(() => parseExpression());
@@ -594,14 +602,9 @@ export const parseModule = (source: string): Module => {
         state.left = { kind: "FunctionApplication", function: state.left, args, location };
         continue;
       }
-      if (token.text === "." && peek(1).kind === "Identifier") {
+      if (token.text === "." && isFieldName(peek(1))) {
         advance();
-        state.left = {
-          kind: "FieldAccess",
-          record: state.left,
-          field: expectIdentifier(),
-          location,
-        };
+        state.left = { kind: "FieldAccess", record: state.left, field: advance().text, location };
         continue;
       }
       const infix = INFIX_OPERATORS.get(token.text);
