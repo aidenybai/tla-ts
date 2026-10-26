@@ -97,6 +97,10 @@ Increment(n) == n + 1
 ASSUME Apply(Increment, 1) = 2
 ASSUME Apply(LAMBDA n : n * 10, 2) = 20
 
+Labeled == \/ P0:: 1 = 2
+           \/ P1:: \A n \in {1, 2} : lab(n) :: n > 0
+ASSUME Labeled
+
 a (+) b == a + b + 1
 ASSUME 1 (+) 2 = 4
 

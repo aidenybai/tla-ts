@@ -238,6 +238,19 @@ export const parseModule = (source: string): Module => {
     return false;
   };
 
+  const isLabelAhead = () => {
+    if (isAt("::")) return true;
+    if (!isAt("(")) return false;
+    const offset = { value: 1 };
+    while (peek(offset.value).kind === "Identifier" && isAt(",", offset.value + 1))
+      offset.value += 2;
+    return (
+      peek(offset.value).kind === "Identifier" &&
+      isAt(")", offset.value + 1) &&
+      isAt("::", offset.value + 2)
+    );
+  };
+
   const parsePattern = (): BoundPattern => {
     if (!accept("<<")) return { kind: "Name", name: expectIdentifier() };
     const names = parseSeparated(expectIdentifier);
@@ -439,6 +452,10 @@ export const parseModule = (source: string): Module => {
     if (token.kind === "Number") return { kind: "Number", value: Number(token.text), location };
     if (token.kind === "String") return { kind: "String", value: token.text, location };
     if (token.kind === "Identifier") {
+      if (isLabelAhead()) {
+        while (!accept("::")) advance();
+        return parseExpression();
+      }
       if (isAt("("))
         return { kind: "Apply", operator: token.text, args: parseArguments(), location };
       if (isAt("!") && peek(1).kind === "Identifier") {
