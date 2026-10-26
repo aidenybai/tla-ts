@@ -240,16 +240,18 @@ const SEQUENCES_OPERATORS: Builtin[] = [
     return typeof sequence === "string" ? sequence.slice(1) : createTuple(sequence.slice(1));
   }),
   defineOperator("SubSeq", 3, (args) => {
-    const elements = getSequence(args, 0, "SubSeq");
+    const sequence = getSequenceOrString(args, 0, "SubSeq");
     const start = getNumber(args, 1, "SubSeq");
     const end = getNumber(args, 2, "SubSeq");
-    if (start > end) return createTuple([]);
-    if (start < 1 || end > elements.length) {
+    if (start > end) return typeof sequence === "string" ? "" : createTuple([]);
+    if (start < 1 || end > sequence.length) {
       throw new TlaEvaluationError(
-        `SubSeq bounds ${start}..${end} are outside 1..${elements.length}`,
+        `SubSeq bounds ${start}..${end} are outside 1..${sequence.length}`,
       );
     }
-    return createTuple(elements.slice(start - 1, end));
+    return typeof sequence === "string"
+      ? sequence.slice(start - 1, end)
+      : createTuple(sequence.slice(start - 1, end));
   }),
   defineOperator("SelectSeq", 2, (args) => {
     const test = getOperator(args, 1, "SelectSeq");

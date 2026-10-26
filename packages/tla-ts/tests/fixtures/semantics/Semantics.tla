@@ -86,6 +86,7 @@ ASSUME (TRUE => FALSE) = FALSE /\ (FALSE => FALSE)
 ASSUME (TRUE <=> TRUE) /\ ~(TRUE <=> FALSE)
 ASSUME {{1, 2}, {2, 1}} = {{1, 2}}
 ASSUME <<>> = [x \in {} |-> 0]
+ASSUME SubSeq("abcdef", 2, 4) = "bcd" /\ SubSeq("abc", 3, 2) = ""
 
 RECURSIVE Sum(_)
 Sum(set) == IF set = {} THEN 0 ELSE LET element == CHOOSE x \in set : TRUE IN element + Sum(set \ {element})
