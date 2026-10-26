@@ -14,6 +14,7 @@ import {
 import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "./runtime";
 import { getRandomElement } from "./tlc-random";
 import {
+  ANY_SET,
   createFunction,
   createRecord,
   createSet,
@@ -214,7 +215,7 @@ export const createTlcOperators = (
       `The first argument of TLCSet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
     );
   }),
-  defineConstant("Any", { kind: "InfiniteSet", name: "Any" }),
+  defineConstant("Any", ANY_SET),
   defineOperator("RandomElement", 1, (args) =>
     getRandomElement(getEnumerableSet(args, 0, "RandomElement"), runtime.getRandom()),
   ),
