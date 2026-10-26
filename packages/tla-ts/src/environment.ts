@@ -61,10 +61,21 @@ export const createEnvironment = (
     return exported;
   };
 
+  const nestedModules = new Map<string, Module>();
+  const addNestedModules = (module: Module): Module => {
+    module.modules.forEach((nested) => {
+      if (!nestedModules.has(nested.name)) nestedModules.set(nested.name, addNestedModules(nested));
+    });
+    return module;
+  };
+  addNestedModules(root);
+
   const loadModule = (name: string) => {
+    const nested = nestedModules.get(name);
+    if (nested) return nested;
     const source = options.loadModule?.(name);
     if (source === undefined) throw new TlaUnsupportedError(`Module ${name} is not available`);
-    return parseModule(source);
+    return addNestedModules(parseModule(source));
   };
 
   const flatModules = new Map<string, FlatModule & { symbols: Symbols }>();
@@ -95,6 +106,15 @@ export const createEnvironment = (
     };
   };
 
+  const addOuterSymbols = (module: Module, imported: Symbols) => {
+    module.outer?.extends.forEach((extended) =>
+      (addStandardModule(extended) ?? getFlatModule(extended).symbols).forEach((arity, symbol) =>
+        imported.set(symbol, arity),
+      ),
+    );
+    module.outer?.symbols.forEach((symbol) => imported.set(symbol.name, symbol.arity));
+  };
+
   const getFlatModule = (name: string): FlatModule & { symbols: Symbols } => {
     const cached = flatModules.get(name);
     if (cached) return cached;
@@ -102,6 +122,7 @@ export const createEnvironment = (
     const imported: Symbols = new Map(
       CORE_OPERATORS.map((operator) => [operator.name, operator.arity]),
     );
+    addOuterSymbols(module, imported);
     const flat = {
       name,
       constants: [...module.constants],
@@ -137,6 +158,7 @@ export const createEnvironment = (
     const imported: Symbols = new Map(
       CORE_OPERATORS.map((operator) => [operator.name, operator.arity]),
     );
+    addOuterSymbols(module, imported);
     module.extends.forEach((name) =>
       (
         moduleExports.get(name) ??

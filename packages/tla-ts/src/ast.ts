@@ -328,8 +328,15 @@ export interface Instance {
   location: SourceLocation;
 }
 
+export interface OuterScope {
+  extends: string[];
+  symbols: Declaration[];
+}
+
 export interface Module {
   name: string;
+  outer: OuterScope | undefined;
+  modules: Module[];
   extends: string[];
   constants: Declaration[];
   variables: string[];

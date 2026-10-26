@@ -10,6 +10,7 @@ import type {
   Expression,
   Module,
   Instance,
+  OuterScope,
   InstanceSubstitution,
   OperatorParam,
   RecordField,
@@ -807,13 +808,15 @@ export const parseModule = (source: string): Module => {
     return { name: undefined, expression: parseExpression(), isAxiom, location };
   };
 
-  const parseModuleBody = (): Module => {
+  const parseModuleBody = (outer?: OuterScope): Module => {
     expect("----");
     expect("MODULE");
     const name = expectIdentifier();
     expect("----");
     const module: Module = {
       name,
+      outer,
+      modules: [],
       extends: accept("EXTENDS") ? parseSeparated(expectIdentifier) : [],
       constants: [],
       variables: [],
@@ -825,9 +828,8 @@ export const parseModule = (source: string): Module => {
       const token = peek();
       if (token.kind === "ModuleEnd" || token.kind === "End") return module;
       if (token.kind === "Separator") {
-        if (isAt("MODULE", 1))
-          throw new TlaUnsupportedError("Nested modules are not supported yet");
-        advance();
+        if (isAt("MODULE", 1)) module.modules.push(parseNestedModule(getOuterScope(module)));
+        else advance();
         continue;
       }
       switch (token.text) {
@@ -888,5 +890,27 @@ export const parseModule = (source: string): Module => {
     }
   };
 
-  return parseModuleBody();
+  const getOuterScope = (module: Module): OuterScope => ({
+    extends: [...(module.outer?.extends ?? []), ...module.extends],
+    symbols: [
+      ...(module.outer?.symbols ?? []),
+      ...module.constants,
+      ...module.variables.map((variable) => ({ name: variable, arity: 0 })),
+      ...module.definitions.map((definition) => ({
+        name: definition.name,
+        arity: definition.kind === "Operator" ? definition.params.length : 0,
+      })),
+    ],
+  });
+
+  const parseNestedModule = (outer?: OuterScope) => {
+    const nested = parseModuleBody(outer);
+    accept("====");
+    return nested;
+  };
+
+  const root = parseModuleBody();
+  accept("====");
+  while (peekRaw().kind === "Separator") root.modules.push(parseNestedModule());
+  return root;
 };
