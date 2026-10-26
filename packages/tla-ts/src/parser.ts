@@ -552,6 +552,7 @@ export const parseModule = (source: string): Module => {
     const token = advance();
     const location = getLocation(token);
     if (token.kind === "Number") return { kind: "Number", value: Number(token.text), location };
+    if (token.kind === "Decimal") return { kind: "Decimal", text: token.text, location };
     if (token.kind === "String") return { kind: "String", value: token.text, location };
     if (token.kind === "Identifier") {
       if (isLabelAhead()) {
@@ -907,15 +908,15 @@ export const parseModule = (source: string): Module => {
     );
   };
 
-  const parseTheorem = (): Definition | undefined => {
+  const parseTheorem = (module: Module) => {
     const start = advance();
-    const isNamed = peek().kind === "Identifier" && isAt("==", 1) && !isAt("ASSUME", 2);
-    if (!isNamed) {
+    const isNamed = peek().kind === "Identifier" && isAt("==", 1);
+    if (isAt("ASSUME", isNamed ? 2 : 0)) {
       skipUnit(start);
-      return undefined;
+      return;
     }
-    const name = expectIdentifier();
-    advance();
+    const name = isNamed ? expectIdentifier() : undefined;
+    if (isNamed) advance();
     const end = { value: cursor.index };
     while (!isProofStart(end.value, start)) end.value++;
     cursor.limit = end.value;
@@ -923,8 +924,10 @@ export const parseModule = (source: string): Module => {
     const isComplete = cursor.index === end.value;
     cursor.limit = tokens.length;
     skipUnit(start);
-    if (!isComplete) return undefined;
-    return {
+    if (!isComplete) return;
+    module.theorems.push(body);
+    if (name === undefined) return;
+    module.definitions.push({
       kind: "Operator",
       name,
       params: [],
@@ -932,7 +935,7 @@ export const parseModule = (source: string): Module => {
       isLocal: false,
       isRecursive: false,
       location: getLocation(start),
-    };
+    });
   };
 
   const parseAssumption = (): Assumption => {
@@ -962,6 +965,7 @@ export const parseModule = (source: string): Module => {
       definitions: [],
       instances: [],
       assumptions: [],
+      theorems: [],
     };
     while (true) {
       const token = peek();
@@ -1020,8 +1024,7 @@ export const parseModule = (source: string): Module => {
         }
       }
       if (token.kind === "Keyword" && THEOREM_KEYWORDS.has(token.text)) {
-        const theorem = parseTheorem();
-        if (theorem) module.definitions.push(theorem);
+        parseTheorem(module);
         continue;
       }
       const unit = parseDefinition(false);

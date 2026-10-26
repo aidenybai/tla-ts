@@ -13,7 +13,13 @@ import type { ConfigValue, ModelConfig } from "./config";
 import type { FileSystem } from "./json";
 import { TlaConfigError, TlaEvaluationError, TlaSyntaxError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import { getChildren, isConstantLevel, type Builtin, type Environment } from "./evaluate";
+import {
+  createRealNumberError,
+  getChildren,
+  isConstantLevel,
+  type Builtin,
+  type Environment,
+} from "./evaluate";
 import {
   createInstantiation,
   getEnabledVariableName,
@@ -133,6 +139,21 @@ const getVariableIndex = (variables: string[], declared: string[]) => {
   return index;
 };
 
+const getSubstitutions = (instances: Instance[]) =>
+  instances.flatMap((instance) =>
+    instance.substitutions.map((substitution) => substitution.expression),
+  );
+
+const rejectRealNumbers = (expressions: Expression[]): void =>
+  expressions.forEach((expression) => {
+    if (expression.kind === "Decimal") throw createRealNumberError(expression);
+    rejectRealNumbers(
+      expression.kind === "Let"
+        ? [...getChildren(expression), ...getSubstitutions(expression.instances ?? [])]
+        : getChildren(expression),
+    );
+  });
+
 export const createEnvironment = (
   root: Module,
   config: ModelConfig,
@@ -169,15 +190,26 @@ export const createEnvironment = (
 
   const nestedModules = new Map<string, Module>();
   const outerModules = new Map<string, Module>();
-  const addNestedModules = (module: Module): Module => {
+  // Like TLC, reject a decimal anywhere in a module, even where nothing evaluates it.
+  const addParsedModule = (module: Module): Module => {
+    rejectRealNumbers([
+      ...module.definitions.flatMap((definition) =>
+        definition.kind === "Function"
+          ? [...definition.bounds.map((bound) => bound.set), definition.body]
+          : [definition.body],
+      ),
+      ...module.assumptions.map((assumption) => assumption.expression),
+      ...module.theorems,
+      ...getSubstitutions(module.instances),
+    ]);
     module.modules.forEach((nested) => {
       if (nestedModules.has(nested.name)) return;
       outerModules.set(nested.name, module);
-      nestedModules.set(nested.name, addNestedModules(nested));
+      nestedModules.set(nested.name, addParsedModule(nested));
     });
     return module;
   };
-  addNestedModules(root);
+  addParsedModule(root);
 
   const loadModule = (name: string) => {
     const nested = nestedModules.get(name);
@@ -185,7 +217,7 @@ export const createEnvironment = (
     const source = options.loadModule?.(name) ?? BUNDLED_MODULES.get(name);
     if (source === undefined)
       throw new TlaSyntaxError(`Cannot find source file for module ${name}`);
-    return addNestedModules(parseModule(source));
+    return addParsedModule(parseModule(source));
   };
 
   const getDefinitionKey = (module: Module, name: string) =>
