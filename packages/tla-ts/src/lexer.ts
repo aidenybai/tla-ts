@@ -274,6 +274,9 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
 
 const TAB_SIZE = 8;
 
+const getWidthAfter = (width: number, character: string | undefined) =>
+  character === "\t" ? width + TAB_SIZE - (width % TAB_SIZE) : width + 1;
+
 export const tokenize = (source: string): Token[] => {
   const headerMatch = MODULE_HEADER.exec(source);
   if (!headerMatch)
@@ -287,14 +290,17 @@ export const tokenize = (source: string): Token[] => {
     moduleDepth: 0,
   };
 
+  const scan = { lineStart: -1, position: 0, width: 0 };
   const getColumn = () => {
-    const tab = source.indexOf("\t", cursor.lineStart);
-    if (tab === -1 || tab >= cursor.index) return cursor.index - cursor.lineStart + 1;
-    let column = 0;
-    for (let position = cursor.lineStart; position <= cursor.index; position++) {
-      column = source[position] === "\t" ? column + TAB_SIZE - (column % TAB_SIZE) : column + 1;
+    if (scan.lineStart !== cursor.lineStart || scan.position > cursor.index) {
+      scan.lineStart = cursor.lineStart;
+      scan.position = cursor.lineStart;
+      scan.width = 0;
     }
-    return column;
+    for (; scan.position < cursor.index; scan.position++) {
+      scan.width = getWidthAfter(scan.width, source[scan.position]);
+    }
+    return getWidthAfter(scan.width, source[cursor.index]);
   };
   const pushToken = (kind: TokenKind, text: string, length: number) => {
     tokens.push({ kind, text, line: cursor.line, column: getColumn() });
