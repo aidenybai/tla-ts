@@ -349,6 +349,14 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
     environment,
   );
   const actionConstraints = getNamedExpressions(config.actionConstraints, environment);
+  const actionProperties = properties.actionProperties.map((property) => {
+    const unchanged: Expression = {
+      kind: "Unchanged",
+      expression: property.subscript,
+      location: START,
+    };
+    return { ...property, unchanged };
+  });
   const possible = getNamedExpressions(config.possible, environment);
   const isActionPossible = (item: NamedExpression) =>
     getLevel(item.expression, undefined, environment) >= ACTION_LEVEL;
@@ -395,7 +403,7 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
           ),
       ),
     findViolatedActionProperty: (state, next) =>
-      properties.actionProperties.find(
+      actionProperties.find(
         (property) =>
           !holds(
             property.action,
@@ -403,7 +411,7 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
             `property ${property.name}`,
           ) &&
           !holds(
-            { kind: "Unchanged", expression: property.subscript, location: START },
+            property.unchanged,
             getContext(environment, state, next, property.scope),
             "a subscript",
           ),
