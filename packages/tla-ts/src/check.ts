@@ -571,7 +571,9 @@ export const check = (options: CheckOptions): CheckResult => {
   for (let index = 0; index < states.length && !runtime.isStopped; index++) {
     const state = states[index];
     runtime.queueSize = states.length - index - 1;
+    runtime.expandingLevel = depths[index];
     const successors = getSuccessors(spec.next, state, environment);
+    runtime.expandingLevel = undefined;
     if (successors.length === 0 && config.checkDeadlock) {
       return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
     }

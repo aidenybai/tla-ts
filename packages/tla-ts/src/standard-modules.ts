@@ -166,7 +166,10 @@ const getRuntimeValue = (
   const duration = Math.floor((Date.now() - runtime.startedAt) / 1000);
   switch (key) {
     case "level":
-      return state === undefined ? 0 : (runtime.levels.get(state) ?? 0);
+      return state === undefined
+        ? 0
+        : (runtime.levels.get(state) ??
+            (runtime.expandingLevel === undefined ? 0 : runtime.expandingLevel + 1));
     case "diameter":
       return runtime.diameter;
     case "generated":
