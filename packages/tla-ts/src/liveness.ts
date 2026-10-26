@@ -851,6 +851,7 @@ export const createLivenessChecker = (
   };
 
   const addState = (index: number, state: Value[], successors: LiveSuccessor[]) => {
+    environment.runtime.setLivenessSource(index);
     states[index] = state;
     const edges: LiveSuccessor[] = [];
     const edgesByTarget = new Map<number, LiveSuccessor[]>();
@@ -893,6 +894,7 @@ export const createLivenessChecker = (
   };
 
   const computeActionResults = (source: number) => {
+    environment.runtime.setLivenessSource(source);
     const state = states[source];
     const successors = edgeStates[source];
     const values = successors.map(() => new Int8Array(actionKeys.size).fill(-1));
