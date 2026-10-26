@@ -554,23 +554,25 @@ const hasLetInstance = (expression: Expression): boolean =>
 
 const expandLetInstances = (
   expression: Expression,
-  instantiate: (instance: Instance) => Definition[],
+  instantiate: (instance: Instance, lets: Definition[]) => Definition[],
+  lets: Definition[],
 ): Expression => {
-  const mapped = mapChildren(expression, (child) => expandLetInstances(child, instantiate));
+  const inner = expression.kind === "Let" ? [...lets, ...expression.definitions] : lets;
+  const mapped = mapChildren(expression, (child) => expandLetInstances(child, instantiate, inner));
   if (mapped.kind !== "Let" || !mapped.instances) return mapped;
   const definitions = mapped.instances.reduce((current, instance) => {
     const position = current.findIndex((definition) =>
       isBefore(instance.location, definition.location),
     );
     const index = position === -1 ? current.length : position;
-    return [...current.slice(0, index), ...instantiate(instance), ...current.slice(index)];
+    return [...current.slice(0, index), ...instantiate(instance, inner), ...current.slice(index)];
   }, mapped.definitions);
   return { kind: "Let", definitions, body: mapped.body, location: mapped.location };
 };
 
 export const withLetInstances = (
   module: Module,
-  instantiate: (instance: Instance) => Definition[],
+  instantiate: (instance: Instance, lets: Definition[]) => Definition[],
 ): Module => {
   const isExpanded =
     module.definitions.some((definition) => hasLetInstance(definition.body)) ||
@@ -579,11 +581,11 @@ export const withLetInstances = (
   return {
     ...module,
     definitions: module.definitions.map((definition) =>
-      mapDefinition(definition, (child) => expandLetInstances(child, instantiate)),
+      mapDefinition(definition, (child) => expandLetInstances(child, instantiate, [])),
     ),
     assumptions: module.assumptions.map((assumption) => ({
       ...assumption,
-      expression: expandLetInstances(assumption.expression, instantiate),
+      expression: expandLetInstances(assumption.expression, instantiate, []),
     })),
   };
 };

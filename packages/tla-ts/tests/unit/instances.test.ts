@@ -96,6 +96,14 @@ const INNER_MODULES: Record<string, string> = {
   Pure: "EXTENDS Naturals\nCONSTANT c, Op(_)\nUse == Op(c) + c",
   Primed: "EXTENDS Naturals\nCONSTANT c, Op(_)\nUse == Op(c)' + c",
   Vars: "EXTENDS Naturals\nVARIABLE v, w\nUse == v + w",
+  Applied: "CONSTANT c, Op(_)\nUse == Op(c)",
+  Assumed: "CONSTANT C, D\nASSUME C = {}",
+  Nested: "EXTENDS Naturals\nCONSTANT c, Op(_)\nVARIABLE v\nUse == Op(v') /\\ c = 1",
+  Twice: "CONSTANT c, Op(_, _)\nUse == Op(c, c)\nOther(d) == Op(d, c)",
+  Outer:
+    "EXTENDS Naturals\nCONSTANT c\nN == INSTANCE Twice WITH c <- c, Op <- LAMBDA a, b : a + b\nUse == N!Use",
+  Functions:
+    "EXTENDS Naturals\nCONSTANT c\nf[i \\in {1}] == c + i\nRECURSIVE g(_)\ng(n) == IF n = 0 THEN c ELSE g(n - 1)",
 };
 
 const checkSubstitution = (body: string) =>
@@ -111,61 +119,131 @@ const getLevelError = (module: string, name: string, level: number) =>
 const getLeibnizError = (module: string) =>
   `Error in instantiating module '${module}': a non-Leibniz operator substituted for 'Op'`;
 
+const getArgumentError = (module: string, index: number, maximum: number) =>
+  `Level error when instantiating module '${module}': the level of the argument ${index} of the operator Op' must be at most ${maximum}`;
+
+const getMessagePattern = (messages: string[]) =>
+  new RegExp(
+    `^${messages
+      .map(
+        (message) => `${message.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")} at line \\d+, column \\d+`,
+      )
+      .join("\\n")}$`,
+  );
+
 describe("substitution levels match SANY", () => {
   it.each([
     [
       "I == INSTANCE Stateful WITH c <- 1, Op <- LAMBDA a : a + x, v <- x",
-      getLevelError("Stateful", "Op", 0),
+      [getLevelError("Stateful", "Op", 0)],
     ],
     [
       "I == INSTANCE Stateful WITH c <- x, Op <- LAMBDA a : a, v <- x",
-      getLevelError("Stateful", "c", 0),
+      [getLevelError("Stateful", "c", 0)],
     ],
     [
       "I == INSTANCE Stateful WITH c <- x', Op <- LAMBDA a : a, v <- x",
-      getLevelError("Stateful", "c", 0),
+      [getLevelError("Stateful", "c", 0)],
     ],
     [
       "INSTANCE Stateful WITH c <- x, Op <- LAMBDA a : a, v <- x",
-      getLevelError("Stateful", "c", 0),
+      [getLevelError("Stateful", "c", 0)],
     ],
     [
       "F(a) == a + x\nI == INSTANCE Stateful WITH c <- 1, Op <- F, v <- x",
-      getLevelError("Stateful", "Op", 0),
+      [getLevelError("Stateful", "Op", 0)],
     ],
-    ["I == INSTANCE Vars WITH v <- x', w <- x", getLevelError("Vars", "v", 1)],
-    ["I == INSTANCE Vars WITH v <- [](x = 1), w <- x", getLevelError("Vars", "v", 1)],
-    ["I == INSTANCE Primed WITH c <- 1, Op <- LAMBDA a : a + x", getLevelError("Primed", "Op", 0)],
+    ["I == INSTANCE Vars WITH v <- x', w <- x", [getLevelError("Vars", "v", 1)]],
+    [
+      "I == INSTANCE Vars WITH v <- [](x = 1), w <- x",
+      [getLevelError("Vars", "v", 1), getLevelError("Vars", "v", 2)],
+    ],
+    [
+      "I == INSTANCE Primed WITH c <- 1, Op <- LAMBDA a : a + x",
+      [getLevelError("Primed", "Op", 0)],
+    ],
+    ["I == INSTANCE Pure WITH c <- [](x = 1), Op <- LAMBDA a : a", [getLevelError("Pure", "c", 2)]],
+    ["I == INSTANCE Assumed WITH C <- [](x = 0), D <- TRUE", [getLevelError("Assumed", "C", 2)]],
+    ["I == INSTANCE Outer WITH c <- [](x = 1)", [getLevelError("Outer", "c", 2)]],
+    ["I == INSTANCE Functions WITH c <- [](x = 1)", [getLevelError("Functions", "c", 2)]],
+    [
+      "I == INSTANCE Applied WITH c <- [](x = 1), Op <- LAMBDA a : a + 1",
+      [getArgumentError("Applied", 0, 2)],
+    ],
+    [
+      "F(a) == LET G == a' IN G\nI == INSTANCE Applied WITH c <- [](x = 1), Op <- F",
+      [getArgumentError("Applied", 0, 1)],
+    ],
+    [
+      "I == INSTANCE Twice WITH c <- [](x = 1), Op <- LAMBDA a, b : a + b",
+      [getArgumentError("Twice", 0, 2), getArgumentError("Twice", 1, 2)],
+    ],
+    [
+      "F(a) == LET G == a' IN G\nI == INSTANCE Nested WITH c <- 1, Op <- F, v <- x",
+      [
+        getLevelError("Nested", "Op", 0),
+        "Level error in instantiating module 'Nested': the level of the argument 1 of the operator F must be at least 2",
+      ],
+    ],
     [
       "Foo == LET I == INSTANCE Stateful WITH c <- x, Op <- LAMBDA a : a, v <- x IN I!Use",
-      getLevelError("Stateful", "c", 0),
+      [getLevelError("Stateful", "c", 0)],
     ],
-    ["F(a) == a'\nI == INSTANCE Pure WITH c <- 1, Op <- F", getLeibnizError("Pure")],
-    ["I == INSTANCE Pure WITH c <- 1, Op <- LAMBDA a : ENABLED a", getLeibnizError("Pure")],
-    ["I == INSTANCE Pure WITH c <- 1, Op <- LAMBDA a : UNCHANGED a", getLeibnizError("Pure")],
+    [
+      "Foo == LET k == x\n           I == INSTANCE Stateful WITH c <- k, Op <- LAMBDA a : a, v <- x IN I!Use",
+      [getLevelError("Stateful", "c", 0)],
+    ],
+    [
+      "Foo == LET k == x\n           j == k + 1\n           I == INSTANCE Stateful WITH c <- j, Op <- LAMBDA a : a, v <- x IN I!Use",
+      [getLevelError("Stateful", "c", 0)],
+    ],
+    [
+      "Foo == LET F(a) == a + x\n           I == INSTANCE Stateful WITH c <- 1, Op <- F, v <- x IN I!Use",
+      [getLevelError("Stateful", "Op", 0)],
+    ],
+    [
+      "Foo == LET F(a) == a'\n           I == INSTANCE Pure WITH c <- 1, Op <- F IN I!Use",
+      [getLeibnizError("Pure")],
+    ],
+    ["F(a) == a'\nI == INSTANCE Pure WITH c <- 1, Op <- F", [getLeibnizError("Pure")]],
+    ["I == INSTANCE Pure WITH c <- 1, Op <- LAMBDA a : ENABLED a", [getLeibnizError("Pure")]],
+    ["I == INSTANCE Pure WITH c <- 1, Op <- LAMBDA a : UNCHANGED a", [getLeibnizError("Pure")]],
+    [
+      "I == INSTANCE Pure WITH c <- 1, Op <- LAMBDA a : [](a = 1)",
+      [getLeibnizError("Pure"), getLevelError("Pure", "Op", 2)],
+    ],
     [
       "G(b) == b'\nF(a) == G(a) + 1\nI == INSTANCE Pure WITH c <- 1, Op <- F",
-      getLeibnizError("Pure"),
+      [getLeibnizError("Pure")],
     ],
     [
       "a ++ b == a' + b\nF(a) == a ++ 1\nI == INSTANCE Pure WITH c <- 1, Op <- F",
-      getLeibnizError("Pure"),
+      [getLeibnizError("Pure")],
     ],
     [
       "F(a) == \\E k \\in {1} : a' = k\nI == INSTANCE Pure WITH c <- 1, Op <- F",
-      getLeibnizError("Pure"),
+      [getLeibnizError("Pure")],
     ],
-    ["F(a) == [a = 1]_a\nI == INSTANCE Pure WITH c <- 1, Op <- F", getLeibnizError("Pure")],
-  ])("rejects %s", (body, message) => {
+    ["F(a) == [a = 1]_a\nI == INSTANCE Pure WITH c <- 1, Op <- F", [getLeibnizError("Pure")]],
+  ])("rejects %s", (body, messages) => {
     expect(() => checkSubstitution(body)).toThrow(TlaSyntaxError);
-    expect(() => checkSubstitution(body)).toThrow(message);
+    expect(() => checkSubstitution(body)).toThrow(getMessagePattern(messages));
   });
 
   it.each([
     "I == INSTANCE Stateful WITH c <- 1, Op <- LAMBDA a : a + 1, v <- x",
     "I == INSTANCE Pure WITH c <- x, Op <- LAMBDA a : a + x",
+    "I == INSTANCE Pure WITH c <- x', Op <- LAMBDA a : a",
     "I == INSTANCE Vars WITH v <- ENABLED (x' = 1), w <- x",
+    "I == INSTANCE Applied WITH c <- x', Op <- LAMBDA a : a + 1",
+    "I == INSTANCE Applied WITH c <- [](x = 1), Op <- LAMBDA a : a",
+    "I == INSTANCE Assumed WITH C <- x', D <- x'",
+    "I == INSTANCE Outer WITH c <- x'",
+    "I == INSTANCE Nested WITH c <- 1, Op <- LAMBDA a : a = 1, v <- x",
+    "I == INSTANCE Twice WITH c <- [](x = 1), Op <- LAMBDA a, b : a",
     "P(k) == INSTANCE Stateful WITH c <- k, Op <- LAMBDA a : a + k, v <- x",
+    "Foo == LET k == 1\n           I == INSTANCE Stateful WITH c <- k, Op <- LAMBDA a : a, v <- x IN I!Use",
+    "Foo == \\E k \\in {1} : LET I == INSTANCE Stateful WITH c <- k, Op <- LAMBDA a : a, v <- x IN I!Use",
     "F(a) == x' + a\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "F(a) == LET G == a' IN G\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "F(a) == LET G == 1 IN a' + G\nI == INSTANCE Pure WITH c <- 1, Op <- F",

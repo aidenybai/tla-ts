@@ -186,7 +186,7 @@ export const getLevel = (
   }
 };
 
-export const getDefinitionLevel = (definition: Definition, environment: Environment): number => {
+const getDefinitionLevel = (definition: Definition, environment: Environment): number => {
   const cached = definitionLevels.get(definition);
   if (cached !== undefined) return cached;
   definitionLevels.set(definition, 0);

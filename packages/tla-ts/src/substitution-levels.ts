@@ -1,144 +1,181 @@
-import type { Definition, Expression, SourceLocation } from "./ast";
+import type { Declaration, Definition, Expression, SourceLocation } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { getChildren, getDefinition, isLocallyResolved, type Environment } from "./evaluate";
-import { getDefinitionLevel, getLevel } from "./liveness";
+import {
+  createLevelAnalyzer,
+  getArgumentKey,
+  MAX_LEVEL,
+  parseArgumentParamKey,
+  type OperatorLevels,
+  type Scope,
+} from "./levels";
 
-export interface SubstitutionCheck {
+export interface InstanceCheck {
   module: string;
-  name: string;
-  arity: number;
-  maximumLevel: number;
-  expression: Expression;
+  instancer: string;
+  lets: Definition[];
+  substitutions: Map<string, Expression>;
   location: SourceLocation;
-  keys: string[];
-  hasVariables: boolean;
 }
 
-const NON_LEIBNIZ_OPERATORS = new Set(["~>", "\\cdot", "-+->"]);
+export interface ModuleContext {
+  constants: Declaration[];
+  variables: string[];
+  definitions: Definition[];
+  assumptions: Expression[];
+  getDefinition: (name: string) => Definition | undefined;
+}
 
-const leibnizParams = new WeakMap<Definition, boolean[]>();
+interface ModuleLevels {
+  isConstant: boolean;
+  constraints: Map<string, number>;
+  argConstraints: Map<string, number>;
+  argParams: Set<string>;
+}
 
-const getNonLeibnizNames = (
-  expression: Expression,
-  environment: Environment,
-  isNonLeibniz = false,
-  names = new Set<string>(),
-): Set<string> => {
-  const visit = (child: Expression, isChildNonLeibniz = isNonLeibniz) =>
-    getNonLeibnizNames(child, environment, isChildNonLeibniz, names);
-  switch (expression.kind) {
-    case "Identifier":
-      if (isNonLeibniz && isLocallyResolved(expression)) names.add(expression.name);
-      return names;
-    // SANY's LetInNode and OpArgNode don't carry the non-Leibniz parameters of their bodies.
-    case "Lambda":
-    case "Let":
-      return names;
-    case "Prime":
-    case "Unchanged":
-    case "Enabled":
-    case "Always":
-    case "Eventually":
-    case "BoxAction":
-    case "AngleAction":
-    case "WeakFairness":
-    case "StrongFairness":
-      getChildren(expression).forEach((child) => visit(child, true));
-      return names;
-    case "UnboundedQuantifier":
-      visit(expression.body, isNonLeibniz || expression.isTemporal === true);
-      return names;
-    case "Apply": {
-      if (isLocallyResolved(expression)) {
-        if (isNonLeibniz) names.add(expression.operator);
-        expression.args.forEach((arg) => visit(arg));
-        return names;
-      }
-      const definition = getDefinition(expression.operator, environment);
-      expression.args.forEach((arg, index) =>
-        visit(
-          arg,
-          isNonLeibniz ||
-            NON_LEIBNIZ_OPERATORS.has(expression.operator) ||
-            (definition !== undefined && !isLeibnizIn(definition, index, environment)),
-        ),
+interface Substituted {
+  name: string;
+  maximumLevel: number;
+  arity: number;
+  level: number;
+  operator: OperatorLevels | undefined;
+  isLeibniz: boolean;
+}
+
+const getMaxLevel = (operator: OperatorLevels, index: number) =>
+  operator.maxLevels[index] ?? MAX_LEVEL;
+
+export const checkInstances = (
+  checks: InstanceCheck[],
+  getModule: (name: string) => ModuleContext,
+) => {
+  const analyzers = new Map<string, ReturnType<typeof createLevelAnalyzer>>();
+  const getAnalyzer = (name: string) => {
+    const cached = analyzers.get(name);
+    if (cached) return cached;
+    const module = getModule(name);
+    const analyzer = createLevelAnalyzer({
+      constants: new Set(module.constants.map((constant) => constant.name)),
+      variables: new Set(module.variables),
+      getDefinition: module.getDefinition,
+    });
+    analyzers.set(name, analyzer);
+    return analyzer;
+  };
+
+  const moduleLevels = new Map<string, ModuleLevels>();
+  const getModuleLevels = (name: string) => {
+    const cached = moduleLevels.get(name);
+    if (cached) return cached;
+    const module = getModule(name);
+    const analyzer = getAnalyzer(name);
+    const definitions = module.definitions.map((definition) =>
+      analyzer.analyzeDefinition(definition, new Map()),
+    );
+    const levels: ModuleLevels = {
+      isConstant:
+        module.variables.length === 0 && definitions.every((definition) => definition.level === 0),
+      constraints: new Map(),
+      argConstraints: new Map(),
+      argParams: new Set(),
+    };
+    const putConstraint = (key: string, value: number) =>
+      levels.constraints.set(key, Math.min(value, levels.constraints.get(key) ?? MAX_LEVEL));
+    if (!levels.isConstant) module.constants.forEach((constant) => putConstraint(constant.name, 0));
+    const addLevels = (
+      data: Omit<ModuleLevels, "isConstant">,
+      isKept: (operator: string, param: string) => boolean,
+    ) => {
+      data.constraints.forEach((value, key) => putConstraint(key, value));
+      data.argConstraints.forEach((value, key) =>
+        levels.argConstraints.set(key, Math.max(value, levels.argConstraints.get(key) ?? 0)),
       );
-      return names;
-    }
-    default:
-      getChildren(expression).forEach((child) => visit(child));
-      return names;
-  }
-};
+      data.argParams.forEach((key) => {
+        const parameter = parseArgumentParamKey(key);
+        if (isKept(parameter.operator, parameter.param)) levels.argParams.add(key);
+      });
+    };
+    definitions.forEach((definition) =>
+      addLevels(definition, (operator, param) =>
+        definition.formals.every((formal) => formal.name !== operator && formal.name !== param),
+      ),
+    );
+    module.assumptions.forEach((assumption) =>
+      addLevels(analyzer.analyze(assumption, new Map()), () => true),
+    );
+    moduleLevels.set(name, levels);
+    return levels;
+  };
 
-const isLeibnizIn = (definition: Definition, index: number, environment: Environment) => {
-  if (definition.kind !== "Operator") return true;
-  const cached = leibnizParams.get(definition);
-  if (cached) return cached[index] ?? true;
-  leibnizParams.set(
-    definition,
-    definition.params.map(() => true),
-  );
-  const names = getNonLeibnizNames(definition.body, environment);
-  const params = definition.params.map((param) => !names.has(param.name));
-  leibnizParams.set(definition, params);
-  return params[index] ?? true;
-};
-
-const getOperatorName = (expression: Expression) =>
-  expression.kind === "Identifier"
-    ? expression.name
-    : expression.kind === "Apply" || expression.kind === "OperatorReference"
-      ? expression.operator
-      : undefined;
-
-const isLeibnizOperator = (expression: Expression, environment: Environment) => {
-  if (expression.kind === "Lambda") {
-    const names = getNonLeibnizNames(expression.body, environment);
-    return expression.params.every((param) => !names.has(param));
-  }
-  const name = getOperatorName(expression);
-  if (name === undefined || isLocallyResolved(expression)) return true;
-  if (NON_LEIBNIZ_OPERATORS.has(name)) return false;
-  const definition = getDefinition(name, environment);
-  return (
-    definition?.kind !== "Operator" ||
-    definition.params.every((_, index) => isLeibnizIn(definition, index, environment))
-  );
-};
-
-const getOperatorLevel = (expression: Expression, environment: Environment) => {
-  if (expression.kind === "Lambda") return getLevel(expression.body, undefined, environment);
-  const name = getOperatorName(expression);
-  if (name === "~>" || name === "-+->") return 3;
-  if (name === "\\cdot") return 2;
-  return name === undefined
-    ? getLevel(expression, undefined, environment)
-    : getLevel({ kind: "Identifier", name, location: expression.location }, undefined, environment);
-};
-
-const isConstantModule = (check: SubstitutionCheck, environment: Environment) =>
-  !check.hasVariables &&
-  check.keys.every((key) => {
-    const definition = environment.definitions.get(key);
-    return definition === undefined || getDefinitionLevel(definition, environment) === 0;
-  });
-
-export const checkSubstitutions = (checks: SubstitutionCheck[], environment: Environment) =>
+  const messages = new Set<string>();
   checks.forEach((check) => {
     const location = `at line ${check.location.line}, column ${check.location.column}`;
-    const level =
-      check.arity === 0
-        ? getLevel(check.expression, undefined, environment)
-        : getOperatorLevel(check.expression, environment);
-    if (level > check.maximumLevel && !isConstantModule(check, environment)) {
-      throw new TlaSyntaxError(
-        `Level error in instantiating module '${check.module}': the level of the expression or operator substituted for '${check.name}' must be at most ${check.maximumLevel} ${location}`,
-      );
-    }
-    if (check.arity > 0 && !isLeibnizOperator(check.expression, environment)) {
-      throw new TlaSyntaxError(
-        `Error in instantiating module '${check.module}': a non-Leibniz operator substituted for '${check.name}' ${location}`,
-      );
-    }
+    const add = (message: string) => messages.add(`${message} ${location}`);
+    const instancee = getModule(check.module);
+    const levels = getModuleLevels(check.module);
+    const analyzer = getAnalyzer(check.instancer);
+    const scope: Scope = new Map();
+    check.lets.forEach((definition) =>
+      scope.set(definition.name, { kind: "Let", definition, scope }),
+    );
+    const declarations = [
+      ...instancee.constants.map((constant) => ({ ...constant, maximumLevel: 0 })),
+      ...instancee.variables.map((variable) => ({ name: variable, arity: 0, maximumLevel: 1 })),
+    ];
+    const substituted = declarations.flatMap((declaration): Substituted[] => {
+      const expression = check.substitutions.get(declaration.name);
+      if (!expression) return [];
+      if (declaration.arity === 0) {
+        const data = analyzer.analyze(expression, scope);
+        return [{ ...declaration, level: data.level, operator: undefined, isLeibniz: true }];
+      }
+      const operand = analyzer.toOperand(expression, scope);
+      return [
+        {
+          ...declaration,
+          level: operand.data.level,
+          operator: operand.operator,
+          isLeibniz: operand.operator === undefined || operand.operator.nonLeibniz.size === 0,
+        },
+      ];
+    });
+    const levelError = (name: string, level: number) =>
+      `Level error in instantiating module '${check.module}': the level of the expression or operator substituted for '${name}' must be at most ${level}`;
+    substituted.forEach((item) => {
+      if (!levels.isConstant && item.level > item.maximumLevel) {
+        add(levelError(item.name, item.maximumLevel));
+      }
+      if (!item.isLeibniz) {
+        add(
+          `Error in instantiating module '${check.module}': a non-Leibniz operator substituted for '${item.name}'`,
+        );
+      }
+    });
+    substituted.forEach((item) => {
+      const maximum = levels.constraints.get(item.name);
+      if (maximum !== undefined && item.level > maximum) add(levelError(item.name, maximum));
+      const operator = item.operator;
+      if (!operator) return;
+      Array.from({ length: item.arity }, (_, index) => {
+        const minimum = levels.argConstraints.get(getArgumentKey(item.name, index));
+        if (minimum !== undefined && getMaxLevel(operator, index) < minimum) {
+          add(
+            `Level error in instantiating module '${check.module}': the level of the argument ${index + 1} of the operator ${operator.name} must be at least ${minimum}`,
+          );
+        }
+      });
+    });
+    levels.argParams.forEach((key) => {
+      const parameter = parseArgumentParamKey(key);
+      const operator = substituted.find((item) => item.name === parameter.operator)?.operator;
+      const argument = substituted.find((item) => item.name === parameter.param);
+      if (!operator || !argument) return;
+      const maximum = getMaxLevel(operator, parameter.index);
+      if (argument.level > maximum) {
+        add(
+          `Level error when instantiating module '${check.module}': the level of the argument ${parameter.index} of the operator ${parameter.operator}' must be at most ${maximum}`,
+        );
+      }
+    });
   });
+  if (messages.size > 0) throw new TlaSyntaxError([...messages].join("\n"));
+};

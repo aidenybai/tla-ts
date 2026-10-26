@@ -24,7 +24,7 @@ import { KEY_SEPARATOR, resolveModule, resolveSubstitutions, type Symbols } from
 import { createRuntime } from "./runtime";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
-import { checkSubstitutions, type SubstitutionCheck } from "./substitution-levels";
+import { checkInstances, type InstanceCheck, type ModuleContext } from "./substitution-levels";
 import {
   checkInteger,
   createModelValue,
@@ -142,7 +142,7 @@ export const createEnvironment = (
   const runtime = createRuntime(config.checkDeadlock);
   const linkedModules = new Map<string, LinkedModule>();
   const copyCount = { value: 0 };
-  const substitutionChecks: SubstitutionCheck[] = [];
+  const instanceChecks: InstanceCheck[] = [];
 
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
@@ -200,31 +200,6 @@ export const createEnvironment = (
 
   const getLinkedModule = (name: string) => linkedModules.get(name) ?? linkModule(loadModule(name));
 
-  const addSubstitutionChecks = (
-    instance: Instance,
-    linked: LinkedModule,
-    substitutions: Map<string, Expression>,
-  ) => {
-    const keys = [...linked.visible.values()].map((symbol) => symbol.key);
-    const hasVariables = linked.variables.length > 0;
-    const add = (declaration: Declaration, maximumLevel: number) => {
-      const expression = substitutions.get(declaration.name);
-      if (!expression) return;
-      substitutionChecks.push({
-        module: instance.module,
-        name: declaration.name,
-        arity: declaration.arity,
-        maximumLevel,
-        expression,
-        location: instance.location,
-        keys,
-        hasVariables,
-      });
-    };
-    linked.constants.forEach((constant) => add(constant, 0));
-    linked.variables.forEach((variable) => add({ name: variable, arity: 0 }, 1));
-  };
-
   const instantiate = (
     instance: Instance,
     module: Module,
@@ -255,7 +230,13 @@ export const createEnvironment = (
       module,
       unit,
     );
-    addSubstitutionChecks(instance, linked, substitutions);
+    instanceChecks.push({
+      module: instance.module,
+      instancer: module.name,
+      lets: [],
+      substitutions,
+      location: instance.location,
+    });
     const instantiation = createInstantiation({
       params: instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` })),
       substitutions: new Map(
@@ -342,7 +323,11 @@ export const createEnvironment = (
     };
   };
 
-  const instantiateLocally = (instance: Instance): Definition[] => {
+  const instantiateLocally = (
+    instance: Instance,
+    lets: Definition[],
+    instancer: string,
+  ): Definition[] => {
     const location = instance.location;
     const instanceParams = instance.params;
     const standardSymbols = addStandardModule(instance.module);
@@ -368,11 +353,15 @@ export const createEnvironment = (
     ];
     const getReplacement = (declaration: Declaration): Expression =>
       explicit.get(declaration.name) ?? { kind: "Identifier", name: declaration.name, location };
-    addSubstitutionChecks(
-      instance,
-      linked,
-      new Map(declarations.map((declaration) => [declaration.name, getReplacement(declaration)])),
-    );
+    instanceChecks.push({
+      module: instance.module,
+      instancer,
+      lets,
+      substitutions: new Map(
+        declarations.map((declaration) => [declaration.name, getReplacement(declaration)]),
+      ),
+      location,
+    });
     const instanceNames = new Set(instanceParams.map((param) => param.name));
     const isParameterDependent = (declaration: Declaration) =>
       mentionsName(getReplacement(declaration), instanceNames);
@@ -505,7 +494,7 @@ export const createEnvironment = (
       ),
     );
     const module = resolveModuleSubexpressions(
-      withLetInstances(parsed, instantiateLocally),
+      withLetInstances(parsed, (instance, lets) => instantiateLocally(instance, lets, parsed.name)),
       getAvailableDefinitions(visible),
     );
     resolveModule(module, getUnit(module));
@@ -600,7 +589,21 @@ export const createEnvironment = (
     constantLevels: new Map(),
     evaluators: new WeakMap(),
   };
-  checkSubstitutions(substitutionChecks, environment);
+  checkInstances(instanceChecks, (name): ModuleContext => {
+    const linked = linkedModules.get(name) ?? linkedRoot;
+    const getKey = (symbol: string) => linked.visible.get(symbol)?.key ?? symbol;
+    return {
+      constants: linked.constants,
+      variables: linked.variables,
+      definitions: [
+        ...new Set(
+          [...linked.visible.values()].flatMap((symbol) => definitions.get(symbol.key) ?? []),
+        ),
+      ],
+      assumptions: linked.module.assumptions.map((assumption) => assumption.expression),
+      getDefinition: (symbol) => definitions.get(getKey(symbol)),
+    };
+  });
   substitutions.forEach((target, name) => {
     const definition = definitions.get(target);
     if (
