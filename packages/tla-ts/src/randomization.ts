@@ -135,6 +135,11 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
     if (typeof count !== "number") {
       throw describeArgument("first", "RandomSubset", "nonnegative integer", formatValue(count));
     }
+    if (count < 0) {
+      throw new TlaEvaluationError(
+        `Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.Randomization.RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\n${count}`,
+      );
+    }
     const set = getValue(args, 1, "RandomSubset");
     if (!isSetValue(set) || (!isEmptySet(set) && !isEnumerable(set))) {
       throw describeArgument("second", "RandomSubset", "a finite set", formatValue(set));
