@@ -90,6 +90,30 @@ const exploreGuard = (
     onComplete(partial, label);
 };
 
+const getMissingVariables = (partial: State, environment: Environment) =>
+  environment.variables.filter((_, index) => partial[index] === undefined);
+
+const isComplete = (partial: State): partial is Value[] =>
+  partial.every((value) => value !== undefined);
+
+const isInitAssigned = (exploration: Exploration, partial: State) =>
+  exploration.isInit && isComplete(partial);
+
+const holdsInInit = (
+  expressions: Expression[],
+  scope: Scope | undefined,
+  partial: State,
+  exploration: Exploration,
+) => {
+  const context = getContext(exploration, scope, partial);
+  return expressions.every((expression) =>
+    expectBoolean(
+      evaluate(expression, context),
+      `the initial predicate at ${describeLocation(expression)}`,
+    ),
+  );
+};
+
 const exploreSequence = (
   operands: Expression[],
   index: number,
@@ -101,6 +125,10 @@ const exploreSequence = (
 ): void => {
   if (index === operands.length) {
     onComplete(partial, label);
+    return;
+  }
+  if (index > 0 && isInitAssigned(exploration, partial)) {
+    if (holdsInInit(operands.slice(index), scope, partial, exploration)) onComplete(partial, label);
     return;
   }
   explore(operands[index], scope, partial, label, exploration, (nextPartial, nextLabel) =>
@@ -250,14 +278,25 @@ const explore = (
       });
       return;
     case "Forall": {
-      const scopes: (Scope | undefined)[] = [];
+      const boundScopes: (Scope | undefined)[] = [];
       forEachBinding(expression.bounds, getContext(exploration, scope, partial), (boundScope) => {
-        scopes.push(boundScope);
+        boundScopes.push(boundScope);
         return false;
       });
+      // TLC explores the first binding and pushes the rest onto its action stack, which visits them last to first.
+      const scopes = [...boundScopes.slice(0, 1), ...boundScopes.slice(1).reverse()];
       const visit = (index: number, nextPartial: State, nextLabel: Label): void => {
         if (index === scopes.length) {
           onComplete(nextPartial, nextLabel);
+          return;
+        }
+        if (index > 0 && isInitAssigned(exploration, nextPartial)) {
+          const isSatisfied = scopes
+            .slice(index)
+            .every((boundScope) =>
+              holdsInInit([expression.body], boundScope, nextPartial, exploration),
+            );
+          if (isSatisfied) onComplete(nextPartial, nextLabel);
           return;
         }
         explore(
@@ -355,12 +394,6 @@ const explore = (
       exploreGuard(expression, scope, partial, label, exploration, onComplete);
   }
 };
-
-const getMissingVariables = (partial: State, environment: Environment) =>
-  environment.variables.filter((_, index) => partial[index] === undefined);
-
-const isComplete = (partial: State): partial is Value[] =>
-  partial.every((value) => value !== undefined);
 
 export const getInitialStates = (expression: Expression, environment: Environment): Value[][] => {
   const states: Value[][] = [];

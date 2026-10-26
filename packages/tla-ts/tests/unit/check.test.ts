@@ -65,6 +65,12 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
   });
 
+  it("stops branching on initial conjuncts once every variable is assigned", () => {
+    const result = checkFixture("initial-states", "InitialStates");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([5, 2, 1]);
+  });
+
   it("reduces states under a symmetry set", () => {
     const result = checkFixture("symmetry", "Symmetry");
     expect(result.status).toBe("success");
