@@ -1,4 +1,4 @@
-import { TlaEvaluationError } from "./errors";
+import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
 import type { Builtin, BuiltinArgument, OperatorValue } from "./evaluate";
 import {
   checkInteger,
@@ -136,23 +136,6 @@ export const CORE_OPERATORS: Builtin[] = [
   ),
   defineOperator("\\subseteq", 2, (args) =>
     isSubsetOf(getElements(args, 0, "\\subseteq"), getSet(args, 1, "\\subseteq")),
-  ),
-  defineOperator(
-    "\\subset",
-    2,
-    (args) =>
-      isSubsetOf(getElements(args, 0, "\\subset"), getSet(args, 1, "\\subset")) &&
-      !valuesEqual(getSet(args, 0, "\\subset"), getSet(args, 1, "\\subset")),
-  ),
-  defineOperator("\\supseteq", 2, (args) =>
-    isSubsetOf(getElements(args, 1, "\\supseteq"), getSet(args, 0, "\\supseteq")),
-  ),
-  defineOperator(
-    "\\supset",
-    2,
-    (args) =>
-      isSubsetOf(getElements(args, 1, "\\supset"), getSet(args, 0, "\\supset")) &&
-      !valuesEqual(getSet(args, 0, "\\supset"), getSet(args, 1, "\\supset")),
   ),
   defineOperator("\\cup", 2, (args) =>
     unionSorted(getElements(args, 0, "\\cup"), getElements(args, 1, "\\cup")),
@@ -358,6 +341,15 @@ export const createTlcOperators = (print: (text: string) => void): Builtin[] => 
       }, []),
     );
   }),
+  ...[
+    { name: "TLCGet", arity: 1 },
+    { name: "TLCSet", arity: 2 },
+    { name: "Any", arity: 0 },
+  ].map((operator) =>
+    defineOperator(operator.name, operator.arity, () => {
+      throw new TlaUnsupportedError(`${operator.name} is not supported yet`);
+    }),
+  ),
   defineOperator("RandomElement", 1, (args) => {
     const elements = getElements(args, 0, "RandomElement");
     if (elements.length === 0) throw new TlaEvaluationError("RandomElement of the empty set");
@@ -375,14 +367,11 @@ export const getStandardModule = (
     case "Integers":
       return { extends: ["Naturals"], operators: INTEGERS_OPERATORS };
     case "Sequences":
-      return { extends: ["Naturals"], operators: SEQUENCES_OPERATORS };
+      return { extends: [], operators: SEQUENCES_OPERATORS };
     case "FiniteSets":
-      return { extends: ["Naturals", "Sequences"], operators: FINITE_SETS_OPERATORS };
+      return { extends: [], operators: FINITE_SETS_OPERATORS };
     case "TLC":
-      return {
-        extends: ["Naturals", "Sequences", "FiniteSets"],
-        operators: createTlcOperators(print),
-      };
+      return { extends: [], operators: createTlcOperators(print) };
     default:
       return undefined;
   }
