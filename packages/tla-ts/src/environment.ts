@@ -28,6 +28,7 @@ import {
   renameLocals,
   withLetInstances,
 } from "./instances";
+import { overrideDefinitions } from "./java-overrides";
 import { extractModule, parseModule } from "./parser";
 import {
   checkRedefinitions,
@@ -54,6 +55,7 @@ import {
 export interface EnvironmentOptions {
   source: string;
   loadModule: ((name: string) => string | undefined) | undefined;
+  loadClass?: (name: string) => Uint8Array | undefined;
   print: (text: string) => void;
   files: FileSystem;
   seed?: bigint;
@@ -566,7 +568,8 @@ export const createEnvironment = (
       return definition ? [{ ...definition, name }] : [];
     });
 
-  const linkModule = (parsed: Module, scope: ModuleScope): LinkedModule => {
+  const linkModule = (unlinked: Module, scope: ModuleScope): LinkedModule => {
+    const parsed = overrideDefinitions(unlinked, options.loadClass?.(unlinked.name));
     const visible: Symbols = new Map([
       ...CORE_OPERATORS.map((operator): [string, ModuleSymbol] => [
         operator.name,

@@ -55,6 +55,7 @@ export interface CheckOptions {
   source: string;
   config: string | ModelConfig;
   loadModule?: (name: string) => string | undefined;
+  loadClass?: (name: string) => Uint8Array | undefined;
   onPrint?: (text: string) => void;
   onPause?: () => void;
   readFile?: (path: string) => string | undefined;
@@ -695,6 +696,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule: options.loadModule,
+    loadClass: options.loadClass,
     print,
     files: { readFile: options.readFile, writeFile: options.writeFile },
     seed: options.seed,
@@ -718,7 +720,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     violation: violation && { ...violation, loopStart: violation.loopStart },
     generatedStates: runtime.generatedStates,
     distinctStates: runtime.distinctStates,
-    depth: statistics.depth,
+    depth: runtime.generatedStates === 0 ? 0 : Math.max(statistics.depth, 1),
   });
 
   const assumptionViolation = findAssumptionViolation(specification.assumptions, environment);

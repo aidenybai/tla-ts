@@ -129,6 +129,10 @@ const run = async (args: string[]) => {
       const modulePath = join(directory, `${name}.tla`);
       return existsSync(modulePath) ? readFileSync(modulePath, "utf8") : undefined;
     },
+    loadClass: (name) => {
+      const classPath = join(directory, `${name}.class`);
+      return existsSync(classPath) ? readFileSync(classPath) : undefined;
+    },
     readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
     writeFile: (path, content) => {
       mkdirSync(dirname(resolve(path)), { recursive: true });

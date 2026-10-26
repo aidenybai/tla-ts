@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ModelOutcome } from "./check-model";
-import { CONFORMANCE_DIRECTORY, EXPECTED_PATH, findModels } from "./corpora";
+import { CONFORMANCE_DIRECTORY, EXPECTED_PATH, findModels, type CorpusModel } from "./corpora";
 import type { ExpectedResult } from "./record-tlc";
 
 type Verdict = "match" | "mismatch" | "unsupported" | "crash";
@@ -65,6 +65,7 @@ const runModel = (specPath: string, configPath: string) =>
         "--import",
         "tsx",
         "--stack-size=8000",
+        "--max-old-space-size=6144",
         join(import.meta.dirname, "check-model.ts"),
         specPath,
         configPath,
@@ -81,21 +82,24 @@ const runModel = (specPath: string, configPath: string) =>
 
 const expectedResults: ExpectedResult[] = JSON.parse(readFileSync(EXPECTED_PATH, "utf8"));
 const expectedById = new Map(expectedResults.map((result) => [result.id, result]));
+const isLarge = (model: CorpusModel) =>
+  (expectedById.get(model.id)?.tlcMilliseconds ?? 0) > maximumTlcMilliseconds;
+
+// TLC only errors after the time limit when it runs out of memory or disk on an unbounded state
+// space, so those runs have no verdict to compare.
 const models = findModels().filter((model) => {
   const expected = expectedById.get(model.id);
   return (
     expected !== undefined &&
-    expected.tlcMilliseconds <= maximumTlcMilliseconds &&
+    (expected.status !== "error" || !isLarge(model)) &&
     (filter === undefined || model.id.includes(filter))
   );
 });
 
 const results: ConformanceResult[] = [];
-const queue = { next: 0 };
 
-const work = async () => {
-  while (queue.next < models.length) {
-    const model = models[queue.next++];
+const work = async (queue: CorpusModel[]) => {
+  for (let model = queue.shift(); model; model = queue.shift()) {
     const expected = expectedById.get(model.id);
     if (!expected) continue;
     const actual = await runModel(model.specPath, model.configPath);
@@ -114,7 +118,9 @@ const work = async () => {
   }
 };
 
-await Promise.all(Array.from({ length: CONCURRENCY }, work));
+const smallModels = models.filter((model) => !isLarge(model));
+await Promise.all(Array.from({ length: CONCURRENCY }, () => work(smallModels)));
+await work(models.filter(isLarge));
 results.sort((left, right) => (left.id < right.id ? -1 : 1));
 writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
 

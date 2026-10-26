@@ -1,4 +1,5 @@
 import type { Bound, Definition, Expression } from "./ast";
+import { getReadVariables } from "./dependencies";
 import { TlaEvaluationError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
@@ -11,7 +12,9 @@ import {
   expectBoolean,
   forEachBinding,
   getBoundsDomain,
+  getChildren,
   getDefinition,
+  getReevaluatedDefinitions,
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,
@@ -21,6 +24,7 @@ import {
   type Scope,
   type State,
 } from "./evaluate";
+import { mapChildren } from "./instances";
 import {
   createTuple,
   formatValue,
@@ -217,6 +221,56 @@ const isGuard = (expression: Expression, environment: Environment, isInit: boole
     environment.substitutions.get(expression.operator) ?? expression.operator,
   );
   return definition === undefined && environment.builtins.has(expression.operator);
+};
+
+const NO_NAMES: ReadonlySet<string> = new Set();
+
+// The local names an expression reads from enclosing scopes, or undefined when it applies a local
+// operator, whose body may assign variables.
+const getReadLocals = (
+  expression: Expression,
+  bound: ReadonlySet<string>,
+): string[] | undefined => {
+  if (isLocallyResolved(expression)) {
+    if (expression.kind !== "Identifier") return undefined;
+    return bound.has(expression.name) ? [] : [expression.name];
+  }
+  const names: string[] = [];
+  const result = { isReadOnly: true };
+  mapChildren(expression, (child, childNames) => {
+    const childLocals = result.isReadOnly
+      ? getReadLocals(child, childNames.length === 0 ? bound : new Set([...bound, ...childNames]))
+      : [];
+    if (childLocals) names.push(...childLocals);
+    else result.isReadOnly = false;
+    return child;
+  });
+  return result.isReadOnly ? names : undefined;
+};
+
+// TLC generates a successor for every disjunct and witness that holds, so an expression only
+// checks like a guard when it has neither.
+const hasBranches = (
+  expression: Expression,
+  environment: Environment,
+  visited: Set<Definition>,
+): boolean => {
+  if (expression.kind === "Or" || expression.kind === "Exists") return true;
+  const name =
+    expression.kind === "Identifier"
+      ? expression.name
+      : expression.kind === "Apply"
+        ? expression.operator
+        : undefined;
+  const definition =
+    name === undefined || isLocallyResolved(expression)
+      ? undefined
+      : getDefinition(name, environment);
+  if (definition && !visited.has(definition)) {
+    visited.add(definition);
+    if (hasBranches(definition.body, environment, visited)) return true;
+  }
+  return getChildren(expression).some((child) => hasBranches(child, environment, visited));
 };
 
 const toConjunct = (
@@ -600,6 +654,12 @@ const compileAction = (
     }
     case "Forall": {
       const body = child(expression.body);
+      const readLocals =
+        !isInit &&
+        getReadVariables(expression, environment) !== undefined &&
+        !hasBranches(expression.body, environment, new Set())
+          ? getReadLocals(expression, NO_NAMES)
+          : undefined;
       return (run, scope, partial, action, _isFixed, onComplete) => {
         const boundScopes: (Scope | undefined)[] = [];
         forEachBinding(expression.bounds, getContext(run, scope, partial), (boundScope) => {
@@ -607,6 +667,14 @@ const compileAction = (
           return false;
         });
         const scopes = [...boundScopes.slice(0, 1), ...boundScopes.slice(1).reverse()];
+        const isGuard = readLocals?.every((name) => lookupScope(scope, name)?.kind === "Value");
+        if (isGuard) {
+          const isSatisfied = scopes.every((boundScope) =>
+            holds(expression.body, getContext(run, boundScope, partial)),
+          );
+          if (isSatisfied) onComplete(partial, action);
+          return;
+        }
         const visit = (index: number, nextPartial: State, nextAction: string | undefined): void => {
           if (index === scopes.length) {
             onComplete(nextPartial, nextAction);
@@ -656,10 +724,11 @@ const compileAction = (
     }
     case "Let": {
       const body = child(expression.body);
+      const reevaluated = getReevaluatedDefinitions(expression.definitions, environment);
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(
           run,
-          bindDefinitions(expression.definitions, getContext(run, scope, partial)),
+          bindDefinitions(expression.definitions, getContext(run, scope, partial), reevaluated),
           partial,
           action,
           isFixed,

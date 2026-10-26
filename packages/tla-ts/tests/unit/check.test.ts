@@ -165,6 +165,59 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("generates a successor for each witness of an existential under a universal action", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nWitness(i) == \\E j \\in 1..3 : j >= i\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ \\A i \\in {1, 2} : Witness(i)\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    });
+    expect([result.generatedStates, result.distinctStates]).toEqual([13, 3]);
+  });
+
+  it("reports a depth of 1 when the constraint excludes every initial state", async () => {
+    const results = await Promise.all(
+      [1, 2].map((workers) =>
+        check({
+          source:
+            "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 1\nNext == x' = x\nConstraint == x = 0\n====",
+          config: "INIT Init\nNEXT Next\nCONSTRAINT Constraint",
+          workers,
+        }),
+      ),
+    );
+    expect(
+      results.map((result) => [result.generatedStates, result.distinctStates, result.depth]),
+    ).toEqual([
+      [1, 0, 1],
+      [1, 0, 1],
+    ]);
+  });
+
+  it("prints empty intervals and keys that are not field names like TLC", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME PrintT(0..-2)\nASSUME PrintT(("<<>>" :> 0) @@ ("a b" :> 1))\nASSUME PrintT(("x1" :> 2) @@ ("y" :> 3))\nInit == x = 0\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["{}", '("<<>>" :> 0 @@ "a b" :> 1)', "[x1 |-> 2, y |-> 3]"]);
+  });
+
+  it("rejects an initial predicate or next-state action that is a constant like TLC", async () => {
+    const getError = (init: string, next: string) =>
+      check({
+        source: `---- MODULE M ----\nVARIABLE x\nInit == ${init}\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      }).catch((error: Error) => error.message);
+    expect(await getError("TRUE", "x' = x")).toBe(
+      "The initial predicate Init cannot be a constant.",
+    );
+    expect(await getError("x = 0", "TRUE")).toBe(
+      "The next state action Next cannot be a constant.",
+    );
+  });
+
   it("bundles the Reals module, whose Real is not a set TLC can check", async () => {
     const result = await check({
       source:

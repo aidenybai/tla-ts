@@ -29,6 +29,7 @@ export interface StartMessage {
   source: string;
   config: ModelConfig;
   modules: [string, string | undefined][];
+  classes: [string, Uint8Array | undefined][];
   index: number;
   count: number;
   ports: (Port | undefined)[];
@@ -94,11 +95,18 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     modules.set(name, source);
     return source;
   };
+  const classes = new Map<string, Uint8Array | undefined>();
+  const loadClass = (name: string) => {
+    const bytes = options.loadClass?.(name);
+    classes.set(name, bytes);
+    return bytes;
+  };
   setStringOrder(getTlcStringOrder(options.source, config, loadModule));
   const startupStrings = getRankedStringCount();
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule,
+    loadClass,
     print: options.onPrint ?? console.log,
     files: { readFile: options.readFile, writeFile: options.writeFile },
   });
@@ -143,9 +151,9 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     statistics.distinctStates++;
   }
   if (getRankedStringCount() !== startupStrings) return fallBack();
+  statistics.depth = statistics.generatedStates === 0 ? 0 : 1;
   if (statistics.distinctStates === 0)
     return { status: "success", violation: undefined, ...statistics };
-  statistics.depth = 1;
 
   const reports: WorkerMessage[] = [];
   const pending = { resolve: (_: WorkerMessage[]) => {} };
@@ -180,6 +188,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       source: options.source,
       config,
       modules: [...modules],
+      classes: [...classes],
       index,
       count,
       ports,

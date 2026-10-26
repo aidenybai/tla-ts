@@ -703,10 +703,12 @@ const enumerateSet = (value: Value): Value[] => {
   switch (value.kind) {
     case "Set":
       return value.elements;
-    case "Interval":
-      return value.low === 1 && value.high >= 1
-        ? getIntervalDomain(value.high)
-        : Array.from({ length: getCardinality(value) }, (_, index) => value.low + index);
+    case "Interval": {
+      if (value.low === 1 && value.high >= 1) return getIntervalDomain(value.high);
+      const elements: number[] = [];
+      for (let element = value.low; element <= value.high; element++) elements.push(element);
+      return elements;
+    }
     case "Subset": {
       const base = toFiniteSet(value.base).elements;
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
@@ -815,13 +817,15 @@ const finiteSets = new WeakMap<ObjectValue, SetValue>();
 
 export const toFiniteSet = (value: Value): SetValue => {
   if (typeof value === "object" && value.kind === "Set") return value;
+  if (typeof value === "object" && value.kind === "Interval") {
+    return createSortedSet(enumerateSet(value));
+  }
   const cached = typeof value === "object" ? finiteSets.get(value) : undefined;
   if (cached) return cached;
   const elements = enumerateSet(value);
   const isSorted =
     typeof value === "object" &&
-    (value.kind === "Interval" ||
-      value.kind === "SetOperation" ||
+    (value.kind === "SetOperation" ||
       value.kind === "FilteredSet" ||
       value.kind === "ProductSet" ||
       value.kind === "FunctionSet" ||
@@ -1430,10 +1434,19 @@ const formatLazySet = (value: LazySetValue, isStrict: boolean): string => {
   }
 };
 
-const isFieldName = (name: string) =>
-  /^[\p{L}\p{N}_]*$/u.test(name) &&
-  /\p{L}/u.test(name) &&
-  (name.length < 4 || !/^[WS]F_/.test(name));
+// FcnRcdValue#isName: TLC prints a function as a record when every key could be a field name.
+const isTlcName = (text: string) => {
+  const state = { hasLetter: false };
+  for (const character of text) {
+    if (character === "_") continue;
+    const isLetter = character.toLowerCase() !== character.toUpperCase();
+    if (!isLetter && (character < "0" || character > "9")) return false;
+    state.hasLetter ||= isLetter;
+  }
+  return (
+    state.hasLetter && (text.length < 4 || (!text.startsWith("WF_") && !text.startsWith("SF_")))
+  );
+};
 
 export const formatValue = (value: Value, isStrict = false): string => {
   const format = (inner: Value) => formatValue(inner, isStrict);
@@ -1475,7 +1488,7 @@ export const formatValue = (value: Value, isStrict = false): string => {
       if (fn.domain.every((key, index) => key === index + 1)) {
         return `<<${fn.range.map(format).join(", ")}>>`;
       }
-      if (fn.domain.every((key) => typeof key === "string" && isFieldName(key))) {
+      if (fn.domain.every((key) => typeof key === "string" && isTlcName(key))) {
         return `[${fn.domain.map((key, index) => `${String(key)} |-> ${format(fn.range[index])}`).join(", ")}]`;
       }
       return `(${fn.domain.map((key, index) => `${format(key)} :> ${format(fn.range[index])}`).join(" @@ ")})`;
