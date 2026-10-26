@@ -25,7 +25,7 @@ result.status; // "invariant-violation"
 ```
 
 > [!WARNING]
-> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `VIEW`, `POSTCONDITION`, nested modules, `INSTANCE` inside `LET`, subexpression references such as `F(2)!3`, `TLCGet`, `TLCSet`, and the Bags and Reals modules.
+> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `VIEW`, `POSTCONDITION`, nested modules, `INSTANCE` inside `LET`, subexpression references such as `F(2)!3`, `TLCGet`, `TLCSet`, and the Reals module.
 
 ## Install
 
@@ -78,7 +78,7 @@ The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `
 
 `check` supports:
 
-- **Standard modules**: Naturals, Integers, Sequences, FiniteSets, and TLC
+- **Standard modules**: Naturals, Integers, Sequences, FiniteSets, Bags, and TLC
 - **Modules**: `EXTENDS`, and `INSTANCE` with `WITH` substitutions, named instances, and parameterized instances
 - **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, and `CHECK_DEADLOCK`
 - **Properties**: invariants, `[][A]_v`, and the liveness forms `<>P`, `[]<>P`, `<>[]P`, `P ~> Q`, `<><<A>>_v`, and `[]<><<A>>_v` under `WF` and `SF` fairness
