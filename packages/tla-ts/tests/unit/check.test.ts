@@ -32,6 +32,27 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([2, 1, 1]);
   });
 
+  it("checks invariants before action properties and constrained states", () => {
+    const results = ["InvariantFirst", "ConstrainedInvariant"].map((name) =>
+      check({
+        source: readFileSync(join(FIXTURES, "ordering", "Ordering.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "ordering", `${name}.cfg`), "utf8"),
+      }),
+    );
+    expect(
+      results.map((result) => [
+        result.status,
+        result.violation?.name,
+        result.generatedStates,
+        result.distinctStates,
+        result.depth,
+      ]),
+    ).toEqual([
+      ["invariant-violation", "Small", 3, 3, 3],
+      ["invariant-violation", "Small", 3, 2, 2],
+    ]);
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");

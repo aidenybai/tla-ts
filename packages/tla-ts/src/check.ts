@@ -391,7 +391,8 @@ export const check = (options: CheckOptions): CheckResult => {
         isUnchangedFor(constraint, state, parent) ||
         holds(constraint.expression, getContext(state, undefined), `constraint ${constraint.name}`),
     );
-  const countViolatingState = (depth: number) => {
+  const countViolatingState = (depth: number, isInModel: boolean) => {
+    if (!isInModel) return;
     statistics.distinctStates = states.length + 1;
     statistics.depth = Math.max(statistics.depth, depth);
   };
@@ -418,9 +419,10 @@ export const check = (options: CheckOptions): CheckResult => {
     const fingerprintState = getFingerprintState(state);
     const hash = getStateHash(fingerprintState);
     if (findStateIndex(hash, fingerprintState) !== -1) continue;
+    const isInModel = satisfiesConstraints(state);
     const violated = findViolatedInvariant(state);
     if (violated) {
-      countViolatingState(1);
+      countViolatingState(1, isInModel);
       return createResult("invariant-violation", {
         name: violated.name,
         trace: [{ action: undefined, state: toRecord(state) }],
@@ -435,12 +437,13 @@ export const check = (options: CheckOptions): CheckResult => {
         ),
     );
     if (failedPredicate) {
+      countViolatingState(1, isInModel);
       return createResult("property-violation", {
         name: failedPredicate.name,
         trace: [{ action: undefined, state: toRecord(state) }],
       });
     }
-    if (!satisfiesConstraints(state)) continue;
+    if (!isInModel) continue;
     markSeen(hash, states.length);
     initial.push(states.length);
     addState(state, fingerprintState, -1, undefined);
@@ -454,6 +457,28 @@ export const check = (options: CheckOptions): CheckResult => {
       return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
     }
     for (const successor of successors) {
+      const transition = getContext(state, successor.state);
+      const isAllowedAction = actionConstraints.every((constraint) =>
+        holds(constraint.expression, transition, `action constraint ${constraint.name}`),
+      );
+      canonicalizeState(successor.state);
+      const fingerprintState = getFingerprintState(successor.state);
+      const hash = getStateHash(fingerprintState);
+      const existing = isAllowedAction ? findStateIndex(hash, fingerprintState) : -1;
+      if (existing !== -1 && isRecordingEdges) edges[index].push(existing);
+      const isInModel =
+        isAllowedAction && (existing !== -1 || satisfiesConstraints(successor.state, state));
+      const isNew = isInModel && existing === -1;
+      if (existing === -1) {
+        const violated = findViolatedInvariant(successor.state, state);
+        if (violated) {
+          countViolatingState(depths[index] + 1, isInModel);
+          return createResult("invariant-violation", {
+            name: violated.name,
+            trace: getTrace(index, successor),
+          });
+        }
+      }
       const violatedProperty = properties.actionProperties.find(
         (property) =>
           !holds(
@@ -468,36 +493,13 @@ export const check = (options: CheckOptions): CheckResult => {
           ),
       );
       if (violatedProperty) {
+        countViolatingState(depths[index] + 1, isNew);
         return createResult("property-violation", {
           name: violatedProperty.name,
           trace: getTrace(index, successor),
         });
       }
-      const transition = getContext(state, successor.state);
-      if (
-        !actionConstraints.every((constraint) =>
-          holds(constraint.expression, transition, `action constraint ${constraint.name}`),
-        )
-      ) {
-        continue;
-      }
-      canonicalizeState(successor.state);
-      const fingerprintState = getFingerprintState(successor.state);
-      const hash = getStateHash(fingerprintState);
-      const existing = findStateIndex(hash, fingerprintState);
-      if (existing !== -1) {
-        if (isRecordingEdges) edges[index].push(existing);
-        continue;
-      }
-      const violated = findViolatedInvariant(successor.state, state);
-      if (violated) {
-        countViolatingState(depths[index] + 1);
-        return createResult("invariant-violation", {
-          name: violated.name,
-          trace: getTrace(index, successor),
-        });
-      }
-      if (!satisfiesConstraints(successor.state, state)) continue;
+      if (!isNew) continue;
       markSeen(hash, states.length);
       if (isRecordingEdges) edges[index].push(states.length);
       addState(successor.state, fingerprintState, index, successor.action);
