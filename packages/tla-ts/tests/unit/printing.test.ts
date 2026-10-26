@@ -113,3 +113,42 @@ describe("line breaking matches TLC's pretty printer", () => {
     );
   });
 });
+
+describe("functions over infinite domains print like TLC", () => {
+  it.each([
+    [
+      "ASSUME PrintT([n \\in Nat |-> n])",
+      "[n \\in Nat |-> <expression line 3, col 30 to line 3, col 30 of module M>]",
+    ],
+    [
+      "ASSUME PrintT([n, m \\in Nat |-> n])",
+      "[n \\in Nat |-> <expression line 3, col 33 to line 3, col 33 of module M>]",
+    ],
+    [
+      "ASSUME PrintT([n \\in Nat, m \\in 1..2 |-> n])",
+      "[n \\in Nat, m \\in 1..2 |-> <expression line 3, col 42 to line 3, col 42 of module M>]",
+    ],
+    [
+      "ASSUME PrintT([<<a, b>> \\in Nat \\X Nat |-> a])",
+      "[<<a, b>> \\in (Nat \\X Nat) |-> <expression line 3, col 44 to line 3, col 44 of module M>]",
+    ],
+    [
+      "ASSUME PrintT([n \\in Nat |->\n  n + 1])",
+      "[n \\in Nat |-> <expression line 4, col 3 to line 4, col 7 of module M>]",
+    ],
+    [
+      "ASSUME PrintT([[n \\in Int |-> n] EXCEPT ![1] = 5])",
+      "[n \\in Int |-> <expression line 3, col 31 to line 3, col 31 of module M>]",
+    ],
+    [
+      "f[n \\in Nat] == IF n = 0 THEN 0 ELSE f[n - 1]\nASSUME PrintT(f)",
+      "[n \\in Nat |-> <expression line 3, col 17 to line 3, col 45 of module M>]",
+    ],
+    [
+      "ASSUME PrintT(ToString([n \\in Nat \\ {1} |-> n]))",
+      '"[n \\\\in Nat \\\\ {1} |-> <expression line 3, col 45 to line 3, col 45 of module M>]"',
+    ],
+  ])("prints %s with its parameters and body location", async (body, text) => {
+    expect((await checkPrinting(body)).printed).toEqual([text]);
+  });
+});

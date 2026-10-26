@@ -36,6 +36,7 @@ import {
   toFiniteSet,
   updateFunction,
   valuesEqual,
+  type LazyFunctionSource,
   type LazyFunctionValue,
   type Value,
 } from "./values";
@@ -392,14 +393,70 @@ export const bindArgument = (bounds: Bound[], scope: Scope | undefined, argument
   );
 };
 
+// TLC prints a function it can't enumerate as its parameters and the location of its body. It
+// prints only the first name of a group such as `m, n \in S`.
+interface LazyFunctionTemplate {
+  parameters: { index: number; name: string }[];
+  body: string;
+}
+
+const lazyFunctionTemplates = new WeakMap<Expression, LazyFunctionTemplate>();
+
+const getLazyFunctionTemplate = (bounds: Bound[], body: Expression) => {
+  const cached = lazyFunctionTemplates.get(body);
+  if (cached) return cached;
+  const range = body.location.range;
+  if (!range) return undefined;
+  const template = {
+    parameters: bounds.flatMap((bound, index) =>
+      index > 0 && bounds[index - 1].set === bound.set
+        ? []
+        : [
+            {
+              index,
+              name:
+                bound.pattern.kind === "Name"
+                  ? bound.pattern.name
+                  : `<<${bound.pattern.names.join(", ")}>>`,
+            },
+          ],
+    ),
+    body: `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`,
+  };
+  lazyFunctionTemplates.set(body, template);
+  return template;
+};
+
+const getLazyFunctionSource = (
+  bounds: Bound[],
+  body: Expression,
+  domain: Value,
+): LazyFunctionSource | undefined => {
+  const template = getLazyFunctionTemplate(bounds, body);
+  if (!template) return undefined;
+  const domains =
+    bounds.length > 1 && typeof domain === "object" && domain.kind === "ProductSet"
+      ? domain.factors
+      : [domain];
+  return {
+    parameters: template.parameters.map((parameter) => ({
+      name: parameter.name,
+      domain: domains[parameter.index],
+    })),
+    body: template.body,
+  };
+};
+
 const createLazyFunction = (
   domain: Value,
   compute: (argument: Value, self: LazyFunctionValue) => Value,
+  source: LazyFunctionSource | undefined,
 ): LazyFunctionValue => {
   const memo = new Map<number, Value[]>();
   const self: LazyFunctionValue = {
     kind: "LazyFunction",
     domain,
+    source,
     apply: (argument) => {
       const hash = getValueHash(argument);
       const bucket = memo.get(hash);
@@ -419,14 +476,18 @@ const createLazyFunction = (
 };
 
 const createRecursiveFunction = (definition: FunctionDefinition, context: Context) => {
-  const fn = createLazyFunction(getBoundsDomain(definition.bounds, context), (argument, self) =>
-    evaluate(
-      definition.body,
-      withScope(
-        context,
-        bindArgument(definition.bounds, bindValue(undefined, definition.name, self), argument),
+  const domain = getBoundsDomain(definition.bounds, context);
+  const fn = createLazyFunction(
+    domain,
+    (argument, self) =>
+      evaluate(
+        definition.body,
+        withScope(
+          context,
+          bindArgument(definition.bounds, bindValue(undefined, definition.name, self), argument),
+        ),
       ),
-    ),
+    getLazyFunctionSource(definition.bounds, definition.body, domain),
   );
   return definition.bounds.length === 1 ? markLambdaFunction(fn) : fn;
 };
@@ -1227,8 +1288,10 @@ const compileFunctionConstruction = (
   return (context) => {
     const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
     if (expression.isRecursive || !isEnumerable(domain)) {
-      const fn = createLazyFunction(domain, (argument) =>
-        body(withScope(context, bindArgument(bounds, context.scope, argument))),
+      const fn = createLazyFunction(
+        domain,
+        (argument) => body(withScope(context, bindArgument(bounds, context.scope, argument))),
+        getLazyFunctionSource(bounds, expression.body, domain),
       );
       return bounds.length === 1 ? markLambdaFunction(fn) : fn;
     }
