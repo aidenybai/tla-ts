@@ -50,9 +50,12 @@ export interface Lasso {
 interface Restriction {
   isAllowedState: (index: number) => boolean;
   isAllowedEdge: (from: number, to: number) => boolean;
+  isAllowedNext: (from: number, next: Value[]) => boolean;
 }
 
 const START: SourceLocation = { line: 0, column: 0 };
+
+const everyNext = () => true;
 
 const TEMPORAL_KINDS = new Set([
   "Always",
@@ -278,22 +281,23 @@ export const findLivenessViolation = (
     if (successorStates === undefined) return from === to ? [] : [graph.states[to]];
     return successorStates.filter((_, position) => graph.successors[from][position] === to);
   };
-  const stepHolds = (step: Expression, scope: Scope | undefined, from: number, to: number) =>
-    getNextStates(from, to).some((next) =>
-      expectBoolean(
-        evaluate(step, { environment, scope, state: graph.states[from], next }),
-        "a step predicate",
-      ),
+  const holdsOn = (step: Expression, scope: Scope | undefined, from: number, next: Value[]) =>
+    expectBoolean(
+      evaluate(step, { environment, scope, state: graph.states[from], next }),
+      "a step predicate",
+    );
+  const stepHolds = (
+    step: Expression,
+    scope: Scope | undefined,
+    from: number,
+    to: number,
+    isAllowedNext: (from: number, next: Value[]) => boolean = everyNext,
+  ) =>
+    getNextStates(from, to).some(
+      (next) => isAllowedNext(from, next) && holdsOn(step, scope, from, next),
     );
   const stepFails = (step: Expression, scope: Scope | undefined, from: number, to: number) =>
-    from === to ||
-    getNextStates(from, to).some(
-      (next) =>
-        !expectBoolean(
-          evaluate(step, { environment, scope, state: graph.states[from], next }),
-          "a step predicate",
-        ),
-    );
+    from === to || getNextStates(from, to).some((next) => !holdsOn(step, scope, from, next));
   const enabledCache = fairness.map(() => new Map<number, boolean>());
   const isConditionEnabled = (conditionIndex: number, state: number) => {
     const cache = enabledCache[conditionIndex];
@@ -329,7 +333,9 @@ export const findLivenessViolation = (
     const getEdges = getRestrictedEdges(restriction, members);
     for (const from of component) {
       for (const to of getEdges(from)) {
-        if (stepHolds(condition.step, condition.scope, from, to)) return [from, to];
+        if (stepHolds(condition.step, condition.scope, from, to, restriction.isAllowedNext)) {
+          return [from, to];
+        }
       }
     }
     return undefined;
@@ -457,6 +463,7 @@ export const findLivenessViolation = (
       const restriction: Restriction = {
         isAllowedState: (index) => !stateHolds(property.predicate, index),
         isAllowedEdge: everyEdge,
+        isAllowedNext: everyNext,
       };
       const reachable =
         property.kind === "Eventually"
@@ -471,7 +478,11 @@ export const findLivenessViolation = (
       return toLasso(restriction, prefix, component);
     }
     case "EventuallyAlways": {
-      const restriction: Restriction = { isAllowedState: everyState, isAllowedEdge: everyEdge };
+      const restriction: Restriction = {
+        isAllowedState: everyState,
+        isAllowedEdge: everyEdge,
+        isAllowedNext: everyNext,
+      };
       for (const component of findFairComponent(restriction, allStates)) {
         const violating = component.find((index) => !stateHolds(property.predicate, index));
         if (violating === undefined) continue;
@@ -487,6 +498,7 @@ export const findLivenessViolation = (
       const restriction: Restriction = {
         isAllowedState: (index) => !stateHolds(property.right, index),
         isAllowedEdge: everyEdge,
+        isAllowedNext: everyNext,
       };
       const candidates = allStates.filter(restriction.isAllowedState);
       const components = findFairComponent(restriction, candidates);
@@ -532,6 +544,7 @@ export const findLivenessViolation = (
       const restriction: Restriction = {
         isAllowedState: everyState,
         isAllowedEdge: (from, to) => stepFails(step.expression, step.scope, from, to),
+        isAllowedNext: (from, next) => !holdsOn(step.expression, step.scope, from, next),
       };
       const reachable =
         property.kind === "EventuallyStep"
