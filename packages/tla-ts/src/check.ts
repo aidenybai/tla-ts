@@ -177,6 +177,9 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
     }
     initConjuncts.push(item);
   });
+  if (initConjuncts.length === 0 && environment.variables.length > 0) {
+    throw new TlaConfigError("The configuration file did not specify the initial state predicate");
+  }
   if (nextActions.length !== 1) {
     throw new TlaConfigError(
       `The specification ${config.specification} must contain exactly one [][Next]_vars`,

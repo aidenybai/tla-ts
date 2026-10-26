@@ -30,14 +30,20 @@ describe("SPECIFICATION matches TLC", () => {
     expect(getSummary("SPECIFICATION Argument\nPROPERTY Visits")[0]).toBe("liveness-violation");
   });
 
-  it.each(["InsideForall", "InsideExists", "ForallInit", "ForallNext"])(
-    "takes no initial predicate or next-state relation from inside the quantifier of %s",
+  it.each(["InsideForall", "InsideExists", "ForallInit"])(
+    "takes no initial predicate from inside the quantifier of %s",
     (name) => {
       expect(() => checkSpecification(`SPECIFICATION ${name}`, "Specifications", "{1}")).toThrow(
-        TlaError,
+        new TlaConfigError("The configuration file did not specify the initial state predicate"),
       );
     },
   );
+
+  it("takes no next-state relation from inside a quantifier", () => {
+    expect(() => checkSpecification("SPECIFICATION ForallNext", "Specifications", "{1}")).toThrow(
+      TlaError,
+    );
+  });
 
   it.each(["TemporalExists", "TemporalForall"])("rejects the temporal quantifier of %s", (name) => {
     expect(() => checkSpecification(`SPECIFICATION ${name}`)).toThrow(
