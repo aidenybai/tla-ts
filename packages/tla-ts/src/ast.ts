@@ -115,6 +115,7 @@ export interface QuantifierExpression {
 export interface UnboundedQuantifierExpression {
   kind: "UnboundedQuantifier";
   names: string[];
+  isTemporal?: boolean;
   body: Expression;
   location: SourceLocation;
 }

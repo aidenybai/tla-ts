@@ -427,14 +427,15 @@ export const parseModule = (source: string): Module => {
   const parseQuantifier = (start: Token): Expression => {
     const location = getLocation(start);
     const kind = start.text === "\\A" ? "Forall" : "Exists";
-    if (isBoundAhead()) {
+    const isTemporal = start.text === "\\AA" || start.text === "\\EE";
+    if (!isTemporal && isBoundAhead()) {
       const bounds = parseBounds();
       expect(":");
       return { kind, bounds, body: parseExpression(), location };
     }
     const names = parseSeparated(expectIdentifier);
     expect(":");
-    return { kind: "UnboundedQuantifier", names, body: parseExpression(), location };
+    return { kind: "UnboundedQuantifier", names, body: parseExpression(), isTemporal, location };
   };
 
   const parseCase = (start: Token): Expression => {
@@ -502,10 +503,9 @@ export const parseModule = (source: string): Module => {
         return { kind: "ExceptAt", location };
       case "\\A":
       case "\\E":
-        return parseQuantifier(token);
       case "\\AA":
       case "\\EE":
-        throw new TlaUnsupportedError("Temporal quantifiers \\AA and \\EE are not supported");
+        return parseQuantifier(token);
       case "IF": {
         const condition = parseExpression();
         expect("THEN");
