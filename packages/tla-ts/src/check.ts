@@ -81,8 +81,8 @@ export interface ActionProperty {
 }
 
 export interface Specification {
-  init: Expression;
-  next: Expression;
+  init: Expression | undefined;
+  next: Expression | undefined;
   temporals: ScopedExpression[];
 }
 
@@ -123,17 +123,18 @@ const getConjuncts = (expression: Expression, environment: Environment): Express
 
 export const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
   if (config.specification === undefined) {
-    if (config.init === undefined)
-      throw new TlaConfigError(
-        "The configuration file did not specify the initial state predicate",
-      );
-    if (config.next === undefined)
-      throw new TlaConfigError("The configuration does not specify NEXT");
-    getDefinitionBody(config.init, environment);
-    getDefinitionBody(config.next, environment);
+    const getOperator = (name: string | undefined, description: string) => {
+      if (name === undefined) return undefined;
+      getDefinitionBody(name, environment);
+      const identifier = createIdentifier(name);
+      if (getLevel(identifier, undefined, environment) === 0) {
+        throw new TlaConfigError(`The ${description} ${name} cannot be a constant`);
+      }
+      return identifier;
+    };
     return {
-      init: createIdentifier(config.init),
-      next: createIdentifier(config.next),
+      init: getOperator(config.init, "initial predicate"),
+      next: getOperator(config.next, "next state action"),
       temporals: [],
     };
   }
@@ -176,13 +177,16 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
     }
     initConjuncts.push(getUnscoped(conjunct, item.scope));
   });
-  if (nextActions.length !== 1) {
+  if (nextActions.length > 1) {
     throw new TlaConfigError(
-      `The specification ${config.specification} must contain exactly one [][Next]_vars`,
+      `The specification ${config.specification} must contain at most one [][Next]_vars`,
     );
   }
   return {
-    init: { kind: "And", operands: initConjuncts, location: START },
+    init:
+      initConjuncts.length === 0
+        ? undefined
+        : { kind: "And", operands: initConjuncts, location: START },
     next: nextActions[0],
     temporals,
   };
@@ -309,17 +313,28 @@ export const findAssumptionViolation = (
   return undefined;
 };
 
-export const createSearch = (config: ModelConfig, environment: Environment): Search | undefined => {
+export const createSearch = (config: ModelConfig, environment: Environment): Search => {
   const properties = getProperties(config, environment);
   const invariants = getStateChecks(
     [...getNamedExpressions(config.invariants, environment), ...properties.invariants],
     environment,
   );
-  const isConstantModel =
-    config.specification === undefined &&
-    config.init === undefined &&
-    environment.variables.length === 0;
-  if (isConstantModel) return undefined;
+  const spec = getSpecification(config, environment);
+  const isCheckingBehaviors =
+    invariants.length > 0 ||
+    properties.actionProperties.length > 0 ||
+    properties.liveness.length > 0;
+  if (
+    spec.init === undefined &&
+    (isCheckingBehaviors ||
+      properties.initialPredicates.length > 0 ||
+      environment.variables.length > 0)
+  ) {
+    throw new TlaConfigError("The configuration file did not specify the initial state predicate");
+  }
+  if (spec.next === undefined && isCheckingBehaviors) {
+    throw new TlaConfigError("The configuration file did not specify the next state predicate");
+  }
   const symmetryGroup =
     config.symmetry === undefined ? [] : getSymmetryGroup(config.symmetry, environment);
   const constraints = getStateChecks(
@@ -329,7 +344,7 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
   const actionConstraints = getNamedExpressions(config.actionConstraints, environment);
   return {
     properties,
-    spec: getSpecification(config, environment),
+    spec,
     getFingerprintState: (state) =>
       symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup),
     findViolatedInvariant: (state, parent) =>
@@ -408,7 +423,6 @@ export const check = (options: CheckOptions): CheckResult => {
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
 
   const search = createSearch(config, environment);
-  if (!search) return createResult("success");
   const properties = search.properties;
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
@@ -434,18 +448,6 @@ export const check = (options: CheckOptions): CheckResult => {
     }
     return steps.reverse();
   };
-  const getPathTrace = (path: number[]) =>
-    path.map((stateIndex, position): TraceStep => {
-      if (position === 0) return { action: undefined, state: toRecord(states[stateIndex]) };
-      const previous = path[position - 1];
-      const action =
-        previous === stateIndex
-          ? "Stuttering"
-          : getSuccessors(spec.next, states[previous], environment).find((successor) =>
-              isSameState(successor.state, states[stateIndex]),
-            )?.action;
-      return { action, state: toRecord(states[stateIndex]) };
-    });
   const getStateHash = (state: Value[]) => {
     let hash = 0x811c9dc5;
     for (let index = 0; index < state.length; index++)
@@ -492,7 +494,7 @@ export const check = (options: CheckOptions): CheckResult => {
     statistics.depth = Math.max(statistics.depth, depth);
   };
 
-  for (const state of getInitialStates(spec.init, environment)) {
+  for (const state of spec.init === undefined ? [] : getInitialStates(spec.init, environment)) {
     canonicalizeState(state);
     statistics.generatedStates++;
     const fingerprintState = getFingerprintState(state);
@@ -519,9 +521,31 @@ export const check = (options: CheckOptions): CheckResult => {
     addState(state, fingerprintState, -1, undefined);
   }
 
+  const next = spec.next;
+  if (next === undefined) {
+    if (states.length > 0) {
+      throw new TlaEvaluationError(
+        "No next state actions defined to generate successor states from",
+      );
+    }
+    return createResult("success");
+  }
+  const getPathTrace = (path: number[]) =>
+    path.map((stateIndex, position): TraceStep => {
+      if (position === 0) return { action: undefined, state: toRecord(states[stateIndex]) };
+      const previous = path[position - 1];
+      const action =
+        previous === stateIndex
+          ? "Stuttering"
+          : getSuccessors(next, states[previous], environment).find((successor) =>
+              isSameState(successor.state, states[stateIndex]),
+            )?.action;
+      return { action, state: toRecord(states[stateIndex]) };
+    });
+
   for (let index = 0; index < states.length; index++) {
     const state = states[index];
-    const successors = getSuccessors(spec.next, state, environment);
+    const successors = getSuccessors(next, state, environment);
     statistics.generatedStates += successors.length;
     if (successors.length === 0 && config.checkDeadlock) {
       return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
