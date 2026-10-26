@@ -7,6 +7,7 @@ import {
   evaluate,
   expectBoolean,
   getDefinition,
+  isConstantLevel,
   type Context,
   type Environment,
   type Scope,
@@ -111,6 +112,24 @@ const getDefinitionBody = (name: string, environment: Environment) => {
     throw new TlaConfigError(`${name} is not defined as an operator without arguments`);
   }
   return definition.body;
+};
+
+const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
+  const definition = getDefinition(name, environment);
+  if (!definition) {
+    throw new TlaConfigError(
+      `The ${kind} ${name} specified in the configuration file\nis not defined in the specification.`,
+    );
+  }
+  if (definition.kind === "Operator" && definition.params.length > 0) {
+    throw new TlaConfigError(
+      `TLC requires ${kind} not to take any argument, but one was given: ${name}`,
+    );
+  }
+  if (isConstantLevel(definition, environment)) {
+    throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
+  }
+  return definition;
 };
 
 const getConjuncts = (expression: Expression, environment: Environment): Expression[] => {
@@ -239,6 +258,21 @@ export const getNamedExpressions = (names: string[], environment: Environment): 
     return { name, expression: createIdentifier(name), scope: undefined };
   });
 
+const getPossiblePredicates = (names: string[], environment: Environment): NamedExpression[] =>
+  names.map((name, index) => {
+    if (names.indexOf(name) !== index) {
+      throw new TlaConfigError(`_POSSIBLE lists ${name} more than once`);
+    }
+    getConfigDefinition("possible", name, environment);
+    const expression = createIdentifier(name);
+    if (getLevel(expression, undefined, environment) === TEMPORAL_LEVEL) {
+      throw new TlaConfigError(
+        `The possible of ${name} is equal to a temporal formula; only state- and action-level predicates are supported`,
+      );
+    }
+    return { name, expression, scope: undefined };
+  });
+
 export const getStateChecks = (named: NamedExpression[], environment: Environment): StateCheck[] =>
   named.flatMap((item) =>
     getConjuncts(item.expression, environment).map((expression) => ({
@@ -349,7 +383,7 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
     environment,
   );
   const actionConstraints = getNamedExpressions(config.actionConstraints, environment);
-  const possible = getNamedExpressions(config.possible, environment);
+  const possible = getPossiblePredicates(config.possible, environment);
   const isActionPossible = (item: NamedExpression) =>
     getLevel(item.expression, undefined, environment) >= ACTION_LEVEL;
   const statePossible = possible.filter((item) => !isActionPossible(item));
@@ -433,7 +467,7 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
         return {
           name: unwitnessed.name,
           trace: [],
-          message: `The _POSSIBLE predicate ${unwitnessed.name} was never witnessed.`,
+          message: `The _POSSIBLE predicate ${unwitnessed.name} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`,
         };
       }
       for (const name of config.postconditions) {
