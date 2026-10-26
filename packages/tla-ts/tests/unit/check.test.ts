@@ -201,6 +201,13 @@ describe("name resolution matches SANY", () => {
     expect(() => checkSource(source)).toThrow(TlaSyntaxError);
   });
 
+  it("defines prefix, postfix, and <: operators", () => {
+    const result = checkSource(
+      "EXTENDS Naturals\nn ^+ == n + 1\n-. n == 10 - n\na <: b == a - b\nASSUME (2^+) = 3 /\\ -4 = 6 /\\ (5 <: 2) = 3",
+    );
+    expect(result.status).toBe("success");
+  });
+
   it("accepts recursive functions, named assumptions, and operator aliases", () => {
     const result = checkSource(
       "EXTENDS Naturals\nRECURSIVE fact\ntwice[n \\in Nat] == fact[n] * 2\nfact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]\nASSUME Positive == twice[3] = 12\nASSUME Positive\na \\oplus b == a + b\nASSUME 1 (+) 2 = 3",

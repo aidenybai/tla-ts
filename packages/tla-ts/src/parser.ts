@@ -77,6 +77,7 @@ const INFIX_OPERATORS = new Map<string, InfixOperator>([
   ["\\cdot", createInfix(5, 14, true)],
   ["@@", createInfix(6, 6, true)],
   [":>", createInfix(7, 7, false)],
+  ["<:", createInfix(7, 7, false)],
   ["\\cup", createInfix(8, 8, true)],
   ["\\cap", createInfix(8, 8, true)],
   ["\\", createInfix(8, 8, false)],
@@ -678,8 +679,23 @@ export const parseModule = (source: string): Module => {
         };
       }
     }
-    if (token.kind === "Operator" && token.text === "-" && isAt(".", 1)) {
-      throw new TlaUnsupportedError("Prefix operator definitions are not supported");
+    const isPrefixDefinition = token.kind === "Operator" && token.text === "-.";
+    const isPostfixDefinition =
+      token.kind === "Identifier" && POSTFIX_OPERATORS.has(peek(1).text) && isAt("==", 2);
+    if (isPrefixDefinition || isPostfixDefinition) {
+      const operator = isPrefixDefinition ? token.text : peek(1).text;
+      cursor.index += isPrefixDefinition ? 1 : 2;
+      const param = isPrefixDefinition ? expectIdentifier() : token.text;
+      expect("==");
+      return {
+        kind: "Operator",
+        name: operator,
+        params: [{ name: param, arity: 0 }],
+        body: parseExpression(),
+        isLocal,
+        isRecursive: recursiveNames.has(operator),
+        location,
+      };
     }
     const name = expectIdentifier();
     if (accept("[")) {
