@@ -330,6 +330,34 @@ const getParamArguments = (params: OperatorParam[], location: SourceLocation): E
 const getArity = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params.length : 0;
 
+const getInstanceOperator = (
+  key: string,
+  params: OperatorParam[],
+  arity: number,
+  location: SourceLocation,
+): Expression => {
+  const names = Array.from({ length: arity }, (_, index) => `argument${index}`);
+  return {
+    kind: "Lambda",
+    params: names,
+    body: {
+      kind: "Apply",
+      operator: key,
+      args: [
+        ...getParamArguments(params, location),
+        ...names.map((name): Expression => ({
+          kind: "Identifier",
+          name,
+          location,
+          resolution: { kind: "Local" },
+        })),
+      ],
+      location,
+    },
+    location,
+  };
+};
+
 const getCopy = (rewrite: Rewrite, key: string) =>
   rewrite.instantiation.isParameterized(key) ? copyDefinition(rewrite, key) : undefined;
 
@@ -385,9 +413,7 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
     if (params.length === 0) return { ...expression, name: copy };
     const definition = instantiation.getDefinition(expression.name);
     if (definition && getArity(definition) > 0) {
-      throw new TlaUnsupportedError(
-        `Passing ${definition.name} from a parameterized instance as an operator argument is not supported yet`,
-      );
+      return getInstanceOperator(copy, params, getArity(definition), expression.location);
     }
     return {
       kind: "Apply",
@@ -447,10 +473,9 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
     const copy = getCopy(rewrite, expression.operator);
     if (copy === undefined) return expression;
-    if (params.length > 0) {
-      throw new TlaUnsupportedError(
-        `Passing ${expression.operator} from a parameterized instance as an operator argument is not supported yet`,
-      );
+    const definition = instantiation.getDefinition(expression.operator);
+    if (params.length > 0 && definition) {
+      return getInstanceOperator(copy, params, getArity(definition), expression.location);
     }
     return { ...expression, operator: copy };
   }
