@@ -7,6 +7,7 @@ import {
   evaluate,
   expectBoolean,
   getDefinition,
+  isConstantLevel,
   type Context,
   type Environment,
   type Scope,
@@ -41,7 +42,8 @@ export type CheckStatus =
   | "invariant-violation"
   | "property-violation"
   | "liveness-violation"
-  | "deadlock";
+  | "deadlock"
+  | "postcondition-violation";
 
 export interface TraceStep {
   action: string | undefined;
@@ -288,13 +290,13 @@ const getContext = (
 const holds = (expression: Expression, context: Context, description: string) =>
   expectBoolean(evaluate(expression, context), description);
 
-const getAssumptionError = (assumption: Assumption, environment: Environment) => {
+const getConstantError = (
+  expression: Expression,
+  environment: Environment,
+  description: string,
+) => {
   try {
-    return holds(
-      assumption.expression,
-      getContext(environment, undefined, undefined),
-      "an assumption",
-    )
+    return holds(expression, getContext(environment, undefined, undefined), description)
       ? undefined
       : { message: undefined };
   } catch (error) {
@@ -308,12 +310,31 @@ export const findAssumptionViolation = (
   environment: Environment,
 ): Omit<Violation, "loopStart"> | undefined => {
   for (const assumption of assumptions.filter((candidate) => !candidate.isAxiom)) {
-    const failure = getAssumptionError(assumption, environment);
+    const failure = getConstantError(assumption.expression, environment, "an assumption");
     if (failure) {
       const name =
         assumption.name ?? `line ${assumption.location.line}, column ${assumption.location.column}`;
       return { name, trace: [], message: failure.message };
     }
+  }
+  return undefined;
+};
+
+const findPostconditionViolation = (
+  names: string[],
+  environment: Environment,
+): Omit<Violation, "loopStart"> | undefined => {
+  for (const postcondition of getNamedExpressions(names, environment)) {
+    const definition = getDefinition(postcondition.name, environment);
+    if (definition && isConstantLevel(definition, environment)) {
+      throw new TlaConfigError(`The post condition ${postcondition.name} cannot be a constant`);
+    }
+    const failure = getConstantError(
+      postcondition.expression,
+      environment,
+      `postcondition ${postcondition.name}`,
+    );
+    if (failure) return { name: postcondition.name, trace: [], message: failure.message };
   }
   return undefined;
 };
@@ -619,5 +640,8 @@ export const check = (options: CheckOptions): CheckResult => {
     });
   }
 
+  const postconditionViolation = findPostconditionViolation(config.postconditions, environment);
+  if (postconditionViolation)
+    return createResult("postcondition-violation", postconditionViolation);
   return createResult("success");
 };

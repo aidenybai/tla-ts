@@ -25,7 +25,7 @@ result.status; // "invariant-violation"
 ```
 
 > [!WARNING]
-> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `VIEW`, `POSTCONDITION`, `TLCGet("spec")`, `TLCGet("revision")`, and the Bags and Reals modules.
+> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `VIEW`, `TLCGet("spec")`, `TLCGet("revision")`, and the Bags and Reals modules.
 
 ## Install
 
@@ -42,13 +42,13 @@ npx tla-ts Spec.tla -config Other.cfg -deadlock
 
 Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` turns off deadlock checking. Output and exit codes follow TLC:
 
-| Exit code | Meaning                      |
-| --------: | ---------------------------- |
-|         0 | No error found               |
-|        10 | An assumption is false       |
-|        11 | Deadlock                     |
-|        12 | Invariant or property broken |
-|        13 | Liveness violation           |
+| Exit code | Meaning                                 |
+| --------: | --------------------------------------- |
+|         0 | No error found                          |
+|        10 | An assumption or postcondition is false |
+|        11 | Deadlock                                |
+|        12 | Invariant or property broken            |
+|        13 | Liveness violation                      |
 
 ## API reference
 
@@ -74,13 +74,13 @@ Options:
 - `loadModule`: maps a module name to its source, for modules other than the standard modules
 - `onPrint`: receives the output of `Print` and `PrintT`, which defaults to `console.log`
 
-The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `depth`. `status` is `"success"`, `"assumption-violation"`, `"invariant-violation"`, `"property-violation"`, `"liveness-violation"`, or `"deadlock"`. `violation` holds the name of what failed and the trace that reaches it. For a liveness violation, `violation.loopStart` is the trace index where the lasso loops back.
+The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `depth`. `status` is `"success"`, `"assumption-violation"`, `"invariant-violation"`, `"property-violation"`, `"liveness-violation"`, `"deadlock"`, or `"postcondition-violation"`. `violation` holds the name of what failed and the trace that reaches it. For a liveness violation, `violation.loopStart` is the trace index where the lasso loops back.
 
 `check` supports:
 
 - **Standard modules**: Naturals, Integers, Sequences, FiniteSets, and TLC
 - **Modules**: `EXTENDS`, nested modules, and `INSTANCE` with `WITH` substitutions, `LAMBDA` substitutions for operator parameters, named instances, parameterized instances, and instances inside `LET`
-- **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, and `CHECK_DEADLOCK`
+- **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `POSTCONDITIONS`, `SYMMETRY`, and `CHECK_DEADLOCK`
 - **Properties**: invariants, `[][A]_v`, and every temporal formula TLC accepts, checked through TLC's tableau construction under the fairness and temporal conjuncts of the specification
 - **Subexpression references**: selectors such as `F(2)!3`, `Op!<<`, `Op!>>`, `Op!:`, `Op!@`, and `Op!(x)`, labels such as `Op!lab`, and names of `THEOREM` formulas
 - **TLC semantics**: 32-bit integer overflow errors, `ENABLED`, and TLC's enumeration order for `CHOOSE` and quantifiers

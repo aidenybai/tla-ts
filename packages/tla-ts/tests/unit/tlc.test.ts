@@ -5,8 +5,13 @@ import { check, formatValue, parseConfig, TlaConfigError, TlaUnsupportedError } 
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
-const checkFixture = (directory: string, name: string, onPrint?: (text: string) => void) => {
-  const config = parseConfig(readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"));
+const checkFixture = (
+  directory: string,
+  name: string,
+  configName = name,
+  onPrint?: (text: string) => void,
+) => {
+  const config = parseConfig(readFileSync(join(FIXTURES, directory, `${configName}.cfg`), "utf8"));
   config.checkDeadlock = false;
   return check({
     source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
@@ -50,7 +55,9 @@ describe("TLCGet and TLCSet match TLC", () => {
 
   it("keeps a register set by the initial predicate", () => {
     const printed: string[] = [];
-    const result = checkFixture("tlc-set-init", "TLCSetInit", (text) => printed.push(text));
+    const result = checkFixture("tlc-set-init", "TLCSetInit", "TLCSetInit", (text) =>
+      printed.push(text),
+    );
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([10, 10, 10]);
     expect(printed).toEqual(Array.from({ length: 9 }, () => '"TLCSet works."'));
@@ -129,4 +136,55 @@ describe("TLCGet and TLCSet match TLC", () => {
       expect(() => checkModule(`ASSUME ${expression}`)).toThrow(TlaUnsupportedError);
     },
   );
+});
+
+describe("POSTCONDITION matches TLC", () => {
+  it.each([
+    ["tlc-set", "TLCSet", "TLCSetPost", [4225, 4225, 4225]],
+    ["post-conditions", "PostConditionsTest", "PostConditionsTest", [4, 4, 4]],
+    ["tlc-get-all", "TLCGetAll", "TLCGetAll", [10101, 101, 2]],
+  ])("holds after checking %s/%s.cfg", (directory, name, configName, counts) => {
+    const result = checkFixture(directory, name, configName);
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual(counts);
+  });
+
+  it.each([
+    ["post-conditions", "PostConditionsTest", "PostConditionsFailTest", "PostFail", [4, 4, 4]],
+    ["test2", "Test2", "Test2PostCondition", "PostConditionViolated", [6, 5, 5]],
+  ])("fails after checking %s/%s.cfg", (directory, name, configName, postcondition, counts) => {
+    const result = checkFixture(directory, name, configName);
+    expect(result.status).toBe("postcondition-violation");
+    expect(result.violation?.name).toBe(postcondition);
+    expect(result.violation?.message).toBeUndefined();
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual(counts);
+  });
+
+  it("reads registers that an earlier postcondition sets", () => {
+    const result = checkModule(
+      'Post == TLCSet(100, TLCGet("generated"))\nCheck == TLCGet(100) = 6 /\\ TLCGet("distinct") = 5 /\\ TLCGet("queue") = 0 /\\ TLCGet("level") = 0',
+      "INIT Init\nNEXT Next\nPOSTCONDITIONS Post Check",
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it("reports a postcondition that fails to evaluate", () => {
+    const result = checkModule("Post == x = 0", "INIT Init\nNEXT Next\nPOSTCONDITION Post");
+    expect(result.status).toBe("postcondition-violation");
+    expect(result.violation?.message).toMatch(/^The variable x is not assigned/);
+  });
+
+  it("skips postconditions after a violation", () => {
+    const result = checkModule(
+      'Inv == x < 1\nPost == TLCGet("distinct") = 0',
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post",
+    );
+    expect(result.status).toBe("invariant-violation");
+  });
+
+  it("rejects a constant postcondition", () => {
+    expect(() => checkModule("Post == FALSE", "INIT Init\nNEXT Next\nPOSTCONDITION Post")).toThrow(
+      TlaConfigError,
+    );
+  });
 });
