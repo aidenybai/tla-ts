@@ -1,5 +1,5 @@
 import type { Definition, Expression } from "./ast";
-import { TlaEvaluationError } from "./errors";
+import { TlaConfigError, TlaEvaluationError } from "./errors";
 import {
   bindDefinitions,
   bindOperatorArguments,
@@ -202,20 +202,31 @@ export const expandTemporal = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
+  expanding = new Set<Definition>(),
 ): ScopedExpression[] => {
   if (expression.kind === "And") {
-    return expression.operands.flatMap((operand) => expandTemporal(operand, scope, environment));
+    return expression.operands.flatMap((operand) =>
+      expandTemporal(operand, scope, environment, expanding),
+    );
   }
   if (expression.kind === "Identifier") {
     const binding = isLocallyResolved(expression) ? lookupScope(scope, expression.name) : undefined;
     if (binding?.kind === "Thunk") {
-      return expandTemporal(binding.expression, binding.scope, environment);
+      return expandTemporal(binding.expression, binding.scope, environment, expanding);
     }
     const definition = environment.constants.has(expression.name)
       ? undefined
       : getDefinition(expression.name, environment);
     if (!binding && definition?.kind === "Operator" && definition.params.length === 0) {
-      return expandTemporal(definition.body, undefined, environment);
+      if (expanding.has(definition)) {
+        throw new TlaConfigError(`The definition of ${expression.name} refers to itself`);
+      }
+      return expandTemporal(
+        definition.body,
+        undefined,
+        environment,
+        new Set([...expanding, definition]),
+      );
     }
   }
   const context = getConstantContext(environment, scope);
@@ -229,6 +240,7 @@ export const expandTemporal = (
         operator.body,
         bindOperatorArguments(operator, expression.args, context),
         environment,
+        expanding,
       );
     }
   }
@@ -239,7 +251,7 @@ export const expandTemporal = (
   if (expression.kind === "Forall" && isUnrolled) {
     const expanded: ScopedExpression[] = [];
     forEachBinding(expression.bounds, context, (boundScope) => {
-      expanded.push(...expandTemporal(expression.body, boundScope, environment));
+      expanded.push(...expandTemporal(expression.body, boundScope, environment, expanding));
       return false;
     });
     return expanded;
