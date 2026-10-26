@@ -8,6 +8,7 @@ import {
   expectBoolean,
   getChildren,
   getDefinition,
+  isConstantLevel,
   type Context,
   type Environment,
   type Scope,
@@ -138,6 +139,20 @@ const getConjuncts = (expression: Expression, environment: Environment): Express
   return [expression];
 };
 
+// TLC replaces each constant definition without parameters by its value at startup, so it rejects
+// one named as the initial predicate or the next-state action unless evaluating it fails.
+const expectNotConstant = (name: string, description: string, environment: Environment) => {
+  const definition = getDefinition(name, environment);
+  if (!definition || !isConstantLevel(definition, environment)) return;
+  try {
+    evaluate(definition.body, getContext(environment, undefined, undefined));
+  } catch (error) {
+    if (error instanceof TlaEvaluationError) return;
+    throw error;
+  }
+  throw new TlaConfigError(`The ${description} ${name} cannot be a constant.`);
+};
+
 export const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
   if (config.specification === undefined) {
     if (config.init === undefined)
@@ -148,6 +163,8 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
       throw new TlaConfigError("The configuration does not specify NEXT");
     getDefinitionBody(config.init, environment);
     getDefinitionBody(config.next, environment);
+    expectNotConstant(config.init, "initial predicate", environment);
+    expectNotConstant(config.next, "next state action", environment);
     return {
       init: createIdentifier(config.init),
       next: createIdentifier(config.next),

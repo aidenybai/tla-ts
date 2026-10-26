@@ -174,6 +174,31 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("prints empty intervals and keys that are not field names like TLC", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME PrintT(0..-2)\nASSUME PrintT(("<<>>" :> 0) @@ ("a b" :> 1))\nASSUME PrintT(("x1" :> 2) @@ ("y" :> 3))\nInit == x = 0\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["{}", '("<<>>" :> 0 @@ "a b" :> 1)', "[x1 |-> 2, y |-> 3]"]);
+  });
+
+  it("rejects an initial predicate or next-state action that is a constant like TLC", async () => {
+    const getError = (init: string, next: string) =>
+      check({
+        source: `---- MODULE M ----\nVARIABLE x\nInit == ${init}\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      }).catch((error: Error) => error.message);
+    expect(await getError("TRUE", "x' = x")).toBe(
+      "The initial predicate Init cannot be a constant.",
+    );
+    expect(await getError("x = 0", "TRUE")).toBe(
+      "The next state action Next cannot be a constant.",
+    );
+  });
+
   it("bundles the Reals module, whose Real is not a set TLC can check", async () => {
     const result = await check({
       source:

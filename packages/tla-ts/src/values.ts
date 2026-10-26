@@ -1051,6 +1051,20 @@ const formatLazySet = (
   }
 };
 
+// FcnRcdValue#isName: TLC prints a function as a record when every key could be a field name.
+const isTlcName = (text: string) => {
+  const state = { hasLetter: false };
+  for (const character of text) {
+    if (character === "_") continue;
+    const isLetter = character.toLowerCase() !== character.toUpperCase();
+    if (!isLetter && (character < "0" || character > "9")) return false;
+    state.hasLetter ||= isLetter;
+  }
+  return (
+    state.hasLetter && (text.length < 4 || (!text.startsWith("WF_") && !text.startsWith("SF_")))
+  );
+};
+
 export const formatValue = (value: Value, isExpanded = false): string => {
   const format = (inner: Value) => formatValue(inner, isExpanded);
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
@@ -1062,7 +1076,7 @@ export const formatValue = (value: Value, isExpanded = false): string => {
     case "Set":
       return `{${value.elements.map(format).join(", ")}}`;
     case "Interval":
-      return `${value.low}..${value.high}`;
+      return value.low > value.high ? "{}" : `${value.low}..${value.high}`;
     case "InfiniteSet":
       return value.name === "Any" ? "ANY" : value.name;
     case "Subset":
@@ -1084,7 +1098,7 @@ export const formatValue = (value: Value, isExpanded = false): string => {
       if (fn.domain.every((key, index) => key === index + 1)) {
         return `<<${fn.range.map(format).join(", ")}>>`;
       }
-      if (fn.domain.every((key) => typeof key === "string" && key.length > 0)) {
+      if (fn.domain.every((key) => typeof key === "string" && isTlcName(key))) {
         return `[${fn.domain.map((key, index) => `${String(key)} |-> ${format(fn.range[index])}`).join(", ")}]`;
       }
       return `(${fn.domain.map((key, index) => `${format(key)} :> ${format(fn.range[index])}`).join(" @@ ")})`;
