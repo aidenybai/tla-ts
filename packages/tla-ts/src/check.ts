@@ -36,6 +36,7 @@ export interface CheckOptions {
   onPrint?: (text: string) => void;
   readFile?: (path: string) => string | undefined;
   writeFile?: (path: string, content: string) => void;
+  workers?: number;
 }
 
 export type CheckStatus =
@@ -457,7 +458,7 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
   };
 };
 
-export const check = (options: CheckOptions): CheckResult => {
+export const checkSequentially = (options: CheckOptions): CheckResult => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   const print = options.onPrint ?? console.log;
   const specification = createEnvironment(parseModule(options.source), config, {

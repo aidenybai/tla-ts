@@ -26,8 +26,8 @@ const TLC_VERDICTS: [string, string][] = [
 ];
 
 describe("liveness matches TLC", () => {
-  it.each(TLC_VERDICTS)("%s is %s", (name, status) => {
-    const result = check({
+  it.each(TLC_VERDICTS)("%s is %s", async (name, status) => {
+    const result = await check({
       source: SOURCE,
       config: readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"),
     });
@@ -35,8 +35,8 @@ describe("liveness matches TLC", () => {
     expect([result.generatedStates, result.distinctStates]).toEqual([92, 36]);
   });
 
-  it("reports a lasso whose cycle returns to an earlier state", () => {
-    const result = check({
+  it("reports a lasso whose cycle returns to an earlier state", async () => {
+    const result = await check({
       source: SOURCE,
       config: readFileSync(join(DIRECTORY, "Unfair-ReachesLimit.cfg"), "utf8"),
     });

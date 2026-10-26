@@ -15,21 +15,23 @@ const checkSubexpressions = (source: string, configName: string) =>
   });
 
 describe("subexpression references match TLC", () => {
-  it("selects operands, bound bodies, labels, LET definitions, and instance operators", () => {
-    const result = checkSubexpressions(SOURCE, "Subexpressions.cfg");
+  it("selects operands, bound bodies, labels, LET definitions, and instance operators", async () => {
+    const result = await checkSubexpressions(SOURCE, "Subexpressions.cfg");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([5, 4, 4]);
   });
 
-  it("reports violations of labeled subexpressions", () => {
-    const result = checkSubexpressions(SOURCE, "Violation.cfg");
+  it("reports violations of labeled subexpressions", async () => {
+    const result = await checkSubexpressions(SOURCE, "Violation.cfg");
     expect(result.status).toBe("invariant-violation");
     expect(result.violation?.name).toBe("Broken");
     expect(result.violation?.trace).toHaveLength(4);
   });
 
-  it("rejects an assumption whose selected operand differs", () => {
+  it("rejects an assumption whose selected operand differs", async () => {
     const source = SOURCE.replace("ASSUME A!Double(4)!1!<< = 4", "ASSUME A!Double(4)!1!<< = 8");
-    expect(checkSubexpressions(source, "Subexpressions.cfg").status).toBe("assumption-violation");
+    expect((await checkSubexpressions(source, "Subexpressions.cfg")).status).toBe(
+      "assumption-violation",
+    );
   });
 });
