@@ -35,8 +35,6 @@ npm install tla-ts
 
 ## Usage
 
-### Command line
-
 ```shell
 npx tla-ts Spec.tla
 npx tla-ts Spec.tla -config Other.cfg -deadlock
@@ -52,25 +50,83 @@ Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` tu
 |        12 | Invariant or property broken |
 |        13 | Liveness violation           |
 
-### API
+## API reference
 
-`check` returns `status`, `violation` with its trace, and the `generatedStates`, `distinctStates`, and `depth` counts. To extend modules other than the standard modules, pass `loadModule`, which maps a module name to its source.
+### `check`
 
-| Export        | Purpose                                                                             |
-| ------------- | ----------------------------------------------------------------------------------- |
-| `check`       | Checks a spec against a TLC configuration                                           |
-| `parseModule` | Parses a TLA+ module                                                                |
-| `parseConfig` | Parses a TLC configuration file                                                     |
-| `formatValue` | Prints a value in TLA+ syntax                                                       |
-| `TlaError`    | Base class of the syntax, configuration, evaluation, and unsupported-feature errors |
+Checks a spec against a TLC configuration and returns the result. It explores every reachable state breadth-first, as TLC does.
 
-## Supported features
+```ts
+import { check } from "tla-ts";
+
+const result = check({
+  source: specSource,
+  config: configSource,
+  loadModule: (name) => modules[name],
+  onPrint: (text) => console.log(text),
+});
+```
+
+Options:
+
+- `source`: the TLA+ module to check
+- `config`: a TLC configuration, as source text or as the result of `parseConfig`
+- `loadModule`: maps a module name to its source, for modules other than the standard modules
+- `onPrint`: receives the output of `Print` and `PrintT`, which defaults to `console.log`
+
+The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `depth`. `status` is `"success"`, `"assumption-violation"`, `"invariant-violation"`, `"property-violation"`, `"liveness-violation"`, or `"deadlock"`. `violation` holds the name of what failed and the trace that reaches it. For a liveness violation, `violation.loopStart` is the trace index where the lasso loops back.
+
+`check` supports:
 
 - **Standard modules**: Naturals, Integers, Sequences, FiniteSets, and TLC
 - **Modules**: `EXTENDS`, and `INSTANCE` with `WITH` substitutions, named instances, and parameterized instances
 - **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, and `CHECK_DEADLOCK`
 - **Properties**: invariants, `[][A]_v`, and the liveness forms `<>P`, `[]<>P`, `<>[]P`, `P ~> Q`, `<><<A>>_v`, and `[]<><<A>>_v` under `WF` and `SF` fairness
 - **TLC semantics**: 32-bit integer overflow errors, `ENABLED`, and TLC's enumeration order for `CHOOSE` and quantifiers
+
+### `parseModule`
+
+Parses a TLA+ module into its syntax tree. Throws `TlaSyntaxError` on invalid input.
+
+```ts
+import { parseModule } from "tla-ts";
+
+const module = parseModule(specSource);
+module.name; // "Counter"
+```
+
+### `parseConfig`
+
+Parses a TLC configuration file into a `ModelConfig`. Pass the result to `check` to change it before checking.
+
+```ts
+import { check, parseConfig } from "tla-ts";
+
+const config = parseConfig(configSource);
+config.checkDeadlock = false;
+check({ source: specSource, config });
+```
+
+### `formatValue`
+
+Prints a value in TLA+ syntax, as TLC prints it in traces.
+
+```ts
+import { formatValue } from "tla-ts";
+
+result.violation?.trace.forEach((step) => {
+  Object.entries(step.state).forEach(([name, value]) => console.log(name, formatValue(value)));
+});
+```
+
+### Errors
+
+Every error extends `TlaError`:
+
+- `TlaSyntaxError`: the module does not parse
+- `TlaConfigError`: the configuration is invalid or refers to an unknown name
+- `TlaEvaluationError`: evaluation failed, as when TLC reports an error
+- `TlaUnsupportedError`: the spec uses a feature tla-ts does not support yet
 
 ## Benchmarks
 
