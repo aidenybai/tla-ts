@@ -104,7 +104,7 @@ export const createEnvironment = (
     }
   });
 
-  const environment = {
+  const environment: Environment = {
     definitions,
     builtins,
     constants,
@@ -113,6 +113,7 @@ export const createEnvironment = (
     variableIndex: new Map(variables.map((name, index) => [name, index])),
     definitionValues: new Map(),
     constantLevels: new Map(),
+    evaluators: new WeakMap(),
   };
   substitutions.forEach((target, name) => {
     const definition = definitions.get(target);

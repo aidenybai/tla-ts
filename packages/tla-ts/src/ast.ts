@@ -1,4 +1,6 @@
-import type { GlobalName, GlobalOperator } from "./evaluate";
+export interface LocalResolution {
+  kind: "Local";
+}
 
 export interface SourceLocation {
   line: number;
@@ -21,7 +23,7 @@ export interface IdentifierExpression {
   kind: "Identifier";
   name: string;
   location: SourceLocation;
-  resolution?: GlobalName;
+  resolution?: LocalResolution;
 }
 
 export interface ApplyExpression {
@@ -29,7 +31,7 @@ export interface ApplyExpression {
   operator: string;
   args: Expression[];
   location: SourceLocation;
-  resolution?: GlobalOperator;
+  resolution?: LocalResolution;
 }
 
 export interface OperatorReferenceExpression {

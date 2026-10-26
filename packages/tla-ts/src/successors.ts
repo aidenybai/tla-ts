@@ -5,6 +5,7 @@ import {
   bindDefinitions,
   bindOperatorArguments,
   bindValue,
+  compileArgumentScope,
   evaluate,
   expectBoolean,
   forEachBinding,
@@ -12,6 +13,8 @@ import {
   getDefinition,
   lookupScope,
   resolveApplyOperator,
+  resolveGlobalOperator,
+  isLocallyResolved,
   type Context,
   type Environment,
   type Scope,
@@ -32,90 +35,366 @@ export interface Successor {
   action: string | undefined;
 }
 
-interface Label {
-  name: string | undefined;
-  isFixed: boolean;
-}
-
-interface Exploration {
+interface Run {
   environment: Environment;
   isInit: boolean;
   current: Value[] | undefined;
 }
 
-interface FunctionLambda {
+type Continuation = (partial: State, action: string | undefined) => void;
+
+type Runner = (
+  run: Run,
+  scope: Scope | undefined,
+  partial: State,
+  action: string | undefined,
+  isFixed: boolean,
+  onComplete: Continuation,
+) => void;
+
+type Conjunct = { expression: Expression } & (
+  | { kind: "Guard" }
+  | { kind: "Assign"; index: number; value: Expression }
+  | { kind: "Unchanged"; indices: number[] }
+  | { kind: "Branch"; runner: Runner }
+);
+
+const initRunners = new WeakMap<Expression, Runner>();
+const nextRunners = new WeakMap<Expression, Runner>();
+
+const describeLocation = (expression: Expression) =>
+  `line ${expression.location.line}, column ${expression.location.column}`;
+
+const getContext = (run: Run, scope: Scope | undefined, partial: State): Context =>
+  run.isInit
+    ? { environment: run.environment, scope, state: partial, next: undefined }
+    : { environment: run.environment, scope, state: run.current, next: partial };
+
+const assign = (partial: State, index: number, value: Value) => {
+  const copy = partial.slice();
+  copy[index] = value;
+  return copy;
+};
+
+const holds = (expression: Expression, context: Context) => {
+  const value = evaluate(expression, context);
+  if (typeof value === "boolean") return value;
+  return expectBoolean(value, `the action at ${describeLocation(expression)}`);
+};
+
+const getRunner = (expression: Expression, environment: Environment, isInit: boolean): Runner => {
+  const runners = isInit ? initRunners : nextRunners;
+  const cached = runners.get(expression);
+  if (cached) return cached;
+  const runner = compileAction(expression, environment, isInit);
+  runners.set(expression, runner);
+  return runner;
+};
+
+const getZeroArityBody = (name: string, environment: Environment) => {
+  if (environment.constants.has(name)) return undefined;
+  const definition = getDefinition(name, environment);
+  return definition?.kind === "Operator" && definition.params.length === 0 ? definition : undefined;
+};
+
+const getStaticVariableIndex = (
+  expression: Expression,
+  environment: Environment,
+  isPrimed: boolean,
+  visited = new Set<string>(),
+): number | undefined => {
+  if (expression.kind === "Prime" && isPrimed) {
+    return getStaticVariableIndex(expression.expression, environment, false, visited);
+  }
+  if (expression.kind !== "Identifier" || isLocallyResolved(expression)) return undefined;
+  const index = environment.variableIndex.get(expression.name);
+  if (index !== undefined) return isPrimed ? undefined : index;
+  const definition = getZeroArityBody(expression.name, environment);
+  if (!definition || visited.has(definition.name)) return undefined;
+  visited.add(definition.name);
+  return getStaticVariableIndex(definition.body, environment, isPrimed, visited);
+};
+
+const getAssignableIndex = (target: Expression, environment: Environment, isInit: boolean) =>
+  getStaticVariableIndex(target, environment, !isInit);
+
+const getRuntimeVariableIndex = (
+  expression: Expression,
+  scope: Scope | undefined,
+  partial: State,
+  run: Run,
+  isPrimed: boolean,
+): number | undefined => {
+  if (expression.kind === "Prime" && isPrimed) {
+    return getRuntimeVariableIndex(expression.expression, scope, partial, run, false);
+  }
+  if (expression.kind === "Let") {
+    const letScope = bindDefinitions(expression.definitions, getContext(run, scope, partial));
+    return getRuntimeVariableIndex(expression.body, letScope, partial, run, isPrimed);
+  }
+  if (expression.kind !== "Identifier") return undefined;
+  const binding = lookupScope(scope, expression.name);
+  if (binding?.kind === "Thunk") {
+    return getRuntimeVariableIndex(binding.expression, binding.scope, partial, run, isPrimed);
+  }
+  if (binding) return undefined;
+  const index = run.environment.variableIndex.get(expression.name);
+  if (index !== undefined) return isPrimed ? undefined : index;
+  const definition = getZeroArityBody(expression.name, run.environment);
+  if (!definition) return undefined;
+  return getRuntimeVariableIndex(definition.body, undefined, partial, run, isPrimed);
+};
+
+const isPossiblyAssignable = (target: Expression, isInit: boolean) =>
+  isInit ? target.kind === "Identifier" || target.kind === "Let" : target.kind === "Prime";
+
+const getUnchangedIndices = (
+  expression: Expression,
+  environment: Environment,
+  visited = new Set<string>(),
+): number[] | undefined => {
+  if (expression.kind === "Tuple") {
+    const indices = expression.elements.map((element) =>
+      getUnchangedIndices(element, environment, visited),
+    );
+    return indices.every((item) => item !== undefined) ? indices.flat() : undefined;
+  }
+  if (expression.kind !== "Identifier" || visited.has(expression.name)) return undefined;
+  const index = environment.variableIndex.get(expression.name);
+  if (index !== undefined) return [index];
+  const definition = getZeroArityBody(expression.name, environment);
+  if (!definition) return undefined;
+  visited.add(expression.name);
+  return getUnchangedIndices(definition.body, environment, visited);
+};
+
+const ACTION_KINDS = new Set([
+  "And",
+  "Or",
+  "Exists",
+  "Forall",
+  "If",
+  "Case",
+  "Let",
+  "Unchanged",
+  "BoxAction",
+  "AngleAction",
+  "FunctionApplication",
+]);
+
+const isGuard = (expression: Expression, environment: Environment, isInit: boolean): boolean => {
+  if (ACTION_KINDS.has(expression.kind)) return false;
+  if (expression.kind === "Identifier") {
+    if (
+      environment.variableIndex.has(expression.name) ||
+      environment.constants.has(expression.name)
+    ) {
+      return true;
+    }
+    return false;
+  }
+  if (expression.kind !== "Apply") return true;
+  if (expression.operator === "=>") return false;
+  if (expression.operator === "=" || expression.operator === "\\in") {
+    if (isPossiblyAssignable(expression.args[0], isInit)) return false;
+    if (getAssignableIndex(expression.args[0], environment, isInit) !== undefined) return false;
+  }
+  if (isLocallyResolved(expression)) return false;
+  const definition = environment.definitions.get(
+    environment.substitutions.get(expression.operator) ?? expression.operator,
+  );
+  return definition === undefined && environment.builtins.has(expression.operator);
+};
+
+const toConjunct = (
+  expression: Expression,
+  environment: Environment,
+  isInit: boolean,
+): Conjunct => {
+  if (expression.kind === "Apply" && expression.operator === "=") {
+    const index = getAssignableIndex(expression.args[0], environment, isInit);
+    if (index !== undefined) {
+      return { kind: "Assign", expression, index, value: expression.args[1] };
+    }
+  }
+  if (!isInit && expression.kind === "Unchanged") {
+    const indices = getUnchangedIndices(expression.expression, environment);
+    if (indices) return { kind: "Unchanged", expression, indices };
+  }
+  if (isGuard(expression, environment, isInit)) return { kind: "Guard", expression };
+  return { kind: "Branch", expression, runner: getRunner(expression, environment, isInit) };
+};
+
+const compileConjunction = (
+  operands: Expression[],
+  environment: Environment,
+  isInit: boolean,
+): Runner => {
+  const conjuncts = operands.map((operand) => toConjunct(operand, environment, isInit));
+  const runFrom = (
+    start: number,
+    run: Run,
+    scope: Scope | undefined,
+    partial: State,
+    action: string | undefined,
+    onComplete: Continuation,
+  ): void => {
+    let current = partial;
+    let context: Context | undefined;
+    for (let index = start; index < conjuncts.length; index++) {
+      if (index > 0 && run.isInit && isComplete(current)) {
+        context ??= getContext(run, scope, current);
+        for (let rest = index; rest < conjuncts.length; rest++) {
+          if (!holdsInInit(conjuncts[rest].expression, context)) return;
+        }
+        onComplete(current, action);
+        return;
+      }
+      const conjunct = conjuncts[index];
+      if (conjunct.kind === "Guard") {
+        context ??= getContext(run, scope, current);
+        if (!holds(conjunct.expression, context)) return;
+        continue;
+      }
+      if (conjunct.kind === "Assign") {
+        context ??= getContext(run, scope, current);
+        const value = evaluate(conjunct.value, context);
+        const assigned = current[conjunct.index];
+        if (assigned === undefined) {
+          current = assign(current, conjunct.index, value);
+          context = undefined;
+        } else if (!valuesEqual(assigned, value)) {
+          return;
+        }
+        continue;
+      }
+      if (conjunct.kind === "Unchanged") {
+        const state = run.current;
+        if (!state) return;
+        for (const variable of conjunct.indices) {
+          const assigned = current[variable];
+          if (assigned === undefined) {
+            current = assign(current, variable, state[variable]);
+            context = undefined;
+          } else if (!valuesEqual(assigned, state[variable])) {
+            return;
+          }
+        }
+        continue;
+      }
+      const next = index + 1;
+      conjunct.runner(run, scope, current, action, true, (nextPartial, nextAction) =>
+        runFrom(next, run, scope, nextPartial, nextAction, onComplete),
+      );
+      return;
+    }
+    onComplete(current, action);
+  };
+  return (run, scope, partial, action, _isFixed, onComplete) =>
+    runFrom(0, run, scope, partial, action, onComplete);
+};
+
+const holdsInInit = (expression: Expression, context: Context) =>
+  expectBoolean(
+    evaluate(expression, context),
+    `the initial predicate at ${describeLocation(expression)}`,
+  );
+
+const compileGuard =
+  (expression: Expression): Runner =>
+  (run, scope, partial, action, _isFixed, onComplete) => {
+    if (holds(expression, getContext(run, scope, partial))) onComplete(partial, action);
+  };
+
+const compileMembership = (
+  expression: Expression & { kind: "Apply" },
+  getIndex: (run: Run, scope: Scope | undefined, partial: State) => number,
+): Runner => {
+  const set = expression.args[1];
+  return (run, scope, partial, action, _isFixed, onComplete) => {
+    const index = getIndex(run, scope, partial);
+    const context = getContext(run, scope, partial);
+    if (partial[index] !== undefined) {
+      if (holds(expression, context)) onComplete(partial, action);
+      return;
+    }
+    const value = evaluate(set, context);
+    if (!isEnumerable(value)) {
+      throw new TlaEvaluationError(
+        `In computing next states, the right side of \\in is not enumerable: ${formatValue(value)} at ${describeLocation(expression)}`,
+      );
+    }
+    const elements = toFiniteSet(value).elements;
+    for (let position = 0; position < elements.length; position++) {
+      onComplete(assign(partial, index, elements[position]), action);
+    }
+  };
+};
+
+const unchangedWrappers = new WeakMap<Expression, Expression>();
+
+const getUnchangedWrapper = (expression: Expression): Expression => {
+  const cached = unchangedWrappers.get(expression);
+  if (cached) return cached;
+  const wrapper: Expression =
+    expression.kind === "Tuple"
+      ? {
+          kind: "And",
+          operands: expression.elements.map(getUnchangedWrapper),
+          location: expression.location,
+        }
+      : { kind: "Unchanged", expression, location: expression.location };
+  unchangedWrappers.set(expression, wrapper);
+  return wrapper;
+};
+
+const compileDynamicAssignment = (
+  expression: Expression & { kind: "Apply" },
+  isInit: boolean,
+): Runner => {
+  const target = expression.args[0];
+  const guard = compileGuard(expression);
+  const getIndex = (run: Run, scope: Scope | undefined, partial: State) =>
+    getRuntimeVariableIndex(target, scope, partial, run, !isInit) ?? -1;
+  const membership = compileMembership(expression, getIndex);
+  return (run, scope, partial, action, isFixed, onComplete) => {
+    const index = getIndex(run, scope, partial);
+    if (index === -1 || partial[index] !== undefined) {
+      guard(run, scope, partial, action, isFixed, onComplete);
+      return;
+    }
+    if (expression.operator === "\\in") {
+      membership(run, scope, partial, action, isFixed, onComplete);
+      return;
+    }
+    const value = evaluate(expression.args[1], getContext(run, scope, partial));
+    onComplete(assign(partial, index, value), action);
+  };
+};
+
+interface FunctionAction {
   bounds: Bound[];
   body: Expression;
   scope: Scope | undefined;
 }
 
-type Continuation = (partial: State, label: Label) => void;
-
-const getContext = (exploration: Exploration, scope: Scope | undefined, partial: State): Context =>
-  exploration.isInit
-    ? { environment: exploration.environment, scope, state: partial, next: undefined }
-    : { environment: exploration.environment, scope, state: exploration.current, next: partial };
-
-const nameAction = (label: Label, name: string): Label =>
-  label.isFixed ? label : { name, isFixed: false };
-
-const fixLabel = (label: Label): Label => (label.isFixed ? label : { ...label, isFixed: true });
-
-const assign = (partial: State, index: number, value: Value) => {
-  const copy = [...partial];
-  copy[index] = value;
-  return copy;
-};
-
-const getVariableIndex = (
+const getFunctionAction = (
   expression: Expression,
   scope: Scope | undefined,
   partial: State,
-  exploration: Exploration,
-  isPrimed: boolean,
-): number | undefined => {
-  if (expression.kind === "Prime" && isPrimed)
-    return getVariableIndex(expression.expression, scope, partial, exploration, false);
-  if (expression.kind === "Let") {
-    const letScope = bindDefinitions(
-      expression.definitions,
-      getContext(exploration, scope, partial),
-    );
-    return getVariableIndex(expression.body, letScope, partial, exploration, isPrimed);
+  run: Run,
+): FunctionAction | undefined => {
+  if (expression.kind === "FunctionConstruction") {
+    return { bounds: expression.bounds, body: expression.body, scope };
   }
   if (expression.kind !== "Identifier") return undefined;
   const binding = lookupScope(scope, expression.name);
-  if (binding?.kind === "Thunk")
-    return getVariableIndex(binding.expression, binding.scope, partial, exploration, isPrimed);
-  if (binding) return undefined;
-  const environment = exploration.environment;
-  const index = environment.variableIndex.get(expression.name);
-  if (index !== undefined) return isPrimed ? undefined : index;
-  const definition = getDefinition(expression.name, environment);
-  if (
-    definition?.kind !== "Operator" ||
-    definition.params.length > 0 ||
-    environment.constants.has(expression.name)
-  )
-    return undefined;
-  return getVariableIndex(definition.body, undefined, partial, exploration, isPrimed);
-};
-
-const getFunctionLambda = (
-  expression: Expression,
-  scope: Scope | undefined,
-  partial: State,
-  exploration: Exploration,
-): FunctionLambda | undefined => {
-  if (expression.kind === "FunctionConstruction")
-    return { bounds: expression.bounds, body: expression.body, scope };
-  if (expression.kind !== "Identifier") return undefined;
-  const binding = lookupScope(scope, expression.name);
-  if (binding?.kind === "Thunk")
-    return getFunctionLambda(binding.expression, binding.scope, partial, exploration);
-  const definition = binding ? undefined : getDefinition(expression.name, exploration.environment);
+  if (binding?.kind === "Thunk") {
+    return getFunctionAction(binding.expression, binding.scope, partial, run);
+  }
+  const definition = binding ? undefined : getDefinition(expression.name, run.environment);
   if (definition?.kind !== "Function") return undefined;
-  const self = evaluate(expression, getContext(exploration, undefined, partial));
+  const self = evaluate(expression, getContext(run, undefined, partial));
   return {
     bounds: definition.bounds,
     body: definition.body,
@@ -123,370 +402,366 @@ const getFunctionLambda = (
   };
 };
 
-const describeLocation = (expression: Expression) =>
-  `line ${expression.location.line}, column ${expression.location.column}`;
+const compileFunctionAction = (
+  expression: Expression & { kind: "FunctionApplication" },
+  environment: Environment,
+  isInit: boolean,
+): Runner => {
+  const guard = compileGuard(expression);
+  return (run, scope, partial, action, isFixed, onComplete) => {
+    const lambda = getFunctionAction(expression.function, scope, partial, run);
+    if (!lambda) {
+      guard(run, scope, partial, action, isFixed, onComplete);
+      return;
+    }
+    const context = getContext(run, scope, partial);
+    const args = expression.args.map((arg) => evaluate(arg, context));
+    const argument = args.length === 1 ? args[0] : createTuple(args);
+    const domain = getBoundsDomain(lambda.bounds, getContext(run, lambda.scope, partial));
+    if (!isElementOf(argument, domain)) {
+      throw new TlaEvaluationError(
+        `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain at ${describeLocation(expression)}`,
+      );
+    }
+    getRunner(lambda.body, environment, isInit)(
+      run,
+      bindArgument(lambda.bounds, lambda.scope, argument),
+      partial,
+      action,
+      isFixed,
+      onComplete,
+    );
+  };
+};
 
-const exploreGuard = (
+const compileUnchanged = (expression: Expression, environment: Environment): Runner => {
+  const indices = getUnchangedIndices(expression, environment);
+  if (indices) return compileConjunction([getUnchangedWrapper(expression)], environment, false);
+  if (expression.kind === "Tuple")
+    return getRunner(getUnchangedWrapper(expression), environment, false);
+  const unchanged = getUnchangedWrapper(expression);
+  return (run, scope, partial, action, isFixed, onComplete) => {
+    const binding =
+      expression.kind === "Identifier" ? lookupScope(scope, expression.name) : undefined;
+    if (binding?.kind === "Thunk") {
+      getRunner(getUnchangedWrapper(binding.expression), environment, false)(
+        run,
+        binding.scope,
+        partial,
+        action,
+        isFixed,
+        onComplete,
+      );
+      return;
+    }
+    if (holds(unchanged, getContext(run, scope, partial))) onComplete(partial, action);
+  };
+};
+
+const compileCall = (
+  expression: Expression & { kind: "Apply" },
+  environment: Environment,
+  isInit: boolean,
+): Runner => {
+  const name = expression.operator;
+  const guard = compileGuard(expression);
+  const global = isLocallyResolved(expression)
+    ? undefined
+    : resolveGlobalOperator(name, environment);
+  if (global?.kind === "Builtin") return guard;
+  if (global?.kind === "Closure") {
+    const bindArguments = compileArgumentScope(global, expression.args, environment);
+    const compiled = { body: undefined as Runner | undefined };
+    return (run, scope, partial, action, isFixed, onComplete) => {
+      compiled.body ??= getRunner(global.body, environment, isInit);
+      compiled.body(
+        run,
+        bindArguments(getContext(run, scope, partial)),
+        partial,
+        isFixed ? action : name,
+        isFixed,
+        onComplete,
+      );
+    };
+  }
+  return (run, scope, partial, action, isFixed, onComplete) => {
+    const context = getContext(run, scope, partial);
+    const operator = resolveApplyOperator(expression, context);
+    if (operator?.kind !== "Closure") {
+      guard(run, scope, partial, action, isFixed, onComplete);
+      return;
+    }
+    getRunner(operator.body, environment, isInit)(
+      run,
+      bindOperatorArguments(operator, expression.args, context),
+      partial,
+      isFixed ? action : name,
+      isFixed,
+      onComplete,
+    );
+  };
+};
+
+const compileIdentifier = (
+  expression: Expression & { kind: "Identifier" },
+  environment: Environment,
+  isInit: boolean,
+): Runner => {
+  const guard = compileGuard(expression);
+  const definition = isLocallyResolved(expression)
+    ? undefined
+    : getZeroArityBody(expression.name, environment);
+  const compiled = { body: undefined as Runner | undefined };
+  return (run, scope, partial, action, isFixed, onComplete) => {
+    const binding = lookupScope(scope, expression.name);
+    if (binding?.kind === "Thunk") {
+      getRunner(binding.expression, environment, isInit)(
+        run,
+        binding.scope,
+        partial,
+        action,
+        isFixed,
+        onComplete,
+      );
+      return;
+    }
+    if (binding || !definition) {
+      guard(run, scope, partial, action, isFixed, onComplete);
+      return;
+    }
+    compiled.body ??= getRunner(definition.body, environment, isInit);
+    compiled.body(run, undefined, partial, isFixed ? action : definition.name, isFixed, onComplete);
+  };
+};
+
+const compileAction = (
   expression: Expression,
-  scope: Scope | undefined,
-  partial: State,
-  label: Label,
-  exploration: Exploration,
-  onComplete: Continuation,
-) => {
-  const value = evaluate(expression, getContext(exploration, scope, partial));
-  if (expectBoolean(value, `the action at ${describeLocation(expression)}`))
-    onComplete(partial, label);
+  environment: Environment,
+  isInit: boolean,
+): Runner => {
+  const child = (node: Expression) => getRunner(node, environment, isInit);
+  switch (expression.kind) {
+    case "And":
+      return compileConjunction(expression.operands, environment, isInit);
+    case "Or": {
+      const operands = expression.operands.map(child);
+      return (run, scope, partial, action, isFixed, onComplete) => {
+        for (const operand of operands) operand(run, scope, partial, action, isFixed, onComplete);
+      };
+    }
+    case "Exists": {
+      const body = child(expression.body);
+      const bound = expression.bounds[0];
+      if (expression.bounds.length === 1 && bound.pattern.kind === "Name") {
+        const name = bound.pattern.name;
+        return (run, scope, partial, action, isFixed, onComplete) => {
+          const set = evaluate(bound.set, getContext(run, scope, partial));
+          if (!isEnumerable(set)) {
+            throw new TlaEvaluationError(
+              `TLC encountered a non-enumerable quantifier bound ${formatValue(set)} at ${describeLocation(bound.set)}`,
+            );
+          }
+          const elements = toFiniteSet(set).elements;
+          for (let index = 0; index < elements.length; index++) {
+            body(
+              run,
+              bindValue(scope, name, elements[index]),
+              partial,
+              action,
+              isFixed,
+              onComplete,
+            );
+          }
+        };
+      }
+      return (run, scope, partial, action, isFixed, onComplete) => {
+        forEachBinding(expression.bounds, getContext(run, scope, partial), (boundScope) => {
+          body(run, boundScope, partial, action, isFixed, onComplete);
+          return false;
+        });
+      };
+    }
+    case "Forall": {
+      const body = child(expression.body);
+      return (run, scope, partial, action, _isFixed, onComplete) => {
+        const boundScopes: (Scope | undefined)[] = [];
+        forEachBinding(expression.bounds, getContext(run, scope, partial), (boundScope) => {
+          boundScopes.push(boundScope);
+          return false;
+        });
+        const scopes = [...boundScopes.slice(0, 1), ...boundScopes.slice(1).reverse()];
+        const visit = (index: number, nextPartial: State, nextAction: string | undefined): void => {
+          if (index === scopes.length) {
+            onComplete(nextPartial, nextAction);
+            return;
+          }
+          if (index > 0 && run.isInit && isComplete(nextPartial)) {
+            const isSatisfied = scopes
+              .slice(index)
+              .every((boundScope) =>
+                holdsInInit(expression.body, getContext(run, boundScope, nextPartial)),
+              );
+            if (isSatisfied) onComplete(nextPartial, nextAction);
+            return;
+          }
+          body(run, scopes[index], nextPartial, nextAction, true, (afterPartial, afterAction) =>
+            visit(index + 1, afterPartial, afterAction),
+          );
+        };
+        visit(0, partial, action);
+      };
+    }
+    case "If": {
+      const consequent = child(expression.consequent);
+      const alternative = child(expression.alternative);
+      return (run, scope, partial, action, isFixed, onComplete) => {
+        const condition = evaluate(expression.condition, getContext(run, scope, partial));
+        const branch = expectBoolean(condition, "an IF condition") ? consequent : alternative;
+        branch(run, scope, partial, action, isFixed, onComplete);
+      };
+    }
+    case "Case": {
+      const arms = expression.arms.map((arm) => ({
+        condition: arm.condition,
+        body: child(arm.body),
+      }));
+      const other = expression.other ? child(expression.other) : undefined;
+      return (run, scope, partial, action, isFixed, onComplete) => {
+        const context = getContext(run, scope, partial);
+        const arm = arms.find((candidate) =>
+          expectBoolean(evaluate(candidate.condition, context), "a CASE guard"),
+        );
+        const body = arm?.body ?? other;
+        if (!body)
+          throw new TlaEvaluationError(`No CASE guard is true at ${describeLocation(expression)}`);
+        body(run, scope, partial, action, isFixed, onComplete);
+      };
+    }
+    case "Let": {
+      const body = child(expression.body);
+      return (run, scope, partial, action, isFixed, onComplete) =>
+        body(
+          run,
+          bindDefinitions(expression.definitions, getContext(run, scope, partial)),
+          partial,
+          action,
+          isFixed,
+          onComplete,
+        );
+    }
+    case "Unchanged":
+      if (isInit) {
+        return () => {
+          throw new TlaEvaluationError(
+            `UNCHANGED appears in an initial predicate at ${describeLocation(expression)}`,
+          );
+        };
+      }
+      return compileUnchanged(expression.expression, environment);
+    case "AngleAction": {
+      const body = child(expression.action);
+      const unchanged = getUnchangedWrapper(expression.subscript);
+      return (run, scope, partial, action, isFixed, onComplete) =>
+        body(run, scope, partial, action, isFixed, (nextPartial, nextAction) => {
+          if (!holds(unchanged, getContext(run, scope, nextPartial)))
+            onComplete(nextPartial, nextAction);
+        });
+    }
+    case "BoxAction":
+      return child({
+        kind: "Or",
+        operands: [expression.action, getUnchangedWrapper(expression.subscript)],
+        location: expression.location,
+      });
+    case "Identifier":
+      return compileIdentifier(expression, environment, isInit);
+    case "FunctionApplication":
+      return compileFunctionAction(expression, environment, isInit);
+    case "Apply": {
+      const args = expression.args;
+      if (expression.operator === "=" || expression.operator === "\\in") {
+        const index = getAssignableIndex(args[0], environment, isInit);
+        if (index !== undefined) {
+          if (expression.operator === "\\in") return compileMembership(expression, () => index);
+          return compileConjunction([expression], environment, isInit);
+        }
+        if (isPossiblyAssignable(args[0], isInit)) {
+          return compileDynamicAssignment(expression, isInit);
+        }
+      }
+      if (expression.operator === "=>") {
+        const right = child(args[1]);
+        return (run, scope, partial, action, isFixed, onComplete) => {
+          const condition = evaluate(args[0], getContext(run, scope, partial));
+          const isTrue =
+            typeof condition === "boolean"
+              ? condition
+              : expectBoolean(condition, `the left side of => at ${describeLocation(args[0])}`);
+          if (!isTrue) {
+            onComplete(partial, action);
+            return;
+          }
+          right(run, scope, partial, action, isFixed, onComplete);
+        };
+      }
+      return compileCall(expression, environment, isInit);
+    }
+    default:
+      return compileGuard(expression);
+  }
+};
+
+const emptyStates = new WeakMap<Environment, State>();
+
+const getEmptyState = (environment: Environment) => {
+  const cached = emptyStates.get(environment);
+  if (cached) return cached;
+  const state = environment.variables.map((): Value | undefined => undefined);
+  emptyStates.set(environment, state);
+  return state;
 };
 
 const getMissingVariables = (partial: State, environment: Environment) =>
   environment.variables.filter((_, index) => partial[index] === undefined);
 
-const isComplete = (partial: State): partial is Value[] =>
-  partial.every((value) => value !== undefined);
-
-const isInitAssigned = (exploration: Exploration, partial: State) =>
-  exploration.isInit && isComplete(partial);
-
-const holdsInInit = (
-  expressions: Expression[],
-  scope: Scope | undefined,
-  partial: State,
-  exploration: Exploration,
-) => {
-  const context = getContext(exploration, scope, partial);
-  return expressions.every((expression) =>
-    expectBoolean(
-      evaluate(expression, context),
-      `the initial predicate at ${describeLocation(expression)}`,
-    ),
-  );
+const isComplete = (partial: State): partial is Value[] => {
+  for (let index = 0; index < partial.length; index++) {
+    if (partial[index] === undefined) return false;
+  }
+  return true;
 };
 
-const exploreSequence = (
-  operands: Expression[],
-  index: number,
-  scope: Scope | undefined,
-  partial: State,
-  label: Label,
-  exploration: Exploration,
-  onComplete: Continuation,
-): void => {
-  if (index === operands.length) {
-    onComplete(partial, label);
-    return;
-  }
-  if (index > 0 && isInitAssigned(exploration, partial)) {
-    if (holdsInInit(operands.slice(index), scope, partial, exploration)) onComplete(partial, label);
-    return;
-  }
-  explore(operands[index], scope, partial, label, exploration, (nextPartial, nextLabel) =>
-    exploreSequence(operands, index + 1, scope, nextPartial, nextLabel, exploration, onComplete),
-  );
-};
-
-const exploreUnchanged = (
-  expression: Expression,
-  scope: Scope | undefined,
-  partial: State,
-  label: Label,
-  exploration: Exploration,
-  onComplete: Continuation,
-): void => {
-  const current = exploration.current;
-  if (!current)
+export const isEnabled = (expression: Expression, context: Context): boolean => {
+  const state = context.state;
+  if (!state || !isComplete(state)) {
     throw new TlaEvaluationError(
-      `UNCHANGED appears in an initial predicate at ${describeLocation(expression)}`,
+      `ENABLED needs a complete state at ${describeLocation(expression)}`,
     );
-  if (expression.kind === "Tuple") {
-    const unchangedElements = expression.elements.map((element): Expression => ({
-      kind: "Unchanged",
-      expression: element,
-      location: element.location,
-    }));
-    exploreSequence(unchangedElements, 0, scope, partial, label, exploration, onComplete);
-    return;
   }
-  if (expression.kind === "Identifier") {
-    const binding = lookupScope(scope, expression.name);
-    if (binding?.kind === "Thunk") {
-      exploreUnchanged(binding.expression, binding.scope, partial, label, exploration, onComplete);
-      return;
-    }
-    const index = binding ? undefined : exploration.environment.variableIndex.get(expression.name);
-    if (index !== undefined) {
-      const assigned = partial[index];
-      if (assigned === undefined) onComplete(assign(partial, index, current[index]), label);
-      else if (valuesEqual(assigned, current[index])) onComplete(partial, label);
-      return;
-    }
-    const definition = binding
-      ? undefined
-      : getDefinition(expression.name, exploration.environment);
-    if (definition?.kind === "Operator" && definition.params.length === 0) {
-      exploreUnchanged(definition.body, undefined, partial, label, exploration, onComplete);
-      return;
-    }
-  }
-  exploreGuard(
-    { kind: "Unchanged", expression, location: expression.location },
-    scope,
-    partial,
-    label,
-    exploration,
-    onComplete,
+  const environment = context.environment;
+  const found = { value: false };
+  getRunner(expression, environment, false)(
+    { environment, isInit: false, current: state },
+    context.scope,
+    getEmptyState(environment),
+    undefined,
+    false,
+    () => {
+      found.value = true;
+    },
   );
-};
-
-const exploreApply = (
-  expression: Expression & { kind: "Apply" },
-  scope: Scope | undefined,
-  partial: State,
-  label: Label,
-  exploration: Exploration,
-  onComplete: Continuation,
-) => {
-  const args = expression.args;
-  if (expression.operator === "=" || expression.operator === "\\in") {
-    const index = getVariableIndex(args[0], scope, partial, exploration, !exploration.isInit);
-    if (index !== undefined && partial[index] === undefined) {
-      const value = evaluate(args[1], getContext(exploration, scope, partial));
-      if (expression.operator === "=") {
-        onComplete(assign(partial, index, value), label);
-        return;
-      }
-      if (!isEnumerable(value)) {
-        throw new TlaEvaluationError(
-          `In computing next states, the right side of \\in is not enumerable: ${formatValue(value)} at ${describeLocation(expression)}`,
-        );
-      }
-      toFiniteSet(value).elements.forEach((element) =>
-        onComplete(assign(partial, index, element), label),
-      );
-      return;
-    }
-  }
-  if (expression.operator === "=>") {
-    const condition = evaluate(args[0], getContext(exploration, scope, partial));
-    if (!expectBoolean(condition, `the left side of => at ${describeLocation(expression)}`)) {
-      onComplete(partial, label);
-      return;
-    }
-    explore(args[1], scope, partial, label, exploration, onComplete);
-    return;
-  }
-  const operator = resolveApplyOperator(expression, getContext(exploration, scope, partial));
-  if (operator?.kind === "Closure") {
-    const operatorScope = bindOperatorArguments(
-      operator,
-      args,
-      getContext(exploration, scope, partial),
-    );
-    explore(
-      operator.body,
-      operatorScope,
-      partial,
-      nameAction(label, expression.operator),
-      exploration,
-      onComplete,
-    );
-    return;
-  }
-  exploreGuard(expression, scope, partial, label, exploration, onComplete);
-};
-
-const explore = (
-  expression: Expression,
-  scope: Scope | undefined,
-  partial: State,
-  label: Label,
-  exploration: Exploration,
-  onComplete: Continuation,
-): void => {
-  switch (expression.kind) {
-    case "And":
-      exploreSequence(
-        expression.operands,
-        0,
-        scope,
-        partial,
-        fixLabel(label),
-        exploration,
-        onComplete,
-      );
-      return;
-    case "Or":
-      expression.operands.forEach((operand) =>
-        explore(operand, scope, partial, label, exploration, onComplete),
-      );
-      return;
-    case "Exists":
-      forEachBinding(expression.bounds, getContext(exploration, scope, partial), (boundScope) => {
-        explore(expression.body, boundScope, partial, label, exploration, onComplete);
-        return false;
-      });
-      return;
-    case "Forall": {
-      const boundScopes: (Scope | undefined)[] = [];
-      forEachBinding(expression.bounds, getContext(exploration, scope, partial), (boundScope) => {
-        boundScopes.push(boundScope);
-        return false;
-      });
-      // TLC explores the first binding and pushes the rest onto its action stack, which visits them last to first.
-      const scopes = [...boundScopes.slice(0, 1), ...boundScopes.slice(1).reverse()];
-      const visit = (index: number, nextPartial: State, nextLabel: Label): void => {
-        if (index === scopes.length) {
-          onComplete(nextPartial, nextLabel);
-          return;
-        }
-        if (index > 0 && isInitAssigned(exploration, nextPartial)) {
-          const isSatisfied = scopes
-            .slice(index)
-            .every((boundScope) =>
-              holdsInInit([expression.body], boundScope, nextPartial, exploration),
-            );
-          if (isSatisfied) onComplete(nextPartial, nextLabel);
-          return;
-        }
-        explore(
-          expression.body,
-          scopes[index],
-          nextPartial,
-          nextLabel,
-          exploration,
-          (afterPartial, afterLabel) => visit(index + 1, afterPartial, afterLabel),
-        );
-      };
-      visit(0, partial, fixLabel(label));
-      return;
-    }
-    case "If": {
-      const condition = evaluate(expression.condition, getContext(exploration, scope, partial));
-      const branch = expectBoolean(condition, "an IF condition")
-        ? expression.consequent
-        : expression.alternative;
-      explore(branch, scope, partial, label, exploration, onComplete);
-      return;
-    }
-    case "Case": {
-      const context = getContext(exploration, scope, partial);
-      const arm = expression.arms.find((candidate) =>
-        expectBoolean(evaluate(candidate.condition, context), "a CASE guard"),
-      );
-      const body = arm?.body ?? expression.other;
-      if (!body)
-        throw new TlaEvaluationError(`No CASE guard is true at ${describeLocation(expression)}`);
-      explore(body, scope, partial, label, exploration, onComplete);
-      return;
-    }
-    case "Let": {
-      const letScope = bindDefinitions(
-        expression.definitions,
-        getContext(exploration, scope, partial),
-      );
-      explore(expression.body, letScope, partial, label, exploration, onComplete);
-      return;
-    }
-    case "Unchanged":
-      exploreUnchanged(expression.expression, scope, partial, label, exploration, onComplete);
-      return;
-    case "BoxAction":
-      explore(
-        {
-          kind: "Or",
-          operands: [
-            expression.action,
-            { kind: "Unchanged", expression: expression.subscript, location: expression.location },
-          ],
-          location: expression.location,
-        },
-        scope,
-        partial,
-        label,
-        exploration,
-        onComplete,
-      );
-      return;
-    case "AngleAction":
-      explore(expression.action, scope, partial, label, exploration, (nextPartial, nextLabel) => {
-        const isUnchanged = evaluate(
-          { kind: "Unchanged", expression: expression.subscript, location: expression.location },
-          getContext(exploration, scope, nextPartial),
-        );
-        if (!expectBoolean(isUnchanged, "a subscript")) onComplete(nextPartial, nextLabel);
-      });
-      return;
-    case "FunctionApplication": {
-      const lambda = getFunctionLambda(expression.function, scope, partial, exploration);
-      if (!lambda) {
-        exploreGuard(expression, scope, partial, label, exploration, onComplete);
-        return;
-      }
-      const context = getContext(exploration, scope, partial);
-      const args = expression.args.map((arg) => evaluate(arg, context));
-      const argument = args.length === 1 ? args[0] : createTuple(args);
-      const domain = getBoundsDomain(lambda.bounds, getContext(exploration, lambda.scope, partial));
-      if (!isElementOf(argument, domain)) {
-        throw new TlaEvaluationError(
-          `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain at ${describeLocation(expression)}`,
-        );
-      }
-      explore(
-        lambda.body,
-        bindArgument(lambda.bounds, lambda.scope, argument),
-        partial,
-        label,
-        exploration,
-        onComplete,
-      );
-      return;
-    }
-    case "Identifier": {
-      const binding = lookupScope(scope, expression.name);
-      if (binding?.kind === "Thunk") {
-        explore(binding.expression, binding.scope, partial, label, exploration, onComplete);
-        return;
-      }
-      const name = binding
-        ? undefined
-        : (exploration.environment.substitutions.get(expression.name) ?? expression.name);
-      const definition =
-        name === undefined ? undefined : exploration.environment.definitions.get(name);
-      if (
-        definition?.kind === "Operator" &&
-        definition.params.length === 0 &&
-        !exploration.environment.constants.has(expression.name)
-      ) {
-        explore(
-          definition.body,
-          undefined,
-          partial,
-          nameAction(label, definition.name),
-          exploration,
-          onComplete,
-        );
-        return;
-      }
-      exploreGuard(expression, scope, partial, label, exploration, onComplete);
-      return;
-    }
-    case "Apply":
-      exploreApply(expression, scope, partial, label, exploration, onComplete);
-      return;
-    default:
-      exploreGuard(expression, scope, partial, label, exploration, onComplete);
-  }
+  return found.value;
 };
 
 export const getInitialStates = (expression: Expression, environment: Environment): Value[][] => {
   const states: Value[][] = [];
-  const exploration: Exploration = { environment, isInit: true, current: undefined };
-  explore(
-    expression,
+  const run: Run = { environment, isInit: true, current: undefined };
+  getRunner(expression, environment, true)(
+    run,
     undefined,
-    Array.from<Value | undefined>({ length: environment.variables.length }),
-    { name: undefined, isFixed: false },
-    exploration,
+    getEmptyState(environment),
+    undefined,
+    false,
     (partial) => {
       if (!isComplete(partial)) {
         throw new TlaEvaluationError(
@@ -505,20 +780,20 @@ export const getSuccessors = (
   environment: Environment,
 ): Successor[] => {
   const successors: Successor[] = [];
-  const exploration: Exploration = { environment, isInit: false, current: state };
-  explore(
-    expression,
+  const run: Run = { environment, isInit: false, current: state };
+  getRunner(expression, environment, false)(
+    run,
     undefined,
-    Array.from<Value | undefined>({ length: state.length }),
-    { name: undefined, isFixed: false },
-    exploration,
-    (partial, label) => {
+    getEmptyState(environment),
+    undefined,
+    false,
+    (partial, action) => {
       if (!isComplete(partial)) {
         throw new TlaEvaluationError(
-          `Successor state is not completely specified by action ${label.name ?? "Next"}. The following variables are not assigned: ${getMissingVariables(partial, environment).join(", ")}`,
+          `Successor state is not completely specified by action ${action ?? "Next"}. The following variables are not assigned: ${getMissingVariables(partial, environment).join(", ")}`,
         );
       }
-      successors.push({ state: partial, action: label.name });
+      successors.push({ state: partial, action });
     },
   );
   return successors;
