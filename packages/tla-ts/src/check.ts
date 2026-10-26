@@ -1,4 +1,4 @@
-import type { Definition, Expression, SourceLocation } from "./ast";
+import type { Assumption, Definition, Expression, SourceLocation } from "./ast";
 import { parseConfig, type ModelConfig } from "./config";
 import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
@@ -28,7 +28,7 @@ import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { createCanonicalizer } from "./canonical";
-import { getPossibleCounts } from "./runtime";
+import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { combineHash, formatValue, getValueHash, isSameValue, type Value } from "./values";
 
 export interface CheckOptions {
@@ -264,12 +264,66 @@ export const isUnchangedFor = (
 
 export interface Search {
   properties: Properties;
-  invariants: StateCheck[];
   spec: Specification;
-  constraints: StateCheck[];
-  actionConstraints: NamedExpression[];
   getFingerprintState: (state: Value[]) => Value[];
+  findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
+  satisfiesConstraints: (state: Value[], parent?: Value[]) => boolean;
+  findFailedInitialPredicate: (state: Value[]) => NamedExpression | undefined;
+  findViolatedActionProperty: (state: Value[], next: Value[]) => ActionProperty | undefined;
+  satisfiesActionConstraints: (state: Value[], next: Value[]) => boolean;
+  trackStatePossible: (state: Value[]) => void;
+  trackActionPossible: (state: Value[], next: Value[]) => void;
+  findPostconditionViolation: (
+    print: (text: string) => void,
+  ) => Omit<Violation, "loopStart"> | undefined;
 }
+
+const getContext = (
+  environment: Environment,
+  state: Value[] | undefined,
+  next: Value[] | undefined,
+  scope?: Scope,
+): Context => ({ environment, scope, state, next });
+
+const holds = (expression: Expression, context: Context, description: string) =>
+  expectBoolean(evaluate(expression, context), description);
+
+const trackPossible = (items: NamedExpression[], runtime: CheckerRuntime, context: Context) =>
+  items.forEach((item) => {
+    const count = runtime.possibleCounts.get(item.name) ?? 0;
+    const isWitnessed = holds(item.expression, context, `_POSSIBLE ${item.name}`);
+    runtime.possibleCounts.set(item.name, isWitnessed ? count + 1 : count);
+  });
+
+const getConstantFailure = (
+  expression: Expression,
+  environment: Environment,
+  description: string,
+) => {
+  try {
+    return holds(expression, getContext(environment, undefined, undefined), description)
+      ? undefined
+      : { message: undefined };
+  } catch (error) {
+    if (error instanceof TlaEvaluationError) return { message: error.message };
+    throw error;
+  }
+};
+
+export const findAssumptionViolation = (
+  assumptions: Assumption[],
+  environment: Environment,
+): Omit<Violation, "loopStart"> | undefined => {
+  for (const assumption of assumptions.filter((candidate) => !candidate.isAxiom)) {
+    const failure = getConstantFailure(assumption.expression, environment, "an assumption");
+    if (failure) {
+      const name =
+        assumption.name ?? `line ${assumption.location.line}, column ${assumption.location.column}`;
+      return { name, trace: [], message: failure.message };
+    }
+  }
+  return undefined;
+};
 
 export const createSearch = (config: ModelConfig, environment: Environment): Search | undefined => {
   const properties = getProperties(config, environment);
@@ -284,14 +338,95 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
   if (isConstantModel) return undefined;
   const symmetryGroup =
     config.symmetry === undefined ? [] : getSymmetryGroup(config.symmetry, environment);
+  const constraints = getStateChecks(
+    getNamedExpressions(config.constraints, environment),
+    environment,
+  );
+  const actionConstraints = getNamedExpressions(config.actionConstraints, environment);
+  const possible = getNamedExpressions(config.possible, environment);
+  const isActionPossible = (item: NamedExpression) =>
+    isActionLevel(getDefinitionBody(item.name, environment), environment);
+  const statePossible = possible.filter((item) => !isActionPossible(item));
+  const actionPossible = possible.filter(isActionPossible);
+  const runtime = environment.runtime;
   return {
     properties,
-    invariants,
     spec: getSpecification(config, environment),
-    constraints: getStateChecks(getNamedExpressions(config.constraints, environment), environment),
-    actionConstraints: getNamedExpressions(config.actionConstraints, environment),
     getFingerprintState: (state) =>
       symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup),
+    findViolatedInvariant: (state, parent) =>
+      invariants.find(
+        (invariant) =>
+          !isUnchangedFor(invariant, state, parent) &&
+          !holds(
+            invariant.expression,
+            getContext(environment, state, undefined, invariant.scope),
+            `invariant ${invariant.name}`,
+          ),
+      ),
+    satisfiesConstraints: (state, parent) =>
+      constraints.every(
+        (constraint) =>
+          isUnchangedFor(constraint, state, parent) ||
+          holds(
+            constraint.expression,
+            getContext(environment, state, undefined),
+            `constraint ${constraint.name}`,
+          ),
+      ),
+    findFailedInitialPredicate: (state) =>
+      properties.initialPredicates.find(
+        (predicate) =>
+          !holds(
+            predicate.expression,
+            getContext(environment, state, undefined, predicate.scope),
+            `property ${predicate.name}`,
+          ),
+      ),
+    findViolatedActionProperty: (state, next) =>
+      properties.actionProperties.find(
+        (property) =>
+          !holds(
+            property.action,
+            getContext(environment, state, next, property.scope),
+            `property ${property.name}`,
+          ) &&
+          !holds(
+            { kind: "Unchanged", expression: property.subscript, location: START },
+            getContext(environment, state, next, property.scope),
+            "a subscript",
+          ),
+      ),
+    satisfiesActionConstraints: (state, next) =>
+      actionConstraints.every((constraint) =>
+        holds(
+          constraint.expression,
+          getContext(environment, state, next),
+          `action constraint ${constraint.name}`,
+        ),
+      ),
+    trackStatePossible: (state) =>
+      trackPossible(statePossible, runtime, getContext(environment, state, undefined)),
+    trackActionPossible: (state, next) =>
+      trackPossible(actionPossible, runtime, getContext(environment, state, next)),
+    findPostconditionViolation: (print) => {
+      const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
+      if (unwitnessed) {
+        print(formatValue(getPossibleCounts(runtime), true));
+        return {
+          name: unwitnessed.name,
+          trace: [],
+          message: `The _POSSIBLE predicate ${unwitnessed.name} was never witnessed.`,
+        };
+      }
+      for (const name of config.postconditions) {
+        const failure = getConstantFailure(createIdentifier(name), environment, "a postcondition");
+        if (failure) {
+          return { name, trace: [], message: failure.message ?? `Postcondition ${name} is false.` };
+        }
+      }
+      return undefined;
+    },
   };
 };
 
@@ -304,19 +439,6 @@ export const check = (options: CheckOptions): CheckResult => {
     print,
   });
   const environment = specification.environment;
-  const getContext = (
-    state: Value[] | undefined,
-    next: Value[] | undefined,
-    scope?: Scope,
-  ): Context => ({
-    environment,
-    scope,
-    state,
-    next,
-  });
-  const holds = (expression: Expression, context: Context, description: string) =>
-    expectBoolean(evaluate(expression, context), description);
-
   const runtime = environment.runtime;
   const statistics = { depth: 0 };
   const createResult = (
@@ -330,47 +452,15 @@ export const check = (options: CheckOptions): CheckResult => {
     depth: statistics.depth,
   });
 
-  const getConstantFailure = (expression: Expression, description: string) => {
-    try {
-      return holds(expression, getContext(undefined, undefined), description)
-        ? undefined
-        : { message: undefined };
-    } catch (error) {
-      if (error instanceof TlaEvaluationError) return { message: error.message };
-      throw error;
-    }
-  };
-  for (const assumption of specification.assumptions.filter((candidate) => !candidate.isAxiom)) {
-    const failure = getConstantFailure(assumption.expression, "an assumption");
-    if (failure) {
-      const name =
-        assumption.name ?? `line ${assumption.location.line}, column ${assumption.location.column}`;
-      return createResult("assumption-violation", { name, trace: [], message: failure.message });
-    }
-  }
+  const assumptionViolation = findAssumptionViolation(specification.assumptions, environment);
+  if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
 
   const search = createSearch(config, environment);
   if (!search) return createResult("success");
   const properties = search.properties;
-  const invariants = search.invariants;
   const spec = search.spec;
-  const constraints = search.constraints;
-  const actionConstraints = search.actionConstraints;
   const getFingerprintState = search.getFingerprintState;
   const isRecordingEdges = properties.liveness.length > 0;
-  const possible = config.possible.map((name) => ({
-    name,
-    expression: createIdentifier(name),
-    isAction: isActionLevel(getDefinitionBody(name, environment), environment),
-  }));
-  const statePossible = possible.filter((item) => !item.isAction);
-  const actionPossible = possible.filter((item) => item.isAction);
-  const trackPossible = (items: typeof possible, context: Context) =>
-    items.forEach((item) => {
-      const count = runtime.possibleCounts.get(item.name) ?? 0;
-      const isWitnessed = holds(item.expression, context, `_POSSIBLE ${item.name}`);
-      runtime.possibleCounts.set(item.name, isWitnessed ? count + 1 : count);
-    });
 
   const states: Value[][] = [];
   const fingerprintStates: Value[][] = [];
@@ -422,22 +512,6 @@ export const check = (options: CheckOptions): CheckResult => {
     else if (typeof bucket === "number") buckets.set(hash, [bucket, index]);
     else bucket.push(index);
   };
-  const findViolatedInvariant = (state: Value[], parent?: Value[]) =>
-    invariants.find(
-      (invariant) =>
-        !isUnchangedFor(invariant, state, parent) &&
-        !holds(
-          invariant.expression,
-          getContext(state, undefined, invariant.scope),
-          `invariant ${invariant.name}`,
-        ),
-    );
-  const satisfiesConstraints = (state: Value[], parent?: Value[]) =>
-    constraints.every(
-      (constraint) =>
-        isUnchangedFor(constraint, state, parent) ||
-        holds(constraint.expression, getContext(state, undefined), `constraint ${constraint.name}`),
-    );
   const countDistinctState = (depth: number) => {
     runtime.distinctStates = states.length + 1;
     statistics.depth = Math.max(statistics.depth, depth);
@@ -467,28 +541,21 @@ export const check = (options: CheckOptions): CheckResult => {
     const fingerprintState = getFingerprintState(state);
     const hash = getStateHash(fingerprintState);
     const isSeen = findStateIndex(hash, fingerprintState) !== -1;
-    const isInModel = isSeen || satisfiesConstraints(state);
-    if (isInModel) trackPossible(statePossible, getContext(state, undefined));
+    const isInModel = isSeen || search.satisfiesConstraints(state);
+    if (isInModel) search.trackStatePossible(state);
     if (isSeen) continue;
     if (isInModel) {
       countDistinctState(1);
       runtime.queueSize++;
     }
-    const violated = findViolatedInvariant(state);
+    const violated = search.findViolatedInvariant(state);
     if (violated) {
       return createResult("invariant-violation", {
         name: violated.name,
         trace: [{ action: undefined, state: toRecord(state) }],
       });
     }
-    const failedPredicate = properties.initialPredicates.find(
-      (predicate) =>
-        !holds(
-          predicate.expression,
-          getContext(state, undefined, predicate.scope),
-          `property ${predicate.name}`,
-        ),
-    );
+    const failedPredicate = search.findFailedInitialPredicate(state);
     if (failedPredicate) {
       return createResult("property-violation", {
         name: failedPredicate.name,
@@ -511,26 +578,21 @@ export const check = (options: CheckOptions): CheckResult => {
     for (const successor of successors) {
       runtime.generatedStates++;
       runtime.levels.set(successor.state, depths[index] + 1);
-      const transition = getContext(state, successor.state);
       canonicalizeState(successor.state);
       const fingerprintState = getFingerprintState(successor.state);
       const hash = getStateHash(fingerprintState);
       const found = findStateIndex(hash, fingerprintState);
-      const isStateInModel = found !== -1 || satisfiesConstraints(successor.state, state);
-      if (isStateInModel) trackPossible(statePossible, getContext(successor.state, undefined));
-      const isInModel =
-        isStateInModel &&
-        actionConstraints.every((constraint) =>
-          holds(constraint.expression, transition, `action constraint ${constraint.name}`),
-        );
-      if (isInModel) trackPossible(actionPossible, transition);
+      const isStateInModel = found !== -1 || search.satisfiesConstraints(successor.state, state);
+      if (isStateInModel) search.trackStatePossible(successor.state);
+      const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
+      if (isInModel) search.trackActionPossible(state, successor.state);
       const existing = isInModel ? found : -1;
       if (existing !== -1 && isRecordingEdges) edges[index].push(existing);
       if (existing !== -1 && isRecordingEdgeStates) edgeStates[index].push(successor.state);
       const isNew = isInModel && existing === -1;
       if (isNew) countDistinctState(depths[index] + 1);
       if (existing === -1) {
-        const violated = findViolatedInvariant(successor.state, state);
+        const violated = search.findViolatedInvariant(successor.state, state);
         if (violated) {
           return createResult("invariant-violation", {
             name: violated.name,
@@ -538,19 +600,7 @@ export const check = (options: CheckOptions): CheckResult => {
           });
         }
       }
-      const violatedProperty = properties.actionProperties.find(
-        (property) =>
-          !holds(
-            property.action,
-            getContext(state, successor.state, property.scope),
-            `property ${property.name}`,
-          ) &&
-          !holds(
-            { kind: "Unchanged", expression: property.subscript, location: START },
-            getContext(state, successor.state, property.scope),
-            "a subscript",
-          ),
-      );
+      const violatedProperty = search.findViolatedActionProperty(state, successor.state);
       if (violatedProperty) {
         return createResult("property-violation", {
           name: violatedProperty.name,
@@ -595,24 +645,9 @@ export const check = (options: CheckOptions): CheckResult => {
     });
   }
 
-  const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
-  if (unwitnessed) {
-    print(formatValue(getPossibleCounts(runtime), true));
-    return createResult("postcondition-violation", {
-      name: unwitnessed.name,
-      trace: [],
-      message: `The _POSSIBLE predicate ${unwitnessed.name} was never witnessed.`,
-    });
-  }
-  for (const name of config.postconditions) {
-    const failure = getConstantFailure(createIdentifier(name), "a postcondition");
-    if (failure) {
-      return createResult("postcondition-violation", {
-        name,
-        trace: [],
-        message: failure.message ?? `Postcondition ${name} is false.`,
-      });
-    }
+  const postconditionViolation = search.findPostconditionViolation(print);
+  if (postconditionViolation) {
+    return createResult("postcondition-violation", postconditionViolation);
   }
   return createResult("success");
 };
