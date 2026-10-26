@@ -636,7 +636,9 @@ export const check = (options: CheckOptions): CheckResult => {
       if (isInModel) search.trackActionPossible(state, successor.state);
       const existing = isInModel ? found : -1;
       if (existing !== -1 && liveness) {
-        liveSuccessors.push({ index: existing, state: successor.state });
+        const stored = states[existing];
+        const isStored = stored.every((value, position) => value === successor.state[position]);
+        liveSuccessors.push({ index: existing, state: isStored ? stored : successor.state });
       }
       const isNew = isInModel && existing === -1;
       if (isNew) countDistinctState(depths[index] + 1);

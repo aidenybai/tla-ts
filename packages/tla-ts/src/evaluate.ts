@@ -11,7 +11,7 @@ import { TlaEvaluationError } from "./errors";
 import { generateEvaluator } from "./codegen";
 import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
-import { mapChildren } from "./instances";
+import { mapChildren, substitutedExpressions } from "./instances";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
@@ -817,6 +817,28 @@ const cacheFirstValue = (evaluator: Evaluator): Evaluator => {
   };
 };
 
+const hasFreeLocals = (expression: Expression, bound: ReadonlySet<string>): boolean => {
+  if (expression.kind === "Identifier" && isLocallyResolved(expression)) {
+    return !bound.has(expression.name);
+  }
+  if (isLocallyResolved(expression)) return true;
+  const isFree = { value: false };
+  mapChildren(expression, (child, names) => {
+    isFree.value ||= hasFreeLocals(
+      child,
+      names.length === 0 ? bound : new Set([...bound, ...names]),
+    );
+    return child;
+  });
+  return isFree.value;
+};
+
+const isStateCached = (expression: Expression, environment: Environment) =>
+  substitutedExpressions.has(expression) &&
+  isWorthCaching(expression) &&
+  getReadVariables(expression, environment) !== undefined &&
+  !hasFreeLocals(expression, NO_BOUND_NAMES);
+
 export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
   const cached = environment.evaluators.get(expression);
   if (cached) return cached;
@@ -824,7 +846,9 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
   const evaluator =
     isWorthCaching(expression) && isClosedConstant(expression, environment)
       ? cacheFirstValue(compiled)
-      : compiled;
+      : isStateCached(expression, environment)
+        ? cacheStateValue(compiled)
+        : compiled;
   environment.evaluators.set(expression, evaluator);
   return evaluator;
 };
@@ -874,10 +898,11 @@ const compileIdentifier = (
     }
     if (definition.params.length === 0) {
       const compiled = { body: undefined as Evaluator | undefined };
-      return (context) => {
+      const evaluator: Evaluator = (context) => {
         compiled.body ??= getEntryEvaluator(definition.body, environment);
         return compiled.body(withScope(context, undefined));
       };
+      return isStatePure(definition, environment) ? cacheStateValue(evaluator) : evaluator;
     }
     return (context) => evaluateDefinitionValue(definition, context);
   }
@@ -897,14 +922,25 @@ const isStatePure = (definition: Definition, environment: Environment) =>
     definition.bounds.every((bound) => getReadVariables(bound.set, environment) !== undefined));
 
 const cacheStateValue = (evaluator: Evaluator): Evaluator => {
-  const cache = { state: undefined as Context["state"], value: undefined as Value | undefined };
+  const cache = {
+    recent: undefined as Context["state"],
+    recentValue: undefined as Value | undefined,
+    previous: undefined as Context["state"],
+    previousValue: undefined as Value | undefined,
+  };
   return (context) => {
-    if (context.state !== undefined && cache.state === context.state && cache.value !== undefined) {
-      return cache.value;
+    const state = context.state;
+    if (state !== undefined && cache.recent === state && cache.recentValue !== undefined) {
+      return cache.recentValue;
+    }
+    if (state !== undefined && cache.previous === state && cache.previousValue !== undefined) {
+      return cache.previousValue;
     }
     const value = evaluator(context);
-    cache.state = context.state;
-    cache.value = value;
+    cache.previous = cache.recent;
+    cache.previousValue = cache.recentValue;
+    cache.recent = state;
+    cache.recentValue = value;
     return value;
   };
 };

@@ -18,6 +18,8 @@ const getPatternNames = (pattern: BoundPattern) =>
 const getBoundNames = (bounds: Bound[]) =>
   bounds.flatMap((bound) => getPatternNames(bound.pattern));
 
+export const substitutedExpressions = new WeakSet<Expression>();
+
 export const renameLocals = (
   expression: Expression,
   names: Map<string, string>,
@@ -395,6 +397,7 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
   if (expression.kind === "Identifier" && isFree(expression.name)) {
     const replacement = instantiation.substitutions.get(expression.name);
     if (replacement) {
+      substitutedExpressions.add(replacement);
       return replacement;
     }
     const copy = getCopy(rewrite, expression.name);
