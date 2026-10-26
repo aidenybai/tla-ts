@@ -60,6 +60,7 @@
     "prepack": "cp ../../README.md ../../LICENSE .",
     "prepublishOnly": "nr build",
     "bench": "pnpm build && tsx scripts/benchmark.ts",
+    "bench:corpus": "pnpm build && tsx scripts/benchmark-corpus.ts",
     "conformance": "tsx scripts/conformance.ts",
     "conformance:fetch": "tsx scripts/fetch-corpora.ts",
     "conformance:record": "tsx scripts/record-tlc.ts",
