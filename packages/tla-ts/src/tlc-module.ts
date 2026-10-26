@@ -128,7 +128,7 @@ export const createTlcOperators = (
   defineOperator("Assert", 2, (args) => {
     if (getValue(args, 0, "Assert") !== true) {
       throw new TlaEvaluationError(
-        `The first argument of Assert evaluated to FALSE; the second argument was: ${formatValue(getValue(args, 1, "Assert"))}`,
+        `The first argument of Assert evaluated to FALSE; the second argument was:\n${formatValue(getValue(args, 1, "Assert"))}`,
       );
     }
     return true;
