@@ -45,7 +45,6 @@ import {
   unionSorted,
   isEqualLikeTlc,
   createEnumeratedSet,
-  isEmptySet,
   type IntervalValue,
   type MixedSetValue,
   type SetOperationValue,
@@ -138,16 +137,7 @@ export const CORE_OPERATORS: Builtin[] = [
     defineOperator(operator, 2, (args) => {
       const left = getSet(args, 0, operator);
       const right = getSet(args, 1, operator);
-      if (isMixedSet(left) || isMixedSet(right)) {
-        if (isReducible(left)) return combineReducible(operator, left, right);
-        if (operator !== "\\" && isReducible(right)) return combineReducible(operator, right, left);
-        return { kind: "SetOperation", operator, left, right };
-      }
-      if (operator === "\\cup" && isReducible(left) && isEmptySet(left)) return right;
-      if (operator === "\\cup" && !isReducible(left) && isReducible(right) && isEmptySet(right)) {
-        return left;
-      }
-      if (isEnumerable(left) && isEnumerable(right)) {
+      if (isReducible(left) && isReducible(right) && !isMixedSet(left) && !isMixedSet(right)) {
         const merge =
           operator === "\\cup"
             ? unionSorted
@@ -156,11 +146,9 @@ export const CORE_OPERATORS: Builtin[] = [
               : differenceSorted;
         return merge(toFiniteSet(left), toFiniteSet(right));
       }
-      const isSwapped = operator === "\\cup" && !isReducible(left) && isReducible(right);
-      const set: Value = isSwapped
-        ? { kind: "SetOperation", operator, left: right, right: left }
-        : { kind: "SetOperation", operator, left, right };
-      return isEnumerable(set) ? toFiniteSet(set) : set;
+      if (isReducible(left)) return combineReducible(operator, left, right);
+      if (operator !== "\\" && isReducible(right)) return combineReducible(operator, right, left);
+      return { kind: "SetOperation", operator, left, right };
     }),
   ),
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getSet(args, 0, "SUBSET") })),

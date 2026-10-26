@@ -1249,6 +1249,19 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect([result.generatedStates, result.distinctStates]).toEqual([9, 2]);
   });
 
+  it("keeps a set operation lazy unless TLC can reduce both sets", async () => {
+    const getCounts = async (set: string) => {
+      const result = await checkSource(
+        `EXTENDS Naturals\nVARIABLE x\nInit == x \\in ${set}\nNext == UNCHANGED x`,
+        "INIT Init\nNEXT Next",
+      );
+      return [result.generatedStates, result.distinctStates];
+    };
+    expect(await getCounts("SUBSET {1} \\cup SUBSET {2}")).toEqual([7, 3]);
+    expect(await getCounts("(1..3) \\cup SUBSET {}")).toEqual([8, 4]);
+    expect(await getCounts("{1} \\cup {1, 2}")).toEqual([4, 2]);
+  });
+
   it("reports initial states without a next-state action", async () => {
     await expect(checkSource("VARIABLE x\nInit == x \\in {1, 2}", "INIT Init")).rejects.toThrow(
       /No next state actions defined to generate successor states from/,
