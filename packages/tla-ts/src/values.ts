@@ -172,6 +172,10 @@ export const compareValues = (left: Value, right: Value): number => {
       }
       return leftKind === "ModelValue" ? -1 : 1;
     }
+    if (leftKind === "InfiniteSet" && rightKind === "InfiniteSet") {
+      if (left.name === right.name) return 0;
+      if (left.name !== "STRING" && right.name !== "STRING") return left.name === "Nat" ? -1 : 1;
+    }
     const leftIsSet = isSetValue(left);
     if (leftIsSet !== isSetValue(right)) {
       throw new TlaEvaluationError(

@@ -23,6 +23,7 @@ ASSUME 3 \in Nat \ {0} /\ 0 \notin Nat \ {0}
 ASSUME (Nat \cap {-1, 2}) = {2} /\ ({-1, 2} \cap Nat) = {2}
 ASSUME -1 \in Nat \cup {-1} /\ -2 \notin Nat \cup {-1}
 ASSUME {1, -2} \ Nat = {-2}
+ASSUME (CHOOSE s \in {{Int}, {Nat}} : TRUE) = {Nat} /\ {Nat, Int} = {Int, Nat}
 ASSUME 2 \in Nat /\ -2 \notin Nat /\ -2 \in Int
 ASSUME SUBSET {1, 2} = {{}, {1}, {2}, {1, 2}}
 ASSUME UNION {{1}, {2, 3}} = {1, 2, 3}
