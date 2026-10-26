@@ -69,6 +69,7 @@ Options:
 
 - `source`: the TLA+ module to check
 - `config`: a TLC configuration, as source text or as the result of `parseConfig`
+- `spec`: a spec from `defineSpec`, in place of `source` and `config`
 - `loadModule`: maps a module name to its source, for modules other than the standard modules
 - `onPrint`: receives the output of `Print` and `PrintT`, which defaults to `console.log`
 - `readFile` and `writeFile`: let the Json module read and write files. Without them, it has no file access
@@ -95,6 +96,47 @@ const result = await checkInParallel({ source: specSource, config: configSource,
 ```
 
 Workers deduplicate states by 64-bit fingerprint, as TLC does. When a run finds a violation, or the spec uses liveness properties or impure operators such as `Print`, `checkInParallel` falls back to `check` and returns its exact result and trace.
+
+### `defineSpec`
+
+Builds a spec and its configuration in TypeScript. It builds the same syntax tree as the parser, so a TypeScript spec gets TLC's semantics, traces, and state counts. Pass the result to `check` as `spec`:
+
+```ts
+import { check, defineSpec } from "tla-ts";
+
+const counter = defineSpec((tla) => {
+  const limit = tla.constant("Limit", 3);
+  const count = tla.variable("count");
+  const increment = tla.define(
+    "Increment",
+    tla.and(count.lt(limit), count.prime().eq(count.plus(1))),
+  );
+  return {
+    init: count.eq(0),
+    next: increment,
+    fairness: [tla.weakFairness(increment)],
+    properties: { Done: tla.eventually(count.eq(limit)) },
+    checkDeadlock: false,
+  };
+});
+
+check({ spec: counter }).status; // "success"
+```
+
+- `tla.variable` and `tla.constant` declare names. A constant takes a number, string, boolean, `tla.modelValue(name)`, or an array, which becomes a set.
+- `tla.define` adds a named definition. `tla.operator(name, params, body)` adds an operator, such as `tla.operator("Send", ["item"], (item) => ...)`. Named actions appear in error traces.
+- A parameter such as `"F(_)"` takes an operator. Pass it a `tla.lambda` or the function that `tla.operator` returns.
+- `tla.function(name, sets, body)` defines a recursive function, such as `Fib[n \in Nat] == ...`.
+- Terms have methods for the standard operators, such as `eq`, `plus`, `in`, `union`, `at`, `except`, `append`, `selectSeq`, `permutations`, `divide`, `copiesIn`, and `bagAdd`. `tla.value(literal)` turns a number, string, or boolean into a term.
+- `tla.tlcGet(key)` and `tla.tlcSet(key, value)` build `TLCGet` and `TLCSet`. `tla.EmptyBag`, `tla.Real`, and `tla.Infinity` are the constants of the Bags and Reals modules. A number that is not an integer throws TLC's "can't handle real numbers" error.
+- `tla.forall`, `tla.exists`, `tla.fn`, and `tla.map` take a set, or an array of sets for several bound variables, and a callback that receives the bound variables. `tla.choose` and `tla.filter` take one set.
+- `tla.unboundedForall`, `tla.unboundedExists`, and `tla.unboundedChoose` take only a callback. TLC cannot evaluate them, so they throw `TlaEvaluationError` like TLC does.
+- `tla.let(value, (name) => body)` and `tla.letOperator(params, definition, (operator) => body)` build `LET`. The definition callback receives the operator after its parameters, so it can call itself.
+- `tla.product` builds `\X`, and `tla.lambda(params, body)` builds `LAMBDA`.
+- `tla.instance(name, module, substitutions)` instantiates a module from `loadModule` and returns a function that applies its operators, such as `channel("Send", item)`. `tla.parameterizedInstance(name, params, module, getSubstitutions)` adds instance parameters, such as `pair(right)("TypeOK")`. `tla.unnamedInstance(module, substitutions)` adds the module's definitions without a prefix.
+- The return value sets `init`, `next`, `fairness`, `invariants`, `properties`, `constraints`, `actionConstraints`, `symmetry`, `view`, `postconditions`, `assumptions`, and `checkDeadlock`. Each record key names a definition.
+
+TypeScript checks the number of bound variables and operator arguments. A recursive operator or function needs a return type on its callback, such as `(n): Term => ...`. A TypeScript spec extends only the standard modules that it uses. Error messages point to the line and column in the TypeScript file that built the failing expression.
 
 ### `parseModule`
 

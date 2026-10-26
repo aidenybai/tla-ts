@@ -5,7 +5,11 @@ export interface LocalResolution {
 export interface SourceLocation {
   line: number;
   column: number;
+  file?: string;
 }
+
+export const describeLocation = (node: { location: SourceLocation }) =>
+  `line ${node.location.line}, column ${node.location.column}${node.location.file === undefined ? "" : ` of ${node.location.file}`}`;
 
 export interface NumberExpression {
   kind: "Number";

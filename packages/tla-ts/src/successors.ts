@@ -1,4 +1,4 @@
-import type { Bound, Definition, Expression } from "./ast";
+import { describeLocation, type Bound, type Definition, type Expression } from "./ast";
 import { TlaEvaluationError } from "./errors";
 import {
   bindArgument,
@@ -61,9 +61,6 @@ type Conjunct = { expression: Expression } & (
 
 const initRunners = new WeakMap<Expression, Runner>();
 const nextRunners = new WeakMap<Expression, Runner>();
-
-const describeLocation = (expression: Expression) =>
-  `line ${expression.location.line}, column ${expression.location.column}`;
 
 const getContext = (run: Run, scope: Scope | undefined, partial: State): Context =>
   run.isInit

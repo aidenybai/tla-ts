@@ -1,12 +1,13 @@
-import type {
-  Bound,
-  BoundPattern,
-  Definition,
-  Expression,
-  Instance,
-  Module,
-  OperatorParam,
-  SourceLocation,
+import {
+  describeLocation,
+  type Bound,
+  type BoundPattern,
+  type Definition,
+  type Expression,
+  type Instance,
+  type Module,
+  type OperatorParam,
+  type SourceLocation,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import { getChildren, isLocallyResolved } from "./evaluate";
@@ -459,7 +460,7 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
     }
     if (replacement) {
       throw new TlaSyntaxError(
-        `The operator ${expression.operator} can only be substituted by an operator at line ${expression.location.line}, column ${expression.location.column}`,
+        `The operator ${expression.operator} can only be substituted by an operator at ${describeLocation(expression)}`,
       );
     }
     const copy = getCopy(rewrite, expression.operator);

@@ -1,13 +1,14 @@
-import type {
-  Bound,
-  BoundPattern,
-  Definition,
-  Expression,
-  Instance,
-  Module,
-  OperatorParam,
-  Selector,
-  SourceLocation,
+import {
+  describeLocation,
+  type Bound,
+  type BoundPattern,
+  type Definition,
+  type Expression,
+  type Instance,
+  type Module,
+  type OperatorParam,
+  type Selector,
+  type SourceLocation,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import { getChildren } from "./evaluate";
@@ -31,11 +32,8 @@ const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
 const SELECTION_NAME = "$subexpression";
 
-const describeLocation = (location: SourceLocation) =>
-  `line ${location.line}, column ${location.column}`;
-
 const createError = (message: string, location: SourceLocation) =>
-  new TlaSyntaxError(`${message} at ${describeLocation(location)}`);
+  new TlaSyntaxError(`${message} at ${describeLocation({ location })}`);
 
 const getPatternNames = (pattern: BoundPattern) =>
   pattern.kind === "Name" ? [pattern.name] : pattern.names;

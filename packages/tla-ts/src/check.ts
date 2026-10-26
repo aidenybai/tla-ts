@@ -23,6 +23,7 @@ import {
   type TemporalProperty,
 } from "./liveness";
 import { parseModule } from "./parser";
+import type { Spec } from "./builder";
 import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { createCanonicalizer } from "./canonical";
@@ -36,6 +37,10 @@ export interface CheckOptions {
   onPrint?: (text: string) => void;
   readFile?: (path: string) => string | undefined;
   writeFile?: (path: string, content: string) => void;
+}
+
+export interface SpecCheckOptions extends Omit<CheckOptions, "source" | "config"> {
+  spec: Spec;
 }
 
 export type CheckStatus =
@@ -447,10 +452,17 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
   };
 };
 
-export const check = (options: CheckOptions): CheckResult => {
-  const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
+export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => {
+  const model =
+    "spec" in options
+      ? options.spec.build()
+      : {
+          config: typeof options.config === "string" ? parseConfig(options.config) : options.config,
+          module: parseModule(options.source),
+        };
+  const config = model.config;
   const print = options.onPrint ?? console.log;
-  const specification = createEnvironment(parseModule(options.source), config, {
+  const specification = createEnvironment(model.module, config, {
     loadModule: options.loadModule,
     print,
     files: { readFile: options.readFile, writeFile: options.writeFile },
