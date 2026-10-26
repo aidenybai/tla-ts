@@ -18,11 +18,14 @@ export interface FlatModule {
 
 interface Rewrite {
   prefix: string;
+  isLocal: boolean;
   params: OperatorParam[];
   definitionNames: Set<string>;
   substitutions: Map<string, Expression>;
   substitutedNames: Map<string, Set<string>>;
 }
+
+const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
 const getPatternNames = (pattern: BoundPattern) =>
   pattern.kind === "Name" ? [pattern.name] : pattern.names;
@@ -47,7 +50,7 @@ const getLocalNames = (expression: Expression, names = new Set<string>()): Set<s
 const mapBounds = (bounds: Bound[], map: (child: Expression) => Expression): Bound[] =>
   bounds.map((bound) => ({ pattern: bound.pattern, set: map(bound.set) }));
 
-const mapDefinition = (
+export const mapDefinition = (
   definition: Definition,
   map: (child: Expression, bound: string[]) => Expression,
 ): Definition =>
@@ -230,13 +233,15 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
     }
     if (rewrite.definitionNames.has(expression.name) && expression.resolution?.kind !== "Local") {
       const name = `${rewrite.prefix}${expression.name}`;
+      const resolution = rewrite.isLocal ? LOCAL_RESOLUTION : undefined;
       return rewrite.params.length === 0
-        ? { ...expression, name }
+        ? { ...expression, name, resolution }
         : {
             kind: "Apply",
             operator: name,
             args: getParamArguments(rewrite, expression.location),
             location: expression.location,
+            resolution,
           };
     }
     return expression;
@@ -267,7 +272,7 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
             location: replacement.location,
           },
         ],
-        body: { ...expression, operator: replacement.kind, args, resolution: { kind: "Local" } },
+        body: { ...expression, operator: replacement.kind, args, resolution: LOCAL_RESOLUTION },
         location: expression.location,
       };
     }
@@ -284,6 +289,7 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
         ...expression,
         operator: `${rewrite.prefix}${expression.operator}`,
         args: [...getParamArguments(rewrite, expression.location), ...args],
+        resolution: rewrite.isLocal ? LOCAL_RESOLUTION : undefined,
       };
     }
     return { ...expression, args };
@@ -299,8 +305,12 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
   );
 };
 
-export const instantiateModule = (instance: Instance, flat: FlatModule): Definition[] => {
-  const params = new Set(instance.params.map((param) => param.name));
+export const instantiateModule = (
+  instance: Instance,
+  flat: FlatModule,
+  locals?: Set<string>,
+): Definition[] => {
+  const params = new Set([...(locals ?? []), ...instance.params.map((param) => param.name)]);
   const explicit = new Map(
     instance.substitutions.map((item) => [item.name, markParams(item.expression, params)]),
   );
@@ -308,11 +318,13 @@ export const instantiateModule = (instance: Instance, flat: FlatModule): Definit
   const substitutions = new Map(
     declared.map((name): [string, Expression] => [
       name,
-      explicit.get(name) ?? { kind: "Identifier", name, location: instance.location },
+      explicit.get(name) ??
+        markParams({ kind: "Identifier", name, location: instance.location }, params),
     ]),
   );
   const rewrite: Rewrite = {
     prefix: instance.name === undefined ? "" : `${instance.name}!`,
+    isLocal: locals !== undefined,
     params: instance.params,
     definitionNames: new Set(flat.definitions.map((definition) => definition.name)),
     substitutions,

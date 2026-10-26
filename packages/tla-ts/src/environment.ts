@@ -1,10 +1,10 @@
-import type { Assumption, Definition, Instance, Module } from "./ast";
+import type { Assumption, Definition, Expression, Instance, Module } from "./ast";
 import type { ConfigValue, ModelConfig } from "./config";
 import { TlaConfigError, TlaUnsupportedError } from "./errors";
-import { isConstantLevel, type Builtin, type Environment } from "./evaluate";
-import { instantiateModule, type FlatModule } from "./instances";
+import { getChildren, isConstantLevel, type Builtin, type Environment } from "./evaluate";
+import { instantiateModule, mapChildren, mapDefinition, type FlatModule } from "./instances";
 import { parseModule } from "./parser";
-import { resolveModule, type Symbols } from "./resolve";
+import { isBefore, resolveModule, type Symbols } from "./resolve";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
 import { checkInteger, createSet, type Value } from "./values";
 
@@ -115,10 +115,51 @@ export const createEnvironment = (
     module.outer?.symbols.forEach((symbol) => imported.set(symbol.name, symbol.arity));
   };
 
+  const expandLetInstances = (expression: Expression, locals: Set<string>): Expression => {
+    const mapped = mapChildren(expression, (child, bound) =>
+      expandLetInstances(child, bound.length === 0 ? locals : new Set([...locals, ...bound])),
+    );
+    if (mapped.kind !== "Let" || !mapped.instances) return mapped;
+    const definitions = [...mapped.definitions];
+    mapped.instances.forEach((instance) => {
+      const position = definitions.findIndex((definition) =>
+        isBefore(instance.location, definition.location),
+      );
+      const visible = new Set([
+        ...locals,
+        ...definitions.slice(0, position === -1 ? undefined : position).map((item) => item.name),
+      ]);
+      const instantiated = instantiateModule(instance, getFlatModule(instance.module), visible);
+      definitions.splice(position === -1 ? definitions.length : position, 0, ...instantiated);
+    });
+    return { kind: "Let", definitions, body: mapped.body, location: mapped.location };
+  };
+
+  const hasLetInstance = (expression: Expression): boolean =>
+    (expression.kind === "Let" && expression.instances !== undefined) ||
+    getChildren(expression).some(hasLetInstance);
+
+  const withLetInstances = (module: Module): Module => {
+    const isExpanded =
+      module.definitions.some((definition) => hasLetInstance(definition.body)) ||
+      module.assumptions.some((assumption) => hasLetInstance(assumption.expression));
+    if (!isExpanded) return module;
+    return {
+      ...module,
+      definitions: module.definitions.map((definition) =>
+        mapDefinition(definition, (child, bound) => expandLetInstances(child, new Set(bound))),
+      ),
+      assumptions: module.assumptions.map((assumption) => ({
+        ...assumption,
+        expression: expandLetInstances(assumption.expression, new Set()),
+      })),
+    };
+  };
+
   const getFlatModule = (name: string): FlatModule & { symbols: Symbols } => {
     const cached = flatModules.get(name);
     if (cached) return cached;
-    const module = loadModule(name);
+    const module = withLetInstances(loadModule(name));
     const imported: Symbols = new Map(
       CORE_OPERATORS.map((operator) => [operator.name, operator.arity]),
     );
@@ -153,7 +194,8 @@ export const createEnvironment = (
     return flat;
   };
 
-  const addModule = (module: Module, isRoot: boolean): Symbols => {
+  const addModule = (parsed: Module, isRoot: boolean): Symbols => {
+    const module = withLetInstances(parsed);
     moduleExports.set(module.name, new Map());
     const imported: Symbols = new Map(
       CORE_OPERATORS.map((operator) => [operator.name, operator.arity]),

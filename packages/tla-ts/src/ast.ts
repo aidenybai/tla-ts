@@ -94,6 +94,7 @@ export interface CaseExpression {
 export interface LetExpression {
   kind: "Let";
   definitions: Definition[];
+  instances?: Instance[];
   body: Expression;
   location: SourceLocation;
 }

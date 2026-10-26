@@ -16,7 +16,7 @@ import type {
   RecordField,
   SourceLocation,
 } from "./ast";
-import { TlaSyntaxError, TlaUnsupportedError } from "./errors";
+import { TlaSyntaxError } from "./errors";
 import { tokenize, type Token } from "./lexer";
 
 interface InfixOperator {
@@ -518,18 +518,20 @@ export const parseModule = (source: string): Module => {
         return parseCase(token);
       case "LET": {
         const definitions: Definition[] = [];
+        const instances: Instance[] = [];
         while (!accept("IN")) {
           if (accept("RECURSIVE")) {
             parseDeclarations().forEach((declaration) => recursiveNames.add(declaration.name));
             continue;
           }
           const unit = parseDefinition(false);
-          if (unit.kind === "Instance") {
-            throw new TlaUnsupportedError("INSTANCE inside LET is not supported yet");
-          }
-          definitions.push(unit);
+          if (unit.kind === "Instance") instances.push(unit);
+          else definitions.push(unit);
         }
-        return { kind: "Let", definitions, body: parseExpression(), location };
+        const body = parseExpression();
+        return instances.length === 0
+          ? { kind: "Let", definitions, body, location }
+          : { kind: "Let", definitions, instances, body, location };
       }
       case "CHOOSE": {
         const pattern = parsePattern();

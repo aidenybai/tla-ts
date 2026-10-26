@@ -38,4 +38,17 @@ describe("INSTANCE matches TLC", () => {
     expect(result.violation?.trace).toHaveLength(4);
     expect([result.generatedStates, result.distinctStates]).toEqual([37, 16]);
   });
+
+  it("instantiates modules inside LET with substitutions that use local names", () => {
+    const result = checkInstances("LetInstances.cfg", "LetInstances");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([193, 96, 19]);
+  });
+
+  it("reports violations through instances defined inside LET", () => {
+    const result = checkInstances("LetInstancesViolation.cfg", "LetInstances");
+    expect(result.status).toBe("invariant-violation");
+    expect(result.violation?.trace).toHaveLength(5);
+    expect(result.distinctStates).toBe(11);
+  });
 });
