@@ -821,9 +821,30 @@ const compileQuantifier = (
       return isForall;
     };
   }
+  const bounds = expression.bounds;
+  if (bounds.every((item) => item.pattern.kind === "Name")) {
+    const names = bounds.map((item) => (item.pattern.kind === "Name" ? item.pattern.name : ""));
+    const sets = bounds.map((item) => getEvaluator(item.set, environment));
+    return (context) => {
+      const lists = sets.map((set, index) =>
+        getEnumeratedElements(set(context), bounds[index].set),
+      );
+      const visit = (index: number, scope: Scope | undefined): boolean => {
+        if (index < 0) {
+          return expectBoolean(body(withScope(context, scope)), description) !== isForall;
+        }
+        const list = lists[index];
+        for (let position = 0; position < list.length; position++) {
+          if (visit(index - 1, bindValue(scope, names[index], list[position]))) return true;
+        }
+        return false;
+      };
+      return visit(bounds.length - 1, context.scope) ? !isForall : isForall;
+    };
+  }
   return (context) => {
     const isFound = forEachBinding(
-      expression.bounds,
+      bounds,
       context,
       (scope) => expectBoolean(body(withScope(context, scope)), description) !== isForall,
     );
@@ -863,11 +884,10 @@ const compileFunctionConstruction = (
     if (isSingleName && bound.pattern.kind === "Name") {
       const name = bound.pattern.name;
       const keys = toFiniteSet(domain).elements;
-      const range: Value[] = Array.from({ length: keys.length });
-      for (let index = 0; index < keys.length; index++) {
-        range[index] = body(withScope(context, bindValue(context.scope, name, keys[index])));
-      }
-      return createSortedFunction(keys, range);
+      return createSortedFunction(
+        keys,
+        keys.map((key) => body(withScope(context, bindValue(context.scope, name, key)))),
+      );
     }
     const pairs: [Value, Value][] = [];
     forEachBinding(bounds, context, (scope) => {
@@ -994,11 +1014,11 @@ const compileRecord = (recordFields: RecordField[], environment: Environment): E
       );
   }
   const names: Value[] = fields.map((field) => field.name);
-  return (context) => {
-    const range: Value[] = Array.from({ length: values.length });
-    for (let index = 0; index < values.length; index++) range[index] = values[index](context);
-    return createSortedFunction(names, range);
-  };
+  return (context) =>
+    createSortedFunction(
+      names,
+      values.map((value) => value(context)),
+    );
 };
 
 const createUnchanged = (expression: Expression, location: Expression["location"]): Expression => ({

@@ -61,8 +61,11 @@ const assign = (partial: State, index: number, value: Value) => {
   return copy;
 };
 
-const holds = (expression: Expression, context: Context) =>
-  expectBoolean(evaluate(expression, context), `the action at ${describeLocation(expression)}`);
+const holds = (expression: Expression, context: Context) => {
+  const value = evaluate(expression, context);
+  if (typeof value === "boolean") return value;
+  return expectBoolean(value, `the action at ${describeLocation(expression)}`);
+};
 
 const getRunner = (expression: Expression, environment: Environment, isInit: boolean): Runner => {
   const runners = isInit ? initRunners : nextRunners;
@@ -482,7 +485,11 @@ const compileAction = (
         const right = child(args[1]);
         return (run, scope, partial, action, isFixed, onComplete) => {
           const condition = evaluate(args[0], getContext(run, scope, partial));
-          if (!expectBoolean(condition, `the left side of => at ${describeLocation(expression)}`)) {
+          const isTrue =
+            typeof condition === "boolean"
+              ? condition
+              : expectBoolean(condition, `the left side of => at ${describeLocation(args[0])}`);
+          if (!isTrue) {
             onComplete(partial, action);
             return;
           }
@@ -494,6 +501,16 @@ const compileAction = (
     default:
       return compileGuard(expression);
   }
+};
+
+const emptyStates = new WeakMap<Environment, State>();
+
+const getEmptyState = (environment: Environment) => {
+  const cached = emptyStates.get(environment);
+  if (cached) return cached;
+  const state = environment.variables.map((): Value | undefined => undefined);
+  emptyStates.set(environment, state);
+  return state;
 };
 
 const getMissingVariables = (partial: State, environment: Environment) =>
@@ -512,7 +529,7 @@ export const getInitialStates = (expression: Expression, environment: Environmen
   getRunner(expression, environment, true)(
     run,
     undefined,
-    Array.from<Value | undefined>({ length: environment.variables.length }),
+    getEmptyState(environment),
     undefined,
     false,
     (partial) => {
@@ -537,7 +554,7 @@ export const getSuccessors = (
   getRunner(expression, environment, false)(
     run,
     undefined,
-    Array.from<Value | undefined>({ length: state.length }),
+    getEmptyState(environment),
     undefined,
     false,
     (partial, action) => {
