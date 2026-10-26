@@ -39,6 +39,7 @@ interface Run {
   environment: Environment;
   isInit: boolean;
   current: Value[] | undefined;
+  isStopped: boolean;
 }
 
 type Continuation = (partial: State, action: string | undefined) => void;
@@ -333,7 +334,7 @@ const compileMembership = (
       );
     }
     const elements = toFiniteSet(value).elements;
-    for (let position = 0; position < elements.length; position++) {
+    for (let position = 0; position < elements.length && !run.isStopped; position++) {
       onComplete(assign(partial, index, elements[position]), action);
     }
   };
@@ -554,7 +555,9 @@ const compileAction = (
     case "Or": {
       const operands = expression.operands.map(child);
       return (run, scope, partial, action, isFixed, onComplete) => {
-        for (const operand of operands) operand(run, scope, partial, action, isFixed, onComplete);
+        for (let index = 0; index < operands.length && !run.isStopped; index++) {
+          operands[index](run, scope, partial, action, isFixed, onComplete);
+        }
       };
     }
     case "Exists": {
@@ -570,7 +573,7 @@ const compileAction = (
             );
           }
           const elements = toFiniteSet(set).elements;
-          for (let index = 0; index < elements.length; index++) {
+          for (let index = 0; index < elements.length && !run.isStopped; index++) {
             body(
               run,
               bindValue(scope, name, elements[index]),
@@ -585,7 +588,7 @@ const compileAction = (
       return (run, scope, partial, action, isFixed, onComplete) => {
         forEachBinding(expression.bounds, getContext(run, scope, partial), (boundScope) => {
           body(run, boundScope, partial, action, isFixed, onComplete);
-          return false;
+          return run.isStopped;
         });
       };
     }
@@ -751,7 +754,7 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
   const environment = context.environment;
   const found = { value: false };
   getRunner(expression, environment, false)(
-    { environment, isInit: false, current: state },
+    { environment, isInit: false, current: state, isStopped: false },
     context.scope,
     getEmptyState(environment),
     undefined,
@@ -763,9 +766,12 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
   return found.value;
 };
 
-export const getInitialStates = (expression: Expression, environment: Environment): Value[][] => {
-  const states: Value[][] = [];
-  const run: Run = { environment, isInit: true, current: undefined };
+export const forEachInitialState = (
+  expression: Expression,
+  environment: Environment,
+  onState: (state: Value[]) => boolean,
+) => {
+  const run: Run = { environment, isInit: true, current: undefined, isStopped: false };
   getRunner(expression, environment, true)(
     run,
     undefined,
@@ -773,15 +779,52 @@ export const getInitialStates = (expression: Expression, environment: Environmen
     undefined,
     false,
     (partial) => {
+      if (run.isStopped) return;
       if (!isComplete(partial)) {
         throw new TlaEvaluationError(
           `The initial predicate does not assign ${getMissingVariables(partial, environment).join(", ")}`,
         );
       }
-      states.push(partial);
+      run.isStopped = onState(partial);
     },
   );
+};
+
+export const getInitialStates = (expression: Expression, environment: Environment): Value[][] => {
+  const states: Value[][] = [];
+  forEachInitialState(expression, environment, (state) => {
+    states.push(state);
+    return false;
+  });
   return states;
+};
+
+export const forEachSuccessor = (
+  expression: Expression,
+  state: Value[],
+  environment: Environment,
+  onSuccessor: (successor: Successor) => boolean,
+) => {
+  const run: Run = { environment, isInit: false, current: state, isStopped: false };
+  const counter = { successors: 0 };
+  getRunner(expression, environment, false)(
+    run,
+    undefined,
+    getEmptyState(environment),
+    undefined,
+    false,
+    (partial, action) => {
+      if (run.isStopped) return;
+      if (!isComplete(partial)) {
+        throw new TlaEvaluationError(
+          `Successor state is not completely specified by action ${action ?? "Next"}. The following variables are not assigned: ${getMissingVariables(partial, environment).join(", ")}`,
+        );
+      }
+      counter.successors++;
+      run.isStopped = onSuccessor({ state: partial, action });
+    },
+  );
+  return counter.successors;
 };
 
 export const getSuccessors = (
@@ -790,21 +833,9 @@ export const getSuccessors = (
   environment: Environment,
 ): Successor[] => {
   const successors: Successor[] = [];
-  const run: Run = { environment, isInit: false, current: state };
-  getRunner(expression, environment, false)(
-    run,
-    undefined,
-    getEmptyState(environment),
-    undefined,
-    false,
-    (partial, action) => {
-      if (!isComplete(partial)) {
-        throw new TlaEvaluationError(
-          `Successor state is not completely specified by action ${action ?? "Next"}. The following variables are not assigned: ${getMissingVariables(partial, environment).join(", ")}`,
-        );
-      }
-      successors.push({ state: partial, action });
-    },
-  );
+  forEachSuccessor(expression, state, environment, (successor) => {
+    successors.push(successor);
+    return false;
+  });
   return successors;
 };
