@@ -310,7 +310,7 @@ ASSUME TLCFP(a) = -887695703
       'ToJson({3, 2, 1}) = "[1,2,3]"',
       'ToJsonObject([a |-> TRUE, b |-> FALSE]) = "{\\"a\\":true,\\"b\\":false}"',
       'ToJson(3 :> "c" @@ 2 :> "b" @@ 1 :> "a") = "[\\"a\\",\\"b\\",\\"c\\"]"',
-      'ToJson([x \\in {3, 2, 1} |-> 2 * x + 1]) = "[3,5,7]"',
+      'ToJson([n \\in {3, 2, 1} |-> 2 * n + 1]) = "[3,5,7]"',
       'ToJsonArray({}) = "[]"',
     ];
     const result = await check({
@@ -912,6 +912,59 @@ describe("name resolution matches SANY", () => {
       4,
       3,
     ]);
+  });
+
+  it.each([
+    ["a definition defined twice", "B == 1\nB == 2"],
+    ["a definition of a declared constant", "CONSTANT B\nB == 1"],
+    ["a constant declared after a definition", "B == 1\nCONSTANT B"],
+    ["a constant and a variable with one name", "CONSTANT y\nVARIABLE y"],
+    ["an operator parameter named after a definition", "B == 1\nF(B) == B"],
+    ["a LET definition named after a definition", "B == 1\nF == LET B == 2 IN B"],
+    ["a bound variable named after a variable", "VARIABLE y\nF == \\E y \\in {1} : TRUE"],
+    ["nested bound variables with one name", "F == \\E y \\in {1} : \\E y \\in {2} : TRUE"],
+    ["an operator of an extended module", "EXTENDS Naturals\na + b == a"],
+    ["a built-in operator", "BOOLEAN == 1"],
+    ["a definition after an instance that imports it", "INSTANCE Naturals\nNat == 1"],
+    ["a named instance and a definition with one name", "I == 1\nI == INSTANCE Naturals"],
+    ["duplicate operator parameters", "F(a, a) == a"],
+    [
+      "a LAMBDA parameter named after a definition",
+      "B == 1\nG(Op(_)) == Op(1)\nF == G(LAMBDA B : B)",
+    ],
+    ["a function bound named after a definition", "y == 1\nf[y \\in {1}] == y"],
+    ["duplicate names in a tuple pattern", "F == \\E <<a, a>> \\in {<<1, 2>>} : TRUE"],
+    ["a LET definition named after an enclosing one", "F == LET A == 1 IN LET A == 2 IN A"],
+    ["a LOCAL definition of an extended operator", "EXTENDS FiniteSets\nLOCAL Cardinality(S) == 0"],
+    [
+      "a nested module definition named after an outer one",
+      "B == 1\n---- MODULE Inner ----\nB == 2\n====\nI == INSTANCE Inner",
+    ],
+  ])("rejects %s as multiply defined", async (_, source) => {
+    await expect(checkSource(source)).rejects.toThrow(/Multiply-defined symbol/);
+  });
+
+  it.each([
+    ["a definition before an instance that imports it", "Nat == 1\nINSTANCE Naturals"],
+    ["a bound variable before a definition of that name", "F == \\E B \\in {1} : TRUE\nB == 1"],
+    [
+      "sibling quantifiers with one name",
+      "F == (\\E y \\in {1} : TRUE) /\\ (\\E y \\in {2} : TRUE)",
+    ],
+    [
+      "a LET definition whose body binds its own name",
+      "F == LET e == CHOOSE e \\in {1} : TRUE IN e",
+    ],
+    [
+      "a LET parameter named after a later LET definition",
+      "F == LET A(B) == B\n         B == 1\n     IN A(B)",
+    ],
+    [
+      "a recursive LET definition",
+      "F == LET RECURSIVE G(_)\n         G(n) == IF n = 0 THEN 0 ELSE G(0)\n     IN G(1)",
+    ],
+  ])("accepts %s", async (_, source) => {
+    expect((await checkSource(source)).status).toBe("success");
   });
 
   it("defines prefix, postfix, and <: operators", async () => {

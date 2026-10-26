@@ -300,9 +300,234 @@ const resolveExpression = (
 
 interface ModuleUnit {
   imported: Symbols;
+  importedAt: Map<string, SourceLocation>;
   definitions: Map<string, Definition>;
   getKey: (definition: Definition) => string;
 }
+
+interface ModuleName {
+  name: string;
+  kind: "Definition" | "Constant" | "Variable";
+  location: SourceLocation;
+  isRecursive: boolean;
+}
+
+type IsDefined = (name: string) => boolean;
+
+const createRedefinitionError = (name: string, location: SourceLocation) =>
+  new TlaSyntaxError(
+    `Multiply-defined symbol '${name}' at line ${location.line}, column ${location.column}`,
+  );
+
+const bindUnique = (
+  scope: LocalName | undefined,
+  names: string[],
+  isDefined: IsDefined,
+  location: SourceLocation,
+) =>
+  names.reduce<LocalName | undefined>((parent, name) => {
+    if (lookupLocal(parent, name) || isDefined(name)) throw createRedefinitionError(name, location);
+    return { name, arity: 0, parent };
+  }, scope);
+
+const checkBoundNames = (
+  bounds: Bound[],
+  scope: LocalName | undefined,
+  isDefined: IsDefined,
+  location: SourceLocation,
+) => {
+  bounds.forEach((bound) => checkNames(bound.set, scope, isDefined));
+  return bounds.reduce(
+    (current, bound) => bindUnique(current, getPatternNames(bound.pattern), isDefined, location),
+    scope,
+  );
+};
+
+const checkDefinitionNames = (
+  definition: Definition,
+  scope: LocalName | undefined,
+  isDefined: IsDefined,
+) => {
+  if (definition.kind === "Function") {
+    const self = bindNames(scope, [definition.name]);
+    const bound = checkBoundNames(definition.bounds, self, isDefined, definition.location);
+    checkNames(definition.body, bound, isDefined);
+    return;
+  }
+  const params = bindUnique(
+    scope,
+    definition.params.map((param) => param.name),
+    isDefined,
+    definition.location,
+  );
+  checkNames(definition.body, params, isDefined);
+};
+
+const checkNames = (
+  expression: Expression,
+  scope: LocalName | undefined,
+  isDefined: IsDefined,
+): void => {
+  const location = expression.location;
+  switch (expression.kind) {
+    case "Lambda":
+      checkNames(
+        expression.body,
+        bindUnique(scope, expression.params, isDefined, location),
+        isDefined,
+      );
+      return;
+    case "Let": {
+      const recursive = expression.definitions
+        .filter((definition) => definition.isRecursive)
+        .map((definition) => definition.name);
+      const inner = expression.definitions.reduce((current, definition) => {
+        if (lookupLocal(current, definition.name) || isDefined(definition.name)) {
+          throw createRedefinitionError(definition.name, definition.location);
+        }
+        checkDefinitionNames(definition, bindNames(current, recursive), isDefined);
+        return bindNames(current, [definition.name]);
+      }, scope);
+      checkNames(
+        expression.body,
+        bindUnique(
+          inner,
+          (expression.instances ?? []).flatMap((instance) =>
+            instance.name === undefined ? [] : [instance.name],
+          ),
+          isDefined,
+          location,
+        ),
+        isDefined,
+      );
+      return;
+    }
+    case "Forall":
+    case "Exists":
+    case "FunctionConstruction":
+      checkNames(
+        expression.body,
+        checkBoundNames(expression.bounds, scope, isDefined, location),
+        isDefined,
+      );
+      return;
+    case "SetFilter":
+      checkNames(
+        expression.predicate,
+        checkBoundNames([expression.bound], scope, isDefined, location),
+        isDefined,
+      );
+      return;
+    case "SetMap":
+      checkNames(
+        expression.expression,
+        checkBoundNames(expression.bounds, scope, isDefined, location),
+        isDefined,
+      );
+      return;
+    case "UnboundedQuantifier":
+      checkNames(
+        expression.body,
+        bindUnique(scope, expression.names, isDefined, location),
+        isDefined,
+      );
+      return;
+    case "Choose":
+      if (expression.set) checkNames(expression.set, scope, isDefined);
+      checkNames(
+        expression.body,
+        bindUnique(scope, getPatternNames(expression.pattern), isDefined, location),
+        isDefined,
+      );
+      return;
+    default:
+      getChildren(expression).forEach((child) => checkNames(child, scope, isDefined));
+  }
+};
+
+const getModuleNames = (module: Module): ModuleName[] => [
+  ...module.definitions.map((definition): ModuleName => ({
+    name: definition.name,
+    kind: "Definition",
+    location: definition.location,
+    isRecursive: definition.isRecursive,
+  })),
+  ...module.instances.flatMap((instance): ModuleName[] =>
+    instance.name === undefined
+      ? []
+      : [
+          {
+            name: instance.name,
+            kind: "Definition",
+            location: instance.location,
+            isRecursive: false,
+          },
+        ],
+  ),
+  ...module.constants.map((constant): ModuleName => ({
+    name: constant.name,
+    kind: "Constant",
+    location: constant.location,
+    isRecursive: false,
+  })),
+  ...module.variables.map((variable): ModuleName => ({
+    name: variable.name,
+    kind: "Variable",
+    location: variable.location,
+    isRecursive: false,
+  })),
+];
+
+export const checkRedefinitions = (module: Module, unit: ModuleUnit) => {
+  const byName = new Map<string, ModuleName[]>();
+  getModuleNames(module)
+    .sort((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
+    .forEach((entry) => byName.set(entry.name, [...(byName.get(entry.name) ?? []), entry]));
+  const isImportedBefore = (name: string, location: SourceLocation) => {
+    if (!unit.imported.has(name) && !CORE_SYMBOLS.has(name)) return false;
+    const importedAt = unit.importedAt.get(name);
+    return importedAt === undefined || isBefore(importedAt, location);
+  };
+  byName.forEach((entries) =>
+    entries.forEach((entry, index) => {
+      const isDuplicate = entries
+        .slice(0, index)
+        .some(
+          (earlier) =>
+            earlier.kind === "Definition" ||
+            entry.kind === "Definition" ||
+            earlier.kind !== entry.kind,
+        );
+      const isImported =
+        entry.kind === "Definition" && isImportedBefore(entry.name, entry.location);
+      if (isDuplicate || isImported) throw createRedefinitionError(entry.name, entry.location);
+    }),
+  );
+  const getIsDefined =
+    (location: SourceLocation): IsDefined =>
+    (name) =>
+      (byName.get(name) ?? []).some(
+        (entry) => entry.isRecursive || isBefore(entry.location, location),
+      ) || isImportedBefore(name, location);
+  module.definitions.forEach((definition) =>
+    checkDefinitionNames(definition, undefined, getIsDefined(definition.location)),
+  );
+  module.assumptions.forEach((assumption) =>
+    checkNames(assumption.expression, undefined, getIsDefined(assumption.location)),
+  );
+  module.instances.forEach((instance) => {
+    const isDefined = getIsDefined(instance.location);
+    const params = bindUnique(
+      undefined,
+      instance.params.map((param) => param.name),
+      isDefined,
+      instance.location,
+    );
+    instance.substitutions.forEach((substitution) =>
+      checkNames(substitution.expression, params, isDefined),
+    );
+  });
+};
 
 const createSymbols = (module: Module, imported: Symbols) => {
   const symbols = new Map([...CORE_SYMBOLS, ...imported]);
