@@ -14,6 +14,7 @@ import {
   getBoundsDomain,
   getChildren,
   getDefinition,
+  getEnumeratedElements,
   getReevaluatedDefinitions,
   lookupScope,
   resolveApplyOperator,
@@ -626,13 +627,10 @@ const compileAction = (
       if (expression.bounds.length === 1 && bound.pattern.kind === "Name") {
         const name = bound.pattern.name;
         return (run, scope, partial, action, isFixed, onComplete) => {
-          const set = evaluate(bound.set, getContext(run, scope, partial));
-          if (!isEnumerable(set)) {
-            throw new TlaEvaluationError(
-              `TLC encountered a non-enumerable quantifier bound ${formatValue(set)} at ${describeLocation(bound.set)}`,
-            );
-          }
-          const elements = toFiniteSet(set).elements;
+          const elements = getEnumeratedElements(
+            evaluate(bound.set, getContext(run, scope, partial)),
+            bound.set,
+          );
           for (let index = 0; index < elements.length && !run.isStopped; index++) {
             body(
               run,

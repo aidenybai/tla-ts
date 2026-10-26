@@ -15,6 +15,8 @@ describe("bundled modules match TLC's sources", () => {
 
   it("evaluates the definitions of TLC's Reals and Toolbox modules", async () => {
     expect((await checkInit('Real = "Reals"')).status).toBe("success");
-    await expect(checkInit("_TETrace = 0")).rejects.toThrow("at line 14, column 18");
+    await expect(checkInit("_TETrace = 0")).rejects.toThrow(
+      "Attempted to enumerate S \\ T when S:\nNat\nis not enumerable.",
+    );
   });
 });
