@@ -1,5 +1,5 @@
 import type { Definition, Expression } from "./ast";
-import { getChildren, IMPURE_BUILTINS, type Environment } from "./evaluate";
+import { getChildren, isImpureBuiltin, type Environment } from "./evaluate";
 
 const STATE_INDEPENDENT_KINDS = new Set([
   "Prime",
@@ -34,8 +34,7 @@ export const getReadVariables = (
     if (name !== undefined && !isLocal && !environment.constants.has(name)) {
       const target = environment.substitutions.get(name) ?? name;
       const definition = environment.definitions.get(target);
-      if (!definition && IMPURE_BUILTINS.has(target) && environment.builtins.has(target))
-        return false;
+      if (!definition && isImpureBuiltin(target, environment)) return false;
       const variableIndex = environment.variableIndex.get(name);
       if (variableIndex !== undefined) variables.add(variableIndex);
       if (definition && !visited.has(definition)) {

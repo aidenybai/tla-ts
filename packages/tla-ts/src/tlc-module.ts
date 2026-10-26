@@ -212,6 +212,6 @@ export const createTlcOperators = (
   defineOperator("RandomElement", 1, (args) => {
     const elements = getElements(args, 0, "RandomElement");
     if (elements.length === 0) throw new TlaEvaluationError("RandomElement of the empty set");
-    return elements[0];
+    return elements[Math.floor(runtime.random() * elements.length)];
   }),
 ];

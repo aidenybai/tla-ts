@@ -4,6 +4,7 @@ export interface CheckerRuntime {
   levels: WeakMap<readonly (Value | undefined)[], number>;
   expandingLevel: number | undefined;
   getBehavior: (state: Value[]) => Value[][];
+  random: () => number;
   generatedStates: number;
   distinctStates: number;
   initialStates: number;
@@ -18,10 +19,21 @@ export interface CheckerRuntime {
   startedAt: number;
 }
 
+const createRandom = (seed: number) => {
+  const state = { value: seed >>> 0 };
+  return () => {
+    state.value = (state.value + 0x6d2b79f5) >>> 0;
+    const mixed = Math.imul(state.value ^ (state.value >>> 15), state.value | 1);
+    const shifted = mixed ^ (mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61));
+    return ((shifted ^ (shifted >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
 export const createRuntime = (checkDeadlock: boolean): CheckerRuntime => ({
   levels: new WeakMap(),
   expandingLevel: undefined,
   getBehavior: () => [],
+  random: createRandom(0),
   generatedStates: 0,
   distinctStates: 0,
   initialStates: 0,

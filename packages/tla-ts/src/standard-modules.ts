@@ -17,6 +17,7 @@ import {
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
 import { BAGS_OPERATORS } from "./bags";
+import { createRandomizationOperators } from "./randomization";
 import { createTlcExtOperators } from "./tlc-ext";
 import { createTlcOperators } from "./tlc-module";
 import {
@@ -258,6 +259,8 @@ export const getStandardModule = (
       return { extends: [], operators: FINITE_SETS_OPERATORS };
     case "TLC":
       return { extends: [], operators: createTlcOperators(print, runtime) };
+    case "Randomization":
+      return { extends: [], operators: createRandomizationOperators(runtime) };
     case "Bags":
       return { extends: [], operators: BAGS_OPERATORS };
     case "TLCExt":

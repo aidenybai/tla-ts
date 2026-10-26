@@ -522,7 +522,9 @@ export const findGlobalName = (name: string, environment: Environment): GlobalNa
   const definition = environment.definitions.get(name);
   if (definition) return { kind: "Definition", definition };
   const builtin = environment.builtins.get(name);
-  if (builtin && builtin.arity === 0) return { kind: "Value", value: builtin.evaluate([]) };
+  if (builtin && builtin.arity === 0 && !builtin.isStateLevel) {
+    return { kind: "Value", value: builtin.evaluate([]) };
+  }
   return undefined;
 };
 
@@ -672,6 +674,8 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
   }
   if (global?.kind === "Value") return global.value;
   if (global?.kind === "Definition") return evaluateDefinitionValue(global.definition, context);
+  const builtin = context.environment.builtins.get(name);
+  if (builtin?.arity === 0) return builtin.evaluate([], context);
   throw new TlaEvaluationError(`Unknown identifier ${name} at ${describeLocation(expression)}`);
 };
 
@@ -687,6 +691,9 @@ export const IMPURE_BUILTINS = new Set([
   "TLCGet",
   "TLCSet",
 ]);
+
+export const isImpureBuiltin = (name: string, environment: Environment) =>
+  IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;
 
 const closedConstants = new WeakMap<Expression, boolean>();
 
@@ -756,7 +763,9 @@ const computeIsClosedConstant = (
     );
   }
   if (expression.kind === "Apply") {
-    if (IMPURE_BUILTINS.has(expression.operator) || expression.operator === "~>") return false;
+    if (isImpureBuiltin(expression.operator, environment) || expression.operator === "~>") {
+      return false;
+    }
     const operator = resolveGlobalOperator(expression.operator, environment);
     const isPure =
       operator?.kind === "Builtin" ||
