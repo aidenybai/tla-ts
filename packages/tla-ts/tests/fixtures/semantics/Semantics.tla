@@ -22,6 +22,9 @@ ASSUME 2 \in Nat /\ -2 \notin Nat /\ -2 \in Int
 ASSUME SUBSET {1, 2} = {{}, {1}, {2}, {1, 2}}
 ASSUME UNION {{1}, {2, 3}} = {1, 2, 3}
 ASSUME Cardinality(SUBSET (1..4)) = 16
+ASSUME Cardinality([1..3 -> 1..4]) = 64 /\ Cardinality([{} -> {}]) = 1 /\ Cardinality([1..2 -> {}]) = 0
+ASSUME Cardinality([a : 1..3, b : 1..5]) = 15 /\ Cardinality((1..3) \X {} \X (1..4)) = 0
+ASSUME Cardinality(SUBSET SUBSET (1..4)) = 65536
 ASSUME {x * x : x \in 1..3} = {1, 4, 9}
 ASSUME {x \in 1..10 : x % 3 = 0} = {3, 6, 9}
 ASSUME {<<x, y>> : x \in 1..2, y \in {"a"}} = {<<1, "a">>, <<2, "a">>}

@@ -373,10 +373,40 @@ export const toFiniteSet = (value: Value): SetValue => {
     : createSet(elements);
 };
 
-export const getCardinality = (value: Value) => {
-  if (typeof value === "object" && value.kind === "Interval")
-    return Math.max(0, value.high - value.low + 1);
-  return toFiniteSet(value).elements.length;
+const checkCardinality = (cardinality: number, set: Value) => {
+  if (cardinality > MAXIMUM_INTEGER) {
+    throw new TlaEvaluationError(
+      `Overflow when computing the number of elements in ${formatValue(set)}`,
+    );
+  }
+  return cardinality;
+};
+
+const getProductCardinality = (sets: Value[], set: Value) => {
+  const sizes = sets.map(getCardinality);
+  if (sizes.includes(0)) return 0;
+  return sizes.reduce((product, size) => checkCardinality(product * size, set), 1);
+};
+
+export const getCardinality = (value: Value): number => {
+  if (typeof value !== "object") return toFiniteSet(value).elements.length;
+  switch (value.kind) {
+    case "Interval":
+      return Math.max(0, value.high - value.low + 1);
+    case "Subset":
+      return checkCardinality(2 ** getCardinality(value.base), value);
+    case "FunctionSet":
+      return getProductCardinality(
+        Array.from({ length: getCardinality(value.domain) }, () => value.range),
+        value,
+      );
+    case "RecordSet":
+      return getProductCardinality(value.sets, value);
+    case "ProductSet":
+      return getProductCardinality(value.factors, value);
+    default:
+      return toFiniteSet(value).elements.length;
+  }
 };
 
 const findIndex = (sortedValues: Value[], target: Value) => {

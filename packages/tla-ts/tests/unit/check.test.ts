@@ -7,7 +7,7 @@ const FIXTURES = join(import.meta.dirname, "../fixtures");
 
 const checkModule = (body: string, config = "") =>
   check({
-    source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${body}\n====`,
+    source: `---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${body}\n====`,
     config: `${config}\nINIT Init\nNEXT Next`,
   });
 
@@ -105,6 +105,11 @@ describe("evaluation errors match TLC", () => {
     expect(result.status).toBe("assumption-violation");
     expect(result.violation?.name).toBe("line 7, column 1");
     expect(result.violation?.message).toMatch(/^Attempted to compute CHOOSE/);
+  });
+
+  it("reports an overflowing cardinality without enumerating the set", () => {
+    const result = checkModule("ASSUME Cardinality(SUBSET (1..31)) > 0");
+    expect(result.violation?.message).toMatch(/^Overflow when computing the number of elements/);
   });
 
   it("rejects a mistyped membership outside an assumption", () => {
