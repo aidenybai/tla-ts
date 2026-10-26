@@ -371,6 +371,10 @@ describe("defineSpec matches TLC", () => {
       const leftChannel = tla.instance("Left", "Channel", { Data: values, channel: left });
       const rightChannel = tla.instance("Right", "Channel", { Data: values, channel: right });
       const sharedChannel = tla.instance("Shared", "Channel", { Data: values, channel: shared });
+      const pair = tla.parameterizedInstance("Pair", ["target"], "Channel", (target) => ({
+        Data: values,
+        channel: target,
+      }));
       return {
         init: tla.and(left.eq(0), right.eq(0), shared.eq(0)),
         next: tla.or(
@@ -389,7 +393,7 @@ describe("defineSpec matches TLC", () => {
           ),
         ),
         invariants: {
-          Safe: tla.and(leftChannel("TypeOK"), rightChannel("TypeOK"), sharedChannel("TypeOK")),
+          Safe: tla.and(leftChannel("TypeOK"), pair(right)("TypeOK"), sharedChannel("TypeOK")),
           ...(isDifferent ? { Different: left.plus(right).plus(shared).lt(6) } : {}),
         },
       };
@@ -530,15 +534,75 @@ describe("defineSpec", () => {
     expect(() => check({ spec })).toThrow(TlaSyntaxError);
   });
 
+  it("passes operators to operator parameters", () => {
+    const spec = defineSpec((tla) => {
+      const x = tla.variable("x");
+      const twice = tla.operator("Twice", ["F(_)", "value"], (apply, value) => apply(apply(value)));
+      const increment = tla.operator("Increment", ["value"], (value) => value.plus(1));
+      return {
+        init: x.eq(0),
+        next: tla.and(x.lt(4), x.prime().eq(twice(increment, x))),
+        invariants: {
+          Small: tla.letOperator(
+            ["value"],
+            (value) => value.times(2),
+            (double) => double(x).lt(10),
+          ),
+        },
+        checkDeadlock: false,
+      };
+    });
+    expect(getCounts({ spec })).toEqual(["success", 3, 3, 3]);
+  });
+
+  it("evaluates recursive function definitions", () => {
+    const spec = defineSpec((tla) => {
+      const x = tla.variable("x");
+      const fibonacci = tla.function("Fibonacci", tla.range(0, 10), (n): Term =>
+        tla.ifThenElse(n.lt(2), n, fibonacci.at(n.minus(1)).plus(fibonacci.at(n.minus(2)))),
+      );
+      return {
+        init: x.eq(0),
+        next: tla.and(x.lt(10), x.prime().eq(x.plus(1))),
+        invariants: { Small: fibonacci.at(x).lt(5) },
+      };
+    });
+    const result = check({ spec });
+    expect(result.violation?.name).toBe("Small");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([6, 6, 6]);
+  });
+
+  it("reports a false assumption", () => {
+    const spec = defineSpec((tla) => {
+      const limit = tla.constant("Limit", 3);
+      const x = tla.variable("x");
+      return {
+        init: x.eq(0),
+        next: x.prime().eq(x),
+        assumptions: { LimitIsLarge: limit.gt(5) },
+      };
+    });
+    const result = check({ spec });
+    expect([result.status, result.violation?.name]).toEqual([
+      "assumption-violation",
+      "LimitIsLarge",
+    ]);
+  });
+
   it("checks the arity of binders and operators at compile time", () => {
     defineSpec((tla) => {
       const x = tla.variable("x");
       const add = tla.operator("Add", ["left", "right"], (left, right) => left.plus(right));
+      const twice = tla.operator("Twice", ["F(_)", "value"], (apply, value) => apply(apply(value)));
       return {
         // @ts-expect-error A single set binds one variable.
         init: tla.exists(tla.range(0, 1), (left, right) => x.eq(left.plus(right))),
-        // @ts-expect-error Add takes two arguments.
-        next: x.prime().eq(add(x)),
+        next: tla.and(
+          // @ts-expect-error Add takes two arguments.
+          x.prime().eq(add(x)),
+          // @ts-expect-error F(_) takes an operator, not a number.
+          x.prime().eq(twice(1, x)),
+        ),
       };
     });
   });

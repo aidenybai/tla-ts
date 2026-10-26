@@ -1,4 +1,13 @@
-import type { Bound, Definition, Expression, Instance, Module, SourceLocation } from "./ast";
+import type {
+  Assumption,
+  Bound,
+  Definition,
+  Expression,
+  Instance,
+  Module,
+  OperatorParam,
+  SourceLocation,
+} from "./ast";
 import type { ConfigValue, ConstantAssignment, ModelConfig } from "./config";
 import { TlaSyntaxError, TlaUnsupportedError } from "./errors";
 import { getChildren } from "./evaluate";
@@ -17,6 +26,7 @@ export interface SpecDefinition {
   constraints?: Record<string, TermLike>;
   actionConstraints?: Record<string, TermLike>;
   symmetry?: TermLike;
+  assumptions?: Record<string, TermLike>;
   checkDeadlock?: boolean;
 }
 
@@ -30,13 +40,33 @@ type Elements<Sets extends BoundSets> = Sets extends readonly TermLike[]
   ? { -readonly [Index in keyof Sets]: Term }
   : [element: Term];
 
-type Params<Names extends readonly string[]> = { -readonly [Index in keyof Names]: Term };
+type OperatorHandle = (...args: never) => Term;
 
-type Arguments<Names extends readonly string[]> = { -readonly [Index in keyof Names]: TermLike };
+type ApplyArgument = TermLike | OperatorHandle;
+
+type Holes<Text extends string> = Text extends `${string},${infer Rest}`
+  ? [TermLike, ...Holes<Rest>]
+  : [TermLike];
+
+type Param<Name> = Name extends `${string}(${infer Text})` ? (...args: Holes<Text>) => Term : Term;
+
+type Argument<Name> = Name extends `${string}(${string})` ? Term | OperatorHandle : TermLike;
+
+type Params<Names extends readonly string[]> = {
+  -readonly [Index in keyof Names]: Param<Names[Index]>;
+};
+
+type Arguments<Names extends readonly string[]> = {
+  -readonly [Index in keyof Names]: Argument<Names[Index]>;
+};
+
+type Terms<Names extends readonly string[]> = { -readonly [Index in keyof Names]: Term };
 
 const START: SourceLocation = { line: 0, column: 0 };
 
 const IDENTIFIER = /^[A-Za-z0-9_]*[A-Za-z][A-Za-z0-9_]*$/;
+
+const PARAM = /^([A-Za-z0-9_]+)(?:\((\s*_\s*(?:,\s*_\s*)*)\))?$/;
 
 const STACK_FRAME = /(?:\(|at |@)([^()]*?):(\d+):(\d+)\)?$/;
 
@@ -55,6 +85,8 @@ const STANDARD_OPERATORS = new Map(
 );
 
 const boundCount = { value: 0 };
+
+const operatorHandles = new WeakMap<OperatorHandle, string>();
 
 const parseCallSite = (stack: string) => {
   const frames = stack.split("\n").flatMap((line) => {
@@ -289,15 +321,47 @@ const createTerm = (build: (location: SourceLocation) => Expression) => {
 const createReference = (name: string, location = getCallSite()) =>
   new Term(() => ({ kind: "Identifier", name, location }));
 
-const createApply = (operator: string, args: TermLike[]) =>
+const toArgument = (argument: ApplyArgument, location: SourceLocation): Expression => {
+  if (typeof argument !== "function") return toExpression(argument);
+  const operator = operatorHandles.get(argument);
+  if (operator === undefined)
+    throw new TlaSyntaxError("An operator argument must come from tla.operator or tla.letOperator");
+  return { kind: "OperatorReference", operator, location };
+};
+
+const createApply = (operator: string, args: ApplyArgument[]) =>
   args.length === 0
     ? createReference(operator)
     : createTerm((location) => ({
         kind: "Apply",
         operator,
-        args: args.map(toExpression),
+        args: args.map((argument) => toArgument(argument, location)),
         location,
       }));
+
+const createOperatorHandle = (name: string) => {
+  const handle = (...args: ApplyArgument[]) => createApply(name, args);
+  operatorHandles.set(handle, name);
+  return handle;
+};
+
+const toOperatorParam = (spec: string): OperatorParam => {
+  const match = PARAM.exec(spec);
+  if (!match) throw new TlaSyntaxError(`${JSON.stringify(spec)} is not a TLA+ parameter`);
+  return { name: match[1], arity: match[2] === undefined ? 0 : match[2].split(",").length };
+};
+
+const bindParams = (specs: readonly string[], location?: SourceLocation) => {
+  const params = specs.map(toOperatorParam);
+  return {
+    params,
+    references: params.map((param) =>
+      param.arity === 0
+        ? createReference(param.name, location)
+        : (...args: ApplyArgument[]) => createApply(param.name, args),
+    ),
+  };
+};
 
 const createJunction = (kind: "And" | "Or", operands: TermLike[]) =>
   operands.length === 1
@@ -319,10 +383,11 @@ const toSetList = (sets: BoundSets): readonly TermLike[] =>
 const bindSets = <const Sets extends BoundSets>(
   sets: Sets,
   body: (...elements: Elements<Sets>) => TermLike,
+  location?: SourceLocation,
 ) => {
   const setList = toSetList(sets);
   const names = createBoundNames(setList.length);
-  const elements = names.map((name) => createReference(name)) as Elements<Sets>;
+  const elements = names.map((name) => createReference(name, location)) as Elements<Sets>;
   return {
     body: toTerm(body(...elements)),
     getBounds: () =>
@@ -362,16 +427,35 @@ const toConfigValue = (value: ConstantValue): ConfigValue => {
 
 const createDefinition = (
   name: string,
-  params: string[],
+  params: OperatorParam[],
   body: Expression,
   location: SourceLocation,
 ): Definition => ({
   kind: "Operator",
   name,
-  params: params.map((param) => ({ name: param, arity: 0 })),
+  params,
   body,
   isLocal: false,
   isRecursive: true,
+  location,
+});
+
+const createInstance = (
+  name: string,
+  params: OperatorParam[],
+  module: string,
+  substitutions: Record<string, TermLike>,
+  location: SourceLocation,
+): Instance => ({
+  kind: "Instance",
+  name,
+  params,
+  module,
+  substitutions: Object.entries(substitutions).map(([target, value]) => ({
+    name: target,
+    expression: toExpression(value),
+  })),
+  isLocal: false,
   location,
 });
 
@@ -418,11 +502,12 @@ const createBuilder = () => {
     checkName(name);
     names.add(name);
   };
-  const checkParams = (params: readonly string[]) => {
-    params.forEach(checkName);
-    if (new Set(params).size < params.length)
-      throw new TlaSyntaxError(`Multiply-defined parameter in ${params.join(", ")}`);
-    return [...params];
+  const checkParams = <Param extends { name: string }>(params: Param[]) => {
+    const paramNames = params.map((param) => param.name);
+    paramNames.forEach(checkName);
+    if (new Set(paramNames).size < paramNames.length)
+      throw new TlaSyntaxError(`Multiply-defined parameter in ${paramNames.join(", ")}`);
+    return params;
   };
 
   const addDefinition = (name: string, value: TermLike, location: SourceLocation) => {
@@ -456,25 +541,46 @@ const createBuilder = () => {
       declare(name);
       const location = getCallSite();
       definitions.push(() => {
-        const references = params.map((param) => createReference(param, location)) as Params<Names>;
+        const bound = bindParams(params, location);
         return createDefinition(
           name,
-          checkParams(params),
-          toExpression(body(...references)),
+          checkParams(bound.params),
+          toExpression(body(...(bound.references as Params<Names>))),
           location,
         );
       });
-      return (...args: Arguments<Names>) => createApply(name, args);
+      return createOperatorHandle(name) as (...args: Arguments<Names>) => Term;
+    },
+    function: <const Sets extends BoundSets>(
+      name: string,
+      sets: Sets,
+      body: (...elements: Elements<Sets>) => TermLike,
+    ) => {
+      declare(name);
+      const location = getCallSite();
+      definitions.push(() => {
+        const bound = bindSets(sets, body, location);
+        return {
+          kind: "Function",
+          name,
+          bounds: bound.getBounds(),
+          body: bound.body.build(),
+          isLocal: false,
+          isRecursive: true,
+          location,
+        };
+      });
+      return createReference(name, location);
     },
     lambda: <const Names extends readonly string[]>(
       params: Names,
-      body: (...params: Params<Names>) => TermLike,
+      body: (...params: Terms<Names>) => TermLike,
     ) => {
-      const references = params.map((param) => createReference(param)) as Params<Names>;
+      const references = params.map((param) => createReference(param)) as Terms<Names>;
       const result = toTerm(body(...references));
       return createTerm((location) => ({
         kind: "Lambda",
-        params: checkParams(params),
+        params: checkParams(params.map((param) => ({ name: param }))).map((param) => param.name),
         body: result.build(),
         location,
       }));
@@ -482,19 +588,31 @@ const createBuilder = () => {
     instance: (name: string, module: string, substitutions: Record<string, TermLike> = {}) => {
       declare(name);
       const location = getCallSite();
-      instances.push(() => ({
-        kind: "Instance",
-        name,
-        params: [],
-        module,
-        substitutions: Object.entries(substitutions).map(([target, value]) => ({
-          name: target,
-          expression: toExpression(value),
-        })),
-        isLocal: false,
-        location,
-      }));
-      return (operator: string, ...args: TermLike[]) => createApply(`${name}!${operator}`, args);
+      instances.push(() => createInstance(name, [], module, substitutions, location));
+      return (operator: string, ...args: ApplyArgument[]) =>
+        createApply(`${name}!${operator}`, args);
+    },
+    parameterizedInstance: <const Names extends readonly string[]>(
+      name: string,
+      params: Names,
+      module: string,
+      getSubstitutions: (...params: Params<Names>) => Record<string, TermLike>,
+    ) => {
+      declare(name);
+      const location = getCallSite();
+      instances.push(() => {
+        const bound = bindParams(params, location);
+        return createInstance(
+          name,
+          checkParams(bound.params),
+          module,
+          getSubstitutions(...(bound.references as Params<Names>)),
+          location,
+        );
+      });
+      return (...instanceArgs: Arguments<Names>) =>
+        (operator: string, ...args: ApplyArgument[]) =>
+          createApply(`${name}!${operator}`, [...instanceArgs, ...args]);
     },
     Nat: createReference("Nat"),
     Int: createReference("Int"),
@@ -618,6 +736,29 @@ const createBuilder = () => {
         kind: "Let",
         definitions: [
           { ...createDefinition(name, [], toExpression(value), location), isRecursive: false },
+        ],
+        body: result.build(),
+        location,
+      }));
+    },
+    letOperator: <const Names extends readonly string[]>(
+      params: Names,
+      definition: (...params: Params<Names>) => TermLike,
+      body: (operator: (...args: Arguments<Names>) => Term) => TermLike,
+    ) => {
+      const name = createBoundNames(1)[0];
+      const bound = bindParams(params);
+      const definitionBody = toTerm(definition(...(bound.references as Params<Names>)));
+      const result = toTerm(
+        body(createOperatorHandle(name) as (...args: Arguments<Names>) => Term),
+      );
+      return createTerm((location) => ({
+        kind: "Let",
+        definitions: [
+          {
+            ...createDefinition(name, checkParams(bound.params), definitionBody.build(), location),
+            isRecursive: false,
+          },
         ],
         body: result.build(),
         location,
@@ -753,11 +894,18 @@ const createBuilder = () => {
         definition.symmetry === undefined ? undefined : getName("Symmetry", definition.symmetry),
       view: undefined,
     };
+    const assumptions = Object.entries(definition.assumptions ?? {}).map(
+      ([name, value]): Assumption => {
+        declare(name);
+        return { name, expression: toExpression(value), isAxiom: false, location: START };
+      },
+    );
     const builtDefinitions = definitions.map((createLazyDefinition) => createLazyDefinition());
     const builtInstances = instances.map((createLazyInstance) => createLazyInstance());
     const standardExtends = getStandardExtends(
       [
         ...builtDefinitions.map((builtDefinition) => builtDefinition.body),
+        ...assumptions.map((assumption) => assumption.expression),
         ...builtInstances.flatMap((builtInstance) =>
           builtInstance.substitutions.map((substitution) => substitution.expression),
         ),
@@ -777,7 +925,7 @@ const createBuilder = () => {
       variables,
       definitions: builtDefinitions,
       instances: builtInstances,
-      assumptions: [],
+      assumptions,
     };
     return { module, config };
   };
