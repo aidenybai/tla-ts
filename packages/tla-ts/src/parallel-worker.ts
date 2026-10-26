@@ -112,7 +112,9 @@ const run = (start: StartMessage, parent: Port) => {
   const search = createSearch(start.config, environment, () =>
     getTlcVariableOrder(start.source, loadModule),
   );
-  if (!search) return parent.postMessage({ type: "abort" } satisfies WorkerMessage);
+  const nextAction = search?.spec.next;
+  if (!search || nextAction === undefined)
+    return parent.postMessage({ type: "abort" } satisfies WorkerMessage);
   const width = environment.variables.length;
   const count = start.count;
   const self = start.index;
@@ -142,7 +144,7 @@ const run = (start: StartMessage, parent: Port) => {
     }));
     const statistics = { generated: 0 };
     for (const state of states) {
-      const successors = getSuccessors(search.spec.next, state, environment);
+      const successors = getSuccessors(nextAction, state, environment);
       statistics.generated += successors.length;
       if (successors.length === 0 && start.config.checkDeadlock) return undefined;
       for (const successor of successors) {

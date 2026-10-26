@@ -833,3 +833,35 @@ describe("parseConfig matches TLC", () => {
     expect([config.possible, config.postconditions]).toEqual([["Done", "Started"], ["Post"]]);
   });
 });
+
+describe("initial predicate and next-state relation match TLC", () => {
+  const checkSource = (body: string, config: string) =>
+    check({ source: `---- MODULE M ----\n${body}\n====`, config });
+
+  it("explores no states when a spec without variables has no initial predicate", async () => {
+    const result = await checkSource("ASSUME TRUE\nSpec == [][TRUE]_<<>>", "SPECIFICATION Spec");
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      0,
+      0,
+      0,
+    ]);
+  });
+
+  it("requires an initial predicate when the spec has variables", async () => {
+    await expect(checkSource("VARIABLE x\nSpec == [][x' = x]_x", "SPECIFICATION Spec")).rejects.toThrow(
+      /did not specify the initial state predicate/,
+    );
+  });
+
+  it("rejects a constant initial predicate or next-state action", async () => {
+    await expect(checkSource("VARIABLE x\nInit == TRUE\nNext == x' = x", "INIT Init\nNEXT Next")).rejects.toThrow(/The initial predicate Init cannot be a constant/);
+    await expect(checkSource("VARIABLE x\nInit == x = 0\nNext == TRUE", "INIT Init\nNEXT Next")).rejects.toThrow(/The next state action Next cannot be a constant/);
+  });
+
+  it("reports initial states without a next-state action", async () => {
+    await expect(checkSource("VARIABLE x\nInit == x \\in {1, 2}", "INIT Init")).rejects.toThrow(
+      /No next state actions defined to generate successor states from/,
+    );
+  });
+});

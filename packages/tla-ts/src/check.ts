@@ -110,8 +110,8 @@ export interface ActionProperty {
 }
 
 export interface Specification {
-  init: Expression;
-  next: Expression;
+  init: Expression | undefined;
+  next: Expression | undefined;
   temporals: ScopedExpression[];
 }
 
@@ -190,20 +190,20 @@ const isConstantTrue = (item: ScopedExpression, environment: Environment, usage:
 
 export const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
   if (config.specification === undefined) {
-    if (config.init === undefined)
-      throw new TlaConfigError(
-        "The configuration file did not specify the initial state predicate",
-      );
-    if (config.next === undefined)
-      throw setExitCode(
-        new TlaConfigError("The configuration does not specify NEXT"),
-        EXIT_STATUS.specEvaluationFailure,
-      );
-    getDefinitionBody(config.init, environment);
-    getDefinitionBody(config.next, environment);
+    const getOperator = (name: string | undefined, description: string) => {
+      if (name === undefined) return undefined;
+      const body = getDefinitionBody(name, environment);
+      const identifier = createIdentifier(name);
+      // TLC evaluates a literal body later and reports that it is not a boolean.
+      const isLiteral = body.kind === "Number" || body.kind === "String";
+      if (!isLiteral && getLevel(identifier, undefined, environment) === 0) {
+        throw new TlaConfigError(`The ${description} ${name} cannot be a constant.`);
+      }
+      return identifier;
+    };
     return {
-      init: createIdentifier(config.init),
-      next: createIdentifier(config.next),
+      init: getOperator(config.init, "initial predicate"),
+      next: getOperator(config.next, "next state action"),
       temporals: [],
     };
   }
@@ -247,13 +247,16 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
     }
     initConjuncts.push(getUnscoped(conjunct, item.scope));
   });
-  if (nextActions.length !== 1) {
+  if (nextActions.length > 1) {
     throw new TlaConfigError(
-      `The specification ${config.specification} must contain exactly one [][Next]_vars`,
+      `The specification ${config.specification} must contain at most one [][Next]_vars`,
     );
   }
   return {
-    init: { kind: "And", operands: initConjuncts, location: START },
+    init:
+      initConjuncts.length === 0
+        ? undefined
+        : { kind: "And", operands: initConjuncts, location: START },
     next: nextActions[0],
     temporals,
   };
@@ -454,12 +457,22 @@ export const createSearch = (
     [...getNamedExpressions(config.invariants, environment), ...properties.invariants],
     environment,
   );
-  const isConstantModel =
-    config.specification === undefined &&
-    config.init === undefined &&
-    environment.variables.length === 0;
-  if (isConstantModel) return undefined;
   const spec = getSpecification(config, environment);
+  const isCheckingBehaviors =
+    invariants.length > 0 ||
+    properties.actionProperties.length > 0 ||
+    properties.liveness.length > 0;
+  if (
+    spec.init === undefined &&
+    (isCheckingBehaviors ||
+      properties.initialPredicates.length > 0 ||
+      environment.variables.length > 0)
+  ) {
+    throw new TlaConfigError("The configuration file did not specify the initial state predicate");
+  }
+  if (spec.next === undefined && isCheckingBehaviors) {
+    throw new TlaConfigError("The configuration file did not specify the next state predicate");
+  }
   if (environment.variables.length === 0) return undefined;
   const symmetryGroup =
     config.symmetry === undefined ? [] : getSymmetryGroup(config.symmetry, environment);
@@ -680,16 +693,20 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     Object.fromEntries(
       search.getTlcOrder().map((index) => [environment.variables[index], state[index]]),
     );
+  const getSpecInitialStates = () =>
+    spec.init === undefined ? [] : getInitialStates(spec.init, environment);
+  const getTraceSuccessors = (state: Value[]) =>
+    spec.next === undefined ? [] : getSuccessors(spec.next, state, environment);
   const hasFingerprint = (state: Value[], index: number) =>
     isSameState(getFingerprintState(state), fingerprintStates[index]);
   const findSuccessorWithFingerprint = (state: Value[], index: number) =>
-    getSuccessors(spec.next, state, environment).find((successor) =>
+    getTraceSuccessors(state).find((successor) =>
       hasFingerprint(successor.state, index),
     );
   const getPathStates = (path: number[], nextFailure: string) => {
     const initial =
       isReducing || isImpure(environment)
-        ? getInitialStates(spec.init, environment).find((state) => hasFingerprint(state, path[0]))
+        ? getSpecInitialStates().find((state) => hasFingerprint(state, path[0]))
         : states[path[0]];
     if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);
     const steps: Successor[] = [{ state: initial, action: undefined }];
@@ -716,7 +733,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
         : path.map((current) => ({ state: states[current], action: actions[current] }));
     if (!last) return toTrace(steps);
     const action = isReducing
-      ? getSuccessors(spec.next, states[index], environment).find((successor) =>
+      ? getTraceSuccessors(states[index]).find((successor) =>
           isSameState(successor.state, last.state),
         )?.action
       : last.action;
@@ -804,7 +821,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     return current.isExpanding ? depths[current.index] + 1 : 0;
   };
 
-  for (const state of getInitialStates(spec.init, environment)) {
+  for (const state of getSpecInitialStates()) {
     canonicalizeState(state);
     runtime.generatedStates++;
     runtime.initialStates++;
@@ -840,13 +857,22 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     addState(state, fingerprintState, -1, undefined);
   }
 
+  const next = spec.next;
+  if (next === undefined) {
+    if (states.length > 0) {
+      throw new TlaEvaluationError(
+        "No next state actions defined to generate successor states from",
+      );
+    }
+    return createResult("success");
+  }
   setNextStatePhase(true);
   for (let index = 0; index < states.length && !runtime.isStopped; index++) {
     const state = states[index];
     current.index = index;
     runtime.queueSize = states.length - index - 1;
     current.isExpanding = true;
-    const successors = getSuccessors(spec.next, state, environment);
+    const successors = getSuccessors(next, state, environment);
     current.isExpanding = false;
     if (successors.length === 0 && config.checkDeadlock) {
       return reportViolation("deadlock", { name: "deadlock", trace: getTrace(index) });
