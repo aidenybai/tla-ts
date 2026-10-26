@@ -10,7 +10,7 @@
     "fmt": "vp fmt",
     "lint": "vp lint",
     "check": "vp check",
-    "typecheck": "pnpm --filter tla-ts --filter @tla-ts/website typecheck",
+    "typecheck": "pnpm run build && pnpm --filter tla-ts --filter @tla-ts/website typecheck",
     "changeset": "nr build && changeset",
     "version": "changeset version",
     "release": "changeset publish"
