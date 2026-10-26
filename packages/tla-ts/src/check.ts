@@ -25,6 +25,7 @@ import {
 import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
+import { createCanonicalizer } from "./canonical";
 import { combineHash, getValueHash, isSameValue, type Value } from "./values";
 
 export interface CheckOptions {
@@ -62,30 +63,30 @@ export interface CheckResult {
   depth: number;
 }
 
-interface NamedExpression {
+export interface NamedExpression {
   name: string;
   expression: Expression;
   scope: Scope | undefined;
 }
 
-interface StateCheck extends NamedExpression {
+export interface StateCheck extends NamedExpression {
   variables: number[] | undefined;
 }
 
-interface ActionProperty {
+export interface ActionProperty {
   name: string;
   action: Expression;
   subscript: Expression;
   scope: Scope | undefined;
 }
 
-interface Specification {
+export interface Specification {
   init: Expression;
   next: Expression;
   fairness: FairnessCondition[];
 }
 
-interface Properties {
+export interface Properties {
   initialPredicates: NamedExpression[];
   invariants: NamedExpression[];
   actionProperties: ActionProperty[];
@@ -120,7 +121,7 @@ const getConjuncts = (expression: Expression, environment: Environment): Express
   return [expression];
 };
 
-const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
+export const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
   if (config.specification === undefined) {
     if (config.init === undefined)
       throw new TlaConfigError(
@@ -168,7 +169,7 @@ const getSpecification = (config: ModelConfig, environment: Environment): Specif
   };
 };
 
-const getProperties = (config: ModelConfig, environment: Environment): Properties => {
+export const getProperties = (config: ModelConfig, environment: Environment): Properties => {
   const properties: Properties = {
     initialPredicates: [],
     invariants: [],
@@ -204,13 +205,13 @@ const getProperties = (config: ModelConfig, environment: Environment): Propertie
   return properties;
 };
 
-const getNamedExpressions = (names: string[], environment: Environment): NamedExpression[] =>
+export const getNamedExpressions = (names: string[], environment: Environment): NamedExpression[] =>
   names.map((name) => {
     getDefinitionBody(name, environment);
     return { name, expression: createIdentifier(name), scope: undefined };
   });
 
-const getStateChecks = (named: NamedExpression[], environment: Environment): StateCheck[] =>
+export const getStateChecks = (named: NamedExpression[], environment: Environment): StateCheck[] =>
   named.flatMap((item) =>
     getConjuncts(item.expression, environment).map((expression) => ({
       name: item.name,
@@ -220,13 +221,46 @@ const getStateChecks = (named: NamedExpression[], environment: Environment): Sta
     })),
   );
 
-const isUnchangedFor = (stateCheck: StateCheck, state: Value[], parent: Value[] | undefined) => {
+export const isUnchangedFor = (stateCheck: StateCheck, state: Value[], parent: Value[] | undefined) => {
   const variables = stateCheck.variables;
   if (!parent || !variables) return false;
   for (let index = 0; index < variables.length; index++) {
     if (state[variables[index]] !== parent[variables[index]]) return false;
   }
   return true;
+};
+
+export interface Search {
+  properties: Properties;
+  invariants: StateCheck[];
+  spec: Specification;
+  constraints: StateCheck[];
+  actionConstraints: NamedExpression[];
+  getFingerprintState: (state: Value[]) => Value[];
+}
+
+export const createSearch = (config: ModelConfig, environment: Environment): Search | undefined => {
+  const properties = getProperties(config, environment);
+  const invariants = getStateChecks(
+    [...getNamedExpressions(config.invariants, environment), ...properties.invariants],
+    environment,
+  );
+  const isConstantModel =
+    config.specification === undefined &&
+    config.init === undefined &&
+    environment.variables.length === 0;
+  if (isConstantModel) return undefined;
+  const symmetryGroup =
+    config.symmetry === undefined ? [] : getSymmetryGroup(config.symmetry, environment);
+  return {
+    properties,
+    invariants,
+    spec: getSpecification(config, environment),
+    constraints: getStateChecks(getNamedExpressions(config.constraints, environment), environment),
+    actionConstraints: getNamedExpressions(config.actionConstraints, environment),
+    getFingerprintState: (state) =>
+      symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup),
+  };
 };
 
 export const check = (options: CheckOptions): CheckResult => {
@@ -279,27 +313,15 @@ export const check = (options: CheckOptions): CheckResult => {
     }
   }
 
-  const properties = getProperties(config, environment);
-  const invariants = getStateChecks(
-    [...getNamedExpressions(config.invariants, environment), ...properties.invariants],
-    environment,
-  );
-  const isConstantModel =
-    config.specification === undefined &&
-    config.init === undefined &&
-    environment.variables.length === 0;
-  if (isConstantModel) return createResult("success");
-  const spec = getSpecification(config, environment);
-  const constraints = getStateChecks(
-    getNamedExpressions(config.constraints, environment),
-    environment,
-  );
-  const actionConstraints = getNamedExpressions(config.actionConstraints, environment);
+  const search = createSearch(config, environment);
+  if (!search) return createResult("success");
+  const properties = search.properties;
+  const invariants = search.invariants;
+  const spec = search.spec;
+  const constraints = search.constraints;
+  const actionConstraints = search.actionConstraints;
+  const getFingerprintState = search.getFingerprintState;
   const isRecordingEdges = properties.liveness.length > 0;
-  const symmetryGroup =
-    config.symmetry === undefined ? [] : getSymmetryGroup(config.symmetry, environment);
-  const getFingerprintState = (state: Value[]) =>
-    symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup);
 
   const states: Value[][] = [];
   const fingerprintStates: Value[][] = [];
@@ -309,31 +331,7 @@ export const check = (options: CheckOptions): CheckResult => {
   const edges: number[][] = [];
   const initial: number[] = [];
   const buckets = new Map<number, number | number[]>();
-  const canonicalValues = new Map<number, Value | Value[]>();
-  const canonicalize = (value: Value): Value => {
-    if (typeof value !== "object" || (value.kind !== "Set" && value.kind !== "Function"))
-      return value;
-    const hash = getValueHash(value);
-    const bucket = canonicalValues.get(hash);
-    if (bucket === undefined) {
-      canonicalValues.set(hash, value);
-      return value;
-    }
-    if (!Array.isArray(bucket)) {
-      if (isSameValue(bucket, value)) return bucket;
-      canonicalValues.set(hash, [bucket, value]);
-      return value;
-    }
-    for (let index = 0; index < bucket.length; index++) {
-      if (isSameValue(bucket[index], value)) return bucket[index];
-    }
-    bucket.push(value);
-    return value;
-  };
-  const canonicalizeState = (state: Value[]) => {
-    for (let index = 0; index < state.length; index++) state[index] = canonicalize(state[index]);
-    return state;
-  };
+  const canonicalizeState = createCanonicalizer();
 
   const toRecord = (state: Value[]) =>
     Object.fromEntries(environment.variables.map((name, index) => [name, state[index]]));
