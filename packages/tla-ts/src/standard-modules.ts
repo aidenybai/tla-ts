@@ -4,7 +4,6 @@ import {
   checkInteger,
   createFunction,
   createSet,
-  createSortedSet,
   createTuple,
   formatValue,
   getCardinality,
@@ -16,8 +15,8 @@ import {
   isSetValue,
   toFiniteFunction,
   toFiniteSet,
-  unionSorted,
   valuesEqual,
+  type SetOperationValue,
   type Value,
 } from "./values";
 
@@ -117,6 +116,8 @@ const isSubsetOf = (left: Value[], right: Value) =>
 
 const BOOLEAN_SET = createSet([false, true]);
 
+const SET_OPERATORS: SetOperationValue["operator"][] = ["\\cup", "\\cap", "\\"];
+
 export const CORE_OPERATORS: Builtin[] = [
   defineConstant("TRUE", true),
   defineConstant("FALSE", false),
@@ -137,21 +138,17 @@ export const CORE_OPERATORS: Builtin[] = [
   defineOperator("\\subseteq", 2, (args) =>
     isSubsetOf(getElements(args, 0, "\\subseteq"), getSet(args, 1, "\\subseteq")),
   ),
-  defineOperator("\\cup", 2, (args) =>
-    unionSorted(getElements(args, 0, "\\cup"), getElements(args, 1, "\\cup")),
+  ...SET_OPERATORS.map((operator) =>
+    defineOperator(operator, 2, (args) => {
+      const set: Value = {
+        kind: "SetOperation",
+        operator,
+        left: getSet(args, 0, operator),
+        right: getSet(args, 1, operator),
+      };
+      return isEnumerable(set) ? toFiniteSet(set) : set;
+    }),
   ),
-  defineOperator("\\cap", 2, (args) => {
-    const right = getSet(args, 1, "\\cap");
-    return createSortedSet(
-      getElements(args, 0, "\\cap").filter((element) => isElementOf(element, right)),
-    );
-  }),
-  defineOperator("\\", 2, (args) => {
-    const right = getSet(args, 1, "\\");
-    return createSortedSet(
-      getElements(args, 0, "\\").filter((element) => !isElementOf(element, right)),
-    );
-  }),
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getSet(args, 0, "SUBSET") })),
   defineOperator("UNION", 1, (args) =>
     createSet(

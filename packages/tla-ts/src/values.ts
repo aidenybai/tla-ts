@@ -56,6 +56,13 @@ export interface SequenceSetValue {
   base: Value;
 }
 
+export interface SetOperationValue {
+  kind: "SetOperation";
+  operator: "\\cup" | "\\cap" | "\\";
+  left: Value;
+  right: Value;
+}
+
 export interface LazyFunctionValue {
   kind: "LazyFunction";
   domain: Value;
@@ -76,6 +83,7 @@ export type Value =
   | RecordSetValue
   | ProductSetValue
   | SequenceSetValue
+  | SetOperationValue
   | LazyFunctionValue;
 
 type ObjectValue = Exclude<Value, boolean | number | string>;
@@ -303,6 +311,10 @@ export const isEnumerable = (value: Value): boolean => {
       return value.sets.every(isEnumerable);
     case "ProductSet":
       return value.factors.every(isEnumerable);
+    case "SetOperation":
+      if (value.operator === "\\cup") return isEnumerable(value.left) && isEnumerable(value.right);
+      if (value.operator === "\\cap") return isEnumerable(value.left) || isEnumerable(value.right);
+      return isEnumerable(value.left);
     default:
       return false;
   }
@@ -355,6 +367,22 @@ const enumerateSet = (value: Value): Value[] => {
       return getCartesianProduct(value.factors.map((factor) => toFiniteSet(factor).elements)).map(
         createTuple,
       );
+    case "SetOperation": {
+      if (!isEnumerable(value)) {
+        throw new TlaEvaluationError(
+          `Attempted to enumerate the non-enumerable set ${formatValue(value)}`,
+        );
+      }
+      if (value.operator === "\\cup")
+        return unionSorted(toFiniteSet(value.left).elements, toFiniteSet(value.right).elements)
+          .elements;
+      const isLeftEnumerated = value.operator === "\\" || isEnumerable(value.left);
+      const enumerated = isLeftEnumerated ? value.left : value.right;
+      const other = isLeftEnumerated ? value.right : value.left;
+      return toFiniteSet(enumerated).elements.filter(
+        (element) => isElementOf(element, other) === (value.operator === "\\cap"),
+      );
+    }
     case "InfiniteSet":
     case "SequenceSet":
       throw new TlaEvaluationError(
@@ -368,7 +396,7 @@ const enumerateSet = (value: Value): Value[] => {
 export const toFiniteSet = (value: Value): SetValue => {
   if (typeof value === "object" && value.kind === "Set") return value;
   const elements = enumerateSet(value);
-  return typeof value === "object" && value.kind === "Interval"
+  return typeof value === "object" && (value.kind === "Interval" || value.kind === "SetOperation")
     ? createSortedSet(elements)
     : createSet(elements);
 };
@@ -488,6 +516,13 @@ export const isElementOf = (element: Value, set: Value): boolean => {
         elements.every((item, index) => isElementOf(item, set.factors[index]))
       );
     }
+    case "SetOperation":
+      if (set.operator === "\\cup")
+        return isElementOf(element, set.left) || isElementOf(element, set.right);
+      return (
+        isElementOf(element, set.left) &&
+        isElementOf(element, set.right) === (set.operator === "\\cap")
+      );
     case "SequenceSet": {
       const elements = getSequenceElements(element);
       if (elements === undefined) {
@@ -666,6 +701,8 @@ export const formatValue = (value: Value): string => {
       return value.factors.map(formatValue).join(" \\X ");
     case "SequenceSet":
       return `Seq(${formatValue(value.base)})`;
+    case "SetOperation":
+      return `${formatValue(value.left)} ${value.operator} ${formatValue(value.right)}`;
     case "Function":
     case "LazyFunction": {
       if (value.kind === "LazyFunction" && !isEnumerable(value.domain)) return "<function>";
