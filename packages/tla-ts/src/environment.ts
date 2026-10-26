@@ -5,6 +5,7 @@ import { isConstantLevel, type Builtin, type Environment } from "./evaluate";
 import { createInstantiation, getEnabledVariableName } from "./instances";
 import { parseModule } from "./parser";
 import { resolveModule, resolveSubstitutions, type Symbols } from "./resolve";
+import { createRuntime } from "./runtime";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
 import { checkInteger, createSet, type Value } from "./values";
 
@@ -62,13 +63,14 @@ export const createEnvironment = (
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
   );
   const standardExports = new Map<string, Symbols>();
+  const runtime = createRuntime(config.checkDeadlock);
   const linkedModules = new Map<string, LinkedModule>();
   const copyCount = { value: 0 };
 
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
     if (cached) return cached;
-    const standardModule = getStandardModule(name, options.print);
+    const standardModule = getStandardModule(name, options.print, runtime);
     if (!standardModule) return undefined;
     const exported: Symbols = new Map();
     standardModule.extends.forEach((extended) =>
@@ -244,6 +246,7 @@ export const createEnvironment = (
   });
 
   const environment: Environment = {
+    runtime,
     definitions,
     builtins,
     constants,

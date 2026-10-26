@@ -9,6 +9,7 @@ import type {
 } from "./ast";
 import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
 import { generateEvaluator } from "./codegen";
+import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
 import { mapChildren } from "./instances";
 import { isEnabled } from "./successors";
@@ -48,7 +49,7 @@ export interface Builtin {
   kind: "Builtin";
   name: string;
   arity: number;
-  evaluate: (args: BuiltinArgument[]) => Value;
+  evaluate: (args: BuiltinArgument[], context?: Context) => Value;
   evaluateUnary: ((value: Value) => Value) | undefined;
   evaluateBinary: ((left: Value, right: Value) => Value) | undefined;
   isStateLevel?: boolean;
@@ -85,6 +86,7 @@ export interface Scope {
 }
 
 export interface Environment {
+  runtime: CheckerRuntime;
   definitions: Map<string, Definition>;
   builtins: Map<string, Builtin>;
   constants: Map<string, Value>;
@@ -474,7 +476,7 @@ export const callOperatorWithValues = (
   args: Value[],
   context: Context,
 ): Value => {
-  if (operator.kind === "Builtin") return operator.evaluate(args);
+  if (operator.kind === "Builtin") return operator.evaluate(args, context);
   if (operator.kind === "Operator") return operator.call(args);
   const scope = operator.params.reduce<Scope | undefined>(
     (current, param, index) => bindValue(current, param.name, args[index]),
@@ -594,6 +596,7 @@ const callOperator = (operator: Operator, args: Expression[], context: Context):
         ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
         : evaluate(arg, context),
     ),
+    context,
   );
 };
 
@@ -931,6 +934,7 @@ const compileBuiltinCall = (
           ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
           : evaluate(arg, context),
       ),
+      context,
     );
 };
 

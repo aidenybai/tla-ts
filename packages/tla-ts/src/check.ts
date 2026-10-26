@@ -288,14 +288,17 @@ export const check = (options: CheckOptions): CheckResult => {
   const holds = (expression: Expression, context: Context, description: string) =>
     expectBoolean(evaluate(expression, context), description);
 
-  const statistics = { generatedStates: 0, distinctStates: 0, depth: 0 };
+  const runtime = environment.runtime;
+  const statistics = { depth: 0 };
   const createResult = (
     status: CheckStatus,
     violation?: Omit<Violation, "loopStart"> & { loopStart?: number },
   ): CheckResult => ({
     status,
     violation: violation && { ...violation, loopStart: violation.loopStart },
-    ...statistics,
+    generatedStates: runtime.generatedStates,
+    distinctStates: runtime.distinctStates,
+    depth: statistics.depth,
   });
 
   const getAssumptionError = (assumption: Assumption) => {
@@ -393,10 +396,10 @@ export const check = (options: CheckOptions): CheckResult => {
         isUnchangedFor(constraint, state, parent) ||
         holds(constraint.expression, getContext(state, undefined), `constraint ${constraint.name}`),
     );
-  const countViolatingState = (depth: number, isInModel: boolean) => {
-    if (!isInModel) return;
-    statistics.distinctStates = states.length + 1;
+  const countDistinctState = (depth: number) => {
+    runtime.distinctStates = states.length + 1;
     statistics.depth = Math.max(statistics.depth, depth);
+    runtime.diameter = Math.max(runtime.diameter, depth);
   };
   const addState = (
     state: Value[],
@@ -412,20 +415,23 @@ export const check = (options: CheckOptions): CheckResult => {
     depths.push(depth);
     if (isRecordingEdges) edges.push([]);
     if (isRecordingEdgeStates) edgeStates.push([]);
-    statistics.distinctStates = states.length;
-    statistics.depth = Math.max(statistics.depth, depth);
   };
 
   for (const state of getInitialStates(spec.init, environment)) {
     canonicalizeState(state);
-    statistics.generatedStates++;
+    runtime.generatedStates++;
+    runtime.initialStates++;
+    runtime.levels.set(state, 1);
     const fingerprintState = getFingerprintState(state);
     const hash = getStateHash(fingerprintState);
     if (findStateIndex(hash, fingerprintState) !== -1) continue;
     const isInModel = satisfiesConstraints(state);
+    if (isInModel) {
+      countDistinctState(1);
+      runtime.queueSize++;
+    }
     const violated = findViolatedInvariant(state);
     if (violated) {
-      countViolatingState(1, isInModel);
       return createResult("invariant-violation", {
         name: violated.name,
         trace: [{ action: undefined, state: toRecord(state) }],
@@ -440,7 +446,6 @@ export const check = (options: CheckOptions): CheckResult => {
         ),
     );
     if (failedPredicate) {
-      countViolatingState(1, isInModel);
       return createResult("property-violation", {
         name: failedPredicate.name,
         trace: [{ action: undefined, state: toRecord(state) }],
@@ -452,14 +457,16 @@ export const check = (options: CheckOptions): CheckResult => {
     addState(state, fingerprintState, -1, undefined);
   }
 
-  for (let index = 0; index < states.length; index++) {
+  for (let index = 0; index < states.length && !runtime.isStopped; index++) {
     const state = states[index];
+    runtime.queueSize = states.length - index - 1;
     const successors = getSuccessors(spec.next, state, environment);
-    statistics.generatedStates += successors.length;
     if (successors.length === 0 && config.checkDeadlock) {
       return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
     }
     for (const successor of successors) {
+      runtime.generatedStates++;
+      runtime.levels.set(successor.state, depths[index] + 1);
       const transition = getContext(state, successor.state);
       const isAllowedAction = actionConstraints.every((constraint) =>
         holds(constraint.expression, transition, `action constraint ${constraint.name}`),
@@ -473,10 +480,10 @@ export const check = (options: CheckOptions): CheckResult => {
       const isInModel =
         isAllowedAction && (existing !== -1 || satisfiesConstraints(successor.state, state));
       const isNew = isInModel && existing === -1;
+      if (isNew) countDistinctState(depths[index] + 1);
       if (existing === -1) {
         const violated = findViolatedInvariant(successor.state, state);
         if (violated) {
-          countViolatingState(depths[index] + 1, isInModel);
           return createResult("invariant-violation", {
             name: violated.name,
             trace: getTrace(index, successor),
@@ -497,7 +504,6 @@ export const check = (options: CheckOptions): CheckResult => {
           ),
       );
       if (violatedProperty) {
-        countViolatingState(depths[index] + 1, isNew);
         return createResult("property-violation", {
           name: violatedProperty.name,
           trace: getTrace(index, successor),
@@ -508,6 +514,7 @@ export const check = (options: CheckOptions): CheckResult => {
       if (isRecordingEdges) edges[index].push(states.length);
       if (isRecordingEdgeStates) edgeStates[index].push(successor.state);
       addState(successor.state, fingerprintState, index, successor.action);
+      runtime.queueSize++;
     }
   }
 

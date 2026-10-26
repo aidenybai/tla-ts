@@ -75,6 +75,28 @@ describe("check matches TLC", () => {
     ).toThrow(TlaSyntaxError);
   });
 
+  it("exposes TLC's level, counters, and registers through TLCGet and TLCSet", () => {
+    const results = ["Runtime", "Distinct", "Generated"].map((name) =>
+      check({
+        source: readFileSync(join(FIXTURES, "runtime", "Runtime.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
+      }),
+    );
+    expect(
+      results.map((result) => [
+        result.status,
+        result.generatedStates,
+        result.distinctStates,
+        result.depth,
+        result.violation?.trace.map((step) => step.state.x),
+      ]),
+    ).toEqual([
+      ["success", 14, 8, 4, undefined],
+      ["invariant-violation", 10, 6, 3, [1, 3, 5]],
+      ["invariant-violation", 8, 5, 3, [0, 2, 4]],
+    ]);
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");
