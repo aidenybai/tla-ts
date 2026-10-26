@@ -121,6 +121,19 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("generates no states for a specification without variables", () => {
+    const result = check({
+      source: "---- MODULE M ----\nSpec == [][TRUE]_<<>>\n====",
+      config: "SPECIFICATION Spec",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      0,
+      0,
+      0,
+    ]);
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");

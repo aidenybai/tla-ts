@@ -336,6 +336,8 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
     config.init === undefined &&
     environment.variables.length === 0;
   if (isConstantModel) return undefined;
+  const spec = getSpecification(config, environment);
+  if (environment.variables.length === 0) return undefined;
   const symmetryGroup =
     config.symmetry === undefined ? [] : getSymmetryGroup(config.symmetry, environment);
   const constraints = getStateChecks(
@@ -351,7 +353,7 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
   const runtime = environment.runtime;
   return {
     properties,
-    spec: getSpecification(config, environment),
+    spec,
     getFingerprintState: (state) =>
       symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup),
     findViolatedInvariant: (state, parent) =>
