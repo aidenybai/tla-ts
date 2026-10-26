@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, TlaConfigError, TlaEvaluationError } from "../../src";
+import { check, TlaConfigError } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/operator-constants");
 
@@ -44,10 +44,8 @@ describe("operator constants match TLC", () => {
       "invariant-violation",
       [0, 2],
     ]);
-    await expect(checkConstants("F <- Inc G <- Add C = 1 Inc(0) = 7")).rejects.toThrow(
-      new TlaEvaluationError(
-        "Attempted to apply operator:\n{ <0, 7>}\nto arguments (7), which is undefined.",
-      ),
+    expect((await checkConstants("F <- Inc G <- Add C = 1 Inc(0) = 7")).failure?.message).toBe(
+      "Attempted to apply operator:\n{ <0, 7>}\nto arguments (7), which is undefined.",
     );
   });
 
@@ -78,7 +76,7 @@ describe("operator constants match TLC", () => {
       ],
     ];
     for (const [constants, message] of cases) {
-      await expect(checkConstants(constants)).rejects.toThrow(new TlaEvaluationError(message));
+      expect((await checkConstants(constants)).failure?.message).toBe(message);
     }
   });
 

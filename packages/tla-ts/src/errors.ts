@@ -1,4 +1,4 @@
-import { EXIT_STATUS, setModuleExitCode } from "./exit-codes";
+import { EXIT_STATUS, getExitCode, setModuleExitCode } from "./exit-codes";
 
 export class TlaError extends Error {
   constructor(message: string, cause?: unknown) {
@@ -44,3 +44,13 @@ export class TlaUnsupportedError extends TlaError {
     this.name = "TlaUnsupportedError";
   }
 }
+
+export const getErrorExitCode = (error: TlaError) =>
+  getExitCode(error) ??
+  (error instanceof TlaSyntaxError
+    ? EXIT_STATUS.specParseError
+    : error instanceof TlaConfigError
+      ? EXIT_STATUS.configParseError
+      : error instanceof TlaEvaluationError
+        ? EXIT_STATUS.specEvaluationFailure
+        : EXIT_STATUS.error);

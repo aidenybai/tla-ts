@@ -29,6 +29,18 @@ describe("check with workers matches TLC", () => {
     expect(getCounts(result)).toEqual([890, 251, 11]);
   });
 
+  it("reports an invariant that fails to evaluate on an initial state like one worker", async () => {
+    const tlaTs = await loadPackage();
+    const result = await tlaTs.check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in 0..1\nNext == UNCHANGED x\nInv == 1 \\div x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      workers: 2,
+    });
+    expect(result.failure?.message).toBe("The second argument of \\div is 0.");
+    expect(result.failure?.exitCode).toBe(75);
+  });
+
   it("explores a queue that only grows to its bound", async () => {
     const result = await checkFixtureInParallel("queue", "Queue", 3);
     expect(result.status).toBe("success");
