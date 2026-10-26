@@ -10,7 +10,12 @@ import {
 } from "./builtins";
 import { TlaEvaluationError } from "./errors";
 import { evaluate, getDefinition, type Builtin, type Environment } from "./evaluate";
-import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "./runtime";
+import {
+  getNamedRegisters,
+  getPossibleCounts,
+  NAMED_REGISTER_PREFIX,
+  type CheckerRuntime,
+} from "./runtime";
 import {
   applyFunction,
   createRecord,
@@ -152,5 +157,31 @@ export const createTlcExtOperators = (
       );
     }
     return evaluate({ kind: "Identifier", name, location: definition.location }, context);
+  }),
+];
+
+export const createPossibleOperators = (
+  print: (text: string) => void,
+  runtime: CheckerRuntime,
+): Builtin[] => [
+  defineStateOperator("_Track", 2, (args) => {
+    const name = getValue(args, 1, "_Track");
+    const count = runtime.possibleCounts.get(String(name)) ?? 0;
+    runtime.possibleCounts.set(
+      String(name),
+      getValue(args, 0, "_Track") === true ? count + 1 : count,
+    );
+    return true;
+  }),
+  defineStateOperator("_Counts", 0, () => getPossibleCounts(runtime)),
+  defineStateOperator("_CheckName", 1, (args) => {
+    const name = String(getValue(args, 0, "_CheckName"));
+    if (runtime.possibleCounts.get(name)) return true;
+    print(formatValue(getPossibleCounts(runtime), true));
+    return false;
+  }),
+  defineStateOperator("_PrintCounts", 0, () => {
+    print(formatValue(getPossibleCounts(runtime), true));
+    return true;
   }),
 ];
