@@ -38,6 +38,7 @@ export interface CheckOptions {
 
 export interface SpecCheckOptions {
   spec: Spec;
+  loadModule?: (name: string) => string | undefined;
   onPrint?: (text: string) => void;
 }
 
@@ -284,7 +285,7 @@ export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => 
   const config = model.config;
   if (config.view !== undefined) throw new TlaUnsupportedError("VIEW is not supported yet");
   const specification = createEnvironment(model.module, config, {
-    loadModule: "spec" in options ? undefined : options.loadModule,
+    loadModule: options.loadModule,
     print: options.onPrint ?? console.log,
   });
   const environment = specification.environment;

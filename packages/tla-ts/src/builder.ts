@@ -1,6 +1,8 @@
-import type { Bound, Definition, Expression, Module, SourceLocation } from "./ast";
+import type { Bound, Definition, Expression, Instance, Module, SourceLocation } from "./ast";
 import type { ConfigValue, ConstantAssignment, ModelConfig } from "./config";
 import { TlaSyntaxError, TlaUnsupportedError } from "./errors";
+import { getChildren } from "./evaluate";
+import { getStandardModule } from "./standard-modules";
 
 export type TermLike = Term | number | string | boolean;
 
@@ -22,11 +24,63 @@ export interface Spec {
   build: () => { module: Module; config: ModelConfig };
 }
 
+type BoundSets = TermLike | readonly TermLike[];
+
+type Elements<Sets extends BoundSets> = Sets extends readonly TermLike[]
+  ? { -readonly [Index in keyof Sets]: Term }
+  : [element: Term];
+
+type Params<Names extends readonly string[]> = { -readonly [Index in keyof Names]: Term };
+
+type Arguments<Names extends readonly string[]> = { -readonly [Index in keyof Names]: TermLike };
+
 const START: SourceLocation = { line: 0, column: 0 };
 
 const IDENTIFIER = /^[A-Za-z0-9_]*[A-Za-z][A-Za-z0-9_]*$/;
 
-const STANDARD_MODULES = ["Integers", "Sequences", "FiniteSets", "TLC"];
+const STACK_FRAME = /(?:\(|at |@)([^()]*?):(\d+):(\d+)\)?$/;
+
+const STANDARD_MODULES = ["Naturals", "Integers", "Sequences", "FiniteSets", "TLC"].map((name) => ({
+  name,
+  module: getStandardModule(name, () => {}),
+}));
+
+const STANDARD_OPERATORS = new Map(
+  STANDARD_MODULES.flatMap((standard) =>
+    (standard.module?.operators ?? []).map((operator): [string, string] => [
+      operator.name,
+      standard.name,
+    ]),
+  ),
+);
+
+const boundCount = { value: 0 };
+
+const parseCallSite = (stack: string) => {
+  const frames = stack.split("\n").flatMap((line) => {
+    const match = STACK_FRAME.exec(line.trim());
+    return match ? [{ line: Number(match[2]), column: Number(match[3]), file: match[1] }] : [];
+  });
+  return frames.find((frame) => frame.file !== frames[0].file) ?? START;
+};
+
+// HACK: formatting a stack costs tens of microseconds, so getters format it only when an error message reads the location
+const getCallSite = (): SourceLocation => {
+  const error = new Error();
+  const cache: { location?: SourceLocation } = {};
+  const getLocation = () => (cache.location ??= parseCallSite(error.stack ?? ""));
+  return {
+    get line() {
+      return getLocation().line;
+    },
+    get column() {
+      return getLocation().column;
+    },
+    get file() {
+      return getLocation().file;
+    },
+  };
+};
 
 export class Term {
   constructor(readonly build: () => Expression) {}
@@ -75,6 +129,14 @@ export class Term {
     return createApply("%", [this, other]);
   }
 
+  power(exponent: TermLike) {
+    return createApply("^", [this, exponent]);
+  }
+
+  negate() {
+    return createApply("-.", [this]);
+  }
+
   in(set: TermLike) {
     return createApply("\\in", [this, set]);
   }
@@ -99,45 +161,73 @@ export class Term {
     return createApply("\\", [this, set]);
   }
 
+  powerset() {
+    return createApply("SUBSET", [this]);
+  }
+
+  bigUnion() {
+    return createApply("UNION", [this]);
+  }
+
   cardinality() {
     return createApply("Cardinality", [this]);
   }
 
+  isFiniteSet() {
+    return createApply("IsFiniteSet", [this]);
+  }
+
+  permutations() {
+    return createApply("Permutations", [this]);
+  }
+
+  randomElement() {
+    return createApply("RandomElement", [this]);
+  }
+
   at(...args: TermLike[]) {
-    return new Term(() => ({
+    return createTerm((location) => ({
       kind: "FunctionApplication",
       function: this.build(),
       args: args.map(toExpression),
-      location: START,
+      location,
     }));
   }
 
   field(name: string) {
-    return new Term(() => ({
+    return createTerm((location) => ({
       kind: "FieldAccess",
       record: this.build(),
       field: name,
-      location: START,
+      location,
     }));
   }
 
   except(key: TermLike, value: TermLike | ((current: Term) => TermLike)) {
     const updated =
       typeof value === "function"
-        ? value(new Term(() => ({ kind: "ExceptAt", location: START })))
+        ? value(createTerm((location) => ({ kind: "ExceptAt", location })))
         : value;
-    return new Term(() => ({
+    return createTerm((location) => ({
       kind: "Except",
       function: this.build(),
       updates: [
         { path: [{ kind: "Index", args: [toExpression(key)] }], value: toExpression(updated) },
       ],
-      location: START,
+      location,
     }));
   }
 
   domain() {
     return createApply("DOMAIN", [this]);
+  }
+
+  mapsTo(value: TermLike) {
+    return createApply(":>", [this, value]);
+  }
+
+  merge(other: TermLike) {
+    return createApply("@@", [this, other]);
   }
 
   length() {
@@ -160,8 +250,20 @@ export class Term {
     return createApply("Tail", [this]);
   }
 
+  subSeq(from: TermLike, to: TermLike) {
+    return createApply("SubSeq", [this, from, to]);
+  }
+
+  selectSeq(test: (element: Term) => TermLike) {
+    return createApply("SelectSeq", [this, createLambda(createBoundNames(1), test)]);
+  }
+
+  sortSeq(precedes: (left: Term, right: Term) => TermLike) {
+    return createApply("SortSeq", [this, createLambda(createBoundNames(2), precedes)]);
+  }
+
   prime() {
-    return new Term(() => ({ kind: "Prime", expression: this.build(), location: START }));
+    return createTerm((location) => ({ kind: "Prime", expression: this.build(), location }));
   }
 }
 
@@ -179,22 +281,75 @@ const toExpression = (value: TermLike): Expression => {
 const toTerm = (value: TermLike) =>
   value instanceof Term ? value : new Term(() => toExpression(value));
 
-const createReference = (name: string) =>
-  new Term(() => ({ kind: "Identifier", name, location: START }));
+const createTerm = (build: (location: SourceLocation) => Expression) => {
+  const location = getCallSite();
+  return new Term(() => build(location));
+};
+
+const createReference = (name: string, location = getCallSite()) =>
+  new Term(() => ({ kind: "Identifier", name, location }));
 
 const createApply = (operator: string, args: TermLike[]) =>
   args.length === 0
     ? createReference(operator)
-    : new Term(() => ({ kind: "Apply", operator, args: args.map(toExpression), location: START }));
+    : createTerm((location) => ({
+        kind: "Apply",
+        operator,
+        args: args.map(toExpression),
+        location,
+      }));
 
 const createJunction = (kind: "And" | "Or", operands: TermLike[]) =>
   operands.length === 1
     ? toTerm(operands[0])
-    : new Term(() => ({ kind, operands: operands.map(toExpression), location: START }));
+    : createTerm((location) => ({ kind, operands: operands.map(toExpression), location }));
 
-const toBounds = (names: string[], set: TermLike): Bound[] => {
-  const expression = toExpression(set);
-  return names.map((name) => ({ pattern: { kind: "Name", name }, set: expression }));
+// Bound names are not TLA+ identifiers, so they never capture a declared name.
+const createBoundNames = (count: number) =>
+  Array.from({ length: count }, () => `_${++boundCount.value}`);
+
+const createLambda = (params: string[], body: (...params: Term[]) => TermLike) => {
+  const result = toTerm(body(...params.map((param) => createReference(param))));
+  return createTerm((location) => ({ kind: "Lambda", params, body: result.build(), location }));
+};
+
+const toSetList = (sets: BoundSets): readonly TermLike[] =>
+  typeof sets === "object" && !(sets instanceof Term) ? sets : [sets];
+
+const bindSets = <const Sets extends BoundSets>(
+  sets: Sets,
+  body: (...elements: Elements<Sets>) => TermLike,
+) => {
+  const setList = toSetList(sets);
+  const names = createBoundNames(setList.length);
+  const elements = names.map((name) => createReference(name)) as Elements<Sets>;
+  return {
+    body: toTerm(body(...elements)),
+    getBounds: () =>
+      names.map((name, index): Bound => ({
+        pattern: { kind: "Name", name },
+        set: toExpression(setList[index]),
+      })),
+  };
+};
+
+const createQuantifier = (kind: "Forall" | "Exists", bound: ReturnType<typeof bindSets>) =>
+  createTerm((location) => ({
+    kind,
+    bounds: bound.getBounds(),
+    body: bound.body.build(),
+    location,
+  }));
+
+const createUnboundedQuantifier = (body: (element: Term) => TermLike) => {
+  const name = createBoundNames(1)[0];
+  const result = toTerm(body(createReference(name)));
+  return createTerm((location) => ({
+    kind: "UnboundedQuantifier",
+    names: [name],
+    body: result.build(),
+    location,
+  }));
 };
 
 const toConfigValue = (value: ConstantValue): ConfigValue => {
@@ -205,52 +360,80 @@ const toConfigValue = (value: ConstantValue): ConfigValue => {
   return value;
 };
 
-const createDefinition = (name: string, params: string[], body: Expression): Definition => ({
+const createDefinition = (
+  name: string,
+  params: string[],
+  body: Expression,
+  location: SourceLocation,
+): Definition => ({
   kind: "Operator",
   name,
   params: params.map((param) => ({ name: param, arity: 0 })),
   body,
   isLocal: false,
   isRecursive: true,
-  location: START,
+  location,
 });
+
+const getStandardExtends = (expressions: Expression[], declared: Set<string>) => {
+  const used = new Set<string>();
+  const visit = (expression: Expression) => {
+    const name =
+      expression.kind === "Apply" || expression.kind === "OperatorReference"
+        ? expression.operator
+        : expression.kind === "Identifier"
+          ? expression.name
+          : undefined;
+    const module =
+      name === undefined || declared.has(name) ? undefined : STANDARD_OPERATORS.get(name);
+    if (module !== undefined) used.add(module);
+    getChildren(expression).forEach(visit);
+  };
+  expressions.forEach(visit);
+  return STANDARD_MODULES.map((standard) => standard.name).filter((name) => used.has(name));
+};
+
+const getVisibleModules = (names: string[]): string[] =>
+  names.flatMap((name) => [
+    name,
+    ...getVisibleModules(
+      STANDARD_MODULES.find((standard) => standard.name === name)?.module?.extends ?? [],
+    ),
+  ]);
 
 const createBuilder = () => {
   const names = new Set<string>();
   const variables: string[] = [];
   const constants: ConstantAssignment[] = [];
   const definitions: (() => Definition)[] = [];
+  const instances: (() => Instance)[] = [];
   const definitionNames = new WeakMap<Term, string>();
-  const boundCount = { value: 0 };
 
-  const declare = (name: string) => {
+  const checkName = (name: string) => {
     if (!IDENTIFIER.test(name))
       throw new TlaSyntaxError(`${JSON.stringify(name)} is not a TLA+ identifier`);
     if (names.has(name)) throw new TlaSyntaxError(`Multiply-defined symbol ${name}`);
+  };
+  const declare = (name: string) => {
+    checkName(name);
     names.add(name);
   };
-
-  // Bound names are not TLA+ identifiers, so they never capture a declared name.
-  const createBoundNames = (count: number) =>
-    Array.from({ length: count }, () => `_${++boundCount.value}`);
-
-  const bind = (body: (...elements: Term[]) => TermLike) => {
-    const boundNames = createBoundNames(Math.max(body.length, 1));
-    return { names: boundNames, body: toTerm(body(...boundNames.map(createReference))) };
+  const checkParams = (params: readonly string[]) => {
+    params.forEach(checkName);
+    if (new Set(params).size < params.length)
+      throw new TlaSyntaxError(`Multiply-defined parameter in ${params.join(", ")}`);
+    return [...params];
   };
 
-  const createQuantifier =
-    (kind: "Forall" | "Exists") => (set: TermLike, body: (...elements: Term[]) => TermLike) => {
-      const bound = bind(body);
-      return new Term(() => ({
-        kind,
-        bounds: toBounds(bound.names, set),
-        body: bound.body.build(),
-        location: START,
-      }));
-    };
+  const addDefinition = (name: string, value: TermLike, location: SourceLocation) => {
+    declare(name);
+    definitions.push(() => createDefinition(name, [], toExpression(value), location));
+    const reference = createReference(name, location);
+    definitionNames.set(reference, name);
+    return reference;
+  };
 
-  const defaultSubscript = createReference("vars");
+  const defaultSubscript = createReference("vars", START);
 
   const tla = {
     variable: (name: string) => {
@@ -264,109 +447,180 @@ const createBuilder = () => {
       return createReference(name);
     },
     modelValue: (name: string): ConfigValue => ({ kind: "ModelValue", name }),
-    define: (name: string, value: TermLike) => {
+    define: (name: string, value: TermLike) => addDefinition(name, value, getCallSite()),
+    operator: <const Names extends readonly string[]>(
+      name: string,
+      params: Names,
+      body: (...params: Params<Names>) => TermLike,
+    ) => {
       declare(name);
-      definitions.push(() => createDefinition(name, [], toExpression(value)));
-      const reference = createReference(name);
-      definitionNames.set(reference, name);
-      return reference;
-    },
-    operator: (name: string, body: (...params: Term[]) => TermLike) => {
-      declare(name);
+      const location = getCallSite();
       definitions.push(() => {
-        const params = createBoundNames(body.length);
-        return createDefinition(name, params, toExpression(body(...params.map(createReference))));
+        const references = params.map((param) => createReference(param, location)) as Params<Names>;
+        return createDefinition(
+          name,
+          checkParams(params),
+          toExpression(body(...references)),
+          location,
+        );
       });
-      return (...args: TermLike[]) => createApply(name, args);
+      return (...args: Arguments<Names>) => createApply(name, args);
     },
-    call: (operator: string, ...args: TermLike[]) => createApply(operator, args),
+    lambda: <const Names extends readonly string[]>(
+      params: Names,
+      body: (...params: Params<Names>) => TermLike,
+    ) => {
+      const references = params.map((param) => createReference(param)) as Params<Names>;
+      const result = toTerm(body(...references));
+      return createTerm((location) => ({
+        kind: "Lambda",
+        params: checkParams(params),
+        body: result.build(),
+        location,
+      }));
+    },
+    instance: (name: string, module: string, substitutions: Record<string, TermLike> = {}) => {
+      declare(name);
+      const location = getCallSite();
+      instances.push(() => ({
+        kind: "Instance",
+        name,
+        params: [],
+        module,
+        substitutions: Object.entries(substitutions).map(([target, value]) => ({
+          name: target,
+          expression: toExpression(value),
+        })),
+        isLocal: false,
+        location,
+      }));
+      return (operator: string, ...args: TermLike[]) => createApply(`${name}!${operator}`, args);
+    },
     Nat: createReference("Nat"),
     Int: createReference("Int"),
     BOOLEAN: createReference("BOOLEAN"),
     STRING: createReference("STRING"),
+    JavaTime: createReference("JavaTime"),
+    seq: (set: TermLike) => createApply("Seq", [set]),
+    print: (output: TermLike, value: TermLike) => createApply("Print", [output, value]),
+    printT: (output: TermLike) => createApply("PrintT", [output]),
+    assert: (condition: TermLike, message: TermLike) => createApply("Assert", [condition, message]),
+    toString: (value: TermLike) => createApply("ToString", [value]),
+    tlcEval: (value: TermLike) => createApply("TLCEval", [value]),
     set: (...elements: TermLike[]) =>
-      new Term(() => ({
+      createTerm((location) => ({
         kind: "SetEnumeration",
         elements: elements.map(toExpression),
-        location: START,
+        location,
       })),
     tuple: (...elements: TermLike[]) =>
-      new Term(() => ({ kind: "Tuple", elements: elements.map(toExpression), location: START })),
+      createTerm((location) => ({
+        kind: "Tuple",
+        elements: elements.map(toExpression),
+        location,
+      })),
     record: (fields: Record<string, TermLike>) =>
-      new Term(() => ({
+      createTerm((location) => ({
         kind: "Record",
         fields: Object.entries(fields).map(([name, value]) => ({
           name,
           value: toExpression(value),
         })),
-        location: START,
+        location,
       })),
     recordSet: (fields: Record<string, TermLike>) =>
-      new Term(() => ({
+      createTerm((location) => ({
         kind: "RecordSet",
         fields: Object.entries(fields).map(([name, value]) => ({
           name,
           value: toExpression(value),
         })),
-        location: START,
+        location,
       })),
     range: (low: TermLike, high: TermLike) => createApply("..", [low, high]),
+    product: (...sets: TermLike[]) =>
+      createTerm((location) => ({ kind: "Product", factors: sets.map(toExpression), location })),
     functions: (domain: TermLike, range: TermLike) =>
-      new Term(() => ({
+      createTerm((location) => ({
         kind: "FunctionSet",
         domain: toExpression(domain),
         range: toExpression(range),
-        location: START,
+        location,
       })),
-    fn: (set: TermLike, body: (...elements: Term[]) => TermLike) => {
-      const bound = bind(body);
-      return new Term(() => ({
+    fn: <const Sets extends BoundSets>(
+      sets: Sets,
+      body: (...elements: Elements<Sets>) => TermLike,
+    ) => {
+      const bound = bindSets(sets, body);
+      return createTerm((location) => ({
         kind: "FunctionConstruction",
-        bounds: toBounds(bound.names, set),
+        bounds: bound.getBounds(),
         body: bound.body.build(),
-        location: START,
+        location,
       }));
     },
-    forall: createQuantifier("Forall"),
-    exists: createQuantifier("Exists"),
+    forall: <const Sets extends BoundSets>(
+      sets: Sets,
+      body: (...elements: Elements<Sets>) => TermLike,
+    ) => createQuantifier("Forall", bindSets(sets, body)),
+    exists: <const Sets extends BoundSets>(
+      sets: Sets,
+      body: (...elements: Elements<Sets>) => TermLike,
+    ) => createQuantifier("Exists", bindSets(sets, body)),
+    unboundedForall: createUnboundedQuantifier,
+    unboundedExists: createUnboundedQuantifier,
     choose: (set: TermLike, predicate: (element: Term) => TermLike) => {
-      const bound = bind(predicate);
-      return new Term(() => ({
+      const bound = bindSets(set, predicate);
+      return createTerm((location) => ({
         kind: "Choose",
-        pattern: { kind: "Name", name: bound.names[0] },
+        pattern: bound.getBounds()[0].pattern,
         set: toExpression(set),
         body: bound.body.build(),
-        location: START,
+        location,
+      }));
+    },
+    unboundedChoose: (predicate: (element: Term) => TermLike) => {
+      const name = createBoundNames(1)[0];
+      const result = toTerm(predicate(createReference(name)));
+      return createTerm((location) => ({
+        kind: "Choose",
+        pattern: { kind: "Name", name },
+        set: undefined,
+        body: result.build(),
+        location,
       }));
     },
     filter: (set: TermLike, predicate: (element: Term) => TermLike) => {
-      const bound = bind(predicate);
-      return new Term(() => ({
+      const bound = bindSets(set, predicate);
+      return createTerm((location) => ({
         kind: "SetFilter",
-        bound: toBounds(bound.names, set)[0],
+        bound: bound.getBounds()[0],
         predicate: bound.body.build(),
-        location: START,
+        location,
       }));
     },
-    map: (set: TermLike, body: (...elements: Term[]) => TermLike) => {
-      const bound = bind(body);
-      return new Term(() => ({
+    map: <const Sets extends BoundSets>(
+      sets: Sets,
+      body: (...elements: Elements<Sets>) => TermLike,
+    ) => {
+      const bound = bindSets(sets, body);
+      return createTerm((location) => ({
         kind: "SetMap",
         expression: bound.body.build(),
-        bounds: toBounds(bound.names, set),
-        location: START,
+        bounds: bound.getBounds(),
+        location,
       }));
     },
-    product: (...sets: TermLike[]) =>
-      new Term(() => ({ kind: "Product", factors: sets.map(toExpression), location: START })),
     let: (value: TermLike, body: (name: Term) => TermLike) => {
       const name = createBoundNames(1)[0];
       const result = toTerm(body(createReference(name)));
-      return new Term(() => ({
+      return createTerm((location) => ({
         kind: "Let",
-        definitions: [{ ...createDefinition(name, [], toExpression(value)), isRecursive: false }],
+        definitions: [
+          { ...createDefinition(name, [], toExpression(value), location), isRecursive: false },
+        ],
         body: result.build(),
-        location: START,
+        location,
       }));
     },
     and: (...operands: TermLike[]) => createJunction("And", operands),
@@ -375,87 +629,114 @@ const createBuilder = () => {
     implies: (left: TermLike, right: TermLike) => createApply("=>", [left, right]),
     equivalent: (left: TermLike, right: TermLike) => createApply("<=>", [left, right]),
     ifThenElse: (condition: TermLike, consequent: TermLike, alternative: TermLike) =>
-      new Term(() => ({
+      createTerm((location) => ({
         kind: "If",
         condition: toExpression(condition),
         consequent: toExpression(consequent),
         alternative: toExpression(alternative),
-        location: START,
+        location,
       })),
     cases: (arms: [TermLike, TermLike][], other?: TermLike) =>
-      new Term(() => ({
+      createTerm((location) => ({
         kind: "Case",
         arms: arms.map(([condition, body]) => ({
           condition: toExpression(condition),
           body: toExpression(body),
         })),
         other: other === undefined ? undefined : toExpression(other),
-        location: START,
+        location,
       })),
     unchanged: (...terms: TermLike[]) => {
       const expression = terms.length === 1 ? toTerm(terms[0]) : tla.tuple(...terms);
-      return new Term(() => ({
+      return createTerm((location) => ({
         kind: "Unchanged",
         expression: expression.build(),
-        location: START,
+        location,
       }));
     },
     enabled: (action: TermLike) =>
-      new Term(() => ({ kind: "Enabled", expression: toExpression(action), location: START })),
+      createTerm((location) => ({ kind: "Enabled", expression: toExpression(action), location })),
     always: (formula: TermLike) =>
-      new Term(() => ({ kind: "Always", expression: toExpression(formula), location: START })),
+      createTerm((location) => ({ kind: "Always", expression: toExpression(formula), location })),
     eventually: (formula: TermLike) =>
-      new Term(() => ({ kind: "Eventually", expression: toExpression(formula), location: START })),
+      createTerm((location) => ({
+        kind: "Eventually",
+        expression: toExpression(formula),
+        location,
+      })),
     leadsTo: (left: TermLike, right: TermLike) => createApply("~>", [left, right]),
     boxAction: (action: TermLike, subscript: TermLike = defaultSubscript) =>
-      new Term(() => ({
+      createTerm((location) => ({
         kind: "BoxAction",
         action: toExpression(action),
         subscript: toExpression(subscript),
-        location: START,
+        location,
       })),
     angleAction: (action: TermLike, subscript: TermLike = defaultSubscript) =>
-      new Term(() => ({
+      createTerm((location) => ({
         kind: "AngleAction",
         action: toExpression(action),
         subscript: toExpression(subscript),
-        location: START,
+        location,
       })),
     weakFairness: (action: TermLike, subscript: TermLike = defaultSubscript) =>
-      new Term(() => ({
+      createTerm((location) => ({
         kind: "WeakFairness",
         subscript: toExpression(subscript),
         action: toExpression(action),
-        location: START,
+        location,
       })),
     strongFairness: (action: TermLike, subscript: TermLike = defaultSubscript) =>
-      new Term(() => ({
+      createTerm((location) => ({
         kind: "StrongFairness",
         subscript: toExpression(subscript),
         action: toExpression(action),
-        location: START,
+        location,
       })),
   };
 
   const getName = (name: string, value: TermLike) => {
     if (value instanceof Term && definitionNames.get(value) === name) return name;
-    tla.define(name, value);
+    addDefinition(name, value, START);
     return name;
   };
   const getNames = (entries: Record<string, TermLike> = {}) =>
     Object.entries(entries).map(([name, value]) => getName(name, value));
 
   const toModel = (definition: SpecDefinition) => {
-    tla.define("vars", tla.tuple(...variables.map(createReference)));
+    addDefinition(
+      "vars",
+      new Term(() => ({
+        kind: "Tuple",
+        elements: variables.map((name) => createReference(name, START).build()),
+        location: START,
+      })),
+      START,
+    );
     const init = getName("Init", definition.init);
     const next = getName("Next", definition.next);
-    tla.define(
+    const fairness = definition.fairness ?? [];
+    addDefinition(
       "Spec",
-      tla.and(
-        createReference(init),
-        tla.always(tla.boxAction(createReference(next))),
-        ...(definition.fairness ?? []),
-      ),
+      new Term(() => ({
+        kind: "And",
+        operands: [
+          createReference(init, START).build(),
+          {
+            kind: "Always",
+            expression: {
+              kind: "BoxAction",
+              action: createReference(next, START).build(),
+              subscript: defaultSubscript.build(),
+              location: START,
+            },
+            location: START,
+          },
+          ...fairness.map(toExpression),
+        ],
+        location: START,
+      })),
+      START,
     );
     const config: ModelConfig = {
       init: undefined,
@@ -472,13 +753,30 @@ const createBuilder = () => {
         definition.symmetry === undefined ? undefined : getName("Symmetry", definition.symmetry),
       view: undefined,
     };
+    const builtDefinitions = definitions.map((createLazyDefinition) => createLazyDefinition());
+    const builtInstances = instances.map((createLazyInstance) => createLazyInstance());
+    const standardExtends = getStandardExtends(
+      [
+        ...builtDefinitions.map((builtDefinition) => builtDefinition.body),
+        ...builtInstances.flatMap((builtInstance) =>
+          builtInstance.substitutions.map((substitution) => substitution.expression),
+        ),
+      ],
+      names,
+    );
+    const visibleModules = new Set(getVisibleModules(standardExtends));
+    names.forEach((name) => {
+      const module = STANDARD_OPERATORS.get(name);
+      if (module !== undefined && visibleModules.has(module))
+        throw new TlaSyntaxError(`Multiply-defined symbol ${name} conflicts with module ${module}`);
+    });
     const module: Module = {
       name: "Spec",
-      extends: STANDARD_MODULES,
+      extends: standardExtends,
       constants: constants.map((constant) => ({ name: constant.name, arity: 0 })),
       variables,
-      definitions: definitions.map((createLazyDefinition) => createLazyDefinition()),
-      instances: [],
+      definitions: builtDefinitions,
+      instances: builtInstances,
       assumptions: [],
     };
     return { module, config };

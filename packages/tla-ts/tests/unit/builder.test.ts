@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import {
   check,
@@ -9,6 +11,8 @@ import {
   type Term,
   type TermLike,
 } from "../../src";
+
+const INSTANCES = join(import.meta.dirname, "../fixtures/instances");
 
 const getCounts = (spec: Parameters<typeof check>[0]) => {
   const result = check(spec);
@@ -88,7 +92,7 @@ const commit = defineSpec((tla) => {
       tla.unchanged(participantState, prepared),
     ),
   );
-  const coordinatorReceive = tla.operator("CoordinatorReceive", (participant) =>
+  const coordinatorReceive = tla.operator("CoordinatorReceive", ["participant"], (participant) =>
     tla.and(
       coordinatorState.eq("init"),
       tla.record({ kind: "prepared", from: participant }).in(messages),
@@ -96,7 +100,7 @@ const commit = defineSpec((tla) => {
       tla.unchanged(participantState, coordinatorState, messages),
     ),
   );
-  const prepare = tla.operator("Prepare", (participant) =>
+  const prepare = tla.operator("Prepare", ["participant"], (participant) =>
     tla.and(
       participantState.at(participant).eq("working"),
       participantState.prime().eq(participantState.except(participant, "prepared")),
@@ -106,7 +110,7 @@ const commit = defineSpec((tla) => {
       tla.unchanged(coordinatorState, prepared),
     ),
   );
-  const decide = tla.operator("Decide", (participant) =>
+  const decide = tla.operator("Decide", ["participant"], (participant) =>
     tla.or(
       ...[
         ["commit", "committed"],
@@ -143,7 +147,7 @@ const commit = defineSpec((tla) => {
         prepared.subsetOf(participants),
         messages.subsetOf(messageSet),
       ),
-      Consistent: tla.forall(participants, (first, second) =>
+      Consistent: tla.forall([participants, participants], (first, second) =>
         tla.not(
           tla.and(
             participantState.at(first).eq("aborted"),
@@ -170,14 +174,14 @@ const defineLiveness = (
       "Increment",
       tla.and(count.lt(limit), count.prime().eq(count.plus(1)), tla.unchanged(location, token)),
     );
-    const request = tla.operator("Request", (process) =>
+    const request = tla.operator("Request", ["process"], (process) =>
       tla.and(
         location.at(process).eq("idle"),
         location.prime().eq(location.except(process, "waiting")),
         tla.unchanged(count, token),
       ),
     );
-    const enter = tla.operator("Enter", (process) =>
+    const enter = tla.operator("Enter", ["process"], (process) =>
       tla.and(
         location.at(process).eq("waiting"),
         token.eq(process),
@@ -185,7 +189,7 @@ const defineLiveness = (
         tla.unchanged(count, token),
       ),
     );
-    const leave = tla.operator("Leave", (process) =>
+    const leave = tla.operator("Leave", ["process"], (process) =>
       tla.and(
         location.at(process).eq("critical"),
         location.prime().eq(location.except(process, "idle")),
@@ -193,7 +197,7 @@ const defineLiveness = (
         tla.unchanged(count),
       ),
     );
-    const pass = tla.operator("Pass", (process) =>
+    const pass = tla.operator("Pass", ["process"], (process) =>
       tla.and(
         token.eq(process),
         location.at(process).eq("idle"),
@@ -201,7 +205,7 @@ const defineLiveness = (
         tla.unchanged(count, location),
       ),
     );
-    const step = tla.operator("Step", (process) =>
+    const step = tla.operator("Step", ["process"], (process) =>
       tla.or(request(process), enter(process), leave(process), pass(process)),
     );
     const model = { processes, limit, count, location, token, pass, leave };
@@ -349,10 +353,49 @@ describe("defineSpec matches TLC", () => {
             tla.and(owner.prime().eq(candidate), tla.unchanged(votes)),
           ),
         ),
-        symmetry: tla.call("Permutations", proc).union(tla.call("Permutations", value)),
+        symmetry: proc.permutations().union(value.permutations()),
       };
     });
     expect(getCounts({ spec })).toEqual(["success", 42, 10, 7]);
+  });
+
+  it.each([
+    [false, "success", 244, 27, 4],
+    [true, "invariant-violation", 118, 27, 4],
+  ])("substitutes into named instances when checking Different is %s", (isDifferent, ...counts) => {
+    const spec = defineSpec((tla) => {
+      const left = tla.variable("left");
+      const right = tla.variable("right");
+      const shared = tla.variable("shared");
+      const values = tla.define("Values", tla.range(0, 2));
+      const leftChannel = tla.instance("Left", "Channel", { Data: values, channel: left });
+      const rightChannel = tla.instance("Right", "Channel", { Data: values, channel: right });
+      const sharedChannel = tla.instance("Shared", "Channel", { Data: values, channel: shared });
+      return {
+        init: tla.and(left.eq(0), right.eq(0), shared.eq(0)),
+        next: tla.or(
+          tla.and(
+            tla.exists(values, (item) => leftChannel("Send", item)),
+            rightChannel("Idle"),
+            sharedChannel("Idle"),
+          ),
+          tla.and(
+            tla.exists(values, (item) => rightChannel("Send", item)),
+            tla.unchanged(left, shared),
+          ),
+          tla.and(
+            tla.exists(values, (item) => sharedChannel("Send", item)),
+            tla.unchanged(left, right),
+          ),
+        ),
+        invariants: {
+          Safe: tla.and(leftChannel("TypeOK"), rightChannel("TypeOK"), sharedChannel("TypeOK")),
+          ...(isDifferent ? { Different: left.plus(right).plus(shared).lt(6) } : {}),
+        },
+      };
+    });
+    const loadModule = (name: string) => readFileSync(join(INSTANCES, `${name}.tla`), "utf8");
+    expect(getCounts({ spec, loadModule })).toEqual(counts);
   });
 });
 
@@ -364,7 +407,7 @@ describe("defineSpec", () => {
   it("evaluates recursive operators", () => {
     const spec = defineSpec((tla) => {
       const x = tla.variable("x");
-      const factorial = tla.operator("Factorial", (n) =>
+      const factorial = tla.operator("Factorial", ["n"], (n): Term =>
         tla.ifThenElse(n.eq(0), 1, n.times(factorial(n.minus(1)))),
       );
       return {
@@ -421,6 +464,83 @@ describe("defineSpec", () => {
       return { init: x.eq(0), next: x.prime().eq(x) };
     });
     expect(() => check({ spec })).toThrow(TlaSyntaxError);
+  });
+
+  it("passes LAMBDA to higher-order operators", () => {
+    const spec = defineSpec((tla) => {
+      const x = tla.variable("x");
+      const twice = tla.instance("Twice", "Twice");
+      const numbers = tla.tuple(3, 1, 2);
+      return {
+        init: x.eq(0),
+        next: tla.and(
+          x.lt(4),
+          x.prime().eq(
+            twice(
+              "ApplyTwice",
+              tla.lambda(["value"], (value) => value.plus(1)),
+              x,
+            ),
+          ),
+        ),
+        invariants: {
+          Sorted: numbers.sortSeq((left, right) => left.lt(right)).eq(tla.tuple(1, 2, 3)),
+          Selected: numbers.selectSeq((element) => element.gt(1)).eq(tla.tuple(3, 2)),
+        },
+        checkDeadlock: false,
+      };
+    });
+    const loadModule = () => "---- MODULE Twice ----\nApplyTwice(F(_), x) == F(F(x))\n====";
+    expect(getCounts({ spec, loadModule })).toEqual(["success", 3, 3, 3]);
+  });
+
+  it("reports the TypeScript call site of a failing expression", () => {
+    const spec = defineSpec((tla) => {
+      const x = tla.variable("x");
+      return {
+        init: x.eq(0),
+        next: x.prime().eq(x),
+        invariants: { Unbounded: tla.unboundedExists((value) => value.eq(x)) },
+      };
+    });
+    expect(() => check({ spec })).toThrow(
+      /TLC cannot evaluate an unbounded quantifier at line \d+, column \d+ of .*builder\.test\.ts/,
+    );
+  });
+
+  it("extends only the standard modules that a spec uses", () => {
+    const getSpec = (isAppending: boolean) =>
+      defineSpec((tla) => {
+        const head = tla.variable("Head");
+        return {
+          init: head.eq(isAppending ? tla.tuple().append(1) : 0),
+          next: head.prime().eq(head),
+        };
+      });
+    expect(check({ spec: getSpec(false) }).status).toBe("success");
+    expect(() => check({ spec: getSpec(true) })).toThrow(TlaSyntaxError);
+  });
+
+  it("rejects parameters that shadow a declared name", () => {
+    const spec = defineSpec((tla) => {
+      const x = tla.variable("x");
+      const increment = tla.operator("Increment", ["x"], (value) => value.plus(1));
+      return { init: x.eq(0), next: x.prime().eq(increment(x)) };
+    });
+    expect(() => check({ spec })).toThrow(TlaSyntaxError);
+  });
+
+  it("checks the arity of binders and operators at compile time", () => {
+    defineSpec((tla) => {
+      const x = tla.variable("x");
+      const add = tla.operator("Add", ["left", "right"], (left, right) => left.plus(right));
+      return {
+        // @ts-expect-error A single set binds one variable.
+        init: tla.exists(tla.range(0, 1), (left, right) => x.eq(left.plus(right))),
+        // @ts-expect-error Add takes two arguments.
+        next: x.prime().eq(add(x)),
+      };
+    });
   });
 
   it("reports 32-bit overflow like TLC", () => {
