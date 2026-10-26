@@ -24,6 +24,7 @@ const checkFixture = (directory: string, name: string) =>
   check({
     source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
     config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
+    loadModule: (module) => readFileSync(join(FIXTURES, directory, `${module}.tla`), "utf8"),
   });
 
 describe("check matches TLC", () => {
@@ -103,6 +104,48 @@ describe("check matches TLC", () => {
     const result = checkFixture("symmetry", "Symmetry");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([42, 10, 7]);
+  });
+
+  it("reports the TLC trace when states are deduplicated by VIEW", () => {
+    const result = checkFixture("view", "ViewMap");
+    expect(result.status).toBe("invariant-violation");
+    expect(result.violation?.name).toBe("Inv");
+    const trace = result.violation?.trace ?? [];
+    expect(trace.map((step) => step.action)).toEqual([
+      undefined,
+      "lbc",
+      "lbc",
+      "lbp",
+      "lbp",
+      "lbc",
+      "lbc",
+      "lbc",
+    ]);
+    expect(trace.map((step) => formatValue(step.state.waitset))).toEqual([
+      "{}",
+      "{c1}",
+      "{c1, c2}",
+      "{c2}",
+      "{c2, p1}",
+      "{p1}",
+      "{c1, p1}",
+      "{c1, c2, p1}",
+    ]);
+    expect(formatValue(trace[7].state.pc)).toBe('(c1 :> "lbc" @@ c2 :> "lbc" @@ p1 :> "lbp")');
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([43, 14, 8]);
+  });
+
+  it("checks liveness on the graph of VIEW values", () => {
+    const result = checkFixture("view", "MCDistributedReplicatedLog");
+    expect(result.status).toBe("liveness-violation");
+    expect(result.violation?.name).toBe("InSync");
+    expect(result.violation?.trace.slice(1).every((step) => step.action !== undefined)).toBe(true);
+    expect([result.generatedStates, result.distinctStates]).toEqual([271, 37]);
+  });
+
+  it("rejects a VIEW that is not an operator without arguments", () => {
+    expect(() => checkModule("", "VIEW Missing")).toThrow(TlaConfigError);
+    expect(() => checkModule("View(a) == a", "VIEW View")).toThrow(TlaConfigError);
   });
 
   it("rejects a symmetry that names a constant", () => {

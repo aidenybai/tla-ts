@@ -25,7 +25,7 @@ result.status; // "invariant-violation"
 ```
 
 > [!WARNING]
-> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `VIEW`, `POSTCONDITION`, `TLCGet`, and `TLCSet`.
+> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `POSTCONDITION`, `TLCGet`, and `TLCSet`.
 
 ## Install
 
@@ -81,7 +81,7 @@ The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `
 
 - **Standard modules**: Naturals, Integers, Reals, Sequences, FiniteSets, Bags, and TLC. Reals matches TLC, which has no real arithmetic. `Real` is the string `"Reals"`, and `/` and `Infinity` fail to evaluate. A decimal literal such as `1.5` anywhere in the spec throws `TlaEvaluationError` before checking starts.
 - **Modules**: `EXTENDS`, nested modules, and `INSTANCE` with `WITH` substitutions, `LAMBDA` substitutions for operator parameters, named instances, parameterized instances, and instances inside `LET`
-- **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, and `CHECK_DEADLOCK`
+- **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, `VIEW`, and `CHECK_DEADLOCK`
 - **Properties**: invariants, `[][A]_v`, and every temporal formula TLC accepts, checked through TLC's tableau construction under the fairness and temporal conjuncts of the specification
 - **Subexpression references**: selectors such as `F(2)!3`, `Op!<<`, `Op!>>`, `Op!:`, `Op!@`, and `Op!(x)`, labels such as `Op!lab`, and names of `THEOREM` formulas
 - **TLC semantics**: 32-bit integer overflow errors, `ENABLED`, and TLC's enumeration order for `CHOOSE` and quantifiers
