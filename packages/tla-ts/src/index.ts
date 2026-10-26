@@ -1,5 +1,14 @@
+export { defineSpec } from "./builder";
+export type { ConstantValue, Spec, SpecBuilder, SpecDefinition, Term, TermLike } from "./builder";
 export { check } from "./check";
-export type { CheckOptions, CheckResult, CheckStatus, TraceStep, Violation } from "./check";
+export type {
+  CheckOptions,
+  CheckResult,
+  CheckStatus,
+  SpecCheckOptions,
+  TraceStep,
+  Violation,
+} from "./check";
 export { parseConfig } from "./config";
 export type { ConfigValue, ConstantAssignment, ModelConfig, Substitution } from "./config";
 export {

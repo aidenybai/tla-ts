@@ -59,10 +59,46 @@ Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` tu
 | Export        | Purpose                                                                             |
 | ------------- | ----------------------------------------------------------------------------------- |
 | `check`       | Checks a spec against a TLC configuration                                           |
+| `defineSpec`  | Builds a spec and its configuration in TypeScript                                   |
 | `parseModule` | Parses a TLA+ module                                                                |
 | `parseConfig` | Parses a TLC configuration file                                                     |
 | `formatValue` | Prints a value in TLA+ syntax                                                       |
 | `TlaError`    | Base class of the syntax, configuration, evaluation, and unsupported-feature errors |
+
+### TypeScript specs
+
+`defineSpec` builds the same syntax tree as the parser, so a TypeScript spec gets TLC's semantics, traces, and state counts. The object it returns also replaces the configuration file:
+
+```ts
+import { check, defineSpec } from "tla-ts";
+
+const counter = defineSpec((tla) => {
+  const limit = tla.constant("Limit", 3);
+  const count = tla.variable("count");
+  const increment = tla.define(
+    "Increment",
+    tla.and(count.lt(limit), count.prime().eq(count.plus(1))),
+  );
+  return {
+    init: count.eq(0),
+    next: increment,
+    fairness: [tla.weakFairness(increment)],
+    properties: { Done: tla.eventually(count.eq(limit)) },
+    checkDeadlock: false,
+  };
+});
+
+check({ spec: counter }).status; // "success"
+```
+
+- `tla.variable` and `tla.constant` declare names. A constant takes a number, string, boolean, `tla.modelValue(name)`, or an array, which becomes a set.
+- `tla.define` and `tla.operator` add named definitions. Named actions appear in error traces. Operators can call themselves.
+- Terms have methods for relations, arithmetic, sets, functions, records, and sequences, such as `eq`, `plus`, `in`, `union`, `at`, `except`, and `append`.
+- `tla.forall`, `tla.exists`, `tla.choose`, `tla.filter`, `tla.map`, and `tla.fn` take a callback that receives the bound variables.
+- `tla.call` applies any other standard operator by name, such as `tla.call("Permutations", procs)`.
+- The return value sets `init`, `next`, `fairness`, `invariants`, `properties`, `constraints`, `actionConstraints`, `symmetry`, and `checkDeadlock`. Each record key names a definition.
+
+Every TypeScript spec extends Integers, Sequences, FiniteSets, and TLC. The builder does not support `LET`, `\X`, `LAMBDA`, unbounded quantifiers, or `INSTANCE`. Use a TypeScript function in place of `LET`.
 
 ## Supported features
 

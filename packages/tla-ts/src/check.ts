@@ -27,11 +27,17 @@ import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { createCanonicalizer } from "./canonical";
 import { combineHash, getValueHash, isSameValue, type Value } from "./values";
+import type { Spec } from "./builder";
 
 export interface CheckOptions {
   source: string;
   config: string | ModelConfig;
   loadModule?: (name: string) => string | undefined;
+  onPrint?: (text: string) => void;
+}
+
+export interface SpecCheckOptions {
+  spec: Spec;
   onPrint?: (text: string) => void;
 }
 
@@ -267,11 +273,18 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
   };
 };
 
-export const check = (options: CheckOptions): CheckResult => {
-  const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
+export const check = (options: CheckOptions | SpecCheckOptions): CheckResult => {
+  const model =
+    "spec" in options
+      ? options.spec.build()
+      : {
+          config: typeof options.config === "string" ? parseConfig(options.config) : options.config,
+          module: parseModule(options.source),
+        };
+  const config = model.config;
   if (config.view !== undefined) throw new TlaUnsupportedError("VIEW is not supported yet");
-  const specification = createEnvironment(parseModule(options.source), config, {
-    loadModule: options.loadModule,
+  const specification = createEnvironment(model.module, config, {
+    loadModule: "spec" in options ? undefined : options.loadModule,
     print: options.onPrint ?? console.log,
   });
   const environment = specification.environment;
