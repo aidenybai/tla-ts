@@ -24,19 +24,6 @@ result.status; // "invariant-violation"
 > [!WARNING]
 > tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `VIEW`, `POSTCONDITION`, nested modules, `INSTANCE` inside `LET`, subexpression references such as `F(2)!3`, `TLCGet`, `TLCSet`, and the Bags and Reals modules.
 
-## Benchmarks
-
-Wall time on one worker, including JVM and Node startup. Both checkers report the same state counts on every model.
-
-| Spec                                                           | Distinct states |     TLC |  tla-ts | Speedup |
-| -------------------------------------------------------------- | --------------: | ------: | ------: | ------: |
-| [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |  4.49 s |  2.65 s |    1.7× |
-| [Dining philosophers](packages/tla-ts/benchmarks/philosophers) |         128,889 |  1.67 s |  1.08 s |    1.5× |
-| [Bounded queue](packages/tla-ts/benchmarks/queue)              |          44,044 |  0.68 s |  0.22 s |    3.1× |
-| 390 conformance models                                         |                 | 251.3 s | 119.6 s |    2.1× |
-
-The conformance models come from [tlaplus/Examples](https://github.com/tlaplus/Examples), TLC's test suite, [Spectacle](https://github.com/will62794/tla-web), and [tla-rs](https://github.com/fabracht/tla-rs).
-
 ## Install
 
 ```shell
@@ -105,6 +92,19 @@ Rerun the benchmarks with `TLA2TOOLS_JAR` set to the path of `tla2tools.jar`:
 pnpm --filter tla-ts bench
 pnpm --filter tla-ts bench:corpus
 ```
+
+## Benchmarks
+
+Wall time on one worker, including JVM and Node startup. Both checkers report the same state counts on every model.
+
+| Spec                                                           | Distinct states |     TLC |  tla-ts | Speedup |
+| -------------------------------------------------------------- | --------------: | ------: | ------: | ------: |
+| [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |  4.49 s |  2.65 s |    1.7× |
+| [Dining philosophers](packages/tla-ts/benchmarks/philosophers) |         128,889 |  1.67 s |  1.08 s |    1.5× |
+| [Bounded queue](packages/tla-ts/benchmarks/queue)              |          44,044 |  0.68 s |  0.22 s |    3.1× |
+| 390 conformance models                                         |                 | 251.3 s | 119.6 s |    2.1× |
+
+The conformance models come from [tlaplus/Examples](https://github.com/tlaplus/Examples), TLC's test suite, [Spectacle](https://github.com/will62794/tla-web), and [tla-rs](https://github.com/fabracht/tla-rs).
 
 ## License
 
