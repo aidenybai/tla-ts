@@ -30,7 +30,6 @@ export interface ApplyExpression {
   args: Expression[];
   location: SourceLocation;
   resolution?: GlobalOperator;
-  assignableIndex?: number;
 }
 
 export interface OperatorReferenceExpression {

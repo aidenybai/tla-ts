@@ -296,12 +296,12 @@ export const forEachBinding = (
   return visitBound(bounds.length - 1, context.scope);
 };
 
-const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
+export const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
   const sets = bounds.map((bound) => evaluate(bound.set, context));
   return sets.length === 1 ? sets[0] : { kind: "ProductSet", factors: sets };
 };
 
-const bindArgument = (bounds: Bound[], scope: Scope | undefined, argument: Value) => {
+export const bindArgument = (bounds: Bound[], scope: Scope | undefined, argument: Value) => {
   if (bounds.length === 1) return bindPattern(scope, bounds[0].pattern, argument);
   const components = getSequenceElements(argument) ?? [];
   return bounds.reduce<Scope | undefined>(

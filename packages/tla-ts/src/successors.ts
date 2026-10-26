@@ -1,11 +1,14 @@
-import type { Expression } from "./ast";
+import type { Bound, Expression } from "./ast";
 import { TlaEvaluationError } from "./errors";
 import {
+  bindArgument,
   bindDefinitions,
   bindOperatorArguments,
+  bindValue,
   evaluate,
   expectBoolean,
   forEachBinding,
+  getBoundsDomain,
   getDefinition,
   lookupScope,
   resolveApplyOperator,
@@ -14,7 +17,15 @@ import {
   type Scope,
   type State,
 } from "./evaluate";
-import { formatValue, isEnumerable, toFiniteSet, valuesEqual, type Value } from "./values";
+import {
+  createTuple,
+  formatValue,
+  isElementOf,
+  isEnumerable,
+  toFiniteSet,
+  valuesEqual,
+  type Value,
+} from "./values";
 
 export interface Successor {
   state: Value[];
@@ -30,6 +41,12 @@ interface Exploration {
   environment: Environment;
   isInit: boolean;
   current: Value[] | undefined;
+}
+
+interface FunctionLambda {
+  bounds: Bound[];
+  body: Expression;
+  scope: Scope | undefined;
 }
 
 type Continuation = (partial: State, label: Label) => void;
@@ -50,28 +67,60 @@ const assign = (partial: State, index: number, value: Value) => {
   return copy;
 };
 
-const getAssignableIndex = (
-  expression: Expression & { kind: "Apply" },
-  exploration: Exploration,
+const getVariableIndex = (
+  expression: Expression,
   scope: Scope | undefined,
-) => {
-  const cached = expression.assignableIndex;
-  if (cached === -1) return undefined;
-  const target = exploration.isInit
-    ? expression.args[0]
-    : expression.args[0].kind === "Prime"
-      ? expression.args[0].expression
-      : undefined;
-  if (cached === undefined) {
-    const index =
-      target?.kind === "Identifier"
-        ? exploration.environment.variableIndex.get(target.name)
-        : undefined;
-    expression.assignableIndex = index ?? -1;
-    if (index === undefined) return undefined;
+  partial: State,
+  exploration: Exploration,
+  isPrimed: boolean,
+): number | undefined => {
+  if (expression.kind === "Prime" && isPrimed)
+    return getVariableIndex(expression.expression, scope, partial, exploration, false);
+  if (expression.kind === "Let") {
+    const letScope = bindDefinitions(
+      expression.definitions,
+      getContext(exploration, scope, partial),
+    );
+    return getVariableIndex(expression.body, letScope, partial, exploration, isPrimed);
   }
-  if (target?.kind !== "Identifier" || lookupScope(scope, target.name)) return undefined;
-  return expression.assignableIndex;
+  if (expression.kind !== "Identifier") return undefined;
+  const binding = lookupScope(scope, expression.name);
+  if (binding?.kind === "Thunk")
+    return getVariableIndex(binding.expression, binding.scope, partial, exploration, isPrimed);
+  if (binding) return undefined;
+  const environment = exploration.environment;
+  const index = environment.variableIndex.get(expression.name);
+  if (index !== undefined) return isPrimed ? undefined : index;
+  const definition = getDefinition(expression.name, environment);
+  if (
+    definition?.kind !== "Operator" ||
+    definition.params.length > 0 ||
+    environment.constants.has(expression.name)
+  )
+    return undefined;
+  return getVariableIndex(definition.body, undefined, partial, exploration, isPrimed);
+};
+
+const getFunctionLambda = (
+  expression: Expression,
+  scope: Scope | undefined,
+  partial: State,
+  exploration: Exploration,
+): FunctionLambda | undefined => {
+  if (expression.kind === "FunctionConstruction")
+    return { bounds: expression.bounds, body: expression.body, scope };
+  if (expression.kind !== "Identifier") return undefined;
+  const binding = lookupScope(scope, expression.name);
+  if (binding?.kind === "Thunk")
+    return getFunctionLambda(binding.expression, binding.scope, partial, exploration);
+  const definition = binding ? undefined : getDefinition(expression.name, exploration.environment);
+  if (definition?.kind !== "Function") return undefined;
+  const self = evaluate(expression, getContext(exploration, undefined, partial));
+  return {
+    bounds: definition.bounds,
+    body: definition.body,
+    scope: bindValue(undefined, definition.name, self),
+  };
 };
 
 const describeLocation = (expression: Expression) =>
@@ -199,7 +248,7 @@ const exploreApply = (
 ) => {
   const args = expression.args;
   if (expression.operator === "=" || expression.operator === "\\in") {
-    const index = getAssignableIndex(expression, exploration, scope);
+    const index = getVariableIndex(args[0], scope, partial, exploration, !exploration.isInit);
     if (index !== undefined && partial[index] === undefined) {
       const value = evaluate(args[1], getContext(exploration, scope, partial));
       if (expression.operator === "=") {
@@ -358,6 +407,40 @@ const explore = (
         onComplete,
       );
       return;
+    case "AngleAction":
+      explore(expression.action, scope, partial, label, exploration, (nextPartial, nextLabel) => {
+        const isUnchanged = evaluate(
+          { kind: "Unchanged", expression: expression.subscript, location: expression.location },
+          getContext(exploration, scope, nextPartial),
+        );
+        if (!expectBoolean(isUnchanged, "a subscript")) onComplete(nextPartial, nextLabel);
+      });
+      return;
+    case "FunctionApplication": {
+      const lambda = getFunctionLambda(expression.function, scope, partial, exploration);
+      if (!lambda) {
+        exploreGuard(expression, scope, partial, label, exploration, onComplete);
+        return;
+      }
+      const context = getContext(exploration, scope, partial);
+      const args = expression.args.map((arg) => evaluate(arg, context));
+      const argument = args.length === 1 ? args[0] : createTuple(args);
+      const domain = getBoundsDomain(lambda.bounds, getContext(exploration, lambda.scope, partial));
+      if (!isElementOf(argument, domain)) {
+        throw new TlaEvaluationError(
+          `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain at ${describeLocation(expression)}`,
+        );
+      }
+      explore(
+        lambda.body,
+        bindArgument(lambda.bounds, lambda.scope, argument),
+        partial,
+        label,
+        exploration,
+        onComplete,
+      );
+      return;
+    }
     case "Identifier": {
       const binding = lookupScope(scope, expression.name);
       if (binding?.kind === "Thunk") {

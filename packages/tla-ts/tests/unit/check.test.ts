@@ -71,6 +71,12 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([5, 2, 1]);
   });
 
+  it("assigns variables through definitions, parameters, function applications, and <<A>>_v", () => {
+    const result = checkFixture("assignments", "Assignments");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([98, 24, 5]);
+  });
+
   it("reduces states under a symmetry set", () => {
     const result = checkFixture("symmetry", "Symmetry");
     expect(result.status).toBe("success");
