@@ -343,12 +343,19 @@ const enumerateSet = (value: Value): Value[] => {
   }
 };
 
+const finiteSets = new WeakMap<ObjectValue, SetValue>();
+
 export const toFiniteSet = (value: Value): SetValue => {
   if (typeof value === "object" && value.kind === "Set") return value;
+  const cached = typeof value === "object" ? finiteSets.get(value) : undefined;
+  if (cached) return cached;
   const elements = enumerateSet(value);
-  return typeof value === "object" && value.kind === "Interval"
-    ? createSortedSet(elements)
-    : createSet(elements);
+  const set =
+    typeof value === "object" && value.kind === "Interval"
+      ? createSortedSet(elements)
+      : createSet(elements);
+  if (typeof value === "object") finiteSets.set(value, set);
+  return set;
 };
 
 export const getCardinality = (value: Value) => {

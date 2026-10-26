@@ -644,10 +644,104 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
 const isTlcInteger = (value: number) =>
   Number.isInteger(value) && value <= 2147483647 && value >= -2147483648;
 
+const IMPURE_BUILTINS = new Set([
+  "Print",
+  "PrintT",
+  "Assert",
+  "JavaTime",
+  "RandomElement",
+  "TLCGet",
+  "TLCSet",
+]);
+
+const closedConstants = new WeakMap<Expression, boolean>();
+
+const isClosedConstant = (expression: Expression, environment: Environment): boolean => {
+  const cached = closedConstants.get(expression);
+  if (cached !== undefined) return cached;
+  const isClosed = computeIsClosedConstant(expression, environment);
+  closedConstants.set(expression, isClosed);
+  return isClosed;
+};
+
+const CLOSED_KINDS = new Set([
+  "Number",
+  "String",
+  "Identifier",
+  "Apply",
+  "And",
+  "Or",
+  "If",
+  "Case",
+  "SetEnumeration",
+  "Tuple",
+  "FunctionSet",
+  "Record",
+  "RecordSet",
+  "FunctionApplication",
+  "FieldAccess",
+  "Product",
+]);
+
+const computeIsClosedConstant = (expression: Expression, environment: Environment): boolean => {
+  if (!CLOSED_KINDS.has(expression.kind)) return false;
+  if (expression.kind === "Identifier") {
+    const global = findGlobalName(expression.name, environment);
+    if (global?.kind === "Value") return true;
+    return (
+      global?.kind === "Definition" &&
+      global.definition.kind === "Operator" &&
+      global.definition.params.length === 0 &&
+      isConstantLevel(global.definition, environment)
+    );
+  }
+  if (expression.kind === "Apply") {
+    if (IMPURE_BUILTINS.has(expression.operator) || expression.operator === "~>") return false;
+    const operator = resolveGlobalOperator(expression.operator, environment);
+    const isPure =
+      operator?.kind === "Builtin" ||
+      (operator?.kind === "Closure" &&
+        (() => {
+          const definition = environment.definitions.get(
+            environment.substitutions.get(expression.operator) ?? expression.operator,
+          );
+          return definition !== undefined && isConstantLevel(definition, environment);
+        })());
+    if (!isPure || operator === undefined) return false;
+    const params = operator.kind === "Closure" ? operator.params : [];
+    const hasOperatorArgument = params.some((param) => param.arity > 0);
+    if (hasOperatorArgument) return false;
+    return expression.args.every(
+      (arg) =>
+        arg.kind !== "Lambda" &&
+        arg.kind !== "OperatorReference" &&
+        isClosedConstant(arg, environment),
+    );
+  }
+  return getChildren(expression).every((child) => isClosedConstant(child, environment));
+};
+
+const isWorthCaching = (expression: Expression) =>
+  expression.kind !== "Number" && expression.kind !== "String" && expression.kind !== "Identifier";
+
+const cacheFirstValue = (evaluator: Evaluator): Evaluator => {
+  const cache = { value: undefined as Value | undefined };
+  return (context) => {
+    if (cache.value !== undefined) return cache.value;
+    const value = evaluator(context);
+    cache.value = value;
+    return value;
+  };
+};
+
 const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
   const cached = environment.evaluators.get(expression);
   if (cached) return cached;
-  const evaluator = compile(expression, environment);
+  const compiled = compile(expression, environment);
+  const evaluator =
+    isWorthCaching(expression) && isClosedConstant(expression, environment)
+      ? cacheFirstValue(compiled)
+      : compiled;
   environment.evaluators.set(expression, evaluator);
   return evaluator;
 };
