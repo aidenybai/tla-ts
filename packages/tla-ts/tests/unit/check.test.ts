@@ -167,6 +167,18 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("assigns operator constants from tables in the configuration", () => {
+    const result = check({
+      source:
+        "---- MODULE M ----\nCONSTANT F(_)\nVARIABLE x\nInit == x = 0\nNext == x' = F(x)\nInv == x /= 2\n====",
+      config: "INIT Init\nNEXT Next\nCONSTANT\n  F(0) = 1\n  F(1) = 2\n  F(2) = 2\nINVARIANT Inv",
+    });
+    expect([result.status, result.violation?.trace.map((step) => step.state.x)]).toEqual([
+      "invariant-violation",
+      [0, 1, 2],
+    ]);
+  });
+
   it("explores the mutex state space", () => {
     const result = checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");

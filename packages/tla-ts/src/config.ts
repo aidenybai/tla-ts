@@ -1,4 +1,4 @@
-import { TlaConfigError, TlaUnsupportedError } from "./errors";
+import { TlaConfigError } from "./errors";
 import { matchOperator } from "./lexer";
 
 export type ConfigValue =
@@ -11,6 +11,7 @@ export type ConfigValue =
 export interface ConstantAssignment {
   name: string;
   value: ConfigValue;
+  args?: ConfigValue[];
   module?: string;
 }
 
@@ -212,8 +213,18 @@ export const parseConfig = (source: string): ModelConfig => {
   const parseConstants = () => {
     while (peek().kind === "Word" && !isKeyword(peek())) {
       const name = advance().text;
-      if (peek().text === "(")
-        throw new TlaUnsupportedError(`Assigning operator constant ${name} is not supported`);
+      if (peek().text === "(") {
+        advance();
+        const args: ConfigValue[] = [];
+        while (peek().text !== ")") {
+          args.push(parseValue());
+          if (peek().text !== ")") expect(",");
+        }
+        advance();
+        expect("=");
+        config.constants.push({ name, value: parseValue(), args });
+        continue;
+      }
       if (peek().text === "<-") {
         advance();
         const module = parseModuleScope();

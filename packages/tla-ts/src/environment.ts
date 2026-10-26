@@ -9,7 +9,7 @@ import type {
 } from "./ast";
 import { BUNDLED_MODULES } from "./bundled-modules";
 import type { ConfigValue, ModelConfig } from "./config";
-import { TlaConfigError, TlaSyntaxError, TlaUnsupportedError } from "./errors";
+import { TlaConfigError, TlaEvaluationError, TlaSyntaxError, TlaUnsupportedError } from "./errors";
 import { isConstantLevel, type Builtin, type Environment } from "./evaluate";
 import { createInstantiation, getEnabledVariableName, withLetInstances } from "./instances";
 import { parseModule } from "./parser";
@@ -17,7 +17,7 @@ import { KEY_SEPARATOR, resolveModule, resolveSubstitutions, type Symbols } from
 import { createRuntime } from "./runtime";
 import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
-import { checkInteger, createSet, type Value } from "./values";
+import { checkInteger, createSet, formatValue, valuesEqual, type Value } from "./values";
 
 export interface EnvironmentOptions {
   loadModule: ((name: string) => string | undefined) | undefined;
@@ -71,6 +71,29 @@ const createLocalFunction = (definition: Definition, key: string): Definition =>
   isLocal: true,
   isRecursive: false,
   location: definition.location,
+});
+
+const createOperatorConstant = (name: string, rows: [Value[], Value][]): Builtin => ({
+  kind: "Builtin",
+  name,
+  arity: rows[0][0].length,
+  evaluate: (args) => {
+    const row = rows.find((candidate) =>
+      candidate[0].every((value, index) => {
+        const argument = args[index];
+        return (
+          !(typeof argument === "object" && argument.kind === "Operator") &&
+          valuesEqual(value, argument)
+        );
+      }),
+    );
+    if (row) return row[1];
+    throw new TlaEvaluationError(
+      `Attempted to apply operator:\n${name}\nto arguments (${args.map((argument) => (typeof argument === "object" && argument.kind === "Operator" ? argument.name : formatValue(argument))).join(", ")}), which is undefined.`,
+    );
+  },
+  evaluateUnary: undefined,
+  evaluateBinary: undefined,
 });
 
 const getArity = (definition: Definition) =>
@@ -429,9 +452,27 @@ export const createEnvironment = (
     return [linkedModules.get(item.module)?.visible.get(item.name)?.key ?? item.name];
   };
   const constants = new Map<string, Value>();
+  config.constants
+    .filter((assignment) => assignment.args === undefined)
+    .forEach((assignment) => {
+      const value = toValue(assignment.value);
+      getScopedKeys(assignment).forEach((key) => constants.set(key, value));
+    });
+  const operatorConstants = new Map<string, [Value[], Value][]>();
   config.constants.forEach((assignment) => {
-    const value = toValue(assignment.value);
-    getScopedKeys(assignment).forEach((key) => constants.set(key, value));
+    if (assignment.args === undefined) return;
+    const rows = operatorConstants.get(assignment.name) ?? [];
+    if (rows.length > 0 && rows[0][0].length !== assignment.args.length) {
+      throw new TlaConfigError(
+        `The operator ${assignment.name} is assigned values with inconsistent arities`,
+      );
+    }
+    rows.push([assignment.args.map(toValue), toValue(assignment.value)]);
+    operatorConstants.set(assignment.name, rows);
+  });
+  operatorConstants.forEach((rows, name) => {
+    builtins.set(name, createOperatorConstant(name, rows));
+    constants.delete(name);
   });
   const substitutions = new Map(
     config.substitutions.flatMap((substitution) =>
@@ -442,7 +483,7 @@ export const createEnvironment = (
     ),
   );
   declaredConstants.forEach((name) => {
-    if (!constants.has(name) && !substitutions.has(name)) {
+    if (!constants.has(name) && !substitutions.has(name) && !operatorConstants.has(name)) {
       throw new TlaConfigError(`The constant ${name} is not assigned a value by the configuration`);
     }
   });
