@@ -3,6 +3,7 @@ import { createFunction, type Value } from "./values";
 export interface CheckerRuntime {
   getLevel: (state: (Value | undefined)[]) => number;
   getBehavior: (state: Value[]) => Value[][];
+  counterExample: Value | undefined;
   random: () => number;
   generatedStates: number;
   distinctStates: number;
@@ -31,6 +32,7 @@ const createRandom = (seed: number) => {
 export const createRuntime = (checkDeadlock: boolean): CheckerRuntime => ({
   getLevel: () => 0,
   getBehavior: () => [],
+  counterExample: undefined,
   random: createRandom(0),
   generatedStates: 0,
   distinctStates: 0,

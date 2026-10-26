@@ -27,6 +27,7 @@ import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { createCanonicalizer } from "./canonical";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
+import { createCounterExample } from "./tlc-ext";
 import { combineHash, formatValue, getValueHash, isSameValue, type Value } from "./values";
 
 export interface CheckOptions {
@@ -582,6 +583,22 @@ export const check = (options: CheckOptions): CheckResult => {
     if (state === states[current.index]) return depths[current.index];
     return current.isExpanding ? depths[current.index] + 1 : 0;
   };
+  const hasPostconditions = config.postconditions.length > 0 || config.possible.length > 0;
+  const reportViolation = (
+    status: CheckStatus,
+    violation: Omit<Violation, "loopStart"> & { loopStart?: number },
+    getLoopAction?: () => string | undefined,
+  ) => {
+    if (hasPostconditions) {
+      const start = violation.loopStart;
+      runtime.counterExample = createCounterExample(
+        violation.trace,
+        start === undefined || !getLoopAction ? undefined : { start, action: getLoopAction() },
+      );
+      search.findPostconditionViolation(print);
+    }
+    return createResult(status, violation);
+  };
 
   for (const state of getInitialStates(spec.init, environment)) {
     canonicalizeState(state);
@@ -602,14 +619,14 @@ export const check = (options: CheckOptions): CheckResult => {
     }
     const violated = search.findViolatedInvariant(state);
     if (violated) {
-      return createResult("invariant-violation", {
+      return reportViolation("invariant-violation", {
         name: violated.name,
         trace: [{ action: undefined, state: toRecord(state) }],
       });
     }
     const failedPredicate = search.findFailedInitialPredicate(state);
     if (failedPredicate) {
-      return createResult("liveness-violation", {
+      return reportViolation("liveness-violation", {
         name: failedPredicate.name,
         trace: [{ action: undefined, state: toRecord(state) }],
       });
@@ -627,7 +644,7 @@ export const check = (options: CheckOptions): CheckResult => {
     const successors = getSuccessors(spec.next, state, environment);
     current.isExpanding = false;
     if (successors.length === 0 && config.checkDeadlock) {
-      return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
+      return reportViolation("deadlock", { name: "deadlock", trace: getTrace(index) });
     }
     const liveSuccessors: LiveSuccessor[] = [];
     for (const successor of successors) {
@@ -653,7 +670,7 @@ export const check = (options: CheckOptions): CheckResult => {
       if (existing === -1) {
         const violated = search.findViolatedInvariant(successor.state, state);
         if (violated) {
-          return createResult("invariant-violation", {
+          return reportViolation("invariant-violation", {
             name: violated.name,
             trace: getTrace(index, successor),
           });
@@ -661,7 +678,7 @@ export const check = (options: CheckOptions): CheckResult => {
       }
       const violatedProperty = search.findViolatedActionProperty(state, successor.state);
       if (violatedProperty) {
-        return createResult("liveness-violation", {
+        return reportViolation("liveness-violation", {
           name: violatedProperty.name,
           trace: getTrace(index, successor),
         });
@@ -674,7 +691,7 @@ export const check = (options: CheckOptions): CheckResult => {
     }
     const accepted = liveness?.addState(index, state, liveSuccessors);
     if (accepted) {
-      return createResult("property-violation", {
+      return reportViolation("property-violation", {
         name: accepted.name,
         trace: getPathTrace(accepted.path),
       });
@@ -685,11 +702,20 @@ export const check = (options: CheckOptions): CheckResult => {
   current.candidate = undefined;
   const lasso = liveness?.findViolation();
   if (lasso) {
-    return createResult("liveness-violation", {
-      name: lasso.name,
-      trace: getPathTrace([...lasso.prefix, ...lasso.cycle]),
-      loopStart: lasso.prefix.length,
-    });
+    const path = [...lasso.prefix, ...lasso.cycle];
+    const trace = getPathTrace(path);
+    const back = path[lasso.prefix.length];
+    const last = path[path.length - 1];
+    return reportViolation(
+      "liveness-violation",
+      { name: lasso.name, trace, loopStart: lasso.prefix.length },
+      () =>
+        back === last
+          ? trace[trace.length - 1].action
+          : getSuccessors(spec.next, states[last], environment).find((successor) =>
+              isSameState(successor.state, states[back]),
+            )?.action,
+    );
   }
 
   const postconditionViolation = search.findPostconditionViolation(print);
