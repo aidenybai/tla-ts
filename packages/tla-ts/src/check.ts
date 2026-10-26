@@ -258,6 +258,15 @@ export const isUnchangedFor = (
   return true;
 };
 
+interface Progress {
+  initial: number;
+  expanded: number;
+  pendingDepth: number;
+  current: Value[] | undefined;
+  level: number;
+  isExiting: boolean;
+}
+
 export interface Search {
   properties: Properties;
   spec: Specification;
@@ -389,12 +398,38 @@ export const createSearch = (config: ModelConfig, environment: Environment): Sea
 export const check = (options: CheckOptions): CheckResult => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   if (config.view !== undefined) throw new TlaUnsupportedError("VIEW is not supported yet");
+  const statistics = { generatedStates: 0, distinctStates: 0, depth: 0 };
+  const states: Value[][] = [];
+  const progress: Progress = {
+    initial: 0,
+    expanded: 0,
+    pendingDepth: 0,
+    current: undefined,
+    level: -1,
+    isExiting: false,
+  };
   const specification = createEnvironment(parseModule(options.source), config, {
     loadModule: options.loadModule,
-    print: options.onPrint ?? console.log,
+    runtime: {
+      print: options.onPrint ?? console.log,
+      checkDeadlock: config.checkDeadlock,
+      getLevel: (state) => {
+        if (state === undefined) return 0;
+        return state === progress.current ? progress.level : progress.level + 1;
+      },
+      getStatistics: () => ({
+        queue: states.length - progress.expanded,
+        distinct: states.length + (progress.pendingDepth === 0 ? 0 : 1),
+        initial: progress.initial,
+        generated: statistics.generatedStates,
+        diameter: Math.max(1, statistics.depth, progress.pendingDepth),
+      }),
+      exit: () => {
+        progress.isExiting = true;
+      },
+    },
   });
   const environment = specification.environment;
-  const statistics = { generatedStates: 0, distinctStates: 0, depth: 0 };
   const createResult = (
     status: CheckStatus,
     violation?: Omit<Violation, "loopStart"> & { loopStart?: number },
@@ -414,7 +449,6 @@ export const check = (options: CheckOptions): CheckResult => {
   const getFingerprintState = search.getFingerprintState;
   const liveness = createLivenessChecker(properties.liveness, spec.temporals, environment);
 
-  const states: Value[][] = [];
   const fingerprintStates: Value[][] = [];
   const parents: number[] = [];
   const actions: (string | undefined)[] = [];
@@ -438,6 +472,8 @@ export const check = (options: CheckOptions): CheckResult => {
     path.map((stateIndex, position): TraceStep => {
       if (position === 0) return { action: undefined, state: toRecord(states[stateIndex]) };
       const previous = path[position - 1];
+      progress.current = states[previous];
+      progress.level = depths[previous];
       const action =
         previous === stateIndex
           ? "Stuttering"
@@ -492,15 +528,22 @@ export const check = (options: CheckOptions): CheckResult => {
     statistics.depth = Math.max(statistics.depth, depth);
   };
 
-  for (const state of getInitialStates(spec.init, environment)) {
+  const initialStates = getInitialStates(spec.init, environment);
+  progress.level = 0;
+  for (const state of initialStates) {
     canonicalizeState(state);
     statistics.generatedStates++;
+    progress.initial++;
     const fingerprintState = getFingerprintState(state);
     const hash = getStateHash(fingerprintState);
     if (findStateIndex(hash, fingerprintState) !== -1) continue;
+    if (search.satisfiesConstraints(state)) {
+      markSeen(hash, states.length);
+      liveness?.addInitialState(states.length, state);
+      addState(state, fingerprintState, -1, undefined);
+    }
     const violated = search.findViolatedInvariant(state);
     if (violated) {
-      countViolatingState(1);
       return createResult("invariant-violation", {
         name: violated.name,
         trace: [{ action: undefined, state: toRecord(state) }],
@@ -513,14 +556,13 @@ export const check = (options: CheckOptions): CheckResult => {
         trace: [{ action: undefined, state: toRecord(state) }],
       });
     }
-    if (!search.satisfiesConstraints(state)) continue;
-    markSeen(hash, states.length);
-    liveness?.addInitialState(states.length, state);
-    addState(state, fingerprintState, -1, undefined);
   }
 
-  for (let index = 0; index < states.length; index++) {
+  for (let index = 0; index < states.length && !progress.isExiting; index++) {
     const state = states[index];
+    progress.expanded = index + 1;
+    progress.current = state;
+    progress.level = depths[index];
     const successors = getSuccessors(spec.next, state, environment);
     if (successors.length === 0 && config.checkDeadlock) {
       return createResult("deadlock", { name: "deadlock", trace: getTrace(index) });
@@ -544,14 +586,16 @@ export const check = (options: CheckOptions): CheckResult => {
         if (liveness) liveSuccessors.push({ index: existing, state: successor.state });
         continue;
       }
+      progress.pendingDepth = depths[index] + 1;
       const violated = search.findViolatedInvariant(successor.state, state);
       if (violated) {
-        countViolatingState(depths[index] + 1);
+        countViolatingState(progress.pendingDepth);
         return createResult("invariant-violation", {
           name: violated.name,
           trace: getTrace(index, successor),
         });
       }
+      progress.pendingDepth = 0;
       if (!search.satisfiesConstraints(successor.state, state)) continue;
       markSeen(hash, states.length);
       if (liveness) liveSuccessors.push({ index: states.length, state: successor.state });

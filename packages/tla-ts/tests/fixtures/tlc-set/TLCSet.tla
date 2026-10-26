@@ -1,0 +1,57 @@
+--------------------------- MODULE TLCSet ---------------------------
+EXTENDS Integers, TLC
+
+ASSUME TLCGet("config").mode = "bfs"
+
+                
+
+ASSUME TLCSet("s:counter", 0)
+ASSUME TLCSet("s:label", "hello")
+
+VARIABLES x
+
+Init == /\ x = 0
+        \* Old world
+        /\ TLCGet("duration") >= 0 \* Init might take more than a seconds since startup.
+        /\ TLCGet("diameter") = 1
+        /\ TLCGet("queue") = 0 \* queue is always empty because spec is a single behavior.
+        /\ TLCGet("distinct") = 0
+        \* New world
+        /\ TLCGet("stats").duration >= 0
+        /\ TLCGet("stats").queue = 0
+        /\ TLCGet("stats").distinct = 0
+        /\ TLCGet("stats").diameter = 1
+        /\ TLCGet("stats").generated = 0
+
+Next == /\ x' = x + 1
+        /\ TLCSet("exit", x = 4223)
+        \* Old world
+        /\ TLCGet("duration") >= 0 \* Next might evaluate within the first second of model checking.
+        /\ TLCGet("queue") = 0 \* queue is always empty because spec is a single behavior.
+        /\ TLCGet("distinct") = x'
+        /\ TLCGet("generated") = x'
+        /\ TLCGet("diameter") = x' \* As byproduct check that trace is strictly monotonically increasing.
+        \* Named registers
+        /\ TLCGet("s:counter") = x
+        /\ TLCGet("s:label") = "hello"
+        /\ TLCSet("s:counter", x')
+        \* New world
+        /\ TLCGet("stats").duration >= 0
+        /\ TLCGet("stats").queue = 0
+        /\ TLCGet("stats").distinct = x' 
+        /\ TLCGet("stats").diameter = x'
+        /\ TLCGet("stats").generated = x'
+
+Spec == Init /\ [][Next]_x
+
+PostCondition ==
+    /\ TLCGet("s:label") = "hello"
+    /\ TLCGet("s:counter") \in Nat
+
+ASSUME TLCGet("config").deadlock = FALSE
+ASSUME TLCGet("config").worker = 1
+ASSUME TLCGet("config").fingerprint \in STRING
+ASSUME TLCGet("config").seed \in STRING
+
+
+=============================================================================

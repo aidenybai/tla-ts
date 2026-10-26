@@ -48,7 +48,7 @@ export interface Builtin {
   kind: "Builtin";
   name: string;
   arity: number;
-  evaluate: (args: BuiltinArgument[]) => Value;
+  evaluate: (args: BuiltinArgument[], context: Context) => Value;
   evaluateUnary: ((value: Value) => Value) | undefined;
   evaluateBinary: ((left: Value, right: Value) => Value) | undefined;
   isStateLevel?: boolean;
@@ -478,7 +478,7 @@ export const callOperatorWithValues = (
   args: Value[],
   context: Context,
 ): Value => {
-  if (operator.kind === "Builtin") return operator.evaluate(args);
+  if (operator.kind === "Builtin") return operator.evaluate(args, context);
   if (operator.kind === "Operator") return operator.call(args);
   const scope = operator.params.reduce<Scope | undefined>(
     (current, param, index) => bindValue(current, param.name, args[index]),
@@ -523,7 +523,17 @@ export const findGlobalName = (name: string, environment: Environment): GlobalNa
   const definition = environment.definitions.get(name);
   if (definition) return { kind: "Definition", definition };
   const builtin = environment.builtins.get(name);
-  if (builtin && builtin.arity === 0) return { kind: "Value", value: builtin.evaluate([]) };
+  if (builtin && builtin.arity === 0) {
+    return {
+      kind: "Value",
+      value: builtin.evaluate([], {
+        environment,
+        scope: undefined,
+        state: undefined,
+        next: undefined,
+      }),
+    };
+  }
   return undefined;
 };
 
@@ -598,6 +608,7 @@ const callOperator = (operator: Operator, args: Expression[], context: Context):
         ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
         : evaluate(arg, context),
     ),
+    context,
   );
 };
 
@@ -935,6 +946,7 @@ const compileBuiltinCall = (
           ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
           : evaluate(arg, context),
       ),
+      context,
     );
 };
 

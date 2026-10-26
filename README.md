@@ -25,7 +25,7 @@ result.status; // "invariant-violation"
 ```
 
 > [!WARNING]
-> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `VIEW`, `POSTCONDITION`, `TLCGet`, `TLCSet`, and the Bags and Reals modules.
+> tla-ts is in early development. Unsupported features throw `TlaUnsupportedError`: `VIEW`, `POSTCONDITION`, `TLCGet("spec")`, `TLCGet("revision")`, and the Bags and Reals modules.
 
 ## Install
 

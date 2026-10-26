@@ -6,12 +6,17 @@ import { instantiateModule, withLetInstances, type FlatModule } from "./instance
 import { parseModule } from "./parser";
 import { resolveModule, type Symbols } from "./resolve";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
-import { CORE_OPERATORS, getStandardModule } from "./standard-modules";
+import {
+  CORE_OPERATORS,
+  createTlcOperators,
+  getStandardModule,
+  type TlcRuntime,
+} from "./standard-modules";
 import { checkInteger, createSet, type Value } from "./values";
 
 export interface EnvironmentOptions {
   loadModule: ((name: string) => string | undefined) | undefined;
-  print: (text: string) => void;
+  runtime: TlcRuntime;
 }
 
 export interface Specification {
@@ -46,9 +51,10 @@ export const createEnvironment = (
   const variables: string[] = [];
   const assumptions: Assumption[] = [];
   const moduleExports = new Map<string, Symbols>();
+  const tlcOperators = createTlcOperators(options.runtime);
 
   const addStandardModule = (name: string) => {
-    const standardModule = getStandardModule(name, options.print);
+    const standardModule = getStandardModule(name, tlcOperators);
     if (!standardModule) return undefined;
     const exported: Symbols = new Map();
     standardModule.extends.forEach((extended) =>

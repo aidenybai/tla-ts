@@ -1,8 +1,9 @@
 import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
-import type { Builtin, BuiltinArgument, OperatorValue } from "./evaluate";
+import type { Builtin, BuiltinArgument, Context, OperatorValue, State } from "./evaluate";
 import {
   checkInteger,
   createFunction,
+  createRecord,
   createSet,
   createSortedSet,
   createTuple,
@@ -332,13 +333,150 @@ const getPermutations = (elements: Value[]): Value[][] =>
         ]),
       );
 
-export const createTlcOperators = (print: (text: string) => void): Builtin[] => [
+export interface TlcStatistics {
+  queue: number;
+  distinct: number;
+  initial: number;
+  generated: number;
+  diameter: number;
+}
+
+export interface TlcRuntime {
+  print: (text: string) => void;
+  checkDeadlock: boolean;
+  getLevel: (state: State | undefined) => number;
+  getStatistics: () => TlcStatistics;
+  exit: () => void;
+}
+
+const UNKNOWN_ACTION = createRecord([
+  ["name", "UnnamedAction"],
+  [
+    "location",
+    createRecord([
+      ["beginLine", 0],
+      ["beginColumn", 0],
+      ["endLine", 0],
+      ["endColumn", 0],
+      ["module", "--TLA+ BUILTINS--"],
+    ]),
+  ],
+]);
+
+const NAMED_REGISTER_PREFIX = "s:";
+
+const PROPERTY_PREFIX = "-D";
+
+const getRegisterValues = (registers: Map<Value, Value>) =>
+  createFunction([...registers].map(([key, value]): [Value, Value] => [key, createTuple([value])]));
+
+const createTlcGetSet = (runtime: TlcRuntime): Builtin[] => {
+  const registers = new Map<Value, Value>();
+  const namedRegisters = new Map<Value, Value>();
+  const properties = new Map<string, string>();
+  const startTime = Date.now();
+  const getDuration = () => Math.floor((Date.now() - startTime) / 1000);
+  const getNamedValue = (name: string, context: Context): Value => {
+    switch (name) {
+      case "diameter":
+      case "generated":
+      case "distinct":
+      case "queue":
+        return runtime.getStatistics()[name];
+      case "duration":
+        return getDuration();
+      case "stats":
+        return createRecord([
+          ...Object.entries(runtime.getStatistics()),
+          ["duration", getDuration()],
+          ["worker", 0],
+        ]);
+      case "config":
+        return createRecord([
+          ["mode", "bfs"],
+          ["deadlock", runtime.checkDeadlock],
+          ["worker", 1],
+          ["seed", "0"],
+          ["fingerprint", "0"],
+          ["install", ""],
+        ]);
+      case "level":
+        return runtime.getLevel(context.state);
+      case "action":
+        return UNKNOWN_ACTION;
+      case "all":
+        return getRegisterValues(registers);
+      case "all:named":
+        return getRegisterValues(namedRegisters);
+      case "spec":
+      case "revision":
+        throw new TlaUnsupportedError(`TLCGet("${name}") is not supported yet`);
+    }
+    const named = namedRegisters.get(name);
+    if (named !== undefined) return named;
+    if (name.startsWith(PROPERTY_PREFIX)) return properties.get(name) ?? name;
+    throw new TlaEvaluationError(`TLCGet(${name}) was undefined.`);
+  };
+  return [
+    {
+      kind: "Builtin",
+      name: "TLCGet",
+      arity: 1,
+      evaluate: (args, context) => {
+        const key = getValue(args, 0, "TLCGet");
+        if (typeof key === "string") return getNamedValue(key, context);
+        if (typeof key !== "number" || key < 0) {
+          throw new TlaEvaluationError(
+            `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
+          );
+        }
+        const value = registers.get(key);
+        if (value === undefined) throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
+        return value;
+      },
+      evaluateUnary: undefined,
+      evaluateBinary: undefined,
+      isStateLevel: true,
+    },
+    {
+      ...defineOperator("TLCSet", 2, (args) => {
+        const key = getValue(args, 0, "TLCSet");
+        const value = getValue(args, 1, "TLCSet");
+        if (typeof key === "number" && key >= 0) {
+          registers.set(key, value);
+          return true;
+        }
+        if (key === "exit" && value === true) runtime.exit();
+        if (key === "pause" && value === true) {
+          throw new TlaUnsupportedError('TLCSet("pause", TRUE) is not supported');
+        }
+        if (key === "exit" || key === "pause") return true;
+        if (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)) {
+          namedRegisters.set(key, value);
+          return true;
+        }
+        if (typeof key === "string" && key.startsWith(PROPERTY_PREFIX)) {
+          properties.set(key, formatValue(value));
+          return true;
+        }
+        throw new TlaEvaluationError(
+          `The first argument of TLCSet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
+        );
+      }),
+      isStateLevel: true,
+    },
+  ];
+};
+
+export const createTlcOperators = (runtime: TlcRuntime): Builtin[] => [
   defineOperator("Print", 2, (args) => {
-    print(`${formatValue(getValue(args, 0, "Print"))}  ${formatValue(getValue(args, 1, "Print"))}`);
+    runtime.print(
+      `${formatValue(getValue(args, 0, "Print"))}  ${formatValue(getValue(args, 1, "Print"))}`,
+    );
     return getValue(args, 1, "Print");
   }),
   defineOperator("PrintT", 1, (args) => {
-    print(formatValue(getValue(args, 0, "PrintT")));
+    runtime.print(formatValue(getValue(args, 0, "PrintT")));
     return true;
   }),
   defineOperator("Assert", 2, (args) => {
@@ -386,16 +524,10 @@ export const createTlcOperators = (print: (text: string) => void): Builtin[] => 
       }, []),
     );
   }),
-  ...[
-    { name: "TLCGet", arity: 1 },
-    { name: "TLCSet", arity: 2 },
-    { name: "Any", arity: 0 },
-  ].map((operator): Builtin => ({
-    ...defineOperator(operator.name, operator.arity, () => {
-      throw new TlaUnsupportedError(`${operator.name} is not supported yet`);
-    }),
-    isStateLevel: operator.name !== "Any",
-  })),
+  ...createTlcGetSet(runtime),
+  defineOperator("Any", 0, () => {
+    throw new TlaUnsupportedError("Any is not supported yet");
+  }),
   defineOperator("RandomElement", 1, (args) => {
     const elements = getElements(args, 0, "RandomElement");
     if (elements.length === 0) throw new TlaEvaluationError("RandomElement of the empty set");
@@ -405,7 +537,7 @@ export const createTlcOperators = (print: (text: string) => void): Builtin[] => 
 
 export const getStandardModule = (
   name: string,
-  print: (text: string) => void,
+  tlcOperators: Builtin[],
 ): StandardModule | undefined => {
   switch (name) {
     case "Naturals":
@@ -417,7 +549,7 @@ export const getStandardModule = (
     case "FiniteSets":
       return { extends: [], operators: FINITE_SETS_OPERATORS };
     case "TLC":
-      return { extends: [], operators: createTlcOperators(print) };
+      return { extends: [], operators: tlcOperators };
     default:
       return undefined;
   }
