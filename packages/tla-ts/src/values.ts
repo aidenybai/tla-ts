@@ -600,6 +600,15 @@ export const updateFunction = (
   argument: Value,
   update: (previous: Value) => Value,
 ): Value => {
+  if (typeof fn === "object" && fn.kind === "LazyFunction" && !isEnumerable(fn.domain)) {
+    if (!isElementOf(argument, fn.domain)) return fn;
+    const updated = update(fn.apply(argument));
+    return {
+      kind: "LazyFunction",
+      domain: fn.domain,
+      apply: (key) => (valuesEqual(key, argument) ? updated : fn.apply(key)),
+    };
+  }
   const finite = toFiniteFunction(fn);
   const position = findIndex(finite.domain, argument);
   if (position === -1) return finite;
