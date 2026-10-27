@@ -5,11 +5,12 @@ import type { useCheck } from "../../hooks/use-check";
 interface PlaygroundContextValue {
   example: Example;
   exampleIndex: number;
-  isResultShown: boolean;
+  container: HTMLDivElement | null;
+  isDrawerOpen: boolean;
   specRef: RefObject<string>;
   configRef: RefObject<string>;
   check: ReturnType<typeof useCheck>;
-  setIsResultShown: (isResultShown: boolean) => void;
+  setIsDrawerOpen: (isDrawerOpen: boolean) => void;
   selectExample: (index: number) => void;
   runCheck: () => void;
 }

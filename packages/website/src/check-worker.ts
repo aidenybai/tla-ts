@@ -56,7 +56,9 @@ self.onmessage = async (event: MessageEvent<CheckRequest>) => {
       violation: result.violation?.name,
       trace: (result.violation?.trace ?? []).map((step, index) => ({
         number: index + 1,
-        action: step.action,
+        // TLC labels a step "Announce(1) line 138, col 5 to …", and only the call is shown.
+        action:
+          step.action === undefined ? undefined : (step.label ?? step.action).split(" line ")[0],
         variables: Object.entries(step.state).map(([name, value]): [string, string] => [
           name,
           formatValue(value),

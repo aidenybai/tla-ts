@@ -7,12 +7,28 @@ import staleShrinkSpec from "./specs/StaleShrink.tla?raw";
 
 export interface Example {
   name: string;
+  description: string;
   spec: string;
   config: string;
 }
 
 export const EXAMPLES: Example[] = [
-  { name: "DieHard", spec: dieHardSpec, config: dieHardConfig },
-  { name: "ReplicatedLog", spec: replicatedLogSpec, config: replicatedLogConfig },
-  { name: "StaleShrink", spec: staleShrinkSpec, config: staleShrinkConfig },
+  {
+    name: "DieHard",
+    description: "Lamport's water jug puzzle",
+    spec: dieHardSpec,
+    config: dieHardConfig,
+  },
+  {
+    name: "ReplicatedLog",
+    description: "A log whose followers never catch up",
+    spec: replicatedLogSpec,
+    config: replicatedLogConfig,
+  },
+  {
+    name: "StaleShrink",
+    description: "A data-loss race in Holochain's DHT",
+    spec: staleShrinkSpec,
+    config: staleShrinkConfig,
+  },
 ];

@@ -14,7 +14,7 @@ export const useCheck = () => {
     setIsRunning(false);
   };
 
-  const run = (request: CheckRequest) => {
+  const run = (request: CheckRequest, onResponse: (response: CheckResponse) => void) => {
     stop();
     const worker = new Worker(new URL("../check-worker.ts", import.meta.url), { type: "module" });
     workerRef.current = worker;
@@ -24,6 +24,7 @@ export const useCheck = () => {
     worker.onmessage = (event: MessageEvent<CheckResponse>) => {
       setResponse(event.data);
       stop();
+      onResponse(event.data);
     };
     worker.postMessage(request);
   };

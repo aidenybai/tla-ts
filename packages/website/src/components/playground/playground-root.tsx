@@ -9,7 +9,9 @@ interface RootProps {
 
 export const Root = (props: RootProps) => {
   const [exampleIndex, setExampleIndex] = useState(0);
-  const [isResultShown, setIsResultShown] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  // The results drawer renders inside the playground, not over the whole page.
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const check = useCheck();
   // The editors own their text, so edits only need reading when Check runs.
   const specRef = useRef(EXAMPLES[0].spec);
@@ -17,15 +19,15 @@ export const Root = (props: RootProps) => {
 
   const selectExample = (index: number) => {
     check.reset();
-    setIsResultShown(false);
+    setIsDrawerOpen(false);
     setExampleIndex(index);
     specRef.current = EXAMPLES[index].spec;
     configRef.current = EXAMPLES[index].config;
   };
 
   const runCheck = () => {
-    setIsResultShown(true);
-    check.run({ spec: specRef.current, config: configRef.current });
+    setIsDrawerOpen(false);
+    check.run({ spec: specRef.current, config: configRef.current }, () => setIsDrawerOpen(true));
   };
 
   return (
@@ -33,16 +35,20 @@ export const Root = (props: RootProps) => {
       value={{
         example: EXAMPLES[exampleIndex],
         exampleIndex,
-        isResultShown,
+        container,
+        isDrawerOpen,
         specRef,
         configRef,
         check,
-        setIsResultShown,
+        setIsDrawerOpen,
         selectExample,
         runCheck,
       }}
     >
-      <div className="flex h-[80dvh] flex-col overflow-hidden rounded-2xl bg-white shadow-custom lg:h-full">
+      <div
+        ref={setContainer}
+        className="relative flex h-[80dvh] flex-col overflow-hidden rounded-2xl bg-white shadow-custom lg:h-full"
+      >
         {props.children}
       </div>
     </PlaygroundContext>

@@ -1,6 +1,14 @@
 import { CodePane } from "./code-pane";
-import { ResultPane } from "./result-pane";
 import { Root } from "./playground-root";
-import { CheckButton, SpecSelect, Tabs, Toolbar } from "./playground-toolbar";
+import { CheckButton, SpecSelect, Status, Toolbar } from "./playground-toolbar";
+import { ResultDrawer } from "./result-drawer";
 
-export const Playground = { Root, Toolbar, Tabs, SpecSelect, CheckButton, CodePane, ResultPane };
+export const Playground = {
+  Root,
+  Toolbar,
+  SpecSelect,
+  Status,
+  CheckButton,
+  CodePane,
+  ResultDrawer,
+};
