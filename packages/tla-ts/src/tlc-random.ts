@@ -142,6 +142,93 @@ export const getTlcFingerprint = (state: Value[]) => {
   return fingerprint;
 };
 
+const getFingerprintLength = (value: Value): number => {
+  if (typeof value === "boolean") return 2;
+  if (typeof value === "number" || isModelValue(value)) return 5;
+  if (typeof value === "string") return 5 + value.length;
+  if (isFunctionValue(value)) {
+    const fn = toFiniteFunction(value);
+    return fn.domain.reduce<number>(
+      (length, key, index) =>
+        length + getFingerprintLength(key) + getFingerprintLength(fn.range[index]),
+      5,
+    );
+  }
+  return toFiniteSet(value).elements.reduce<number>(
+    (length, element) => length + getFingerprintLength(element),
+    5,
+  );
+};
+
+// The fingerprint after `length` zero bytes, as one table per byte of the fingerprint it shifts.
+const createShiftTable = (length: number) => {
+  const table = new Int32Array(8 * 256 * 2);
+  for (let bit = 0; bit < 64; bit++) {
+    high = bit < 32 ? 0 : 1 << (bit - 32);
+    low = bit < 32 ? 1 << bit : 0;
+    for (let step = 0; step < length; step++) extendByte(0);
+    const position = bit >> 3;
+    const mask = 1 << (bit & 7);
+    for (let byte = mask; byte < 2 * mask; byte++) {
+      const entry = (position * 256 + byte) * 2;
+      const rest = (position * 256 + byte - mask) * 2;
+      table[entry] = table[rest] ^ high;
+      table[entry + 1] = table[rest + 1] ^ low;
+    }
+  }
+  return table;
+};
+
+// Extending a fingerprint by a byte is linear over GF(2), so extending it by a value's bytes
+// XORs the value's own fingerprint from zero into the fingerprint shifted by their length.
+// The fingerprinter caches each distinct variable value for one pass over the stored states.
+export const createTlcFingerprinter = () => {
+  const shiftTables = new Map<number, Int32Array>();
+  const indices = new Map<Value, number>();
+  const contributions: number[] = [];
+  const getContribution = (value: Value) => {
+    const cached = indices.get(value);
+    if (cached !== undefined) return cached;
+    const length = getFingerprintLength(value);
+    high = 0;
+    low = 0;
+    extendValue(value);
+    indices.set(value, contributions.length);
+    contributions.push(length, high, low);
+    return contributions.length - 3;
+  };
+  const getShiftTable = (length: number) => {
+    const cached = shiftTables.get(length);
+    if (cached) return cached;
+    const table = createShiftTable(length);
+    shiftTables.set(length, table);
+    return table;
+  };
+  return (state: Value[]) => {
+    const outer = { high, low };
+    const fingerprint = { high: INITIAL_HIGH, low: INITIAL_LOW };
+    for (const value of state) {
+      const contribution = getContribution(value);
+      const table = getShiftTable(contributions[contribution]);
+      const extended = {
+        high: contributions[contribution + 1],
+        low: contributions[contribution + 2],
+      };
+      for (let position = 0; position < 8; position++) {
+        const word = position < 4 ? fingerprint.low : fingerprint.high;
+        const entry = (position * 256 + ((word >>> ((position & 3) * 8)) & 0xff)) * 2;
+        extended.high ^= table[entry];
+        extended.low ^= table[entry + 1];
+      }
+      fingerprint.high = extended.high;
+      fingerprint.low = extended.low;
+    }
+    high = outer.high;
+    low = outer.low;
+    return (BigInt(fingerprint.high >>> 0) << 32n) | BigInt(fingerprint.low >>> 0);
+  };
+};
+
 // RandomGenerator.primes holds the 1341 consecutive primes from 1277011 to 1295953.
 const PRIMES: number[] = [];
 
