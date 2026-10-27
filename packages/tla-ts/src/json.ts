@@ -12,6 +12,7 @@ import {
   toFiniteFunction,
   toFiniteSet,
   type Value,
+  rankString,
 } from "./values";
 
 export interface FileSystem {
@@ -52,15 +53,19 @@ const toJson = (value: Value): JsonValue => {
 };
 
 const serialize = (json: JsonValue) =>
-  JSON.stringify(json).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+  rankString(JSON.stringify(json).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029"));
 
 const fromJson = (json: unknown): Value => {
-  if (typeof json === "boolean" || typeof json === "string") return json;
+  if (typeof json === "boolean") return json;
+  if (typeof json === "string") return rankString(json);
   if (typeof json === "number") return checkInteger(Math.trunc(json));
   if (Array.isArray(json)) return createTuple(json.map(fromJson));
   if (json !== null && typeof json === "object") {
     return createRecord(
-      Object.entries(json).map(([key, field]): [string, Value] => [key, fromJson(field)]),
+      Object.entries(json).map(([key, field]): [string, Value] => [
+        rankString(key),
+        fromJson(field),
+      ]),
     );
   }
   throw new TlaEvaluationError(`Cannot convert value: unsupported JSON value ${String(json)}`);
