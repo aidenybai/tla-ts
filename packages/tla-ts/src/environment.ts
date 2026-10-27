@@ -270,13 +270,15 @@ export const createEnvironment = (
   };
   rejectModuleLiterals(root);
 
-  const loadModule = (name: string) => {
+  const loadModule = (name: string, importer: string) => {
     const source =
       options.loadModule?.(name) ??
       BUNDLED_MODULES.get(name) ??
       extractModule(options.source, name);
     if (source === undefined)
-      throw new TlaSyntaxError(`Cannot find source file for module ${name}`);
+      throw new TlaSyntaxError(
+        `Cannot find source file for module ${name} imported in module ${importer}.`,
+      );
     return rejectModuleLiterals(parseModule(source));
   };
 
@@ -299,13 +301,13 @@ export const createEnvironment = (
     return { linked, closure };
   };
 
-  const getLinkedModule = (name: string): LinkedModule => {
+  const getLinkedModule = (name: string, importer: string): LinkedModule => {
     const cached = linkedModules.get(name);
     if (cached) {
       useModule(name, dependencies.get(name) ?? []);
       return cached;
     }
-    const top = linkTopLevel(loadModule(name));
+    const top = linkTopLevel(loadModule(name, importer));
     linkedModules.set(name, top.linked);
     dependencies.set(name, top.closure);
     useModule(name, top.closure);
@@ -331,7 +333,7 @@ export const createEnvironment = (
         [...standardSymbols].map(([name, symbol]) => [`${instance.name}!${name}`, symbol]),
       );
     }
-    const linked = nested ?? getLinkedModule(instance.module);
+    const linked = nested ?? getLinkedModule(instance.module, module.name);
     const declarations = [
       ...linked.constants,
       ...linked.variables.map((variable) => ({ name: variable, arity: 0 })),
@@ -467,7 +469,7 @@ export const createEnvironment = (
         );
       });
     }
-    const linked = nested ?? getLinkedModule(instance.module);
+    const linked = nested ?? getLinkedModule(instance.module, instancer);
     const suffix = `#${copyCount.value++}`;
     const explicit = new Map(instance.substitutions.map((item) => [item.name, item.expression]));
     const declarations = [
@@ -590,7 +592,7 @@ export const createEnvironment = (
         addSymbols(standardSymbols, true);
         return;
       }
-      const linked = nested ?? getLinkedModule(name);
+      const linked = nested ?? getLinkedModule(name, parsed.name);
       constants.push(
         ...linked.constants.filter((constant) =>
           constants.every((existing) => existing.name !== constant.name),

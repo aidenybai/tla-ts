@@ -877,6 +877,15 @@ describe("name resolution matches SANY", () => {
       config: "INIT Init\nNEXT Next",
     });
 
+  it("fails to parse a spec that imports a module it cannot find, such as Strings", async () => {
+    await expect(checkSource("EXTENDS Strings")).rejects.toThrow(
+      new TlaSyntaxError("Cannot find source file for module Strings imported in module M."),
+    );
+    await expect(checkSource("N == INSTANCE Nowhere")).rejects.toThrow(
+      new TlaSyntaxError("Cannot find source file for module Nowhere imported in module M."),
+    );
+  });
+
   it.each([
     ["an operator from a module that is not extended", "EXTENDS Naturals\nf == 1 :> 2"],
     ["an operator that a standard module only instantiates locally", "EXTENDS TLC\nf == 1 + 1"],
