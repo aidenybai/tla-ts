@@ -11,7 +11,7 @@ import type {
 import { TlaSyntaxError } from "./errors";
 import { getChildren } from "./evaluate";
 import { getSourceName, mapChildren, mapDefinition } from "./instances";
-import { getBoundNames, getPatternNames, LOCAL_RESOLUTION } from "./resolve";
+import { getArity, getBoundNames, getPatternNames, LOCAL_RESOLUTION } from "./resolve";
 
 type Lookup = (name: string) => Definition | undefined;
 
@@ -153,11 +153,8 @@ const findLabel = (
   return undefined;
 };
 
-const takeArguments = (
-  selector: Selector & { kind: "Name" | "Bound" },
-  count: number,
-  pool: Expression[],
-) => (selector.args.length === 0 && pool.length > 0 ? pool.splice(0, count) : selector.args);
+const takeArguments = (args: Expression[], count: number, pool: Expression[]) =>
+  args.length === 0 && pool.length > 0 ? pool.splice(0, count) : args;
 
 const wrapLets = (body: Expression, lets: Definition[][], location: SourceLocation) =>
   lets.reduceRight<Expression>(
@@ -260,9 +257,7 @@ const selectSubexpression = (
         ? local.find((candidate) => getSourceName(candidate) === name)
         : lookup(name);
       if (definition) {
-        const arity = definition.kind === "Operator" ? definition.params.length : 0;
-        const given = args.length === 0 && pool.length > 0 ? pool.splice(0, arity) : args;
-        return { definition, args: given };
+        return { definition, args: takeArguments(args, getArity(definition), pool) };
       }
       state.index++;
     }
@@ -272,7 +267,7 @@ const selectSubexpression = (
   const enterDefinition = (local: Definition[] | undefined) => {
     const found = findDefinition(local);
     const definition = found.definition;
-    const arity = definition.kind === "Operator" ? definition.params.length : 0;
+    const arity = getArity(definition);
     const isLast = state.index === selectors.length - 1;
     if (found.args.length !== arity && found.args.length !== 0) {
       throw createError(`The operator ${definition.name} requires ${arity} arguments`, location);
@@ -289,13 +284,14 @@ const selectSubexpression = (
   };
 
   const followLabels = () => {
-    while (state.index < selectors.length && selectors[state.index].kind === "Name") {
-      const selector = selectors[state.index] as Selector & { kind: "Name" };
+    while (state.index < selectors.length) {
+      const selector = selectors[state.index];
+      if (selector.kind !== "Name") return;
       const found = state.current && findLabel(state.current, selector.name, []);
       if (!found) throw createError(`Cannot find label ${selector.name}`, location);
       selection.lets.push(...found.lets);
       selection.params.push(...found.label.params.map((name) => ({ name, arity: 0 })));
-      selection.args.push(...takeArguments(selector, found.label.params.length, pool));
+      selection.args.push(...takeArguments(selector.args, found.label.params.length, pool));
       state.current = found.label.body;
       state.index++;
     }
@@ -322,7 +318,7 @@ const selectSubexpression = (
     if (binder && (selector.kind === "Bound" || selector.kind === "At")) {
       selection.params.push(...binder.names.map((name) => ({ name, arity: 0 })));
       if (selector.kind === "Bound") {
-        selection.args.push(...takeArguments(selector, binder.names.length, pool));
+        selection.args.push(...takeArguments(selector.args, binder.names.length, pool));
       }
       state.current = binder.body;
       return;
@@ -363,8 +359,7 @@ const selectSubexpression = (
         throw createError("A name selector here must be from a LET clause", location);
       }
       selection.lets.push(state.current.definitions);
-      const definitions = state.current.definitions;
-      const last = enterDefinition(definitions);
+      const last = enterDefinition(state.current.definitions);
       if (last) {
         return applyDefinition(last.definition, {
           ...selection,
@@ -437,10 +432,10 @@ export const resolveInstanceSubexpressions = (instance: Instance, module: Module
 
 export const resolveModuleSubexpressions = (module: Module, available: Definition[]): Module => {
   const lookup = createLookup([...available, ...module.definitions]);
-  const isResolved =
+  const hasReferences =
     module.definitions.some((definition) => containsReference(definition.body)) ||
     module.assumptions.some((assumption) => containsReference(assumption.expression));
-  if (!isResolved) return module;
+  if (!hasReferences) return module;
   return {
     ...module,
     definitions: module.definitions.map((definition) =>

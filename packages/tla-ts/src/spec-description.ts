@@ -149,7 +149,7 @@ const getParameters = (closure: Closure | undefined, scope: Scope | undefined) =
     return binding?.kind === "Value" ? [[param.name, binding.value]] : [];
   });
 
-const tryCollect = <Item>(collect: () => Item[], fallback: () => Item[]) => {
+const tryCollect = <Result>(collect: () => Result, fallback: () => Result) => {
   try {
     return collect();
   } catch (error) {
@@ -362,11 +362,11 @@ const describeProperty = (
           recurse(expression.body, boundScope);
           return false;
         });
-        return [true];
+        return true;
       },
-      () => [],
+      () => false,
     );
-    if (isEnumerated.length > 0) return;
+    if (isEnumerated) return;
   }
   if (expression.kind === "And") {
     expression.operands.forEach((operand) => recurse(operand, scope));
