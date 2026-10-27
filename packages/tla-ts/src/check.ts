@@ -2,7 +2,7 @@ import type { Assumption, Definition, Expression, SourceLocation } from "./ast";
 import { parseConfig, type ConfigValue, type ModelConfig } from "./config";
 import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
-import { TlaConfigError, TlaEvaluationError } from "./errors";
+import { getErrorExitCode, TlaConfigError, TlaEvaluationError, TlaModuleError } from "./errors";
 import { EXIT_STATUS, setExitCode, setNextStatePhase, withLivenessExitCode } from "./exit-codes";
 import {
   evaluate,
@@ -72,7 +72,8 @@ export type CheckStatus =
   | "property-violation"
   | "liveness-violation"
   | "postcondition-violation"
-  | "deadlock";
+  | "deadlock"
+  | "error";
 
 export interface TraceStep {
   action: string | undefined;
@@ -94,9 +95,18 @@ export interface Postcondition {
   counts?: string;
 }
 
+// An evaluation that failed during the search, with the behavior up to the state TLC was working on.
+export interface EvaluationFailure {
+  message: string;
+  trace: TraceStep[];
+  initialState: Record<string, Value> | undefined;
+  exitCode: number;
+}
+
 export interface CheckResult {
   status: CheckStatus;
   violation: Violation | undefined;
+  failure: EvaluationFailure | undefined;
   generatedStates: number;
   distinctStates: number;
   queuedStates: number;
@@ -667,22 +677,24 @@ export const createSearch = (
         symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup, order);
       return view === undefined ? representative : [getViewValue(view.expression, representative)];
     },
-    findViolatedInvariant: (state, parent) => {
-      try {
-        return invariants.find(
-          (invariant) =>
-            !isUnchangedFor(invariant, state, parent) &&
-            !holds(
-              invariant.expression,
-              getContext(environment, state, undefined, invariant.scope),
-              `invariant ${invariant.name}`,
-            ),
-        );
-      } catch (error) {
-        // TLC reports a failure only on a state after the initial states as an invariant failure.
-        throw parent ? setExitCode(error, EXIT_STATUS.safetyEvaluationFailure) : error;
-      }
-    },
+    findViolatedInvariant: (state, parent) =>
+      invariants.find((invariant) => {
+        if (isUnchangedFor(invariant, state, parent)) return false;
+        try {
+          return !holds(
+            invariant.expression,
+            getContext(environment, state, undefined, invariant.scope),
+            `invariant ${invariant.name}`,
+          );
+        } catch (error) {
+          // TLC reports a failure only on a state after the initial states as an invariant failure.
+          if (!parent) throw error;
+          throw withHeadline(
+            setExitCode(error, EXIT_STATUS.safetyEvaluationFailure),
+            `Evaluating invariant ${invariant.name} failed.`,
+          );
+        }
+      }),
     satisfiesConstraints: (state, parent) =>
       constraints.every(
         (constraint) =>
@@ -703,19 +715,24 @@ export const createSearch = (
           ),
       ),
     findViolatedActionProperty: (state, next) =>
-      actionProperties.find(
-        (property) =>
-          !holds(
-            property.action,
-            getContext(environment, state, next, property.scope),
-            `property ${property.name}`,
-          ) &&
-          !holds(
-            property.unchanged,
-            getContext(environment, state, next, property.scope),
-            "a subscript",
-          ),
-      ),
+      actionProperties.find((property) => {
+        try {
+          return (
+            !holds(
+              property.action,
+              getContext(environment, state, next, property.scope),
+              `property ${property.name}`,
+            ) &&
+            !holds(
+              property.unchanged,
+              getContext(environment, state, next, property.scope),
+              "a subscript",
+            )
+          );
+        } catch (error) {
+          throw withHeadline(error, `Evaluating action property ${property.name} failed.`);
+        }
+      }),
     satisfiesActionConstraints: (state, next) =>
       actionConstraints.every((constraint) =>
         holds(
@@ -749,6 +766,14 @@ export const createSearch = (
   };
 };
 
+const withHeadline = (error: unknown, headline: string) =>
+  error instanceof TlaEvaluationError
+    ? setExitCode(
+        new TlaEvaluationError(`${headline}\n${error.message}`, error),
+        getErrorExitCode(error),
+      )
+    : error;
+
 export const checkSequentially = (options: CheckOptions): CheckResult => {
   setNextStatePhase(false);
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
@@ -776,9 +801,11 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   const createResult = (
     status: CheckStatus,
     violation?: Omit<Violation, "loopStart"> & { loopStart?: number },
+    failure?: EvaluationFailure,
   ): CheckResult => ({
     status,
     violation: violation && { ...violation, loopStart: violation.loopStart },
+    failure,
     generatedStates: runtime.generatedStates,
     distinctStates: runtime.distinctStates,
     queuedStates: runtime.queueSize,
@@ -901,6 +928,22 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
         )?.action
       : last.action;
     return toTrace([...steps, { state: last.state, action }]);
+  };
+  // TLC prints an initial state on its own without evaluating the alias.
+  const getStateTrace = (index: number) =>
+    parents[index] === -1
+      ? [{ action: undefined, state: toRecord(states[index]) }]
+      : getTrace(index);
+  // TLC names the initial state it was checking unless a standard module's Java code failed.
+  const toFailure = (error: unknown, trace: TraceStep[], initialState?: Value[]) => {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    return createResult("error", undefined, {
+      message: error.message,
+      trace,
+      initialState:
+        initialState && !(error instanceof TlaModuleError) ? toRecord(initialState) : undefined,
+      exitCode: getErrorExitCode(error),
+    });
   };
   const getPathTrace = (path: number[], loopStart?: number) => {
     const steps = getPathStates(path, NEXT_RECOVERY_FAILURE);
@@ -1076,15 +1119,23 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
 
   const outcome: { result: CheckResult | undefined } = { result: undefined };
   if (spec.init !== undefined) {
-    forEachInitialState(
-      spec.init,
-      environment,
-      (state) => {
-        outcome.result = visitInitialState(state);
-        return outcome.result !== undefined;
-      },
-      spec.scope,
-    );
+    try {
+      forEachInitialState(
+        spec.init,
+        environment,
+        (state) => {
+          try {
+            outcome.result = visitInitialState(state);
+          } catch (error) {
+            outcome.result = toFailure(error, [], state);
+          }
+          return outcome.result !== undefined;
+        },
+        spec.scope,
+      );
+    } catch (error) {
+      return toFailure(error, []);
+    }
   }
   if (outcome.result) return outcome.result;
 
@@ -1097,20 +1148,19 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     }
     return createResult("success");
   }
-  setNextStatePhase(true);
-  for (let index = 0; index < states.length && !runtime.isStopped; index++) {
+  const expandState = (index: number): CheckResult | undefined => {
     const state = states[index];
-    current.index = index;
-    current.candidate = undefined;
-    runtime.queueSize = states.length - index - 1;
-    current.isExpanding = true;
     const liveSuccessors: LiveSuccessor[] = [];
     const successorCount = forEachSuccessor(
       next,
       state,
       environment,
       (successor) => {
-        outcome.result = visitSuccessor(index, successor, liveSuccessors);
+        try {
+          outcome.result = visitSuccessor(index, successor, liveSuccessors);
+        } catch (error) {
+          outcome.result = toFailure(error, getTrace(index, successor));
+        }
         return outcome.result !== undefined;
       },
       spec.scope,
@@ -1118,19 +1168,28 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     current.isExpanding = false;
     if (outcome.result) return outcome.result;
     if (successorCount === 0 && config.checkDeadlock) {
-      // TLC prints a deadlocked initial state without evaluating the alias.
-      const trace =
-        parents[index] === -1 ? [{ action: undefined, state: toRecord(state) }] : getTrace(index);
-      return reportViolation("deadlock", { name: "deadlock", trace });
+      return reportViolation("deadlock", { name: "deadlock", trace: getStateTrace(index) });
     }
     const accepted = liveness?.addState(index, state, liveSuccessors);
     current.livenessSource = -1;
-    if (accepted) {
-      return reportViolation("property-violation", {
-        name: accepted.name,
-        trace: getPathTrace(accepted.path),
-      });
+    if (!accepted) return undefined;
+    return reportViolation("property-violation", {
+      name: accepted.name,
+      trace: getPathTrace(accepted.path),
+    });
+  };
+  setNextStatePhase(true);
+  for (let index = 0; index < states.length && !runtime.isStopped; index++) {
+    current.index = index;
+    current.candidate = undefined;
+    runtime.queueSize = states.length - index - 1;
+    current.isExpanding = true;
+    try {
+      outcome.result = expandState(index);
+    } catch (error) {
+      outcome.result = toFailure(error, getStateTrace(index));
     }
+    if (outcome.result) return outcome.result;
   }
 
   current.index = -1;

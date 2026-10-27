@@ -1,21 +1,21 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check, TlaError } from "../../src";
-import { getErrorExitCode } from "../../src/run-cli";
+import { getErrorExitCode } from "../../src/errors";
 
 const STEP = "Init == x = 0\nNext == x < 2 /\\ x' = x + 1";
 
-const getThrownExitCode = async (definitions: string, config = "INIT Init\nNEXT Next") => {
+const getFailureExitCode = async (definitions: string, config = "INIT Init\nNEXT Next") => {
   try {
-    await check({
+    const result = await check({
       source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nVARIABLE x\n${definitions}\n====`,
       config,
       onPrint: () => {},
     });
+    return result.failure?.exitCode;
   } catch (error) {
     if (error instanceof TlaError) return getErrorExitCode(error);
     throw error;
   }
-  return undefined;
 };
 
 describe("CLI exit codes match TLC", () => {
@@ -48,21 +48,21 @@ describe("CLI exit codes match TLC", () => {
     ],
     ["a next-state relation that is not a boolean", "Init == x = 0\nNext == 3", 255],
   ])("exits for %s", async (_, definitions, code) => {
-    expect(await getThrownExitCode(definitions)).toBe(code);
+    expect(await getFailureExitCode(definitions)).toBe(code);
   });
 
   it("exits with 75 when an invariant fails on an initial state and 76 afterwards", async () => {
     const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
-    expect(await getThrownExitCode(`${STEP}\nInv == 1 \\div 0 = x`, config)).toBe(75);
-    expect(await getThrownExitCode(`${STEP}\nInv == x < 1 \\/ 1 \\div 0 = 1`, config)).toBe(76);
+    expect(await getFailureExitCode(`${STEP}\nInv == 1 \\div 0 = x`, config)).toBe(75);
+    expect(await getFailureExitCode(`${STEP}\nInv == x < 1 \\/ 1 \\div 0 = 1`, config)).toBe(76);
   });
 
   it("exits with 255 when a liveness property fails to evaluate", async () => {
     const definitions = `${STEP}\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nProp == <>(1 \\div 0 = x)`;
-    expect(await getThrownExitCode(definitions, "SPECIFICATION Spec\nPROPERTY Prop")).toBe(255);
+    expect(await getFailureExitCode(definitions, "SPECIFICATION Spec\nPROPERTY Prop")).toBe(255);
   });
 
   it("exits with 75 when the configuration has no next-state relation", async () => {
-    expect(await getThrownExitCode("Init == x = 0", "INIT Init")).toBe(75);
+    expect(await getFailureExitCode("Init == x = 0", "INIT Init")).toBe(75);
   });
 });

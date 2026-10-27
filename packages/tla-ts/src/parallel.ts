@@ -1,3 +1,4 @@
+import type { Expression } from "./ast";
 import { createCanonicalizer } from "./canonical";
 import {
   checkSequentially,
@@ -8,6 +9,7 @@ import {
 } from "./check";
 import { parseConfig, type ModelConfig } from "./config";
 import { createEnvironment } from "./environment";
+import { TlaEvaluationError } from "./errors";
 import { isImpure } from "./evaluate";
 import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from "./fingerprints";
 import { getInitialStates } from "./successors";
@@ -133,27 +135,37 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     fingerprints: [] as number[],
   }));
   const statistics = { generatedStates: 0, distinctStates: 0, queuedStates: 0, depth: 0 };
-  for (const state of getInitialStates(search.spec.init, environment, search.spec.scope)) {
-    canonicalize(state);
-    statistics.generatedStates++;
-    getStateFingerprint(search.getFingerprintState(state), fingerprint);
-    if (!table.insert(fingerprint[0], fingerprint[1])) continue;
-    if (search.findViolatedInvariant(state) || search.findFailedInitialPredicate(state)) {
-      return fallBack();
+  const seedInitialStates = (init: Expression) => {
+    for (const state of getInitialStates(init, environment, search.spec.scope)) {
+      canonicalize(state);
+      statistics.generatedStates++;
+      getStateFingerprint(search.getFingerprintState(state), fingerprint);
+      if (!table.insert(fingerprint[0], fingerprint[1])) continue;
+      if (search.findViolatedInvariant(state) || search.findFailedInitialPredicate(state)) {
+        return false;
+      }
+      if (!search.satisfiesConstraints(state)) {
+        table.remove(fingerprint[0], fingerprint[1]);
+        continue;
+      }
+      const seed = seeds[getFingerprintOwner(fingerprint[1], count)];
+      if (!seed.encoder.encode(state)) return false;
+      seed.fingerprints.push(fingerprint[0], fingerprint[1]);
+      statistics.distinctStates++;
     }
-    if (!search.satisfiesConstraints(state)) {
-      table.remove(fingerprint[0], fingerprint[1]);
-      continue;
-    }
-    const seed = seeds[getFingerprintOwner(fingerprint[1], count)];
-    if (!seed.encoder.encode(state)) return fallBack();
-    seed.fingerprints.push(fingerprint[0], fingerprint[1]);
-    statistics.distinctStates++;
+    return true;
+  };
+  // The sequential search reports a violation or a failed evaluation in the initial states.
+  try {
+    if (!seedInitialStates(search.spec.init)) return fallBack();
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    return fallBack();
   }
   if (getRankedStringCount() !== startupStrings) return fallBack();
   statistics.depth = statistics.generatedStates === 0 ? 0 : 1;
   if (statistics.distinctStates === 0)
-    return { status: "success", violation: undefined, ...statistics };
+    return { status: "success", violation: undefined, failure: undefined, ...statistics };
 
   const reports: WorkerMessage[] = [];
   const pending = { resolve: (_: WorkerMessage[]) => {} };
@@ -221,7 +233,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     statistics.distinctStates += added;
     if (added === 0) {
       terminate();
-      return { status: "success", violation: undefined, ...statistics };
+      return { status: "success", violation: undefined, failure: undefined, ...statistics };
     }
     statistics.depth++;
   }

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import {
   check,
+  type CheckResult,
   formatValue,
   parseConfig,
   parseModule,
@@ -366,13 +367,14 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("rejects comparisons of differently-typed model values", async () => {
-    await expect(
-      check({
-        source:
-          '---- MODULE M ----\nEXTENDS TLCExt\nVARIABLE v\nInit == v = {TLCModelValue("A_a"), TLCModelValue("B_a")}\nNext == UNCHANGED v\n====',
-        config: "INIT Init\nNEXT Next",
-      }),
-    ).rejects.toThrow("Attempted to compare the differently-typed model values B_a and A_a");
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLCExt\nVARIABLE v\nInit == v = {TLCModelValue("A_a"), TLCModelValue("B_a")}\nNext == UNCHANGED v\n====',
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.message).toContain(
+      "Attempted to compare the differently-typed model values B_a and A_a",
+    );
   });
 
   it("explores the mutex state space", async () => {
@@ -584,7 +586,63 @@ describe("formatValue matches TLC", () => {
   });
 });
 
+const checkSteps = (definitions: string, config: string) =>
+  check({
+    source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\n${definitions}\n====`,
+    config,
+  });
+
+const getFailureSummary = (result: CheckResult) => [
+  result.status,
+  result.failure?.trace.map((step) => formatValue(step.state.x)),
+  [result.generatedStates, result.distinctStates, result.queuedStates, result.depth],
+  result.failure?.exitCode,
+];
+
 describe("evaluation errors match TLC", () => {
+  it("reports the behavior up to a state whose invariant fails to evaluate", async () => {
+    const result = await checkSteps(
+      "Inv == 1 \\div (2 - x) >= 0",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.failure?.message).toBe(
+      "Evaluating invariant Inv failed.\nThe second argument of \\div is 0.",
+    );
+    expect(getFailureSummary(result)).toEqual(["error", ["0", "1", "2"], [3, 3, 0, 3], 76]);
+  });
+
+  it("names an action property that fails to evaluate", async () => {
+    const result = await checkSteps(
+      "P == [][1 \\div (2 - x) >= 0]_x\nSpec == Init /\\ [][Next]_x",
+      "SPECIFICATION Spec\nPROPERTY P",
+    );
+    expect(result.failure?.message).toBe(
+      "Evaluating action property P failed.\nThe second argument of \\div is 0.",
+    );
+    expect(getFailureSummary(result)).toEqual(["error", ["0", "1", "2", "3"], [4, 4, 0, 4], 255]);
+  });
+
+  it("reports the behavior up to a state whose successors fail to evaluate", async () => {
+    const result = await checkSteps(
+      'Step == Next /\\ Assert(x < 1, "boom")',
+      "INIT Init\nNEXT Step",
+    );
+    expect(result.failure?.message).toBe(
+      'The first argument of Assert evaluated to FALSE; the second argument was:\n"boom"',
+    );
+    expect(getFailureSummary(result)).toEqual(["error", ["0", "1"], [2, 2, 0, 2], 14]);
+  });
+
+  it("names the initial state a check fails on unless a standard module fails", async () => {
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
+    const core = await checkSteps("Inv == (CHOOSE y \\in {} : TRUE) = x", config);
+    const standard = await checkSteps("Inv == 1 \\div x = 0", config);
+    expect(core.failure?.initialState).toEqual({ x: 0 });
+    expect(getFailureSummary(core)).toEqual(["error", [], [1, 1, 1, 1], 75]);
+    expect(standard.failure?.initialState).toBeUndefined();
+    expect(getFailureSummary(standard)).toEqual(["error", [], [1, 1, 1, 1], 75]);
+  });
+
   it("checks only the assumptions of a model without variables or an initial predicate", async () => {
     const result = await check({ source: "---- MODULE M ----\nASSUME TRUE\n====", config: "" });
     expect(result.status).toBe("success");
@@ -811,13 +869,12 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("rejects a mistyped membership outside an assumption", async () => {
-    await expect(
-      check({
-        source:
-          '---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = "a" /\\ x \\in Nat\nNext == x\' = x\n====',
-        config: "INIT Init\nNEXT Next",
-      }),
-    ).rejects.toThrow(TlaEvaluationError);
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = "a" /\\ x \\in Nat\nNext == x\' = x\n====',
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("error");
   });
 
   it("treats untyped model values as outside built-in sets", async () => {

@@ -1,4 +1,11 @@
-export type { CheckOptions, CheckResult, CheckStatus, TraceStep, Violation } from "./check";
+export type {
+  CheckOptions,
+  CheckResult,
+  CheckStatus,
+  EvaluationFailure,
+  TraceStep,
+  Violation,
+} from "./check";
 export { parseConfig } from "./config";
 export type { ConfigValue, ConstantAssignment, ModelConfig, Substitution } from "./config";
 export {
