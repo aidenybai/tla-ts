@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, TlaSyntaxError } from "../../src";
+import { check, parseModule, TlaSyntaxError } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/instances");
 
@@ -119,6 +119,26 @@ describe("INSTANCE matches TLC", () => {
       4,
       4,
     ]);
+  });
+
+  it("substitutes operator symbols at the end of a WITH clause", async () => {
+    expect((await checkInstances("Symbols.cfg", "Symbols")).status).toBe("success");
+  });
+
+  it("parses a prefix operator followed by an operand as an expression", () => {
+    const module = parseModule(
+      "---- MODULE M ----\nI == INSTANCE N WITH a <- - b, c <- SUBSET d, e <- -\n====",
+    );
+    expect(module.instances[0].substitutions.map((item) => item.expression.kind)).toEqual([
+      "Apply",
+      "Apply",
+      "OperatorReference",
+    ]);
+    expect(() =>
+      parseModule(
+        "---- MODULE M ----\nFoo == LET I == INSTANCE N WITH c <- ~\n           J == 1\n       IN J\n====",
+      ),
+    ).not.toThrow();
   });
 });
 
