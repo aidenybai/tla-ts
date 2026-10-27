@@ -1,0 +1,71 @@
+{
+  "name": "tsprover",
+  "version": "0.0.2",
+  "description": "Model check TypeScript by compiling it to TLA+",
+  "keywords": [
+    "formal verification",
+    "model checker",
+    "tla",
+    "tla+",
+    "tlc",
+    "typescript"
+  ],
+  "homepage": "https://github.com/aidenybai/tla-ts/tree/main/packages/tsprover#readme",
+  "bugs": {
+    "url": "https://github.com/aidenybai/tla-ts/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Aiden Bai",
+    "email": "aiden@million.dev"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aidenybai/tla-ts.git",
+    "directory": "packages/tsprover"
+  },
+  "bin": {
+    "tsprover": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "NODE_ENV=production vp pack",
+    "prepack": "cp ../../LICENSE .",
+    "prepublishOnly": "pnpm build",
+    "publint": "publint",
+    "test": "vp test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "tla-ts": "workspace:^",
+    "typescript": "6.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "publint": "^0.3.0",
+    "tsx": "^4.21.0",
+    "vite-plus": "latest"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
