@@ -26,6 +26,7 @@ export interface FunctionValue {
   range: Value[];
   hash: number;
   fingerprint: number;
+  writtenKeys: Value[] | undefined;
 }
 
 export interface IntervalValue {
@@ -158,17 +159,16 @@ export const checkInteger = (value: number) => {
 // TLC keeps a record, or a function with string keys that @@ builds, in the order the spec writes
 // it until it sorts the value to compare or fingerprint it. ToString, Assert, and error messages
 // show that order.
-const writtenOrders = new WeakMap<FunctionValue, Value[]>();
 const writtenOrderUse = { isUsed: false };
 
 const setWrittenOrder = (fn: FunctionValue, keys: Value[]) => {
   writtenOrderUse.isUsed = true;
-  writtenOrders.set(fn, keys);
+  fn.writtenKeys = keys;
   return fn;
 };
 
 export const getWrittenPairs = (fn: FunctionValue): [Value, Value][] => {
-  const keys = writtenOrders.get(fn) ?? fn.domain;
+  const keys = fn.writtenKeys ?? fn.domain;
   return keys.map((key) => [key, fn.range[findIndex(fn.domain, key)]]);
 };
 
@@ -181,7 +181,7 @@ const forgetWrittenOrder = (value: Value): void => {
   if (typeof value !== "object" || (value.kind !== "Function" && value.kind !== "Set")) return;
   if (value.hash !== 0 || value.fingerprint !== 0) return;
   if (value.kind === "Set") return value.elements.forEach(forgetWrittenOrder);
-  writtenOrders.delete(value);
+  value.writtenKeys = undefined;
   value.range.forEach(forgetWrittenOrder);
 };
 
@@ -194,8 +194,8 @@ const isRecordMismatch = (left: Value[], right: Value[]) =>
 
 const compareFunctions = (left: FunctionValue, right: FunctionValue): number => {
   if (writtenOrderUse.isUsed) {
-    writtenOrders.delete(left);
-    writtenOrders.delete(right);
+    left.writtenKeys = undefined;
+    right.writtenKeys = undefined;
   }
   const leftDomain = left.domain;
   const rightDomain = right.domain;
@@ -399,6 +399,7 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   range,
   hash: 0,
   fingerprint: 0,
+  writtenKeys: undefined,
 });
 
 export const valuesEqual = (left: Value, right: Value): boolean => {
@@ -1724,8 +1725,7 @@ export const updateFunction = (
   const next = update(previous);
   range[position] = next;
   const updated = createSortedFunction(finite.domain, range);
-  const writtenOrder = writtenOrderUse.isUsed ? writtenOrders.get(finite) : undefined;
-  if (writtenOrder) writtenOrders.set(updated, writtenOrder);
+  updated.writtenKeys = finite.writtenKeys;
   if (finite.hash !== 0) {
     const key = finite.domain[position];
     updated.hash =
