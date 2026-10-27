@@ -478,6 +478,18 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([73, 14, 7]);
   });
 
+  it("reports a membership invariant that one changed entry violates", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE f\nInit == f = [p \\in 1..2 |-> [q \\in 1..2 |-> 0]]\nNext == \\E p, q \\in 1..2 : f' = [f EXCEPT ![p][q] = @ + 1]\nTypeOK == f \\in [1..2 -> [1..2 -> 0..2]]\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT TypeOK",
+    });
+    expect(result.violation?.name).toBe("TypeOK");
+    const trace = result.violation?.trace ?? [];
+    expect(formatValue(trace[trace.length - 1].state.f)).toBe("<<<<3, 0>>, <<0, 0>>>>");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([22, 16, 4]);
+  });
+
   it("labels each step with the action TLC splits the next-state relation into", async () => {
     const getLabels = async (definitions: string, config = "INIT Init\nNEXT Next") => {
       const result = await check({

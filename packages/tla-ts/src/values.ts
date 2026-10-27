@@ -1667,6 +1667,25 @@ export const isElementOf = (element: Value, set: Value): boolean => {
   }
 };
 
+// A function that agrees with a member of a function set outside some entries is a member when
+// those entries are.
+export const isUpdatedElementOf = (element: Value, member: Value, set: Value): boolean => {
+  if (element === member) return true;
+  if (
+    typeof element !== "object" ||
+    typeof member !== "object" ||
+    typeof set !== "object" ||
+    element.kind !== "Function" ||
+    member.kind !== "Function" ||
+    set.kind !== "FunctionSet" ||
+    element.domain !== member.domain
+  )
+    return isElementOf(element, set);
+  return element.range.every((item, index) =>
+    isUpdatedElementOf(item, member.range[index], set.range),
+  );
+};
+
 export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "Function") return value;
   if (typeof value === "object" && value.kind === "LazyFunction") {

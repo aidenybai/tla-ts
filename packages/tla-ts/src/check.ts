@@ -13,6 +13,7 @@ import {
   getDefinition,
   isConstantLevel,
   isImpure,
+  isLocallyResolved,
   type Context,
   type Environment,
   type Scope,
@@ -54,6 +55,7 @@ import {
   getValueHash,
   isFunctionValue,
   isSameValue,
+  isUpdatedElementOf,
   setStringOrder,
   toFiniteFunction,
   type Value,
@@ -139,6 +141,13 @@ interface NamedExpression {
 
 interface StateCheck extends NamedExpression {
   variables: number[] | undefined;
+  membership: Membership | undefined;
+}
+
+// A conjunct `x \in S` whose S reads no variables.
+interface Membership {
+  variable: number;
+  set: Expression;
 }
 
 interface ActionProperty {
@@ -481,14 +490,32 @@ const getPossiblePredicates = (names: string[], environment: Environment) =>
     return { name, expression, scope: undefined };
   });
 
+const getMembership = (
+  expression: Expression,
+  variables: number[] | undefined,
+  environment: Environment,
+): Membership | undefined => {
+  if (expression.kind !== "Apply" || expression.operator !== "\\in" || variables?.length !== 1)
+    return undefined;
+  const element = expression.args[0];
+  if (element.kind !== "Identifier" || isLocallyResolved(element)) return undefined;
+  return environment.variableIndex.get(element.name) === variables[0]
+    ? { variable: variables[0], set: expression.args[1] }
+    : undefined;
+};
+
 const getStateChecks = (named: NamedExpression[], environment: Environment): StateCheck[] =>
   named.flatMap((item) =>
-    getConjuncts(item.expression, environment).map((expression) => ({
-      name: item.name,
-      expression,
-      scope: item.scope,
-      variables: getReadVariables(expression, environment),
-    })),
+    getConjuncts(item.expression, environment).map((expression) => {
+      const variables = getReadVariables(expression, environment);
+      return {
+        name: item.name,
+        expression,
+        scope: item.scope,
+        variables,
+        membership: getMembership(expression, variables, environment),
+      };
+    }),
   );
 
 const isUnchangedFor = (stateCheck: StateCheck, state: Value[], parent: Value[] | undefined) => {
@@ -743,10 +770,16 @@ export const createSearch = (
       invariants.find((invariant) => {
         if (isUnchangedFor(invariant, state, parent)) return false;
         try {
-          return !holdsLikeTlc(
-            invariant.expression,
-            getContext(environment, state, undefined, invariant.scope),
-          );
+          const context = getContext(environment, state, undefined, invariant.scope);
+          const membership = invariant.membership;
+          // The parent satisfies every invariant, so only the entries the step changed can fail.
+          return parent && membership
+            ? !isUpdatedElementOf(
+                state[membership.variable],
+                parent[membership.variable],
+                evaluate(membership.set, context),
+              )
+            : !holdsLikeTlc(invariant.expression, context);
         } catch (error) {
           // TLC reports a failure only on a state after the initial states as an invariant failure.
           if (!parent) throw error;
