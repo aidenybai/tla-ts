@@ -360,13 +360,13 @@ export const compareValues = (left: Value, right: Value): number => {
     if (isSetValue(left) && isSetValue(right) && isOverriddenComparison(left, right)) {
       return compareOverriddenSets(left, right, "compare");
     }
-    const leftIsSet = isSetValue(left);
-    if (leftIsSet !== isSetValue(right)) {
+    const isLeftSet = isSetValue(left);
+    if (isLeftSet !== isSetValue(right)) {
       throw new TlaEvaluationError(
         `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
       );
     }
-    if (leftIsSet) return compareSets(toFiniteSet(left), toFiniteSet(right));
+    if (isLeftSet) return compareSets(toFiniteSet(left), toFiniteSet(right));
     return compareFunctions(toFiniteFunction(left), toFiniteFunction(right));
   }
   if (typeof left === "number" && typeof right === "number") return left - right;

@@ -27,16 +27,16 @@ describe("ALIAS matches TLC", () => {
     const result = await checkAlias("Alias");
     expect(result.status).toBe("invariant-violation");
     expect(formatTrace(result.violation?.trace)).toEqual(
-      [1, 2, 3, 4].map((x) => [
-        `yy = ${x % 2 === 0 ? "TRUE" : "FALSE"}`,
-        `x = ${x}`,
-        `a = ${x === 4 ? 0 : 1}`,
-        `b = ${x === 4 ? "TRUE" : "FALSE"}`,
-        `anim = "e1: ${x} e2: ${x % 2 === 0 ? "TRUE" : "FALSE"}"`,
+      [1, 2, 3, 4].map((stateNumber) => [
+        `yy = ${stateNumber % 2 === 0 ? "TRUE" : "FALSE"}`,
+        `x = ${stateNumber}`,
+        `a = ${stateNumber === 4 ? 0 : 1}`,
+        `b = ${stateNumber === 4 ? "TRUE" : "FALSE"}`,
+        `anim = "e1: ${stateNumber} e2: ${stateNumber % 2 === 0 ? "TRUE" : "FALSE"}"`,
         "te = TRUE",
-        `lvl = <<${x}, ${x}>>`,
+        `lvl = <<${stateNumber}, ${stateNumber}>>`,
         `trc = <<${[1, 2, 3, 4]
-          .slice(0, x)
+          .slice(0, stateNumber)
           .map((step) => `[x |-> ${step}, y |-> ${step % 2 === 0 ? "TRUE" : "FALSE"}]`)
           .join(", ")}>>`,
       ]),

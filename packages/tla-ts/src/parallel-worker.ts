@@ -1,7 +1,7 @@
 import { createCanonicalizer } from "./canonical";
 import { createSearch } from "./check";
 import { createEnvironment } from "./environment";
-import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from "./fingerprints";
+import { createFingerprintTable, getFingerprintOwner, writeStateFingerprint } from "./fingerprints";
 import type { LevelMessage, Port, StartMessage, WorkerMessage } from "./parallel";
 import { getSuccessors } from "./successors";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
@@ -154,7 +154,7 @@ const run = (start: StartMessage, parent: Port) => {
         if (search.findViolatedActionProperty(state, successor.state)) return undefined;
         if (!search.satisfiesActionConstraints(state, successor.state)) continue;
         canonicalize(successor.state);
-        getStateFingerprint(search.getFingerprintState(successor.state), fingerprint);
+        writeStateFingerprint(search.getFingerprintState(successor.state), fingerprint);
         const owner = getFingerprintOwner(fingerprint[1], count);
         if (owner === self) {
           if (!table.insert(fingerprint[0], fingerprint[1])) continue;
