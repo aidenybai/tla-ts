@@ -521,6 +521,23 @@ ASSUME TLCFP(a) = -887695703
   });
 });
 
+describe("formatValue matches TLC", () => {
+  it("prints functions as records only when every key is a field name", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source: readFileSync(join(FIXTURES, "formatting", "Format.tla"), "utf8"),
+      config: readFileSync(join(FIXTURES, "formatting", "Format.cfg"), "utf8"),
+      onPrint: (text) => printed.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(printed).toEqual(
+      readFileSync(join(FIXTURES, "formatting", "Format.out"), "utf8")
+        .trim()
+        .split("\n"),
+    );
+  });
+});
+
 describe("evaluation errors match TLC", () => {
   it("checks only the assumptions of a model without variables or an initial predicate", async () => {
     const result = await check({ source: "---- MODULE M ----\nASSUME TRUE\n====", config: "" });

@@ -1390,6 +1390,11 @@ const formatLazySet = (value: LazySetValue, isStrict: boolean): string => {
   }
 };
 
+const isFieldName = (name: string) =>
+  /^[\p{L}\p{N}_]*$/u.test(name) &&
+  /\p{L}/u.test(name) &&
+  (name.length < 4 || !/^[WS]F_/.test(name));
+
 export const formatValue = (value: Value, isStrict = false): string => {
   const format = (inner: Value) => formatValue(inner, isStrict);
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
@@ -1430,7 +1435,7 @@ export const formatValue = (value: Value, isStrict = false): string => {
       if (fn.domain.every((key, index) => key === index + 1)) {
         return `<<${fn.range.map(format).join(", ")}>>`;
       }
-      if (fn.domain.every((key) => typeof key === "string" && key.length > 0)) {
+      if (fn.domain.every((key) => typeof key === "string" && isFieldName(key))) {
         return `[${fn.domain.map((key, index) => `${String(key)} |-> ${format(fn.range[index])}`).join(", ")}]`;
       }
       return `(${fn.domain.map((key, index) => `${format(key)} :> ${format(fn.range[index])}`).join(" @@ ")})`;
