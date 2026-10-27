@@ -52,11 +52,16 @@ const LOGICAL_OPERATORS = new Map([
   [ts.SyntaxKind.BarBarToken, "\\/"],
 ]);
 
-// The TLA+ index of a JavaScript index into a sequence, since sequences count from 1.
-export const translateIndex = (node: ts.Expression, scope: Scope, context: Context) =>
-  ts.isNumericLiteral(node)
-    ? String(Number(node.text) + 1)
-    : `${wrap(translateExpression(node, scope, context))} + 1`;
+// The key of an element access, which counts from 1 in a sequence where JavaScript counts from 0.
+export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, context: Context) => {
+  const key = node.argumentExpression;
+  if (getKind(node.expression, context) !== "sequence") {
+    return translateExpression(key, scope, context);
+  }
+  return ts.isNumericLiteral(key)
+    ? String(Number(key.text) + 1)
+    : `${wrap(translateExpression(key, scope, context))} + 1`;
+};
 
 // An array literal as a sequence, joining spread arrays with \o.
 const translateArrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope, context: Context) => {
@@ -417,10 +422,7 @@ const translateElementAccess = (
   context: Context,
 ) => {
   const value = wrap(translateExpression(node.expression, scope, context));
-  const index = node.argumentExpression;
-  return getKind(node.expression, context) === "sequence"
-    ? `${value}[${translateIndex(index, scope, context)}]`
-    : `${value}[${translateExpression(index, scope, context)}]`;
+  return `${value}[${translateKey(node, scope, context)}]`;
 };
 
 export const translateCondition = (node: ts.Expression, scope: Scope, context: Context) => {

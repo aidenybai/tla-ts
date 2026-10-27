@@ -160,7 +160,7 @@ export const translateLocalCall = (node: ts.CallExpression, scope: Scope, contex
 export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Context): string => {
   if (!ts.isBlock(body)) return translateExpression(body, scope, context);
   return render(
-    translatePure(body.statements, 0, scope, context, () => {
+    translatePure(body.statements, scope, context, () => {
       throw new TsproverError("This function must return a value on every path", body);
     }),
   );
@@ -168,16 +168,15 @@ export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Conte
 
 const translatePure = (
   statements: readonly ts.Statement[],
-  index: number,
   scope: Scope,
   context: Context,
   next: (scope: Scope) => Formula,
 ): Formula => {
-  if (index === statements.length) return next(scope);
-  const statement = statements[index];
-  const continueWith = (inner: Scope) => translatePure(statements, index + 1, inner, context, next);
+  if (statements.length === 0) return next(scope);
+  const statement = statements[0];
+  const continueWith = (inner: Scope) => translatePure(statements.slice(1), inner, context, next);
   if (ts.isBlock(statement)) {
-    return translatePure(statement.statements, 0, scope, context, continueWith);
+    return translatePure(statement.statements, scope, context, continueWith);
   }
   if (ts.isVariableStatement(statement)) {
     const bound = statement.declarationList.declarations.reduce<Bound>(
@@ -195,17 +194,12 @@ const translatePure = (
     return letIn(bound.definitions, continueWith(bound.scope));
   }
   if (ts.isIfStatement(statement)) {
-    const condition = translateCondition(statement.expression, scope, context);
-    const whenTrue = translatePure([statement.thenStatement], 0, scope, context, continueWith);
-    const whenFalse =
-      statement.elseStatement === undefined
-        ? continueWith(scope)
-        : translatePure([statement.elseStatement], 0, scope, context, continueWith);
-    return ifThenElse(
-      condition,
-      whenTrue,
-      whenFalse,
-      translateNegatedCondition(statement.expression, scope, context),
+    return translateIf(
+      statement,
+      scope,
+      context,
+      (branch) => translatePure([branch], scope, context, continueWith),
+      () => continueWith(scope),
     );
   }
   if (ts.isReturnStatement(statement)) {
@@ -217,10 +211,9 @@ const translatePure = (
     return translateSwitch(
       statement,
       scope,
-      scope,
       context,
-      (clause, inner, after) => translatePure(clause, 0, inner, context, after),
-      continueWith,
+      (clause) => translatePure(clause, scope, context, continueWith),
+      () => continueWith(scope),
     );
   }
   throw new TsproverError(`Unsupported statement: ${statement.getText()}`, statement);
@@ -235,23 +228,40 @@ export const translateThrow = (statement: ts.ThrowStatement, scope: Scope, conte
   return `Assert(FALSE, ${message})`;
 };
 
-// A switch as nested IFs. Each clause but the last must end in break, return, or throw.
-export const translateSwitch = <State>(
-  statement: ts.SwitchStatement,
-  state: State,
+// An if statement as an IF. Without an else, the false branch is the rest of the statements.
+export const translateIf = (
+  statement: ts.IfStatement,
   scope: Scope,
   context: Context,
-  translateClause: (
-    statements: readonly ts.Statement[],
-    state: State,
-    after: (state: State) => Formula,
-  ) => Formula,
-  continueWith: (state: State) => Formula,
+  translateBranch: (branch: ts.Statement) => Formula,
+  translateRest: () => Formula,
+) => {
+  const condition = translateCondition(statement.expression, scope, context);
+  const whenTrue = translateBranch(statement.thenStatement);
+  const whenFalse =
+    statement.elseStatement === undefined
+      ? translateRest()
+      : translateBranch(statement.elseStatement);
+  return ifThenElse(
+    condition,
+    whenTrue,
+    whenFalse,
+    translateNegatedCondition(statement.expression, scope, context),
+  );
+};
+
+// A switch as nested IFs. Each clause but the last must end in break, return, or throw.
+export const translateSwitch = (
+  statement: ts.SwitchStatement,
+  scope: Scope,
+  context: Context,
+  translateClause: (statements: readonly ts.Statement[]) => Formula,
+  translateRest: () => Formula,
 ): Formula => {
   const subject = wrap(translateExpression(statement.expression, scope, context));
   const clauses = statement.caseBlock.clauses;
   const translateFrom = (start: number): Formula => {
-    if (start === clauses.length) return continueWith(state);
+    if (start === clauses.length) return translateRest();
     // Empty clauses fall through to the next clause with statements.
     const end = clauses.findIndex(
       (clause, index) => index >= start && clause.statements.length > 0,
@@ -267,8 +277,9 @@ export const translateSwitch = <State>(
     if (body.length > 0 && !isTerminated && !isLast) {
       throw new TsproverError("End each case with break, return, or throw", lastClause);
     }
-    const statements = last !== undefined && ts.isBreakStatement(last) ? body.slice(0, -1) : body;
-    const formula = translateClause(statements, state, continueWith);
+    const formula = translateClause(
+      last !== undefined && ts.isBreakStatement(last) ? body.slice(0, -1) : body,
+    );
     if (group.some(ts.isDefaultClause)) return formula;
     const condition = group
       .filter(ts.isCaseClause)

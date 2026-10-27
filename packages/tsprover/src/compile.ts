@@ -36,7 +36,7 @@ const translateExported = (
 ) => {
   const tag = [...definition.tags.keys()].find((candidate) => VALUE_TAGS.has(candidate));
   if (tag !== undefined) return translateProperty(definition, tag, model, sections, context);
-  if (writesState(definition.body, context, new Set())) {
+  if (writesState(definition.body, context)) {
     return translateStep(definition, sections, context);
   }
   const returnType = context.checker.getSignatureFromDeclaration(definition.node)?.getReturnType();
