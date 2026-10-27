@@ -18,7 +18,7 @@ import type {
   SourceRange,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { tokenize, type Token } from "./lexer";
+import { getNumeralValue, tokenize, type Token } from "./lexer";
 
 interface InfixOperator {
   low: number;
@@ -358,10 +358,15 @@ export const parseModule = (source: string): Module => {
   const parseSubscript = (): Expression => {
     const token = peek();
     if (token.kind === "Identifier") {
-      cursor.index++;
+      const start = cursor.index;
+      const names = [expectIdentifier()];
+      while (isAt("!") && peek(1).kind === "Identifier") {
+        advance();
+        names.push(expectIdentifier());
+      }
       return withRange(
-        { kind: "Identifier", name: token.text, location: getLocation(token) },
-        cursor.index - 1,
+        { kind: "Identifier", name: names.join("!"), location: getLocation(token) },
+        start,
       );
     }
     if (isAt("<<") || isAt("(")) return parsePrimary();
@@ -580,7 +585,7 @@ export const parseModule = (source: string): Module => {
 
   const parseSelector = (): Selector => {
     const token = advance();
-    if (token.kind === "Number") return { kind: "Operand", operand: Number(token.text) };
+    if (token.kind === "Number") return { kind: "Operand", operand: getNumeralValue(token.text) };
     switch (token.text) {
       case "<<":
       case ">>":
@@ -600,7 +605,10 @@ export const parseModule = (source: string): Module => {
   const parsePrimary = (): Expression => {
     const token = advance();
     const location = getLocation(token);
-    if (token.kind === "Number") return { kind: "Number", value: Number(token.text), location };
+    if (token.kind === "Number") {
+      return { kind: "Number", value: getNumeralValue(token.text), text: token.text, location };
+    }
+    if (token.kind === "Decimal") return { kind: "Decimal", text: token.text, location };
     if (token.kind === "String") return { kind: "String", value: token.text, location };
     if (token.kind === "Identifier") {
       if (isLabelAhead()) {
@@ -1033,39 +1041,41 @@ export const parseModule = (source: string): Module => {
     );
   };
 
-  const parseTheorem = (): Definition | undefined => {
+  const parseTheorem = (module: Module) => {
     const start = cursor.index;
-    const theorem = parseTheoremUnit();
-    return theorem && withRange(theorem, start);
-  };
-
-  const parseTheoremUnit = (): Definition | undefined => {
-    const start = advance();
-    if (peek().kind === "Identifier" && isAt("==", 1)) factNames.add(peek().text);
-    const isNamed = peek().kind === "Identifier" && isAt("==", 1) && !isAt("ASSUME", 2);
-    if (!isNamed) {
-      skipUnit(start);
-      return undefined;
+    const keyword = advance();
+    const isNamed = peek().kind === "Identifier" && isAt("==", 1);
+    if (isNamed) factNames.add(peek().text);
+    if (isAt("ASSUME", isNamed ? 2 : 0)) {
+      skipUnit(keyword);
+      return;
     }
-    const name = expectIdentifier();
-    advance();
+    const name = isNamed ? expectIdentifier() : undefined;
+    if (isNamed) advance();
     const end = { value: cursor.index };
-    while (!isProofStart(end.value, start)) end.value++;
+    while (!isProofStart(end.value, keyword)) end.value++;
     cursor.limit = end.value;
     const body = parseExpression();
     const isComplete = cursor.index === end.value;
     cursor.limit = tokens.length;
-    skipUnit(start);
-    if (!isComplete) return undefined;
-    return {
-      kind: "Operator",
-      name,
-      params: [],
-      body,
-      isLocal: false,
-      isRecursive: false,
-      location: getLocation(start),
-    };
+    skipUnit(keyword);
+    if (!isComplete) return;
+    module.theorems.push(body);
+    if (name === undefined) return;
+    module.definitions.push(
+      withRange(
+        {
+          kind: "Operator",
+          name,
+          params: [],
+          body,
+          isLocal: false,
+          isRecursive: false,
+          location: getLocation(keyword),
+        },
+        start,
+      ),
+    );
   };
 
   const parseAssumption = (): Assumption => {
@@ -1101,6 +1111,7 @@ export const parseModule = (source: string): Module => {
       instances: [],
       assumptions: [],
       location,
+      theorems: [],
     };
     openModules.push(module);
     while (true) {
@@ -1179,8 +1190,7 @@ export const parseModule = (source: string): Module => {
         }
       }
       if (token.kind === "Keyword" && THEOREM_KEYWORDS.has(token.text)) {
-        const theorem = parseTheorem();
-        if (theorem) module.definitions.push(theorem);
+        parseTheorem(module);
         continue;
       }
       const unit = parseDefinition(false);
