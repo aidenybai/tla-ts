@@ -78,10 +78,10 @@ const createData = (level = 0): LevelData => ({
   argParams: new Set(),
 });
 
-const putConstraint = (constraints: Map<string, number>, name: string, level: number) =>
+export const putConstraint = (constraints: Map<string, number>, name: string, level: number) =>
   constraints.set(name, Math.min(level, constraints.get(name) ?? MAX_LEVEL));
 
-const putArgConstraint = (constraints: Map<string, number>, key: string, level: number) =>
+export const putArgConstraint = (constraints: Map<string, number>, key: string, level: number) =>
   constraints.set(key, Math.max(level, constraints.get(key) ?? 0));
 
 const createSignature = (
@@ -561,9 +561,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           expression.bounds.map((bound) => bound.set),
           getBoundNames(expression.bounds),
         );
-        const isActionBound = () =>
-          expression.bounds.some((bound) => analyze(bound.set, scope).level === ACTION_LEVEL);
-        if (data.level === TEMPORAL_LEVEL && isActionBound()) {
+        if (
+          data.level === TEMPORAL_LEVEL &&
+          expression.bounds.some((bound) => analyze(bound.set, scope).level === ACTION_LEVEL)
+        ) {
           throw createLevelError(
             "Action-level bound of quantified temporal formula",
             expression.location,
@@ -813,7 +814,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return levels;
   };
 
-  return { analyze, analyzeDefinition, getNonLeibnizNames, resolve, toOperand };
+  return { analyze, analyzeDefinition, toOperand };
 };
 
 const analyzeAssumeProve = (
