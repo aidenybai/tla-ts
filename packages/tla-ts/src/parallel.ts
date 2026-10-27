@@ -75,7 +75,7 @@ const spawnWorker = async (onMessage: (message: WorkerMessage) => void): Promise
     /* @vite-ignore */ /* webpackIgnore: true */ WORKER_THREADS_MODULE
   );
   const worker = new threads.Worker(new URL("./parallel-worker.js", import.meta.url));
-  worker.on("message", (message: WorkerMessage) => onMessage(message));
+  worker.on("message", onMessage);
   worker.on("error", () => onMessage({ type: "abort" }));
   return {
     postMessage: (message, transfer) =>
@@ -200,7 +200,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   if (statistics.distinctStates === 0) return createSuccess();
 
   const reports: WorkerMessage[] = [];
-  const pending = { resolve: (_: WorkerMessage[]) => {} };
+  const pending = { resolve: (_reports: WorkerMessage[]) => {} };
   const onMessage = (message: WorkerMessage) => {
     reports.push(message);
     if (message.type === "abort" || reports.length === count) {
@@ -215,7 +215,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const workers = await Promise.all(Array.from({ length: count }, () => spawnWorker(onMessage)));
   const terminate = () => workers.forEach((worker) => worker.terminate());
   const channels = new Map<string, MessageChannel>();
-  const getPort = (from: number, to: number): Port => {
+  const getPort = (from: number, to: number) => {
     const key = from < to ? `${from}:${to}` : `${to}:${from}`;
     const channel = channels.get(key) ?? new MessageChannel();
     channels.set(key, channel);
@@ -264,7 +264,9 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     statistics.generatedStates += levels.reduce((sum, message) => sum + message.generated, 0);
     statistics.distinctStates += added;
     levels.forEach((message) => {
-      message.outDegrees.forEach((count, degree) => (statistics.outDegrees[degree] += count));
+      message.outDegrees.forEach(
+        (degreeCount, degree) => (statistics.outDegrees[degree] += degreeCount),
+      );
       tlcFingerprints.push(message.fingerprints);
     });
     if (added === 0) {
