@@ -48,7 +48,7 @@ describe("SPECIFICATION matches TLC", () => {
       await expect(
         checkSpecification(`SPECIFICATION ${name}`, "Specifications", "{1}"),
       ).rejects.toThrow(
-        new TlaConfigError("The configuration file did not specify the initial state predicate"),
+        new TlaConfigError("The configuration file did not specify the initial state predicate."),
       );
     },
   );
