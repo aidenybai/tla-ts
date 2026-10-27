@@ -175,10 +175,8 @@ export const createTlcExtOperators = (
       }
       return createModelValue(name);
     }),
-    defineLazyOperator("TLCDefer", 1, (args) => {
-      getThunk(args, 0, "TLCDefer")();
-      return true;
-    }),
+    // TLC runs the deferred expression only in simulation, when it extends a behavior.
+    defineLazyOperator("TLCDefer", 1, () => true),
     defineOperator("TLCNoOp", 1, (args) => getValue(args, 0, "TLCNoOp")),
     defineLazyOperator("PickSuccessor", 1, (args, context) => {
       if (getThunk(args, 0, "PickSuccessor")() === true) return true;
