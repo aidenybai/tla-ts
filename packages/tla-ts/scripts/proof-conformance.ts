@@ -9,7 +9,7 @@ import {
 } from "../src";
 import { parseConfig } from "../src/config";
 import { createEnvironment } from "../src/environment";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, LIBRARY_DIRECTORIES } from "./corpora";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getLibraryModules } from "./corpora";
 import type { SanyResult } from "./record-sany";
 
 type Verdict = "match" | "accepted" | "rejected" | "unsupported";
@@ -21,7 +21,10 @@ interface ParseOutcome {
 
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".sany-results.json");
 
-const readModule = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : undefined);
+const readModule = (path: string | undefined) =>
+  path !== undefined && existsSync(path) ? readFileSync(path, "utf8") : undefined;
+
+const libraryModules = getLibraryModules();
 
 // tla-ts checks a module the way SANY does when it builds the environment, before it needs a model.
 const analyze = (path: string): ParseOutcome => {
@@ -37,9 +40,7 @@ const analyze = (path: string): ParseOutcome => {
     createEnvironment(parseConfig(""), {
       source,
       loadModule: (name) =>
-        [dirname(path), ...LIBRARY_DIRECTORIES]
-          .map((directory) => readModule(join(directory, `${name}.tla`)))
-          .find((module) => module !== undefined),
+        readModule(join(dirname(path), `${name}.tla`)) ?? readModule(libraryModules.get(name)),
       print: () => {},
       files: { readFile: undefined, writeFile: undefined },
     });

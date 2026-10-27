@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
-import { basename, delimiter, dirname, join } from "node:path";
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import {
   CONFORMANCE_DIRECTORY,
   CORPORA_DIRECTORY,
   findModules,
-  LIBRARY_DIRECTORIES,
+  getLibraryModules,
   type CorpusModule,
 } from "./corpora";
 import { digestSany, type ModuleDigest } from "./proof-digest";
@@ -19,6 +19,9 @@ export interface SanyResult {
 }
 
 export const SANY_PATH = join(CONFORMANCE_DIRECTORY, "sany.json");
+
+// One directory of library modules, so SANY finds them after its standard modules.
+const LIBRARY_PATH = join(CONFORMANCE_DIRECTORY, ".library");
 
 const CONCURRENCY = 3;
 
@@ -53,14 +56,7 @@ const runJava = (args: string[], directory: string) =>
 const runSany = async (module: CorpusModule): Promise<SanyResult> => {
   const directory = dirname(module.path);
   const exported = await runJava(
-    [
-      "tla2sany.xml.XMLExporter",
-      "-o",
-      "-t",
-      "-r",
-      ...LIBRARY_DIRECTORIES.flatMap((library) => ["-I", library]),
-      basename(module.path),
-    ],
+    ["tla2sany.xml.XMLExporter", "-o", "-t", "-r", "-I", LIBRARY_PATH, basename(module.path)],
     directory,
   );
   if (exported.exitCode === 0) {
@@ -73,12 +69,7 @@ const runSany = async (module: CorpusModule): Promise<SanyResult> => {
   }
   // XML cannot hold some characters that a module may contain, so SANY alone decides those modules.
   const checked = await runJava(
-    [
-      `-DTLA-Library=${LIBRARY_DIRECTORIES.join(delimiter)}`,
-      "tla2sany.SANY",
-      "-error-codes",
-      basename(module.path),
-    ],
+    [`-DTLA-Library=${LIBRARY_PATH}`, "tla2sany.SANY", "-error-codes", basename(module.path)],
     directory,
   );
   return checked.exitCode === 0
@@ -86,6 +77,9 @@ const runSany = async (module: CorpusModule): Promise<SanyResult> => {
     : { id: module.id, status: "error", error: getError(checked.output) };
 };
 
+rmSync(LIBRARY_PATH, { recursive: true, force: true });
+mkdirSync(LIBRARY_PATH);
+getLibraryModules().forEach((path, name) => symlinkSync(path, join(LIBRARY_PATH, `${name}.tla`)));
 const modules = findModules();
 const results: SanyResult[] = [];
 const queue = [...modules];
