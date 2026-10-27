@@ -39,7 +39,7 @@ npx tla-ts Spec.tla -workers auto
 npx tla-ts Spec.tla -seed 42
 ```
 
-Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` turns off deadlock checking. `-seed` sets the seed of `RandomElement` and the Randomization module, which defaults to 0. `-workers` checks on several threads, one per core with `auto`. Output and exit codes follow TLC:
+Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` turns off deadlock checking. `-seed` sets the seed of `RandomElement` and the Randomization module, which defaults to 0. `-workers` checks on several threads, one per core with `auto`. A compiled Java class named after a module, next to the spec, overrides that module's operators. Output and exit codes follow TLC:
 
 | Exit code | Meaning                      |
 | --------: | ---------------------------- |
@@ -72,6 +72,7 @@ Options:
 - `source`: the TLA+ module to check
 - `config`: a TLC configuration, as source text or as the result of `parseConfig`
 - `loadModule`: maps a module name to its source, for modules other than the standard modules
+- `loadClass`: maps a module name to the bytes of a compiled Java class, which overrides the module's operators as TLC's module overrides do. tla-ts runs overrides that return a constant `BoolValue`, `IntValue`, or `StringValue`
 - `onPrint`: receives the output of `Print` and `PrintT`, which defaults to `console.log`
 - `onPause`: runs when `TLCSet("pause", TRUE)` pauses checking, and checking resumes when it returns. The CLI waits for a line on standard input, as TLC does
 - `readFile` and `writeFile`: let the Json module read and write files, as TLC does from its working directory. Without `readFile`, `JsonDeserialize` fails as if the file were missing. Without `writeFile`, `JsonSerialize` writes nothing and still returns `TRUE`, so a spec that exports traces checks the same way in the browser

@@ -99,11 +99,13 @@ const createInbox = () => {
 const run = (start: StartMessage, parent: Port) => {
   const modules = new Map(start.modules);
   const loadModule = (name: string) => modules.get(name);
+  const classes = new Map(start.classes);
   setStringOrder(getTlcStringOrder(start.source, start.config, loadModule));
   const startupStrings = getRankedStringCount();
   const specification = createEnvironment(start.config, {
     source: start.source,
     loadModule,
+    loadClass: (name) => classes.get(name),
     print: () => {},
     files: { readFile: undefined, writeFile: undefined },
   });

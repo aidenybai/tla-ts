@@ -31,6 +31,10 @@ export const checkModel = async (specPath: string, configPath: string): Promise<
       const modulePath = join(directory, `${name}.tla`);
       return existsSync(modulePath) ? readFileSync(modulePath, "utf8") : undefined;
     },
+    loadClass: (name) => {
+      const classPath = join(directory, `${name}.class`);
+      return existsSync(classPath) ? readFileSync(classPath) : undefined;
+    },
     readFile: (path) => {
       const filePath = join(directory, path);
       return existsSync(filePath) ? readFileSync(filePath, "utf8") : undefined;
