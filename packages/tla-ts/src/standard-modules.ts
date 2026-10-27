@@ -28,7 +28,6 @@ import { TLC_JAVA_METHODS } from "./tlc-modules";
 import {
   createSet,
   describeKind,
-  createSortedSet,
   createTuple,
   differenceSorted,
   formatValue,
@@ -46,6 +45,7 @@ import {
   unionSorted,
   isEqualLikeTlc,
   createEnumeratedSet,
+  EMPTY_SET,
   type IntervalValue,
   type MixedSetValue,
   type SetOperationValue,
@@ -63,7 +63,6 @@ const isSubsetOf = (left: Value[], right: Value) =>
   left.every((element) => isElementOf(element, right));
 
 const BOOLEAN_SET = createSet([false, true]);
-const EMPTY_SET = createSortedSet([]);
 
 // Merging the sets pairwise in a balanced tree compares each element about log2 of their count
 // times.
