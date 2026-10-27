@@ -4,6 +4,7 @@ import { createFunction, type Value } from "./values";
 export interface CheckerRuntime {
   getLevel: (state: (Value | undefined)[]) => number;
   getBehavior: (state: Value[]) => Value[][];
+  setLivenessSource: (index: number) => void;
   getCurrentState: () => Value[] | undefined;
   getFingerprint: (state: Value[]) => bigint;
   getRandom: () => JavaRandom;
@@ -35,6 +36,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
   const runtime: CheckerRuntime = {
     getLevel: () => 0,
     getBehavior: () => [],
+    setLivenessSource: () => {},
     getCurrentState: () => undefined,
     getFingerprint: getTlcFingerprint,
     getRandom: () => {

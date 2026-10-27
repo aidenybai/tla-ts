@@ -654,6 +654,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     isExpanding: false,
     candidate: undefined as Value[] | undefined,
     candidateLevel: 0,
+    livenessSource: -1,
   };
   const getPath = (index: number): Value[][] =>
     index === -1 ? [] : [...getPath(parents[index]), states[index]];
@@ -662,7 +663,12 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     return index === -1 ? [...getPath(current.index), state] : getPath(index);
   };
   runtime.getCurrentState = () => (current.index === -1 ? undefined : states[current.index]);
+  runtime.setLivenessSource = (index) => {
+    current.livenessSource = index;
+  };
   runtime.getLevel = (state) => {
+    const source = current.livenessSource;
+    if (source !== -1) return state === states[source] ? depths[source] : depths[source] + 1;
     if (state === current.candidate) return current.candidateLevel;
     if (current.index === -1) return 0;
     if (state === states[current.index]) return depths[current.index];
@@ -760,6 +766,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       runtime.queueSize++;
     }
     const accepted = liveness?.addState(index, state, liveSuccessors);
+    current.livenessSource = -1;
     if (accepted) {
       return createResult("property-violation", {
         name: accepted.name,
@@ -771,6 +778,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   current.index = -1;
   current.candidate = undefined;
   const lasso = liveness?.findViolation();
+  current.livenessSource = -1;
   if (lasso) {
     return createResult("liveness-violation", {
       name: lasso.name,
