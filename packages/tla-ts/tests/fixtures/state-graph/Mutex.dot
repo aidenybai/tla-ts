@@ -1,0 +1,43 @@
+strict digraph DiskGraph {
+node [shape=box,style=rounded]
+edge [colorscheme="paired12"]
+nodesep=0.35;
+subgraph cluster_graph {
+color="white";
+-136632289946012243 [label="/\\ location = (0 :> \"idle\" @@ 1 :> \"idle\")\n/\\ turn = 0\n/\\ wants = (0 :> FALSE @@ 1 :> FALSE)",style = filled]
+1042509021137651194 [label="/\\ location = (0 :> \"idle\" @@ 1 :> \"idle\")\n/\\ turn = 1\n/\\ wants = (0 :> FALSE @@ 1 :> FALSE)",style = filled]
+-136632289946012243 -> 638774669081198396 [label="Request(0)",color="2",fontcolor="2"];
+638774669081198396 [label="/\\ location = (0 :> \"waiting\" @@ 1 :> \"idle\")\n/\\ turn = 1\n/\\ wants = (0 :> TRUE @@ 1 :> FALSE)",tooltip="/\\ location = (0 :> \"waiting\" @@ 1 :> \"idle\")\n/\\ turn = 1\n/\\ wants = (0 :> TRUE @@ 1 :> FALSE)"];
+-136632289946012243 -> 1507745914910579947 [label="Request(1)",color="2",fontcolor="2"];
+1507745914910579947 [label="/\\ location = (0 :> \"idle\" @@ 1 :> \"waiting\")\n/\\ turn = 0\n/\\ wants = (0 :> FALSE @@ 1 :> TRUE)",tooltip="/\\ location = (0 :> \"idle\" @@ 1 :> \"waiting\")\n/\\ turn = 0\n/\\ wants = (0 :> FALSE @@ 1 :> TRUE)"];
+1042509021137651194 -> 638774669081198396 [label="Request(0)",color="2",fontcolor="2"];
+1042509021137651194 -> 1507745914910579947 [label="Request(1)",color="2",fontcolor="2"];
+638774669081198396 -> 1360916657100278041 [label="Enter(0)",color="3",fontcolor="3"];
+1360916657100278041 [label="/\\ location = (0 :> \"critical\" @@ 1 :> \"idle\")\n/\\ turn = 1\n/\\ wants = (0 :> TRUE @@ 1 :> FALSE)",tooltip="/\\ location = (0 :> \"critical\" @@ 1 :> \"idle\")\n/\\ turn = 1\n/\\ wants = (0 :> TRUE @@ 1 :> FALSE)"];
+638774669081198396 -> 6785822979656264093 [label="Request(1)",color="2",fontcolor="2"];
+6785822979656264093 [label="/\\ location = (0 :> \"waiting\" @@ 1 :> \"waiting\")\n/\\ turn = 0\n/\\ wants = (0 :> TRUE @@ 1 :> TRUE)",tooltip="/\\ location = (0 :> \"waiting\" @@ 1 :> \"waiting\")\n/\\ turn = 0\n/\\ wants = (0 :> TRUE @@ 1 :> TRUE)"];
+1507745914910579947 -> -5890356720001115702 [label="Request(0)",color="2",fontcolor="2"];
+-5890356720001115702 [label="/\\ location = (0 :> \"waiting\" @@ 1 :> \"waiting\")\n/\\ turn = 1\n/\\ wants = (0 :> TRUE @@ 1 :> TRUE)",tooltip="/\\ location = (0 :> \"waiting\" @@ 1 :> \"waiting\")\n/\\ turn = 1\n/\\ wants = (0 :> TRUE @@ 1 :> TRUE)"];
+1507745914910579947 -> -8684737568587724645 [label="Enter(1)",color="3",fontcolor="3"];
+-8684737568587724645 [label="/\\ location = (0 :> \"idle\" @@ 1 :> \"critical\")\n/\\ turn = 0\n/\\ wants = (0 :> FALSE @@ 1 :> TRUE)",tooltip="/\\ location = (0 :> \"idle\" @@ 1 :> \"critical\")\n/\\ turn = 0\n/\\ wants = (0 :> FALSE @@ 1 :> TRUE)"];
+1360916657100278041 -> 1042509021137651194 [label="Exit(0)",color="4",fontcolor="4"];
+1360916657100278041 -> 2723680907801833032 [label="Request(1)",color="2",fontcolor="2"];
+2723680907801833032 [label="/\\ location = (0 :> \"critical\" @@ 1 :> \"waiting\")\n/\\ turn = 0\n/\\ wants = (0 :> TRUE @@ 1 :> TRUE)",tooltip="/\\ location = (0 :> \"critical\" @@ 1 :> \"waiting\")\n/\\ turn = 0\n/\\ wants = (0 :> TRUE @@ 1 :> TRUE)"];
+6785822979656264093 -> 2723680907801833032 [label="Enter(0)",color="3",fontcolor="3"];
+-5890356720001115702 -> 4952595532424247348 [label="Enter(1)",color="3",fontcolor="3"];
+4952595532424247348 [label="/\\ location = (0 :> \"waiting\" @@ 1 :> \"critical\")\n/\\ turn = 1\n/\\ wants = (0 :> TRUE @@ 1 :> TRUE)",tooltip="/\\ location = (0 :> \"waiting\" @@ 1 :> \"critical\")\n/\\ turn = 1\n/\\ wants = (0 :> TRUE @@ 1 :> TRUE)"];
+-8684737568587724645 -> 4952595532424247348 [label="Request(0)",color="2",fontcolor="2"];
+-8684737568587724645 -> -136632289946012243 [label="Exit(1)",color="4",fontcolor="4"];
+2723680907801833032 -> 1507745914910579947 [label="Exit(0)",color="4",fontcolor="4"];
+4952595532424247348 -> 638774669081198396 [label="Exit(1)",color="4",fontcolor="4"];
+{rank = same; -136632289946012243;1042509021137651194;}
+{rank = same; 638774669081198396;1507745914910579947;}
+{rank = same; -5890356720001115702;6785822979656264093;-8684737568587724645;1360916657100278041;}
+{rank = same; 2723680907801833032;4952595532424247348;}
+}
+subgraph cluster_legend {graph[style=bold];label = "Next State Actions" style="solid"
+node [ labeljust="l",colorscheme="paired12",style=filled,shape=record ]
+Request [label="Request",fillcolor=2]
+Enter [label="Enter",fillcolor=3]
+Exit [label="Exit",fillcolor=4]
+}}
