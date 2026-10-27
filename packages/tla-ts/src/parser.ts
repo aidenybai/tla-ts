@@ -768,6 +768,14 @@ export const parseModule = (source: string): Module => {
     return params;
   };
 
+  const parseBody = () => {
+    const start = getLocation(peek());
+    const body = parseExpression();
+    const last = tokens[cursor.index - 1];
+    const end = { line: last.line, column: last.endColumn };
+    return { body, bodyRange: { module: openModules[openModules.length - 1].name, start, end } };
+  };
+
   const parseDefinition = (isLocal: boolean): Definition | Instance => {
     const token = peek();
     const location = getLocation(token);
@@ -788,7 +796,7 @@ export const parseModule = (source: string): Module => {
             { name: left, arity: 0 },
             { name: right, arity: 0 },
           ],
-          body: parseExpression(),
+          ...parseBody(),
           isLocal,
           isRecursive: recursiveNames.has(operator),
           location,
@@ -807,7 +815,7 @@ export const parseModule = (source: string): Module => {
         kind: "Operator",
         name: operator,
         params: [{ name: param, arity: 0 }],
-        body: parseExpression(),
+        ...parseBody(),
         isLocal,
         isRecursive: recursiveNames.has(operator),
         location,
@@ -835,7 +843,7 @@ export const parseModule = (source: string): Module => {
       kind: "Operator",
       name,
       params,
-      body: parseExpression(),
+      ...parseBody(),
       isLocal,
       isRecursive: recursiveNames.has(name),
       location,
