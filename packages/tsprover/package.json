@@ -1,6 +1,6 @@
 {
   "name": "tsprover",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Model check TypeScript by compiling it to TLA+",
   "keywords": [
     "formal verification",
