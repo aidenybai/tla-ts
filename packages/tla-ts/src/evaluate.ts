@@ -25,6 +25,7 @@ import {
   createEnumeratedSet,
   createSortedFunction,
   createSortedSet,
+  createWrittenRecord,
   createTuple,
   formatValue,
   getDomain,
@@ -1601,6 +1602,15 @@ const compileRecord = (recordFields: RecordField[], environment: Environment): E
       );
   }
   const names: Value[] = fields.map((field) => field.name);
+  const writtenNames = recordFields.map((field) => field.name);
+  if (writtenNames.some((name, index) => name !== names[index])) {
+    return (context) =>
+      createWrittenRecord(
+        names,
+        values.map((value) => value(context)),
+        writtenNames,
+      );
+  }
   return (context) =>
     createSortedFunction(
       names,

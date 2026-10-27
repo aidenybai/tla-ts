@@ -27,6 +27,7 @@ import {
   createEnumeratedSet,
   createSortedFunction,
   createTuple,
+  createWrittenRecord,
   valuesEqual,
   type Value,
 } from "./values";
@@ -79,6 +80,7 @@ const createRuntime = () => ({
   tuple: createTuple,
   set: createEnumeratedSet,
   record: createSortedFunction,
+  writtenRecord: createWrittenRecord,
   equal: valuesEqual,
   enumerate: getEnumeratedElements,
   unassigned: (name: string, expression: Expression): never => {
@@ -265,7 +267,12 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         generator,
         fields.map((field) => field.name),
       );
-      return `record(${names}, [${fields.map((field) => generate(field.value)).join(", ")}])`;
+      const values = `[${fields.map((field) => generate(field.value)).join(", ")}]`;
+      const writtenNames = expression.fields.map((field) => field.name);
+      if (writtenNames.every((name, index) => name === fields[index].name)) {
+        return `record(${names}, ${values})`;
+      }
+      return `writtenRecord(${names}, ${values}, ${addReference(generator, writtenNames)})`;
     }
     case "Tuple":
       return `tuple([${expression.elements.map((element) => generate(element)).join(", ")}])`;
