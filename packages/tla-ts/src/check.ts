@@ -603,9 +603,7 @@ export const findAssumptionViolation = (
   for (const assumption of assumptions.filter((candidate) => !candidate.isAxiom)) {
     const failure = getConstantFailure(assumption.expression, environment, "an assumption");
     if (failure) {
-      const name =
-        assumption.name ?? `line ${assumption.location.line}, column ${assumption.location.column}`;
-      return { name, trace: [], message: failure.message };
+      return { name: describeRange(assumption.expression), trace: [], message: failure.message };
     }
   }
   return undefined;

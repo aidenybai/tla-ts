@@ -35,6 +35,11 @@ describe("the CLI prints traces like TLC", () => {
 
 // TLC's output for the same models, without the lines that report versions, progress and time.
 const TLC_REPORTS = [
+  [
+    "AssumptionFalse",
+    10,
+    ["Error: Assumption line 4, col 20 to line 4, col 24 of module AssumptionFalse is false."],
+  ],
   ["InitialInvariant", 12, ["Error: Invariant Inv is violated by the initial state:", "x = 0", ""]],
   [
     "Lasso",

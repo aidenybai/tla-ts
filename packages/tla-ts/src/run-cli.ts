@@ -108,7 +108,8 @@ const printResult = (result: CheckResult) => {
     const unwitnessed = violation.unwitnessed;
     if (unwitnessed?.counts) console.log(unwitnessed.counts);
     if (unwitnessed) console.log(`Error: ${unwitnessed.message}`);
-    if (isInitial) return;
+    // TLC checks assumptions before it starts the search, so it has no statistics to print.
+    if (isInitial || result.status === "assumption-violation") return;
   } else {
     console.log("Model checking completed. No error has been found.");
   }
