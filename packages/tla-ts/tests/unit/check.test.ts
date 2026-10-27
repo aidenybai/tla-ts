@@ -488,6 +488,12 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([42, 10, 7]);
   });
 
+  it("reduces a set of records that a permutation partly moves", async () => {
+    const result = await checkFixture("symmetry", "SymmetricMessages");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([641, 80, 9]);
+  });
+
   it("checks liveness on the symmetry-reduced graph", async () => {
     const result = await checkFixture("symmetry", "SymmetricLiveness");
     expect(result.status).toBe("liveness-violation");
