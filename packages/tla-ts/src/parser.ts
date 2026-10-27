@@ -5,6 +5,7 @@ import type {
   BoundPattern,
   CaseArm,
   Declaration,
+  DefineStep,
   Definition,
   ExceptPathStep,
   ExceptUpdate,
@@ -1276,10 +1277,12 @@ export const parseModule = (source: string): Module => {
       return withRange(parseInstance(undefined, [], false, getLocation(token)), cursor.index);
     }
     if (isAt("DEFINE") || isDefinitionStart()) {
+      const start = cursor.index;
       accept("DEFINE");
       const definitions = [parseDefinition(false)];
       while (isDefinitionStart()) definitions.push(parseDefinition(false));
-      return { kind: "Define", definitions };
+      const define: DefineStep = { kind: "Define", definitions, location: getLocation(token) };
+      return withRange(define, start);
     }
     if (accept("HAVE")) return { kind: "Have", expression: parseExpression() };
     if (accept("TAKE")) {

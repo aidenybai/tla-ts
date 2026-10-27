@@ -401,10 +401,16 @@ export type Proof =
   | { kind: "By"; isOnly: boolean; facts: Fact[]; defs: Fact[]; location: SourceLocation }
   | { kind: "Steps"; level: number; steps: ProofStep[]; location: SourceLocation };
 
+export interface DefineStep {
+  kind: "Define";
+  definitions: (Definition | Instance)[];
+  location: SourceLocation;
+}
+
 export type StepBody =
   | UseOrHide
   | Instance
-  | { kind: "Define"; definitions: (Definition | Instance)[] }
+  | DefineStep
   | { kind: "Have"; expression: Expression }
   | { kind: "Take"; names: string[]; bounds: Bound[] }
   | { kind: "Witness"; expressions: Expression[] }
