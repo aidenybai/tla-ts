@@ -41,6 +41,8 @@ export const checkModel = async (specPath: string, configPath: string): Promise<
     },
     onPrint: () => {},
     seed: TLC_SEED,
+    // The recordings run TLC with -lncheck final, since a periodic check depends on timing.
+    livenessCheck: "final",
   });
   const milliseconds = Math.round(performance.now() - startedAt);
   if (result.failure) {

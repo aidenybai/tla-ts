@@ -23,6 +23,7 @@ import {
   expandTemporal,
   getLevel,
   TEMPORAL_LEVEL,
+  type Lasso,
   type LiveSuccessor,
   type ScopedExpression,
   type TemporalProperty,
@@ -71,6 +72,8 @@ export interface CheckOptions {
   writeFile?: (path: string, content: string) => void;
   seed?: bigint;
   workers?: number;
+  // TLC's -lncheck: "final" checks liveness only on the complete state graph.
+  livenessCheck?: "default" | "final";
 }
 
 export type CheckStatus =
@@ -175,6 +178,13 @@ const createIdentifier = (name: string): Expression => ({
 
 // TLC leaves the kind out when it rejects arguments to the specification or a property.
 const UNNAMED_ARGUMENT_KINDS = new Set(["name", "property"]);
+
+// TLC checks liveness on the graph so far 3 seconds into the search and then every minute, once
+// the graph has grown by a tenth and liveness checking has taken at most a fifth of the time.
+const PERIODIC_START = 3000;
+const PROGRESS_INTERVAL = 60_000;
+const LIVENESS_GROWTH = 0.1;
+const LIVENESS_RATIO = 0.2;
 
 const getConfigOperator = (kind: string, name: string, environment: Environment) => {
   const definition = getDefinition(name, environment);
@@ -1298,27 +1308,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       return toFailure(error, getStateTrace(index), undefined, getPartialOutDegrees());
     }
   };
-  setNextStatePhase(true);
-  for (let index = 0; index < states.length && !runtime.isStopped; index++) {
-    current.index = index;
-    current.candidate = undefined;
-    runtime.queueSize = states.length - index - 1;
-    current.isExpanding = true;
-    try {
-      outcome.result = expandState(index);
-    } catch (error) {
-      outcome.result = toFailure(error, getStateTrace(index));
-    }
-    if (outcome.result) return outcome.result;
-    outDegrees[getOutDegreeBucket()]++;
-    expansion.newStates = 0;
-  }
-
-  current.index = -1;
-  current.candidate = undefined;
-  const lasso = liveness?.findViolation();
-  current.livenessSource = -1;
-  if (lasso) {
+  const reportLasso = (lasso: Lasso) => {
     const path = [...lasso.prefix, ...lasso.cycle];
     const trace = getPathTrace(path, lasso.prefix.length);
     const back = path[lasso.prefix.length];
@@ -1335,7 +1325,46 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
               isSameState(successor.state, states[back]),
             )?.action,
     );
+  };
+  const isPeriodic = liveness !== undefined && options.livenessCheck !== "final";
+  const startedAt = performance.now();
+  const periodic = { at: startedAt + PERIODIC_START, size: 1, time: 0 };
+  const findPeriodicViolation = (expanded: number) => {
+    const now = performance.now();
+    periodic.at = now + PROGRESS_INTERVAL;
+    const isGrown = (expanded - periodic.size) / periodic.size > LIVENESS_GROWTH;
+    if (!isGrown || periodic.time > (now - startedAt) * LIVENESS_RATIO) return undefined;
+    periodic.size = expanded;
+    const lasso = liveness?.findViolation();
+    current.livenessSource = -1;
+    periodic.time += performance.now() - now;
+    return lasso;
+  };
+  setNextStatePhase(true);
+  for (let index = 0; index < states.length && !runtime.isStopped; index++) {
+    current.index = index;
+    current.candidate = undefined;
+    runtime.queueSize = states.length - index - 1;
+    current.isExpanding = true;
+    try {
+      outcome.result = expandState(index);
+    } catch (error) {
+      outcome.result = toFailure(error, getStateTrace(index));
+    }
+    if (outcome.result) return outcome.result;
+    outDegrees[getOutDegreeBucket()]++;
+    expansion.newStates = 0;
+    if (isPeriodic && performance.now() >= periodic.at) {
+      const lasso = findPeriodicViolation(index + 1);
+      if (lasso) return reportLasso(lasso);
+    }
   }
+
+  current.index = -1;
+  current.candidate = undefined;
+  const lasso = liveness?.findViolation();
+  current.livenessSource = -1;
+  if (lasso) return reportLasso(lasso);
 
   const postconditionViolation = search.findPostconditionViolation();
   if (postconditionViolation) {
