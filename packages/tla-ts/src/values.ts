@@ -1232,14 +1232,12 @@ const enumerateSet = (value: Value): Value[] => {
       return toFiniteSet(createEnumeratedSet(elements)).elements;
     }
     case "SetOperation": {
-      const left = formatValue(value.left);
-      const right = formatValue(value.right);
       if (
         value.operator === "\\cup" &&
         (isOverriddenSet(value.left) || isOverriddenSet(value.right))
       ) {
         throw new TlaEvaluationError(
-          `Attempted to enumerate S \\cup T when S:\n${left}\nand T:\n${right}\nare not both enumerable`,
+          `Attempted to enumerate S \\cup T when S:\n${formatValue(value.left)}\nand T:\n${formatValue(value.right)}\nare not both enumerable`,
         );
       }
       if (
@@ -1248,12 +1246,12 @@ const enumerateSet = (value: Value): Value[] => {
         isOverriddenSet(value.right)
       ) {
         throw new TlaEvaluationError(
-          `Attempted to enumerate S \\cap T when neither S:\n${left}\nnor T:\n${right}\nis enumerable`,
+          `Attempted to enumerate S \\cap T when neither S:\n${formatValue(value.left)}\nnor T:\n${formatValue(value.right)}\nis enumerable`,
         );
       }
       if (value.operator === "\\" && isOverriddenSet(value.left)) {
         throw new TlaEvaluationError(
-          `Attempted to enumerate S \\ T when S:\n${left}\nis not enumerable.`,
+          `Attempted to enumerate S \\ T when S:\n${formatValue(value.left)}\nis not enumerable.`,
         );
       }
       if (value.operator === "\\cup")
