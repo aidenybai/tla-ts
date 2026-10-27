@@ -20,6 +20,10 @@ const getBoundNames = (bounds: Bound[]) =>
 
 export const substitutedExpressions = new WeakSet<Expression>();
 
+// Applications inside an instance with substitutions or parameters, which TLC evaluates in a
+// context that binds them.
+export const contextualApplications = new WeakSet<Expression>();
+
 export const renameLocals = (
   expression: Expression,
   names: Map<string, string>,
@@ -537,22 +541,30 @@ const substitute = (
   if (expression.kind === "Apply" && isFree(expression.operator)) {
     const args = expression.args.map(recurse);
     const replacement = instantiation.substitutions.get(expression.operator);
+    const isContextual =
+      instantiation.substitutions.size > 0 ||
+      params.length > 0 ||
+      contextualApplications.has(expression);
+    const mark = <Rewritten extends Expression>(rewritten: Rewritten) => {
+      if (isContextual) contextualApplications.add(rewritten);
+      return rewritten;
+    };
     if (replacement?.kind === "Identifier" || replacement?.kind === "OperatorReference") {
       const operator = replacement.kind === "Identifier" ? replacement.name : replacement.operator;
-      return {
+      return mark({
         ...expression,
         operator,
         args,
         resolution: replacement.kind === "Identifier" ? replacement.resolution : undefined,
-      };
+      });
     }
     if (replacement?.kind === "Apply") {
-      return {
+      return mark({
         ...expression,
         operator: replacement.operator,
         args: [...replacement.args, ...args],
         resolution: replacement.resolution,
-      };
+      });
     }
     if (replacement?.kind === "Lambda") {
       return {
@@ -583,7 +595,7 @@ const substitute = (
       );
     }
     const copy = getCopy(rewrite, expression.operator);
-    if (copy === undefined) return { ...expression, args };
+    if (copy === undefined) return mark({ ...expression, args });
     return {
       ...expression,
       operator: copy,

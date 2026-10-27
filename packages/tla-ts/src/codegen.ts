@@ -195,6 +195,7 @@ const generateApply = (
     const domain = addReference(generator, getDomainOperator(expression));
     return `${domain}(${generateExpression(generator, args[0], frame)})`;
   }
+  if (builtin.name === "TLCEval") return generateDelegate(generator, expression, frame);
   if (builtin.name === "\\subseteq" && args.length === 2) {
     const subset = addReference(generator, getSubsetOperator(expression, builtin));
     return `${subset}(${generateExpression(generator, args[0], frame)}, ${generateExpression(generator, args[1], frame)})`;

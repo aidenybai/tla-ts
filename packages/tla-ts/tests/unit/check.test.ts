@@ -779,6 +779,21 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("sorts a TLCEval argument only outside an instance that substitutes", async () => {
+    const inner =
+      '---- MODULE Inner ----\nEXTENDS TLC\nCONSTANT K\nMixed == 1 \\in TLCEval({1, "a"})\n====';
+    const instanced = await check({
+      source: "---- MODULE M ----\nEXTENDS TLC\nINSTANCE Inner WITH K <- 1\nASSUME Mixed\n====",
+      config: "",
+      loadModule: (name) => (name === "Inner" ? inner : undefined),
+    });
+    expect(instanced.status).toBe("success");
+    const direct = await checkModule('ASSUME 1 \\in TLCEval({1, "a"})');
+    expect(direct.violation?.message).toBe(
+      'Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\nAttempted to compare string "a" with non-string:\n1',
+    );
+  });
+
   it("rejects a mistyped membership outside an assumption", async () => {
     await expect(
       check({

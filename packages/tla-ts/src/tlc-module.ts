@@ -115,7 +115,7 @@ const getPermutations = (elements: Value[]): Value[][] =>
         ]),
       );
 
-// TLC sorts the value of a TLCEval argument it can cache, with every value inside it.
+// TLC sorts the value of a TLCEval argument that it caches, with every value inside it.
 const normalizeDeeply = (value: Value): void => {
   if (typeof value !== "object") return;
   if (value.kind === "Set" || value.kind === "MixedSet") {
@@ -159,18 +159,11 @@ export const createTlcOperators = (
   defineOperator("ToString", 1, (args) =>
     rankString(formatValue(getValue(args, 0, "ToString"), true)),
   ),
-  {
-    kind: "Builtin",
-    name: "TLCEval",
-    arity: 1,
-    evaluate: (args, context) => {
-      const value = getValue(args, 0, "TLCEval");
-      if (context?.scope === undefined) normalizeDeeply(value);
-      return value;
-    },
-    evaluateUnary: undefined,
-    evaluateBinary: undefined,
-  },
+  defineOperator("TLCEval", 1, (args) => {
+    const value = getValue(args, 0, "TLCEval");
+    normalizeDeeply(value);
+    return value;
+  }),
   defineOperator("Permutations", 1, (args) => {
     const elements = getElements(args, 0, "Permutations");
     return createSet(
