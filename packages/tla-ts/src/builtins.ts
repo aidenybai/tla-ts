@@ -44,15 +44,18 @@ export const getSet = (args: BuiltinArgument[], index: number, name: string) => 
   return value;
 };
 
-export const getFiniteSet = (args: BuiltinArgument[], index: number, name: string) => {
+export const getEnumerableSet = (args: BuiltinArgument[], index: number, name: string) => {
   const set = getSet(args, index, name);
   if (!isEnumerable(set)) {
     throw new TlaEvaluationError(
       `${name} cannot enumerate the non-enumerable set ${formatValue(set)}`,
     );
   }
-  return toFiniteSet(set);
+  return set;
 };
+
+export const getFiniteSet = (args: BuiltinArgument[], index: number, name: string) =>
+  toFiniteSet(getEnumerableSet(args, index, name));
 
 export const getElements = (args: BuiltinArgument[], index: number, name: string) =>
   getFiniteSet(args, index, name).elements;

@@ -37,6 +37,7 @@ export interface EnvironmentOptions {
   loadModule: ((name: string) => string | undefined) | undefined;
   print: (text: string) => void;
   files: FileSystem;
+  seed?: bigint;
 }
 
 export interface Specification {
@@ -138,7 +139,7 @@ export const createEnvironment = (
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
   );
   const standardExports = new Map<string, Symbols>();
-  const runtime = createRuntime(config.checkDeadlock);
+  const runtime = createRuntime(config.checkDeadlock, options.seed);
   const linkedModules = new Map<string, LinkedModule>();
   const copyCount = { value: 0 };
 

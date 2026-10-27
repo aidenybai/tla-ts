@@ -2,13 +2,11 @@ import { defineStateOperator, getValue } from "./builtins";
 import { TlaEvaluationError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
+import { getRandomSubset, type JavaRandom } from "./tlc-random";
 import {
-  createRecord,
   createSet,
-  createSortedFunction,
   createTuple,
   formatValue,
-  getCardinality,
   isEmptySet,
   isEnumerable,
   isSetValue,
@@ -35,65 +33,12 @@ const getFiniteElements = (value: Value, position: string, name: string, expecte
   return toFiniteSet(value).elements;
 };
 
-const getMixedRadixElement = (sets: Value[], index: number) => {
-  const lists = sets.map((set) => toFiniteSet(set).elements);
-  return lists.reduceRight<{ remaining: number; elements: Value[] }>(
-    (current, list) => ({
-      remaining: Math.floor(current.remaining / list.length),
-      elements: [list[current.remaining % list.length], ...current.elements],
-    }),
-    { remaining: index, elements: [] },
-  ).elements;
-};
-
-const getElementAt = (set: Value, index: number): Value => {
-  if (typeof set === "object" && set.kind === "Interval") return set.low + index;
-  if (typeof set === "object" && set.kind === "ProductSet") {
-    return createTuple(getMixedRadixElement(set.factors, index));
-  }
-  if (typeof set === "object" && set.kind === "RecordSet") {
-    const values = getMixedRadixElement(set.sets, index);
-    return createRecord(
-      set.names.map((name, position): [string, Value] => [name, values[position]]),
-    );
-  }
-  if (typeof set === "object" && set.kind === "FunctionSet") {
-    const domain = toFiniteSet(set.domain).elements;
-    return createSortedFunction(
-      domain,
-      getMixedRadixElement(
-        domain.map(() => set.range),
-        index,
-      ),
-    );
-  }
-  return toFiniteSet(set).elements[index];
-};
-
-const getSampleSize = (set: Value): number => {
-  if (isEmptySet(set)) return 0;
-  if (typeof set === "object" && set.kind === "ProductSet") {
-    return set.factors.reduce<number>((size, factor) => size * getSampleSize(factor), 1);
-  }
-  if (typeof set === "object" && set.kind === "RecordSet") {
-    return set.sets.reduce<number>((size, factor) => size * getSampleSize(factor), 1);
-  }
-  if (typeof set === "object" && set.kind === "FunctionSet") {
-    return getSampleSize(set.range) ** getCardinality(set.domain);
-  }
-  return getCardinality(set);
-};
-
-const pickSubset = (set: Value, count: number, random: () => number) => {
-  const size = getSampleSize(set);
-  const indices = new Set<number>();
-  while (indices.size < Math.min(count, size)) indices.add(Math.floor(random() * size));
-  return [...indices].map((index) => getElementAt(set, index));
-};
-
-const tossSubsets = (elements: Value[], picks: number, probability: number, random: () => number) =>
+// SubsetValue.CoinTossingSubsetEnumerator: each pick keeps each element with the probability.
+const tossSubsets = (elements: Value[], picks: number, probability: number, random: JavaRandom) =>
   createSet(
-    Array.from({ length: picks }, () => createSet(elements.filter(() => random() < probability))),
+    Array.from({ length: picks }, () =>
+      createSet(elements.filter(() => random.nextDouble() < probability)),
+    ),
   );
 
 const checkPicks = (picks: number, size: number, name: string) => {
@@ -125,7 +70,7 @@ const getRandomSetOfSubsets = (args: BuiltinArgument[], runtime: CheckerRuntime)
     elements,
     picks,
     elements.length === 0 ? 0 : size / elements.length,
-    runtime.random,
+    runtime.getRandom(),
   );
 };
 
@@ -144,7 +89,7 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
     if (!isSetValue(set) || (!isEmptySet(set) && !isEnumerable(set))) {
       throw describeArgument("second", "RandomSubset", "a finite set", formatValue(set));
     }
-    return createSet(pickSubset(set, count, runtime.random));
+    return createSet(getRandomSubset(count, set, runtime.getRandom()));
   }),
   defineStateOperator("RandomSetOfSubsets", 3, (args) => getRandomSetOfSubsets(args, runtime)),
   defineStateOperator("TestRandomSetOfSubsets", 3, (args) =>
@@ -183,6 +128,6 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
       "finite set",
     );
     checkPicks(picks, elements.length, name);
-    return tossSubsets(elements, picks, probability, runtime.random);
+    return tossSubsets(elements, picks, probability, runtime.getRandom());
   }),
 ];
