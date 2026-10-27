@@ -1061,6 +1061,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
     isLocal: boolean,
     location: SourceLocation,
   ): Instance => {
+    const start = cursor.index;
     expect("INSTANCE");
     const module = expectIdentifier();
     const substitutions = accept("WITH")
@@ -1070,7 +1071,16 @@ const parse = (source: string, isTlapm: boolean): Module => {
           return { name: target, expression: parseArgument() };
         })
       : [];
-    return { kind: "Instance", name, params, module, substitutions, isLocal, location };
+    return {
+      kind: "Instance",
+      name,
+      params,
+      module,
+      substitutions,
+      isLocal,
+      location,
+      instanceRange: getRange(start),
+    };
   };
 
   const parseDeclaration = (): Declaration => {

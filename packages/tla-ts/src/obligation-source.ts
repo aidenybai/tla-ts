@@ -1030,7 +1030,8 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
                 whereDefined: "User",
                 visibility: "Hidden",
                 isLocal: instance.isLocal,
-                location,
+                // tlapm locates a named instance from its INSTANCE token.
+                location: getRangeLocus(instance.instanceRange),
               };
         }
         case "Assumption":

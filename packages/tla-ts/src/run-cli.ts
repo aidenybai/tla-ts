@@ -372,10 +372,12 @@ const prove = (args: string[]) => {
     (name) => directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean),
     {
       lines,
-      onWarning: (warning) =>
-        isToolbox && warning.isToolboxMessage
-          ? printToolboxMessage(["type:warning", `msg:${warning.text}`])
-          : console.error(warning.text),
+      onWarning: (warning) => {
+        if (warning.channel === "stdout") return console.log(warning.text);
+        if (isToolbox && warning.channel === "toolbox")
+          return printToolboxMessage(["type:warning", `msg:${warning.text}`]);
+        console.error(warning.text);
+      },
     },
   );
   results.forEach((result) => {

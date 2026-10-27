@@ -1,0 +1,4 @@
+File "./Notes.tla", line 10, characters 9-34:
+Warning: Instancing produces parametric theorems.
+Such theorems will be forcibly hidden and cannot be cited.
+(This warning appears at-most once per INSTANCE declaration.)

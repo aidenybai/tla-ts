@@ -9,6 +9,7 @@ import {
   applyBuiltin,
   at,
   bumpBy,
+  getAtPrefix,
   getScopeAt,
   mapScoped,
   normalizeApply,
@@ -16,6 +17,7 @@ import {
   stripProps,
   substituteExpr,
   type Expr,
+  type ObligationWarning,
   type Scope,
   type Substitution,
 } from "./obligation-expression";
@@ -56,11 +58,13 @@ const getDecrementedLevel = (level: number | undefined) =>
 // auto_expansion_of_defs. ENABLED and the first argument of \cdot need every definition of action
 // level expanded, a prime lowers that bound to 1, and so does the second argument of \cdot.
 const expandDefinitions = (
+  onWarning: (warning: ObligationWarning) => void,
   scope: Scope | undefined,
   expression: Expr,
   level: number | undefined,
 ): Expr => {
-  const recurse = (inner: Expr, innerLevel = level) => expandDefinitions(scope, inner, innerLevel);
+  const recurse = (inner: Expr, innerLevel = level) =>
+    expandDefinitions(onWarning, scope, inner, innerLevel);
   if (isLambdified(expression)) return expression;
   if (expression.kind === "Sub") {
     return {
@@ -90,7 +94,7 @@ const expandDefinitions = (
     return mapScoped(
       scope,
       expression,
-      (inner, child) => expandDefinitions(inner, child, level),
+      (inner, child) => expandDefinitions(onWarning, inner, child, level),
       adjoin,
     );
   }
@@ -113,6 +117,10 @@ const expandDefinitions = (
   if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
     throw new TlapmBugError();
   }
+  onWarning({
+    text: `${getAtPrefix(expression.location)}[INFO]: Auto-expanding the definition of operator:  ${definition.name}\n`,
+    channel: "stdout",
+  });
   const body = substituteExpr(shift(head.index), definition.body);
   return recurse(
     stripProps(expression.kind === "Apply" ? normalizeApply(body, expression.args) : body),
@@ -338,8 +346,13 @@ const checkArity = (expression: Expr): Expr => {
   );
 };
 
-export const lambdify = (anonymizer: Anonymizer, scope: Scope | undefined, expression: Expr) => {
-  const expanded = expandDefinitions(scope, expression, undefined);
+export const lambdify = (
+  anonymizer: Anonymizer,
+  onWarning: (warning: ObligationWarning) => void,
+  scope: Scope | undefined,
+  expression: Expr,
+) => {
+  const expanded = expandDefinitions(onWarning, scope, expression, undefined);
   const bound = shiftIndices(shift(0), bindVariables(undefined, undefined, scope, expanded));
   return checkArity(renameParams(anonymizer.expr(scope, bound)));
 };

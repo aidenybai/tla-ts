@@ -226,6 +226,14 @@ describe("prove prints obligations as tlapm -N does", () => {
     expect(result.stderr).toBe(readToolbox("Warnings"));
   });
 
+  // Notes.stdout and Notes.stderr are what tlapm -N writes.
+  it("prints the notes tlapm prints outside toolbox mode", () => {
+    const result = runCliWith("obligations", ["prove", "-N", "Notes.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(readFileSync(join(FIXTURES, "obligations", "Notes.stdout"), "utf8"));
+    expect(result.stderr).toBe(readFileSync(join(FIXTURES, "obligations", "Notes.stderr"), "utf8"));
+  });
+
   it("prints tlapm's header in toolbox mode", () => {
     const result = runCliWith("obligations", ["prove", "-N", "--line", "3", "Omit.tla"]);
     expect(result.status).toBe(0);

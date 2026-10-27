@@ -208,7 +208,7 @@ export const createAnonymizer = (
         if (context.warnedSteps.includes(name)) {
           onWarning({
             text: `${getLocusPrefix(expression.location)}Warning: ${name} does not introduce any assumptions. It does not make sense to use it here.\n`,
-            isToolboxMessage: true,
+            channel: "toolbox",
           });
           return at({ kind: "Internal", builtin: "TRUE" }, expression);
         }
@@ -386,14 +386,14 @@ export const createAnonymizer = (
       if (resolved.kind !== "Ix") {
         onWarning({
           text: `${getLocusPrefix(def.location)}Ignored unexpandable identifier ${JSON.stringify(def.name)} in BY DEF.`,
-          isToolboxMessage: false,
+          channel: "stderr",
         });
         return [];
       }
       if (getScopeAt(context.scope, resolved.index - 1)?.hyp.kind !== "Defn") {
         onWarning({
           text: `${getLocusPrefix(def.location)}${JSON.stringify(def.name)} is not a definition and cannot be used in a DEF clause.`,
-          isToolboxMessage: true,
+          channel: "toolbox",
         });
         return [];
       }

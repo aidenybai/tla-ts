@@ -11,10 +11,12 @@ export interface Locus {
   endColumn: number;
 }
 
-// A warning tlapm sends as a toolbox message (Errors.err), or prints to stderr as is (Errors.warn).
+// A note tlapm sends as a toolbox message in toolbox mode and prints to stderr otherwise
+// (Errors.err), prints to stderr as is (Errors.warn and Util.eprintf), or prints to stdout
+// (Util.printf).
 export interface ObligationWarning {
   text: string;
-  isToolboxMessage: boolean;
+  channel: "toolbox" | "stderr" | "stdout";
 }
 
 // Loc.string_of_locus_nofile, where endColumn is the column after the end.
@@ -30,6 +32,10 @@ export const getLocusPosition = (locus: Locus) => {
 // Loc.string_of_locus.
 export const getLocusText = (locus: Locus) =>
   `File ${JSON.stringify(locus.file)}, ${getLocusPosition(locus)}`;
+
+// The locus Util.eprintf and Util.printf print before a message given ~at.
+export const getAtPrefix = (locus: Locus | undefined) =>
+  `${locus ? getLocusText(locus) : "<unknown location>"}:\n`;
 
 // Errors.loc_to_string: Loc.string_of_locus and " :".
 export const getLocusPrefix = (locus: Locus | undefined) =>

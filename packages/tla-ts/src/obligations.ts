@@ -101,7 +101,7 @@ const loadMule = (
   };
   onWarning({
     text: `${getLocusPrefix(locus)}Warning: module name ${JSON.stringify(mule.name)} does not match file name ${JSON.stringify(fileName)}.`,
-    isToolboxMessage: true,
+    channel: "toolbox",
   });
   return { ...mule, name };
 };
@@ -228,6 +228,7 @@ export const getObligations = (
     generator: createGenerator(counter, new Set(mains.map((main) => main.file)), lines),
     salts: { value: 0 },
     latestModules: new Map(),
+    onWarning,
   };
   const order = schedule(modules).map((module) =>
     module.isStandard ? module : flatten(modules, module, new Set()),

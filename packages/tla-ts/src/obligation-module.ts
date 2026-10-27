@@ -12,6 +12,8 @@ import {
   consSubstitution,
   exprifySequent,
   findNamed,
+  getAtPrefix,
+  getLocusPrefix,
   getScopeHyps,
   mapAccumulate,
   getFresh,
@@ -29,6 +31,7 @@ import {
   type Hyp,
   type InstanceDefinition,
   type Locus,
+  type ObligationWarning,
   type Scope,
   type Sequent,
   type Substitution,
@@ -361,6 +364,7 @@ export interface Pipeline {
   generator: Generator;
   salts: Counter;
   latestModules: Map<string, Mule>;
+  onWarning: (warning: ObligationWarning) => void;
 }
 
 const substituteUsable = (substitution: Substitution, usable: Usable): Usable => ({
@@ -435,7 +439,10 @@ const substituteUnits = (substitution: Substitution, units: ModuleUnit[]) =>
 
 const lambdifySequent = (pipeline: Pipeline, scope: Scope | undefined, sequent: Sequent) => {
   try {
-    const lambdified = lambdify(pipeline.anonymizer, scope, { kind: "Sequent", sequent });
+    const lambdified = lambdify(pipeline.anonymizer, pipeline.onWarning, scope, {
+      kind: "Sequent",
+      sequent,
+    });
     if (lambdified.kind !== "Sequent") throw new TlapmBugError();
     return lambdified.sequent;
   } catch (error) {
@@ -451,7 +458,7 @@ const lambdifyUnit = (pipeline: Pipeline, scope: Scope | undefined, unit: Module
   if (unit.kind !== "Definition") return unit;
   const definition = unit.definition;
   if (definition.kind !== "Operator" && definition.kind !== "Bpragma") return unit;
-  const body = lambdify(pipeline.anonymizer, scope, definition.body);
+  const body = lambdify(pipeline.anonymizer, pipeline.onWarning, scope, definition.body);
   return { ...unit, definition: { ...definition, body } };
 };
 
@@ -535,9 +542,10 @@ const addParameters = (expression: Expr, args: string[]): Expr => {
 };
 
 // localize: renames the instancee's units under the instance name, salts its local definitions
-// and binds the instance arguments in each of them.
+// and binds the instance arguments in each of them. With arguments, it warns once that the axioms
+// or theorems become parametric.
 const localize = (
-  salts: Counter,
+  pipeline: Pipeline,
   units: ModuleUnit[],
   prefix: string,
   instance: InstanceDefinition,
@@ -549,6 +557,12 @@ const localize = (
   const body: ModuleUnit[] = [];
   let size = 0;
   let rest = units;
+  let isComplained = argumentCount === 0;
+  const complain = (text: string) => {
+    if (isComplained) return;
+    isComplained = true;
+    pipeline.onWarning({ text, channel: "stderr" });
+  };
   while (rest.length > 0) {
     const [unit, ...tail] = rest;
     rest = tail;
@@ -563,7 +577,9 @@ const localize = (
         if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
           throw new TlaProofError("Module.Elab.localize");
         }
-        const name = unit.isLocal ? `${definition.name}$${getUnique(salts)}` : definition.name;
+        const name = unit.isLocal
+          ? `${definition.name}$${getUnique(pipeline.salts)}`
+          : definition.name;
         body.push({
           ...unit,
           definition: { ...definition, name: getName(name), body: localized(definition.body) },
@@ -574,6 +590,9 @@ const localize = (
         continue;
       }
       case "Axiom": {
+        complain(
+          `${getLocusPrefix(location)}Instancing produces parametric axioms.\nSuch axioms will be forcibly hidden and cannot be cited.\n(This warning appears at-most once per INSTANCE declaration.)`,
+        );
         const axiom: ModuleUnit = {
           ...unit,
           name: unit.name === undefined ? undefined : getName(unit.name),
@@ -584,6 +603,9 @@ const localize = (
         continue;
       }
       case "Theorem": {
+        complain(
+          `${getAtPrefix(location)}Warning: Instancing produces parametric theorems.\nSuch theorems will be forcibly hidden and cannot be cited.\n(This warning appears at-most once per INSTANCE declaration.)`,
+        );
         const expression = localized(at(exprifySequent(unit.sequent), unit));
         body.push({
           ...unit,
@@ -725,7 +747,7 @@ const instantiate = (
   const [, lambdified] = lambdifyUnits(pipeline, instanceScope, body);
   return localizeAxioms(
     localize(
-      pipeline.salts,
+      pipeline,
       applyParameters(lambdified, anonymized),
       prefix,
       instance,

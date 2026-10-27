@@ -365,6 +365,7 @@ export interface InstanceSubstitution {
   expression: Expression;
 }
 
+// instanceRange runs from the INSTANCE token to the end.
 export interface Instance {
   kind: "Instance";
   name: string | undefined;
@@ -373,6 +374,7 @@ export interface Instance {
   substitutions: InstanceSubstitution[];
   isLocal: boolean;
   location: SourceLocation;
+  instanceRange: SourceRange;
 }
 
 export interface NewSymbol {
