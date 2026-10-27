@@ -240,7 +240,8 @@ export const parseConfig = (source: string): ModelConfig => {
         }
         advance();
         expect("=");
-        config.constants.push({ name, value: parseValue(), args });
+        const module = parseModuleScope();
+        config.constants.push({ name, value: parseValue(), args, ...(module && { module }) });
         continue;
       }
       if (peek().text === "<-") {

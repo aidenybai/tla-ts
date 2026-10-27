@@ -135,28 +135,36 @@ const createLocalFunction = (definition: Definition, key: string): Definition =>
   location: definition.location,
 });
 
-const createOperatorConstant = (name: string, rows: [Value[], Value][]): Builtin => ({
-  kind: "Builtin",
-  name,
-  arity: rows[0][0].length,
-  evaluate: (args) => {
-    const row = rows.find((candidate) =>
-      candidate[0].every((value, index) => {
-        const argument = args[index];
-        return (
-          !(typeof argument === "object" && argument.kind === "Operator") &&
-          valuesEqual(value, argument)
-        );
-      }),
-    );
-    if (row) return row[1];
-    throw new TlaEvaluationError(
-      `Attempted to apply operator:\n${name}\nto arguments (${args.map((argument) => (typeof argument === "object" && argument.kind === "Operator" ? argument.name : formatValue(argument))).join(", ")}), which is undefined.`,
-    );
-  },
-  evaluateUnary: undefined,
-  evaluateBinary: undefined,
-});
+const createOperatorConstant = (name: string, arity: number, rows: [Value[], Value][]): Builtin => {
+  const table = `{ ${rows.map((row) => `<${[...row[0], row[1]].map((value) => formatValue(value)).join(", ")}>`).join(", ")}}`;
+  return {
+    kind: "Builtin",
+    name,
+    arity,
+    evaluate: (args) => {
+      const row = rows.find((candidate) => {
+        if (candidate[0].length !== args.length) {
+          throw new TlaEvaluationError(
+            `Attempted to apply the operator ${table}\nwith wrong number of arguments.`,
+          );
+        }
+        return candidate[0].every((value, index) => {
+          const argument = args[index];
+          return (
+            !(typeof argument === "object" && argument.kind === "Operator") &&
+            valuesEqual(value, argument)
+          );
+        });
+      });
+      if (row) return row[1];
+      throw new TlaEvaluationError(
+        `Attempted to apply operator:\n${table}\nto arguments (${args.map((argument) => (typeof argument === "object" && argument.kind === "Operator" ? argument.name : formatValue(argument))).join(", ")}), which is undefined.`,
+      );
+    },
+    evaluateUnary: undefined,
+    evaluateBinary: undefined,
+  };
+};
 
 const mentionsName = (expression: Expression, names: Set<string>): boolean =>
   (expression.kind === "Identifier" && names.has(expression.name)) ||
@@ -729,29 +737,60 @@ export const createEnvironment = (
     const linked = linkedModules.get(item.module) ?? nestedModules.get(item.module);
     return [linked?.visible.get(item.name)?.key ?? item.name];
   };
+  const getKeyArity = (key: string) => {
+    const definition = definitions.get(key);
+    return definition?.kind === "Operator"
+      ? definition.params.length
+      : (linkedRoot.constants.find((constant) => constant.name === key)?.arity ?? 0);
+  };
   const constants = new Map<string, Value>();
+  const operatorKeys = new Set<string>();
+  const setOperator = (key: string, operator: Builtin) => {
+    builtins.set(key, operator);
+    definitions.delete(key);
+    constants.delete(key);
+    operatorKeys.add(key);
+  };
   config.constants
     .filter((assignment) => assignment.args === undefined)
     .forEach((assignment) => {
       const value = toValue(assignment.value);
-      getScopedKeys(assignment).forEach((key) => constants.set(key, value));
+      getScopedKeys(assignment).forEach((key) => {
+        const arity = getKeyArity(key);
+        if (arity === 0) constants.set(key, value);
+        else
+          setOperator(key, {
+            kind: "Builtin",
+            name: key,
+            arity,
+            evaluate: () => value,
+            evaluateUnary: undefined,
+            evaluateBinary: undefined,
+            isLazy: true,
+          });
+      });
     });
-  const operatorConstants = new Map<string, [Value[], Value][]>();
+  const tables = new Map<string, { name: string; module?: string; rows: [Value[], Value][] }>();
   config.constants.forEach((assignment) => {
     if (assignment.args === undefined) return;
-    const rows = operatorConstants.get(assignment.name) ?? [];
-    if (rows.length > 0 && rows[0][0].length !== assignment.args.length) {
+    const id = `${assignment.module ?? ""}!${assignment.name}`;
+    const table = tables.get(id) ?? { name: assignment.name, module: assignment.module, rows: [] };
+    if (table.rows.length > 0 && table.rows[0][0].length !== assignment.args.length) {
       throw new TlaConfigError(
-        `The operator ${assignment.name} is assigned values with inconsistent arities`,
+        `The arity of the operator ${assignment.name} is inconsistent in the configuration file.`,
       );
     }
-    rows.push([assignment.args.map(toValue), toValue(assignment.value)]);
-    operatorConstants.set(assignment.name, rows);
+    table.rows.push([assignment.args.map(toValue), toValue(assignment.value)]);
+    tables.set(id, table);
   });
-  operatorConstants.forEach((rows, name) => {
-    builtins.set(name, createOperatorConstant(name, rows));
-    constants.delete(name);
-  });
+  tables.forEach((table) =>
+    getScopedKeys(table).forEach((key) =>
+      setOperator(
+        key,
+        createOperatorConstant(table.name, getKeyArity(key) || table.rows[0][0].length, table.rows),
+      ),
+    ),
+  );
   const substitutions = new Map(
     config.substitutions.flatMap((substitution) =>
       getScopedKeys(substitution).map((key): [string, string] => [
@@ -760,8 +799,47 @@ export const createEnvironment = (
       ]),
     ),
   );
+  config.substitutions
+    .filter((substitution) => substitution.module === undefined)
+    .forEach((substitution) => {
+      const name = substitution.name;
+      const target = substitution.target;
+      if (!declaredConstants.includes(name) && !linkedRoot.visible.has(name)) {
+        throw new TlaConfigError(
+          `In the configuration file, the identifier ${name} does not appear in the specification.`,
+        );
+      }
+      if (config.substitutions.some((other) => other.name === target)) {
+        throw new TlaConfigError(
+          `In the configuration file, the identifier ${target} appears\non the right-hand side of a <- after already appearing on the\nleft-hand side of one.`,
+        );
+      }
+      const targetKey = getRootKey(target);
+      const definition = definitions.get(targetKey);
+      const isDefined =
+        definition !== undefined ||
+        builtins.has(targetKey) ||
+        constants.has(targetKey) ||
+        declaredConstants.includes(target) ||
+        variables.includes(target);
+      if (!isDefined) {
+        throw new TlaConfigError(
+          `The configuration file substitutes for ${name} with the undefined identifier ${target}.`,
+        );
+      }
+      if (
+        definition?.kind === "Operator" &&
+        definition.params.length !==
+          (linkedRoot.constants.find((constant) => constant.name === name)?.arity ??
+            linkedRoot.visible.get(name)?.arity)
+      ) {
+        throw new TlaConfigError(
+          `The configuration file substitutes for ${name} with ${target} of different number of arguments.`,
+        );
+      }
+    });
   declaredConstants.forEach((name) => {
-    if (!constants.has(name) && !substitutions.has(name) && !operatorConstants.has(name)) {
+    if (!constants.has(name) && !substitutions.has(name) && !operatorKeys.has(name)) {
       throw new TlaConfigError(`The constant ${name} is not assigned a value by the configuration`);
     }
   });
