@@ -1254,6 +1254,45 @@ describe("name resolution matches SANY", () => {
   });
 });
 
+describe("level checking matches SANY", () => {
+  const checkDefinition = (definition: string) =>
+    check({
+      source: `---- MODULE M ----\nVARIABLE x\nF == ${definition}\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+
+  // Cases from SANY's test215, which outlaws raw actions in temporal formulas.
+  it.each([
+    ["x' ~> []x", "Action used where only temporal formula or state predicate allowed"],
+    ["[]x -+-> x'", "Action used where only temporal formula or state predicate allowed"],
+    ["<>(x')", "<> followed by action not of form <<A>>_v"],
+    ["[](x')", "[] followed by action not of form [A]_v"],
+    ["\\A i \\in {}, j \\in x' : []x", "Action-level bound of quantified temporal formula"],
+    ["x' /\\ []x", "Formula has both temporal formula and action as arguments"],
+    ["(x')'", "Level error in applying operator '"],
+    ["ENABLED []x", "Level error in applying operator ENABLED"],
+  ])("rejects %s", async (definition, message) => {
+    await expect(checkDefinition(definition)).rejects.toThrow(message);
+  });
+
+  it.each(["x ~> []x", "<><<x'>>_x", "[][x']_x", "\\A i \\in x' : x'", "[](LET A == x' IN A)"])(
+    "accepts %s",
+    async (definition) => {
+      expect((await checkDefinition(definition)).status).toBe("success");
+    },
+  );
+
+  it("rejects an argument above the level an instantiated operator allows", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE y\nFoo == y' = 0\n====\nI(z) == INSTANCE Inner WITH y <- z\nFooBar == I(x')!Foo\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow("Level error in applying operator Foo");
+  });
+});
+
 describe("parseConfig matches TLC", () => {
   it("reads operator symbols and names that start with digits", () => {
     const config = parseConfig("CONSTANT ++ <- PlusPlus\n  Plus <- +\n  \\o <- +\nINVARIANT 1Inv");

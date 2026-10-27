@@ -42,6 +42,7 @@ import {
 import { createRuntime } from "./runtime";
 import { CORE_OPERATORS, getStandardModule, STANDARD_DEPENDENCIES } from "./standard-modules";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
+import { checkModuleLevels } from "./levels";
 import { checkInstances, type InstanceCheck, type ModuleContext } from "./substitution-levels";
 import {
   checkInteger,
@@ -718,6 +719,11 @@ export const createEnvironment = (
       const symbol = { key, arity: getArity(definition) };
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
+    });
+    checkModuleLevels(module, {
+      constants: new Set(constants.map((constant) => constant.name)),
+      variables: new Set(variables),
+      getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
     });
     const linked = {
       module,
