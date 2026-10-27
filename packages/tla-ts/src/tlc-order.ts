@@ -357,16 +357,13 @@ export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader): s
         },
       });
     });
-    return units
-      .map((item, index) => ({ item, index }))
-      .sort((left, right) =>
-        isBefore(left.item.location, right.item.location)
-          ? -1
-          : isBefore(right.item.location, left.item.location)
-            ? 1
-            : left.index - right.index,
-      )
-      .map((entry) => entry.item);
+    return units.sort((left, right) =>
+      isBefore(left.location, right.location)
+        ? -1
+        : isBefore(right.location, left.location)
+          ? 1
+          : 0,
+    );
   };
 
   const contexts = new Map<string, SymbolTable>();
@@ -450,20 +447,17 @@ export const getTlcStringOrder = (
     }
     return undefined;
   };
-  const findExtension: ModuleSearch = (module, visited) => {
-    if (visited.has(module.key)) return undefined;
-    visited.add(module.key);
-    const name = module.extends.find((extended) => !isResolved(module, extended));
-    return name === undefined ? searchReferences(module, visited, findExtension) : [module, name];
+  const createSearch = (getNames: (module: ModuleReferences) => string[]) => {
+    const search: ModuleSearch = (module, visited) => {
+      if (visited.has(module.key)) return undefined;
+      visited.add(module.key);
+      const name = getNames(module).find((referenced) => !isResolved(module, referenced));
+      return name === undefined ? searchReferences(module, visited, search) : [module, name];
+    };
+    return search;
   };
-  const findInstantiation: ModuleSearch = (module, visited) => {
-    if (visited.has(module.key)) return undefined;
-    visited.add(module.key);
-    const name = module.instances.find((instanced) => !isResolved(module, instanced));
-    return name === undefined
-      ? searchReferences(module, visited, findInstantiation)
-      : [module, name];
-  };
+  const findExtension = createSearch((module) => module.extends);
+  const findInstantiation = createSearch((module) => module.instances);
   const parsedUnits = new Set<string | undefined>([undefined]);
   const dependencies = new Map<string | undefined, string[]>();
   getParsedTexts(getUnitTokens(undefined)).forEach((text, index) => {
