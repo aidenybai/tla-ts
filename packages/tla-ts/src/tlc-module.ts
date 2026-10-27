@@ -24,6 +24,7 @@ import {
   createSet,
   createTuple,
   formatValue,
+  toFiniteSet,
   type Value,
   rankString,
 } from "./values";
@@ -112,6 +113,15 @@ const getPermutations = (elements: Value[]): Value[][] =>
         ]),
       );
 
+// TLC sorts the value of a TLCEval argument it can cache, with every value inside it.
+const normalizeDeeply = (value: Value): void => {
+  if (typeof value !== "object") return;
+  if (value.kind === "Set" || value.kind === "MixedSet") {
+    toFiniteSet(value).elements.forEach(normalizeDeeply);
+  }
+  if (value.kind === "Function") value.range.forEach(normalizeDeeply);
+};
+
 export const createTlcOperators = (
   print: (text: string) => void,
   runtime: CheckerRuntime,
@@ -150,7 +160,18 @@ export const createTlcOperators = (
   defineOperator("ToString", 1, (args) =>
     rankString(formatValue(getValue(args, 0, "ToString"), true)),
   ),
-  defineOperator("TLCEval", 1, (args) => getValue(args, 0, "TLCEval")),
+  {
+    kind: "Builtin",
+    name: "TLCEval",
+    arity: 1,
+    evaluate: (args, context) => {
+      const value = getValue(args, 0, "TLCEval");
+      if (context?.scope === undefined) normalizeDeeply(value);
+      return value;
+    },
+    evaluateUnary: undefined,
+    evaluateBinary: undefined,
+  },
   defineOperator("Permutations", 1, (args) => {
     const elements = getElements(args, 0, "Permutations");
     return createSet(

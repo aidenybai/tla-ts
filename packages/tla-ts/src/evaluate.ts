@@ -1422,10 +1422,21 @@ const lookupKey = (pattern: BoundPattern, scope: Scope | undefined): Value | und
   return binding?.kind === "Value" ? binding.value : undefined;
 };
 
+// TLC keeps a function constructor lazy when it is the function of an application, or the base of
+// an EXCEPT that is, so it evaluates the body only at the arguments it is applied to.
+const keptLazyExpressions = new WeakSet<Expression>();
+
+export const keepLazy = (expression: Expression) => {
+  if (expression.kind === "FunctionConstruction" || expression.kind === "Except") {
+    keptLazyExpressions.add(expression);
+  }
+};
+
 const compileFunctionConstruction = (
   expression: Expression & { kind: "FunctionConstruction" },
   environment: Environment,
 ): Evaluator => {
+  const isKeptLazy = keptLazyExpressions.has(expression);
   const body = getEvaluator(expression.body, environment);
   const bounds = expression.bounds;
   const bound = bounds[0];
@@ -1433,7 +1444,7 @@ const compileFunctionConstruction = (
   const set = getEvaluator(bound.set, environment);
   return (context) => {
     const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
-    if (expression.isRecursive || !isEnumerable(domain)) {
+    if (expression.isRecursive || isKeptLazy || !isEnumerable(domain)) {
       const fn = createLazyFunction(
         domain,
         (argument) => body(withScope(context, bindArgument(bounds, context.scope, argument))),
@@ -1468,6 +1479,8 @@ const compileExcept = (
   expression: Expression & { kind: "Except" },
   environment: Environment,
 ): Evaluator => {
+  const isKeptLazy = keptLazyExpressions.has(expression);
+  if (isKeptLazy) keepLazy(expression.function);
   const fn = getEvaluator(expression.function, environment);
   const updates = expression.updates.map((update) => ({
     path: update.path.map((step) =>
@@ -1497,8 +1510,11 @@ const compileExcept = (
     if (depth === path.length) {
       return value(withScope(context, bindValue(context.scope, EXCEPT_AT, current)));
     }
-    return updateFunction(current, getKey(path[depth], context), (previous) =>
-      update(previous, path, depth + 1, context, value),
+    return updateFunction(
+      current,
+      getKey(path[depth], context),
+      (previous) => update(previous, path, depth + 1, context, value),
+      isKeptLazy && depth === 0,
     );
   };
   return (context) => {
@@ -1755,6 +1771,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         return binding.value;
       };
     case "FunctionApplication": {
+      keepLazy(expression.function);
       const fn = child(expression.function);
       const args = expression.args.map(child);
       if (args.length === 1) {
