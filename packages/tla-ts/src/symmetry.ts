@@ -5,6 +5,7 @@ import {
   createFunction,
   createSet,
   createSortedFunction,
+  createSortedSet,
   isEnumerable,
   isFunctionValue,
   isModelValue,
@@ -118,6 +119,36 @@ const permuteElements = (elements: Value[], permutation: Permutation): Value[] |
   return undefined;
 };
 
+// A permutation maps distinct elements to distinct elements and keeps the elements it doesn't move
+// in order, so it sorts only the moved ones and merges them back.
+const permuteSortedElements = (
+  elements: Value[],
+  permutation: Permutation,
+): Value[] | undefined => {
+  const kept: Value[] = [];
+  const moved: Value[] = [];
+  for (const element of elements) {
+    const permuted = permuteValue(element, permutation);
+    if (permuted === element) kept.push(element);
+    else moved.push(permuted);
+  }
+  if (moved.length === 0) return undefined;
+  moved.sort(compareValues);
+  const merged: Value[] = [];
+  let keptIndex = 0;
+  let movedIndex = 0;
+  while (keptIndex < kept.length && movedIndex < moved.length) {
+    merged.push(
+      compareValues(kept[keptIndex], moved[movedIndex]) < 0
+        ? kept[keptIndex++]
+        : moved[movedIndex++],
+    );
+  }
+  while (keptIndex < kept.length) merged.push(kept[keptIndex++]);
+  while (movedIndex < moved.length) merged.push(moved[movedIndex++]);
+  return merged;
+};
+
 const CACHE_LIMIT = 1 << 22;
 const CACHED_SIZE_LIMIT = 16;
 
@@ -148,8 +179,8 @@ const permuteValue = (value: Value, permutation: Permutation): Value => {
 const computePermutedValue = (value: ObjectValue, permutation: Permutation): Value => {
   const kind = value.kind;
   if (kind === "Set") {
-    const elements = permuteElements(value.elements, permutation);
-    return elements ? createSet(elements) : value;
+    const elements = permuteSortedElements(value.elements, permutation);
+    return elements ? createSortedSet(elements) : value;
   }
   if (kind === "Function" || (kind === "LazyFunction" && isEnumerable(value.domain))) {
     const fn = toFiniteFunction(value);
