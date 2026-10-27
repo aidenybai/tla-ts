@@ -38,6 +38,12 @@ const renamedArities = new WeakMap<Expression, number>();
 
 export const KEY_SEPARATOR = "@";
 
+// A key is a name, the separator, and an id, so the operator @@ is not one.
+const isKey = (name: string) => {
+  const index = name.lastIndexOf(KEY_SEPARATOR);
+  return index > 0 && index < name.length - 1;
+};
+
 const CORE_SYMBOLS: Symbols = new Map(
   ["~>", "-+->", "\\cdot"].map((name) => [name, { key: name, arity: 2 }]),
 );
@@ -84,7 +90,7 @@ const getSymbolArity = (
   const location = expression.location;
   const renamed = renamedArities.get(expression);
   if (renamed !== undefined) return renamed;
-  if (name.includes(KEY_SEPARATOR)) return expression.kind === "Apply" ? expression.args.length : 0;
+  if (isKey(name)) return expression.kind === "Apply" ? expression.args.length : 0;
   const local = lookupLocal(scope, name);
   if (local && expression.kind !== "OperatorReference") expression.resolution = LOCAL_RESOLUTION;
   if (local) return local.arity;
