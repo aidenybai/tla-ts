@@ -15,6 +15,7 @@ import {
   getValue,
 } from "./builtins";
 import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "./runtime";
+import { createActionRecord } from "./tlc-ext";
 import { getRandomElement } from "./tlc-random";
 import {
   ANY_SET,
@@ -26,15 +27,6 @@ import {
   type Value,
   rankString,
 } from "./values";
-
-const createLocationRecord = () =>
-  createRecord([
-    ["beginLine", 0],
-    ["beginColumn", 0],
-    ["endLine", 0],
-    ["endColumn", 0],
-    ["module", "--unknown--"],
-  ]);
 
 const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
   createFunction([...registers].map(([key, value]): [Value, Value] => [key, createTuple([value])]));
@@ -88,10 +80,7 @@ const getRuntimeValue = (
     case "spec":
       return runtime.getSpecification();
     case "action":
-      return createRecord([
-        ["name", "UnnamedAction"],
-        ["location", createLocationRecord()],
-      ]);
+      return createActionRecord(undefined);
     case "all":
       return getRegisterFunction(runtime.registers);
     case "all:named":
