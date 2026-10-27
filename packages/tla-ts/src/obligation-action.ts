@@ -2,7 +2,7 @@
 // ENABLED and \cdot takes a LAMBDA over the variables it binds, after expanding the definitions
 // in its scope that soundness needs expanded.
 
-import { TlaProofError } from "./errors";
+import { TlaProofError, TlapmBugError } from "./errors";
 import type { Anonymizer } from "./obligation-anon";
 import {
   adjoin,
@@ -19,7 +19,7 @@ import {
   type Scope,
   type Substitution,
 } from "./obligation-expression";
-import { getLevelInfo, TLAPM_BUG } from "./obligation-levels";
+import { getLevelInfo } from "./obligation-levels";
 
 interface FreshNames {
   names: string[];
@@ -28,7 +28,7 @@ interface FreshNames {
 
 const getHyp = (scope: Scope | undefined, index: number) => {
   const hyp = getScopeAt(scope, index - 1)?.hyp;
-  if (!hyp) throw new TlaProofError(TLAPM_BUG);
+  if (!hyp) throw new TlapmBugError();
   return hyp;
 };
 
@@ -95,11 +95,11 @@ const expandDefinitions = (
   if (level === undefined) return expression;
   const expressionLevel = getLevelInfo(scope, expression).level;
   const hyp = getHyp(scope, head.index);
-  if (hyp.kind === "Fresh" && hyp.level === "Unknown") throw new TlaProofError(TLAPM_BUG);
+  if (hyp.kind === "Fresh" && hyp.level === "Unknown") throw new TlapmBugError();
   if (expressionLevel < level) return expression;
-  if (expressionLevel > 2 || hyp.kind === "Fact") throw new TlaProofError(TLAPM_BUG);
+  if (expressionLevel > 2 || hyp.kind === "Fact") throw new TlapmBugError();
   if (hyp.kind === "Flex") {
-    if (expression.kind !== "Ix") throw new TlaProofError(TLAPM_BUG);
+    if (expression.kind !== "Ix") throw new TlapmBugError();
     return expression;
   }
   if (hyp.kind === "Fresh") {
@@ -109,7 +109,7 @@ const expandDefinitions = (
   }
   const definition = hyp.definition;
   if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
-    throw new TlaProofError(TLAPM_BUG);
+    throw new TlapmBugError();
   }
   const body = substituteExpr(shift(head.index), definition.body);
   return recurse(
@@ -135,7 +135,7 @@ const expandPropositional = (expression: Expr): Expr => {
   if (expression.kind === "Apply" && expression.args.length === 1) {
     return rewriteUnchanged(expression.args[0]);
   }
-  if (expression.kind !== "Sub") throw new TlaProofError(TLAPM_BUG);
+  if (expression.kind !== "Sub") throw new TlapmBugError();
   const unchanged = rewriteUnchanged(expression.subscript);
   const second =
     expression.modal === "Box" ? unchanged : applyBuiltin("Neg", [unchanged], expression);
@@ -240,14 +240,14 @@ const bindVariables = (
   if (expression.kind === "Ix") {
     if (!current) return expression;
     const hyp = getHyp(scope, expression.index);
-    if (hyp.kind === "Fact") throw new TlaProofError(TLAPM_BUG);
+    if (hyp.kind === "Fact") throw new TlapmBugError();
     if (hyp.kind !== "Flex") return expression;
     const name = `${hyp.name}#enabled#prime${current.depth}`;
     if (!current.names.includes(name)) current.names.push(name);
     return at({ kind: "Opaque", name }, expression);
   }
   if (expression.kind === "Apply" && expression.operator.kind === "Opaque") {
-    throw new TlaProofError(TLAPM_BUG);
+    throw new TlapmBugError();
   }
   return mapScoped(
     scope,
@@ -263,7 +263,7 @@ const shiftIndices = (substitution: Substitution, expression: Expr): Expr => {
   if (expression.kind === "Apply" && isActionOperator(expression.operator)) {
     const [lambda] = expression.args;
     if (expression.args.length !== 1 || lambda.kind !== "Lambda") {
-      throw new TlaProofError(TLAPM_BUG);
+      throw new TlapmBugError();
     }
     const [placeholder, ...params] = lambda.params;
     if (placeholder.name !== "_") return expression;
@@ -297,7 +297,7 @@ const renameParams = (expression: Expr): Expr => {
   if (expression.kind === "Apply" && isActionOperator(expression.operator)) {
     const [lambda] = expression.args;
     if (expression.args.length !== 1 || lambda.kind !== "Lambda" || lambda.params[0].name === "_") {
-      throw new TlaProofError(TLAPM_BUG);
+      throw new TlapmBugError();
     }
     const name =
       expression.operator.kind === "Internal" && expression.operator.builtin === "Cdot"
@@ -331,7 +331,7 @@ const checkArity = (expression: Expr): Expr => {
     expression.operator.builtin === "Cdot" &&
     expression.args.length === 1 &&
     expression.args[0].kind !== "Lambda";
-  if (isInvalid) throw new TlaProofError(TLAPM_BUG);
+  if (isInvalid) throw new TlapmBugError();
   return mapScoped(
     undefined,
     expression,

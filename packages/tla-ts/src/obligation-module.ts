@@ -1,9 +1,8 @@
 // A port of tlapm's module pipeline: flattening EXTENDS (Module.Flatten), normalization
 // (Module.Elab.normalize) and obligation generation (Module.Gen).
 
-import { TlaProofError } from "./errors";
+import { TlaProofError, TlapmBugError } from "./errors";
 import { lambdify } from "./obligation-action";
-import { TLAPM_BUG } from "./obligation-levels";
 import type { Anonymizer } from "./obligation-anon";
 import {
   adjoinAll,
@@ -427,10 +426,10 @@ const substituteUnits = (substitution: Substitution, units: ModuleUnit[]) =>
 const lambdifySequent = (pipeline: Pipeline, scope: Scope | undefined, sequent: Sequent) => {
   try {
     const lambdified = lambdify(pipeline.anonymizer, scope, { kind: "Sequent", sequent });
-    if (lambdified.kind !== "Sequent") throw new TlaProofError(TLAPM_BUG);
+    if (lambdified.kind !== "Sequent") throw new TlapmBugError();
     return lambdified.sequent;
   } catch (error) {
-    if (!(error instanceof TlaProofError) || error.message === TLAPM_BUG) throw error;
+    if (!(error instanceof TlaProofError) || error instanceof TlapmBugError) throw error;
     return { context: [], active: at({ kind: "Internal", builtin: "TRUE" }, sequent.active) };
   }
 };

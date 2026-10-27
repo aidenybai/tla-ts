@@ -2,7 +2,7 @@
 // 3 temporal, 4 undefined), the weights of an operator's arguments, and the declared names the
 // level depends on.
 
-import { TlaProofError } from "./errors";
+import { TlaProofError, TlapmBugError } from "./errors";
 import {
   adjoin,
   getBoundedFresh,
@@ -22,8 +22,6 @@ interface LevelInfo {
   weights: boolean[];
   params: Set<string>;
 }
-
-export const TLAPM_BUG = "Oops, this seems to be a bug in TLAPM.";
 
 const getInfo = (level: number, arity = 0): LevelInfo => ({
   level,
@@ -136,7 +134,7 @@ const getHypLevel = (scope: Scope): LevelInfo => {
       case "Defn": {
         const definition = hyp.definition;
         if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
-          throw new TlaProofError(TLAPM_BUG);
+          throw new TlapmBugError();
         }
         return getLevelInfo(scope.rest, definition.body);
       }
@@ -176,12 +174,12 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
   switch (expression.kind) {
     case "Ix": {
       const hypScope = getScopeAt(scope, expression.index - 1);
-      if (!hypScope) throw new TlaProofError(TLAPM_BUG);
+      if (!hypScope) throw new TlapmBugError();
       return getHypLevel(hypScope);
     }
     case "Internal": {
       const entry = BUILTIN_LEVELS[expression.builtin];
-      if (!entry) throw new TlaProofError(TLAPM_BUG);
+      if (!entry) throw new TlapmBugError();
       return getInfo(entry[0], entry[1]);
     }
     case "Opaque":
@@ -211,16 +209,16 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
         switch (operator.builtin) {
           case "Prime":
           case "StrongPrime":
-            if (recurse(arg).level > 1) throw new TlaProofError(TLAPM_BUG);
+            if (recurse(arg).level > 1) throw new TlapmBugError();
             return getInfo(2, 1);
           case "ENABLED": {
             const info = recurse(arg);
-            if (info.level > 2) throw new TlaProofError(TLAPM_BUG);
+            if (info.level > 2) throw new TlapmBugError();
             return { level: 1, weights: [], params: info.params };
           }
           case "UNCHANGED": {
             const info = recurse(arg);
-            if (info.level > 1) throw new TlaProofError(TLAPM_BUG);
+            if (info.level > 1) throw new TlapmBugError();
             return { level: 2, weights: [], params: info.params };
           }
         }
@@ -324,6 +322,6 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
       ]);
     case "Bang":
     case "At":
-      throw new TlaProofError(TLAPM_BUG);
+      throw new TlapmBugError();
   }
 };

@@ -15,7 +15,7 @@ import type {
   SourceRange,
   UseOrHide,
 } from "./ast";
-import { TlaProofError, TlaUnsupportedError } from "./errors";
+import { TlapmBugError, TlaProofError, TlaUnsupportedError } from "./errors";
 import type {
   Bound,
   Builtin,
@@ -38,7 +38,6 @@ import {
   getUnbounded,
   type TuplyBound,
 } from "./obligation-tuples";
-import { TLAPM_BUG } from "./obligation-levels";
 import { lookupOperator, type Fixity } from "./obligation-printer";
 import {
   getUnique,
@@ -318,7 +317,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
   const convertBounds = (bounds: QuantifierExpression["bounds"], isExcept: boolean): Bound[] =>
     bounds.flatMap((bound, index) => {
       if (bound.pattern.kind === "Tuple") {
-        throw new TlaProofError(TLAPM_BUG);
+        throw new TlapmBugError();
       }
       const isDitto = index > 0 && bounds[index - 1].set === bound.set;
       return [
@@ -349,7 +348,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     });
 
   const expandTuples = (expand: () => Expr, location: Locus) => {
-    if (!isExpanded) throw new TlaProofError(TLAPM_BUG);
+    if (!isExpanded) throw new TlapmBugError();
     return located(expand(), location);
   };
 
