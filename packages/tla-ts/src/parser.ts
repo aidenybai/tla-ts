@@ -153,6 +153,8 @@ const EXPRESSION_PREFIXES = new Set([
   "<>",
 ]);
 
+const CIRCLED_OPERATORS = new Set(["+", "-", "/", "\\X"]);
+
 const OPERATOR_ARGUMENTS = new Set([
   "SUBSET",
   "UNION",
@@ -264,7 +266,9 @@ export const extractModule = (source: string, name: string) => {
   return lines.slice(start, end === -1 ? undefined : end + 1).join("\n");
 };
 
-export const parseModule = (source: string): Module => {
+// isTlapm parses as tlapm does for proof obligations, which accepts and rejects some modules that
+// SANY does not.
+const parse = (source: string, isTlapm: boolean): Module => {
   const tokens = tokenize(source);
   const cursor = { index: 0, offsideColumns: [] as number[] };
   // A RECURSIVE declaration covers the definitions of its own LET or module.
@@ -327,7 +331,12 @@ export const parseModule = (source: string): Module => {
   const createError = (message: string, token: { line: number; column: number } = peekRaw()) =>
     new TlaSyntaxError(`${message} at line ${token.line}, column ${token.column}`);
 
-  const isFieldName = (token: Token) => token.kind === "Identifier" || token.kind === "Keyword";
+  // tlapm reads TRUE, FALSE, BOOLEAN, STRING and the other keywords only as keywords.
+  const isTlapmKeyword = (token: Token) =>
+    isTlapm && (token.kind === "Keyword" || BUILTIN_CONSTANTS.has(token.text));
+
+  const isFieldName = (token: Token) =>
+    (token.kind === "Identifier" || token.kind === "Keyword") && !isTlapmKeyword(token);
 
   const isAt = (text: string, offset = 0) => {
     const token = peek(offset);
@@ -358,6 +367,7 @@ export const parseModule = (source: string): Module => {
     if (token.kind !== "Identifier") {
       throw createError(`Expected an identifier but found ${describe(token)}`);
     }
+    if (isTlapmKeyword(token)) throw createError(`Unexpected keyword ${token.text}`);
     cursor.index++;
     return token.text;
   };
@@ -422,7 +432,7 @@ export const parseModule = (source: string): Module => {
     const token = peek();
     if (token.kind === "Identifier") {
       const start = cursor.index;
-      const names = [expectIdentifier()];
+      const names = [advance().text];
       while (isAt("!") && peek(1).kind === "Identifier") {
         advance();
         names.push(expectIdentifier());
@@ -470,6 +480,23 @@ export const parseModule = (source: string): Module => {
       token.kind === "Operator" &&
       (INFIX_OPERATORS.has(token.text) || PREFIX_OPERATOR_REFERENCES.has(token.text)) &&
       isStandalone(token);
+    // tlapm reads a prefix operator as the start of an expression, and (+), (-), (/) and (\X) as
+    // the operators \oplus, \ominus, \oslash and \otimes.
+    const isTlapmIncomplete =
+      isTlapm &&
+      token.kind !== "String" &&
+      (PREFIX_OPERATOR_REFERENCES.has(token.text) ||
+        (OPERATOR_ARGUMENTS.has(token.text) &&
+          token.text !== "'" &&
+          !POSTFIX_OPERATORS.has(token.text)) ||
+        (CIRCLED_OPERATORS.has(token.text) &&
+          peek(-1).text === "(" &&
+          peek(-1).line === token.line &&
+          peek(-1).endColumn + 1 === token.column &&
+          peek(1).text === ")" &&
+          peek(1).line === token.line &&
+          peek(1).column === token.endColumn + 1));
+    if (isTlapmIncomplete && isStandalone(token)) throw createError("incomplete expression", token);
     if (isOperatorAlone) {
       cursor.index++;
       return withRange(
@@ -524,6 +551,7 @@ export const parseModule = (source: string): Module => {
     return {
       kind: bullet.text === "/\\" ? "And" : "Or",
       operands,
+      isBulleted: true,
       location: getLocation(bullet),
     };
   };
@@ -637,7 +665,14 @@ export const parseModule = (source: string): Module => {
     }
     const names = parseSeparated(expectIdentifier);
     expect(":");
-    return { kind: "UnboundedQuantifier", names, body: parseExpression(), isTemporal, location };
+    return {
+      kind: "UnboundedQuantifier",
+      quantifier: start.text === "\\A" || start.text === "\\AA" ? "Forall" : "Exists",
+      names,
+      body: parseExpression(),
+      isTemporal,
+      location,
+    };
   };
 
   const parseCase = (start: Token): Expression => {
@@ -691,7 +726,13 @@ export const parseModule = (source: string): Module => {
     const isFactStart = cursor.index === factStart.index;
     const token = advance();
     const location = getLocation(token);
+    if (isTlapm && token.kind === "Keyword" && token.text === "LAMBDA") {
+      const params = parseSeparated(expectIdentifier);
+      expect(":");
+      return { kind: "Lambda", params, body: parseExpression(), location };
+    }
     if (token.kind === "Number") {
+      if (isTlapm && /^\\[BOH]/.test(token.text)) throw createError("incomplete expression", token);
       return { kind: "Number", value: getNumeralValue(token.text), text: token.text, location };
     }
     if (token.kind === "Decimal") return { kind: "Decimal", text: token.text, location };
@@ -721,7 +762,7 @@ export const parseModule = (source: string): Module => {
       const instance = openModules
         .flatMap((module) => module.instances)
         .find((candidate) => candidate.name === name);
-      if (instance && !isFactStart && instance.params.length !== args.length) {
+      if (instance && !isFactStart && !isTlapm && instance.params.length !== args.length) {
         throw createError(
           `The operator ${name} requires ${instance.params.length} arguments`,
           token,
@@ -740,9 +781,13 @@ export const parseModule = (source: string): Module => {
       const qualifiedArgs = selectors.flatMap((selector) =>
         "args" in selector ? selector.args : [],
       );
-      return qualifiedArgs.length > 0
-        ? { kind: "Apply", operator, args: qualifiedArgs, location }
-        : { kind: "Identifier", name: operator, location };
+      if (qualifiedArgs.length === 0) return { kind: "Identifier", name: operator, location };
+      const argumentCounts = selectors.map((selector) =>
+        "args" in selector ? selector.args.length : 0,
+      );
+      return argumentCounts.slice(0, -1).some((count) => count > 0)
+        ? { kind: "Apply", operator, args: qualifiedArgs, argumentCounts, location }
+        : { kind: "Apply", operator, args: qualifiedArgs, location };
     }
     if (token.kind === "Operator" && isOperatorName(token.text) && isAt("("))
       return { kind: "Apply", operator: token.text, args: parseArguments(), location };
@@ -1049,10 +1094,13 @@ export const parseModule = (source: string): Module => {
 
   const parseDeclarations = () => parseSeparated(parseDeclaration);
 
-  const declareRecursive = () =>
-    parseDeclarations().forEach((declaration) =>
+  const declareRecursive = () => {
+    const declarations = parseDeclarations();
+    declarations.forEach((declaration) =>
       recursiveScopes[recursiveScopes.length - 1].add(declaration.name),
     );
+    return declarations;
+  };
 
   const getClosingOffset = (offset: number) => {
     const depth = { value: 0, offset };
@@ -1200,7 +1248,30 @@ export const parseModule = (source: string): Module => {
         module.variables.some((variable) => variable.name === name),
     );
 
+  // tlapm's definable: names and operators joined by !.
+  const parseDefinable = (): Fact => {
+    const start = cursor.index;
+    const token = peek();
+    const parts = parseSeparated(() => {
+      const part = peek();
+      const isName = part.kind === "Identifier" && !isTlapmKeyword(part);
+      if (!isName && part.kind !== "Operator") {
+        throw createError(`Expected a definition name but found ${describe(part)}`);
+      }
+      cursor.index++;
+      return part.text;
+    }, "!");
+    const location = getLocation(token);
+    return withRange(
+      parts.length === 1 && token.kind === "Operator"
+        ? { kind: "OperatorReference", operator: token.text, location }
+        : { kind: "Identifier", name: parts.join("!"), location },
+      start,
+    );
+  };
+
   const parseDefs = () => {
+    if (isTlapm) return parseSeparated(parseDefinable);
     const defs = parseSeparated(parseFact);
     const invalid = defs.find((def) => def.kind === "Identifier" && isDeclaredSymbol(def.name));
     if (invalid) {
@@ -1218,10 +1289,12 @@ export const parseModule = (source: string): Module => {
     const start = cursor.index;
     const keyword = advance();
     const isOnly = keyword.text === "USE" && accept("ONLY");
+    const keywordRange = getRange(start);
     const use: UseOrHide = {
       kind: keyword.text === "USE" ? "Use" : "Hide",
       isOnly,
       ...parseFacts(),
+      keyword: keywordRange,
       location: getLocation(keyword),
     };
     const invalid = use.kind === "Hide" ? use.facts.find((fact) => !isHideFact(fact)) : undefined;
@@ -1356,7 +1429,7 @@ export const parseModule = (source: string): Module => {
       throw createError("<*> and <+> cannot be used for a named step", step);
     }
     cursor.index++;
-    return { name: getStepName(step), location: getLocation(step) };
+    return { name: getStepName(step), token: step.text, location: getLocation(step) };
   };
 
   // The names an assertion assumes stay in its own proof, and other steps declare theirs for the rest
@@ -1367,6 +1440,7 @@ export const parseModule = (source: string): Module => {
     const scope = new Set<string>();
     proofScopes.push(scope);
     const body: StepBody = accept("QED") ? { kind: "Qed" } : parseStepBody();
+    const head = getRange(start);
     const hasProof = isProofStart(peek());
     if (hasProof && !PROVABLE_STEPS.has(body.kind)) {
       throw createError("Proof of a step that does not take a proof");
@@ -1374,15 +1448,21 @@ export const parseModule = (source: string): Module => {
     const proof = hasProof ? parseProof() : undefined;
     proofScopes.pop();
     if (body.kind !== "Assert" || body.isSuffices) scope.forEach(declareProofSymbol);
-    return withRange({ ...step, body, proof }, start);
+    return withRange({ ...step, body, head, proof }, start);
   };
+
+  const getTokenRange = (token: Token): SourceRange => ({
+    module: openModules[openModules.length - 1].name,
+    start: getLocation(token),
+    end: { line: token.line, column: token.endColumn },
+  });
 
   const parseProofBody = (): Proof => {
     const location = getLocation(peek());
     if (isAt("BY") || (isAt("PROOF") && isAt("BY", 1))) {
       accept("PROOF");
-      advance();
-      return { kind: "By", isOnly: accept("ONLY"), ...parseFacts(), location };
+      const keyword = getTokenRange(advance());
+      return { kind: "By", isOnly: accept("ONLY"), ...parseFacts(), keyword, location };
     }
     const terminal = peek(isAt("PROOF") ? 1 : 0);
     if (
@@ -1390,13 +1470,13 @@ export const parseModule = (source: string): Module => {
       (terminal.text === "OBVIOUS" || terminal.text === "OMITTED")
     ) {
       accept("PROOF");
-      advance();
-      return { kind: terminal.text === "OBVIOUS" ? "Obvious" : "Omitted", location };
+      const keyword = getTokenRange(advance());
+      return { kind: terminal.text === "OBVIOUS" ? "Obvious" : "Omitted", keyword, location };
     }
-    accept("PROOF");
+    const isKeyword = accept("PROOF");
     const steps = [parseStep()];
     while (steps[steps.length - 1].body.kind !== "Qed") steps.push(parseStep());
-    return { kind: "Steps", level: getProofLevel(), steps, location };
+    return { kind: "Steps", level: getProofLevel(), steps, isKeyword, location };
   };
 
   const parseProof = (): Proof => {
@@ -1421,9 +1501,12 @@ export const parseModule = (source: string): Module => {
       return { statement, proof: isProofStart(peek()) ? parseProof() : undefined };
     });
     const statement = parsed.statement;
-    module.theorems.push(
-      withRange({ name, statement, proof: parsed.proof, location: getLocation(keyword) }, start),
+    const theorem = withRange(
+      { name, statement, proof: parsed.proof, location: getLocation(keyword) },
+      start,
     );
+    module.theorems.push(theorem);
+    module.units.push({ kind: "Theorem", theorem });
     if (name === undefined || statement.kind === "AssumeProve") return;
     module.definitions.push(
       withRange(
@@ -1476,6 +1559,7 @@ export const parseModule = (source: string): Module => {
       location,
       theorems: [],
       uses: [],
+      units: [],
     };
     openModules.push(module);
     recursiveScopes.push(new Set());
@@ -1489,7 +1573,9 @@ export const parseModule = (source: string): Module => {
       }
       if (token.kind === "Separator") {
         if (isAt("MODULE", 1)) {
-          module.modules.push(parseModuleBody());
+          const submodule = parseModuleBody();
+          module.modules.push(submodule);
+          module.units.push({ kind: "Module", module: submodule });
           expect("====");
           continue;
         }
@@ -1498,26 +1584,31 @@ export const parseModule = (source: string): Module => {
       }
       switch (token.text) {
         case "CONSTANT":
-        case "CONSTANTS":
+        case "CONSTANTS": {
           advance();
-          module.constants.push(...parseDeclarations());
+          const declarations = parseDeclarations();
+          module.constants.push(...declarations);
+          module.units.push({ kind: "Constants", declarations });
           continue;
+        }
         case "VARIABLE":
-        case "VARIABLES":
+        case "VARIABLES": {
           advance();
-          module.variables.push(
-            ...parseSeparated(() => {
-              const start = cursor.index;
-              const location = getLocation(peek());
-              return withRange({ name: expectIdentifier(), arity: 0, location }, start);
-            }),
-          );
+          const declarations = parseSeparated(() => {
+            const start = cursor.index;
+            const location = getLocation(peek());
+            return withRange({ name: expectIdentifier(), arity: 0, location }, start);
+          });
+          module.variables.push(...declarations);
+          module.units.push({ kind: "Variables", declarations });
           continue;
+        }
         case "ASSUME":
         case "ASSUMPTION":
         case "AXIOM": {
           const assumption = parseAssumption();
           module.assumptions.push(assumption);
+          module.units.push({ kind: "Assumption", assumption });
           if (assumption.name !== undefined) {
             module.definitions.push({
               kind: "Operator",
@@ -1532,29 +1623,37 @@ export const parseModule = (source: string): Module => {
           continue;
         }
         case "USE":
-        case "HIDE":
-          module.uses.push(parseUseOrHide());
+        case "HIDE": {
+          const use = parseUseOrHide();
+          module.uses.push(use);
+          module.units.push({ kind: "Use", use });
           continue;
+        }
         case "RECURSIVE":
           advance();
-          declareRecursive();
+          module.units.push({ kind: "Recursive", declarations: declareRecursive() });
           continue;
-        case "INSTANCE":
-          module.instances.push(
-            withRange(parseInstance(undefined, [], false, getLocation(token)), tokenIndex),
+        case "INSTANCE": {
+          const instance = withRange(
+            parseInstance(undefined, [], false, getLocation(token)),
+            tokenIndex,
           );
+          module.instances.push(instance);
+          module.units.push({ kind: "Instance", instance });
           continue;
+        }
         case "LOCAL": {
           advance();
           if (isAt("INSTANCE")) {
-            module.instances.push(
-              withRange(parseInstance(undefined, [], true, getLocation(token)), tokenIndex),
+            const instance = withRange(
+              parseInstance(undefined, [], true, getLocation(token)),
+              tokenIndex,
             );
+            module.instances.push(instance);
+            module.units.push({ kind: "Instance", instance });
             continue;
           }
-          const unit = parseDefinition(true);
-          if (unit.kind === "Instance") module.instances.push(unit);
-          else module.definitions.push(unit);
+          addDefinitionUnit(module, parseDefinition(true));
           continue;
         }
       }
@@ -1562,11 +1661,23 @@ export const parseModule = (source: string): Module => {
         parseTheorem(module);
         continue;
       }
-      const unit = parseDefinition(false);
-      if (unit.kind === "Instance") module.instances.push(unit);
-      else module.definitions.push(unit);
+      addDefinitionUnit(module, parseDefinition(false));
     }
+  };
+
+  const addDefinitionUnit = (module: Module, unit: Definition | Instance) => {
+    if (unit.kind === "Instance") {
+      module.instances.push(unit);
+      module.units.push({ kind: "Instance", instance: unit });
+      return;
+    }
+    module.definitions.push(unit);
+    module.units.push({ kind: "Definition", definition: unit });
   };
 
   return parseModuleBody();
 };
+
+export const parseModule = (source: string) => parse(source, false);
+
+export const parseTlapmModule = (source: string) => parse(source, true);

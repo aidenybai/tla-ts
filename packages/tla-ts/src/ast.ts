@@ -44,6 +44,9 @@ export interface ApplyExpression {
   kind: "Apply";
   operator: string;
   args: Expression[];
+  // The number of args each part of a name like F(x)!l(y) takes, when a part before the last takes
+  // some.
+  argumentCounts?: number[];
   location: SourceLocation;
   resolution?: LocalResolution;
 }
@@ -64,6 +67,7 @@ export interface LambdaExpression {
 export interface JunctionExpression {
   kind: "And" | "Or";
   operands: Expression[];
+  isBulleted?: boolean;
   location: SourceLocation;
 }
 
@@ -129,6 +133,7 @@ export interface QuantifierExpression {
 
 export interface UnboundedQuantifierExpression {
   kind: "UnboundedQuantifier";
+  quantifier: "Forall" | "Exists";
   names: string[];
   isTemporal?: boolean;
   body: Expression;
@@ -388,18 +393,35 @@ export interface AssumeProve {
 
 export type Fact = Expression | { kind: "ModuleFact"; name: string; location: SourceLocation };
 
+// keyword is the range of the USE or HIDE token and any ONLY after it.
 export interface UseOrHide {
   kind: "Use" | "Hide";
   isOnly: boolean;
   facts: Fact[];
   defs: Fact[];
+  keyword: SourceRange;
   location: SourceLocation;
 }
 
+// keyword is the range of the BY, OBVIOUS, or OMITTED token, and isKeyword records a PROOF keyword
+// before the first step.
 export type Proof =
-  | { kind: "Obvious" | "Omitted"; location: SourceLocation }
-  | { kind: "By"; isOnly: boolean; facts: Fact[]; defs: Fact[]; location: SourceLocation }
-  | { kind: "Steps"; level: number; steps: ProofStep[]; location: SourceLocation };
+  | { kind: "Obvious" | "Omitted"; keyword: SourceRange; location: SourceLocation }
+  | {
+      kind: "By";
+      isOnly: boolean;
+      facts: Fact[];
+      defs: Fact[];
+      keyword: SourceRange;
+      location: SourceLocation;
+    }
+  | {
+      kind: "Steps";
+      level: number;
+      steps: ProofStep[];
+      isKeyword: boolean;
+      location: SourceLocation;
+    };
 
 export interface DefineStep {
   kind: "Define";
@@ -419,9 +441,12 @@ export type StepBody =
   | { kind: "Assert"; isSuffices: boolean; statement: Expression | AssumeProve }
   | { kind: "Qed" };
 
+// head is the range of the step number and its statement, without the proof.
 export interface ProofStep {
   name: string | undefined;
+  token: string;
   body: StepBody;
+  head: SourceRange;
   proof: Proof | undefined;
   location: SourceLocation;
 }
@@ -432,6 +457,18 @@ export interface Theorem {
   proof: Proof | undefined;
   location: SourceLocation;
 }
+
+// The units of a module in source order, for consumers that need the order across kinds.
+export type ModuleUnit =
+  | { kind: "Constants"; declarations: Declaration[] }
+  | { kind: "Variables"; declarations: Declaration[] }
+  | { kind: "Recursive"; declarations: Declaration[] }
+  | { kind: "Definition"; definition: Definition }
+  | { kind: "Instance"; instance: Instance }
+  | { kind: "Assumption"; assumption: Assumption }
+  | { kind: "Theorem"; theorem: Theorem }
+  | { kind: "Use"; use: UseOrHide }
+  | { kind: "Module"; module: Module };
 
 export interface Module {
   name: string;
@@ -445,4 +482,5 @@ export interface Module {
   location: SourceLocation;
   theorems: Theorem[];
   uses: UseOrHide[];
+  units: ModuleUnit[];
 }

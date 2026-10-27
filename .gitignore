@@ -14,3 +14,5 @@ packages/tla-ts/tests/conformance/.corpora
 packages/tla-ts/tests/conformance/.library
 packages/tla-ts/tests/conformance/.results.json
 packages/tla-ts/tests/conformance/.sany-results.json
+packages/tla-ts/tests/conformance/.tlapm.json
+packages/tla-ts/tests/conformance/.tlapm-results.json
