@@ -1,5 +1,6 @@
-// TLC orders strings and model values by when it first interned their text, and compares a
-// state's variables in the order of SANY's symbol table. This reproduces both orders.
+// TLC picks a symmetry representative by comparing variables in SANY's order and strings and
+// model values by when TLC interned them. That choice only changes results under a VIEW, so the
+// checker reproduces both orders there.
 import type { Module, SourceLocation } from "./ast";
 import type { ConfigValue, ModelConfig } from "./config";
 import { tokenize, type Token } from "./lexer";
@@ -9,9 +10,23 @@ import {
   SANY_NODE_NAMES,
   SANY_OPERATOR_SYNONYMS,
   TLC_MODULE_SOURCES,
-  TLC_RUNTIME_STRINGS,
   TLC_STARTUP_STRINGS,
 } from "./tlc-modules";
+import {
+  compareValues,
+  isEnumerable,
+  isFunctionValue,
+  isModelValue,
+  isSetValue,
+  toFiniteFunction,
+  toFiniteSet,
+  type Value,
+} from "./values";
+
+export interface TlcOrder {
+  variables: string[];
+  ranks: Map<string, number>;
+}
 
 type SymbolKind = "builtin" | "constant" | "variable" | "definition" | "theorem" | "module";
 
@@ -28,14 +43,17 @@ interface SymbolTable {
   enumerate: () => SymbolEntry[];
 }
 
+interface ParsedFile {
+  module: Module;
+  tokens: Token[];
+}
+
 interface ParsedModule {
+  module: Module;
   tokens: Token[];
   start: number;
   end: number;
-  getModule: () => Module;
 }
-
-type ModuleLoader = ((name: string) => string | undefined) | undefined;
 
 interface ModuleUnit {
   location: SourceLocation;
@@ -186,9 +204,8 @@ const isAdjacent = (left: Token, right: Token | undefined) =>
   right.line === left.line &&
   right.column === left.column + left.text.length;
 
-// The texts SANY interns while parsing, in order. SANY reads a proof step label such as <1>2 and
-// a module header such as ---- MODULE as one token, and interns a string literal's contents only
-// during semantic analysis.
+// The texts SANY interns while parsing, in order. SANY reads a proof step label such as <1>2 as
+// one token, and interns a string literal's contents only during semantic analysis.
 const getParsedTexts = (tokens: Token[]) => {
   const texts: string[] = [];
   for (let index = 0; index < tokens.length; index++) {
@@ -203,73 +220,61 @@ const getParsedTexts = (tokens: Token[]) => {
       index += isAdjacent(tokens[index + 2], tokens[index + 3]) ? 3 : 2;
       continue;
     }
-    const isHeader = token.text === "MODULE" && tokens[index - 1]?.kind === "Separator";
-    if (token.kind !== "String" && !isHeader) texts.push(token.text);
+    if (token.kind !== "String") texts.push(token.text);
   }
   return texts;
 };
 
-const getRanges = (tokens: Token[]) => {
-  const ranges = new Map<string, { start: number; end: number }>();
-  const open: { name: string; start: number }[] = [];
-  tokens.forEach((token, index) => {
-    if (token.kind === "Separator" && tokens[index + 1]?.text === "MODULE") {
-      open.push({ name: tokens[index + 2].text, start: index });
-    }
-    const closed = token.kind === "ModuleEnd" ? open.pop() : undefined;
-    if (closed && !ranges.has(closed.name)) {
-      ranges.set(closed.name, { start: closed.start, end: index + 1 });
-    }
-  });
-  return ranges;
-};
-
-const findModule = (modules: Module[], name: string): Module | undefined =>
-  modules.find((module) => module.name === name) ??
-  modules.map((module) => findModule(module.modules, name)).find(Boolean);
-
-// The modules TLC reads for a spec: the root module, the inner and trailing modules in its file,
-// TLC's standard modules, and the files the loader returns. A module without a source has no
-// tokens.
-const createModuleSet = (source: string, loadModule: ModuleLoader) => {
-  const files = new Map<string, ParsedModule>();
-  const getFile = (name: string | undefined): ParsedModule => {
-    const cached = files.get(name ?? "");
+export const createTlcOrder = (
+  source: string,
+  config: ModelConfig,
+  loadModule: ((name: string) => string | undefined) | undefined,
+): TlcOrder => {
+  const files = new Map<string, ParsedFile>();
+  const getFile = (name: string | undefined): ParsedFile => {
+    const key = name ?? "";
+    const cached = files.get(key);
     if (cached) return cached;
-    const text = name === undefined ? source : (TLC_MODULE_SOURCES.get(name) ?? loadModule?.(name));
-    const tokens = text === undefined ? [] : tokenize(text);
-    const range = getRanges(tokens).get(tokens[2]?.text ?? "") ?? { start: 0, end: 0 };
-    const parsed = { module: undefined as Module | undefined };
-    const file = {
-      tokens,
-      ...range,
-      getModule: () => (parsed.module ??= parseModule(text ?? "")),
-    };
-    files.set(name ?? "", file);
-    return file;
+    const text =
+      name === undefined ? source : (loadModule?.(name) ?? TLC_MODULE_SOURCES.get(name) ?? "");
+    const result = { module: parseModule(text), tokens: tokenize(text) };
+    files.set(key, result);
+    return result;
   };
+  const getRanges = (tokens: Token[]) => {
+    const ranges = new Map<string, { start: number; end: number }>();
+    const open: { name: string; start: number }[] = [];
+    tokens.forEach((token, index) => {
+      if (token.kind === "Separator" && tokens[index + 1]?.text === "MODULE") {
+        open.push({ name: tokens[index + 2].text, start: index });
+      }
+      const closed = token.kind === "ModuleEnd" ? open.pop() : undefined;
+      if (closed && !ranges.has(closed.name)) {
+        ranges.set(closed.name, { start: closed.start, end: index + 1 });
+      }
+    });
+    return ranges;
+  };
+  const findModule = (modules: Module[], name: string): Module | undefined =>
+    modules.find((module) => module.name === name) ??
+    modules.map((module) => findModule(module.modules, name)).find(Boolean);
   const root = getFile(undefined);
   const rootRanges = getRanges(root.tokens);
-  return (name: string | undefined): ParsedModule => {
-    const range = name === undefined ? undefined : rootRanges.get(name);
-    if (name === undefined || !range || root.tokens[root.start + 2]?.text === name) {
-      return getFile(name);
+  const nestedNames = new Set([...rootRanges.keys()].filter((name) => name !== root.module.name));
+  const getParsed = (name: string | undefined): ParsedModule => {
+    if (name !== undefined && nestedNames.has(name)) {
+      const range = rootRanges.get(name) ?? { start: 0, end: 0 };
+      const module = findModule(root.module.modules, name) ?? root.module;
+      return { module, tokens: root.tokens, ...range };
     }
-    return {
-      tokens: root.tokens,
-      ...range,
-      getModule: () => findModule(root.getModule().modules, name) ?? root.getModule(),
-    };
+    const file = getFile(name);
+    const range = getRanges(file.tokens).get(file.module.name) ?? { start: 0, end: 0 };
+    return { ...file, ...range };
   };
-};
 
-// The variables in the order TLC compares them: the reverse of the root module's context
-// enumeration, as ModuleNode.getVariableDecls returns them.
-export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader): string[] => {
-  const getParsed = createModuleSet(source, loadModule);
   const getUnits = (unit: ParsedModule): ModuleUnit[] => {
     const tokens = unit.tokens;
-    const module = unit.getModule();
+    const module = unit.module;
     const units: ModuleUnit[] = [];
     const statementLocations: SourceLocation[] = [];
     const declare = (index: number, kind: SymbolKind) => {
@@ -378,7 +383,7 @@ export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader): s
       table.put(createEntry(builtin, "builtin", false)),
     );
     const unit = getParsed(name);
-    unit.getModule().extends.forEach((extended) =>
+    unit.module.extends.forEach((extended) =>
       getContext(extended).inserted.forEach((entry) => {
         if (!entry.isLocal) table.put(entry);
       }),
@@ -386,25 +391,16 @@ export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader): s
     getUnits(unit).forEach((item) => item.apply(table));
     return table;
   };
-  return getContext(undefined)
+
+  const variables = getContext(undefined)
     .enumerate()
     .filter((entry) => entry.kind === "variable")
     .map((entry) => entry.name)
     .reverse();
-};
 
-// Every string TLC interns before model checking starts, in order: values in the config, TLC's
-// startup strings, each module's tokens in the order SpecObj.loadSpec parses the modules, string
-// literals in semantic analysis order, and the names TLC interns for TLCGet.
-export const getTlcStringOrder = (
-  source: string,
-  config: ModelConfig,
-  loadModule: ModuleLoader,
-): string[] => {
-  const getParsed = createModuleSet(source, loadModule);
-  const order = new Set<string>();
+  const ranks = new Map<string, number>();
   const intern = (text: string) => {
-    order.add(text);
+    if (!ranks.has(text)) ranks.set(text, ranks.size);
   };
   const internConfigValue = (value: ConfigValue): void => {
     if (value.kind === "ModelValue") intern(value.name);
@@ -466,7 +462,7 @@ export const getTlcStringOrder = (
   const parsedUnits = new Set<string | undefined>([undefined]);
   const dependencies = new Map<string | undefined, string[]>();
   getParsedTexts(getUnitTokens(undefined)).forEach((text, index) => {
-    if (index === 3) SANY_NODE_NAMES.forEach(intern);
+    if (index === 4) SANY_NODE_NAMES.forEach(intern);
     intern(text);
   });
   const rootReferences = getUnitReferences(undefined);
@@ -497,6 +493,70 @@ export const getTlcStringOrder = (
     });
   };
   analyze(undefined);
-  TLC_RUNTIME_STRINGS.forEach(intern);
-  return [...order];
+  return { variables, ranks };
+};
+
+const getTlcComparator = (ranks: Map<string, number>) => {
+  const getRank = (text: string) => {
+    if (!ranks.has(text)) ranks.set(text, ranks.size);
+    return ranks.get(text) ?? 0;
+  };
+  const compare = (left: Value, right: Value): number => {
+    if (left === right) return 0;
+    if (typeof left === "string" && typeof right === "string") {
+      return getRank(left) - getRank(right);
+    }
+    if (isModelValue(left) && isModelValue(right)) return getRank(left.name) - getRank(right.name);
+    if (typeof left !== "object" || typeof right !== "object") return compareValues(left, right);
+    if (isModelValue(left) || isModelValue(right)) return compareValues(left, right);
+    if (isSetValue(left) && isSetValue(right) && isEnumerable(left) && isEnumerable(right)) {
+      const leftElements = toFiniteSet(left).elements.toSorted(compare);
+      const rightElements = toFiniteSet(right).elements.toSorted(compare);
+      if (leftElements.length !== rightElements.length) {
+        return leftElements.length - rightElements.length;
+      }
+      for (let index = 0; index < leftElements.length; index++) {
+        const comparison = compare(leftElements[index], rightElements[index]);
+        if (comparison !== 0) return comparison;
+      }
+      return 0;
+    }
+    if (isFunctionValue(left) && isFunctionValue(right)) {
+      const getEntries = (value: Value) => {
+        const fn = toFiniteFunction(value);
+        return fn.domain
+          .map((key, index): [Value, Value] => [key, fn.range[index]])
+          .toSorted((first, second) => compare(first[0], second[0]));
+      };
+      const leftEntries = getEntries(left);
+      const rightEntries = getEntries(right);
+      if (leftEntries.length !== rightEntries.length) {
+        return leftEntries.length - rightEntries.length;
+      }
+      for (const position of [0, 1]) {
+        for (let index = 0; index < leftEntries.length; index++) {
+          const comparison = compare(leftEntries[index][position], rightEntries[index][position]);
+          if (comparison !== 0) return comparison;
+        }
+      }
+      return 0;
+    }
+    return compareValues(left, right);
+  };
+  return compare;
+};
+
+export const getTlcStateComparator = (order: TlcOrder, variableIndex: Map<string, number>) => {
+  const compare = getTlcComparator(order.ranks);
+  const indices = order.variables.flatMap((name) => {
+    const index = variableIndex.get(name);
+    return index === undefined ? [] : [index];
+  });
+  return (left: Value[], right: Value[]) => {
+    for (const index of indices) {
+      const comparison = compare(left[index], right[index]);
+      if (comparison !== 0) return comparison;
+    }
+    return 0;
+  };
 };

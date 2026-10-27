@@ -165,6 +165,16 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("evaluates a VIEW on the symmetry representative TLC picks by its variable order", async () => {
+    const result = await checkFixture("view", "ViewSymmetry");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([7, 4, 4]);
+  });
+
+  it("orders model values, strings, and record fields like TLC when picking a representative", async () => {
+    const result = await checkFixture("view", "ViewSymmetryOrder");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([139, 14, 3]);
+  });
+
   it("enumerates subsets for x \\subseteq S in the initial predicate and next-state relation", async () => {
     const result = await check({
       source:
