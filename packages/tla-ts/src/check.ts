@@ -538,6 +538,7 @@ export interface Search {
   properties: Properties;
   spec: Specification;
   getFingerprintState: (state: Value[]) => Value[];
+  getStoredFingerprint: (state: Value[], fingerprintState: Value[]) => bigint;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
   findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
@@ -696,7 +697,8 @@ export const createSearch = (
       .sort((left, right) => getTlcPosition(left) - getTlcPosition(right));
     return tlcOrder.indices;
   };
-  const order = view !== undefined && symmetryGroup.length > 0 ? getTlcOrder() : undefined;
+  // A representative in TLC's variable order is the one whose fingerprint TLC reports.
+  const order = symmetryGroup.length > 0 ? getTlcOrder() : undefined;
   const getViewValue = (expression: Expression, state: Value[]) =>
     evaluate(expression, getContext(environment, state, undefined));
   const getTlcStateFingerprint = (state: Value[]) => {
@@ -729,6 +731,10 @@ export const createSearch = (
     spec,
     isSymmetric: symmetryGroup.length > 0,
     getTlcOrder,
+    getStoredFingerprint: (state, fingerprintState) =>
+      order === undefined || view !== undefined || isFingerprintedLikeTlc
+        ? getTlcStateFingerprint(state)
+        : getTlcFingerprint(order.map((index) => fingerprintState[index])),
     getFingerprintState: (state) => {
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
       const representative =
@@ -891,7 +897,12 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     fingerprintDistance: getFingerprintDistance(
       runtime.distinctStates,
       runtime.generatedStates,
-      () => BigInt64Array.from(states, (state) => runtime.getFingerprint(state)),
+      () =>
+        BigInt64Array.from(states, (state, index) =>
+          search
+            ? search.getStoredFingerprint(state, fingerprintStates[index])
+            : runtime.getFingerprint(state),
+        ),
     ),
   });
 
