@@ -10,7 +10,16 @@ import {
 } from "./context";
 import { isNumericKey, translateString } from "./domains";
 import { TsproverError } from "./errors";
-import { type Formula, ifThenElse, indent, letIn, render, text, wrap } from "./formula";
+import {
+  type Formula,
+  ifThenElse,
+  indent,
+  letIn,
+  render,
+  text,
+  wrap,
+  wrapEquated,
+} from "./formula";
 
 interface Field {
   key: string;
@@ -49,6 +58,13 @@ const BINARY_OPERATORS = new Map([
   [ts.SyntaxKind.LessThanEqualsToken, "<="],
   [ts.SyntaxKind.GreaterThanToken, ">"],
   [ts.SyntaxKind.GreaterThanEqualsToken, ">="],
+]);
+
+const ORDERING_OPERATORS = new Set([
+  ts.SyntaxKind.LessThanToken,
+  ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanToken,
+  ts.SyntaxKind.GreaterThanEqualsToken,
 ]);
 
 const LOGICAL_OPERATORS = new Map([
@@ -248,6 +264,7 @@ const translateUnordered = (
   }
   if (kind === "map" && method === "values") return getValues(translate(receiver), context);
   if (kind === "map" && method === "entries") return getEntries(translate(receiver), context);
+  if (method === "toArray") return translateUnordered(receiver, scope, context);
   if (method !== "filter" && method !== "map") return undefined;
   const source = translateUnordered(receiver, scope, context);
   if (source === undefined) return undefined;
@@ -394,12 +411,12 @@ const translateObjectLiteral = (
     if (isExisting) {
       const changes = updates.map((property) => {
         const key = getKey(property);
-        if (key !== undefined) return `!${getField(key)} = ${getValue(property)}`;
+        if (key !== undefined) return `!${getField(key)} = ${wrapEquated(getValue(property))}`;
         const name = property.name;
         if (name === undefined || !ts.isComputedPropertyName(name)) {
           throw new TsproverError("Unsupported object member", property);
         }
-        return `![${translateExpression(name.expression, scope, context)}] = ${getValue(property)}`;
+        return `![${translateExpression(name.expression, scope, context)}] = ${wrapEquated(getValue(property))}`;
       });
       return `[${wrap(base)} EXCEPT ${changes.join(", ")}]`;
     }
@@ -462,15 +479,17 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
   if ((method === "min" || method === "max") && node.arguments.length > 0) {
     const comparison = method === "min" ? "<=" : ">=";
     if (node.arguments.length === 1 && ts.isSpreadElement(argument)) {
-      const unordered = translateUnordered(argument.expression, scope, context);
-      const sequence = unordered === undefined ? wrap(translate(argument.expression)) : undefined;
-      const set = unordered?.set ?? `{${sequence}[index] : index \\in DOMAIN ${sequence}}`;
-      return translateMinimum(set, comparison, context);
+      return translateMinimum(
+        translateSet(argument.expression, scope, context),
+        comparison,
+        context,
+      );
     }
     return node.arguments
       .map((inner) => wrap(translate(inner)))
       .reduce(
-        (result, inner) => `IF ${result} ${comparison} ${inner} THEN ${result} ELSE ${inner}`,
+        (result, inner) =>
+          `IF ${wrap(result)} ${comparison} ${inner} THEN ${wrap(result)} ELSE ${inner}`,
       );
   }
   throw new TsproverError(`Unsupported call: Math.${method}`, node);
@@ -564,7 +583,7 @@ const translateSequenceMethod = (
       .join(" \\o ");
   }
   if (method === "with") {
-    return `[${wrap(sequence)} EXCEPT ![${wrap(translate(argument))} + 1] = ${translate(node.arguments[1])}]`;
+    return `[${wrap(sequence)} EXCEPT ![${wrap(translate(argument))} + 1] = ${wrapEquated(translate(node.arguments[1]))}]`;
   }
   if (method === "toReversed") {
     const index = context.names.getFresh("index");
@@ -612,6 +631,9 @@ const translateUnorderedMethod = (
   const argument = node.arguments[0];
   if (method === "includes" || method === "has") {
     return `${wrap(translateExpression(argument, scope, context))} \\in ${wrap(source.set)}`;
+  }
+  if (!["every", "some", "find"].includes(method)) {
+    throw new TsproverError(`Unsupported method on a set's elements: ${method}`, node);
   }
   if (getCallbackParameter(argument, 1, context) !== undefined) {
     throw new TsproverError("Elements of a set have no index", argument);
@@ -898,6 +920,18 @@ const translateCall = (
   return value;
 };
 
+// The elements of a set, an array, or an iterator over a collection, as a TLA+ set.
+const translateSet = (node: ts.Expression, scope: Scope, context: Context) => {
+  const unordered = translateUnordered(node, scope, context);
+  if (unordered !== undefined) return unordered.set;
+  const kind = getKind(node, context);
+  const value = translateExpression(node, scope, context);
+  if (kind === "set") return value;
+  if (kind !== "sequence") throw new TsproverError("Expected a Set or an array", node);
+  const index = context.names.getFresh("index");
+  return `{${wrap(value)}[${index}] : ${index} \\in DOMAIN ${wrap(value)}}`;
+};
+
 const translateNew = (node: ts.NewExpression, scope: Scope, context: Context) => {
   const constructor = node.expression.getText();
   const argument = node.arguments?.[0];
@@ -906,15 +940,7 @@ const translateNew = (node: ts.NewExpression, scope: Scope, context: Context) =>
     if (ts.isArrayLiteralExpression(argument) && !argument.elements.some(ts.isSpreadElement)) {
       return `{${argument.elements.map((element) => translateExpression(element, scope, context)).join(", ")}}`;
     }
-    const unordered = translateUnordered(argument, scope, context);
-    if (unordered !== undefined) return unordered.set;
-    const kind = getKind(argument, context);
-    const value = translateExpression(argument, scope, context);
-    if (kind === "set") return value;
-    if (kind === "sequence") {
-      const index = context.names.getFresh("index");
-      return `{${wrap(value)}[${index}] : ${index} \\in DOMAIN ${wrap(value)}}`;
-    }
+    return translateSet(argument, scope, context);
   }
   if (constructor === "Map") {
     if (argument === undefined) return "<<>>";
@@ -1060,6 +1086,11 @@ const translateTemplate = (node: ts.TemplateExpression, scope: Scope, context: C
 const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
   const kind = node.operatorToken.kind;
   const translate = (inner: ts.Expression) => wrap(translateExpression(inner, scope, context));
+  // JavaScript converts the other operand of a string + to a string.
+  const translateString = (inner: ts.Expression) =>
+    getKind(inner, context) === "string"
+      ? translate(inner)
+      : `ToString(${translateExpression(inner, scope, context)})`;
   const logical = LOGICAL_OPERATORS.get(kind);
   if (logical !== undefined) {
     if (!isBooleanLike(node.left, context) || !isBooleanLike(node.right, context)) {
@@ -1073,7 +1104,8 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
   if (kind === ts.SyntaxKind.PlusToken) {
     const isString =
       getKind(node.left, context) === "string" || getKind(node.right, context) === "string";
-    return `${translate(node.left)} ${isString ? "\\o" : "+"} ${translate(node.right)}`;
+    if (!isString) return `${translate(node.left)} + ${translate(node.right)}`;
+    return `${translateString(node.left)} \\o ${translateString(node.right)}`;
   }
   if (kind === ts.SyntaxKind.PercentToken) {
     context.prelude.add("Rem");
@@ -1092,6 +1124,12 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     throw new TsproverError("Write division as Math.floor(a / b) or Math.trunc(a / b)", node);
   }
   const operator = BINARY_OPERATORS.get(kind);
+  if (
+    ORDERING_OPERATORS.has(kind) &&
+    (getKind(node.left, context) === "string" || getKind(node.right, context) === "string")
+  ) {
+    throw new TsproverError("TLA+ strings have no order, so compare them with === only", node);
+  }
   if (operator === undefined) {
     throw new TsproverError(
       `Unsupported operator: ${node.operatorToken.getText()}`,
@@ -1298,7 +1336,8 @@ export const translateSwitch = <State>(
     const isTerminated =
       last !== undefined &&
       (ts.isBreakStatement(last) || ts.isReturnStatement(last) || ts.isThrowStatement(last));
-    if (body.length > 0 && !isTerminated) {
+    const isLast = start + group.length === clauses.length;
+    if (body.length > 0 && !isTerminated && !isLast) {
       throw new TsproverError("End each case with break, return, or throw", lastClause);
     }
     const statements = last !== undefined && ts.isBreakStatement(last) ? body.slice(0, -1) : body;

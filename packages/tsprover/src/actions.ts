@@ -14,7 +14,7 @@ import {
   translateSwitch,
   translateThrow,
 } from "./expressions";
-import { and, DISABLED, type Formula, ifThenElse, letIn, text, wrap } from "./formula";
+import { and, DISABLED, type Formula, ifThenElse, letIn, text, wrap, wrapEquated } from "./formula";
 
 interface Path {
   scope: Scope;
@@ -62,6 +62,9 @@ const getTarget = (
     return { symbol, current, selector: "" };
   }
   if (ts.isPropertyAccessExpression(node)) {
+    if (getKind(node.expression, context) !== "other") {
+      throw new TsproverError(`Can't assign to ${node.getText()}`, node);
+    }
     const target = getTarget(node.expression, path, context);
     return { ...target, selector: `${target.selector}.${node.name.text}` };
   }
@@ -100,7 +103,7 @@ const assign = (
   const value =
     target.selector === ""
       ? getValue(target.current)
-      : `[${wrap(target.current)} EXCEPT !${target.selector} = ${getValue("@")}]`;
+      : `[${wrap(target.current)} EXCEPT !${target.selector} = ${wrapEquated(getValue("@"))}]`;
   return {
     scope: { ...path.scope, bindings: new Map([...path.scope.bindings, [target.symbol, value]]) },
     mutable: path.mutable,
@@ -193,6 +196,9 @@ const translateExpressionStatement = (
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
+  if (ts.isParenthesizedExpression(expression)) {
+    return translateExpressionStatement(expression.expression, path, context, frame, continueWith);
+  }
   const translate = (inner: ts.Expression) => translateExpression(inner, path.scope, context);
   if (ts.isBinaryExpression(expression)) {
     const kind = expression.operatorToken.kind;
@@ -427,7 +433,7 @@ export const translateAction = (
     return and([
       ...assignments
         .filter((assignment) => assignment.value !== assignment.name)
-        .map((assignment) => text(`${assignment.name}' = ${assignment.value}`)),
+        .map((assignment) => text(`${assignment.name}' = ${wrapEquated(assignment.value)}`)),
       ...(unchanged.length > 0
         ? [text(`UNCHANGED <<${unchanged.map((assignment) => assignment.name).join(", ")}>>`)]
         : []),
