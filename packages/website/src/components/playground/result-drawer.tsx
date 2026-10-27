@@ -82,7 +82,10 @@ const TraceResult = (props: TraceResultProps) => {
         </pre>
       )}
       {trace.length > 0 && (
-        <div data-drawer-scroll className="min-h-0 flex-1 overflow-auto border-t">
+        <div
+          data-drawer-scroll
+          className="min-h-0 flex-1 touch-pan-x touch-pan-y overflow-auto overscroll-contain border-t"
+        >
           <TraceTable
             trace={trace}
             loopStart={result.loopStart}
