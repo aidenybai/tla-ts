@@ -593,14 +593,16 @@ const SCALAR_KINDS = {
   boolean: { name: "boolean", other: "non-boolean", equality: "compare equality of" },
 };
 
-const failScalar = (left: number | string | boolean, right: Value, isEquality: boolean): never => {
+const describeScalarMismatch = (
+  left: number | string | boolean,
+  right: Value,
+  isEquality: boolean,
+) => {
   const kind =
     SCALAR_KINDS[
       typeof left === "number" ? "number" : typeof left === "string" ? "string" : "boolean"
     ];
-  throw new TlaEvaluationError(
-    `Attempted to ${isEquality ? kind.equality : "compare"} ${kind.name} ${formatValue(left)} with ${kind.other}:\n${formatValue(right)}`,
-  );
+  return `Attempted to ${isEquality ? kind.equality : "compare"} ${kind.name} ${formatValue(left)} with ${kind.other}:\n${formatValue(right)}`;
 };
 
 const compareTlcFunctions = (functionValue: TlcFunction, left: Value, right: Value) => {
@@ -718,7 +720,7 @@ const compareLikeTlc = (left: Value, right: Value): number => {
   if (typeof left !== "object") {
     if (typeof right === typeof left) return compareValues(left, right);
     if (isModelValue(right)) return compareModelValueWith(right, left);
-    return failScalar(left, right, false);
+    throw new TlaEvaluationError(describeScalarMismatch(left, right, false));
   }
   if (left.kind === "ModelValue") return compareModelValue(left, right);
   if (isFunctionValue(left)) return compareFunctionLikeTlc(left, right);
@@ -815,7 +817,7 @@ const equalsLikeTlc = (left: Value, right: Value): boolean => {
   if (typeof left !== "object") {
     if (typeof right === typeof left) return left === right;
     if (isModelValue(right)) return equalsModelValueWith(right, left);
-    return failScalar(left, right, true);
+    throw new TlaEvaluationError(describeScalarMismatch(left, right, true));
   }
   if (left.kind === "ModelValue") return equalsModelValue(left, right);
   if (isFunctionValue(left)) return equalsFunctionLikeTlc(left, right);

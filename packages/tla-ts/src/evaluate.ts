@@ -1664,21 +1664,21 @@ const createUnchanged = (expression: Expression, location: Expression["location"
   location,
 });
 
-const throwing =
-  (createError: () => Error): Evaluator =>
-  () => {
-    throw createError();
-  };
-
 const compile = (expression: Expression, environment: Environment): Evaluator => {
   const child = (node: Expression) => getEvaluator(node, environment);
   switch (expression.kind) {
     case "Number": {
       const value = expression.value;
-      return isTlcInteger(value) ? () => value : throwing(() => createBigNumberError(expression));
+      return isTlcInteger(value)
+        ? () => value
+        : () => {
+            throw createBigNumberError(expression);
+          };
     }
     case "Decimal":
-      return throwing(() => createRealNumberError(expression));
+      return () => {
+        throw createRealNumberError(expression);
+      };
     case "String": {
       const value = expression.value;
       return () => value;
@@ -1689,12 +1689,11 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       return compileApply(expression, environment);
     case "OperatorReference":
     case "Lambda":
-      return throwing(
-        () =>
-          new TlaEvaluationError(
-            `An operator cannot be used as a value at ${describeLocation(expression)}`,
-          ),
-      );
+      return () => {
+        throw new TlaEvaluationError(
+          `An operator cannot be used as a value at ${describeLocation(expression)}`,
+        );
+      };
     case "And": {
       const operands = expression.operands.map(child);
       return (context) => {
@@ -1773,12 +1772,11 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "Exists":
       return compileQuantifier(expression, environment);
     case "UnboundedQuantifier":
-      return throwing(
-        () =>
-          new TlaEvaluationError(
-            `TLC cannot evaluate an unbounded quantifier at ${describeLocation(expression)}`,
-          ),
-      );
+      return () => {
+        throw new TlaEvaluationError(
+          `TLC cannot evaluate an unbounded quantifier at ${describeLocation(expression)}`,
+        );
+      };
     case "Choose":
     case "SetFilter":
     case "SetMap":
@@ -1861,21 +1859,19 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "Label":
       return child(expression.body);
     case "Subexpression":
-      return throwing(
-        () =>
-          new TlaEvaluationError(
-            `The subexpression reference at ${describeLocation(expression)} does not name a subexpression`,
-          ),
-      );
+      return () => {
+        throw new TlaEvaluationError(
+          `The subexpression reference at ${describeLocation(expression)} does not name a subexpression`,
+        );
+      };
     case "Always":
     case "Eventually":
     case "WeakFairness":
     case "StrongFairness":
-      return throwing(
-        () =>
-          new TlaEvaluationError(
-            `TLC cannot evaluate a temporal formula in a state at ${describeLocation(expression)}`,
-          ),
-      );
+      return () => {
+        throw new TlaEvaluationError(
+          `TLC cannot evaluate a temporal formula in a state at ${describeLocation(expression)}`,
+        );
+      };
   }
 };
