@@ -26,7 +26,6 @@ import {
   type ScopedExpression,
   type TemporalProperty,
 } from "./liveness";
-import { parseModule } from "./parser";
 import { prettyPrint } from "./pretty-print";
 import { getInitialStates, getSuccessors, type Successor } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
@@ -650,9 +649,9 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   setNextStatePhase(false);
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   const print = options.onPrint ?? console.log;
-  const module = parseModule(options.source);
   setStringOrder(getTlcStringOrder(options.source, config, options.loadModule));
-  const specification = createEnvironment(module, config, {
+  const specification = createEnvironment(config, {
+    source: options.source,
     loadModule: options.loadModule,
     print,
     files: { readFile: options.readFile, writeFile: options.writeFile },

@@ -3,7 +3,6 @@ import { createSearch } from "./check";
 import { createEnvironment } from "./environment";
 import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from "./fingerprints";
 import type { LevelMessage, Port, StartMessage, WorkerMessage } from "./parallel";
-import { parseModule } from "./parser";
 import { getSuccessors } from "./successors";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
@@ -100,10 +99,10 @@ const createInbox = () => {
 const run = (start: StartMessage, parent: Port) => {
   const modules = new Map(start.modules);
   const loadModule = (name: string) => modules.get(name);
-  const module = parseModule(start.source);
   setStringOrder(getTlcStringOrder(start.source, start.config, loadModule));
   const startupStrings = getRankedStringCount();
-  const specification = createEnvironment(module, start.config, {
+  const specification = createEnvironment(start.config, {
+    source: start.source,
     loadModule,
     print: () => {},
     files: { readFile: undefined, writeFile: undefined },
