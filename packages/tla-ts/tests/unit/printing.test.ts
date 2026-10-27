@@ -28,6 +28,8 @@ describe("printing matches TLC", () => {
     ["(1..40) \\X (1..50)", "(1..40 \\X 1..50)"],
     ["{} \\X Nat", "{}"],
     ["<<SUBSET (1..7)>>", "<<SUBSET (1..7)>>"],
+    ["{} \\cup (0..0)", "0..0"],
+    ["(0..1) \\cup {}", "{0, 1}"],
   ])("prints %s as %s", async (expression, text) => {
     expect((await checkPrinting(`ASSUME PrintT(${expression})`)).printed).toEqual([text]);
   });

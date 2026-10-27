@@ -37,6 +37,7 @@ import {
   intersectSorted,
   isElementOf,
   getSequenceElements,
+  isEmptySet,
   isEnumerable,
   isFiniteSet,
   isFunctionValue,
@@ -138,6 +139,7 @@ export const CORE_OPERATORS: Builtin[] = [
       const left = getSet(args, 0, operator);
       const right = getSet(args, 1, operator);
       if (isReducible(left) && isReducible(right) && !isMixedSet(left) && !isMixedSet(right)) {
+        if (operator === "\\cup" && isEmptySet(left)) return right;
         const merge =
           operator === "\\cup"
             ? unionSorted
