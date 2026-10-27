@@ -242,7 +242,7 @@ const KIND_STRINGS: Record<string, string> = {
 
 // TLC stores a function as a TupleValue or a RecordValue when it has that shape, so the
 // shape stands in for how TLC built the value.
-const getJavaClassName = (value: Value) => {
+export const getJavaClassName = (value: Value) => {
   if (typeof value === "number") return "IntValue";
   if (typeof value === "string") return "StringValue";
   if (typeof value === "boolean") return "BoolValue";

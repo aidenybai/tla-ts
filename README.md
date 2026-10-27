@@ -73,7 +73,7 @@ Options:
 - `loadModule`: maps a module name to its source, for modules other than the standard modules
 - `onPrint`: receives the output of `Print` and `PrintT`, which defaults to `console.log`
 - `onPause`: runs when `TLCSet("pause", TRUE)` pauses checking, and checking resumes when it returns. The CLI waits for a line on standard input, as TLC does
-- `readFile` and `writeFile`: let the Json module read and write files. Without them, it has no file access
+- `readFile` and `writeFile`: let the Json module read and write files, as TLC does from its working directory. Without `readFile`, `JsonDeserialize` fails as if the file were missing. Without `writeFile`, `JsonSerialize` writes nothing and still returns `TRUE`, so a spec that exports traces checks the same way in the browser
 - `seed`: a `bigint` that seeds `RandomElement` and the Randomization module, which defaults to `0n`. tla-ts makes the same choices as TLC run with `-seed` set to the same value and `-fp 0`
 - `workers`: the number of worker threads to check on, which defaults to 1. With 1, `check` runs on the calling thread
 
