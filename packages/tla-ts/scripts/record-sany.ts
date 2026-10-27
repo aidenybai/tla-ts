@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import {
   CONFORMANCE_DIRECTORY,
   CORPORA_DIRECTORY,
@@ -22,6 +22,8 @@ export const SANY_PATH = join(CONFORMANCE_DIRECTORY, "sany.json");
 
 const CONCURRENCY = 3;
 
+const UNEXPORTABLE_CHARACTER = "XML 1.0 cannot represent that character";
+
 const jarPath = process.env.TLA2TOOLS_JAR;
 if (!jarPath || !existsSync(jarPath)) {
   console.error("Set TLA2TOOLS_JAR to the path of tla2tools.jar");
@@ -37,37 +39,52 @@ const getError = (output: string) =>
     .join("\n")
     .trim();
 
-const runSany = (module: CorpusModule) =>
-  new Promise<SanyResult>((resolve) => {
-    const child = spawn(
-      "java",
-      [
-        "-Xmx512m",
-        "-cp",
-        jarPath,
-        "tla2sany.xml.XMLExporter",
-        "-o",
-        "-t",
-        "-r",
-        ...LIBRARY_DIRECTORIES.flatMap((directory) => ["-I", directory]),
-        basename(module.path),
-      ],
-      { cwd: dirname(module.path) },
-    );
+const runJava = (args: string[], directory: string) =>
+  new Promise<{ exitCode: number | null; output: string }>((resolve) => {
+    const child = spawn("java", ["-Xmx512m", "-cp", jarPath, ...args], { cwd: directory });
     const chunks: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
-    child.on("close", (exitCode) => {
-      const output = Buffer.concat(chunks).toString("utf8");
-      if (exitCode !== 0) {
-        resolve({ id: module.id, status: "error", error: getError(output) });
-        return;
-      }
-      const digest = digestSany(parseXml(output), basename(module.path, ".tla"));
-      const isEmpty = digest.units.length === 0 && digest.modules.length === 0;
-      resolve({ id: module.id, status: "ok", ...(isEmpty ? {} : { module: digest }) });
-    });
+    child.on("close", (exitCode) =>
+      resolve({ exitCode, output: Buffer.concat(chunks).toString("utf8") }),
+    );
   });
+
+const runSany = async (module: CorpusModule): Promise<SanyResult> => {
+  const directory = dirname(module.path);
+  const exported = await runJava(
+    [
+      "tla2sany.xml.XMLExporter",
+      "-o",
+      "-t",
+      "-r",
+      ...LIBRARY_DIRECTORIES.flatMap((library) => ["-I", library]),
+      basename(module.path),
+    ],
+    directory,
+  );
+  if (exported.exitCode === 0) {
+    const digest = digestSany(parseXml(exported.output), basename(module.path, ".tla"));
+    const isEmpty = digest.units.length === 0 && digest.modules.length === 0;
+    return { id: module.id, status: "ok", ...(isEmpty ? {} : { module: digest }) };
+  }
+  if (!exported.output.includes(UNEXPORTABLE_CHARACTER)) {
+    return { id: module.id, status: "error", error: getError(exported.output) };
+  }
+  // XML cannot hold some characters that a module may contain, so SANY alone decides those modules.
+  const checked = await runJava(
+    [
+      `-DTLA-Library=${LIBRARY_DIRECTORIES.join(delimiter)}`,
+      "tla2sany.SANY",
+      "-error-codes",
+      basename(module.path),
+    ],
+    directory,
+  );
+  return checked.exitCode === 0
+    ? { id: module.id, status: "ok" }
+    : { id: module.id, status: "error", error: getError(checked.output) };
+};
 
 const modules = findModules();
 const results: SanyResult[] = [];

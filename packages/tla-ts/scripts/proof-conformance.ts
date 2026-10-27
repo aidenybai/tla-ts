@@ -1,6 +1,12 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { parseModule, TlaConfigError, TlaSyntaxError, TlaUnsupportedError } from "../src";
+import {
+  parseModule,
+  TlaConfigError,
+  TlaEvaluationError,
+  TlaSyntaxError,
+  TlaUnsupportedError,
+} from "../src";
 import { parseConfig } from "../src/config";
 import { createEnvironment } from "../src/environment";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, LIBRARY_DIRECTORIES } from "./corpora";
@@ -17,8 +23,7 @@ const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".sany-results.json");
 
 const readModule = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : undefined);
 
-// tla-ts checks a module the way SANY does when it builds the environment, before it needs a model,
-// so an error about the missing configuration means it accepted the module.
+// tla-ts checks a module the way SANY does when it builds the environment, before it needs a model.
 const analyze = (path: string): ParseOutcome => {
   const source = readFileSync(path, "utf8");
   try {
@@ -40,7 +45,10 @@ const analyze = (path: string): ParseOutcome => {
     });
     return { status: "ok", error: undefined };
   } catch (error) {
-    if (error instanceof TlaConfigError) return { status: "ok", error: undefined };
+    // TLC rejects a configuration or a value while it loads a module, which SANY never checks.
+    if (error instanceof TlaConfigError || error instanceof TlaEvaluationError) {
+      return { status: "ok", error: undefined };
+    }
     if (error instanceof TlaUnsupportedError)
       return { status: "unsupported", error: error.message };
     if (error instanceof TlaSyntaxError) return { status: "error", error: error.message };

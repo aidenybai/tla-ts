@@ -1683,7 +1683,7 @@
 {"id":"tlc/tlatools/org.lamport.tlatools/test-model/sany/NestedModuleTopLevelInstance.tla","status":"ok","module":{"name":"NestedModuleTopLevelInstance","units":[],"modules":[{"name":"TopLevelInner","units":[],"modules":[]}]}},
 {"id":"tlc/tlatools/org.lamport.tlatools/test-model/sany/RecursiveDefDeclMismatch.tla","status":"error","error":"Semantic errors:\n\n*** Errors: 2\n\nline 4, col 1 to line 4, col 56 of module RecursiveDefDeclMismatch\n\nDefinition of CountDown has different arity than its RECURSIVE declaration.\n\n\nline 4, col 50 to line 4, col 56 of module RecursiveDefDeclMismatch\n\nThe operator CountDown requires 2 arguments."},
 {"id":"tlc/tlatools/org.lamport.tlatools/test-model/sany/StringEscapes.tla","status":"ok"},
-{"id":"tlc/tlatools/org.lamport.tlatools/test-model/sany/StringFormFeedEscape.tla","status":"error","error":"ERROR: The spec contains the character U+000C in the StringValue element. XML 1.0 cannot represent that character in character data, not even as a numeric character reference, so the spec cannot be exported until the character is removed from it."},
+{"id":"tlc/tlatools/org.lamport.tlatools/test-model/sany/StringFormFeedEscape.tla","status":"ok"},
 {"id":"tlc/tlatools/org.lamport.tlatools/test-model/simulation/BasicMultiTrace/BasicMultiTrace.tla","status":"ok"},
 {"id":"tlc/tlatools/org.lamport.tlatools/test-model/simulation/BenchmarkSpec/BenchmarkSpec.tla","status":"ok"},
 {"id":"tlc/tlatools/org.lamport.tlatools/test-model/simulation/Example1.tla","status":"ok"},
