@@ -1,9 +1,9 @@
 import ts from "typescript";
-import type { Names } from "./names";
+import { createNames, type Names } from "./names";
 
 export interface Definition {
   name: string;
-  // The operator's parameters, written as TLA+ declares them, such as "x" or "F(_)".
+  // The operator's parameters as TLA+ declares them, such as "x" or "F(_)".
   parameters: string[];
   readsState: boolean;
 }
@@ -14,7 +14,8 @@ export interface Context {
   variables: Map<ts.Symbol, string>;
   // Helper functions and constants, compiled when first referenced.
   definitions: Map<ts.Declaration, Definition>;
-  inProgress: Set<ts.Declaration>;
+  // Helpers being compiled or inlined, to detect recursion.
+  inProgress: Set<ts.Node>;
   recursive: Set<ts.Declaration>;
   // Rendered definitions, each after the definitions it uses.
   output: string[];
@@ -23,6 +24,22 @@ export interface Context {
   // Model values and helper operators that the spec uses.
   prelude: Set<"Null" | "Undefined" | "Rem" | "Quot">;
 }
+
+export type FunctionNode = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
+
+export type HelperDeclaration = ts.FunctionDeclaration | ts.VariableDeclaration;
+
+export const createContext = (checker: ts.TypeChecker): Context => ({
+  checker,
+  names: createNames(),
+  variables: new Map(),
+  definitions: new Map(),
+  inProgress: new Set(),
+  recursive: new Set(),
+  output: [],
+  modelValues: new Map(),
+  prelude: new Set(),
+});
 
 export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
   const symbol =
@@ -50,21 +67,18 @@ export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
   return isTopLevelConst ? declaration : undefined;
 };
 
-export const getTypeName = (type: ts.Type) => type.getSymbol()?.getName();
+// The function a node is, or that a variable declaration initializes.
+export const getFunction = (node: ts.Node | undefined): FunctionNode | undefined => {
+  if (node === undefined) return undefined;
+  if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+    return node;
+  }
+  return ts.isVariableDeclaration(node) ? getFunction(node.initializer) : undefined;
+};
 
-export const isSetType = (type: ts.Type) =>
-  ["Set", "ReadonlySet"].includes(getTypeName(type) ?? "");
+// The function that a callee or callback names: one written in place, or one declared elsewhere.
+export const getCallee = (node: ts.Expression, context: Context) =>
+  getFunction(node) ?? getFunction(getSymbol(node, context.checker)?.valueDeclaration);
 
-export const isMapType = (type: ts.Type) =>
-  ["Map", "ReadonlyMap"].includes(getTypeName(type) ?? "");
-
-// Arrays, tuples, and unions of them, such as [] | [number] | [number, number].
-export const isSequenceType = (type: ts.Type, checker: ts.TypeChecker): boolean =>
-  type.isUnion()
-    ? type.types.every((member) => isSequenceType(member, checker))
-    : checker.isArrayType(type) || checker.isTupleType(type);
-
-export const getTypeArguments = (type: ts.Type, checker: ts.TypeChecker) =>
-  type.flags & ts.TypeFlags.Object && (type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference
-    ? checker.getTypeArguments(type as ts.TypeReference)
-    : [];
+export const translateString = (value: string, context: Context) =>
+  context.modelValues.get(value) ?? JSON.stringify(value);
