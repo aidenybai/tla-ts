@@ -1713,6 +1713,19 @@ const describeMissingArgument = (functionValue: Value, argument: Value) =>
     ? `In applying the function\n${prettyPrint(formatValue(functionValue))},\nthe first argument is:\n${prettyPrint(formatValue(argument))}\nwhich is not in its domain.\n`
     : `Attempted to apply function ${formatValue(functionValue)} to ${formatValue(argument)}, which is not in its domain`;
 
+const findKeyIndex = (domain: Value[], argument: Value) => {
+  const first = domain[0];
+  if (typeof argument === "number" && typeof first === "number") {
+    const offset = argument - first;
+    if (domain[offset] === argument) return offset;
+  }
+  if (domain.length <= 8) {
+    for (let index = 0; index < domain.length; index++)
+      if (domain[index] === argument) return index;
+  }
+  return findIndex(domain, argument);
+};
+
 export const applyFunction = (
   functionValue: Value,
   argument: Value,
@@ -1733,17 +1746,7 @@ export const applyFunction = (
       `Attempted to apply ${formatValue(functionValue)}, which is not a function`,
     );
   }
-  const domain = functionValue.domain;
-  const first = domain[0];
-  if (typeof argument === "number" && typeof first === "number") {
-    const offset = argument - first;
-    if (domain[offset] === argument) return functionValue.range[offset];
-  }
-  if (domain.length <= 8) {
-    for (let index = 0; index < domain.length; index++)
-      if (domain[index] === argument) return functionValue.range[index];
-  }
-  const position = findIndex(domain, argument);
+  const position = findKeyIndex(functionValue.domain, argument);
   if (position === -1) {
     throw new TlaEvaluationError(
       describeMissing?.(functionValue) ?? describeMissingArgument(functionValue, argument),
@@ -1781,7 +1784,7 @@ export const updateFunction = (
     };
   }
   const finite = toFiniteFunction(functionValue);
-  const position = findIndex(finite.domain, argument);
+  const position = findKeyIndex(finite.domain, argument);
   if (position === -1) return finite;
   const range = [...finite.range];
   const previous = finite.range[position];
