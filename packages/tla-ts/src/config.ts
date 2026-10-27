@@ -177,9 +177,10 @@ export const parseConfig = (source: string): ModelConfig => {
     }
     return token.text;
   };
+  const isNameAhead = () => peek().kind === "Word" && !isKeyword(peek());
   const parseNames = () => {
     const names: string[] = [];
-    while (peek().kind === "Word" && !isKeyword(peek())) names.push(advance().text);
+    while (isNameAhead()) names.push(advance().text);
     return names;
   };
   const setSingle = (
@@ -229,7 +230,7 @@ export const parseConfig = (source: string): ModelConfig => {
   };
 
   const parseConstants = () => {
-    while (peek().kind === "Word" && !isKeyword(peek())) {
+    while (isNameAhead()) {
       const name = advance().text;
       if (peek().text === "(") {
         advance();
