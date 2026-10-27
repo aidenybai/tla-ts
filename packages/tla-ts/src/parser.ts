@@ -272,6 +272,8 @@ export const parseModule = (source: string): Module => {
   const factNames = new Set<string>();
   // The NEW, TAKE, and PICK names in scope, which a DEF clause cannot cite.
   const proofScopes: Set<string>[] = [];
+  // A fact may cite an operator of a parameterized instance without the instance's arguments.
+  const factStart = { index: -1 };
   const openModules: Module[] = [];
 
   const isRecursiveName = (name: string) => recursiveScopes[recursiveScopes.length - 1].has(name);
@@ -689,6 +691,7 @@ export const parseModule = (source: string): Module => {
   };
 
   const parsePrimary = (): Expression => {
+    const isFactStart = cursor.index === factStart.index;
     const token = advance();
     const location = getLocation(token);
     if (token.kind === "Number") {
@@ -717,6 +720,15 @@ export const parseModule = (source: string): Module => {
         return hasArguments
           ? { kind: "Apply", operator: name, args, location }
           : { kind: "Identifier", name, location };
+      }
+      const instance = openModules
+        .flatMap((module) => module.instances)
+        .find((candidate) => candidate.name === name);
+      if (instance && !isFactStart && instance.params.length !== args.length) {
+        throw createError(
+          `The operator ${name} requires ${instance.params.length} arguments`,
+          token,
+        );
       }
       const selectors: Selector[] = [{ kind: "Name", name, args }];
       while (isSelectorAhead()) {
@@ -1171,6 +1183,7 @@ export const parseModule = (source: string): Module => {
   // start of an expression.
   const parseFact = (): Fact => {
     const start = cursor.index;
+    factStart.index = start;
     const token = peek();
     const isOperatorName =
       token.kind === "Operator" &&
