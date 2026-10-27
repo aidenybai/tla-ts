@@ -30,45 +30,65 @@ result.status; // "invariant-violation"
 npm install tla-ts
 ```
 
-## Usage
+## Command line
+
+The `tla-ts` command takes TLC's options and prints TLC's output. `tla-ts prove` takes tlapm's options and prints tlapm's output.
+
+### Check a spec
+
+To check a spec, pass its path:
 
 ```shell
-npx tla-ts Spec.tla [-config Spec.cfg] [-deadlock] [-lncheck final] [-seed 0] [-workers auto]
+npx tla-ts Spec.tla
 ```
 
-Pass several specs, a `.cfg` path or a glob such as `"specs/*.tla"` to check each spec in turn. A glob skips modules without a `.cfg` next to them, so helper modules aren't checked on their own. The exit code is the first failure's.
+tla-ts reads the configuration from `Spec.cfg` next to the spec. It exits with the exit code TLC uses for the same result.
 
-- `-config`: the TLC configuration. Defaults to `Spec.cfg` next to the spec. It applies to one spec only.
-- `-deadlock`: turns off deadlock checking.
-- `-lncheck final`: checks liveness once, after the search.
-- `-seed`: seeds `RandomElement` and the Randomization module. Defaults to 0.
-- `-workers`: the number of worker threads, or `auto` for one per core. Defaults to 1.
+You can pass several paths, or a glob such as `"specs/*.tla"`. tla-ts checks each spec in turn and exits with the exit code of the first spec that fails. A glob skips each module that has no `.cfg` next to it, so it doesn't check helper modules that other specs import. tla-ts never skips a path that you pass by name. If you pass a `.cfg` path, tla-ts checks the `.tla` file with the same name.
 
-Output and exit codes match TLC's. The CLI loads a compiled Java class such as `Module.class` from the spec's directory as an override for that module.
+The options are:
 
-### Proof obligations
+- `-config <Spec.cfg>`: read the configuration from this file. You can use it only when you check one spec.
+- `-deadlock`: don't report deadlocks.
+- `-lncheck final`: check liveness once, after the search ends.
+- `-seed <num>`: seed `RandomElement` and the `Randomization` module. The default is 0.
+- `-workers <count|auto>`: search with this number of worker threads. `auto` uses one thread per core. The default is 1.
+
+TLC can replace a module's operators with Java methods, and tla-ts reads the same files. If the spec's directory has `Module.class`, tla-ts replaces each operator in `Module` with the public static method that has the same name and arity.
+
+### Generate proof obligations
+
+A proof obligation is one claim that a backend prover must prove. `tla-ts prove -N` prints the obligations of a module, as `tlapm -N` does. It doesn't run a prover. For example, this command prints every obligation in `Module.tla` with its text:
 
 ```shell
 npx tla-ts prove -N --toolbox 0 0 --printallobs Module.tla
 ```
 
-`tla-ts prove -N` takes tlapm's options and prints the proof obligations tlapm prints, without running a prover. With `--toolbox`, it writes the Toolbox protocol messages to stderr, as `tlapm -N` does. It supports these options:
+With `--toolbox` or `--line`, tla-ts writes the messages of the TLA+ Toolbox protocol to stderr, as tlapm does. If you pass a tlapm option that isn't in this list, tla-ts prints an error:
 
-- `-N`: don't run a prover.
-- `--toolbox <start> <end>`: print Toolbox messages for the proofs between those lines. `0 0` selects the whole module.
-- `--line <num>`: print Toolbox messages for the proof at that line.
-- `--printallobs`: include each obligation's text.
-- `--summary`: print how many obligations each module has, and its missing and omitted proofs. It implies `-N`.
-- `--strict`: report missing and omitted proofs, and a selected range with no obligations, as errors.
-- `-I <directory>`: search a directory for modules.
+- `--toolbox <start> <end>`: print Toolbox messages for the proofs from line `start` to line `end`. `0 0` selects the whole module.
+- `--line <num>`: print Toolbox messages for the proof at this line.
+- `--printallobs`: print the text of each obligation.
+- `--summary`: print the number of obligations in each module, and list its missing and omitted proofs. You don't need `-N` with `--summary`.
+- `--strict`: report missing proofs, omitted proofs and a selected range with no obligations as errors.
+- `-I <directory>`: search this directory for modules.
 
-Like tlapm, it searches for modules in the current directory and each module's directory first. If `tlapm` is on your `PATH`, it then searches tlapm's standard library, which has the `TLAPS` module. Last come the `-I` directories.
+tla-ts searches for modules in the same order as tlapm:
 
-Without `-N` or `--summary`, `tla-ts prove` runs [tlapm](https://github.com/tlaplus/tlapm) from your `PATH` with the same options. tlapm then sends the obligations to its provers:
+1. The directory of each module you pass, the last one first.
+2. The current directory.
+3. The standard library of tlapm, which has the `TLAPS` module. tla-ts searches it only if `tlapm` is on your `PATH`.
+4. The `-I` directories, the last one first.
+
+### Prove with tlapm
+
+tla-ts doesn't include a prover. Without `-N` or `--summary`, `tla-ts prove` runs [tlapm](https://github.com/tlaplus/tlapm) from your `PATH`:
 
 ```shell
 npx tla-ts prove Module.tla
 ```
+
+tla-ts expands the globs and passes every argument to tlapm, so all of tlapm's options work. tlapm sends the obligations to its provers, and tla-ts exits with the exit code of tlapm. If `tlapm` isn't on your `PATH`, tla-ts prints an error and exits with code 1.
 
 ## API reference
 
