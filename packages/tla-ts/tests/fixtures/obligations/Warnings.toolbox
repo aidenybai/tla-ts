@@ -1,0 +1,84 @@
+File "./Warnings.tla", line 6, characters 13-15 :
+Ignored unexpandable identifier "Nat" in BY DEF.
+@!!BEGIN
+@!!type:warning
+@!!msg:File "./Warnings.tla", line 6, character 18 :
+"x" is not a definition and cannot be used in a DEF clause.
+@!!END
+
+@!!BEGIN
+@!!type:warning
+@!!msg:File "./Warnings.tla", line 14, characters 14-17 :
+Warning: <1>2 does not introduce any assumptions. It does not make sense to use it here.
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:6:3:6:5
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE x,
+       F(a) == a + 1
+PROVE  F(1) = 2
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:14:5:14:7
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE x,
+       <2>1 ,
+       TRUE 
+PROVE  x = x
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:14:8:14:12
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE x
+PROVE  <2>1
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:14:14:14:18
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE x,
+       <2>1 
+PROVE  TRUE
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:12:5:12:12
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE x
+PROVE  x = x
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:9:3:9:10
+@!!status:to be proved
+@!!obl:ASSUME NEW VARIABLE x
+PROVE  x = x
+
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:6
+@!!END
+

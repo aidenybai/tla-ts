@@ -1,0 +1,64 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:7:3:7:5
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT N,
+       NType == N \in Nat,
+       NType 
+PROVE  N + 1 > 0
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:7:6:7:11
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT N,
+       NType == N \in Nat
+PROVE  NType
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:11:9:11:16
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT N,
+       NType == N \in Nat,
+       NEW CONSTANT x \in Nat
+PROVE  x + x = 2 * x
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:10:1:10:19
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT N,
+       NType == N \in Nat,
+       <1>_a5 
+PROVE  \A x \in Nat : x + x = 2 * x
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:10:1:10:19
+@!!status:to be proved
+@!!obl:ASSUME NEW CONSTANT N,
+       NType == N \in Nat,
+       <1>_a5 
+PROVE  <1>_a5
+
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:5
+@!!END
+

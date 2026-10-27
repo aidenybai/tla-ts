@@ -1,10 +1,20 @@
-import { existsSync, mkdirSync, readFileSync, readSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import {
+  existsSync,
+  globSync,
+  mkdirSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
 import type { CheckResult, CheckStatus, TraceStep } from "./check";
 import { parseConfig } from "./config";
 import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
+import type { LineRange } from "./obligation-generate";
+import { getObligations, WHOLE_MODULE } from "./obligations";
 import { check } from "./parallel";
 import { prettyPrint } from "./pretty-print";
 import {
@@ -26,8 +36,40 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   error: EXIT_STATUS.error,
 };
 
-const USAGE =
-  "Usage: tla-ts <Spec.tla> [-config <Spec.cfg>] [-deadlock] [-lncheck <final|default>] [-seed <num>] [-workers <count|auto>]";
+const USAGE = [
+  "Usage: tla-ts <Spec.tla|Spec.cfg|glob>... [-config <Spec.cfg>] [-deadlock] [-lncheck <final|default>] [-seed <num>] [-workers <count|auto>]",
+  "       tla-ts prove -N [--toolbox <start> <end>] [--line <num>] [--printallobs] [-I <directory>]... <Module.tla|glob>...",
+].join("\n");
+
+const VALUE_FLAGS = new Set(["-config", "-lncheck", "-seed", "-workers"]);
+
+// The tlapm options that prove supports, with the number of values each takes.
+const PROVE_OPTIONS = new Map([
+  ["-N", 0],
+  ["--printallobs", 0],
+  ["-I", 1],
+  ["--line", 1],
+  ["--toolbox", 2],
+]);
+
+const GLOB_CHARACTERS = /[*?[{]/;
+
+interface InputPath {
+  path: string;
+  isGlobbed: boolean;
+}
+
+// The arguments that are not flags or flag values, each glob expanded to the files it matches.
+const getInputPaths = (args: string[]): InputPath[] =>
+  args
+    .filter((arg, index) => !arg.startsWith("-") && !VALUE_FLAGS.has(args[index - 1]))
+    .flatMap((arg): InputPath[] =>
+      GLOB_CHARACTERS.test(arg)
+        ? globSync(arg)
+            .sort()
+            .map((path) => ({ path, isGlobbed: true }))
+        : [{ path: arg, isGlobbed: false }],
+    );
 
 const isJavaLong = (text: string) =>
   /^[+-]?\d+$/.test(text) && BigInt.asIntN(64, BigInt(text)) === BigInt(text);
@@ -130,12 +172,7 @@ const printResult = (result: CheckResult) => {
   if (outDegree) console.log(outDegree);
 };
 
-const run = async (args: string[]) => {
-  const specPath = args.find((arg, index) => arg.endsWith(".tla") && args[index - 1] !== "-config");
-  if (!specPath) {
-    console.error(USAGE);
-    return 1;
-  }
+const checkSpec = async (specPath: string, args: string[]) => {
   if (!existsSync(specPath)) {
     console.error(`Cannot find the specification file ${specPath}`);
     return EXIT_STATUS.configParseError;
@@ -199,12 +236,167 @@ const printError = (error: TlaError) => {
   console.error(`${error.name}: ${error.message}`);
 };
 
-export const runCli = async () => {
+// Prints a TlaError and returns its exit code.
+const reportErrors = async (run: () => number | Promise<number>) => {
   try {
-    process.exitCode = await run(process.argv.slice(2));
+    return await run();
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     printError(error);
-    process.exitCode = getErrorExitCode(error);
+    return getErrorExitCode(error);
   }
+};
+
+// Runs each path in turn, so an error in one leaves the others to report. The exit code is the
+// first that is not success.
+const runEach = async (paths: string[], runPath: (path: string) => number | Promise<number>) => {
+  const exitCodes: number[] = [];
+  for (const [index, path] of paths.entries()) {
+    if (index > 0) console.log("");
+    exitCodes.push(await reportErrors(() => runPath(path)));
+  }
+  return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
+};
+
+// tlapm installs its standard library, with modules such as TLAPS, at lib/tlapm/stdlib beside
+// bin/tlapm.
+const getTlapmLibrary = () =>
+  (process.env.PATH ?? "")
+    .split(delimiter)
+    .map((directory) => join(directory, "tlapm"))
+    .filter((path) => existsSync(path))
+    .map((path) => join(dirname(dirname(realpathSync(path))), "lib/tlapm/stdlib"))
+    .find((path) => existsSync(path));
+
+const readModule = (path: string) =>
+  existsSync(path) ? { file: path, source: readFileSync(path, "utf8") } : undefined;
+
+interface ProveOption {
+  name: string;
+  values: string[];
+}
+
+// A message of tlapm's toolbox protocol, which it writes to stderr.
+const printToolboxMessage = (fields: string[]) =>
+  console.error(`@!!BEGIN\n${fields.map((field) => `@!!${field}\n`).join("")}@!!END\n`);
+
+// Mirrors tlapm -N, which generates the obligations without sending them to a backend.
+const prove = (args: string[]) => {
+  const options: ProveOption[] = [];
+  const paths: string[] = [];
+  for (let index = 0; index < args.length; index++) {
+    const arity = PROVE_OPTIONS.get(args[index]);
+    if (arity === undefined) {
+      paths.push(args[index]);
+      continue;
+    }
+    options.push({ name: args[index], values: args.slice(index + 1, index + 1 + arity) });
+    index += arity;
+  }
+  const unsupported = paths.find((path) => path.startsWith("-"));
+  if (unsupported !== undefined) {
+    console.error(`Error: tla-ts prove does not support the tlapm option ${unsupported}.`);
+    return 1;
+  }
+  const incomplete = options.find(
+    (option) => option.values.length < (PROVE_OPTIONS.get(option.name) ?? 0),
+  );
+  if (incomplete) {
+    console.error(`Error: option '${incomplete.name}' needs an argument.`);
+    return 1;
+  }
+  const nonInteger = options.find(
+    (option) => option.name !== "-I" && option.values.some((value) => !/^-?\d+$/.test(value)),
+  );
+  if (nonInteger) {
+    console.error(`Error: option '${nonInteger.name}' expects an integer.`);
+    return 1;
+  }
+  if (!options.some((option) => option.name === "-N")) {
+    console.error("Error: tla-ts has no prover backend yet, so prove needs -N.");
+    return 1;
+  }
+  const modulePaths = paths
+    .flatMap((path) => (GLOB_CHARACTERS.test(path) ? globSync(path).sort() : [path]))
+    .map((path) => (path.endsWith(".tla") ? path : `${path}.tla`));
+  if (modulePaths.length === 0) {
+    console.error(USAGE);
+    return 1;
+  }
+  const missing = modulePaths.find((path) => !existsSync(path));
+  if (missing !== undefined) {
+    console.error(`Cannot find the module file ${missing}`);
+    return EXIT_STATUS.configParseError;
+  }
+  const isToolbox = options.some((option) => ["--toolbox", "--line"].includes(option.name));
+  // Like tlapm, the last of --toolbox and --line wins, and a 0 means the whole module.
+  const lines = options.reduce<LineRange>((range, option) => {
+    const [start, end] = option.values.map(Number);
+    if (option.name === "--toolbox") return { start, end: end === 0 ? Infinity : end };
+    if (option.name === "--line") return start === 0 ? WHOLE_MODULE : { start, end: start };
+    return range;
+  }, WHOLE_MODULE);
+  // tlapm searches the current directory and each module's, then its library, then each -I
+  // directory, the last given first.
+  const tlapmLibrary = getTlapmLibrary();
+  const includes = options.flatMap((option) => (option.name === "-I" ? option.values : []));
+  const directories = modulePaths.reduce(
+    (found, path) => (found.includes(dirname(path)) ? found : [dirname(path), ...found]),
+    [".", ...(tlapmLibrary ? [tlapmLibrary] : []), ...includes.toReversed()],
+  );
+  // tlapm names each file it reads by joining a search directory and the name, as in ./Module.tla.
+  const results = getObligations(
+    modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
+    (name) => directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean),
+    {
+      lines,
+      onWarning: (warning) =>
+        isToolbox && warning.isToolboxMessage
+          ? printToolboxMessage(["type:warning", `msg:${warning.text}`])
+          : console.error(warning.text),
+    },
+  );
+  if (!isToolbox) return EXIT_STATUS.success;
+  const isPrintingAll = options.some((option) => option.name === "--printallobs");
+  results.forEach((result) => {
+    result.obligations.forEach((obligation) =>
+      printToolboxMessage([
+        "type:obligation",
+        `id:${obligation.id}`,
+        `loc:${obligation.location}`,
+        "status:to be proved",
+        ...(isPrintingAll ? [`obl:${obligation.text}`] : []),
+      ]),
+    );
+    printToolboxMessage(["type:obligationsnumber", `count:${result.obligations.length}`]);
+  });
+  return EXIT_STATUS.success;
+};
+
+const run = async (args: string[]) => {
+  if (args[0] === "prove") return reportErrors(() => prove(args.slice(1)));
+  const inputs = getInputPaths(args);
+  const isConfigured = args.includes("-config");
+  // A glob also matches modules that only other specs import, which have no configuration.
+  const specPaths = inputs
+    .map((input) => ({ ...input, path: input.path.replace(/\.cfg$/, ".tla") }))
+    .filter(
+      (input) =>
+        input.path.endsWith(".tla") &&
+        (!input.isGlobbed || isConfigured || existsSync(input.path.replace(/\.tla$/, ".cfg"))),
+    )
+    .map((input) => input.path);
+  if (specPaths.length === 0) {
+    console.error(USAGE);
+    return 1;
+  }
+  if (isConfigured && specPaths.length > 1) {
+    console.error("Error: -config applies to one specification, but several were given.");
+    return 1;
+  }
+  return runEach([...new Set(specPaths)], (path) => checkSpec(path, args));
+};
+
+export const runCli = async () => {
+  process.exitCode = await run(process.argv.slice(2));
 };

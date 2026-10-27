@@ -36,13 +36,31 @@ npm install tla-ts
 npx tla-ts Spec.tla [-config Spec.cfg] [-deadlock] [-lncheck final] [-seed 0] [-workers auto]
 ```
 
-- `-config`: the TLC configuration. Defaults to `Spec.cfg` next to the spec.
+Pass several specs, a `.cfg` path or a glob such as `"specs/*.tla"` to check each spec in turn. A glob skips modules without a `.cfg` next to them, so helper modules aren't checked on their own. The exit code is the first failure's.
+
+- `-config`: the TLC configuration. Defaults to `Spec.cfg` next to the spec. It applies to one spec only.
 - `-deadlock`: turns off deadlock checking.
 - `-lncheck final`: checks liveness once, after the search.
 - `-seed`: seeds `RandomElement` and the Randomization module. Defaults to 0.
 - `-workers`: the number of worker threads, or `auto` for one per core. Defaults to 1.
 
 Output and exit codes match TLC's. The CLI loads a compiled Java class such as `Module.class` from the spec's directory as an override for that module.
+
+### Proof obligations
+
+```shell
+npx tla-ts prove -N --toolbox 0 0 --printallobs Module.tla
+```
+
+`tla-ts prove` takes tlapm's options and prints the proof obligations tlapm prints. There's no prover backend yet, so it needs `-N`. With `--toolbox`, it writes the Toolbox protocol messages to stderr, as `tlapm -N` does. It supports these options:
+
+- `-N`: don't run a prover. It's required for now.
+- `--toolbox <start> <end>`: print Toolbox messages for the proofs between those lines. `0 0` selects the whole module.
+- `--line <num>`: print Toolbox messages for the proof at that line.
+- `--printallobs`: include each obligation's text.
+- `-I <directory>`: search a directory for modules.
+
+Like tlapm, it searches for modules in the current directory and each module's directory first. If `tlapm` is on your `PATH`, it then searches tlapm's standard library, which has the `TLAPS` module. Last come the `-I` directories.
 
 ## API reference
 

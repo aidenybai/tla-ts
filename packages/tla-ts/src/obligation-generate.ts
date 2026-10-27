@@ -200,6 +200,12 @@ const setExpression = (visibility: Visibility, fact: Expr, context: Hyp[]): Hyp[
   return result;
 };
 
+// The lines of tlapm's --toolbox and --line options, which select the proofs to generate.
+export interface LineRange {
+  start: number;
+  end: number;
+}
+
 export interface Generator {
   generate: (sequent: Sequent, proof: Proof) => Proof;
   collect: (proof: Proof) => Obligation[];
@@ -272,9 +278,20 @@ const replaceAt = (expression: Expr, replacement: Expr): Expr =>
     ? at(stripProps(replacement), expression)
     : mapChildren(expression, (inner) => replaceAt(inner, replacement));
 
-export const createGenerator = (counter: Counter, inputFile: string): Generator => {
+export const createGenerator = (
+  counter: Counter,
+  inputFiles: Set<string>,
+  lines: LineRange,
+): Generator => {
   const generate = (sequent: Sequent, proof: Proof): Proof => {
-    if (proof.location?.file !== inputFile) return proof;
+    const location = proof.location;
+    if (
+      !location ||
+      !inputFiles.has(location.file) ||
+      location.endLine < lines.start ||
+      location.startLine > lines.end
+    )
+      return proof;
     switch (proof.kind) {
       case "Obvious":
         return { ...proof, obligations: [obligate(sequent, proof, { kind: "Main" })] };

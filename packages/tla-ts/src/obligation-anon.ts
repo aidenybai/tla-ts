@@ -11,6 +11,7 @@ import {
   exprifySequent,
   findNamed,
   getFresh,
+  getLocusPrefix,
   getScopeAt,
   isEqualExpr,
   mapAccumulate,
@@ -27,6 +28,7 @@ import {
   type Expr,
   type ExprCore,
   type Hyp,
+  type ObligationWarning,
   type ParenForm,
   type Scope,
   type Selector,
@@ -64,6 +66,7 @@ export const createAnonymizer = (
     scope: Scope | undefined,
     definition: Extract<Defn, { kind: "Instance" }>,
   ) => Defn[],
+  onWarning: (warning: ObligationWarning) => void,
 ) => {
   // Elab.desugar's current_at: the value @ stands for inside an EXCEPT, and the context size there.
   let currentAt: { expression: Expr; size: number } | undefined;
@@ -202,8 +205,13 @@ export const createAnonymizer = (
       case "Apply": {
         if (expression.operator.kind !== "Opaque") return visit(context, expression);
         const name = expression.operator.name;
-        if (context.warnedSteps.includes(name))
+        if (context.warnedSteps.includes(name)) {
+          onWarning({
+            text: `${getLocusPrefix(expression.location)}Warning: ${name} does not introduce any assumptions. It does not make sense to use it here.\n`,
+            isToolboxMessage: true,
+          });
           return at({ kind: "Internal", builtin: "TRUE" }, expression);
+        }
         const args = expression.args.map((arg) => expr(context, arg));
         return resolveName(context, name, args, expression);
       }
@@ -375,9 +383,20 @@ export const createAnonymizer = (
     defs: item.defs.flatMap((def): UseDef[] => {
       if (def.kind === "Dx") return [def];
       const resolved = expr(context, at({ kind: "Opaque", name: def.name }, def));
-      if (resolved.kind !== "Ix") return [];
-      // tlapm reports a DEF of a declaration and drops it.
-      if (getScopeAt(context.scope, resolved.index - 1)?.hyp.kind !== "Defn") return [];
+      if (resolved.kind !== "Ix") {
+        onWarning({
+          text: `${getLocusPrefix(def.location)}Ignored unexpandable identifier ${JSON.stringify(def.name)} in BY DEF.`,
+          isToolboxMessage: false,
+        });
+        return [];
+      }
+      if (getScopeAt(context.scope, resolved.index - 1)?.hyp.kind !== "Defn") {
+        onWarning({
+          text: `${getLocusPrefix(def.location)}${JSON.stringify(def.name)} is not a definition and cannot be used in a DEF clause.`,
+          isToolboxMessage: true,
+        });
+        return [];
+      }
       return [{ kind: "Dx", index: resolved.index, location: def.location }];
     }),
   });

@@ -1,15 +1,22 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
-const runCli = (directory: string, name: string, args: string[] = []) =>
+const runCliWith = (directory: string, args: string[]) =>
   spawnSync(
     process.execPath,
-    ["--import", "tsx", join(import.meta.dirname, "../../src/cli.ts"), `${name}.tla`, ...args],
+    ["--import", "tsx", join(import.meta.dirname, "../../src/cli.ts"), ...args],
     { cwd: join(FIXTURES, directory), encoding: "utf8" },
   );
+
+const runCli = (directory: string, name: string, args: string[] = []) =>
+  runCliWith(directory, [`${name}.tla`, ...args]);
+
+const getCheckedSpecs = (output: string) =>
+  output.split("\n").filter((line) => line.startsWith("Checking "));
 
 const getStateLines = (output: string) =>
   output.split("\n").filter((line) => line.includes(" = ") && !line.startsWith("State"));
@@ -116,5 +123,132 @@ describe("the CLI reports results like TLC", () => {
     const result = runCli("cli-output", "Lasso", ["-lncheck"]);
     expect(result.status).toBe(1);
     expect(result.stderr).toBe("Error: expect a strategy such as final for -lncheck option.\n");
+  });
+});
+
+describe("the CLI takes several specs and globs", () => {
+  it("checks each spec a glob matches and exits with the first failure", () => {
+    const result = runCliWith("cli-output", ["*.tla"]);
+    expect(result.status).toBe(10);
+    expect(getCheckedSpecs(result.stdout)).toEqual([
+      "Checking AssumptionFalse.tla with AssumptionFalse.cfg",
+      "Checking FailedInvariant.tla with FailedInvariant.cfg",
+      "Checking InitialInvariant.tla with InitialInvariant.cfg",
+      "Checking Lasso.tla with Lasso.cfg",
+      "Checking NoNext.tla with NoNext.cfg",
+      "Checking Success.tla with Success.cfg",
+    ]);
+  });
+
+  it("skips a module a glob matches when it has no configuration", () => {
+    const result = runCliWith("tlc-spec", ["*.tla"]);
+    expect(result.status).toBe(0);
+    expect(getCheckedSpecs(result.stdout)).toEqual([
+      "Checking Inst.tla with Inst.cfg",
+      "Checking Param.tla with Param.cfg",
+      "Checking Rich.tla with Rich.cfg",
+      "Checking Subst.tla with Subst.cfg",
+      "Checking Unnamed.tla with Unnamed.cfg",
+    ]);
+  });
+
+  it("checks the spec beside a configuration", () => {
+    const result = runCliWith("cli-output", ["Success.cfg"]);
+    expect(result.status).toBe(0);
+    expect(getCheckedSpecs(result.stdout)).toEqual(["Checking Success.tla with Success.cfg"]);
+  });
+
+  it("rejects -config with several specs", () => {
+    const result = runCliWith("cli-output", ["Lasso.tla", "Success.tla", "-config", "Success.cfg"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe(
+      "Error: -config applies to one specification, but several were given.\n",
+    );
+  });
+});
+
+describe("prove prints obligations as tlapm -N does", () => {
+  // Each .toolbox file is what tlapm -N writes to stderr for the same arguments.
+  const readToolbox = (name: string) =>
+    readFileSync(join(FIXTURES, "obligations", `${name}.toolbox`), "utf8");
+
+  it("prints each obligation with its text", () => {
+    const result = runCliWith("obligations", [
+      "prove",
+      "-N",
+      "--toolbox",
+      "0",
+      "0",
+      "--printallobs",
+      "Proofs.tla",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe(readToolbox("Proofs"));
+  });
+
+  it("numbers omitted proofs but doesn't print them", () => {
+    const result = runCliWith("obligations", ["prove", "-N", "--toolbox", "0", "0", "Omit.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe(readToolbox("Omit"));
+  });
+
+  it("generates only the proofs within the lines", () => {
+    const result = runCliWith("obligations", ["prove", "-N", "--toolbox", "6", "7", "Omit.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe(readToolbox("Omit-6-7"));
+  });
+
+  it("warns when a module's name differs from its file's", () => {
+    const result = runCliWith("obligations", [
+      "prove",
+      "-N",
+      "--toolbox",
+      "0",
+      "0",
+      "--printallobs",
+      "Renamed.tla",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe(readToolbox("Renamed"));
+  });
+
+  it("reports the warnings tlapm reports", () => {
+    const result = runCliWith("obligations", [
+      "prove",
+      "-N",
+      "--toolbox",
+      "0",
+      "0",
+      "--printallobs",
+      "Warnings.tla",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe(readToolbox("Warnings"));
+  });
+
+  it("prints nothing outside toolbox mode", () => {
+    const result = runCliWith("obligations", ["prove", "-N", "Proofs.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout + result.stderr).toBe("");
+  });
+
+  it("needs -N while it has no prover backend", () => {
+    const result = runCliWith("obligations", ["prove", "Proofs.tla"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("Error: tla-ts has no prover backend yet, so prove needs -N.\n");
+  });
+
+  it("rejects the tlapm options it doesn't support", () => {
+    const result = runCliWith("obligations", ["prove", "-N", "--summary", "Proofs.tla"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe(
+      "Error: tla-ts prove does not support the tlapm option --summary.\n",
+    );
+  });
+
+  it("names a module it cannot find", () => {
+    const result = runCliWith("obligations", ["prove", "-N", "Missing.tla"]);
+    expect(result.status).toBe(151);
+    expect(result.stderr).toBe("Cannot find the module file Missing.tla\n");
   });
 });
