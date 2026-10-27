@@ -526,6 +526,59 @@ describe("evaluation errors match TLC", () => {
     expect(result.violation?.message).toMatch(/^Attempted to compute CHOOSE/);
   });
 
+  it("words arithmetic, sequence, and membership errors like TLC", async () => {
+    const cases = [
+      ["1 \\div 0 = 0", "The second argument of \\div is 0."],
+      ["1 % 0 = 0", "The second argument of % should be a positive number, but instead it is:\n0"],
+      [
+        "2 ^ (-1) = 0",
+        "The second argument of ^ should be a natural number, but instead it is:\n-1",
+      ],
+      ["0 ^ 0 = 0", "0^0 is undefined."],
+      ["2147483647 + 1 = 0", "Overflow when computing 2147483647+1"],
+      ["-2147483647 - 2 = 0", "Overflow when computing -2147483647-2"],
+      ["65536 * 65536 = 0", "Overflow when computing 65536*65536"],
+      ["2 ^ 31 = 0", "Overflow when computing 2^31"],
+      ["-(-2147483647 - 1) = 0", "Overflow when computing --2147483648"],
+      ["(-2147483647 - 1) \\div (-1) = 0", "Overflow when computing -2147483648 \\div -1"],
+      ['"a" < 1', 'The first argument of < should be an integer, but instead it is:\n"a"'],
+      ['1 >= "a"', 'The second argument of >= should be an integer, but instead it is:\n"a"'],
+      ["Head(<<>>) = 0", "Attempted to apply Head to the empty sequence."],
+      ["Tail(<<>>) = 0", "Attempted to apply Tail to the empty sequence."],
+      ["Len(1) = 0", "The argument of Len should be a sequence, but instead it is:\n1"],
+      [
+        "Append(1, 2) = 0",
+        "Evaluating an expression of the form Append(s, v) when s is not a sequence:\n1",
+      ],
+      [
+        "1 \\o <<1>> = 0",
+        "Evaluating an expression of the form s \\o t when s is not a sequence:\n1",
+      ],
+      [
+        '"ab" \\o <<1>> = 0',
+        "Evaluating an expression of the form t \\o s when s is not a string:\n<<1>>",
+      ],
+      [
+        "SubSeq(<<1, 2>>, 1, 3) = <<>>",
+        "The third argument of SubSeq must be in the domain of its first argument:\n<<1, 2>>\n, but instead it is\n3",
+      ],
+      [
+        "SelectSeq(<<1>>, LAMBDA e: 1) = <<>>",
+        "The second argument of SelectSeq should be a operator, but instead it is:\n1",
+      ],
+      ["Cardinality(Nat) = 0", "Attempted to compute cardinality of the value\nNat"],
+      ['"a" \\in Nat', 'Attempted to check if the value:\n"a"\nis an element of Nat.'],
+      ['"a" \\in 1..2', 'Attempted to check if the value:\n"a"\nis in the integer interval 1..2'],
+      ["1 \\in TRUE", "Attempted to check if the value:\n1\nis an element of the boolean TRUE"],
+      ["1 \\in [a |-> 1]", "Attempted to check if element:\n1\nis in the record:\n[a |-> 1]"],
+      ["1 \\in <<1>>", "Attempted to check set membership in a tuple value."],
+    ];
+    const messages = await Promise.all(
+      cases.map(async (item) => (await checkModule(`ASSUME ${item[0]}`)).violation?.message),
+    );
+    expect(messages).toEqual(cases.map((item) => item[1]));
+  });
+
   it("reports an overflowing cardinality without enumerating the set", async () => {
     const result = await checkModule("ASSUME Cardinality(SUBSET (1..31)) > 0");
     expect(result.violation?.message).toMatch(/^Overflow when computing the number of elements/);
