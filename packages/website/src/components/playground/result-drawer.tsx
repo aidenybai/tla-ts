@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import { Drawer } from "vaul";
 import { cn } from "@/lib/utils";
 import type { CheckSummary } from "../../check-worker";
+import { useIsWide } from "../../hooks/use-is-wide";
 import { usePlayback } from "../../hooks/use-playback";
 import { TraceTable } from "../trace-table";
 import { usePlayground } from "./playground-context";
@@ -39,7 +40,7 @@ const TraceResult = (props: TraceResultProps) => {
               {result.violation}
             </code>
           )}
-          <span className="ml-2 font-normal whitespace-nowrap text-gray-1000 tabular-nums">
+          <span className="mt-0.5 block font-normal text-gray-1000 tabular-nums sm:mt-0 sm:ml-2 sm:inline">
             {result.distinctStates.toLocaleString()} states, depth {result.depth},{" "}
             {Math.round(result.milliseconds).toLocaleString()} ms
           </span>
@@ -106,19 +107,21 @@ const TraceResult = (props: TraceResultProps) => {
 export const ResultDrawer = () => {
   const playground = usePlayground();
   const response = playground.check.response;
+  // On a phone the playground runs past the fold, so the drawer covers the screen instead.
+  const isWide = useIsWide();
   return (
     <Drawer.Root
       open={playground.isDrawerOpen && response !== undefined}
       onOpenChange={playground.setIsDrawerOpen}
-      container={playground.container}
+      container={isWide ? playground.container : undefined}
       handleOnly
       noBodyStyles
     >
       <Drawer.Portal>
-        <Drawer.Overlay className="absolute inset-0 z-10 bg-gray-1200/5" />
+        <Drawer.Overlay className="fixed inset-0 z-10 bg-gray-1200/20 lg:absolute lg:bg-gray-1200/5" />
         <Drawer.Content
           aria-describedby={undefined}
-          className="absolute inset-x-0 bottom-0 z-20 flex max-h-[75%] flex-col rounded-t-2xl bg-white shadow-[0_0_0_1px_#0000000f,0_-8px_24px_-12px_#00000029] outline-none"
+          className="fixed inset-x-0 bottom-0 z-20 flex max-h-[85dvh] flex-col rounded-t-2xl pb-[env(safe-area-inset-bottom)] lg:absolute lg:max-h-[75%] lg:pb-0 bg-white shadow-[0_0_0_1px_#0000000f,0_-8px_24px_-12px_#00000029] outline-none"
         >
           <div className="flex items-center justify-between px-2 pt-2">
             <span className="size-7" />

@@ -22,9 +22,7 @@ export const TraceTable = (props: TraceTableProps) => {
     <table className="w-full border-separate border-spacing-0 font-mono text-[13px]/5 select-text">
       <thead>
         <tr>
-          <th aria-label="Loop" className={cn(HEADER_CLASS_NAME, "w-4 px-0")} />
-          <th className={cn(HEADER_CLASS_NAME, "w-0 pl-1")}>#</th>
-          <th className={cn(HEADER_CLASS_NAME, "w-0")}>Action</th>
+          <th className={cn(HEADER_CLASS_NAME, "left-0 z-20 w-0 pl-5")}>Step</th>
           {props.trace[0].variables.map(([name]) => (
             <th key={name} className={HEADER_CLASS_NAME}>
               {name}
@@ -43,10 +41,19 @@ export const TraceTable = (props: TraceTableProps) => {
               className={cn(
                 "transition-[opacity,background-color] duration-200",
                 index > props.activeIndex && "opacity-30",
-                isFailing ? "bg-red-50 motion-safe:animate-shake" : isActive && "bg-gray-200",
+                isFailing
+                  ? "bg-red-50 motion-safe:animate-shake"
+                  : isActive
+                    ? "bg-gray-200"
+                    : "bg-white",
               )}
             >
-              <td className="relative w-4 p-0">
+              <td
+                className={cn(
+                  CELL_CLASS_NAME,
+                  "sticky left-0 z-[1] bg-inherit pl-5 font-sans text-sm whitespace-nowrap",
+                )}
+              >
                 {index >= loopStart && (
                   <span
                     aria-hidden
@@ -57,17 +64,14 @@ export const TraceTable = (props: TraceTableProps) => {
                     )}
                   />
                 )}
-              </td>
-              <td
-                className={cn(
-                  CELL_CLASS_NAME,
-                  "pl-1 tabular-nums",
-                  isFailing ? "text-red-500" : "text-gray-900",
-                )}
-              >
-                {String(step.number).padStart(2, "0")}
-              </td>
-              <td className={cn(CELL_CLASS_NAME, "font-sans text-sm whitespace-nowrap")}>
+                <span
+                  className={cn(
+                    "mr-3 font-mono text-[13px] tabular-nums",
+                    isFailing ? "text-red-500" : "text-gray-900",
+                  )}
+                >
+                  {String(step.number).padStart(2, "0")}
+                </span>
                 <button
                   type="button"
                   onClick={() => props.onSelect(index)}

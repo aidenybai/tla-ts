@@ -11,7 +11,7 @@ const createEditor: EditorFactory<undefined, undefined> = (type, options, editSt
 export const App = () => (
   <EditProvider createEditor={createEditor}>
     <div className="lg:grid lg:h-dvh lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
-      <main className="px-6 pt-12 text-paragraph sm:pt-24 lg:overflow-y-auto lg:pt-9 lg:pb-24 [&>p+p]:mt-4">
+      <main className="px-4 pt-12 sm:px-6 text-paragraph sm:pt-24 lg:overflow-y-auto lg:pt-9 lg:pb-24 [&>p+p]:mt-4">
         <h1 className="text-2xl font-semibold text-gray-1200">tla-ts</h1>
         <p className="mb-8 text-gray-1000">TLA+ model checker in TypeScript</p>
         <p className="text-pretty">
@@ -28,7 +28,7 @@ export const App = () => (
           </a>
         </p>
       </main>
-      <section className="px-6 pt-8 pb-12 lg:min-h-0 lg:py-6 lg:pl-0">
+      <section className="px-4 pt-8 pb-12 sm:px-6 lg:min-h-0 lg:py-6 lg:pl-0">
         <Playground.Root>
           <Playground.Toolbar>
             <Playground.SpecSelect />
