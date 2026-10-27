@@ -30,6 +30,7 @@ import {
   isEnumerable,
   isFunctionValue,
   isSameValue,
+  markLambdaFunction,
   isSetValue,
   toFiniteSet,
   updateFunction,
@@ -416,8 +417,8 @@ const createLazyFunction = (
   return self;
 };
 
-const createRecursiveFunction = (definition: FunctionDefinition, context: Context) =>
-  createLazyFunction(getBoundsDomain(definition.bounds, context), (argument, self) =>
+const createRecursiveFunction = (definition: FunctionDefinition, context: Context) => {
+  const fn = createLazyFunction(getBoundsDomain(definition.bounds, context), (argument, self) =>
     evaluate(
       definition.body,
       withScope(
@@ -426,6 +427,8 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
       ),
     ),
   );
+  return definition.bounds.length === 1 ? markLambdaFunction(fn) : fn;
+};
 
 const evaluateDefinitionBody = (definition: Definition, context: Context) =>
   definition.kind === "Function"
@@ -1223,16 +1226,19 @@ const compileFunctionConstruction = (
   return (context) => {
     const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
     if (expression.isRecursive || !isEnumerable(domain)) {
-      return createLazyFunction(domain, (argument) =>
+      const fn = createLazyFunction(domain, (argument) =>
         body(withScope(context, bindArgument(bounds, context.scope, argument))),
       );
+      return bounds.length === 1 ? markLambdaFunction(fn) : fn;
     }
     if (isSingleName && bound.pattern.kind === "Name") {
       const name = bound.pattern.name;
       const keys = toFiniteSet(domain).elements;
-      return createSortedFunction(
-        keys,
-        keys.map((key) => body(withScope(context, bindValue(context.scope, name, key)))),
+      return markLambdaFunction(
+        createSortedFunction(
+          keys,
+          keys.map((key) => body(withScope(context, bindValue(context.scope, name, key)))),
+        ),
       );
     }
     const pairs: [Value, Value][] = [];
