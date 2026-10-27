@@ -1,92 +1,67 @@
 @import "tailwindcss";
-@import "shadcn/tailwind.css";
-@import "@fontsource-variable/inter";
 @import "@fontsource-variable/geist-mono";
 
-@theme inline {
-  --font-sans: "Inter Variable", system-ui, sans-serif;
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --color-background: var(--ground);
-  --color-foreground: var(--ink);
-  --color-card: var(--ground);
-  --color-card-foreground: var(--ink);
-  --color-popover: var(--ground);
-  --color-popover-foreground: var(--ink);
-  --color-primary: var(--ink);
-  --color-primary-foreground: var(--ground);
-  --color-secondary: var(--well);
-  --color-secondary-foreground: var(--ink);
-  --color-muted: var(--well);
-  --color-muted-foreground: var(--muted);
-  --color-accent: var(--well);
-  --color-accent-foreground: var(--ink);
-  --color-destructive: var(--alarm);
-  --color-success: var(--success);
-  --color-border: var(--rule);
-  --color-input: var(--rule);
-  --color-ring: var(--faint);
-  --color-text-2: var(--text-2);
-  --color-faint: var(--faint);
-  --color-well-2: var(--well-2);
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --shadow-card: var(--card-shadow);
-  --shadow-focus: var(--card-shadow), 0 0 0 3px var(--well-2);
-  --ease-out-soft: cubic-bezier(0.22, 0.75, 0.2, 1);
-}
+  --color-gray-100: #fcfcfc;
+  --color-gray-200: #f6f6f6;
+  --color-gray-300: #f0f0f0;
+  --color-gray-400: #e8e8e8;
+  --color-gray-500: #e0e0e0;
+  --color-gray-600: #d9d9d9;
+  --color-gray-700: #cecece;
+  --color-gray-800: #bbb;
+  --color-gray-900: #8d8d8d;
+  --color-gray-1000: #838383;
+  --color-gray-1100: #6f6f6f;
+  --color-gray-1200: #202020;
+  --color-paragraph: #424242;
+  --shadow-custom: 0 0 0 1px #0000000f, 0 1px 2px -1px #0000000f, 0 2px 4px 0 #0000000a;
+  --animate-shake: shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 
-:root {
-  --ground: #ffffff;
-  --ink: #1c1917;
-  --text-2: #57534e;
-  --muted: #8a8580;
-  --faint: #bdb8b2;
-  --rule: #ebe9e6;
-  --well: #f4f3f1;
-  --well-2: #e9e7e3;
-  --alarm: #c0392b;
-  --success: #2f7d4f;
-  --card-shadow:
-    0 0 0 1px rgb(0 0 0 / 0.04), 0 1px 2px 0 rgb(0 0 0 / 0.04), 0 2px 8px -2px rgb(0 0 0 / 0.06);
-  color-scheme: light;
+  @keyframes shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    15% {
+      transform: translateX(-10px);
+    }
+    30% {
+      transform: translateX(8px);
+    }
+    45% {
+      transform: translateX(-6px);
+    }
+    60% {
+      transform: translateX(4px);
+    }
+    75% {
+      transform: translateX(-2px);
+    }
+  }
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-gray-400;
     scrollbar-width: thin;
-    scrollbar-color: var(--well-2) transparent;
+    scrollbar-color: rgb(0 0 0 / 0.15) transparent;
   }
   html {
-    @apply font-sans text-[13px]/[19px] font-normal tracking-[-0.01em] antialiased;
-    text-rendering: optimizeLegibility;
+    @apply bg-gray-100 font-sans text-[16px]/[1.6] text-gray-1200 antialiased;
+    color-scheme: light;
     -webkit-tap-highlight-color: transparent;
-    overflow: hidden;
-    overscroll-behavior: none;
-  }
-  body {
-    @apply bg-background text-foreground;
-    overflow: hidden;
-    overscroll-behavior: none;
   }
   ::selection {
-    background: var(--well-2);
-  }
-  code,
-  kbd,
-  pre {
-    @apply font-mono;
+    @apply bg-blue-500/20;
   }
   button {
+    @apply cursor-pointer;
     touch-action: manipulation;
   }
-  @media (prefers-reduced-motion: reduce) {
-    *,
-    ::before,
-    ::after {
-      transition-duration: 0.01ms !important;
-    }
+  code {
+    @apply font-mono;
   }
 }
