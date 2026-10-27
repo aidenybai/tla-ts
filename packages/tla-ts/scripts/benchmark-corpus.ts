@@ -45,6 +45,8 @@ const models = findModels().filter((model) => matching.has(model.id));
 
 const timings: Timing[] = models.map((model, index) => {
   const metadataDirectory = mkdtempSync(join(tmpdir(), "tla-ts-corpus-"));
+  // tla-ts seeds random operators such as RandomElement with 0 by default, and TLC picks a seed at
+  // random.
   const tlc = time(
     "java",
     [
@@ -53,6 +55,8 @@ const timings: Timing[] = models.map((model, index) => {
       "-cp",
       jarPath,
       "tlc2.TLC",
+      "-seed",
+      "0",
       "-workers",
       "1",
       "-nowarning",
