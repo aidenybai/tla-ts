@@ -78,17 +78,17 @@ export const translateProperty = (
 ) => {
   const name = definition.name;
   const node = definition.node;
-  const isPrevious = tag === "always" || tag === "actionConstraint";
+  const hasPreviousState = tag === "always" || tag === "actionConstraint";
   // A temporal property's parameters hold for every value, as in \A p \in P : []<>Eats(p).
   const isQuantified = TEMPORAL_OPERATORS.has(tag) || tag === "leadsTo";
-  if (!isPrevious && !isQuantified && node.parameters.length > 0) {
+  if (!hasPreviousState && !isQuantified && node.parameters.length > 0) {
     throw new TsproverError(`@${tag} functions can't take parameters`, node.parameters[0]);
   }
   const quantified = (isQuantified ? node.parameters : []).map((parameter) => ({
     ...declareParameter(parameter, context),
     domain: getDomain(context.checker.getTypeAtLocation(parameter.name), parameter, context),
   }));
-  const scope = isPrevious
+  const scope = hasPreviousState
     ? getPreviousScope(definition, context)
     : bindNames(createStateScope(context), quantified);
   const forAll =

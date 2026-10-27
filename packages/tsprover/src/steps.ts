@@ -20,6 +20,11 @@ interface Chosen {
   isDependent: boolean;
 }
 
+interface Guards {
+  chosen: Map<Parameter, Chosen>;
+  remaining: readonly ts.Statement[];
+}
+
 const isBareReturn = (statement: ts.Statement): boolean =>
   ts.isReturnStatement(statement)
     ? statement.expression === undefined
@@ -85,7 +90,7 @@ const readGuards = (
   parameters: Parameter[],
   chosen: Map<Parameter, Chosen>,
   context: Context,
-): { chosen: Map<Parameter, Chosen>; remaining: readonly ts.Statement[] } => {
+): Guards => {
   const guard =
     statements.length === 0 ? undefined : getGuard(statements[0], parameters, chosen, context);
   if (guard === undefined) return { chosen, remaining: statements };
@@ -121,10 +126,14 @@ export const translateStep = (definition: Exported, sections: Sections, context:
       ? name
       : `${name}(${parameters.map((parameter) => parameter.name).join(", ")})`;
   sections.actions.push(`${head} ==\n  ${indent(render(formula), "  ")}`);
+  const fairness = definition.tags.has("strongFair")
+    ? "SF_vars"
+    : definition.tags.has("fair")
+      ? "WF_vars"
+      : undefined;
   if (parameters.length === 0) {
     sections.next.push(name);
-    if (definition.tags.has("strongFair")) sections.fairness.push(`SF_vars(${name})`);
-    else if (definition.tags.has("fair")) sections.fairness.push(`WF_vars(${name})`);
+    if (fairness !== undefined) sections.fairness.push(`${fairness}(${name})`);
     return;
   }
   const getType = (parameter: Parameter) => context.checker.getTypeAtLocation(parameter.node.name);
@@ -144,11 +153,6 @@ export const translateStep = (definition: Exported, sections: Sections, context:
     .map((entry) => `\\E ${entry[0].name} \\in ${entry[1].domain} : `);
   const step = `\\E ${independent.join(", ")} : ${dependent.join("")}${head}`;
   sections.next.push(step);
-  const fairness = definition.tags.has("strongFair")
-    ? "SF_vars"
-    : definition.tags.has("fair")
-      ? "WF_vars"
-      : undefined;
   if (fairness === undefined) return;
   // Fairness holds for each parameter value when every parameter has a finite type, with the
   // guards that chose parameters kept inside the action.
