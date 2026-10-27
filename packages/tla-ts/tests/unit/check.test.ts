@@ -1070,7 +1070,7 @@ describe("rejecting literals matches TLC", () => {
 
   it("accepts the largest integer literal and big literals in proofs", async () => {
     const result = await checkSource(
-      "VARIABLE x\nTHEOREM TRUE\n<1>1. 2147483648 > 0\n  OBVIOUS\n<1>2. QED\n  BY <1>1\nInit == x = 2147483647",
+      "EXTENDS Naturals\nVARIABLE x\nTHEOREM TRUE\n<1>1. 2147483648 > 0\n  OBVIOUS\n<1>2. QED\n  BY <1>1\nInit == x = 2147483647",
     );
     expect(result.status).toBe("success");
   });
@@ -1107,6 +1107,12 @@ describe("name resolution matches SANY", () => {
       "a LET definition named after the recursive one it is in",
       "RECURSIVE F\nF == LET F == 2 IN F",
     ],
+    ["an unknown operator in a theorem", "THEOREM Undefined"],
+    ["an unknown operator in a proof step", "THEOREM TRUE\n<1>1. Undefined\n  OBVIOUS\n<1> QED"],
+    [
+      "a NEW symbol after the proof of its step",
+      "THEOREM TRUE\n<1>1. ASSUME NEW c PROVE c = c\n  OBVIOUS\n<1>2. c = c\n<1> QED",
+    ],
   ])("rejects %s", async (_, source) => {
     await expect(checkSource(source)).rejects.toThrow(TlaSyntaxError);
   });
@@ -1114,6 +1120,23 @@ describe("name resolution matches SANY", () => {
   it("accepts USE and HIDE of theorems, assumptions, steps, and definitions", async () => {
     const result = await checkSource(
       "EXTENDS Naturals\nfoo == 1\nUSE foo, foo > 0 DEF foo\nASSUME A == foo \\in Nat\nHIDE A\nTHEOREM T == foo = 1\nHIDE T DEF foo\nTHEOREM U == ASSUME NEW n \\in Nat PROVE n >= 0\n<1>1. n >= 0\n  OBVIOUS\n<1>2. HIDE <1>1, T\n<1> QED\n  BY <1>1",
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it("resolves NEW, SUFFICES, PICK, DEFINE, and theorem labels in the steps they scope", async () => {
+    const result = await checkSource(
+      [
+        "EXTENDS Naturals",
+        "THEOREM Thm == ASSUME NEW S PROVE lab :: S = S",
+        "<1> SUFFICES ASSUME NEW n \\in Nat PROVE n + 0 = n OBVIOUS",
+        "<1>1. PICK m \\in Nat : m = n OBVIOUS",
+        "<1> DEFINE k == m + n",
+        "<1>2. ASSUME NEW c PROVE Thm!lab /\\ k = c",
+        "  <2>1. c = c OBVIOUS",
+        "  <2> QED",
+        "<1> QED BY <1>2",
+      ].join("\n"),
     );
     expect(result.status).toBe("success");
   });
