@@ -30,6 +30,7 @@ import {
 } from "./instances";
 import { extractModule, parseModule } from "./parser";
 import {
+  checkRedefinitions,
   isBefore,
   KEY_SEPARATOR,
   resolveModule,
@@ -308,6 +309,7 @@ export const createEnvironment = (
     module: Module,
     unit: {
       imported: Symbols;
+      importedAt: Map<string, SourceLocation>;
       definitions: Map<string, Definition>;
       getKey: (definition: Definition) => string;
     },
@@ -603,8 +605,10 @@ export const createEnvironment = (
     );
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const getKey = (definition: Definition) => getDefinitionKey(parsed, scope.id, definition.name);
+    const importedAt = new Map<string, SourceLocation>();
     const getUnit = (module: Module) => ({
       imported: visible,
+      importedAt,
       definitions: new Map(module.definitions.map((definition) => [definition.name, definition])),
       getKey,
     });
@@ -641,17 +645,19 @@ export const createEnvironment = (
     [
       ...parsed.instances.map((instance) => ({
         location: instance.location,
-        link: () =>
-          addSymbols(
-            instantiate(
-              instance,
-              parsed,
-              getUnit(parsed),
-              isParameterFree,
-              getVisibleModules().get(instance.module),
-            ),
-            !instance.isLocal,
-          ),
+        link: () => {
+          const symbols = instantiate(
+            instance,
+            parsed,
+            getUnit(parsed),
+            isParameterFree,
+            getVisibleModules().get(instance.module),
+          );
+          symbols.forEach((_, name) => {
+            if (!visible.has(name)) importedAt.set(name, instance.location);
+          });
+          addSymbols(symbols, !instance.isLocal);
+        },
       })),
       ...parsed.modules.map((nested) => ({
         location: nested.location,
@@ -660,6 +666,7 @@ export const createEnvironment = (
     ]
       .sort((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
       .forEach((unit) => unit.link());
+    checkRedefinitions(parsed, getUnit(parsed));
     const isInstancedAfterDefinition = (nested: Module) => {
       const first = parsed.instances.find((instance) => instance.module === nested.name);
       return first !== undefined && isBefore(nested.location, first.location);
