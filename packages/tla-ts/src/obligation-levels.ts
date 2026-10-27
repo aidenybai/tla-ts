@@ -12,7 +12,6 @@ import {
   type Bound,
   type Builtin,
   type Expr,
-  type Hyp,
   type Level,
   type Scope,
 } from "./obligation-expression";
@@ -103,7 +102,7 @@ const BUILTIN_LEVELS: Partial<Record<Builtin, [number, number]>> = {
   Unprimable: [0, 1],
 };
 
-const KIND_LEVELS: Record<Level, number> = {
+const LEVEL_NUMBERS: Record<Level, number> = {
   Constant: 0,
   State: 1,
   Action: 2,
@@ -122,26 +121,29 @@ const combine = (infos: LevelInfo[]): LevelInfo => ({
 // The level of each hypothesis depends only on the scope before it.
 const hypLevels = new WeakMap<Scope, LevelInfo>();
 
+const computeHypLevel = (scope: Scope): LevelInfo => {
+  const hyp = scope.hyp;
+  switch (hyp.kind) {
+    case "Flex":
+      return getInfo(1);
+    case "Fresh":
+      return { ...getInfo(LEVEL_NUMBERS[hyp.level], hyp.shape), params: new Set([hyp.name]) };
+    case "Defn": {
+      const definition = hyp.definition;
+      if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
+        throw new TlapmBugError();
+      }
+      return getLevelInfo(scope.rest, definition.body);
+    }
+    case "Fact":
+      return getLevelInfo(scope.rest, hyp.expression);
+  }
+};
+
 const getHypLevel = (scope: Scope): LevelInfo => {
   const cached = hypLevels.get(scope);
   if (cached) return cached;
-  const info = ((hyp: Hyp): LevelInfo => {
-    switch (hyp.kind) {
-      case "Flex":
-        return getInfo(1);
-      case "Fresh":
-        return { ...getInfo(KIND_LEVELS[hyp.level], hyp.shape), params: new Set([hyp.name]) };
-      case "Defn": {
-        const definition = hyp.definition;
-        if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
-          throw new TlapmBugError();
-        }
-        return getLevelInfo(scope.rest, definition.body);
-      }
-      case "Fact":
-        return getLevelInfo(scope.rest, hyp.expression);
-    }
-  })(scope.hyp);
+  const info = computeHypLevel(scope);
   hypLevels.set(scope, info);
   return info;
 };
@@ -277,13 +279,13 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
       return getInfo(3);
     case "Choose":
     case "SetSt": {
-      const domain = expression.domain && recurse(expression.domain);
+      const domainLevel = expression.domain && recurse(expression.domain);
       const hyp = expression.domain
         ? getBoundedFresh(expression.name, expression.domain)
         : getFresh(expression.name, "Constant");
       return combine([
         getLevelInfo(adjoin(scope, hyp), expression.body),
-        ...(domain ? [domain] : []),
+        ...(domainLevel ? [domainLevel] : []),
       ]);
     }
     case "SetEnum":

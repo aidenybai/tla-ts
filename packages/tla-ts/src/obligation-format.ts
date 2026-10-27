@@ -46,9 +46,11 @@ const INFINITY = 1000000010;
 
 const UNKNOWN = -1;
 
+const ENCODER = new TextEncoder();
+
 const getLength = (text: string) => {
   for (let index = 0; index < text.length; index++) {
-    if (text.charCodeAt(index) > 0x7f) return Buffer.byteLength(text);
+    if (text.charCodeAt(index) > 0x7f) return ENCODER.encode(text).length;
   }
   return text.length;
 };
@@ -187,8 +189,7 @@ const setSize = (formatter: Formatter, isBreak: boolean) => {
     formatter.scanStack = [getSentinel()];
     return;
   }
-  const kind = top.element.token.kind;
-  if ((kind === "Break") === isBreak && (kind === "Break" || kind === "Begin")) {
+  if (top.element.token.kind === (isBreak ? "Break" : "Begin")) {
     top.element.size = formatter.rightTotal + top.element.size;
     formatter.scanStack.pop();
   }
@@ -271,10 +272,7 @@ const SPACE: Command = { kind: "Break", width: 1, offset: 0 };
 const CUT: Command = { kind: "Break", width: 0, offset: 0 };
 
 const parseOpen = (directive: string): Command => {
-  let split = 0;
-  while (split < directive.length && !(directive[split] >= "0" && directive[split] <= "9")) {
-    split++;
-  }
+  const split = directive.search(/\d|$/);
   return {
     kind: "Open",
     box: BOX_KINDS[directive.slice(0, split)],
@@ -293,18 +291,13 @@ export const format = (pattern: string, ...args: FormatArgument[]): Doc => {
     doc.push(getText(pending));
     pending = "";
   };
-  const pushArgument = () => {
-    const argument = args[argumentIndex++];
-    if (typeof argument === "string") {
-      if (argument !== "") doc.push(getText(argument));
-    } else doc.push(argument);
-  };
   for (let index = 0; index < pattern.length; index++) {
     const character = pattern[index];
-    const next = pattern[index + 1];
     if (character === "%") {
       flushText();
-      pushArgument();
+      const argument = args[argumentIndex++];
+      if (typeof argument !== "string") doc.push(argument);
+      else if (argument !== "") doc.push(getText(argument));
       index++;
       continue;
     }
@@ -313,41 +306,55 @@ export const format = (pattern: string, ...args: FormatArgument[]): Doc => {
       continue;
     }
     flushText();
-    if (next === "[" && pattern[index + 2] === "<") {
-      const end = pattern.indexOf(">", index);
-      doc.push(parseOpen(pattern.slice(index + 3, end)));
-      index = end;
-    } else if (next === "[") {
-      doc.push({ kind: "Open", box: "b", indent: 0 });
-      index++;
-    } else if (next === "]") {
-      doc.push({ kind: "Close" });
-      index++;
-    } else if (next === " ") {
-      doc.push(SPACE);
-      index++;
-    } else if (next === ",") {
-      doc.push(CUT);
-      index++;
-    } else if (next === "\n") {
-      doc.push({ kind: "Newline" });
-      index++;
-    } else if (next === ".") {
-      doc.push({ kind: "Flush" });
-      index++;
-    } else if (next === ";") {
-      const end = pattern.indexOf(">", index);
-      const values = pattern.slice(index + 3, end).split(" ");
-      doc.push({ kind: "Break", width: Number(values[0]), offset: Number(values[1]) });
-      index = end;
-    } else if (next === "<") {
-      const end = pattern.indexOf(">", index);
-      doc.push({
-        kind: "Text",
-        text: String(args[argumentIndex++]),
-        size: Number(pattern.slice(index + 2, end)),
-      });
-      index = end + 2;
+    switch (pattern[index + 1]) {
+      case "[": {
+        if (pattern[index + 2] !== "<") {
+          doc.push({ kind: "Open", box: "b", indent: 0 });
+          index++;
+          break;
+        }
+        const end = pattern.indexOf(">", index);
+        doc.push(parseOpen(pattern.slice(index + 3, end)));
+        index = end;
+        break;
+      }
+      case "]":
+        doc.push({ kind: "Close" });
+        index++;
+        break;
+      case " ":
+        doc.push(SPACE);
+        index++;
+        break;
+      case ",":
+        doc.push(CUT);
+        index++;
+        break;
+      case "\n":
+        doc.push({ kind: "Newline" });
+        index++;
+        break;
+      case ".":
+        doc.push({ kind: "Flush" });
+        index++;
+        break;
+      case ";": {
+        const end = pattern.indexOf(">", index);
+        const values = pattern.slice(index + 3, end).split(" ");
+        doc.push({ kind: "Break", width: Number(values[0]), offset: Number(values[1]) });
+        index = end;
+        break;
+      }
+      case "<": {
+        const end = pattern.indexOf(">", index);
+        doc.push({
+          kind: "Text",
+          text: String(args[argumentIndex++]),
+          size: Number(pattern.slice(index + 2, end)),
+        });
+        index = end + 2;
+        break;
+      }
     }
   }
   flushText();

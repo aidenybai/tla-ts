@@ -32,7 +32,9 @@ const getHyp = (scope: Scope | undefined, index: number) => {
   return hyp;
 };
 
-const isActionOperator = (expression: Expr) =>
+const isActionOperator = (
+  expression: Expr,
+): expression is Expr & { kind: "Internal"; builtin: "ENABLED" | "Cdot" } =>
   expression.kind === "Internal" &&
   (expression.builtin === "ENABLED" || expression.builtin === "Cdot");
 
@@ -195,7 +197,7 @@ const bindVariables = (
 ): Expr => {
   const recurse = (inner: Expr) => bindVariables(current, primed, scope, inner);
   const isInScope = current !== undefined || primed !== undefined;
-  const lambdify = (operator: Expr, args: Expr[]) => {
+  const lambdifyOperator = (operator: Expr, args: Expr[]) => {
     const fresh: FreshNames = {
       names: [],
       depth: Math.max(current?.depth ?? 0, primed?.depth ?? 0) + 1,
@@ -228,7 +230,7 @@ const bindVariables = (
       (builtin === "ENABLED" && expression.args.length === 1) ||
       (builtin === "Cdot" && expression.args.length === 2)
     ) {
-      return lambdify(expression.operator, expression.args);
+      return lambdifyOperator(expression.operator, expression.args);
     }
     if (builtin === "Prime" && expression.args.length === 1) {
       const arg = bindVariables(primed, undefined, scope, expression.args[0]);
@@ -267,15 +269,14 @@ const shiftIndices = (substitution: Substitution, expression: Expr): Expr => {
     }
     const [placeholder, ...params] = lambda.params;
     if (placeholder.name !== "_") return expression;
-    const inner: Substitution = {
-      kind: "Compose",
-      outer: substitution,
-      inner: shift(params.length),
-    };
+    const body = shiftIndices(
+      { kind: "Compose", outer: substitution, inner: shift(params.length) },
+      lambda.body,
+    );
     return {
       kind: "Apply",
       operator: expression.operator,
-      args: [{ kind: "Lambda", params, body: shiftIndices(inner, lambda.body) }],
+      args: [{ kind: "Lambda", params, body }],
     };
   }
   if (expression.kind === "Ix") return substituteExpr(substitution, expression);
@@ -299,10 +300,7 @@ const renameParams = (expression: Expr): Expr => {
     if (expression.args.length !== 1 || lambda.kind !== "Lambda" || lambda.params[0].name === "_") {
       throw new TlapmBugError();
     }
-    const name =
-      expression.operator.kind === "Internal" && expression.operator.builtin === "Cdot"
-        ? "CdotWrapper"
-        : "EnabledWrapper";
+    const name = expression.operator.builtin === "Cdot" ? "CdotWrapper" : "EnabledWrapper";
     return {
       kind: "Apply",
       operator: at({ kind: "Opaque", name }, expression.operator),

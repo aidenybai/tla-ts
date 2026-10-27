@@ -32,9 +32,9 @@ interface Label {
   indices: { name: string; index: number }[];
 }
 
-const BAD: Expr = { kind: "Opaque", name: "$Bad" };
+const BAD = { kind: "Opaque", name: "$Bad" } satisfies Expr;
 
-const isBad = (expression: Expr) => expression.kind === "Opaque" && expression.name === "$Bad";
+const isBad = (expression: Expr) => expression.kind === "Opaque" && expression.name === BAD.name;
 
 const clean = (expression: Expr): Expr => {
   const mapped =
@@ -146,7 +146,6 @@ const getArityMessage = (expected: number, found: number) =>
   `Arity mismatch in subexpression instance.@\nExpected ${expected} argument${expected === 1 ? "" : "s"}, but found${found < expected ? " only" : ""} ${found}.`;
 
 const instantiate = (expression: Expr, args: Expr[]): Expr => {
-  const substitution = consAll(args, shift(0));
   switch (expression.kind) {
     case "Quant":
     case "Fcn":
@@ -155,7 +154,7 @@ const instantiate = (expression: Expr, args: Expr[]): Expr => {
         throw new TlaProofError(getArityMessage(expression.bounds.length, args.length));
       }
       const body = expression.kind === "SetOf" ? expression.element : expression.body;
-      return substituteExpr(substitution, body);
+      return substituteExpr(consAll(args, shift(0)), body);
     }
     case "Tquant":
       return instantiate(
@@ -198,7 +197,7 @@ const instantiate = (expression: Expr, args: Expr[]): Expr => {
           `Arity mismatch in subexpression instance.@\nExpected 1 argument, but found ${args.length}.`,
         );
       }
-      return substituteExpr(substitution, expression.body);
+      return substituteExpr(consAll(args, shift(0)), expression.body);
     default:
       throw new TlaProofError("Cannot instantiate non-binding expression");
   }
@@ -533,21 +532,17 @@ const deref = (isLabel: boolean, state: Deref, selectors: Selector[]): Expr => {
   );
 };
 
+const getInitialDeref = (operator: Expr, args: Expr[]): Deref => {
+  if (args.length > 0) {
+    return { params: [], definitions: [], expression: instantiate(operator, args) };
+  }
+  if (operator.kind !== "Lambda") return { params: [], definitions: [], expression: operator };
+  const [params, expression] = abstract(0, operator);
+  return { params, definitions: [], expression };
+};
+
 export const resolveSubexpression = (operator: Expr, args: Expr[], selectors: Selector[]) => {
-  const result = (() => {
-    if (args.length > 0) {
-      return deref(
-        true,
-        { params: [], definitions: [], expression: instantiate(operator, args) },
-        selectors,
-      );
-    }
-    if (operator.kind !== "Lambda") {
-      return deref(true, { params: [], definitions: [], expression: operator }, selectors);
-    }
-    const [params, expression] = abstract(0, operator);
-    return deref(true, { params, definitions: [], expression }, selectors);
-  })();
+  const result = deref(true, getInitialDeref(operator, args), selectors);
   if (isBad(result)) throw new TlaProofError("Could not resolve subexpression reference");
   return result;
 };

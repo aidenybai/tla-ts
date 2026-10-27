@@ -109,7 +109,7 @@ export type Selector =
   | { kind: "Instance"; args: Expr[] }
   | { kind: "Label"; label: string; args: Expr[] };
 
-type ExceptPoint = { kind: "Dot"; field: string } | { kind: "Apply"; expression: Expr };
+export type ExceptPoint = { kind: "Dot"; field: string } | { kind: "Apply"; expression: Expr };
 
 interface ExceptSpec {
   trail: ExceptPoint[];

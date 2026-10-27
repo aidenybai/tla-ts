@@ -259,32 +259,24 @@ const isBelow = (high: number, expression: Minimal) =>
 
 const withParens = (doc: Doc): Doc => [format("("), doc, format(")")];
 
+const printOperand = (operand: Minimal, isBare: boolean) =>
+  isBare ? printMinimal(operand) : withParens(printMinimal(operand));
+
 const printMinimal = (expression: Minimal): Doc => {
   if (expression.kind !== "Op") return expression.doc;
   const skeleton = expression.skeleton;
   const isUnder = (operand: Minimal) => isBelow(expression.high, operand);
   switch (skeleton.kind) {
-    case "Prefix": {
-      const operand = skeleton.operand;
-      const isBare =
-        isUnder(operand) || (operand.kind === "Op" && operand.skeleton.kind === "Prefix");
-      return [
-        format("@[<h>"),
-        expression.doc,
-        isBare ? printMinimal(operand) : withParens(printMinimal(operand)),
-        format("@]"),
-      ];
-    }
+    case "Prefix":
     case "Postfix": {
       const operand = skeleton.operand;
-      const isBare =
-        isUnder(operand) || (operand.kind === "Op" && operand.skeleton.kind === "Postfix");
-      return [
-        format("@[<h>"),
-        isBare ? printMinimal(operand) : withParens(printMinimal(operand)),
-        expression.doc,
-        format("@]"),
-      ];
+      const operandDoc = printOperand(
+        operand,
+        isUnder(operand) || (operand.kind === "Op" && operand.skeleton.kind === skeleton.kind),
+      );
+      const docs =
+        skeleton.kind === "Prefix" ? [expression.doc, operandDoc] : [operandDoc, expression.doc];
+      return [format("@[<h>"), ...docs, format("@]")];
     }
     case "Infix": {
       const left = skeleton.left;
@@ -300,9 +292,9 @@ const printMinimal = (expression: Minimal): Doc => {
           right.skeleton.assoc === "Right");
       return [
         format("@[<b0>"),
-        isLeftBare ? printMinimal(left) : withParens(printMinimal(left)),
+        printOperand(left, isLeftBare),
         expression.doc,
-        isRightBare ? printMinimal(right) : withParens(printMinimal(right)),
+        printOperand(right, isRightBare),
         format("@]"),
       ];
     }
@@ -312,9 +304,6 @@ const printMinimal = (expression: Minimal): Doc => {
 const atom = (doc: Doc): Minimal => ({ kind: "Atm", doc });
 
 const big = (doc: Doc): Minimal => ({ kind: "Big", doc });
-
-const isLetter = (character: string) =>
-  (character >= "A" && character <= "Z") || (character >= "a" && character <= "z");
 
 const isWith = (expression: Expr): boolean => {
   if (expression.kind === "Lambda") return isWith(expression.body);
@@ -483,41 +472,36 @@ const createPrinter = (hyps: Hyp[] = []) => {
           throw new TlaProofError("Cannot print this operator");
       }
     })();
+    const getOp = (doc: Doc, skeleton: Skeleton): Minimal => ({
+      kind: "Op",
+      name: top.name,
+      doc,
+      low: top.low,
+      high: top.high,
+      skeleton,
+    });
     if (args.length === 0) return atom(text(top.name));
     if (top.fixity === "Nonfix") {
       return atom(format("@[<b2>%s@[<b1>(%a)@]@]", top.name, formatDelimited(args, printExpr)));
     }
     if (top.fixity === "Prefix" && args.length === 1) {
-      return {
-        kind: "Op",
-        name: top.name,
-        doc: isLetter(top.name[top.name.length - 1]) ? format("%s@ ", top.name) : text(top.name),
-        low: top.low,
-        high: top.high,
-        skeleton: { kind: "Prefix", operand: formatExpr(args[0]) },
-      };
+      return getOp(/[A-Za-z]$/.test(top.name) ? format("%s@ ", top.name) : text(top.name), {
+        kind: "Prefix",
+        operand: formatExpr(args[0]),
+      });
     }
     if (top.fixity === "Postfix" && args.length === 1) {
-      return {
-        kind: "Op",
-        name: top.name,
-        doc: text(top.name),
-        low: top.low,
-        high: top.high,
-        skeleton: { kind: "Postfix", operand: formatExpr(args[0]) },
-      };
+      return getOp(text(top.name), { kind: "Postfix", operand: formatExpr(args[0]) });
     }
     if (top.fixity.startsWith("Infix") && args.length === 2) {
       const assoc: Assoc =
         top.fixity === "InfixLeft" ? "Left" : top.fixity === "InfixRight" ? "Right" : "Non";
-      return {
-        kind: "Op",
-        name: top.name,
-        doc: top.name === ".." ? text(top.name) : format("@ %s ", top.name),
-        low: top.low,
-        high: top.high,
-        skeleton: { kind: "Infix", assoc, left: formatExpr(args[0]), right: formatExpr(args[1]) },
-      };
+      return getOp(top.name === ".." ? text(top.name) : format("@ %s ", top.name), {
+        kind: "Infix",
+        assoc,
+        left: formatExpr(args[0]),
+        right: formatExpr(args[1]),
+      });
     }
     throw new TlaProofError(`Arity mismatch for operator ${top.name}`);
   };
@@ -784,9 +768,8 @@ const createPrinter = (hyps: Hyp[] = []) => {
               );
         const inner = formatExpr(expression.expression);
         if (names.length === 0) {
-          return inner.kind === "Op"
-            ? atom(format("%s::(%a)", form.label, printMinimal(inner)))
-            : atom(format("%s::%a", form.label, printMinimal(inner)));
+          const pattern = inner.kind === "Op" ? "%s::(%a)" : "%s::%a";
+          return atom(format(pattern, form.label, printMinimal(inner)));
         }
         const namesDoc = formatDelimited(names, text);
         if (inner.kind === "Atm")
