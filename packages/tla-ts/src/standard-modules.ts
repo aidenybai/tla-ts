@@ -46,6 +46,7 @@ import {
   isEqualLikeTlc,
   createEnumeratedSet,
   EMPTY_SET,
+  isEnumeratedSet,
   type IntervalValue,
   type MixedSetValue,
   type SetOperationValue,
@@ -81,9 +82,6 @@ const isReducible = (value: Value): value is ReducibleSet =>
   (value.kind === "Set" || value.kind === "MixedSet" || value.kind === "Interval");
 
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
-
-const isSetEnumeration = (value: Value): value is SetValue | MixedSetValue =>
-  typeof value === "object" && (value.kind === "Set" || value.kind === "MixedSet");
 
 const getReducibleElements = (set: ReducibleSet) =>
   set.kind === "Interval" ? toFiniteSet(set).elements : set.elements;
@@ -162,8 +160,8 @@ export const CORE_OPERATORS: Builtin[] = [
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getSet(args, 0, "SUBSET") })),
   defineOperator("UNION", 1, (args) => {
     const outer = getSet(args, 0, "UNION");
-    const sets = isSetEnumeration(outer) ? outer.elements.filter(isSetEnumeration) : [];
-    if (!isSetEnumeration(outer) || sets.length !== outer.elements.length) {
+    const sets = isEnumeratedSet(outer) ? outer.elements.filter(isEnumeratedSet) : [];
+    if (!isEnumeratedSet(outer) || sets.length !== outer.elements.length) {
       return { kind: "Union", base: outer };
     }
     if (isMixedSet(outer) || sets.some(isMixedSet)) {
@@ -250,6 +248,11 @@ const getSequenceOrString = (args: BuiltinArgument[], index: number, message: st
   return typeof value === "string" ? value : getSequenceArgument(args, index, message);
 };
 
+const sliceSequence = (sequence: string | Value[], start: number, end?: number) =>
+  typeof sequence === "string"
+    ? rankString(sequence.slice(start, end))
+    : createTuple(sequence.slice(start, end));
+
 const getSequenceMessage = (position: string, name: string) =>
   `The ${position}argument of ${name} should be a sequence, but instead it is:`;
 
@@ -302,24 +305,25 @@ const SEQUENCES_OPERATORS = withJavaMethods("Sequences", [
     const sequence = getSequenceOrString(args, 0, getSequenceMessage("", "Tail"));
     if (sequence.length === 0)
       throw new TlaModuleError("Attempted to apply Tail to the empty sequence.");
-    return typeof sequence === "string"
-      ? rankString(sequence.slice(1))
-      : createTuple(sequence.slice(1));
+    return sliceSequence(sequence, 1);
   }),
   defineOperator("SubSeq", 3, (args) => {
     const sequence = getSequenceOrString(args, 0, getSequenceMessage("first ", "SubSeq"));
     const start = getNumber(args, 1, "SubSeq");
     const end = getNumber(args, 2, "SubSeq");
-    if (start > end) return typeof sequence === "string" ? rankString("") : createTuple([]);
-    const outOfDomain = start < 1 ? ["second", start] : end > sequence.length ? ["third", end] : [];
-    if (outOfDomain.length > 0) {
+    if (start > end) return sliceSequence(sequence, 0, 0);
+    const outOfDomain =
+      start < 1
+        ? { position: "second", value: start }
+        : end > sequence.length
+          ? { position: "third", value: end }
+          : undefined;
+    if (outOfDomain) {
       throw new TlaModuleError(
-        `The ${outOfDomain[0]} argument of SubSeq must be in the domain of its first argument:\n${formatValue(getValue(args, 0, "SubSeq"))}\n, but instead it is\n${outOfDomain[1]}`,
+        `The ${outOfDomain.position} argument of SubSeq must be in the domain of its first argument:\n${formatValue(getValue(args, 0, "SubSeq"))}\n, but instead it is\n${outOfDomain.value}`,
       );
     }
-    return typeof sequence === "string"
-      ? rankString(sequence.slice(start - 1, end))
-      : createTuple(sequence.slice(start - 1, end));
+    return sliceSequence(sequence, start - 1, end);
   }),
   defineHigherOrderOperator("SelectSeq", 2, (args) => {
     const test = getOperator(args, 1, "SelectSeq");

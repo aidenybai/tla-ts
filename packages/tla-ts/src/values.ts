@@ -679,7 +679,7 @@ const compareFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: 
   );
 };
 
-const isEnumeratedSet = (value: Value): value is SetValue | MixedSetValue =>
+export const isEnumeratedSet = (value: Value): value is SetValue | MixedSetValue =>
   typeof value === "object" && (value.kind === "Set" || value.kind === "MixedSet");
 
 // TLC compares a lazy set, or a set it overrides in Java, through its own class before it compares
