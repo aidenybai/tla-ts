@@ -925,13 +925,12 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     if (!unwitnessed) search.findPostconditionViolation();
     return createResult(status, unwitnessed ? { ...violation, unwitnessed } : violation);
   };
-  const properties = search.properties;
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
   const nextActions = { value: undefined as SpecAction[] | undefined };
   const isReducing = config.view !== undefined || config.symmetry !== undefined;
   const liveness = withLivenessExitCode(() =>
-    createLivenessChecker(properties.liveness, spec.temporals, environment),
+    createLivenessChecker(search.properties.liveness, spec.temporals, environment),
   );
   const isCanonicalizedFirst = search.isSymmetric || liveness !== undefined;
 
@@ -1033,11 +1032,13 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   };
   const getTrace = (index: number, last?: Successor) => {
     const path: number[] = [];
-    for (let current = index; current !== -1; current = parents[current]) path.unshift(current);
+    for (let position = index; position !== -1; position = parents[position]) {
+      path.unshift(position);
+    }
     const steps =
       isReducing && path.length > 1
         ? getPathStates(path, INITIAL_RECOVERY_FAILURE)
-        : path.map((current) => ({ state: states[current], action: actions[current] }));
+        : path.map((position) => ({ state: states[position], action: actions[position] }));
     if (!last) return toTrace(steps, path);
     const action = isReducing
       ? getTraceSuccessors(states[index]).find((successor) =>
