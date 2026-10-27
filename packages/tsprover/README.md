@@ -123,12 +123,12 @@ TLC tries every value of a parameter's type, so a parameter needs a finite type.
 | `new Map([[k, v]])`, `m.get(k)!`        | Functions, `m[k]`                              |
 | `Record<K, V>`, `r[k]`                  | Records, `r[k]`, or functions for numeric keys |
 
-`===` compares values, not references, so two sets with the same elements are equal. Sets keep no order.
+`===` compares values, not references, so two sets with the same elements are equal, and a `Set` of arrays or objects keeps one copy of equal elements. Sets keep no order.
 
 ### Operations
 
 - **Numbers:** `+`, `-`, `*`, `**`, `%`, comparisons, `Math.floor(a / b)`, `Math.trunc(a / b)`, `Math.min`, `Math.max`, and `Math.abs`. `%` keeps JavaScript's sign. Write division with `Math.floor` or `Math.trunc`.
-- **Strings:** `+` and template literals.
+- **Strings:** `+`, template literals, `length`, `===`, and `!==`. TLA+ strings have no order, so `<` and `>` don't take strings.
 - **Arrays:** `at`, `includes`, `indexOf`, `slice`, `concat`, `with`, `toReversed`, `map`, `filter`, `every`, `some`, `find`, `findIndex`, spreads, `Array.from({ length: n }, (_, i) => …)`, and `Array(n).fill(v)`.
 - **Sets:** `has`, `union`, `intersection`, `difference`, `symmetricDifference`, `isSubsetOf`, `isSupersetOf`, and `isDisjointFrom`. `[...s]` and `s.values()` take `every`, `some`, `filter`, `map`, and `find`. `find` on a set returns an arbitrary match that is the same on every call.
 - **Maps and records:** `get`, `has`, `size`, `keys()`, `values()`, `entries()`, `Object.keys`, `Object.values`, `Object.entries`, and `new Map(s.values().map((k) => [k, v]))` or `Object.fromEntries(…)` to build one from a set.

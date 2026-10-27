@@ -89,35 +89,73 @@ export const render = (formula: Formula) => renderLines(formula).join("\n");
 const OPENING = new Set(["(", "[", "{"]);
 const CLOSING = new Set([")", "]", "}"]);
 
-// Whether an expression has no operator outside brackets, quotes, and tuples, so that it can be
-// an operand without parentheses.
-const isAtomic = (expression: string) => {
-  if (expression === "" || /^[~-]/.test(expression) || expression.includes("\n")) return false;
-  let depth = 0;
-  let isQuoted = false;
-  for (let index = 0; index < expression.length; index++) {
-    const character = expression[index];
-    if (isQuoted) {
-      if (character === "\\") index++;
-      if (character === '"') isQuoted = false;
-      continue;
-    }
-    if (character === '"') isQuoted = true;
-    else if (expression.startsWith("<<", index)) {
-      depth++;
-      index++;
-    } else if (expression.startsWith(">>", index) && depth > 0) {
-      depth--;
-      index++;
-    } else if (OPENING.has(character)) depth++;
-    else if (CLOSING.has(character)) depth--;
-    else if (character === " " && depth === 0) return false;
-  }
-  return true;
-};
+interface Scan {
+  depth: number;
+  isQuoted: boolean;
+  isEscaped: boolean;
+  isSkipped: boolean;
+  surface: string;
+}
+
+// The expression without anything inside brackets, tuples, or strings, which leaves the operators
+// that apply to the whole expression.
+const getSurface = (expression: string) =>
+  [...expression].reduce<Scan>(
+    (scan, character, index) => {
+      if (scan.isSkipped) return { ...scan, isSkipped: false };
+      if (scan.isQuoted) {
+        return {
+          ...scan,
+          isQuoted: scan.isEscaped || character !== '"',
+          isEscaped: !scan.isEscaped && character === "\\",
+        };
+      }
+      const pair = expression.slice(index, index + 2);
+      if (pair === "<<") return { ...scan, depth: scan.depth + 1, isSkipped: true };
+      if (pair === ">>" && scan.depth > 0) {
+        return { ...scan, depth: scan.depth - 1, isSkipped: true };
+      }
+      if (character === '"') return { ...scan, isQuoted: true };
+      if (OPENING.has(character)) return { ...scan, depth: scan.depth + 1 };
+      if (CLOSING.has(character)) return { ...scan, depth: scan.depth - 1 };
+      return scan.depth === 0 ? { ...scan, surface: scan.surface + character } : scan;
+    },
+    { depth: 0, isQuoted: false, isEscaped: false, isSkipped: false, surface: "" },
+  ).surface;
+
+// Whether an expression is a single term, so that it can be an operand without parentheses.
+const isAtomic = (expression: string) =>
+  expression !== "" &&
+  !/^[~-]/.test(expression) &&
+  !expression.includes("\n") &&
+  !getSurface(expression).includes(" ");
 
 // Parenthesizes an operand unless it is a single term.
 export const wrap = (expression: string) => (isAtomic(expression) ? expression : `(${expression})`);
+
+// Operators that bind no tighter than =, so that x = a = b would be ambiguous.
+const LOOSE_OPERATORS = [
+  " = ",
+  " # ",
+  " < ",
+  " > ",
+  " <= ",
+  " >= ",
+  " \\in ",
+  " \\notin ",
+  " \\subseteq ",
+  " /\\ ",
+  " \\/ ",
+  " => ",
+  " ~> ",
+];
+
+// Parenthesizes the value on the right of = when it is itself a comparison or a logical formula.
+export const wrapEquated = (expression: string) =>
+  expression.startsWith("~") ||
+  LOOSE_OPERATORS.some((operator) => getSurface(expression).includes(operator))
+    ? `(${expression})`
+    : expression;
 
 export const indent = (expression: string, prefix: string) =>
   expression.split("\n").join(`\n${prefix}`);

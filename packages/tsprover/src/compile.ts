@@ -11,7 +11,7 @@ import {
   translateCondition,
   translateExpression,
 } from "./expressions";
-import { indent, render, wrap } from "./formula";
+import { indent, render, wrap, wrapEquated } from "./formula";
 import { createNames } from "./names";
 
 export interface CompiledSpec {
@@ -250,7 +250,7 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
   const init = variables.map((variable, index) => {
     const initializer = variable.declaration.initializer;
     if (initializer !== undefined) {
-      return `${variableNames[index]} = ${indent(translateBody(initializer, stateScope, context), "     ")}`;
+      return `${variableNames[index]} = ${indent(wrapEquated(translateBody(initializer, stateScope, context)), "     ")}`;
     }
     const type = checker.getTypeAtLocation(variable.declaration.name);
     return `${variableNames[index]} \\in ${getDomain(type, variable.declaration, context)}`;
