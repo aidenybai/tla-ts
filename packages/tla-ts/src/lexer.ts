@@ -293,8 +293,13 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
   const character = source[index];
   if (character === "\\" && /[A-Za-z]/.test(source[index + 1] ?? "")) {
     const word = /^[A-Za-z]+/.exec(source.slice(index + 1))?.[0] ?? "";
-    const operator = BACKSLASH_OPERATORS.get(word);
-    return operator === undefined ? undefined : { text: operator, length: word.length + 1 };
+    // Like SANY, read the longest operator that the word starts with, so S\used is S \ used.
+    const length = { value: word.length };
+    while (length.value > 0 && !BACKSLASH_OPERATORS.has(word.slice(0, length.value))) {
+      length.value--;
+    }
+    const operator = BACKSLASH_OPERATORS.get(word.slice(0, length.value));
+    return { text: operator ?? "\\", length: operator === undefined ? 1 : length.value + 1 };
   }
   const unicodeOperator = UNICODE_OPERATORS.get(character);
   if (unicodeOperator) return { text: unicodeOperator, length: character.length };
@@ -478,10 +483,6 @@ export const tokenize = (source: string): Token[] => {
     if (operator) {
       pushToken("Operator", operator.text, operator.length);
       continue;
-    }
-    if (character === "\\") {
-      const word = /^[A-Za-z]+/.exec(source.slice(cursor.index + 1))?.[0] ?? "";
-      throw createError(`Unknown operator \\${word}`);
     }
     throw createError(`Unexpected character ${JSON.stringify(character)}`);
   }
