@@ -72,6 +72,22 @@ describe("parseModule reads operators like SANY", () => {
       ),
     ).toEqual(["\\", "\\in", "\\cap"]);
   });
+
+  const INNER = "---- MODULE Inner ----\nVARIABLE x\nFoo == x\n====\nM(x) == INSTANCE Inner";
+
+  it("rejects an operator of a parameterized instance without the instance's arguments", () => {
+    expect(() =>
+      parseModule(`---- MODULE M ----\n${INNER}\nTHEOREM M!Foo(TRUE) => M!Foo(TRUE)\n====`),
+    ).toThrow("The operator M requires 1 arguments at line 7, column 9");
+  });
+
+  it("cites an operator of a parameterized instance in a DEF clause without arguments", () => {
+    const module = parseModule(
+      `---- MODULE M ----\n${INNER}\nTHEOREM M(1)!Foo = M(1)!Foo\nBY DEF M!Foo\n====`,
+    );
+    const proof = module.theorems[0].proof;
+    expect(proof?.kind === "By" && proof.defs).toMatchObject([{ name: "M!Foo" }]);
+  });
 });
 
 describe("parseModule reads proofs like SANY", () => {
