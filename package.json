@@ -5,12 +5,12 @@
   "scripts": {
     "dev": "vp run @tla-ts/website#dev",
     "build": "vp run tla-ts#build",
-    "test": "pnpm --filter tla-ts test",
+    "test": "pnpm --filter tla-ts --filter tsprover test",
     "publint": "vp run tla-ts#publint",
     "fmt": "vp fmt",
     "lint": "vp lint",
     "check": "vp check",
-    "typecheck": "pnpm run build && pnpm --filter tla-ts --filter @tla-ts/website typecheck",
+    "typecheck": "pnpm run build && pnpm --filter tla-ts --filter tsprover --filter @tla-ts/website typecheck",
     "changeset": "nr build && changeset",
     "version": "changeset version",
     "release": "changeset publish"
