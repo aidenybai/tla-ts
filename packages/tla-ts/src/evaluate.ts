@@ -7,6 +7,7 @@ import type {
   OperatorParam,
   RecordField,
 } from "./ast";
+import { getKindString } from "./builtins";
 import { TlaEvaluationError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
@@ -23,9 +24,11 @@ import {
   createSortedSet,
   createTuple,
   formatValue,
+  getDomain,
   getSequenceElements,
   getValueHash,
   isEnumerable,
+  isFunctionValue,
   isSameValue,
   isSetValue,
   toFiniteSet,
@@ -121,6 +124,56 @@ const EXCEPT_AT = "@";
 
 const describeLocation = (expression: Expression) =>
   `line ${expression.location.line}, column ${expression.location.column}`;
+
+export const describeRange = (expression: Expression) => {
+  const range = expression.location.range;
+  return range
+    ? `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`
+    : describeLocation(expression);
+};
+
+export const getConditionError = (expression: Expression, value: Value) =>
+  new TlaEvaluationError(
+    `A non-boolean expression (${getKindString(value)}) was used as the condition of an IF.\n${describeRange(expression)}`,
+  );
+
+// TLC parses an infix chain of /\ as nested binary conjunctions and a bulleted list as one
+// conjunction list, and it words the error differently for each.
+export const getConjunctError = (
+  expression: Expression & { kind: "And" | "Or" },
+  index: number,
+  value: Value,
+) => {
+  const range = expression.location.range;
+  const isBulleted =
+    range?.start.line === expression.location.line &&
+    range.start.column === expression.location.column;
+  if (isBulleted || !range) {
+    const operand = expression.operands[index];
+    // SANY prints a numeral as its value instead of its location.
+    const description = operand.kind === "Number" ? String(operand.value) : describeRange(operand);
+    return new TlaEvaluationError(
+      `A non-boolean expression (${getKindString(value)}) was used as a formula in a conjunction.\n${description}`,
+    );
+  }
+  const end = expression.operands[Math.max(index, 1)].location.range?.end ?? range.end;
+  return new TlaEvaluationError(
+    `Attempted to evaluate an expression of form P /\\ Q when ${index === 0 ? "P" : "Q"} was\n${getKindString(value)}.\n${describeRange({ ...expression, location: { ...expression.location, range: { ...range, end } } })}`,
+  );
+};
+
+export const getFieldError =
+  (expression: Expression & { kind: "FieldAccess" }) => (record: Value) =>
+    `Attempted to select nonexistent field "${expression.field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`;
+
+export const getDomainOperator = (expression: Expression) => (value: Value) => {
+  if (!isFunctionValue(value)) {
+    throw new TlaEvaluationError(
+      `Attempted to apply the operator DOMAIN to a non-function\n(${getKindString(value)})\n${describeRange(expression)}`,
+    );
+  }
+  return getDomain(value);
+};
 
 export const lookupScope = (scope: Scope | undefined, name: string): Binding | undefined => {
   for (let current = scope; current; current = current.parent) {
@@ -1072,6 +1125,11 @@ const compileApply = (
     ? undefined
     : resolveGlobalOperator(expression.operator, environment);
   if (global?.kind === "Closure") return compileClosureCall(global, args, environment);
+  if (global?.kind === "Builtin" && global.name === "DOMAIN") {
+    const operand = getEvaluator(args[0], environment);
+    const domain = getDomainOperator(expression);
+    return (context) => domain(operand(context));
+  }
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
   return (context) => {
     const operator = resolveOperator(expression.operator, context);
@@ -1290,7 +1348,7 @@ const compileSetComprehension = (
     });
     if (chosen.value === undefined) {
       throw new TlaEvaluationError(
-        `Attempted to compute CHOOSE x \\in S : P, but no element of S satisfies P at ${describeLocation(expression)}`,
+        `Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\n${describeRange(expression)}`,
       );
     }
     return chosen.value;
@@ -1364,7 +1422,9 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const operands = expression.operands.map(child);
       return (context) => {
         for (let index = 0; index < operands.length; index++) {
-          if (!expectBoolean(operands[index](context), "a conjunct")) return false;
+          const value = operands[index](context);
+          if (typeof value !== "boolean") throw getConjunctError(expression, index, value);
+          if (!value) return false;
         }
         return true;
       };
@@ -1407,10 +1467,11 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const condition = child(expression.condition);
       const consequent = child(expression.consequent);
       const alternative = child(expression.alternative);
-      return (context) =>
-        expectBoolean(condition(context), "an IF condition")
-          ? consequent(context)
-          : alternative(context);
+      return (context) => {
+        const value = condition(context);
+        if (typeof value !== "boolean") throw getConditionError(expression, value);
+        return value ? consequent(context) : alternative(context);
+      };
     }
     case "Case": {
       const arms = expression.arms.map((arm) => ({
@@ -1494,7 +1555,8 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "FieldAccess": {
       const record = child(expression.record);
       const field = expression.field;
-      return (context) => applyFunction(record(context), field);
+      const describeMissing = getFieldError(expression);
+      return (context) => applyFunction(record(context), field, describeMissing);
     }
     case "Product": {
       const factors = expression.factors.map(child);
