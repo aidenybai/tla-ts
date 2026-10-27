@@ -6,7 +6,7 @@ import {
   at,
   consAll,
   consSubstitution,
-  getAtPrefix,
+  getErrorNote,
   getChildren,
   getFresh,
   mapChildren,
@@ -156,10 +156,7 @@ const instantiate = (
       if (expression.bounds.length !== args.length) {
         const expected = expression.bounds.length;
         const message = `Arity mismatch in subexpression instance.\nExpected ${expected} argument${expected === 1 ? "" : "s"}, but found${args.length < expected ? " only" : ""} ${args.length}.`;
-        onWarning({
-          text: `${getAtPrefix(expression.location)}Error: ${message}`,
-          channel: "stderr",
-        });
+        onWarning(getErrorNote(expression.location, message));
         throw new TlaProofError(message, { failure: "Expr.Deref.deref_inst" });
       }
       const body = expression.kind === "SetOf" ? expression.element : expression.body;
@@ -205,19 +202,13 @@ const instantiate = (
     case "Choose":
       if (args.length !== 1) {
         const message = `Arity mismatch in subexpression instance.\nExpected 1 argument, but found ${args.length}.`;
-        onWarning({
-          text: `${getAtPrefix(expression.location)}Error: ${message}`,
-          channel: "stderr",
-        });
+        onWarning(getErrorNote(expression.location, message));
         throw new TlaProofError(message, { failure: "Expr.Deref.deref_inst" });
       }
       return substituteExpr(consAll(args, shift(0)), expression.body);
     default: {
       const message = "Cannot instantiate non-binding expression";
-      onWarning({
-        text: `${getAtPrefix(expression.location)}Error: ${message}`,
-        channel: "stderr",
-      });
+      onWarning(getErrorNote(expression.location, message));
       throw new TlaProofError(message, { failure: "Expr.Deref.deref_inst" });
     }
   }
@@ -243,10 +234,7 @@ const abstract = (
         return [{ name: expression.name, shape: 0 }];
       default: {
         const message = "Cannot abstract over bound variables in a non-binding expression";
-        onWarning({
-          text: `${getAtPrefix(expression.location)}Error: ${message}`,
-          channel: "stderr",
-        });
+        onWarning(getErrorNote(expression.location, message));
         throw new TlaProofError(message, { failure: "Expr.Deref.deref_at" });
       }
     }
@@ -255,8 +243,6 @@ const abstract = (
   return [params, instantiate(onWarning, shifted, getIndices(params.length))];
 };
 
-// Expr.Deref.deref_num. A position past the subexpressions raises Bad_index, which deref reports
-// at the expression it started from.
 const getNumbered = (
   onWarning: (warning: ObligationWarning) => void,
   definitions: Defn[],
@@ -267,7 +253,7 @@ const getNumbered = (
 ): [Defn[], Expr] => {
   const checkAtMost = (count: number) => {
     if (position <= count) return;
-    onWarning({ text: `${getAtPrefix(origin.location)}Error: ${message}`, channel: "stderr" });
+    onWarning(getErrorNote(origin.location, message));
     throw new TlaProofError(message, { failure: "Expr.Deref.deref_num" });
   };
   const pick = (items: Expr[]) => {
@@ -282,10 +268,7 @@ const getNumbered = (
         const hyp = sequent.context[position - 1];
         if (hyp && hyp.kind !== "Fact") {
           const hypMessage = "subexpression reference does not resolve to an expression";
-          onWarning({
-            text: `${getAtPrefix(expression.location)}Error: ${hypMessage}`,
-            channel: "stderr",
-          });
+          onWarning(getErrorNote(expression.location, hypMessage));
           throw new TlaProofError(hypMessage, { failure: "Expr.Deref.deref_num" });
         }
         const shifted = substituteExpr(
@@ -293,10 +276,12 @@ const getNumbered = (
           hyp ? hyp.expression : sequent.active,
         );
         if (hasNegativeIndex(shifted)) {
-          onWarning({
-            text: `${getAtPrefix(expression.location)}Error: subexpression of ASSUME/PROVE uses identifiers declared therein\nTlapm does not handle yet such subexpression namings.`,
-            channel: "stderr",
-          });
+          onWarning(
+            getErrorNote(
+              expression.location,
+              `subexpression of ASSUME/PROVE uses identifiers declared therein\nTlapm does not handle yet such subexpression namings.`,
+            ),
+          );
           throw new TlaProofError(
             "Subexpression of ASSUME/PROVE uses identifiers declared therein\n\nTlapm does not handle yet such subexpression namings.",
             { failure: "Expr.Deref.deref_num" },
@@ -389,18 +374,12 @@ const getNumbered = (
         ];
     }
     const emptyMessage = "Expression has no subexpressions";
-    onWarning({
-      text: `${getAtPrefix(expression.location)}Error: ${emptyMessage}`,
-      channel: "stderr",
-    });
+    onWarning(getErrorNote(expression.location, emptyMessage));
     throw new TlaProofError(emptyMessage, { failure: "Expr.Deref.deref_num" });
   })();
   if (isBad(result[1])) {
     const badMessage = `Cannot resolve subexpression reference !${position}`;
-    onWarning({
-      text: `${getAtPrefix(expression.location)}Error: ${badMessage}`,
-      channel: "stderr",
-    });
+    onWarning(getErrorNote(expression.location, badMessage));
     throw new TlaProofError(badMessage, { failure: "Expr.Deref.deref_num" });
   }
   return result;
@@ -426,20 +405,14 @@ const resolveLabel = (
 ): Deref => {
   const found = findLabel(expression, label, []);
   if (!found) {
-    onWarning({
-      text: `${getAtPrefix(expression.location)}Error: Could not find label ${label}`,
-      channel: "stderr",
-    });
+    onWarning(getErrorNote(expression.location, `Could not find label ${label}`));
     return { params: [], definitions: [], expression: BAD };
   }
   const indices = found.indices;
   if (indices.length !== labelArgs.length && labelArgs.length > 0) {
     const plural = indices.length === 1 ? "" : "s";
     const message = `Expected ${indices.length} argument${plural} for labelled reference !${label}, but found ${labelArgs.length}`;
-    onWarning({
-      text: `${getAtPrefix(found.expression.location)}Error: ${message}`,
-      channel: "stderr",
-    });
+    onWarning(getErrorNote(found.expression.location, message));
     throw new TlaProofError(message, { failure: "Expr.Deref.deref_lsub" });
   }
   const params =
@@ -494,10 +467,7 @@ const resolveLetOperator = (
   args: Expr[],
 ): Deref => {
   if (expression.kind !== "Let") {
-    onWarning({
-      text: `${getAtPrefix(expression.location)}Error: not a LET expression`,
-      channel: "stderr",
-    });
+    onWarning(getErrorNote(expression.location, `not a LET expression`));
     throw new TlaProofError("not a LET expression", { failure: "Expr.Deref.deref_letop" });
   }
   const index = expression.definitions.findIndex(
@@ -506,7 +476,7 @@ const resolveLetOperator = (
   const definition = expression.definitions[index];
   if (!definition || definition.kind !== "Operator") {
     const message = `no definition of operator ${label}`;
-    onWarning({ text: `${getAtPrefix(expression.location)}Error: ${message}`, channel: "stderr" });
+    onWarning(getErrorNote(expression.location, message));
     throw new TlaProofError(message, { failure: "Expr.Deref.deref_letop" });
   }
   const body = definition.body;
@@ -568,10 +538,7 @@ const deref = (
     return { ...clean(abstracted), isAtomic: true };
   }
   if (state.expression.isAtomic) {
-    onWarning({
-      text: `${getAtPrefix(state.expression.location)}Error: Expression has no subexpressions`,
-      channel: "stderr",
-    });
+    onWarning(getErrorNote(state.expression.location, `Expression has no subexpressions`));
     return BAD;
   }
   const expression = isLabel ? state.expression : cleanParens(state.expression);
@@ -654,8 +621,6 @@ const getInitialDeref = (
   return { params, definitions: [], expression };
 };
 
-// Expr.Anon reports a reference that resolves to nothing at the reference, which the operator
-// carries the locus of.
 export const resolveSubexpression = (
   onWarning: (warning: ObligationWarning) => void,
   operator: Expr,
@@ -665,7 +630,7 @@ export const resolveSubexpression = (
   const result = deref(onWarning, true, getInitialDeref(onWarning, operator, args), selectors);
   if (isBad(result)) {
     const message = "Could not resolve subexpression reference";
-    onWarning({ text: `${getAtPrefix(operator.location)}Error: ${message}`, channel: "stderr" });
+    onWarning(getErrorNote(operator.location, message));
     throw new TlaProofError(message, { failure: "Expr.Anon: 2" });
   }
   return result;

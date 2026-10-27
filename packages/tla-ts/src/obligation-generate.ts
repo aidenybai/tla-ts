@@ -7,7 +7,7 @@ import {
   at,
   consSubstitution,
   exprifySequent,
-  getAtPrefix,
+  getErrorNote,
   isEqualExpr,
   mapAccumulate,
   normalizeApply,
@@ -203,7 +203,7 @@ const setExpression = (
   }
   if (!isFound) {
     const message = "This expression does not appear in the context and cannot be hidden.";
-    onWarning({ text: `${getAtPrefix(fact.location)}Error: ${message}\n`, channel: "stderr" });
+    onWarning(getErrorNote(fact.location, `${message}\n`));
     throw new TlaProofError(message, { failure: "proof.Gen.set_expr" });
   }
   return result;
@@ -282,8 +282,6 @@ const obligate = (
   kind: ObligationKind,
 ): Obligation => ({ sequent, location: from.location, kind });
 
-// Proof.Gen's statistics: how many obligations it generates, and the missing and omitted proofs
-// among them in the order it generates them.
 export interface ProofSummary {
   total: number;
   absent: Locus[];
@@ -312,7 +310,6 @@ const getStepSummary = (step: Step): ProofSummary => {
   }
 };
 
-// A proof outside the lines or the files given to tlapm generates nothing, so it counts nothing.
 export const getProofSummary = (proof: Proof): ProofSummary => {
   if (proof.kind === "Steps") {
     return [...proof.steps.map(getStepSummary), getProofSummary(proof.qed.proof)].reduce(

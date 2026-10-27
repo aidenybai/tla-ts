@@ -200,8 +200,6 @@ const regroup = (expression: Extract<Expression, { kind: "Apply" }>): Expression
   return grouping.kind === "Attached" ? grouping.expression : expression;
 };
 
-// tlapm expands tuple declarations only in the modules it checks. Elsewhere its visitors fail on
-// them.
 const TUPLY_FAILURE = "use instead the class`E_visit.iter_concrete`";
 
 export const createSource = (file: string, text: string, counter: Counter, isExpanded: boolean) => {
@@ -215,8 +213,6 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     endColumn: range.end.column + 1,
   });
 
-  // tlapm reads a method pragma (*{ ... }*) right after OBVIOUS as part of the proof, and right
-  // after a theorem's statement as part of the theorem.
   const withPragma = (locus: Locus) => {
     const position = { line: locus.endLine - 1, column: locus.endColumn - 1 };
     const isBlank = (character: string | undefined) => character === " " || character === "\r";
@@ -235,7 +231,6 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     return locus;
   };
 
-  // A parameter is located by its name.
   const getNameLocus = (name: string, location: SourceLocation): Locus => ({
     file,
     startLine: location.line,
@@ -1044,7 +1039,6 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
                 whereDefined: "User",
                 visibility: "Hidden",
                 isLocal: instance.isLocal,
-                // tlapm locates a named instance from its INSTANCE token.
                 location: getRangeLocus(instance.instanceRange),
               };
         }
@@ -1058,7 +1052,6 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         case "Theorem": {
           const theorem = unit.theorem;
           const location = getLocus(theorem.location);
-          // A theorem's missing proof is where tlapm's parser stops, after the statement.
           const end = withPragma(location);
           return {
             kind: "Theorem",

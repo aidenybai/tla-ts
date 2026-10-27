@@ -10,7 +10,7 @@ import {
   consSubstitution,
   exprifySequent,
   findNamed,
-  getAtPrefix,
+  getErrorNote,
   getFresh,
   getLocusPrefix,
   getScopeAt,
@@ -54,8 +54,6 @@ const DUMMY_FACT: Hyp = {
   visibility: "Visible",
 };
 
-// Expr.Anon names its failure to resolve a prefix of a subexpression after the selector that
-// follows it.
 const ANON_SELECTOR_FAILURES = {
   Number: "1NUM",
   Down: "1DOWN",
@@ -136,7 +134,7 @@ export const createAnonymizer = (
     const found = findNamed(context.scope, name);
     if (!found) {
       const message = `Operator "${name}" not found`;
-      onWarning({ text: `${getAtPrefix(from.location)}Error: ${message}`, channel: "stderr" });
+      onWarning(getErrorNote(from.location, message));
       throw new TlaProofError(message, { failure: "Expr.Anon: 4" });
     }
     const index = found.depth + 1;
@@ -187,10 +185,8 @@ export const createAnonymizer = (
           from,
         );
       }
-      // Expr.Anon prints nothing when no selector follows.
       const message = `Operator "${prefix}" not found`;
-      if (selector)
-        onWarning({ text: `${getAtPrefix(from.location)}Error: ${message}`, channel: "stderr" });
+      if (selector) onWarning(getErrorNote(from.location, message));
       throw new TlaProofError(message, {
         failure: `Expr.Anon: ${selector ? ANON_SELECTOR_FAILURES[selector.kind] : "1EMPTY"}`,
       });

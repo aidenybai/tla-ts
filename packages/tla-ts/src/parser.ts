@@ -215,7 +215,6 @@ const PROOF_STARTS = new Set(["BY", "PROOF", "OBVIOUS", "OMITTED"]);
 
 const PROVABLE_STEPS = new Set(["Qed", "Pick", "Case", "Assert"]);
 
-// The tokens tlapm's lexer reads as punctuation rather than operators.
 const TLAPM_PUNCTUATION = new Set([
   ",",
   ".",
@@ -318,7 +317,6 @@ const parse = (source: string, isTlapm: boolean): Module => {
 
   const isRecursiveName = (name: string) => recursiveScopes[recursiveScopes.length - 1].has(name);
 
-  // tlapm's lexer starts a string where it reads the closing quote.
   const getLocation = (token: Token): SourceLocation => ({
     line: token.line,
     column: isTlapm && token.kind === "String" ? token.endColumn : token.column,
@@ -365,7 +363,6 @@ const parse = (source: string, isTlapm: boolean): Module => {
   const describe = (token: Token) =>
     token.kind === "End" ? "end of input" : JSON.stringify(token.text);
 
-  // The unit being parsed. tlapm reports an error in the body of a definition after its ==.
   const unitStart = { index: 0 };
 
   const getDefinitionEnd = (fallback: { line: number; column: number }) => {
@@ -379,7 +376,6 @@ const parse = (source: string, isTlapm: boolean): Module => {
   const isTlapmKeyword = (token: Token) =>
     isTlapm && (token.kind === "Keyword" || BUILTIN_CONSTANTS.has(token.text));
 
-  // The end of the last token before a position, which is where tlapm reports an error.
   const getPreviousEnd = (position: { line: number; column: number }) => {
     const previous = tokens.findLast(
       (token) =>
@@ -390,7 +386,6 @@ const parse = (source: string, isTlapm: boolean): Module => {
     return previous ? { line: previous.line, column: previous.endColumn + 1 } : position;
   };
 
-  // Tla_parser.Token.rep, how tlapm names a token.
   const getTlapmName = (token: Token) => {
     if (/^-{4,}$/.test(token.text)) return "----";
     if (/^={4,}$/.test(token.text)) return "====";
@@ -401,7 +396,6 @@ const parse = (source: string, isTlapm: boolean): Module => {
     return token.kind === "Identifier" ? `identifier ${token.text}` : `operator ${token.text}`;
   };
 
-  // tlapm reports the end of the tokens as Unexpected EOF, and a token it did not expect by name.
   const createError = (
     message: string,
     token: { line: number; column: number } = peekRaw(),
@@ -409,22 +403,31 @@ const parse = (source: string, isTlapm: boolean): Module => {
   ) => {
     const end = tokens[tokens.length - 1];
     const isEnd = token.line === end.line && token.column === end.column;
-    const failure = !isTlapm
-      ? { reason: message, line: token.line, column: token.column, isEnd }
-      : isEnd
-        ? { reason: "Unexpected EOF", ...getDefinitionEnd(getPreviousEnd(end)), isEnd }
-        : unexpected
-          ? {
-              reason: `Unexpected ${getTlapmName(unexpected)}`,
-              ...getPreviousEnd(unexpected),
-              isEnd,
-            }
-          : { reason: message, line: token.line, column: token.column, isEnd };
     return new TlaSyntaxError(
       `${message} at line ${token.line}, column ${token.column}`,
       undefined,
-      failure,
+      getFailure(message, token, isEnd, unexpected),
     );
+  };
+
+  const getFailure = (
+    message: string,
+    token: { line: number; column: number },
+    isEnd: boolean,
+    unexpected: Token | undefined,
+  ) => {
+    if (isTlapm && isEnd) {
+      const end = tokens[tokens.length - 1];
+      return { reason: "Unexpected EOF", ...getDefinitionEnd(getPreviousEnd(end)), isEnd };
+    }
+    if (isTlapm && unexpected) {
+      return {
+        reason: `Unexpected ${getTlapmName(unexpected)}`,
+        ...getPreviousEnd(unexpected),
+        isEnd,
+      };
+    }
+    return { reason: message, line: token.line, column: token.column, isEnd };
   };
 
   const createUnexpected = (message: string, token: Token = peekRaw()) =>
@@ -919,7 +922,6 @@ const parse = (source: string, isTlapm: boolean): Module => {
         const instances: Instance[] = [];
         recursiveScopes.push(new Set());
         while (!accept("IN")) {
-          // tlapm's LET takes only definitions.
           if (isTlapm && isAt("RECURSIVE"))
             throw createError("Unexpected keyword RECURSIVE", getDefinitionEnd(peekRaw()));
           if (accept("RECURSIVE")) {
@@ -1409,7 +1411,6 @@ const parse = (source: string, isTlapm: boolean): Module => {
       keyword: keywordRange,
       location: getLocation(keyword),
     };
-    // tlapm parses any expression as a fact, and fails on it when it generates obligations.
     const invalid =
       use.kind === "Hide" && !isTlapm ? use.facts.find((fact) => !isHideFact(fact)) : undefined;
     if (invalid) {
@@ -1686,7 +1687,6 @@ const parse = (source: string, isTlapm: boolean): Module => {
       unitStart.index = tokenIndex;
       const token = peek();
       if (token.kind === "ModuleEnd" || token.kind === "End") {
-        // The module runs through its closing ====, which the caller consumes.
         if (token.kind === "ModuleEnd") {
           location.range = {
             module: name,

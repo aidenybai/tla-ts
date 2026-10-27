@@ -366,8 +366,6 @@ export interface InstanceSubstitution {
   expression: Expression;
 }
 
-// instanceRange runs from the INSTANCE token to the end, and the definitionRange of a named
-// instance from the token after its name.
 export interface Instance {
   kind: "Instance";
   name: string | undefined;

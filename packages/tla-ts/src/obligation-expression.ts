@@ -11,15 +11,11 @@ export interface Locus {
   endColumn: number;
 }
 
-// A note tlapm sends as a toolbox message in toolbox mode and prints to stderr otherwise
-// (Errors.err), sends only in toolbox mode (Backend.Toolbox.print_message), prints to stderr as
-// is (Errors.warn and Util.eprintf), or prints to stdout (Util.printf).
 export interface ObligationWarning {
   text: string;
   channel: "toolbox" | "toolboxOnly" | "stderr" | "stdout";
 }
 
-// Loc.string_of_locus_nofile, where endColumn is the column after the end.
 export const getLocusPosition = (locus: Locus) => {
   const end = locus.endColumn - 1;
   if (locus.startLine !== locus.endLine)
@@ -29,15 +25,17 @@ export const getLocusPosition = (locus: Locus) => {
     : `line ${locus.startLine}, characters ${locus.startColumn}-${end}`;
 };
 
-// Loc.string_of_locus.
 export const getLocusText = (locus: Locus) =>
   `File ${JSON.stringify(locus.file)}, ${getLocusPosition(locus)}`;
 
-// The locus Util.eprintf and Util.printf print before a message given ~at.
 export const getAtPrefix = (locus: Locus | undefined) =>
   `${locus ? getLocusText(locus) : "<unknown location>"}:\n`;
 
-// Errors.loc_to_string: Loc.string_of_locus and " :".
+export const getErrorNote = (locus: Locus | undefined, message: string): ObligationWarning => ({
+  text: `${getAtPrefix(locus)}Error: ${message}`,
+  channel: "stderr",
+});
+
 export const getLocusPrefix = (locus: Locus | undefined) =>
   locus ? `${getLocusText(locus)} :\n` : "";
 
@@ -206,7 +204,6 @@ interface Field {
   value: Expr;
 }
 
-// location is where tlapm reports that the module is unknown.
 export interface InstanceDefinition {
   args: string[];
   module: string;
@@ -899,10 +896,8 @@ const mapHyp = (hyp: Hyp, map: (inner: Expr) => Expr, hyps: "visible" | "all"): 
 };
 
 // Visit.map, threading a state through each binder: a scope or a substitution. Visit.map_visible_hyp
-// binds hidden hypotheses without visiting them, and Visit.map visits them too.
-// Visit.map, which maps the children in the order OCaml evaluates them: the arguments of a
-// constructor from last to first, and the items of a list from first to last. The order decides
-// which error tlapm reports first.
+// binds hidden hypotheses without visiting them, and Visit.map visits them too. Children map in
+// OCaml evaluation order, last constructor argument first, which decides the error tlapm reports.
 export const mapScoped = <State>(
   state: State,
   expression: Expr,

@@ -10,6 +10,7 @@ import {
   at,
   bumpBy,
   getAtPrefix,
+  getErrorNote,
   getLocusText,
   getScopeAt,
   mapScoped,
@@ -105,10 +106,12 @@ const expandDefinitions = (
   const getDeclaration = (name: string) =>
     `The operator \`${name}\` is declared at:\n${hyp.location ? getLocusText(hyp.location) : "<unknown location>"}`;
   if (hyp.kind === "Fresh" && hyp.level === "Unknown") {
-    onWarning({
-      text: `${getAtPrefix(expression.location)}Error: Declared operator \`${hyp.name}\` has unknown level and occurs within the scope of \`ENABLED\` or \`\\cdot\` where soundness requires expanding expressions of level >= ${level}.\nIf a constant operator is substituted for this operator, then the expression that results from applying this declared operator has expression level ${expressionLevel}.\n May need expansion. A declared operator cannot be expanded.\n${getDeclaration(hyp.name)}\n and has arity: ${hyp.shape}`,
-      channel: "stderr",
-    });
+    onWarning(
+      getErrorNote(
+        expression.location,
+        `Declared operator \`${hyp.name}\` has unknown level and occurs within the scope of \`ENABLED\` or \`\\cdot\` where soundness requires expanding expressions of level >= ${level}.\nIf a constant operator is substituted for this operator, then the expression that results from applying this declared operator has expression level ${expressionLevel}.\n May need expansion. A declared operator cannot be expanded.\n${getDeclaration(hyp.name)}\n and has arity: ${hyp.shape}`,
+      ),
+    );
     throw new TlapmBugError(
       'File "src/expr/e_action.ml", line 367, characters 20-26: Assertion failed',
     );
@@ -121,7 +124,7 @@ const expandDefinitions = (
   }
   if (hyp.kind === "Fresh") {
     const message = `The expression that results from applying the declared operator \`${hyp.name}\` has expression level ${expressionLevel} within the scope of \`ENABLED\` or \`\\cdot\` where soundness requires expanding expressions of level >= ${level}. A declared operator cannot be expanded.\n${getDeclaration(hyp.name)}\n and has level: ${LEVEL_NUMBERS[hyp.level]}\n and arity: ${hyp.shape}`;
-    onWarning({ text: `${getAtPrefix(expression.location)}Error: ${message}`, channel: "stderr" });
+    onWarning(getErrorNote(expression.location, message));
     throw new TlaProofError(message);
   }
   const definition = hyp.definition;
@@ -269,10 +272,12 @@ const bindVariables = (
     return at({ kind: "Opaque", name }, expression);
   }
   if (expression.kind === "Apply" && expression.operator.kind === "Opaque") {
-    onWarning({
-      text: `${getAtPrefix(expression.location)}Error: Named operator \`${expression.operator.name}\` unexpected after anonymization.`,
-      channel: "stderr",
-    });
+    onWarning(
+      getErrorNote(
+        expression.location,
+        `Named operator \`${expression.operator.name}\` unexpected after anonymization.`,
+      ),
+    );
     throw new TlapmBugError(
       'File "src/expr/e_action.ml", line 1048, characters 12-18: Assertion failed',
     );

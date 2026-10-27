@@ -7,7 +7,6 @@ export class TlaError extends Error {
   }
 }
 
-// Why and where the lexer or parser rejects a module, and whether it read to the end.
 export interface SyntaxFailure {
   reason: string;
   line: number;
@@ -49,15 +48,11 @@ export class TlaModuleError extends TlaEvaluationError {
   }
 }
 
-// The OCaml exception tlapm ends with when it rejects a module: a Failure with a message, or
-// another exception as Printexc prints it.
 export interface TlapmReport {
   failure?: string;
   exception?: string;
 }
 
-// tlapm rejects the module while it generates proof obligations. Unless the report says
-// otherwise, tlapm fails with the message.
 export class TlaProofError extends TlaError {
   failure: string | undefined;
   exception: string;
@@ -66,7 +61,6 @@ export class TlaProofError extends TlaError {
     super(message);
     this.name = "TlaProofError";
     this.failure = report.exception === undefined ? (report.failure ?? message) : undefined;
-    // Printexc quotes the message of a Failure as OCaml's %S does.
     this.exception = report.exception ?? `Failure(${JSON.stringify(this.failure)})`;
   }
 }

@@ -308,7 +308,7 @@ const getExports = (module: Mule): ModuleUnit[] =>
     }
   });
 
-// tlapm recurses without end on a module that extends itself, until the stack overflows.
+// tlapm recurses on a module that extends itself until the stack overflows.
 export const flatten = (
   modules: Map<string, Mule>,
   module: Mule,
@@ -335,7 +335,6 @@ export const flatten = (
 // Module.Dep.external_deps: the modules a module extends or instantiates, including those of its
 // submodules.
 export const getDependencies = (module: Mule) => {
-  // Each dependency keeps the location it first appears at.
   const dependencies = new Map<string, Locus | undefined>();
   const addDependency = (name: string, location: Locus | undefined) => {
     if (!dependencies.has(name)) dependencies.set(name, location);
@@ -464,7 +463,6 @@ const substituteUnit = (
 const substituteUnits = (substitution: Substitution, units: ModuleUnit[]) =>
   mapAccumulate(substitution, units, substituteUnit)[1];
 
-// A theorem that fails to lambdify states TRUE, and tlapm prints why.
 const lambdifyTheorem = (
   pipeline: Pipeline,
   scope: Scope | undefined,
@@ -579,8 +577,6 @@ const addParameters = (expression: Expr, args: string[]): Expr => {
 };
 
 // localize: renames the instancee's units under the instance name, salts its local definitions
-// and binds the instance arguments in each of them. With arguments, it warns once that the axioms
-// or theorems become parametric.
 const localize = (
   pipeline: Pipeline,
   units: ModuleUnit[],
@@ -980,7 +976,6 @@ export const normalize = (
   return normalized;
 };
 
-// The statistics of a module's proofs, with those of each theorem in its body.
 export interface TheoremSummary extends ProofSummary {
   location: Locus | undefined;
 }

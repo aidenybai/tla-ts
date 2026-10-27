@@ -289,14 +289,11 @@ interface ProveOption {
 const printToolboxMessage = (fields: string[]) =>
   console.error(`@!!BEGIN\n${fields.map((field) => `@!!${field}\n`).join("")}@!!END\n`);
 
-// The tlapm build whose output prove mirrors.
 const TLAPM_VERSION = "5f5037f";
 
-// Tlapm_args.quote_if_needed: Filename.quote, unless every character is one of these.
 const quoteArgument = (arg: string) =>
   /^[+,\-./0-9:=@A-Z_a-z]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
 
-// In toolbox mode, tlapm first prints its version, the local time and its command line.
 const printToolboxHeader = (args: string[]) => {
   const now = new Date();
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -307,11 +304,8 @@ const printToolboxHeader = (args: string[]) => {
   );
 };
 
-// The exit statuses of tlapm --strict that need no backend. An incomplete proof is the more severe.
-const STRICT_EXIT_STATUS = { incomplete: 11, emptyTarget: 12 } as const;
+const STRICT_EXIT_STATUS = { incomplete: 11, emptyTarget: 12 };
 
-// tlapm --strict reports each missing and omitted proof, unless --summary lists them, and an
-// explicit target that selects no obligation.
 const checkStrictly = (result: ModuleObligations, isTargeted: boolean, isSummary: boolean) => {
   const summary = result.summary;
   if (!isSummary) {
@@ -336,8 +330,6 @@ const checkStrictly = (result: ModuleObligations, isTargeted: boolean, isSummary
   ];
 };
 
-// tlapm exits with 3 when an exception ends it, which it prints with its OCaml backtrace. tla-ts
-// prints the exception without a backtrace.
 const TLAPM_FAILURE_STATUS = 3;
 
 const generateObligations = (generate: () => ModuleObligations[]) => {
@@ -383,7 +375,6 @@ const prove = (args: string[]) => {
     return 1;
   }
   const hasOption = (name: string) => options.some((option) => option.name === name);
-  // tlapm's --summary implies -N.
   if (!hasOption("-N") && !hasOption("--summary")) {
     console.error("Error: tla-ts has no prover backend yet, so prove needs -N.");
     return 1;
@@ -415,9 +406,9 @@ const prove = (args: string[]) => {
   );
   // tlapm names each file it reads by joining a search directory and the name, as in ./Module.tla.
   const results = generateObligations(() => {
-    // Module.Save.parse_file names the file as given, at Loc.unknown.
-    const missing = files.find((_file, index) => !existsSync(modulePaths[index]));
-    if (missing !== undefined) {
+    const missingIndex = modulePaths.findIndex((path) => !existsSync(path));
+    if (missingIndex !== -1) {
+      const missing = files[missingIndex];
       console.error(`File "<unknown>":\nError: File ${JSON.stringify(missing)} not found`);
       throw new TlaProofError(`File ${missing} not found`, { failure: "Module.Parser.parse_file" });
     }
