@@ -38,6 +38,14 @@ export class TlaModuleError extends TlaEvaluationError {
   }
 }
 
+// tlapm rejects the module while it generates proof obligations.
+export class TlaProofError extends TlaError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = "TlaProofError";
+  }
+}
+
 export class TlaUnsupportedError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);

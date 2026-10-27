@@ -66,6 +66,8 @@
     "conformance:sany": "tsx scripts/proof-conformance.ts",
     "conformance:record": "tsx scripts/record-tlc.ts",
     "conformance:record-sany": "tsx scripts/record-sany.ts",
+    "conformance:record-tlapm": "tsx scripts/record-tlapm.ts",
+    "conformance:tlapm": "tsx scripts/tlapm-conformance.ts",
     "publint": "publint",
     "test": "vp test",
     "typecheck": "tsc --noEmit"

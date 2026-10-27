@@ -7,8 +7,11 @@ export default defineConfig({
   fmt: {
     semi: true,
     singleQuote: false,
-    // One line per module keeps SANY's recorded proof trees small enough to commit.
-    ignorePatterns: ["packages/tla-ts/tests/conformance/sany.json"],
+    // One line per module keeps the recordings of SANY and tlapm small enough to commit.
+    ignorePatterns: [
+      "packages/tla-ts/tests/conformance/sany.json",
+      "packages/tla-ts/tests/conformance/tlapm.json",
+    ],
   },
   lint: {
     rules: {
