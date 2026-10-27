@@ -1,4 +1,4 @@
-import { check, formatValue, TlaError } from "tla-ts";
+import { check, formatValue, TlaError, type CheckStatus } from "tla-ts";
 
 export interface CheckRequest {
   spec: string;
@@ -6,24 +6,31 @@ export interface CheckRequest {
 }
 
 export interface TraceStepSummary {
+  number: number;
   action: string | undefined;
   variables: [string, string][];
 }
 
-export type CheckResponse =
-  | {
-      kind: "result";
-      status: string;
-      violation: string | undefined;
-      trace: TraceStepSummary[];
-      loopStart: number | undefined;
-      generatedStates: number;
-      distinctStates: number;
-      depth: number;
-      milliseconds: number;
-      output: string[];
-    }
-  | { kind: "error"; name: string; message: string };
+export interface CheckSummary {
+  kind: "result";
+  status: CheckStatus;
+  violation: string | undefined;
+  trace: TraceStepSummary[];
+  loopStart: number | undefined;
+  generatedStates: number;
+  distinctStates: number;
+  depth: number;
+  milliseconds: number;
+  output: string[];
+}
+
+export interface CheckFailure {
+  kind: "error";
+  name: string;
+  message: string;
+}
+
+export type CheckResponse = CheckSummary | CheckFailure;
 
 const respond = (response: CheckResponse) => self.postMessage(response);
 
@@ -47,7 +54,8 @@ self.onmessage = async (event: MessageEvent<CheckRequest>) => {
       kind: "result",
       status: result.status,
       violation: result.violation?.name,
-      trace: (result.violation?.trace ?? []).map((step) => ({
+      trace: (result.violation?.trace ?? []).map((step, index) => ({
+        number: index + 1,
         action: step.action,
         variables: Object.entries(step.state).map(([name, value]): [string, string] => [
           name,
