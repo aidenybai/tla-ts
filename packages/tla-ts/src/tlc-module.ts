@@ -23,7 +23,9 @@ import {
   createRecord,
   createSet,
   createTuple,
+  createWrittenFunction,
   formatValue,
+  getWrittenPairs,
   toFiniteSet,
   type Value,
   rankString,
@@ -128,12 +130,12 @@ export const createTlcOperators = (
 ): Builtin[] => [
   defineOperator("Print", 2, (args) => {
     print(
-      `${prettyPrint(formatValue(getValue(args, 0, "Print"), true))}  ${prettyPrint(formatValue(getValue(args, 1, "Print"), true))}`,
+      `${prettyPrint(formatValue(getValue(args, 0, "Print"), true, true))}  ${prettyPrint(formatValue(getValue(args, 1, "Print"), true, true))}`,
     );
     return getValue(args, 1, "Print");
   }),
   defineOperator("PrintT", 1, (args) => {
-    print(prettyPrint(formatValue(getValue(args, 0, "PrintT"), true)));
+    print(prettyPrint(formatValue(getValue(args, 0, "PrintT"), true, true)));
     return true;
   }),
   defineOperator("Assert", 2, (args) => {
@@ -152,10 +154,7 @@ export const createTlcOperators = (
   defineOperator("@@", 2, (args) => {
     const left = getFunction(args, 0, "@@");
     const right = getFunction(args, 1, "@@");
-    return createFunction([
-      ...left.domain.map((key, index): [Value, Value] => [key, left.range[index]]),
-      ...right.domain.map((key, index): [Value, Value] => [key, right.range[index]]),
-    ]);
+    return createWrittenFunction([...getWrittenPairs(left), ...getWrittenPairs(right)]);
   }),
   defineOperator("ToString", 1, (args) =>
     rankString(formatValue(getValue(args, 0, "ToString"), true)),
