@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { type Context, getCallee, getSymbol } from "./context";
+import { type Context, getCallee, getSymbol, share } from "./context";
 import { TsproverError } from "./errors";
 import { translateExpression } from "./expressions";
 import { wrap, wrapEquated } from "./formula";
@@ -12,6 +12,9 @@ interface Unordered {
   // Whether map() built the set, so that it may have fewer elements than the array would.
   isMapped: boolean;
 }
+
+// Methods that read their array once, so that sharing it with a LET gains nothing.
+const SINGLE_USE_METHODS = new Set(["concat", "with", "filter"]);
 
 interface Element {
   variable: string;
@@ -65,18 +68,28 @@ const bindIndexed = (
     : bindPatternInline(parameters[1].name, `(${index} - 1)`, withElement, context);
 };
 
-const getValues = (value: string, context: Context): Unordered => {
-  const key = context.names.getFresh("key");
-  return { set: `{${wrap(value)}[${key}] : ${key} \\in DOMAIN ${wrap(value)}}`, isMapped: true };
-};
+const getValues = (value: string, context: Context): Unordered => ({
+  set: share(value, "map", context, (map) => {
+    const key = context.names.getFresh("key");
+    return `{${map}[${key}] : ${key} \\in DOMAIN ${map}}`;
+  }),
+  isMapped: true,
+});
 
-const getEntries = (value: string, context: Context): Unordered => {
-  const key = context.names.getFresh("key");
-  return {
-    set: `{<<${key}, ${wrap(value)}[${key}]>> : ${key} \\in DOMAIN ${wrap(value)}}`,
-    isMapped: false,
-  };
-};
+const getEntries = (value: string, context: Context): Unordered => ({
+  set: share(value, "map", context, (map) => {
+    const key = context.names.getFresh("key");
+    return `{<<${key}, ${map}[${key}]>> : ${key} \\in DOMAIN ${map}}`;
+  }),
+  isMapped: false,
+});
+
+// The elements of a sequence as a set.
+const getElements = (value: string, context: Context) =>
+  share(value, "sequence", context, (sequence) => {
+    const index = context.names.getFresh("index");
+    return `{${sequence}[${index}] : ${index} \\in DOMAIN ${sequence}}`;
+  });
 
 // A set built from a Set, Map, or object, whose element order TLA+ doesn't keep.
 const translateUnordered = (
@@ -148,8 +161,7 @@ export const translateSet = (node: ts.Expression, scope: Scope, context: Context
   const value = translateExpression(node, scope, context);
   if (kind === "set") return value;
   if (kind !== "sequence") throw new TsproverError("Expected a Set or an array", node);
-  const index = context.names.getFresh("index");
-  return `{${wrap(value)}[${index}] : ${index} \\in DOMAIN ${wrap(value)}}`;
+  return getElements(value, context);
 };
 
 // The number of elements in a collection, or undefined if the receiver isn't one.
@@ -184,7 +196,7 @@ export const translateFunctionConstructor = (
   const source =
     translateUnordered(receiver, scope, context)?.set ??
     (getKind(receiver, context) === "sequence"
-      ? `{${wrap(translateExpression(receiver, scope, context))}[index] : index \\in DOMAIN ${wrap(translateExpression(receiver, scope, context))}}`
+      ? getElements(translateExpression(receiver, scope, context), context)
       : undefined);
   const callback = node.arguments[0];
   const parameter = getCallback(callback, context).parameters[0];
@@ -276,16 +288,15 @@ const translateFirstIndex = (
   };
 };
 
-const translateSequenceMethod = (
+const translateSequenceOperation = (
   node: ts.CallExpression,
-  receiver: ts.Expression,
+  sequence: string,
   method: string,
   scope: Scope,
   context: Context,
   isDefined: boolean,
 ) => {
   const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
-  const sequence = translate(receiver);
   const argument = node.arguments[0];
   const isNegative = (inner: ts.Expression): inner is ts.PrefixUnaryExpression =>
     ts.isPrefixUnaryExpression(inner) && inner.operator === ts.SyntaxKind.MinusToken;
@@ -303,13 +314,17 @@ const translateSequenceMethod = (
       : `${wrap(translate(argument))} + 1`;
     return orUndefined(`${index} \\in DOMAIN ${wrap(sequence)}`, `${wrap(sequence)}[${index}]`);
   }
-  if (method === "includes" || method === "indexOf") {
-    const value = translate(argument);
+  if (method === "includes") {
     const index = context.names.getFresh("index");
-    const isFound = `${wrap(sequence)}[${index}] = ${wrap(value)}`;
-    if (method === "includes") return `\\E ${index} \\in DOMAIN ${wrap(sequence)} : ${isFound}`;
-    const earlier = context.names.getFresh("earlier");
-    return `IF \\E ${index} \\in DOMAIN ${wrap(sequence)} : ${isFound} THEN (CHOOSE ${index} \\in DOMAIN ${wrap(sequence)} : ${isFound} /\\ \\A ${earlier} \\in 1..(${index} - 1) : ${wrap(sequence)}[${earlier}] # ${wrap(value)}) - 1 ELSE -1`;
+    return `\\E ${index} \\in DOMAIN ${wrap(sequence)} : ${wrap(sequence)}[${index}] = ${wrap(translate(argument))}`;
+  }
+  if (method === "indexOf") {
+    return share(translate(argument), "value", context, (value) => {
+      const index = context.names.getFresh("index");
+      const earlier = context.names.getFresh("earlier");
+      const isFound = `${wrap(sequence)}[${index}] = ${value}`;
+      return `IF \\E ${index} \\in DOMAIN ${wrap(sequence)} : ${isFound} THEN (CHOOSE ${index} \\in DOMAIN ${wrap(sequence)} : ${isFound} /\\ \\A ${earlier} \\in 1..(${index} - 1) : ${wrap(sequence)}[${earlier}] # ${value}) - 1 ELSE -1`;
+    });
   }
   if (method === "slice") {
     const start = argument === undefined ? "0" : getOffset(argument);
@@ -356,6 +371,22 @@ const translateSequenceMethod = (
     return orUndefined(result.exists, `${wrap(sequence)}[${result.first}]`);
   }
   throw new TsproverError(`Unsupported array method: ${method}`, node);
+};
+
+const translateSequenceMethod = (
+  node: ts.CallExpression,
+  receiver: ts.Expression,
+  method: string,
+  scope: Scope,
+  context: Context,
+  isDefined: boolean,
+) => {
+  const sequence = translateExpression(receiver, scope, context);
+  const translateWith = (shared: string) =>
+    translateSequenceOperation(node, shared, method, scope, context, isDefined);
+  return SINGLE_USE_METHODS.has(method)
+    ? translateWith(sequence)
+    : share(sequence, "sequence", context, translateWith);
 };
 
 const translateUnorderedMethod = (
@@ -428,7 +459,15 @@ const translateMapMethod = (
   if (method !== "get") throw new TsproverError(`Unsupported Map method: ${method}`, node);
   if (isDefined) return `${map}[${key}]`;
   context.prelude.add("Undefined");
-  return `IF ${key} \\in DOMAIN ${map} THEN ${map}[${key}] ELSE Undefined`;
+  return share(map, "map", context, (sharedMap) =>
+    share(
+      key,
+      "key",
+      context,
+      (sharedKey) =>
+        `IF ${sharedKey} \\in DOMAIN ${sharedMap} THEN ${sharedMap}[${sharedKey}] ELSE Undefined`,
+    ),
+  );
 };
 
 // The value of a collection after a mutating method call, or undefined if the method doesn't
