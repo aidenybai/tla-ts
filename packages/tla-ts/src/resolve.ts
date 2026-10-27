@@ -14,6 +14,7 @@ import { getChildren, isLocallyResolved } from "./evaluate";
 export interface ModuleSymbol {
   key: string;
   arity: number;
+  declaration?: "Constant" | "Variable";
 }
 
 export type Symbols = Map<string, ModuleSymbol>;
@@ -504,9 +505,10 @@ export const checkRedefinitions = (module: Module, unit: ModuleUnit) => {
             entry.kind === "Definition" ||
             earlier.kind !== entry.kind,
         );
-      const isImported =
-        entry.kind === "Definition" && isImportedBefore(entry.name, entry.location);
-      if (isDuplicate || isImported) throw createRedefinitionError(entry.name, entry.location);
+      // A module may declare again a constant or variable that it extends or that encloses it.
+      const isRedeclared = unit.imported.get(entry.name)?.declaration === entry.kind;
+      if (isDuplicate || (!isRedeclared && isImportedBefore(entry.name, entry.location)))
+        throw createRedefinitionError(entry.name, entry.location);
     }),
   );
   const getIsDefined =

@@ -619,10 +619,14 @@ export const createEnvironment = (
       extended.push(linked);
     });
     parsed.constants.forEach((constant) =>
-      exported.set(constant.name, { key: constant.name, arity: constant.arity }),
+      exported.set(constant.name, {
+        key: constant.name,
+        arity: constant.arity,
+        declaration: "Constant",
+      }),
     );
     parsed.variables.forEach((variable) =>
-      exported.set(variable.name, { key: variable.name, arity: 0 }),
+      exported.set(variable.name, { key: variable.name, arity: 0, declaration: "Variable" }),
     );
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const getKey = (definition: Definition) => getDefinitionKey(parsed, scope.id, definition.name);
@@ -637,11 +641,14 @@ export const createEnvironment = (
     const getSymbolsBefore = (location: SourceLocation): Symbols =>
       new Map([
         ...visible,
-        ...[...parsed.constants, ...parsed.variables]
+        ...[
+          ...parsed.constants.map((constant) => ({ ...constant, kind: "Constant" as const })),
+          ...parsed.variables.map((variable) => ({ ...variable, kind: "Variable" as const })),
+        ]
           .filter((declaration) => isBefore(declaration.location, location))
           .map((declaration): [string, ModuleSymbol] => [
             declaration.name,
-            { key: declaration.name, arity: declaration.arity },
+            { key: declaration.name, arity: declaration.arity, declaration: declaration.kind },
           ]),
         ...parsed.definitions
           .filter((definition) => isBefore(definition.location, location))
