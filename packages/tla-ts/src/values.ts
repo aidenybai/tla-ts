@@ -1023,26 +1023,67 @@ const computeValueKey = (value: ObjectValue): string => {
 const formatString = (value: string) =>
   `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\t/g, "\\t")}"`;
 
-const formatLazySet = (
-  value:
-    | SubsetValue
-    | FunctionSetValue
-    | RecordSetValue
-    | ProductSetValue
-    | SetOperationValue
-    | FilteredSetValue,
-  isExpanded: boolean,
-): string => {
-  const format = (inner: Value) => formatValue(inner, isExpanded);
+type LazySetValue =
+  | SubsetValue
+  | FunctionSetValue
+  | RecordSetValue
+  | ProductSetValue
+  | SetOperationValue
+  | FilteredSetValue;
+
+const MAXIMUM_EXPANDED_SUBSET_BASE = 6;
+const MAXIMUM_EXPANDED_PRODUCT = 1999;
+
+const getProductSize = (sets: Value[]) =>
+  sets.reduce<number>((size, set) => (size === 0 ? 0 : size * getCardinality(set)), 1);
+
+const expandLazySet = (value: LazySetValue) => {
+  if (value.kind === "Subset") {
+    return getCardinality(value.base) <= MAXIMUM_EXPANDED_SUBSET_BASE
+      ? toFiniteSet(value)
+      : undefined;
+  }
+  if (value.kind === "SetOperation" || value.kind === "FilteredSet") return toFiniteSet(value);
+  if (
+    value.kind === "FunctionSet" &&
+    isEnumerable(value.domain) &&
+    getCardinality(value.domain) === 0
+  ) {
+    return createSortedSet([createSortedFunction([], [])]);
+  }
+  const size =
+    value.kind === "FunctionSet"
+      ? getCardinality(value.range) ** getCardinality(value.domain)
+      : getProductSize(value.kind === "RecordSet" ? value.sets : value.factors);
+  if (size === 0) return EMPTY_SET;
+  return size <= MAXIMUM_EXPANDED_PRODUCT ? toFiniteSet(value) : undefined;
+};
+
+const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
+  if (isStrict) return expandLazySet(value);
+  // TLC prints a set it can't enumerate symbolically, except in Print, PrintT, and ToString.
+  if (!isEnumerable(value)) return undefined;
+  try {
+    return expandLazySet(value);
+  } catch (error) {
+    if (error instanceof TlaEvaluationError) return undefined;
+    throw error;
+  }
+};
+
+const formatLazySet = (value: LazySetValue, isStrict: boolean): string => {
+  const format = (inner: Value) => formatValue(inner, isStrict);
   switch (value.kind) {
     case "Subset":
-      return `SUBSET ${format(value.base)}`;
+      return typeof value.base === "object" && value.base.kind === "Interval"
+        ? `SUBSET (${format(value.base)})`
+        : `SUBSET ${format(value.base)}`;
     case "FunctionSet":
       return `[${format(value.domain)} -> ${format(value.range)}]`;
     case "RecordSet":
-      return `[${value.names.map((name, index) => `${name} : ${format(value.sets[index])}`).join(", ")}]`;
+      return `[${value.names.map((name, index) => `${name}: ${format(value.sets[index])}`).join(", ")}]`;
     case "ProductSet":
-      return value.factors.map(format).join(" \\X ");
+      return `(${value.factors.map(format).join(" \\X ")})`;
     case "SetOperation":
       return `${format(value.left)} ${value.operator} ${format(value.right)}`;
     case "FilteredSet":
@@ -1050,8 +1091,8 @@ const formatLazySet = (
   }
 };
 
-export const formatValue = (value: Value, isExpanded = false): string => {
-  const format = (inner: Value) => formatValue(inner, isExpanded);
+export const formatValue = (value: Value, isStrict = false): string => {
+  const format = (inner: Value) => formatValue(inner, isStrict);
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
   if (typeof value === "number") return String(value);
   if (typeof value === "string") return formatString(value);
@@ -1061,7 +1102,7 @@ export const formatValue = (value: Value, isExpanded = false): string => {
     case "Set":
       return `{${value.elements.map(format).join(", ")}}`;
     case "Interval":
-      return `${value.low}..${value.high}`;
+      return value.low <= value.high ? `${value.low}..${value.high}` : "{}";
     case "InfiniteSet":
       return value.name === "Any" ? "ANY" : value.name;
     case "Subset":
@@ -1069,10 +1110,10 @@ export const formatValue = (value: Value, isExpanded = false): string => {
     case "RecordSet":
     case "ProductSet":
     case "SetOperation":
-    case "FilteredSet":
-      return isExpanded && isEnumerable(value)
-        ? format(toFiniteSet(value))
-        : formatLazySet(value, isExpanded);
+    case "FilteredSet": {
+      const expanded = getExpandedLazySet(value, isStrict);
+      return expanded ? format(expanded) : formatLazySet(value, isStrict);
+    }
 
     case "SequenceSet":
       return `Seq(${format(value.base)})`;
