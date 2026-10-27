@@ -461,11 +461,42 @@ export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
   return createSortedFunction(domain, range);
 };
 
+const intervalDomains: Value[][] = [];
+const intervalValues: IntervalValue[] = [];
+
+// TLC keeps the domain of a tuple, or of a function built over 1..n, as an interval. Every
+// such function shares one domain array per length, so the array's identity records it.
+// Callers must not mutate the returned array.
+export const getIntervalDomain = (length: number): Value[] => {
+  const cached = intervalDomains[length];
+  if (cached) return cached;
+  const domain = Array.from({ length }, (_, index) => index + 1);
+  intervalDomains[length] = domain;
+  return domain;
+};
+
+const isIntervalDomain = (domain: Value[]) =>
+  domain.length > 0 && domain === intervalDomains[domain.length];
+
+// TLC keeps an interval domain only for a function built over an interval itself, so a set
+// such as (1..2) \cap S, whose elements are the shared array, gets a copy.
+export const getFunctionDomain = (set: Value): Value[] => {
+  const elements = toFiniteSet(set).elements;
+  return isIntervalDomain(elements) && !(typeof set === "object" && set.kind === "Interval")
+    ? [...elements]
+    : elements;
+};
+
+const getIntervalValue = (high: number): IntervalValue => {
+  const cached = intervalValues[high];
+  if (cached) return cached;
+  const interval: IntervalValue = { kind: "Interval", low: 1, high };
+  intervalValues[high] = interval;
+  return interval;
+};
+
 export const createTuple = (elements: Value[]): FunctionValue =>
-  createSortedFunction(
-    elements.map((_, index) => index + 1),
-    elements,
-  );
+  createSortedFunction(getIntervalDomain(elements.length), elements);
 
 export const createRecord = (fields: [string, Value][]): FunctionValue => createFunction(fields);
 
@@ -542,10 +573,12 @@ const enumerateSet = (value: Value): Value[] => {
     case "Set":
       return value.elements;
     case "Interval":
-      return Array.from(
-        { length: Math.max(0, value.high - value.low + 1) },
-        (_, index) => value.low + index,
-      );
+      return value.low === 1 && value.high >= 1
+        ? getIntervalDomain(value.high)
+        : Array.from(
+            { length: Math.max(0, value.high - value.low + 1) },
+            (_, index) => value.low + index,
+          );
     case "Subset": {
       const base = toFiniteSet(value.base).elements;
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
@@ -556,7 +589,7 @@ const enumerateSet = (value: Value): Value[] => {
       return getSortedSubsets(base);
     }
     case "FunctionSet": {
-      const domain = toFiniteSet(value.domain).elements;
+      const domain = getFunctionDomain(value.domain);
       const range = toFiniteSet(value.range).elements;
       return getCartesianProduct(domain.map(() => range)).map((combination): Value =>
         createSortedFunction(domain, combination),
@@ -805,7 +838,7 @@ export const isElementOf = (element: Value, set: Value): boolean => {
 export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "Function") return value;
   if (typeof value === "object" && value.kind === "LazyFunction") {
-    const domain = toFiniteSet(value.domain).elements;
+    const domain = getFunctionDomain(value.domain);
     return createSortedFunction(
       domain,
       domain.map((key) => value.apply(key)),
@@ -863,7 +896,8 @@ export const applyFunction = (
 
 export const getDomain = (fn: Value): Value => {
   if (typeof fn === "object" && fn.kind === "LazyFunction") return fn.domain;
-  return createSortedSet(toFiniteFunction(fn).domain);
+  const domain = toFiniteFunction(fn).domain;
+  return isIntervalDomain(domain) ? getIntervalValue(domain.length) : createSortedSet(domain);
 };
 
 export const updateFunction = (

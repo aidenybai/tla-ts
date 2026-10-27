@@ -702,6 +702,43 @@ describe("evaluation errors match TLC", () => {
   );
 });
 
+describe("DOMAIN matches TLC", () => {
+  const printDomain = async (expression: string) => {
+    const printed: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nASSUME PrintT(${expression})\n====`,
+      config: "",
+      onPrint: (text) => printed.push(text),
+    });
+    return printed;
+  };
+
+  it.each([
+    ['DOMAIN <<"a", "b">>', "1..2"],
+    ["DOMAIN [i \\in 1..2 |-> i]", "1..2"],
+    ["DOMAIN [x \\in {1, 2} |-> x]", "{1, 2}"],
+    ["DOMAIN [[i \\in 1..2 |-> i] EXCEPT ![2] = 5]", "1..2"],
+    ["DOMAIN CHOOSE f \\in [1..2 -> {0}] : TRUE", "1..2"],
+    ["DOMAIN [x \\in (1..2) \\cap (1..3) |-> x]", "{1, 2}"],
+    ["DOMAIN (<<1>> @@ <<1, 2>>)", "{1, 2}"],
+    ["LET f[n \\in 1..3] == IF n = 1 THEN 1 ELSE n * f[n - 1] IN DOMAIN f", "1..3"],
+    ["DOMAIN <<>>", "{}"],
+    ["ToString(DOMAIN <<1, 2>>)", '"1..2"'],
+    ["\\A i \\in DOMAIN <<1, 2, 3>> : i \\in DOMAIN <<4, 5, 6>>", "TRUE"],
+  ])("prints %s as %s", async (expression, text) => {
+    expect(await printDomain(expression)).toEqual([text]);
+  });
+
+  it("keeps the interval in a state", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE b\nInit == b = DOMAIN <<7, 8>>\nNext == UNCHANGED b\nInv == b # b\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(formatValue(result.violation?.trace[0].state.b ?? false)).toBe("1..2");
+  });
+});
+
 describe("name resolution matches SANY", () => {
   const checkSource = (source: string) =>
     check({

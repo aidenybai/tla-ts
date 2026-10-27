@@ -25,6 +25,7 @@ import {
   createTuple,
   formatValue,
   getDomain,
+  getFunctionDomain,
   getSequenceElements,
   getValueHash,
   isEnumerable,
@@ -1233,7 +1234,7 @@ const compileFunctionConstruction = (
     }
     if (isSingleName && bound.pattern.kind === "Name") {
       const name = bound.pattern.name;
-      const keys = toFiniteSet(domain).elements;
+      const keys = getFunctionDomain(domain);
       return markLambdaFunction(
         createSortedFunction(
           keys,
