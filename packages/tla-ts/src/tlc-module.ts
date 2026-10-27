@@ -28,6 +28,11 @@ import {
   rankString,
 } from "./values";
 
+const padTime = (value: number) => String(value).padStart(2, "0");
+
+const formatCalendarVersion = (date: Date) =>
+  `${date.getUTCFullYear()}.${padTime(date.getUTCMonth() + 1)}.${padTime(date.getUTCDate())}.${padTime(date.getUTCHours())}${padTime(date.getUTCMinutes())}${padTime(date.getUTCSeconds())}`;
+
 const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
   createFunction([...registers].map(([key, value]): [Value, Value] => [key, createTuple([value])]));
 
@@ -67,16 +72,18 @@ const getRuntimeValue = (
         ["worker", 1],
         ["seed", String(runtime.seed)],
         ["fingerprint", "0"],
-        ["install", ""],
+        ["install", "unknown"],
       ]);
-    case "revision":
+    case "revision": {
+      const now = new Date();
       return createRecord([
         ["count", 0],
-        ["timestamp", 0],
-        ["date", "1970-01-01T00:00:00.0Z"],
-        ["tag", "tla-ts"],
-        ["calver", "0"],
+        ["timestamp", Math.floor(now.getTime() / 1000)],
+        ["date", rankString(`${now.toISOString().slice(0, 19)}.${now.getUTCMilliseconds()}Z`)],
+        ["tag", "development"],
+        ["calver", rankString(formatCalendarVersion(new Date(runtime.startedAt)))],
       ]);
+    }
     case "spec":
       return runtime.getSpecification();
     case "action":
