@@ -61,6 +61,19 @@ describe("parseModule records ranges like SANY", () => {
   });
 });
 
+describe("parseModule reads operators like SANY", () => {
+  it("reads a backslash word as the longest operator it starts with", () => {
+    const module = parseModule(
+      "---- MODULE M ----\nF(S, used) == S\\used\nG(S) == 1 \\inS\nH(S, T) == S \\capT\n====",
+    );
+    expect(
+      module.definitions.map((definition) =>
+        definition.body.kind === "Apply" ? definition.body.operator : definition.body.kind,
+      ),
+    ).toEqual(["\\", "\\in", "\\cap"]);
+  });
+});
+
 describe("parseModule reads proofs like SANY", () => {
   const parseProof = (proof: string) =>
     parseModule(`---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${proof}\n====`);
