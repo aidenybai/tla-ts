@@ -3,7 +3,7 @@
 Model check TypeScript. You write a model as a plain TypeScript module, and tsprover checks every reachable state of it. tsprover compiles the module to TLA+ and checks it with [tla-ts](https://github.com/aidenybai/tla-ts), which matches TLC's semantics without a JVM.
 
 ```ts
-// bank.proof.ts
+// bank.model.ts
 type Account = "alice" | "bob";
 
 let balances: Record<Account, number> = { alice: 10, bob: 10 };
@@ -21,7 +21,7 @@ npx tsprover
 ```
 
 ```
-✗ bank.proof.ts: invariant noOverdraft is violated
+✗ bank.model.ts: invariant noOverdraft is violated
   1. Initial state
      balances = { alice: 10, bob: 10 }
   2. transfer
@@ -48,7 +48,7 @@ npm install --save-dev tsprover
 tsprover [files...]
 ```
 
-With no files, tsprover checks every `*.proof.ts` file under the current directory, skipping `node_modules`. It exits with 1 when any check fails.
+With no files, tsprover checks every `*.model.ts` file under the current directory, skipping `node_modules`. It exits with 1 when any check fails.
 
 | Option                  | Description                                         |
 | ----------------------- | --------------------------------------------------- |
@@ -181,7 +181,7 @@ export const isWaiting = (proc: Proc) => waiting.has(proc);
 import { check } from "tla-ts";
 import { compile } from "tsprover";
 
-const spec = compile(source, "bank.proof.ts");
+const spec = compile(source, "bank.model.ts");
 const result = await check(spec);
 ```
 

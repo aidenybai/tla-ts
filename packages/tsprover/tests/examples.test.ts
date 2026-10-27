@@ -19,9 +19,9 @@ describe("ports of tlaplus/Examples check like the originals", () => {
   for (const name of readdirSync(EXAMPLES).sort()) {
     const directory = join(EXAMPLES, name);
     const files = readdirSync(directory);
-    const proof = files.find((file) => file.endsWith(".proof.ts"));
+    const model = files.find((file) => file.endsWith(".model.ts"));
     const config = files.find((file) => file.endsWith(".cfg"));
-    if (proof === undefined || config === undefined) continue;
+    if (model === undefined || config === undefined) continue;
     it(name, async () => {
       const original = await check({
         source: readFileSync(join(directory, config.replace(/\.cfg$/, ".tla")), "utf8"),
@@ -31,7 +31,7 @@ describe("ports of tlaplus/Examples check like the originals", () => {
           return existsSync(path) ? readFileSync(path, "utf8") : undefined;
         },
       });
-      const path = join(directory, proof);
+      const path = join(directory, model);
       const ported = await check(compile(readFileSync(path, "utf8"), path));
       expect(original.failure?.message).toBeUndefined();
       expect(ported.failure?.message).toBeUndefined();
