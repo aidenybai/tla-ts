@@ -34,6 +34,7 @@ import {
   getValueHash,
   isEnumerable,
   isFunctionValue,
+  isOverriddenSet,
   isSameValue,
   markLambdaFunction,
   isSetValue,
@@ -182,6 +183,16 @@ export const getDomainOperator = (expression: Expression) => (value: Value) => {
   }
   return getDomain(value);
 };
+
+export const getSubsetOperator =
+  (expression: Expression, builtin: Builtin) => (left: Value, right: Value) => {
+    if (!isSetValue(left) || isOverriddenSet(left)) {
+      throw new TlaEvaluationError(
+        `Attempted to evaluate an expression of form S \\subseteq T, but S was not enumerable.\n${describeRange(expression)}`,
+      );
+    }
+    return builtin.evaluate([left, right]);
+  };
 
 // TLC rejects a decimal, or an integer literal too big for it, while it processes the spec.
 export const createRealNumberError = (expression: DecimalExpression) =>
@@ -376,10 +387,32 @@ export const isConstantLevel = (definition: Definition, environment: Environment
   return isConstant;
 };
 
+const getBoundExplanation = (set: Value, text: string) => {
+  const quantified = `universally (\\A) or existentially (\\E) quantify over ${text}, because this would require checking an\ninfinite number of cases.`;
+  if (typeof set === "object" && set.kind === "SequenceSet") {
+    return `In TLA+, Seq(S) represents the set of all finite sequences whose elements come from the set S. Even when S\nis a finite set, the number of possible sequences in Seq(S) is unbounded because sequences can have any\nfinite length (e.g., length 0, 1, 2, and so on). As a result, TLC cannot evaluate expressions that\n${quantified} Note that for a finite set of sequences s, TLC handles s \\subseteq Seq(S).\nSee https://explain.tlapl.us/seq-unenumerable for additional details.`;
+  }
+  if (
+    typeof set === "object" &&
+    set.kind === "InfiniteSet" &&
+    set.name !== "STRING" &&
+    set.name !== "Any"
+  ) {
+    return `The set ${set.name} contains infinitely many elements. As a result, TLC cannot evaluate expressions that\n${quantified} Note that TLC handles set membership like T \\subseteq ${set.name} for any finite set T.`;
+  }
+  return undefined;
+};
+
+// TLC enumerates every set except the ones it implements in Java, so any other set fails as its own
+// class does.
 export const getEnumeratedElements = (set: Value, expression: Expression) => {
-  if (!isEnumerable(set)) {
+  if (!isSetValue(set) || isOverriddenSet(set)) {
+    const text = formatValue(set);
+    const explanation = getBoundExplanation(set, text);
     throw new TlaEvaluationError(
-      `TLC encountered a non-enumerable quantifier bound ${formatValue(set)} at ${describeLocation(expression)}`,
+      explanation === undefined
+        ? `TLC encountered a non-enumerable quantifier bound\n${text}.\n${describeRange(expression)}`
+        : `TLC encountered the non-enumerable quantifier bound\n${text}\n${describeRange(expression)}\n${explanation}`,
     );
   }
   return toFiniteSet(set).elements;
@@ -1341,6 +1374,12 @@ const compileApply = (
     const operand = getEvaluator(args[0], environment);
     const domain = getDomainOperator(expression);
     return (context) => domain(operand(context));
+  }
+  if (global?.kind === "Builtin" && global.name === "\\subseteq" && args.length === 2) {
+    const left = getEvaluator(args[0], environment);
+    const right = getEvaluator(args[1], environment);
+    const subset = getSubsetOperator(expression, global);
+    return (context) => subset(left(context), right(context));
   }
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
   return (context) => {

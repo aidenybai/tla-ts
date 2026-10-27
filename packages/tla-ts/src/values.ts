@@ -270,7 +270,7 @@ const compareStrings = (left: string, right: string) => {
   return left < right ? -1 : 1;
 };
 
-const isOverriddenSet = (value: Value): value is InfiniteSetValue | SequenceSetValue =>
+export const isOverriddenSet = (value: Value): value is InfiniteSetValue | SequenceSetValue =>
   typeof value === "object" && (value.kind === "InfiniteSet" || value.kind === "SequenceSet");
 
 const isOverriddenComparison = (left: Value, right: Value) =>
@@ -1105,12 +1105,14 @@ const enumerateSet = (value: Value): Value[] => {
     case "MixedSet":
       return sortLikeTlc(value.elements);
     case "Interval": {
+      getCardinality(value);
       if (value.low === 1 && value.high >= 1) return getIntervalDomain(value.high);
       const elements: number[] = [];
       for (let element = value.low; element <= value.high; element++) elements.push(element);
       return elements;
     }
     case "Subset": {
+      if (isOverriddenSet(value.base)) getCardinality(value.base);
       const base = toFiniteSet(value.base).elements;
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
         throw new TlaEvaluationError(
@@ -1528,6 +1530,7 @@ export const isElementOf = (element: Value, set: Value): boolean => {
 export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "Function") return value;
   if (typeof value === "object" && value.kind === "LazyFunction") {
+    if (!isEnumerable(value.domain)) getCardinality(value.domain);
     const domain = getFunctionDomain(value.domain);
     return createSortedFunction(
       domain,
