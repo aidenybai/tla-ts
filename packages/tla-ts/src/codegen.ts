@@ -23,7 +23,7 @@ import {
 import {
   applyFunction,
   compareValues,
-  createSet,
+  createEnumeratedSet,
   createSortedFunction,
   createTuple,
   valuesEqual,
@@ -76,7 +76,7 @@ const createRuntime = () => ({
   },
   apply: applyFunction,
   tuple: createTuple,
-  set: createSet,
+  set: createEnumeratedSet,
   record: createSortedFunction,
   equal: valuesEqual,
   enumerate: getEnumeratedElements,

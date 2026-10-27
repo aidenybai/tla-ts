@@ -13,6 +13,13 @@ export interface SetValue {
   fingerprint: number;
 }
 
+// A set enumeration whose elements TLC can't sort, such as {1, "a"}. TLC sorts a set enumeration
+// only when it has to, so it still checks membership in one element by element.
+export interface MixedSetValue {
+  kind: "MixedSet";
+  elements: Value[];
+}
+
 export interface FunctionValue {
   kind: "Function";
   domain: Value[];
@@ -95,6 +102,7 @@ export type Value =
   | string
   | ModelValue
   | SetValue
+  | MixedSetValue
   | FunctionValue
   | IntervalValue
   | InfiniteSetValue
@@ -431,6 +439,335 @@ export const isSameValue = (left: Value, right: Value): boolean => {
   return getValueKey(left) === getValueKey(right);
 };
 
+// The comparisons above fail with their own messages. These follow the compareTo and equals
+// methods of TLC's Java value classes, which word a failure by the class of the left operand, so a
+// failed comparison runs again through them to fail as TLC does.
+interface TlcFunction {
+  domain: Value[];
+  range: Value[];
+  low: number | undefined;
+}
+
+const getIntervalLow = (domain: Value[]) => {
+  const first = domain.length === 0 ? 1 : domain[0];
+  return typeof first === "number" && domain.every((key, index) => key === first + index)
+    ? first
+    : undefined;
+};
+
+const toTlcFunction = (value: Value): TlcFunction | undefined => {
+  if (!isFunctionValue(value)) return undefined;
+  const fn = toFiniteFunction(value);
+  return { domain: fn.domain, range: fn.range, low: getIntervalLow(fn.domain) };
+};
+
+const toTlcRecord = (value: Value) => {
+  if (!isFunctionValue(value)) return undefined;
+  const fn = toFiniteFunction(value);
+  return fn.domain.every((key) => typeof key === "string") ? fn : undefined;
+};
+
+const compareModelValueWith = (modelValue: ModelValue, other: Value) => {
+  if (getModelValueType(modelValue) !== undefined) {
+    throw new TlaEvaluationError(
+      `Attempted to compare the typed model value ${formatValue(modelValue)} and the non-model value\n${formatValue(other)}`,
+    );
+  }
+  return 1;
+};
+
+const equalsModelValueWith = (modelValue: ModelValue, other: Value) => {
+  if (getModelValueType(modelValue) !== undefined) {
+    throw new TlaEvaluationError(
+      `Attempted to check equality of the typed model value ${formatValue(modelValue)} and the non-model value\n${formatValue(other)}`,
+    );
+  }
+  return false;
+};
+
+const compareModelValue = (left: ModelValue, right: Value) => {
+  const type = getModelValueType(left);
+  if (type === undefined) return isModelValue(right) ? compareStrings(left.name, right.name) : -1;
+  if (!isModelValue(right)) {
+    throw new TlaEvaluationError(
+      `Attempted to compare the typed model value ${formatValue(left)} and non-model value\n${formatValue(right)}`,
+    );
+  }
+  const otherType = getModelValueType(right);
+  if (otherType !== undefined && otherType !== type) {
+    throw new TlaEvaluationError(
+      `Attempted to compare the differently-typed model values ${formatValue(left)} and ${formatValue(right)}`,
+    );
+  }
+  return compareStrings(left.name, right.name);
+};
+
+const equalsModelValue = (left: ModelValue, right: Value) => {
+  const type = getModelValueType(left);
+  if (type === undefined) return isModelValue(right) && left.name === right.name;
+  if (!isModelValue(right)) {
+    throw new TlaEvaluationError(
+      `Attempted to check equality of typed model value ${formatValue(left)} and non-model value\n${formatValue(right)}`,
+    );
+  }
+  const otherType = getModelValueType(right);
+  if (otherType !== undefined && otherType !== type) {
+    throw new TlaEvaluationError(
+      `Attempted to check equality of the differently-typed model values ${formatValue(left)} and ${formatValue(right)}`,
+    );
+  }
+  return left.name === right.name;
+};
+
+const SCALAR_KINDS = {
+  number: { name: "integer", other: "non-integer", equality: "check equality of" },
+  string: { name: "string", other: "non-string", equality: "check equality of" },
+  boolean: { name: "boolean", other: "non-boolean", equality: "compare equality of" },
+};
+
+const failScalar = (left: number | string | boolean, right: Value, isEquality: boolean): never => {
+  const kind =
+    SCALAR_KINDS[
+      typeof left === "number" ? "number" : typeof left === "string" ? "string" : "boolean"
+    ];
+  throw new TlaEvaluationError(
+    `Attempted to ${isEquality ? kind.equality : "compare"} ${kind.name} ${formatValue(left)} with ${kind.other}:\n${formatValue(right)}`,
+  );
+};
+
+const compareTlcFunctions = (fn: TlcFunction, left: Value, right: Value): number => {
+  const other = toTlcFunction(right);
+  if (!other) {
+    if (isModelValue(right)) return compareModelValueWith(right, left);
+    throw new TlaEvaluationError(
+      `Attempted to compare the function ${formatValue(left)} with the value:\n${formatValue(right)}`,
+    );
+  }
+  if (fn.range.length !== other.range.length) return fn.range.length - other.range.length;
+  const compareRanges = () => compareElementsLikeTlc(fn.range, other.range);
+  if (fn.low !== undefined && fn.range.length === 0) return 0;
+  if (fn.low !== undefined && other.low !== undefined) {
+    return fn.low === other.low ? compareRanges() : fn.low - other.low;
+  }
+  const intervalLow = fn.low ?? other.low;
+  if (intervalLow === undefined) {
+    return compareElementsLikeTlc(fn.domain, other.domain) || compareRanges();
+  }
+  const keys = fn.low === undefined ? fn.domain : other.domain;
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index];
+    if (typeof key !== "number") {
+      throw new TlaEvaluationError(
+        `Attempted to compare integer with non-integer${fn.low === undefined ? "" : ":"}\n${formatValue(key)}.`,
+      );
+    }
+    const difference =
+      fn.low === undefined ? key - (intervalLow + index) : intervalLow + index - key;
+    if (difference !== 0) return difference;
+  }
+  return compareRanges();
+};
+
+const compareElementsLikeTlc = (left: Value[], right: Value[]) => {
+  for (let index = 0; index < left.length; index++) {
+    const comparison = compareLikeTlc(left[index], right[index]);
+    if (comparison !== 0) return comparison;
+  }
+  return 0;
+};
+
+const compareFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: Value): number => {
+  const fn = toFiniteFunction(left);
+  const isTuple = left.kind === "Function" && getSequenceElements(fn) !== undefined;
+  if (isTuple) {
+    const tuple = isFunctionValue(right) ? getSequenceElements(right) : undefined;
+    if (!tuple) return compareTlcFunctions({ ...fn, low: 1 }, left, right);
+    return fn.range.length - tuple.length || compareElementsLikeTlc(fn.range, tuple);
+  }
+  if (left.kind === "Function" && fn.domain.every((key) => typeof key === "string")) {
+    const record = toTlcRecord(right);
+    if (!record) {
+      if (isModelValue(right)) return compareModelValueWith(right, left);
+      throw new TlaEvaluationError(
+        `Attempted to compare record:\n${formatValue(left)}\nwith non-record\n${formatValue(right)}`,
+      );
+    }
+    return (
+      fn.domain.length - record.domain.length ||
+      compareElementsLikeTlc(fn.domain, record.domain) ||
+      compareElementsLikeTlc(fn.range, record.range)
+    );
+  }
+  return compareTlcFunctions({ ...fn, low: getIntervalLow(fn.domain) }, left, right);
+};
+
+const isEnumeratedSet = (value: Value): value is SetValue | MixedSetValue =>
+  typeof value === "object" && (value.kind === "Set" || value.kind === "MixedSet");
+
+// TLC compares a lazy set, or a set it overrides in Java, through its own class before it compares
+// elements. The comparisons above already fail as those classes do.
+const isComparedByClass = (left: ObjectValue, right: Value) =>
+  isOverriddenSet(left) ||
+  isOverriddenSet(right) ||
+  (typeof right === "object" &&
+    left.kind === right.kind &&
+    (left.kind === "Interval" ||
+      left.kind === "Subset" ||
+      left.kind === "FunctionSet" ||
+      left.kind === "RecordSet" ||
+      left.kind === "ProductSet"));
+
+const getSetElementsLikeTlc = (left: SetValue | MixedSetValue, right: Value) => {
+  const other = isEnumeratedSet(right) ? right : toFiniteSet(right);
+  return { elements: toFiniteSet(left).elements, otherElements: toFiniteSet(other).elements };
+};
+
+const compareSetLikeTlc = (left: ObjectValue, right: Value): number => {
+  if (isComparedByClass(left, right)) return compareValues(left, right);
+  if (!isEnumeratedSet(left)) return compareSetLikeTlc(toFiniteSet(left), right);
+  if (!isSetValue(right)) {
+    if (isModelValue(right)) return compareModelValueWith(right, left);
+    throw new TlaEvaluationError(
+      `Attempted to compare the set ${formatValue(left)} with the value:\n${formatValue(right)}`,
+    );
+  }
+  const sets = getSetElementsLikeTlc(left, right);
+  return (
+    sets.elements.length - sets.otherElements.length ||
+    compareElementsLikeTlc(sets.elements, sets.otherElements)
+  );
+};
+
+export const compareLikeTlc = (left: Value, right: Value): number => {
+  if (typeof left !== "object") {
+    if (typeof right === typeof left) return compareValues(left, right);
+    if (isModelValue(right)) return compareModelValueWith(right, left);
+    return failScalar(left, right, false);
+  }
+  if (left.kind === "ModelValue") return compareModelValue(left, right);
+  if (isFunctionValue(left)) return compareFunctionLikeTlc(left, right);
+  return compareSetLikeTlc(left, right);
+};
+
+const equalsElementsLikeTlc = (left: Value[], right: Value[]) =>
+  left.every((element, index) => equalsLikeTlc(element, right[index]));
+
+const equalsTlcFunctions = (fn: TlcFunction, left: Value, right: Value): boolean => {
+  const other = toTlcFunction(right);
+  if (!other) {
+    if (isModelValue(right)) return equalsModelValueWith(right, left);
+    throw new TlaEvaluationError(
+      `Attempted to check equality of the function ${formatValue(left)} with the value:\n${formatValue(right)}`,
+    );
+  }
+  if (fn.range.length !== other.range.length) return false;
+  if (fn.low !== undefined && other.low !== undefined) {
+    return (
+      (fn.range.length === 0 || fn.low === other.low) &&
+      equalsElementsLikeTlc(fn.range, other.range)
+    );
+  }
+  const intervalLow = fn.low ?? other.low;
+  if (intervalLow === undefined) {
+    return (
+      equalsElementsLikeTlc(fn.domain, other.domain) && equalsElementsLikeTlc(fn.range, other.range)
+    );
+  }
+  const keys = fn.low === undefined ? fn.domain : other.domain;
+  return (
+    keys.every((key, index) => {
+      if (typeof key !== "number") {
+        throw new TlaEvaluationError(
+          `Attempted to compare an integer with non-integer:\n${formatValue(key)}.`,
+        );
+      }
+      return key === intervalLow + index;
+    }) && equalsElementsLikeTlc(fn.range, other.range)
+  );
+};
+
+const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: Value): boolean => {
+  const fn = toFiniteFunction(left);
+  const isTuple = left.kind === "Function" && getSequenceElements(fn) !== undefined;
+  if (isTuple) {
+    const tuple = isFunctionValue(right) ? getSequenceElements(right) : undefined;
+    if (!tuple) return equalsTlcFunctions({ ...fn, low: 1 }, left, right);
+    return fn.range.length === tuple.length && equalsElementsLikeTlc(fn.range, tuple);
+  }
+  if (left.kind === "Function" && fn.domain.every((key) => typeof key === "string")) {
+    const record = toTlcRecord(right);
+    if (!record) {
+      if (isModelValue(right)) return equalsModelValueWith(right, left);
+      throw new TlaEvaluationError(
+        `Attempted to check equality of record:\n${formatValue(left)}\nwith non-record\n${formatValue(right)}`,
+      );
+    }
+    return (
+      fn.domain.length === record.domain.length &&
+      equalsElementsLikeTlc(fn.domain, record.domain) &&
+      equalsElementsLikeTlc(fn.range, record.range)
+    );
+  }
+  return equalsTlcFunctions({ ...fn, low: getIntervalLow(fn.domain) }, left, right);
+};
+
+const equalsSetLikeTlc = (left: ObjectValue, right: Value): boolean => {
+  if (isComparedByClass(left, right)) return valuesEqual(left, right);
+  if (!isEnumeratedSet(left)) return equalsSetLikeTlc(toFiniteSet(left), right);
+  if (!isSetValue(right)) {
+    if (isModelValue(right)) return equalsModelValueWith(right, left);
+    throw new TlaEvaluationError(
+      `Attempted to check equality of the set ${formatValue(left)} with the value:\n${formatValue(right)}`,
+    );
+  }
+  const sets = getSetElementsLikeTlc(left, right);
+  return (
+    sets.elements.length === sets.otherElements.length &&
+    equalsElementsLikeTlc(sets.elements, sets.otherElements)
+  );
+};
+
+export const equalsLikeTlc = (left: Value, right: Value): boolean => {
+  if (typeof left !== "object") {
+    if (typeof right === typeof left) return left === right;
+    if (isModelValue(right)) return equalsModelValueWith(right, left);
+    return failScalar(left, right, true);
+  }
+  if (left.kind === "ModelValue") return equalsModelValue(left, right);
+  if (isFunctionValue(left)) return equalsFunctionLikeTlc(left, right);
+  return equalsSetLikeTlc(left, right);
+};
+
+// TLC's ValueVec.sort, which inserts each element into the sorted prefix by binary search.
+const sortLikeTlc = (elements: Value[]) => {
+  const sorted: Value[] = [];
+  for (const element of elements) {
+    const bounds = { low: 0, high: sorted.length, comparison: 1 };
+    while (bounds.low < bounds.high) {
+      const middle = bounds.low + ((bounds.high - bounds.low) >> 1);
+      bounds.comparison = compareLikeTlc(element, sorted[middle]);
+      if (bounds.comparison === 0) break;
+      if (bounds.comparison < 0) bounds.high = middle;
+      else bounds.low = middle + 1;
+    }
+    if (bounds.comparison !== 0) sorted.splice(bounds.low, 0, element);
+  }
+  return sorted;
+};
+
+// TLC checks membership in a set enumeration it hasn't sorted element by element.
+const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
+  elements.some((member) => equalsLikeTlc(member, element));
+
+export const isEqualLikeTlc = (left: Value, right: Value) => {
+  try {
+    return valuesEqual(left, right);
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    return equalsLikeTlc(left, right);
+  }
+};
+
 const isStrictlySorted = (elements: Value[]) => {
   for (let index = 1; index < elements.length; index++) {
     if (compareValues(elements[index - 1], elements[index]) >= 0) return false;
@@ -446,6 +783,17 @@ export const createSet = (elements: Value[]): SetValue => {
     if (compareValues(unique[unique.length - 1], sorted[index]) !== 0) unique.push(sorted[index]);
   }
   return createSortedSet(unique);
+};
+
+// TLC builds a set enumeration without sorting it, so one whose elements it can't compare still
+// evaluates.
+export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue => {
+  try {
+    return createSet(elements);
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    return { kind: "MixedSet", elements };
+  }
 };
 
 export const EMPTY_SET = createSortedSet([]);
@@ -598,6 +946,7 @@ export const isEnumerable = (value: Value): boolean => {
   if (typeof value !== "object") return false;
   switch (value.kind) {
     case "Set":
+    case "MixedSet":
     case "Interval":
       return true;
     case "InfiniteSet":
@@ -629,6 +978,7 @@ const getEmptiness = (value: Value): boolean | undefined => {
   if (typeof value !== "object") return undefined;
   switch (value.kind) {
     case "Set":
+    case "MixedSet":
       return value.elements.length === 0;
     case "Interval":
       return value.low > value.high;
@@ -703,6 +1053,8 @@ const enumerateSet = (value: Value): Value[] => {
   switch (value.kind) {
     case "Set":
       return value.elements;
+    case "MixedSet":
+      return sortLikeTlc(value.elements);
     case "Interval": {
       if (value.low === 1 && value.high >= 1) return getIntervalDomain(value.high);
       const elements: number[] = [];
@@ -825,7 +1177,8 @@ export const toFiniteSet = (value: Value): SetValue => {
   const elements = enumerateSet(value);
   const isSorted =
     typeof value === "object" &&
-    (value.kind === "SetOperation" ||
+    (value.kind === "MixedSet" ||
+      value.kind === "SetOperation" ||
       value.kind === "FilteredSet" ||
       value.kind === "ProductSet" ||
       value.kind === "FunctionSet" ||
@@ -841,6 +1194,7 @@ export const isEmptySet = (value: Value): boolean => {
   }
   switch (value.kind) {
     case "Set":
+    case "MixedSet":
       return value.elements.length === 0;
     case "Interval":
       return value.low > value.high;
@@ -933,6 +1287,7 @@ export const isFiniteSet = (value: Value): boolean => {
   }
   switch (value.kind) {
     case "Set":
+    case "MixedSet":
     case "Interval":
     case "Function":
       return true;
@@ -1023,7 +1378,14 @@ export const isElementOf = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":
-      return findIndex(set.elements, element) !== -1;
+      try {
+        return findIndex(set.elements, element) !== -1;
+      } catch (error) {
+        if (!(error instanceof TlaEvaluationError)) throw error;
+        return isElementOfLikeTlc(element, set.elements);
+      }
+    case "MixedSet":
+      return isElementOfLikeTlc(element, set.elements);
     case "Interval":
       if (typeof element === "number") return element >= set.low && element <= set.high;
       if (set.low <= set.high && !isModelValue(element)) {
@@ -1449,6 +1811,8 @@ export const formatValue = (value: Value, isStrict = false): string => {
       return value.name;
     case "Set":
       return `{${value.elements.map(format).join(", ")}}`;
+    case "MixedSet":
+      return format(toFiniteSet(value));
     case "Interval":
       return value.low <= value.high ? `${value.low}..${value.high}` : "{}";
     case "InfiniteSet":
