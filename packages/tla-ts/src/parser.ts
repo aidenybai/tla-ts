@@ -1,4 +1,5 @@
 import type {
+  AssumeProve,
   Assumption,
   Bound,
   BoundPattern,
@@ -8,14 +9,20 @@ import type {
   ExceptPathStep,
   ExceptUpdate,
   Expression,
+  Fact,
   Module,
   Instance,
   InstanceSubstitution,
+  NewSymbol,
   OperatorParam,
+  Proof,
+  ProofStep,
   RecordField,
   Selector,
   SourceLocation,
   SourceRange,
+  StepBody,
+  UseOrHide,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import { getNumeralValue, tokenize, type Token } from "./lexer";
@@ -201,7 +208,44 @@ const UNIT_KEYWORDS = new Set([
 
 const THEOREM_KEYWORDS = new Set(["THEOREM", "LEMMA", "COROLLARY", "PROPOSITION"]);
 
-const PROOF_WORDS = new Set(["BY", "OBVIOUS", "OMITTED", "QED", "USE", "HIDE"]);
+const PROOF_STARTS = new Set(["BY", "PROOF", "OBVIOUS", "OMITTED"]);
+
+const PROVABLE_STEPS = new Set(["Qed", "Pick", "Case", "Assert"]);
+
+const UNNAMED_STEP_LABELS = new Set(["", "*", "-"]);
+
+const FACT_KEYWORDS = new Set([
+  "CASE",
+  "CHOOSE",
+  "DOMAIN",
+  "ENABLED",
+  "IF",
+  "LAMBDA",
+  "LET",
+  "SF_",
+  "SUBSET",
+  "UNCHANGED",
+  "UNION",
+  "WF_",
+]);
+
+const NEW_SYMBOL_LEVELS = new Map<string, NewSymbol["level"]>([
+  ["CONSTANT", "Constant"],
+  ["CONSTANTS", "Constant"],
+  ["VARIABLE", "Variable"],
+  ["VARIABLES", "Variable"],
+  ["STATE", "State"],
+  ["ACTION", "Action"],
+  ["ACTIONS", "Action"],
+  ["TEMPORAL", "Temporal"],
+  ["TEMPORALS", "Temporal"],
+]);
+
+const NEW_SYMBOL_STARTS = new Set(["NEW", ...NEW_SYMBOL_LEVELS.keys()]);
+
+const OPENING_BRACKETS = new Set(["(", "[", "{", "<<"]);
+
+const CLOSING_BRACKETS = new Set([")", "]", "}", ">>", "]_", ">>_"]);
 
 const BUILTIN_CONSTANTS = new Set(["TRUE", "FALSE", "BOOLEAN", "STRING"]);
 
@@ -221,7 +265,7 @@ export const extractModule = (source: string, name: string) => {
 
 export const parseModule = (source: string): Module => {
   const tokens = tokenize(source);
-  const cursor = { index: 0, limit: tokens.length, offsideColumns: [] as number[] };
+  const cursor = { index: 0, offsideColumns: [] as number[] };
   const recursiveNames = new Set<string>();
   const factNames = new Set<string>();
   const openModules: Module[] = [];
@@ -261,10 +305,7 @@ export const parseModule = (source: string): Module => {
   const peekRaw = (offset = 0) => tokens[Math.min(cursor.index + offset, tokens.length - 1)];
 
   const peek = (offset = 0) => {
-    const token =
-      cursor.index + offset >= cursor.limit
-        ? { ...peekRaw(offset), kind: "End" as const, text: "" }
-        : peekRaw(offset);
+    const token = peekRaw(offset);
     const offsideColumn = cursor.offsideColumns[cursor.offsideColumns.length - 1];
     if (offsideColumn === undefined || offsideColumn === NO_OFFSIDE || token.kind === "End") {
       return token;
@@ -649,21 +690,29 @@ export const parseModule = (source: string): Module => {
     }
     if (token.kind === "Decimal") return { kind: "Decimal", text: token.text, location };
     if (token.kind === "String") return { kind: "String", value: token.text, location };
-    if (token.kind === "Identifier") {
+    const isStep = token.kind === "Step" && isStepReference(token);
+    if (isStep && getProofLevel() < 0 && proofLevels.length <= 1) {
+      throw createError("Step number used outside proof", token);
+    }
+    if (isStep && token.text[1] === "+") {
+      throw createError("<+> step number used in an expression", token);
+    }
+    if (token.kind === "Identifier" || isStep) {
+      const name = isStep ? (getStepName(token) ?? token.text) : token.text;
       if (isLabelAhead()) {
         const params = accept("(") ? parseSeparated(expectIdentifier) : [];
         if (params.length > 0) expect(")");
         expect("::");
-        return { kind: "Label", name: token.text, params, body: parseExpression(), location };
+        return { kind: "Label", name, params, body: parseExpression(), location };
       }
       const hasArguments = isAt("(");
       const args = hasArguments ? parseArguments() : [];
       if (!isSelectorAhead()) {
         return hasArguments
-          ? { kind: "Apply", operator: token.text, args, location }
-          : { kind: "Identifier", name: token.text, location };
+          ? { kind: "Apply", operator: name, args, location }
+          : { kind: "Identifier", name, location };
       }
-      const selectors: Selector[] = [{ kind: "Name", name: token.text, args }];
+      const selectors: Selector[] = [{ kind: "Name", name, args }];
       while (isSelectorAhead()) {
         advance();
         selectors.push(parseSelector());
@@ -979,40 +1028,104 @@ export const parseModule = (source: string): Module => {
     return { kind: "Instance", name, params, module, substitutions, isLocal, location };
   };
 
-  const parseDeclarations = (): Declaration[] =>
-    parseSeparated(() => {
-      const location = getLocation(peek());
-      if (isAt("_") && peek(1).kind === "Operator") {
-        advance();
-        const name = advance().text;
-        return { name, arity: accept("_") ? 2 : 1, location };
-      }
-      if (peek().kind === "Operator" && isAt("_", 1)) {
-        const operator = advance().text;
-        advance();
-        return { name: operator === "-" ? "-." : operator, arity: 1, location };
-      }
-      const name = expectIdentifier();
-      if (!accept("(")) return { name, arity: 0, location };
-      const placeholders = parseSeparated(() => expect("_"));
-      expect(")");
-      return { name, arity: placeholders.length, location };
-    });
-
-  const isUnitStart = (token: Token, next: Token) => {
-    if (token.column !== 1) return false;
-    if (token.kind === "Separator" || token.kind === "ModuleEnd" || token.kind === "End")
-      return true;
-    if (token.kind === "Keyword") return UNIT_KEYWORDS.has(token.text);
-    return (
-      token.kind === "Identifier" && (next.text === "==" || next.text === "(" || next.text === "[")
-    );
+  const parseDeclaration = (): Declaration => {
+    const location = getLocation(peek());
+    if (isAt("_") && peek(1).kind === "Operator") {
+      advance();
+      const name = advance().text;
+      return { name, arity: accept("_") ? 2 : 1, location };
+    }
+    if (peek().kind === "Operator" && isAt("_", 1)) {
+      const operator = advance().text;
+      advance();
+      return { name: operator === "-" ? "-." : operator, arity: 1, location };
+    }
+    const name = expectIdentifier();
+    if (!accept("(")) return { name, arity: 0, location };
+    const placeholders = parseSeparated(() => expect("_"));
+    expect(")");
+    return { name, arity: placeholders.length, location };
   };
 
-  const isStepStart = (index: number) =>
-    tokens[index].text === "<" &&
-    tokens[index + 1]?.kind === "Number" &&
-    tokens[index + 2]?.text === ">";
+  const parseDeclarations = () => parseSeparated(parseDeclaration);
+
+  const getClosingOffset = (offset: number) => {
+    const depth = { value: 0, offset };
+    do {
+      const token = peek(depth.offset);
+      if (token.kind === "End") return depth.offset;
+      if (token.kind === "Operator" && OPENING_BRACKETS.has(token.text)) depth.value++;
+      if (token.kind === "Operator" && CLOSING_BRACKETS.has(token.text)) depth.value--;
+      depth.offset++;
+    } while (depth.value > 0);
+    return depth.offset;
+  };
+
+  // SANY inserts a break before each definition, which ends the fact list or step before it.
+  const isDefinitionStart = () => {
+    const token = peek();
+    const next = peek(1);
+    if (token.kind !== "Identifier") {
+      return isAt("-.") && next.kind === "Identifier" && isAt("==", 2);
+    }
+    if (isAt("(", 1) || isAt("[", 1)) return isAt("==", getClosingOffset(1));
+    if (next.kind === "Operator" && POSTFIX_OPERATORS.has(next.text)) return isAt("==", 2);
+    if (next.kind === "Operator" && INFIX_OPERATORS.has(next.text)) {
+      return peek(2).kind === "Identifier" && isAt("==", 3);
+    }
+    return isAt("==", 1);
+  };
+
+  // SANY's proof levels, one for each open proof, which stay -1 until a step sets them.
+  const proofLevels: number[] = [];
+
+  const getProofLevel = () => proofLevels[proofLevels.length - 1] ?? -1;
+
+  const getStepLevel = (step: Token) => {
+    if (step.text[1] === "*") return -1;
+    if (step.text[1] === "+") return -2;
+    return Number(step.text.slice(1, step.text.indexOf(">")));
+  };
+
+  const getStepLabel = (step: Token) => {
+    const label = step.text.slice(step.text.indexOf(">") + 1);
+    const end = { value: label.length };
+    while (label[end.value - 1] === ".") end.value--;
+    return label.slice(0, end.value);
+  };
+
+  const isStepReference = (step: Token) =>
+    !step.text.endsWith(".") && !UNNAMED_STEP_LABELS.has(getStepLabel(step));
+
+  const getStepName = (step: Token) => {
+    const label = getStepLabel(step);
+    if (UNNAMED_STEP_LABELS.has(label)) return undefined;
+    const level = getStepLevel(step);
+    if (level >= 0) return `<${level}>${label}`;
+    const current = getProofLevel();
+    const outer = proofLevels[proofLevels.length - 2];
+    return `<${current < 0 && outer !== undefined ? outer : current}>${label}`;
+  };
+
+  const beginsProof = (token: Token) => {
+    if (token.kind === "Keyword") return PROOF_STARTS.has(token.text);
+    if (token.kind !== "Step") return false;
+    if (token.text[1] === "*") return proofLevels.length === 0;
+    if (token.text[1] === "+" || proofLevels.length === 0) return true;
+    const level = getProofLevel();
+    return level >= 0 && getStepLevel(token) > level;
+  };
+
+  const isCorrectLevel = (step: Token) => {
+    const level = getStepLevel(step);
+    const top = proofLevels.length - 1;
+    const outer = proofLevels[top - 1] ?? -1;
+    const isFirst = proofLevels[top] < 0;
+    if (isFirst) proofLevels[top] = level < 0 ? outer + 1 : level;
+    if (level === -1) return true;
+    if (level === -2) return isFirst;
+    return isFirst ? level > outer : proofLevels[top] === level;
+  };
 
   const isDeclared = (name: string) =>
     !factNames.has(name) &&
@@ -1023,91 +1136,244 @@ export const parseModule = (source: string): Module => {
         module.definitions.some((definition) => definition.name === name),
     );
 
-  const isHideFact = (fact: Token[]) => {
-    if (fact[0].text === "MODULE" || fact[0].text === "<") return true;
-    if (fact[0].kind !== "Identifier") return false;
-    if (fact.length > 1) return fact[1].text === "!";
-    return !BUILTIN_CONSTANTS.has(fact[0].text) && !isDeclared(fact[0].text);
+  const isHideFact = (fact: Fact) => {
+    if (fact.kind === "ModuleFact" || fact.kind === "Subexpression") return true;
+    if (fact.kind === "Apply") return fact.operator.includes("!");
+    if (fact.kind !== "Identifier") return false;
+    if (fact.name.startsWith("<") || fact.name.includes("!")) return true;
+    return !BUILTIN_CONSTANTS.has(fact.name) && !isDeclared(fact.name);
   };
 
-  const checkHideFacts = (hide: number) => {
-    const facts: Token[][] = [[]];
-    const depth = { value: 0 };
-    for (let index = hide + 1; ; index++) {
-      const token = tokens[index];
-      const previous = tokens[index - 1];
-      const isBracket = token.kind !== "String";
-      const isEnd =
-        depth.value === 0 &&
-        (token.kind === "End" ||
-          token.kind === "ModuleEnd" ||
-          token.kind === "Separator" ||
-          token.text === "DEF" ||
-          token.text === "DEFS" ||
-          (token.line > previous.line && isUnitStart(token, tokens[index + 1])) ||
-          (isStepStart(index) && index > hide + 1 && previous.text !== ","));
-      if (isEnd) break;
-      if (isBracket && ["(", "[", "{", "<<"].includes(token.text)) depth.value++;
-      if (isBracket && [")", "]", "}", ">>"].includes(token.text)) depth.value--;
-      if (depth.value === 0 && token.text === ",") facts.push([]);
-      else facts[facts.length - 1].push(token);
+  const isFactAhead = () => {
+    const token = peek();
+    if (token.kind === "Step") return isStepReference(token);
+    if (token.kind === "Keyword") return FACT_KEYWORDS.has(token.text);
+    if (token.kind === "End" || token.kind === "ModuleEnd" || token.kind === "Separator") {
+      return false;
     }
-    const invalid = facts.find((fact) => fact.length > 0 && !isHideFact(fact));
-    if (invalid) {
-      throw createError(
-        "The only expression allowed as a fact in a HIDE is the name of a theorem, assumption, or step",
-        invalid[0],
+    return !isDefinitionStart();
+  };
+
+  // SANY reads an infix or postfix operator alone as its name, but a prefix operator such as - as the
+  // start of an expression.
+  const parseFact = (): Fact => {
+    const start = cursor.index;
+    const token = peek();
+    const isOperatorName =
+      token.kind === "Operator" &&
+      !EXPRESSION_PREFIXES.has(token.text) &&
+      (INFIX_OPERATORS.has(token.text) || POSTFIX_OPERATORS.has(token.text) || token.text === "-.");
+    if (isOperatorName) {
+      cursor.index++;
+      return withRange(
+        { kind: "OperatorReference", operator: token.text, location: getLocation(token) },
+        start,
       );
     }
-  };
-
-  const skipUnit = (start: Token) => {
-    while (peekRaw().kind !== "End") {
-      const token = peekRaw();
-      if (token.line > start.line && isUnitStart(token, peekRaw(1))) return;
-      if (token.kind === "Identifier" && token.text === "HIDE") checkHideFacts(cursor.index);
-      cursor.index++;
-    }
-  };
-
-  const isProofStart = (index: number, start: Token) => {
-    const token = tokens[index];
-    if (token.kind === "End") return true;
-    if (token.line > start.line && isUnitStart(token, tokens[index + 1])) return true;
-    if (token.text === "PROOF" || PROOF_WORDS.has(token.text)) return true;
-    return (
-      token.text === "<" && tokens[index + 1]?.kind === "Number" && tokens[index + 2]?.text === ">"
+    if (!accept("MODULE")) return parseExpression();
+    return withRange(
+      { kind: "ModuleFact", name: expectIdentifier(), location: getLocation(token) },
+      start,
     );
+  };
+
+  const parseFacts = () => ({
+    facts: isFactAhead() ? parseSeparated(parseFact) : [],
+    defs: accept("DEF") || accept("DEFS") ? parseSeparated(parseFact) : [],
+  });
+
+  const parseUseOrHide = (): UseOrHide => {
+    const start = cursor.index;
+    const keyword = advance();
+    const isOnly = keyword.text === "USE" && accept("ONLY");
+    const use: UseOrHide = {
+      kind: keyword.text === "USE" ? "Use" : "Hide",
+      isOnly,
+      ...parseFacts(),
+      location: getLocation(keyword),
+    };
+    const invalid = use.kind === "Hide" ? use.facts.find((fact) => !isHideFact(fact)) : undefined;
+    if (invalid) {
+      throw new TlaSyntaxError(
+        `The only expression allowed as a fact in a HIDE is the name of a theorem, assumption, or step at line ${invalid.location.line}, column ${invalid.location.column}`,
+      );
+    }
+    return withRange(use, start);
+  };
+
+  const parseNewSymbol = (): NewSymbol => {
+    const start = cursor.index;
+    const location = getLocation(peek());
+    const isNew = accept("NEW");
+    const level = peek().kind === "Keyword" ? NEW_SYMBOL_LEVELS.get(peek().text) : undefined;
+    if (!isNew && level === undefined) {
+      throw createError(`Expected a declaration but found ${describe(peek())}`);
+    }
+    if (level !== undefined) advance();
+    if (level === "Variable") {
+      const name = expectIdentifier();
+      return withRange(
+        { kind: "NewSymbol", name, arity: 0, level, set: undefined, location },
+        start,
+      );
+    }
+    const declaration = parseDeclaration();
+    const isBounded = (level ?? "Constant") === "Constant" && isAt("\\in");
+    if (isBounded && declaration.arity > 0) {
+      throw createError("declared symbol with arguments before \\in");
+    }
+    if (isBounded) advance();
+    return withRange(
+      {
+        kind: "NewSymbol",
+        name: declaration.name,
+        arity: declaration.arity,
+        level: level ?? "Constant",
+        set: isBounded ? parseExpression() : undefined,
+        location,
+      },
+      start,
+    );
+  };
+
+  const parseAssumeProve = (): AssumeProve => {
+    const start = cursor.index;
+    const location = getLocation(expect("ASSUME"));
+    const assumptions = parseSeparated((): Expression | NewSymbol | AssumeProve => {
+      if (isAt("ASSUME")) return parseAssumeProve();
+      if (peek().kind === "Keyword" && NEW_SYMBOL_STARTS.has(peek().text)) return parseNewSymbol();
+      return parseExpression();
+    });
+    expect("PROVE");
+    return withRange(
+      { kind: "AssumeProve", assumptions, conclusion: parseExpression(), location },
+      start,
+    );
+  };
+
+  const isNameListAhead = (terminator: string) => {
+    const offset = { value: 0 };
+    while (peek(offset.value).kind === "Identifier" && isAt(",", offset.value + 1)) {
+      offset.value += 2;
+    }
+    return peek(offset.value).kind === "Identifier" && isAt(terminator, offset.value + 1);
+  };
+
+  const parseStepBody = (): StepBody => {
+    const token = peek();
+    if (isAt("USE") || isAt("HIDE")) return parseUseOrHide();
+    if (isAt("INSTANCE")) {
+      return withRange(parseInstance(undefined, [], false, getLocation(token)), cursor.index);
+    }
+    if (isAt("DEFINE") || isDefinitionStart()) {
+      accept("DEFINE");
+      const definitions = [parseDefinition(false)];
+      while (isDefinitionStart()) definitions.push(parseDefinition(false));
+      return { kind: "Define", definitions };
+    }
+    if (accept("HAVE")) return { kind: "Have", expression: parseExpression() };
+    if (accept("TAKE")) {
+      return isBoundAhead()
+        ? { kind: "Take", names: [], bounds: parseBounds() }
+        : { kind: "Take", names: parseSeparated(expectIdentifier), bounds: [] };
+    }
+    if (accept("WITNESS")) {
+      return { kind: "Witness", expressions: parseSeparated(() => parseExpression()) };
+    }
+    if (accept("PICK")) {
+      const isNames = isNameListAhead(":");
+      const names = isNames ? parseSeparated(expectIdentifier) : [];
+      const bounds = isNames ? [] : parseBounds();
+      expect(":");
+      return { kind: "Pick", names, bounds, body: parseExpression() };
+    }
+    if (accept("CASE")) return { kind: "Case", expression: parseExpression() };
+    const isSuffices = accept("SUFFICES");
+    return {
+      kind: "Assert",
+      isSuffices,
+      statement: isAt("ASSUME") ? parseAssumeProve() : parseExpression(),
+    };
+  };
+
+  const parseStepStart = (isQed: boolean) => {
+    const step = peek();
+    if (step.kind !== "Step") {
+      throw createError(`Expected a step number but found ${describe(step)}`);
+    }
+    if (!isCorrectLevel(step)) {
+      throw createError(`${isQed ? "QED step" : "step"}'s number has bad level`, step);
+    }
+    if (getStepLevel(step) < 0 && getStepName(step) !== undefined) {
+      throw createError("<*> and <+> cannot be used for a named step", step);
+    }
+    cursor.index++;
+    return { name: getStepName(step), location: getLocation(step) };
+  };
+
+  const parseStep = (): ProofStep => {
+    const start = cursor.index;
+    const step = parseStepStart(isAt("QED", 1));
+    const body: StepBody = accept("QED") ? { kind: "Qed" } : parseStepBody();
+    const hasProof = beginsProof(peek());
+    if (hasProof && !PROVABLE_STEPS.has(body.kind)) {
+      throw createError("Proof of a step that does not take a proof");
+    }
+    return withRange({ ...step, body, proof: hasProof ? parseProof() : undefined }, start);
+  };
+
+  const parseProofBody = (): Proof => {
+    const location = getLocation(peek());
+    if (isAt("BY") || (isAt("PROOF") && isAt("BY", 1))) {
+      accept("PROOF");
+      advance();
+      return { kind: "By", isOnly: accept("ONLY"), ...parseFacts(), location };
+    }
+    const terminal = peek(isAt("PROOF") ? 1 : 0);
+    if (
+      terminal.kind === "Keyword" &&
+      (terminal.text === "OBVIOUS" || terminal.text === "OMITTED")
+    ) {
+      accept("PROOF");
+      advance();
+      return { kind: terminal.text === "OBVIOUS" ? "Obvious" : "Omitted", location };
+    }
+    accept("PROOF");
+    const steps = [parseStep()];
+    while (steps[steps.length - 1].body.kind !== "Qed") steps.push(parseStep());
+    return { kind: "Steps", level: getProofLevel(), steps, location };
+  };
+
+  const parseProof = (): Proof => {
+    const start = cursor.index;
+    proofLevels.push(-1);
+    const proof = parseProofBody();
+    proofLevels.pop();
+    return withRange(proof, start);
   };
 
   const parseTheorem = (module: Module) => {
     const start = cursor.index;
     const keyword = advance();
     const isNamed = peek().kind === "Identifier" && isAt("==", 1);
-    if (isNamed) factNames.add(peek().text);
-    if (isAt("ASSUME", isNamed ? 2 : 0)) {
-      skipUnit(keyword);
-      return;
-    }
     const name = isNamed ? expectIdentifier() : undefined;
-    if (isNamed) advance();
-    const end = { value: cursor.index };
-    while (!isProofStart(end.value, keyword)) end.value++;
-    cursor.limit = end.value;
-    const body = parseExpression();
-    const isComplete = cursor.index === end.value;
-    cursor.limit = tokens.length;
-    skipUnit(keyword);
-    if (!isComplete) return;
-    module.theorems.push(body);
-    if (name === undefined) return;
+    if (name !== undefined) {
+      factNames.add(name);
+      advance();
+    }
+    const statement = isAt("ASSUME") ? parseAssumeProve() : parseExpression();
+    const proof = beginsProof(peek()) ? parseProof() : undefined;
+    module.theorems.push(
+      withRange({ name, statement, proof, location: getLocation(keyword) }, start),
+    );
+    if (name === undefined || statement.kind === "AssumeProve") return;
     module.definitions.push(
       withRange(
         {
           kind: "Operator",
           name,
           params: [],
-          body,
+          body: statement,
           isLocal: false,
           isRecursive: false,
           location: getLocation(keyword),
@@ -1151,6 +1417,7 @@ export const parseModule = (source: string): Module => {
       assumptions: [],
       location,
       theorems: [],
+      uses: [],
     };
     openModules.push(module);
     while (true) {
@@ -1204,7 +1471,7 @@ export const parseModule = (source: string): Module => {
         }
         case "USE":
         case "HIDE":
-          skipUnit(token);
+          module.uses.push(parseUseOrHide());
           continue;
         case "RECURSIVE":
           advance();

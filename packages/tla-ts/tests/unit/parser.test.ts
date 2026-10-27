@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { parseModule, type Module } from "../../src";
+import { parseModule, TlaSyntaxError, type Module } from "../../src";
 
 const SOURCE = `---- MODULE Ranges ----
 EXTENDS Naturals, TLC
@@ -58,5 +58,85 @@ describe("parseModule records ranges like SANY", () => {
       "line 9, col 16 to line 9, col 20 of module Ranges",
       "line 10, col 16 to line 10, col 16 of module Ranges",
     ]);
+  });
+});
+
+describe("parseModule reads proofs like SANY", () => {
+  const parseProof = (proof: string) =>
+    parseModule(`---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${proof}\n====`);
+
+  const getStepNames = (module: Module) => {
+    const proof = module.theorems[0].proof;
+    return proof?.kind === "Steps" ? proof.steps.map((step) => step.name) : [];
+  };
+
+  it("ends a proof where the next definition starts", () => {
+    const module = parseProof(
+      "THEOREM T == x = 0\n<1>a. x = 0\n  BY DEF T\n<1> QED BY <1>a DEF T\n\na|b == a + b",
+    );
+    expect(module.definitions.map((definition) => definition.name)).toEqual(["T", "|"]);
+  });
+
+  it("reads a fact that starts with a parenthesis at the start of a line", () => {
+    const module = parseProof("THEOREM T == x # 0\nBY (x # 0) <=> ~(x = 0), x > 0 DEF T");
+    const proof = module.theorems[0].proof;
+    expect(proof?.kind === "By" && [proof.facts.length, proof.defs.length]).toEqual([2, 1]);
+  });
+
+  it("names steps by their level, filling in <*> and dropping leading zeros", () => {
+    const module = parseProof("THEOREM x = 0\n<01>a. x = 0\n<1>b. x = 0\n  BY <*>a\n<*> QED");
+    const proof = module.theorems[0].proof;
+    const fact = proof?.kind === "Steps" ? proof.steps[1].proof : undefined;
+    expect(getStepNames(module)).toEqual(["<1>a", "<1>b", undefined]);
+    expect(fact?.kind === "By" && fact.facts).toMatchObject([{ name: "<1>a" }]);
+  });
+
+  it("reads parts of a step as facts", () => {
+    const module = parseProof(
+      "THEOREM x = 0\n<1>1. x = 0 /\\ x = 0\n<1>2. x = 0\n  BY <1>1!1, <1>1!2\n<1> QED",
+    );
+    expect(getStepNames(module)).toEqual(["<1>1", "<1>2", undefined]);
+  });
+
+  it("reads ASSUME PROVE statements and every kind of step", () => {
+    const module = parseProof(
+      [
+        "THEOREM ASSUME NEW S, NEW P(_), CONSTANT c \\in S, STATE f PROVE \\A s \\in S : P(s)",
+        "<1> SUFFICES ASSUME NEW s \\in S PROVE P(s) OBVIOUS",
+        "<1> DEFINE Q(y) == P(y)",
+        "<1>1. CASE s = c",
+        "  <2> PICK t \\in S : t = s OBVIOUS",
+        "  <2> QED OBVIOUS",
+        "<1> USE ONLY <1>1 DEF Q",
+        "<1> HIDE <1>1",
+        "<1> TAKE y \\in S",
+        "<1> WITNESS c",
+        "<1> HAVE TRUE",
+        "<1> QED OMITTED",
+      ].join("\n"),
+    );
+    const proof = module.theorems[0].proof;
+    expect(proof?.kind === "Steps" && proof.steps.map((step) => step.body.kind)).toEqual([
+      "Assert",
+      "Define",
+      "Case",
+      "Use",
+      "Hide",
+      "Take",
+      "Witness",
+      "Have",
+      "Qed",
+    ]);
+  });
+
+  it.each([
+    ["a QED step at another level", "THEOREM TRUE\n<2>1. TRUE\n<1> QED"],
+    ["a named <+> step", "THEOREM TRUE\n<1>1. TRUE\n<+>a. TRUE\n<2> QED\n<1> QED"],
+    ["a proof of a step that takes none", "THEOREM TRUE\n<1> HAVE TRUE OBVIOUS\n<1> QED"],
+    ["a step number outside a proof", "THEOREM <1>1"],
+    ["a proof without a QED step", "THEOREM TRUE\n<1>1. TRUE"],
+    ["a bounded NEW operator", "THEOREM ASSUME NEW P(_) \\in {} PROVE TRUE"],
+  ])("rejects %s", (_, proof) => {
+    expect(() => parseProof(proof)).toThrow(TlaSyntaxError);
   });
 });

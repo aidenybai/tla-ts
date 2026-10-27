@@ -264,7 +264,9 @@ export const createEnvironment = (
           : [definition.body],
       ),
       ...module.assumptions.map((assumption) => assumption.expression),
-      ...module.theorems,
+      ...module.theorems.flatMap((theorem) =>
+        theorem.statement.kind === "AssumeProve" ? [] : [theorem.statement],
+      ),
       ...getSubstitutions(module.instances),
     ]);
     module.modules.forEach(rejectModuleLiterals);

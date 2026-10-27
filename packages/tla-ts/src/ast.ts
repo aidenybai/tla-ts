@@ -370,6 +370,63 @@ export interface Instance {
   location: SourceLocation;
 }
 
+export interface NewSymbol {
+  kind: "NewSymbol";
+  name: string;
+  arity: number;
+  level: "Constant" | "Variable" | "State" | "Action" | "Temporal";
+  set: Expression | undefined;
+  location: SourceLocation;
+}
+
+export interface AssumeProve {
+  kind: "AssumeProve";
+  assumptions: (Expression | NewSymbol | AssumeProve)[];
+  conclusion: Expression;
+  location: SourceLocation;
+}
+
+export type Fact = Expression | { kind: "ModuleFact"; name: string; location: SourceLocation };
+
+export interface UseOrHide {
+  kind: "Use" | "Hide";
+  isOnly: boolean;
+  facts: Fact[];
+  defs: Fact[];
+  location: SourceLocation;
+}
+
+export type Proof =
+  | { kind: "Obvious" | "Omitted"; location: SourceLocation }
+  | { kind: "By"; isOnly: boolean; facts: Fact[]; defs: Fact[]; location: SourceLocation }
+  | { kind: "Steps"; level: number; steps: ProofStep[]; location: SourceLocation };
+
+export type StepBody =
+  | UseOrHide
+  | Instance
+  | { kind: "Define"; definitions: (Definition | Instance)[] }
+  | { kind: "Have"; expression: Expression }
+  | { kind: "Take"; names: string[]; bounds: Bound[] }
+  | { kind: "Witness"; expressions: Expression[] }
+  | { kind: "Pick"; names: string[]; bounds: Bound[]; body: Expression }
+  | { kind: "Case"; expression: Expression }
+  | { kind: "Assert"; isSuffices: boolean; statement: Expression | AssumeProve }
+  | { kind: "Qed" };
+
+export interface ProofStep {
+  name: string | undefined;
+  body: StepBody;
+  proof: Proof | undefined;
+  location: SourceLocation;
+}
+
+export interface Theorem {
+  name: string | undefined;
+  statement: Expression | AssumeProve;
+  proof: Proof | undefined;
+  location: SourceLocation;
+}
+
 export interface Module {
   name: string;
   modules: Module[];
@@ -380,5 +437,6 @@ export interface Module {
   instances: Instance[];
   assumptions: Assumption[];
   location: SourceLocation;
-  theorems: Expression[];
+  theorems: Theorem[];
+  uses: UseOrHide[];
 }
