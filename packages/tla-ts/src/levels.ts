@@ -441,6 +441,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const analyze = (expression: Expression, scope: Scope): LevelData => {
     switch (expression.kind) {
       case "Number":
+      case "Decimal":
       case "String":
       case "ExceptAt":
         return createData();

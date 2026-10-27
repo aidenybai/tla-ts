@@ -17,6 +17,13 @@ export interface SourceRange {
 export interface NumberExpression {
   kind: "Number";
   value: number;
+  text?: string;
+  location: SourceLocation;
+}
+
+export interface DecimalExpression {
+  kind: "Decimal";
+  text: string;
   location: SourceLocation;
 }
 
@@ -273,6 +280,7 @@ export interface SubexpressionExpression {
 
 export type Expression =
   | NumberExpression
+  | DecimalExpression
   | StringExpression
   | IdentifierExpression
   | ApplyExpression
@@ -372,4 +380,5 @@ export interface Module {
   instances: Instance[];
   assumptions: Assumption[];
   location: SourceLocation;
+  theorems: Expression[];
 }

@@ -177,6 +177,7 @@ const resolveExpression = (
     expressions.forEach((child) => resolveExpression(child, scope, unit));
   switch (expression.kind) {
     case "Number":
+    case "Decimal":
     case "String":
     case "ExceptAt":
       return;

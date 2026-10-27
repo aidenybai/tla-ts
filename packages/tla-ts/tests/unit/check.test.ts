@@ -5,6 +5,7 @@ import {
   check,
   formatValue,
   parseConfig,
+  parseModule,
   TlaConfigError,
   TlaEvaluationError,
   TlaSyntaxError,
@@ -793,6 +794,82 @@ describe("DOMAIN matches TLC", () => {
   });
 });
 
+describe("rejecting literals matches TLC", () => {
+  const checkSource = (source: string) =>
+    check({
+      source: `---- MODULE M ----\n${source}\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+
+  it("parses decimal literals", () => {
+    const module = parseModule("---- MODULE M ----\nHalf == 1.5\nRange == 1..2\n====");
+    expect(module.definitions.map((definition) => definition.body.kind)).toEqual([
+      "Decimal",
+      "Apply",
+    ]);
+  });
+
+  it.each([
+    ["an evaluated decimal", "EXTENDS Reals\nVARIABLE x\nInit == x = 1.5"],
+    ["a decimal that is never evaluated", "VARIABLE x\nHalf == 1.5\nInit == x = 0"],
+    ["a decimal in an unused LET", "VARIABLE x\nF == LET h == 1.5 IN 0\nInit == x = 0"],
+    ["a decimal in an unnamed theorem", "VARIABLE x\nTHEOREM 1.5 = 1.5\nInit == x = 0"],
+    [
+      "a decimal in an instance substitution",
+      "---- MODULE Inner ----\nCONSTANT c\n====\nVARIABLE x\nI == INSTANCE Inner WITH c <- 1.5\nInit == x = 0",
+    ],
+    [
+      "a decimal in an unused nested module",
+      "VARIABLE x\n---- MODULE Inner ----\nHalf == 1.5\n====\nInit == x = 0",
+    ],
+  ])("rejects %s before checking", async (_, source) => {
+    const run = checkSource(source);
+    await expect(run).rejects.toThrow(TlaEvaluationError);
+    await expect(run).rejects.toThrow(/^TLC can't handle real numbers: 1\.5/);
+  });
+
+  it("accepts decimals in proofs and ASSUME PROVE theorems", async () => {
+    const result = await checkSource(
+      "VARIABLE x\nTHEOREM TRUE\n<1>1. 1.5 = 1.5\n  OBVIOUS\n<1>2. QED\n  BY <1>1\nTHEOREM ASSUME NEW c PROVE c = 1.5\nInit == x = 0",
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it.each([
+    ["an unused definition", "VARIABLE x\nBig == 2147483648\nInit == x = 0"],
+    ["an assumption", "VARIABLE x\nASSUME 2147483648 > 0\nInit == x = 0"],
+    ["a negated literal", "EXTENDS Integers\nVARIABLE x\nInit == x = -2147483648"],
+    [
+      "an unused nested module",
+      "VARIABLE x\n---- MODULE Inner ----\nBig == 2147483648\n====\nInit == x = 0",
+    ],
+  ])("rejects an integer literal too big for TLC in %s", async (_, source) => {
+    const run = checkSource(source);
+    await expect(run).rejects.toThrow(TlaEvaluationError);
+    await expect(run).rejects.toThrow(/^TLC can't handle a number this big: 2147483648/);
+  });
+
+  it.each(["\\hFFFFFFFFF", "99999999999999999999"])("quotes %s as typed", async (literal) => {
+    await expect(checkSource(`VARIABLE x\nBig == ${literal}\nInit == x = 0`)).rejects.toThrow(
+      `TLC can't handle a number this big: ${literal} at line 3, column 8`,
+    );
+  });
+
+  it("reads based numerals", async () => {
+    const result = await checkSource(
+      "VARIABLE x\nASSUME \\h1F = 31 /\\ \\b101 = 5 /\\ \\o17 = 15\nInit == x = 0",
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it("accepts the largest integer literal and big literals in proofs", async () => {
+    const result = await checkSource(
+      "VARIABLE x\nTHEOREM TRUE\n<1>1. 2147483648 > 0\n  OBVIOUS\n<1>2. QED\n  BY <1>1\nInit == x = 2147483647",
+    );
+    expect(result.status).toBe("success");
+  });
+});
+
 describe("name resolution matches SANY", () => {
   const checkSource = (source: string) =>
     check({
@@ -820,6 +897,19 @@ describe("name resolution matches SANY", () => {
       "EXTENDS Naturals\nfoo == 1\nUSE foo, foo > 0 DEF foo\nASSUME A == foo \\in Nat\nHIDE A\nTHEOREM T == foo = 1\nHIDE T DEF foo\nTHEOREM U == ASSUME NEW n \\in Nat PROVE n >= 0\n<1>1. n >= 0\n  OBVIOUS\n<1>2. HIDE <1>1, T\n<1> QED\n  BY <1>1",
     );
     expect(result.status).toBe("success");
+  });
+
+  it("reads instance-qualified subscripts", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE x\nvars == <<x>>\nNext == x' = (x + 1) % 3\n====\nI == INSTANCE Inner\nSpec == x = 0 /\\ [][I!Next]_I!vars /\\ WF_I!vars(I!Next)\nProp == <>(x = 2)\nTHEOREM Spec => WF_I!vars(I!Next)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      4,
+      3,
+    ]);
   });
 
   it("defines prefix, postfix, and <: operators", async () => {
