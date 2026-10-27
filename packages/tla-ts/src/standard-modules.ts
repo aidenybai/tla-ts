@@ -1,5 +1,6 @@
 import { TlaEvaluationError, TlaModuleError } from "./errors";
 import {
+  createOverflowError,
   defineArithmetic,
   defineBinary,
   defineComparison,
@@ -10,9 +11,9 @@ import {
   getElements,
   getNumber,
   getOperator,
-  getSequence,
   getSet,
   getValue,
+  isOutOfRange,
 } from "./builtins";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
@@ -22,7 +23,6 @@ import { createRandomizationOperators } from "./randomization";
 import { createPossibleOperators, createTlcExtOperators } from "./tlc-ext";
 import { createTlcOperators } from "./tlc-module";
 import {
-  checkInteger,
   createSet,
   createSortedSet,
   createTuple,
@@ -33,6 +33,7 @@ import {
   intersectSorted,
   isElementOf,
   isEmptySet,
+  getSequenceElements,
   isEnumerable,
   isFunctionValue,
   isSetValue,
@@ -72,12 +73,12 @@ export const CORE_OPERATORS: Builtin[] = [
   defineOperator("\\/", 2, (args) => getBoolean(args, 0, "\\/") || getBoolean(args, 1, "\\/")),
   defineOperator("=>", 2, (args) => !getBoolean(args, 0, "=>") || getBoolean(args, 1, "=>")),
   defineOperator("\\in", 2, (args) =>
-    isElementOf(getValue(args, 0, "\\in"), getSet(args, 1, "\\in")),
+    isElementOf(getValue(args, 0, "\\in"), getValue(args, 1, "\\in")),
   ),
   defineOperator(
     "\\notin",
     2,
-    (args) => !isElementOf(getValue(args, 0, "\\notin"), getSet(args, 1, "\\notin")),
+    (args) => !isElementOf(getValue(args, 0, "\\notin"), getValue(args, 1, "\\notin")),
   ),
   defineOperator("\\subseteq", 2, (args) => {
     const left = getSet(args, 0, "\\subseteq");
@@ -149,18 +150,26 @@ const NATURALS_OPERATORS: Builtin[] = [
   defineArithmetic("-", (left, right) => left - right),
   defineArithmetic("*", (left, right) => left * right),
   defineArithmetic("^", (base, exponent) => {
-    if (exponent < 0 || (base === 0 && exponent === 0)) {
-      throw new TlaModuleError(`${base}^${exponent} is undefined`);
+    if (exponent < 0) {
+      throw new TlaModuleError(
+        `The second argument of ^ should be a natural number, but instead it is:\n${exponent}`,
+      );
     }
+    if (base === 0 && exponent === 0) throw new TlaModuleError("0^0 is undefined.");
     return base ** exponent;
   }),
   defineArithmetic("\\div", (left, right) => {
-    if (right === 0) throw new TlaModuleError(`Division by zero in ${left} \\div 0`);
-    return Math.floor(left / right);
+    if (right === 0) throw new TlaModuleError("The second argument of \\div is 0.");
+    const quotient = Math.floor(left / right);
+    if (isOutOfRange(quotient)) throw createOverflowError(`${left} \\div ${right}`);
+    return quotient;
   }),
   defineArithmetic("%", (left, right) => {
-    if (right <= 0)
-      throw new TlaModuleError(`The second argument of % must be positive, but was ${right}`);
+    if (right <= 0) {
+      throw new TlaModuleError(
+        `The second argument of % should be a positive number, but instead it is:\n${right}`,
+      );
+    }
     return ((left % right) + right) % right;
   }),
   defineComparison("<", (left, right) => left < right),
@@ -176,50 +185,82 @@ const NATURALS_OPERATORS: Builtin[] = [
 
 const INTEGERS_OPERATORS: Builtin[] = [
   defineConstant("Int", { kind: "InfiniteSet", name: "Int" }),
-  defineOperator("-.", 1, (args) => checkInteger(-getNumber(args, 0, "-"))),
+  defineOperator("-.", 1, (args) => {
+    const value = getNumber(args, 0, "-");
+    if (isOutOfRange(-value)) throw createOverflowError(`-${value}`);
+    return -value;
+  }),
 ];
 
-const getSequenceOrString = (args: BuiltinArgument[], index: number, name: string) => {
-  const value = getValue(args, index, name);
-  return typeof value === "string" ? value : getSequence(args, index, name);
+const getSequenceArgument = (args: BuiltinArgument[], index: number, message: string) => {
+  const value = getValue(args, index, message);
+  const elements = getSequenceElements(value);
+  if (!elements) throw new TlaModuleError(`${message}\n${formatValue(value)}`);
+  return elements;
 };
+
+const getSequenceOrString = (args: BuiltinArgument[], index: number, message: string) => {
+  const value = getValue(args, index, message);
+  return typeof value === "string" ? value : getSequenceArgument(args, index, message);
+};
+
+const getSequenceMessage = (position: string, name: string) =>
+  `The ${position}argument of ${name} should be a sequence, but instead it is:`;
+
+const getEvaluatingMessage = (form: string, kind: string) =>
+  `Evaluating an expression of the form ${form} when s is not a ${kind}:`;
 
 const SEQUENCES_OPERATORS: Builtin[] = [
   defineOperator("Seq", 1, (args) => ({ kind: "SequenceSet", base: getSet(args, 0, "Seq") })),
-  defineOperator("Len", 1, (args) => getSequenceOrString(args, 0, "Len").length),
+  defineOperator(
+    "Len",
+    1,
+    (args) => getSequenceOrString(args, 0, getSequenceMessage("", "Len")).length,
+  ),
   defineOperator("\\o", 2, (args) => {
-    const left = getSequenceOrString(args, 0, "\\o");
-    const right = getSequenceOrString(args, 1, "\\o");
-    if (typeof left === "string" && typeof right === "string") return rankString(left + right);
-    if (typeof left === "string" || typeof right === "string") {
-      throw new TlaModuleError("\\o cannot concatenate a string with a sequence");
+    const left = getSequenceOrString(args, 0, getEvaluatingMessage("s \\o t", "sequence"));
+    if (typeof left !== "string") {
+      const right = getSequenceArgument(args, 1, getEvaluatingMessage("t \\o s", "sequence"));
+      return createTuple([...left, ...right]);
     }
-    return createTuple([...left, ...right]);
+    const right = getValue(args, 1, "\\o");
+    if (typeof right !== "string") {
+      throw new TlaModuleError(
+        `${getEvaluatingMessage("t \\o s", "string")}\n${formatValue(right)}`,
+      );
+    }
+    return rankString(left + right);
   }),
   defineOperator("Append", 2, (args) =>
-    createTuple([...getSequence(args, 0, "Append"), getValue(args, 1, "Append")]),
+    createTuple([
+      ...getSequenceArgument(args, 0, getEvaluatingMessage("Append(s, v)", "sequence")),
+      getValue(args, 1, "Append"),
+    ]),
   ),
   defineOperator("Head", 1, (args) => {
-    const elements = getSequence(args, 0, "Head");
+    const elements = getSequenceArgument(args, 0, getSequenceMessage("", "Head"));
     if (elements.length === 0)
-      throw new TlaModuleError("Attempted to apply Head to the empty sequence");
+      throw new TlaModuleError("Attempted to apply Head to the empty sequence.");
     return elements[0];
   }),
   defineOperator("Tail", 1, (args) => {
-    const sequence = getSequenceOrString(args, 0, "Tail");
+    const sequence = getSequenceOrString(args, 0, getSequenceMessage("", "Tail"));
     if (sequence.length === 0)
-      throw new TlaModuleError("Attempted to apply Tail to the empty sequence");
+      throw new TlaModuleError("Attempted to apply Tail to the empty sequence.");
     return typeof sequence === "string"
       ? rankString(sequence.slice(1))
       : createTuple(sequence.slice(1));
   }),
   defineOperator("SubSeq", 3, (args) => {
-    const sequence = getSequenceOrString(args, 0, "SubSeq");
+    const sequence = getSequenceOrString(args, 0, getSequenceMessage("first ", "SubSeq"));
     const start = getNumber(args, 1, "SubSeq");
     const end = getNumber(args, 2, "SubSeq");
     if (start > end) return typeof sequence === "string" ? rankString("") : createTuple([]);
-    if (start < 1 || end > sequence.length) {
-      throw new TlaModuleError(`SubSeq bounds ${start}..${end} are outside 1..${sequence.length}`);
+    const outOfDomain = start < 1 ? ["second", start] : end > sequence.length ? ["third", end] : [];
+    if (outOfDomain.length > 0) {
+      throw new TlaModuleError(
+        `The ${outOfDomain[0]} argument of SubSeq must be in the domain of its first argument:\n${formatValue(getValue(args, 0, "SubSeq"))}\n, but instead it is\n${outOfDomain[1]}`,
+      );
     }
     return typeof sequence === "string"
       ? rankString(sequence.slice(start - 1, end))
@@ -228,10 +269,13 @@ const SEQUENCES_OPERATORS: Builtin[] = [
   defineHigherOrderOperator("SelectSeq", 2, (args) => {
     const test = getOperator(args, 1, "SelectSeq");
     return createTuple(
-      getSequence(args, 0, "SelectSeq").filter((element) => {
+      getSequenceArgument(args, 0, getSequenceMessage("first ", "SelectSeq")).filter((element) => {
         const result = test.call([element]);
-        if (typeof result !== "boolean")
-          throw new TlaModuleError("The test of SelectSeq must return a boolean");
+        if (typeof result !== "boolean") {
+          throw new TlaModuleError(
+            `The second argument of SelectSeq should be a operator, but instead it is:\n${formatValue(result)}`,
+          );
+        }
         return result;
       }),
     );
@@ -241,10 +285,13 @@ const SEQUENCES_OPERATORS: Builtin[] = [
 const FINITE_SETS_OPERATORS: Builtin[] = [
   defineOperator("IsFiniteSet", 1, (args) => isEnumerable(getSet(args, 0, "IsFiniteSet"))),
   defineOperator("Cardinality", 1, (args) => {
-    const set = getSet(args, 0, "Cardinality");
-    if (isEmptySet(set)) return 0;
-    if (!isEnumerable(set))
-      throw new TlaModuleError(`Cardinality of the infinite set ${formatValue(set)}`);
+    const set = getValue(args, 0, "Cardinality");
+    if (isSetValue(set) && isEmptySet(set)) return 0;
+    if (!isSetValue(set) || !isEnumerable(set)) {
+      throw new TlaModuleError(
+        `Attempted to compute cardinality of the value\n${formatValue(set)}`,
+      );
+    }
     return getCardinality(set);
   }),
 ];

@@ -1,13 +1,14 @@
 import { TlaEvaluationError, TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
 import {
-  checkInteger,
   formatValue,
   getSequenceElements,
   isEnumerable,
   isFunctionValue,
   isSetValue,
   toFiniteFunction,
+  MAXIMUM_INTEGER,
+  MINIMUM_INTEGER,
   toFiniteSet,
   type Value,
 } from "./values";
@@ -202,13 +203,33 @@ export const defineBinary = (
   evaluateBinary: compute,
 });
 
+export const isOutOfRange = (value: number) => value > MAXIMUM_INTEGER || value < MINIMUM_INTEGER;
+
+export const createOverflowError = (computation: string) =>
+  new TlaModuleError(`Overflow when computing ${computation}`);
+
 export const defineArithmetic = (name: string, compute: (left: number, right: number) => number) =>
-  defineBinary(name, (left, right) =>
-    checkInteger(compute(toNumber(left, name), toNumber(right, name))),
-  );
+  defineBinary(name, (left, right) => {
+    const leftNumber = toNumber(left, name);
+    const rightNumber = toNumber(right, name);
+    const result = compute(leftNumber, rightNumber);
+    if (isOutOfRange(result)) throw createOverflowError(`${leftNumber}${name}${rightNumber}`);
+    return result;
+  });
+
+const getIntegerArgument = (value: Value, position: string, name: string) => {
+  if (typeof value !== "number") {
+    throw new TlaModuleError(
+      `The ${position} argument of ${name} should be an integer, but instead it is:\n${formatValue(value)}`,
+    );
+  }
+  return value;
+};
 
 export const defineComparison = (name: string, compare: (left: number, right: number) => boolean) =>
-  defineBinary(name, (left, right) => compare(toNumber(left, name), toNumber(right, name)));
+  defineBinary(name, (left, right) =>
+    compare(getIntegerArgument(left, "first", name), getIntegerArgument(right, "second", name)),
+  );
 
 export const defineLazyOperator = (
   name: string,
