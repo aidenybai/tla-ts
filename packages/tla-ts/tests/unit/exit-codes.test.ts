@@ -62,6 +62,11 @@ describe("CLI exit codes match TLC", () => {
     expect(await getFailureExitCode(definitions, "SPECIFICATION Spec\nPROPERTY Prop")).toBe(255);
   });
 
+  it("exits with 255 for a temporal quantifier over variables in the specification", async () => {
+    const definitions = `${STEP}\nSpec == Init /\\ [][Next]_x /\\ \\EE y : y = x`;
+    expect(await getFailureExitCode(definitions, "SPECIFICATION Spec")).toBe(255);
+  });
+
   it("exits with 75 when the configuration has no next-state relation", async () => {
     expect(await getFailureExitCode("Init == x = 0", "INIT Init")).toBe(75);
   });
