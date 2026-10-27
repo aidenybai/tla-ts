@@ -991,6 +991,16 @@ export const getIntervalDomain = (length: number): Value[] => {
   return domain;
 };
 
+// The elements of an interval for a caller that only iterates them, so they need not record
+// the interval for DOMAIN.
+export const getIntervalElements = (value: IntervalValue): Value[] => {
+  getCardinality(value);
+  if (value.low === 1 && value.high >= 1) return getIntervalDomain(value.high);
+  const elements: number[] = [];
+  for (let element = value.low; element <= value.high; element++) elements.push(element);
+  return elements;
+};
+
 const isIntervalDomain = (domain: Value[]) =>
   domain.length > 0 && (domain === intervalDomains[domain.length] || intervalArrays.has(domain));
 
@@ -1157,11 +1167,8 @@ const enumerateSet = (value: Value): Value[] => {
     case "MixedSet":
       return sortLikeTlc(value.elements);
     case "Interval": {
-      getCardinality(value);
-      if (value.low === 1 && value.high >= 1) return getIntervalDomain(value.high);
-      const elements: number[] = [];
-      for (let element = value.low; element <= value.high; element++) elements.push(element);
-      intervalArrays.set(elements, value);
+      const elements = getIntervalElements(value);
+      if (elements !== intervalDomains[elements.length]) intervalArrays.set(elements, value);
       return elements;
     }
     case "Subset": {

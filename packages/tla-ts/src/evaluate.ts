@@ -31,6 +31,7 @@ import {
   formatValue,
   getDomain,
   getFunctionDomain,
+  getIntervalElements,
   getSequenceElements,
   getValueHash,
   isEnumerable,
@@ -417,7 +418,9 @@ export const getEnumeratedElements = (set: Value, expression: Expression) => {
         : `TLC encountered the non-enumerable quantifier bound\n${text}\n${describeRange(expression)}\n${explanation}`,
     );
   }
-  return toFiniteSet(set).elements;
+  return typeof set === "object" && set.kind === "Interval"
+    ? getIntervalElements(set)
+    : toFiniteSet(set).elements;
 };
 
 export const forEachBinding = (
