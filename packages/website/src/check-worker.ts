@@ -36,6 +36,13 @@ self.onmessage = async (event: MessageEvent<CheckRequest>) => {
       config: event.data.config,
       onPrint: (text) => output.push(text),
     });
+    if (result.failure) {
+      return respond({
+        kind: "error",
+        name: "TlaEvaluationError",
+        message: result.failure.message,
+      });
+    }
     respond({
       kind: "result",
       status: result.status,

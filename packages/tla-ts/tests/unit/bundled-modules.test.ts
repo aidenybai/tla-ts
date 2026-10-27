@@ -9,13 +9,15 @@ const checkInit = (init: string) =>
 
 describe("bundled modules match TLC's sources", () => {
   it("reports errors at the lines of TLC's Reals and RealTime modules", async () => {
-    await expect(checkInit("Infinity = 0")).rejects.toThrow("at line 17, column 13");
-    await expect(checkInit("RTBound(x' = x, x, 0, 1)")).rejects.toThrow("at line 20, column 6");
+    expect((await checkInit("Infinity = 0")).failure?.message).toContain("at line 17, column 13");
+    expect((await checkInit("RTBound(x' = x, x, 0, 1)")).failure?.message).toContain(
+      "at line 20, column 6",
+    );
   });
 
   it("evaluates the definitions of TLC's Reals and Toolbox modules", async () => {
     expect((await checkInit('Real = "Reals"')).status).toBe("success");
-    await expect(checkInit("_TETrace = 0")).rejects.toThrow(
+    expect((await checkInit("_TETrace = 0")).failure?.message).toContain(
       "Attempted to enumerate S \\ T when S:\nNat\nis not enumerable.",
     );
   });

@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
-import { type CheckResult, type CheckStatus } from "./check";
+import { type CheckResult, type CheckStatus, type TraceStep } from "./check";
 import { parseConfig } from "./config";
-import { TlaConfigError, TlaError, TlaEvaluationError, TlaSyntaxError } from "./errors";
-import { EXIT_STATUS, getExitCode } from "./exit-codes";
+import { getErrorExitCode, TlaError } from "./errors";
+import { EXIT_STATUS } from "./exit-codes";
 import { check } from "./parallel";
 import { prettyPrint } from "./pretty-print";
-import { formatValue } from "./values";
+import { formatValue, type Value } from "./values";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: 0,
@@ -17,17 +17,8 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   "property-violation": 12,
   "liveness-violation": 13,
   "postcondition-violation": 10,
+  error: EXIT_STATUS.error,
 };
-
-export const getErrorExitCode = (error: TlaError) =>
-  getExitCode(error) ??
-  (error instanceof TlaSyntaxError
-    ? EXIT_STATUS.specParseError
-    : error instanceof TlaConfigError
-      ? EXIT_STATUS.configParseError
-      : error instanceof TlaEvaluationError
-        ? EXIT_STATUS.specEvaluationFailure
-        : EXIT_STATUS.error);
 
 const USAGE =
   "Usage: tla-ts <Spec.tla> [-config <Spec.cfg>] [-deadlock] [-seed <num>] [-workers <count|auto>]";
@@ -44,10 +35,36 @@ const getWorkerCount = (args: string[]) => {
     : Math.max(1, Number.parseInt(value ?? "1", 10) || 1);
 };
 
+const printState = (state: Record<string, Value>) => {
+  const entries = Object.entries(state);
+  entries.forEach(([name, value]) =>
+    console.log(
+      `${entries.length === 1 ? "" : "/\\ "}${name} = ${prettyPrint(formatValue(value))}`,
+    ),
+  );
+  console.log("");
+};
+
+const printTrace = (trace: TraceStep[]) => {
+  if (trace.length > 0) console.log("Error: The behavior up to this point is:");
+  trace.forEach((step, index) => {
+    console.log(`State ${index + 1}: <${step.action ?? "Initial predicate"}>`);
+    printState(step.state);
+  });
+};
+
 const printResult = (result: CheckResult) => {
-  if (result.violation) {
+  if (result.failure) {
+    console.log(`Error: ${result.failure.message}`);
+    if (result.failure.initialState) {
+      console.log("While working on the initial state:");
+      printState(result.failure.initialState);
+    }
+    printTrace(result.failure.trace);
+  } else if (result.violation) {
     const headline = {
       success: "",
+      error: "",
       "assumption-violation": result.violation.message
         ? `Error: Evaluating assumption ${result.violation.name} failed.\n${result.violation.message}`
         : `Error: Assumption ${result.violation.name} is false.`,
@@ -59,17 +76,7 @@ const printResult = (result: CheckResult) => {
     }[result.status];
     if (result.violation.counts) console.log(result.violation.counts);
     console.log(headline);
-    if (result.violation.trace.length > 0) console.log("Error: The behavior up to this point is:");
-    result.violation.trace.forEach((step, index) => {
-      console.log(`State ${index + 1}: <${step.action ?? "Initial predicate"}>`);
-      const entries = Object.entries(step.state);
-      entries.forEach(([name, value]) =>
-        console.log(
-          `${entries.length === 1 ? "" : "/\\ "}${name} = ${prettyPrint(formatValue(value))}`,
-        ),
-      );
-      console.log("");
-    });
+    printTrace(result.violation.trace);
     const loopStart = result.violation.loopStart;
     if (loopStart !== undefined) {
       const isStuttering = loopStart === result.violation.trace.length - 1;
@@ -140,7 +147,7 @@ const run = async (args: string[]) => {
     },
   });
   printResult(result);
-  return EXIT_CODES[result.status];
+  return result.failure?.exitCode ?? EXIT_CODES[result.status];
 };
 
 export const runCli = async () => {

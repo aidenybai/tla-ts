@@ -50,7 +50,7 @@ describe("TLCExt operators match TLC", () => {
   });
 
   it("fails PickSuccessor without a complete successor state", async () => {
-    await expect(checkFixture("Pick", "PickIncomplete")).rejects.toThrow(
+    expect((await checkFixture("Pick", "PickIncomplete")).failure?.message).toContain(
       'Cannot invoke "tlc2.value.IValue.fingerPrint(long)" because "minVals[i]" is null',
     );
   });

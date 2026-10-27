@@ -43,6 +43,13 @@ export const checkModel = async (specPath: string, configPath: string): Promise<
     seed: TLC_SEED,
   });
   const milliseconds = Math.round(performance.now() - startedAt);
+  if (result.failure) {
+    return {
+      status: "error",
+      error: `TlaEvaluationError: ${result.failure.message}`,
+      milliseconds,
+    };
+  }
   if (result.status === "success") {
     return {
       status: result.status,
