@@ -55,7 +55,7 @@ export interface Lasso {
   cycle: number[];
 }
 
-export interface SafetyViolation {
+interface SafetyViolation {
   name: string;
   path: number[];
 }

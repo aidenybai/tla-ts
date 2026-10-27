@@ -13,7 +13,7 @@ import { getChildren } from "./evaluate";
 import { mapChildren } from "./instances";
 import { STANDARD_LEVELS } from "./standard-levels";
 
-export interface LevelData {
+interface LevelData {
   level: number;
   params: Set<string>;
   constraints: Map<string, number>;
@@ -31,7 +31,7 @@ export interface OperatorLevels extends LevelData {
   nonLeibniz: Set<number>;
 }
 
-export interface LevelContext {
+interface LevelContext {
   constants: Set<string>;
   variables: Set<string>;
   getDefinition: (name: string) => Definition | undefined;
@@ -43,7 +43,7 @@ type ScopeEntry =
 
 export type Scope = Map<string, ScopeEntry>;
 
-export type Resolved =
+type Resolved =
   | { kind: "Declared"; name: string; level: number; arity: number }
   | { kind: "Defined"; levels: OperatorLevels };
 
@@ -60,7 +60,7 @@ const SEPARATOR = "\u0000";
 export const getArgumentKey = (operator: string, index: number) =>
   `${operator}${SEPARATOR}${index}`;
 
-export const getArgumentParamKey = (operator: string, index: number, param: string) =>
+const getArgumentParamKey = (operator: string, index: number, param: string) =>
   `${operator}${SEPARATOR}${index}${SEPARATOR}${param}`;
 
 export const parseArgumentParamKey = (key: string) => {

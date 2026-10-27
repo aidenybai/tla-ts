@@ -218,7 +218,7 @@ export const mapChildren = (
   }
 };
 
-export interface Instantiation {
+interface Instantiation {
   params: OperatorParam[];
   substitutions: Map<string, Expression>;
   variables: Set<string>;

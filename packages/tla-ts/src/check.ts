@@ -103,7 +103,7 @@ export interface Violation {
   unwitnessed?: Postcondition;
 }
 
-export interface Postcondition {
+interface Postcondition {
   name: string;
   message: string;
   counts?: string;
@@ -133,17 +133,17 @@ export interface CheckResult {
   fingerprintDistance: bigint | undefined;
 }
 
-export interface NamedExpression {
+interface NamedExpression {
   name: string;
   expression: Expression;
   scope: Scope | undefined;
 }
 
-export interface StateCheck extends NamedExpression {
+interface StateCheck extends NamedExpression {
   variables: number[] | undefined;
 }
 
-export interface ActionProperty {
+interface ActionProperty {
   name: string;
   box: Expression;
   action: Expression;
@@ -151,14 +151,14 @@ export interface ActionProperty {
   scope: Scope | undefined;
 }
 
-export interface Specification {
+interface Specification {
   init: Expression | undefined;
   next: Expression | undefined;
   scope: Scope | undefined;
   temporals: ScopedExpression[];
 }
 
-export interface Properties {
+interface Properties {
   initialPredicates: NamedExpression[];
   invariants: NamedExpression[];
   actionProperties: ActionProperty[];
@@ -298,7 +298,7 @@ const isConstantTrue = (item: ScopedExpression, environment: Environment, usage:
   return true;
 };
 
-export const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
+const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
   if (config.specification === undefined) {
     const getOperator = (name: string | undefined, description: string) => {
       if (name === undefined) return undefined;
@@ -408,7 +408,7 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
   };
 };
 
-export const getProperties = (config: ModelConfig, environment: Environment): Properties => {
+const getProperties = (config: ModelConfig, environment: Environment): Properties => {
   const properties: Properties = {
     initialPredicates: [],
     invariants: [],
@@ -452,7 +452,7 @@ export const getProperties = (config: ModelConfig, environment: Environment): Pr
   return properties;
 };
 
-export const getNamedExpressions = (
+const getNamedExpressions = (
   kind: string,
   names: string[],
   environment: Environment,
@@ -483,7 +483,7 @@ const getPossiblePredicates = (names: string[], environment: Environment): Named
     return { name, expression, scope: undefined };
   });
 
-export const getStateChecks = (named: NamedExpression[], environment: Environment): StateCheck[] =>
+const getStateChecks = (named: NamedExpression[], environment: Environment): StateCheck[] =>
   named.flatMap((item) =>
     getConjuncts(item.expression, environment).map((expression) => ({
       name: item.name,
@@ -493,11 +493,7 @@ export const getStateChecks = (named: NamedExpression[], environment: Environmen
     })),
   );
 
-export const isUnchangedFor = (
-  stateCheck: StateCheck,
-  state: Value[],
-  parent: Value[] | undefined,
-) => {
+const isUnchangedFor = (stateCheck: StateCheck, state: Value[], parent: Value[] | undefined) => {
   const variables = stateCheck.variables;
   if (!parent || !variables) return false;
   for (let index = 0; index < variables.length; index++) {
@@ -534,7 +530,7 @@ const hasWideString = (config: ModelConfig, environment: Environment) =>
         definition.bounds.some((bound) => isWideExpression(bound.set))),
   );
 
-export interface Search {
+interface Search {
   properties: Properties;
   spec: Specification;
   getFingerprintState: (state: Value[]) => Value[];

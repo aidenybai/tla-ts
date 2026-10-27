@@ -80,7 +80,7 @@ export interface Closure {
   scope: Scope | undefined;
 }
 
-export type Operator = Closure | Builtin | OperatorValue;
+type Operator = Closure | Builtin | OperatorValue;
 
 export interface Thunk {
   kind: "Thunk";
@@ -91,10 +91,7 @@ export interface Thunk {
   cache: Value | undefined;
 }
 
-export type Binding =
-  | { kind: "Value"; value: Value }
-  | Thunk
-  | { kind: "Operator"; operator: Operator };
+type Binding = { kind: "Value"; value: Value } | Thunk | { kind: "Operator"; operator: Operator };
 
 export interface Scope {
   name: string;
@@ -227,11 +224,7 @@ export const bindValue = (scope: Scope | undefined, name: string, value: Value):
   parent: scope,
 });
 
-export const bindPattern = (
-  scope: Scope | undefined,
-  pattern: BoundPattern,
-  value: Value,
-): Scope => {
+const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Value): Scope => {
   if (pattern.kind === "Name") return bindValue(scope, pattern.name, value);
   const elements = getSequenceElements(value);
   if (!elements || elements.length !== pattern.names.length) {
@@ -662,11 +655,7 @@ const evaluateOperatorArgument = (expression: Expression, context: Context): Ope
   return operator;
 };
 
-export const callOperatorWithValues = (
-  operator: Operator,
-  args: Value[],
-  context: Context,
-): Value => {
+const callOperatorWithValues = (operator: Operator, args: Value[], context: Context): Value => {
   if (operator.kind === "Builtin") return operator.evaluate(args, context);
   if (operator.kind === "Operator") return operator.call(args);
   const scope = operator.params.reduce<Scope | undefined>(
@@ -881,7 +870,7 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
 export const isTlcInteger = (value: number) =>
   Number.isInteger(value) && value <= 2147483647 && value >= -2147483648;
 
-export const IMPURE_BUILTINS = new Set([
+const IMPURE_BUILTINS = new Set([
   "Print",
   "PrintT",
   "Assert",

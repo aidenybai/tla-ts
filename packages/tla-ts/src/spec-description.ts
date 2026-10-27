@@ -123,7 +123,7 @@ const isEvaluable = (expression: Expression, environment: Environment) => {
   }
 };
 
-export const isConstantValue = (definition: Definition | undefined, environment: Environment) =>
+const isConstantValue = (definition: Definition | undefined, environment: Environment) =>
   definition?.kind === "Operator" &&
   definition.params.length === 0 &&
   definition.body.kind !== "Number" &&
