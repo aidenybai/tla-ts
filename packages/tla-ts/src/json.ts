@@ -74,13 +74,13 @@ const toSetJson = (value: Value, method: string) => {
 };
 
 const toFunctionJson = (value: Value, method: string) => {
-  const fn = toFiniteFunction(value);
-  const elements = getSequenceElements(fn);
+  const functionValue = toFiniteFunction(value);
+  const elements = getSequenceElements(functionValue);
   if (elements) return `[${elements.map((element) => toJson(element, method)).join(",")}]`;
-  return `{${fn.domain
+  return `{${functionValue.domain
     .map(
       (key, index) =>
-        `${toJsonString(typeof key === "string" ? key : formatValue(key))}:${toJson(fn.range[index], method)}`,
+        `${toJsonString(typeof key === "string" ? key : formatValue(key))}:${toJson(functionValue.range[index], method)}`,
     )
     .join(",")}}`;
 };

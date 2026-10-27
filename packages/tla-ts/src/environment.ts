@@ -810,15 +810,19 @@ export const createEnvironment = (
   const tables = new Map<string, { name: string; module?: string; rows: [Value[], Value][] }>();
   config.constants.forEach((assignment) => {
     if (assignment.args === undefined) return;
-    const id = `${assignment.module ?? ""}!${assignment.name}`;
-    const table = tables.get(id) ?? { name: assignment.name, module: assignment.module, rows: [] };
+    const tableKey = `${assignment.module ?? ""}!${assignment.name}`;
+    const table = tables.get(tableKey) ?? {
+      name: assignment.name,
+      module: assignment.module,
+      rows: [],
+    };
     if (table.rows.length > 0 && table.rows[0][0].length !== assignment.args.length) {
       throw new TlaConfigError(
         `The arity of the operator ${assignment.name} is inconsistent in the configuration file.`,
       );
     }
     table.rows.push([assignment.args.map(toValue), toValue(assignment.value)]);
-    tables.set(id, table);
+    tables.set(tableKey, table);
   });
   tables.forEach((table) =>
     getScopedKeys(table).forEach((key) =>

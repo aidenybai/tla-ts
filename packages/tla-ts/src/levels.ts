@@ -257,8 +257,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       const index = operator.formals.findIndex((param) => param.name === formal);
       return index === -1 ? undefined : operands[index];
     };
-    const hasCondition = (i: number, j: number, k: number) =>
-      operator.conditions.has(getConditionKey(i, j, k));
+    const hasCondition = (operandIndex: number, otherIndex: number, argumentIndex: number) =>
+      operator.conditions.has(getConditionKey(operandIndex, otherIndex, argumentIndex));
     const data = createData(
       Math.max(
         operator.level,
@@ -291,14 +291,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         if (!isBound(param)) putConstraint(data.constraints, param, getMaxLevel(operator, index));
       }),
     );
-    operands.forEach((operand, i) => {
+    operands.forEach((operand, operandIndex) => {
       const argument = operand.operator;
       if (!argument) return;
-      operands.forEach((other, j) =>
-        argument.formals.forEach((_, k) => {
-          if (!hasCondition(i, j, k)) return;
+      operands.forEach((other, otherIndex) =>
+        argument.formals.forEach((_, argumentIndex) => {
+          if (!hasCondition(operandIndex, otherIndex, argumentIndex)) return;
           other.data.params.forEach((param) =>
-            putConstraint(data.constraints, param, getMaxLevel(argument, k)),
+            putConstraint(data.constraints, param, getMaxLevel(argument, argumentIndex)),
           );
         }),
       );
@@ -319,22 +319,22 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     argConstraints.forEach((constraints) =>
       constraints.forEach((value, key) => putArgConstraint(data.argConstraints, key, value)),
     );
-    operands.forEach((operand, i) => {
+    operands.forEach((operand, operandIndex) => {
       const declared = operand.declared;
       if (!declared) return;
-      Array.from({ length: declared.arity }, (_, j) =>
+      Array.from({ length: declared.arity }, (_, argumentIndex) =>
         putArgConstraint(
           data.argConstraints,
-          getArgumentKey(declared.name, j),
-          operator.minMaxLevels[i]?.[j] ?? 0,
+          getArgumentKey(declared.name, argumentIndex),
+          operator.minMaxLevels[operandIndex]?.[argumentIndex] ?? 0,
         ),
       );
-      operands.forEach((other, j) =>
-        Array.from({ length: declared.arity }, (_, k) => {
-          if (hasCondition(i, j, k)) {
+      operands.forEach((other, otherIndex) =>
+        Array.from({ length: declared.arity }, (_, argumentIndex) => {
+          if (hasCondition(operandIndex, otherIndex, argumentIndex)) {
             putArgConstraint(
               data.argConstraints,
-              getArgumentKey(declared.name, k),
+              getArgumentKey(declared.name, argumentIndex),
               other.data.level,
             );
           }
@@ -379,14 +379,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         );
       }
     });
-    operands.forEach((operand, i) => {
+    operands.forEach((operand, operandIndex) => {
       const declared = operand.declared;
       if (!declared) return;
-      operands.forEach((other, j) =>
-        Array.from({ length: declared.arity }, (_, k) => {
-          if (!hasCondition(i, j, k)) return;
+      operands.forEach((other, otherIndex) =>
+        Array.from({ length: declared.arity }, (_, argumentIndex) => {
+          if (!hasCondition(operandIndex, otherIndex, argumentIndex)) return;
           other.data.params.forEach((param) =>
-            data.argParams.add(getArgumentParamKey(declared.name, k, param)),
+            data.argParams.add(getArgumentParamKey(declared.name, argumentIndex, param)),
           );
         }),
       );
@@ -765,11 +765,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         ),
       ),
       conditions: new Set(
-        formals.flatMap((operator, i) =>
-          formals.flatMap((param, j) =>
-            Array.from({ length: operator.arity }, (_, k) => k)
-              .filter((k) => data.argParams.has(getArgumentParamKey(operator.name, k, param.name)))
-              .map((k) => getConditionKey(i, j, k)),
+        formals.flatMap((operator, operatorIndex) =>
+          formals.flatMap((param, paramIndex) =>
+            Array.from({ length: operator.arity }, (_, argumentIndex) => argumentIndex)
+              .filter((argumentIndex) =>
+                data.argParams.has(getArgumentParamKey(operator.name, argumentIndex, param.name)),
+              )
+              .map((argumentIndex) => getConditionKey(operatorIndex, paramIndex, argumentIndex)),
           ),
         ),
       ),
