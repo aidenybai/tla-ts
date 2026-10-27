@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
@@ -272,10 +272,32 @@ describe("prove prints obligations as tlapm -N does", () => {
     expect(result.stdout + result.stderr).toBe("");
   });
 
-  it("needs -N while it has no prover backend", () => {
-    const result = runCliWith("obligations", ["prove", "Proofs.tla"]);
+  it("explains that proving needs tlapm when it isn't on the PATH", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", join(import.meta.dirname, "../../src/cli.ts"), "prove", "Proofs.tla"],
+      {
+        cwd: join(FIXTURES, "obligations"),
+        encoding: "utf8",
+        env: { PATH: dirname(process.execPath) },
+      },
+    );
     expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Error: tla-ts has no prover backend yet, so prove needs -N.\n");
+    expect(result.stderr).toBe(
+      "Error: tla-ts prove runs tlapm to prove obligations, but tlapm isn't on your PATH. Install tlapm, or pass -N to only generate the obligations.\n",
+    );
+  });
+
+  const tlapm = (process.env.PATH ?? "")
+    .split(delimiter)
+    .map((directory) => join(directory, "tlapm"))
+    .find((path) => spawnSync(path, ["--version"]).status === 0);
+
+  it.skipIf(tlapm === undefined)("runs tlapm without -N", () => {
+    const result = runCliWith("obligations", ["prove", "--version"]);
+    const expected = spawnSync(tlapm ?? "", ["--version"], { encoding: "utf8" });
+    expect(result.status).toBe(expected.status);
+    expect(result.stdout).toBe(expected.stdout);
   });
 
   it("rejects the tlapm options it doesn't support", () => {

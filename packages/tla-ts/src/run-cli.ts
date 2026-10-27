@@ -7,6 +7,7 @@ import {
   realpathSync,
   writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
 import type { CheckResult, CheckStatus, TraceStep } from "./check";
@@ -45,7 +46,8 @@ const EXIT_CODES: Record<CheckStatus, number> = {
 
 const USAGE = [
   "Usage: tla-ts <Spec.tla|Spec.cfg|glob>... [-config <Spec.cfg>] [-deadlock] [-lncheck <final|default>] [-seed <num>] [-workers <count|auto>]",
-  "       tla-ts prove -N [--toolbox <start> <end>] [--line <num>] [--printallobs] [-I <directory>]... <Module.tla|glob>...",
+  "       tla-ts prove -N [--toolbox <start> <end>] [--line <num>] [--printallobs] [--summary] [--strict] [-I <directory>]... <Module.tla|glob>...",
+  "       tla-ts prove [<tlapm option>]... <Module.tla|glob>...",
 ].join("\n");
 
 const VALUE_FLAGS = new Set(["-config", "-lncheck", "-seed", "-workers"]);
@@ -269,13 +271,30 @@ const runEach = async (paths: string[], runPath: (path: string) => number | Prom
 
 // tlapm installs its standard library, with modules such as TLAPS, at lib/tlapm/stdlib beside
 // bin/tlapm.
-const getTlapmLibrary = () =>
+const getTlapmPaths = () =>
   (process.env.PATH ?? "")
     .split(delimiter)
     .map((directory) => join(directory, "tlapm"))
-    .filter((path) => existsSync(path))
+    .filter((path) => existsSync(path));
+
+const getTlapmLibrary = () =>
+  getTlapmPaths()
     .map((path) => join(dirname(dirname(realpathSync(path))), "lib/tlapm/stdlib"))
     .find((path) => existsSync(path));
+
+const expandGlobs = (paths: string[]) =>
+  paths.flatMap((path) => (GLOB_CHARACTERS.test(path) ? globSync(path).sort() : [path]));
+
+const proveWithTlapm = (args: string[]) => {
+  const tlapm = getTlapmPaths()[0];
+  if (tlapm === undefined) {
+    console.error(
+      "Error: tla-ts prove runs tlapm to prove obligations, but tlapm isn't on your PATH. Install tlapm, or pass -N to only generate the obligations.",
+    );
+    return 1;
+  }
+  return spawnSync(tlapm, expandGlobs(args), { stdio: "inherit" }).status ?? 1;
+};
 
 const readModule = (path: string) =>
   existsSync(path) ? { file: path, source: readFileSync(path, "utf8") } : undefined;
@@ -342,8 +361,8 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
   }
 };
 
-// Mirrors tlapm -N, which generates the obligations without sending them to a backend.
 const prove = (args: string[]) => {
+  if (!args.includes("-N") && !args.includes("--summary")) return proveWithTlapm(args);
   const options: ProveOption[] = [];
   const paths: string[] = [];
   for (let index = 0; index < args.length; index++) {
@@ -375,13 +394,7 @@ const prove = (args: string[]) => {
     return 1;
   }
   const hasOption = (name: string) => options.some((option) => option.name === name);
-  if (!hasOption("-N") && !hasOption("--summary")) {
-    console.error("Error: tla-ts has no prover backend yet, so prove needs -N.");
-    return 1;
-  }
-  const files = paths.flatMap((path) =>
-    GLOB_CHARACTERS.test(path) ? globSync(path).sort() : [path],
-  );
+  const files = expandGlobs(paths);
   const modulePaths = files.map((path) => (path.endsWith(".tla") ? path : `${path}.tla`));
   if (modulePaths.length === 0) {
     console.error(USAGE);
