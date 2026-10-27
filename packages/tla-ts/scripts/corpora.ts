@@ -48,4 +48,26 @@ export const findModels = (): CorpusModel[] =>
       }));
   });
 
+export interface CorpusModule {
+  id: string;
+  path: string;
+}
+
+export const findModules = (): CorpusModule[] =>
+  getCorpora().flatMap((corpus) => {
+    const root = join(CORPORA_DIRECTORY, corpus.name);
+    if (!existsSync(root)) return [];
+    return corpus.paths
+      .flatMap((path) => listFiles(join(root, path)))
+      .filter((path) => path.endsWith(".tla"))
+      .sort()
+      .map((path) => ({ id: `${corpus.name}/${relative(root, path)}`, path }));
+  });
+
+// The libraries that modules in the corpora extend: TLAPS and the Community Modules.
+export const LIBRARY_DIRECTORIES = [
+  join(CORPORA_DIRECTORY, "tlapm/library"),
+  join(CORPORA_DIRECTORY, "community/modules"),
+];
+
 export const getModuleName = (specPath: string) => basename(specPath, ".tla");
