@@ -82,3 +82,18 @@ export const getCallee = (node: ts.Expression, context: Context) =>
 
 export const translateString = (value: string, context: Context) =>
   context.modelValues.get(value) ?? JSON.stringify(value);
+
+// A name, a number, a string, or the @ of an EXCEPT, which costs nothing to repeat.
+const isTrivial = (value: string) => /^(@|[A-Za-z_]\w*'?|-?\d+|"[^"\\]*")$/.test(value);
+
+// Binds a value that an expression repeats to a LET definition, so that TLC evaluates it once.
+export const share = (
+  value: string,
+  base: string,
+  context: Context,
+  use: (shared: string) => string,
+) => {
+  if (isTrivial(value)) return use(value);
+  const name = context.names.getFresh(base);
+  return `(LET ${name} == ${value} IN ${use(name)})`;
+};

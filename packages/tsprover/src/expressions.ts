@@ -13,6 +13,7 @@ import {
   getSymbol,
   getTopLevelDeclaration,
   type HelperDeclaration,
+  share,
   translateString,
 } from "./context";
 import { TsproverError } from "./errors";
@@ -193,8 +194,12 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
     return `Quot(${left}, ${right})`;
   }
   if (method === "abs" && node.arguments.length === 1) {
-    const value = translate(argument);
-    return `IF ${value} < 0 THEN -${value} ELSE ${value}`;
+    return share(
+      translate(argument),
+      "value",
+      context,
+      (value) => `IF ${value} < 0 THEN -${value} ELSE ${value}`,
+    );
   }
   if ((method === "min" || method === "max") && node.arguments.length > 0) {
     const comparison = method === "min" ? "<=" : ">=";
@@ -206,9 +211,15 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
     }
     return node.arguments
       .map(translate)
-      .reduce(
-        (result, inner) =>
-          `IF ${wrap(result)} ${comparison} ${inner} THEN ${wrap(result)} ELSE ${inner}`,
+      .reduce((result, inner) =>
+        share(result, "best", context, (best) =>
+          share(
+            inner,
+            "value",
+            context,
+            (value) => `IF ${best} ${comparison} ${value} THEN ${best} ELSE ${value}`,
+          ),
+        ),
       );
   }
   throw new TsproverError(`Unsupported call: Math.${method}`, node);
@@ -285,8 +296,12 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
   if (kind === ts.SyntaxKind.QuestionQuestionToken) {
     context.prelude.add("Null");
     context.prelude.add("Undefined");
-    const value = translate(node.left);
-    return `IF ${value} \\in {Null, Undefined} THEN ${translate(node.right)} ELSE ${value}`;
+    return share(
+      translate(node.left),
+      "value",
+      context,
+      (value) => `IF ${value} \\in {Null, Undefined} THEN ${translate(node.right)} ELSE ${value}`,
+    );
   }
   if (kind === ts.SyntaxKind.InKeyword) {
     return `${translate(node.left)} \\in DOMAIN ${translate(node.right)}`;
