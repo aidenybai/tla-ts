@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
-import { type CheckResult, type CheckStatus, type TraceStep } from "./check";
+import type { CheckResult, CheckStatus, TraceStep } from "./check";
 import { parseConfig } from "./config";
 import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
@@ -16,13 +16,13 @@ import {
 import { formatValue, type Value } from "./values";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
-  success: 0,
-  "assumption-violation": 10,
-  deadlock: 11,
-  "invariant-violation": 12,
-  "property-violation": 12,
-  "liveness-violation": 13,
-  "postcondition-violation": 10,
+  success: EXIT_STATUS.success,
+  "assumption-violation": EXIT_STATUS.assumptionViolation,
+  deadlock: EXIT_STATUS.deadlock,
+  "invariant-violation": EXIT_STATUS.safetyViolation,
+  "property-violation": EXIT_STATUS.safetyViolation,
+  "liveness-violation": EXIT_STATUS.livenessViolation,
+  "postcondition-violation": EXIT_STATUS.assumptionViolation,
   error: EXIT_STATUS.error,
 };
 
@@ -36,9 +36,7 @@ const getWorkerCount = (args: string[]) => {
   const flag = args.indexOf("-workers");
   if (flag === -1) return 1;
   const value = args[flag + 1];
-  return value === "auto"
-    ? availableParallelism()
-    : Math.max(1, Number.parseInt(value ?? "1", 10) || 1);
+  return value === "auto" ? availableParallelism() : Math.max(1, Number.parseInt(value, 10) || 1);
 };
 
 const printState = (state: Record<string, Value>) => {
@@ -51,9 +49,7 @@ const printState = (state: Record<string, Value>) => {
   console.log("");
 };
 
-const BEHAVIOR_HEADING = "Error: The behavior up to this point is:";
-
-const printTrace = (trace: TraceStep[], heading = BEHAVIOR_HEADING) => {
+const printTrace = (trace: TraceStep[], heading = "Error: The behavior up to this point is:") => {
   if (trace.length > 0) console.log(heading);
   trace.forEach((step, index) => {
     console.log(`State ${index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>`);
@@ -104,11 +100,10 @@ const printResult = (result: CheckResult) => {
     else {
       printTrace(violation.trace, "Error: The following behavior constitutes a counter-example:\n");
       const isStuttering = loopStart === violation.trace.length - 1;
-      const back = violation.loopLabel ? `: <${violation.loopLabel}>\n` : "";
       console.log(
         isStuttering
           ? `State ${loopStart + 2}: Stuttering`
-          : `Back to state ${loopStart + 1}${back}`,
+          : `Back to state ${loopStart + 1}${violation.loopLabel ? `: <${violation.loopLabel}>\n` : ""}`,
       );
     }
     const unwitnessed = violation.unwitnessed;
@@ -205,13 +200,11 @@ const printError = (error: TlaError) => {
 };
 
 export const runCli = async () => {
-  const outcome = { code: 1 };
   try {
-    outcome.code = await run(process.argv.slice(2));
+    process.exitCode = await run(process.argv.slice(2));
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     printError(error);
-    outcome.code = getErrorExitCode(error);
+    process.exitCode = getErrorExitCode(error);
   }
-  process.exitCode = outcome.code;
 };
