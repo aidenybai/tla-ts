@@ -710,7 +710,7 @@ describe("evaluation errors match TLC", () => {
   it("reports an assumption that fails to evaluate and skips axioms", async () => {
     const result = await checkModule("AXIOM 1 = 2\nASSUME CHOOSE n \\in {} : TRUE");
     expect(result.status).toBe("assumption-violation");
-    expect(result.violation?.name).toBe("line 7, column 1");
+    expect(result.violation?.name).toBe("line 7, col 8 to line 7, col 29 of module M");
     expect(result.violation?.message).toMatch(
       /^Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P/,
     );
