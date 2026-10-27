@@ -220,6 +220,8 @@ export const createEnvironment = (
   const linkedList: LinkedModule[] = [];
   const dependencies = new Map<string, Set<string>>();
   const loading: Set<string>[] = [];
+  // The top-level modules being linked, to report a cycle of EXTENDS or INSTANCE.
+  const linking: string[] = [];
 
   const useModule = (name: string, used: Iterable<string>) =>
     loading.forEach((closure) => {
@@ -297,8 +299,16 @@ export const createEnvironment = (
     module === root ? name : `${name}${KEY_SEPARATOR}${id}`;
 
   const linkTopLevel = (parsed: Module) => {
+    const cycleStart = linking.indexOf(parsed.name);
+    if (cycleStart !== -1) {
+      const cycle = [...linking.slice(cycleStart), parsed.name].map((name) => `${name}.tla`);
+      throw new TlaSyntaxError(
+        `Circular dependency among .tla files; dependency cycle is: ${cycle.join(" --> ")}`,
+      );
+    }
     const closure = new Set<string>();
     const nested: Module[] = [];
+    linking.push(parsed.name);
     loading.push(closure);
     const linked = linkModule(parsed, {
       id: parsed.name,
@@ -307,6 +317,7 @@ export const createEnvironment = (
       nested,
     });
     loading.pop();
+    linking.pop();
     const duplicate = nested.find((module) => closure.has(module.name));
     if (duplicate) throw createModuleRedefinedError(duplicate);
     return { linked, closure };
