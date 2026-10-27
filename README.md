@@ -3,7 +3,7 @@
 [![version](https://img.shields.io/npm/v/tla-ts?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
 [![downloads](https://img.shields.io/npm/dt/tla-ts.svg?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
 
-A TLA+ model checker in TypeScript, **2.4× faster than TLC**.
+A TLA+ model checker in TypeScript, **2× faster than TLC**.
 
 tla-ts checks TLA+ specs with the same verdicts, error traces, and state counts as TLC. It runs in Node and in the browser without a JVM. Try it in the [playground](https://tla-ts.aidenybai.com).
 
@@ -139,10 +139,10 @@ Wall time on one worker, including JVM and Node startup. Both checkers report th
 
 | Spec                                                           | Distinct states |     TLC |  tla-ts | Speedup |
 | -------------------------------------------------------------- | --------------: | ------: | ------: | ------: |
-| [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |  4.32 s |  2.01 s |    2.2× |
+| [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |  4.32 s |  2.01 s |      2× |
 | [Dining philosophers](packages/tla-ts/benchmarks/philosophers) |         128,889 |  1.06 s |  0.71 s |    1.5× |
-| [Bounded queue](packages/tla-ts/benchmarks/queue)              |          44,044 |  0.37 s |  0.17 s |    2.2× |
-| 542 conformance models                                         |                 | 986.6 s | 403.3 s |    2.4× |
+| [Bounded queue](packages/tla-ts/benchmarks/queue)              |          44,044 |  0.37 s |  0.17 s |      2× |
+| 542 conformance models                                         |                 | 986.6 s | 403.3 s |      2× |
 
 ## Development
 
