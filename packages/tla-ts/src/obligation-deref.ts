@@ -4,19 +4,20 @@
 import { TlaProofError } from "./errors";
 import {
   at,
+  consAll,
   consSubstitution,
+  getChildren,
   getFresh,
   mapChildren,
+  mapSelectorArgs,
   shift,
   substituteExpr,
-  substituteSelector,
   type Bound,
   type Defn,
   type Expr,
   type Hyp,
   type Param,
   type Selector,
-  type Substitution,
 } from "./obligation-expression";
 
 interface Deref {
@@ -31,9 +32,9 @@ interface Label {
   indices: { name: string; index: number }[];
 }
 
-const BAD: Expr = { kind: "Opaque", name: "$Bad" };
+const BAD = { kind: "Opaque", name: "$Bad" } satisfies Expr;
 
-const isBad = (expression: Expr) => expression.kind === "Opaque" && expression.name === "$Bad";
+const isBad = (expression: Expr) => expression.kind === "Opaque" && expression.name === BAD.name;
 
 const clean = (expression: Expr): Expr => {
   const mapped =
@@ -55,15 +56,8 @@ const cleanParens = (expression: Expr): Expr => {
   return mapChildren(expression, cleanParens);
 };
 
-const hasNegativeIndex = (expression: Expr): boolean => {
-  if (expression.kind === "Ix") return expression.index <= 0;
-  let isFound = false;
-  mapChildren(expression, (inner) => {
-    isFound ||= hasNegativeIndex(inner);
-    return inner;
-  });
-  return isFound;
-};
+const hasNegativeIndex = (expression: Expr): boolean =>
+  expression.kind === "Ix" ? expression.index <= 0 : getChildren(expression).some(hasNegativeIndex);
 
 // Visit.iter's context for each binder, stopping at labels with other names and at declarations
 // in an ASSUME.
@@ -129,24 +123,19 @@ const findLabel = (expression: Expr, label: string, context: Hyp[]): Label | und
       }
       return search(expression.sequent.active, inner);
     }
-    default: {
-      let found: Label | undefined;
-      mapChildren(expression, (inner) => {
-        found ??= search(inner);
-        return inner;
-      });
-      return found;
-    }
+    default:
+      for (const child of getChildren(expression)) {
+        const found = search(child);
+        if (found) return found;
+      }
+      return undefined;
   }
 };
 
 // The first count indices in reverse, and the rest past the parameters.
 const getReversal = (count: number, paramCount: number) =>
-  Array.from({ length: count }, (_item, index): Expr => ({
-    kind: "Ix",
-    index: index + 1,
-  })).reduce<Substitution>(
-    (rest, expression) => consSubstitution(expression, rest),
+  consAll(
+    Array.from({ length: count }, (_item, index): Expr => ({ kind: "Ix", index: index + 1 })),
     shift(count + paramCount),
   );
 
@@ -157,10 +146,6 @@ const getArityMessage = (expected: number, found: number) =>
   `Arity mismatch in subexpression instance.@\nExpected ${expected} argument${expected === 1 ? "" : "s"}, but found${found < expected ? " only" : ""} ${found}.`;
 
 const instantiate = (expression: Expr, args: Expr[]): Expr => {
-  const substitution = args.reduce<Substitution>(
-    (rest, arg) => consSubstitution(arg, rest),
-    shift(0),
-  );
   switch (expression.kind) {
     case "Quant":
     case "Fcn":
@@ -169,7 +154,7 @@ const instantiate = (expression: Expr, args: Expr[]): Expr => {
         throw new TlaProofError(getArityMessage(expression.bounds.length, args.length));
       }
       const body = expression.kind === "SetOf" ? expression.element : expression.body;
-      return substituteExpr(substitution, body);
+      return substituteExpr(consAll(args, shift(0)), body);
     }
     case "Tquant":
       return instantiate(
@@ -212,7 +197,7 @@ const instantiate = (expression: Expr, args: Expr[]): Expr => {
           `Arity mismatch in subexpression instance.@\nExpected 1 argument, but found ${args.length}.`,
         );
       }
-      return substituteExpr(substitution, expression.body);
+      return substituteExpr(consAll(args, shift(0)), expression.body);
     default:
       throw new TlaProofError("Cannot instantiate non-binding expression");
   }
@@ -541,25 +526,23 @@ const deref = (isLabel: boolean, state: Deref, selectors: Selector[]): Expr => {
       definitions: [...state.definitions, ...next.definitions],
       expression: next.expression,
     },
-    next.rest.map((item) => substituteSelector(shift(next.definitions.length), item)),
+    next.rest.map((item) =>
+      mapSelectorArgs(item, (arg) => substituteExpr(shift(next.definitions.length), arg)),
+    ),
   );
 };
 
+const getInitialDeref = (operator: Expr, args: Expr[]): Deref => {
+  if (args.length > 0) {
+    return { params: [], definitions: [], expression: instantiate(operator, args) };
+  }
+  if (operator.kind !== "Lambda") return { params: [], definitions: [], expression: operator };
+  const [params, expression] = abstract(0, operator);
+  return { params, definitions: [], expression };
+};
+
 export const resolveSubexpression = (operator: Expr, args: Expr[], selectors: Selector[]) => {
-  const result = (() => {
-    if (args.length > 0) {
-      return deref(
-        true,
-        { params: [], definitions: [], expression: instantiate(operator, args) },
-        selectors,
-      );
-    }
-    if (operator.kind !== "Lambda") {
-      return deref(true, { params: [], definitions: [], expression: operator }, selectors);
-    }
-    const [params, expression] = abstract(0, operator);
-    return deref(true, { params, definitions: [], expression }, selectors);
-  })();
+  const result = deref(true, getInitialDeref(operator, args), selectors);
   if (isBad(result)) throw new TlaProofError("Could not resolve subexpression reference");
   return result;
 };

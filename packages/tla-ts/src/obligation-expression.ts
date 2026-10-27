@@ -109,7 +109,7 @@ export type Selector =
   | { kind: "Instance"; args: Expr[] }
   | { kind: "Label"; label: string; args: Expr[] };
 
-type ExceptPoint = { kind: "Dot"; field: string } | { kind: "Apply"; expression: Expr };
+export type ExceptPoint = { kind: "Dot"; field: string } | { kind: "Apply"; expression: Expr };
 
 interface ExceptSpec {
   trail: ExceptPoint[];
@@ -127,7 +127,12 @@ export interface Param {
 }
 
 // isAtomic is Expr.Deref.atomic: a resolved subexpression reference, which has no subexpressions.
-export type Expr = ExprCore & { location?: Locus; isAtomic?: boolean };
+interface ExprProps {
+  location?: Locus;
+  isAtomic?: boolean;
+}
+
+export type Expr = ExprCore & ExprProps;
 
 export type ExprCore =
   | { kind: "Ix"; index: number }
@@ -228,13 +233,17 @@ export const consSubstitution = (expression: Expr, rest: Substitution): Substitu
   rest,
 });
 
+// Binds the expressions in order, so the last one becomes index 1.
+export const consAll = (expressions: Expr[], rest: Substitution) =>
+  expressions.reduce((inner, expression) => consSubstitution(expression, inner), rest);
+
 export const bumpBy = (amount: number, substitution: Substitution): Substitution =>
   substitution.kind === "Bump"
     ? { kind: "Bump", amount: substitution.amount + amount, rest: substitution.rest }
     : { kind: "Bump", amount, rest: substitution };
 
 // tlapm's core @@ from, which takes the properties of from.
-export const at = (core: ExprCore, from: { location?: Locus; isAtomic?: boolean }): Expr => {
+export const at = (core: ExprCore, from: ExprProps): Expr => {
   const located = from.location ? { ...core, location: from.location } : core;
   return from.isAtomic ? { ...located, isAtomic: true } : located;
 };
@@ -249,6 +258,64 @@ export const getHypName = (hyp: Hyp) => {
     case "Fact":
       return undefined;
   }
+};
+
+export const applyBuiltin = (builtin: Builtin, args: Expr[], from: ExprProps): Expr =>
+  at({ kind: "Apply", operator: at({ kind: "Internal", builtin }, from), args }, from);
+
+export const exprifySequent = (sequent: Sequent): ExprCore =>
+  sequent.context.length === 0 ? sequent.active : { kind: "Sequent", sequent };
+
+// A persistent context, newest hypothesis first, so binders extend it without copying.
+export interface Scope {
+  hyp: Hyp;
+  rest: Scope | undefined;
+  size: number;
+}
+
+export const adjoin = (scope: Scope | undefined, hyp: Hyp): Scope => ({
+  hyp,
+  rest: scope,
+  size: (scope?.size ?? 0) + 1,
+});
+
+export const adjoinAll = (scope: Scope | undefined, hyps: Hyp[]) =>
+  hyps.reduce<Scope | undefined>(adjoin, scope);
+
+export const getScopeHyps = (scope: Scope | undefined): Hyp[] => {
+  const hyps: Hyp[] = [];
+  for (let current = scope; current; current = current.rest) hyps.push(current.hyp);
+  return hyps.reverse();
+};
+
+export const findNamed = (scope: Scope | undefined, name: string) => {
+  let depth = 0;
+  for (let current = scope; current; current = current.rest) {
+    if (getHypName(current.hyp) === name) return { depth, hyp: current.hyp };
+    depth++;
+  }
+  return undefined;
+};
+
+export const getScopeAt = (scope: Scope | undefined, depth: number) => {
+  let current = scope;
+  for (let index = 0; index < depth && current; index++) current = current.rest;
+  return current;
+};
+
+// Maps the items in order, threading a state from each item to the next.
+export const mapAccumulate = <State, Item, Result>(
+  state: State,
+  items: Item[],
+  step: (state: State, item: Item) => [State, Result],
+): [State, Result[]] => {
+  const results: Result[] = [];
+  const final = items.reduce((current, item) => {
+    const [next, result] = step(current, item);
+    results.push(result);
+    return next;
+  }, state);
+  return [final, results];
 };
 
 export const getFresh = (name: string, level: Level, shape = 0): Hyp => ({
@@ -296,11 +363,7 @@ export const substituteExprs = (substitution: Substitution, expressions: Expr[])
 export const normalizeApply = (operator: Expr, args: Expr[]): ExprCore => {
   if (operator.kind === "Lambda") {
     if (operator.params.length !== args.length) throw new TlaProofError("Arity mismatch");
-    const substitution = args.reduce<Substitution>(
-      (rest, arg) => consSubstitution(arg, rest),
-      shift(0),
-    );
-    return stripProps(substituteExpr(substitution, operator.body));
+    return stripProps(substituteExpr(consAll(args, shift(0)), operator.body));
   }
   if (operator.kind === "Apply") {
     return { kind: "Apply", operator: operator.operator, args: [...operator.args, ...args] };
@@ -320,31 +383,15 @@ export const substituteBounds = (
   bounds: Bound[],
 ): [Substitution, Bound[]] => [
   bumpBy(bounds.length, substitution),
-  bounds.map((bound) =>
-    bound.domain.kind === "Domain"
-      ? {
-          ...bound,
-          domain: {
-            kind: "Domain",
-            expression: substituteExpr(substitution, bound.domain.expression),
-          },
-        }
-      : bound,
-  ),
+  mapBoundDomains(bounds, (domain) => substituteExpr(substitution, domain)),
 ];
-
-export const substituteSelector = (substitution: Substitution, selector: Selector): Selector =>
-  selector.kind === "Instance" || selector.kind === "Label"
-    ? { ...selector, args: substituteExprs(substitution, selector.args) }
-    : selector;
 
 export const substituteDefn = (substitution: Substitution, definition: Defn): Defn => {
   switch (definition.kind) {
     case "Recursive":
-      return definition;
     case "Operator":
     case "Bpragma":
-      return { ...definition, body: substituteExpr(substitution, definition.body) };
+      return mapDefnBody(definition, (body) => substituteExpr(substitution, body));
     case "Instance": {
       const inner = bumpBy(definition.instance.args.length, substitution);
       return {
@@ -361,21 +408,6 @@ export const substituteDefn = (substitution: Substitution, definition: Defn): De
   }
 };
 
-// Each item binds one name for the items after it.
-const substituteEach = <Item>(
-  substitution: Substitution,
-  items: Item[],
-  substituteItem: (substitution: Substitution, item: Item) => Item,
-): [Substitution, Item[]] => {
-  let current = substitution;
-  const result = items.map((item) => {
-    const substituted = substituteItem(current, item);
-    current = bumpBy(1, current);
-    return substituted;
-  });
-  return [current, result];
-};
-
 export const substituteHyp = (substitution: Substitution, hyp: Hyp): Hyp => {
   switch (hyp.kind) {
     case "Fresh":
@@ -390,7 +422,10 @@ export const substituteHyp = (substitution: Substitution, hyp: Hyp): Hyp => {
 };
 
 export const substituteSequent = (substitution: Substitution, sequent: Sequent): Sequent => {
-  const [inner, context] = substituteEach(substitution, sequent.context, substituteHyp);
+  const [inner, context] = mapAccumulate(substitution, sequent.context, (current, hyp) => [
+    bumpBy(1, current),
+    substituteHyp(current, hyp),
+  ]);
   return { context, active: substituteExpr(inner, sequent.active) };
 };
 
@@ -417,9 +452,7 @@ export const substituteExpr = (substitution: Substitution, expression: Expr): Ex
       return {
         ...expression,
         expression: recurse(expression.expression),
-        selectors: expression.selectors.map((selector) =>
-          substituteSelector(substitution, selector),
-        ),
+        selectors: expression.selectors.map((selector) => mapSelectorArgs(selector, recurse)),
       };
     case "Lambda":
       return {
@@ -427,10 +460,10 @@ export const substituteExpr = (substitution: Substitution, expression: Expr): Ex
         body: substituteExpr(bumpBy(expression.params.length, substitution), expression.body),
       };
     case "Let": {
-      const [inner, definitions] = substituteEach(
+      const [inner, definitions] = mapAccumulate(
         substitution,
         expression.definitions,
-        substituteDefn,
+        (current, definition) => [bumpBy(1, current), substituteDefn(current, definition)],
       );
       return { ...expression, definitions, body: substituteExpr(inner, expression.body) };
     }
@@ -507,14 +540,7 @@ export const substituteExpr = (substitution: Substitution, expression: Expr): Ex
       return {
         ...expression,
         function: recurse(expression.function),
-        specs: expression.specs.map((spec) => ({
-          trail: spec.trail.map((point) =>
-            point.kind === "Apply"
-              ? { kind: "Apply", expression: recurse(point.expression) }
-              : point,
-          ),
-          value: recurse(spec.value),
-        })),
+        specs: mapExceptSpecs(expression.specs, recurse),
       };
     case "Dot":
       return { ...expression, expression: recurse(expression.expression) };
@@ -806,145 +832,215 @@ export const isEqualExpr = (left: Expr, right: Expr): boolean => {
   }
 };
 
-// Visit.map for the expression forms @ can appear under; binders do not change @.
-export const mapChildren = (expression: Expr, map: (inner: Expr) => Expr): Expr => {
+export const mapBoundDomains = (bounds: Bound[], map: (domain: Expr) => Expr): Bound[] =>
+  bounds.map((bound) =>
+    bound.domain.kind === "Domain"
+      ? { ...bound, domain: { kind: "Domain", expression: map(bound.domain.expression) } }
+      : bound,
+  );
+
+export const mapSelectorArgs = (selector: Selector, map: (arg: Expr) => Expr): Selector =>
+  selector.kind === "Instance" || selector.kind === "Label"
+    ? { ...selector, args: selector.args.map(map) }
+    : selector;
+
+export const mapExceptSpecs = (specs: ExceptSpec[], map: (inner: Expr) => Expr): ExceptSpec[] =>
+  specs.map((spec) => ({
+    trail: spec.trail.map((point) =>
+      point.kind === "Apply" ? { kind: "Apply", expression: map(point.expression) } : point,
+    ),
+    value: map(spec.value),
+  }));
+
+export const mapDefnBody = (definition: Defn, map: (body: Expr) => Expr): Defn =>
+  definition.kind === "Operator" || definition.kind === "Bpragma"
+    ? { ...definition, body: map(definition.body) }
+    : definition;
+
+const mapHyp = (hyp: Hyp, map: (inner: Expr) => Expr, hyps: "visible" | "all"): Hyp => {
+  if (hyp.kind === "Fresh") return hyp.domain ? { ...hyp, domain: map(hyp.domain) } : hyp;
+  if (hyp.kind === "Flex" || (hyps === "visible" && hyp.visibility === "Hidden")) return hyp;
+  if (hyp.kind === "Defn") return { ...hyp, definition: mapDefnBody(hyp.definition, map) };
+  return { ...hyp, expression: map(hyp.expression) };
+};
+
+// Visit.map, threading a state through each binder: a scope or a substitution. Visit.map_visible_hyp
+// binds hidden hypotheses without visiting them, and Visit.map visits them too.
+export const mapScoped = <State>(
+  state: State,
+  expression: Expr,
+  map: (state: State, inner: Expr) => Expr,
+  bind: (state: State, hyp: Hyp) => State,
+  hyps: "visible" | "all" = "visible",
+): Expr => {
+  const recurse = (inner: Expr) => map(state, inner);
+  const bindBounds = (bounds: Bound[]) =>
+    bounds.reduce((current, bound) => bind(current, getFresh(bound.name, bound.level)), state);
   switch (expression.kind) {
     case "Ix":
-    case "Opaque":
     case "Internal":
+    case "Opaque":
     case "String":
     case "Num":
     case "At":
       return expression;
-    case "Lambda":
-      return { ...expression, body: map(expression.body) };
-    case "Sequent":
-      return {
-        ...expression,
-        sequent: {
-          context: expression.sequent.context.map((hyp): Hyp => {
-            if (hyp.kind === "Fact") return { ...hyp, expression: map(hyp.expression) };
-            if (hyp.kind === "Fresh" && hyp.domain) return { ...hyp, domain: map(hyp.domain) };
-            if (hyp.kind === "Defn" && hyp.definition.kind === "Operator") {
-              return { ...hyp, definition: { ...hyp.definition, body: map(hyp.definition.body) } };
-            }
-            return hyp;
-          }),
-          active: map(expression.sequent.active),
+    case "Lambda": {
+      const inner = expression.params.reduce(
+        (current, param) => bind(current, getFresh(param.name, "Unknown", param.shape)),
+        state,
+      );
+      return { ...expression, body: map(inner, expression.body) };
+    }
+    case "Sequent": {
+      const [inner, context] = mapAccumulate(state, expression.sequent.context, (current, hyp) => {
+        const mapped = mapHyp(hyp, (child) => map(current, child), hyps);
+        return [bind(current, mapped), mapped];
+      });
+      return { ...expression, sequent: { context, active: map(inner, expression.sequent.active) } };
+    }
+    case "Let": {
+      const [inner, definitions] = mapAccumulate(
+        state,
+        expression.definitions,
+        (current, definition) => {
+          const mapped = mapDefnBody(definition, (body) => map(current, body));
+          const hyp: Hyp = {
+            kind: "Defn",
+            definition: mapped,
+            whereDefined: "User",
+            visibility: "Visible",
+            isLocal: true,
+          };
+          return [bind(current, hyp), mapped];
         },
-      };
+      );
+      return { ...expression, definitions, body: map(inner, expression.body) };
+    }
+    case "Quant":
+    case "Fcn": {
+      const bounds = mapBoundDomains(expression.bounds, recurse);
+      return { ...expression, bounds, body: map(bindBounds(bounds), expression.body) };
+    }
+    case "SetOf": {
+      const bounds = mapBoundDomains(expression.bounds, recurse);
+      return { ...expression, bounds, element: map(bindBounds(bounds), expression.element) };
+    }
+    case "Tquant": {
+      const inner = expression.names.reduce(
+        (current, name) => bind(current, { kind: "Flex", name }),
+        state,
+      );
+      return { ...expression, body: map(inner, expression.body) };
+    }
+    case "Choose": {
+      const domain = expression.domain && recurse(expression.domain);
+      const hyp = domain
+        ? getBoundedFresh(expression.name, domain)
+        : getFresh(expression.name, "Constant");
+      return { ...expression, domain, body: map(bind(state, hyp), expression.body) };
+    }
+    case "SetSt": {
+      const domain = recurse(expression.domain);
+      const hyp = getBoundedFresh(expression.name, domain);
+      return { ...expression, domain, body: map(bind(state, hyp), expression.body) };
+    }
     case "Bang":
       return {
         ...expression,
-        expression: map(expression.expression),
-        selectors: expression.selectors.map((selector) =>
-          selector.kind === "Instance" || selector.kind === "Label"
-            ? { ...selector, args: selector.args.map(map) }
-            : selector,
-        ),
+        expression: recurse(expression.expression),
+        selectors: expression.selectors.map((selector) => mapSelectorArgs(selector, recurse)),
       };
     case "Apply":
-      return { ...expression, operator: map(expression.operator), args: expression.args.map(map) };
+      return {
+        ...expression,
+        operator: recurse(expression.operator),
+        args: expression.args.map(recurse),
+      };
     case "With":
-      return { ...expression, expression: map(expression.expression) };
+    case "Dot":
+    case "Parens":
+      return { ...expression, expression: recurse(expression.expression) };
     case "If":
       return {
         ...expression,
-        condition: map(expression.condition),
-        consequent: map(expression.consequent),
-        alternative: map(expression.alternative),
+        condition: recurse(expression.condition),
+        consequent: recurse(expression.consequent),
+        alternative: recurse(expression.alternative),
       };
     case "List":
-      return { ...expression, items: expression.items.map(map) };
-    case "Let":
-      return {
-        ...expression,
-        definitions: expression.definitions.map((definition) =>
-          definition.kind === "Operator" || definition.kind === "Bpragma"
-            ? { ...definition, body: map(definition.body) }
-            : definition,
-        ),
-        body: map(expression.body),
-      };
-    case "Quant":
-    case "SetOf":
-    case "Fcn": {
-      const bounds = expression.bounds.map((bound) =>
-        bound.domain.kind === "Domain"
-          ? {
-              ...bound,
-              domain: { kind: "Domain" as const, expression: map(bound.domain.expression) },
-            }
-          : bound,
-      );
-      if (expression.kind === "SetOf")
-        return { ...expression, bounds, element: map(expression.element) };
-      return { ...expression, bounds, body: map(expression.body) };
-    }
-    case "Tquant":
-      return { ...expression, body: map(expression.body) };
-    case "Choose":
-      return {
-        ...expression,
-        domain: expression.domain && map(expression.domain),
-        body: map(expression.body),
-      };
-    case "SetSt":
-      return { ...expression, domain: map(expression.domain), body: map(expression.body) };
+      return { ...expression, items: expression.items.map(recurse) };
     case "SetEnum":
-      return { ...expression, elements: expression.elements.map(map) };
-    case "Product":
-      return { ...expression, factors: expression.factors.map(map) };
     case "Tuple":
-      return { ...expression, elements: expression.elements.map(map) };
+      return { ...expression, elements: expression.elements.map(recurse) };
+    case "Product":
+      return { ...expression, factors: expression.factors.map(recurse) };
     case "FcnApp":
-      return { ...expression, function: map(expression.function), args: expression.args.map(map) };
+      return {
+        ...expression,
+        function: recurse(expression.function),
+        args: expression.args.map(recurse),
+      };
     case "Arrow":
-      return { ...expression, domain: map(expression.domain), range: map(expression.range) };
+      return {
+        ...expression,
+        domain: recurse(expression.domain),
+        range: recurse(expression.range),
+      };
     case "Rect":
     case "Record":
       return {
         ...expression,
-        fields: expression.fields.map((field) => ({ name: field.name, value: map(field.value) })),
+        fields: expression.fields.map((field) => ({
+          name: field.name,
+          value: recurse(field.value),
+        })),
       };
     case "Except":
       return {
         ...expression,
-        function: map(expression.function),
-        specs: expression.specs.map((spec) => ({
-          trail: spec.trail.map((point) =>
-            point.kind === "Apply"
-              ? { kind: "Apply" as const, expression: map(point.expression) }
-              : point,
-          ),
-          value: map(spec.value),
-        })),
+        function: recurse(expression.function),
+        specs: mapExceptSpecs(expression.specs, recurse),
       };
-    case "Dot":
-      return { ...expression, expression: map(expression.expression) };
     case "Sub":
     case "Tsub":
       return {
         ...expression,
-        action: map(expression.action),
-        subscript: map(expression.subscript),
+        action: recurse(expression.action),
+        subscript: recurse(expression.subscript),
       };
     case "Fair":
       return {
         ...expression,
-        subscript: map(expression.subscript),
-        action: map(expression.action),
+        subscript: recurse(expression.subscript),
+        action: recurse(expression.action),
       };
     case "Case":
       return {
         ...expression,
         arms: expression.arms.map((arm) => ({
-          condition: map(arm.condition),
-          body: map(arm.body),
+          condition: recurse(arm.condition),
+          body: recurse(arm.body),
         })),
-        other: expression.other && map(expression.other),
+        other: expression.other && recurse(expression.other),
       };
-    case "Parens":
-      return { ...expression, expression: map(expression.expression) };
   }
+};
+
+// Visit.map without a state: every child, the hidden hypotheses of an ASSUME included.
+export const mapChildren = (expression: Expr, map: (inner: Expr) => Expr): Expr =>
+  mapScoped(
+    undefined,
+    expression,
+    (_state, inner) => map(inner),
+    () => undefined,
+    "all",
+  );
+
+export const getChildren = (expression: Expr) => {
+  const children: Expr[] = [];
+  mapChildren(expression, (inner) => {
+    children.push(inner);
+    return inner;
+  });
+  return children;
 };

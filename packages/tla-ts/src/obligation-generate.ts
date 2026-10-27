@@ -1,18 +1,21 @@
 // A port of tlapm's proof simplification (Proof.Simplify) and obligation generation (Proof.Gen):
 // leaf proofs become obligations whose context is everything the proof may use at that point.
 
-import { TlaProofError } from "./errors";
-import { exprifySequent } from "./obligation-anon";
+import { TlapmBugError, TlaProofError } from "./errors";
 import {
+  applyBuiltin,
   at,
   consSubstitution,
+  exprifySequent,
   isEqualExpr,
+  mapAccumulate,
   normalizeApply,
   shift,
   shiftExpr,
   substituteBounds,
   substituteExpr,
   type Bound,
+  type Builtin,
   type Expr,
   type Hyp,
   type Locus,
@@ -49,10 +52,16 @@ const isAnonymous = (step: StepNumber | undefined) => step?.kind === "Named" && 
 
 const getLevel = (step: StepNumber | undefined) => step?.level ?? 0;
 
-const getInternal = (
-  builtin: "TRUE" | "Mem" | "Subseteq" | "Unprimable" | "Prime",
-  from: { location?: Locus },
-): Expr => at({ kind: "Internal", builtin }, from);
+const getTrue = (from: { location?: Locus }) => at({ kind: "Internal", builtin: "TRUE" }, from);
+
+const isBinary = (
+  expression: Expr,
+  builtin: Builtin,
+): expression is Extract<Expr, { kind: "Apply" }> =>
+  expression.kind === "Apply" &&
+  expression.operator.kind === "Internal" &&
+  expression.operator.builtin === builtin &&
+  expression.args.length === 2;
 
 const getMessage = (pattern: string, ...args: (string | Doc)[]) =>
   renderDoc(format(pattern, ...args));
@@ -82,45 +91,39 @@ const expandDittoes = (bounds: Bound[]): Bound[] => {
   });
 };
 
-const assumedFacts = (offset: number, sequent: Sequent): Expr[] => {
-  const facts: Expr[] = [];
-  let current = offset;
-  for (let index = sequent.context.length - 1; index >= 0; index--) {
-    const hyp = sequent.context[index];
-    if (hyp.kind === "Fact" && hyp.visibility === "Visible")
-      facts.unshift(shiftExpr(current, hyp.expression));
-    current++;
-  }
-  return facts;
-};
+// Each visible fact of the sequent, shifted past the hypotheses after it.
+const getAssumedFacts = (offset: number, sequent: Sequent) =>
+  sequent.context.flatMap((hyp, index) =>
+    hyp.kind === "Fact" && hyp.visibility === "Visible"
+      ? [shiftExpr(offset + sequent.context.length - 1 - index, hyp.expression)]
+      : [],
+  );
 
-const getStepDefinition = (step: Step, body: Expr): Hyp => ({
-  kind: "Defn",
-  definition: {
-    kind: "Operator",
-    name: getStepName(step.step as StepNumber),
-    body,
+const getStepDefinition = (step: Step, body: Expr): Hyp => {
+  if (!step.step) throw new TlapmBugError();
+  return {
+    kind: "Defn",
+    definition: { kind: "Operator", name: getStepName(step.step), body, location: step.location },
+    whereDefined: "Proof",
+    visibility: "Visible",
+    isLocal: true,
     location: step.location,
-  },
-  whereDefined: "Proof",
-  visibility: "Visible",
-  isLocal: true,
-  location: step.location,
-});
+  };
+};
 
 const proveAssertion = (context: Hyp[], sequent: Sequent, step: Step) => {
   const visibility: Visibility = isAnonymous(step.step) ? "Visible" : "Hidden";
   const hyps = sequent.context.map((hyp): Hyp =>
     hyp.kind === "Fact" ? { ...hyp, visibility } : hyp,
   );
-  const body = at({ kind: "List", bullet: "Refs", items: assumedFacts(2, sequent) }, step);
+  const body = at({ kind: "List", bullet: "Refs", items: getAssumedFacts(2, sequent) }, step);
   return {
     context: [
       ...context,
       ...hyps,
       {
         kind: "Fact",
-        expression: getInternal("TRUE", step),
+        expression: getTrue(step),
         visibility: "Hidden",
         location: step.location,
       },
@@ -209,17 +212,67 @@ export interface Generator {
   simplify: (context: Hyp[], goal: Expr, proof: Proof) => Proof;
 }
 
-export const createGenerator = (counter: Counter, inputFile: string): Generator => {
-  const obligate = (
-    sequent: Sequent,
-    from: { location?: Locus },
-    kind: ObligationKind,
-  ): Obligation => ({
-    sequent,
-    location: from.location,
-    kind,
-  });
+// The bounds after a witnessed one, where a ditto takes the witnessed domain.
+const getRemainingBounds = (first: Bound, rest: Bound[]): Bound[] => {
+  const shifted = substituteBounds(shift(1), rest)[1];
+  return shifted[0].domain.kind === "Ditto" && first.domain.kind === "Domain"
+    ? [
+        {
+          ...shifted[0],
+          domain: { kind: "Domain", expression: shiftExpr(1, first.domain.expression) },
+        },
+        ...shifted.slice(1),
+      ]
+    : shifted;
+};
 
+// A WITNESS proves each membership and subset it relies on, then the goal from them.
+const getWitnessProof = (step: Step, aux: Expr[]): Proof => {
+  if (step.isSuppressed || aux.length === 0) return { kind: "Obvious", ...getProps(step) };
+  const steps = aux.map((item, index): Step => {
+    const active = shiftExpr(2 * index + 2, item);
+    return {
+      kind: "Assert",
+      sequent: { context: [], active },
+      proof: {
+        kind: "By",
+        usable: { facts: [shiftExpr(3, active)], defs: [] },
+        isOnly: false,
+        location: item.location,
+      },
+      location: item.location,
+    };
+  });
+  const facts = [
+    at({ kind: "Ix", index: 2 * aux.length + 2 }, step),
+    ...aux.map((_item, index) => at({ kind: "Ix", index: 2 * (aux.length - index) }, step)),
+  ];
+  const qedProof: Proof = {
+    kind: "By",
+    usable: { facts, defs: [] },
+    isOnly: true,
+    ...getProps(step),
+  };
+  return {
+    kind: "Steps",
+    steps,
+    qed: { proof: qedProof, location: qedProof.location },
+    ...getProps(step),
+  };
+};
+
+const obligate = (
+  sequent: Sequent,
+  from: { location?: Locus },
+  kind: ObligationKind,
+): Obligation => ({ sequent, location: from.location, kind });
+
+const replaceAt = (expression: Expr, replacement: Expr): Expr =>
+  expression.kind === "At" && !expression.isExcept
+    ? at(stripProps(replacement), expression)
+    : mapChildren(expression, (inner) => replaceAt(inner, replacement));
+
+export const createGenerator = (counter: Counter, inputFile: string): Generator => {
   const generate = (sequent: Sequent, proof: Proof): Proof => {
     if (proof.location?.file !== inputFile) return proof;
     switch (proof.kind) {
@@ -238,13 +291,8 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
       case "By":
         throw new TlaProofError("Proof.Gen.generate");
       case "Steps": {
-        let current = sequent;
-        const steps = proof.steps.map((step) => {
-          const [next, generated] = generateStep(current, step);
-          current = next;
-          return generated;
-        });
-        const qedProof = generate(current, proof.qed.proof);
+        const [inner, steps] = mapAccumulate(sequent, proof.steps, generateStep);
+        const qedProof = generate(inner, proof.qed.proof);
         return { ...proof, steps, qed: { ...proof.qed, proof: qedProof } };
       }
     }
@@ -340,45 +388,36 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
     mode: "Use" | "Hide",
     usable: Usable,
     location: Locus | undefined,
-  ) => {
-    const step: Step =
-      mode === "Use"
-        ? {
-            kind: "Use",
-            usable,
-            isOnly: false,
-            location,
-            step: { kind: "Unnamed", level: 0, id: 0 },
-          }
-        : { kind: "Hide", usable, location, step: { kind: "Unnamed", level: 0, id: 0 } };
+  ): [Hyp[], Obligation[]] => {
+    const step: StepNumber = { kind: "Unnamed", level: 0, id: 0 };
     const [sequent, generated] = generateStep(
       { context, active: { ...AT_NOWHERE, location } },
-      step,
+      mode === "Use"
+        ? { kind: "Use", usable, isOnly: false, location, step }
+        : { kind: "Hide", usable, location, step },
     );
-    return [sequent.context, generated.obligations ?? []] as const;
+    return [sequent.context, generated.obligations ?? []];
   };
 
+  // The definitions go first, then each fact on its own, shifting the facts after it.
   const mutate = (
     context: Hyp[],
     mode: "Use" | "Hide",
     usable: Usable,
     location: Locus | undefined,
   ): [Hyp[], Obligation[]] => {
-    if (usable.defs.length > 0) {
-      const [next, first] = mutateOne(context, mode, { defs: usable.defs, facts: [] }, location);
-      const [last, rest] = mutate(next, mode, { defs: [], facts: usable.facts }, location);
-      return [last, [...first, ...rest]];
-    }
-    if (usable.facts.length === 0) return [context, []];
+    if (usable.defs.length === 0 && usable.facts.length === 0) return [context, []];
+    const isDefs = usable.defs.length > 0;
+    const [fact, ...facts] = usable.facts;
     const [next, first] = mutateOne(
       context,
       mode,
-      { defs: [], facts: [usable.facts[0]] },
+      isDefs ? { defs: usable.defs, facts: [] } : { defs: [], facts: [fact] },
       location,
     );
-    const facts = usable.facts.slice(1).map((fact) => shiftExpr(1, fact));
-    const [last, rest] = mutate(next, mode, { defs: [], facts }, location);
-    return [last, [...first, ...rest]];
+    const rest = isDefs ? usable.facts : facts.map((inner) => shiftExpr(1, inner));
+    const [last, others] = mutate(next, mode, { defs: [], facts: rest }, location);
+    return [last, [...first, ...others]];
   };
 
   // collect: a QED's obligations come before its sibling steps', and a step's own before its proof's.
@@ -459,11 +498,7 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
       goal.operator.builtin === "Prime"
     ) {
       const inner = exposeConnective(context, goal.args[0]);
-      const prime = (expression: Expr): Expr =>
-        at(
-          { kind: "Apply", operator: getInternal("Prime", expression), args: [expression] },
-          expression,
-        );
+      const prime = (expression: Expr) => applyBuiltin("Prime", [expression], expression);
       if (inner.kind === "Quant") {
         return at(
           {
@@ -482,12 +517,7 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
           goal,
         );
       }
-      if (
-        inner.kind === "Apply" &&
-        inner.operator.kind === "Internal" &&
-        (inner.operator.builtin === "Implies" || inner.operator.builtin === "Mem") &&
-        inner.args.length === 2
-      ) {
+      if (isBinary(inner, "Implies") || isBinary(inner, "Mem")) {
         return at(
           {
             kind: "Apply",
@@ -507,14 +537,6 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
     if (step.kind !== "Assert") return undefined;
     const active = step.sequent.active;
     return active.kind === "Apply" && active.args.length === 2 ? active.args[1] : undefined;
-  };
-
-  const replaceAt = (expression: Expr, replacement: Expr): Expr => {
-    const replace = (inner: Expr): Expr => {
-      if (inner.kind === "At" && !inner.isExcept) return at(stripProps(replacement), inner);
-      return mapChildren(inner, replace);
-    };
-    return replace(expression);
   };
 
   // at_expand: @ in a step stands for the right side of the previous step's assertion.
@@ -693,11 +715,7 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
           visibility: "Visible",
           location: step.location,
         };
-        const isImplication =
-          connective.kind === "Apply" &&
-          connective.operator.kind === "Internal" &&
-          connective.operator.builtin === "Implies" &&
-          connective.args.length === 2;
+        const isImplication = isBinary(connective, "Implies");
         const sequent: Sequent = {
           context: [fact],
           active: isImplication ? shiftExpr(1, connective.args[1]) : connective,
@@ -794,24 +812,16 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
     }
   };
 
-  const getSalted = (step: StepNumber | undefined, salt: string): StepNumber =>
-    step?.kind === "Named"
-      ? {
-          kind: "Named",
-          level: step.level,
-          label: `${step.label}${salt}${getUnique(counter)}`,
-          isAnonymous: false,
-        }
-      : {
-          kind: "Named",
-          level: getLevel(step),
-          label: `_a${salt}${getUnique(counter)}`,
-          isAnonymous: false,
-        };
+  const getSalted = (step: StepNumber | undefined, salt: string): StepNumber => ({
+    kind: "Named",
+    level: getLevel(step),
+    label: `${step?.kind === "Named" ? step.label : "_a"}${salt}${getUnique(counter)}`,
+    isAnonymous: false,
+  });
 
   const getTakeSuffices = (context: Hyp[], goal: Expr, step: Step & { kind: "Take" }): Step => {
     const bounds = expandDittoes(step.bounds);
-    const strip = (
+    const stripBounds = (
       amount: number,
       aux: Expr[],
       current: Expr,
@@ -836,19 +846,7 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
       const goalBounds = expandDittoes(exposed.bounds).slice(1);
       const domain = bound.domain;
       const goalDomain = goalBound.domain;
-      let nextAux = aux;
-      if (domain.kind === "Domain" && goalDomain.kind === "Domain") {
-        if (!isEqualExpr(domain.expression, goalDomain.expression)) {
-          nextAux = [
-            {
-              kind: "Apply",
-              operator: { kind: "Internal", builtin: "Subseteq" },
-              args: [goalDomain.expression, domain.expression],
-            },
-            ...aux,
-          ];
-        }
-      } else if (domain.kind === "NoDomain" && goalDomain.kind === "Domain") {
+      if (domain.kind === "NoDomain" && goalDomain.kind === "Domain") {
         return getMessage(
           "@.@[<b0>%s (%s)@ %s (%s \\in %a)@]@.",
           "Error: the TAKE argument",
@@ -857,7 +855,8 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
           goalBound.name,
           printExpression(context, goalDomain.expression),
         );
-      } else if (domain.kind === "Domain" && goalDomain.kind === "NoDomain") {
+      }
+      if (domain.kind === "Domain" && goalDomain.kind === "NoDomain") {
         return getMessage(
           "@.@[<b0>%s (%s \\in %a)@ %s (%s)@]@.",
           "Error: the TAKE argument",
@@ -867,12 +866,25 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
           goalBound.name,
         );
       }
-      if (goalBounds.length === 0) return strip(1, nextAux, exposed.body, rest.slice(1));
+      const nextAux =
+        domain.kind === "Domain" &&
+        goalDomain.kind === "Domain" &&
+        !isEqualExpr(domain.expression, goalDomain.expression)
+          ? [
+              {
+                kind: "Apply",
+                operator: { kind: "Internal", builtin: "Subseteq" },
+                args: [goalDomain.expression, domain.expression],
+              } satisfies Expr,
+              ...aux,
+            ]
+          : aux;
+      if (goalBounds.length === 0) return stripBounds(1, nextAux, exposed.body, rest.slice(1));
       const shiftedBounds =
         rest.length === 1
           ? goalBounds.map((item) => substituteBounds(shift(amount), [item])[1][0])
           : goalBounds;
-      return strip(
+      return stripBounds(
         amount + 1,
         nextAux,
         at(
@@ -882,7 +894,7 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
         rest.slice(1),
       );
     };
-    const stripped = strip(1, [], goal, bounds);
+    const stripped = stripBounds(1, [], goal, bounds);
     if (typeof stripped === "string") {
       return {
         kind: "Suffices",
@@ -890,7 +902,7 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
           context: [
             {
               kind: "Fact",
-              expression: getInternal("TRUE", goal),
+              expression: getTrue(goal),
               visibility: "Visible",
               location: step.location,
             },
@@ -918,7 +930,7 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
     goal: Expr,
     step: Step & { kind: "Witness" },
   ): Step => {
-    let aux: Expr[] = [];
+    const aux: Expr[] = [];
     let error = "";
     let current = goal;
     for (const witness of step.expressions) {
@@ -928,67 +940,41 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
         exposed.quantifier !== "Exists" ||
         exposed.bounds.length === 0
       ) {
-        const message = getMessage(
+        error ||= getMessage(
           "@.@[<v2>@[<b0>%s@ %s@]@,%a@]@.",
           "Error: this WITNESS step is applied to the following goal,",
           "which is not an existential formula:",
           printExpression(context, exposed),
         );
-        if (error === "") error = message;
         current = exposed;
         break;
       }
       const [first, ...rest] = exposed.bounds;
-      const next: Expr =
+      const next =
         rest.length === 0
           ? exposed.body
-          : (() => {
-              const shifted = substituteBounds(shift(1), rest)[1];
-              const bounds =
-                shifted[0].domain.kind === "Ditto" && first.domain.kind === "Domain"
-                  ? [
-                      {
-                        ...shifted[0],
-                        domain: {
-                          kind: "Domain" as const,
-                          expression: shiftExpr(1, first.domain.expression),
-                        },
-                      },
-                      ...shifted.slice(1),
-                    ]
-                  : shifted;
-              return at(
-                { kind: "Quant", quantifier: "Exists", bounds, body: exposed.body },
-                exposed,
-              );
-            })();
+          : at(
+              {
+                kind: "Quant",
+                quantifier: "Exists",
+                bounds: getRemainingBounds(first, rest),
+                body: exposed.body,
+              },
+              exposed,
+            );
       let value = witness;
       if (first.domain.kind === "Domain") {
         const domain = first.domain.expression;
         const membership = exposeConnective(context, witness);
-        if (
-          membership.kind === "Apply" &&
-          membership.operator.kind === "Internal" &&
-          membership.operator.builtin === "Mem" &&
-          membership.args.length === 2
-        ) {
+        if (isBinary(membership, "Mem")) {
           const [term, termDomain] = membership.args;
-          const subset: Expr[] = isEqualExpr(termDomain, domain)
+          const subset = isEqualExpr(termDomain, domain)
             ? []
-            : [
-                at(
-                  {
-                    kind: "Apply",
-                    operator: getInternal("Subseteq", termDomain),
-                    args: [termDomain, domain],
-                  },
-                  termDomain,
-                ),
-              ];
-          aux = [membership, ...subset, ...aux];
+            : [applyBuiltin("Subseteq", [termDomain, domain], termDomain)];
+          aux.push(...subset, membership);
           value = term;
         } else {
-          const message = getMessage(
+          error ||= getMessage(
             "@.@[<b0>%s (%a)@ %s (%s \\in %a)@]@.",
             "Error: the WITNESS argument",
             printExpression(context, membership),
@@ -996,51 +982,16 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
             first.name,
             printExpression(context, domain),
           );
-          if (error === "") error = message;
           value = membership;
         }
       }
-      const unprimable = at(
-        { kind: "Apply", operator: getInternal("Unprimable", value), args: [value] },
-        value,
-      );
+      const unprimable = applyBuiltin("Unprimable", [value], value);
       current = substituteExpr(consSubstitution(unprimable, shift(0)), next);
     }
-    aux = aux.reverse();
-    const proof = ((): Proof => {
-      if (error !== "") return { kind: "Error", message: error, ...getProps(step) };
-      if (step.isSuppressed || aux.length === 0) return { kind: "Obvious", ...getProps(step) };
-      const steps = aux.map((item, index): Step => {
-        const active = shiftExpr(2 * index + 2, item);
-        return {
-          kind: "Assert",
-          sequent: { context: [], active },
-          proof: {
-            kind: "By",
-            usable: { facts: [shiftExpr(3, active)], defs: [] },
-            isOnly: false,
-            location: item.location,
-          },
-          location: item.location,
-        };
-      });
-      const facts = [
-        at({ kind: "Ix", index: 2 * aux.length + 2 }, step),
-        ...aux.map((_item, index) => at({ kind: "Ix", index: 2 * (aux.length - index) }, step)),
-      ];
-      const qedProof: Proof = {
-        kind: "By",
-        usable: { facts, defs: [] },
-        isOnly: true,
-        ...getProps(step),
-      };
-      return {
-        kind: "Steps",
-        steps,
-        qed: { proof: qedProof, location: qedProof.location },
-        ...getProps(step),
-      };
-    })();
+    const proof: Proof =
+      error === ""
+        ? getWitnessProof(step, aux)
+        : { kind: "Error", message: error, ...getProps(step) };
     return {
       kind: "Suffices",
       sequent: { context: [], active: current },

@@ -15,18 +15,18 @@ import type {
   SourceRange,
   UseOrHide,
 } from "./ast";
-import { TlaProofError, TlaUnsupportedError } from "./errors";
-import type {
-  Bound,
-  Builtin,
-  Defn,
-  Expr,
-  ExprCore,
-  Hyp,
-  InstanceDefinition,
-  Locus,
-  Selector,
-  Sequent,
+import { TlapmBugError, TlaProofError, TlaUnsupportedError } from "./errors";
+import {
+  at,
+  type Bound,
+  type Builtin,
+  type Defn,
+  type Expr,
+  type Hyp,
+  type InstanceDefinition,
+  type Locus,
+  type Selector,
+  type Sequent,
 } from "./obligation-expression";
 import type { ModuleUnit, Mule } from "./obligation-module";
 import {
@@ -38,13 +38,11 @@ import {
   getUnbounded,
   type TuplyBound,
 } from "./obligation-tuples";
-import { TLAPM_BUG } from "./obligation-levels";
-import { lookupOperator, type Fixity } from "./obligation-printer";
+import { lookupOperator, type Fixity, type Operator } from "./obligation-printer";
 import {
   getUnique,
   type Counter,
   type Proof,
-  type QedStep,
   type Step,
   type StepNumber,
   type UseDef,
@@ -88,20 +86,6 @@ const getCanonicalName = (name: string, isPrefix = false) =>
 
 const STEP_PATTERN = /^<(\d+|\*|\+)>([A-Za-z0-9_]*)\.*$/;
 
-interface Source {
-  file: string;
-  lines: string[];
-  counter: Counter;
-}
-
-const getRangeLocus = (file: string, range: SourceRange): Locus => ({
-  file,
-  startLine: range.start.line,
-  startColumn: range.start.column,
-  endLine: range.end.line,
-  endColumn: range.end.column + 1,
-});
-
 const mergeLoci = (left: Locus | undefined, right: Locus | undefined): Locus | undefined => {
   if (!left || !right) return left ?? right;
   const isLeftFirst =
@@ -118,8 +102,6 @@ const mergeLoci = (left: Locus | undefined, right: Locus | undefined): Locus | u
     endColumn: isLeftLast ? left.endColumn : right.endColumn,
   };
 };
-
-type Operator = ReturnType<typeof lookupOperator>;
 
 type Grouping =
   | { kind: "Attached"; expression: Expression }
@@ -220,56 +202,53 @@ const regroup = (expression: Extract<Expression, { kind: "Apply" }>): Expression
 
 // tlapm expands tuple declarations only in the modules it checks, and crashes on them elsewhere.
 export const createSource = (file: string, text: string, counter: Counter, isExpanded: boolean) => {
-  const source: Source = { file, lines: text.split("\n"), counter };
+  const lines = text.split("\n");
+
+  const getRangeLocus = (range: SourceRange): Locus => ({
+    file,
+    startLine: range.start.line,
+    startColumn: range.start.column,
+    endLine: range.end.line,
+    endColumn: range.end.column + 1,
+  });
 
   // tlapm reads a method pragma (*{ ... }*) right after OBVIOUS as part of the proof.
   const getObviousLocus = (keyword: SourceRange) => {
-    const locus = getRangeLocus(source.file, keyword);
+    const locus = getRangeLocus(keyword);
     const position = { line: locus.endLine - 1, column: locus.endColumn - 1 };
     const isBlank = (character: string | undefined) => character === " " || character === "\r";
-    while (position.line < source.lines.length) {
-      const line = source.lines[position.line];
+    while (position.line < lines.length) {
+      const line = lines[position.line];
       while (isBlank(line[position.column])) position.column++;
       if (position.column < line.length) break;
       position.line++;
       position.column = 0;
     }
-    const line = source.lines[position.line] ?? "";
-    if (!line.startsWith("(*{", position.column)) return locus;
-    const lineOffset = source.lines.findIndex(
-      (innerLine, index) =>
-        index >= position.line &&
-        innerLine.includes("}*)", index === position.line ? position.column : 0),
-    );
-    if (lineOffset === -1) return locus;
-    const close = source.lines[lineOffset].indexOf(
-      "}*)",
-      lineOffset === position.line ? position.column : 0,
-    );
-    return { ...locus, endLine: lineOffset + 1, endColumn: close + 4 };
+    if (!(lines[position.line] ?? "").startsWith("(*{", position.column)) return locus;
+    for (let index = position.line; index < lines.length; index++) {
+      const close = lines[index].indexOf("}*)", index === position.line ? position.column : 0);
+      if (close !== -1) return { ...locus, endLine: index + 1, endColumn: close + 4 };
+    }
+    return locus;
   };
 
   const getLocus = (location: SourceLocation): Locus =>
     location.range
-      ? getRangeLocus(source.file, location.range)
+      ? getRangeLocus(location.range)
       : {
-          file: source.file,
+          file,
           startLine: location.line,
           startColumn: location.column,
           endLine: location.line,
           endColumn: location.column + 1,
         };
 
-  const located = (core: ExprCore, location: Locus | undefined): Expr =>
-    location ? { ...core, location } : core;
-
-  const getOperator = (name: string, location: Locus | undefined, isPrefix = false): Expr => {
-    const canonical = getCanonicalName(name, isPrefix);
+  const getOperator = (name: string, location: Locus | undefined): Expr => {
+    const canonical = getCanonicalName(name);
     const builtin = BUILTINS[canonical];
-    return located(
-      builtin ? { kind: "Internal", builtin } : { kind: "Opaque", name: canonical },
+    return at(builtin ? { kind: "Internal", builtin } : { kind: "Opaque", name: canonical }, {
       location,
-    );
+    });
   };
 
   // A name with ! selects through instances, which anonymization resolves by joining the names.
@@ -277,59 +256,54 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     name: string,
     args: Expr[],
     location: Locus,
-    argumentCounts = name
-      .split("!")
-      .map((_part, index, parts) => (index === parts.length - 1 ? args.length : 0)),
+    argumentCounts?: number[],
   ): Expr => {
     if (name.startsWith("<")) {
-      const operator = located({ kind: "Opaque", name }, location);
-      return located({ kind: "Bang", expression: operator, selectors: [] }, location);
+      const operator = at({ kind: "Opaque", name }, { location });
+      return at({ kind: "Bang", expression: operator, selectors: [] }, { location });
     }
     const builtin = BUILTINS[name];
-    if (builtin && args.length === 0) return located({ kind: "Internal", builtin }, location);
+    if (builtin && args.length === 0) return at({ kind: "Internal", builtin }, { location });
     const names = name.split("!");
     if (names.length === 1) {
-      const operator = located({ kind: "Opaque", name }, location);
-      return args.length === 0 ? operator : located({ kind: "Apply", operator, args }, location);
+      const operator = at({ kind: "Opaque", name }, { location });
+      return args.length === 0 ? operator : at({ kind: "Apply", operator, args }, { location });
     }
-    const offsets = argumentCounts.map((_count, index) =>
-      argumentCounts.slice(0, index).reduce((total, count) => total + count, 0),
+    const counts =
+      argumentCounts ?? names.map((_name, index) => (index === names.length - 1 ? args.length : 0));
+    const offsets = counts.map((_count, index) =>
+      counts.slice(0, index).reduce((total, count) => total + count, 0),
     );
-    const getArgs = (index: number) =>
-      args.slice(offsets[index], offsets[index] + argumentCounts[index]);
-    const head = located({ kind: "Opaque", name: names[0] }, location);
-    return located(
+    const getArgs = (index: number) => args.slice(offsets[index], offsets[index] + counts[index]);
+    const head = at({ kind: "Opaque", name: names[0] }, { location });
+    return at(
       {
         kind: "Bang",
         expression:
-          argumentCounts[0] === 0
+          counts[0] === 0
             ? head
-            : located({ kind: "Apply", operator: head, args: getArgs(0) }, location),
+            : at({ kind: "Apply", operator: head, args: getArgs(0) }, { location }),
         selectors: names.slice(1).map((label, index) => ({
           kind: "Label",
           label: getCanonicalName(label),
           args: getArgs(index + 1),
         })),
       },
-      location,
+      { location },
     );
   };
 
   const convertBounds = (bounds: QuantifierExpression["bounds"], isExcept: boolean): Bound[] =>
-    bounds.flatMap((bound, index) => {
-      if (bound.pattern.kind === "Tuple") {
-        throw new TlaProofError(TLAPM_BUG);
-      }
+    bounds.map((bound, index) => {
+      if (bound.pattern.kind === "Tuple") throw new TlapmBugError();
       const isDitto = index > 0 && bounds[index - 1].set === bound.set;
-      return [
-        {
-          name: bound.pattern.name,
-          level: "Constant",
-          domain: isDitto
-            ? { kind: "Ditto" }
-            : { kind: "Domain", expression: convertExpression(bound.set, isExcept) },
-        },
-      ];
+      return {
+        name: bound.pattern.name,
+        level: "Constant",
+        domain: isDitto
+          ? { kind: "Ditto" }
+          : { kind: "Domain", expression: convertExpression(bound.set, isExcept) },
+      };
     });
 
   const getTuplyBounds = (
@@ -349,30 +323,12 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     });
 
   const expandTuples = (expand: () => Expr, location: Locus) => {
-    if (!isExpanded) throw new TlaProofError(TLAPM_BUG);
-    return located(expand(), location);
+    if (!isExpanded) throw new TlapmBugError();
+    return at(expand(), { location });
   };
 
   const hasTuple = (bounds: QuantifierExpression["bounds"]) =>
     bounds.some((bound) => bound.pattern.kind === "Tuple");
-
-  const convertJunction = (
-    bullet: "And" | "Or",
-    operands: Expression[],
-    isBulleted: boolean,
-    location: Locus,
-    isExcept: boolean,
-  ): Expr => {
-    const items = operands.map((operand) => convertExpression(operand, isExcept));
-    if (isBulleted) return located({ kind: "List", bullet, items }, location);
-    const builtin = bullet === "And" ? "Conj" : "Disj";
-    return items.reduce((left, right) =>
-      located(
-        { kind: "Apply", operator: { kind: "Internal", builtin }, args: [left, right] },
-        mergeLoci(left.location, right.location),
-      ),
-    );
-  };
 
   const convertExpression = (expression: Expression, isExcept: boolean): Expr => {
     const location = getLocus(expression.location);
@@ -397,22 +353,22 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
       return location;
     };
     const applyPrefix = (builtin: Builtin, operand: Expr): Expr =>
-      located(
+      at(
         { kind: "Apply", operator: { kind: "Internal", builtin }, args: [operand] },
-        getOperatorLocus([operand], "Prefix"),
+        { location: getOperatorLocus([operand], "Prefix") },
       );
     switch (expression.kind) {
       case "Number":
-        return located(
+        return at(
           { kind: "Num", integer: expression.text ?? String(expression.value), fraction: "" },
-          location,
+          { location },
         );
       case "Decimal": {
         const [integer, fraction] = expression.text.split(".");
-        return located({ kind: "Num", integer, fraction }, location);
+        return at({ kind: "Num", integer, fraction }, { location });
       }
       case "String":
-        return located({ kind: "String", value: expression.value }, location);
+        return at({ kind: "String", value: expression.value }, { location });
       case "Identifier":
         return getName(expression.name, [], location);
       case "Apply": {
@@ -422,24 +378,10 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         }
         const args = expression.args.map(recurse);
         const operator = lookupOperator(expression.operator);
-        if (operator.fixity !== "Nonfix" || expression.operator === "-") {
-          return located(
-            {
-              kind: "Apply",
-              operator: getOperator(expression.operator, undefined, expression.operator === "-."),
-              args,
-            },
-            getOperatorLocus(args, operator.fixity),
-          );
-        }
-        if (
-          expression.operator === "SUBSET" ||
-          expression.operator === "UNION" ||
-          expression.operator === "DOMAIN"
-        ) {
-          return located(
-            { kind: "Apply", operator: { kind: "Internal", builtin: expression.operator }, args },
-            getOperatorLocus(args, "Prefix"),
+        if (operator.fixity !== "Nonfix") {
+          return at(
+            { kind: "Apply", operator: getOperator(expression.operator, undefined), args },
+            { location: getOperatorLocus(args, operator.fixity) },
           );
         }
         return getName(expression.operator, args, location, expression.argumentCounts);
@@ -447,28 +389,32 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
       case "OperatorReference":
         return getOperator(expression.operator, location);
       case "Lambda":
-        return located(
+        return at(
           {
             kind: "Lambda",
             params: expression.params.map((name) => ({ name, shape: 0 })),
             body: recurse(expression.body),
           },
-          location,
+          { location },
         );
       case "And":
-      case "Or":
-        return convertJunction(
-          expression.kind,
-          expression.operands,
-          expression.isBulleted === true,
-          location,
-          isExcept,
+      case "Or": {
+        const items = expression.operands.map(recurse);
+        if (expression.isBulleted)
+          return at({ kind: "List", bullet: expression.kind, items }, { location });
+        const builtin = expression.kind === "And" ? "Conj" : "Disj";
+        return items.reduce((left, right) =>
+          at(
+            { kind: "Apply", operator: { kind: "Internal", builtin }, args: [left, right] },
+            { location: mergeLoci(left.location, right.location) },
+          ),
         );
+      }
       case "Prime": {
         const operand = recurse(expression.expression);
-        return located(
+        return at(
           { kind: "Apply", operator: { kind: "Internal", builtin: "Prime" }, args: [operand] },
-          getOperatorLocus([operand], "Postfix"),
+          { location: getOperatorLocus([operand], "Postfix") },
         );
       }
       case "Unchanged":
@@ -476,17 +422,17 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
       case "Enabled":
         return applyPrefix("ENABLED", recurse(expression.expression));
       case "If":
-        return located(
+        return at(
           {
             kind: "If",
             condition: recurse(expression.condition),
             consequent: recurse(expression.consequent),
             alternative: recurse(expression.alternative),
           },
-          location,
+          { location },
         );
       case "Case":
-        return located(
+        return at(
           {
             kind: "Case",
             arms: expression.arms.map((arm) => ({
@@ -495,14 +441,14 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
             })),
             other: expression.other && recurse(expression.other),
           },
-          location,
+          { location },
         );
       case "Let":
         // tlapm's LET takes only definitions, so a RECURSIVE declaration there fails to parse.
         if (expression.definitions.some((definition) => definition.isRecursive)) {
           throw new TlaProofError("Unexpected keyword RECURSIVE");
         }
-        return located(
+        return at(
           {
             kind: "Let",
             definitions: [...expression.definitions, ...(expression.instances ?? [])]
@@ -514,7 +460,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
               .map((definition) => convertDefinition(definition, isExcept)),
             body: recurse(expression.body),
           },
-          location,
+          { location },
         );
       case "Forall":
       case "Exists":
@@ -523,23 +469,23 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
           const body = recurse(expression.body);
           return expandTuples(() => expandQuant(expression.kind, bounds, body), location);
         }
-        return located(
+        return at(
           {
             kind: "Quant",
             quantifier: expression.kind,
             bounds: convertBounds(expression.bounds, isExcept),
             body: recurse(expression.body),
           },
-          location,
+          { location },
         );
       case "UnboundedQuantifier": {
         const body = recurse(expression.body);
         const quantifier = expression.quantifier;
         return expression.isTemporal
-          ? located({ kind: "Tquant", quantifier, names: expression.names, body }, location)
-          : located(
+          ? at({ kind: "Tquant", quantifier, names: expression.names, body }, { location })
+          : at(
               { kind: "Quant", quantifier, bounds: getUnbounded(expression.names), body },
-              location,
+              { location },
             );
       }
       case "Choose":
@@ -549,17 +495,17 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
           const body = recurse(expression.body);
           return expandTuples(() => expandChoose(names, domain, body), location);
         }
-        return located(
+        return at(
           {
             kind: "Choose",
             name: expression.pattern.name,
             domain: expression.set && recurse(expression.set),
             body: recurse(expression.body),
           },
-          location,
+          { location },
         );
       case "SetEnumeration":
-        return located({ kind: "SetEnum", elements: expression.elements.map(recurse) }, location);
+        return at({ kind: "SetEnum", elements: expression.elements.map(recurse) }, { location });
       case "SetFilter":
         if (expression.bound.pattern.kind === "Tuple") {
           const names = expression.bound.pattern.names;
@@ -567,14 +513,14 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
           const body = recurse(expression.predicate);
           return expandTuples(() => expandSetSt(names, domain, body), location);
         }
-        return located(
+        return at(
           {
             kind: "SetSt",
             name: expression.bound.pattern.name,
             domain: recurse(expression.bound.set),
             body: recurse(expression.predicate),
           },
-          location,
+          { location },
         );
       case "SetMap":
         if (hasTuple(expression.bounds)) {
@@ -582,20 +528,26 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
           const bounds = getTuplyBounds(expression.bounds, isExcept);
           return expandTuples(() => expandSetOf(element, bounds), location);
         }
-        return located(
+        return at(
           {
             kind: "SetOf",
             element: recurse(expression.expression),
             bounds: convertBounds(expression.bounds, isExcept),
           },
-          location,
+          { location },
         );
       case "Tuple":
         // tlapm's tuple parser binds as (<< >>> elements) >>= ">>", which keeps only the location
         // of the closing >>.
-        return located(
+        return at(
           { kind: "Tuple", elements: expression.elements.map(recurse) },
-          { ...location, startLine: location.endLine, startColumn: location.endColumn - 2 },
+          {
+            location: {
+              ...location,
+              startLine: location.endLine,
+              startColumn: location.endColumn - 2,
+            },
+          },
         );
       case "FunctionConstruction":
         if (hasTuple(expression.bounds)) {
@@ -603,22 +555,22 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
           const body = recurse(expression.body);
           return expandTuples(() => expandFcn(bounds, body), location);
         }
-        return located(
+        return at(
           {
             kind: "Fcn",
             bounds: convertBounds(expression.bounds, isExcept),
             body: recurse(expression.body),
           },
-          location,
+          { location },
         );
       case "FunctionSet":
-        return located(
+        return at(
           { kind: "Arrow", domain: recurse(expression.domain), range: recurse(expression.range) },
-          location,
+          { location },
         );
       case "Record":
       case "RecordSet":
-        return located(
+        return at(
           {
             kind: expression.kind === "Record" ? "Record" : "Rect",
             fields: expression.fields.map((field) => ({
@@ -626,10 +578,10 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
               value: recurse(field.value),
             })),
           },
-          location,
+          { location },
         );
       case "Except":
-        return located(
+        return at(
           {
             kind: "Except",
             function: recurse(expression.function),
@@ -648,93 +600,93 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
               value: convertExpression(update.value, true),
             })),
           },
-          location,
+          { location },
         );
       case "ExceptAt":
-        return located({ kind: "At", isExcept }, location);
+        return at({ kind: "At", isExcept }, { location });
       case "FunctionApplication":
-        return located(
+        return at(
           {
             kind: "FcnApp",
             function: recurse(expression.function),
             args: expression.args.map(recurse),
           },
-          location,
+          { location },
         );
       case "FieldAccess":
-        return located(
+        return at(
           { kind: "Dot", expression: recurse(expression.record), field: expression.field },
-          location,
+          { location },
         );
       case "Product":
-        return located({ kind: "Product", factors: expression.factors.map(recurse) }, location);
+        return at({ kind: "Product", factors: expression.factors.map(recurse) }, { location });
       case "Always":
       case "Eventually": {
         const inner = expression.expression;
         if (expression.kind === "Always" && inner.kind === "BoxAction") {
-          return located(
+          return at(
             {
               kind: "Tsub",
               modal: "Box",
               action: recurse(inner.action),
               subscript: recurse(inner.subscript),
             },
-            location,
+            { location },
           );
         }
         if (expression.kind === "Eventually" && inner.kind === "AngleAction") {
-          return located(
+          return at(
             {
               kind: "Tsub",
               modal: "Dia",
               action: recurse(inner.action),
               subscript: recurse(inner.subscript),
             },
-            location,
+            { location },
           );
         }
         return applyPrefix(expression.kind === "Always" ? "BoxTrue" : "Diamond", recurse(inner));
       }
       case "BoxAction":
       case "AngleAction":
-        return located(
+        return at(
           {
             kind: "Sub",
             modal: expression.kind === "BoxAction" ? "Box" : "Dia",
             action: recurse(expression.action),
             subscript: recurse(expression.subscript),
           },
-          location,
+          { location },
         );
       case "WeakFairness":
       case "StrongFairness":
-        return located(
+        return at(
           {
             kind: "Fair",
             fairness: expression.kind === "WeakFairness" ? "Weak" : "Strong",
             subscript: recurse(expression.subscript),
             action: recurse(expression.action),
           },
-          location,
+          { location },
         );
       case "Label":
-        return located(
+        return at(
           {
             kind: "Parens",
             expression: recurse(expression.body),
             form: { kind: "Nlabel", label: expression.name, names: expression.params },
           },
-          location,
+          { location },
         );
       case "Subexpression": {
         const [head, ...selectors] = expression.selectors;
         if (head.kind !== "Name") throw new TlaProofError("Unexpected subexpression reference");
-        const operator = located({ kind: "Opaque", name: head.name }, location);
+        const operator = at({ kind: "Opaque", name: head.name }, { location });
         const base =
           head.args.length === 0
             ? operator
-            : located({ kind: "Apply", operator, args: head.args.map(recurse) }, location);
-        return located(
+            : at({ kind: "Apply", operator, args: head.args.map(recurse) }, { location });
+        return at(
           {
             kind: "Bang",
             expression: base,
@@ -759,7 +711,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
               }
             }),
           },
-          location,
+          { location },
         );
       }
     }
@@ -804,7 +756,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
       return {
         kind: "Operator",
         name,
-        body: located({ kind: "Fcn", bounds, body }, location),
+        body: at({ kind: "Fcn", bounds, body }, { location }),
         location,
       };
     }
@@ -812,7 +764,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     return {
       kind: "Operator",
       name,
-      body: located(
+      body: at(
         {
           kind: "Lambda",
           params: definition.params.map((param) => ({
@@ -821,7 +773,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
           })),
           body,
         },
-        location,
+        { location },
       ),
       location,
     };
@@ -851,7 +803,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
           const location = getLocus(assumption.location);
           return {
             kind: "Fact",
-            expression: located({ kind: "Sequent", sequent: convertSequent(assumption) }, location),
+            expression: at({ kind: "Sequent", sequent: convertSequent(assumption) }, { location }),
             visibility: "Visible",
             location,
           };
@@ -868,13 +820,13 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     if (expression.kind !== "Label" || expression.params.length > 0)
       return convertExpression(expression, false);
     const location = getLocus(expression.location);
-    return located(
+    return at(
       {
         kind: "Parens",
         expression: convertExpression(expression.body, false),
         form: { kind: "Xlabel", label: expression.name, indices: [] },
       },
-      location,
+      { location },
     );
   };
 
@@ -903,17 +855,11 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     defs: use.defs.map(convertDef),
   });
 
-  const getStepNumber = (step: ProofStep, level: number): StepNumber => {
-    const match = STEP_PATTERN.exec(step.token);
-    const label = match ? match[2] : "";
+  const getStepNumber = (token: RegExpExecArray | null, level: number): StepNumber => {
+    const label = token ? token[2] : "";
     return label === ""
-      ? { kind: "Unnamed", level, id: getUnique(source.counter) }
+      ? { kind: "Unnamed", level, id: getUnique(counter) }
       : { kind: "Named", level, label, isAnonymous: false };
-  };
-
-  const getTokenLevel = (step: ProofStep) => {
-    const match = STEP_PATTERN.exec(step.token);
-    return match && match[1] !== "*" && match[1] !== "+" ? Number(match[1]) : undefined;
   };
 
   // to_proof: a missing proof is implicitly omitted where the enclosing step is.
@@ -930,33 +876,33 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         return {
           kind: "Omitted",
           omission: "Explicit",
-          location: getRangeLocus(source.file, proof.keyword),
+          location: getRangeLocus(proof.keyword),
         };
       case "By":
         return {
           kind: "By",
           usable: convertUsable(proof),
           isOnly: proof.isOnly,
-          location: getRangeLocus(source.file, proof.keyword),
+          location: getRangeLocus(proof.keyword),
           step: { kind: "Unnamed", level, id: 0 },
         };
       case "Steps": {
         // A <*> first step takes the enclosing level only after PROOF, and the top level
         // always counts as PROOF.
-        const stepLevel = getTokenLevel(proof.steps[0]) ?? level;
-        const steps: Step[] = [];
-        let qed: QedStep | undefined;
-        for (const step of proof.steps) {
-          const number = getStepNumber(step, stepLevel);
-          const head = getRangeLocus(source.file, step.head);
-          if (step.body.kind === "Qed") {
-            const qedProof = convertProof(step.proof, stepLevel + 1, head);
-            qed = { proof: qedProof, location: mergeLoci(head, qedProof.location), step: number };
-            continue;
-          }
-          steps.push(convertStep(step, number, head, stepLevel));
-        }
-        if (!qed) throw new TlaUnsupportedError("Proof without a QED step");
+        const tokens = proof.steps.map((step) => STEP_PATTERN.exec(step.token));
+        const first = tokens[0];
+        const stepLevel = first && first[1] !== "*" && first[1] !== "+" ? Number(first[1]) : level;
+        // The parser ends the steps at the first QED.
+        const steps = proof.steps
+          .slice(0, -1)
+          .map((step, index) =>
+            convertStep(step, getStepNumber(tokens[index], stepLevel), stepLevel),
+          );
+        const last = proof.steps[proof.steps.length - 1];
+        const number = getStepNumber(tokens[tokens.length - 1], stepLevel);
+        const head = getRangeLocus(last.head);
+        const qedProof = convertProof(last.proof, stepLevel + 1, head);
+        const qed = { proof: qedProof, location: mergeLoci(head, qedProof.location), step: number };
         const location = steps.reduce<Locus | undefined>(
           (merged, step) => mergeLoci(merged, step.location),
           qed.location,
@@ -970,11 +916,12 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
   // facts' location.
   const getUseLocus = (use: UseOrHide) =>
     mergeLoci(
-      getRangeLocus(source.file, use.keyword),
+      getRangeLocus(use.keyword),
       use.defs.length > 0 ? getLocus(use.defs[use.defs.length - 1].location) : undefined,
     );
 
-  const convertStep = (step: ProofStep, number: StepNumber, head: Locus, level: number): Step => {
+  const convertStep = (step: ProofStep, number: StepNumber, level: number): Step => {
+    const head = getRangeLocus(step.head);
     const body = step.body;
     const withProof = (make: (proof: Proof) => Step): Step => {
       const proof = convertProof(step.proof, level + 1, head);
@@ -985,7 +932,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
       case "Use":
       case "Hide": {
         const location = mergeLoci(
-          getRangeLocus(source.file, { ...step.head, end: step.head.start }),
+          getRangeLocus({ ...step.head, end: step.head.start }),
           getUseLocus(body),
         );
         const usable = convertUsable(body);
@@ -1036,98 +983,85 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     }
   };
 
-  const convertUse = (use: UseOrHide): ModuleUnit => ({
-    kind: "Mutate",
-    mode: use.kind,
-    isSuppressed: false,
-    usable: convertUsable(use),
-    location: getUseLocus(use),
-  });
-
   const convertModule = (module: Module): Mule => ({
     name: module.name,
     extendees: module.extends,
     isImportant: false,
-    body: module.units.flatMap((unit): ModuleUnit[] => {
+    body: module.units.map((unit): ModuleUnit => {
       switch (unit.kind) {
         case "Constants":
         case "Recursive":
-          return [
-            {
-              kind: unit.kind === "Constants" ? "Constants" : "Recursives",
-              declarations: unit.declarations.map((declaration) => ({
-                name: getCanonicalName(declaration.name),
-                shape: declaration.arity,
-              })),
-              location: getLocus(unit.declarations[0].location),
-            },
-          ];
+          return {
+            kind: unit.kind === "Constants" ? "Constants" : "Recursives",
+            declarations: unit.declarations.map((declaration) => ({
+              name: getCanonicalName(declaration.name),
+              shape: declaration.arity,
+            })),
+            location: getLocus(unit.declarations[0].location),
+          };
         case "Variables":
-          return [
-            {
-              kind: "Variables",
-              names: unit.declarations.map((declaration) => declaration.name),
-              location: getLocus(unit.declarations[0].location),
-            },
-          ];
+          return {
+            kind: "Variables",
+            names: unit.declarations.map((declaration) => declaration.name),
+            location: getLocus(unit.declarations[0].location),
+          };
         case "Definition":
-          return [
-            {
-              kind: "Definition",
-              definition: convertDefinition(unit.definition),
-              whereDefined: "User",
-              visibility: "Hidden",
-              isLocal: unit.definition.isLocal,
-              location: getLocus(unit.definition.location),
-            },
-          ];
+          return {
+            kind: "Definition",
+            definition: convertDefinition(unit.definition),
+            whereDefined: "User",
+            visibility: "Hidden",
+            isLocal: unit.definition.isLocal,
+            location: getLocus(unit.definition.location),
+          };
         case "Instance": {
           const instance = unit.instance;
-          const definition = convertInstance(instance);
           const location = getLocus(instance.location);
-          if (instance.name === undefined) {
-            return [
-              { kind: "Anoninst", instance: definition, isLocal: instance.isLocal, location },
-            ];
-          }
-          return [
-            {
-              kind: "Definition",
-              definition: { kind: "Instance", name: instance.name, instance: definition, location },
-              whereDefined: "User",
-              visibility: "Hidden",
-              isLocal: instance.isLocal,
-              location,
-            },
-          ];
+          return instance.name === undefined
+            ? {
+                kind: "Anoninst",
+                instance: convertInstance(instance),
+                isLocal: instance.isLocal,
+                location,
+              }
+            : {
+                kind: "Definition",
+                definition: convertDefinition(instance),
+                whereDefined: "User",
+                visibility: "Hidden",
+                isLocal: instance.isLocal,
+                location,
+              };
         }
         case "Assumption":
-          return [
-            {
-              kind: "Axiom",
-              name: unit.assumption.name,
-              expression: convertExpression(unit.assumption.expression, false),
-              location: getLocus(unit.assumption.location),
-            },
-          ];
+          return {
+            kind: "Axiom",
+            name: unit.assumption.name,
+            expression: convertExpression(unit.assumption.expression, false),
+            location: getLocus(unit.assumption.location),
+          };
         case "Theorem": {
           const theorem = unit.theorem;
           const location = getLocus(theorem.location);
-          return [
-            {
-              kind: "Theorem",
-              name: theorem.name,
-              sequent: convertSequent(theorem.statement),
-              axiomCount: 0,
-              proof: convertProof(theorem.proof, 0, location),
-              location,
-            },
-          ];
+          return {
+            kind: "Theorem",
+            name: theorem.name,
+            sequent: convertSequent(theorem.statement),
+            axiomCount: 0,
+            proof: convertProof(theorem.proof, 0, location),
+            location,
+          };
         }
         case "Use":
-          return [convertUse(unit.use)];
+          return {
+            kind: "Mutate",
+            mode: unit.use.kind,
+            isSuppressed: false,
+            usable: convertUsable(unit.use),
+            location: getUseLocus(unit.use),
+          };
         case "Module":
-          return [{ kind: "Submod", module: { ...convertModule(unit.module), isImportant: true } }];
+          return { kind: "Submod", module: { ...convertModule(unit.module), isImportant: true } };
       }
     }),
   });

@@ -37,6 +37,13 @@ const getItemDefinitions = (tuple: string, names: string[]): Defn[] =>
     },
   }));
 
+const getFactorBounds = (names: string[], factors: Expr[]): Bound[] =>
+  names.map((name, index) => ({
+    name,
+    level: "Constant",
+    domain: { kind: "Domain", expression: factors[index] },
+  }));
+
 const getNamedBound = (bound: Extract<TuplyBound, { kind: "Name" }>): Bound => ({
   name: bound.name,
   level: "Constant",
@@ -71,11 +78,7 @@ export const expandQuant = (
       return {
         kind: "Quant",
         quantifier,
-        bounds: first.names.map((name, index) => ({
-          name,
-          level: "Constant",
-          domain: { kind: "Domain", expression: factors[index] },
-        })),
+        bounds: getFactorBounds(first.names, factors),
         body: inner,
         location: inner.location,
       };
@@ -137,14 +140,7 @@ const expandConstructorBounds = (bounds: TuplyBound[], value: Expr, isSetOf: boo
     if (bound.kind === "Name") return { bounds: [getNamedBound(bound)], definitions: [] };
     const factors = getFactors(bound.domain, bound.names);
     if (factors && isSetOf) {
-      return {
-        bounds: bound.names.map((name, index) => ({
-          name,
-          level: "Constant",
-          domain: { kind: "Domain", expression: factors[index] },
-        })),
-        definitions: [],
-      };
+      return { bounds: getFactorBounds(bound.names, factors), definitions: [] };
     }
     const name = `fcn#${bound.names[0]}`;
     const fcnBound: Bound = {

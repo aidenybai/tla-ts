@@ -15,7 +15,7 @@ export interface Usable {
   defs: UseDef[];
 }
 
-export type Omission = "Implicit" | "Explicit" | "Elsewhere";
+type Omission = "Implicit" | "Explicit" | "Elsewhere";
 
 export type ObligationKind =
   | { kind: "Main" }
@@ -38,18 +38,20 @@ interface ProofProps {
 
 export type Proof = ProofCore & ProofProps;
 
-export type ProofCore =
+type ProofCore =
   | { kind: "Obvious" }
   | { kind: "Omitted"; omission: Omission }
   | { kind: "By"; usable: Usable; isOnly: boolean }
   | { kind: "Steps"; steps: Step[]; qed: QedStep }
   | { kind: "Error"; message: string };
 
-export type QedStep = { proof: Proof } & ProofProps;
+interface QedStep extends ProofProps {
+  proof: Proof;
+}
 
 export type Step = StepCore & ProofProps;
 
-export type StepCore =
+type StepCore =
   | { kind: "Hide"; usable: Usable }
   | { kind: "Define"; definitions: Defn[] }
   | { kind: "Assert"; sequent: Sequent; proof: Proof }

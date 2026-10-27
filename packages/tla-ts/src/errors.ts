@@ -46,6 +46,15 @@ export class TlaProofError extends TlaError {
   }
 }
 
+// tlapm fails one of its own assertions, which it reports as a bug in itself. It keeps the name
+// TlaProofError, and index.ts doesn't export it.
+export class TlapmBugError extends TlaProofError {
+  constructor() {
+    super("Oops, this seems to be a bug in TLAPM.");
+    this.name = "TlaProofError";
+  }
+}
+
 export class TlaUnsupportedError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);

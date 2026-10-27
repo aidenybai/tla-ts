@@ -1,21 +1,19 @@
 // A port of tlapm's module pipeline: flattening EXTENDS (Module.Flatten), normalization
 // (Module.Elab.normalize) and obligation generation (Module.Gen).
 
-import { TlaProofError } from "./errors";
+import { TlaProofError, TlapmBugError } from "./errors";
 import { lambdify } from "./obligation-action";
-import { TLAPM_BUG } from "./obligation-levels";
+import type { Anonymizer } from "./obligation-anon";
 import {
   adjoinAll,
-  findNamed,
-  getScopeHyps,
-  exprifySequent,
-  type Anonymizer,
-  type Scope,
-} from "./obligation-anon";
-import {
   at,
   bumpBy,
+  consAll,
   consSubstitution,
+  exprifySequent,
+  findNamed,
+  getScopeHyps,
+  mapAccumulate,
   getFresh,
   isEqualHyp,
   shiftExpr,
@@ -31,6 +29,7 @@ import {
   type Hyp,
   type InstanceDefinition,
   type Locus,
+  type Scope,
   type Sequent,
   type Substitution,
   type Visibility,
@@ -80,7 +79,7 @@ export interface Mule {
   depth?: number;
 }
 
-const getNullary = (name: string, builtin: Builtin): ModuleUnit => ({
+const getBuiltinConstant = (name: string, builtin: Builtin): ModuleUnit => ({
   kind: "Definition",
   definition: { kind: "Operator", name, body: { kind: "Internal", builtin } },
   whereDefined: "Builtin",
@@ -88,7 +87,7 @@ const getNullary = (name: string, builtin: Builtin): ModuleUnit => ({
   isLocal: false,
 });
 
-const getOperator = (arity: number, name: string, builtin: Builtin): ModuleUnit => ({
+const getBuiltinOperator = (arity: number, name: string, builtin: Builtin): ModuleUnit => ({
   kind: "Definition",
   definition: {
     kind: "Operator",
@@ -115,55 +114,59 @@ const getOperator = (arity: number, name: string, builtin: Builtin): ModuleUnit 
 });
 
 const NATURALS: ModuleUnit[] = [
-  getNullary("Nat", "Nat"),
-  getOperator(2, "+", "Plus"),
-  getOperator(2, "-", "Minus"),
-  getOperator(2, "*", "Times"),
-  getOperator(2, "^", "Exp"),
-  getOperator(2, "<", "Lt"),
-  getOperator(2, ">", "Gt"),
-  getOperator(2, "=<", "Lteq"),
-  getOperator(2, ">=", "Gteq"),
-  getOperator(2, "%", "Remainder"),
-  getOperator(2, "\\div", "Quotient"),
-  getOperator(2, "..", "Range"),
+  getBuiltinConstant("Nat", "Nat"),
+  getBuiltinOperator(2, "+", "Plus"),
+  getBuiltinOperator(2, "-", "Minus"),
+  getBuiltinOperator(2, "*", "Times"),
+  getBuiltinOperator(2, "^", "Exp"),
+  getBuiltinOperator(2, "<", "Lt"),
+  getBuiltinOperator(2, ">", "Gt"),
+  getBuiltinOperator(2, "=<", "Lteq"),
+  getBuiltinOperator(2, ">=", "Gteq"),
+  getBuiltinOperator(2, "%", "Remainder"),
+  getBuiltinOperator(2, "\\div", "Quotient"),
+  getBuiltinOperator(2, "..", "Range"),
 ];
 
-const INTEGERS = [...NATURALS, getNullary("Int", "Int"), getOperator(1, "-.", "Uminus")];
+const INTEGERS = [
+  ...NATURALS,
+  getBuiltinConstant("Int", "Int"),
+  getBuiltinOperator(1, "-.", "Uminus"),
+];
 
 const REALS = [
   ...INTEGERS,
-  getNullary("Real", "Real"),
-  getOperator(2, "/", "Ratio"),
-  getNullary("Infinity", "Infinity"),
+  getBuiltinConstant("Real", "Real"),
+  getBuiltinOperator(2, "/", "Ratio"),
+  getBuiltinConstant("Infinity", "Infinity"),
 ];
 
 const SEQUENCES = [
-  getOperator(1, "Seq", "Seq"),
-  getOperator(1, "Len", "Len"),
-  getOperator(2, "BSeq", "BSeq"),
-  getOperator(2, "\\o", "Cat"),
-  getOperator(2, "Append", "Append"),
-  getOperator(1, "Head", "Head"),
-  getOperator(1, "Tail", "Tail"),
-  getOperator(3, "SubSeq", "SubSeq"),
-  getOperator(2, "SelectSeq", "SelectSeq"),
+  getBuiltinOperator(1, "Seq", "Seq"),
+  getBuiltinOperator(1, "Len", "Len"),
+  getBuiltinOperator(2, "BSeq", "BSeq"),
+  getBuiltinOperator(2, "\\o", "Cat"),
+  getBuiltinOperator(2, "Append", "Append"),
+  getBuiltinOperator(1, "Head", "Head"),
+  getBuiltinOperator(1, "Tail", "Tail"),
+  getBuiltinOperator(3, "SubSeq", "SubSeq"),
+  getBuiltinOperator(2, "SelectSeq", "SelectSeq"),
 ];
 
 const TLC = [
-  getOperator(2, "Print", "Print"),
-  getOperator(1, "PrintT", "PrintT"),
-  getOperator(2, "Assert", "Assert"),
-  getNullary("JavaTime", "JavaTime"),
-  getOperator(1, "TLCGet", "TLCGet"),
-  getOperator(2, "TLCSet", "TLCSet"),
-  getOperator(2, ":>", "OneArg"),
-  getOperator(2, "@@", "Extend"),
-  getOperator(1, "Permutations", "Permutations"),
-  getOperator(2, "SortSeq", "SortSeq"),
-  getOperator(1, "RandomElement", "RandomElement"),
-  getNullary("Any", "Any"),
-  getOperator(1, "ToString", "ToString"),
+  getBuiltinOperator(2, "Print", "Print"),
+  getBuiltinOperator(1, "PrintT", "PrintT"),
+  getBuiltinOperator(2, "Assert", "Assert"),
+  getBuiltinConstant("JavaTime", "JavaTime"),
+  getBuiltinOperator(1, "TLCGet", "TLCGet"),
+  getBuiltinOperator(2, "TLCSet", "TLCSet"),
+  getBuiltinOperator(2, ":>", "OneArg"),
+  getBuiltinOperator(2, "@@", "Extend"),
+  getBuiltinOperator(1, "Permutations", "Permutations"),
+  getBuiltinOperator(2, "SortSeq", "SortSeq"),
+  getBuiltinOperator(1, "RandomElement", "RandomElement"),
+  getBuiltinConstant("Any", "Any"),
+  getBuiltinOperator(1, "ToString", "ToString"),
 ];
 
 const getStandard = (name: string, body: ModuleUnit[]): Mule => ({
@@ -421,24 +424,29 @@ const substituteUnit = (
   }
 };
 
-const substituteUnits = (substitution: Substitution, units: ModuleUnit[]) => {
-  let current = substitution;
-  return units.map((unit) => {
-    const [next, substituted] = substituteUnit(current, unit);
-    current = next;
-    return substituted;
-  });
-};
+const substituteUnits = (substitution: Substitution, units: ModuleUnit[]) =>
+  mapAccumulate(substitution, units, substituteUnit)[1];
 
 const lambdifySequent = (pipeline: Pipeline, scope: Scope | undefined, sequent: Sequent) => {
   try {
     const lambdified = lambdify(pipeline.anonymizer, scope, { kind: "Sequent", sequent });
-    if (lambdified.kind !== "Sequent") throw new TlaProofError(TLAPM_BUG);
+    if (lambdified.kind !== "Sequent") throw new TlapmBugError();
     return lambdified.sequent;
   } catch (error) {
-    if (!(error instanceof TlaProofError) || error.message === TLAPM_BUG) throw error;
+    if (!(error instanceof TlaProofError) || error instanceof TlapmBugError) throw error;
     return { context: [], active: at({ kind: "Internal", builtin: "TRUE" }, sequent.active) };
   }
+};
+
+const lambdifyUnit = (pipeline: Pipeline, scope: Scope | undefined, unit: ModuleUnit) => {
+  if (unit.kind === "Theorem") {
+    return { ...unit, sequent: lambdifySequent(pipeline, scope, unit.sequent) };
+  }
+  if (unit.kind !== "Definition") return unit;
+  const definition = unit.definition;
+  if (definition.kind !== "Operator" && definition.kind !== "Bpragma") return unit;
+  const body = lambdify(pipeline.anonymizer, scope, definition.body);
+  return { ...unit, definition: { ...definition, body } };
 };
 
 // lambdify_enabled_cdot: the ENABLED and \cdot of each definition and theorem statement bind
@@ -448,29 +456,15 @@ const lambdifyUnits = (
   pipeline: Pipeline,
   scope: Scope | undefined,
   units: ModuleUnit[],
-): [Scope | undefined, ModuleUnit[]] => {
-  let current = scope;
-  const lambdified = units.map((unit): ModuleUnit => {
+): [Scope | undefined, ModuleUnit[]] =>
+  mapAccumulate(scope, units, (current, unit): [Scope | undefined, ModuleUnit] => {
     if (unit.kind === "Submod") {
       const [inner, body] = lambdifyUnits(pipeline, current, unit.module.body);
-      current = inner;
-      return { ...unit, module: { ...unit.module, body } };
+      return [inner, { ...unit, module: { ...unit.module, body } }];
     }
-    const mapped = ((): ModuleUnit => {
-      if (unit.kind === "Theorem") {
-        return { ...unit, sequent: lambdifySequent(pipeline, current, unit.sequent) };
-      }
-      if (unit.kind !== "Definition") return unit;
-      const definition = unit.definition;
-      if (definition.kind !== "Operator" && definition.kind !== "Bpragma") return unit;
-      const body = lambdify(pipeline.anonymizer, current, definition.body);
-      return { ...unit, definition: { ...definition, body } };
-    })();
-    current = adjoinAll(current, getUnitHyps(mapped));
-    return mapped;
+    const lambdified = lambdifyUnit(pipeline, current, unit);
+    return [adjoinAll(current, getUnitHyps(lambdified)), lambdified];
   });
-  return [current, lambdified];
-};
 
 // apply_subst: each parameter declaration of the instancee gives way to its substitute.
 const applyParameters = (units: ModuleUnit[], substitutes: Map<string, Expr>) => {
@@ -491,7 +485,7 @@ const applyParameters = (units: ModuleUnit[], substitutes: Map<string, Expr>) =>
     if (split) {
       const substitute = substitutes.get(split.name);
       if (!substitute) throw new TlaProofError(`Parameter ${split.name} has no substitute`);
-      const isEmpty = getUnitHyps(split.remaining).length === 0;
+      const isEmpty = getHypSize(split.remaining) === 0;
       rest = substituteUnits(
         consSubstitution(shiftExpr(size, substitute), shift(0)),
         isEmpty ? tail : [split.remaining, ...tail],
@@ -522,10 +516,7 @@ const getLocalSubstitution = (
     const operator = at({ kind: "Ix", index: index + argumentCount + 1 }, { location });
     return argumentCount > 0 ? at({ kind: "Apply", operator, args }, { location }) : operator;
   });
-  return [...locals, ...parameters].reduceRight<Substitution>(
-    (rest, expression) => consSubstitution(expression, rest),
-    shift(count + argumentCount),
-  );
+  return consAll([...locals, ...parameters].reverse(), shift(count + argumentCount));
 };
 
 const addParameters = (expression: Expr, args: string[]): Expr => {
@@ -540,7 +531,7 @@ const addParameters = (expression: Expr, args: string[]): Expr => {
 // localize: renames the instancee's units under the instance name, salts its local definitions
 // and binds the instance arguments in each of them.
 const localize = (
-  pipeline: Pipeline,
+  salts: Counter,
   units: ModuleUnit[],
   prefix: string,
   instance: InstanceDefinition,
@@ -566,9 +557,7 @@ const localize = (
         if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
           throw new TlaProofError("Module.Elab.localize");
         }
-        const name = unit.isLocal
-          ? `${definition.name}$${getUnique(pipeline.salts)}`
-          : definition.name;
+        const name = unit.isLocal ? `${definition.name}$${getUnique(salts)}` : definition.name;
         body.push({
           ...unit,
           definition: { ...definition, name: getName(name), body: localized(definition.body) },
@@ -730,7 +719,7 @@ const instantiate = (
   const [, lambdified] = lambdifyUnits(pipeline, instanceScope, body);
   return localizeAxioms(
     localize(
-      pipeline,
+      pipeline.salts,
       applyParameters(lambdified, anonymized),
       prefix,
       instance,
@@ -740,18 +729,32 @@ const instantiate = (
   );
 };
 
-const getSequentDefinition = (
-  name: string,
+// A named theorem binds its name as a proof definition, which its statement shifts past.
+const bindTheoremName = (
+  name: string | undefined,
   sequent: Sequent,
   location: Locus | undefined,
-): Hyp => ({
-  kind: "Defn",
-  definition: { kind: "Operator", name, body: at(exprifySequent(sequent), { location }), location },
-  whereDefined: "Proof",
-  visibility: "Visible",
-  isLocal: false,
-  location,
-});
+): { hyps: Hyp[]; sequent: Sequent } =>
+  name === undefined
+    ? { hyps: [], sequent }
+    : {
+        hyps: [
+          {
+            kind: "Defn",
+            definition: {
+              kind: "Operator",
+              name,
+              body: at(exprifySequent(sequent), { location }),
+              location,
+            },
+            whereDefined: "Proof",
+            visibility: "Visible",
+            isLocal: false,
+            location,
+          },
+        ],
+        sequent: substituteSequent(shift(1), sequent),
+      };
 
 // make_defs: the definitions among the units an INSTANCE inside a LET or DEFINE stands for.
 export const expandInstance = (
@@ -772,9 +775,12 @@ export const expandInstance = (
   let rest = units;
   while (rest.length > 0) {
     const [unit, ...tail] = rest;
-    if (unit.kind === "Definition") definitions.push(unit.definition);
-    rest =
-      unit.kind === "Definition" ? tail : substituteUnits(shift(-getUnitHyps(unit).length), tail);
+    if (unit.kind !== "Definition") {
+      rest = substituteUnits(shift(-getHypSize(unit)), tail);
+      continue;
+    }
+    definitions.push(unit.definition);
+    rest = tail;
   }
   return definitions;
 };
@@ -872,15 +878,15 @@ export const normalize = (
           : unit.proof;
         pipeline.latestModules = new Map(modules);
         const sequent = pipeline.anonymizer.sequent(current, unit.sequent);
-        const named =
-          name === undefined
-            ? current
-            : adjoinAll(current, [getSequentDefinition(name, sequent, unit.location)]);
-        const shifted = name === undefined ? sequent : substituteSequent(shift(1), sequent);
-        const proofScope = adjoinAll(named, shifted.context);
+        const binding = bindTheoremName(name, sequent, unit.location);
+        const proofScope = adjoinAll(adjoinAll(current, binding.hyps), binding.sequent.context);
         const anonymized = pipeline.anonymizer.proof(proofScope, proof);
         const simplified = module.isImportant
-          ? pipeline.generator.simplify(getScopeHyps(proofScope), shifted.active, anonymized)
+          ? pipeline.generator.simplify(
+              getScopeHyps(proofScope),
+              binding.sequent.active,
+              anonymized,
+            )
           : anonymized;
         emit({ ...unit, name, sequent, proof: simplified });
         continue;
@@ -906,14 +912,10 @@ export const generate = (pipeline: Pipeline, context: Hyp[], module: Mule): Obli
   for (const unit of module.body) {
     switch (unit.kind) {
       case "Theorem": {
-        const named =
-          unit.name === undefined
-            ? current
-            : [...current, getSequentDefinition(unit.name, unit.sequent, unit.location)];
-        const sequent =
-          unit.name === undefined ? unit.sequent : substituteSequent(shift(1), unit.sequent);
+        const binding = bindTheoremName(unit.name, unit.sequent, unit.location);
+        const named = [...current, ...binding.hyps];
         const proof = pipeline.generator.generate(
-          { context: [...named, ...sequent.context], active: sequent.active },
+          { context: [...named, ...binding.sequent.context], active: binding.sequent.active },
           unit.proof,
         );
         obligations.push(...pipeline.generator.collect(proof));

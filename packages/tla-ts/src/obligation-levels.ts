@@ -2,16 +2,18 @@
 // 3 temporal, 4 undefined), the weights of an operator's arguments, and the declared names the
 // level depends on.
 
-import { TlaProofError } from "./errors";
-import { adjoin, type Scope } from "./obligation-anon";
+import { TlaProofError, TlapmBugError } from "./errors";
 import {
+  adjoin,
   getBoundedFresh,
   getFresh,
+  getScopeAt,
+  mapAccumulate,
   type Bound,
   type Builtin,
   type Expr,
-  type Hyp,
   type Level,
+  type Scope,
 } from "./obligation-expression";
 
 interface LevelInfo {
@@ -19,8 +21,6 @@ interface LevelInfo {
   weights: boolean[];
   params: Set<string>;
 }
-
-export const TLAPM_BUG = "Oops, this seems to be a bug in TLAPM.";
 
 const getInfo = (level: number, arity = 0): LevelInfo => ({
   level,
@@ -102,7 +102,7 @@ const BUILTIN_LEVELS: Partial<Record<Builtin, [number, number]>> = {
   Unprimable: [0, 1],
 };
 
-const KIND_LEVELS: Record<Level, number> = {
+const LEVEL_NUMBERS: Record<Level, number> = {
   Constant: 0,
   State: 1,
   Action: 2,
@@ -121,33 +121,29 @@ const combine = (infos: LevelInfo[]): LevelInfo => ({
 // The level of each hypothesis depends only on the scope before it.
 const hypLevels = new WeakMap<Scope, LevelInfo>();
 
-const getScopeAt = (scope: Scope | undefined, depth: number) => {
-  let current = scope;
-  for (let index = 0; index < depth && current; index++) current = current.rest;
-  if (!current) throw new TlaProofError(TLAPM_BUG);
-  return current;
+const computeHypLevel = (scope: Scope): LevelInfo => {
+  const hyp = scope.hyp;
+  switch (hyp.kind) {
+    case "Flex":
+      return getInfo(1);
+    case "Fresh":
+      return { ...getInfo(LEVEL_NUMBERS[hyp.level], hyp.shape), params: new Set([hyp.name]) };
+    case "Defn": {
+      const definition = hyp.definition;
+      if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
+        throw new TlapmBugError();
+      }
+      return getLevelInfo(scope.rest, definition.body);
+    }
+    case "Fact":
+      return getLevelInfo(scope.rest, hyp.expression);
+  }
 };
 
 const getHypLevel = (scope: Scope): LevelInfo => {
   const cached = hypLevels.get(scope);
   if (cached) return cached;
-  const info = ((hyp: Hyp): LevelInfo => {
-    switch (hyp.kind) {
-      case "Flex":
-        return getInfo(1);
-      case "Fresh":
-        return { ...getInfo(KIND_LEVELS[hyp.level], hyp.shape), params: new Set([hyp.name]) };
-      case "Defn": {
-        const definition = hyp.definition;
-        if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
-          throw new TlaProofError(TLAPM_BUG);
-        }
-        return getLevelInfo(scope.rest, definition.body);
-      }
-      case "Fact":
-        return getLevelInfo(scope.rest, hyp.expression);
-    }
-  })(scope.hyp);
+  const info = computeHypLevel(scope);
   hypLevels.set(scope, info);
   return info;
 };
@@ -178,11 +174,14 @@ const applyOperator = (operator: LevelInfo, args: LevelInfo[]): LevelInfo => {
 export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelInfo => {
   const recurse = (inner: Expr) => getLevelInfo(scope, inner);
   switch (expression.kind) {
-    case "Ix":
-      return getHypLevel(getScopeAt(scope, expression.index - 1));
+    case "Ix": {
+      const hypScope = getScopeAt(scope, expression.index - 1);
+      if (!hypScope) throw new TlapmBugError();
+      return getHypLevel(hypScope);
+    }
     case "Internal": {
       const entry = BUILTIN_LEVELS[expression.builtin];
-      if (!entry) throw new TlaProofError(TLAPM_BUG);
+      if (!entry) throw new TlapmBugError();
       return getInfo(entry[0], entry[1]);
     }
     case "Opaque":
@@ -212,16 +211,16 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
         switch (operator.builtin) {
           case "Prime":
           case "StrongPrime":
-            if (recurse(arg).level > 1) throw new TlaProofError(TLAPM_BUG);
+            if (recurse(arg).level > 1) throw new TlapmBugError();
             return getInfo(2, 1);
           case "ENABLED": {
             const info = recurse(arg);
-            if (info.level > 2) throw new TlaProofError(TLAPM_BUG);
+            if (info.level > 2) throw new TlapmBugError();
             return { level: 1, weights: [], params: info.params };
           }
           case "UNCHANGED": {
             const info = recurse(arg);
-            if (info.level > 1) throw new TlaProofError(TLAPM_BUG);
+            if (info.level > 1) throw new TlapmBugError();
             return { level: 2, weights: [], params: info.params };
           }
         }
@@ -237,10 +236,9 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
       return applyOperator(recurse(operator), expression.args.map(recurse));
     }
     case "Sequent": {
-      let inner = scope;
-      const levels = expression.sequent.context.map((hyp) => {
-        inner = adjoin(inner, hyp);
-        return getHypLevel(inner).level;
+      const [inner, levels] = mapAccumulate(scope, expression.sequent.context, (current, hyp) => {
+        const next = adjoin(current, hyp);
+        return [next, getHypLevel(next).level];
       });
       return getInfo(Math.max(0, ...levels, getLevelInfo(inner, expression.sequent.active).level));
     }
@@ -281,13 +279,13 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
       return getInfo(3);
     case "Choose":
     case "SetSt": {
-      const domain = expression.domain && recurse(expression.domain);
+      const domainLevel = expression.domain && recurse(expression.domain);
       const hyp = expression.domain
         ? getBoundedFresh(expression.name, expression.domain)
         : getFresh(expression.name, "Constant");
       return combine([
         getLevelInfo(adjoin(scope, hyp), expression.body),
-        ...(domain ? [domain] : []),
+        ...(domainLevel ? [domainLevel] : []),
       ]);
     }
     case "SetEnum":
@@ -326,6 +324,6 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
       ]);
     case "Bang":
     case "At":
-      throw new TlaProofError(TLAPM_BUG);
+      throw new TlapmBugError();
   }
 };

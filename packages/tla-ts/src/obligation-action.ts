@@ -2,25 +2,24 @@
 // ENABLED and \cdot takes a LAMBDA over the variables it binds, after expanding the definitions
 // in its scope that soundness needs expanded.
 
-import { TlaProofError } from "./errors";
-import { adjoin, getNth, type Anonymizer, type Scope } from "./obligation-anon";
+import { TlaProofError, TlapmBugError } from "./errors";
+import type { Anonymizer } from "./obligation-anon";
 import {
+  adjoin,
+  applyBuiltin,
   at,
   bumpBy,
-  getBoundedFresh,
-  getFresh,
+  getScopeAt,
+  mapScoped,
   normalizeApply,
   shift,
   stripProps,
   substituteExpr,
-  type Bound,
-  type Builtin,
-  type Defn,
   type Expr,
-  type Hyp,
+  type Scope,
   type Substitution,
 } from "./obligation-expression";
-import { getLevelInfo, TLAPM_BUG } from "./obligation-levels";
+import { getLevelInfo } from "./obligation-levels";
 
 interface FreshNames {
   names: string[];
@@ -28,14 +27,14 @@ interface FreshNames {
 }
 
 const getHyp = (scope: Scope | undefined, index: number) => {
-  const hyp = getNth(scope, index - 1);
-  if (!hyp) throw new TlaProofError(TLAPM_BUG);
+  const hyp = getScopeAt(scope, index - 1)?.hyp;
+  if (!hyp) throw new TlapmBugError();
   return hyp;
 };
 
-const getInternal = (builtin: Builtin, from: Expr) => at({ kind: "Internal", builtin }, from);
-
-const isActionOperator = (expression: Expr) =>
+const isActionOperator = (
+  expression: Expr,
+): expression is Expr & { kind: "Internal"; builtin: "ENABLED" | "Cdot" } =>
   expression.kind === "Internal" &&
   (expression.builtin === "ENABLED" || expression.builtin === "Cdot");
 
@@ -47,205 +46,6 @@ const isLambdified = (expression: Expr) =>
     (expression.operator.kind === "Opaque" &&
       (expression.operator.name === "EnabledWrapper" ||
         expression.operator.name === "CdotWrapper")));
-
-const mapDefn = (definition: Defn, map: (body: Expr) => Expr): Defn =>
-  definition.kind === "Operator" || definition.kind === "Bpragma"
-    ? { ...definition, body: map(definition.body) }
-    : definition;
-
-const mapDomains = (bounds: Bound[], map: (domain: Expr) => Expr): Bound[] =>
-  bounds.map((bound) =>
-    bound.domain.kind === "Domain"
-      ? { ...bound, domain: { kind: "Domain", expression: map(bound.domain.expression) } }
-      : bound,
-  );
-
-// Visit.map_visible_hyp, threading a state through each binder: a scope or a substitution. Hidden
-// hypotheses are bound but not visited.
-const mapScoped = <State>(
-  state: State,
-  expression: Expr,
-  map: (state: State, inner: Expr) => Expr,
-  bind: (state: State, hyp: Hyp) => State,
-): Expr => {
-  const recurse = (inner: Expr) => map(state, inner);
-  const bindBounds = (bounds: Bound[]) =>
-    bounds.reduce((current, bound) => bind(current, getFresh(bound.name, bound.level)), state);
-  switch (expression.kind) {
-    case "Ix":
-    case "Internal":
-    case "Opaque":
-    case "String":
-    case "Num":
-    case "At":
-      return expression;
-    case "Lambda": {
-      const inner = expression.params.reduce(
-        (current, param) => bind(current, getFresh(param.name, "Unknown", param.shape)),
-        state,
-      );
-      return { ...expression, body: map(inner, expression.body) };
-    }
-    case "Sequent": {
-      let inner = state;
-      const context = expression.sequent.context.map((hyp) => {
-        const visit = (child: Expr) => map(inner, child);
-        const mapped = ((): Hyp => {
-          if (hyp.kind === "Fresh" && hyp.domain) return { ...hyp, domain: visit(hyp.domain) };
-          if (hyp.kind === "Defn" && hyp.visibility === "Visible") {
-            return { ...hyp, definition: mapDefn(hyp.definition, visit) };
-          }
-          if (hyp.kind === "Fact" && hyp.visibility === "Visible") {
-            return { ...hyp, expression: visit(hyp.expression) };
-          }
-          return hyp;
-        })();
-        inner = bind(inner, mapped);
-        return mapped;
-      });
-      return { ...expression, sequent: { context, active: map(inner, expression.sequent.active) } };
-    }
-    case "Let": {
-      let inner = state;
-      const definitions = expression.definitions.map((definition) => {
-        const mapped = mapDefn(definition, (body) => map(inner, body));
-        inner = bind(inner, {
-          kind: "Defn",
-          definition: mapped,
-          whereDefined: "User",
-          visibility: "Visible",
-          isLocal: true,
-        });
-        return mapped;
-      });
-      return { ...expression, definitions, body: map(inner, expression.body) };
-    }
-    case "Quant":
-    case "Fcn": {
-      const bounds = mapDomains(expression.bounds, recurse);
-      return { ...expression, bounds, body: map(bindBounds(bounds), expression.body) };
-    }
-    case "SetOf": {
-      const bounds = mapDomains(expression.bounds, recurse);
-      return { ...expression, bounds, element: map(bindBounds(bounds), expression.element) };
-    }
-    case "Tquant": {
-      const inner = expression.names.reduce(
-        (current, name) => bind(current, { kind: "Flex", name }),
-        state,
-      );
-      return { ...expression, body: map(inner, expression.body) };
-    }
-    case "Choose": {
-      const domain = expression.domain && recurse(expression.domain);
-      const hyp = domain
-        ? getBoundedFresh(expression.name, domain)
-        : getFresh(expression.name, "Constant");
-      return { ...expression, domain, body: map(bind(state, hyp), expression.body) };
-    }
-    case "SetSt": {
-      const domain = recurse(expression.domain);
-      const hyp = getBoundedFresh(expression.name, domain);
-      return { ...expression, domain, body: map(bind(state, hyp), expression.body) };
-    }
-    case "Bang":
-      return {
-        ...expression,
-        expression: recurse(expression.expression),
-        selectors: expression.selectors.map((selector) =>
-          selector.kind === "Instance" || selector.kind === "Label"
-            ? { ...selector, args: selector.args.map(recurse) }
-            : selector,
-        ),
-      };
-    case "Apply":
-      return {
-        ...expression,
-        operator: recurse(expression.operator),
-        args: expression.args.map(recurse),
-      };
-    case "With":
-    case "Dot":
-    case "Parens":
-      return { ...expression, expression: recurse(expression.expression) };
-    case "If":
-      return {
-        ...expression,
-        condition: recurse(expression.condition),
-        consequent: recurse(expression.consequent),
-        alternative: recurse(expression.alternative),
-      };
-    case "List":
-      return { ...expression, items: expression.items.map(recurse) };
-    case "SetEnum":
-    case "Tuple":
-      return { ...expression, elements: expression.elements.map(recurse) };
-    case "Product":
-      return { ...expression, factors: expression.factors.map(recurse) };
-    case "FcnApp":
-      return {
-        ...expression,
-        function: recurse(expression.function),
-        args: expression.args.map(recurse),
-      };
-    case "Arrow":
-      return {
-        ...expression,
-        domain: recurse(expression.domain),
-        range: recurse(expression.range),
-      };
-    case "Rect":
-    case "Record":
-      return {
-        ...expression,
-        fields: expression.fields.map((field) => ({
-          name: field.name,
-          value: recurse(field.value),
-        })),
-      };
-    case "Except":
-      return {
-        ...expression,
-        function: recurse(expression.function),
-        specs: expression.specs.map((spec) => ({
-          trail: spec.trail.map((point) =>
-            point.kind === "Apply"
-              ? { kind: "Apply" as const, expression: recurse(point.expression) }
-              : point,
-          ),
-          value: recurse(spec.value),
-        })),
-      };
-    case "Sub":
-    case "Tsub":
-      return {
-        ...expression,
-        action: recurse(expression.action),
-        subscript: recurse(expression.subscript),
-      };
-    case "Fair":
-      return {
-        ...expression,
-        subscript: recurse(expression.subscript),
-        action: recurse(expression.action),
-      };
-    case "Case":
-      return {
-        ...expression,
-        arms: expression.arms.map((arm) => ({
-          condition: recurse(arm.condition),
-          body: recurse(arm.body),
-        })),
-        other: expression.other && recurse(expression.other),
-      };
-  }
-};
-
-const mapInScope = (
-  scope: Scope | undefined,
-  expression: Expr,
-  map: (scope: Scope | undefined, inner: Expr) => Expr,
-) => mapScoped(scope, expression, map, adjoin);
 
 const getInitialLevel = (level: number | undefined) =>
   level === undefined ? 2 : Math.min(2, level);
@@ -287,16 +87,21 @@ const expandDefinitions = (
       ? expression.operator
       : expression;
   if (head.kind !== "Ix") {
-    return mapInScope(scope, expression, (inner, child) => expandDefinitions(inner, child, level));
+    return mapScoped(
+      scope,
+      expression,
+      (inner, child) => expandDefinitions(inner, child, level),
+      adjoin,
+    );
   }
   if (level === undefined) return expression;
   const expressionLevel = getLevelInfo(scope, expression).level;
   const hyp = getHyp(scope, head.index);
-  if (hyp.kind === "Fresh" && hyp.level === "Unknown") throw new TlaProofError(TLAPM_BUG);
+  if (hyp.kind === "Fresh" && hyp.level === "Unknown") throw new TlapmBugError();
   if (expressionLevel < level) return expression;
-  if (expressionLevel > 2 || hyp.kind === "Fact") throw new TlaProofError(TLAPM_BUG);
+  if (expressionLevel > 2 || hyp.kind === "Fact") throw new TlapmBugError();
   if (hyp.kind === "Flex") {
-    if (expression.kind !== "Ix") throw new TlaProofError(TLAPM_BUG);
+    if (expression.kind !== "Ix") throw new TlapmBugError();
     return expression;
   }
   if (hyp.kind === "Fresh") {
@@ -306,7 +111,7 @@ const expandDefinitions = (
   }
   const definition = hyp.definition;
   if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
-    throw new TlaProofError(TLAPM_BUG);
+    throw new TlapmBugError();
   }
   const body = substituteExpr(shift(head.index), definition.body);
   return recurse(
@@ -314,23 +119,15 @@ const expandDefinitions = (
   );
 };
 
-const getEquality = (expression: Expr): Expr => {
-  const primed = at(
-    { kind: "Apply", operator: getInternal("Prime", expression), args: [expression] },
-    expression,
-  );
-  return at(
-    { kind: "Apply", operator: getInternal("Eq", expression), args: [primed, expression] },
-    expression,
-  );
-};
+const getEquality = (expression: Expr): Expr =>
+  applyBuiltin("Eq", [applyBuiltin("Prime", [expression], expression), expression], expression);
 
 // E_tla_norm.rewrite_unch: UNCHANGED <<x, <<y>>>> as x' = x /\ y' = y.
 const rewriteUnchanged = (expression: Expr): Expr => {
   const flatten = (inner: Expr): Expr[] =>
     inner.kind === "Tuple" ? inner.elements.flatMap(flatten) : [inner];
   const items = flatten(expression);
-  if (items.length === 0) return getInternal("TRUE", expression);
+  if (items.length === 0) return at({ kind: "Internal", builtin: "TRUE" }, expression);
   if (items.length === 1) return getEquality(items[0]);
   return at({ kind: "List", bullet: "And", items: items.map(getEquality) }, expression);
 };
@@ -340,17 +137,15 @@ const expandPropositional = (expression: Expr): Expr => {
   if (expression.kind === "Apply" && expression.args.length === 1) {
     return rewriteUnchanged(expression.args[0]);
   }
-  if (expression.kind !== "Sub") throw new TlaProofError(TLAPM_BUG);
+  if (expression.kind !== "Sub") throw new TlapmBugError();
   const unchanged = rewriteUnchanged(expression.subscript);
   const second =
-    expression.modal === "Box"
-      ? unchanged
-      : at(
-          { kind: "Apply", operator: getInternal("Neg", expression), args: [unchanged] },
-          expression,
-        );
-  const operator = getInternal(expression.modal === "Box" ? "Disj" : "Conj", expression);
-  return at({ kind: "Apply", operator, args: [expression.action, second] }, expression);
+    expression.modal === "Box" ? unchanged : applyBuiltin("Neg", [unchanged], expression);
+  return applyBuiltin(
+    expression.modal === "Box" ? "Disj" : "Conj",
+    [expression.action, second],
+    expression,
+  );
 };
 
 // OCaml's Hashtbl.hash of a string: caml_hash's MurmurHash3 over the bytes.
@@ -402,7 +197,7 @@ const bindVariables = (
 ): Expr => {
   const recurse = (inner: Expr) => bindVariables(current, primed, scope, inner);
   const isInScope = current !== undefined || primed !== undefined;
-  const lambdify = (operator: Expr, args: Expr[]) => {
+  const lambdifyOperator = (operator: Expr, args: Expr[]) => {
     const fresh: FreshNames = {
       names: [],
       depth: Math.max(current?.depth ?? 0, primed?.depth ?? 0) + 1,
@@ -435,7 +230,7 @@ const bindVariables = (
       (builtin === "ENABLED" && expression.args.length === 1) ||
       (builtin === "Cdot" && expression.args.length === 2)
     ) {
-      return lambdify(expression.operator, expression.args);
+      return lambdifyOperator(expression.operator, expression.args);
     }
     if (builtin === "Prime" && expression.args.length === 1) {
       const arg = bindVariables(primed, undefined, scope, expression.args[0]);
@@ -447,17 +242,20 @@ const bindVariables = (
   if (expression.kind === "Ix") {
     if (!current) return expression;
     const hyp = getHyp(scope, expression.index);
-    if (hyp.kind === "Fact") throw new TlaProofError(TLAPM_BUG);
+    if (hyp.kind === "Fact") throw new TlapmBugError();
     if (hyp.kind !== "Flex") return expression;
     const name = `${hyp.name}#enabled#prime${current.depth}`;
     if (!current.names.includes(name)) current.names.push(name);
     return at({ kind: "Opaque", name }, expression);
   }
   if (expression.kind === "Apply" && expression.operator.kind === "Opaque") {
-    throw new TlaProofError(TLAPM_BUG);
+    throw new TlapmBugError();
   }
-  return mapInScope(scope, expression, (inner, child) =>
-    bindVariables(current, primed, inner, child),
+  return mapScoped(
+    scope,
+    expression,
+    (inner, child) => bindVariables(current, primed, inner, child),
+    adjoin,
   );
 };
 
@@ -467,19 +265,18 @@ const shiftIndices = (substitution: Substitution, expression: Expr): Expr => {
   if (expression.kind === "Apply" && isActionOperator(expression.operator)) {
     const [lambda] = expression.args;
     if (expression.args.length !== 1 || lambda.kind !== "Lambda") {
-      throw new TlaProofError(TLAPM_BUG);
+      throw new TlapmBugError();
     }
     const [placeholder, ...params] = lambda.params;
     if (placeholder.name !== "_") return expression;
-    const inner: Substitution = {
-      kind: "Compose",
-      outer: substitution,
-      inner: shift(params.length),
-    };
+    const body = shiftIndices(
+      { kind: "Compose", outer: substitution, inner: shift(params.length) },
+      lambda.body,
+    );
     return {
       kind: "Apply",
       operator: expression.operator,
-      args: [{ kind: "Lambda", params, body: shiftIndices(inner, lambda.body) }],
+      args: [{ kind: "Lambda", params, body }],
     };
   }
   if (expression.kind === "Ix") return substituteExpr(substitution, expression);
@@ -501,12 +298,9 @@ const renameParams = (expression: Expr): Expr => {
   if (expression.kind === "Apply" && isActionOperator(expression.operator)) {
     const [lambda] = expression.args;
     if (expression.args.length !== 1 || lambda.kind !== "Lambda" || lambda.params[0].name === "_") {
-      throw new TlaProofError(TLAPM_BUG);
+      throw new TlapmBugError();
     }
-    const name =
-      expression.operator.kind === "Internal" && expression.operator.builtin === "Cdot"
-        ? "CdotWrapper"
-        : "EnabledWrapper";
+    const name = expression.operator.builtin === "Cdot" ? "CdotWrapper" : "EnabledWrapper";
     return {
       kind: "Apply",
       operator: at({ kind: "Opaque", name }, expression.operator),
@@ -535,7 +329,7 @@ const checkArity = (expression: Expr): Expr => {
     expression.operator.builtin === "Cdot" &&
     expression.args.length === 1 &&
     expression.args[0].kind !== "Lambda";
-  if (isInvalid) throw new TlaProofError(TLAPM_BUG);
+  if (isInvalid) throw new TlapmBugError();
   return mapScoped(
     undefined,
     expression,

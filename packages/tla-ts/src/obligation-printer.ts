@@ -14,11 +14,11 @@ import {
   type Sequent,
   type Shape,
 } from "./obligation-expression";
-import { format, formatDelimited, renderDoc, type Doc } from "./obligation-format";
+import { format, formatDelimited, renderDoc, text, type Doc } from "./obligation-format";
 
 export type Fixity = "Nonfix" | "Prefix" | "Postfix" | "InfixLeft" | "InfixNon" | "InfixRight";
 
-interface Operator {
+export interface Operator {
   name: string;
   low: number;
   high: number;
@@ -259,32 +259,24 @@ const isBelow = (high: number, expression: Minimal) =>
 
 const withParens = (doc: Doc): Doc => [format("("), doc, format(")")];
 
+const printOperand = (operand: Minimal, isBare: boolean) =>
+  isBare ? printMinimal(operand) : withParens(printMinimal(operand));
+
 const printMinimal = (expression: Minimal): Doc => {
   if (expression.kind !== "Op") return expression.doc;
   const skeleton = expression.skeleton;
   const isUnder = (operand: Minimal) => isBelow(expression.high, operand);
   switch (skeleton.kind) {
-    case "Prefix": {
-      const operand = skeleton.operand;
-      const isBare =
-        isUnder(operand) || (operand.kind === "Op" && operand.skeleton.kind === "Prefix");
-      return [
-        format("@[<h>"),
-        expression.doc,
-        isBare ? printMinimal(operand) : withParens(printMinimal(operand)),
-        format("@]"),
-      ];
-    }
+    case "Prefix":
     case "Postfix": {
       const operand = skeleton.operand;
-      const isBare =
-        isUnder(operand) || (operand.kind === "Op" && operand.skeleton.kind === "Postfix");
-      return [
-        format("@[<h>"),
-        isBare ? printMinimal(operand) : withParens(printMinimal(operand)),
-        expression.doc,
-        format("@]"),
-      ];
+      const operandDoc = printOperand(
+        operand,
+        isUnder(operand) || (operand.kind === "Op" && operand.skeleton.kind === skeleton.kind),
+      );
+      const docs =
+        skeleton.kind === "Prefix" ? [expression.doc, operandDoc] : [operandDoc, expression.doc];
+      return [format("@[<h>"), ...docs, format("@]")];
     }
     case "Infix": {
       const left = skeleton.left;
@@ -300,9 +292,9 @@ const printMinimal = (expression: Minimal): Doc => {
           right.skeleton.assoc === "Right");
       return [
         format("@[<b0>"),
-        isLeftBare ? printMinimal(left) : withParens(printMinimal(left)),
+        printOperand(left, isLeftBare),
         expression.doc,
-        isRightBare ? printMinimal(right) : withParens(printMinimal(right)),
+        printOperand(right, isRightBare),
         format("@]"),
       ];
     }
@@ -312,9 +304,6 @@ const printMinimal = (expression: Minimal): Doc => {
 const atom = (doc: Doc): Minimal => ({ kind: "Atm", doc });
 
 const big = (doc: Doc): Minimal => ({ kind: "Big", doc });
-
-const isLetter = (character: string) =>
-  (character >= "A" && character <= "Z") || (character >= "a" && character <= "z");
 
 const isWith = (expression: Expr): boolean => {
   if (expression.kind === "Lambda") return isWith(expression.body);
@@ -339,7 +328,7 @@ const printShape = (shape: Shape): Doc =>
         "@[<hov1>(%a)@]",
         formatDelimited(
           Array.from({ length: shape }, () => "_"),
-          (underscore) => format(underscore),
+          text,
         ),
       );
 
@@ -354,7 +343,8 @@ const LEVEL_NAMES = {
 };
 
 // hyps names the indices beyond the printer's own context, as the hypothesis deque does in E_fmt.
-const createPrinter = (context: Context, hyps: Hyp[] = []) => {
+const createPrinter = (hyps: Hyp[] = []) => {
+  const context = createContext();
   const printExpr = (expression: Expr): Doc => printMinimal(formatExpr(expression));
 
   const printLambda = (params: Param[], body: Expr) =>
@@ -385,7 +375,7 @@ const createPrinter = (context: Context, hyps: Hyp[] = []) => {
           else chunks.push({ names: [names[index]], index });
         });
         const boundsDoc = formatDelimited(chunks, (chunk) => {
-          const namesDoc = formatDelimited(chunk.names, (name) => format(name));
+          const namesDoc = formatDelimited(chunk.names, text);
           const domain = bounds[chunk.index].domain;
           if (domain.kind === "NoDomain") return namesDoc;
           if (domain.kind === "Ditto") return format("@[<hov0>%a@ \\in ??????@]", namesDoc);
@@ -405,14 +395,14 @@ const createPrinter = (context: Context, hyps: Hyp[] = []) => {
       case "Right":
         return format(">>");
       case "At":
-        return format("@");
+        return text("@");
       case "Number":
-        return format(String(selector.value));
+        return text(String(selector.value));
       case "Instance":
         return format("@[<b1>(%a)@]", formatDelimited(selector.args, printExpr));
       case "Label":
         return selector.args.length === 0
-          ? format(selector.label)
+          ? text(selector.label)
           : format(
               "@[<b2>%s@,@[<b1>(%a)@]@]",
               selector.label,
@@ -482,41 +472,36 @@ const createPrinter = (context: Context, hyps: Hyp[] = []) => {
           throw new TlaProofError("Cannot print this operator");
       }
     })();
-    if (args.length === 0) return atom(format(top.name));
+    const getOp = (doc: Doc, skeleton: Skeleton): Minimal => ({
+      kind: "Op",
+      name: top.name,
+      doc,
+      low: top.low,
+      high: top.high,
+      skeleton,
+    });
+    if (args.length === 0) return atom(text(top.name));
     if (top.fixity === "Nonfix") {
       return atom(format("@[<b2>%s@[<b1>(%a)@]@]", top.name, formatDelimited(args, printExpr)));
     }
     if (top.fixity === "Prefix" && args.length === 1) {
-      return {
-        kind: "Op",
-        name: top.name,
-        doc: isLetter(top.name[top.name.length - 1]) ? format("%s@ ", top.name) : format(top.name),
-        low: top.low,
-        high: top.high,
-        skeleton: { kind: "Prefix", operand: formatExpr(args[0]) },
-      };
+      return getOp(/[A-Za-z]$/.test(top.name) ? format("%s@ ", top.name) : text(top.name), {
+        kind: "Prefix",
+        operand: formatExpr(args[0]),
+      });
     }
     if (top.fixity === "Postfix" && args.length === 1) {
-      return {
-        kind: "Op",
-        name: top.name,
-        doc: format(top.name),
-        low: top.low,
-        high: top.high,
-        skeleton: { kind: "Postfix", operand: formatExpr(args[0]) },
-      };
+      return getOp(text(top.name), { kind: "Postfix", operand: formatExpr(args[0]) });
     }
     if (top.fixity.startsWith("Infix") && args.length === 2) {
       const assoc: Assoc =
         top.fixity === "InfixLeft" ? "Left" : top.fixity === "InfixRight" ? "Right" : "Non";
-      return {
-        kind: "Op",
-        name: top.name,
-        doc: top.name === ".." ? format(top.name) : format("@ %s ", top.name),
-        low: top.low,
-        high: top.high,
-        skeleton: { kind: "Infix", assoc, left: formatExpr(args[0]), right: formatExpr(args[1]) },
-      };
+      return getOp(top.name === ".." ? text(top.name) : format("@ %s ", top.name), {
+        kind: "Infix",
+        assoc,
+        left: formatExpr(args[0]),
+        right: formatExpr(args[1]),
+      });
     }
     throw new TlaProofError(`Arity mismatch for operator ${top.name}`);
   };
@@ -591,7 +576,7 @@ const createPrinter = (context: Context, hyps: Hyp[] = []) => {
             format(
               "@[<b4>%s @[<b0>%a@] : %a@]",
               expression.quantifier === "Forall" ? "\\AA" : "\\EE",
-              formatDelimited(names, (name) => format(name)),
+              formatDelimited(names, text),
               printExpr(expression.body),
             ),
           ),
@@ -718,7 +703,7 @@ const createPrinter = (context: Context, hyps: Hyp[] = []) => {
             kind: "Infix",
             assoc: "Left",
             left: formatExpr(expression.expression),
-            right: atom(format(expression.field)),
+            right: atom(text(expression.field)),
           },
         };
       case "Sub":
@@ -762,14 +747,14 @@ const createPrinter = (context: Context, hyps: Hyp[] = []) => {
         return atom(format('"%s"', expression.value));
       case "Num":
         return atom(
-          format(
+          text(
             expression.fraction === ""
               ? expression.integer
               : `${expression.integer}.${expression.fraction}`,
           ),
         );
       case "At":
-        return atom(format("@"));
+        return atom(text("@"));
       case "Parens": {
         const form = expression.form;
         if (form.kind === "Syntax") return formatExpr(expression.expression);
@@ -783,11 +768,10 @@ const createPrinter = (context: Context, hyps: Hyp[] = []) => {
               );
         const inner = formatExpr(expression.expression);
         if (names.length === 0) {
-          return inner.kind === "Op"
-            ? atom(format("%s::(%a)", form.label, printMinimal(inner)))
-            : atom(format("%s::%a", form.label, printMinimal(inner)));
+          const pattern = inner.kind === "Op" ? "%s::(%a)" : "%s::%a";
+          return atom(format(pattern, form.label, printMinimal(inner)));
         }
-        const namesDoc = formatDelimited(names, (name) => format(name));
+        const namesDoc = formatDelimited(names, text);
         if (inner.kind === "Atm")
           return atom(format("%s(%a)::%a", form.label, namesDoc, printMinimal(inner)));
         if (inner.kind === "Big") {
@@ -841,12 +825,8 @@ const createPrinter = (context: Context, hyps: Hyp[] = []) => {
         const name = pushName(context, definition.name);
         const head =
           instance.args.length === 0
-            ? format(name)
-            : format(
-                "%s (@[<b0>%a@])",
-                name,
-                formatDelimited(substitutionsDoc.args, (arg) => format(arg)),
-              );
+            ? text(name)
+            : format("%s (@[<b0>%a@])", name, formatDelimited(substitutionsDoc.args, text));
         return format("@[<b2>%a == %a@]", head, substitutionsDoc.doc);
       }
       case "Recursive": {
@@ -901,9 +881,9 @@ const createPrinter = (context: Context, hyps: Hyp[] = []) => {
 };
 
 export const printExpression = (hyps: Hyp[], expression: Expr) =>
-  createPrinter(createContext(), hyps).printExpr(expression);
+  createPrinter(hyps).printExpr(expression);
 
 export const formatObligation = (sequent: Sequent) => {
-  const printer = createPrinter(createContext());
+  const printer = createPrinter();
   return renderDoc(format("@[<b0>%a@]", printer.printSequent(sequent))).trimEnd();
 };
