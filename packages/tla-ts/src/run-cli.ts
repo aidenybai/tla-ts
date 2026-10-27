@@ -45,8 +45,10 @@ const printState = (state: Record<string, Value>) => {
   console.log("");
 };
 
-const printTrace = (trace: TraceStep[]) => {
-  if (trace.length > 0) console.log("Error: The behavior up to this point is:");
+const BEHAVIOR_HEADING = "Error: The behavior up to this point is:";
+
+const printTrace = (trace: TraceStep[], heading = BEHAVIOR_HEADING) => {
+  if (trace.length > 0) console.log(heading);
   trace.forEach((step, index) => {
     console.log(`State ${index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>`);
     printState(step.state);
@@ -62,31 +64,51 @@ const printResult = (result: CheckResult) => {
     }
     printTrace(result.failure.trace);
   } else if (result.violation) {
+    const violation = result.violation;
+    const name = violation.name;
+    const loopStart = violation.loopStart;
+    // TLC prints a violation by an initial state without the behavior or the statistics.
+    const isInitial =
+      loopStart === undefined &&
+      violation.trace.length === 1 &&
+      (result.status === "invariant-violation" || result.status === "liveness-violation");
     const headline = {
       success: "",
       error: "",
-      "assumption-violation": result.violation.message
-        ? `Error: Evaluating assumption ${result.violation.name} failed.\n${result.violation.message}`
-        : `Error: Assumption ${result.violation.name} is false.`,
+      "assumption-violation": violation.message
+        ? `Error: Evaluating assumption ${name} failed.\n${violation.message}`
+        : `Error: Assumption ${name} is false.`,
       deadlock: "Error: Deadlock reached.",
-      "invariant-violation": `Error: Invariant ${result.violation.name} is violated.`,
-      "property-violation": `Error: Property ${result.violation.name} is violated.`,
-      "liveness-violation": `Error: Temporal property ${result.violation.name} was violated.`,
-      "postcondition-violation": `Error: ${result.violation.message ?? `Postcondition ${result.violation.name} is false.`}`,
+      "invariant-violation": isInitial
+        ? `Error: Invariant ${name} is violated by the initial state:`
+        : `Error: Invariant ${name} is violated.`,
+      "property-violation": `Error: Property ${name} is violated.`,
+      "liveness-violation":
+        loopStart !== undefined
+          ? `Error: Temporal property ${name} was violated.\n`
+          : isInitial
+            ? `Error: Property ${name} is violated by the initial state:`
+            : `Error: Action property ${name} is violated.`,
+      "postcondition-violation": `Error: ${violation.message ?? `Postcondition ${name} is false.`}`,
     }[result.status];
-    if (result.violation.counts) console.log(result.violation.counts);
+    if (violation.counts) console.log(violation.counts);
     console.log(headline);
-    printTrace(result.violation.trace);
-    const loopStart = result.violation.loopStart;
-    if (loopStart !== undefined) {
-      const isStuttering = loopStart === result.violation.trace.length - 1;
+    if (isInitial) printState(violation.trace[0].state);
+    else if (loopStart === undefined) printTrace(violation.trace);
+    else {
+      printTrace(violation.trace, "Error: The following behavior constitutes a counter-example:\n");
+      const isStuttering = loopStart === violation.trace.length - 1;
+      const back = violation.loopLabel ? `: <${violation.loopLabel}>\n` : "";
       console.log(
-        isStuttering ? `State ${loopStart + 2}: Stuttering` : `Back to state ${loopStart + 1}`,
+        isStuttering
+          ? `State ${loopStart + 2}: Stuttering`
+          : `Back to state ${loopStart + 1}${back}`,
       );
     }
-    const unwitnessed = result.violation.unwitnessed;
+    const unwitnessed = violation.unwitnessed;
     if (unwitnessed?.counts) console.log(unwitnessed.counts);
     if (unwitnessed) console.log(`Error: ${unwitnessed.message}`);
+    if (isInitial) return;
   } else {
     console.log("Model checking completed. No error has been found.");
   }
