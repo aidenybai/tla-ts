@@ -1,4 +1,14 @@
-import type { Bound, BoundPattern, Definition, Expression, OperatorParam } from "./ast";
+import type {
+  AssumeProve,
+  Bound,
+  BoundPattern,
+  Definition,
+  Expression,
+  Module,
+  OperatorParam,
+  SourceLocation,
+} from "./ast";
+import { TlaSyntaxError } from "./errors";
 import { getChildren } from "./evaluate";
 import { mapChildren } from "./instances";
 import { STANDARD_LEVELS } from "./standard-levels";
@@ -169,6 +179,20 @@ const bindFormals = (scope: Scope, formals: OperatorParam[]): Scope =>
 
 const toFormals = (names: string[]) => names.map((name) => ({ name, arity: 0 }));
 
+const ACTION_LEVEL = 2;
+
+const TEMPORAL_LEVEL = 3;
+
+const createLevelError = (message: string, location: SourceLocation) =>
+  new TlaSyntaxError(`${message} at line ${location.line}, column ${location.column}`);
+
+const LOGICAL_OPERATORS = new Set(["/\\", "\\/", "=>", "<=>"]);
+
+// SANY's OpApplNode.levelCheck rejects raw actions inside temporal formulas, but not inside a LET
+// or a label.
+const isOperatorApplication = (expression: Expression) =>
+  expression.kind !== "Let" && expression.kind !== "Label";
+
 export const createLevelAnalyzer = (context: LevelContext) => {
   const definitionLevels = new Map<Definition, OperatorLevels>();
 
@@ -216,6 +240,19 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     bound: string[] = [],
   ): LevelData => {
     const isBound = (name: string) => bound.includes(name);
+    operands.forEach((operand, index) => {
+      if (operand.operator || operand.declared) return;
+      if (operand.data.level > getMaxLevel(operator, index)) {
+        throw new TlaSyntaxError(
+          `Level error in applying operator ${operator.name}: The level of argument ${index + 1} exceeds the maximum level allowed by the operator.`,
+        );
+      }
+    });
+    if (ranges.some((range) => range.level > ACTION_LEVEL)) {
+      throw new TlaSyntaxError(
+        `Level error in applying operator ${operator.name}: The level of the range for a bounded variable exceeds the maximum level allowed by the operator.`,
+      );
+    }
     const getOperand = (formal: string) => {
       const index = operator.formals.findIndex((param) => param.name === formal);
       return index === -1 ? undefined : operands[index];
@@ -414,6 +451,39 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       ? applyDeclared(resolved.name, resolved.level, operands)
       : applyDefined(resolved.levels, operands);
 
+  const checkJunction = (operands: Operand[], location: SourceLocation) => {
+    const levels = operands.map((operand) => operand.data.level);
+    if (levels.includes(ACTION_LEVEL) && levels.includes(TEMPORAL_LEVEL)) {
+      throw createLevelError("Formula has both temporal formula and action as arguments", location);
+    }
+  };
+
+  const checkApply = (expression: Expression & { kind: "Apply" }, operands: Operand[]) => {
+    const isLeadsTo = expression.operator === "~>" || expression.operator === "-+->";
+    if (isLeadsTo && operands.some((operand) => operand.data.level === ACTION_LEVEL)) {
+      throw createLevelError(
+        "Action used where only temporal formula or state predicate allowed",
+        expression.location,
+      );
+    }
+    if (LOGICAL_OPERATORS.has(expression.operator)) checkJunction(operands, expression.location);
+  };
+
+  const checkTemporal = (
+    expression: Expression & { kind: "Always" | "Eventually" },
+    level: number,
+  ) => {
+    const operand = expression.expression;
+    const form = expression.kind === "Always" ? "BoxAction" : "AngleAction";
+    if (level !== ACTION_LEVEL || !isOperatorApplication(operand) || operand.kind === form) return;
+    throw createLevelError(
+      expression.kind === "Always"
+        ? "[] followed by action not of form [A]_v"
+        : "<> followed by action not of form <<A>>_v",
+      expression.location,
+    );
+  };
+
   const analyzeLet = (expression: Expression & { kind: "Let" }, scope: Scope): LevelData => {
     const inner: Scope = new Map(scope);
     expression.definitions.forEach((definition) =>
@@ -447,25 +517,31 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         return createData();
       case "Identifier":
         return applyResolved(resolve(expression.name, scope), []);
-      case "Apply":
-        return applyResolved(
-          resolve(expression.operator, scope),
-          toOperands(expression.args, scope),
-        );
+      case "Apply": {
+        const operands = toOperands(expression.args, scope);
+        checkApply(expression, operands);
+        return applyResolved(resolve(expression.operator, scope), operands);
+      }
       case "OperatorReference":
       case "Lambda":
         return toOperand(expression, scope).data;
       case "And":
-      case "Or":
-        return applyBuiltin(JUNCTION_LEVELS, expression.operands, scope);
+      case "Or": {
+        const operands = toOperands(expression.operands, scope);
+        checkJunction(operands, expression.location);
+        return applyDefined(JUNCTION_LEVELS, operands);
+      }
       case "Prime":
       case "Unchanged":
         return applyBuiltin(PRIME_LEVELS, [expression.expression], scope);
       case "Enabled":
         return applyBuiltin(ENABLED_LEVELS, [expression.expression], scope);
       case "Always":
-      case "Eventually":
-        return applyBuiltin(TEMPORAL_LEVELS, [expression.expression], scope);
+      case "Eventually": {
+        const operand = toOperand(expression.expression, scope);
+        checkTemporal(expression, operand.data.level);
+        return applyDefined(TEMPORAL_LEVELS, [operand]);
+      }
       case "If":
         return applyBuiltin(
           JUNCTION_LEVELS,
@@ -484,14 +560,24 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "Let":
         return analyzeLet(expression, scope);
       case "Forall":
-      case "Exists":
-        return applyBuiltin(
+      case "Exists": {
+        const data = applyBuiltin(
           JUNCTION_LEVELS,
           [expression.body],
           scope,
           expression.bounds.map((bound) => bound.set),
           getBoundNames(expression.bounds),
         );
+        const isActionBound = () =>
+          expression.bounds.some((bound) => analyze(bound.set, scope).level === ACTION_LEVEL);
+        if (data.level === TEMPORAL_LEVEL && isActionBound()) {
+          throw createLevelError(
+            "Action-level bound of quantified temporal formula",
+            expression.location,
+          );
+        }
+        return data;
+      }
       case "UnboundedQuantifier":
         return applyBuiltin(
           expression.isTemporal ? TEMPORAL_QUANTIFIER_LEVELS : JUNCTION_LEVELS,
@@ -733,4 +819,36 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   };
 
   return { analyze, analyzeDefinition, getNonLeibnizNames, resolve, toOperand };
+};
+
+const analyzeAssumeProve = (
+  assumeProve: AssumeProve,
+  scope: Scope,
+  analyzer: ReturnType<typeof createLevelAnalyzer>,
+): void => {
+  const inner: Scope = new Map(scope);
+  assumeProve.assumptions.forEach((assumption) => {
+    if (assumption.kind === "NewSymbol") {
+      if (assumption.set) analyzer.analyze(assumption.set, inner);
+      inner.set(assumption.name, { kind: "Formal", arity: assumption.arity });
+      return;
+    }
+    if (assumption.kind === "AssumeProve") analyzeAssumeProve(assumption, inner, analyzer);
+    else analyzer.analyze(assumption, inner);
+  });
+  analyzer.analyze(assumeProve.conclusion, inner);
+};
+
+// SANY checks the level of every definition, assumption, and theorem of a module.
+export const checkModuleLevels = (module: Module, context: LevelContext) => {
+  const analyzer = createLevelAnalyzer(context);
+  module.definitions
+    .filter((definition) => !definition.name.includes("!"))
+    .forEach((definition) => analyzer.analyzeDefinition(definition, new Map()));
+  module.assumptions.forEach((assumption) => analyzer.analyze(assumption.expression, new Map()));
+  module.theorems.forEach((theorem) =>
+    theorem.statement.kind === "AssumeProve"
+      ? analyzeAssumeProve(theorem.statement, new Map(), analyzer)
+      : analyzer.analyze(theorem.statement, new Map()),
+  );
 };
