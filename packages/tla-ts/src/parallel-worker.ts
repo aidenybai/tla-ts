@@ -5,7 +5,7 @@ import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from
 import type { LevelMessage, Port, StartMessage, WorkerMessage } from "./parallel";
 import { parseModule } from "./parser";
 import { getSuccessors } from "./successors";
-import { getTlcStringOrder } from "./tlc-order";
+import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
 import { getRankedStringCount, setStringOrder, type Value } from "./values";
 
@@ -109,7 +109,9 @@ const run = (start: StartMessage, parent: Port) => {
     files: { readFile: undefined, writeFile: undefined },
   });
   const environment = specification.environment;
-  const search = createSearch(start.config, environment);
+  const search = createSearch(start.config, environment, () =>
+    getTlcVariableOrder(start.source, loadModule),
+  );
   if (!search) return parent.postMessage({ type: "abort" } satisfies WorkerMessage);
   const width = environment.variables.length;
   const count = start.count;

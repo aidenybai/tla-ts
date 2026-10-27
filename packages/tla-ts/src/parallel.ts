@@ -13,7 +13,7 @@ import { getChildren, isImpureBuiltin, type Environment } from "./evaluate";
 import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from "./fingerprints";
 import { parseModule } from "./parser";
 import { getInitialStates } from "./successors";
-import { getTlcStringOrder } from "./tlc-order";
+import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { createStateEncoder, type EncodedStates } from "./transfer";
 import { getRankedStringCount, setStringOrder } from "./values";
 
@@ -120,7 +120,9 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   });
   const environment = specification.environment;
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
-  const search = createSearch(config, environment);
+  const search = createSearch(config, environment, () =>
+    getTlcVariableOrder(options.source, loadModule),
+  );
   if (!search || search.properties.liveness.length > 0 || isImpure(environment)) {
     return fallBack();
   }

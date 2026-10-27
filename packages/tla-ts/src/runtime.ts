@@ -5,6 +5,7 @@ export interface CheckerRuntime {
   getLevel: (state: (Value | undefined)[]) => number;
   getBehavior: (state: Value[]) => Value[][];
   getCurrentState: () => Value[] | undefined;
+  getFingerprint: (state: Value[]) => bigint;
   getRandom: () => JavaRandom;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
   seed: bigint;
@@ -34,11 +35,12 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     getLevel: () => 0,
     getBehavior: () => [],
     getCurrentState: () => undefined,
+    getFingerprint: getTlcFingerprint,
     getRandom: () => {
       const state = phase.isStartup ? undefined : runtime.getCurrentState();
       if (state === undefined) return startup;
       if (state !== worker.state) {
-        worker.random.setSeed(getTlcFingerprint(state) ^ BigInt.asUintN(64, seed));
+        worker.random.setSeed(runtime.getFingerprint(state) ^ BigInt.asUintN(64, seed));
         worker.state = state;
       }
       return worker.random;
