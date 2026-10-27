@@ -850,18 +850,47 @@ export const IMPURE_BUILTINS = new Set([
 export const isImpureBuiltin = (name: string, environment: Environment) =>
   IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;
 
-const usesImpureBuiltin = (expression: Expression, environment: Environment): boolean =>
-  ((expression.kind === "Apply" || expression.kind === "OperatorReference") &&
-    isImpureBuiltin(expression.operator, environment)) ||
-  (expression.kind === "Identifier" && isImpureBuiltin(expression.name, environment)) ||
-  getChildren(expression).some((child) => usesImpureBuiltin(child, environment));
+const impureDefinitions = new WeakMap<Definition, boolean>();
+
+const isEvaluatedOnce = (definition: Definition, environment: Environment) =>
+  definition.kind === "Operator" &&
+  definition.params.length === 0 &&
+  isConstantLevel(definition, environment);
+
+const callsImpureBuiltin = (expression: Expression, environment: Environment): boolean => {
+  const name =
+    expression.kind === "Identifier"
+      ? expression.name
+      : expression.kind === "Apply" || expression.kind === "OperatorReference"
+        ? expression.operator
+        : undefined;
+  if (name !== undefined && !isLocallyResolved(expression)) {
+    const definition = getDefinition(name, environment);
+    if (!definition && isImpureBuiltin(name, environment)) return true;
+    if (definition && !isEvaluatedOnce(definition, environment)) {
+      if (isImpureDefinition(definition, environment)) return true;
+    }
+  }
+  return getChildren(expression).some((child) => callsImpureBuiltin(child, environment));
+};
+
+// TLC evaluates a constant definition without parameters once, so only other definitions pass
+// on the side effects and random choices of the builtins they call.
+const isImpureDefinition = (definition: Definition, environment: Environment): boolean => {
+  const cached = impureDefinitions.get(definition);
+  if (cached !== undefined) return cached;
+  impureDefinitions.set(definition, false);
+  const isImpure =
+    callsImpureBuiltin(definition.body, environment) ||
+    (definition.kind === "Function" &&
+      definition.bounds.some((bound) => callsImpureBuiltin(bound.set, environment)));
+  impureDefinitions.set(definition, isImpure);
+  return isImpure;
+};
 
 export const isImpure = (environment: Environment) =>
-  [...environment.definitions.values()].some(
-    (definition) =>
-      usesImpureBuiltin(definition.body, environment) ||
-      (definition.kind === "Function" &&
-        definition.bounds.some((bound) => usesImpureBuiltin(bound.set, environment))),
+  [...environment.definitions.values()].some((definition) =>
+    isImpureDefinition(definition, environment),
   );
 
 const closedConstants = new WeakMap<Expression, boolean>();
@@ -943,7 +972,11 @@ const computeIsClosedConstant = (
           const definition = environment.definitions.get(
             environment.substitutions.get(expression.operator) ?? expression.operator,
           );
-          return definition !== undefined && isConstantLevel(definition, environment);
+          return (
+            definition !== undefined &&
+            isConstantLevel(definition, environment) &&
+            !isImpureDefinition(definition, environment)
+          );
         })());
     if (!isPure || operator === undefined) return false;
     const params = operator.kind === "Closure" ? operator.params : [];
