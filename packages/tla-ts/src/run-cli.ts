@@ -62,8 +62,11 @@ const printResult = (result: CheckResult) => {
     if (result.violation.trace.length > 0) console.log("Error: The behavior up to this point is:");
     result.violation.trace.forEach((step, index) => {
       console.log(`State ${index + 1}: <${step.action ?? "Initial predicate"}>`);
-      Object.entries(step.state).forEach(([name, value]) =>
-        console.log(`/\\ ${name} = ${prettyPrint(formatValue(value))}`),
+      const entries = Object.entries(step.state);
+      entries.forEach(([name, value]) =>
+        console.log(
+          `${entries.length === 1 ? "" : "/\\ "}${name} = ${prettyPrint(formatValue(value))}`,
+        ),
       );
       console.log("");
     });
