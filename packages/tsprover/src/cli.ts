@@ -30,10 +30,10 @@ const printTrace = (trace: TraceStep[], loopStart: number | undefined) => {
     const previous = trace[index - 1]?.state;
     const heading = index === 0 ? "Initial state" : (step.action ?? "step");
     console.log(`  ${index + 1}. ${heading}`);
-    for (const [name, value] of Object.entries(step.state)) {
-      const formatted = formatJs(value);
-      if (previous === undefined || formatJs(previous[name]) !== formatted) {
-        console.log(`     ${name} = ${formatted}`);
+    for (const entry of Object.entries(step.state)) {
+      const formatted = formatJs(entry[1]);
+      if (previous === undefined || formatJs(previous[entry[0]]) !== formatted) {
+        console.log(`     ${entry[0]} = ${formatted}`);
       }
     }
   });

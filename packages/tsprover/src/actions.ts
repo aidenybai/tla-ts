@@ -1,26 +1,30 @@
 import ts from "typescript";
-import { type Context, getSymbol, getTopLevelDeclaration } from "./context";
+import { getUpdatedValue } from "./collections";
+import { type Context, getFunction, getSymbol, getTopLevelDeclaration } from "./context";
 import { TsproverError } from "./errors";
 import {
-  bindPattern,
-  bindValues,
-  getKind,
-  getUpdatedValue,
-  isFunctionValue,
-  type Scope,
   translateCondition,
-  translateNegatedCondition,
   translateExpression,
-  translateSwitch,
-  translateThrow,
+  translateIndex,
+  translateNegatedCondition,
 } from "./expressions";
 import { and, DISABLED, type Formula, ifThenElse, letIn, text, wrap, wrapEquated } from "./formula";
+import { translateSwitch, translateThrow } from "./functions";
+import { bindPattern, bindValues, type Scope } from "./scope";
+import { getKind } from "./types";
 
 interface Path {
   scope: Scope;
   // State variables and mutable locals, which assignments may change.
   mutable: Set<ts.Symbol>;
   isAssigned: boolean;
+}
+
+interface Target {
+  symbol: ts.Symbol;
+  current: string;
+  // The path to the changed part, as an EXCEPT selector such as .field[2].
+  selector: string;
 }
 
 interface Frame {
@@ -45,11 +49,7 @@ const MUTATING_METHODS = new Set([
 ]);
 
 // The current value of an assignment target, and how to replace it.
-const getTarget = (
-  node: ts.Expression,
-  path: Path,
-  context: Context,
-): { symbol: ts.Symbol; current: string; selector: string } => {
+const getTarget = (node: ts.Expression, path: Path, context: Context): Target => {
   if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
     return getTarget(node.expression, path, context);
   }
@@ -70,13 +70,10 @@ const getTarget = (
   }
   if (ts.isElementAccessExpression(node)) {
     const target = getTarget(node.expression, path, context);
-    const index = translateExpression(node.argumentExpression, path.scope, context);
     const key =
       getKind(node.expression, context) === "sequence"
-        ? ts.isNumericLiteral(node.argumentExpression)
-          ? String(Number(node.argumentExpression.text) + 1)
-          : `${wrap(index)} + 1`
-        : index;
+        ? translateIndex(node.argumentExpression, path.scope, context)
+        : translateExpression(node.argumentExpression, path.scope, context);
     return { ...target, selector: `${target.selector}[${key}]` };
   }
   if (
@@ -169,8 +166,9 @@ const assignPattern = (
 
 // The value that a call like queue.shift() returns, before it changes the queue.
 const getRemovedValue = (node: ts.Expression, path: Path, context: Context) => {
-  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression))
+  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) {
     return undefined;
+  }
   const method = node.expression.name.text;
   if (method !== "shift" && method !== "pop") return undefined;
   const receiver = node.expression.expression;
@@ -243,15 +241,15 @@ const translateExpressionStatement = (
   }
   if (ts.isCallExpression(expression)) {
     const callee = expression.expression;
-    const arguments_ = expression.arguments.map(translate);
+    const values = expression.arguments.map(translate);
     if (ts.isPropertyAccessExpression(callee) && callee.expression.getText() === "console") {
       if (callee.name.text === "log") {
-        const value = arguments_.length === 1 ? arguments_[0] : `<<${arguments_.join(", ")}>>`;
+        const value = values.length === 1 ? values[0] : `<<${values.join(", ")}>>`;
         return and([text(`PrintT(${value})`), continueWith(path)]);
       }
       if (callee.name.text === "assert") {
-        const message = arguments_[1] ?? JSON.stringify("Assertion failed");
-        return and([text(`Assert(${arguments_[0]}, ${message})`), continueWith(path)]);
+        const message = values[1] ?? JSON.stringify("Assertion failed");
+        return and([text(`Assert(${values[0]}, ${message})`), continueWith(path)]);
       }
     }
     if (ts.isPropertyAccessExpression(callee) && MUTATING_METHODS.has(callee.name.text)) {
@@ -273,30 +271,22 @@ const translateExpressionStatement = (
         }),
       );
     }
+    // A helper that changes state runs inline, as part of the action.
     const helper = getTopLevelDeclaration(getSymbol(callee, context.checker));
-    const fn =
-      helper === undefined
-        ? undefined
-        : ts.isFunctionDeclaration(helper)
-          ? helper
-          : helper.initializer !== undefined &&
-              (ts.isArrowFunction(helper.initializer) ||
-                ts.isFunctionExpression(helper.initializer))
-            ? helper.initializer
-            : undefined;
-    if (helper !== undefined && fn?.body !== undefined) {
+    const helperFunction = getFunction(helper);
+    if (helper !== undefined && helperFunction?.body !== undefined) {
       if (frame.inlining.has(helper)) {
         throw new TsproverError("Helpers that change state can't call themselves", expression);
       }
       const bound = bindValues(
-        fn.parameters.map((parameter) => parameter.name),
-        arguments_,
+        helperFunction.parameters.map((parameter) => parameter.name),
+        values,
         path.scope,
         context,
       );
-      const body = ts.isBlock(fn.body)
-        ? fn.body.statements
-        : [ts.factory.createExpressionStatement(fn.body)];
+      const body = ts.isBlock(helperFunction.body)
+        ? helperFunction.body.statements
+        : [ts.factory.createExpressionStatement(helperFunction.body)];
       const inlining = new Set([...frame.inlining, helper]);
       const afterCall = (inner: Path) =>
         continueWith({ ...inner, scope: { ...inner.scope, previous: path.scope.previous } });
@@ -343,7 +333,7 @@ export const translateStatements = (
       if (declaration.initializer === undefined) {
         throw new TsproverError("Declare locals with a value", declaration);
       }
-      if (isFunctionValue(declaration.initializer)) {
+      if (getFunction(declaration.initializer) !== undefined) {
         return translateDeclarations(declarations.slice(1), current);
       }
       const removed = getRemovedValue(unwrapInitializer(declaration.initializer), current, context);
@@ -425,9 +415,9 @@ export const translateAction = (
 ): Formula => {
   const finish = (path: Path): Formula => {
     if (!path.isAssigned) return DISABLED;
-    const assignments = [...context.variables].map(([symbol, name]) => ({
-      name,
-      value: path.scope.bindings.get(symbol) ?? name,
+    const assignments = [...context.variables].map((entry) => ({
+      name: entry[1],
+      value: path.scope.bindings.get(entry[0]) ?? entry[1],
     }));
     const unchanged = assignments.filter((assignment) => assignment.value === assignment.name);
     return and([
