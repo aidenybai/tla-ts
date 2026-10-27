@@ -151,9 +151,9 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     statistics.distinctStates++;
   }
   if (getRankedStringCount() !== startupStrings) return fallBack();
+  statistics.depth = statistics.generatedStates === 0 ? 0 : 1;
   if (statistics.distinctStates === 0)
     return { status: "success", violation: undefined, ...statistics };
-  statistics.depth = 1;
 
   const reports: WorkerMessage[] = [];
   const pending = { resolve: (_: WorkerMessage[]) => {} };
