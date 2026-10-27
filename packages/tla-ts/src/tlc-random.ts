@@ -66,17 +66,27 @@ const BYTE_MOD_TABLE = (() => {
   );
 })();
 
-const extendByte = (fingerprint: bigint, byte: number) =>
-  (fingerprint >> 8n) ^ BYTE_MOD_TABLE[(byte ^ Number(fingerprint & 0xffn)) & 0xff];
+const BYTE_MOD_HIGH = Int32Array.from(BYTE_MOD_TABLE, (entry) =>
+  Number(BigInt.asIntN(32, entry >> 32n)),
+);
+const BYTE_MOD_LOW = Int32Array.from(BYTE_MOD_TABLE, (entry) => Number(BigInt.asIntN(32, entry)));
 
-const extendInt = (fingerprint: bigint, value: number) =>
-  [0, 8, 16, 24].reduce((current, shift) => extendByte(current, value >>> shift), fingerprint);
+// The fingerprint being extended, as its high and low 32 bits, which avoids a BigInt operation
+// for every byte.
+const INITIAL_HIGH = Number(BigInt.asIntN(32, IRREDUCIBLE_POLYNOMIAL >> 32n));
+const INITIAL_LOW = Number(BigInt.asIntN(32, IRREDUCIBLE_POLYNOMIAL));
+let high = INITIAL_HIGH;
+let low = INITIAL_LOW;
 
-const extendString = (fingerprint: bigint, text: string) =>
-  Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).reduce(
-    extendByte,
-    fingerprint,
-  );
+const extendByte = (byte: number) => {
+  const index = (byte ^ low) & 0xff;
+  low = ((low >>> 8) | (high << 24)) ^ BYTE_MOD_LOW[index];
+  high = (high >>> 8) ^ BYTE_MOD_HIGH[index];
+};
+
+const extendInt = (value: number) => {
+  for (let shift = 0; shift < 32; shift += 8) extendByte(value >>> shift);
+};
 
 const BOOL_VALUE = 0;
 const INT_VALUE = 1;
@@ -87,34 +97,50 @@ const MODEL_VALUE = 21;
 
 // Value#fingerPrint for each of TLC's value classes. A model value extends the fingerprint with
 // its UniqueString token, and TLC numbers tokens from 1 in intern order.
-const extendValue = (fingerprint: bigint, value: Value): bigint => {
+const extendValue = (value: Value) => {
   if (typeof value === "boolean") {
-    return extendByte(extendByte(fingerprint, BOOL_VALUE), value ? 116 : 102);
-  }
-  if (typeof value === "number") return extendInt(extendByte(fingerprint, INT_VALUE), value);
-  if (typeof value === "string") {
-    return extendString(extendInt(extendByte(fingerprint, STRING_VALUE), value.length), value);
-  }
-  if (isModelValue(value)) {
-    return extendInt(extendByte(fingerprint, MODEL_VALUE), getStringRank(value.name) + 1);
-  }
-  if (isFunctionValue(value)) {
+    extendByte(BOOL_VALUE);
+    extendByte(value ? 116 : 102);
+  } else if (typeof value === "number") {
+    extendByte(INT_VALUE);
+    extendInt(value);
+  } else if (typeof value === "string") {
+    extendByte(STRING_VALUE);
+    extendInt(value.length);
+    for (let index = 0; index < value.length; index++) {
+      extendByte(value.charCodeAt(index));
+    }
+  } else if (isModelValue(value)) {
+    extendByte(MODEL_VALUE);
+    extendInt(getStringRank(value.name) + 1);
+  } else if (isFunctionValue(value)) {
     const fn = toFiniteFunction(value);
-    return fn.domain.reduce(
-      (current, key, index) => extendValue(extendValue(current, key), fn.range[index]),
-      extendInt(extendByte(fingerprint, FCN_RCD_VALUE), fn.domain.length),
-    );
+    extendByte(FCN_RCD_VALUE);
+    extendInt(fn.domain.length);
+    for (let index = 0; index < fn.domain.length; index++) {
+      extendValue(fn.domain[index]);
+      extendValue(fn.range[index]);
+    }
+  } else {
+    const elements = toFiniteSet(value).elements;
+    extendByte(SET_ENUM_VALUE);
+    extendInt(elements.length);
+    for (const element of elements) extendValue(element);
   }
-  const elements = toFiniteSet(value).elements;
-  return elements.reduce(
-    extendValue,
-    extendInt(extendByte(fingerprint, SET_ENUM_VALUE), elements.length),
-  );
 };
 
-// TLCStateMut#fingerPrint of variable values in TLC's variable order.
-export const getTlcFingerprint = (state: Value[]) =>
-  state.reduce(extendValue, IRREDUCIBLE_POLYNOMIAL);
+// TLCStateMut#fingerPrint of variable values in TLC's variable order. Evaluating a lazy value can
+// fingerprint another, so this restores the fingerprint it interrupts.
+export const getTlcFingerprint = (state: Value[]) => {
+  const outer = { high, low };
+  high = INITIAL_HIGH;
+  low = INITIAL_LOW;
+  for (const value of state) extendValue(value);
+  const fingerprint = (BigInt(high >>> 0) << 32n) | BigInt(low >>> 0);
+  high = outer.high;
+  low = outer.low;
+  return fingerprint;
+};
 
 // RandomGenerator.primes holds the 1341 consecutive primes from 1277011 to 1295953.
 const PRIMES: number[] = [];
