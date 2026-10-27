@@ -8,7 +8,6 @@ import {
   defineHigherOrderOperator,
   defineOperator,
   getBoolean,
-  getElements,
   getNumber,
   getOperator,
   getSet,
@@ -167,37 +166,23 @@ export const CORE_OPERATORS: Builtin[] = [
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getSet(args, 0, "SUBSET") })),
   defineOperator("UNION", 1, (args) => {
     const outer = getSet(args, 0, "UNION");
-    if (isSetEnumeration(outer)) {
-      const sets = outer.elements.filter(isSetEnumeration);
-      const isMixed = isMixedSet(outer) || sets.some(isMixedSet);
-      if (isMixed && sets.length === outer.elements.length) {
-        const union: MixedSetValue = { kind: "MixedSet", elements: [] };
-        sets.forEach((set) =>
-          set.elements.forEach((member) => {
-            if (!isElementOf(member, union)) union.elements.push(member);
-          }),
-        );
-        return createEnumeratedSet(union.elements);
-      }
+    const sets = isSetEnumeration(outer) ? outer.elements.filter(isSetEnumeration) : [];
+    if (!isSetEnumeration(outer) || sets.length !== outer.elements.length) {
+      return { kind: "Union", base: outer };
     }
-    const sets = getElements(args, 0, "UNION");
-    sets.forEach((element) => {
-      if (!isSetValue(element)) {
-        throw new TlaEvaluationError(
-          `UNION expects a set of sets but found ${formatValue(element)}`,
-        );
-      }
-    });
-    if (sets.every((element) => typeof element === "object" && element.kind === "Set")) {
-      if (sets.length > MERGED_UNION_LIMIT) {
-        return createSet(sets.flatMap((element) => toFiniteSet(element).elements));
-      }
-      return sets.reduce<SetValue>(
-        (union, element) => unionSorted(union, toFiniteSet(element)),
-        EMPTY_SET,
+    if (isMixedSet(outer) || sets.some(isMixedSet)) {
+      const union: MixedSetValue = { kind: "MixedSet", elements: [] };
+      sets.forEach((set) =>
+        set.elements.forEach((member) => {
+          if (!isElementOf(member, union)) union.elements.push(member);
+        }),
       );
+      return createEnumeratedSet(union.elements);
     }
-    return sets.reduce((left, right) => ({ kind: "SetOperation", operator: "\\cup", left, right }));
+    if (sets.length > MERGED_UNION_LIMIT) {
+      return createSet(sets.flatMap((set) => toFiniteSet(set).elements));
+    }
+    return sets.reduce<SetValue>((union, set) => unionSorted(union, toFiniteSet(set)), EMPTY_SET);
   }),
   defineOperator("DOMAIN", 1, (args) => {
     const value = getValue(args, 0, "DOMAIN");
