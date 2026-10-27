@@ -139,6 +139,23 @@ const getConjuncts = (expression: Expression, environment: Environment): Express
   return [expression];
 };
 
+const isConstantTrue = (item: ScopedExpression, environment: Environment, usage: string) => {
+  const conjunct = item.expression;
+  if (conjunct.kind !== "Identifier" || getLevel(conjunct, item.scope, environment) > 0) {
+    return false;
+  }
+  const value = evaluate(conjunct, getContext(environment, undefined, undefined, item.scope));
+  if (value === false) {
+    throw new TlaConfigError(`The spec is trivially false because ${conjunct.name} is false.`);
+  }
+  if (value !== true) {
+    throw new TlaConfigError(
+      `The operator ${conjunct.name}, which equals ${formatValue(value)},\ncannot be used as a ${usage}`,
+    );
+  }
+  return true;
+};
+
 export const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
   if (config.specification === undefined) {
     if (config.init === undefined)
@@ -173,6 +190,7 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
   };
   expandTemporal(body, undefined, environment).forEach((item) => {
     const conjunct = item.expression;
+    if (isConstantTrue(item, environment, "spec")) return;
     if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
       nextActions.push(getUnscoped(conjunct.expression.action, item.scope));
       return;
@@ -220,6 +238,7 @@ export const getProperties = (config: ModelConfig, environment: Environment): Pr
     const body = getDefinitionBody(name, environment);
     expandTemporal(body, undefined, environment).forEach((item) => {
       const conjunct = item.expression;
+      if (isConstantTrue(item, environment, "property")) return;
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
         properties.actionProperties.push({
           name,
