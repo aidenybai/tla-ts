@@ -221,7 +221,12 @@ export const expandTemporal = (
     const definition = environment.constants.has(expression.name)
       ? undefined
       : getDefinition(expression.name, environment);
-    if (!binding && definition?.kind === "Operator" && definition.params.length === 0) {
+    if (
+      !binding &&
+      definition?.kind === "Operator" &&
+      definition.params.length === 0 &&
+      getDefinitionLevel(definition, environment) > 0
+    ) {
       if (expanding.has(definition)) {
         throw new TlaConfigError(`The definition of ${expression.name} refers to itself`);
       }
