@@ -175,6 +175,52 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([139, 14, 3]);
   });
 
+  it("orders strings, record fields, and model values by when TLC interns them", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source: readFileSync(join(FIXTURES, "strings", "StringOrder.tla"), "utf8"),
+      config: readFileSync(join(FIXTURES, "strings", "StringOrder.cfg"), "utf8"),
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual([
+      '"zzq"',
+      '{"zzq", "aaq", "mmq"}',
+      "[zz |-> 1, aa |-> 2]",
+      "{[zz |-> 1], [aa |-> 1]}",
+      "{p2, m, b}",
+      "p2",
+      '{"7", "3"}',
+      '{"zzb", "zza"}',
+    ]);
+    expect(result.status).toBe("invariant-violation");
+    expect(result.violation?.trace.map((step) => formatValue(step.state.pick))).toEqual([
+      '"zzq"',
+      '"aaq"',
+    ]);
+  });
+
+  it("explores states that depend on the order of strings in CHOOSE", async () => {
+    const result = await checkFixture("strings", "StringSets");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([76, 31, 5]);
+  });
+
+  it("ranks strings created while checking in the order they are created", async () => {
+    const result = await checkFixture("strings", "RuntimeStrings");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([115, 97, 6]);
+  });
+
+  it("does not carry one check's string order into the next", async () => {
+    const earlier = await checkModule(
+      'Picked == CHOOSE s \\in {"zzq", "aaq"} : TRUE\nASSUME Picked = "zzq"',
+    );
+    expect(earlier.status).toBe("success");
+    const reversed = await checkModule(
+      'ASSUME "aaq" # "zzq"\nASSUME (CHOOSE s \\in {"zzq", "aaq"} : TRUE) = "aaq"',
+    );
+    expect(reversed.status).toBe("success");
+    expect((await checkFixture("strings", "StringSets")).distinctStates).toBe(31);
+  });
+
   it("enumerates subsets for x \\subseteq S in the initial predicate and next-state relation", async () => {
     const result = await check({
       source:

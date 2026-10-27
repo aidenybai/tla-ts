@@ -185,6 +185,34 @@ const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) =>
   );
 };
 
+// TLC orders strings and model value names by when it first interned the text, so every
+// check sets the order of its spec's strings before it builds any value.
+const stringOrder = { ranks: Object.create(null) as Record<string, number>, size: 0 };
+
+export const setStringOrder = (texts: Iterable<string>) => {
+  stringOrder.ranks = Object.create(null);
+  stringOrder.size = 0;
+  for (const text of texts) rankString(text);
+};
+
+export const rankString = (text: string) => {
+  if (stringOrder.ranks[text] === undefined) stringOrder.ranks[text] = stringOrder.size++;
+  return text;
+};
+
+export const getRankedStringCount = () => stringOrder.size;
+
+const compareStrings = (left: string, right: string) => {
+  if (left === right) return 0;
+  const ranks = stringOrder.ranks;
+  const leftRank = ranks[left];
+  const rightRank = ranks[right];
+  if (leftRank !== undefined && rightRank !== undefined) return leftRank - rightRank;
+  if (leftRank !== undefined) return -1;
+  if (rightRank !== undefined) return 1;
+  return left < right ? -1 : 1;
+};
+
 export const compareValues = (left: Value, right: Value): number => {
   if (left === right) return 0;
   if (typeof left === "object" && typeof right === "object") {
@@ -195,7 +223,7 @@ export const compareValues = (left: Value, right: Value): number => {
     if (leftKind === "ModelValue" || rightKind === "ModelValue") {
       checkModelValueTypes(left, right, false);
       if (leftKind === "ModelValue" && rightKind === "ModelValue") {
-        return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
+        return compareStrings(left.name, right.name);
       }
       return leftKind === "ModelValue" ? -1 : 1;
     }
@@ -219,7 +247,7 @@ export const compareValues = (left: Value, right: Value): number => {
     return compareFunctions(toFiniteFunction(left), toFiniteFunction(right));
   }
   if (typeof left === "number" && typeof right === "number") return left - right;
-  if (typeof left === "string" && typeof right === "string") return left < right ? -1 : 1;
+  if (typeof left === "string" && typeof right === "string") return compareStrings(left, right);
   if (typeof left === "boolean" && typeof right === "boolean") return left < right ? -1 : 1;
   checkModelValueTypes(left, right, false);
   if (isModelValue(left)) return -1;
@@ -232,6 +260,7 @@ export const compareValues = (left: Value, right: Value): number => {
 const modelValues = new Map<string, ModelValue>();
 
 export const createModelValue = (name: string): ModelValue => {
+  rankString(name);
   const known = modelValues.get(name);
   if (known) return known;
   const value: ModelValue = { kind: "ModelValue", name };

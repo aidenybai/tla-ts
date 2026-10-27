@@ -60,4 +60,16 @@ describe("check with workers matches TLC", () => {
     ]);
     expect(getCounts(result)).toEqual([4, 4, 4]);
   });
+
+  it.each([2, 3])("orders sets of strings like TLC with %i workers", async (workers) => {
+    const result = await checkFixtureInParallel("strings", "StringSets", workers);
+    expect(result.status).toBe("success");
+    expect(getCounts(result)).toEqual([76, 31, 5]);
+  });
+
+  it("checks specs that create strings while checking like one worker", async () => {
+    const result = await checkFixtureInParallel("strings", "RuntimeStrings", 2);
+    expect(result.status).toBe("success");
+    expect(getCounts(result)).toEqual([115, 97, 6]);
+  });
 });

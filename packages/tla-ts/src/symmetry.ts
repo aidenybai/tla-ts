@@ -173,30 +173,34 @@ const permuteRemaining = (state: Value[], permuted: Value[], permutation: Permut
   return permuted;
 };
 
-const getSmallerPermutation = (state: Value[], minimum: Value[], permutation: Permutation) => {
+const getSmallerPermutation = (
+  state: Value[],
+  minimum: Value[],
+  permutation: Permutation,
+  order: number[] | undefined,
+) => {
   const permuted: Value[] = [];
-  for (let index = 0; index < state.length; index++) {
+  for (let position = 0; position < state.length; position++) {
+    const index = order ? order[position] : position;
     const value = permuteValue(state[index], permutation);
     const comparison = compareValues(value, minimum[index]);
     if (comparison > 0) return undefined;
-    permuted.push(value);
-    if (comparison < 0) return permuteRemaining(state, permuted, permutation);
+    if (!order) permuted.push(value);
+    if (comparison < 0) {
+      return order
+        ? state.map((item) => permuteValue(item, permutation))
+        : permuteRemaining(state, permuted, permutation);
+    }
   }
   return undefined;
 };
 
-export const getRepresentative = (state: Value[], group: Permutation[]): Value[] =>
-  group.reduce(
-    (minimum, permutation) => getSmallerPermutation(state, minimum, permutation) ?? minimum,
-    state,
-  );
-
-export const getOrderedRepresentative = (
+export const getRepresentative = (
   state: Value[],
   group: Permutation[],
-  compareStates: (left: Value[], right: Value[]) => number,
+  order?: number[],
 ): Value[] =>
-  group.reduce((minimum, permutation) => {
-    const permuted = state.map((value) => permuteValue(value, permutation));
-    return compareStates(permuted, minimum) < 0 ? permuted : minimum;
-  }, state);
+  group.reduce(
+    (minimum, permutation) => getSmallerPermutation(state, minimum, permutation, order) ?? minimum,
+    state,
+  );

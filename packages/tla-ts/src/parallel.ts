@@ -13,7 +13,9 @@ import { getChildren, isImpureBuiltin, type Environment } from "./evaluate";
 import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from "./fingerprints";
 import { parseModule } from "./parser";
 import { getInitialStates } from "./successors";
+import { getTlcStringOrder } from "./tlc-order";
 import { createStateEncoder, type EncodedStates } from "./transfer";
+import { getRankedStringCount, setStringOrder } from "./values";
 
 const WORKER_THREADS_MODULE = "node:worker_threads";
 
@@ -103,12 +105,16 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     config.possible.length > 0;
   if (isSequential) return fallBack();
   const modules = new Map<string, string | undefined>();
-  const specification = createEnvironment(parseModule(options.source), config, {
-    loadModule: (name) => {
-      const source = options.loadModule?.(name);
-      modules.set(name, source);
-      return source;
-    },
+  const loadModule = (name: string) => {
+    const source = options.loadModule?.(name);
+    modules.set(name, source);
+    return source;
+  };
+  const module = parseModule(options.source);
+  setStringOrder(getTlcStringOrder(options.source, config, loadModule));
+  const startupStrings = getRankedStringCount();
+  const specification = createEnvironment(module, config, {
+    loadModule,
     print: options.onPrint ?? console.log,
     files: { readFile: options.readFile, writeFile: options.writeFile },
   });
@@ -144,6 +150,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     seed.fingerprints.push(fingerprint[0], fingerprint[1]);
     statistics.distinctStates++;
   }
+  if (getRankedStringCount() !== startupStrings) return fallBack();
   if (statistics.distinctStates === 0)
     return { status: "success", violation: undefined, ...statistics };
   statistics.depth = 1;
