@@ -734,7 +734,9 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
     if (global === undefined) {
       return (context) => {
         const binding = lookupScope(context.scope, argument.name);
-        return binding?.kind === "Value" ? binding : createThunk(argument, context);
+        return binding?.kind === "Value" || binding?.kind === "Thunk"
+          ? binding
+          : createThunk(argument, context);
       };
     }
   }

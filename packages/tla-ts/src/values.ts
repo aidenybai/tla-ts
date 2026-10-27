@@ -4,6 +4,7 @@ import { prettyPrint } from "./pretty-print";
 export interface ModelValue {
   kind: "ModelValue";
   name: string;
+  type: string | undefined;
 }
 
 export interface SetValue {
@@ -233,8 +234,7 @@ const compareSets = (left: SetValue, right: SetValue) => {
   return 0;
 };
 
-const getModelValueType = (value: Value) =>
-  isModelValue(value) && value.name.length > 2 && value.name[1] === "_" ? value.name[0] : undefined;
+const getModelValueType = (value: Value) => (isModelValue(value) ? value.type : undefined);
 
 const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) => {
   const leftType = getModelValueType(left);
@@ -349,11 +349,14 @@ export const compareValues = (left: Value, right: Value): number => {
       const otherSize = Math.max(0, right.high - right.low + 1);
       return size !== otherSize || size === 0 ? size - otherSize : left.low - right.low;
     }
+    if (leftKind === "ModelValue" && rightKind === "ModelValue") {
+      if (left.type !== undefined && right.type !== undefined) {
+        checkModelValueTypes(left, right, false);
+      }
+      return compareStrings(left.name, right.name);
+    }
     if (leftKind === "ModelValue" || rightKind === "ModelValue") {
       checkModelValueTypes(left, right, false);
-      if (leftKind === "ModelValue" && rightKind === "ModelValue") {
-        return compareStrings(left.name, right.name);
-      }
       return leftKind === "ModelValue" ? -1 : 1;
     }
     if (left === ANY_SET || right === ANY_SET) return compareAny(left === ANY_SET ? right : left);
@@ -386,7 +389,11 @@ export const createModelValue = (name: string): ModelValue => {
   rankString(name);
   const known = modelValues.get(name);
   if (known) return known;
-  const value: ModelValue = { kind: "ModelValue", name };
+  const value: ModelValue = {
+    kind: "ModelValue",
+    name,
+    type: name.length > 2 && name[1] === "_" ? name[0] : undefined,
+  };
   modelValues.set(name, value);
   return value;
 };
