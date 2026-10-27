@@ -93,6 +93,12 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
     : unit.imported.get(name);
 };
 
+// SANY names an undefined operator symbol such as + differently from an undefined identifier.
+const isOperatorSymbol = (name: string) =>
+  name[0].toLowerCase() === name[0].toUpperCase() &&
+  name[0] !== "_" &&
+  (name[0] < "0" || name[0] > "9");
+
 const isStepName = (name: string) =>
   name.startsWith("<") && ((name[1] >= "0" && name[1] <= "9") || name[1] === "*");
 
@@ -128,8 +134,11 @@ const getSymbolArity = (
   if (isSelected) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
+  const position = `at line ${location.line}, column ${location.column}`;
   throw new TlaSyntaxError(
-    `Could not find declaration or definition of symbol ${name} at line ${location.line}, column ${location.column}`,
+    isOperatorSymbol(name)
+      ? `Could not find declaration or definition of symbol '${name}' ${position}`
+      : `Unknown operator: \`${name}' ${position}`,
   );
 };
 
