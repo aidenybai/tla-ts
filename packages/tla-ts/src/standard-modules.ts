@@ -36,9 +36,9 @@ import {
   getDomain,
   intersectSorted,
   isElementOf,
-  isEmptySet,
   getSequenceElements,
   isEnumerable,
+  isFiniteSet,
   isFunctionValue,
   isSetValue,
   toFiniteSet,
@@ -296,7 +296,7 @@ const SEQUENCES_OPERATORS: Builtin[] = [
 const FINITE_SETS_OPERATORS: Builtin[] = [
   defineOperator("IsFiniteSet", 1, (args) => {
     const value = getValue(args, 0, "IsFiniteSet");
-    if (isSetValue(value)) return isEnumerable(value);
+    if (isSetValue(value)) return isFiniteSet(value);
     if (typeof value === "object" && value.kind === "Function") return true;
     throw createJavaOverrideError(
       IS_FINITE_SET_SIGNATURE,
@@ -307,8 +307,10 @@ const FINITE_SETS_OPERATORS: Builtin[] = [
   }),
   defineOperator("Cardinality", 1, (args) => {
     const set = getValue(args, 0, "Cardinality");
-    if (isSetValue(set) && isEmptySet(set)) return 0;
-    if (!isSetValue(set) || !isEnumerable(set)) {
+    if (
+      !isSetValue(set) ||
+      (typeof set === "object" && (set.kind === "InfiniteSet" || set.kind === "SequenceSet"))
+    ) {
       throw new TlaModuleError(
         `Attempted to compute cardinality of the value\n${formatValue(set)}`,
       );

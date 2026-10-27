@@ -309,9 +309,49 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     checkModelValueTypes(left, right, true);
     return isModelValue(left) && isModelValue(right) && left.name === right.name;
   }
+  if (left.kind === "Subset" && right.kind === "Subset") return valuesEqual(left.base, right.base);
+  if (left.kind === "FunctionSet" && right.kind === "FunctionSet") {
+    const isUnit = isEmptySet(left.domain);
+    const isOtherUnit = isEmptySet(right.domain);
+    if (isUnit || isOtherUnit) return isUnit === isOtherUnit;
+    const isEmpty = isEmptySet(left.range);
+    const isOtherEmpty = isEmptySet(right.range);
+    if (isEmpty || isOtherEmpty) return isEmpty === isOtherEmpty;
+    return valuesEqual(left.domain, right.domain) && valuesEqual(left.range, right.range);
+  }
+  if (left.kind === "RecordSet" && right.kind === "RecordSet") {
+    if (isEmptySet(left)) return isEmptySet(right);
+    if (isEmptySet(right)) return false;
+    const getFields = (set: RecordSetValue) =>
+      set.names
+        .map((name, index): [string, Value] => [name, set.sets[index]])
+        .sort((first, second) => (first[0] < second[0] ? -1 : 1));
+    const otherFields = getFields(right);
+    return (
+      left.names.length === right.names.length &&
+      getFields(left).every(
+        (field, index) =>
+          field[0] === otherFields[index][0] && valuesEqual(field[1], otherFields[index][1]),
+      )
+    );
+  }
+  if (left.kind === "ProductSet" && right.kind === "ProductSet") {
+    if (isEmptySet(left)) return isEmptySet(right);
+    if (isEmptySet(right)) return false;
+    return (
+      left.factors.length === right.factors.length &&
+      left.factors.every((factor, index) => valuesEqual(factor, right.factors[index]))
+    );
+  }
   const isInfiniteComparison =
     isSetValue(left) && isSetValue(right) && !(isEnumerable(left) && isEnumerable(right));
-  if (isInfiniteComparison) return getValueKey(left) === getValueKey(right);
+  if (isInfiniteComparison) {
+    if (!isOverriddenSet(left)) {
+      const elements = toFiniteSet(left);
+      if (!isOverriddenSet(right)) return compareSets(elements, toFiniteSet(right)) === 0;
+    }
+    return getValueKey(left) === getValueKey(right);
+  }
   return compareValues(left, right) === 0;
 };
 
@@ -513,11 +553,15 @@ export const isEnumerable = (value: Value): boolean => {
     case "FilteredSet":
       return isEnumerable(value.base);
     case "FunctionSet":
-      return isEnumerable(value.domain) && isEnumerable(value.range);
+      return (
+        (isEnumerable(value.domain) && isEnumerable(value.range)) ||
+        getEmptiness(value.domain) === true ||
+        getEmptiness(value) === true
+      );
     case "RecordSet":
-      return value.sets.every(isEnumerable);
+      return value.sets.every(isEnumerable) || getEmptiness(value) === true;
     case "ProductSet":
-      return value.factors.every(isEnumerable);
+      return value.factors.every(isEnumerable) || getEmptiness(value) === true;
     case "SetOperation":
       if (value.operator === "\\cup") return isEnumerable(value.left) && isEnumerable(value.right);
       if (value.operator === "\\cap") return isEnumerable(value.left) || isEnumerable(value.right);
@@ -526,6 +570,42 @@ export const isEnumerable = (value: Value): boolean => {
       return false;
   }
 };
+
+const getEmptiness = (value: Value): boolean | undefined => {
+  if (typeof value !== "object") return undefined;
+  switch (value.kind) {
+    case "Set":
+      return value.elements.length === 0;
+    case "Interval":
+      return value.low > value.high;
+    case "InfiniteSet":
+      return value.name === "Any" ? undefined : false;
+    case "Subset":
+    case "SequenceSet":
+      return false;
+    case "FunctionSet": {
+      const isUnit = getEmptiness(value.domain);
+      if (isUnit === undefined) return undefined;
+      return isUnit ? false : getEmptiness(value.range);
+    }
+    case "RecordSet":
+    case "ProductSet": {
+      for (const part of value.kind === "RecordSet" ? value.sets : value.factors) {
+        const isEmpty = getEmptiness(part);
+        if (isEmpty !== false) return isEmpty;
+      }
+      return false;
+    }
+    case "SetOperation":
+    case "FilteredSet":
+      return isEnumerable(value) ? toFiniteSet(value).elements.length === 0 : undefined;
+    default:
+      return undefined;
+  }
+};
+
+const isOverriddenSet = (value: Value) =>
+  typeof value === "object" && (value.kind === "InfiniteSet" || value.kind === "SequenceSet");
 
 const getCartesianProduct = (lists: Value[][]): Value[][] => {
   const total = lists.reduce((product, list) => product * list.length, 1);
@@ -575,10 +655,7 @@ const enumerateSet = (value: Value): Value[] => {
     case "Interval":
       return value.low === 1 && value.high >= 1
         ? getIntervalDomain(value.high)
-        : Array.from(
-            { length: Math.max(0, value.high - value.low + 1) },
-            (_, index) => value.low + index,
-          );
+        : Array.from({ length: getCardinality(value) }, (_, index) => value.low + index);
     case "Subset": {
       const base = toFiniteSet(value.base).elements;
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
@@ -589,29 +666,79 @@ const enumerateSet = (value: Value): Value[] => {
       return getSortedSubsets(base);
     }
     case "FunctionSet": {
+      if (isEmptySet(value)) return [];
+      if (isOverriddenSet(value.domain)) {
+        throw new TlaEvaluationError(
+          `Attempted to enumerate a set of the form [D -> R],but the domain D:\n${formatValue(value.domain)}\ncannot be enumerated.`,
+        );
+      }
       const domain = getFunctionDomain(value.domain);
-      const range = toFiniteSet(value.range).elements;
+      if (domain.length > 0 && isOverriddenSet(value.range)) {
+        throw new TlaEvaluationError(
+          `Attempted to enumerate a set of the form [D -> R],but the range R:\n${formatValue(value.range)}\ncannot be enumerated.`,
+        );
+      }
+      const range = domain.length === 0 ? [] : toFiniteSet(value.range).elements;
       return getCartesianProduct(domain.map(() => range)).map((combination): Value =>
         createSortedFunction(domain, combination),
       );
     }
-    case "RecordSet":
-      return getCartesianProduct(value.sets.map((set) => toFiniteSet(set).elements)).map(
-        (combination) =>
-          createRecord(
-            value.names.map((name, index): [string, Value] => [name, combination[index]]),
-          ),
+    case "RecordSet": {
+      if (isEmptySet(value)) return [];
+      const fields = value.sets.map((set, index) => {
+        if (isOverriddenSet(set)) {
+          throw new TlaEvaluationError(
+            `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${formatValue(set)}`,
+          );
+        }
+        return toFiniteSet(set).elements;
+      });
+      return getCartesianProduct(fields).map((combination) =>
+        createRecord(value.names.map((name, index): [string, Value] => [name, combination[index]])),
       );
-    case "ProductSet":
-      return getCartesianProduct(value.factors.map((factor) => toFiniteSet(factor).elements)).map(
-        createTuple,
-      );
+    }
+    case "ProductSet": {
+      if (isEmptySet(value)) return [];
+      const factors = value.factors.map((factor, index) => {
+        if (isOverriddenSet(factor)) {
+          throw new TlaEvaluationError(
+            `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${formatValue(factor)}`,
+          );
+        }
+        return toFiniteSet(factor).elements;
+      });
+      return getCartesianProduct(factors).map(createTuple);
+    }
     case "FilteredSet":
+      if (isOverriddenSet(value.base)) {
+        throw new TlaEvaluationError(
+          `Attempted to enumerate { x \\in S : p(x) } when S:\n${formatValue(value.base)}\nis not enumerable`,
+        );
+      }
       return toFiniteSet(value.base).elements.filter(value.test);
     case "SetOperation": {
-      if (!isEnumerable(value)) {
+      const left = formatValue(value.left);
+      const right = formatValue(value.right);
+      if (
+        value.operator === "\\cup" &&
+        (isOverriddenSet(value.left) || isOverriddenSet(value.right))
+      ) {
         throw new TlaEvaluationError(
-          `Attempted to enumerate the non-enumerable set ${formatValue(value)}`,
+          `Attempted to enumerate S \\cup T when S:\n${left}\nand T:\n${right}\nare not both enumerable`,
+        );
+      }
+      if (
+        value.operator === "\\cap" &&
+        isOverriddenSet(value.left) &&
+        isOverriddenSet(value.right)
+      ) {
+        throw new TlaEvaluationError(
+          `Attempted to enumerate S \\cap T when neither S:\n${left}\nnor T:\n${right}\nis enumerable`,
+        );
+      }
+      if (value.operator === "\\" && isOverriddenSet(value.left)) {
+        throw new TlaEvaluationError(
+          `Attempted to enumerate S \\ T when S:\n${left}\nis not enumerable.`,
         );
       }
       if (value.operator === "\\cup")
@@ -653,23 +780,20 @@ export const toFiniteSet = (value: Value): SetValue => {
   return set;
 };
 
-const checkCardinality = (cardinality: number, set: Value) => {
-  if (cardinality > MAXIMUM_INTEGER) {
-    throw new TlaEvaluationError(
-      `Overflow when computing the number of elements in ${formatValue(set)}`,
-    );
-  }
-  return cardinality;
-};
-
 export const isEmptySet = (value: Value): boolean => {
-  if (typeof value !== "object") return toFiniteSet(value).elements.length === 0;
+  if (typeof value !== "object" || !isSetValue(value)) {
+    throw new TlaEvaluationError(`Shouldn't call isEmpty() on value ${formatValue(value)}`);
+  }
   switch (value.kind) {
     case "Set":
       return value.elements.length === 0;
     case "Interval":
       return value.low > value.high;
     case "InfiniteSet":
+      if (value.name === "Any") {
+        throw new TlaEvaluationError("Shouldn't call isEmpty() on value ANY");
+      }
+      return false;
     case "Subset":
     case "SequenceSet":
       return false;
@@ -678,38 +802,130 @@ export const isEmptySet = (value: Value): boolean => {
     case "RecordSet":
       return value.sets.some(isEmptySet);
     case "FunctionSet":
-      return isEmptySet(value.range) && !isEmptySet(value.domain);
+      return !isEmptySet(value.domain) && isEmptySet(value.range);
     default:
       return toFiniteSet(value).elements.length === 0;
   }
 };
 
-const getProductCardinality = (sets: Value[], set: Value) => {
-  if (sets.some(isEmptySet)) return 0;
-  return sets
-    .map(getCardinality)
-    .reduce((product, size) => checkCardinality(product * size, set), 1);
-};
+const getProductCardinality = (sets: Value[], describe: () => string) =>
+  sets.reduce<number>((product, set) => {
+    const size = product * getCardinality(set);
+    if (size > MAXIMUM_INTEGER) throw new TlaEvaluationError(describe());
+    return size;
+  }, 1);
+
+const describeOverflow = (value: Value) =>
+  `Overflow when computing the number of elements in:\n${formatValue(value)}`;
 
 export const getCardinality = (value: Value): number => {
   if (typeof value !== "object") return toFiniteSet(value).elements.length;
   switch (value.kind) {
-    case "Interval":
-      return Math.max(0, value.high - value.low + 1);
-    case "Subset":
-      return checkCardinality(2 ** getCardinality(value.base), value);
-    case "FunctionSet":
+    case "Interval": {
+      const size = Math.max(0, value.high - value.low + 1);
+      if (size > MAXIMUM_INTEGER) {
+        throw new TlaEvaluationError(
+          `Size of interval value exceeds the maximum representable size (32bits): ${value.low}..${value.high}.`,
+        );
+      }
+      return size;
+    }
+    case "InfiniteSet":
+    case "SequenceSet":
+      throw new TlaEvaluationError(
+        `Attempted to compute the number of elements in the overridden value ${formatValue(value)}.`,
+      );
+    case "Subset": {
+      const size = getCardinality(value.base);
+      if (size >= 31) throw new TlaEvaluationError(describeOverflow(value));
+      return 2 ** size;
+    }
+    case "FunctionSet": {
+      if (isEmptySet(value.domain)) return 1;
+      if (isEmptySet(value.range)) return 0;
+      const rangeSize = getCardinality(value.range);
+      if (rangeSize === 1) return 1;
+      const domainSize = getCardinality(value.domain);
+      const size = { value: 1 };
+      for (let index = 0; index < domainSize; index++) {
+        size.value *= rangeSize;
+        if (size.value > MAXIMUM_INTEGER) throw new TlaEvaluationError(describeOverflow(value));
+      }
+      return size.value;
+    }
+    case "RecordSet":
+      if (isEmptySet(value)) return 0;
+      return getProductCardinality(value.sets, () => describeOverflow(value));
+    case "ProductSet":
       if (isEmptySet(value)) return 0;
       return getProductCardinality(
-        Array.from({ length: getCardinality(value.domain) }, () => value.range),
-        value,
+        value.factors,
+        () => `Overflow when computing the number of elements in ${formatValue(value)}`,
       );
-    case "RecordSet":
-      return getProductCardinality(value.sets, value);
-    case "ProductSet":
-      return getProductCardinality(value.factors, value);
     default:
       return toFiniteSet(value).elements.length;
+  }
+};
+
+const describeInfiniteCheck = (value: Value) =>
+  `Attempted to check if the set ${formatValue(value)}is finite.`;
+
+export const isFiniteSet = (value: Value): boolean => {
+  if (typeof value !== "object" || value.kind === "ModelValue") {
+    throw new TlaEvaluationError(
+      `Attempted to check if the ${describeKind(value)} ${formatValue(value)} is a finite set.`,
+    );
+  }
+  switch (value.kind) {
+    case "Set":
+    case "Interval":
+    case "Function":
+      return true;
+    case "LazyFunction":
+      throw new TlaEvaluationError(
+        `Attempted to check if the function:\n${formatValue(value)}\nis a finite set.`,
+      );
+    case "InfiniteSet":
+      return false;
+    case "SequenceSet":
+      return isFiniteSet(value.base) && isEmptySet(value.base);
+    case "Subset":
+      return isFiniteSet(value.base);
+    case "FunctionSet": {
+      const isFiniteDomain = isFiniteSet(value.domain);
+      if (isFiniteDomain && isEmptySet(value.domain)) return true;
+      const isFiniteRange = isFiniteSet(value.range);
+      if (isFiniteRange && isEmptySet(value.range)) return true;
+      return isFiniteRange && (isFiniteDomain || getCardinality(value.range) === 1);
+    }
+    case "RecordSet":
+    case "ProductSet": {
+      const parts = value.kind === "RecordSet" ? value.sets : value.factors;
+      const finiteness = { isAllFinite: true };
+      for (const part of parts) {
+        if (!isFiniteSet(part)) finiteness.isAllFinite = false;
+        else if (isEmptySet(part)) return true;
+      }
+      return finiteness.isAllFinite;
+    }
+    case "SetOperation":
+      if (value.operator === "\\cup") return isFiniteSet(value.left) && isFiniteSet(value.right);
+      if (value.operator === "\\cap") {
+        if (!isFiniteSet(value.left) && !isFiniteSet(value.right)) {
+          throw new TlaEvaluationError(describeInfiniteCheck(value));
+        }
+        return true;
+      }
+      if (isFiniteSet(value.left)) return true;
+      if (!isFiniteSet(value.right)) throw new TlaEvaluationError(describeInfiniteCheck(value));
+      return false;
+    case "FilteredSet":
+      if (!isFiniteSet(value.base)) {
+        throw new TlaEvaluationError(
+          `Attempted to check if expression of form {x \\in S : p(x)} is a finite set, but cannot check if S:\n${formatValue(value.base)}\nis finite.`,
+        );
+      }
+      return true;
   }
 };
 
