@@ -202,6 +202,8 @@ export const rankString = (text: string) => {
 
 export const getRankedStringCount = () => stringOrder.size;
 
+export const getStringRank = (text: string) => stringOrder.ranks[rankString(text)];
+
 const compareStrings = (left: string, right: string) => {
   if (left === right) return 0;
   const ranks = stringOrder.ranks;

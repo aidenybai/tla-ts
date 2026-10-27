@@ -199,6 +199,38 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it.each(["UnicodeStringFingerprint", "UnicodeRecordFingerprint", "UnicodeFunctionFingerprint"])(
+    "merges states whose strings differ only above U+00FF like TLC's fingerprint in %s",
+    async (name) => {
+      const result = await checkFixture("strings", name);
+      expect([result.generatedStates, result.distinctStates]).toEqual([3, 1]);
+    },
+  );
+
+  it("computes TLCFP with TLC's fingerprint", async () => {
+    const result = await check({
+      source: `---- MODULE M ----
+EXTENDS Integers, TLCExt
+CONSTANT a
+ASSUME TLCFP(1) = -1504394061
+ASSUME TLCFP("m1") = 952772174
+ASSUME TLCFP(<<1, "m1", TRUE>>) = -1323233619
+ASSUME TLCFP([f |-> {a}]) = 820346972
+ASSUME TLCFP(a) = -887695703
+====`,
+      config: "CONSTANT a = a",
+    });
+    expect(result.status).toBe("success");
+  });
+
+  it("lists a trace's variables in TLC's order", async () => {
+    const result = await check({
+      source: readFileSync(join(FIXTURES, "randomization", "RandomModelValue.tla"), "utf8"),
+      config: readFileSync(join(FIXTURES, "randomization", "RandomModelValue.cfg"), "utf8"),
+    });
+    expect(Object.keys(result.violation?.trace[0].state ?? {})).toEqual(["owner", "zeta"]);
+  });
+
   it("explores states that depend on the order of strings in CHOOSE", async () => {
     const result = await checkFixture("strings", "StringSets");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([76, 31, 5]);

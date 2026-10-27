@@ -9,6 +9,7 @@ import {
   getValue,
 } from "./builtins";
 import { TlaEvaluationError } from "./errors";
+import { getTlcFingerprint } from "./tlc-random";
 import {
   evaluate,
   getChildren,
@@ -32,7 +33,6 @@ import {
   createTuple,
   formatValue,
   getSequenceElements,
-  getValueHash,
   getValueKey,
   toFiniteSet,
   valuesEqual,
@@ -201,7 +201,9 @@ export const createTlcExtOperators = (
       cache.set(closure, value);
       return value;
     }),
-    defineOperator("TLCFP", 1, (args) => getValueHash(getValue(args, 0, "TLCFP")) | 0),
+    defineOperator("TLCFP", 1, (args) =>
+      Number(BigInt.asIntN(32, getTlcFingerprint([getValue(args, 0, "TLCFP")]))),
+    ),
     defineStateOperator("TLCEvalDefinition", 1, (args, context) => {
       const name = getValue(args, 0, "TLCEvalDefinition");
       const definition =

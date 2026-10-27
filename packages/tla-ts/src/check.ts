@@ -1,11 +1,12 @@
 import type { Assumption, Expression, SourceLocation } from "./ast";
-import { parseConfig, type ModelConfig } from "./config";
+import { parseConfig, type ConfigValue, type ModelConfig } from "./config";
 import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
 import { TlaConfigError, TlaEvaluationError, TlaUnsupportedError } from "./errors";
 import {
   evaluate,
   expectBoolean,
+  getChildren,
   getDefinition,
   type Context,
   type Environment,
@@ -26,6 +27,7 @@ import { parseModule } from "./parser";
 import { getInitialStates, getSuccessors } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
+import { getTlcFingerprint } from "./tlc-random";
 import { createCanonicalizer } from "./canonical";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import {
@@ -272,10 +274,39 @@ export const isUnchangedFor = (
   return true;
 };
 
+const WIDE_CHARACTER = /[\u0100-\uffff]/;
+
+const DESERIALIZERS = new Set(["JsonDeserialize", "ndJsonDeserialize"]);
+
+const isWideConfigValue = (value: ConfigValue): boolean =>
+  value.kind === "String"
+    ? WIDE_CHARACTER.test(value.value)
+    : value.kind === "Set" && value.elements.some(isWideConfigValue);
+
+const isWideExpression = (expression: Expression): boolean =>
+  (expression.kind === "String" && WIDE_CHARACTER.test(expression.value)) ||
+  (expression.kind === "Apply" && DESERIALIZERS.has(expression.operator)) ||
+  getChildren(expression).some(isWideExpression);
+
+// TLC fingerprints a string by the low byte of each character, so it merges states whose
+// strings differ only above U+00FF. Strings reach a state from literals, the config, or files.
+const hasWideString = (config: ModelConfig, environment: Environment) =>
+  config.constants.some(
+    (constant) =>
+      isWideConfigValue(constant.value) || (constant.args ?? []).some(isWideConfigValue),
+  ) ||
+  [...environment.definitions.values()].some(
+    (definition) =>
+      isWideExpression(definition.body) ||
+      (definition.kind === "Function" &&
+        definition.bounds.some((bound) => isWideExpression(bound.set))),
+  );
+
 export interface Search {
   properties: Properties;
   spec: Specification;
   getFingerprintState: (state: Value[]) => Value[];
+  getTlcOrder: () => number[];
   isSymmetric: boolean;
   findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
   satisfiesConstraints: (state: Value[], parent?: Value[]) => boolean;
@@ -341,7 +372,7 @@ export const findAssumptionViolation = (
 export const createSearch = (
   config: ModelConfig,
   environment: Environment,
-  variableOrder?: string[],
+  getVariableOrder: () => string[],
 ): Search | undefined => {
   const properties = getProperties(config, environment);
   const invariants = getStateChecks(
@@ -378,25 +409,44 @@ export const createSearch = (
   const statePossible = possible.filter((item) => !isActionPossible(item));
   const actionPossible = possible.filter(isActionPossible);
   const runtime = environment.runtime;
-  const getTlcPosition = (index: number) => {
-    const position = variableOrder?.indexOf(environment.variables[index]) ?? -1;
-    return position === -1 ? environment.variables.length : position;
-  };
-  const order =
-    variableOrder &&
-    environment.variables
+  const tlcOrder = { indices: undefined as number[] | undefined };
+  const getTlcOrder = () => {
+    if (tlcOrder.indices) return tlcOrder.indices;
+    const variableOrder = getVariableOrder();
+    const getTlcPosition = (index: number) => {
+      const position = variableOrder.indexOf(environment.variables[index]);
+      return position === -1 ? environment.variables.length : position;
+    };
+    tlcOrder.indices = environment.variables
       .map((_, index) => index)
       .sort((left, right) => getTlcPosition(left) - getTlcPosition(right));
+    return tlcOrder.indices;
+  };
+  const order = view !== undefined && symmetryGroup.length > 0 ? getTlcOrder() : undefined;
+  const getViewValue = (expression: Expression, state: Value[]) =>
+    evaluate(expression, getContext(environment, state, undefined));
+  const getTlcStateFingerprint = (state: Value[]) => {
+    const indices = getTlcOrder();
+    const representative =
+      symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup, indices);
+    return getTlcFingerprint(
+      view === undefined
+        ? indices.map((index) => representative[index])
+        : [getViewValue(view.expression, representative)],
+    );
+  };
+  const isFingerprintedLikeTlc = hasWideString(config, environment);
+  runtime.getFingerprint = getTlcStateFingerprint;
   return {
     properties,
     spec,
     isSymmetric: symmetryGroup.length > 0,
+    getTlcOrder,
     getFingerprintState: (state) => {
+      if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
       const representative =
         symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup, order);
-      return view === undefined
-        ? representative
-        : [evaluate(view.expression, getContext(environment, representative, undefined))];
+      return view === undefined ? representative : [getViewValue(view.expression, representative)];
     },
     findViolatedInvariant: (state, parent) =>
       invariants.find(
@@ -508,11 +558,9 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   const assumptionViolation = findAssumptionViolation(specification.assumptions, environment);
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
 
-  const variableOrder =
-    config.view !== undefined && config.symmetry !== undefined
-      ? getTlcVariableOrder(options.source, options.loadModule)
-      : undefined;
-  const search = createSearch(config, environment, variableOrder);
+  const search = createSearch(config, environment, () =>
+    getTlcVariableOrder(options.source, options.loadModule),
+  );
   if (!search) return createResult("success");
   const properties = search.properties;
   const spec = search.spec;
@@ -529,7 +577,9 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   const canonicalizeState = createCanonicalizer();
 
   const toRecord = (state: Value[]) =>
-    Object.fromEntries(environment.variables.map((name, index) => [name, state[index]]));
+    Object.fromEntries(
+      search.getTlcOrder().map((index) => [environment.variables[index], state[index]]),
+    );
   const getTrace = (
     index: number,
     last?: { state: Value[]; action: string | undefined },
