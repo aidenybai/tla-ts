@@ -918,6 +918,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   for (let index = 0; index < states.length && !runtime.isStopped; index++) {
     const state = states[index];
     current.index = index;
+    current.candidate = undefined;
     runtime.queueSize = states.length - index - 1;
     current.isExpanding = true;
     const successors = getSuccessors(next, state, environment);
