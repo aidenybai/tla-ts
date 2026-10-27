@@ -14,8 +14,9 @@ import { isImpure } from "./evaluate";
 import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from "./fingerprints";
 import { getInitialStates } from "./successors";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
+import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
-import { getRankedStringCount, setStringOrder } from "./values";
+import { getRankedStringCount, setStringOrder, type Value } from "./values";
 
 const WORKER_THREADS_MODULE = "node:worker_threads";
 
@@ -44,6 +45,8 @@ export interface LevelMessage {
   level: number;
   generated: number;
   added: number;
+  outDegrees: number[];
+  fingerprints: BigInt64Array;
 }
 
 export type WorkerMessage = { type: "ready" } | { type: "abort" } | LevelMessage;
@@ -134,8 +137,34 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     encoder: createStateEncoder(),
     fingerprints: [] as number[],
   }));
-  const statistics = { generatedStates: 0, distinctStates: 0, queuedStates: 0, depth: 0 };
+  const statistics = {
+    generatedStates: 0,
+    distinctStates: 0,
+    queuedStates: 0,
+    depth: 0,
+    outDegrees: Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0),
+  };
+  const tlcFingerprints: BigInt64Array[] = [];
+  const createSuccess = (): CheckResult => ({
+    status: "success",
+    violation: undefined,
+    failure: undefined,
+    ...statistics,
+    fingerprintDistance: getFingerprintDistance(
+      statistics.distinctStates,
+      statistics.generatedStates,
+      () => {
+        const fingerprints = new BigInt64Array(statistics.distinctStates);
+        tlcFingerprints.reduce((offset, level) => {
+          fingerprints.set(level, offset);
+          return offset + level.length;
+        }, 0);
+        return fingerprints;
+      },
+    ),
+  });
   const seedInitialStates = (init: Expression) => {
+    const seeded: Value[][] = [];
     for (const state of getInitialStates(init, environment, search.spec.scope)) {
       canonicalize(state);
       statistics.generatedStates++;
@@ -151,8 +180,12 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       const seed = seeds[getFingerprintOwner(fingerprint[1], count)];
       if (!seed.encoder.encode(state)) return false;
       seed.fingerprints.push(fingerprint[0], fingerprint[1]);
+      seeded.push(state);
       statistics.distinctStates++;
     }
+    tlcFingerprints.push(
+      BigInt64Array.from(seeded, (state) => environment.runtime.getFingerprint(state)),
+    );
     return true;
   };
   // The sequential search reports a violation or a failed evaluation in the initial states.
@@ -164,8 +197,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   }
   if (getRankedStringCount() !== startupStrings) return fallBack();
   statistics.depth = statistics.generatedStates === 0 ? 0 : 1;
-  if (statistics.distinctStates === 0)
-    return { status: "success", violation: undefined, failure: undefined, ...statistics };
+  if (statistics.distinctStates === 0) return createSuccess();
 
   const reports: WorkerMessage[] = [];
   const pending = { resolve: (_: WorkerMessage[]) => {} };
@@ -231,9 +263,13 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     const added = levels.reduce((sum, message) => sum + message.added, 0);
     statistics.generatedStates += levels.reduce((sum, message) => sum + message.generated, 0);
     statistics.distinctStates += added;
+    levels.forEach((message) => {
+      message.outDegrees.forEach((count, degree) => (statistics.outDegrees[degree] += count));
+      tlcFingerprints.push(message.fingerprints);
+    });
     if (added === 0) {
       terminate();
-      return { status: "success", violation: undefined, failure: undefined, ...statistics };
+      return createSuccess();
     }
     statistics.depth++;
   }

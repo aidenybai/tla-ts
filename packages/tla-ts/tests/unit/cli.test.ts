@@ -40,6 +40,19 @@ const TLC_REPORTS = [
     10,
     ["Error: Assumption line 4, col 20 to line 4, col 24 of module AssumptionFalse is false."],
   ],
+  [
+    "Success",
+    0,
+    [
+      "Model checking completed. No error has been found.",
+      "  Estimates of the probability that TLC did not check all reachable states",
+      "  because two distinct states had the same fingerprint:",
+      "  calculated (optimistic):  val = 1.3E-18",
+      "10 states generated, 6 distinct states found, 0 states left on queue.",
+      "The depth of the complete state graph search is 3.",
+      "The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).",
+    ],
+  ],
   ["InitialInvariant", 12, ["Error: Invariant Inv is violated by the initial state:", "x = 0", ""]],
   [
     "Lasso",
@@ -79,6 +92,7 @@ const TLC_REPORTS = [
       "",
       "3 states generated, 3 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 3.",
+      "The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).",
     ],
   ],
   ["NoNext", 75, ["Error: No next state actions defined to generate successor states from."]],
