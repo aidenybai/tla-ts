@@ -34,6 +34,7 @@ export interface ModelConfig {
   checkDeadlock: boolean;
   symmetry: string | undefined;
   view: string | undefined;
+  alias: string | undefined;
   postconditions: string[];
   possible: string[];
 }
@@ -144,6 +145,7 @@ export const parseConfig = (source: string): ModelConfig => {
     checkDeadlock: true,
     symmetry: undefined,
     view: undefined,
+    alias: undefined,
     postconditions: [],
     possible: [],
   };
@@ -174,7 +176,7 @@ export const parseConfig = (source: string): ModelConfig => {
     return names;
   };
   const setSingle = (
-    key: "init" | "next" | "specification" | "symmetry" | "view",
+    key: "init" | "next" | "specification" | "symmetry" | "view" | "alias",
     keyword: string,
   ) => {
     if (config[key] !== undefined) throw new TlaConfigError(`The keyword ${keyword} appears twice`);
@@ -276,7 +278,7 @@ export const parseConfig = (source: string): ModelConfig => {
         config.actionConstraints.push(...parseNames());
         break;
       case "ALIAS":
-        expectName();
+        setSingle("alias", token.text);
         break;
       case "POSTCONDITION":
       case "POSTCONDITIONS":
