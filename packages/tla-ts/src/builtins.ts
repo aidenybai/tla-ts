@@ -260,6 +260,30 @@ export const createJavaOverrideError = (signature: string, message: string) =>
     `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${message}`,
   );
 
+// TLC reports a failure inside an operator's Java method as a failure of the method, except an
+// EvalException that the method raises itself. A method that evaluates its own arguments reports
+// every failure that way.
+export const overrideWithJava = (builtin: Builtin, signature: string): Builtin => {
+  const guard =
+    <Arguments extends unknown[]>(compute: (...args: Arguments) => Value) =>
+    (...args: Arguments) => {
+      try {
+        return compute(...args);
+      } catch (error) {
+        const isWrapped =
+          error instanceof TlaEvaluationError &&
+          (builtin.isLazy === true || !(error instanceof TlaModuleError));
+        throw isWrapped ? createJavaOverrideError(signature, error.message) : error;
+      }
+    };
+  return {
+    ...builtin,
+    evaluate: guard(builtin.evaluate),
+    evaluateUnary: builtin.evaluateUnary && guard(builtin.evaluateUnary),
+    evaluateBinary: builtin.evaluateBinary && guard(builtin.evaluateBinary),
+  };
+};
+
 export const getJavaInteger = (value: Value, signature: string) => {
   if (typeof value !== "number") {
     throw createJavaOverrideError(
