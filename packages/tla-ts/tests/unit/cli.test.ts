@@ -4,10 +4,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
-const runCli = (directory: string, name: string) =>
+const runCli = (directory: string, name: string, args: string[] = []) =>
   spawnSync(
     process.execPath,
-    ["--import", "tsx", join(import.meta.dirname, "../../src/cli.ts"), `${name}.tla`],
+    ["--import", "tsx", join(import.meta.dirname, "../../src/cli.ts"), `${name}.tla`, ...args],
     { cwd: join(FIXTURES, directory), encoding: "utf8" },
   );
 
@@ -103,5 +103,18 @@ describe("the CLI reports results like TLC", () => {
     const result = runCli("cli-output", name);
     expect(result.status).toBe(code);
     expect(result.stdout.split("\n").slice(1)).toEqual([...lines, ""]);
+  });
+
+  it("checks liveness on the complete state graph with -lncheck final", () => {
+    const [, code, lines] = TLC_REPORTS.find((report) => report[0] === "Lasso") ?? [];
+    const result = runCli("cli-output", "Lasso", ["-lncheck", "final"]);
+    expect(result.status).toBe(code);
+    expect(result.stdout.split("\n").slice(1)).toEqual([...(lines ?? []), ""]);
+  });
+
+  it("rejects -lncheck without a strategy like TLC", () => {
+    const result = runCli("cli-output", "Lasso", ["-lncheck"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("Error: expect a strategy such as final for -lncheck option.\n");
   });
 });

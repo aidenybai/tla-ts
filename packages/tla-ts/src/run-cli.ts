@@ -27,7 +27,7 @@ const EXIT_CODES: Record<CheckStatus, number> = {
 };
 
 const USAGE =
-  "Usage: tla-ts <Spec.tla> [-config <Spec.cfg>] [-deadlock] [-seed <num>] [-workers <count|auto>]";
+  "Usage: tla-ts <Spec.tla> [-config <Spec.cfg>] [-deadlock] [-lncheck <final|default>] [-seed <num>] [-workers <count|auto>]";
 
 const isJavaLong = (text: string) =>
   /^[+-]?\d+$/.test(text) && BigInt.asIntN(64, BigInt(text)) === BigInt(text);
@@ -163,10 +163,17 @@ const run = async (args: string[]) => {
     console.error(`Error: An integer for seed required. But encountered ${seed}`);
     return 1;
   }
+  const livenessFlag = args.indexOf("-lncheck");
+  const livenessCheck = livenessFlag === -1 ? "default" : args[livenessFlag + 1]?.toLowerCase();
+  if (livenessCheck === undefined) {
+    console.error("Error: expect a strategy such as final for -lncheck option.");
+    return 1;
+  }
   const directory = dirname(specPath);
   console.log(`Checking ${basename(specPath)} with ${basename(configPath)}`);
   const result = await check({
     workers: getWorkerCount(args),
+    livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
     seed: BigInt(seed),
     source: readFileSync(specPath, "utf8"),
     config,

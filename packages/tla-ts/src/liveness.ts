@@ -890,7 +890,9 @@ export const createLivenessChecker = (
     check.product ?? {
       states: states.map((_, index) => index),
       tableauNodes: states.map(() => -1),
-      edges: targets.map((list) => list.flatMap((target, edgeIndex) => [target, edgeIndex])),
+      edges: Array.from({ length: states.length }, (_, index) =>
+        (targets[index] ?? []).flatMap((target, edgeIndex) => [target, edgeIndex]),
+      ),
       initial,
       parents: [],
     };
