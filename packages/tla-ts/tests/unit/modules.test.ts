@@ -193,6 +193,14 @@ describe("nested module scoping matches SANY", () => {
     );
   });
 
+  it("rejects a nested module that an unnamed theorem instantiates inside LET", async () => {
+    await expect(
+      checkSource(
+        "---- MODULE Inner ----\nA == TRUE\n====\nTHEOREM LET M == INSTANCE Inner IN M!A",
+      ),
+    ).rejects.toThrow(/Multiply-defined module 'Inner'/);
+  });
+
   it("instantiates a nested module inside LET once a top-level instance follows it", async () => {
     const result = await checkSource(
       "---- MODULE LetInner ----\nfoo == 42\n====\nTop == INSTANCE LetInner\nASSUME LET Inst == INSTANCE LetInner IN Inst!foo = 42",
