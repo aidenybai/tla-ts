@@ -166,6 +166,50 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("runs only the PlusCal actions whose label guard matches, with TLC's counts", async () => {
+    const result = await check({
+      source: [
+        "---- MODULE M ----",
+        "EXTENDS Integers",
+        "VARIABLES pc, count",
+        'A(self) == pc[self] = "a" /\\ count < 3 /\\ pc\' = [pc EXCEPT ![self] = "b"] /\\ count\' = count + 1',
+        'B(self) == pc[self] = "b" /\\ pc\' = [pc EXCEPT ![self] = "c"] /\\ UNCHANGED count',
+        'C(self) == pc[self] = "c" /\\ pc\' = [pc EXCEPT ![self] = "a"] /\\ UNCHANGED count',
+        "Reset(self) == count > 2 /\\ count' = 0 /\\ UNCHANGED pc",
+        "Proc(self) == A(self) \\/ B(self) \\/ C(self)",
+        'Init == pc = [p \\in {1, 2} |-> "a"] /\\ count = 0',
+        "Next == \\E self \\in {1, 2} : Proc(self) \\/ Reset(self)",
+        "====",
+      ].join("\n"),
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      85,
+      36,
+      12,
+    ]);
+  });
+
+  it("reports a label that is not a string where the first action compares it like TLC", async () => {
+    const result = await check({
+      source: [
+        "---- MODULE M ----",
+        "VARIABLE pc",
+        'A(self) == pc[self] = "a" /\\ pc\' = [pc EXCEPT ![self] = 2]',
+        'B(self) == pc[self] = "b" /\\ UNCHANGED pc',
+        'Init == pc = [p \\in {1} |-> "a"]',
+        "Next == \\E self \\in {1} : A(self) \\/ B(self)",
+        "====",
+      ].join("\n"),
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.failure?.message]).toEqual([
+      "error",
+      'Attempted to check equality of integer 2 with non-integer:\n"a"',
+    ]);
+  });
+
   it("generates a successor for each witness of an existential under a universal action", async () => {
     const result = await check({
       source:
