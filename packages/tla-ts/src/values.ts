@@ -79,6 +79,12 @@ export interface FilteredSetValue {
   test: (element: Value) => boolean;
 }
 
+// UNION S when some element of S isn't a set enumeration. TLC enumerates it only when it has to.
+export interface UnionValue {
+  kind: "Union";
+  base: Value;
+}
+
 export interface LazyFunctionParameter {
   name: string;
   domain: Value;
@@ -113,6 +119,7 @@ export type Value =
   | SequenceSetValue
   | SetOperationValue
   | FilteredSetValue
+  | UnionValue
   | LazyFunctionValue;
 
 export type ObjectValue = Exclude<Value, boolean | number | string>;
@@ -991,6 +998,30 @@ export const createTuple = (elements: Value[]): FunctionValue =>
 
 export const createRecord = (fields: [string, Value][]): FunctionValue => createFunction(fields);
 
+// TLC's Enumerable classes: every set except the ones it implements in Java.
+const isTlcEnumerable = (value: Value) => isSetValue(value) && !isOverriddenSet(value);
+
+const formatUnion = (value: UnionValue, isStrict = false) =>
+  `UNION(${formatValue(value.base, isStrict)})`;
+
+const getUnionSets = (value: UnionValue) => {
+  if (!isTlcEnumerable(value.base)) {
+    throw new TlaEvaluationError(
+      `Attempted to enumerate the nonenumerable set:\n${formatUnion(value)}`,
+    );
+  }
+  return toFiniteSet(value.base).elements;
+};
+
+const getUnionSet = (set: Value, index: number, union: UnionValue) => {
+  if (isTlcEnumerable(set)) return set;
+  throw new TlaEvaluationError(
+    index === 0
+      ? "Attempted to enumerate UNION(s), but some element of s is nonenumerable."
+      : `Attempted to enumerate the nonenumerable set:\n${formatValue(set)}\nwhen enumerating:\n${formatUnion(union)}`,
+  );
+};
+
 export const isEnumerable = (value: Value): boolean => {
   if (typeof value !== "object") return false;
   switch (value.kind) {
@@ -1014,6 +1045,8 @@ export const isEnumerable = (value: Value): boolean => {
       return value.sets.every(isEnumerable) || getEmptiness(value) === true;
     case "ProductSet":
       return value.factors.every(isEnumerable) || getEmptiness(value) === true;
+    case "Union":
+      return isEnumerable(value.base) && toFiniteSet(value.base).elements.every(isEnumerable);
     case "SetOperation":
       if (value.operator === "\\cup") return isEnumerable(value.left) && isEnumerable(value.right);
       if (value.operator === "\\cap") return isEnumerable(value.left) || isEnumerable(value.right);
@@ -1051,6 +1084,7 @@ const getEmptiness = (value: Value): boolean | undefined => {
     }
     case "SetOperation":
     case "FilteredSet":
+    case "Union":
       return isEnumerable(value) ? toFiniteSet(value).elements.length === 0 : undefined;
     default:
       return undefined;
@@ -1172,6 +1206,12 @@ const enumerateSet = (value: Value): Value[] => {
         );
       }
       return toFiniteSet(value.base).elements.filter(value.test);
+    case "Union": {
+      const elements = getUnionSets(value).flatMap(
+        (set, index) => toFiniteSet(getUnionSet(set, index, value)).elements,
+      );
+      return toFiniteSet(createEnumeratedSet(elements)).elements;
+    }
     case "SetOperation": {
       const left = formatValue(value.left);
       const right = formatValue(value.right);
@@ -1229,6 +1269,7 @@ export const toFiniteSet = (value: Value): SetValue => {
   const isSorted =
     typeof value === "object" &&
     (value.kind === "MixedSet" ||
+      value.kind === "Union" ||
       value.kind === "SetOperation" ||
       value.kind === "FilteredSet" ||
       value.kind === "ProductSet" ||
@@ -1263,6 +1304,8 @@ export const isEmptySet = (value: Value): boolean => {
       return value.sets.some(isEmptySet);
     case "FunctionSet":
       return !isEmptySet(value.domain) && isEmptySet(value.range);
+    case "Union":
+      return getUnionSets(value).every((set, index) => isEmptySet(getUnionSet(set, index, value)));
     default:
       return toFiniteSet(value).elements.length === 0;
   }
@@ -1369,6 +1412,13 @@ export const isFiniteSet = (value: Value): boolean => {
       }
       return finiteness.isAllFinite;
     }
+    case "Union":
+      if (!isTlcEnumerable(value.base)) {
+        throw new TlaEvaluationError(
+          `Attempted to check if the nonenumerable set:\n${formatUnion(value)}\nis a finite set.`,
+        );
+      }
+      return toFiniteSet(value.base).elements.every(isFiniteSet);
     case "SetOperation":
       if (value.operator === "\\cup") return isFiniteSet(value.left) && isFiniteSet(value.right);
       if (value.operator === "\\cap") {
@@ -1507,6 +1557,13 @@ export const isElementOf = (element: Value, set: Value): boolean => {
     }
     case "FilteredSet":
       return isElementOf(element, set.base) && set.test(element);
+    case "Union":
+      if (!isTlcEnumerable(set.base)) {
+        throw new TlaEvaluationError(
+          `Attempted to check if:\n ${formatValue(element)}\nis an element of the non-enumerable set:\n ${formatUnion(set)}`,
+        );
+      }
+      return toFiniteSet(set.base).elements.some((inner) => isElementOf(element, inner));
     case "SetOperation":
       if (set.operator === "\\cup")
         return isElementOf(element, set.left) || isElementOf(element, set.right);
@@ -1801,7 +1858,8 @@ type LazySetValue =
   | RecordSetValue
   | ProductSetValue
   | SetOperationValue
-  | FilteredSetValue;
+  | FilteredSetValue
+  | UnionValue;
 
 const MAXIMUM_EXPANDED_SUBSET_BASE = 6;
 const MAXIMUM_EXPANDED_PRODUCT = 1999;
@@ -1815,7 +1873,9 @@ const expandLazySet = (value: LazySetValue) => {
       ? toFiniteSet(value)
       : undefined;
   }
-  if (value.kind === "SetOperation" || value.kind === "FilteredSet") return toFiniteSet(value);
+  if (value.kind === "SetOperation" || value.kind === "FilteredSet" || value.kind === "Union") {
+    return toFiniteSet(value);
+  }
   if (
     value.kind === "FunctionSet" &&
     isEnumerable(value.domain) &&
@@ -1860,6 +1920,8 @@ const formatLazySet = (value: LazySetValue, isStrict: boolean): string => {
       return `${format(value.left)} ${value.operator} ${format(value.right)}`;
     case "FilteredSet":
       return `{x \\in ${format(value.base)} : ...}`;
+    case "Union":
+      return formatUnion(value, isStrict);
   }
 };
 
@@ -1889,7 +1951,8 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
     case "RecordSet":
     case "ProductSet":
     case "SetOperation":
-    case "FilteredSet": {
+    case "FilteredSet":
+    case "Union": {
       const expanded = getExpandedLazySet(value, isStrict);
       return expanded ? format(expanded) : formatLazySet(value, isStrict);
     }
