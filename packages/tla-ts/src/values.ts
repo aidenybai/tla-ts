@@ -1058,7 +1058,7 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       return elements.every((item) => isElementOf(item, set.base));
     }
     default:
-      throw new TlaEvaluationError(`Expected a set but found ${formatValue(set)}`);
+      throw new TlaEvaluationError(describeNonSetMembership(element, set));
   }
 };
 
