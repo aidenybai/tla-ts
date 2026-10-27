@@ -27,7 +27,7 @@ import {
 } from "./liveness";
 import { parseModule } from "./parser";
 import { prettyPrint } from "./pretty-print";
-import { getInitialStates, getSuccessors } from "./successors";
+import { getInitialStates, getSuccessors, type Successor } from "./successors";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { getTlcFingerprint } from "./tlc-random";
@@ -122,6 +122,9 @@ export interface Properties {
 }
 
 const START: SourceLocation = { line: 0, column: 0 };
+
+const INITIAL_RECOVERY_FAILURE = "Failed to recover the initial state from its fingerprint.";
+const NEXT_RECOVERY_FAILURE = "Failed to recover the next state from its fingerprint.";
 
 const createIdentifier = (name: string): Expression => ({
   kind: "Identifier",
@@ -658,6 +661,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   const properties = search.properties;
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
+  const isReducing = config.view !== undefined || config.symmetry !== undefined;
   const liveness = withLivenessExitCode(() =>
     createLivenessChecker(properties.liveness, spec.temporals, environment),
   );
@@ -675,28 +679,58 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     Object.fromEntries(
       search.getTlcOrder().map((index) => [environment.variables[index], state[index]]),
     );
-  const getTrace = (
-    index: number,
-    last?: { state: Value[]; action: string | undefined },
-  ): TraceStep[] => {
-    const steps: TraceStep[] = last ? [{ action: last.action, state: toRecord(last.state) }] : [];
-    for (let current = index; current !== -1; current = parents[current]) {
-      steps.push({ action: actions[current], state: toRecord(states[current]) });
+  const hasFingerprint = (state: Value[], index: number) =>
+    isSameState(getFingerprintState(state), fingerprintStates[index]);
+  const findSuccessorWithFingerprint = (state: Value[], index: number) =>
+    getSuccessors(spec.next, state, environment).find((successor) =>
+      hasFingerprint(successor.state, index),
+    );
+  const getPathStates = (path: number[], nextFailure: string) => {
+    const initial = isReducing
+      ? getInitialStates(spec.init, environment).find((state) => hasFingerprint(state, path[0]))
+      : states[path[0]];
+    if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);
+    const steps: Successor[] = [{ state: initial, action: undefined }];
+    for (let position = 1; position < path.length; position++) {
+      const previous = steps[position - 1].state;
+      if (path[position - 1] === path[position]) {
+        steps.push({ state: previous, action: "Stuttering" });
+        continue;
+      }
+      const successor = findSuccessorWithFingerprint(previous, path[position]);
+      if (!successor) throw new TlaEvaluationError(nextFailure);
+      steps.push(successor);
     }
-    return steps.reverse();
+    return steps;
   };
-  const getPathTrace = (path: number[]) =>
-    path.map((stateIndex, position): TraceStep => {
-      if (position === 0) return { action: undefined, state: toRecord(states[stateIndex]) };
-      const previous = path[position - 1];
-      const action =
-        previous === stateIndex
-          ? "Stuttering"
-          : getSuccessors(spec.next, states[previous], environment).find((successor) =>
-              isSameState(successor.state, states[stateIndex]),
-            )?.action;
-      return { action, state: toRecord(states[stateIndex]) };
-    });
+  const toTrace = (steps: Successor[]): TraceStep[] =>
+    steps.map((step) => ({ action: step.action, state: toRecord(step.state) }));
+  const getTrace = (index: number, last?: Successor): TraceStep[] => {
+    const path: number[] = [];
+    for (let current = index; current !== -1; current = parents[current]) path.unshift(current);
+    const steps =
+      isReducing && path.length > 1
+        ? getPathStates(path, INITIAL_RECOVERY_FAILURE)
+        : path.map((current) => ({ state: states[current], action: actions[current] }));
+    if (!last) return toTrace(steps);
+    const action = isReducing
+      ? getSuccessors(spec.next, states[index], environment).find((successor) =>
+          isSameState(successor.state, last.state),
+        )?.action
+      : last.action;
+    return toTrace([...steps, { state: last.state, action }]);
+  };
+  const getPathTrace = (path: number[], loopStart?: number) => {
+    const steps = getPathStates(path, NEXT_RECOVERY_FAILURE);
+    const last = steps[steps.length - 1].state;
+    const isClosed =
+      !isReducing ||
+      loopStart === undefined ||
+      loopStart === path.length - 1 ||
+      findSuccessorWithFingerprint(last, path[loopStart]) !== undefined;
+    if (!isClosed) throw new TlaEvaluationError(NEXT_RECOVERY_FAILURE);
+    return toTrace(steps);
+  };
   const getStateHash = (state: Value[]) => {
     let hash = 0x811c9dc5;
     for (let index = 0; index < state.length; index++)
@@ -876,7 +910,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   if (lasso) {
     return reportViolation("liveness-violation", {
       name: lasso.name,
-      trace: getPathTrace([...lasso.prefix, ...lasso.cycle]),
+      trace: getPathTrace([...lasso.prefix, ...lasso.cycle], lasso.prefix.length),
       loopStart: lasso.prefix.length,
     });
   }
