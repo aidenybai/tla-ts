@@ -3,7 +3,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
 import { type CheckResult, type CheckStatus, type TraceStep } from "./check";
 import { parseConfig } from "./config";
-import { getErrorExitCode, TlaError } from "./errors";
+import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
 import { check } from "./parallel";
 import { prettyPrint } from "./pretty-print";
@@ -172,13 +172,21 @@ const run = async (args: string[]) => {
   return result.failure?.exitCode ?? EXIT_CODES[result.status];
 };
 
+// TLC prints the errors it raises itself. tla-ts names the others, such as a module SANY rejects.
+const printError = (error: TlaError) => {
+  if (error instanceof TlaConfigError || error instanceof TlaEvaluationError) {
+    return console.log(`Error: ${error.message}`);
+  }
+  console.error(`${error.name}: ${error.message}`);
+};
+
 export const runCli = async () => {
   const outcome = { code: 1 };
   try {
     outcome.code = await run(process.argv.slice(2));
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
-    console.error(`${error.name}: ${error.message}`);
+    printError(error);
     outcome.code = getErrorExitCode(error);
   }
   process.exitCode = outcome.code;
