@@ -133,7 +133,7 @@ export const CORE_OPERATORS: Builtin[] = [
       right.kind === "Subset" &&
       isEnumerable(left.base);
     if (isPowerSets) return isSubsetOf(toFiniteSet(left.base).elements, right.base);
-    return isSubsetOf(getElements(args, 0, "\\subseteq"), right);
+    return isSubsetOf(toFiniteSet(left).elements, right);
   }),
   ...SET_OPERATORS.map((operator) =>
     defineOperator(operator, 2, (args) => {
