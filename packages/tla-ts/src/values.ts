@@ -227,6 +227,47 @@ const compareStrings = (left: string, right: string) => {
   return left < right ? -1 : 1;
 };
 
+const isOverriddenSet = (value: Value): value is InfiniteSetValue | SequenceSetValue =>
+  typeof value === "object" && (value.kind === "InfiniteSet" || value.kind === "SequenceSet");
+
+const isOverriddenComparison = (left: Value, right: Value) =>
+  (isOverriddenSet(left) || isOverriddenSet(right)) &&
+  !(
+    typeof left === "object" &&
+    left.kind === "SequenceSet" &&
+    typeof right === "object" &&
+    right.kind === "SequenceSet"
+  );
+
+// TLC implements Nat, Int, STRING, Seq(S), and Any in Java classes that compare only with each
+// other and with model values. Comparing one with any other set is an error, worded by the class of
+// the left operand.
+const compareOverriddenSets = (
+  left: Value,
+  right: Value,
+  verb: "compare" | "check equality of",
+): number => {
+  if (!isOverriddenSet(left)) {
+    throw new TlaEvaluationError(
+      `Attempted to ${verb} the set ${formatValue(isEnumerable(left) ? toFiniteSet(left) : left, true)} with the value:\n${formatValue(right, true)}`,
+    );
+  }
+  if (!isOverriddenSet(right)) {
+    throw new TlaEvaluationError(
+      `Attempted to compare overridden value ${formatValue(left, true)} with non-overridden value:\n${formatValue(right, true)}`,
+    );
+  }
+  const leftName = left.kind === "InfiniteSet" ? left.name : undefined;
+  const rightName = right.kind === "InfiniteSet" ? right.name : undefined;
+  if (leftName !== undefined && leftName === rightName) return 0;
+  if ((leftName === "Nat" && rightName === "Int") || (leftName === "Int" && rightName === "Nat")) {
+    return leftName === "Nat" ? -1 : 1;
+  }
+  throw new TlaEvaluationError(
+    `Attempted to compare ${formatValue(left, true)} with the value\n${formatValue(right, true)}`,
+  );
+};
+
 export const ANY_SET: InfiniteSetValue = { kind: "InfiniteSet", name: "Any" };
 
 const compareAny = (other: Value): never => {
@@ -248,9 +289,8 @@ export const compareValues = (left: Value, right: Value): number => {
       return leftKind === "ModelValue" ? -1 : 1;
     }
     if (left === ANY_SET || right === ANY_SET) return compareAny(left === ANY_SET ? right : left);
-    if (leftKind === "InfiniteSet" && rightKind === "InfiniteSet") {
-      if (left.name === right.name) return 0;
-      if (left.name !== "STRING" && right.name !== "STRING") return left.name === "Nat" ? -1 : 1;
+    if (isSetValue(left) && isSetValue(right) && isOverriddenComparison(left, right)) {
+      return compareOverriddenSets(left, right, "compare");
     }
     const leftIsSet = isSetValue(left);
     if (leftIsSet !== isSetValue(right)) {
@@ -356,8 +396,8 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   }
   const isInfiniteComparison =
     isSetValue(left) && isSetValue(right) && !(isEnumerable(left) && isEnumerable(right));
-  if (isInfiniteComparison && (isStringSet(left) || isStringSet(right))) {
-    return isStringSetEqual(left, right);
+  if (isInfiniteComparison && isOverriddenComparison(left, right)) {
+    return compareOverriddenSets(left, right, "check equality of") === 0;
   }
   if (isInfiniteComparison) {
     if (!isOverriddenSet(left)) {
@@ -367,33 +407,6 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     return getValueKey(left) === getValueKey(right);
   }
   return compareValues(left, right) === 0;
-};
-
-const isStringSet = (value: Value) =>
-  typeof value === "object" && value.kind === "InfiniteSet" && value.name === "STRING";
-
-const isOverriddenSet = (value: Value) =>
-  typeof value === "object" && (value.kind === "InfiniteSet" || value.kind === "SequenceSet");
-
-// TLC implements STRING in its Java Strings class, which equals only STRING. Comparing it with
-// any other set is an error, worded by the class of the left operand.
-const isStringSetEqual = (left: Value, right: Value) => {
-  if (isStringSet(left) && isStringSet(right)) return true;
-  if (isStringSet(left)) {
-    throw new TlaEvaluationError(
-      isOverriddenSet(right)
-        ? `Attempted to compare STRING with the value\n${formatValue(right, true)}`
-        : `Attempted to compare overridden value STRING with non-overridden value:\n${formatValue(right, true)}`,
-    );
-  }
-  if (isOverriddenSet(left)) {
-    throw new TlaEvaluationError(
-      `Attempted to compare ${formatValue(left, true)} with the value\nSTRING`,
-    );
-  }
-  throw new TlaEvaluationError(
-    `Attempted to check equality of the set ${formatValue(isEnumerable(left) ? toFiniteSet(left) : left, true)} with the value:\nSTRING`,
-  );
 };
 
 const areSameValues = (left: Value[], right: Value[]) =>
