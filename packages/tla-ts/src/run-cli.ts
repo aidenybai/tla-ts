@@ -14,7 +14,7 @@ import { parseConfig } from "./config";
 import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
 import type { LineRange } from "./obligation-generate";
-import { getObligations, WHOLE_MODULE } from "./obligations";
+import { formatSummary, getObligations, WHOLE_MODULE } from "./obligations";
 import { check } from "./parallel";
 import { prettyPrint } from "./pretty-print";
 import {
@@ -47,6 +47,7 @@ const VALUE_FLAGS = new Set(["-config", "-lncheck", "-seed", "-workers"]);
 const PROVE_OPTIONS = new Map([
   ["-N", 0],
   ["--printallobs", 0],
+  ["--summary", 0],
   ["-I", 1],
   ["--line", 1],
   ["--toolbox", 2],
@@ -312,7 +313,9 @@ const prove = (args: string[]) => {
     console.error(`Error: option '${nonInteger.name}' expects an integer.`);
     return 1;
   }
-  if (!options.some((option) => option.name === "-N")) {
+  const hasOption = (name: string) => options.some((option) => option.name === name);
+  // tlapm's --summary implies -N.
+  if (!hasOption("-N") && !hasOption("--summary")) {
     console.error("Error: tla-ts has no prover backend yet, so prove needs -N.");
     return 1;
   }
@@ -356,16 +359,16 @@ const prove = (args: string[]) => {
           : console.error(warning.text),
     },
   );
-  if (!isToolbox) return EXIT_STATUS.success;
-  const isPrintingAll = options.some((option) => option.name === "--printallobs");
   results.forEach((result) => {
+    if (hasOption("--summary")) console.log(formatSummary(result));
+    if (!isToolbox) return;
     result.obligations.forEach((obligation) =>
       printToolboxMessage([
         "type:obligation",
         `id:${obligation.id}`,
         `loc:${obligation.location}`,
         "status:to be proved",
-        ...(isPrintingAll ? [`obl:${obligation.text}`] : []),
+        ...(hasOption("--printallobs") ? [`obl:${obligation.text}`] : []),
       ]),
     );
     printToolboxMessage(["type:obligationsnumber", `count:${result.obligations.length}`]);

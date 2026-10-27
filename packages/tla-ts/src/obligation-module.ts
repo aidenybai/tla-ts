@@ -35,7 +35,13 @@ import {
   type Visibility,
   type WhereDefined,
 } from "./obligation-expression";
-import type { Generator } from "./obligation-generate";
+import {
+  EMPTY_SUMMARY,
+  getProofSummary,
+  joinSummaries,
+  type Generator,
+  type ProofSummary,
+} from "./obligation-generate";
 import {
   getUnique,
   type Counter,
@@ -905,9 +911,24 @@ export const normalize = (
   return normalized;
 };
 
+// The statistics of a module's proofs, with those of each theorem in its body.
+export interface TheoremSummary extends ProofSummary {
+  location: Locus | undefined;
+}
+
+export interface ModuleSummary extends ProofSummary {
+  theorems: TheoremSummary[];
+}
+
 // Module.Gen.generate: a named theorem binds its name as a proof definition for what follows.
-export const generate = (pipeline: Pipeline, context: Hyp[], module: Mule): Obligation[] => {
+export const generate = (
+  pipeline: Pipeline,
+  context: Hyp[],
+  module: Mule,
+): { obligations: Obligation[]; summary: ModuleSummary } => {
   const obligations: Obligation[] = [];
+  const theorems: TheoremSummary[] = [];
+  let summary = EMPTY_SUMMARY;
   let current = context;
   for (const unit of module.body) {
     switch (unit.kind) {
@@ -919,6 +940,9 @@ export const generate = (pipeline: Pipeline, context: Hyp[], module: Mule): Obli
           unit.proof,
         );
         obligations.push(...pipeline.generator.collect(proof));
+        const theorem = getProofSummary(proof);
+        theorems.push({ ...theorem, location: unit.location });
+        summary = joinSummaries(summary, theorem);
         const fact: Expr =
           unit.name === undefined
             ? at(exprifySequent(unit.sequent), unit)
@@ -929,9 +953,12 @@ export const generate = (pipeline: Pipeline, context: Hyp[], module: Mule): Obli
         ];
         continue;
       }
-      case "Submod":
-        obligations.push(...generate(pipeline, current, unit.module));
+      case "Submod": {
+        const generated = generate(pipeline, current, unit.module);
+        obligations.push(...generated.obligations);
+        summary = joinSummaries(summary, generated.summary);
         continue;
+      }
       case "Mutate": {
         const [next, generated] = pipeline.generator.mutate(
           current,
@@ -947,5 +974,5 @@ export const generate = (pipeline: Pipeline, context: Hyp[], module: Mule): Obli
         current = [...current, ...getUnitHyps(unit)];
     }
   }
-  return obligations;
+  return { obligations, summary: { ...summary, theorems } };
 };

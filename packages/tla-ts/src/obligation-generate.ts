@@ -273,6 +273,52 @@ const obligate = (
   kind: ObligationKind,
 ): Obligation => ({ sequent, location: from.location, kind });
 
+// Proof.Gen's statistics: how many obligations it generates, and the missing and omitted proofs
+// among them in the order it generates them.
+export interface ProofSummary {
+  total: number;
+  absent: Locus[];
+  omitted: Locus[];
+}
+
+export const EMPTY_SUMMARY: ProofSummary = { total: 0, absent: [], omitted: [] };
+
+export const joinSummaries = (left: ProofSummary, right: ProofSummary): ProofSummary => ({
+  total: left.total + right.total,
+  absent: [...left.absent, ...right.absent],
+  omitted: [...left.omitted, ...right.omitted],
+});
+
+const getStepSummary = (step: Step): ProofSummary => {
+  switch (step.kind) {
+    case "Use":
+      return { ...EMPTY_SUMMARY, total: step.obligations?.length ?? 0 };
+    case "Assert":
+    case "Suffices":
+    case "Pcase":
+    case "Pick":
+      return getProofSummary(step.proof);
+    default:
+      return EMPTY_SUMMARY;
+  }
+};
+
+// A proof outside the lines or the files given to tlapm generates nothing, so it counts nothing.
+export const getProofSummary = (proof: Proof): ProofSummary => {
+  if (proof.kind === "Steps") {
+    return [...proof.steps.map(getStepSummary), getProofSummary(proof.qed.proof)].reduce(
+      joinSummaries,
+    );
+  }
+  if (proof.kind !== "Omitted" || !proof.obligations || !proof.location)
+    return { ...EMPTY_SUMMARY, total: proof.obligations?.length ?? 0 };
+  return {
+    total: proof.obligations.length,
+    absent: proof.omission === "Implicit" ? [proof.location] : [],
+    omitted: proof.omission === "Explicit" ? [proof.location] : [],
+  };
+};
+
 const replaceAt = (expression: Expr, replacement: Expr): Expr =>
   expression.kind === "At" && !expression.isExcept
     ? at(stripProps(replacement), expression)

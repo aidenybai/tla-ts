@@ -17,17 +17,23 @@ export interface ObligationWarning {
   isToolboxMessage: boolean;
 }
 
-// Errors.loc_to_string: Loc.string_of_locus and " :", where endColumn is the column after the end.
-export const getLocusPrefix = (locus: Locus | undefined) => {
-  if (!locus) return "";
-  const file = `File ${JSON.stringify(locus.file)}, line ${locus.startLine}`;
+// Loc.string_of_locus_nofile, where endColumn is the column after the end.
+export const getLocusPosition = (locus: Locus) => {
   const end = locus.endColumn - 1;
   if (locus.startLine !== locus.endLine)
-    return `${file}, character ${locus.startColumn} to line ${locus.endLine}, character ${end} :\n`;
+    return `line ${locus.startLine}, character ${locus.startColumn} to line ${locus.endLine}, character ${end}`;
   return locus.startColumn >= end
-    ? `${file}, character ${locus.startColumn} :\n`
-    : `${file}, characters ${locus.startColumn}-${end} :\n`;
+    ? `line ${locus.startLine}, character ${locus.startColumn}`
+    : `line ${locus.startLine}, characters ${locus.startColumn}-${end}`;
 };
+
+// Loc.string_of_locus.
+export const getLocusText = (locus: Locus) =>
+  `File ${JSON.stringify(locus.file)}, ${getLocusPosition(locus)}`;
+
+// Errors.loc_to_string: Loc.string_of_locus and " :".
+export const getLocusPrefix = (locus: Locus | undefined) =>
+  locus ? `${getLocusText(locus)} :\n` : "";
 
 export type Builtin =
   | "TRUE"

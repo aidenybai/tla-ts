@@ -2,7 +2,12 @@
 
 import { TlaProofError } from "./errors";
 import { createAnonymizer } from "./obligation-anon";
-import { getLocusPrefix, type Locus, type ObligationWarning } from "./obligation-expression";
+import {
+  getLocusPosition,
+  getLocusPrefix,
+  type Locus,
+  type ObligationWarning,
+} from "./obligation-expression";
 import { createGenerator, type LineRange } from "./obligation-generate";
 import {
   compareNames,
@@ -12,7 +17,9 @@ import {
   getDependencies,
   normalize,
   STANDARD_MODULES,
+  type ModuleSummary,
   type Mule,
+  type TheoremSummary,
   type Pipeline,
 } from "./obligation-module";
 import { formatObligation } from "./obligation-printer";
@@ -35,6 +42,7 @@ export interface PrintedObligation {
 export interface ModuleObligations {
   name: string;
   obligations: PrintedObligation[];
+  summary: ModuleSummary;
 }
 
 export const WHOLE_MODULE: LineRange = { start: 0, end: Infinity };
@@ -117,6 +125,59 @@ const schedule = (modules: Map<string, Mule>) => {
   return order;
 };
 
+// The missing or omitted proofs of a theorem, numbered after those of the theorems before it.
+const formatProofs = (kind: "missing" | "omitted", loci: Locus[], before: number) =>
+  loci.length === 0
+    ? []
+    : [
+        `    ${kind}_proofs_count = ${loci.length}`,
+        ...loci.map(
+          (locus, index) => `    ${kind}_proof_${before + index + 1} at ${getLocusPosition(locus)}`,
+        ),
+      ];
+
+const formatTheoremSummary = (theorem: TheoremSummary, missing: number, omitted: number) => {
+  const location = theorem.location;
+  const start = location
+    ? getLocusPosition({
+        ...location,
+        endLine: location.startLine,
+        endColumn: location.startColumn,
+      })
+    : "<unknown location>";
+  return [
+    `  ---- incomplete proof of theorem at ${start} ----`,
+    ...formatProofs("missing", theorem.absent, missing),
+    ...formatProofs("omitted", theorem.omitted, omitted),
+    "  ====",
+  ];
+};
+
+// Module.Fmt.summary, which tlapm prints to stdout for --summary. It numbers the missing and the
+// omitted proofs across the theorems.
+export const formatSummary = (result: ModuleObligations) => {
+  const summary = result.summary;
+  const theorems = summary.theorems.reduce(
+    (state, theorem) =>
+      theorem.absent.length + theorem.omitted.length === 0
+        ? state
+        : {
+            lines: [...state.lines, ...formatTheoremSummary(theorem, state.missing, state.omitted)],
+            missing: state.missing + theorem.absent.length,
+            omitted: state.omitted + theorem.omitted.length,
+          },
+    { lines: new Array<string>(), missing: 0, omitted: 0 },
+  );
+  return [
+    `---- summary of module ${JSON.stringify(result.name)} ----`,
+    `  obligations_count = ${summary.total}`,
+    ...(summary.absent.length > 0 ? [`  missing_proofs_count = ${summary.absent.length}`] : []),
+    ...(summary.omitted.length > 0 ? [`  omitted_proofs_count = ${summary.omitted.length}`] : []),
+    ...theorems.lines,
+    "====",
+  ].join("\n");
+};
+
 // Each main module is one file given to tlapm. They load into one context and report in schedule
 // order, each numbering its obligations from 1.
 export const getObligations = (
@@ -177,22 +238,21 @@ export const getObligations = (
     if (module.isStandard) return [];
     const result = normalize(pipeline, normalized, undefined, module);
     if (!module.isImportant) return [];
+    const generated = generate(pipeline, [], result);
     // tlapm numbers the obligations, then drops the omitted ones and those outside the lines.
-    const obligations = generate(pipeline, [], result).flatMap(
-      (obligation, index): PrintedObligation[] => {
-        const location = obligation.location;
-        if (
-          obligation.kind.kind === "Omitted" ||
-          (location && (location.startLine < lines.start || location.endLine > lines.end))
-        )
-          return [];
-        const text =
-          obligation.kind.kind === "Error"
-            ? obligation.kind.message
-            : `${formatObligation(obligation.sequent)}\n`;
-        return [{ id: index + 1, location: formatLocus(location), text }];
-      },
-    );
-    return [{ name: module.name, obligations }];
+    const obligations = generated.obligations.flatMap((obligation, index): PrintedObligation[] => {
+      const location = obligation.location;
+      if (
+        obligation.kind.kind === "Omitted" ||
+        (location && (location.startLine < lines.start || location.endLine > lines.end))
+      )
+        return [];
+      const text =
+        obligation.kind.kind === "Error"
+          ? obligation.kind.message
+          : `${formatObligation(obligation.sequent)}\n`;
+      return [{ id: index + 1, location: formatLocus(location), text }];
+    });
+    return [{ name: module.name, obligations, summary: generated.summary }];
   });
 };

@@ -239,11 +239,19 @@ describe("prove prints obligations as tlapm -N does", () => {
   });
 
   it("rejects the tlapm options it doesn't support", () => {
-    const result = runCliWith("obligations", ["prove", "-N", "--summary", "Proofs.tla"]);
+    const result = runCliWith("obligations", ["prove", "-N", "-C", "Proofs.tla"]);
     expect(result.status).toBe(1);
-    expect(result.stderr).toBe(
-      "Error: tla-ts prove does not support the tlapm option --summary.\n",
+    expect(result.stderr).toBe("Error: tla-ts prove does not support the tlapm option -C.\n");
+  });
+
+  // Each .summary file is what tlapm --summary writes to stdout.
+  it("summarizes the missing and omitted proofs of each theorem", () => {
+    const result = runCliWith("obligations", ["prove", "--summary", "Incomplete.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(
+      readFileSync(join(FIXTURES, "obligations", "Incomplete.summary"), "utf8"),
     );
+    expect(result.stderr).toBe("");
   });
 
   it("names a module it cannot find", () => {

@@ -212,9 +212,9 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     endColumn: range.end.column + 1,
   });
 
-  // tlapm reads a method pragma (*{ ... }*) right after OBVIOUS as part of the proof.
-  const getObviousLocus = (keyword: SourceRange) => {
-    const locus = getRangeLocus(keyword);
+  // tlapm reads a method pragma (*{ ... }*) right after OBVIOUS as part of the proof, and right
+  // after a theorem's statement as part of the theorem.
+  const withPragma = (locus: Locus) => {
     const position = { line: locus.endLine - 1, column: locus.endColumn - 1 };
     const isBlank = (character: string | undefined) => character === " " || character === "\r";
     while (position.line < lines.length) {
@@ -871,7 +871,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     if (!proof) return { kind: "Omitted", omission: "Implicit", location: enclosing };
     switch (proof.kind) {
       case "Obvious":
-        return { kind: "Obvious", location: getObviousLocus(proof.keyword) };
+        return { kind: "Obvious", location: withPragma(getRangeLocus(proof.keyword)) };
       case "Omitted":
         return {
           kind: "Omitted",
@@ -1043,12 +1043,18 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         case "Theorem": {
           const theorem = unit.theorem;
           const location = getLocus(theorem.location);
+          // A theorem's missing proof is where tlapm's parser stops, after the statement.
+          const end = withPragma(location);
           return {
             kind: "Theorem",
             name: theorem.name,
             sequent: convertSequent(theorem.statement),
             axiomCount: 0,
-            proof: convertProof(theorem.proof, 0, location),
+            proof: convertProof(theorem.proof, 0, {
+              ...end,
+              startLine: end.endLine,
+              startColumn: end.endColumn,
+            }),
             location,
           };
         }
