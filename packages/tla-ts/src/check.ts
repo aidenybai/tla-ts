@@ -720,7 +720,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     violation: violation && { ...violation, loopStart: violation.loopStart },
     generatedStates: runtime.generatedStates,
     distinctStates: runtime.distinctStates,
-    depth: statistics.depth,
+    depth: runtime.generatedStates === 0 ? 0 : Math.max(statistics.depth, 1),
   });
 
   const assumptionViolation = findAssumptionViolation(specification.assumptions, environment);
