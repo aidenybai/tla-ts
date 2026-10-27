@@ -703,10 +703,12 @@ const enumerateSet = (value: Value): Value[] => {
   switch (value.kind) {
     case "Set":
       return value.elements;
-    case "Interval":
-      return value.low === 1 && value.high >= 1
-        ? getIntervalDomain(value.high)
-        : Array.from({ length: getCardinality(value) }, (_, index) => value.low + index);
+    case "Interval": {
+      if (value.low === 1 && value.high >= 1) return getIntervalDomain(value.high);
+      const elements: number[] = [];
+      for (let element = value.low; element <= value.high; element++) elements.push(element);
+      return elements;
+    }
     case "Subset": {
       const base = toFiniteSet(value.base).elements;
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
@@ -815,13 +817,15 @@ const finiteSets = new WeakMap<ObjectValue, SetValue>();
 
 export const toFiniteSet = (value: Value): SetValue => {
   if (typeof value === "object" && value.kind === "Set") return value;
+  if (typeof value === "object" && value.kind === "Interval") {
+    return createSortedSet(enumerateSet(value));
+  }
   const cached = typeof value === "object" ? finiteSets.get(value) : undefined;
   if (cached) return cached;
   const elements = enumerateSet(value);
   const isSorted =
     typeof value === "object" &&
-    (value.kind === "Interval" ||
-      value.kind === "SetOperation" ||
+    (value.kind === "SetOperation" ||
       value.kind === "FilteredSet" ||
       value.kind === "ProductSet" ||
       value.kind === "FunctionSet" ||
