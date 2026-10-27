@@ -26,7 +26,13 @@ import {
   type TemporalProperty,
 } from "./liveness";
 import { prettyPrint } from "./pretty-print";
-import { getInitialStates, getSuccessors, type Successor } from "./successors";
+import {
+  forEachInitialState,
+  forEachSuccessor,
+  getInitialStates,
+  getSuccessors,
+  type Successor,
+} from "./successors";
 import { getSpecificationValue } from "./spec-description";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
@@ -919,7 +925,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     return current.isExpanding ? depths[current.index] + 1 : 0;
   };
 
-  for (const state of getSpecInitialStates()) {
+  const visitInitialState = (state: Value[]): CheckResult | undefined => {
     canonicalizeState(state);
     runtime.generatedStates++;
     runtime.initialStates++;
@@ -930,7 +936,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     const isInModel = search.satisfiesConstraints(state);
     if (isInModel) search.trackStatePossible(state);
     const isSeen = isInModel && findStateIndex(hash, fingerprintState) !== -1;
-    if (isSeen) continue;
+    if (isSeen) return undefined;
     if (isInModel) {
       countDistinctState(1);
       runtime.queueSize++;
@@ -950,10 +956,74 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
         trace: toTrace([{ action: undefined, state }]),
       });
     }
-    if (!isInModel) continue;
+    if (!isInModel) return undefined;
     markSeen(hash, states.length);
     addState(state, fingerprintState, -1, undefined);
+    return undefined;
+  };
+  const visitSuccessor = (
+    index: number,
+    successor: Successor,
+    liveSuccessors: LiveSuccessor[],
+  ): CheckResult | undefined => {
+    const state = states[index];
+    runtime.generatedStates++;
+    current.candidate = successor.state;
+    current.candidateLevel = depths[index] + 1;
+    if (isCanonicalizedFirst) canonicalizeState(successor.state);
+    const fingerprintState = getFingerprintState(successor.state);
+    const hash = getStateHash(fingerprintState);
+    const found = findStateIndex(hash, fingerprintState);
+    const isStateInModel = search.satisfiesConstraints(successor.state, state);
+    if (isStateInModel) search.trackStatePossible(successor.state);
+    const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
+    if (isInModel) search.trackActionPossible(state, successor.state);
+    const existing = isInModel ? found : -1;
+    if (existing !== -1 && liveness) {
+      const stored = states[existing];
+      const isStored = stored.every((value, position) => value === successor.state[position]);
+      liveSuccessors.push({ index: existing, state: isStored ? stored : successor.state });
+    }
+    const isNew = isInModel && existing === -1;
+    if (isNew) countDistinctState(depths[index] + 1);
+    if (existing === -1) {
+      const violated = search.findViolatedInvariant(successor.state, state);
+      if (violated) {
+        return reportViolation("invariant-violation", {
+          name: violated.name,
+          trace: getTrace(index, successor),
+        });
+      }
+    }
+    const violatedProperty = search.findViolatedActionProperty(state, successor.state);
+    if (violatedProperty) {
+      return reportViolation("liveness-violation", {
+        name: violatedProperty.name,
+        trace: getTrace(index, successor),
+      });
+    }
+    if (!isNew) return undefined;
+    if (!isCanonicalizedFirst) canonicalizeState(successor.state);
+    markSeen(hash, states.length);
+    if (liveness) liveSuccessors.push({ index: states.length, state: successor.state });
+    addState(successor.state, fingerprintState, index, successor.action);
+    runtime.queueSize++;
+    return undefined;
+  };
+
+  const outcome: { result: CheckResult | undefined } = { result: undefined };
+  if (spec.init !== undefined) {
+    forEachInitialState(
+      spec.init,
+      environment,
+      (state) => {
+        outcome.result = visitInitialState(state);
+        return outcome.result !== undefined;
+      },
+      spec.scope,
+    );
   }
+  if (outcome.result) return outcome.result;
 
   const next = spec.next;
   if (next === undefined) {
@@ -971,57 +1041,24 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     current.candidate = undefined;
     runtime.queueSize = states.length - index - 1;
     current.isExpanding = true;
-    const successors = getSuccessors(next, state, environment, spec.scope);
+    const liveSuccessors: LiveSuccessor[] = [];
+    const successorCount = forEachSuccessor(
+      next,
+      state,
+      environment,
+      (successor) => {
+        outcome.result = visitSuccessor(index, successor, liveSuccessors);
+        return outcome.result !== undefined;
+      },
+      spec.scope,
+    );
     current.isExpanding = false;
-    if (successors.length === 0 && config.checkDeadlock) {
+    if (outcome.result) return outcome.result;
+    if (successorCount === 0 && config.checkDeadlock) {
       // TLC prints a deadlocked initial state without evaluating the alias.
       const trace =
         parents[index] === -1 ? [{ action: undefined, state: toRecord(state) }] : getTrace(index);
       return reportViolation("deadlock", { name: "deadlock", trace });
-    }
-    const liveSuccessors: LiveSuccessor[] = [];
-    for (const successor of successors) {
-      runtime.generatedStates++;
-      current.candidate = successor.state;
-      current.candidateLevel = depths[index] + 1;
-      if (isCanonicalizedFirst) canonicalizeState(successor.state);
-      const fingerprintState = getFingerprintState(successor.state);
-      const hash = getStateHash(fingerprintState);
-      const found = findStateIndex(hash, fingerprintState);
-      const isStateInModel = search.satisfiesConstraints(successor.state, state);
-      if (isStateInModel) search.trackStatePossible(successor.state);
-      const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
-      if (isInModel) search.trackActionPossible(state, successor.state);
-      const existing = isInModel ? found : -1;
-      if (existing !== -1 && liveness) {
-        const stored = states[existing];
-        const isStored = stored.every((value, position) => value === successor.state[position]);
-        liveSuccessors.push({ index: existing, state: isStored ? stored : successor.state });
-      }
-      const isNew = isInModel && existing === -1;
-      if (isNew) countDistinctState(depths[index] + 1);
-      if (existing === -1) {
-        const violated = search.findViolatedInvariant(successor.state, state);
-        if (violated) {
-          return reportViolation("invariant-violation", {
-            name: violated.name,
-            trace: getTrace(index, successor),
-          });
-        }
-      }
-      const violatedProperty = search.findViolatedActionProperty(state, successor.state);
-      if (violatedProperty) {
-        return reportViolation("liveness-violation", {
-          name: violatedProperty.name,
-          trace: getTrace(index, successor),
-        });
-      }
-      if (!isNew) continue;
-      if (!isCanonicalizedFirst) canonicalizeState(successor.state);
-      markSeen(hash, states.length);
-      if (liveness) liveSuccessors.push({ index: states.length, state: successor.state });
-      addState(successor.state, fingerprintState, index, successor.action);
-      runtime.queueSize++;
     }
     const accepted = liveness?.addState(index, state, liveSuccessors);
     current.livenessSource = -1;
