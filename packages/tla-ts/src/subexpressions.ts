@@ -11,7 +11,7 @@ import type {
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import { getChildren } from "./evaluate";
-import { mapChildren, mapDefinition } from "./instances";
+import { getSourceName, mapChildren, mapDefinition } from "./instances";
 
 type Lookup = (name: string) => Definition | undefined;
 
@@ -267,7 +267,9 @@ const selectSubexpression = (
       names.push(selector.name);
       args.push(...selector.args);
       const name = names.join("!");
-      const definition = local ? local.find((candidate) => candidate.name === name) : lookup(name);
+      const definition = local
+        ? local.find((candidate) => getSourceName(candidate) === name)
+        : lookup(name);
       if (definition) {
         const arity = definition.kind === "Operator" ? definition.params.length : 0;
         const given = args.length === 0 && pool.length > 0 ? pool.splice(0, arity) : args;

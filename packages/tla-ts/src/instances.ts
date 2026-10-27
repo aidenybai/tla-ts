@@ -44,23 +44,36 @@ export const renameLocals = (
 const mapBounds = (bounds: Bound[], map: (child: Expression) => Expression): Bound[] =>
   bounds.map((bound) => ({ pattern: bound.pattern, set: map(bound.set) }));
 
+const sourceNames = new WeakMap<Definition, string>();
+
+export const getSourceName = (definition: Definition) =>
+  sourceNames.get(definition) ?? definition.name;
+
+const withSourceName = (definition: Definition, source: Definition) => {
+  if (getSourceName(source) !== definition.name) sourceNames.set(definition, getSourceName(source));
+  return definition;
+};
+
 export const mapDefinition = (
   definition: Definition,
   map: (child: Expression, bound: string[]) => Expression,
 ): Definition =>
-  definition.kind === "Function"
-    ? {
-        ...definition,
-        bounds: mapBounds(definition.bounds, (child) => map(child, [])),
-        body: map(definition.body, getBoundNames(definition.bounds)),
-      }
-    : {
-        ...definition,
-        body: map(
-          definition.body,
-          definition.params.map((param) => param.name),
-        ),
-      };
+  withSourceName(
+    definition.kind === "Function"
+      ? {
+          ...definition,
+          bounds: mapBounds(definition.bounds, (child) => map(child, [])),
+          body: map(definition.body, getBoundNames(definition.bounds)),
+        }
+      : {
+          ...definition,
+          body: map(
+            definition.body,
+            definition.params.map((param) => param.name),
+          ),
+        },
+    definition,
+  );
 
 export const mapChildren = (
   expression: Expression,
@@ -206,22 +219,124 @@ export interface Instantiation {
   getDefinition: (key: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
   addDefinition: (name: string, create: (key: string) => Definition) => string;
+  createName: (name: string) => string;
 }
+
+// LAMBDA is a keyword, so no name bound inside the instance can capture it.
+const LAMBDA_NAME = "LAMBDA";
 
 type RewriteMode = "Normal" | "Enabled" | "Primed";
 
 interface Rewrite {
   instantiation: Instantiation;
+  substitutedNames: Set<string>;
   copies: Map<string, string>;
   mode: RewriteMode;
   modes: Map<RewriteMode, Rewrite>;
 }
 
+const getFreeNames = (expression: Expression, bound = new Set<string>()): string[] => {
+  const name =
+    expression.kind === "Identifier"
+      ? expression.name
+      : expression.kind === "Apply" || expression.kind === "OperatorReference"
+        ? expression.operator
+        : undefined;
+  const names = name === undefined || bound.has(name) ? [] : [name];
+  mapChildren(expression, (child, childBound) => {
+    names.push(
+      ...getFreeNames(child, childBound.length === 0 ? bound : new Set([...bound, ...childBound])),
+    );
+    return child;
+  });
+  return names;
+};
+
+const createRenamer = (rewrite: Rewrite) => {
+  const renamed = new Map<string, string>();
+  return (name: string) => {
+    if (!rewrite.substitutedNames.has(name)) return name;
+    const fresh = renamed.get(name) ?? rewrite.instantiation.createName(name);
+    renamed.set(name, fresh);
+    return fresh;
+  };
+};
+
+const bindNames = (bound: Map<string, string>, names: string[], rename: (name: string) => string) =>
+  new Map([...bound, ...names.map((name): [string, string] => [name, rename(name)])]);
+
+const renamePattern = (pattern: BoundPattern, rename: (name: string) => string): BoundPattern =>
+  pattern.kind === "Name"
+    ? { kind: "Name", name: rename(pattern.name) }
+    : { kind: "Tuple", names: pattern.names.map(rename) };
+
+const renameBounds = (bounds: Bound[], rename: (name: string) => string): Bound[] =>
+  bounds.map((bound) => ({ pattern: renamePattern(bound.pattern, rename), set: bound.set }));
+
+const renameParams = (definition: Definition, rename: (name: string) => string): Definition =>
+  definition.kind === "Function"
+    ? { ...definition, bounds: renameBounds(definition.bounds, rename) }
+    : {
+        ...definition,
+        params: definition.params.map((param) => ({
+          name: rename(param.name),
+          arity: param.arity,
+        })),
+      };
+
+const renameNames = (
+  expression: Expression,
+  bound: Map<string, string>,
+  rename: (name: string) => string,
+): Expression => {
+  const getBoundName = (name: string) => bound.get(name) ?? name;
+  switch (expression.kind) {
+    case "Identifier":
+      return { ...expression, name: getBoundName(expression.name) };
+    case "Apply":
+    case "OperatorReference":
+      return { ...expression, operator: getBoundName(expression.operator) };
+    case "Label":
+      return { ...expression, params: expression.params.map(getBoundName) };
+    case "Lambda":
+      return { ...expression, params: expression.params.map(rename) };
+    case "Let":
+      return {
+        ...expression,
+        definitions: expression.definitions.map((definition) =>
+          withSourceName(
+            { ...renameParams(definition, rename), name: rename(definition.name) },
+            definition,
+          ),
+        ),
+      };
+    case "Forall":
+    case "Exists":
+    case "FunctionConstruction":
+    case "SetMap":
+      return { ...expression, bounds: renameBounds(expression.bounds, rename) };
+    case "UnboundedQuantifier":
+      return { ...expression, names: expression.names.map(rename) };
+    case "Choose":
+      return { ...expression, pattern: renamePattern(expression.pattern, rename) };
+    case "SetFilter":
+      return {
+        ...expression,
+        bound: {
+          pattern: renamePattern(expression.bound.pattern, rename),
+          set: expression.bound.set,
+        },
+      };
+    default:
+      return expression;
+  }
+};
+
 export const getEnabledVariableName = (name: string) => `${name}@ENABLED`;
 
 const getMode = (rewrite: Rewrite, mode: RewriteMode) => rewrite.modes.get(mode) ?? rewrite;
 
-const isVariable = (expression: Expression, rewrite: Rewrite, bound: Set<string>) =>
+const isVariable = (expression: Expression, rewrite: Rewrite, bound: Map<string, string>) =>
   expression.kind === "Identifier" &&
   !bound.has(expression.name) &&
   !isLocallyResolved(expression) &&
@@ -230,7 +345,7 @@ const isVariable = (expression: Expression, rewrite: Rewrite, bound: Set<string>
 const getUnchangedVariables = (
   expression: Expression,
   rewrite: Rewrite,
-  bound: Set<string>,
+  bound: Map<string, string>,
 ): string[] | undefined => {
   if (expression.kind === "Tuple") {
     const names = expression.elements.map((element) =>
@@ -244,14 +359,14 @@ const getUnchangedVariables = (
     ? undefined
     : rewrite.instantiation.getDefinition(expression.name);
   return definition?.kind === "Operator" && definition.params.length === 0
-    ? getUnchangedVariables(definition.body, rewrite, new Set())
+    ? getUnchangedVariables(definition.body, rewrite, new Map())
     : undefined;
 };
 
 const substituteInEnabled = (
   expression: Expression,
   rewrite: Rewrite,
-  bound: Set<string>,
+  bound: Map<string, string>,
 ): Expression | undefined => {
   if (rewrite.mode === "Normal") return undefined;
   if (rewrite.mode === "Primed") {
@@ -360,7 +475,11 @@ const getInstanceOperator = (
 const getCopy = (rewrite: Rewrite, key: string) =>
   rewrite.instantiation.isParameterized(key) ? copyDefinition(rewrite, key) : undefined;
 
-const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>): Expression => {
+const substitute = (
+  expression: Expression,
+  rewrite: Rewrite,
+  bound: Map<string, string>,
+): Expression => {
   const recurse = (node: Expression) => substitute(node, rewrite, bound);
   const instantiation = rewrite.instantiation;
   const params = instantiation.params;
@@ -440,7 +559,7 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
         definitions: [
           {
             kind: "Operator",
-            name: replacement.kind,
+            name: LAMBDA_NAME,
             params: replacement.params.map((name) => ({ name, arity: 0 })),
             body: replacement.body,
             isLocal: true,
@@ -450,7 +569,7 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
         ],
         body: {
           ...expression,
-          operator: replacement.kind,
+          operator: LAMBDA_NAME,
           args,
           resolution: { kind: "Local" },
         },
@@ -479,9 +598,13 @@ const substitute = (expression: Expression, rewrite: Rewrite, bound: Set<string>
     }
     return { ...expression, operator: copy };
   }
-  return mapChildren(expression, (child, names) =>
-    names.length === 0 ? recurse(child) : substitute(child, rewrite, new Set([...bound, ...names])),
+  const rename = createRenamer(rewrite);
+  const mapped = mapChildren(expression, (child, names) =>
+    names.length === 0
+      ? recurse(child)
+      : substitute(child, rewrite, bindNames(bound, names, rename)),
   );
+  return renameNames(mapped, bound, rename);
 };
 
 const withInstanceParams = (
@@ -517,8 +640,12 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
   if (!definition) return key;
   return instantiation.addDefinition(definition.name, (copyKey) => {
     rewrite.copies.set(key, copyKey);
-    const mapped = mapDefinition(definition, (child, bound) =>
-      substitute(child, rewrite, new Set(bound)),
+    const rename = createRenamer(rewrite);
+    const mapped = renameParams(
+      mapDefinition(definition, (child, bound) =>
+        substitute(child, rewrite, bindNames(new Map(), bound, rename)),
+      ),
+      rename,
     );
     return withInstanceParams(mapped, instantiation.params, definition.location);
   });
@@ -526,8 +653,11 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
 
 export const createInstantiation = (instantiation: Instantiation) => {
   const modes = new Map<RewriteMode, Rewrite>();
+  const substitutedNames = new Set(
+    [...instantiation.substitutions.values()].flatMap((expression) => getFreeNames(expression)),
+  );
   const createRewrite = (mode: RewriteMode): Rewrite => {
-    const created = { instantiation, copies: new Map(), mode, modes };
+    const created = { instantiation, substitutedNames, copies: new Map(), mode, modes };
     modes.set(mode, created);
     return created;
   };

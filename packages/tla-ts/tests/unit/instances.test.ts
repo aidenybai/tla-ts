@@ -81,6 +81,37 @@ describe("INSTANCE matches TLC", () => {
     ]);
   });
 
+  it("renames names bound inside an instance that would capture substituted names", async () => {
+    const result = await checkInstances("Binders.cfg", "Binders");
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      4,
+      3,
+      3,
+    ]);
+  });
+
+  it("reports violations through substitutions that bound names would capture", async () => {
+    const result = await checkInstances("BindersViolation.cfg", "Binders");
+    expect([result.status, result.violation?.trace.length, result.distinctStates]).toEqual([
+      "invariant-violation",
+      2,
+      2,
+    ]);
+  });
+
+  it.each(["Selection", "SelectionOuter"])(
+    "selects renamed LET definitions by their names in %s",
+    async (moduleName) => {
+      const result = await checkInstances("Selection.cfg", moduleName);
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "success",
+        4,
+        3,
+      ]);
+    },
+  );
+
   it("instantiates parameterized modules inside LET", async () => {
     const result = await checkInstances("LetParameters.cfg", "LetParameters");
     expect([result.status, result.violation?.trace.length, result.distinctStates]).toEqual([
