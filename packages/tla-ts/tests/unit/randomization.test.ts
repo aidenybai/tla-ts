@@ -123,6 +123,13 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     ]);
   });
 
+  it("draws again at each reference to a LET definition in an action", async () => {
+    const result = await checkWithSeed("RandomLet", 1n);
+    expect(result.violation?.trace.map((step) => step.state.alpha)).toEqual([
+      0, 100, 77, 50, 66, 68, 12,
+    ]);
+  });
+
   it('reports the seed in TLCGet("config")', async () => {
     const result = await check({
       source:

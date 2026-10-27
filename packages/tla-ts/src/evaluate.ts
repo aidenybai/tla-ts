@@ -760,7 +760,11 @@ const callOperator = (operator: Operator, args: Expression[], context: Context):
   );
 };
 
-export const bindDefinitions = (definitions: Definition[], context: Context): Scope | undefined =>
+export const bindDefinitions = (
+  definitions: Definition[],
+  context: Context,
+  reevaluated?: ReadonlySet<Definition>,
+): Scope | undefined =>
   definitions.reduce<Scope | undefined>((scope, definition) => {
     const node: Scope = {
       name: definition.name,
@@ -784,7 +788,7 @@ export const bindDefinitions = (definitions: Definition[], context: Context): Sc
       };
       return node;
     }
-    if (definition.params.length > 0) {
+    if (definition.params.length > 0 || reevaluated?.has(definition)) {
       node.binding = {
         kind: "Operator",
         operator: {
@@ -888,6 +892,11 @@ const isImpureDefinition = (definition: Definition, environment: Environment): b
   impureDefinitions.set(definition, isImpure);
   return isImpure;
 };
+
+// TLC's next-state generator does not bind LET definitions to values, so each reference to one
+// that calls an impure builtin evaluates it again.
+export const getReevaluatedDefinitions = (definitions: Definition[], environment: Environment) =>
+  new Set(definitions.filter((definition) => isImpureDefinition(definition, environment)));
 
 export const isImpure = (environment: Environment) =>
   [...environment.definitions.values()].some((definition) =>
