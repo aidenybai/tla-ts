@@ -3,15 +3,18 @@
 // level depends on.
 
 import { TlaProofError } from "./errors";
-import { adjoin, type Scope } from "./obligation-anon";
 import {
+  adjoin,
   getBoundedFresh,
   getFresh,
+  getScopeAt,
+  mapAccumulate,
   type Bound,
   type Builtin,
   type Expr,
   type Hyp,
   type Level,
+  type Scope,
 } from "./obligation-expression";
 
 interface LevelInfo {
@@ -121,13 +124,6 @@ const combine = (infos: LevelInfo[]): LevelInfo => ({
 // The level of each hypothesis depends only on the scope before it.
 const hypLevels = new WeakMap<Scope, LevelInfo>();
 
-const getScopeAt = (scope: Scope | undefined, depth: number) => {
-  let current = scope;
-  for (let index = 0; index < depth && current; index++) current = current.rest;
-  if (!current) throw new TlaProofError(TLAPM_BUG);
-  return current;
-};
-
 const getHypLevel = (scope: Scope): LevelInfo => {
   const cached = hypLevels.get(scope);
   if (cached) return cached;
@@ -178,8 +174,11 @@ const applyOperator = (operator: LevelInfo, args: LevelInfo[]): LevelInfo => {
 export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelInfo => {
   const recurse = (inner: Expr) => getLevelInfo(scope, inner);
   switch (expression.kind) {
-    case "Ix":
-      return getHypLevel(getScopeAt(scope, expression.index - 1));
+    case "Ix": {
+      const hypScope = getScopeAt(scope, expression.index - 1);
+      if (!hypScope) throw new TlaProofError(TLAPM_BUG);
+      return getHypLevel(hypScope);
+    }
     case "Internal": {
       const entry = BUILTIN_LEVELS[expression.builtin];
       if (!entry) throw new TlaProofError(TLAPM_BUG);
@@ -237,10 +236,9 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
       return applyOperator(recurse(operator), expression.args.map(recurse));
     }
     case "Sequent": {
-      let inner = scope;
-      const levels = expression.sequent.context.map((hyp) => {
-        inner = adjoin(inner, hyp);
-        return getHypLevel(inner).level;
+      const [inner, levels] = mapAccumulate(scope, expression.sequent.context, (current, hyp) => {
+        const next = adjoin(current, hyp);
+        return [next, getHypLevel(next).level];
       });
       return getInfo(Math.max(0, ...levels, getLevelInfo(inner, expression.sequent.active).level));
     }

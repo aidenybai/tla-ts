@@ -4,18 +4,17 @@
 import { TlaProofError } from "./errors";
 import { lambdify } from "./obligation-action";
 import { TLAPM_BUG } from "./obligation-levels";
+import type { Anonymizer } from "./obligation-anon";
 import {
   adjoinAll,
-  findNamed,
-  getScopeHyps,
-  exprifySequent,
-  type Anonymizer,
-  type Scope,
-} from "./obligation-anon";
-import {
   at,
   bumpBy,
+  consAll,
   consSubstitution,
+  exprifySequent,
+  findNamed,
+  getScopeHyps,
+  mapAccumulate,
   getFresh,
   isEqualHyp,
   shiftExpr,
@@ -31,6 +30,7 @@ import {
   type Hyp,
   type InstanceDefinition,
   type Locus,
+  type Scope,
   type Sequent,
   type Substitution,
   type Visibility,
@@ -421,14 +421,8 @@ const substituteUnit = (
   }
 };
 
-const substituteUnits = (substitution: Substitution, units: ModuleUnit[]) => {
-  let current = substitution;
-  return units.map((unit) => {
-    const [next, substituted] = substituteUnit(current, unit);
-    current = next;
-    return substituted;
-  });
-};
+const substituteUnits = (substitution: Substitution, units: ModuleUnit[]) =>
+  mapAccumulate(substitution, units, substituteUnit)[1];
 
 const lambdifySequent = (pipeline: Pipeline, scope: Scope | undefined, sequent: Sequent) => {
   try {
@@ -441,6 +435,17 @@ const lambdifySequent = (pipeline: Pipeline, scope: Scope | undefined, sequent: 
   }
 };
 
+const lambdifyUnit = (pipeline: Pipeline, scope: Scope | undefined, unit: ModuleUnit) => {
+  if (unit.kind === "Theorem") {
+    return { ...unit, sequent: lambdifySequent(pipeline, scope, unit.sequent) };
+  }
+  if (unit.kind !== "Definition") return unit;
+  const definition = unit.definition;
+  if (definition.kind !== "Operator" && definition.kind !== "Bpragma") return unit;
+  const body = lambdify(pipeline.anonymizer, scope, definition.body);
+  return { ...unit, definition: { ...definition, body } };
+};
+
 // lambdify_enabled_cdot: the ENABLED and \cdot of each definition and theorem statement bind
 // their variables before instantiation substitutes for them. A theorem that cannot be lambdified
 // states TRUE.
@@ -448,29 +453,15 @@ const lambdifyUnits = (
   pipeline: Pipeline,
   scope: Scope | undefined,
   units: ModuleUnit[],
-): [Scope | undefined, ModuleUnit[]] => {
-  let current = scope;
-  const lambdified = units.map((unit): ModuleUnit => {
+): [Scope | undefined, ModuleUnit[]] =>
+  mapAccumulate(scope, units, (current, unit): [Scope | undefined, ModuleUnit] => {
     if (unit.kind === "Submod") {
       const [inner, body] = lambdifyUnits(pipeline, current, unit.module.body);
-      current = inner;
-      return { ...unit, module: { ...unit.module, body } };
+      return [inner, { ...unit, module: { ...unit.module, body } }];
     }
-    const mapped = ((): ModuleUnit => {
-      if (unit.kind === "Theorem") {
-        return { ...unit, sequent: lambdifySequent(pipeline, current, unit.sequent) };
-      }
-      if (unit.kind !== "Definition") return unit;
-      const definition = unit.definition;
-      if (definition.kind !== "Operator" && definition.kind !== "Bpragma") return unit;
-      const body = lambdify(pipeline.anonymizer, current, definition.body);
-      return { ...unit, definition: { ...definition, body } };
-    })();
-    current = adjoinAll(current, getUnitHyps(mapped));
-    return mapped;
+    const lambdified = lambdifyUnit(pipeline, current, unit);
+    return [adjoinAll(current, getUnitHyps(lambdified)), lambdified];
   });
-  return [current, lambdified];
-};
 
 // apply_subst: each parameter declaration of the instancee gives way to its substitute.
 const applyParameters = (units: ModuleUnit[], substitutes: Map<string, Expr>) => {
@@ -522,10 +513,7 @@ const getLocalSubstitution = (
     const operator = at({ kind: "Ix", index: index + argumentCount + 1 }, { location });
     return argumentCount > 0 ? at({ kind: "Apply", operator, args }, { location }) : operator;
   });
-  return [...locals, ...parameters].reduceRight<Substitution>(
-    (rest, expression) => consSubstitution(expression, rest),
-    shift(count + argumentCount),
-  );
+  return consAll([...locals, ...parameters].reverse(), shift(count + argumentCount));
 };
 
 const addParameters = (expression: Expr, args: string[]): Expr => {

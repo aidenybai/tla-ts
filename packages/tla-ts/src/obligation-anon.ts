@@ -3,22 +3,30 @@
 
 import { TlaProofError } from "./errors";
 import {
+  adjoin,
+  applyBuiltin,
   at,
-  getBoundedFresh,
+  consSubstitution,
+  exprifySequent,
+  findNamed,
   getFresh,
-  getHypName,
+  getScopeAt,
   isEqualExpr,
+  mapAccumulate,
+  mapBoundDomains,
+  mapScoped,
+  mapSelectorArgs,
   normalizeApply,
   shift,
   shiftExpr,
   substituteExpr,
-  consSubstitution,
   type Bound,
   type Defn,
   type Expr,
   type ExprCore,
   type Hyp,
   type ParenForm,
+  type Scope,
   type Selector,
   type Sequent,
 } from "./obligation-expression";
@@ -34,43 +42,6 @@ import {
   type Usable,
 } from "./obligation-proof";
 
-// A persistent context, newest hypothesis first, so binders extend it without copying.
-export interface Scope {
-  hyp: Hyp;
-  rest: Scope | undefined;
-  size: number;
-}
-
-export const adjoin = (scope: Scope | undefined, hyp: Hyp): Scope => ({
-  hyp,
-  rest: scope,
-  size: (scope?.size ?? 0) + 1,
-});
-
-export const adjoinAll = (scope: Scope | undefined, hyps: Hyp[]) =>
-  hyps.reduce<Scope | undefined>(adjoin, scope);
-
-export const getScopeHyps = (scope: Scope | undefined): Hyp[] => {
-  const hyps: Hyp[] = [];
-  for (let current = scope; current; current = current.rest) hyps.push(current.hyp);
-  return hyps.reverse();
-};
-
-export const findNamed = (scope: Scope | undefined, name: string) => {
-  let depth = 0;
-  for (let current = scope; current; current = current.rest) {
-    if (getHypName(current.hyp) === name) return { depth, hyp: current.hyp };
-    depth++;
-  }
-  return undefined;
-};
-
-export const getNth = (scope: Scope | undefined, depth: number) => {
-  let current = scope;
-  for (let index = 0; index < depth && current; index++) current = current.rest;
-  return current?.hyp;
-};
-
 const DUMMY: Expr = { kind: "At", isExcept: false };
 
 const DUMMY_FACT: Hyp = { kind: "Fact", expression: DUMMY, visibility: "Visible" };
@@ -82,9 +53,6 @@ const bump = (scope: Scope | undefined, count: number) => {
   for (let index = 0; index < count; index++) current = adjoin(current, DUMMY_FACT);
   return current;
 };
-
-export const exprifySequent = (sequent: Sequent): ExprCore =>
-  sequent.context.length === 0 ? sequent.active : { kind: "Sequent", sequent };
 
 interface AnonContext {
   warnings: string[];
@@ -217,7 +185,9 @@ export const createAnonymizer = (
       case "Bang": {
         const inner = expression.expression;
         if (inner.kind === "Apply" && inner.operator.kind === "Opaque") {
-          const selectors = expression.selectors.map((selector) => sel(context, selector));
+          const selectors = expression.selectors.map((selector) =>
+            mapSelectorArgs(selector, (arg) => expr(context, arg)),
+          );
           const args = inner.args.map((arg) => expr(context, arg));
           return resolveBang(context, inner.operator.name, args, selectors, expression);
         }
@@ -261,11 +231,6 @@ export const createAnonymizer = (
     };
   };
 
-  const sel = (context: AnonContext, selector: Selector): Selector =>
-    selector.kind === "Instance" || selector.kind === "Label"
-      ? { ...selector, args: selector.args.map((arg) => expr(context, arg)) }
-      : selector;
-
   const withScope = (context: AnonContext, scope: Scope | undefined): AnonContext => ({
     warnings: context.warnings,
     scope,
@@ -274,14 +239,7 @@ export const createAnonymizer = (
   const adj = (context: AnonContext, hyp: Hyp) => withScope(context, adjoin(context.scope, hyp));
 
   const bounds = (context: AnonContext, items: Bound[]): [AnonContext, Bound[]] => {
-    const mapped = items.map((bound): Bound =>
-      bound.domain.kind === "Domain"
-        ? {
-            ...bound,
-            domain: { kind: "Domain", expression: expr(context, bound.domain.expression) },
-          }
-        : bound,
-    );
+    const mapped = mapBoundDomains(items, (domain) => expr(context, domain));
     const inner = mapped.reduce(
       (current, bound) => adj(current, getFresh(bound.name, bound.level)),
       context,
@@ -289,157 +247,16 @@ export const createAnonymizer = (
     return [inner, mapped];
   };
 
+  // Visit.map, apart from the definitions an ASSUME or a LET binds.
   const visit = (context: AnonContext, expression: Expr): Expr => {
-    const recurse = (inner: Expr) => expr(context, inner);
-    switch (expression.kind) {
-      case "Ix":
-      case "Internal":
-      case "Opaque":
-      case "String":
-      case "Num":
-      case "At":
-        return expression;
-      case "Bang":
-        return {
-          ...expression,
-          expression: recurse(expression.expression),
-          selectors: expression.selectors.map((selector) => sel(context, selector)),
-        };
-      case "Lambda": {
-        const inner = expression.params.reduce(
-          (current, param) => adj(current, getFresh(param.name, "Unknown", param.shape)),
-          context,
-        );
-        return { ...expression, body: expr(inner, expression.body) };
-      }
-      case "Apply":
-        return {
-          ...expression,
-          operator: recurse(expression.operator),
-          args: expression.args.map(recurse),
-        };
-      case "Sequent":
-        return { ...expression, sequent: sequent(context, expression.sequent)[1] };
-      case "With":
-        return { ...expression, expression: recurse(expression.expression) };
-      case "Let": {
-        const [inner, definitions] = defns(context, expression.definitions);
-        return { ...expression, definitions, body: expr(inner, expression.body) };
-      }
-      case "If":
-        return {
-          ...expression,
-          condition: recurse(expression.condition),
-          consequent: recurse(expression.consequent),
-          alternative: recurse(expression.alternative),
-        };
-      case "List":
-        return { ...expression, items: expression.items.map(recurse) };
-      case "Quant": {
-        const [inner, mapped] = bounds(context, expression.bounds);
-        return { ...expression, bounds: mapped, body: expr(inner, expression.body) };
-      }
-      case "Tquant": {
-        const inner = expression.names.reduce(
-          (current, name) => adj(current, { kind: "Flex", name }),
-          context,
-        );
-        return { ...expression, body: expr(inner, expression.body) };
-      }
-      case "Choose": {
-        const domain = expression.domain && recurse(expression.domain);
-        const hyp = domain
-          ? getBoundedFresh(expression.name, domain)
-          : getFresh(expression.name, "Constant");
-        return { ...expression, domain, body: expr(adj(context, hyp), expression.body) };
-      }
-      case "SetSt": {
-        const domain = recurse(expression.domain);
-        return {
-          ...expression,
-          domain,
-          body: expr(adj(context, getBoundedFresh(expression.name, domain)), expression.body),
-        };
-      }
-      case "SetOf": {
-        const [inner, mapped] = bounds(context, expression.bounds);
-        return { ...expression, bounds: mapped, element: expr(inner, expression.element) };
-      }
-      case "SetEnum":
-        return { ...expression, elements: expression.elements.map(recurse) };
-      case "Fcn": {
-        const [inner, mapped] = bounds(context, expression.bounds);
-        return { ...expression, bounds: mapped, body: expr(inner, expression.body) };
-      }
-      case "FcnApp":
-        return {
-          ...expression,
-          function: recurse(expression.function),
-          args: expression.args.map(recurse),
-        };
-      case "Arrow":
-        return {
-          ...expression,
-          domain: recurse(expression.domain),
-          range: recurse(expression.range),
-        };
-      case "Product":
-        return { ...expression, factors: expression.factors.map(recurse) };
-      case "Tuple":
-        return { ...expression, elements: expression.elements.map(recurse) };
-      case "Rect":
-      case "Record":
-        return {
-          ...expression,
-          fields: expression.fields.map((field) => ({
-            name: field.name,
-            value: recurse(field.value),
-          })),
-        };
-      case "Except":
-        return {
-          ...expression,
-          function: recurse(expression.function),
-          specs: expression.specs.map((spec) => ({
-            trail: spec.trail.map((point) =>
-              point.kind === "Apply"
-                ? { kind: "Apply" as const, expression: recurse(point.expression) }
-                : point,
-            ),
-            value: recurse(spec.value),
-          })),
-        };
-      case "Dot":
-        return { ...expression, expression: recurse(expression.expression) };
-      case "Sub":
-      case "Tsub":
-        return {
-          ...expression,
-          action: recurse(expression.action),
-          subscript: recurse(expression.subscript),
-        };
-      case "Fair":
-        return {
-          ...expression,
-          subscript: recurse(expression.subscript),
-          action: recurse(expression.action),
-        };
-      case "Case":
-        return {
-          ...expression,
-          arms: expression.arms.map((arm) => ({
-            condition: recurse(arm.condition),
-            body: recurse(arm.body),
-          })),
-          other: expression.other && recurse(expression.other),
-        };
-      case "Parens":
-        return {
-          ...expression,
-          expression: recurse(expression.expression),
-          form: pform(context, expression.form),
-        };
+    if (expression.kind === "Sequent") {
+      return { ...expression, sequent: sequent(context, expression.sequent)[1] };
     }
+    if (expression.kind === "Let") {
+      const [inner, definitions] = defns(context, expression.definitions);
+      return { ...expression, definitions, body: expr(inner, expression.body) };
+    }
+    return mapScoped(context, expression, expr, adj);
   };
 
   // Expr.Anon's defn turns a recursive function definition into a CHOOSE over its own equation.
@@ -454,14 +271,7 @@ export const createAnonymizer = (
       inner,
     );
     if (!isRecursive) return { ...definition, body: shiftExpr(-1, inner) };
-    const equation = at(
-      {
-        kind: "Apply",
-        operator: at({ kind: "Internal", builtin: "Eq" }, inner),
-        args: [at({ kind: "Ix", index: 1 }, inner), inner],
-      },
-      inner,
-    );
+    const equation = applyBuiltin("Eq", [at({ kind: "Ix", index: 1 }, inner), inner], inner);
     return {
       ...definition,
       body: at({ kind: "Choose", name: definition.name, domain: undefined, body: equation }, inner),
@@ -509,13 +319,8 @@ export const createAnonymizer = (
   };
 
   const sequent = (context: AnonContext, item: Sequent): [AnonContext, Sequent] => {
-    let current = context;
-    const hyps = item.context.map((entry) => {
-      const [next, mapped] = hyp(current, entry);
-      current = next;
-      return mapped;
-    });
-    return [current, { context: hyps, active: expr(current, item.active) }];
+    const [inner, hyps] = mapAccumulate(context, item.context, hyp);
+    return [inner, { context: hyps, active: expr(inner, item.active) }];
   };
 
   const pushName = (context: AnonContext, step: StepNumber): AnonContext => ({
@@ -543,12 +348,9 @@ export const createAnonymizer = (
       const amount = count - facts.length + 1;
       if (entry.kind === "Fact") facts.push(shiftExpr(amount, entry.expression));
       else if (entry.kind === "Fresh" && entry.domain) {
-        const membership: Expr = at(
-          {
-            kind: "Apply",
-            operator: at({ kind: "Internal", builtin: "Mem" }, entry.domain),
-            args: [at({ kind: "Ix", index: 0 }, entry.domain), entry.domain],
-          },
+        const membership = applyBuiltin(
+          "Mem",
+          [at({ kind: "Ix", index: 0 }, entry.domain), entry.domain],
           entry.domain,
         );
         facts.push(shiftExpr(amount, membership));
@@ -568,7 +370,7 @@ export const createAnonymizer = (
       const resolved = expr(context, at({ kind: "Opaque", name: def.name }, def));
       if (resolved.kind !== "Ix") return [];
       // tlapm reports a DEF of a declaration and drops it.
-      if (getNth(context.scope, resolved.index - 1)?.kind !== "Defn") return [];
+      if (getScopeAt(context.scope, resolved.index - 1)?.hyp.kind !== "Defn") return [];
       return [{ kind: "Dx", index: resolved.index, location: def.location }];
     }),
   });
@@ -576,7 +378,7 @@ export const createAnonymizer = (
   const proof = (context: AnonContext, item: Proof): Proof => {
     switch (item.kind) {
       case "Steps": {
-        const [inner, steps] = stepList(context, item.steps);
+        const [inner, steps] = mapAccumulate(context, item.steps, step);
         const qedProof = proof(item.step ? pushName(inner, item.step) : inner, item.qed.proof);
         return { ...item, steps, qed: { ...item.qed, proof: qedProof } };
       }
@@ -585,16 +387,6 @@ export const createAnonymizer = (
       default:
         return item;
     }
-  };
-
-  const stepList = (context: AnonContext, steps: Step[]): [AnonContext, Step[]] => {
-    let current = context;
-    const mapped = steps.map((entry) => {
-      const [next, result] = step(current, entry);
-      current = next;
-      return result;
-    });
-    return [current, mapped];
   };
 
   const step = (context: AnonContext, original: Step): [AnonContext, Step] => {

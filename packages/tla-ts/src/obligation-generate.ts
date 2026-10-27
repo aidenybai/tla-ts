@@ -2,17 +2,20 @@
 // leaf proofs become obligations whose context is everything the proof may use at that point.
 
 import { TlaProofError } from "./errors";
-import { exprifySequent } from "./obligation-anon";
 import {
+  applyBuiltin,
   at,
   consSubstitution,
+  exprifySequent,
   isEqualExpr,
+  mapAccumulate,
   normalizeApply,
   shift,
   shiftExpr,
   substituteBounds,
   substituteExpr,
   type Bound,
+  type Builtin,
   type Expr,
   type Hyp,
   type Locus,
@@ -49,10 +52,16 @@ const isAnonymous = (step: StepNumber | undefined) => step?.kind === "Named" && 
 
 const getLevel = (step: StepNumber | undefined) => step?.level ?? 0;
 
-const getInternal = (
-  builtin: "TRUE" | "Mem" | "Subseteq" | "Unprimable" | "Prime",
-  from: { location?: Locus },
-): Expr => at({ kind: "Internal", builtin }, from);
+const getTrue = (from: { location?: Locus }) => at({ kind: "Internal", builtin: "TRUE" }, from);
+
+const isBinary = (
+  expression: Expr,
+  builtin: Builtin,
+): expression is Extract<Expr, { kind: "Apply" }> =>
+  expression.kind === "Apply" &&
+  expression.operator.kind === "Internal" &&
+  expression.operator.builtin === builtin &&
+  expression.args.length === 2;
 
 const getMessage = (pattern: string, ...args: (string | Doc)[]) =>
   renderDoc(format(pattern, ...args));
@@ -120,7 +129,7 @@ const proveAssertion = (context: Hyp[], sequent: Sequent, step: Step) => {
       ...hyps,
       {
         kind: "Fact",
-        expression: getInternal("TRUE", step),
+        expression: getTrue(step),
         visibility: "Hidden",
         location: step.location,
       },
@@ -238,13 +247,8 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
       case "By":
         throw new TlaProofError("Proof.Gen.generate");
       case "Steps": {
-        let current = sequent;
-        const steps = proof.steps.map((step) => {
-          const [next, generated] = generateStep(current, step);
-          current = next;
-          return generated;
-        });
-        const qedProof = generate(current, proof.qed.proof);
+        const [inner, steps] = mapAccumulate(sequent, proof.steps, generateStep);
+        const qedProof = generate(inner, proof.qed.proof);
         return { ...proof, steps, qed: { ...proof.qed, proof: qedProof } };
       }
     }
@@ -459,11 +463,7 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
       goal.operator.builtin === "Prime"
     ) {
       const inner = exposeConnective(context, goal.args[0]);
-      const prime = (expression: Expr): Expr =>
-        at(
-          { kind: "Apply", operator: getInternal("Prime", expression), args: [expression] },
-          expression,
-        );
+      const prime = (expression: Expr) => applyBuiltin("Prime", [expression], expression);
       if (inner.kind === "Quant") {
         return at(
           {
@@ -482,12 +482,7 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
           goal,
         );
       }
-      if (
-        inner.kind === "Apply" &&
-        inner.operator.kind === "Internal" &&
-        (inner.operator.builtin === "Implies" || inner.operator.builtin === "Mem") &&
-        inner.args.length === 2
-      ) {
+      if (isBinary(inner, "Implies") || isBinary(inner, "Mem")) {
         return at(
           {
             kind: "Apply",
@@ -693,11 +688,7 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
           visibility: "Visible",
           location: step.location,
         };
-        const isImplication =
-          connective.kind === "Apply" &&
-          connective.operator.kind === "Internal" &&
-          connective.operator.builtin === "Implies" &&
-          connective.args.length === 2;
+        const isImplication = isBinary(connective, "Implies");
         const sequent: Sequent = {
           context: [fact],
           active: isImplication ? shiftExpr(1, connective.args[1]) : connective,
@@ -890,7 +881,7 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
           context: [
             {
               kind: "Fact",
-              expression: getInternal("TRUE", goal),
+              expression: getTrue(goal),
               visibility: "Visible",
               location: step.location,
             },
@@ -966,25 +957,11 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
       if (first.domain.kind === "Domain") {
         const domain = first.domain.expression;
         const membership = exposeConnective(context, witness);
-        if (
-          membership.kind === "Apply" &&
-          membership.operator.kind === "Internal" &&
-          membership.operator.builtin === "Mem" &&
-          membership.args.length === 2
-        ) {
+        if (isBinary(membership, "Mem")) {
           const [term, termDomain] = membership.args;
-          const subset: Expr[] = isEqualExpr(termDomain, domain)
+          const subset = isEqualExpr(termDomain, domain)
             ? []
-            : [
-                at(
-                  {
-                    kind: "Apply",
-                    operator: getInternal("Subseteq", termDomain),
-                    args: [termDomain, domain],
-                  },
-                  termDomain,
-                ),
-              ];
+            : [applyBuiltin("Subseteq", [termDomain, domain], termDomain)];
           aux = [membership, ...subset, ...aux];
           value = term;
         } else {
@@ -1000,10 +977,7 @@ export const createGenerator = (counter: Counter, inputFile: string): Generator 
           value = membership;
         }
       }
-      const unprimable = at(
-        { kind: "Apply", operator: getInternal("Unprimable", value), args: [value] },
-        value,
-      );
+      const unprimable = applyBuiltin("Unprimable", [value], value);
       current = substituteExpr(consSubstitution(unprimable, shift(0)), next);
     }
     aux = aux.reverse();
