@@ -281,6 +281,24 @@ interface ProveOption {
 const printToolboxMessage = (fields: string[]) =>
   console.error(`@!!BEGIN\n${fields.map((field) => `@!!${field}\n`).join("")}@!!END\n`);
 
+// The tlapm build whose output prove mirrors.
+const TLAPM_VERSION = "5f5037f";
+
+// Tlapm_args.quote_if_needed: Filename.quote, unless every character is one of these.
+const quoteArgument = (arg: string) =>
+  /^[+,\-./0-9:=@A-Z_a-z]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
+
+// In toolbox mode, tlapm first prints its version, the local time and its command line.
+const printToolboxHeader = (args: string[]) => {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const time = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  console.log(
+    `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${date} ${time} with command line:\n\\* ${["tla-ts", "prove", ...args].map(quoteArgument).join(" ")}\n`,
+  );
+};
+
 // Mirrors tlapm -N, which generates the obligations without sending them to a backend.
 const prove = (args: string[]) => {
   const options: ProveOption[] = [];
@@ -326,12 +344,13 @@ const prove = (args: string[]) => {
     console.error(USAGE);
     return 1;
   }
+  const isToolbox = hasOption("--toolbox") || hasOption("--line");
+  if (isToolbox) printToolboxHeader(args);
   const missing = modulePaths.find((path) => !existsSync(path));
   if (missing !== undefined) {
     console.error(`Cannot find the module file ${missing}`);
     return EXIT_STATUS.configParseError;
   }
-  const isToolbox = options.some((option) => ["--toolbox", "--line"].includes(option.name));
   // Like tlapm, the last of --toolbox and --line wins, and a 0 means the whole module.
   const lines = options.reduce<LineRange>((range, option) => {
     const [start, end] = option.values.map(Number);

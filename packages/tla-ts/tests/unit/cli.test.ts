@@ -226,6 +226,14 @@ describe("prove prints obligations as tlapm -N does", () => {
     expect(result.stderr).toBe(readToolbox("Warnings"));
   });
 
+  it("prints tlapm's header in toolbox mode", () => {
+    const result = runCliWith("obligations", ["prove", "-N", "--line", "3", "Omit.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(
+      /^\n\\\* TLAPM version 5f5037f\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* tla-ts prove -N --line 3 Omit\.tla\n\n$/,
+    );
+  });
+
   it("prints nothing outside toolbox mode", () => {
     const result = runCliWith("obligations", ["prove", "-N", "Proofs.tla"]);
     expect(result.status).toBe(0);
