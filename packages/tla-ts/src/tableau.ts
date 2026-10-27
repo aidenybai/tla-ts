@@ -1,6 +1,7 @@
 import type { Expression } from "./ast";
 import { TlaEvaluationError } from "./errors";
 import type { Scope } from "./evaluate";
+import { ACTION_LEVEL, TEMPORAL_LEVEL } from "./levels";
 
 interface LiveBoolean {
   kind: "Boolean";
@@ -84,8 +85,6 @@ interface Triple {
 }
 
 const STATE_LEVEL = 1;
-const ACTION_LEVEL = 2;
-const TEMPORAL_LEVEL = 3;
 const MAXIMUM_DISJUNCTS = 2147483647;
 
 export const TRUE: LiveBoolean = { kind: "Boolean", value: true };

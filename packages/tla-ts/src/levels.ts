@@ -172,9 +172,9 @@ const bindFormals = (scope: Scope, formals: OperatorParam[]): Scope =>
 
 const toFormals = (names: string[]) => names.map((name) => ({ name, arity: 0 }));
 
-const ACTION_LEVEL = 2;
+export const ACTION_LEVEL = 2;
 
-const TEMPORAL_LEVEL = 3;
+export const TEMPORAL_LEVEL = 3;
 
 const createLevelError = (message: string, location: SourceLocation) =>
   new TlaSyntaxError(`${message} at line ${location.line}, column ${location.column}`);

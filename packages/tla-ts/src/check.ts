@@ -18,17 +18,15 @@ import {
   type Scope,
 } from "./evaluate";
 import {
-  ACTION_LEVEL,
   createLivenessChecker,
   expandTemporal,
   getLevel,
-  TEMPORAL_LEVEL,
   type Lasso,
   type LiveSuccessor,
   type ScopedExpression,
   type TemporalProperty,
 } from "./liveness";
-import { createLevelAnalyzer } from "./levels";
+import { ACTION_LEVEL, createLevelAnalyzer, TEMPORAL_LEVEL } from "./levels";
 import { prettyPrint } from "./pretty-print";
 import {
   forEachInitialState,

@@ -15,6 +15,7 @@ import {
   getFieldError,
   isClosedConstant,
   isLocallyResolved,
+  isTlcInteger,
   isValueArgument,
   isWorthCaching,
   keepLazy,
@@ -222,7 +223,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
   }
   switch (expression.kind) {
     case "Number":
-      if (Number.isInteger(expression.value) && Math.abs(expression.value) <= 2147483647) {
+      if (isTlcInteger(expression.value)) {
         return String(expression.value);
       }
       return generateDelegate(generator, expression, frame);
