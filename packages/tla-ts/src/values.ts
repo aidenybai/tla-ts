@@ -1537,14 +1537,19 @@ export const updateFunction = (
   fn: Value,
   argument: Value,
   update: (previous: Value) => Value,
+  isKeptLazy = false,
 ): Value => {
-  if (typeof fn === "object" && fn.kind === "LazyFunction" && !isEnumerable(fn.domain)) {
+  const isLazy =
+    typeof fn === "object" &&
+    fn.kind === "LazyFunction" &&
+    (isKeptLazy || !isEnumerable(fn.domain));
+  if (isLazy) {
     if (!isElementOf(argument, fn.domain)) return fn;
     const updated = update(fn.apply(argument));
     return {
       kind: "LazyFunction",
       domain: fn.domain,
-      apply: (key) => (valuesEqual(key, argument) ? updated : fn.apply(key)),
+      apply: (key) => (isEqualLikeTlc(argument, key) ? updated : fn.apply(key)),
       source: fn.source,
     };
   }
