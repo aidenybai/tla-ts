@@ -5,8 +5,10 @@ import { createEnvironment } from "./environment";
 import { getErrorExitCode, TlaConfigError, TlaEvaluationError, TlaModuleError } from "./errors";
 import { EXIT_STATUS, setExitCode, setNextStatePhase, withLivenessExitCode } from "./exit-codes";
 import {
+  describeRange,
   evaluate,
   expectBoolean,
+  formatRange,
   getChildren,
   getDefinition,
   isConstantLevel,
@@ -133,6 +135,7 @@ export interface StateCheck extends NamedExpression {
 
 export interface ActionProperty {
   name: string;
+  box: Expression;
   action: Expression;
   subscript: Expression;
   scope: Scope | undefined;
@@ -401,6 +404,7 @@ export const getProperties = (config: ModelConfig, environment: Environment): Pr
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
         properties.actionProperties.push({
           name,
+          box: conjunct.expression,
           action: conjunct.expression.action,
           subscript: conjunct.expression.subscript,
           scope: item.scope,
@@ -536,6 +540,34 @@ const getContext = (
 
 const holds = (expression: Expression, context: Context, description: string) =>
   expectBoolean(evaluate(expression, context), description);
+
+// TLC names a check that is not a boolean by the location of the predicate it evaluates.
+const holdsLikeTlc = (
+  expression: Expression,
+  context: Context,
+  getMessage = getExpectedBoolean,
+) => {
+  const value = evaluate(expression, context);
+  if (typeof value !== "boolean") {
+    throw new TlaEvaluationError(getMessage(expression, context.environment));
+  }
+  return value;
+};
+
+// SANY prints a number by its digits and any other expression by its location.
+const getExpectedBoolean = (expression: Expression, environment: Environment) => {
+  const definition =
+    expression.kind === "Identifier" ? getDefinition(expression.name, environment) : undefined;
+  const body = definition?.kind === "Operator" ? definition.body : expression;
+  const range = definition?.kind === "Operator" ? definition.bodyRange : undefined;
+  const location =
+    body.kind === "Number"
+      ? (body.text ?? String(body.value))
+      : range
+        ? formatRange(range)
+        : describeRange(body);
+  return `TLC expected a boolean value, but did not find one. ${location}`;
+};
 
 const ignorePossible = () => {};
 
@@ -689,10 +721,9 @@ export const createSearch = (
       invariants.find((invariant) => {
         if (isUnchangedFor(invariant, state, parent)) return false;
         try {
-          return !holds(
+          return !holdsLikeTlc(
             invariant.expression,
             getContext(environment, state, undefined, invariant.scope),
-            `invariant ${invariant.name}`,
           );
         } catch (error) {
           // TLC reports a failure only on a state after the initial states as an invariant failure.
@@ -707,29 +738,25 @@ export const createSearch = (
       constraints.every(
         (constraint) =>
           isUnchangedFor(constraint, state, parent) ||
-          holds(
-            constraint.expression,
-            getContext(environment, state, undefined),
-            `constraint ${constraint.name}`,
-          ),
+          holdsLikeTlc(constraint.expression, getContext(environment, state, undefined)),
       ),
     findFailedInitialPredicate: (state) =>
       properties.initialPredicates.find(
         (predicate) =>
-          !holds(
+          !holdsLikeTlc(
             predicate.expression,
             getContext(environment, state, undefined, predicate.scope),
-            `property ${predicate.name}`,
           ),
       ),
     findViolatedActionProperty: (state, next) =>
       actionProperties.find((property) => {
         try {
           return (
-            !holds(
+            !holdsLikeTlc(
               property.action,
               getContext(environment, state, next, property.scope),
-              `property ${property.name}`,
+              () =>
+                `Attempted to evaluate an expression of form [A]_e, but A was not a boolean.\n${describeRange(property.box)}`,
             ) &&
             !holds(
               property.unchanged,
@@ -743,10 +770,11 @@ export const createSearch = (
       }),
     satisfiesActionConstraints: (state, next) =>
       actionConstraints.every((constraint) =>
-        holds(
+        holdsLikeTlc(
           constraint.expression,
           getContext(environment, state, next),
-          `action constraint ${constraint.name}`,
+          (expression) =>
+            `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ${getExpectedBoolean(expression, environment)}`,
         ),
       ),
     trackStatePossible:

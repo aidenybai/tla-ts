@@ -7,6 +7,7 @@ import {
   bindOperatorArguments,
   evaluate,
   forEachBinding,
+  formatRange,
   getDefinition,
   isConstantLevel,
   isLocallyResolved,
@@ -464,8 +465,7 @@ export const getNextActions = (
 
 export const getActionLabel = (action: SpecAction) => {
   const parameters = action.parameters.map((parameter) => formatValue(parameter[1]));
-  const range = action.location.range ?? BUILTIN_RANGE;
-  return `${action.name === UNNAMED_ACTION ? "Action" : action.name}${parameters.length === 0 ? "" : `(${parameters.join(",")})`} line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
+  return `${action.name === UNNAMED_ACTION ? "Action" : action.name}${parameters.length === 0 ? "" : `(${parameters.join(",")})`} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
 };
 
 export const getSpecificationValue = (

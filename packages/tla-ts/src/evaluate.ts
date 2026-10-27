@@ -8,6 +8,7 @@ import type {
   NumberExpression,
   OperatorParam,
   RecordField,
+  SourceRange,
 } from "./ast";
 import { getKindString } from "./builtins";
 import { TlaEvaluationError } from "./errors";
@@ -134,11 +135,12 @@ const EXCEPT_AT = "@";
 const describeLocation = (expression: Expression) =>
   `line ${expression.location.line}, column ${expression.location.column}`;
 
+export const formatRange = (range: SourceRange) =>
+  `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
+
 export const describeRange = (expression: Expression) => {
   const range = expression.location.range;
-  return range
-    ? `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`
-    : describeLocation(expression);
+  return range ? formatRange(range) : describeLocation(expression);
 };
 
 export const getConditionError = (expression: Expression, value: Value) =>
