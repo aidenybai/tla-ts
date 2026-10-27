@@ -40,6 +40,8 @@ import {
   isSameValue,
   markLambdaFunction,
   isSetValue,
+  MAXIMUM_INTEGER,
+  MINIMUM_INTEGER,
   toFiniteSet,
   updateFunction,
   valuesEqual,
@@ -868,7 +870,7 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
 };
 
 export const isTlcInteger = (value: number) =>
-  Number.isInteger(value) && value <= 2147483647 && value >= -2147483648;
+  Number.isInteger(value) && value <= MAXIMUM_INTEGER && value >= MINIMUM_INTEGER;
 
 const IMPURE_BUILTINS = new Set([
   "Print",

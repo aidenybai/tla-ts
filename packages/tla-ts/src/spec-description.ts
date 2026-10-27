@@ -17,7 +17,8 @@ import {
   type Environment,
   type Scope,
 } from "./evaluate";
-import { getLevel, TEMPORAL_LEVEL } from "./liveness";
+import { TEMPORAL_LEVEL } from "./levels";
+import { getLevel } from "./liveness";
 import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
 
 export interface SpecAction {

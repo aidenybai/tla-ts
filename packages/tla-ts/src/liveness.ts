@@ -19,6 +19,7 @@ import {
   type Thunk,
 } from "./evaluate";
 import { mapChildren } from "./instances";
+import { ACTION_LEVEL, TEMPORAL_LEVEL } from "./levels";
 import { isEnabled } from "./successors";
 import {
   createJunction,
@@ -88,10 +89,6 @@ interface BehaviorGraph {
   initial: number[];
   parents: number[];
 }
-
-export const ACTION_LEVEL = 2;
-
-export const TEMPORAL_LEVEL = 3;
 
 const MAXIMUM_EXPANSION_DEPTH = 100;
 
