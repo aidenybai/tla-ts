@@ -3,8 +3,6 @@
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/geist-mono";
 
-@custom-variant dark (&:where(.dark, .dark *));
-
 @theme inline {
   --font-sans: "Inter Variable", system-ui, sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -53,22 +51,6 @@
   --card-shadow:
     0 0 0 1px rgb(0 0 0 / 0.04), 0 1px 2px 0 rgb(0 0 0 / 0.04), 0 2px 8px -2px rgb(0 0 0 / 0.06);
   color-scheme: light;
-}
-
-:root.dark {
-  --ground: #0a0a0a;
-  --ink: #ededed;
-  --text-2: #a1a1a1;
-  --muted: #737373;
-  --faint: #4a4a4a;
-  --rule: #1f1f1f;
-  --well: #141414;
-  --well-2: #222222;
-  --alarm: #f06a5c;
-  --success: #5cc48a;
-  --card-shadow:
-    0 0 0 1px rgb(255 255 255 / 0.1), 0 1px 2px 0 rgb(0 0 0 / 0.5), 0 2px 8px -2px rgb(0 0 0 / 0.6);
-  color-scheme: dark;
 }
 
 @layer base {
