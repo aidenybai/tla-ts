@@ -6,7 +6,7 @@ import {
   getOperator,
   getValue,
 } from "./builtins";
-import { TlaEvaluationError } from "./errors";
+import { TlaEvaluationError, TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import {
   checkInteger,
@@ -23,12 +23,12 @@ import {
 } from "./values";
 
 const describeWrongValue = (name: string, expected: string, value: Value) =>
-  new TlaEvaluationError(
+  new TlaModuleError(
     `Applying ${name} to the following value,\nwhich is not ${expected}:\n${formatValue(value)}`,
   );
 
 const describeWrongArgument = (position: string, name: string, expected: string, value: Value) =>
-  new TlaEvaluationError(
+  new TlaModuleError(
     `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${formatValue(value)}`,
   );
 
@@ -59,7 +59,7 @@ const findCount = (fn: FunctionValue, element: Value) => {
 
 const addCounts = (left: number, right: number) => {
   const sum = left + right;
-  if (sum > 2147483647) throw new TlaEvaluationError(`Overflow when computing ${left}+${right}`);
+  if (sum > 2147483647) throw new TlaModuleError(`Overflow when computing ${left}+${right}`);
   return sum;
 };
 
@@ -140,7 +140,7 @@ export const BAGS_OPERATORS: Builtin[] = [
     const bags = getElements(args, 0, "BagUnion").map((element) => {
       const fn = toFunction(element);
       if (!fn) {
-        throw new TlaEvaluationError(
+        throw new TlaModuleError(
           `Attempted to apply BagUnion to the following set, whose\nelement is not a bag:\n${formatValue(set)}`,
         );
       }
