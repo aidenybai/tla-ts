@@ -545,6 +545,12 @@ describe("name resolution matches SANY", () => {
     );
     expect(result.status).toBe("success");
   });
+
+  it("rejects RandomSubsetSet, which TLC's Randomization module does not define", async () => {
+    await expect(
+      checkSource('EXTENDS Randomization\nASSUME RandomSubsetSet(2, "0.5", {1, 2}) = {}'),
+    ).rejects.toThrow(TlaSyntaxError);
+  });
 });
 
 describe("parseConfig matches TLC", () => {
