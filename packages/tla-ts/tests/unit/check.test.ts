@@ -692,6 +692,27 @@ describe("evaluation errors match TLC", () => {
     expect(getFailureSummary(result)).toEqual(["error", ["0", "1"], [2, 2, 0, 2], 14]);
   });
 
+  it("reports a check that is not a boolean at the location of its predicate", async () => {
+    const getMessage = async (definitions: string, config: string) =>
+      (await checkSteps(definitions, `INIT Init\nNEXT Next\n${config}`)).failure?.message;
+    expect(await getMessage("Inv == x + 1", "INVARIANT Inv")).toBe(
+      "TLC expected a boolean value, but did not find one. line 6, col 8 to line 6, col 12 of module M",
+    );
+    expect(await getMessage("Inv == 1", "INVARIANT Inv")).toBe(
+      "TLC expected a boolean value, but did not find one. 1",
+    );
+    expect(await getMessage("C == x' + 1", "ACTION_CONSTRAINT C")).toBe(
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: TLC expected a boolean value, but did not find one. line 6, col 6 to line 6, col 11 of module M",
+    );
+    const property = await checkSteps(
+      "Spec == Init /\\ [][Next]_x\nP == [][x' + 1]_x",
+      "SPECIFICATION Spec\nPROPERTY P",
+    );
+    expect(property.failure?.message).toBe(
+      "Evaluating action property P failed.\nAttempted to evaluate an expression of form [A]_e, but A was not a boolean.\nline 7, col 8 to line 7, col 17 of module M",
+    );
+  });
+
   it("names the initial state a check fails on unless a standard module fails", async () => {
     const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
     const core = await checkSteps("Inv == (CHOOSE y \\in {} : TRUE) = x", config);
