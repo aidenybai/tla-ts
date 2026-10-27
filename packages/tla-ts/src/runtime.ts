@@ -83,7 +83,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
 
 export const NAMED_REGISTER_PREFIX = "s:";
 
-export const POSSIBLE_REGISTER = "s:_possible";
+const POSSIBLE_REGISTER = "s:_possible";
 
 export const getPossibleCounts = (runtime: CheckerRuntime) =>
   createFunction([...runtime.possibleCounts].map(([name, count]): [Value, Value] => [name, count]));

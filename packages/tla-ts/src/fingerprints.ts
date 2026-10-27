@@ -4,7 +4,7 @@ const EMPTY = 0;
 const TOMBSTONE = 1;
 const INITIAL_CAPACITY = 1 << 12;
 
-export interface FingerprintTable {
+interface FingerprintTable {
   insert: (first: number, second: number) => boolean;
   remove: (first: number, second: number) => void;
 }

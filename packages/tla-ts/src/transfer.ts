@@ -14,7 +14,7 @@ export interface EncodedStates {
   count: number;
 }
 
-export interface StateEncoder {
+interface StateEncoder {
   encode: (state: Value[]) => boolean;
   finish: () => EncodedStates;
 }

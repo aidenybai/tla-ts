@@ -2,12 +2,12 @@ import type { Expression } from "./ast";
 import { TlaEvaluationError } from "./errors";
 import type { Scope } from "./evaluate";
 
-export interface LiveBoolean {
+interface LiveBoolean {
   kind: "Boolean";
   value: boolean;
 }
 
-export interface LiveState {
+interface LiveState {
   kind: "State";
   expression: Expression;
   scope: Scope | undefined;
@@ -19,7 +19,7 @@ export interface LiveEnabled {
   scope: Scope | undefined;
 }
 
-export interface LiveAction {
+interface LiveAction {
   kind: "Action";
   expression: Expression;
   unchanged: Expression | undefined;
@@ -27,12 +27,12 @@ export interface LiveAction {
   enabled?: LiveEnabled;
 }
 
-export interface LiveUnary {
+interface LiveUnary {
   kind: "Not" | "Always" | "Eventually" | "Next";
   body: LiveExpression;
 }
 
-export interface LiveJunction {
+interface LiveJunction {
   kind: "And" | "Or";
   operands: LiveExpression[];
 }
@@ -45,7 +45,7 @@ export type LiveExpression =
   | LiveUnary
   | LiveJunction;
 
-export interface TableauNode {
+interface TableauNode {
   particle: LiveExpression[];
   successors: number[];
   statePredicates: LiveExpression[];
@@ -56,7 +56,7 @@ export interface Tableau {
   initialCount: number;
 }
 
-export interface ErrorModel {
+interface ErrorModel {
   eventuallyAlways: number[];
   infinitelyOftenStates: number[];
   infinitelyOftenActions: number[];

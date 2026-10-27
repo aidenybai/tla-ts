@@ -409,7 +409,7 @@ const containsReference = (expression: Expression): boolean =>
   (expression.kind === "Apply" && expression.operator.includes("!")) ||
   getChildren(expression).some(containsReference);
 
-export const resolveSubexpressions = (expression: Expression, lookup: Lookup): Expression => {
+const resolveSubexpressions = (expression: Expression, lookup: Lookup): Expression => {
   if (!containsReference(expression)) return expression;
   if (expression.kind === "Let") {
     const local: Lookup = (name: string) =>

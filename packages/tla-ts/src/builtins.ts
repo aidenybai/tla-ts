@@ -48,7 +48,7 @@ const CORE_OPERATOR_NAMES = new Set([
 const createArgumentError = (name: string, message: string) =>
   CORE_OPERATOR_NAMES.has(name) ? new TlaEvaluationError(message) : new TlaModuleError(message);
 
-export const isOperatorValue = (argument: BuiltinArgument): argument is OperatorValue =>
+const isOperatorValue = (argument: BuiltinArgument): argument is OperatorValue =>
   typeof argument === "object" && argument.kind === "Operator";
 
 export const getValue = (args: BuiltinArgument[], index: number, name: string): Value => {
@@ -96,7 +96,7 @@ export const getEnumerableSet = (args: BuiltinArgument[], index: number, name: s
   return set;
 };
 
-export const getFiniteSet = (args: BuiltinArgument[], index: number, name: string) =>
+const getFiniteSet = (args: BuiltinArgument[], index: number, name: string) =>
   toFiniteSet(getEnumerableSet(args, index, name));
 
 export const getElements = (args: BuiltinArgument[], index: number, name: string) =>

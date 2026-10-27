@@ -86,7 +86,7 @@ export interface UnionValue {
   base: Value;
 }
 
-export interface LazyFunctionParameter {
+interface LazyFunctionParameter {
   name: string;
   domain: Value;
 }
@@ -702,7 +702,7 @@ const compareSetLikeTlc = (left: ObjectValue, right: Value): number => {
   );
 };
 
-export const compareLikeTlc = (left: Value, right: Value): number => {
+const compareLikeTlc = (left: Value, right: Value): number => {
   if (typeof left !== "object") {
     if (typeof right === typeof left) return compareValues(left, right);
     if (isModelValue(right)) return compareModelValueWith(right, left);
@@ -791,7 +791,7 @@ const equalsSetLikeTlc = (left: ObjectValue, right: Value): boolean => {
   );
 };
 
-export const equalsLikeTlc = (left: Value, right: Value): boolean => {
+const equalsLikeTlc = (left: Value, right: Value): boolean => {
   if (typeof left !== "object") {
     if (typeof right === typeof left) return left === right;
     if (isModelValue(right)) return equalsModelValueWith(right, left);
@@ -860,7 +860,7 @@ export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue
   }
 };
 
-export const EMPTY_SET = createSortedSet([]);
+const EMPTY_SET = createSortedSet([]);
 
 export const differenceSorted = (left: SetValue, right: SetValue): SetValue => {
   if (left.elements.length === 0 || right.elements.length === 0) return left;
@@ -988,7 +988,7 @@ const intervalArrays = new WeakMap<Value[], IntervalValue>();
 // TLC keeps the domain of a tuple, or of a function built over an interval, as an interval. Every
 // function over 1..n shares one domain array per length, and the elements of any other interval
 // map to it, so the array's identity records it. Callers must not mutate the returned array.
-export const getIntervalDomain = (length: number): Value[] => {
+const getIntervalDomain = (length: number): Value[] => {
   const cached = intervalDomains[length];
   if (cached) return cached;
   const domain = Array.from({ length }, (_, index) => index + 1);

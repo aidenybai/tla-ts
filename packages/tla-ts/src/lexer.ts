@@ -1,6 +1,6 @@
 import { TlaSyntaxError } from "./errors";
 
-export type TokenKind =
+type TokenKind =
   | "Identifier"
   | "Number"
   | "Decimal"

@@ -53,7 +53,7 @@ import {
   type Value,
 } from "./values";
 
-export interface EnvironmentOptions {
+interface EnvironmentOptions {
   source: string;
   loadModule: ((name: string) => string | undefined) | undefined;
   loadClass?: (name: string) => Uint8Array | undefined;
@@ -62,7 +62,7 @@ export interface EnvironmentOptions {
   seed?: bigint;
 }
 
-export interface Specification {
+interface Specification {
   environment: Environment;
   assumptions: Assumption[];
   variableLocations: SourceLocation[];
