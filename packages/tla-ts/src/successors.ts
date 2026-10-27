@@ -3,6 +3,7 @@ import { getReadVariables } from "./dependencies";
 import { TlaEvaluationError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
+  describeLocation,
   bindArgument,
   bindDefinitions,
   bindOperatorArguments,
@@ -68,9 +69,6 @@ type Conjunct = { expression: Expression } & (
 
 const initRunners = new WeakMap<Expression, Runner>();
 const nextRunners = new WeakMap<Expression, Runner>();
-
-const describeLocation = (expression: Expression) =>
-  `line ${expression.location.line}, column ${expression.location.column}`;
 
 const getContext = (run: Run, scope: Scope | undefined, partial: State): Context =>
   run.isInit

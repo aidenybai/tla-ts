@@ -1,6 +1,5 @@
 import type {
   Bound,
-  BoundPattern,
   Definition,
   Expression,
   Instance,
@@ -12,6 +11,7 @@ import type {
 import { TlaSyntaxError } from "./errors";
 import { getChildren } from "./evaluate";
 import { getSourceName, mapChildren, mapDefinition } from "./instances";
+import { getBoundNames, getPatternNames, LOCAL_RESOLUTION } from "./resolve";
 
 type Lookup = (name: string) => Definition | undefined;
 
@@ -27,21 +27,10 @@ interface Selection {
   location: SourceLocation;
 }
 
-const LOCAL_RESOLUTION = { kind: "Local" } as const;
-
 const SELECTION_NAME = "$subexpression";
 
-const describeLocation = (location: SourceLocation) =>
-  `line ${location.line}, column ${location.column}`;
-
 const createError = (message: string, location: SourceLocation) =>
-  new TlaSyntaxError(`${message} at ${describeLocation(location)}`);
-
-const getPatternNames = (pattern: BoundPattern) =>
-  pattern.kind === "Name" ? [pattern.name] : pattern.names;
-
-const getBoundNames = (bounds: Bound[]) =>
-  bounds.flatMap((bound) => getPatternNames(bound.pattern));
+  new TlaSyntaxError(`${message} at line ${location.line}, column ${location.column}`);
 
 const getBoundSets = (bounds: Bound[]) =>
   bounds

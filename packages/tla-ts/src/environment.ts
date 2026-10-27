@@ -32,8 +32,10 @@ import { overrideDefinitions } from "./java-overrides";
 import { extractModule, parseModule } from "./parser";
 import {
   checkRedefinitions,
+  getArity,
   isBefore,
   KEY_SEPARATOR,
+  LOCAL_RESOLUTION,
   resolveModule,
   resolveSubstitutions,
   type ModuleSymbol,
@@ -116,8 +118,6 @@ const createModuleRedefinedError = (module: Module) =>
     `Multiply-defined module '${module.name}' at line ${module.location.line}, column ${module.location.column}`,
   );
 
-const LOCAL_RESOLUTION = { kind: "Local" } as const;
-
 const createLocalFunction = (definition: Definition, key: string): Definition => ({
   kind: "Operator",
   name: key,
@@ -173,9 +173,6 @@ const mentionsName = (expression: Expression, names: Set<string>): boolean =>
   (expression.kind === "Identifier" && names.has(expression.name)) ||
   (expression.kind === "Apply" && names.has(expression.operator)) ||
   getChildren(expression).some((child) => mentionsName(child, names));
-
-const getArity = (definition: Definition) =>
-  definition.kind === "Operator" ? definition.params.length : 0;
 
 const getVariableIndex = (variables: string[], declared: string[]) => {
   const index = new Map(variables.map((name, position) => [name, position]));

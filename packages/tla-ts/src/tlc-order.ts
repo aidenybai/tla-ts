@@ -4,6 +4,7 @@ import type { Module, SourceLocation } from "./ast";
 import type { ConfigValue, ModelConfig } from "./config";
 import { tokenize, type Token } from "./lexer";
 import { extractModule, parseModule } from "./parser";
+import { isBefore } from "./resolve";
 import {
   SANY_BUILTINS,
   SANY_NODE_NAMES,
@@ -96,9 +97,6 @@ const createEntry = (name: string, kind: SymbolKind, isLocal: boolean): SymbolEn
   kind,
   isLocal,
 });
-
-const isBefore = (left: SourceLocation, right: SourceLocation) =>
-  left.line < right.line || (left.line === right.line && left.column < right.column);
 
 const getDeclaredName = (tokens: Token[], start: number) => {
   const first = tokens[start];
