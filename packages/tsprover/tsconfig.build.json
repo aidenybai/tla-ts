@@ -1,8 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  // The build resolves tla-ts to its built package, so declarations don't land in its source.
-  "compilerOptions": {
-    "paths": {}
-  },
-  "include": ["src"]
-}
