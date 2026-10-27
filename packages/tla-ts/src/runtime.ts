@@ -1,9 +1,10 @@
 import { createJavaRandom, getTlcFingerprint, type JavaRandom } from "./tlc-random";
-import { createFunction, type Value } from "./values";
+import { createFunction, createRecord, type Value } from "./values";
 
 export interface CheckerRuntime {
   getLevel: (state: (Value | undefined)[]) => number;
   getBehavior: (state: Value[]) => Value[][];
+  getSpecification: () => Value;
   setLivenessSource: (index: number) => void;
   getCurrentState: () => Value[] | undefined;
   getFingerprint: (state: Value[]) => bigint;
@@ -36,6 +37,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
   const runtime: CheckerRuntime = {
     getLevel: () => 0,
     getBehavior: () => [],
+    getSpecification: () => createRecord([]),
     setLivenessSource: () => {},
     getCurrentState: () => undefined,
     getFingerprint: getTlcFingerprint,

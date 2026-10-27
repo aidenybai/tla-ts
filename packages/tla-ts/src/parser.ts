@@ -1139,8 +1139,9 @@ export const parseModule = (source: string): Module => {
           advance();
           module.variables.push(
             ...parseSeparated(() => {
+              const start = cursor.index;
               const location = getLocation(peek());
-              return { name: expectIdentifier(), arity: 0, location };
+              return withRange({ name: expectIdentifier(), arity: 0, location }, start);
             }),
           );
           continue;

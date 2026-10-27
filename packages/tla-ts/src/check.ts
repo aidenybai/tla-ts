@@ -28,6 +28,7 @@ import {
 } from "./liveness";
 import { prettyPrint } from "./pretty-print";
 import { getInitialStates, getSuccessors, type Successor } from "./successors";
+import { getSpecificationValue } from "./spec-description";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { getTlcFingerprint } from "./tlc-random";
@@ -667,6 +668,13 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   const environment = specification.environment;
   const runtime = environment.runtime;
   runtime.pause = options.onPause ?? (() => {});
+  runtime.getSpecification = () =>
+    getSpecificationValue(
+      config,
+      environment,
+      specification.variableLocations,
+      specification.instanceActions,
+    );
   const statistics = { depth: 0 };
   const createResult = (
     status: CheckStatus,
