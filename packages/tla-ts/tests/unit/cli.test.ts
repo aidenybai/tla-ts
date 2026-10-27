@@ -76,6 +76,7 @@ const TLC_REPORTS = [
       "The depth of the complete state graph search is 3.",
     ],
   ],
+  ["NoNext", 75, ["Error: No next state actions defined to generate successor states from."]],
 ] as const;
 
 describe("the CLI reports results like TLC", () => {
