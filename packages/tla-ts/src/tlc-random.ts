@@ -3,6 +3,7 @@ import {
   createRecord,
   createSortedFunction,
   createTuple,
+  getFunctionDomain,
   getStringRank,
   isEmptySet,
   isFunctionValue,
@@ -215,7 +216,7 @@ interface Product {
 const getProduct = (set: Value): Product | undefined => {
   if (typeof set !== "object") return undefined;
   if (set.kind === "FunctionSet") {
-    const domain = toFiniteSet(set.domain).elements;
+    const domain = getFunctionDomain(set.domain);
     const range = toFiniteSet(set.range).elements;
     return {
       lists: domain.map(() => range),
@@ -269,7 +270,7 @@ const pickElement = (elements: Value[], random: JavaRandom) => {
 // separately, and otherwise indexes the enumerated set with nextDouble.
 export const getRandomElement = (set: Value, random: JavaRandom): Value => {
   if (typeof set === "object" && set.kind === "FunctionSet") {
-    const domain = toFiniteSet(set.domain).elements;
+    const domain = getFunctionDomain(set.domain);
     return createSortedFunction(
       domain,
       domain.map(() => getRandomElement(set.range, random)),

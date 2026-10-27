@@ -12,7 +12,7 @@ import {
   checkInteger,
   createFunction,
   createSortedFunction,
-  createSortedSet,
+  getDomain,
   formatValue,
   isEnumerable,
   isFunctionValue,
@@ -174,11 +174,11 @@ export const BAGS_OPERATORS: Builtin[] = [
     getFunction(args, 0, "SubBag");
     throw new TlaEvaluationError("SubBag is not implemented.");
   }),
-  defineOperator("BagToSet", 1, (args) => createSortedSet(getFunction(args, 0, "BagToSet").domain)),
+  defineOperator("BagToSet", 1, (args) => getDomain(getFunction(args, 0, "BagToSet"))),
   defineOperator("SetToBag", 1, (args) => {
     const elements = getElements(args, 0, "SetToBag");
     return createSortedFunction(
-      elements,
+      [...elements],
       elements.map(() => 1),
     );
   }),
