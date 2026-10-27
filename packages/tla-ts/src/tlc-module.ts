@@ -148,7 +148,9 @@ export const createTlcOperators = (
       ...right.domain.map((key, index): [Value, Value] => [key, right.range[index]]),
     ]);
   }),
-  defineOperator("ToString", 1, (args) => rankString(formatValue(getValue(args, 0, "ToString")))),
+  defineOperator("ToString", 1, (args) =>
+    rankString(formatValue(getValue(args, 0, "ToString"), true)),
+  ),
   defineOperator("TLCEval", 1, (args) => getValue(args, 0, "TLCEval")),
   defineOperator("Permutations", 1, (args) => {
     const elements = getElements(args, 0, "Permutations");
