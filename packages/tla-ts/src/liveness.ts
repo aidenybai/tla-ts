@@ -1,6 +1,7 @@
 import type { Definition, Expression } from "./ast";
 import { TlaConfigError, TlaEvaluationError } from "./errors";
 import {
+  describeLocation,
   bindDefinitions,
   bindOperatorArguments,
   evaluate,
@@ -106,9 +107,6 @@ const getConstantContext = (environment: Environment, scope: Scope | undefined):
   state: undefined,
   next: undefined,
 });
-
-const describeLocation = (expression: Expression) =>
-  `line ${expression.location.line}, column ${expression.location.column}`;
 
 const createCannotHandleError = (expression: Expression) =>
   new TlaEvaluationError(

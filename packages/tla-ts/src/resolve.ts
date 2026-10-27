@@ -39,7 +39,7 @@ interface Unit {
   facts: Set<string>;
 }
 
-const LOCAL_RESOLUTION = { kind: "Local" } as const;
+export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
 const renamedArities = new WeakMap<Expression, number>();
 
@@ -58,7 +58,7 @@ const CORE_SYMBOLS: Symbols = new Map(
 export const isBefore = (left: SourceLocation, right: SourceLocation) =>
   left.line < right.line || (left.line === right.line && left.column < right.column);
 
-const getArity = (definition: Definition) =>
+export const getArity = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params.length : 0;
 
 const isInstantiated = (definition: Definition) => definition.name.includes("!");
@@ -73,8 +73,11 @@ const lookupLocal = (scope: LocalName | undefined, name: string) => {
 const bindNames = (scope: LocalName | undefined, names: string[], arity = 0) =>
   names.reduce<LocalName | undefined>((parent, name) => ({ name, arity, parent }), scope);
 
-const getPatternNames = (pattern: BoundPattern) =>
+export const getPatternNames = (pattern: BoundPattern) =>
   pattern.kind === "Name" ? [pattern.name] : pattern.names;
+
+export const getBoundNames = (bounds: Bound[]) =>
+  bounds.flatMap((bound) => getPatternNames(bound.pattern));
 
 const getVisibleDefinition = (name: string, unit: Unit) => {
   const definition = unit.definitions.get(name);

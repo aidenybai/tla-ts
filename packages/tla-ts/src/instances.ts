@@ -11,13 +11,7 @@ import type {
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import { getChildren, isLocallyResolved } from "./evaluate";
-import { isBefore } from "./resolve";
-
-const getPatternNames = (pattern: BoundPattern) =>
-  pattern.kind === "Name" ? [pattern.name] : pattern.names;
-
-const getBoundNames = (bounds: Bound[]) =>
-  bounds.flatMap((bound) => getPatternNames(bound.pattern));
+import { getArity, getBoundNames, getPatternNames, isBefore } from "./resolve";
 
 export const substitutedExpressions = new WeakSet<Expression>();
 
@@ -446,9 +440,6 @@ const getParamArguments = (params: OperatorParam[], location: SourceLocation): E
     location,
     resolution: { kind: "Local" },
   }));
-
-const getArity = (definition: Definition) =>
-  definition.kind === "Operator" ? definition.params.length : 0;
 
 const getInstanceOperator = (
   key: string,

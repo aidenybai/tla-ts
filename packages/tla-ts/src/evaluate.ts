@@ -130,7 +130,7 @@ type GlobalName =
 
 const EXCEPT_AT = "@";
 
-const describeLocation = (expression: Expression) =>
+export const describeLocation = (expression: Expression) =>
   `line ${expression.location.line}, column ${expression.location.column}`;
 
 export const formatRange = (range: SourceRange) =>
@@ -475,7 +475,7 @@ const getLazyFunctionTemplate = (bounds: Bound[], body: Expression) => {
             },
           ],
     ),
-    body: `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`,
+    body: formatRange(range),
   };
   lazyFunctionTemplates.set(body, template);
   return template;

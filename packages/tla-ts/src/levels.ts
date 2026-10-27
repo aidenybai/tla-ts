@@ -1,7 +1,5 @@
 import type {
   AssumeProve,
-  Bound,
-  BoundPattern,
   Definition,
   Expression,
   Module,
@@ -11,6 +9,7 @@ import type {
 import { TlaSyntaxError } from "./errors";
 import { getChildren } from "./evaluate";
 import { mapChildren } from "./instances";
+import { getBoundNames, getPatternNames } from "./resolve";
 import { STANDARD_LEVELS } from "./standard-levels";
 
 interface LevelData {
@@ -159,12 +158,6 @@ const TEMPORAL_LEVELS = createSignature("[]", 3, [3], [0]);
 const ACTION_LEVELS = createSignature("$SquareAct", 2, [2, 1], [0, 0]);
 const FAIRNESS_LEVELS = createSignature("$WF", 3, [1, 2], [0, 0]);
 const TEMPORAL_QUANTIFIER_LEVELS = createSignature("$TemporalExists", 3, [3], [0]);
-
-const getPatternNames = (pattern: BoundPattern) =>
-  pattern.kind === "Name" ? [pattern.name] : pattern.names;
-
-const getBoundNames = (bounds: Bound[]) =>
-  bounds.flatMap((bound) => getPatternNames(bound.pattern));
 
 const bindFormals = (scope: Scope, formals: OperatorParam[]): Scope =>
   formals.length === 0

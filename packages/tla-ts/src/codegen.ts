@@ -1,6 +1,7 @@
 import type { Expression } from "./ast";
 import { TlaEvaluationError } from "./errors";
 import {
+  describeLocation,
   bindValue,
   expectBoolean,
   findGlobalName,
@@ -63,9 +64,6 @@ const GENERATED_KINDS = new Set([
   "Forall",
   "Exists",
 ]);
-
-const describeLocation = (expression: Expression) =>
-  `line ${expression.location.line}, column ${expression.location.column}`;
 
 const createRuntime = () => ({
   bool: expectBoolean,

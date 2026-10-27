@@ -713,9 +713,7 @@ export const createSearch = (
     const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
     if (!unwitnessed) return undefined;
     const range = getBodyRange(unwitnessed.name, environment);
-    const location = range
-      ? ` at line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`
-      : "";
+    const location = range ? ` at ${formatRange(range)}` : "";
     return {
       name: unwitnessed.name,
       message: `The _POSSIBLE predicate ${unwitnessed.name}${location} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`,
