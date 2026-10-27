@@ -433,13 +433,15 @@ const substituteInEnabled = (
   };
 };
 
-const getParamArguments = (params: OperatorParam[], location: SourceLocation): Expression[] =>
-  params.map((param) => ({
-    kind: "Identifier",
-    name: param.name,
-    location,
-    resolution: { kind: "Local" },
-  }));
+const createLocalIdentifier = (name: string, location: SourceLocation): Expression => ({
+  kind: "Identifier",
+  name,
+  location,
+  resolution: { kind: "Local" },
+});
+
+const getParamArguments = (params: OperatorParam[], location: SourceLocation) =>
+  params.map((param) => createLocalIdentifier(param.name, location));
 
 const getInstanceOperator = (
   key: string,
@@ -456,12 +458,7 @@ const getInstanceOperator = (
       operator: key,
       args: [
         ...getParamArguments(params, location),
-        ...names.map((name): Expression => ({
-          kind: "Identifier",
-          name,
-          location,
-          resolution: { kind: "Local" },
-        })),
+        ...names.map((name) => createLocalIdentifier(name, location)),
       ],
       location,
     },
@@ -491,7 +488,6 @@ const substitute = (
     (expression.kind === "WeakFairness" || expression.kind === "StrongFairness") &&
     rewrite.mode === "Normal"
   ) {
-    const enabled = getMode(rewrite, "Enabled");
     return {
       ...expression,
       subscript: recurse(expression.subscript),
@@ -503,7 +499,7 @@ const substitute = (
           subscript: expression.subscript,
           location: expression.location,
         },
-        enabled,
+        getMode(rewrite, "Enabled"),
         bound,
       ),
     };
@@ -537,7 +533,7 @@ const substitute = (
       instantiation.substitutions.size > 0 ||
       params.length > 0 ||
       contextualApplications.has(expression);
-    const mark = <Rewritten extends Expression>(rewritten: Rewritten) => {
+    const mark = (rewritten: Expression) => {
       if (isContextual) contextualApplications.add(rewritten);
       return rewritten;
     };
@@ -628,7 +624,7 @@ const withInstanceParams = (
     body: {
       kind: "Let",
       definitions: [definition],
-      body: { kind: "Identifier", name: definition.name, location, resolution: { kind: "Local" } },
+      body: createLocalIdentifier(definition.name, location),
       location,
     },
     isLocal: definition.isLocal,
@@ -662,7 +658,13 @@ export const createInstantiation = (instantiation: Instantiation) => {
     [...instantiation.substitutions.values()].flatMap((expression) => getFreeNames(expression)),
   );
   const createRewrite = (mode: RewriteMode): Rewrite => {
-    const created = { instantiation, substitutedNames, copies: new Map(), mode, modes };
+    const created = {
+      instantiation,
+      substitutedNames,
+      copies: new Map<string, string>(),
+      mode,
+      modes,
+    };
     modes.set(mode, created);
     return created;
   };
@@ -715,14 +717,14 @@ export const withLetInstances = (
   module: Module,
   instantiate: (instance: Instance, lets: Definition[]) => Definition[],
 ): Module => {
-  const isExpanded =
+  const hasLetInstances =
     module.definitions.some((definition) => hasLetInstance(definition.body)) ||
     module.assumptions.some((assumption) => hasLetInstance(assumption.expression)) ||
     module.theorems.some((theorem) => {
       const statement = getUnnamedStatement(theorem);
       return statement !== undefined && hasLetInstance(statement);
     });
-  if (!isExpanded) return module;
+  if (!hasLetInstances) return module;
   return {
     ...module,
     definitions: module.definitions.map((definition) =>

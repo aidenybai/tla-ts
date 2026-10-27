@@ -5,6 +5,8 @@ import {
   getArgumentKey,
   MAX_LEVEL,
   parseArgumentParamKey,
+  putArgConstraint,
+  putConstraint,
   type OperatorLevels,
   type Scope,
 } from "./levels";
@@ -78,16 +80,16 @@ export const checkInstances = (
       argConstraints: new Map(),
       argParams: new Set(),
     };
-    const putConstraint = (key: string, value: number) =>
-      levels.constraints.set(key, Math.min(value, levels.constraints.get(key) ?? MAX_LEVEL));
-    if (!levels.isConstant) module.constants.forEach((constant) => putConstraint(constant.name, 0));
+    if (!levels.isConstant) {
+      module.constants.forEach((constant) => putConstraint(levels.constraints, constant.name, 0));
+    }
     const addLevels = (
       data: Omit<ModuleLevels, "isConstant">,
       isKept: (operator: string, param: string) => boolean,
     ) => {
-      data.constraints.forEach((value, key) => putConstraint(key, value));
+      data.constraints.forEach((value, key) => putConstraint(levels.constraints, key, value));
       data.argConstraints.forEach((value, key) =>
-        levels.argConstraints.set(key, Math.max(value, levels.argConstraints.get(key) ?? 0)),
+        putArgConstraint(levels.argConstraints, key, value),
       );
       data.argParams.forEach((key) => {
         const parameter = parseArgumentParamKey(key);
@@ -109,7 +111,7 @@ export const checkInstances = (
   const messages = new Set<string>();
   checks.forEach((check) => {
     const location = `at line ${check.location.line}, column ${check.location.column}`;
-    const add = (message: string) => messages.add(`${message} ${location}`);
+    const addMessage = (message: string) => messages.add(`${message} ${location}`);
     const instancee = getModule(check.module);
     const levels = getModuleLevels(check.module);
     const analyzer = getAnalyzer(check.instancer);
@@ -138,27 +140,28 @@ export const checkInstances = (
         },
       ];
     });
-    const levelError = (name: string, level: number) =>
+    const getLevelMessage = (name: string, level: number) =>
       `Level error in instantiating module '${check.module}': the level of the expression or operator substituted for '${name}' must be at most ${level}`;
     substituted.forEach((item) => {
       if (!levels.isConstant && item.level > item.maximumLevel) {
-        add(levelError(item.name, item.maximumLevel));
+        addMessage(getLevelMessage(item.name, item.maximumLevel));
       }
       if (!item.isLeibniz) {
-        add(
+        addMessage(
           `Error in instantiating module '${check.module}': a non-Leibniz operator substituted for '${item.name}'`,
         );
       }
     });
     substituted.forEach((item) => {
       const maximum = levels.constraints.get(item.name);
-      if (maximum !== undefined && item.level > maximum) add(levelError(item.name, maximum));
+      if (maximum !== undefined && item.level > maximum)
+        addMessage(getLevelMessage(item.name, maximum));
       const operator = item.operator;
       if (!operator) return;
       Array.from({ length: item.arity }, (_, index) => {
         const minimum = levels.argConstraints.get(getArgumentKey(item.name, index));
         if (minimum !== undefined && getMaxLevel(operator, index) < minimum) {
-          add(
+          addMessage(
             `Level error in instantiating module '${check.module}': the level of the argument ${index + 1} of the operator ${operator.name} must be at least ${minimum}`,
           );
         }
@@ -171,7 +174,7 @@ export const checkInstances = (
       if (!operator || !argument) return;
       const maximum = getMaxLevel(operator, parameter.index);
       if (argument.level > maximum) {
-        add(
+        addMessage(
           `Level error when instantiating module '${check.module}': the level of the argument ${parameter.index} of the operator ${parameter.operator}' must be at most ${maximum}`,
         );
       }
