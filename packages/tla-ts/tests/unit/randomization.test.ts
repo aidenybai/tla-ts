@@ -116,6 +116,13 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     ]);
   });
 
+  it("draws again each time an operator with parameters calls RandomElement", async () => {
+    const result = await checkWithSeed("RandomOperator", 1n);
+    expect(result.violation?.trace.map((step) => step.state.alpha)).toEqual([
+      0, 80, 94, 100, 32, 12, 34,
+    ]);
+  });
+
   it('reports the seed in TLCGet("config")', async () => {
     const result = await check({
       source:
