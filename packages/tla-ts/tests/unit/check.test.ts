@@ -1386,6 +1386,22 @@ describe("level checking matches SANY", () => {
       }),
     ).rejects.toThrow("Level error in applying operator Foo");
   });
+
+  // SANY bounds a sequence argument by the level its LAMBDA allows for the elements.
+  it.each([
+    "SelectSeq(s, LAMBDA a : a' = 1)",
+    "SortSeq(s, LAMBDA a, b : a' = b)",
+    "SortSeq(s, LAMBDA a, b : a = b')",
+  ])("rejects a primed sequence where %s primes its elements", async (application) => {
+    await expect(
+      check({
+        source: `---- MODULE M ----\nEXTENDS Sequences, TLC\nVARIABLE x\nF(s) == ${application}\nG == F(x')\nInit == x = 0\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      "Level error in applying operator F: The level of argument 1 exceeds the maximum level allowed by the operator.",
+    );
+  });
 });
 
 describe("parseConfig matches TLC", () => {
