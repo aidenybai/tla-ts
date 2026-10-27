@@ -729,6 +729,19 @@ describe("evaluation errors match TLC", () => {
       expect(result.violation?.message).toMatch(/^Attempted to check if the value/);
     },
   );
+
+  it.each([
+    ["1 \\in TRUE", "Attempted to check if the value:\n1\nis an element of the boolean TRUE"],
+    ["1 \\notin 5", "Attempted to check if the value:\n1\nis an element of the integer 5"],
+    ['1 \\in "abc"', 'Attempted to check if the value:\n1\nis an element of the string "abc"'],
+    ["1 \\in m", "Attempted to check if the value:\n1\nis an element of the model value m"],
+    ["1 \\in <<1, 2>>", "Attempted to check set membership in a tuple value."],
+    ["1 \\in [a |-> 1]", "Attempted to check if element:\n1\nis in the record:\n[a |-> 1]"],
+  ])("words %s like TLC", async (membership, message) => {
+    const result = await checkModule(`CONSTANT m\nASSUME ${membership}`, "CONSTANT m = m");
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.message).toBe(message);
+  });
 });
 
 describe("DOMAIN matches TLC", () => {
