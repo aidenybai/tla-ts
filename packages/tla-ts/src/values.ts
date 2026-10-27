@@ -356,6 +356,9 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   }
   const isInfiniteComparison =
     isSetValue(left) && isSetValue(right) && !(isEnumerable(left) && isEnumerable(right));
+  if (isInfiniteComparison && (isStringSet(left) || isStringSet(right))) {
+    return isStringSetEqual(left, right);
+  }
   if (isInfiniteComparison) {
     if (!isOverriddenSet(left)) {
       const elements = toFiniteSet(left);
@@ -364,6 +367,33 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     return getValueKey(left) === getValueKey(right);
   }
   return compareValues(left, right) === 0;
+};
+
+const isStringSet = (value: Value) =>
+  typeof value === "object" && value.kind === "InfiniteSet" && value.name === "STRING";
+
+const isOverriddenSet = (value: Value) =>
+  typeof value === "object" && (value.kind === "InfiniteSet" || value.kind === "SequenceSet");
+
+// TLC implements STRING in its Java Strings class, which equals only STRING. Comparing it with
+// any other set is an error, worded by the class of the left operand.
+const isStringSetEqual = (left: Value, right: Value) => {
+  if (isStringSet(left) && isStringSet(right)) return true;
+  if (isStringSet(left)) {
+    throw new TlaEvaluationError(
+      isOverriddenSet(right)
+        ? `Attempted to compare STRING with the value\n${formatValue(right, true)}`
+        : `Attempted to compare overridden value STRING with non-overridden value:\n${formatValue(right, true)}`,
+    );
+  }
+  if (isOverriddenSet(left)) {
+    throw new TlaEvaluationError(
+      `Attempted to compare ${formatValue(left, true)} with the value\nSTRING`,
+    );
+  }
+  throw new TlaEvaluationError(
+    `Attempted to check equality of the set ${formatValue(isEnumerable(left) ? toFiniteSet(left) : left, true)} with the value:\nSTRING`,
+  );
 };
 
 const areSameValues = (left: Value[], right: Value[]) =>
@@ -614,9 +644,6 @@ const getEmptiness = (value: Value): boolean | undefined => {
       return undefined;
   }
 };
-
-const isOverriddenSet = (value: Value) =>
-  typeof value === "object" && (value.kind === "InfiniteSet" || value.kind === "SequenceSet");
 
 const getCartesianProduct = (lists: Value[][]): Value[][] => {
   const total = lists.reduce((product, list) => product * list.length, 1);
@@ -1010,7 +1037,7 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       }
       const fn = toFiniteFunction(element);
       return (
-        valuesEqual(createSortedSet(fn.domain), set.domain) &&
+        valuesEqual(set.domain, createSortedSet(fn.domain)) &&
         fn.range.every((item) => isElementOf(item, set.range))
       );
     }
