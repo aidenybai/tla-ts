@@ -372,7 +372,7 @@ ASSUME TLCFP(a) = -887695703
           '---- MODULE M ----\nEXTENDS TLCExt\nVARIABLE v\nInit == v = {TLCModelValue("A_a"), TLCModelValue("B_a")}\nNext == UNCHANGED v\n====',
         config: "INIT Init\nNEXT Next",
       }),
-    ).rejects.toThrow("Attempted to compare the differently-typed model values A_a and B_a");
+    ).rejects.toThrow("Attempted to compare the differently-typed model values B_a and A_a");
   });
 
   it("explores the mutex state space", async () => {

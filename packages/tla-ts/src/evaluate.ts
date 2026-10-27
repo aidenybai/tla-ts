@@ -22,7 +22,7 @@ import {
   combineHash,
   compareValues,
   createFunction,
-  createSet,
+  createEnumeratedSet,
   createSortedFunction,
   createSortedSet,
   createTuple,
@@ -1524,7 +1524,8 @@ const compileSetComprehension = (
           "a set filter predicate",
         );
       const isReducible =
-        typeof base === "object" && (base.kind === "Set" || base.kind === "Interval");
+        typeof base === "object" &&
+        (base.kind === "Set" || base.kind === "MixedSet" || base.kind === "Interval");
       if (!isReducible) {
         if (isSetValue(base)) return { kind: "FilteredSet", base, test };
         throw new TlaEvaluationError(
@@ -1542,7 +1543,7 @@ const compileSetComprehension = (
         elements.push(mapped(withScope(context, scope)));
         return false;
       });
-      return createSet(elements);
+      return createEnumeratedSet(elements);
     };
   }
   const set = expression.set;
@@ -1718,7 +1719,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       return compileSetComprehension(expression, environment);
     case "SetEnumeration": {
       const elements = expression.elements.map(child);
-      return (context) => createSet(elements.map((element) => element(context)));
+      return (context) => createEnumeratedSet(elements.map((element) => element(context)));
     }
     case "Tuple": {
       const elements = expression.elements.map(child);
