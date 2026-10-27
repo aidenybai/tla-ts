@@ -19,6 +19,7 @@ import { mapChildren, substitutedExpressions } from "./instances";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
+  combineHash,
   compareValues,
   createFunction,
   createSet,
@@ -1228,17 +1229,78 @@ export const compileArgumentScope = (
   };
 };
 
+interface MemoizedCall {
+  args: Value[];
+  value: Value;
+}
+
+const MEMOIZED_CALL_LIMIT = 1 << 16;
+
+const callMemos = new WeakMap<Closure, { calls: Map<number, MemoizedCall[]>; size: number }>();
+
+const getCallMemo = (closure: Closure) => {
+  const cached = callMemos.get(closure);
+  if (cached) return cached;
+  const memo = { calls: new Map<number, MemoizedCall[]>(), size: 0 };
+  callMemos.set(closure, memo);
+  return memo;
+};
+
+const getArgumentValues = (scope: Scope | undefined, arity: number) => {
+  const values: Value[] = [];
+  for (let current = scope; values.length < arity; current = current?.parent) {
+    if (current?.binding.kind !== "Value") return undefined;
+    values.push(current.binding.value);
+  }
+  return values;
+};
+
+const isSameArguments = (left: Value[], right: Value[]) =>
+  left.every((value, index) => isSameValue(value, right[index]));
+
+// A constant-level operator without side effects yields the same value for the same arguments,
+// so its calls with evaluated arguments share one result.
+const isMemoizable = (expression: Expression & { kind: "Apply" }, environment: Environment) => {
+  const definition = getDefinition(expression.operator, environment);
+  return (
+    definition?.kind === "Operator" &&
+    definition.params.length > 0 &&
+    definition.params.every((param) => param.arity === 0) &&
+    isConstantLevel(definition, environment) &&
+    !isImpureDefinition(definition, environment)
+  );
+};
+
 const compileClosureCall = (
   closure: Closure,
   args: Expression[],
   environment: Environment,
+  isMemoized: boolean,
 ): Evaluator => {
   const bindArguments = compileArgumentScope(closure, args, environment);
   const compiled = { body: undefined as Evaluator | undefined };
-  return (context) => {
-    const scope = bindArguments(context);
+  const evaluateBody = (scope: Scope | undefined, context: Context) => {
     compiled.body ??= getEntryEvaluator(closure.body, environment);
     return compiled.body({ environment, scope, state: context.state, next: context.next });
+  };
+  if (!isMemoized) return (context) => evaluateBody(bindArguments(context), context);
+  const memo = getCallMemo(closure);
+  return (context) => {
+    const scope = bindArguments(context);
+    const values = getArgumentValues(scope, args.length);
+    if (!values) return evaluateBody(scope, context);
+    let hash = values.length;
+    for (const value of values) hash = combineHash(hash, getValueHash(value));
+    const bucket = memo.calls.get(hash);
+    const known = bucket?.find((call) => isSameArguments(call.args, values));
+    if (known) return known.value;
+    const value = evaluateBody(scope, context);
+    if (memo.size < MEMOIZED_CALL_LIMIT) {
+      memo.size++;
+      if (bucket) bucket.push({ args: values, value });
+      else memo.calls.set(hash, [{ args: values, value }]);
+    }
+    return value;
   };
 };
 
@@ -1262,7 +1324,9 @@ const compileApply = (
   const global = isLocallyResolved(expression)
     ? undefined
     : resolveGlobalOperator(expression.operator, environment);
-  if (global?.kind === "Closure") return compileClosureCall(global, args, environment);
+  if (global?.kind === "Closure") {
+    return compileClosureCall(global, args, environment, isMemoizable(expression, environment));
+  }
   if (global?.kind === "Builtin" && global.name === "DOMAIN") {
     const operand = getEvaluator(args[0], environment);
     const domain = getDomainOperator(expression);
