@@ -1,12 +1,17 @@
 import type {
+  AssumeProve,
   Bound,
   BoundPattern,
   Definition,
   Expression,
   Instance,
   Module,
+  NewSymbol,
   OperatorParam,
+  Proof,
+  ProofStep,
   SourceLocation,
+  Theorem,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import { getChildren, isLocallyResolved } from "./evaluate";
@@ -31,6 +36,7 @@ interface Unit {
   getKey: (definition: Definition) => string;
   location: SourceLocation;
   self: Definition | undefined;
+  facts: Set<string>;
 }
 
 const LOCAL_RESOLUTION = { kind: "Local" } as const;
@@ -82,6 +88,9 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
     : unit.imported.get(name);
 };
 
+const isStepName = (name: string) =>
+  name.startsWith("<") && ((name[1] >= "0" && name[1] <= "9") || name[1] === "*");
+
 const getSymbolArity = (
   expression: Expression & { kind: "Identifier" | "Apply" | "OperatorReference" },
   name: string,
@@ -92,6 +101,7 @@ const getSymbolArity = (
   const renamed = renamedArities.get(expression);
   if (renamed !== undefined) return renamed;
   if (isKey(name)) return expression.kind === "Apply" ? expression.args.length : 0;
+  if (isStepName(name)) return 0;
   const local = lookupLocal(scope, name);
   if (local && expression.kind !== "OperatorReference") expression.resolution = LOCAL_RESOLUTION;
   if (local) return local.arity;
@@ -101,6 +111,17 @@ const getSymbolArity = (
     else expression.operator = symbol.key;
     renamedArities.set(expression, symbol.arity);
     return symbol.arity;
+  }
+  // A name such as Inv!P1 selects the label P1 of a definition or theorem, which takes its own
+  // arguments.
+  const prefix = name.slice(0, name.indexOf("!"));
+  const isSelected =
+    prefix !== "" &&
+    (lookupLocal(scope, prefix) !== undefined ||
+      findSymbol(prefix, unit) !== undefined ||
+      unit.facts.has(prefix));
+  if (isSelected) {
+    return expression.kind === "Apply" ? expression.args.length : 0;
   }
   throw new TlaSyntaxError(
     `Could not find declaration or definition of symbol ${name} at line ${location.line}, column ${location.column}`,
@@ -168,12 +189,14 @@ const resolveApply = (
       `The operator ${expression.operator} requires ${arity} arguments at line ${expression.location.line}, column ${expression.location.column}`,
     );
   }
-  expression.args.forEach((arg) =>
-    arg.kind === "Identifier"
-      ? getSymbolArity(arg, arg.name, scope, unit)
-      : resolveExpression(arg, scope, unit),
-  );
+  expression.args.forEach((arg) => resolveArgument(arg, scope, unit));
 };
+
+// An argument may name an operator that takes arguments of its own.
+const resolveArgument = (arg: Expression, scope: LocalName | undefined, unit: Unit) =>
+  arg.kind === "Identifier"
+    ? getSymbolArity(arg, arg.name, scope, unit)
+    : resolveExpression(arg, scope, unit);
 
 const resolveExpression = (
   expression: Expression,
@@ -299,10 +322,96 @@ const resolveExpression = (
       resolveExpression(expression.body, scope, unit);
       return;
     case "Subexpression":
-      resolveAll(
-        expression.selectors.flatMap((selector) => ("args" in selector ? selector.args : [])),
-      );
+      expression.selectors
+        .flatMap((selector) => ("args" in selector ? selector.args : []))
+        .forEach((arg) => resolveArgument(arg, scope, unit));
   }
+};
+
+const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit: Unit) => {
+  if (symbol.set) resolveExpression(symbol.set, scope, unit);
+  return { name: symbol.name, arity: symbol.arity, parent: scope };
+};
+
+// The NEW symbols of an ASSUME stay in scope for its conclusion and the proof that follows.
+const resolveAssumeProve = (
+  assumeProve: AssumeProve,
+  scope: LocalName | undefined,
+  unit: Unit,
+): LocalName | undefined => {
+  const assumed = assumeProve.assumptions.reduce((current, assumption) => {
+    if (assumption.kind === "NewSymbol") return resolveNewSymbol(assumption, current, unit);
+    if (assumption.kind === "AssumeProve") resolveAssumeProve(assumption, current, unit);
+    else resolveExpression(assumption, current, unit);
+    return current;
+  }, scope);
+  resolveExpression(assumeProve.conclusion, assumed, unit);
+  return assumed;
+};
+
+const resolveStatement = (
+  statement: Expression | AssumeProve,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  if (statement.kind === "AssumeProve") return resolveAssumeProve(statement, scope, unit);
+  resolveExpression(statement, scope, unit);
+  return scope;
+};
+
+// SANY resolves the expressions of a proof, while its facts and DEF clauses may also name
+// theorems, assumptions, and modules.
+const resolveProof = (proof: Proof | undefined, scope: LocalName | undefined, unit: Unit) => {
+  if (proof?.kind !== "Steps") return;
+  proof.steps.reduce((current, step) => resolveStep(step, current, unit), scope);
+};
+
+const resolveStep = (
+  step: ProofStep,
+  scope: LocalName | undefined,
+  unit: Unit,
+): LocalName | undefined => {
+  const body = step.body;
+  switch (body.kind) {
+    case "Assert": {
+      const assumed = resolveStatement(body.statement, scope, unit);
+      resolveProof(step.proof, assumed, unit);
+      return body.isSuffices ? assumed : scope;
+    }
+    case "Define":
+      return resolveDefinitions(
+        body.definitions.flatMap((definition) =>
+          definition.kind === "Instance" ? [] : [definition],
+        ),
+        scope,
+        unit,
+      );
+    case "Have":
+    case "Case":
+      resolveExpression(body.expression, scope, unit);
+      resolveProof(step.proof, scope, unit);
+      return scope;
+    case "Witness":
+      body.expressions.forEach((expression) => resolveExpression(expression, scope, unit));
+      return scope;
+    case "Take":
+      return bindNames(resolveBounds(body.bounds, scope, unit), body.names);
+    case "Pick": {
+      const picked = bindNames(resolveBounds(body.bounds, scope, unit), body.names);
+      resolveExpression(body.body, picked, unit);
+      resolveProof(step.proof, scope, unit);
+      return picked;
+    }
+    default:
+      resolveProof(step.proof, scope, unit);
+      return scope;
+  }
+};
+
+const resolveTheorem = (theorem: Theorem, unit: Unit) => {
+  const isDefinition = theorem.name !== undefined && theorem.statement.kind !== "AssumeProve";
+  const scope = isDefinition ? undefined : resolveStatement(theorem.statement, undefined, unit);
+  resolveProof(theorem.proof, scope, unit);
 };
 
 interface ModuleUnit {
@@ -564,6 +673,7 @@ export const resolveSubstitutions = (
     getKey: unit.getKey,
     location: instance.location,
     self: undefined,
+    facts: new Set(),
   };
   const explicit = new Map(instance.substitutions.map((item) => [item.name, item.expression]));
   const position = `in the instance of ${instance.module} at line ${instance.location.line}, column ${instance.location.column}`;
@@ -601,17 +711,24 @@ export const resolveSubstitutions = (
 
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const symbols = createSymbols(module, unit.imported);
+  const facts = new Set(
+    [...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
+  );
   const resolveIn = (location: SourceLocation, self: Definition | undefined) => ({
     imported: symbols,
     definitions: unit.definitions,
     getKey: unit.getKey,
     location,
     self,
+    facts,
   });
   module.definitions.forEach((definition) =>
     resolveDefinition(definition, undefined, resolveIn(definition.location, definition)),
   );
   module.assumptions.forEach((assumption) =>
     resolveExpression(assumption.expression, undefined, resolveIn(assumption.location, undefined)),
+  );
+  module.theorems.forEach((theorem) =>
+    resolveTheorem(theorem, resolveIn(theorem.location, undefined)),
   );
 };
