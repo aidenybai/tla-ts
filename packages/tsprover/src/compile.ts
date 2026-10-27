@@ -8,7 +8,7 @@ export interface CompiledSpec {
 
 interface Variable {
   name: string;
-  initializer: ts.Expression;
+  declaration: ts.VariableDeclaration;
 }
 
 interface Definition {
@@ -77,6 +77,26 @@ const isBareReturn = (statement: ts.Statement): boolean =>
       statement.statements.length === 1 &&
       isBareReturn(statement.statements[0]);
 
+// The set of values that a declaration's finite type allows, which TLC chooses from.
+const getDomain = (
+  declaration: ts.ParameterDeclaration | ts.VariableDeclaration,
+  checker: ts.TypeChecker,
+) => {
+  const type = checker.getTypeAtLocation(declaration.name);
+  const members = type.isUnion() ? type.types : [type];
+  const values = members.map((member) => {
+    if (member.isStringLiteral()) return JSON.stringify(member.value);
+    if (member.isNumberLiteral() && Number.isInteger(member.value)) return String(member.value);
+    if (member.flags & ts.TypeFlags.BooleanLiteral) {
+      return checker.typeToString(member).toUpperCase();
+    }
+    throw new TsproverError(
+      `${getLocation(declaration.name)} ${declaration.name.getText()} needs a finite type, such as a union of literals`,
+    );
+  });
+  return `{${values.join(", ")}}`;
+};
+
 const translateExpression = (node: ts.Expression, scope: Scope): string => {
   if (ts.isParenthesizedExpression(node)) return translateExpression(node.expression, scope);
   if (ts.isNumericLiteral(node)) {
@@ -130,10 +150,14 @@ const translateExpression = (node: ts.Expression, scope: Scope): string => {
   throw new TsproverError(`${getLocation(node)} Unsupported expression: ${node.getText()}`);
 };
 
-const translateAction = (statements: ts.NodeArray<ts.Statement>, variables: Variable[]) => {
+const translateAction = (
+  statements: ts.NodeArray<ts.Statement>,
+  variables: Variable[],
+  parameters: string[],
+) => {
   const scope: Scope = {
     values: new Map(variables.map((variable) => [variable.name, variable.name])),
-    locals: new Set(),
+    locals: new Set(parameters),
   };
   const definitions: string[] = [];
   const guards: string[] = [];
@@ -222,13 +246,11 @@ const translateAction = (statements: ts.NodeArray<ts.Statement>, variables: Vari
   ];
   const conjunction = conjuncts.length > 0 ? conjuncts : ["TRUE"];
   return definitions.length === 0
-    ? conjunction.map((conjunct) => `  /\\ ${conjunct}`).join("\n")
+    ? conjunction.map((conjunct) => `/\\ ${conjunct}`)
     : [
-        `  LET ${definitions.join("\n      ")}`,
-        ...conjunction.map(
-          (conjunct, index) => `${index === 0 ? "  IN  " : "      "}/\\ ${conjunct}`,
-        ),
-      ].join("\n");
+        ...definitions.map((definition, index) => `${index === 0 ? "LET " : "    "}${definition}`),
+        ...conjunction.map((conjunct, index) => `${index === 0 ? "IN  " : "    "}/\\ ${conjunct}`),
+      ];
 };
 
 export const compile = (source: string): CompiledSpec => {
@@ -247,6 +269,7 @@ export const compile = (source: string): CompiledSpec => {
   });
   const diagnostics = ts.getPreEmitDiagnostics(program);
   if (diagnostics.length > 0) throw new TsproverError(ts.formatDiagnostics(diagnostics, host));
+  const checker = program.getTypeChecker();
 
   const variables: Variable[] = [];
   const definitions: Definition[] = [];
@@ -269,13 +292,8 @@ export const compile = (source: string): CompiledSpec => {
     const isLet = (statement.declarationList.flags & ts.NodeFlags.Let) !== 0;
     for (const declaration of statement.declarationList.declarations) {
       const initializer = declaration.initializer;
-      if (
-        isLet &&
-        !isExported(declaration) &&
-        ts.isIdentifier(declaration.name) &&
-        initializer !== undefined
-      ) {
-        variables.push({ name: declaration.name.text, initializer });
+      if (isLet && !isExported(declaration) && ts.isIdentifier(declaration.name)) {
+        variables.push({ name: declaration.name.text, declaration });
         continue;
       }
       if (
@@ -306,17 +324,35 @@ export const compile = (source: string): CompiledSpec => {
   const invariants: string[] = [];
   const operators: string[] = [];
   for (const definition of definitions) {
-    if (definition.node.parameters.length > 0) {
-      throw new TsproverError(
-        `${getLocation(definition.node.parameters[0])} Parameters aren't supported yet`,
-      );
-    }
+    const parameters = definition.node.parameters.map((parameter) => {
+      if (
+        !ts.isIdentifier(parameter.name) ||
+        parameter.initializer !== undefined ||
+        parameter.questionToken !== undefined ||
+        parameter.dotDotDotToken !== undefined
+      ) {
+        throw new TsproverError(
+          `${getLocation(parameter)} Unsupported parameter: ${parameter.getText()}`,
+        );
+      }
+      if (scope.values.has(parameter.name.text)) {
+        throw new TsproverError(
+          `${getLocation(parameter.name)} ${parameter.name.text} shadows a state variable`,
+        );
+      }
+      return { name: parameter.name.text, domain: getDomain(parameter, checker) };
+    });
     const body = definition.body;
     const returned = !ts.isBlock(body)
       ? body
       : body.statements.length === 1 && ts.isReturnStatement(body.statements[0])
         ? body.statements[0].expression
         : undefined;
+    if (returned !== undefined && parameters.length > 0) {
+      throw new TsproverError(
+        `${getLocation(definition.node.parameters[0])} Invariants can't take parameters`,
+      );
+    }
     if (returned !== undefined) {
       invariants.push(definition.name);
       operators.push(`${definition.name} == ${translateExpression(returned, scope)}`);
@@ -325,12 +361,24 @@ export const compile = (source: string): CompiledSpec => {
     if (!ts.isBlock(body)) {
       throw new TsproverError(`${getLocation(body)} Unsupported function body`);
     }
+    const lines = translateAction(
+      body.statements,
+      variables,
+      parameters.map((parameter) => parameter.name),
+    );
+    const bindings = parameters.map((parameter) => `${parameter.name} \\in ${parameter.domain}`);
+    const quantified =
+      parameters.length === 0
+        ? lines
+        : [`\\E ${bindings.join(", ")} :`, ...lines.map((line) => `  ${line}`)];
     actions.push(definition.name);
-    operators.push(`${definition.name} ==\n${translateAction(body.statements, variables)}`);
+    operators.push(`${definition.name} ==\n${quantified.map((line) => `  ${line}`).join("\n")}`);
   }
 
-  const init = variables.map(
-    (variable) => `  /\\ ${variable.name} = ${translateExpression(variable.initializer, scope)}`,
+  const init = variables.map((variable) =>
+    variable.declaration.initializer === undefined
+      ? `  /\\ ${variable.name} \\in ${getDomain(variable.declaration, checker)}`
+      : `  /\\ ${variable.name} = ${translateExpression(variable.declaration.initializer, scope)}`,
   );
   const next = actions.map((action) => `  \\/ ${action}`);
   return {

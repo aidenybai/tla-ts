@@ -31,6 +31,59 @@ describe("compile", () => {
     expect(getTrace(ported)).toEqual(getTrace(original));
   });
 
+  it("checks AsynchInterface like the spec in tlaplus/Examples", async () => {
+    const original = await check({
+      source: readFixture("AsynchInterface.tla"),
+      config: readFixture("AsynchInterface.cfg"),
+    });
+    const ported = await check(compile(readFixture("asynch-interface.ts")));
+    expect(ported.status).toBe("success");
+    expect([ported.generatedStates, ported.distinctStates, ported.depth]).toEqual([
+      original.generatedStates,
+      original.distinctStates,
+      original.depth,
+    ]);
+  });
+
+  it("chooses every value of a parameter's type", async () => {
+    const result = await check(
+      compile(`
+        let count = 0;
+        export const add = (amount: 1 | 2) => {
+          if (count >= 3) return;
+          count += amount;
+        };
+        export const isNotThree = () => count !== 3;
+      `),
+    );
+    expect(getTrace(result)).toEqual([{ count: "0" }, { count: "1" }, { count: "3" }]);
+  });
+
+  it("starts a variable without an initializer at every value of its type", async () => {
+    const result = await check(
+      compile(`
+        let isOn: boolean;
+        export const toggle = () => {
+          isOn = !isOn;
+        };
+      `),
+    );
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates]).toEqual([4, 2]);
+  });
+
+  it("rejects a parameter without a finite type", () => {
+    expect(() =>
+      compile(`let count = 0;\nexport const add = (amount: number) => { count += amount; };`),
+    ).toThrow(new TsproverError("2:21 amount needs a finite type, such as a union of literals"));
+  });
+
+  it("rejects an invariant with parameters", () => {
+    expect(() =>
+      compile(`let count = 0;\nexport const isBelow = (limit: 1 | 2) => count < limit;`),
+    ).toThrow(new TsproverError("2:25 Invariants can't take parameters"));
+  });
+
   it("reads a variable's new value after assigning it", async () => {
     const result = await check(
       compile(`
