@@ -91,6 +91,7 @@ export interface Violation {
   name: string;
   trace: TraceStep[];
   loopStart: number | undefined;
+  loopLabel?: string;
   message?: string;
   counts?: string;
   unwitnessed?: Postcondition;
@@ -791,6 +792,12 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   const print = (text: string) => {
     if (!output.isMuted) onPrint(text);
   };
+  const withoutOutput = <Result>(rebuild: () => Result) => {
+    output.isMuted = true;
+    const result = rebuild();
+    output.isMuted = false;
+    return result;
+  };
   setStringOrder(getTlcStringOrder(options.source, config, options.loadModule));
   const specification = createEnvironment(config, {
     source: options.source,
@@ -908,16 +915,16 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   };
   const toTrace = (steps: Successor[], path: number[], loopStart?: number): TraceStep[] => {
     const alias = config.alias;
-    output.isMuted = true;
-    // TLC rebuilds a trace from the initial predicate, which can reset what TLCSet stored.
-    if (steps.length > 1 && isImpure(environment)) getSpecInitialStates();
-    // TLC finds the action that takes each step before it evaluates the alias.
-    const labels = steps.map((step, position) =>
-      position === 0 || step.action === "Stuttering"
-        ? undefined
-        : getLabel(path[position - 1], steps[position - 1].state, step.state),
-    );
-    output.isMuted = false;
+    const labels = withoutOutput(() => {
+      // TLC rebuilds a trace from the initial predicate, which can reset what TLCSet stored.
+      if (steps.length > 1 && isImpure(environment)) getSpecInitialStates();
+      // TLC finds the action that takes each step before it evaluates the alias.
+      return steps.map((step, position) =>
+        position === 0 || step.action === "Stuttering"
+          ? undefined
+          : getLabel(path[position - 1], steps[position - 1].state, step.state),
+      );
+    });
     return steps.map((step, position) => ({
       action: step.action,
       label: labels[position],
@@ -1241,9 +1248,11 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     const trace = getPathTrace(path, lasso.prefix.length);
     const back = path[lasso.prefix.length];
     const last = path[path.length - 1];
+    const loopLabel =
+      back === last ? undefined : withoutOutput(() => getLabel(last, states[last], states[back]));
     return reportViolation(
       "liveness-violation",
-      { name: lasso.name, trace, loopStart: lasso.prefix.length },
+      { name: lasso.name, trace, loopStart: lasso.prefix.length, loopLabel },
       () =>
         back === last
           ? trace[trace.length - 1].action

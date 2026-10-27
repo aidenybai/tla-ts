@@ -32,3 +32,56 @@ describe("the CLI prints traces like TLC", () => {
     expect(getStateLines(result.stdout).slice(0, 2)).toEqual(["/\\ large = 0", "/\\ small = 0"]);
   });
 });
+
+// TLC's output for the same models, without the lines that report versions, progress and time.
+const TLC_REPORTS = [
+  ["InitialInvariant", 12, ["Error: Invariant Inv is violated by the initial state:", "x = 0", ""]],
+  [
+    "Lasso",
+    13,
+    [
+      "Error: Temporal property Prop was violated.",
+      "",
+      "Error: The following behavior constitutes a counter-example:",
+      "",
+      "State 1: <Initial predicate>",
+      "x = 0",
+      "",
+      "State 2: <Next line 5, col 9 to line 5, col 18 of module Lasso>",
+      "x = 1",
+      "",
+      "Back to state 1: <Next line 5, col 9 to line 5, col 18 of module Lasso>",
+      "",
+      "3 states generated, 2 distinct states found, 0 states left on queue.",
+      "The depth of the complete state graph search is 2.",
+    ],
+  ],
+  [
+    "FailedInvariant",
+    76,
+    [
+      "Error: Evaluating invariant Inv failed.",
+      "The second argument of \\div is 0.",
+      "Error: The behavior up to this point is:",
+      "State 1: <Initial predicate>",
+      "x = 0",
+      "",
+      "State 2: <Next line 5, col 9 to line 5, col 27 of module FailedInvariant>",
+      "x = 1",
+      "",
+      "State 3: <Next line 5, col 9 to line 5, col 27 of module FailedInvariant>",
+      "x = 2",
+      "",
+      "3 states generated, 3 distinct states found, 0 states left on queue.",
+      "The depth of the complete state graph search is 3.",
+    ],
+  ],
+] as const;
+
+describe("the CLI reports results like TLC", () => {
+  it.each(TLC_REPORTS)("reports %s", (name, code, lines) => {
+    const result = runCli("cli-output", name);
+    expect(result.status).toBe(code);
+    expect(result.stdout.split("\n").slice(1)).toEqual([...lines, ""]);
+  });
+});
