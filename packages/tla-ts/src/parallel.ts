@@ -1,4 +1,3 @@
-import type { Expression } from "./ast";
 import { createCanonicalizer } from "./canonical";
 import {
   checkSequentially,
@@ -9,7 +8,7 @@ import {
 } from "./check";
 import { parseConfig, type ModelConfig } from "./config";
 import { createEnvironment } from "./environment";
-import { getChildren, isImpureBuiltin, type Environment } from "./evaluate";
+import { isImpure } from "./evaluate";
 import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from "./fingerprints";
 import { parseModule } from "./parser";
 import { getInitialStates } from "./successors";
@@ -79,20 +78,6 @@ const spawnWorker = async (onMessage: (message: WorkerMessage) => void): Promise
     terminate: () => void worker.terminate(),
   };
 };
-
-const usesImpureBuiltin = (expression: Expression, environment: Environment): boolean =>
-  ((expression.kind === "Apply" || expression.kind === "OperatorReference") &&
-    isImpureBuiltin(expression.operator, environment)) ||
-  (expression.kind === "Identifier" && isImpureBuiltin(expression.name, environment)) ||
-  getChildren(expression).some((child) => usesImpureBuiltin(child, environment));
-
-const isImpure = (environment: Environment) =>
-  [...environment.definitions.values()].some(
-    (definition) =>
-      usesImpureBuiltin(definition.body, environment) ||
-      (definition.kind === "Function" &&
-        definition.bounds.some((bound) => usesImpureBuiltin(bound.set, environment))),
-  );
 
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
