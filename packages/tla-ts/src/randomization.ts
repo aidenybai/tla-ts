@@ -100,34 +100,4 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
       ),
     ),
   ),
-  defineStateOperator("RandomSubsetSet", 3, (args) => {
-    const name = "RandomSubsetSetProbability";
-    const picks = getCount(getValue(args, 0, "RandomSubsetSet"), "first", name);
-    const text = getValue(args, 1, "RandomSubsetSet");
-    if (typeof text !== "string") {
-      throw describeArgument(
-        "second",
-        name,
-        "string literal representing a probability",
-        formatValue(text),
-      );
-    }
-    const probability = Number(text);
-    if (text.trim() === "" || Number.isNaN(probability) || probability < 0 || probability > 1) {
-      throw describeArgument(
-        "second",
-        name,
-        "string literal does not represent a parsable probability",
-        formatValue(text),
-      );
-    }
-    const elements = getFiniteElements(
-      getValue(args, 2, "RandomSubsetSet"),
-      "third",
-      name,
-      "finite set",
-    );
-    checkPicks(picks, elements.length, name);
-    return tossSubsets(elements, picks, probability, runtime.getRandom());
-  }),
 ];
