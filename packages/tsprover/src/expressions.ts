@@ -12,7 +12,6 @@ import {
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
-  type HelperDeclaration,
   isMethodCall,
   share,
   translateString,
@@ -87,7 +86,7 @@ const translateArrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope, co
   return sequences.length === 1 ? sequences[0] : sequences.map(wrap).join(" \\o ");
 };
 
-export const getField = (key: string) => (isNumericKey(key) ? `[${key}]` : `.${key}`);
+const getField = (key: string) => (isNumericKey(key) ? `[${key}]` : `.${key}`);
 
 const formatRecord = (fields: Field[]) =>
   fields.every((field) => isNumericKey(field.key))
@@ -334,12 +333,6 @@ const getPreviousVariable = (name: string, node: ts.Node, context: Context) => {
   return variable[1];
 };
 
-// A function passes as its operator's name, and a constant as its value.
-const translateReference = (declaration: HelperDeclaration, scope: Scope, context: Context) =>
-  getFunction(declaration) === undefined
-    ? translateHelperCall(declaration, undefined, scope, context)
-    : getDefinition(declaration, context).name;
-
 const translateEnumMember = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   const declaration = symbol.valueDeclaration;
   const value =
@@ -362,7 +355,11 @@ const translateDeclared = (
     return translateEnumMember(node, symbol, context);
   }
   const declaration = getTopLevelDeclaration(symbol);
-  return declaration === undefined ? undefined : translateReference(declaration, scope, context);
+  if (declaration === undefined) return undefined;
+  // A function passes as its operator's name, and a constant as its value.
+  return getFunction(declaration) === undefined
+    ? translateHelperCall(declaration, undefined, scope, context)
+    : getDefinition(declaration, context).name;
 };
 
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {

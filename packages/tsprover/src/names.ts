@@ -98,8 +98,6 @@ export interface Names {
   getFresh: (base: string) => string;
 }
 
-export const isReserved = (name: string) => RESERVED.has(name);
-
 export const createNames = (): Names => {
   const used = new Set<string>();
   return {
