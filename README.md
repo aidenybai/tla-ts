@@ -39,16 +39,31 @@ npx tla-ts Spec.tla -workers auto
 npx tla-ts Spec.tla -seed 42
 ```
 
-Without `-config`, tla-ts reads the `.cfg` file next to the spec. `-deadlock` turns off deadlock checking. `-seed` sets the seed of `RandomElement` and the Randomization module, which defaults to 0. `-workers` checks on several threads, one per core with `auto`. A compiled Java class named after a module, next to the spec, overrides that module's operators. Output and exit codes follow TLC:
+Flags:
 
-| Exit code | Meaning                      |
-| --------: | ---------------------------- |
-|         0 | No error found               |
-|        10 | An assumption is false       |
-|        11 | Deadlock                     |
-|        12 | Invariant or property broken |
-|        13 | Liveness violation           |
-|       150 | The spec doesn't parse       |
+- `-config <file>`: the TLC configuration. Defaults to the `.cfg` file next to the spec with the same name.
+- `-deadlock`: turns off deadlock checking.
+- `-lncheck final`: checks liveness once, on the complete state graph.
+- `-seed <number>`: seeds `RandomElement` and the Randomization module. Defaults to 0.
+- `-workers <count>`: the number of worker threads. Defaults to 1. `auto` starts one per core.
+
+A compiled Java class next to the spec, named `<Module>.class`, overrides that module's operators.
+
+Output and exit codes follow TLC:
+
+| Exit code | Meaning                                                          |
+| --------: | ---------------------------------------------------------------- |
+|         0 | No error found                                                   |
+|        10 | An assumption is false                                           |
+|        11 | Deadlock                                                         |
+|        12 | An invariant or property is violated                             |
+|        13 | A temporal property or action property is violated               |
+|        14 | `Assert` failed while computing next states                      |
+|        75 | Evaluating the spec failed                                       |
+|        76 | Evaluating an invariant failed                                   |
+|       150 | The spec doesn't parse                                           |
+|       151 | The configuration doesn't parse or doesn't exist                 |
+|       255 | Another error, such as a failure to evaluate a liveness property |
 
 ## API reference
 
@@ -67,33 +82,72 @@ const result = await check({
 });
 ```
 
-Options:
+#### Options
 
-- `source`: the TLA+ module to check
-- `config`: a TLC configuration, as source text or as the result of `parseConfig`
-- `loadModule`: maps a module name to its source, for modules other than the standard modules
-- `loadClass`: maps a module name to the bytes of a compiled Java class, which overrides the module's operators as TLC's module overrides do. tla-ts runs overrides that return a constant `BoolValue`, `IntValue`, or `StringValue`
-- `onPrint`: receives the output of `Print` and `PrintT`, which defaults to `console.log`
-- `onPause`: runs when `TLCSet("pause", TRUE)` pauses checking, and checking resumes when it returns. The CLI waits for a line on standard input, as TLC does
-- `readFile` and `writeFile`: let the Json module read and write files, as TLC does from its working directory. Without `readFile`, `JsonDeserialize` fails as if the file were missing. Without `writeFile`, `JsonSerialize` writes nothing and still returns `TRUE`, so a spec that exports traces checks the same way in the browser
-- `seed`: a `bigint` that seeds `RandomElement` and the Randomization module, which defaults to `0n`. tla-ts makes the same choices as TLC run with `-seed` set to the same value and `-fp 0`
-- `workers`: the number of worker threads to check on, which defaults to 1. With 1, `check` runs on the calling thread
+- `source`: the TLA+ module to check.
+- `config`: a TLC configuration, as source text or as the result of `parseConfig`.
+- `loadModule`: returns the source of a module that isn't a standard module.
+- `loadClass`: returns the bytes of a compiled Java class that overrides a module's operators, as TLC's module overrides do. tla-ts runs overrides that return a constant `BoolValue`, `IntValue`, or `StringValue`.
+- `onPrint`: receives the output of `Print` and `PrintT`. Defaults to `console.log`.
+- `onPause`: runs when `TLCSet("pause", TRUE)` pauses checking. Checking resumes when it returns. The CLI waits for a line on standard input, as TLC does.
+- `readFile` and `writeFile`: read and write files for the Json module, as TLC does from its working directory. Without `readFile`, `JsonDeserialize` fails as if the file were missing. Without `writeFile`, `JsonSerialize` writes nothing and returns `TRUE`, so a spec that exports traces checks the same way in the browser.
+- `seed`: a `bigint` that seeds `RandomElement` and the Randomization module. Defaults to `0n`. tla-ts makes the same choices as TLC run with the same `-seed` and `-fp 0`.
+- `workers`: the number of worker threads. Defaults to 1, which checks on the calling thread.
 
-The result has `status`, `violation`, `generatedStates`, `distinctStates`, and `depth`. `status` is `"success"`, `"assumption-violation"`, `"invariant-violation"`, `"property-violation"`, `"liveness-violation"`, `"postcondition-violation"`, or `"deadlock"`. A `"postcondition-violation"` means a `POSTCONDITION` is false or a `_POSSIBLE` predicate never held during the search. After any other violation except a false assumption, `check` still checks `_POSSIBLE`, as TLC does, and sets `violation.unwitnessed` to the first predicate that never held without changing `status`. A `_POSSIBLE` failure's `counts` holds the record of witness counts that TLC prints before the error, and the CLI prints it there instead of passing it to `onPrint`. `violation` holds the name of what failed and the trace that reaches it. For a liveness violation, `violation.loopStart` is the trace index where the lasso loops back. With `ALIAS` in the configuration, each trace step's `state` holds the alias record instead of the variables, as TLC prints it. If the alias fails to evaluate, `state` holds the variables plus an `_ALIASEvalError` field with the error message.
+#### Result
 
-Workers run in Node, Bun, Deno, and the browser, and deduplicate states by 64-bit fingerprint, as TLC does. When a run finds a violation, or the spec uses liveness properties or impure operators such as `Print`, `check` falls back to the calling thread and returns its exact result and trace.
+`check` resolves to an object with these fields:
 
-`check` supports:
+- `status`: how the check ended, from the table below.
+- `violation`: what failed and the trace that reaches it.
+- `failure`: the message, trace, and exit code of an evaluation error.
+- `generatedStates`, `distinctStates`, and `depth`: the state counts TLC reports.
 
-- **Standard modules**: Naturals, Integers, Sequences, FiniteSets, TLC, Bags, Reals, RealTime, Toolbox, and the community modules TLCExt, Json, and Randomization
-- **Modules**: `EXTENDS`, nested modules, and `INSTANCE` with `WITH` substitutions, `LAMBDA` expressions, operator names, and operator symbols such as `+` substituted for operator parameters, named instances, parameterized instances, and instances inside `LET`
-- **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS` with operator constants assigned through `<-`, a table such as `F(1) = 2`, or a plain value, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, `VIEW`, `ALIAS`, `POSTCONDITION`, `CHECK_DEADLOCK`, and `_POSSIBLE` properties. After a violation, tla-ts still checks `POSTCONDITION` with TLCExt's `CounterExample` bound to the violating behavior, and keeps the status of the violation
-- **Properties**: invariants, `[][A]_v`, and every temporal formula TLC accepts, checked through TLC's tableau construction under the fairness and temporal conjuncts of the specification
-- **Subexpression references**: selectors such as `F(2)!3`, `Op!<<`, `Op!>>`, `Op!:`, `Op!@`, and `Op!(x)`, labels such as `Op!lab`, and names of `THEOREM` formulas
-- **TLC semantics**: 32-bit integer overflow errors, `ENABLED`, `TLCGet` and `TLCSet` with TLC's counters, registers, and `TLCGet("spec")` record, and TLC's enumeration order for `CHOOSE` and quantifiers
-- **`STRING`, `Nat`, `Int`, and `Seq(S)`**: TLC has no Strings module. `STRING` is built in, as TLC's Java `Strings` class implements it. These sets compare only with each other and with model values, as in TLC's Java classes, and comparing one with any other set is an error
+| `status`                    | Meaning                                                          |
+| --------------------------- | ---------------------------------------------------------------- |
+| `"success"`                 | No error found                                                   |
+| `"assumption-violation"`    | An assumption is false                                           |
+| `"deadlock"`                | A reachable state has no successor                               |
+| `"invariant-violation"`     | An invariant is violated                                         |
+| `"property-violation"`      | A property is violated                                           |
+| `"liveness-violation"`      | A temporal property or action property is violated               |
+| `"postcondition-violation"` | A `POSTCONDITION` is false or a `_POSSIBLE` predicate never held |
+| `"error"`                   | Evaluation failed, and `failure` holds the error                 |
 
-`check` also accepts `_PERIODIC` and `_RL_REWARD` and, like TLC, requires each to name an operator without arguments. It does not evaluate them. TLC evaluates `_PERIODIC` on its progress interval, which is 60 seconds by default, and `_RL_REWARD` only in its reinforcement learning simulation mode.
+`violation` has these fields:
+
+- `name`: the name of what failed.
+- `trace`: the steps that reach the failure. Each step's `state` maps variable names to values. With `ALIAS` in the configuration, `state` holds the alias record instead, as TLC prints it. If the alias fails to evaluate, `state` holds the variables and an `_ALIASEvalError` field with the error message.
+- `loopStart`: for a liveness violation, the trace index where the lasso loops back.
+- `unwitnessed`: the first `_POSSIBLE` predicate that never held. As TLC does, `check` still checks `_POSSIBLE` after any violation except a false assumption, and keeps the original `status`.
+- `counts`: for a `_POSSIBLE` failure, the record of witness counts that TLC prints before the error. The CLI prints it there instead of passing it to `onPrint`.
+
+#### Workers
+
+Workers run in Node, Bun, Deno, and the browser. They deduplicate states by 64-bit fingerprint, as TLC does. `check` falls back to the calling thread, and returns its exact result and trace, in these cases:
+
+- The run finds a violation.
+- The spec has liveness properties.
+- The spec uses an impure operator such as `Print`.
+
+#### Supported features
+
+- **Standard modules**: Naturals, Integers, Sequences, FiniteSets, TLC, Bags, Reals, RealTime, and Toolbox.
+- **Community modules**: TLCExt, Json, and Randomization.
+- **Modules**: `EXTENDS`, nested modules, and `INSTANCE` with `WITH` substitutions. Instances can be named, parameterized, or inside `LET`. `LAMBDA` expressions, operator names, and operator symbols such as `+` can be substituted for operator parameters.
+- **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, `VIEW`, `ALIAS`, `POSTCONDITION`, `CHECK_DEADLOCK`, and `_POSSIBLE` properties.
+- **Constants**: plain values, operator constants assigned through `<-`, and tables such as `F(1) = 2`.
+- **Postconditions**: after a violation, tla-ts still checks `POSTCONDITION`, with TLCExt's `CounterExample` bound to the violating behavior. The result keeps the status of the violation.
+- **Properties**: invariants, `[][A]_v`, and every temporal formula TLC accepts. tla-ts checks them through TLC's tableau construction, under the fairness and temporal conjuncts of the specification.
+- **Subexpression references**: selectors such as `F(2)!3`, `Op!<<`, `Op!>>`, `Op!:`, `Op!@`, and `Op!(x)`, labels such as `Op!lab`, and names of `THEOREM` formulas.
+- **TLC semantics**:
+  - 32-bit integer overflow errors.
+  - `ENABLED`.
+  - `TLCGet` and `TLCSet`, with TLC's counters, registers, and `TLCGet("spec")` record.
+  - TLC's enumeration order for `CHOOSE` and quantifiers.
+- **`STRING`, `Nat`, `Int`, and `Seq(S)`**: TLC has no Strings module, so `STRING` is built in, as in TLC's Java `Strings` class. These sets compare only with each other and with model values, as in TLC's Java classes. Comparing one with any other set is an error.
+
+`check` accepts `_PERIODIC` and `_RL_REWARD` but doesn't evaluate them. Like TLC, it requires each to name an operator without arguments. TLC evaluates `_PERIODIC` on its progress interval, 60 s by default, and `_RL_REWARD` only in its reinforcement learning simulation mode.
 
 ### `parseModule`
 
