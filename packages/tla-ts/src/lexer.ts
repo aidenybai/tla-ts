@@ -311,7 +311,11 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
 const isDigit = (character: string | undefined) =>
   character !== undefined && character >= "0" && character <= "9";
 
-const skipWhile = (source: string, index: number, isMatch: (character: string) => boolean) => {
+export const skipWhile = (
+  source: string,
+  index: number,
+  isMatch: (character: string) => boolean,
+) => {
   const end = { value: index };
   while (end.value < source.length && isMatch(source[end.value])) end.value++;
   return end.value;
@@ -380,18 +384,17 @@ export const tokenize = (source: string): Token[] => {
 
   while (cursor.index < source.length) {
     const character = source[cursor.index];
-    const rest = source.slice(cursor.index, cursor.index + 8);
 
     if (character === "\n" || character === " " || character === "\t" || character === "\r") {
       advanceOver(1);
       continue;
     }
-    if (rest.startsWith("\\*")) {
+    if (source.startsWith("\\*", cursor.index)) {
       const lineEnd = source.indexOf("\n", cursor.index);
       advanceOver((lineEnd === -1 ? source.length : lineEnd) - cursor.index);
       continue;
     }
-    if (rest.startsWith("(*")) {
+    if (source.startsWith("(*", cursor.index)) {
       const depth = { value: 0 };
       do {
         if (cursor.index >= source.length) throw createError("Unterminated comment");
@@ -407,8 +410,8 @@ export const tokenize = (source: string): Token[] => {
       } while (depth.value > 0);
       continue;
     }
-    if (rest.startsWith("----")) {
-      const length = /^-+/.exec(source.slice(cursor.index))?.[0].length ?? 0;
+    if (source.startsWith("----", cursor.index)) {
+      const length = skipWhile(source, cursor.index, (next) => next === "-") - cursor.index;
       if (
         source
           .slice(cursor.index + length)
@@ -419,8 +422,8 @@ export const tokenize = (source: string): Token[] => {
       pushToken("Separator", "----", length);
       continue;
     }
-    if (rest.startsWith("====")) {
-      const length = /^=+/.exec(source.slice(cursor.index))?.[0].length ?? 0;
+    if (source.startsWith("====", cursor.index)) {
+      const length = skipWhile(source, cursor.index, (next) => next === "=") - cursor.index;
       pushToken("ModuleEnd", "====", length);
       cursor.moduleDepth--;
       if (cursor.moduleDepth <= 0) break;
@@ -437,8 +440,7 @@ export const tokenize = (source: string): Token[] => {
         }
         if (source[cursor.index] === "\\") {
           const escaped = source[cursor.index + 1];
-          const replacement = { n: "\n", t: "\t", r: "\r", f: "\f" }[escaped] ?? escaped;
-          characters.push(replacement);
+          characters.push({ n: "\n", t: "\t", r: "\r", f: "\f" }[escaped] ?? escaped);
           advanceOver(2);
           continue;
         }
@@ -461,7 +463,10 @@ export const tokenize = (source: string): Token[] => {
       continue;
     }
     if (isIdentifierCharacter(character)) {
-      const word = /^[A-Za-z0-9_]+/.exec(source.slice(cursor.index))?.[0] ?? "";
+      const word = source.slice(
+        cursor.index,
+        skipWhile(source, cursor.index, isIdentifierCharacter),
+      );
       if (/^\d+$/.test(word)) {
         const number = /^\d+(\.\d+)?/.exec(source.slice(cursor.index))?.[0] ?? word;
         pushToken(number.includes(".") ? "Decimal" : "Number", number, number.length);

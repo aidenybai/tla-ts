@@ -1,6 +1,8 @@
 // A port of TLC's tlc2.pprint package, which re-parses a printed value and breaks it across
 // lines of at most 80 columns. TLC prints the original text whenever the parse fails.
 
+import { skipWhile } from "./lexer";
+
 interface PrintedNode {
   kind: "Constant" | "Set" | "Sequence" | "Record" | "Function" | "Subset" | "Pair";
   first: number;
@@ -64,9 +66,8 @@ const isLetterOrDigit = (character: string | undefined) =>
 
 const parsePrinted = (text: string) => {
   const skipWhitespace = (index: number) => {
-    const position = { index };
-    while (isWhitespace(text[position.index])) position.index++;
-    return text[position.index] === undefined ? undefined : position.index;
+    const end = skipWhile(text, index, isWhitespace);
+    return text[end] === undefined ? undefined : end;
   };
 
   const parseItems = (
@@ -107,13 +108,14 @@ const parsePrinted = (text: string) => {
   };
 
   const parseInterval = (first: number): PrintedNode | undefined => {
-    const position = { index: first };
-    while (position.index < text.length && isDigit(text[position.index])) position.index++;
-    if (!text.startsWith("..", position.index)) return undefined;
-    position.index += 2;
-    if (!isDigit(text[position.index])) return undefined;
-    while (isDigit(text[position.index])) position.index++;
-    return { kind: "Constant", first, last: position.index - 1, children: [] };
+    const lowEnd = skipWhile(text, first, isDigit);
+    if (!text.startsWith("..", lowEnd) || !isDigit(text[lowEnd + 2])) return undefined;
+    return {
+      kind: "Constant",
+      first,
+      last: skipWhile(text, lowEnd + 2, isDigit) - 1,
+      children: [],
+    };
   };
 
   const parseConstant = (first: number): PrintedNode | undefined => {
@@ -126,14 +128,20 @@ const parsePrinted = (text: string) => {
     if (interval) return interval;
     if (character === "-") {
       if (first + 1 >= text.length) return undefined;
-      const position = { index: first + 1 };
-      while (isDigit(text[position.index])) position.index++;
-      return { kind: "Constant", first, last: position.index - 1, children: [] };
+      return {
+        kind: "Constant",
+        first,
+        last: skipWhile(text, first + 1, isDigit) - 1,
+        children: [],
+      };
     }
     if (!isLetterOrDigit(character)) return undefined;
-    const position = { index: first };
-    while (isLetterOrDigit(text[position.index])) position.index++;
-    return { kind: "Constant", first, last: position.index - 1, children: [] };
+    return {
+      kind: "Constant",
+      first,
+      last: skipWhile(text, first, isLetterOrDigit) - 1,
+      children: [],
+    };
   };
 
   const parse = (index: number): PrintedNode | undefined => {
@@ -220,32 +228,29 @@ export const prettyPrint = (text: string) => {
     leftPad: string,
     delimiters: Delimiters,
   ) => {
-    const divider = delimiters.divider;
-    const dividerPad = delimiters.dividerPad;
-    const separator = delimiters.separator;
     const parts = pairs.map((pair, index) => {
       const isLast = index === pairs.length - 1;
       const left = pair.children[0];
       const right = pair.children[1];
-      const valueTrailer = isLast ? trailerWidth : separator.length;
-      const ending = isLast ? "" : `${separator}\n${leftPad}`;
+      const ending = isLast ? "" : `${delimiters.separator}\n${leftPad}`;
+      const pairLength = getLength(left) + delimiters.divider.length + 1 + getLength(right);
       const fitsOnOneLine = isLast
-        ? getLength(left) + divider.length + 1 + getLength(right) <= columnWidth - trailerWidth
-        : getLength(left) + divider.length + 1 + getLength(right) + separator.length <= columnWidth;
-      if (fitsOnOneLine) return `${getText(left)}${divider} ${getText(right)}${ending}`;
+        ? pairLength <= columnWidth - trailerWidth
+        : pairLength + delimiters.separator.length <= columnWidth;
+      if (fitsOnOneLine) return `${getText(left)}${delimiters.divider} ${getText(right)}${ending}`;
       const formattedLeft =
-        getLength(left) + divider.length <= columnWidth
+        getLength(left) + delimiters.divider.length <= columnWidth
           ? getText(left)
-          : format(left, columnWidth, trailerWidth + divider.length, leftPad);
+          : format(left, columnWidth, trailerWidth + delimiters.divider.length, leftPad);
       const formattedRight = format(
         right,
-        columnWidth - dividerPad.length,
-        valueTrailer,
-        leftPad + dividerPad,
+        columnWidth - delimiters.dividerPad.length,
+        isLast ? trailerWidth : delimiters.separator.length,
+        leftPad + delimiters.dividerPad,
       );
       return formattedLeft === undefined || formattedRight === undefined
         ? undefined
-        : `${formattedLeft}${divider}\n${leftPad}${dividerPad}${formattedRight}${ending}`;
+        : `${formattedLeft}${delimiters.divider}\n${leftPad}${delimiters.dividerPad}${formattedRight}${ending}`;
     });
     return parts.includes(undefined) ? undefined : parts.join("");
   };
