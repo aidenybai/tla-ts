@@ -76,14 +76,19 @@ const bindNames = (scope: LocalName | undefined, names: string[], arity = 0) =>
 const getPatternNames = (pattern: BoundPattern) =>
   pattern.kind === "Name" ? [pattern.name] : pattern.names;
 
-const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
+const getVisibleDefinition = (name: string, unit: Unit) => {
   const definition = unit.definitions.get(name);
   const isVisible =
     definition !== undefined &&
     (definition === unit.self
       ? definition.kind === "Function" || definition.isRecursive
       : definition.isRecursive || isBefore(definition.location, unit.location));
-  return definition && isVisible
+  return isVisible ? definition : undefined;
+};
+
+const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
+  const definition = getVisibleDefinition(name, unit);
+  return definition
     ? { key: unit.getKey(definition), arity: getArity(definition) }
     : unit.imported.get(name);
 };
@@ -178,25 +183,68 @@ const resolveDefinitions = (
   }, recursiveScope);
 };
 
+// OpDefNode#match: a parameter of arity 0 takes an expression, and a parameter of arity n takes an
+// operator of arity n whose own parameters take expressions.
+const checkArgument = (
+  definition: Definition,
+  index: number,
+  arg: Expression,
+  argArity: number,
+  argDefinition: Definition | undefined,
+) => {
+  const param = definition.kind === "Operator" ? definition.params[index] : undefined;
+  const location = arg.location;
+  if (param?.arity === 0 && argArity > 0) {
+    throw new TlaSyntaxError(
+      `Operator used in argument number ${index + 1} has incorrect number of arguments at line ${location.line}, column ${location.column}`,
+    );
+  }
+  const isHigherOrder =
+    argDefinition?.kind === "Operator" && argDefinition.params.some((inner) => inner.arity > 0);
+  if (param !== undefined && param.arity > 0 && (argArity !== param.arity || isHigherOrder)) {
+    throw new TlaSyntaxError(
+      `Argument number ${index + 1} to operator '${definition.name}' should be a ${param.arity}-parameter operator at line ${location.line}, column ${location.column}`,
+    );
+  }
+};
+
+const getArgumentName = (arg: Expression) =>
+  arg.kind === "Identifier"
+    ? arg.name
+    : arg.kind === "OperatorReference"
+      ? arg.operator
+      : undefined;
+
 const resolveApply = (
   expression: Expression & { kind: "Apply" },
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
+  const callee = lookupLocal(scope, expression.operator)
+    ? undefined
+    : getVisibleDefinition(expression.operator, unit);
   const arity = getSymbolArity(expression, expression.operator, scope, unit);
   if (arity !== expression.args.length) {
     throw new TlaSyntaxError(
       `The operator ${expression.operator} requires ${arity} arguments at line ${expression.location.line}, column ${expression.location.column}`,
     );
   }
-  expression.args.forEach((arg) => resolveArgument(arg, scope, unit));
+  expression.args.forEach((arg, index) => {
+    const name = getArgumentName(arg);
+    const argDefinition =
+      name === undefined || lookupLocal(scope, name) ? undefined : getVisibleDefinition(name, unit);
+    const argArity = resolveArgument(arg, scope, unit);
+    if (callee) checkArgument(callee, index, arg, argArity, argDefinition);
+  });
 };
 
 // An argument may name an operator that takes arguments of its own.
-const resolveArgument = (arg: Expression, scope: LocalName | undefined, unit: Unit) =>
-  arg.kind === "Identifier"
-    ? getSymbolArity(arg, arg.name, scope, unit)
-    : resolveExpression(arg, scope, unit);
+const resolveArgument = (arg: Expression, scope: LocalName | undefined, unit: Unit) => {
+  if (arg.kind === "Identifier") return getSymbolArity(arg, arg.name, scope, unit);
+  if (arg.kind === "OperatorReference") return getSymbolArity(arg, arg.operator, scope, unit);
+  resolveExpression(arg, scope, unit);
+  return arg.kind === "Lambda" ? arg.params.length : 0;
+};
 
 const resolveExpression = (
   expression: Expression,
