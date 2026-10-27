@@ -64,7 +64,14 @@ const isSubsetOf = (left: Value[], right: Value) =>
 
 const BOOLEAN_SET = createSet([false, true]);
 const EMPTY_SET = createSortedSet([]);
-const MERGED_UNION_LIMIT = 8;
+
+// Merging the sets pairwise in a balanced tree compares each element about log2 of their count
+// times.
+const unionInTree = (sets: SetValue[], start: number, end: number): SetValue => {
+  if (end - start === 1) return sets[start];
+  const middle = (start + end) >> 1;
+  return unionSorted(unionInTree(sets, start, middle), unionInTree(sets, middle, end));
+};
 
 const SET_OPERATORS: SetOperationValue["operator"][] = ["\\cup", "\\cap", "\\"];
 
@@ -169,10 +176,7 @@ export const CORE_OPERATORS: Builtin[] = [
       );
       return createEnumeratedSet(union.elements);
     }
-    if (sets.length > MERGED_UNION_LIMIT) {
-      return createSet(sets.flatMap((set) => toFiniteSet(set).elements));
-    }
-    return sets.reduce<SetValue>((union, set) => unionSorted(union, toFiniteSet(set)), EMPTY_SET);
+    return sets.length === 0 ? EMPTY_SET : unionInTree(sets.map(toFiniteSet), 0, sets.length);
   }),
   defineOperator("DOMAIN", 1, (args) => {
     const value = getValue(args, 0, "DOMAIN");
