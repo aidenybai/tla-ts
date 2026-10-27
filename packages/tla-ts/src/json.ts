@@ -134,7 +134,7 @@ const fromJson = (json: unknown, method: string): Value => {
   );
 };
 
-const parseJson = (text: string, method: string): Value => {
+const parseJson = (text: string, method: string) => {
   if (text.trim() === "") return fromJson(null, method);
   try {
     return fromJson(

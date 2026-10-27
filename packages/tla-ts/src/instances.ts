@@ -40,7 +40,7 @@ export const renameLocals = (
   return mapped;
 };
 
-const mapBounds = (bounds: Bound[], map: (child: Expression) => Expression): Bound[] =>
+const mapBounds = (bounds: Bound[], map: (child: Expression) => Expression) =>
   bounds.map((bound) => ({ pattern: bound.pattern, set: map(bound.set) }));
 
 const sourceNames = new WeakMap<Definition, string>();
@@ -270,7 +270,7 @@ const renamePattern = (pattern: BoundPattern, rename: (name: string) => string):
     ? { kind: "Name", name: rename(pattern.name) }
     : { kind: "Tuple", names: pattern.names.map(rename) };
 
-const renameBounds = (bounds: Bound[], rename: (name: string) => string): Bound[] =>
+const renameBounds = (bounds: Bound[], rename: (name: string) => string) =>
   bounds.map((bound) => ({ pattern: renamePattern(bound.pattern, rename), set: bound.set }));
 
 const renameParams = (definition: Definition, rename: (name: string) => string): Definition =>

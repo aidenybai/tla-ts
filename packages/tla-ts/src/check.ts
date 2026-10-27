@@ -237,7 +237,7 @@ const getInvariants = (names: string[], environment: Environment) => {
     variables: new Set(environment.variables),
     getDefinition: (name) => getDefinition(name, environment),
   });
-  return names.flatMap((name): NamedExpression[] => {
+  return names.flatMap((name) => {
     const definition = getConfigPredicate("invariant", name, environment);
     if (!definition) return [];
     const levels = analyzer.analyzeDefinition(definition, new Map());
@@ -466,7 +466,7 @@ const getBodyRange = (name: string, environment: Environment) => {
   return definition?.kind === "Operator" ? definition.bodyRange : undefined;
 };
 
-const getPossiblePredicates = (names: string[], environment: Environment): NamedExpression[] =>
+const getPossiblePredicates = (names: string[], environment: Environment) =>
   names.map((name, index) => {
     if (names.indexOf(name) !== index) {
       throw new TlaConfigError(`_POSSIBLE lists ${name} more than once`);
@@ -551,7 +551,7 @@ const getContext = (
   state: Value[] | undefined,
   next: Value[] | undefined,
   scope?: Scope,
-): Context => ({ environment, scope, state, next });
+) => ({ environment, scope, state, next });
 
 const holds = (expression: Expression, context: Context, description: string) =>
   expectBoolean(evaluate(expression, context), description);
@@ -707,7 +707,7 @@ export const createSearch = (
   };
   const isFingerprintedLikeTlc = hasWideString(config, environment);
   runtime.getFingerprint = getTlcStateFingerprint;
-  const findUnwitnessedPossible = (): Postcondition | undefined => {
+  const findUnwitnessedPossible = () => {
     const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
     if (!unwitnessed) return undefined;
     const range = getBodyRange(unwitnessed.name, environment);
@@ -1031,7 +1031,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     }
     return steps;
   };
-  const getTrace = (index: number, last?: Successor): TraceStep[] => {
+  const getTrace = (index: number, last?: Successor) => {
     const path: number[] = [];
     for (let current = index; current !== -1; current = parents[current]) path.unshift(current);
     const steps =
@@ -1057,7 +1057,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     trace: TraceStep[],
     initialState?: Value[],
     failureOutDegrees?: number[],
-  ): CheckResult => {
+  ) => {
     if (!(error instanceof TlaEvaluationError)) throw error;
     return {
       ...createResult("error", undefined, {
@@ -1156,7 +1156,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     return current.isExpanding ? depths[current.index] + 1 : 0;
   };
 
-  const visitInitialState = (state: Value[]): CheckResult | undefined => {
+  const visitInitialState = (state: Value[]) => {
     canonicalizeState(state);
     runtime.generatedStates++;
     runtime.initialStates++;
@@ -1192,11 +1192,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     addState(state, fingerprintState, -1, undefined);
     return undefined;
   };
-  const visitSuccessor = (
-    index: number,
-    successor: Successor,
-    liveSuccessors: LiveSuccessor[],
-  ): CheckResult | undefined => {
+  const visitSuccessor = (index: number, successor: Successor, liveSuccessors: LiveSuccessor[]) => {
     const state = states[index];
     runtime.generatedStates++;
     current.candidate = successor.state;
@@ -1281,7 +1277,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     }
     return createSuccess();
   }
-  const expandState = (index: number): CheckResult | undefined => {
+  const expandState = (index: number) => {
     const state = states[index];
     const liveSuccessors: LiveSuccessor[] = [];
     const successorCount = forEachSuccessor(

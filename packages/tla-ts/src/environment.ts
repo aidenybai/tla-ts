@@ -45,7 +45,7 @@ import { createRuntime } from "./runtime";
 import { CORE_OPERATORS, getStandardModule, STANDARD_DEPENDENCIES } from "./standard-modules";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { checkModuleLevels } from "./levels";
-import { checkInstances, type InstanceCheck, type ModuleContext } from "./substitution-levels";
+import { checkInstances, type InstanceCheck } from "./substitution-levels";
 import {
   checkInteger,
   createModelValue,
@@ -765,7 +765,7 @@ export const createEnvironment = (
   const declaredConstants = linkedRoot.constants.map((constant) => constant.name);
   const variables = linkedRoot.variables;
 
-  const getScopedKeys = (item: { name: string; module?: string }): string[] => {
+  const getScopedKeys = (item: { name: string; module?: string }) => {
     if (item.module === undefined) return [item.name, getRootKey(item.name)];
     if (item.module === root.name || declaredConstants.includes(item.name)) return [];
     const linked = linkedModules.get(item.module) ?? nestedModules.get(item.module);
@@ -897,7 +897,7 @@ export const createEnvironment = (
     constantLevels: new Map(),
     evaluators: new WeakMap(),
   };
-  checkInstances(instanceChecks, (name): ModuleContext => {
+  checkInstances(instanceChecks, (name) => {
     const linked = linkedModules.get(name) ?? nestedModules.get(name) ?? linkedRoot;
     const getKey = (symbol: string) => linked.visible.get(symbol)?.key ?? symbol;
     return {

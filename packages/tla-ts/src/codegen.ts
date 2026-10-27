@@ -119,7 +119,7 @@ const addReference = (generator: Generator, value: unknown) => {
 
 const createLocal = (generator: Generator) => `local${generator.counter++}`;
 
-const getFreeNames = (expression: Expression, names = new Set<string>()): Set<string> => {
+const getFreeNames = (expression: Expression, names = new Set<string>()) => {
   if (expression.kind === "Identifier") names.add(expression.name);
   if (expression.kind === "Apply") names.add(expression.operator);
   getChildren(expression).forEach((child) => getFreeNames(child, names));
@@ -147,7 +147,7 @@ const generateQuantifier = (
   const description = JSON.stringify(isForall ? "the body of \\A" : "the body of \\E");
   const name = `quantifier${generator.counter++}`;
   const outer = [...frame.locals.values()];
-  const inner: Frame = {
+  const inner = {
     context: "context",
     state: "state",
     next: "next",
@@ -287,7 +287,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "Prime": {
       const node = addReference(generator, expression);
       if (frame.isPrimed) return `primeOutsideAction(${node})`;
-      const primed: Frame = {
+      const primed = {
         context: `(primed ??= prime(${frame.context}))`,
         state: frame.next,
         next: "undefined",

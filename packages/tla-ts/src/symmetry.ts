@@ -32,7 +32,7 @@ const getPermutationKey = (permutation: Images) =>
     .sort()
     .join(",");
 
-const composePermutations = (first: Images, second: Images): Images => {
+const composePermutations = (first: Images, second: Images) => {
   const composed: Images = new Map();
   const names = new Set([...first.keys(), ...second.keys()]);
   names.forEach((name) => {
@@ -43,7 +43,7 @@ const composePermutations = (first: Images, second: Images): Images => {
   return composed;
 };
 
-const toImages = (value: Value, name: string): Images => {
+const toImages = (value: Value, name: string) => {
   if (!isFunctionValue(value)) {
     throw new TlaConfigError(`The symmetry values of ${name} must be functions`);
   }
@@ -104,7 +104,7 @@ export const getSymmetryGroup = (name: string, environment: Environment): Permut
   }));
 };
 
-const permuteElements = (elements: Value[], permutation: Permutation): Value[] | undefined => {
+const permuteElements = (elements: Value[], permutation: Permutation) => {
   for (let index = 0; index < elements.length; index++) {
     const element = elements[index];
     const permuted = permuteValue(element, permutation);
@@ -121,10 +121,7 @@ const permuteElements = (elements: Value[], permutation: Permutation): Value[] |
 
 // A permutation maps distinct elements to distinct elements and keeps the elements it doesn't move
 // in order, so it sorts only the moved ones and merges them back.
-const permuteSortedElements = (
-  elements: Value[],
-  permutation: Permutation,
-): Value[] | undefined => {
+const permuteSortedElements = (elements: Value[], permutation: Permutation) => {
   const kept: Value[] = [];
   const moved: Value[] = [];
   for (const element of elements) {
@@ -176,7 +173,7 @@ const permuteValue = (value: Value, permutation: Permutation): Value => {
   return permuted;
 };
 
-const computePermutedValue = (value: ObjectValue, permutation: Permutation): Value => {
+const computePermutedValue = (value: ObjectValue, permutation: Permutation) => {
   const kind = value.kind;
   if (kind === "Set") {
     const elements = permuteSortedElements(value.elements, permutation);

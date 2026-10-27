@@ -192,7 +192,7 @@ const isRecordDomain = (domain: Value[]) => domain.every((key) => typeof key ===
 const isRecordMismatch = (left: Value[], right: Value[]) =>
   left.length > 0 && right.length > 0 && isRecordDomain(left) !== isRecordDomain(right);
 
-const compareFunctions = (left: FunctionValue, right: FunctionValue): number => {
+const compareFunctions = (left: FunctionValue, right: FunctionValue) => {
   if (writtenOrderUse.isUsed) {
     left.writtenKeys = undefined;
     right.writtenKeys = undefined;
@@ -220,7 +220,7 @@ const compareFunctions = (left: FunctionValue, right: FunctionValue): number => 
   return 0;
 };
 
-const compareSets = (left: SetValue, right: SetValue): number => {
+const compareSets = (left: SetValue, right: SetValue) => {
   const leftElements = left.elements;
   const rightElements = right.elements;
   if (leftElements.length !== rightElements.length)
@@ -306,7 +306,7 @@ const compareOverriddenSets = (
   left: Value,
   right: Value,
   verb: "compare" | "check equality of",
-): number => {
+) => {
   if (!isOverriddenSet(left)) {
     throw new TlaEvaluationError(
       `Attempted to ${verb} the set ${formatValue(isEnumerable(left) ? toFiniteSet(left) : left, true)} with the value:\n${formatValue(right, true)}`,
@@ -519,7 +519,7 @@ const getIntervalLow = (domain: Value[]) => {
     : undefined;
 };
 
-const toTlcFunction = (value: Value): TlcFunction | undefined => {
+const toTlcFunction = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
   const functionValue = toFiniteFunction(value);
   return {
@@ -603,7 +603,7 @@ const failScalar = (left: number | string | boolean, right: Value, isEquality: b
   );
 };
 
-const compareTlcFunctions = (functionValue: TlcFunction, left: Value, right: Value): number => {
+const compareTlcFunctions = (functionValue: TlcFunction, left: Value, right: Value) => {
   const other = toTlcFunction(right);
   if (!other) {
     if (isModelValue(right)) return compareModelValueWith(right, left);
@@ -645,7 +645,7 @@ const compareElementsLikeTlc = (left: Value[], right: Value[]) => {
   return 0;
 };
 
-const compareFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: Value): number => {
+const compareFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: Value) => {
   const functionValue = toFiniteFunction(left);
   const isTuple = left.kind === "Function" && getSequenceElements(functionValue) !== undefined;
   if (isTuple) {
@@ -728,7 +728,7 @@ const compareLikeTlc = (left: Value, right: Value): number => {
 const equalsElementsLikeTlc = (left: Value[], right: Value[]) =>
   left.every((element, index) => equalsLikeTlc(element, right[index]));
 
-const equalsTlcFunctions = (functionValue: TlcFunction, left: Value, right: Value): boolean => {
+const equalsTlcFunctions = (functionValue: TlcFunction, left: Value, right: Value) => {
   const other = toTlcFunction(right);
   if (!other) {
     if (isModelValue(right)) return equalsModelValueWith(right, left);
@@ -763,7 +763,7 @@ const equalsTlcFunctions = (functionValue: TlcFunction, left: Value, right: Valu
   );
 };
 
-const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: Value): boolean => {
+const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: Value) => {
   const functionValue = toFiniteFunction(left);
   const isTuple = left.kind === "Function" && getSequenceElements(functionValue) !== undefined;
   if (isTuple) {
@@ -1144,7 +1144,7 @@ const getEmptiness = (value: Value): boolean | undefined => {
   }
 };
 
-const getCartesianProduct = (lists: Value[][]): Value[][] => {
+const getCartesianProduct = (lists: Value[][]) => {
   const total = lists.reduce((product, list) => product * list.length, 1);
   const combinations: Value[][] = [];
   const positions = lists.map(() => 0);
@@ -1172,7 +1172,7 @@ const advanceCombination = (indices: number[], length: number) => {
   return false;
 };
 
-const getSortedSubsets = (base: Value[]): Value[] => {
+const getSortedSubsets = (base: Value[]) => {
   const subsets: Value[] = [];
   for (let size = 0; size <= base.length; size++) {
     const indices = Array.from({ length: size }, (_, index) => index);
@@ -1816,7 +1816,7 @@ const getElementContribution = (element: Value) =>
 const getEntryContribution = (key: Value, value: Value) =>
   finalizeHash((Math.imul(getValueHash(key), 0x27d4eb2d) + getValueHash(value)) | 0);
 
-const computeValueHash = (value: ObjectValue): number => {
+const computeValueHash = (value: ObjectValue) => {
   if (value.kind === "ModelValue") return finalizeHash(combineHash(hashString(value.name), 0x6d));
   if (isSetValue(value)) {
     if (!isEnumerable(value)) return hashString(getValueKey(value));
@@ -1874,7 +1874,7 @@ const getEntryFingerprint = (key: Value, value: Value) =>
     (Math.imul(getValueFingerprint(key), 0x165667b1) + getValueFingerprint(value)) | 0,
   );
 
-const computeValueFingerprint = (value: ObjectValue): number => {
+const computeValueFingerprint = (value: ObjectValue) => {
   if (value.kind === "ModelValue") return finalizeFingerprint(fingerprintString(value.name) ^ 0x3c);
   if (isSetValue(value)) {
     if (!isEnumerable(value)) return fingerprintString(getValueKey(value));
@@ -1923,7 +1923,7 @@ export const getValueKey = (value: Value): string => {
   return key;
 };
 
-const computeValueKey = (value: ObjectValue): string => {
+const computeValueKey = (value: ObjectValue) => {
   if (value.kind === "ModelValue") return `@${value.name}`;
   if (value.kind === "InfiniteSet") return `<${value.name}>`;
   if (value.kind === "SequenceSet") return `<Seq ${getValueKey(value.base)}>`;

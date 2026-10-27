@@ -100,7 +100,7 @@ const resolveClosure = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
-): Closure | undefined => {
+) => {
   const name = getOperatorName(expression);
   if (name === undefined) return undefined;
   if (isLocallyResolved(expression)) {

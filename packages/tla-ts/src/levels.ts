@@ -159,7 +159,7 @@ const ACTION_LEVELS = createSignature("$SquareAct", 2, [2, 1], [0, 0]);
 const FAIRNESS_LEVELS = createSignature("$WF", 3, [1, 2], [0, 0]);
 const TEMPORAL_QUANTIFIER_LEVELS = createSignature("$TemporalExists", 3, [3], [0]);
 
-const bindFormals = (scope: Scope, formals: OperatorParam[]): Scope =>
+const bindFormals = (scope: Scope, formals: OperatorParam[]) =>
   formals.length === 0
     ? scope
     : new Map([
@@ -208,7 +208,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return { kind: "Declared", name, level: 0, arity: 0 };
   };
 
-  const applyDeclared = (name: string, level: number, operands: Operand[]): LevelData => {
+  const applyDeclared = (name: string, level: number, operands: Operand[]) => {
     const data = createData(Math.max(level, ...operands.map((operand) => operand.data.level)));
     data.params.add(name);
     operands.forEach((operand, index) => {
@@ -231,7 +231,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     operands: Operand[],
     ranges: LevelData[] = [],
     bound: string[] = [],
-  ): LevelData => {
+  ) => {
     const isBound = (name: string) => bound.includes(name);
     operands.forEach((operand, index) => {
       if (operand.operator || operand.declared) return;
@@ -477,13 +477,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     );
   };
 
-  const analyzeLet = (expression: Expression & { kind: "Let" }, scope: Scope): LevelData => {
-    const inner: Scope = new Map(scope);
+  const analyzeLet = (expression: Expression & { kind: "Let" }, scope: Scope) => {
+    const inner = new Map(scope);
     expression.definitions.forEach((definition) =>
       inner.set(definition.name, { kind: "Let", definition, scope: inner }),
     );
     const body = analyze(expression.body, inner);
-    const data: LevelData = {
+    const data = {
       level: body.level,
       params: new Set(body.params),
       constraints: new Map(body.constraints),
@@ -735,7 +735,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     formals: OperatorParam[],
     body: Expression,
     scope: Scope,
-  ): OperatorLevels => {
+  ) => {
     const inner = bindFormals(scope, formals);
     const data = analyze(body, inner);
     const isFormal = (param: string) => formals.some((formal) => formal.name === param);
@@ -820,8 +820,8 @@ const analyzeAssumeProve = (
   assumeProve: AssumeProve,
   scope: Scope,
   analyzer: ReturnType<typeof createLevelAnalyzer>,
-): void => {
-  const inner: Scope = new Map(scope);
+) => {
+  const inner = new Map(scope);
   assumeProve.assumptions.forEach((assumption) => {
     if (assumption.kind === "NewSymbol") {
       if (assumption.set) analyzer.analyze(assumption.set, inner);

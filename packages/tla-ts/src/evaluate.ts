@@ -226,7 +226,7 @@ export const bindValue = (scope: Scope | undefined, name: string, value: Value):
   parent: scope,
 });
 
-const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Value): Scope => {
+const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Value) => {
   if (pattern.kind === "Name") return bindValue(scope, pattern.name, value);
   const elements = getSequenceElements(value);
   if (!elements || elements.length !== pattern.names.length) {
@@ -237,7 +237,7 @@ const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Val
   return pattern.names.reduce<Scope | undefined>(
     (current, name, index) => bindValue(current, name, elements[index]),
     scope,
-  ) as Scope;
+  );
 };
 
 const withScope = (context: Context, scope: Scope | undefined): Context => ({
@@ -483,11 +483,7 @@ const getLazyFunctionTemplate = (bounds: Bound[], body: Expression) => {
   return template;
 };
 
-const getLazyFunctionSource = (
-  bounds: Bound[],
-  body: Expression,
-  domain: Value,
-): LazyFunctionSource | undefined => {
+const getLazyFunctionSource = (bounds: Bound[], body: Expression, domain: Value) => {
   const template = getLazyFunctionTemplate(bounds, body);
   if (!template) return undefined;
   const domains =
@@ -507,7 +503,7 @@ const createLazyFunction = (
   domain: Value,
   compute: (argument: Value, self: LazyFunctionValue) => Value,
   source: LazyFunctionSource | undefined,
-): LazyFunctionValue => {
+) => {
   const memo = new Map<number, Value[]>();
   const self: LazyFunctionValue = {
     kind: "LazyFunction",
@@ -553,7 +549,7 @@ const evaluateDefinitionBody = (definition: Definition, context: Context) =>
     ? createRecursiveFunction(definition, context)
     : evaluate(definition.body, context);
 
-const evaluateDefinitionValue = (definition: Definition, context: Context): Value => {
+const evaluateDefinitionValue = (definition: Definition, context: Context) => {
   const isConstant = isConstantLevel(definition, context.environment);
   const cached = isConstant ? context.environment.definitionValues.get(definition) : undefined;
   if (cached !== undefined) return cached;
@@ -771,7 +767,7 @@ export const bindOperatorArguments = (
   return scope;
 };
 
-const callOperator = (operator: Operator, args: Expression[], context: Context): Value => {
+const callOperator = (operator: Operator, args: Expression[], context: Context) => {
   if (operator.kind === "Closure") {
     return evaluate(
       operator.body,
@@ -975,7 +971,7 @@ const isClosedIn = (
   expression: Expression,
   environment: Environment,
   bound: ReadonlySet<string>,
-): boolean =>
+) =>
   bound.size === 0
     ? isClosedConstant(expression, environment)
     : computeIsClosedConstant(expression, environment, bound);
@@ -1092,7 +1088,7 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
 
 const entryEvaluators = new WeakMap<Expression, Evaluator>();
 
-const getEntryEvaluator = (expression: Expression, environment: Environment): Evaluator => {
+const getEntryEvaluator = (expression: Expression, environment: Environment) => {
   const cached = entryEvaluators.get(expression);
   if (cached) return cached;
   const evaluator =
@@ -1454,7 +1450,7 @@ const compileQuantifier = (
   };
 };
 
-const lookupKey = (pattern: BoundPattern, scope: Scope | undefined): Value | undefined => {
+const lookupKey = (pattern: BoundPattern, scope: Scope | undefined) => {
   if (pattern.kind === "Tuple") {
     return createTuple(
       pattern.names.map((name) => {
@@ -1540,7 +1536,7 @@ const compileExcept = (
     value: getEvaluator(update.value, environment),
   }));
   type CompiledStep = (typeof updates)[number]["path"][number];
-  const getKey = (step: CompiledStep, context: Context): Value => {
+  const getKey = (step: CompiledStep, context: Context) => {
     if (step.kind === "Field") return step.name;
     if (step.args.length === 1) return step.args[0](context);
     return createTuple(step.args.map((arg) => arg(context)));
@@ -1645,7 +1641,7 @@ const compileRecord = (recordFields: RecordField[], environment: Environment): E
         fields.map((field, index): [Value, Value] => [field.name, values[index](context)]),
       );
   }
-  const names: Value[] = fields.map((field) => field.name);
+  const names = fields.map((field) => field.name);
   const writtenNames = recordFields.map((field) => field.name);
   if (writtenNames.some((name, index) => name !== names[index])) {
     return (context) =>

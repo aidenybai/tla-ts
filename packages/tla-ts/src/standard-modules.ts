@@ -190,7 +190,7 @@ const DOT_DOT_SIGNATURE = getIntegersSignature("DotDot", "IntervalValue", 2);
 
 const NEG_SIGNATURE = getIntegersSignature("Neg", "IntValue", 1);
 
-const NATURALS_OPERATORS: Builtin[] = [
+const NATURALS_OPERATORS = [
   defineConstant("Nat", { kind: "InfiniteSet", name: "Nat" }),
   defineArithmetic("+", "Plus", (left, right) => left + right),
   defineArithmetic("-", "Minus", (left, right) => left - right),
@@ -229,7 +229,7 @@ const NATURALS_OPERATORS: Builtin[] = [
   })),
 ];
 
-const INTEGERS_OPERATORS: Builtin[] = [
+const INTEGERS_OPERATORS = [
   defineConstant("Int", { kind: "InfiniteSet", name: "Int" }),
   defineOperator("-.", 1, (args) => {
     const value = getJavaInteger(getValue(args, 0, "-"), NEG_SIGNATURE);

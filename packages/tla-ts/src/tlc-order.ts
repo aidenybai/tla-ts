@@ -91,7 +91,7 @@ const createSymbolTable = (): SymbolTable => {
   };
 };
 
-const createEntry = (name: string, kind: SymbolKind, isLocal: boolean): SymbolEntry => ({
+const createEntry = (name: string, kind: SymbolKind, isLocal: boolean) => ({
   key: kind === "module" ? `module ${name}` : name,
   name,
   kind,
@@ -124,7 +124,7 @@ const getDeclarations = (tokens: Token[], start: number) => {
   }
 };
 
-const getLocation = (token: Token): SourceLocation => ({ line: token.line, column: token.column });
+const getLocation = (token: Token) => ({ line: token.line, column: token.column });
 
 interface ModuleReferences {
   key: string;
@@ -146,7 +146,7 @@ const getModuleReferences = (
   tokens: Token[],
   unit: string | undefined,
   innerModules: Map<string, ModuleReferences>,
-): ModuleReferences => {
+) => {
   const allExtends = new Set<string>();
   const read = (start: number, key: string): { references: ModuleReferences; end: number } => {
     const references: ModuleReferences = {
@@ -232,7 +232,7 @@ const findModule = (modules: Module[], name: string): Module | undefined =>
 const createModuleSet = (source: string, loadModule: ModuleLoader) => {
   const files = new Map<string, ParsedModule>();
   const nestedModules = new Map<string, ParsedModule>();
-  const getFile = (name: string | undefined): ParsedModule => {
+  const getFile = (name: string | undefined) => {
     const cached = files.get(name ?? "");
     if (cached) return cached;
     const text =
@@ -268,7 +268,7 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
 // enumeration, as ModuleNode.getVariableDecls returns them.
 export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader): string[] => {
   const getParsed = createModuleSet(source, loadModule);
-  const getUnits = (unit: ParsedModule): ModuleUnit[] => {
+  const getUnits = (unit: ParsedModule) => {
     const tokens = unit.tokens;
     const module = unit.getModule();
     const units: ModuleUnit[] = [];
@@ -438,7 +438,7 @@ export const getTlcStringOrder = (
     module: ModuleReferences,
     visited: Set<string>,
     search: ModuleSearch,
-  ): [ModuleReferences, string] | undefined => {
+  ) => {
     const nested = [
       ...module.extends.map(getReferenced),
       ...module.instances.filter((name) => isResolved(module, name)).map(getReferenced),

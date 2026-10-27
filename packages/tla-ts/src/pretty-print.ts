@@ -76,7 +76,7 @@ const parsePrinted = (text: string) => {
     close: string,
     parseItem: (index: number) => PrintedNode | undefined,
     separator: string,
-  ): PrintedNode | undefined => {
+  ) => {
     const node: PrintedNode = { kind, first, last: first, children: [] };
     const position = { index: skipWhitespace(start) };
     while (position.index !== undefined && text[position.index] !== close) {

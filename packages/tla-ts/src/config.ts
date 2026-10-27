@@ -74,7 +74,7 @@ const KEYWORDS = new Set([
 
 const SYMBOLS = ["<-", "<<", ">>", "=", "{", "}", ",", "[", "]", "(", ")"];
 
-const tokenizeConfig = (source: string): ConfigToken[] => {
+const tokenizeConfig = (source: string) => {
   const tokens: ConfigToken[] = [];
   const cursor = { index: 0, line: 1 };
   while (cursor.index < source.length) {
