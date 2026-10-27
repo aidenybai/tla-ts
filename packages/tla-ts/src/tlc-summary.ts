@@ -9,15 +9,14 @@ export const getOptimisticProbability = (distinctStates: number, generatedStates
 // TLC computes the estimate from the actual fingerprints only when the optimistic one is this high.
 const ACTUAL_PROBABILITY_THRESHOLD = 1e-10;
 
+const withDecimalPoint = (text: string) => (text.includes(".") ? text : `${text}.0`);
+
 // Java's Double.toString, which prints a number below 1E-3 or from 1E7 up in scientific notation.
 const toJavaString = (value: number) => {
   const magnitude = Math.abs(value);
-  if (magnitude >= 1e-3 && magnitude < 1e7) {
-    const text = String(value);
-    return text.includes(".") ? text : `${text}.0`;
-  }
+  if (magnitude >= 1e-3 && magnitude < 1e7) return withDecimalPoint(String(value));
   const [mantissa, exponent] = value.toExponential().split("e");
-  return `${mantissa.includes(".") ? mantissa : `${mantissa}.0`}E${exponent.replace("+", "")}`;
+  return `${withDecimalPoint(mantissa)}E${exponent.replace("+", "")}`;
 };
 
 const isDigit = (character: string | undefined) =>

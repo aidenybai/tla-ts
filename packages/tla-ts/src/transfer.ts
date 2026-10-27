@@ -89,8 +89,9 @@ export const createStateEncoder = (): StateEncoder => {
   };
 };
 
-export const createStateDecoder = (width: number) => {
-  return (encoded: EncodedStates): Value[][] => {
+export const createStateDecoder =
+  (width: number) =>
+  (encoded: EncodedStates): Value[][] => {
     const words = encoded.words;
     const cursor = { index: 0 };
     const decodeElements = (length: number) => Array.from({ length }, () => decodeValue());
@@ -110,4 +111,3 @@ export const createStateDecoder = (width: number) => {
       Array.from({ length: width }, () => decodeValue()),
     );
   };
-};

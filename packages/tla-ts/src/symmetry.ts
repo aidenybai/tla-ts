@@ -19,6 +19,9 @@ import {
 
 type Images = Map<string, ModelValue>;
 
+const CACHE_LIMIT = 1 << 22;
+const CACHED_SIZE_LIMIT = 64;
+
 interface Permutation {
   images: Images;
   cache: WeakMap<ObjectValue, Value>;
@@ -145,9 +148,6 @@ const permuteSortedElements = (elements: Value[], permutation: Permutation) => {
   while (movedIndex < moved.length) merged.push(moved[movedIndex++]);
   return merged;
 };
-
-const CACHE_LIMIT = 1 << 22;
-const CACHED_SIZE_LIMIT = 64;
 
 const getSize = (value: ObjectValue) =>
   value.kind === "Set"

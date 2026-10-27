@@ -201,13 +201,9 @@ const ACTION_KINDS = new Set([
 const isGuard = (expression: Expression, environment: Environment, isInit: boolean) => {
   if (ACTION_KINDS.has(expression.kind)) return false;
   if (expression.kind === "Identifier") {
-    if (
-      environment.variableIndex.has(expression.name) ||
-      environment.constants.has(expression.name)
-    ) {
-      return true;
-    }
-    return false;
+    return (
+      environment.variableIndex.has(expression.name) || environment.constants.has(expression.name)
+    );
   }
   if (expression.kind !== "Apply") return true;
   if (expression.operator === "=>") return false;
@@ -755,8 +751,10 @@ const compileAction = (
           return false;
         });
         const scopes = [...boundScopes.slice(0, 1), ...boundScopes.slice(1).reverse()];
-        const isGuard = readLocals?.every((name) => lookupScope(scope, name)?.kind === "Value");
-        if (isGuard) {
+        const isBoundToValues = readLocals?.every(
+          (name) => lookupScope(scope, name)?.kind === "Value",
+        );
+        if (isBoundToValues) {
           const isSatisfied = scopes.every((boundScope) =>
             holds(expression.body, getContext(run, boundScope, partial)),
           );
