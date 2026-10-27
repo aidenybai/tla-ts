@@ -41,6 +41,26 @@ describe("check with workers matches TLC", () => {
     expect(result.failure?.exitCode).toBe(75);
   });
 
+  it("summarizes the outdegrees and the fingerprints of every worker like one worker", async () => {
+    const tlaTs = await loadPackage();
+    const directory = join(import.meta.dirname, "../../benchmarks/queue");
+    const options = {
+      source: readFileSync(join(directory, "Queue.tla"), "utf8"),
+      config: readFileSync(join(directory, "Queue.cfg"), "utf8"),
+    };
+    const [sequential, parallel] = await Promise.all([
+      tlaTs.check(options),
+      tlaTs.check({ ...options, workers: 3 }),
+    ]);
+    expect(parallel.fingerprintDistance).toBe(sequential.fingerprintDistance);
+    expect(parallel.fingerprintDistance).toBeDefined();
+    const getTotals = (outDegrees: number[] | undefined = []) => [
+      outDegrees.reduce((sum, count) => sum + count, 0),
+      outDegrees.reduce((sum, count, degree) => sum + count * degree, 0),
+    ];
+    expect(getTotals(parallel.outDegrees)).toEqual(getTotals(sequential.outDegrees));
+  });
+
   it("explores a queue that only grows to its bound", async () => {
     const result = await checkFixtureInParallel("queue", "Queue", 3);
     expect(result.status).toBe("success");

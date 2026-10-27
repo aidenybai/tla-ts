@@ -7,6 +7,12 @@ import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "
 import { EXIT_STATUS } from "./exit-codes";
 import { check } from "./parallel";
 import { prettyPrint } from "./pretty-print";
+import {
+  formatProbability,
+  getActualProbability,
+  getOptimisticProbability,
+  getOutDegreeSummary,
+} from "./tlc-summary";
 import { formatValue, type Value } from "./values";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
@@ -111,12 +117,22 @@ const printResult = (result: CheckResult) => {
     // TLC checks assumptions before it starts the search, so it has no statistics to print.
     if (isInitial || result.status === "assumption-violation") return;
   } else {
+    const optimistic = getOptimisticProbability(result.distinctStates, result.generatedStates);
     console.log("Model checking completed. No error has been found.");
+    console.log("  Estimates of the probability that TLC did not check all reachable states");
+    console.log("  because two distinct states had the same fingerprint:");
+    console.log(`  calculated (optimistic):  val = ${formatProbability(optimistic)}`);
+    if (result.fingerprintDistance !== undefined) {
+      const actual = getActualProbability(result.fingerprintDistance);
+      console.log(`  based on the actual fingerprints:  val = ${formatProbability(actual)}`);
+    }
   }
   console.log(
     `${result.generatedStates} states generated, ${result.distinctStates} distinct states found, ${result.queuedStates} states left on queue.`,
   );
   console.log(`The depth of the complete state graph search is ${result.depth}.`);
+  const outDegree = result.outDegrees && getOutDegreeSummary(result.outDegrees);
+  if (outDegree) console.log(outDegree);
 };
 
 const run = async (args: string[]) => {
