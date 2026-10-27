@@ -321,7 +321,7 @@ describe("definitions", () => {
   });
 
   it("compiles constants and functions imported from other files", async () => {
-    const path = join(import.meta.dirname, "fixtures/imports/counter.proof.ts");
+    const path = join(import.meta.dirname, "fixtures/imports/counter.model.ts");
     const result = await check(compile(readFileSync(path, "utf8"), path));
     expect([result.status, result.distinctStates]).toEqual(["deadlock", 5]);
   });

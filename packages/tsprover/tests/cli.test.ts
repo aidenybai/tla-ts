@@ -20,18 +20,18 @@ const runCli = (directory: string, args: string[] = []) =>
   );
 
 describe("the CLI", () => {
-  it("checks every proof file under the current directory", () => {
+  it("checks every model file under the current directory", () => {
     const result = runCli("passing");
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe("✓ counter.proof.ts (4 distinct states)\n");
+    expect(result.stdout).toBe("✓ counter.model.ts (4 distinct states)\n");
   });
 
   it("prints a counterexample in TypeScript syntax and exits with 1", () => {
-    const result = runCli("failing", ["overdraft.proof.ts"]);
+    const result = runCli("failing", ["overdraft.model.ts"]);
     expect(result.status).toBe(1);
     expect(result.stdout).toBe(
       [
-        "✗ overdraft.proof.ts: invariant noOverdraft is violated",
+        "✗ overdraft.model.ts: invariant noOverdraft is violated",
         "  1. Initial state",
         "     balances = { alice: 2, bob: 2 }",
         "  2. transfer",
@@ -47,9 +47,9 @@ describe("the CLI", () => {
     const result = runCli("failing");
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
-      "✗ division.proof.ts\n  division.proof.ts:4:11 Write division as Math.floor(a / b) or Math.trunc(a / b)",
+      "✗ division.model.ts\n  division.model.ts:4:11 Write division as Math.floor(a / b) or Math.trunc(a / b)",
     );
-    expect(result.stdout).toContain("✗ overdraft.proof.ts: invariant noOverdraft is violated");
+    expect(result.stdout).toContain("✗ overdraft.model.ts: invariant noOverdraft is violated");
   });
 
   it("prints the generated TLA+ with --emit", () => {

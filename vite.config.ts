@@ -30,7 +30,7 @@ export default defineConfig({
       {
         // A tsprover model declares a variable without a value to start it at every value of its
         // type, and compares sets and records by value.
-        files: ["**/*.proof.ts"],
+        files: ["**/*.model.ts"],
         rules: { "no-unassigned-vars": "off", "no-constant-binary-expression": "off" },
       },
     ],

@@ -69,18 +69,18 @@ const checkFile = async (path: string, options: Options) => {
 const program = new Command()
   .name("tsprover")
   .description("Model check TypeScript models by compiling them to TLA+")
-  .argument("[files...]", "models to check (default: every *.proof.ts file)")
+  .argument("[files...]", "models to check (default: every *.model.ts file)")
   .option("-w, --workers <count>", "number of worker threads", "1")
   .option("--emit", "print the generated TLA+ spec and config instead of checking")
   .action(async (files: string[], options: Options) => {
     const paths =
       files.length > 0
         ? files
-        : globSync("**/*.proof.ts", {
+        : globSync("**/*.model.ts", {
             exclude: (path) => path.split(/[\\/]/).includes("node_modules"),
           }).sort();
     if (paths.length === 0) {
-      console.error("No *.proof.ts files found");
+      console.error("No *.model.ts files found");
       process.exitCode = 1;
       return;
     }
