@@ -13,6 +13,7 @@ import {
   exprifySequent,
   findNamed,
   getAtPrefix,
+  getLocusText,
   getLocusPrefix,
   getScopeHyps,
   mapAccumulate,
@@ -82,6 +83,7 @@ type ModuleUnitCore =
 export interface Mule {
   name: string;
   extendees: string[];
+  extendeeLocations?: Locus[];
   body: ModuleUnit[];
   isImportant: boolean;
   isStandard?: boolean;
@@ -306,13 +308,20 @@ const getExports = (module: Mule): ModuleUnit[] =>
     }
   });
 
-export const flatten = (modules: Map<string, Mule>, module: Mule, seen: Set<string>): Mule => {
+// tlapm recurses without end on a module that extends itself, until the stack overflows.
+export const flatten = (
+  modules: Map<string, Mule>,
+  module: Mule,
+  seen: Set<string>,
+  extending = new Set([module.name]),
+): Mule => {
   const extension: ModuleUnit[] = [];
   for (const name of module.extendees) {
     if (seen.has(name)) continue;
+    if (extending.has(name)) throw new TlapmBugError("Stack overflow");
     const extended = modules.get(name);
     if (!extended) throw new TlaProofError(`Module "${name}" unknown`);
-    extension.push(...getExports(flatten(modules, extended, seen)));
+    extension.push(...getExports(flatten(modules, extended, seen, new Set([...extending, name]))));
     seen.add(name);
   }
   return {
@@ -326,16 +335,22 @@ export const flatten = (modules: Map<string, Mule>, module: Mule, seen: Set<stri
 // Module.Dep.external_deps: the modules a module extends or instantiates, including those of its
 // submodules.
 export const getDependencies = (module: Mule) => {
-  const dependencies = new Set<string>();
+  // Each dependency keeps the location it first appears at.
+  const dependencies = new Map<string, Locus | undefined>();
+  const addDependency = (name: string, location: Locus | undefined) => {
+    if (!dependencies.has(name)) dependencies.set(name, location);
+  };
+  const addExtendees = (extending: Mule) =>
+    extending.extendees.forEach((name, index) =>
+      addDependency(name, extending.extendeeLocations?.[index]),
+    );
   const locals = new Set<string>();
   const submodules = new Map<string, Mule>();
   // Every INSTANCE definition inside a value, such as one in a LET.
   const addInstances = (value: unknown) => {
     if (typeof value !== "object" || value === null) return;
-    if ("instance" in value && typeof value.instance === "object" && value.instance !== null) {
-      if ("module" in value.instance && typeof value.instance.module === "string") {
-        dependencies.add(value.instance.module);
-      }
+    if ("instance" in value && isInstanceDefinition(value.instance)) {
+      addDependency(value.instance.module, value.instance.location);
     }
     Object.values(value).forEach(addInstances);
   };
@@ -346,14 +361,25 @@ export const getDependencies = (module: Mule) => {
     if (unit.kind !== "Submod") return;
     locals.add(unit.module.name);
     submodules.set(unit.module.name, unit.module);
-    unit.module.extendees.forEach((name) => dependencies.add(name));
+    addExtendees(unit.module);
     unit.module.body.forEach(visit);
   };
   module.body.forEach(visit);
   locals.forEach((name) => dependencies.delete(name));
-  module.extendees.forEach((name) => dependencies.add(name));
-  return { dependencies: [...dependencies].sort(compareNames), submodules };
+  addExtendees(module);
+  return {
+    dependencies: [...dependencies.keys()].sort(compareNames),
+    locations: dependencies,
+    submodules,
+  };
 };
+
+const isInstanceDefinition = (value: unknown): value is InstanceDefinition =>
+  typeof value === "object" &&
+  value !== null &&
+  "module" in value &&
+  typeof value.module === "string" &&
+  "substitutions" in value;
 
 export const compareNames = (left: string, right: string) =>
   left < right ? -1 : left > right ? 1 : 0;
@@ -438,7 +464,13 @@ const substituteUnit = (
 const substituteUnits = (substitution: Substitution, units: ModuleUnit[]) =>
   mapAccumulate(substitution, units, substituteUnit)[1];
 
-const lambdifySequent = (pipeline: Pipeline, scope: Scope | undefined, sequent: Sequent) => {
+// A theorem that fails to lambdify states TRUE, and tlapm prints why.
+const lambdifyTheorem = (
+  pipeline: Pipeline,
+  scope: Scope | undefined,
+  name: string | undefined,
+  sequent: Sequent,
+) => {
   try {
     const lambdified = lambdify(pipeline.anonymizer, pipeline.onWarning, scope, {
       kind: "Sequent",
@@ -447,14 +479,18 @@ const lambdifySequent = (pipeline: Pipeline, scope: Scope | undefined, sequent: 
     if (lambdified.kind !== "Sequent") throw new TlapmBugError();
     return lambdified.sequent;
   } catch (error) {
-    if (!(error instanceof TlaProofError) || error instanceof TlapmBugError) throw error;
+    if (!(error instanceof TlaProofError) || error.failure === undefined) throw error;
+    const location = sequent.active.location;
+    const message = `${error.failure}\nCould not instantiate the theorem ${name === undefined ? "" : `named: ${name}, `}at: ${location ? getLocusText(location) : "<unknown location>"}`;
+    pipeline.onWarning({ text: `${getAtPrefix(location)}[ERROR]${message}`, channel: "stdout" });
+    pipeline.onWarning({ text: message, channel: "toolboxOnly" });
     return { context: [], active: at({ kind: "Internal", builtin: "TRUE" }, sequent.active) };
   }
 };
 
 const lambdifyUnit = (pipeline: Pipeline, scope: Scope | undefined, unit: ModuleUnit) => {
   if (unit.kind === "Theorem") {
-    return { ...unit, sequent: lambdifySequent(pipeline, scope, unit.sequent) };
+    return { ...unit, sequent: lambdifyTheorem(pipeline, scope, unit.name, unit.sequent) };
   }
   if (unit.kind !== "Definition") return unit;
   const definition = unit.definition;
@@ -791,6 +827,16 @@ export const expandInstance = (
   scope: Scope | undefined,
   definition: Extract<Defn, { kind: "Instance" }>,
 ): Defn[] => {
+  const name = definition.instance.module;
+  if (!pipeline.latestModules.has(name)) {
+    pipeline.onWarning({
+      text: `${getLocusPrefix(definition.instance.location)}Module ${JSON.stringify(name)} unknown\n`,
+      channel: "toolbox",
+    });
+    throw new TlaProofError(`Module ${JSON.stringify(name)} unknown`, {
+      failure: "Module.Elab.anon#defns",
+    });
+  }
   const units = instantiate(
     pipeline,
     pipeline.latestModules,

@@ -1,8 +1,9 @@
 // Generates the proof obligations tlapm prints for a module, in tlapm's order and layout.
 
-import { TlaProofError } from "./errors";
+import { TlaProofError, TlaSyntaxError, type SyntaxFailure } from "./errors";
 import { createAnonymizer } from "./obligation-anon";
 import {
+  getAtPrefix,
   getLocusPosition,
   getLocusPrefix,
   type Locus,
@@ -27,6 +28,7 @@ import type { Counter } from "./obligation-proof";
 import { createSource } from "./obligation-source";
 import { tokenize } from "./lexer";
 import { parseTlapmModule } from "./parser";
+import type { Module } from "./ast";
 
 export interface ObligationSource {
   file: string;
@@ -55,27 +57,70 @@ interface ObligationOptions {
 
 const MODULE_HEADER = /-{4,} *MODULE/;
 
+const END_FAILURE = "Unexpected EOF";
+
 const formatLocus = (locus: Locus | undefined) =>
   locus ? `${locus.startLine}:${locus.startColumn}:${locus.endLine}:${locus.endColumn}` : "";
 
-// The closing ==== is on the line of the last token.
-const getModuleEnd = (source: string) => {
+// tlapm's lexer reads tokens lazily from the module header through the closing ====, which is on
+// the line of the last token, and rejects the first TAB it reads.
+const findTab = (source: string) => {
+  const tokens = tokenize(source);
   const lines = source.split("\n");
-  const line = tokenize(source).at(-1)?.line ?? lines.length;
-  return { line, column: lines[line - 1].indexOf("====") + 1, lines };
+  const endLine = tokens.at(-1)?.line ?? lines.length;
+  const moduleEnd =
+    lines.slice(0, endLine - 1).reduce((total, line) => total + line.length + 1, 0) +
+    lines[endLine - 1].indexOf("====");
+  const offset = source.indexOf("\t", source.search(MODULE_HEADER));
+  if (offset === -1 || offset >= moduleEnd) return undefined;
+  const line = source.slice(0, offset).split("\n").length;
+  const column = offset - source.lastIndexOf("\n", offset - 1);
+  // Between two units, the parser takes the end of the tokens for the end of the module, which
+  // tlapm reports after the last token.
+  const last = tokens.findLast(
+    (token) =>
+      token.kind !== "End" && (token.line < line || (token.line === line && token.column < column)),
+  );
+  const end: SyntaxFailure = {
+    reason: END_FAILURE,
+    line: last?.line ?? line,
+    column: last ? last.endColumn + 1 : column,
+    isEnd: true,
+  };
+  return { offset, line, column, end };
 };
 
-// tlapm's lexer rejects a TAB anywhere from the module header through the closing ====.
-const assertNoTabs = (source: string) => {
-  const end = getModuleEnd(source);
-  const offset =
-    end.lines.slice(0, end.line - 1).reduce((total, line) => total + line.length + 1, 0) +
-    end.column -
-    1;
-  if (source.slice(source.search(MODULE_HEADER), offset).includes("\t"))
-    throw new TlaProofError(
-      "Unexpected TAB character. TLAPS does not handle TAB characters in source files.",
-    );
+// What the lexer or parser reads, or why it rejects the module.
+const readModule = <Value>(read: () => Value): Value | SyntaxFailure => {
+  try {
+    return read();
+  } catch (error) {
+    if (!(error instanceof TlaSyntaxError) || !error.failure) throw error;
+    return error.failure;
+  }
+};
+
+const isSyntaxFailure = (value: unknown): value is SyntaxFailure =>
+  typeof value === "object" && value !== null && "reason" in value;
+
+// What tlapm parses of a module, or the errors it reports for it.
+const parseSource = (source: string): Module | SyntaxFailure[] => {
+  const tab = readModule(() => findTab(source));
+  if (isSyntaxFailure(tab)) return [tab];
+  const parsed = readModule(() => parseTlapmModule(tab ? source.slice(0, tab.offset) : source));
+  // The parser reads the tokens before the TAB, then their end.
+  if (tab && (!isSyntaxFailure(parsed) || parsed.isEnd)) {
+    return [
+      {
+        reason: "Unexpected TAB character. TLAPS does not handle TAB characters in source files.",
+        line: tab.line,
+        column: tab.column,
+        isEnd: false,
+      },
+      isSyntaxFailure(parsed) && parsed.reason === END_FAILURE ? parsed : tab.end,
+    ];
+  }
+  return isSyntaxFailure(parsed) ? [parsed] : parsed;
 };
 
 // Module.Save.parse_file warns when a module's name differs from its file's, then renames it.
@@ -84,10 +129,23 @@ const loadMule = (
   counter: Counter,
   isMain: boolean,
   onWarning: (warning: ObligationWarning) => void,
+  citation: string,
 ): Mule => {
-  const module = parseTlapmModule(input.source);
-  assertNoTabs(input.source);
-  const mule = createSource(input.file, input.source, counter, isMain).convertModule(module);
+  if (!MODULE_HEADER.test(input.source)) throw new TlaProofError("No tokens in file");
+  const parsed = parseSource(input.source);
+  // Pars.Error.print_error prints each error to stderr, and in toolbox mode as a toolbox message
+  // too. Module.Save then names the file at the location of whatever cited it.
+  if (Array.isArray(parsed)) {
+    parsed.forEach((failure) => {
+      const text = `File ${JSON.stringify(input.file)}, line ${failure.line}, character ${failure.column}\n${failure.reason}`;
+      onWarning({ text, channel: "stderr" });
+      onWarning({ text: `${text}\n`, channel: "toolboxOnly" });
+    });
+    const message = `Could not parse ${JSON.stringify(input.file)} successfully.`;
+    onWarning({ text: `${citation}Error: ${message}`, channel: "stderr" });
+    throw new TlaProofError(message, { failure: "Module.Parser.parse_file" });
+  }
+  const mule = createSource(input.file, input.source, counter, isMain).convertModule(parsed);
   const fileName = input.file.slice(input.file.lastIndexOf("/") + 1);
   const name = fileName.replace(/\.tla$/, "");
   if (mule.name === name) return mule;
@@ -182,13 +240,17 @@ export const getObligations = (
   const counter = { value: 0 };
   const modules = new Map<string, Mule>(STANDARD_MODULES);
   mains.forEach((main) => {
-    const module = { ...loadMule(main, counter, true, onWarning), isImportant: true };
+    const module = {
+      // Util.locate names a file given on the command line at Loc.unknown.
+      ...loadMule(main, counter, true, onWarning, 'File "<unknown>":\n'),
+      isImportant: true,
+    };
     modules.set(module.name, module);
   });
   // Module.Save.complete_load: breadth first from every known module, by name.
   const queue = [...modules.values()].sort((left, right) => compareNames(left.name, right.name));
   // A missing module is fine only if some loaded module declares it as a submodule.
-  const requested = new Set<string>();
+  const requested = new Map<string, Locus | undefined>();
   const found = new Set<string>();
   for (let index = 0; index < queue.length; index++) {
     const result = getDependencies(queue[index]);
@@ -201,23 +263,39 @@ export const getObligations = (
       if (modules.has(name) && !STANDARD_MODULES.has(name)) continue;
       const input = loadModule(name);
       if (!input) {
-        if (!modules.has(name)) requested.add(name);
+        if (!modules.has(name) && !requested.has(name))
+          requested.set(name, result.locations.get(name));
         continue;
       }
-      const loaded = loadMule(input, counter, false, onWarning);
+      const loaded = loadMule(
+        input,
+        counter,
+        false,
+        onWarning,
+        getAtPrefix(result.locations.get(name)),
+      );
       modules.set(name, loaded);
       queue.push(loaded);
     }
   }
-  const missing = [...requested].find((name) => !found.has(name));
-  if (missing !== undefined) throw new TlaProofError(`Unknown module "${missing}"`);
+  const missing = [...requested.keys()].filter((name) => !found.has(name)).sort(compareNames);
+  missing.forEach((name) =>
+    onWarning({
+      text: `${getAtPrefix(requested.get(name))}Error: Unknown module ${JSON.stringify(name)}`,
+      channel: "stderr",
+    }),
+  );
+  if (missing.length > 0)
+    throw new TlaProofError(`Unknown module ${JSON.stringify(missing[0])}`, {
+      failure: "Module.Parser.load_module",
+    });
   const pipeline: Pipeline = {
     anonymizer: createAnonymizer(
       counter,
       (scope, definition) => expandInstance(pipeline, scope, definition),
       onWarning,
     ),
-    generator: createGenerator(counter, new Set(mains.map((main) => main.file)), lines),
+    generator: createGenerator(counter, new Set(mains.map((main) => main.file)), lines, onWarning),
     salts: { value: 0 },
     latestModules: new Map(),
     onWarning,

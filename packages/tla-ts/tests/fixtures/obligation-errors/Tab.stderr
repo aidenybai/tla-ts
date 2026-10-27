@@ -1,0 +1,8 @@
+File "./Tab.tla", line 2, character 6
+Unexpected TAB character. TLAPS does not handle TAB characters in source files.
+File "./Tab.tla", line 2, character 6
+Unexpected EOF
+File "<unknown>":
+Error: Could not parse "./Tab.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+

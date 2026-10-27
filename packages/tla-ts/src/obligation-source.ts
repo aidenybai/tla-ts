@@ -15,7 +15,7 @@ import type {
   SourceRange,
   UseOrHide,
 } from "./ast";
-import { TlapmBugError, TlaProofError, TlaUnsupportedError } from "./errors";
+import { TlaProofError, TlaUnsupportedError } from "./errors";
 import {
   at,
   type Bound,
@@ -200,7 +200,10 @@ const regroup = (expression: Extract<Expression, { kind: "Apply" }>): Expression
   return grouping.kind === "Attached" ? grouping.expression : expression;
 };
 
-// tlapm expands tuple declarations only in the modules it checks, and crashes on them elsewhere.
+// tlapm expands tuple declarations only in the modules it checks. Elsewhere its visitors fail on
+// them.
+const TUPLY_FAILURE = "use instead the class`E_visit.iter_concrete`";
+
 export const createSource = (file: string, text: string, counter: Counter, isExpanded: boolean) => {
   const lines = text.split("\n");
 
@@ -231,6 +234,15 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     }
     return locus;
   };
+
+  // A parameter is located by its name.
+  const getNameLocus = (name: string, location: SourceLocation): Locus => ({
+    file,
+    startLine: location.line,
+    startColumn: location.column,
+    endLine: location.line,
+    endColumn: location.column + name.length,
+  });
 
   const getLocus = (location: SourceLocation): Locus =>
     location.range
@@ -295,7 +307,8 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
 
   const convertBounds = (bounds: QuantifierExpression["bounds"], isExcept: boolean): Bound[] =>
     bounds.map((bound, index) => {
-      if (bound.pattern.kind === "Tuple") throw new TlapmBugError();
+      if (bound.pattern.kind === "Tuple")
+        throw new TlaProofError("Unexpected tuple declaration", { failure: TUPLY_FAILURE });
       const isDitto = index > 0 && bounds[index - 1].set === bound.set;
       return {
         name: bound.pattern.name,
@@ -323,7 +336,8 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     });
 
   const expandTuples = (expand: () => Expr, location: Locus) => {
-    if (!isExpanded) throw new TlapmBugError();
+    if (!isExpanded)
+      throw new TlaProofError("Unexpected tuple declaration", { failure: TUPLY_FAILURE });
     return at(expand(), { location });
   };
 
@@ -444,10 +458,6 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
           { location },
         );
       case "Let":
-        // tlapm's LET takes only definitions, so a RECURSIVE declaration there fails to parse.
-        if (expression.definitions.some((definition) => definition.isRecursive)) {
-          throw new TlaProofError("Unexpected keyword RECURSIVE");
-        }
         return at(
           {
             kind: "Let",
@@ -718,6 +728,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
   };
 
   const convertInstance = (instance: Instance): InstanceDefinition => ({
+    location: getRangeLocus(instance.definitionRange ?? instance.instanceRange),
     args: instance.params.map((param) => param.name),
     module: instance.module,
     substitutions: instance.substitutions.map((substitution) => ({
@@ -770,6 +781,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
           params: definition.params.map((param) => ({
             name: getCanonicalName(param.name),
             shape: param.arity,
+            ...(param.location && { location: getNameLocus(param.name, param.location) }),
           })),
           body,
         },
@@ -986,6 +998,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
   const convertModule = (module: Module): Mule => ({
     name: module.name,
     extendees: module.extends,
+    extendeeLocations: module.extendsRanges.map(getRangeLocus),
     isImportant: false,
     location: getLocus(module.location),
     body: module.units.map((unit): ModuleUnit => {

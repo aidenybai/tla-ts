@@ -10,6 +10,7 @@ import {
   at,
   bumpBy,
   getAtPrefix,
+  getLocusText,
   getScopeAt,
   mapScoped,
   normalizeApply,
@@ -21,7 +22,7 @@ import {
   type Scope,
   type Substitution,
 } from "./obligation-expression";
-import { getLevelInfo } from "./obligation-levels";
+import { getLevelInfo, LEVEL_NUMBERS } from "./obligation-levels";
 
 interface FreshNames {
   names: string[];
@@ -101,7 +102,17 @@ const expandDefinitions = (
   if (level === undefined) return expression;
   const expressionLevel = getLevelInfo(scope, expression).level;
   const hyp = getHyp(scope, head.index);
-  if (hyp.kind === "Fresh" && hyp.level === "Unknown") throw new TlapmBugError();
+  const getDeclaration = (name: string) =>
+    `The operator \`${name}\` is declared at:\n${hyp.location ? getLocusText(hyp.location) : "<unknown location>"}`;
+  if (hyp.kind === "Fresh" && hyp.level === "Unknown") {
+    onWarning({
+      text: `${getAtPrefix(expression.location)}Error: Declared operator \`${hyp.name}\` has unknown level and occurs within the scope of \`ENABLED\` or \`\\cdot\` where soundness requires expanding expressions of level >= ${level}.\nIf a constant operator is substituted for this operator, then the expression that results from applying this declared operator has expression level ${expressionLevel}.\n May need expansion. A declared operator cannot be expanded.\n${getDeclaration(hyp.name)}\n and has arity: ${hyp.shape}`,
+      channel: "stderr",
+    });
+    throw new TlapmBugError(
+      'File "src/expr/e_action.ml", line 367, characters 20-26: Assertion failed',
+    );
+  }
   if (expressionLevel < level) return expression;
   if (expressionLevel > 2 || hyp.kind === "Fact") throw new TlapmBugError();
   if (hyp.kind === "Flex") {
@@ -109,9 +120,9 @@ const expandDefinitions = (
     return expression;
   }
   if (hyp.kind === "Fresh") {
-    throw new TlaProofError(
-      `The expression that results from applying the declared operator \`${hyp.name}\` has expression level ${expressionLevel} within the scope of \`ENABLED\` or \`\\cdot\` where soundness requires expanding expressions of level >= ${level}. A declared operator cannot be expanded.`,
-    );
+    const message = `The expression that results from applying the declared operator \`${hyp.name}\` has expression level ${expressionLevel} within the scope of \`ENABLED\` or \`\\cdot\` where soundness requires expanding expressions of level >= ${level}. A declared operator cannot be expanded.\n${getDeclaration(hyp.name)}\n and has level: ${LEVEL_NUMBERS[hyp.level]}\n and arity: ${hyp.shape}`;
+    onWarning({ text: `${getAtPrefix(expression.location)}Error: ${message}`, channel: "stderr" });
+    throw new TlaProofError(message);
   }
   const definition = hyp.definition;
   if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
@@ -198,12 +209,13 @@ const getHashtblKeys = (names: string[]) => {
 // into primed. ENABLED A binds the primes of A, and A \cdot B binds those of A and the unprimed
 // variables of B, each as an opaque name such as x#enabled#prime1.
 const bindVariables = (
+  onWarning: (warning: ObligationWarning) => void,
   current: FreshNames | undefined,
   primed: FreshNames | undefined,
   scope: Scope | undefined,
   expression: Expr,
 ): Expr => {
-  const recurse = (inner: Expr) => bindVariables(current, primed, scope, inner);
+  const recurse = (inner: Expr) => bindVariables(onWarning, current, primed, scope, inner);
   const isInScope = current !== undefined || primed !== undefined;
   const lambdifyOperator = (operator: Expr, args: Expr[]) => {
     const fresh: FreshNames = {
@@ -212,8 +224,8 @@ const bindVariables = (
     };
     const [first, second] = args;
     const bound = [
-      bindVariables(current, fresh, scope, first),
-      ...(second ? [bindVariables(fresh, primed, scope, second)] : []),
+      bindVariables(onWarning, current, fresh, scope, first),
+      ...(second ? [bindVariables(onWarning, fresh, primed, scope, second)] : []),
     ];
     const params = fresh.names.length === 0 ? ["r#0"] : getHashtblKeys(fresh.names);
     return at(
@@ -241,7 +253,7 @@ const bindVariables = (
       return lambdifyOperator(expression.operator, expression.args);
     }
     if (builtin === "Prime" && expression.args.length === 1) {
-      const arg = bindVariables(primed, undefined, scope, expression.args[0]);
+      const arg = bindVariables(onWarning, primed, undefined, scope, expression.args[0]);
       return primed ? arg : { ...expression, args: [arg] };
     }
     if (builtin === "UNCHANGED" && isInScope) return recurse(expandPropositional(expression));
@@ -257,12 +269,18 @@ const bindVariables = (
     return at({ kind: "Opaque", name }, expression);
   }
   if (expression.kind === "Apply" && expression.operator.kind === "Opaque") {
-    throw new TlapmBugError();
+    onWarning({
+      text: `${getAtPrefix(expression.location)}Error: Named operator \`${expression.operator.name}\` unexpected after anonymization.`,
+      channel: "stderr",
+    });
+    throw new TlapmBugError(
+      'File "src/expr/e_action.ml", line 1048, characters 12-18: Assertion failed',
+    );
   }
   return mapScoped(
     scope,
     expression,
-    (inner, child) => bindVariables(current, primed, inner, child),
+    (inner, child) => bindVariables(onWarning, current, primed, inner, child),
     adjoin,
   );
 };
@@ -353,6 +371,9 @@ export const lambdify = (
   expression: Expr,
 ) => {
   const expanded = expandDefinitions(onWarning, scope, expression, undefined);
-  const bound = shiftIndices(shift(0), bindVariables(undefined, undefined, scope, expanded));
+  const bound = shiftIndices(
+    shift(0),
+    bindVariables(onWarning, undefined, undefined, scope, expanded),
+  );
   return checkArity(renameParams(anonymizer.expr(scope, bound)));
 };

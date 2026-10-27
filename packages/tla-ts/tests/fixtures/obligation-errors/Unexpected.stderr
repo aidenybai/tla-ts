@@ -1,0 +1,6 @@
+File "./Unexpected.tla", line 3, character 14
+Unexpected keyword PROVE
+File "<unknown>":
+Error: Could not parse "./Unexpected.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+

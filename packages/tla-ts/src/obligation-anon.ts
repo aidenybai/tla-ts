@@ -10,6 +10,7 @@ import {
   consSubstitution,
   exprifySequent,
   findNamed,
+  getAtPrefix,
   getFresh,
   getLocusPrefix,
   getScopeAt,
@@ -52,6 +53,17 @@ const DUMMY_FACT: Hyp = {
   expression: { kind: "At", isExcept: false },
   visibility: "Visible",
 };
+
+// Expr.Anon names its failure to resolve a prefix of a subexpression after the selector that
+// follows it.
+const ANON_SELECTOR_FAILURES = {
+  Number: "1NUM",
+  Down: "1DOWN",
+  At: "1AT",
+  Instance: "1INST",
+  Left: "1",
+  Right: "1",
+} as const;
 
 const BAD_EXPRESSION: Expr = { kind: "Opaque", name: "$badexp" };
 
@@ -122,7 +134,11 @@ export const createAnonymizer = (
 
   const resolveName = (context: AnonContext, name: string, args: Expr[], from: Expr): Expr => {
     const found = findNamed(context.scope, name);
-    if (!found) throw new TlaProofError(`Operator "${name}" not found`);
+    if (!found) {
+      const message = `Operator "${name}" not found`;
+      onWarning({ text: `${getAtPrefix(from.location)}Error: ${message}`, channel: "stderr" });
+      throw new TlaProofError(message, { failure: "Expr.Anon: 4" });
+    }
     const index = found.depth + 1;
     const hyp = found.hyp;
     switch (hyp.kind) {
@@ -132,7 +148,9 @@ export const createAnonymizer = (
           return standardForm(index, hyp.whereDefined, definition.body, args, from);
         }
         if (definition.kind === "Recursive")
-          throw new TlaProofError("Recursive operators not supported by TLAPS");
+          throw new TlaProofError("Recursive operators not supported by TLAPS", {
+            failure: "Expr.Anon: Recursive",
+          });
         return anonApply(index, args, from);
       }
       case "Fresh":
@@ -140,7 +158,9 @@ export const createAnonymizer = (
       case "Flex":
         return at({ kind: "Ix", index }, from);
       case "Fact":
-        throw new TlaProofError(`Operator "${name}" not found`);
+        throw new TlapmBugError(
+          'File "src/expr/e_anon.ml", line 230, characters 24-36: Assertion failed',
+        );
     }
   };
 
@@ -156,17 +176,24 @@ export const createAnonymizer = (
     const found = findNamed(context.scope, prefix);
     if (!found) {
       const [selector, ...rest] = selectors;
-      if (!selector || selector.kind !== "Label")
-        throw new TlaProofError(`Operator "${prefix}" not found`);
-      const labelArgs = selector.args.map((arg) => expr(context, arg));
-      return resolveBang(
-        context,
-        `${prefix}!${selector.label}`,
-        [...args, ...labelArgs],
-        rest,
-        true,
-        from,
-      );
+      if (selector?.kind === "Label") {
+        const labelArgs = selector.args.map((arg) => expr(context, arg));
+        return resolveBang(
+          context,
+          `${prefix}!${selector.label}`,
+          [...args, ...labelArgs],
+          rest,
+          true,
+          from,
+        );
+      }
+      // Expr.Anon prints nothing when no selector follows.
+      const message = `Operator "${prefix}" not found`;
+      if (selector)
+        onWarning({ text: `${getAtPrefix(from.location)}Error: ${message}`, channel: "stderr" });
+      throw new TlaProofError(message, {
+        failure: `Expr.Anon: ${selector ? ANON_SELECTOR_FAILURES[selector.kind] : "1EMPTY"}`,
+      });
     }
     const hyp = found.hyp;
     if (
@@ -182,7 +209,7 @@ export const createAnonymizer = (
         : standardForm(index, hyp.whereDefined, hyp.definition.body, args, from);
     }
     const body = withLocus(shiftExpr(index, hyp.definition.body), from);
-    return withLocus(resolveSubexpression(body, args, selectors), from);
+    return withLocus(resolveSubexpression(onWarning, body, args, selectors), from);
   };
 
   const anonCore = (context: AnonContext, expression: Expr): Expr => {

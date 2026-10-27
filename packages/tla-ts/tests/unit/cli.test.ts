@@ -294,9 +294,31 @@ describe("prove prints obligations as tlapm -N does", () => {
     expect(result.stderr).toBe("");
   });
 
+  // Each .stderr file is what tlapm -N writes to stderr, without the OCaml backtrace.
+  it.each([
+    "Declaration",
+    "Hide",
+    "Label",
+    "NotFound",
+    "Recursive",
+    "Tab",
+    "Unexpected",
+    "UnknownModule",
+  ])("prints the error tlapm prints for %s", (name) => {
+    const result = runCliWith("obligation-errors", ["prove", "-N", `${name}.tla`]);
+    expect(result.status).toBe(3);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      readFileSync(join(FIXTURES, "obligation-errors", `${name}.stderr`), "utf8"),
+    );
+  });
+
   it("names a module it cannot find", () => {
     const result = runCliWith("obligations", ["prove", "-N", "Missing.tla"]);
-    expect(result.status).toBe(151);
-    expect(result.stderr).toBe("Cannot find the module file Missing.tla\n");
+    expect(result.status).toBe(3);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      'File "<unknown>":\nError: File "Missing.tla" not found\n tlapm ending abnormally with Failure("Module.Parser.parse_file")\n\n',
+    );
   });
 });

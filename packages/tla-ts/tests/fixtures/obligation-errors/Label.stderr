@@ -1,0 +1,6 @@
+File "./Label.tla", line 3, characters 8-15:
+Error: Could not find label other
+File "./Label.tla", line 3, characters 8-15:
+Error: Could not resolve subexpression reference
+ tlapm ending abnormally with Failure("Expr.Anon: 2")
+

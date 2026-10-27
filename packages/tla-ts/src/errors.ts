@@ -7,10 +7,21 @@ export class TlaError extends Error {
   }
 }
 
+// Why and where the lexer or parser rejects a module, and whether it read to the end.
+export interface SyntaxFailure {
+  reason: string;
+  line: number;
+  column: number;
+  isEnd: boolean;
+}
+
 export class TlaSyntaxError extends TlaError {
-  constructor(message: string, cause?: unknown) {
+  failure: SyntaxFailure | undefined;
+
+  constructor(message: string, cause?: unknown, failure?: SyntaxFailure) {
     super(message, cause);
     this.name = "TlaSyntaxError";
+    this.failure = failure;
   }
 }
 
@@ -38,19 +49,33 @@ export class TlaModuleError extends TlaEvaluationError {
   }
 }
 
-// tlapm rejects the module while it generates proof obligations.
+// The OCaml exception tlapm ends with when it rejects a module: a Failure with a message, or
+// another exception as Printexc prints it.
+export interface TlapmReport {
+  failure?: string;
+  exception?: string;
+}
+
+// tlapm rejects the module while it generates proof obligations. Unless the report says
+// otherwise, tlapm fails with the message.
 export class TlaProofError extends TlaError {
-  constructor(message: string, cause?: unknown) {
-    super(message, cause);
+  failure: string | undefined;
+  exception: string;
+
+  constructor(message: string, report: TlapmReport = {}) {
+    super(message);
     this.name = "TlaProofError";
+    this.failure = report.exception === undefined ? (report.failure ?? message) : undefined;
+    // Printexc quotes the message of a Failure as OCaml's %S does.
+    this.exception = report.exception ?? `Failure(${JSON.stringify(this.failure)})`;
   }
 }
 
 // tlapm fails one of its own assertions, which it reports as a bug in itself. It keeps the name
 // TlaProofError, and index.ts doesn't export it.
 export class TlapmBugError extends TlaProofError {
-  constructor() {
-    super("Oops, this seems to be a bug in TLAPM.");
+  constructor(exception = "Assert_failure") {
+    super("Oops, this seems to be a bug in TLAPM.", { exception });
     this.name = "TlaProofError";
   }
 }

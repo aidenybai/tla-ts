@@ -11,7 +11,13 @@ import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
 import type { CheckResult, CheckStatus, TraceStep } from "./check";
 import { parseConfig } from "./config";
-import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "./errors";
+import {
+  getErrorExitCode,
+  TlaConfigError,
+  TlaError,
+  TlaEvaluationError,
+  TlaProofError,
+} from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
 import type { LineRange } from "./obligation-generate";
 import { getAtPrefix, getLocusText } from "./obligation-expression";
@@ -330,6 +336,20 @@ const checkStrictly = (result: ModuleObligations, isTargeted: boolean, isSummary
   ];
 };
 
+// tlapm exits with 3 when an exception ends it, which it prints with its OCaml backtrace. tla-ts
+// prints the exception without a backtrace.
+const TLAPM_FAILURE_STATUS = 3;
+
+const generateObligations = (generate: () => ModuleObligations[]) => {
+  try {
+    return generate();
+  } catch (error) {
+    if (!(error instanceof TlaProofError)) throw error;
+    console.error(` tlapm ending abnormally with ${error.exception}\n`);
+    return undefined;
+  }
+};
+
 // Mirrors tlapm -N, which generates the obligations without sending them to a backend.
 const prove = (args: string[]) => {
   const options: ProveOption[] = [];
@@ -368,20 +388,16 @@ const prove = (args: string[]) => {
     console.error("Error: tla-ts has no prover backend yet, so prove needs -N.");
     return 1;
   }
-  const modulePaths = paths
-    .flatMap((path) => (GLOB_CHARACTERS.test(path) ? globSync(path).sort() : [path]))
-    .map((path) => (path.endsWith(".tla") ? path : `${path}.tla`));
+  const files = paths.flatMap((path) =>
+    GLOB_CHARACTERS.test(path) ? globSync(path).sort() : [path],
+  );
+  const modulePaths = files.map((path) => (path.endsWith(".tla") ? path : `${path}.tla`));
   if (modulePaths.length === 0) {
     console.error(USAGE);
     return 1;
   }
   const isToolbox = hasOption("--toolbox") || hasOption("--line");
   if (isToolbox) printToolboxHeader(args);
-  const missing = modulePaths.find((path) => !existsSync(path));
-  if (missing !== undefined) {
-    console.error(`Cannot find the module file ${missing}`);
-    return EXIT_STATUS.configParseError;
-  }
   // Like tlapm, the last of --toolbox and --line wins, and a 0 means the whole module.
   const lines = options.reduce<LineRange>((range, option) => {
     const [start, end] = option.values.map(Number);
@@ -398,19 +414,31 @@ const prove = (args: string[]) => {
     [".", ...(tlapmLibrary ? [tlapmLibrary] : []), ...includes.toReversed()],
   );
   // tlapm names each file it reads by joining a search directory and the name, as in ./Module.tla.
-  const results = getObligations(
-    modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
-    (name) => directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean),
-    {
-      lines,
-      onWarning: (warning) => {
-        if (warning.channel === "stdout") return console.log(warning.text);
-        if (isToolbox && warning.channel === "toolbox")
-          return printToolboxMessage(["type:warning", `msg:${warning.text}`]);
-        console.error(warning.text);
+  const results = generateObligations(() => {
+    // Module.Save.parse_file names the file as given, at Loc.unknown.
+    const missing = files.find((_file, index) => !existsSync(modulePaths[index]));
+    if (missing !== undefined) {
+      console.error(`File "<unknown>":\nError: File ${JSON.stringify(missing)} not found`);
+      throw new TlaProofError(`File ${missing} not found`, { failure: "Module.Parser.parse_file" });
+    }
+    return getObligations(
+      modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
+      (name) =>
+        directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean),
+      {
+        lines,
+        onWarning: (warning) => {
+          if (warning.channel === "stdout") return console.log(warning.text);
+          const isToolboxMessage =
+            warning.channel === "toolbox" || warning.channel === "toolboxOnly";
+          if (isToolbox && isToolboxMessage)
+            return printToolboxMessage(["type:warning", `msg:${warning.text}`]);
+          if (warning.channel !== "toolboxOnly") console.error(warning.text);
+        },
       },
-    },
-  );
+    );
+  });
+  if (!results) return TLAPM_FAILURE_STATUS;
   const failures = results.flatMap((result) => {
     if (hasOption("--summary")) console.log(formatSummary(result));
     if (isToolbox) {

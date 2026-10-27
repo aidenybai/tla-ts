@@ -322,6 +322,7 @@ export type Expression =
 export interface OperatorParam {
   name: string;
   arity: number;
+  location?: SourceLocation;
 }
 
 export interface OperatorDefinition {
@@ -365,7 +366,8 @@ export interface InstanceSubstitution {
   expression: Expression;
 }
 
-// instanceRange runs from the INSTANCE token to the end.
+// instanceRange runs from the INSTANCE token to the end, and the definitionRange of a named
+// instance from the token after its name.
 export interface Instance {
   kind: "Instance";
   name: string | undefined;
@@ -375,6 +377,7 @@ export interface Instance {
   isLocal: boolean;
   location: SourceLocation;
   instanceRange: SourceRange;
+  definitionRange?: SourceRange;
 }
 
 export interface NewSymbol {
@@ -474,6 +477,7 @@ export interface Module {
   name: string;
   modules: Module[];
   extends: string[];
+  extendsRanges: SourceRange[];
   constants: Declaration[];
   variables: Declaration[];
   definitions: Definition[];

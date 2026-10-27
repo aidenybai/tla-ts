@@ -1,0 +1,6 @@
+File "./UnknownModule.tla", line 2, characters 28-33:
+Error: Unknown module "Absent"
+File "./UnknownModule.tla", line 2, characters 19-25:
+Error: Unknown module "Missing"
+ tlapm ending abnormally with Failure("Module.Parser.load_module")
+

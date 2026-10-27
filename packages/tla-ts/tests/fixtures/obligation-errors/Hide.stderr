@@ -1,0 +1,5 @@
+File "./Hide.tla", line 3, characters 6-9:
+Error: This expression does not appear in the context and cannot be hidden.
+
+ tlapm ending abnormally with Failure("proof.Gen.set_expr")
+

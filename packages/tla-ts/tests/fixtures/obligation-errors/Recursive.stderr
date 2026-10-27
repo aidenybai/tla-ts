@@ -1,0 +1,6 @@
+File "./Recursive.tla", line 2, character 6
+Unexpected keyword RECURSIVE
+File "<unknown>":
+Error: Could not parse "./Recursive.tla" successfully.
+ tlapm ending abnormally with Failure("Module.Parser.parse_file")
+

@@ -102,7 +102,7 @@ const BUILTIN_LEVELS: Partial<Record<Builtin, [number, number]>> = {
   Unprimable: [0, 1],
 };
 
-const LEVEL_NUMBERS: Record<Level, number> = {
+export const LEVEL_NUMBERS: Record<Level, number> = {
   Constant: 0,
   State: 1,
   Action: 2,
