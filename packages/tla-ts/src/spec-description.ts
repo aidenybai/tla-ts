@@ -17,12 +17,14 @@ import {
   type Scope,
 } from "./evaluate";
 import { getLevel, TEMPORAL_LEVEL } from "./liveness";
-import { createRecord, createSet, createTuple, type Value } from "./values";
+import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
 
-interface SpecAction {
+export interface SpecAction {
   name: string;
   location: SourceLocation;
   parameters: [string, Value][];
+  expression: Expression;
+  scope: Scope | undefined;
 }
 
 interface SpecDescription {
@@ -71,6 +73,8 @@ const createAction = (name: string, expression: Expression): SpecAction => ({
   name,
   location: expression.location,
   parameters: [],
+  expression,
+  scope: undefined,
 });
 
 const getConstantContext = (environment: Environment, scope: Scope | undefined) => ({
@@ -161,9 +165,11 @@ const getInstanceActions = (
 ): SpecAction[] => {
   const args = getArguments(expression);
   const callAction = (): SpecAction[] => [
-    { name: instanceAction.name, location: expression.location, parameters: [] },
+    { name: instanceAction.name, location: expression.location, parameters: [], expression, scope },
   ];
-  if (!called || args.length === 0) return [{ ...instanceAction, parameters: [] }];
+  if (!called || args.length === 0) {
+    return [{ ...instanceAction, parameters: [], expression, scope }];
+  }
   if (args.some((arg) => getLevel(arg, scope, environment) !== 0)) return callAction();
   return tryCollect(
     () => [
@@ -173,6 +179,8 @@ const getInstanceActions = (
           called.params[index].name.replace(/#\d+$/, ""),
           evaluate(arg, getConstantContext(environment, scope)),
         ]),
+        expression,
+        scope,
       },
     ],
     callAction,
@@ -190,6 +198,8 @@ const getActions = (
     name: closure?.name ?? UNNAMED_ACTION,
     location: expression.location,
     parameters: getParameters(closure, scope),
+    expression,
+    scope,
   });
   switch (expression.kind) {
     case "Let":
@@ -234,7 +244,7 @@ const getActions = (
   if (!called) return [createSplitAction()];
   const args = getArguments(expression);
   const callAction = (): SpecAction[] => [
-    { name: called.name, location: expression.location, parameters: [] },
+    { name: called.name, location: expression.location, parameters: [], expression, scope },
   ];
   if (isConstantDefinition(called, environment)) return callAction();
   if (args.some((arg) => getLevel(arg, scope, environment) !== 0)) return callAction();
@@ -391,12 +401,11 @@ const describeDefinition = (definition: Definition) =>
     ["location", toLocationValue(definition.location)],
   ]);
 
-export const getSpecificationValue = (
+const describe = (
   config: ModelConfig,
   environment: Environment,
-  variableLocations: SourceLocation[],
   instanceActions: Map<string, InstanceAction>,
-): Value => {
+) => {
   const description: SpecDescription = {
     inits: [],
     actions: [],
@@ -443,6 +452,29 @@ export const getSpecificationValue = (
     const definition = getOperatorDefinition(name, environment);
     if (definition) describeProperty(name, definition.body, undefined, environment, description);
   });
+  return description;
+};
+
+// TLC's split of the next-state relation into the actions it names in a behavior.
+export const getNextActions = (
+  config: ModelConfig,
+  environment: Environment,
+  instanceActions: Map<string, InstanceAction>,
+) => describe(config, environment, instanceActions).actions;
+
+export const getActionLabel = (action: SpecAction) => {
+  const parameters = action.parameters.map((parameter) => formatValue(parameter[1]));
+  const range = action.location.range ?? BUILTIN_RANGE;
+  return `${action.name === UNNAMED_ACTION ? "Action" : action.name}${parameters.length === 0 ? "" : `(${parameters.join(",")})`} line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
+};
+
+export const getSpecificationValue = (
+  config: ModelConfig,
+  environment: Environment,
+  variableLocations: SourceLocation[],
+  instanceActions: Map<string, InstanceAction>,
+): Value => {
+  const description = describe(config, environment, instanceActions);
   const toSet = (actions: SpecAction[]) => createSet(actions.map(toActionValue));
   const toDefinitionSet = (names: string[]) =>
     createSet(
