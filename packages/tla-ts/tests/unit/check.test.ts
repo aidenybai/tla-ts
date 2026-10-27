@@ -1142,6 +1142,13 @@ describe("name resolution matches SANY", () => {
     ["nested bound variables with one name", "F == \\E y \\in {1} : \\E y \\in {2} : TRUE"],
     ["an operator of an extended module", "EXTENDS Naturals\na + b == a"],
     ["a built-in operator", "BOOLEAN == 1"],
+    ["a constant named after a built-in operator", "CONSTANT BOOLEAN"],
+    ["a variable named after a built-in operator", "VARIABLE TRUE"],
+    ["a constant named after an operator of an extended module", "EXTENDS Naturals\nCONSTANT Nat"],
+    [
+      "a nested module constant named after an enclosing variable",
+      "VARIABLE y\n---- MODULE Inner ----\nCONSTANT y\n====",
+    ],
     ["a definition after an instance that imports it", "INSTANCE Naturals\nNat == 1"],
     ["a named instance and a definition with one name", "I == 1\nI == INSTANCE Naturals"],
     ["duplicate operator parameters", "F(a, a) == a"],
