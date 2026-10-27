@@ -73,6 +73,12 @@ const lookupLocal = (scope: LocalName | undefined, name: string) => {
 const bindNames = (scope: LocalName | undefined, names: string[], arity = 0) =>
   names.reduce<LocalName | undefined>((parent, name) => ({ name, arity, parent }), scope);
 
+const bindParams = (scope: LocalName | undefined, params: OperatorParam[]) =>
+  params.reduce<LocalName | undefined>(
+    (parent, param) => ({ name: param.name, arity: param.arity, parent }),
+    scope,
+  );
+
 export const getPatternNames = (pattern: BoundPattern) =>
   pattern.kind === "Name" ? [pattern.name] : pattern.names;
 
@@ -171,11 +177,7 @@ const resolveDefinition = (definition: Definition, scope: LocalName | undefined,
     markRecursiveConstructions(definition.body, definition.name);
     return;
   }
-  const params = definition.params.reduce<LocalName | undefined>(
-    (parent, param) => ({ name: param.name, arity: param.arity, parent }),
-    self,
-  );
-  resolveExpression(definition.body, params, unit);
+  resolveExpression(definition.body, bindParams(self, definition.params), unit);
 };
 
 const resolveDefinitions = (
@@ -723,10 +725,7 @@ export const resolveSubstitutions = (
   module: Module,
   unit: ModuleUnit,
 ) => {
-  const scope = instance.params.reduce<LocalName | undefined>(
-    (parent, param) => ({ name: param.name, arity: param.arity, parent }),
-    undefined,
-  );
+  const scope = bindParams(undefined, instance.params);
   const context: Unit = {
     imported: createSymbols(module, unit.imported),
     definitions: unit.definitions,
@@ -774,7 +773,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const facts = new Set(
     [...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
   );
-  const resolveIn = (location: SourceLocation, self: Definition | undefined) => ({
+  const createUnit = (location: SourceLocation, self: Definition | undefined) => ({
     imported: symbols,
     definitions: unit.definitions,
     getKey: unit.getKey,
@@ -783,12 +782,12 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     facts,
   });
   module.definitions.forEach((definition) =>
-    resolveDefinition(definition, undefined, resolveIn(definition.location, definition)),
+    resolveDefinition(definition, undefined, createUnit(definition.location, definition)),
   );
   module.assumptions.forEach((assumption) =>
-    resolveExpression(assumption.expression, undefined, resolveIn(assumption.location, undefined)),
+    resolveExpression(assumption.expression, undefined, createUnit(assumption.location, undefined)),
   );
   module.theorems.forEach((theorem) =>
-    resolveTheorem(theorem, resolveIn(theorem.location, undefined)),
+    resolveTheorem(theorem, createUnit(theorem.location, undefined)),
   );
 };

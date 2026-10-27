@@ -242,9 +242,7 @@ export const createTlcExtOperators = (
         (pair) => getSequenceElements(pair) ?? [],
       );
       return createTuple(
-        [...states]
-          .sort((left, right) => Number(left[0]) - Number(right[0]))
-          .map((pair) => pair[1]),
+        states.sort((left, right) => Number(left[0]) - Number(right[0])).map((pair) => pair[1]),
       );
     }),
     defineOperator("TLCModelValue", 1, (args) => {
@@ -317,12 +315,9 @@ export const createPossibleOperators = (
   runtime: CheckerRuntime,
 ): Builtin[] => [
   defineStateOperator("_Track", 2, (args) => {
-    const name = getValue(args, 1, "_Track");
-    const count = runtime.possibleCounts.get(String(name)) ?? 0;
-    runtime.possibleCounts.set(
-      String(name),
-      getValue(args, 0, "_Track") === true ? count + 1 : count,
-    );
+    const name = String(getValue(args, 1, "_Track"));
+    const count = runtime.possibleCounts.get(name) ?? 0;
+    runtime.possibleCounts.set(name, getValue(args, 0, "_Track") === true ? count + 1 : count);
     return true;
   }),
   defineStateOperator("_Counts", 0, () => getPossibleCounts(runtime)),
