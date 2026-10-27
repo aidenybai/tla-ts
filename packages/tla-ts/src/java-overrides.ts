@@ -61,7 +61,7 @@ const readMethods = (bytes: Uint8Array) => {
   const decoder = new TextDecoder();
   for (let index = 1; index < count; index++) {
     const tag = reader.u1();
-    const entry: PoolEntry = { tag, text: "", value: 0, first: 0, second: 0 };
+    const entry = { tag, text: "", value: 0, first: 0, second: 0 };
     pool[index] = entry;
     if (tag === 1) entry.text = decoder.decode(reader.bytes(reader.u2()));
     else if (tag === 3) entry.value = reader.i4();
@@ -127,7 +127,7 @@ const getReturnedLiteral = (
   pool: PoolEntry[],
   className: string,
   location: SourceLocation,
-): Expression => {
+) => {
   const unsupported = () =>
     new TlaUnsupportedError(
       `The Java override ${className}.${method.name} computes its value, which tla-ts cannot run`,

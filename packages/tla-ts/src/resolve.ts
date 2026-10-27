@@ -621,7 +621,7 @@ const checkNames = (
   }
 };
 
-const getModuleNames = (module: Module): ModuleName[] => [
+const getModuleNames = (module: Module) => [
   ...module.definitions.map((definition): ModuleName => ({
     name: definition.name,
     kind: "Definition",

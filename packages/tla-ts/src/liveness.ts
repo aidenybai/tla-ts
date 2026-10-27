@@ -116,7 +116,7 @@ export const getLevel = (
   environment: Environment,
   shadowed = new Set<string>(),
 ): number => {
-  const getBindingLevel = (name: string): number | undefined => {
+  const getBindingLevel = (name: string) => {
     const binding = lookupScope(scope, name);
     if (!binding) return undefined;
     if (binding.kind === "Value") return 0;
@@ -124,7 +124,7 @@ export const getLevel = (
     const operator = binding.operator;
     return operator.kind === "Closure" ? getLevel(operator.body, operator.scope, environment) : 0;
   };
-  const getGlobalLevel = (name: string): number | undefined => {
+  const getGlobalLevel = (name: string) => {
     if (environment.variableIndex.has(name)) return 1;
     if (environment.constants.has(name)) return 0;
     const definition = getDefinition(name, environment);
@@ -181,7 +181,7 @@ export const getLevel = (
   }
 };
 
-const getDefinitionLevel = (definition: Definition, environment: Environment): number => {
+const getDefinitionLevel = (definition: Definition, environment: Environment) => {
   const cached = definitionLevels.get(definition);
   if (cached !== undefined) return cached;
   definitionLevels.set(definition, 0);
@@ -326,7 +326,7 @@ const toLiveExpression = (
   const convertCall = (
     expression: Expression & { kind: "Identifier" | "Apply" },
     scope: Scope | undefined,
-  ): LiveExpression => {
+  ) => {
     const name = expression.kind === "Identifier" ? expression.name : expression.operator;
     const context = getConstantContext(environment, scope);
     const binding =

@@ -70,7 +70,7 @@ type Conjunct = { expression: Expression } & (
 const initRunners = new WeakMap<Expression, Runner>();
 const nextRunners = new WeakMap<Expression, Runner>();
 
-const getContext = (run: Run, scope: Scope | undefined, partial: State): Context =>
+const getContext = (run: Run, scope: Scope | undefined, partial: State) =>
   run.isInit
     ? { environment: run.environment, scope, state: partial, next: undefined }
     : { environment: run.environment, scope, state: run.current, next: partial };
@@ -198,7 +198,7 @@ const ACTION_KINDS = new Set([
   "FunctionApplication",
 ]);
 
-const isGuard = (expression: Expression, environment: Environment, isInit: boolean): boolean => {
+const isGuard = (expression: Expression, environment: Environment, isInit: boolean) => {
   if (ACTION_KINDS.has(expression.kind)) return false;
   if (expression.kind === "Identifier") {
     if (

@@ -436,7 +436,7 @@ const getTriples = (
   closure: LiveExpression[],
   repeated: "Always" | "Eventually",
   junction: "And" | "Or",
-): Triple[] =>
+) =>
   closure.flatMap((term): Triple[] => {
     const parts = getExpansion(term, repeated, junction);
     return parts ? [{ whole: term, first: parts[0], second: parts[1] }] : [];
@@ -450,7 +450,7 @@ const unionParticles = (left: LiveExpression[][], right: LiveExpression[][]) => 
   ...right,
 ];
 
-const getParticleClosure = (terms: LiveExpression[]): LiveExpression[][] => {
+const getParticleClosure = (terms: LiveExpression[]) => {
   const closure = getPositiveClosure(terms);
   const alphas = getTriples(closure, "Always", "And");
   const betas = getTriples(closure, "Eventually", "Or");
@@ -508,7 +508,7 @@ const createTableauNode = (particle: LiveExpression[]): TableauNode => ({
   statePredicates: particle.filter((term) => getLiveLevel(term) <= STATE_LEVEL),
 });
 
-const createTableau = (formula: LiveExpression): Tableau => {
+const createTableau = (formula: LiveExpression) => {
   const nodes = getParticleClosure([formula]).map(createTableauNode);
   const initialCount = nodes.length;
   for (let index = 0; index < nodes.length; index++) {
@@ -591,13 +591,13 @@ export const getSolutions = (formula: LiveExpression): Solution[] => {
     if (group) group.classifications.push(classification);
     else groups.push({ formula: temporal, classifications: [classification] });
   }
-  return groups.map((group): Solution => {
+  return groups.map((group) => {
     const binary = group.formula && makeBinary(group.formula);
     const promises: LiveUnary[] = [];
     if (binary) extractPromises(binary, promises);
     const stateChecks: LiveExpression[] = [];
     const actionChecks: LiveExpression[] = [];
-    const models = group.classifications.map((classification): ErrorModel => ({
+    const models = group.classifications.map((classification) => ({
       infinitelyOftenActions: classification.infinitelyOftenActions.map((check) =>
         addToBin(actionChecks, check),
       ),

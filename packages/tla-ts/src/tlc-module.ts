@@ -43,7 +43,7 @@ const getRuntimeValue = (
   runtime: CheckerRuntime,
   key: string,
   state: (Value | undefined)[] | undefined,
-): Value => {
+) => {
   const duration = Math.floor((Date.now() - runtime.startedAt) / 1000);
   switch (key) {
     case "level":

@@ -210,7 +210,7 @@ const createApplication = (selection: Selection, body: Expression): Expression =
   };
 };
 
-const applyDefinition = (definition: Definition, selection: Selection): Expression => {
+const applyDefinition = (definition: Definition, selection: Selection) => {
   const location = selection.location;
   const params =
     definition.kind === "Operator"
@@ -401,7 +401,7 @@ const containsReference = (expression: Expression): boolean =>
 const resolveSubexpressions = (expression: Expression, lookup: Lookup): Expression => {
   if (!containsReference(expression)) return expression;
   if (expression.kind === "Let") {
-    const local: Lookup = (name: string) =>
+    const local: Lookup = (name) =>
       expression.definitions.find((definition) => definition.name === name) ?? lookup(name);
     return mapChildren(expression, (child) => resolveSubexpressions(child, local));
   }
