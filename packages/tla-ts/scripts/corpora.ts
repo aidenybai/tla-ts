@@ -21,6 +21,8 @@ export const CORPORA_DIRECTORY = join(CONFORMANCE_DIRECTORY, ".corpora");
 
 export const EXPECTED_PATH = join(CONFORMANCE_DIRECTORY, "expected.json");
 
+export const TLC_SEED = 4n;
+
 export const getCorpora = (): Corpus[] =>
   JSON.parse(readFileSync(join(CONFORMANCE_DIRECTORY, "corpora.json"), "utf8"));
 
