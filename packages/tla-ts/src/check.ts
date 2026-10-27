@@ -10,6 +10,7 @@ import {
   getChildren,
   getDefinition,
   isConstantLevel,
+  isImpure,
   type Context,
   type Environment,
   type Scope,
@@ -686,9 +687,10 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       hasFingerprint(successor.state, index),
     );
   const getPathStates = (path: number[], nextFailure: string) => {
-    const initial = isReducing
-      ? getInitialStates(spec.init, environment).find((state) => hasFingerprint(state, path[0]))
-      : states[path[0]];
+    const initial =
+      isReducing || isImpure(environment)
+        ? getInitialStates(spec.init, environment).find((state) => hasFingerprint(state, path[0]))
+        : states[path[0]];
     if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);
     const steps: Successor[] = [{ state: initial, action: undefined }];
     for (let position = 1; position < path.length; position++) {
