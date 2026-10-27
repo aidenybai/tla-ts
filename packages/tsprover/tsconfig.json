@@ -9,7 +9,10 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "tla-ts": ["../tla-ts/src/index.ts"]
+    }
   },
   "include": ["src", "tests", "vite.config.ts"],
   "exclude": ["**/node_modules/**"]

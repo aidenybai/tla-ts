@@ -1,402 +1,630 @@
+import { resolve } from "node:path";
 import ts from "typescript";
+import { translateAction, writesState } from "./actions";
+import { type Context, getSymbol } from "./context";
+import { getDomain } from "./domains";
 import { TsproverError } from "./errors";
+import {
+  getDefinition,
+  type Scope,
+  translateBody,
+  translateCondition,
+  translateExpression,
+} from "./expressions";
+import { indent, render, wrap } from "./formula";
+import { createNames } from "./names";
 
 export interface CompiledSpec {
   source: string;
   config: string;
 }
 
-interface Variable {
+type FunctionNode = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
+
+interface Exported {
   name: string;
+  node: FunctionNode;
+  body: ts.ConciseBody;
+  tags: Map<string, string>;
+}
+
+interface Variable {
+  symbol: ts.Symbol;
   declaration: ts.VariableDeclaration;
 }
 
-interface Definition {
+interface Parameter {
+  node: ts.ParameterDeclaration;
   name: string;
-  node: ts.SignatureDeclaration;
-  body: ts.ConciseBody;
+  symbol: ts.Symbol | undefined;
 }
 
-interface Scope {
-  // The TLA+ expression for each state variable's value at this point in the step.
-  values: Map<string, string>;
-  locals: Set<string>;
-}
-
-const FILE_NAME = "/spec.ts";
+// The values of a parameter's type, or undefined when the type has no end.
+const getFiniteDomain = (parameter: Parameter, context: Context) => {
+  try {
+    return getDomain(
+      context.checker.getTypeAtLocation(parameter.node.name),
+      parameter.node,
+      context,
+    );
+  } catch (error) {
+    if (error instanceof TsproverError) return undefined;
+    throw error;
+  }
+};
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {
   strict: true,
   noEmit: true,
   target: ts.ScriptTarget.ESNext,
   module: ts.ModuleKind.ESNext,
+  moduleResolution: ts.ModuleResolutionKind.Bundler,
   moduleDetection: ts.ModuleDetectionKind.Force,
+  allowImportingTsExtensions: true,
+  resolveJsonModule: true,
   lib: ["lib.esnext.d.ts"],
   types: [],
 };
 
-const BINARY_OPERATORS = new Map([
-  [ts.SyntaxKind.PlusToken, "+"],
-  [ts.SyntaxKind.MinusToken, "-"],
-  [ts.SyntaxKind.AsteriskToken, "*"],
-  [ts.SyntaxKind.EqualsEqualsEqualsToken, "="],
-  [ts.SyntaxKind.ExclamationEqualsEqualsToken, "#"],
-  [ts.SyntaxKind.LessThanToken, "<"],
-  [ts.SyntaxKind.LessThanEqualsToken, "<="],
-  [ts.SyntaxKind.GreaterThanToken, ">"],
-  [ts.SyntaxKind.GreaterThanEqualsToken, ">="],
-  [ts.SyntaxKind.AmpersandAmpersandToken, "/\\"],
-  [ts.SyntaxKind.BarBarToken, "\\/"],
+const TEMPORAL_OPERATORS = new Map([
+  ["eventually", "<>"],
+  ["alwaysEventually", "[]<>"],
+  ["eventuallyAlways", "<>[]"],
 ]);
 
-const ASSIGNMENT_OPERATORS = new Map([
-  [ts.SyntaxKind.PlusEqualsToken, "+"],
-  [ts.SyntaxKind.MinusEqualsToken, "-"],
-  [ts.SyntaxKind.AsteriskEqualsToken, "*"],
+const VALUE_TAGS = new Set([
+  ...TEMPORAL_OPERATORS.keys(),
+  "initially",
+  "always",
+  "leadsTo",
+  "constraint",
+  "actionConstraint",
+  "view",
+  "assume",
+  "postcondition",
 ]);
 
-const UPDATE_OPERATORS = new Map([
-  [ts.SyntaxKind.PlusPlusToken, "+"],
-  [ts.SyntaxKind.MinusMinusToken, "-"],
+const KNOWN_TAGS = new Set([
+  ...VALUE_TAGS,
+  "fair",
+  "strongFair",
+  "symmetric",
+  "noDeadlock",
+  "param",
+  "returns",
+  "return",
+  "example",
+  "see",
+  "deprecated",
+  "remarks",
+  "throws",
+  "link",
+  "description",
 ]);
 
-const getLocation = (node: ts.Node) => {
-  const position = node.getSourceFile().getLineAndCharacterOfPosition(node.getStart());
-  return `${position.line + 1}:${position.character + 1}`;
+const getTags = (node: ts.Node) => {
+  const tags = ts.getJSDocTags(node);
+  for (const tag of tags) {
+    if (!KNOWN_TAGS.has(tag.tagName.text)) {
+      throw new TsproverError(`Unknown tag: @${tag.tagName.text}`, tag);
+    }
+  }
+  return new Map(
+    tags.map((tag) => [tag.tagName.text, ts.getTextOfJSDocComment(tag.comment)?.trim() ?? ""]),
+  );
 };
-
-const wrap = (expression: string) => (expression.includes(" ") ? `(${expression})` : expression);
 
 const isExported = (node: ts.Declaration) =>
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export) !== 0;
 
-const isBareReturn = (statement: ts.Statement): boolean =>
-  ts.isReturnStatement(statement)
-    ? statement.expression === undefined
-    : ts.isBlock(statement) &&
-      statement.statements.length === 1 &&
-      isBareReturn(statement.statements[0]);
-
-// The set of values that a declaration's finite type allows, which TLC chooses from.
-const getDomain = (
-  declaration: ts.ParameterDeclaration | ts.VariableDeclaration,
-  checker: ts.TypeChecker,
-) => {
-  const type = checker.getTypeAtLocation(declaration.name);
-  const members = type.isUnion() ? type.types : [type];
-  const values = members.map((member) => {
-    if (member.isStringLiteral()) return JSON.stringify(member.value);
-    if (member.isNumberLiteral() && Number.isInteger(member.value)) return String(member.value);
-    if (member.flags & ts.TypeFlags.BooleanLiteral) {
-      return checker.typeToString(member).toUpperCase();
-    }
-    throw new TsproverError(
-      `${getLocation(declaration.name)} ${declaration.name.getText()} needs a finite type, such as a union of literals`,
-    );
-  });
-  return `{${values.join(", ")}}`;
-};
-
-const translateExpression = (node: ts.Expression, scope: Scope): string => {
-  if (ts.isParenthesizedExpression(node)) return translateExpression(node.expression, scope);
-  if (ts.isNumericLiteral(node)) {
-    if (!Number.isInteger(Number(node.text))) {
-      throw new TsproverError(`${getLocation(node)} Only integers are supported: ${node.text}`);
-    }
-    return node.text;
-  }
-  if (ts.isStringLiteral(node)) return JSON.stringify(node.text);
-  if (node.kind === ts.SyntaxKind.TrueKeyword) return "TRUE";
-  if (node.kind === ts.SyntaxKind.FalseKeyword) return "FALSE";
-  if (ts.isIdentifier(node)) {
-    const value = scope.values.get(node.text);
-    if (value !== undefined) return value;
-    if (scope.locals.has(node.text)) return node.text;
-    throw new TsproverError(`${getLocation(node)} Unknown name: ${node.text}`);
-  }
-  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
-    return `~${wrap(translateExpression(node.operand, scope))}`;
-  }
-  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
-    return `-${wrap(translateExpression(node.operand, scope))}`;
-  }
-  if (ts.isBinaryExpression(node)) {
-    const operator = BINARY_OPERATORS.get(node.operatorToken.kind);
-    if (operator === undefined) {
-      throw new TsproverError(
-        `${getLocation(node.operatorToken)} Unsupported operator: ${node.operatorToken.getText()}`,
-      );
-    }
-    return `${wrap(translateExpression(node.left, scope))} ${operator} ${wrap(translateExpression(node.right, scope))}`;
-  }
-  if (ts.isConditionalExpression(node)) {
-    return `IF ${translateExpression(node.condition, scope)} THEN ${translateExpression(node.whenTrue, scope)} ELSE ${translateExpression(node.whenFalse, scope)}`;
-  }
-  if (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    node.expression.expression.getText() === "Math" &&
-    ["min", "max"].includes(node.expression.name.text) &&
-    node.arguments.length > 0
-  ) {
-    const comparison = node.expression.name.text === "min" ? "<" : ">";
-    return node.arguments
-      .map((argument) => wrap(translateExpression(argument, scope)))
-      .reduce(
-        (result, argument) =>
-          `IF ${result} ${comparison} ${argument} THEN ${result} ELSE ${argument}`,
-      );
-  }
-  throw new TsproverError(`${getLocation(node)} Unsupported expression: ${node.getText()}`);
-};
-
-const translateAction = (
-  statements: ts.NodeArray<ts.Statement>,
-  variables: Variable[],
-  parameters: string[],
-) => {
-  const scope: Scope = {
-    values: new Map(variables.map((variable) => [variable.name, variable.name])),
-    locals: new Set(parameters),
-  };
-  const definitions: string[] = [];
-  const guards: string[] = [];
-  const assigned = new Set<string>();
-  const assign = (target: ts.Expression, getValue: (current: string) => string) => {
-    const current = ts.isIdentifier(target) ? scope.values.get(target.text) : undefined;
-    if (current === undefined) {
-      throw new TsproverError(
-        `${getLocation(target)} Only state variables can be assigned: ${target.getText()}`,
-      );
-    }
-    scope.values.set(target.getText(), getValue(current));
-    assigned.add(target.getText());
-  };
-
-  for (const statement of statements) {
-    if (ts.isVariableStatement(statement) && statement.declarationList.flags & ts.NodeFlags.Const) {
-      for (const declaration of statement.declarationList.declarations) {
-        if (!ts.isIdentifier(declaration.name) || declaration.initializer === undefined) {
-          throw new TsproverError(
-            `${getLocation(declaration)} Unsupported declaration: ${declaration.getText()}`,
-          );
-        }
-        if (scope.values.has(declaration.name.text)) {
-          throw new TsproverError(
-            `${getLocation(declaration.name)} ${declaration.name.text} shadows a state variable`,
-          );
-        }
-        definitions.push(
-          `${declaration.name.text} == ${translateExpression(declaration.initializer, scope)}`,
-        );
-        scope.locals.add(declaration.name.text);
-      }
-      continue;
-    }
-    if (
-      ts.isIfStatement(statement) &&
-      statement.elseStatement === undefined &&
-      isBareReturn(statement.thenStatement)
-    ) {
-      if (assigned.size > 0) {
-        throw new TsproverError(
-          `${getLocation(statement)} A guard must come before any assignment`,
-        );
-      }
-      guards.push(`~${wrap(translateExpression(statement.expression, scope))}`);
-      continue;
-    }
-    const expression = ts.isExpressionStatement(statement) ? statement.expression : undefined;
-    if (expression !== undefined && ts.isBinaryExpression(expression)) {
-      const operator = ASSIGNMENT_OPERATORS.get(expression.operatorToken.kind);
-      const value = translateExpression(expression.right, scope);
-      if (expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-        assign(expression.left, () => value);
-        continue;
-      }
-      if (operator !== undefined) {
-        assign(expression.left, (current) => `${wrap(current)} ${operator} ${wrap(value)}`);
-        continue;
-      }
-    }
-    if (
-      expression !== undefined &&
-      (ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression))
-    ) {
-      const operator = UPDATE_OPERATORS.get(expression.operator);
-      if (operator !== undefined) {
-        assign(expression.operand, (current) => `${wrap(current)} ${operator} 1`);
-        continue;
-      }
-    }
-    throw new TsproverError(
-      `${getLocation(statement)} Unsupported statement: ${statement.getText()}`,
-    );
-  }
-
-  const unchanged = variables
-    .map((variable) => variable.name)
-    .filter((name) => scope.values.get(name) === name);
-  const conjuncts = [
-    ...guards,
-    ...variables
-      .filter((variable) => !unchanged.includes(variable.name))
-      .map((variable) => `${variable.name}' = ${scope.values.get(variable.name)}`),
-    ...(unchanged.length > 0 ? [`UNCHANGED <<${unchanged.join(", ")}>>`] : []),
-  ];
-  const conjunction = conjuncts.length > 0 ? conjuncts : ["TRUE"];
-  return definitions.length === 0
-    ? conjunction.map((conjunct) => `/\\ ${conjunct}`)
-    : [
-        ...definitions.map((definition, index) => `${index === 0 ? "LET " : "    "}${definition}`),
-        ...conjunction.map((conjunct, index) => `${index === 0 ? "IN  " : "    "}/\\ ${conjunct}`),
-      ];
-};
-
-export const compile = (source: string): CompiledSpec => {
-  const sourceFile = ts.createSourceFile(FILE_NAME, source, ts.ScriptTarget.ESNext, true);
+const createProgram = (source: string, path: string) => {
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.ESNext, true);
   const host = ts.createCompilerHost(COMPILER_OPTIONS);
   const program = ts.createProgram({
-    rootNames: [FILE_NAME],
+    rootNames: [path],
     options: COMPILER_OPTIONS,
     host: {
       ...host,
       getSourceFile: (fileName, languageVersion) =>
-        fileName === FILE_NAME ? sourceFile : host.getSourceFile(fileName, languageVersion),
-      fileExists: (fileName) => fileName === FILE_NAME || host.fileExists(fileName),
-      readFile: (fileName) => (fileName === FILE_NAME ? source : host.readFile(fileName)),
+        fileName === path ? sourceFile : host.getSourceFile(fileName, languageVersion),
+      fileExists: (fileName) => fileName === path || host.fileExists(fileName),
+      readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),
     },
   });
   const diagnostics = ts.getPreEmitDiagnostics(program);
   if (diagnostics.length > 0) throw new TsproverError(ts.formatDiagnostics(diagnostics, host));
-  const checker = program.getTypeChecker();
+  return { sourceFile, checker: program.getTypeChecker() };
+};
 
+// Compiles a TypeScript model into a TLA+ spec and the config that checks it. Imports resolve
+// relative to fileName.
+export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
+  const program = createProgram(source, resolve(fileName).replaceAll("\\", "/"));
+  const checker = program.checker;
+  const context: Context = {
+    checker,
+    names: createNames(),
+    variables: new Map(),
+    definitions: new Map(),
+    inProgress: new Set(),
+    recursive: new Set(),
+    output: [],
+    modelValues: new Map(),
+    prelude: new Set(),
+  };
+  const symmetrySets: string[] = [];
   const variables: Variable[] = [];
-  const definitions: Definition[] = [];
-  for (const statement of sourceFile.statements) {
-    if (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement)) continue;
-    if (
-      ts.isFunctionDeclaration(statement) &&
-      statement.name !== undefined &&
-      statement.body !== undefined &&
-      isExported(statement)
-    ) {
-      definitions.push({ name: statement.name.text, node: statement, body: statement.body });
-      continue;
-    }
-    if (!ts.isVariableStatement(statement)) {
-      throw new TsproverError(
-        `${getLocation(statement)} Unsupported statement: ${statement.getText()}`,
-      );
-    }
-    const isLet = (statement.declarationList.flags & ts.NodeFlags.Let) !== 0;
-    for (const declaration of statement.declarationList.declarations) {
-      const initializer = declaration.initializer;
-      if (isLet && !isExported(declaration) && ts.isIdentifier(declaration.name)) {
-        variables.push({ name: declaration.name.text, declaration });
-        continue;
-      }
-      if (
-        !isLet &&
-        isExported(declaration) &&
-        ts.isIdentifier(declaration.name) &&
-        initializer !== undefined &&
-        (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))
-      ) {
-        definitions.push({
-          name: declaration.name.text,
-          node: initializer,
-          body: initializer.body,
-        });
-        continue;
-      }
-      throw new TsproverError(
-        `${getLocation(declaration)} Unsupported declaration: ${declaration.getText()}`,
-      );
+  const exported: Exported[] = [];
+  const topLevel = new Map<string, ts.FunctionDeclaration | ts.VariableDeclaration>();
+  const statements = program.sourceFile.statements;
+  const isDeadlockChecked = !statements.some((statement) => getTags(statement).has("noDeadlock"));
+
+  for (const statement of statements) {
+    if (ts.isTypeAliasDeclaration(statement) && getTags(statement).has("symmetric")) {
+      const type = checker.getTypeAtLocation(statement.name);
+      const members = type.isUnion() ? type.types : [type];
+      const names = members.map((member) => {
+        if (!member.isStringLiteral()) {
+          throw new TsproverError("A @symmetric type must be a union of strings", statement);
+        }
+        const name = context.names.getFresh(member.value);
+        if (name !== member.value) {
+          throw new TsproverError(`"${member.value}" can't name a TLA+ model value`, statement);
+        }
+        context.modelValues.set(member.value, name);
+        return name;
+      });
+      symmetrySets.push(`{${names.join(", ")}}`);
     }
   }
 
-  const scope: Scope = {
-    values: new Map(variables.map((variable) => [variable.name, variable.name])),
-    locals: new Set(),
-  };
+  for (const statement of statements) {
+    if (
+      ts.isImportDeclaration(statement) ||
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) ||
+      ts.isEnumDeclaration(statement)
+    ) {
+      continue;
+    }
+    if (ts.isExportDeclaration(statement) && statement.isTypeOnly) continue;
+    if (ts.isFunctionDeclaration(statement) && statement.name !== undefined && statement.body) {
+      if (isExported(statement)) {
+        exported.push({
+          name: statement.name.text,
+          node: statement,
+          body: statement.body,
+          tags: getTags(statement),
+        });
+      }
+      topLevel.set(statement.name.text, statement);
+      continue;
+    }
+    if (!ts.isVariableStatement(statement)) {
+      throw new TsproverError(`Unsupported statement: ${statement.getText()}`, statement);
+    }
+    const isLet = (statement.declarationList.flags & ts.NodeFlags.Let) !== 0;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name)) {
+        throw new TsproverError("Declare one name at a time", declaration);
+      }
+      if (isLet) {
+        const symbol = getSymbol(declaration.name, checker);
+        if (isExported(declaration) || symbol === undefined) {
+          throw new TsproverError("State variables can't be exported", declaration);
+        }
+        variables.push({ symbol, declaration });
+        continue;
+      }
+      if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) {
+        throw new TsproverError("Use let for state and const for everything else", declaration);
+      }
+      topLevel.set(declaration.name.text, declaration);
+      const initializer = declaration.initializer;
+      if (
+        isExported(declaration) &&
+        initializer !== undefined &&
+        (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))
+      ) {
+        exported.push({
+          name: declaration.name.text,
+          node: initializer,
+          body: initializer.body,
+          tags: getTags(declaration),
+        });
+      }
+    }
+  }
+
+  const variableNames = variables.map((variable) => {
+    const name = context.names.getFresh(variable.declaration.name.getText());
+    context.variables.set(variable.symbol, name);
+    return name;
+  });
+  const names = new Map(
+    exported.map((definition) => [definition, context.names.getFresh(definition.name)]),
+  );
+  const getName = (definition: Exported) => names.get(definition) ?? definition.name;
+  const stateScope: Scope = { bindings: new Map(context.variables), previous: undefined };
+
+  const init = variables.map((variable, index) => {
+    const initializer = variable.declaration.initializer;
+    if (initializer !== undefined) {
+      return `${variableNames[index]} = ${indent(translateBody(initializer, stateScope, context), "     ")}`;
+    }
+    const type = checker.getTypeAtLocation(variable.declaration.name);
+    return `${variableNames[index]} \\in ${getDomain(type, variable.declaration, context)}`;
+  });
+
   const actions: string[] = [];
+  const next: string[] = [];
+  const fairness: string[] = [];
+  const predicates: string[] = [];
+  const temporal: string[] = [];
   const invariants: string[] = [];
-  const operators: string[] = [];
-  for (const definition of definitions) {
-    const parameters = definition.node.parameters.map((parameter) => {
+  const properties: string[] = [];
+  const constraints: string[] = [];
+  const actionConstraints: string[] = [];
+  const views: string[] = [];
+  const postconditions: string[] = [];
+  const assumptions: string[] = [];
+
+  const getPreviousScope = (definition: Exported) => {
+    const parameter = definition.node.parameters[0];
+    if (parameter === undefined) return stateScope;
+    if (definition.node.parameters.length > 1 || !ts.isIdentifier(parameter.name)) {
+      throw new TsproverError("Take the state before the step as one parameter", parameter);
+    }
+    return {
+      bindings: new Map([...context.variables].map(([symbol, name]) => [symbol, `${name}'`])),
+      previous: getSymbol(parameter.name, checker),
+    };
+  };
+
+  for (const definition of exported) {
+    const name = getName(definition);
+    const node = definition.node;
+    const tags = definition.tags;
+    const body = definition.body;
+    const valueTag = [...tags.keys()].find((tag) => VALUE_TAGS.has(tag));
+    const isPrevious = valueTag === "always" || valueTag === "actionConstraint";
+    // A temporal property's parameters hold for every value, as in \A p \in P : []<>Eats(p).
+    const isQuantified =
+      valueTag !== undefined && (TEMPORAL_OPERATORS.has(valueTag) || valueTag === "leadsTo");
+    if (valueTag !== undefined && !isPrevious && !isQuantified && node.parameters.length > 0) {
+      throw new TsproverError(`@${valueTag} functions can't take parameters`, node.parameters[0]);
+    }
+    if (valueTag !== undefined) {
+      const quantified = isQuantified
+        ? node.parameters.map((parameter) => {
+            if (!ts.isIdentifier(parameter.name)) {
+              throw new TsproverError("Destructured parameters aren't supported here", parameter);
+            }
+            return {
+              name: context.names.getFresh(parameter.name.text),
+              symbol: getSymbol(parameter.name, checker),
+              domain: getDomain(checker.getTypeAtLocation(parameter.name), parameter, context),
+            };
+          })
+        : [];
+      const scope = isPrevious
+        ? getPreviousScope(definition)
+        : {
+            ...stateScope,
+            bindings: new Map([
+              ...stateScope.bindings,
+              ...quantified.flatMap((parameter): [ts.Symbol, string][] =>
+                parameter.symbol ? [[parameter.symbol, parameter.name]] : [],
+              ),
+            ]),
+          };
+      const forAll =
+        quantified.length === 0
+          ? ""
+          : `\\A ${quantified.map((parameter) => `${parameter.name} \\in ${parameter.domain}`).join(", ")} : `;
+      const value = indent(translateBody(body, scope, context), "  ");
+      const operator = TEMPORAL_OPERATORS.get(valueTag);
+      if (operator !== undefined) {
+        temporal.push(`${name} ==\n  ${forAll}${operator}(${value})`);
+        properties.push(name);
+      }
+      if (valueTag === "leadsTo") {
+        const target = topLevel.get(tags.get("leadsTo") ?? "");
+        const exportedTarget = exported.find(
+          (candidate) =>
+            candidate.node === target ||
+            (target !== undefined &&
+              ts.isVariableDeclaration(target) &&
+              candidate.node === target.initializer),
+        );
+        if (target === undefined) {
+          throw new TsproverError(
+            `@leadsTo names an unknown function: ${tags.get("leadsTo")}`,
+            node,
+          );
+        }
+        const getTargetName = () => {
+          if (exportedTarget !== undefined) return getName(exportedTarget);
+          const targetDefinition = getDefinition(target, context);
+          const targetArguments = quantified
+            .slice(0, targetDefinition.parameters.length)
+            .map((parameter) => parameter.name);
+          return targetArguments.length === 0
+            ? targetDefinition.name
+            : `${targetDefinition.name}(${targetArguments.join(", ")})`;
+        };
+        const targetName = getTargetName();
+        temporal.push(`${name} ==\n  ${forAll}(${value}) ~> ${targetName}`);
+        properties.push(name);
+      }
+      if (valueTag === "initially") {
+        init.push(value);
+      }
+      if (valueTag === "always") {
+        temporal.push(
+          node.parameters.length === 0
+            ? `${name} ==\n  [](${value})`
+            : `${name} ==\n  [][${value}]_vars`,
+        );
+        properties.push(name);
+      }
+      const plain: Record<string, string[]> = {
+        constraint: constraints,
+        actionConstraint: actionConstraints,
+        view: views,
+        postcondition: postconditions,
+        assume: assumptions,
+      };
+      if (plain[valueTag] !== undefined) {
+        predicates.push(`${name} ==\n  ${value}`);
+        plain[valueTag].push(name);
+      }
+      continue;
+    }
+    const isAction = writesState(body, context, new Set());
+    const returnType = checker.getSignatureFromDeclaration(node)?.getReturnType();
+    const isVoid =
+      returnType === undefined ||
+      (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0;
+    if (!isAction && !isVoid) {
+      if (!(returnType.flags & ts.TypeFlags.BooleanLike)) {
+        throw new TsproverError(
+          "An exported function that returns a value must return a boolean, or be tagged, such as @view",
+          node,
+        );
+      }
+      if (node.parameters.length > 0) {
+        throw new TsproverError("Invariants can't take parameters", node.parameters[0]);
+      }
+      const value = ts.isBlock(body)
+        ? translateBody(body, stateScope, context)
+        : translateCondition(body, stateScope, context);
+      predicates.push(`${name} ==\n  ${indent(value, "  ")}`);
+      invariants.push(name);
+      continue;
+    }
+
+    const parameters = node.parameters.map((parameter) => {
       if (
         !ts.isIdentifier(parameter.name) ||
         parameter.initializer !== undefined ||
         parameter.questionToken !== undefined ||
         parameter.dotDotDotToken !== undefined
       ) {
-        throw new TsproverError(
-          `${getLocation(parameter)} Unsupported parameter: ${parameter.getText()}`,
-        );
+        throw new TsproverError(`Unsupported parameter: ${parameter.getText()}`, parameter);
       }
-      if (scope.values.has(parameter.name.text)) {
-        throw new TsproverError(
-          `${getLocation(parameter.name)} ${parameter.name.text} shadows a state variable`,
-        );
-      }
-      return { name: parameter.name.text, domain: getDomain(parameter, checker) };
+      const result: Parameter = {
+        node: parameter,
+        name: context.names.getFresh(parameter.name.text),
+        symbol: getSymbol(parameter.name, checker),
+      };
+      return result;
     });
-    const body = definition.body;
-    const returned = !ts.isBlock(body)
-      ? body
-      : body.statements.length === 1 && ts.isReturnStatement(body.statements[0])
-        ? body.statements[0].expression
+    const guardedDomains = new Map<Parameter, { domain: string; isDependent: boolean }>();
+    const statementsOfBody = ts.isBlock(body)
+      ? [...body.statements]
+      : [ts.factory.createExpressionStatement(body)];
+    // A leading `if (!set.has(parameter)) return;` chooses the parameter from that set, as
+    // `\E parameter \in set` does, so TLC doesn't enumerate the parameter's whole type.
+    const isGuardedBy = (statement: ts.Statement) => {
+      if (!ts.isIfStatement(statement) || statement.elseStatement !== undefined) return undefined;
+      const then = statement.thenStatement;
+      const isReturn = ts.isReturnStatement(then)
+        ? then.expression === undefined
+        : ts.isBlock(then) &&
+          then.statements.length === 1 &&
+          ts.isReturnStatement(then.statements[0]) &&
+          then.statements[0].expression === undefined;
+      const condition = statement.expression;
+      if (
+        !isReturn ||
+        !ts.isPrefixUnaryExpression(condition) ||
+        condition.operator !== ts.SyntaxKind.ExclamationToken
+      )
+        return undefined;
+      const call = ts.isParenthesizedExpression(condition.operand)
+        ? condition.operand.expression
+        : condition.operand;
+      if (
+        !ts.isCallExpression(call) ||
+        !ts.isPropertyAccessExpression(call.expression) ||
+        call.expression.name.text !== "has" ||
+        call.arguments.length !== 1
+      )
+        return undefined;
+      const argument = call.arguments[0];
+      const parameter = ts.isIdentifier(argument)
+        ? parameters.find((candidate) => candidate.symbol === getSymbol(argument, checker))
         : undefined;
-    if (returned !== undefined && parameters.length > 0) {
-      throw new TsproverError(
-        `${getLocation(definition.node.parameters[0])} Invariants can't take parameters`,
+      const set = call.expression.expression;
+      // The set may use parameters that earlier guards chose, as in \E a \in A : \E b \in B(a).
+      const getUsed = (inner: ts.Node): Parameter[] => [
+        ...parameters.filter(
+          (candidate) => ts.isIdentifier(inner) && candidate.symbol === getSymbol(inner, checker),
+        ),
+        ...inner.getChildren().flatMap(getUsed),
+      ];
+      const used = getUsed(set);
+      const isSet = (checker.getTypeAtLocation(set).getSymbol()?.getName() ?? "").endsWith("Set");
+      if (
+        parameter === undefined ||
+        guardedDomains.has(parameter) ||
+        !used.every((candidate) => guardedDomains.has(candidate)) ||
+        !isSet
+      )
+        return undefined;
+      return { parameter, set, isDependent: used.length > 0 };
+    };
+    const firstOther = statementsOfBody.findIndex((statement) => {
+      const guard = isGuardedBy(statement);
+      if (guard === undefined) return true;
+      const guardScope = {
+        ...stateScope,
+        bindings: new Map([
+          ...stateScope.bindings,
+          ...[...guardedDomains.keys()].flatMap((parameter): [ts.Symbol, string][] =>
+            parameter.symbol ? [[parameter.symbol, parameter.name]] : [],
+          ),
+        ]),
+      };
+      guardedDomains.set(guard.parameter, {
+        domain: translateExpression(guard.set, guardScope, context),
+        isDependent: guard.isDependent,
+      });
+      return false;
+    });
+    const remaining = firstOther === -1 ? [] : statementsOfBody.slice(firstOther);
+    const scope: Scope = {
+      bindings: new Map([
+        ...context.variables,
+        ...parameters.flatMap((parameter): [ts.Symbol, string][] =>
+          parameter.symbol ? [[parameter.symbol, parameter.name]] : [],
+        ),
+      ]),
+      previous: undefined,
+    };
+    const formula = translateAction(remaining, scope, context);
+    const head =
+      parameters.length === 0
+        ? name
+        : `${name}(${parameters.map((parameter) => parameter.name).join(", ")})`;
+    actions.push(`${head} ==\n  ${indent(render(formula), "  ")}`);
+    const domains = parameters.map((parameter) => ({
+      ...parameter,
+      domain:
+        guardedDomains.get(parameter)?.domain ??
+        getDomain(checker.getTypeAtLocation(parameter.node.name), parameter.node, context),
+      isTyped: !guardedDomains.has(parameter),
+      isDependent: guardedDomains.get(parameter)?.isDependent === true,
+    }));
+    const independent = domains.filter((parameter) => !parameter.isDependent);
+    // Guards run in order, so each dependent parameter is chosen after the ones its set uses.
+    const dependent = [...guardedDomains]
+      .filter((entry) => entry[1].isDependent)
+      .map((entry) => `\\E ${entry[0].name} \\in ${entry[1].domain} : `);
+    const step =
+      parameters.length === 0
+        ? name
+        : `\\E ${independent.map((parameter) => `${parameter.name} \\in ${parameter.domain}`).join(", ")} : ${dependent.join("")}${head}`;
+    next.push(step);
+    const fairnessKind = tags.has("strongFair")
+      ? "SF_vars"
+      : tags.has("fair")
+        ? "WF_vars"
+        : undefined;
+    if (fairnessKind !== undefined) {
+      // Fairness holds for each parameter value when every parameter has a finite type, with the
+      // guards that chose parameters kept inside the action.
+      const typeDomains = domains.map((parameter) =>
+        parameter.isTyped ? parameter.domain : getFiniteDomain(parameter, context),
+      );
+      const guards = domains
+        .filter((parameter) => !parameter.isTyped)
+        .map((parameter) => `${parameter.name} \\in ${wrap(parameter.domain)}`);
+      const forAll = domains
+        .map((parameter, index) => `${parameter.name} \\in ${typeDomains[index]}`)
+        .join(", ");
+      fairness.push(
+        parameters.length === 0
+          ? `${fairnessKind}(${name})`
+          : typeDomains.every((domain) => domain !== undefined)
+            ? `\\A ${forAll} : ${fairnessKind}(${[...guards, head].join(" /\\ ")})`
+            : `${fairnessKind}(${step})`,
       );
     }
-    if (returned !== undefined) {
-      invariants.push(definition.name);
-      operators.push(`${definition.name} == ${translateExpression(returned, scope)}`);
-      continue;
-    }
-    if (!ts.isBlock(body)) {
-      throw new TsproverError(`${getLocation(body)} Unsupported function body`);
-    }
-    const lines = translateAction(
-      body.statements,
-      variables,
-      parameters.map((parameter) => parameter.name),
-    );
-    const bindings = parameters.map((parameter) => `${parameter.name} \\in ${parameter.domain}`);
-    const quantified =
-      parameters.length === 0
-        ? lines
-        : [`\\E ${bindings.join(", ")} :`, ...lines.map((line) => `  ${line}`)];
-    actions.push(definition.name);
-    operators.push(`${definition.name} ==\n${quantified.map((line) => `  ${line}`).join("\n")}`);
   }
 
-  const init = variables.map((variable) =>
-    variable.declaration.initializer === undefined
-      ? `  /\\ ${variable.name} \\in ${getDomain(variable.declaration, checker)}`
-      : `  /\\ ${variable.name} = ${translateExpression(variable.declaration.initializer, scope)}`,
-  );
-  const next = actions.map((action) => `  \\/ ${action}`);
+  const recursive = [...context.recursive].map((declaration) => {
+    const definition = context.definitions.get(declaration);
+    if (definition === undefined || definition.parameters.length === 0) {
+      throw new TsproverError("A constant can't refer to itself", declaration);
+    }
+    return `${definition.name}(${definition.parameters.map(() => "_").join(", ")})`;
+  });
+  const prelude = context.prelude;
+  const constants = [
+    ...(prelude.has("Null") ? ["Null"] : []),
+    ...(prelude.has("Undefined") ? ["Undefined"] : []),
+    ...context.modelValues.values(),
+  ];
+  const conjunction = (items: string[]) =>
+    items.length === 1 ? ` ${items[0]}` : `\n${items.map((item) => `  /\\ ${item}`).join("\n")}`;
+  const disjunction = (items: string[]) =>
+    items.length === 0
+      ? " FALSE"
+      : items.length === 1
+        ? ` ${items[0]}`
+        : `\n${items.map((item) => `  \\/ ${item}`).join("\n")}`;
+
+  const spec = [
+    "---- MODULE Spec ----",
+    "EXTENDS Integers, Sequences, FiniteSets, TLC",
+    ...(constants.length > 0 ? [`CONSTANTS ${constants.join(", ")}`] : []),
+    ...(variableNames.length > 0 ? [`VARIABLES ${variableNames.join(", ")}`] : []),
+    `vars == <<${variableNames.join(", ")}>>`,
+    ...(recursive.length > 0 ? [`RECURSIVE ${recursive.join(", ")}`] : []),
+    ...(prelude.has("Rem")
+      ? [
+          "Rem(a, b) ==\n  LET m == IF b < 0 THEN -b ELSE b\n  IN  IF a >= 0 THEN a % m ELSE -((-a) % m)",
+        ]
+      : []),
+    ...(prelude.has("Quot")
+      ? [
+          "Quot(a, b) ==\n  LET q == (IF a < 0 THEN -a ELSE a) \\div (IF b < 0 THEN -b ELSE b)\n  IN  IF (a < 0) = (b < 0) THEN q ELSE -q",
+        ]
+      : []),
+    ...context.output,
+    `Init ==${conjunction(init.length > 0 ? init : ["TRUE"])}`,
+    ...actions,
+    `Next ==${disjunction(next)}`,
+    `Spec ==${conjunction(["Init", "[][Next]_vars", ...fairness])}`,
+    ...predicates,
+    ...temporal,
+    ...assumptions.map((assumption) => `ASSUME ${assumption}`),
+    ...(symmetrySets.length > 0
+      ? [`Perms == ${symmetrySets.map((set) => `Permutations(${set})`).join(" \\cup ")}`]
+      : []),
+    "====",
+  ].join("\n");
+
+  const section = (keyword: string, values: string[]) =>
+    values.length > 0 ? [`${keyword} ${values.join(" ")}`] : [];
+  if (views.length > 1) throw new TsproverError("Tag only one function @view");
   return {
-    source: [
-      "---- MODULE Spec ----",
-      "EXTENDS Integers",
-      ...(variables.length > 0
-        ? [`VARIABLES ${variables.map((variable) => variable.name).join(", ")}`]
-        : []),
-      `Init ==\n${init.length > 0 ? init.join("\n") : "  TRUE"}`,
-      ...operators,
-      `Next ==\n${next.length > 0 ? next.join("\n") : "  FALSE"}`,
-      "====",
-    ].join("\n"),
+    source: spec,
     config: [
-      "INIT Init",
-      "NEXT Next",
-      ...(invariants.length > 0 ? [`INVARIANTS ${invariants.join(" ")}`] : []),
+      "SPECIFICATION Spec",
+      ...(constants.length > 0
+        ? ["CONSTANTS", ...constants.map((constant) => `  ${constant} = ${constant}`)]
+        : []),
+      ...section("INVARIANTS", invariants),
+      ...section("PROPERTIES", properties),
+      ...section("CONSTRAINTS", constraints),
+      ...section("ACTION_CONSTRAINTS", actionConstraints),
+      ...section("VIEW", views),
+      ...section("POSTCONDITIONS", postconditions),
+      ...(symmetrySets.length > 0 ? ["SYMMETRY Perms"] : []),
+      ...(isDeadlockChecked ? [] : ["CHECK_DEADLOCK FALSE"]),
     ].join("\n"),
   };
 };
