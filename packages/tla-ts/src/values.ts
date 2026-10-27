@@ -344,6 +344,11 @@ export const compareValues = (left: Value, right: Value): number => {
     const rightKind = right.kind;
     if (leftKind === "Function" && rightKind === "Function") return compareFunctions(left, right);
     if (leftKind === "Set" && rightKind === "Set") return compareSets(left, right);
+    if (leftKind === "Interval" && rightKind === "Interval") {
+      const size = Math.max(0, left.high - left.low + 1);
+      const otherSize = Math.max(0, right.high - right.low + 1);
+      return size !== otherSize || size === 0 ? size - otherSize : left.low - right.low;
+    }
     if (leftKind === "ModelValue" || rightKind === "ModelValue") {
       checkModelValueTypes(left, right, false);
       if (leftKind === "ModelValue" && rightKind === "ModelValue") {

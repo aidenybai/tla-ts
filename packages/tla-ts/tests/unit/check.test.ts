@@ -255,6 +255,17 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("orders and compares intervals by size and then low bound like TLC", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nASSUME PrintT(<<{2..3, 1..3, 3..2, 1..0, 0..1, 5..4}, 1..3 = 1..3, 3..2 = 1..0, 1..2 = 2..3, Cardinality({1..0, 3..2}), [1..2 -> {0}] \\subseteq [1..2 -> {0, 1}]>>)\nInit == x = 0\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["<<{{}, 0..1, 2..3, 1..3}, TRUE, TRUE, FALSE, 1, TRUE>>"]);
+  });
+
   it("bundles the Reals module, whose Real is not a set TLC can check", async () => {
     const result = await check({
       source:
