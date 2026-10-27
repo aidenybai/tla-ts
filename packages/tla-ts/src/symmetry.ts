@@ -150,7 +150,7 @@ const permuteSortedElements = (
 };
 
 const CACHE_LIMIT = 1 << 22;
-const CACHED_SIZE_LIMIT = 16;
+const CACHED_SIZE_LIMIT = 64;
 
 const getSize = (value: ObjectValue) =>
   value.kind === "Set"
