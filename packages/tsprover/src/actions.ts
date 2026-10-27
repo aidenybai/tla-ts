@@ -1,6 +1,12 @@
 import ts from "typescript";
-import { getUpdatedValue } from "./collections";
-import { type Context, getFunction, getSymbol, getTopLevelDeclaration } from "./context";
+import { getUpdatedValue, MUTATING_METHODS } from "./collections";
+import {
+  type Context,
+  getFunction,
+  getSymbol,
+  getTopLevelDeclaration,
+  isMethodCall,
+} from "./context";
 import { TsproverError } from "./errors";
 import {
   translateCondition,
@@ -37,17 +43,6 @@ interface Frame {
   inlining: Set<ts.Declaration>;
 }
 
-const MUTATING_METHODS = new Set([
-  "push",
-  "pop",
-  "shift",
-  "unshift",
-  "add",
-  "delete",
-  "clear",
-  "set",
-]);
-
 // The current value of an assignment target, and how to replace it.
 const getTarget = (node: ts.Expression, path: Path, context: Context): Target => {
   if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
@@ -77,8 +72,7 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     return { ...target, selector: `${target.selector}[${key}]` };
   }
   if (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
+    isMethodCall(node) &&
     node.expression.name.text === "get" &&
     node.arguments.length === 1 &&
     getKind(node.expression.expression, context) === "map"
@@ -166,9 +160,7 @@ const assignPattern = (
 
 // The value that a call like queue.shift() returns, before it changes the queue.
 const getRemovedValue = (node: ts.Expression, path: Path, context: Context) => {
-  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) {
-    return undefined;
-  }
+  if (!isMethodCall(node)) return undefined;
   const method = node.expression.name.text;
   if (method !== "shift" && method !== "pop") return undefined;
   const receiver = node.expression.expression;
@@ -252,20 +244,17 @@ const translateExpressionStatement = (
         return and([text(`Assert(${values[0]}, ${message})`), continueWith(path)]);
       }
     }
-    if (ts.isPropertyAccessExpression(callee) && MUTATING_METHODS.has(callee.name.text)) {
-      const kind = getKind(callee.expression, context);
+    if (isMethodCall(expression) && MUTATING_METHODS.has(expression.expression.name.text)) {
+      const receiver = expression.expression.expression;
+      const kind = getKind(receiver, context);
       return continueWith(
-        assign(callee.expression, path, context, (current) => {
-          const value = getUpdatedValue(
-            current,
-            kind,
-            callee.name.text,
-            expression,
-            path.scope,
-            context,
-          );
+        assign(receiver, path, context, (current) => {
+          const value = getUpdatedValue(current, kind, expression, path.scope, context);
           if (value === undefined) {
-            throw new TsproverError(`Unsupported method: ${callee.name.text}`, expression);
+            throw new TsproverError(
+              `Unsupported method: ${expression.expression.name.text}`,
+              expression,
+            );
           }
           return value;
         }),
@@ -439,11 +428,7 @@ export const translateAction = (
 };
 
 const getRoot = (node: ts.Expression): ts.Expression => {
-  if (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    node.expression.name.text === "get"
-  ) {
+  if (isMethodCall(node) && node.expression.name.text === "get") {
     return getRoot(node.expression.expression);
   }
   return ts.isPropertyAccessExpression(node) ||
@@ -472,8 +457,7 @@ export const writesState = (node: ts.Node, context: Context, visited: Set<ts.Nod
       node.operator === ts.SyntaxKind.MinusMinusToken) &&
     isStateRoot(node.operand);
   const isMutation =
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
+    isMethodCall(node) &&
     MUTATING_METHODS.has(node.expression.name.text) &&
     isStateRoot(node.expression.expression);
   if (isAssignment || isUpdate || isMutation) return true;

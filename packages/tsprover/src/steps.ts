@@ -1,6 +1,6 @@
 import ts from "typescript";
 import { translateAction } from "./actions";
-import { type Context, getSymbol } from "./context";
+import { type Context, getSymbol, isMethodCall } from "./context";
 import type { Sections } from "./emit";
 import { translateExpression } from "./expressions";
 import { indent, render, wrap } from "./formula";
@@ -52,12 +52,7 @@ const getGuard = (
   const call = ts.isParenthesizedExpression(condition.operand)
     ? condition.operand.expression
     : condition.operand;
-  if (
-    !ts.isCallExpression(call) ||
-    !ts.isPropertyAccessExpression(call.expression) ||
-    call.expression.name.text !== "has" ||
-    call.arguments.length !== 1
-  ) {
+  if (!isMethodCall(call) || call.expression.name.text !== "has" || call.arguments.length !== 1) {
     return undefined;
   }
   const getParameters = (node: ts.Node): Parameter[] => [

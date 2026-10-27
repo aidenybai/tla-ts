@@ -13,6 +13,7 @@ import {
   getSymbol,
   getTopLevelDeclaration,
   type HelperDeclaration,
+  isMethodCall,
   share,
   translateString,
 } from "./context";
@@ -231,25 +232,24 @@ const translateCall = (
   context: Context,
   isDefined: boolean,
 ) => {
-  const callee = node.expression;
-  const symbol = getSymbol(callee, context.checker);
+  const symbol = getSymbol(node.expression, context.checker);
   const helper = getTopLevelDeclaration(symbol);
   if (helper !== undefined) return translateHelperCall(helper, node, scope, context);
-  if (!ts.isPropertyAccessExpression(callee)) {
+  if (!isMethodCall(node)) {
     const operator = symbol === undefined ? undefined : scope.bindings.get(symbol);
     if (operator === undefined) return translateLocalCall(node, scope, context);
     const values = node.arguments.map((argument) => translateExpression(argument, scope, context));
     return `${operator}(${values.join(", ")})`;
   }
-  const receiver = callee.expression;
-  const method = callee.name.text;
+  const receiver = node.expression.expression;
+  const method = node.expression.name.text;
   const global = ts.isIdentifier(receiver) ? receiver.text : undefined;
   if (global === "Math") return translateMath(node, method, scope, context);
   const constructed =
     global === "Object" && method === "fromEntries"
       ? translateFunctionConstructor(node.arguments[0], scope, context)
-      : translateArrayConstructor(node, receiver, method, scope, context);
-  return constructed ?? translateMethod(node, receiver, method, scope, context, isDefined);
+      : translateArrayConstructor(node, scope, context);
+  return constructed ?? translateMethod(node, scope, context, isDefined);
 };
 
 // A value as a string, as JavaScript converts it in a template or beside a string in +.
