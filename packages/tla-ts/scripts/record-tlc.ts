@@ -2,7 +2,13 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import { CORPORA_DIRECTORY, EXPECTED_PATH, findModels, type CorpusModel } from "./corpora";
+import {
+  CORPORA_DIRECTORY,
+  EXPECTED_PATH,
+  findModels,
+  TLC_SEED,
+  type CorpusModel,
+} from "./corpora";
 
 export interface ExpectedResult {
   id: string;
@@ -77,6 +83,12 @@ const runTlc = (model: CorpusModel) =>
         "-workers",
         "1",
         "-nowarning",
+        "-seed",
+        String(TLC_SEED),
+        "-fp",
+        "0",
+        "-lncheck",
+        "final",
         "-noGenerateSpecTE",
         "-metadir",
         metadataDirectory,
