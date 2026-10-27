@@ -108,7 +108,13 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const search = createSearch(config, environment, () =>
     getTlcVariableOrder(options.source, loadModule),
   );
-  if (!search || search.properties.liveness.length > 0 || isImpure(environment)) {
+  if (
+    !search ||
+    search.spec.init === undefined ||
+    search.spec.next === undefined ||
+    search.properties.liveness.length > 0 ||
+    isImpure(environment)
+  ) {
     return fallBack();
   }
 
