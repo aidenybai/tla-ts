@@ -183,6 +183,16 @@ describe("nested module scoping matches SANY", () => {
     ).rejects.toThrow(/Multiply-defined module 'Shared'/);
   });
 
+  it("rejects an extended file that holds a module of another name", async () => {
+    await expect(
+      checkSource("EXTENDS test", { test: "---- MODULE Foo ----\nA == 1\n====" }),
+    ).rejects.toThrow(
+      new TlaSyntaxError(
+        "File name 'test' does not match the name 'Foo' of the top level module it contains.",
+      ),
+    );
+  });
+
   it("instantiates a nested module inside LET once a top-level instance follows it", async () => {
     const result = await checkSource(
       "---- MODULE LetInner ----\nfoo == 42\n====\nTop == INSTANCE LetInner\nASSUME LET Inst == INSTANCE LetInner IN Inst!foo = 42",

@@ -283,7 +283,13 @@ export const createEnvironment = (
       throw new TlaSyntaxError(
         `Cannot find source file for module ${name} imported in module ${importer}.`,
       );
-    return rejectModuleLiterals(parseModule(source));
+    const module = parseModule(source);
+    if (module.name !== name) {
+      throw new TlaSyntaxError(
+        `File name '${name}' does not match the name '${module.name}' of the top level module it contains.`,
+      );
+    }
+    return rejectModuleLiterals(module);
   };
 
   const getDefinitionKey = (module: Module, id: string, name: string) =>
