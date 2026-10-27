@@ -987,6 +987,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     name: module.name,
     extendees: module.extends,
     isImportant: false,
+    location: getLocus(module.location),
     body: module.units.map((unit): ModuleUnit => {
       switch (unit.kind) {
         case "Constants":

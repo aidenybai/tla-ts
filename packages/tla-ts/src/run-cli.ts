@@ -14,7 +14,8 @@ import { parseConfig } from "./config";
 import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
 import type { LineRange } from "./obligation-generate";
-import { formatSummary, getObligations, WHOLE_MODULE } from "./obligations";
+import { getAtPrefix, getLocusText } from "./obligation-expression";
+import { formatSummary, getObligations, WHOLE_MODULE, type ModuleObligations } from "./obligations";
 import { check } from "./parallel";
 import { prettyPrint } from "./pretty-print";
 import {
@@ -48,6 +49,7 @@ const PROVE_OPTIONS = new Map([
   ["-N", 0],
   ["--printallobs", 0],
   ["--summary", 0],
+  ["--strict", 0],
   ["-I", 1],
   ["--line", 1],
   ["--toolbox", 2],
@@ -299,6 +301,35 @@ const printToolboxHeader = (args: string[]) => {
   );
 };
 
+// The exit statuses of tlapm --strict that need no backend. An incomplete proof is the more severe.
+const STRICT_EXIT_STATUS = { incomplete: 11, emptyTarget: 12 } as const;
+
+// tlapm --strict reports each missing and omitted proof, unless --summary lists them, and an
+// explicit target that selects no obligation.
+const checkStrictly = (result: ModuleObligations, isTargeted: boolean, isSummary: boolean) => {
+  const summary = result.summary;
+  if (!isSummary) {
+    summary.absent.forEach((locus) => console.error(`Missing proof at ${getLocusText(locus)}`));
+    summary.omitted.forEach((locus) => console.error(`Omitted proof at ${getLocusText(locus)}`));
+  }
+  const isIncomplete = summary.absent.length + summary.omitted.length > 0;
+  if (isIncomplete) {
+    console.error(
+      `${getAtPrefix(result.location)}[ERROR]: Proof incomplete in module ${JSON.stringify(result.name)}: ${summary.absent.length} missing, ${summary.omitted.length} omitted proof step(s).`,
+    );
+  }
+  const isEmpty = isTargeted && result.obligations.length === 0;
+  if (isEmpty) {
+    console.error(
+      `${getAtPrefix(result.location)}[ERROR]: No proof obligation found for the selected target.`,
+    );
+  }
+  return [
+    ...(isIncomplete ? [STRICT_EXIT_STATUS.incomplete] : []),
+    ...(isEmpty ? [STRICT_EXIT_STATUS.emptyTarget] : []),
+  ];
+};
+
 // Mirrors tlapm -N, which generates the obligations without sending them to a backend.
 const prove = (args: string[]) => {
   const options: ProveOption[] = [];
@@ -380,21 +411,26 @@ const prove = (args: string[]) => {
       },
     },
   );
-  results.forEach((result) => {
+  const failures = results.flatMap((result) => {
     if (hasOption("--summary")) console.log(formatSummary(result));
-    if (!isToolbox) return;
-    result.obligations.forEach((obligation) =>
-      printToolboxMessage([
-        "type:obligation",
-        `id:${obligation.id}`,
-        `loc:${obligation.location}`,
-        "status:to be proved",
-        ...(hasOption("--printallobs") ? [`obl:${obligation.text}`] : []),
-      ]),
-    );
-    printToolboxMessage(["type:obligationsnumber", `count:${result.obligations.length}`]);
+    if (isToolbox) {
+      result.obligations.forEach((obligation) =>
+        printToolboxMessage([
+          "type:obligation",
+          `id:${obligation.id}`,
+          `loc:${obligation.location}`,
+          "status:to be proved",
+          ...(hasOption("--printallobs") ? [`obl:${obligation.text}`] : []),
+        ]),
+      );
+      printToolboxMessage(["type:obligationsnumber", `count:${result.obligations.length}`]);
+    }
+    if (!hasOption("--strict")) return [];
+    return checkStrictly(result, lines.start > 0 || lines.end < Infinity, hasOption("--summary"));
   });
-  return EXIT_STATUS.success;
+  return failures.includes(STRICT_EXIT_STATUS.incomplete)
+    ? STRICT_EXIT_STATUS.incomplete
+    : (failures[0] ?? EXIT_STATUS.success);
 };
 
 const run = async (args: string[]) => {

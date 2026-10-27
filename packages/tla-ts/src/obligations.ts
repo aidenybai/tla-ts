@@ -41,6 +41,7 @@ export interface PrintedObligation {
 
 export interface ModuleObligations {
   name: string;
+  location: Locus | undefined;
   obligations: PrintedObligation[];
   summary: ModuleSummary;
 }
@@ -90,17 +91,8 @@ const loadMule = (
   const fileName = input.file.slice(input.file.lastIndexOf("/") + 1);
   const name = fileName.replace(/\.tla$/, "");
   if (mule.name === name) return mule;
-  const end = getModuleEnd(input.source);
-  const closing = end.lines[end.line - 1].slice(end.column - 1).match(/^=+/)?.[0] ?? "";
-  const locus = {
-    file: input.file,
-    startLine: module.location.line,
-    startColumn: module.location.column,
-    endLine: end.line,
-    endColumn: end.column + closing.length,
-  };
   onWarning({
-    text: `${getLocusPrefix(locus)}Warning: module name ${JSON.stringify(mule.name)} does not match file name ${JSON.stringify(fileName)}.`,
+    text: `${getLocusPrefix(mule.location)}Warning: module name ${JSON.stringify(mule.name)} does not match file name ${JSON.stringify(fileName)}.`,
     channel: "toolbox",
   });
   return { ...mule, name };
@@ -254,6 +246,8 @@ export const getObligations = (
           : `${formatObligation(obligation.sequent)}\n`;
       return [{ id: index + 1, location: formatLocus(location), text }];
     });
-    return [{ name: module.name, obligations, summary: generated.summary }];
+    return [
+      { name: module.name, location: module.location, obligations, summary: generated.summary },
+    ];
   });
 };

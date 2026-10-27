@@ -1573,6 +1573,14 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const tokenIndex = cursor.index;
       const token = peek();
       if (token.kind === "ModuleEnd" || token.kind === "End") {
+        // The module runs through its closing ====, which the caller consumes.
+        if (token.kind === "ModuleEnd") {
+          location.range = {
+            module: name,
+            start: { line: location.line, column: location.column },
+            end: { line: token.line, column: token.endColumn },
+          };
+        }
         openModules.pop();
         recursiveScopes.pop();
         return module;

@@ -1,0 +1,9 @@
+Missing proof at File "./Incomplete.tla", line 4, characters 1-11
+Missing proof at File "./Incomplete.tla", line 10, character 18
+Omitted proof at File "./Incomplete.tla", line 6, characters 3-9
+Omitted proof at File "./Incomplete.tla", line 13, characters 3-9
+File "./Incomplete.tla", line 1, character 1 to line 14, character 4:
+[ERROR]: Proof incomplete in module "Incomplete": 2 missing, 2 omitted proof step(s).
+Missing proof at File "./Incomplete.tla", line 10, character 18
+File "./Incomplete.tla", line 9, character 1 to line 11, character 4:
+[ERROR]: Proof incomplete in module "Inner": 1 missing, 0 omitted proof step(s).

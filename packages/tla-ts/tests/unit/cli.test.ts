@@ -226,6 +226,30 @@ describe("prove prints obligations as tlapm -N does", () => {
     expect(result.stderr).toBe(readToolbox("Warnings"));
   });
 
+  // Each .strict file is what tlapm -N --strict writes to stderr.
+  it("reports incomplete proofs under --strict", () => {
+    const result = runCliWith("obligations", ["prove", "-N", "--strict", "Incomplete.tla"]);
+    expect(result.status).toBe(11);
+    expect(result.stderr).toBe(
+      readFileSync(join(FIXTURES, "obligations", "Incomplete.strict"), "utf8"),
+    );
+  });
+
+  it("reports a target without obligations under --strict", () => {
+    const result = runCliWith("obligations", [
+      "prove",
+      "-N",
+      "--strict",
+      "--line",
+      "2",
+      "Proofs.tla",
+    ]);
+    expect(result.status).toBe(12);
+    expect(result.stderr).toBe(
+      readFileSync(join(FIXTURES, "obligations", "Proofs-2.strict"), "utf8"),
+    );
+  });
+
   // Notes.stdout and Notes.stderr are what tlapm -N writes.
   it("prints the notes tlapm prints outside toolbox mode", () => {
     const result = runCliWith("obligations", ["prove", "-N", "Notes.tla"]);

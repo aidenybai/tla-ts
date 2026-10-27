@@ -86,6 +86,7 @@ export interface Mule {
   isImportant: boolean;
   isStandard?: boolean;
   depth?: number;
+  location?: Locus;
 }
 
 const getBuiltinConstant = (name: string, builtin: Builtin): ModuleUnit => ({
