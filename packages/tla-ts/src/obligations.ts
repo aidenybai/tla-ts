@@ -78,7 +78,7 @@ export const getObligations = (
   main: ObligationSource,
   loadModule: (name: string) => ObligationSource | undefined,
 ): PrintedObligation[] => {
-  const counter: Counter = { value: 0 };
+  const counter = { value: 0 };
   const mainModule = { ...loadMule(main, counter, true), isImportant: true };
   const modules = new Map<string, Mule>(STANDARD_MODULES);
   modules.set(mainModule.name, mainModule);

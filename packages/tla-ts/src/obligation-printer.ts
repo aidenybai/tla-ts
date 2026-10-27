@@ -18,7 +18,7 @@ import { format, formatDelimited, renderDoc, text, type Doc } from "./obligation
 
 export type Fixity = "Nonfix" | "Prefix" | "Postfix" | "InfixLeft" | "InfixNon" | "InfixRight";
 
-interface Operator {
+export interface Operator {
   name: string;
   low: number;
   high: number;
