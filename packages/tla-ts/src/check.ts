@@ -48,6 +48,7 @@ import { getTlcFingerprint } from "./tlc-random";
 import { createCanonicalizer } from "./canonical";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createCounterExample } from "./tlc-ext";
+import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import {
   combineHash,
   formatValue,
@@ -121,6 +122,12 @@ export interface CheckResult {
   distinctStates: number;
   queuedStates: number;
   depth: number;
+  // How many states that TLC counts as expanded found each number of new states, when TLC prints
+  // the outdegree of the state graph.
+  outDegrees: number[] | undefined;
+  // The smallest distance between the fingerprints of two distinct states, when TLC estimates a
+  // collision from the actual fingerprints.
+  fingerprintDistance: bigint | undefined;
 }
 
 export interface NamedExpression {
@@ -859,6 +866,23 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     distinctStates: runtime.distinctStates,
     queuedStates: runtime.queueSize,
     depth: runtime.generatedStates === 0 ? 0 : Math.max(statistics.depth, 1),
+    outDegrees: undefined,
+    fingerprintDistance: undefined,
+  });
+  const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
+  const expansion = { newStates: 0 };
+  const getOutDegreeBucket = () => Math.min(expansion.newStates, OUT_DEGREE_BUCKETS - 1);
+  // TLC counts the state it was expanding when an evaluation failed.
+  const getPartialOutDegrees = () =>
+    outDegrees.map((count, degree) => (degree === getOutDegreeBucket() ? count + 1 : count));
+  const createSuccess = (): CheckResult => ({
+    ...createResult("success"),
+    outDegrees: [...outDegrees],
+    fingerprintDistance: getFingerprintDistance(
+      runtime.distinctStates,
+      runtime.generatedStates,
+      () => BigInt64Array.from(states, (state) => runtime.getFingerprint(state)),
+    ),
   });
 
   const search = createSearch(config, environment, () =>
@@ -866,7 +890,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   );
   const assumptionViolation = findAssumptionViolation(specification.assumptions, environment);
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
-  if (!search) return createResult("success");
+  if (!search) return createSuccess();
   const hasPostconditions = config.postconditions.length > 0 || config.possible.length > 0;
   const reportViolation = (
     status: CheckStatus,
@@ -1011,15 +1035,23 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       ? [{ action: undefined, label: undefined, state: toRecord(states[index]) }]
       : getTrace(index);
   // TLC names the initial state it was checking unless a standard module's Java code failed.
-  const toFailure = (error: unknown, trace: TraceStep[], initialState?: Value[]) => {
+  const toFailure = (
+    error: unknown,
+    trace: TraceStep[],
+    initialState?: Value[],
+    failureOutDegrees?: number[],
+  ): CheckResult => {
     if (!(error instanceof TlaEvaluationError)) throw error;
-    return createResult("error", undefined, {
-      message: error.message,
-      trace,
-      initialState:
-        initialState && !(error instanceof TlaModuleError) ? toRecord(initialState) : undefined,
-      exitCode: getErrorExitCode(error),
-    });
+    return {
+      ...createResult("error", undefined, {
+        message: error.message,
+        trace,
+        initialState:
+          initialState && !(error instanceof TlaModuleError) ? toRecord(initialState) : undefined,
+        exitCode: getErrorExitCode(error),
+      }),
+      outDegrees: failureOutDegrees,
+    };
   };
   const getPathTrace = (path: number[], loopStart?: number) => {
     const steps = getPathStates(path, NEXT_RECOVERY_FAILURE);
@@ -1167,14 +1199,22 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       liveSuccessors.push({ index: existing, state: isStored ? stored : successor.state });
     }
     const isNew = isInModel && existing === -1;
-    if (isNew) countDistinctState(depths[index] + 1);
+    if (isNew) {
+      countDistinctState(depths[index] + 1);
+      expansion.newStates++;
+    }
     if (existing === -1) {
-      const violated = search.findViolatedInvariant(successor.state, state);
-      if (violated) {
-        return reportViolation("invariant-violation", {
-          name: violated.name,
-          trace: getTrace(index, successor),
-        });
+      try {
+        const violated = search.findViolatedInvariant(successor.state, state);
+        if (violated) {
+          return reportViolation("invariant-violation", {
+            name: violated.name,
+            trace: getTrace(index, successor),
+          });
+        }
+      } catch (error) {
+        // TLC prints the outdegree when it cannot reproduce the failure, as for an invariant here.
+        return toFailure(error, getTrace(index, successor), undefined, getPartialOutDegrees());
       }
     }
     const violatedProperty = search.findViolatedActionProperty(state, successor.state);
@@ -1222,7 +1262,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
         "No next state actions defined to generate successor states from.",
       );
     }
-    return createResult("success");
+    return createSuccess();
   }
   const expandState = (index: number): CheckResult | undefined => {
     const state = states[index];
@@ -1246,13 +1286,17 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     if (successorCount === 0 && config.checkDeadlock) {
       return reportViolation("deadlock", { name: "deadlock", trace: getStateTrace(index) });
     }
-    const accepted = liveness?.addState(index, state, liveSuccessors);
-    current.livenessSource = -1;
-    if (!accepted) return undefined;
-    return reportViolation("property-violation", {
-      name: accepted.name,
-      trace: getPathTrace(accepted.path),
-    });
+    try {
+      const accepted = liveness?.addState(index, state, liveSuccessors);
+      current.livenessSource = -1;
+      if (!accepted) return undefined;
+      return reportViolation("property-violation", {
+        name: accepted.name,
+        trace: getPathTrace(accepted.path),
+      });
+    } catch (error) {
+      return toFailure(error, getStateTrace(index), undefined, getPartialOutDegrees());
+    }
   };
   setNextStatePhase(true);
   for (let index = 0; index < states.length && !runtime.isStopped; index++) {
@@ -1266,6 +1310,8 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       outcome.result = toFailure(error, getStateTrace(index));
     }
     if (outcome.result) return outcome.result;
+    outDegrees[getOutDegreeBucket()]++;
+    expansion.newStates = 0;
   }
 
   current.index = -1;
@@ -1295,5 +1341,5 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   if (postconditionViolation) {
     return createResult("postcondition-violation", { ...postconditionViolation, trace: [] });
   }
-  return createResult("success");
+  return createSuccess();
 };

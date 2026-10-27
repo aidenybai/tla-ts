@@ -5,6 +5,7 @@ import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from
 import type { LevelMessage, Port, StartMessage, WorkerMessage } from "./parallel";
 import { getSuccessors } from "./successors";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
+import { OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
 import { getRankedStringCount, setStringOrder, type Value } from "./values";
 
@@ -12,7 +13,7 @@ const WORKER_THREADS_MODULE = "node:worker_threads";
 
 interface Pending {
   states: Value[][];
-  parents: Value[][];
+  origins: number[];
   fingerprints: number[];
 }
 
@@ -140,11 +141,13 @@ const run = (start: StartMessage, parent: Port) => {
   const expand = (states: Value[][], next: Value[][]) => {
     const pending: Pending[] = Array.from({ length: count }, () => ({
       states: [],
-      parents: [],
+      origins: [],
       fingerprints: [],
     }));
     const statistics = { generated: 0 };
-    for (const state of states) {
+    const newStates = new Int32Array(states.length);
+    for (let origin = 0; origin < states.length; origin++) {
+      const state = states[origin];
       const successors = getSuccessors(nextAction, state, environment, search.spec.scope);
       statistics.generated += successors.length;
       if (successors.length === 0 && start.config.checkDeadlock) return undefined;
@@ -157,17 +160,19 @@ const run = (start: StartMessage, parent: Port) => {
         if (owner === self) {
           if (!table.insert(fingerprint[0], fingerprint[1])) continue;
           if (search.findViolatedInvariant(successor.state, state)) return undefined;
-          if (search.satisfiesConstraints(successor.state, state)) next.push(successor.state);
-          else table.remove(fingerprint[0], fingerprint[1]);
+          if (search.satisfiesConstraints(successor.state, state)) {
+            next.push(successor.state);
+            newStates[origin]++;
+          } else table.remove(fingerprint[0], fingerprint[1]);
           continue;
         }
         if (!known.insert(fingerprint[0], fingerprint[1])) continue;
         pending[owner].states.push(successor.state);
-        pending[owner].parents.push(state);
+        pending[owner].origins.push(origin);
         pending[owner].fingerprints.push(fingerprint[0], fingerprint[1]);
       }
     }
-    return { pending, generated: statistics.generated };
+    return { pending, generated: statistics.generated, newStates };
   };
 
   const answer = (fingerprints: Int32Array | number[]) => {
@@ -178,15 +183,16 @@ const run = (start: StartMessage, parent: Port) => {
     return bits;
   };
 
-  const commit = (pending: Pending, bits: Uint8Array, next: Value[][]) => {
+  const commit = (pending: Pending, bits: Uint8Array, next: Value[][], newStates: Int32Array) => {
     const unmarks: number[] = [];
     for (let index = 0; index < bits.length; index++) {
       if (bits[index] === 0) continue;
       const state = pending.states[index];
-      const parentState = pending.parents[index];
+      const parentState = frontier.states[pending.origins[index]];
       if (search.findViolatedInvariant(state, parentState)) return undefined;
       if (search.satisfiesConstraints(state, parentState)) {
         next.push(state);
+        newStates[pending.origins[index]]++;
         continue;
       }
       known.remove(pending.fingerprints[index * 2], pending.fingerprints[index * 2 + 1]);
@@ -236,11 +242,21 @@ const run = (start: StartMessage, parent: Port) => {
     });
     const answers = await inbox.receive("answer", level, peers.length);
     for (const reply of answers) {
-      const unmarks = commit(expanded.pending[reply.from], reply.bits ?? new Uint8Array(), next);
+      const unmarks = commit(
+        expanded.pending[reply.from],
+        reply.bits ?? new Uint8Array(),
+        next,
+        expanded.newStates,
+      );
       if (!unmarks) return undefined;
       send(reply.from, { phase: "sizes", level, from: self, unmarks, size: 0 }, [unmarks.buffer]);
     }
     const added = next.length;
+    const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
+    expanded.newStates.forEach((degree) => outDegrees[Math.min(degree, OUT_DEGREE_BUCKETS - 1)]++);
+    const fingerprints = BigInt64Array.from(next, (state) =>
+      environment.runtime.getFingerprint(state),
+    );
     const sizes = Array.from({ length: count }, () => 0);
     sizes[self] = added;
     peers.forEach((peer) =>
@@ -254,10 +270,11 @@ const run = (start: StartMessage, parent: Port) => {
     if (getRankedStringCount() !== startupStrings) return undefined;
     if (!(await balance(level, next, sizes))) return undefined;
     frontier.states = next;
-    return { type: "level", level, generated: expanded.generated, added };
+    return { type: "level", level, generated: expanded.generated, added, outDegrees, fingerprints };
   };
 
-  const report = (message: WorkerMessage) => parent.postMessage(message);
+  const report = (message: WorkerMessage) =>
+    parent.postMessage(message, message.type === "level" ? [message.fingerprints.buffer] : []);
   const step = (level: number) => {
     runLevel(level).then(
       (message) => report(message ?? { type: "abort" }),
