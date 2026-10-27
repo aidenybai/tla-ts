@@ -1109,6 +1109,10 @@ describe("name resolution matches SANY", () => {
     ],
     ["an unknown operator in a theorem", "THEOREM Undefined"],
     ["an unknown operator in a proof step", "THEOREM TRUE\n<1>1. Undefined\n  OBVIOUS\n<1> QED"],
+    ["a higher-order operator as an operator argument", "D(Op(_)) == Op(42)\nFoo == D(D)"],
+    ["an expression as an operator argument", "D(Op(_)) == Op(42)\nFoo == D(1)"],
+    ["an operator as an expression argument", "F(a) == a\nG(a) == a\nFoo == F(G)"],
+    ["an operator argument with the wrong arity", "D(Op(_)) == Op(42)\nG(a, b) == a\nFoo == D(G)"],
     [
       "a NEW symbol after the proof of its step",
       "THEOREM TRUE\n<1>1. ASSUME NEW c PROVE c = c\n  OBVIOUS\n<1>2. c = c\n<1> QED",
@@ -1214,6 +1218,10 @@ describe("name resolution matches SANY", () => {
     [
       "a recursive LET definition",
       "F == LET RECURSIVE G(_)\n         G(n) == IF n = 0 THEN 0 ELSE G(0)\n     IN G(1)",
+    ],
+    [
+      "operator arguments of the arity a parameter takes",
+      "D(Op(_)) == Op(42)\nG(a) == a\nF == D(G) = D(LAMBDA a : a)",
     ],
   ])("accepts %s", async (_, source) => {
     expect((await checkSource(source)).status).toBe("success");
