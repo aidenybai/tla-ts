@@ -266,9 +266,12 @@ export const extractModule = (source: string, name: string) => {
 export const parseModule = (source: string): Module => {
   const tokens = tokenize(source);
   const cursor = { index: 0, offsideColumns: [] as number[] };
-  const recursiveNames = new Set<string>();
+  // A RECURSIVE declaration covers the definitions of its own LET or module.
+  const recursiveScopes: Set<string>[] = [];
   const factNames = new Set<string>();
   const openModules: Module[] = [];
+
+  const isRecursiveName = (name: string) => recursiveScopes[recursiveScopes.length - 1].has(name);
 
   const getLocation = (token: Token): SourceLocation => ({
     line: token.line,
@@ -764,15 +767,17 @@ export const parseModule = (source: string): Module => {
       case "LET": {
         const definitions: Definition[] = [];
         const instances: Instance[] = [];
+        recursiveScopes.push(new Set());
         while (!accept("IN")) {
           if (accept("RECURSIVE")) {
-            parseDeclarations().forEach((declaration) => recursiveNames.add(declaration.name));
+            declareRecursive();
             continue;
           }
           const unit = parseDefinition(false);
           if (unit.kind === "Instance") instances.push(unit);
           else definitions.push(unit);
         }
+        recursiveScopes.pop();
         const body = parseExpression();
         return instances.length === 0
           ? { kind: "Let", definitions, body, location }
@@ -958,7 +963,7 @@ export const parseModule = (source: string): Module => {
           ],
           ...parseBody(),
           isLocal,
-          isRecursive: recursiveNames.has(operator),
+          isRecursive: isRecursiveName(operator),
           location,
         };
       }
@@ -977,7 +982,7 @@ export const parseModule = (source: string): Module => {
         params: [{ name: param, arity: 0 }],
         ...parseBody(),
         isLocal,
-        isRecursive: recursiveNames.has(operator),
+        isRecursive: isRecursiveName(operator),
         location,
       };
     }
@@ -992,7 +997,7 @@ export const parseModule = (source: string): Module => {
         bounds,
         body: parseExpression(),
         isLocal,
-        isRecursive: recursiveNames.has(name),
+        isRecursive: isRecursiveName(name),
         location,
       };
     }
@@ -1005,7 +1010,7 @@ export const parseModule = (source: string): Module => {
       params,
       ...parseBody(),
       isLocal,
-      isRecursive: recursiveNames.has(name),
+      isRecursive: isRecursiveName(name),
       location,
     };
   };
@@ -1048,6 +1053,11 @@ export const parseModule = (source: string): Module => {
   };
 
   const parseDeclarations = () => parseSeparated(parseDeclaration);
+
+  const declareRecursive = () =>
+    parseDeclarations().forEach((declaration) =>
+      recursiveScopes[recursiveScopes.length - 1].add(declaration.name),
+    );
 
   const getClosingOffset = (offset: number) => {
     const depth = { value: 0, offset };
@@ -1420,11 +1430,13 @@ export const parseModule = (source: string): Module => {
       uses: [],
     };
     openModules.push(module);
+    recursiveScopes.push(new Set());
     while (true) {
       const tokenIndex = cursor.index;
       const token = peek();
       if (token.kind === "ModuleEnd" || token.kind === "End") {
         openModules.pop();
+        recursiveScopes.pop();
         return module;
       }
       if (token.kind === "Separator") {
@@ -1475,7 +1487,7 @@ export const parseModule = (source: string): Module => {
           continue;
         case "RECURSIVE":
           advance();
-          parseDeclarations().forEach((declaration) => recursiveNames.add(declaration.name));
+          declareRecursive();
           continue;
         case "INSTANCE":
           module.instances.push(

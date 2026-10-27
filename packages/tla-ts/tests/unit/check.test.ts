@@ -1103,6 +1103,10 @@ describe("name resolution matches SANY", () => {
       "a definition as a fact in a HIDE step",
       "foo == 1\nTHEOREM T == TRUE\n<1>1. HIDE foo\n<1> QED",
     ],
+    [
+      "a LET definition named after the recursive one it is in",
+      "RECURSIVE F\nF == LET F == 2 IN F",
+    ],
   ])("rejects %s", async (_, source) => {
     await expect(checkSource(source)).rejects.toThrow(TlaSyntaxError);
   });
@@ -1167,6 +1171,11 @@ describe("name resolution matches SANY", () => {
     [
       "a LET definition whose body binds its own name",
       "F == LET e == CHOOSE e \\in {1} : TRUE IN e",
+    ],
+    ["a LET definition named after the definition it is in", "F == LET F == 2 IN F"],
+    [
+      "a definition named after a recursive LET definition before it",
+      "G == LET RECURSIVE F(_)\n         F(n) == n\n     IN F(1)\nF == LET F == 2 IN F",
     ],
     [
       "a LET parameter named after a later LET definition",
