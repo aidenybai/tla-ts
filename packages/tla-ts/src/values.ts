@@ -72,10 +72,21 @@ export interface FilteredSetValue {
   test: (element: Value) => boolean;
 }
 
+export interface LazyFunctionParameter {
+  name: string;
+  domain: Value;
+}
+
+export interface LazyFunctionSource {
+  parameters: LazyFunctionParameter[];
+  body: string;
+}
+
 export interface LazyFunctionValue {
   kind: "LazyFunction";
   domain: Value;
   apply: (argument: Value) => Value;
+  source?: LazyFunctionSource;
 }
 
 export type Value =
@@ -1128,6 +1139,7 @@ export const updateFunction = (
       kind: "LazyFunction",
       domain: fn.domain,
       apply: (key) => (valuesEqual(key, argument) ? updated : fn.apply(key)),
+      source: fn.source,
     };
   }
   const finite = toFiniteFunction(fn);
@@ -1406,7 +1418,14 @@ export const formatValue = (value: Value, isStrict = false): string => {
       return `Seq(${format(value.base)})`;
     case "Function":
     case "LazyFunction": {
-      if (value.kind === "LazyFunction" && !isEnumerable(value.domain)) return "<function>";
+      if (value.kind === "LazyFunction" && !isEnumerable(value.domain)) {
+        const source = value.source;
+        if (!source) return "<function>";
+        const parameters = source.parameters
+          .map((parameter) => `${parameter.name} \\in ${formatValue(parameter.domain)}`)
+          .join(", ");
+        return `[${parameters} |-> <expression ${source.body}>]`;
+      }
       const fn = toFiniteFunction(value);
       if (fn.domain.every((key, index) => key === index + 1)) {
         return `<<${fn.range.map(format).join(", ")}>>`;
