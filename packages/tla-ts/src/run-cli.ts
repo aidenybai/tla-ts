@@ -11,10 +11,17 @@ import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
 import type { CheckResult, CheckStatus, TraceStep } from "./check";
 import { parseConfig } from "./config";
-import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "./errors";
+import {
+  getErrorExitCode,
+  TlaConfigError,
+  TlaError,
+  TlaEvaluationError,
+  TlaProofError,
+} from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
 import type { LineRange } from "./obligation-generate";
-import { getObligations, WHOLE_MODULE } from "./obligations";
+import { getAtPrefix, getLocusText } from "./obligation-expression";
+import { formatSummary, getObligations, WHOLE_MODULE, type ModuleObligations } from "./obligations";
 import { check } from "./parallel";
 import { prettyPrint } from "./pretty-print";
 import {
@@ -47,6 +54,8 @@ const VALUE_FLAGS = new Set(["-config", "-lncheck", "-seed", "-workers"]);
 const PROVE_OPTIONS = new Map([
   ["-N", 0],
   ["--printallobs", 0],
+  ["--summary", 0],
+  ["--strict", 0],
   ["-I", 1],
   ["--line", 1],
   ["--toolbox", 2],
@@ -280,6 +289,59 @@ interface ProveOption {
 const printToolboxMessage = (fields: string[]) =>
   console.error(`@!!BEGIN\n${fields.map((field) => `@!!${field}\n`).join("")}@!!END\n`);
 
+const TLAPM_VERSION = "5f5037f";
+
+const quoteArgument = (arg: string) =>
+  /^[+,\-./0-9:=@A-Z_a-z]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
+
+const printToolboxHeader = (args: string[]) => {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const time = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  console.log(
+    `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${date} ${time} with command line:\n\\* ${["tla-ts", "prove", ...args].map(quoteArgument).join(" ")}\n`,
+  );
+};
+
+const STRICT_EXIT_STATUS = { incomplete: 11, emptyTarget: 12 };
+
+const checkStrictly = (result: ModuleObligations, isTargeted: boolean, isSummary: boolean) => {
+  const summary = result.summary;
+  if (!isSummary) {
+    summary.absent.forEach((locus) => console.error(`Missing proof at ${getLocusText(locus)}`));
+    summary.omitted.forEach((locus) => console.error(`Omitted proof at ${getLocusText(locus)}`));
+  }
+  const isIncomplete = summary.absent.length + summary.omitted.length > 0;
+  if (isIncomplete) {
+    console.error(
+      `${getAtPrefix(result.location)}[ERROR]: Proof incomplete in module ${JSON.stringify(result.name)}: ${summary.absent.length} missing, ${summary.omitted.length} omitted proof step(s).`,
+    );
+  }
+  const isEmpty = isTargeted && result.obligations.length === 0;
+  if (isEmpty) {
+    console.error(
+      `${getAtPrefix(result.location)}[ERROR]: No proof obligation found for the selected target.`,
+    );
+  }
+  return [
+    ...(isIncomplete ? [STRICT_EXIT_STATUS.incomplete] : []),
+    ...(isEmpty ? [STRICT_EXIT_STATUS.emptyTarget] : []),
+  ];
+};
+
+const TLAPM_FAILURE_STATUS = 3;
+
+const generateObligations = (generate: () => ModuleObligations[]) => {
+  try {
+    return generate();
+  } catch (error) {
+    if (!(error instanceof TlaProofError)) throw error;
+    console.error(` tlapm ending abnormally with ${error.exception}\n`);
+    return undefined;
+  }
+};
+
 // Mirrors tlapm -N, which generates the obligations without sending them to a backend.
 const prove = (args: string[]) => {
   const options: ProveOption[] = [];
@@ -312,23 +374,21 @@ const prove = (args: string[]) => {
     console.error(`Error: option '${nonInteger.name}' expects an integer.`);
     return 1;
   }
-  if (!options.some((option) => option.name === "-N")) {
+  const hasOption = (name: string) => options.some((option) => option.name === name);
+  if (!hasOption("-N") && !hasOption("--summary")) {
     console.error("Error: tla-ts has no prover backend yet, so prove needs -N.");
     return 1;
   }
-  const modulePaths = paths
-    .flatMap((path) => (GLOB_CHARACTERS.test(path) ? globSync(path).sort() : [path]))
-    .map((path) => (path.endsWith(".tla") ? path : `${path}.tla`));
+  const files = paths.flatMap((path) =>
+    GLOB_CHARACTERS.test(path) ? globSync(path).sort() : [path],
+  );
+  const modulePaths = files.map((path) => (path.endsWith(".tla") ? path : `${path}.tla`));
   if (modulePaths.length === 0) {
     console.error(USAGE);
     return 1;
   }
-  const missing = modulePaths.find((path) => !existsSync(path));
-  if (missing !== undefined) {
-    console.error(`Cannot find the module file ${missing}`);
-    return EXIT_STATUS.configParseError;
-  }
-  const isToolbox = options.some((option) => ["--toolbox", "--line"].includes(option.name));
+  const isToolbox = hasOption("--toolbox") || hasOption("--line");
+  if (isToolbox) printToolboxHeader(args);
   // Like tlapm, the last of --toolbox and --line wins, and a 0 means the whole module.
   const lines = options.reduce<LineRange>((range, option) => {
     const [start, end] = option.values.map(Number);
@@ -345,32 +405,51 @@ const prove = (args: string[]) => {
     [".", ...(tlapmLibrary ? [tlapmLibrary] : []), ...includes.toReversed()],
   );
   // tlapm names each file it reads by joining a search directory and the name, as in ./Module.tla.
-  const results = getObligations(
-    modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
-    (name) => directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean),
-    {
-      lines,
-      onWarning: (warning) =>
-        isToolbox && warning.isToolboxMessage
-          ? printToolboxMessage(["type:warning", `msg:${warning.text}`])
-          : console.error(warning.text),
-    },
-  );
-  if (!isToolbox) return EXIT_STATUS.success;
-  const isPrintingAll = options.some((option) => option.name === "--printallobs");
-  results.forEach((result) => {
-    result.obligations.forEach((obligation) =>
-      printToolboxMessage([
-        "type:obligation",
-        `id:${obligation.id}`,
-        `loc:${obligation.location}`,
-        "status:to be proved",
-        ...(isPrintingAll ? [`obl:${obligation.text}`] : []),
-      ]),
+  const results = generateObligations(() => {
+    const missingIndex = modulePaths.findIndex((path) => !existsSync(path));
+    if (missingIndex !== -1) {
+      const missing = files[missingIndex];
+      console.error(`File "<unknown>":\nError: File ${JSON.stringify(missing)} not found`);
+      throw new TlaProofError(`File ${missing} not found`, { failure: "Module.Parser.parse_file" });
+    }
+    return getObligations(
+      modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
+      (name) =>
+        directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean),
+      {
+        lines,
+        onWarning: (warning) => {
+          if (warning.channel === "stdout") return console.log(warning.text);
+          const isToolboxMessage =
+            warning.channel === "toolbox" || warning.channel === "toolboxOnly";
+          if (isToolbox && isToolboxMessage)
+            return printToolboxMessage(["type:warning", `msg:${warning.text}`]);
+          if (warning.channel !== "toolboxOnly") console.error(warning.text);
+        },
+      },
     );
-    printToolboxMessage(["type:obligationsnumber", `count:${result.obligations.length}`]);
   });
-  return EXIT_STATUS.success;
+  if (!results) return TLAPM_FAILURE_STATUS;
+  const failures = results.flatMap((result) => {
+    if (hasOption("--summary")) console.log(formatSummary(result));
+    if (isToolbox) {
+      result.obligations.forEach((obligation) =>
+        printToolboxMessage([
+          "type:obligation",
+          `id:${obligation.id}`,
+          `loc:${obligation.location}`,
+          "status:to be proved",
+          ...(hasOption("--printallobs") ? [`obl:${obligation.text}`] : []),
+        ]),
+      );
+      printToolboxMessage(["type:obligationsnumber", `count:${result.obligations.length}`]);
+    }
+    if (!hasOption("--strict")) return [];
+    return checkStrictly(result, lines.start > 0 || lines.end < Infinity, hasOption("--summary"));
+  });
+  return failures.includes(STRICT_EXIT_STATUS.incomplete)
+    ? STRICT_EXIT_STATUS.incomplete
+    : (failures[0] ?? EXIT_STATUS.success);
 };
 
 const run = async (args: string[]) => {

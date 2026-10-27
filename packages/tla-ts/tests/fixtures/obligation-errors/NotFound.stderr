@@ -1,0 +1,4 @@
+File "./NotFound.tla", line 2, characters 7-15:
+Error: Operator "Missing" not found
+ tlapm ending abnormally with Failure("Expr.Anon: 1NUM")
+

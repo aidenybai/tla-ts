@@ -1,0 +1,23 @@
+---- summary of module "Incomplete" ----
+  obligations_count = 7
+  missing_proofs_count = 2
+  omitted_proofs_count = 2
+  ---- incomplete proof of theorem at line 3, character 1 ----
+    missing_proofs_count = 1
+    missing_proof_1 at line 4, characters 1-11
+    omitted_proofs_count = 1
+    omitted_proof_1 at line 6, characters 3-9
+  ====
+  ---- incomplete proof of theorem at line 12, character 1 ----
+    omitted_proofs_count = 1
+    omitted_proof_2 at line 13, characters 3-9
+  ====
+====
+---- summary of module "Inner" ----
+  obligations_count = 1
+  missing_proofs_count = 1
+  ---- incomplete proof of theorem at line 10, character 1 ----
+    missing_proofs_count = 1
+    missing_proof_1 at line 10, character 18
+  ====
+====

@@ -7,6 +7,7 @@ import {
   at,
   consSubstitution,
   exprifySequent,
+  getErrorNote,
   isEqualExpr,
   mapAccumulate,
   normalizeApply,
@@ -19,6 +20,7 @@ import {
   type Expr,
   type Hyp,
   type Locus,
+  type ObligationWarning,
   type Sequent,
   type Visibility,
   mapChildren,
@@ -179,7 +181,12 @@ const isDomainMatch = (fact: Expr, domain: Expr) =>
   fact.args[0].index === 0 &&
   isEqualExpr(domain, fact.args[1]);
 
-const setExpression = (visibility: Visibility, fact: Expr, context: Hyp[]): Hyp[] => {
+const setExpression = (
+  onWarning: (warning: ObligationWarning) => void,
+  visibility: Visibility,
+  fact: Expr,
+  context: Hyp[],
+): Hyp[] => {
   let isFound = false;
   let current = fact;
   const result = [...context];
@@ -195,7 +202,9 @@ const setExpression = (visibility: Visibility, fact: Expr, context: Hyp[]): Hyp[
     }
   }
   if (!isFound) {
-    throw new TlaProofError("This expression does not appear in the context and cannot be hidden.");
+    const message = "This expression does not appear in the context and cannot be hidden.";
+    onWarning(getErrorNote(fact.location, `${message}\n`));
+    throw new TlaProofError(message, { failure: "proof.Gen.set_expr" });
   }
   return result;
 };
@@ -273,6 +282,49 @@ const obligate = (
   kind: ObligationKind,
 ): Obligation => ({ sequent, location: from.location, kind });
 
+export interface ProofSummary {
+  total: number;
+  absent: Locus[];
+  omitted: Locus[];
+}
+
+export const EMPTY_SUMMARY: ProofSummary = { total: 0, absent: [], omitted: [] };
+
+export const joinSummaries = (left: ProofSummary, right: ProofSummary): ProofSummary => ({
+  total: left.total + right.total,
+  absent: [...left.absent, ...right.absent],
+  omitted: [...left.omitted, ...right.omitted],
+});
+
+const getStepSummary = (step: Step): ProofSummary => {
+  switch (step.kind) {
+    case "Use":
+      return { ...EMPTY_SUMMARY, total: step.obligations?.length ?? 0 };
+    case "Assert":
+    case "Suffices":
+    case "Pcase":
+    case "Pick":
+      return getProofSummary(step.proof);
+    default:
+      return EMPTY_SUMMARY;
+  }
+};
+
+export const getProofSummary = (proof: Proof): ProofSummary => {
+  if (proof.kind === "Steps") {
+    return [...proof.steps.map(getStepSummary), getProofSummary(proof.qed.proof)].reduce(
+      joinSummaries,
+    );
+  }
+  if (proof.kind !== "Omitted" || !proof.obligations || !proof.location)
+    return { ...EMPTY_SUMMARY, total: proof.obligations?.length ?? 0 };
+  return {
+    total: proof.obligations.length,
+    absent: proof.omission === "Implicit" ? [proof.location] : [],
+    omitted: proof.omission === "Explicit" ? [proof.location] : [],
+  };
+};
+
 const replaceAt = (expression: Expr, replacement: Expr): Expr =>
   expression.kind === "At" && !expression.isExcept
     ? at(stripProps(replacement), expression)
@@ -282,6 +334,7 @@ export const createGenerator = (
   counter: Counter,
   inputFiles: Set<string>,
   lines: LineRange,
+  onWarning: (warning: ObligationWarning) => void,
 ): Generator => {
   const generate = (sequent: Sequent, proof: Proof): Proof => {
     const location = proof.location;
@@ -356,7 +409,7 @@ export const createGenerator = (
           sequent.context,
         );
         const context = step.usable.facts.reduceRight(
-          (current, fact) => setExpression("Hidden", fact, current),
+          (current, fact) => setExpression(onWarning, "Hidden", fact, current),
           hidden,
         );
         return [{ ...sequent, context }, step];

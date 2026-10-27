@@ -380,7 +380,12 @@ export const tokenize = (source: string): Token[] => {
     }
   };
   const createError = (message: string) =>
-    new TlaSyntaxError(`${message} at line ${cursor.line}, column ${getColumn()}`);
+    new TlaSyntaxError(`${message} at line ${cursor.line}, column ${getColumn()}`, undefined, {
+      reason: message,
+      line: cursor.line,
+      column: getColumn(),
+      isEnd: cursor.index >= source.length,
+    });
 
   while (cursor.index < source.length) {
     const character = source[cursor.index];

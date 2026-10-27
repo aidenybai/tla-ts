@@ -215,6 +215,41 @@ const PROOF_STARTS = new Set(["BY", "PROOF", "OBVIOUS", "OMITTED"]);
 
 const PROVABLE_STEPS = new Set(["Qed", "Pick", "Case", "Assert"]);
 
+const TLAPM_PUNCTUATION = new Set([
+  ",",
+  ".",
+  "_",
+  "(",
+  ")",
+  "[",
+  "]",
+  "{",
+  "}",
+  "<<",
+  ">>",
+  "]_",
+  ">>_",
+  "==",
+  "!",
+  "@",
+  ":",
+  "::",
+  ";",
+  "->",
+  "<-",
+  "|->",
+  "\\A",
+  "\\AA",
+  "\\E",
+  "\\EE",
+  "\\forall",
+  "\\exists",
+  "WF_",
+  "SF_",
+  "(*{",
+  "}*)",
+]);
+
 const UNNAMED_STEP_LABELS = new Set(["", "*", "-"]);
 
 const FACT_KEYWORDS = new Set([
@@ -284,7 +319,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
 
   const getLocation = (token: Token): SourceLocation => ({
     line: token.line,
-    column: token.column,
+    column: isTlapm && token.kind === "String" ? token.endColumn : token.column,
     range: undefined,
   });
 
@@ -328,12 +363,75 @@ const parse = (source: string, isTlapm: boolean): Module => {
   const describe = (token: Token) =>
     token.kind === "End" ? "end of input" : JSON.stringify(token.text);
 
-  const createError = (message: string, token: { line: number; column: number } = peekRaw()) =>
-    new TlaSyntaxError(`${message} at line ${token.line}, column ${token.column}`);
+  const unitStart = { index: 0 };
+
+  const getDefinitionEnd = (fallback: { line: number; column: number }) => {
+    const equals = tokens
+      .slice(unitStart.index, cursor.index)
+      .find((token) => token.text === "==" && token.kind !== "String");
+    return equals ? { line: equals.line, column: equals.endColumn + 1 } : fallback;
+  };
 
   // tlapm reads TRUE, FALSE, BOOLEAN, STRING and the other keywords only as keywords.
   const isTlapmKeyword = (token: Token) =>
     isTlapm && (token.kind === "Keyword" || BUILTIN_CONSTANTS.has(token.text));
+
+  const getPreviousEnd = (position: { line: number; column: number }) => {
+    const previous = tokens.findLast(
+      (token) =>
+        token.kind !== "End" &&
+        (token.line < position.line ||
+          (token.line === position.line && token.column < position.column)),
+    );
+    return previous ? { line: previous.line, column: previous.endColumn + 1 } : position;
+  };
+
+  const getTlapmName = (token: Token) => {
+    if (/^-{4,}$/.test(token.text)) return "----";
+    if (/^={4,}$/.test(token.text)) return "====";
+    if (TLAPM_PUNCTUATION.has(token.text) || token.kind === "Number" || token.kind === "Decimal")
+      return token.text;
+    if (token.kind === "String") return JSON.stringify(token.text);
+    if (isTlapmKeyword(token)) return `keyword ${token.text}`;
+    return token.kind === "Identifier" ? `identifier ${token.text}` : `operator ${token.text}`;
+  };
+
+  const createError = (
+    message: string,
+    token: { line: number; column: number } = peekRaw(),
+    unexpected?: Token,
+  ) => {
+    const end = tokens[tokens.length - 1];
+    const isEnd = token.line === end.line && token.column === end.column;
+    return new TlaSyntaxError(
+      `${message} at line ${token.line}, column ${token.column}`,
+      undefined,
+      getFailure(message, token, isEnd, unexpected),
+    );
+  };
+
+  const getFailure = (
+    message: string,
+    token: { line: number; column: number },
+    isEnd: boolean,
+    unexpected: Token | undefined,
+  ) => {
+    if (isTlapm && isEnd) {
+      const end = tokens[tokens.length - 1];
+      return { reason: "Unexpected EOF", ...getDefinitionEnd(getPreviousEnd(end)), isEnd };
+    }
+    if (isTlapm && unexpected) {
+      return {
+        reason: `Unexpected ${getTlapmName(unexpected)}`,
+        ...getPreviousEnd(unexpected),
+        isEnd,
+      };
+    }
+    return { reason: message, line: token.line, column: token.column, isEnd };
+  };
+
+  const createUnexpected = (message: string, token: Token = peekRaw()) =>
+    createError(message, token, token);
 
   const isFieldName = (token: Token) =>
     (token.kind === "Identifier" || token.kind === "Keyword") && !isTlapmKeyword(token);
@@ -358,16 +456,16 @@ const parse = (source: string, isTlapm: boolean): Module => {
 
   const expect = (text: string) => {
     if (!isAt(text))
-      throw createError(`Expected ${JSON.stringify(text)} but found ${describe(peek())}`);
+      throw createUnexpected(`Expected ${JSON.stringify(text)} but found ${describe(peek())}`);
     return advance();
   };
 
   const expectIdentifier = () => {
     const token = peek();
     if (token.kind !== "Identifier") {
-      throw createError(`Expected an identifier but found ${describe(token)}`);
+      throw createUnexpected(`Expected an identifier but found ${describe(token)}`);
     }
-    if (isTlapmKeyword(token)) throw createError(`Unexpected keyword ${token.text}`);
+    if (isTlapmKeyword(token)) throw createUnexpected(`Unexpected keyword ${token.text}`);
     cursor.index++;
     return token.text;
   };
@@ -443,7 +541,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
       );
     }
     if (isAt("<<") || isAt("(")) return parsePrimary();
-    throw createError(`Expected a subscript but found ${describe(token)}`);
+    throw createUnexpected(`Expected a subscript but found ${describe(token)}`);
   };
 
   const isDefinitionAhead = (operator: Token) => {
@@ -589,7 +687,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
           while (isAt(".") || isAt("[")) {
             if (accept(".")) {
               if (!isFieldName(peek()))
-                throw createError(`Expected a field name but found ${describe(peek())}`);
+                throw createUnexpected(`Expected a field name but found ${describe(peek())}`);
               path.push({ kind: "Field", name: advance().text });
               continue;
             }
@@ -824,6 +922,8 @@ const parse = (source: string, isTlapm: boolean): Module => {
         const instances: Instance[] = [];
         recursiveScopes.push(new Set());
         while (!accept("IN")) {
+          if (isTlapm && isAt("RECURSIVE"))
+            throw createError("Unexpected keyword RECURSIVE", getDefinitionEnd(peekRaw()));
           if (accept("RECURSIVE")) {
             declareRecursive();
             continue;
@@ -861,7 +961,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
         };
       }
     }
-    throw createError(`Unexpected ${describe(token)}`, token);
+    throw createUnexpected(`Unexpected ${describe(token)}`, token);
   };
 
   const parsePrefix = (): Expression => {
@@ -1049,9 +1149,13 @@ const parse = (source: string, isTlapm: boolean): Module => {
         location,
       };
     }
+    const definitionStart = cursor.index;
     const params = parseParams();
     expect("==");
-    if (isAt("INSTANCE")) return parseInstance(name, params, isLocal, location);
+    if (isAt("INSTANCE")) {
+      const instance = parseInstance(name, params, isLocal, location);
+      return { ...instance, definitionRange: getRange(definitionStart) };
+    }
     return parseOperator(name, params);
   };
 
@@ -1061,6 +1165,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
     isLocal: boolean,
     location: SourceLocation,
   ): Instance => {
+    const start = cursor.index;
     expect("INSTANCE");
     const module = expectIdentifier();
     const substitutions = accept("WITH")
@@ -1070,7 +1175,16 @@ const parse = (source: string, isTlapm: boolean): Module => {
           return { name: target, expression: parseArgument() };
         })
       : [];
-    return { kind: "Instance", name, params, module, substitutions, isLocal, location };
+    return {
+      kind: "Instance",
+      name,
+      params,
+      module,
+      substitutions,
+      isLocal,
+      location,
+      instanceRange: getRange(start),
+    };
   };
 
   const parseDeclaration = (): Declaration => {
@@ -1256,7 +1370,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const part = peek();
       const isName = part.kind === "Identifier" && !isTlapmKeyword(part);
       if (!isName && part.kind !== "Operator") {
-        throw createError(`Expected a definition name but found ${describe(part)}`);
+        throw createUnexpected(`Expected a definition name but found ${describe(part)}`, part);
       }
       cursor.index++;
       return part.text;
@@ -1297,7 +1411,8 @@ const parse = (source: string, isTlapm: boolean): Module => {
       keyword: keywordRange,
       location: getLocation(keyword),
     };
-    const invalid = use.kind === "Hide" ? use.facts.find((fact) => !isHideFact(fact)) : undefined;
+    const invalid =
+      use.kind === "Hide" && !isTlapm ? use.facts.find((fact) => !isHideFact(fact)) : undefined;
     if (invalid) {
       throw createError(
         "The only expression allowed as a fact in a HIDE is the name of a theorem, assumption, or step",
@@ -1313,7 +1428,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
     const isNew = accept("NEW");
     const level = peek().kind === "Keyword" ? NEW_SYMBOL_LEVELS.get(peek().text) : undefined;
     if (!isNew && level === undefined) {
-      throw createError(`Expected a declaration but found ${describe(peek())}`);
+      throw createUnexpected(`Expected a declaration but found ${describe(peek())}`);
     }
     if (level !== undefined) advance();
     if (level === "Variable") {
@@ -1420,7 +1535,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
   const parseStepStart = (isQed: boolean) => {
     const step = peek();
     if (step.kind !== "Step") {
-      throw createError(`Expected a step number but found ${describe(step)}`);
+      throw createUnexpected(`Expected a step number but found ${describe(step)}`, step);
     }
     if (!isCorrectLevel(step)) {
       throw createError(`${isQed ? "QED step" : "step"}'s number has bad level`, step);
@@ -1546,7 +1661,8 @@ const parse = (source: string, isTlapm: boolean): Module => {
     const module: Module = {
       name,
       modules: [],
-      extends: accept("EXTENDS") ? parseSeparated(expectIdentifier) : [],
+      extends: [],
+      extendsRanges: [],
       constants: [],
       variables: [],
       definitions: [],
@@ -1559,10 +1675,25 @@ const parse = (source: string, isTlapm: boolean): Module => {
     };
     openModules.push(module);
     recursiveScopes.push(new Set());
+    if (accept("EXTENDS")) {
+      parseSeparated(() => {
+        const start = cursor.index;
+        module.extends.push(expectIdentifier());
+        module.extendsRanges.push(getRange(start));
+      });
+    }
     while (true) {
       const tokenIndex = cursor.index;
+      unitStart.index = tokenIndex;
       const token = peek();
       if (token.kind === "ModuleEnd" || token.kind === "End") {
+        if (token.kind === "ModuleEnd") {
+          location.range = {
+            module: name,
+            start: { line: location.line, column: location.column },
+            end: { line: token.line, column: token.endColumn },
+          };
+        }
         openModules.pop();
         recursiveScopes.pop();
         return module;

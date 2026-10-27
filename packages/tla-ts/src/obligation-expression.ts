@@ -11,23 +11,33 @@ export interface Locus {
   endColumn: number;
 }
 
-// A warning tlapm sends as a toolbox message (Errors.err), or prints to stderr as is (Errors.warn).
 export interface ObligationWarning {
   text: string;
-  isToolboxMessage: boolean;
+  channel: "toolbox" | "toolboxOnly" | "stderr" | "stdout";
 }
 
-// Errors.loc_to_string: Loc.string_of_locus and " :", where endColumn is the column after the end.
-export const getLocusPrefix = (locus: Locus | undefined) => {
-  if (!locus) return "";
-  const file = `File ${JSON.stringify(locus.file)}, line ${locus.startLine}`;
+export const getLocusPosition = (locus: Locus) => {
   const end = locus.endColumn - 1;
   if (locus.startLine !== locus.endLine)
-    return `${file}, character ${locus.startColumn} to line ${locus.endLine}, character ${end} :\n`;
+    return `line ${locus.startLine}, character ${locus.startColumn} to line ${locus.endLine}, character ${end}`;
   return locus.startColumn >= end
-    ? `${file}, character ${locus.startColumn} :\n`
-    : `${file}, characters ${locus.startColumn}-${end} :\n`;
+    ? `line ${locus.startLine}, character ${locus.startColumn}`
+    : `line ${locus.startLine}, characters ${locus.startColumn}-${end}`;
 };
+
+export const getLocusText = (locus: Locus) =>
+  `File ${JSON.stringify(locus.file)}, ${getLocusPosition(locus)}`;
+
+export const getAtPrefix = (locus: Locus | undefined) =>
+  `${locus ? getLocusText(locus) : "<unknown location>"}:\n`;
+
+export const getErrorNote = (locus: Locus | undefined, message: string): ObligationWarning => ({
+  text: `${getAtPrefix(locus)}Error: ${message}`,
+  channel: "stderr",
+});
+
+export const getLocusPrefix = (locus: Locus | undefined) =>
+  locus ? `${getLocusText(locus)} :\n` : "";
 
 export type Builtin =
   | "TRUE"
@@ -142,6 +152,7 @@ export type ParenForm =
 export interface Param {
   name: string;
   shape: Shape;
+  location?: Locus;
 }
 
 // isAtomic is Expr.Deref.atomic: a resolved subexpression reference, which has no subexpressions.
@@ -197,6 +208,7 @@ export interface InstanceDefinition {
   args: string[];
   module: string;
   substitutions: { name: string; expression: Expr }[];
+  location?: Locus;
 }
 
 export type Defn = DefnCore & { location?: Locus };
@@ -863,12 +875,13 @@ export const mapSelectorArgs = (selector: Selector, map: (arg: Expr) => Expr): S
     : selector;
 
 export const mapExceptSpecs = (specs: ExceptSpec[], map: (inner: Expr) => Expr): ExceptSpec[] =>
-  specs.map((spec) => ({
-    trail: spec.trail.map((point) =>
+  specs.map((spec) => {
+    const value = map(spec.value);
+    const trail = spec.trail.map((point): ExceptPoint =>
       point.kind === "Apply" ? { kind: "Apply", expression: map(point.expression) } : point,
-    ),
-    value: map(spec.value),
-  }));
+    );
+    return { trail, value };
+  });
 
 export const mapDefnBody = (definition: Defn, map: (body: Expr) => Expr): Defn =>
   definition.kind === "Operator" || definition.kind === "Bpragma"
@@ -883,7 +896,8 @@ const mapHyp = (hyp: Hyp, map: (inner: Expr) => Expr, hyps: "visible" | "all"): 
 };
 
 // Visit.map, threading a state through each binder: a scope or a substitution. Visit.map_visible_hyp
-// binds hidden hypotheses without visiting them, and Visit.map visits them too.
+// binds hidden hypotheses without visiting them, and Visit.map visits them too. Children map in
+// OCaml evaluation order, last constructor argument first, which decides the error tlapm reports.
 export const mapScoped = <State>(
   state: State,
   expression: Expr,
@@ -903,10 +917,10 @@ export const mapScoped = <State>(
     case "At":
       return expression;
     case "Lambda": {
-      const inner = expression.params.reduce(
-        (current, param) => bind(current, getFresh(param.name, "Unknown", param.shape)),
-        state,
-      );
+      const inner = expression.params.reduce((current, param) => {
+        const fresh = getFresh(param.name, "Unknown", param.shape);
+        return bind(current, param.location ? { ...fresh, location: param.location } : fresh);
+      }, state);
       return { ...expression, body: map(inner, expression.body) };
     }
     case "Sequent": {
@@ -962,29 +976,23 @@ export const mapScoped = <State>(
       const hyp = getBoundedFresh(expression.name, domain);
       return { ...expression, domain, body: map(bind(state, hyp), expression.body) };
     }
-    case "Bang":
-      return {
-        ...expression,
-        expression: recurse(expression.expression),
-        selectors: expression.selectors.map((selector) => mapSelectorArgs(selector, recurse)),
-      };
-    case "Apply":
-      return {
-        ...expression,
-        operator: recurse(expression.operator),
-        args: expression.args.map(recurse),
-      };
+    case "Bang": {
+      const selectors = expression.selectors.map((selector) => mapSelectorArgs(selector, recurse));
+      return { ...expression, expression: recurse(expression.expression), selectors };
+    }
+    case "Apply": {
+      const args = expression.args.map(recurse);
+      return { ...expression, operator: recurse(expression.operator), args };
+    }
     case "With":
     case "Dot":
     case "Parens":
       return { ...expression, expression: recurse(expression.expression) };
-    case "If":
-      return {
-        ...expression,
-        condition: recurse(expression.condition),
-        consequent: recurse(expression.consequent),
-        alternative: recurse(expression.alternative),
-      };
+    case "If": {
+      const alternative = recurse(expression.alternative);
+      const consequent = recurse(expression.consequent);
+      return { ...expression, condition: recurse(expression.condition), consequent, alternative };
+    }
     case "List":
       return { ...expression, items: expression.items.map(recurse) };
     case "SetEnum":
@@ -992,18 +1000,14 @@ export const mapScoped = <State>(
       return { ...expression, elements: expression.elements.map(recurse) };
     case "Product":
       return { ...expression, factors: expression.factors.map(recurse) };
-    case "FcnApp":
-      return {
-        ...expression,
-        function: recurse(expression.function),
-        args: expression.args.map(recurse),
-      };
-    case "Arrow":
-      return {
-        ...expression,
-        domain: recurse(expression.domain),
-        range: recurse(expression.range),
-      };
+    case "FcnApp": {
+      const args = expression.args.map(recurse);
+      return { ...expression, function: recurse(expression.function), args };
+    }
+    case "Arrow": {
+      const range = recurse(expression.range);
+      return { ...expression, domain: recurse(expression.domain), range };
+    }
     case "Rect":
     case "Record":
       return {
@@ -1013,34 +1017,26 @@ export const mapScoped = <State>(
           value: recurse(field.value),
         })),
       };
-    case "Except":
-      return {
-        ...expression,
-        function: recurse(expression.function),
-        specs: mapExceptSpecs(expression.specs, recurse),
-      };
+    case "Except": {
+      const specs = mapExceptSpecs(expression.specs, recurse);
+      return { ...expression, function: recurse(expression.function), specs };
+    }
     case "Sub":
     case "Tsub":
-      return {
-        ...expression,
-        action: recurse(expression.action),
-        subscript: recurse(expression.subscript),
-      };
     case "Fair":
       return {
         ...expression,
         subscript: recurse(expression.subscript),
         action: recurse(expression.action),
       };
-    case "Case":
-      return {
-        ...expression,
-        arms: expression.arms.map((arm) => ({
-          condition: recurse(arm.condition),
-          body: recurse(arm.body),
-        })),
-        other: expression.other && recurse(expression.other),
-      };
+    case "Case": {
+      const other = expression.other && recurse(expression.other);
+      const arms = expression.arms.map((arm) => {
+        const body = recurse(arm.body);
+        return { condition: recurse(arm.condition), body };
+      });
+      return { ...expression, arms, other };
+    }
   }
 };
 

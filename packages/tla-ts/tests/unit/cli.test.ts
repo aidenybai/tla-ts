@@ -226,6 +226,46 @@ describe("prove prints obligations as tlapm -N does", () => {
     expect(result.stderr).toBe(readToolbox("Warnings"));
   });
 
+  // Each .strict file is what tlapm -N --strict writes to stderr.
+  it("reports incomplete proofs under --strict", () => {
+    const result = runCliWith("obligations", ["prove", "-N", "--strict", "Incomplete.tla"]);
+    expect(result.status).toBe(11);
+    expect(result.stderr).toBe(
+      readFileSync(join(FIXTURES, "obligations", "Incomplete.strict"), "utf8"),
+    );
+  });
+
+  it("reports a target without obligations under --strict", () => {
+    const result = runCliWith("obligations", [
+      "prove",
+      "-N",
+      "--strict",
+      "--line",
+      "2",
+      "Proofs.tla",
+    ]);
+    expect(result.status).toBe(12);
+    expect(result.stderr).toBe(
+      readFileSync(join(FIXTURES, "obligations", "Proofs-2.strict"), "utf8"),
+    );
+  });
+
+  // Notes.stdout and Notes.stderr are what tlapm -N writes.
+  it("prints the notes tlapm prints outside toolbox mode", () => {
+    const result = runCliWith("obligations", ["prove", "-N", "Notes.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(readFileSync(join(FIXTURES, "obligations", "Notes.stdout"), "utf8"));
+    expect(result.stderr).toBe(readFileSync(join(FIXTURES, "obligations", "Notes.stderr"), "utf8"));
+  });
+
+  it("prints tlapm's header in toolbox mode", () => {
+    const result = runCliWith("obligations", ["prove", "-N", "--line", "3", "Omit.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(
+      /^\n\\\* TLAPM version 5f5037f\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* tla-ts prove -N --line 3 Omit\.tla\n\n$/,
+    );
+  });
+
   it("prints nothing outside toolbox mode", () => {
     const result = runCliWith("obligations", ["prove", "-N", "Proofs.tla"]);
     expect(result.status).toBe(0);
@@ -239,16 +279,46 @@ describe("prove prints obligations as tlapm -N does", () => {
   });
 
   it("rejects the tlapm options it doesn't support", () => {
-    const result = runCliWith("obligations", ["prove", "-N", "--summary", "Proofs.tla"]);
+    const result = runCliWith("obligations", ["prove", "-N", "-C", "Proofs.tla"]);
     expect(result.status).toBe(1);
+    expect(result.stderr).toBe("Error: tla-ts prove does not support the tlapm option -C.\n");
+  });
+
+  // Each .summary file is what tlapm --summary writes to stdout.
+  it("summarizes the missing and omitted proofs of each theorem", () => {
+    const result = runCliWith("obligations", ["prove", "--summary", "Incomplete.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(
+      readFileSync(join(FIXTURES, "obligations", "Incomplete.summary"), "utf8"),
+    );
+    expect(result.stderr).toBe("");
+  });
+
+  // Each .stderr file is what tlapm -N writes to stderr, without the OCaml backtrace.
+  it.each([
+    "Declaration",
+    "Hide",
+    "Label",
+    "NotFound",
+    "Recursive",
+    "Tab",
+    "Unexpected",
+    "UnknownModule",
+  ])("prints the error tlapm prints for %s", (name) => {
+    const result = runCliWith("obligation-errors", ["prove", "-N", `${name}.tla`]);
+    expect(result.status).toBe(3);
+    expect(result.stdout).toBe("");
     expect(result.stderr).toBe(
-      "Error: tla-ts prove does not support the tlapm option --summary.\n",
+      readFileSync(join(FIXTURES, "obligation-errors", `${name}.stderr`), "utf8"),
     );
   });
 
   it("names a module it cannot find", () => {
     const result = runCliWith("obligations", ["prove", "-N", "Missing.tla"]);
-    expect(result.status).toBe(151);
-    expect(result.stderr).toBe("Cannot find the module file Missing.tla\n");
+    expect(result.status).toBe(3);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      'File "<unknown>":\nError: File "Missing.tla" not found\n tlapm ending abnormally with Failure("Module.Parser.parse_file")\n\n',
+    );
   });
 });

@@ -1,0 +1,7 @@
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:0
+@!!END
+
+File "./Proofs.tla", line 1, character 1 to line 12, character 4:
+[ERROR]: No proof obligation found for the selected target.
