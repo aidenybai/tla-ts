@@ -90,7 +90,7 @@ const MAXIMUM_DISJUNCTS = 2147483647;
 export const TRUE: LiveBoolean = { kind: "Boolean", value: true };
 export const FALSE: LiveBoolean = { kind: "Boolean", value: false };
 
-const createBoolean = (value: boolean) => (value ? TRUE : FALSE);
+export const createBoolean = (value: boolean) => (value ? TRUE : FALSE);
 
 const isAtom = (expression: LiveExpression) =>
   expression.kind === "State" || expression.kind === "Enabled" || expression.kind === "Action";
@@ -264,6 +264,10 @@ const toDisjunctiveNormalForm = (expression: LiveExpression): LiveExpression => 
       const total = { value: 1 };
       for (const operand of expression.operands) {
         const normal = toDisjunctiveNormalForm(operand);
+        if (normal.kind === "And") {
+          items.push(...normal.operands);
+          continue;
+        }
         if (normal.kind === "Or") {
           total.value *= normal.operands.length;
           if (total.value > MAXIMUM_DISJUNCTS) {
@@ -271,12 +275,8 @@ const toDisjunctiveNormalForm = (expression: LiveExpression): LiveExpression => 
               "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form",
             );
           }
-          items.push(normal);
-        } else if (normal.kind === "And") {
-          items.push(...normal.operands);
-        } else {
-          items.push(normal);
         }
+        items.push(normal);
       }
       if (total.value === 1) return { kind: "And", operands: items };
       const conjunctions = Array.from({ length: total.value }, (): LiveExpression[] => []);
@@ -426,9 +426,13 @@ const getExpansion = (
   term: LiveExpression,
   repeated: "Always" | "Eventually",
   junction: "And" | "Or",
-): [LiveExpression, LiveExpression] | undefined => {
-  if (term.kind === repeated && "body" in term) return [term.body, createUnary("Next", term)];
-  if (term.kind === junction && "operands" in term) return [term.operands[0], term.operands[1]];
+) => {
+  if (term.kind === repeated && "body" in term) {
+    return { first: term.body, second: createUnary("Next", term) };
+  }
+  if (term.kind === junction && "operands" in term) {
+    return { first: term.operands[0], second: term.operands[1] };
+  }
   return undefined;
 };
 
@@ -439,7 +443,7 @@ const getTriples = (
 ) =>
   closure.flatMap((term): Triple[] => {
     const parts = getExpansion(term, repeated, junction);
-    return parts ? [{ whole: term, first: parts[0], second: parts[1] }] : [];
+    return parts ? [{ whole: term, first: parts.first, second: parts.second }] : [];
   });
 
 const isSameParticle = (left: LiveExpression[], right: LiveExpression[]) =>
@@ -459,9 +463,11 @@ const getParticleClosure = (terms: LiveExpression[]) => {
     for (const term of particle) {
       const parts = getExpansion(term, "Eventually", "Or");
       if (!parts) continue;
-      const [first, second] = parts;
-      if (isMember(particle, first) || isMember(particle, second)) continue;
-      return unionParticles(expand([...particle, first]), expand([...particle, second]));
+      if (isMember(particle, parts.first) || isMember(particle, parts.second)) continue;
+      return unionParticles(
+        expand([...particle, parts.first]),
+        expand([...particle, parts.second]),
+      );
     }
     const beta = betas.find(
       (triple) =>
@@ -477,9 +483,8 @@ const getParticleClosure = (terms: LiveExpression[]) => {
     for (let index = 0; index < expanded.length; index++) {
       const parts = getExpansion(expanded[index], "Always", "And");
       if (!parts) continue;
-      const [first, second] = parts;
-      if (!isMember(expanded, first)) expanded.push(first);
-      if (!isMember(expanded, second)) expanded.push(second);
+      if (!isMember(expanded, parts.first)) expanded.push(parts.first);
+      if (!isMember(expanded, parts.second)) expanded.push(parts.second);
     }
     const state = { isChanged: true };
     while (state.isChanged) {
@@ -528,11 +533,13 @@ export const isFulfilling = (particle: LiveExpression[], promise: LiveUnary) =>
   !isMember(particle, promise) || isMember(particle, promise.body);
 
 const classify = (expression: LiveExpression, classification: Classification) => {
-  if (expression.kind === "Eventually" && expression.body.kind === "Always") {
-    if (getLiveLevel(expression.body.body) < TEMPORAL_LEVEL) {
-      classification.eventuallyAlways.push(expression.body.body);
-      return;
-    }
+  if (
+    expression.kind === "Eventually" &&
+    expression.body.kind === "Always" &&
+    getLiveLevel(expression.body.body) < TEMPORAL_LEVEL
+  ) {
+    classification.eventuallyAlways.push(expression.body.body);
+    return;
   }
   const infinitelyOften = getInfinitelyOftenBody(expression);
   if (infinitelyOften) {

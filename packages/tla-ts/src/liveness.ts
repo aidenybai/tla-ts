@@ -22,14 +22,13 @@ import { mapChildren } from "./instances";
 import { ACTION_LEVEL, TEMPORAL_LEVEL } from "./levels";
 import { isEnabled } from "./successors";
 import {
+  createBoolean,
   createJunction,
   createPair,
   createUnary,
-  FALSE,
   getLiveLevel,
   getSolutions,
   isFulfilling,
-  TRUE,
   type LiveEnabled,
   type LiveExpression,
   type Solution,
@@ -249,7 +248,7 @@ export const expandTemporal = (
     expression.kind === "Forall" &&
     getLevel(expression.body, scope, environment) === TEMPORAL_LEVEL &&
     expression.bounds.every((bound) => getLevel(bound.set, scope, environment) === 0);
-  if (expression.kind === "Forall" && isUnrolled) {
+  if (isUnrolled) {
     const expanded: ScopedExpression[] = [];
     forEachBinding(expression.bounds, context, (boundScope) => {
       expanded.push(...expand(expression.body, boundScope));
@@ -297,7 +296,7 @@ const toLiveExpression = (
           `TLC expected a boolean in the temporal formula at ${describeLocation(expression)}`,
         );
       }
-      return value ? TRUE : FALSE;
+      return createBoolean(value);
     }
     if (atomLevel === 1) return { kind: "State", expression, scope };
     return { kind: "Action", expression, unchanged: undefined, scope };
@@ -363,7 +362,7 @@ const toLiveExpression = (
       return false;
     });
     const isForall = expression.kind === "Forall";
-    if (operands.length === 0) return isForall ? TRUE : FALSE;
+    if (operands.length === 0) return createBoolean(isForall);
     const result = createJunction(isForall ? "And" : "Or", operands);
     const level = getLiveLevel(result);
     return level > ACTION_LEVEL ? result : toAtom(expression, scope, level);
@@ -971,9 +970,9 @@ export const createLivenessChecker = (
           if (!isViolation) return false;
           const entry = component[component.length - 1];
           const waypoints = [
-            ...stateWitnesses.flatMap((witness) => (witness === undefined ? [] : [witness])),
+            ...stateWitnesses.flatMap((witness) => witness ?? []),
             ...actionWitnesses.flatMap((witness) => witness ?? []),
-            ...promiseWitnesses.flatMap((witness) => (witness === undefined ? [] : [witness])),
+            ...promiseWitnesses.flatMap((witness) => witness ?? []),
           ];
           const cycle = [entry];
           for (const waypoint of waypoints) {
