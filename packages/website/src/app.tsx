@@ -1,7 +1,7 @@
 import { Editor, type EditorFactory } from "@pierre/diffs/edit";
 import { EditProvider, File, type FileOptions } from "@pierre/diffs/react";
 import { Check, ChevronDown, Play, Square } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
 import {
@@ -15,8 +15,8 @@ import type { CheckRequest, CheckResponse } from "./check-worker";
 import { EXAMPLES } from "./examples";
 
 const FILE_OPTIONS: FileOptions<undefined, undefined> = {
-  theme: { light: "github-light", dark: "github-dark-default" },
-  themeType: "system",
+  theme: "github-light",
+  themeType: "light",
   overflow: "wrap",
   disableFileHeader: true,
   unsafeCSS:
@@ -34,16 +34,6 @@ const STATUS_LABELS: Record<string, string> = {
   "liveness-violation": "Temporal property violated",
   "postcondition-violation": "Postcondition is false",
   deadlock: "Deadlock reached",
-};
-
-const useSystemTheme = () => {
-  useEffect(() => {
-    const query = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = () => document.documentElement.classList.toggle("dark", query.matches);
-    apply();
-    query.addEventListener("change", apply);
-    return () => query.removeEventListener("change", apply);
-  }, []);
 };
 
 interface SectionProps {
@@ -160,7 +150,6 @@ const describeStatistics = (response: CheckResponse | undefined) => {
 };
 
 export const App = () => {
-  useSystemTheme();
   const [exampleIndex, setExampleIndex] = useState(0);
   const example = EXAMPLES[exampleIndex];
   const [spec, setSpec] = useState(example.spec);
