@@ -1,0 +1,24 @@
+<<"constraint", 0, 1>>
+<<"invariant", 0, 1>>
+<<"constraint", 1, 1>>
+<<"invariant", 1, 1>>
+<<"constraint", 0, 2>>
+<<"action constraint", 0, 0, 1>>
+<<"property", 0, 0>>
+<<"constraint", 1, 2>>
+<<"action constraint", 0, 1, 1>>
+<<"property", 0, 1>>
+<<"constraint", 1, 2>>
+<<"action constraint", 1, 1, 1>>
+<<"property", 1, 1>>
+<<"constraint", 2, 2>>
+<<"action constraint", 1, 2, 1>>
+<<"invariant", 2, 2>>
+<<"property", 1, 2>>
+<<"constraint", 2, 3>>
+<<"action constraint", 2, 2, 2>>
+<<"property", 2, 2>>
+<<"constraint", 3, 3>>
+<<"action constraint", 2, 3, 2>>
+<<"invariant", 3, 3>>
+<<"property", 2, 3>>
