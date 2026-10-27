@@ -47,10 +47,10 @@ const toImages = (value: Value, name: string): Images => {
   if (!isFunctionValue(value)) {
     throw new TlaConfigError(`The symmetry values of ${name} must be functions`);
   }
-  const fn = toFiniteFunction(value);
+  const functionValue = toFiniteFunction(value);
   const permutation: Images = new Map();
-  fn.domain.forEach((key, index) => {
-    const image = fn.range[index];
+  functionValue.domain.forEach((key, index) => {
+    const image = functionValue.range[index];
     if (!isModelValue(key) || !isModelValue(image)) {
       throw new TlaConfigError("Symmetry function must have model values as domain and range");
     }
@@ -183,13 +183,15 @@ const computePermutedValue = (value: ObjectValue, permutation: Permutation): Val
     return elements ? createSortedSet(elements) : value;
   }
   if (kind === "Function" || (kind === "LazyFunction" && isEnumerable(value.domain))) {
-    const fn = toFiniteFunction(value);
-    const domain = permuteElements(fn.domain, permutation);
-    const range = permuteElements(fn.range, permutation) ?? fn.range;
+    const functionValue = toFiniteFunction(value);
+    const domain = permuteElements(functionValue.domain, permutation);
+    const range = permuteElements(functionValue.range, permutation) ?? functionValue.range;
     if (domain) {
       return createFunction(domain.map((key, index): [Value, Value] => [key, range[index]]));
     }
-    return range === fn.range ? fn : createSortedFunction(fn.domain, range);
+    return range === functionValue.range
+      ? functionValue
+      : createSortedFunction(functionValue.domain, range);
   }
   if (kind === "Interval" || !isSetValue(value) || !isEnumerable(value)) return value;
   const set = toFiniteSet(value);

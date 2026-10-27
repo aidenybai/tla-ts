@@ -114,12 +114,12 @@ const extendValue = (value: Value) => {
     extendByte(MODEL_VALUE);
     extendInt(getStringRank(value.name) + 1);
   } else if (isFunctionValue(value)) {
-    const fn = toFiniteFunction(value);
+    const functionValue = toFiniteFunction(value);
     extendByte(FCN_RCD_VALUE);
-    extendInt(fn.domain.length);
-    for (let index = 0; index < fn.domain.length; index++) {
-      extendValue(fn.domain[index]);
-      extendValue(fn.range[index]);
+    extendInt(functionValue.domain.length);
+    for (let index = 0; index < functionValue.domain.length; index++) {
+      extendValue(functionValue.domain[index]);
+      extendValue(functionValue.range[index]);
     }
   } else {
     const elements = toFiniteSet(value).elements;
@@ -147,10 +147,10 @@ const getFingerprintLength = (value: Value): number => {
   if (typeof value === "number" || isModelValue(value)) return 5;
   if (typeof value === "string") return 5 + value.length;
   if (isFunctionValue(value)) {
-    const fn = toFiniteFunction(value);
-    return fn.domain.reduce<number>(
+    const functionValue = toFiniteFunction(value);
+    return functionValue.domain.reduce<number>(
       (length, key, index) =>
-        length + getFingerprintLength(key) + getFingerprintLength(fn.range[index]),
+        length + getFingerprintLength(key) + getFingerprintLength(functionValue.range[index]),
       5,
     );
   }

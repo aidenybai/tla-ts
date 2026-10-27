@@ -255,9 +255,10 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
       return `(condition(${generate(expression.condition)}, ${addReference(generator, expression)}) ? ${generate(expression.consequent)} : ${generate(expression.alternative)})`;
     case "FunctionApplication": {
       keepLazy(expression.function);
-      const fn = generate(expression.function);
-      if (expression.args.length === 1) return `apply(${fn}, ${generate(expression.args[0])})`;
-      return `apply(${fn}, tuple([${expression.args.map((arg) => generate(arg)).join(", ")}]))`;
+      const functionCode = generate(expression.function);
+      if (expression.args.length === 1)
+        return `apply(${functionCode}, ${generate(expression.args[0])})`;
+      return `apply(${functionCode}, tuple([${expression.args.map((arg) => generate(arg)).join(", ")}]))`;
     }
     case "FieldAccess":
       return `apply(${generate(expression.record)}, ${JSON.stringify(expression.field)}, ${addReference(generator, getFieldError(expression))})`;

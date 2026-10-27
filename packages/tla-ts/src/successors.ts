@@ -665,12 +665,16 @@ const getLabelGuard = (
 
 const getLabel = (run: Run, scope: Scope | undefined, guard: LabelGuard) => {
   const binding = lookupScope(scope, guard.argument);
-  const fn = run.current?.[guard.variable];
-  if (binding?.kind !== "Value" || typeof fn !== "object" || fn.kind !== "Function") {
+  const functionValue = run.current?.[guard.variable];
+  if (
+    binding?.kind !== "Value" ||
+    typeof functionValue !== "object" ||
+    functionValue.kind !== "Function"
+  ) {
     return undefined;
   }
-  const position = fn.domain.indexOf(binding.value);
-  const label = position === -1 ? undefined : fn.range[position];
+  const position = functionValue.domain.indexOf(binding.value);
+  const label = position === -1 ? undefined : functionValue.range[position];
   return typeof label === "string" ? label : undefined;
 };
 

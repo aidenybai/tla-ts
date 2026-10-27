@@ -531,7 +531,7 @@ const createLazyFunction = (
 
 const createRecursiveFunction = (definition: FunctionDefinition, context: Context) => {
   const domain = getBoundsDomain(definition.bounds, context);
-  const fn = createLazyFunction(
+  const functionValue = createLazyFunction(
     domain,
     (argument, self) =>
       evaluate(
@@ -543,7 +543,7 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
       ),
     getLazyFunctionSource(definition.bounds, definition.body, domain),
   );
-  return definition.bounds.length === 1 ? markLambdaFunction(fn) : fn;
+  return definition.bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
 };
 
 const evaluateDefinitionBody = (definition: Definition, context: Context) =>
@@ -1488,12 +1488,12 @@ const compileFunctionConstruction = (
   return (context) => {
     const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
     if (expression.isRecursive || isKeptLazy || !isEnumerable(domain)) {
-      const fn = createLazyFunction(
+      const functionValue = createLazyFunction(
         domain,
         (argument) => body(withScope(context, bindArgument(bounds, context.scope, argument))),
         getLazyFunctionSource(bounds, expression.body, domain),
       );
-      return bounds.length === 1 ? markLambdaFunction(fn) : fn;
+      return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
     }
     if (isSingleName && bound.pattern.kind === "Name") {
       const name = bound.pattern.name;
@@ -1524,7 +1524,7 @@ const compileExcept = (
 ): Evaluator => {
   const isKeptLazy = keptLazyExpressions.has(expression);
   if (isKeptLazy) keepLazy(expression.function);
-  const fn = getEvaluator(expression.function, environment);
+  const evaluateFunction = getEvaluator(expression.function, environment);
   const updates = expression.updates.map((update) => ({
     path: update.path.map((step) =>
       step.kind === "Field"
@@ -1561,7 +1561,7 @@ const compileExcept = (
     );
   };
   return (context) => {
-    let current = fn(context);
+    let current = evaluateFunction(context);
     for (const item of updates) current = update(current, item.path, 0, context, item.value);
     return current;
   };
@@ -1824,13 +1824,14 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       };
     case "FunctionApplication": {
       keepLazy(expression.function);
-      const fn = child(expression.function);
+      const evaluateFunction = child(expression.function);
       const args = expression.args.map(child);
       if (args.length === 1) {
         const argument = args[0];
-        return (context) => applyFunction(fn(context), argument(context));
+        return (context) => applyFunction(evaluateFunction(context), argument(context));
       }
-      return (context) => applyFunction(fn(context), createTuple(args.map((arg) => arg(context))));
+      return (context) =>
+        applyFunction(evaluateFunction(context), createTuple(args.map((arg) => arg(context))));
     }
     case "FieldAccess": {
       const record = child(expression.record);

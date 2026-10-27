@@ -161,15 +161,15 @@ export const checkInteger = (value: number) => {
 // show that order.
 const writtenOrderUse = { isUsed: false };
 
-const setWrittenOrder = (fn: FunctionValue, keys: Value[]) => {
+const setWrittenOrder = (functionValue: FunctionValue, keys: Value[]) => {
   writtenOrderUse.isUsed = true;
-  fn.writtenKeys = keys;
-  return fn;
+  functionValue.writtenKeys = keys;
+  return functionValue;
 };
 
-export const getWrittenPairs = (fn: FunctionValue): [Value, Value][] => {
-  const keys = fn.writtenKeys ?? fn.domain;
-  return keys.map((key) => [key, fn.range[findIndex(fn.domain, key)]]);
+export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] => {
+  const keys = functionValue.writtenKeys ?? functionValue.domain;
+  return keys.map((key) => [key, functionValue.range[findIndex(functionValue.domain, key)]]);
 };
 
 export const createWrittenRecord = (names: Value[], range: Value[], writtenNames: Value[]) =>
@@ -521,14 +521,18 @@ const getIntervalLow = (domain: Value[]) => {
 
 const toTlcFunction = (value: Value): TlcFunction | undefined => {
   if (!isFunctionValue(value)) return undefined;
-  const fn = toFiniteFunction(value);
-  return { domain: fn.domain, range: fn.range, low: getIntervalLow(fn.domain) };
+  const functionValue = toFiniteFunction(value);
+  return {
+    domain: functionValue.domain,
+    range: functionValue.range,
+    low: getIntervalLow(functionValue.domain),
+  };
 };
 
 const toTlcRecord = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
-  const fn = toFiniteFunction(value);
-  return fn.domain.every((key) => typeof key === "string") ? fn : undefined;
+  const functionValue = toFiniteFunction(value);
+  return functionValue.domain.every((key) => typeof key === "string") ? functionValue : undefined;
 };
 
 const compareModelValueWith = (modelValue: ModelValue, other: Value) => {
@@ -599,7 +603,7 @@ const failScalar = (left: number | string | boolean, right: Value, isEquality: b
   );
 };
 
-const compareTlcFunctions = (fn: TlcFunction, left: Value, right: Value): number => {
+const compareTlcFunctions = (functionValue: TlcFunction, left: Value, right: Value): number => {
   const other = toTlcFunction(right);
   if (!other) {
     if (isModelValue(right)) return compareModelValueWith(right, left);
@@ -607,26 +611,27 @@ const compareTlcFunctions = (fn: TlcFunction, left: Value, right: Value): number
       `Attempted to compare the function ${formatValue(left)} with the value:\n${formatValue(right)}`,
     );
   }
-  if (fn.range.length !== other.range.length) return fn.range.length - other.range.length;
-  const compareRanges = () => compareElementsLikeTlc(fn.range, other.range);
-  if (fn.low !== undefined && fn.range.length === 0) return 0;
-  if (fn.low !== undefined && other.low !== undefined) {
-    return fn.low === other.low ? compareRanges() : fn.low - other.low;
+  if (functionValue.range.length !== other.range.length)
+    return functionValue.range.length - other.range.length;
+  const compareRanges = () => compareElementsLikeTlc(functionValue.range, other.range);
+  if (functionValue.low !== undefined && functionValue.range.length === 0) return 0;
+  if (functionValue.low !== undefined && other.low !== undefined) {
+    return functionValue.low === other.low ? compareRanges() : functionValue.low - other.low;
   }
-  const intervalLow = fn.low ?? other.low;
+  const intervalLow = functionValue.low ?? other.low;
   if (intervalLow === undefined) {
-    return compareElementsLikeTlc(fn.domain, other.domain) || compareRanges();
+    return compareElementsLikeTlc(functionValue.domain, other.domain) || compareRanges();
   }
-  const keys = fn.low === undefined ? fn.domain : other.domain;
+  const keys = functionValue.low === undefined ? functionValue.domain : other.domain;
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index];
     if (typeof key !== "number") {
       throw new TlaEvaluationError(
-        `Attempted to compare integer with non-integer${fn.low === undefined ? "" : ":"}\n${formatValue(key)}.`,
+        `Attempted to compare integer with non-integer${functionValue.low === undefined ? "" : ":"}\n${formatValue(key)}.`,
       );
     }
     const difference =
-      fn.low === undefined ? key - (intervalLow + index) : intervalLow + index - key;
+      functionValue.low === undefined ? key - (intervalLow + index) : intervalLow + index - key;
     if (difference !== 0) return difference;
   }
   return compareRanges();
@@ -641,14 +646,17 @@ const compareElementsLikeTlc = (left: Value[], right: Value[]) => {
 };
 
 const compareFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: Value): number => {
-  const fn = toFiniteFunction(left);
-  const isTuple = left.kind === "Function" && getSequenceElements(fn) !== undefined;
+  const functionValue = toFiniteFunction(left);
+  const isTuple = left.kind === "Function" && getSequenceElements(functionValue) !== undefined;
   if (isTuple) {
     const tuple = isFunctionValue(right) ? getSequenceElements(right) : undefined;
-    if (!tuple) return compareTlcFunctions({ ...fn, low: 1 }, left, right);
-    return fn.range.length - tuple.length || compareElementsLikeTlc(fn.range, tuple);
+    if (!tuple) return compareTlcFunctions({ ...functionValue, low: 1 }, left, right);
+    return (
+      functionValue.range.length - tuple.length ||
+      compareElementsLikeTlc(functionValue.range, tuple)
+    );
   }
-  if (left.kind === "Function" && fn.domain.every((key) => typeof key === "string")) {
+  if (left.kind === "Function" && functionValue.domain.every((key) => typeof key === "string")) {
     const record = toTlcRecord(right);
     if (!record) {
       if (isModelValue(right)) return compareModelValueWith(right, left);
@@ -657,12 +665,16 @@ const compareFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: 
       );
     }
     return (
-      fn.domain.length - record.domain.length ||
-      compareElementsLikeTlc(fn.domain, record.domain) ||
-      compareElementsLikeTlc(fn.range, record.range)
+      functionValue.domain.length - record.domain.length ||
+      compareElementsLikeTlc(functionValue.domain, record.domain) ||
+      compareElementsLikeTlc(functionValue.range, record.range)
     );
   }
-  return compareTlcFunctions({ ...fn, low: getIntervalLow(fn.domain) }, left, right);
+  return compareTlcFunctions(
+    { ...functionValue, low: getIntervalLow(functionValue.domain) },
+    left,
+    right,
+  );
 };
 
 const isEnumeratedSet = (value: Value): value is SetValue | MixedSetValue =>
@@ -716,7 +728,7 @@ const compareLikeTlc = (left: Value, right: Value): number => {
 const equalsElementsLikeTlc = (left: Value[], right: Value[]) =>
   left.every((element, index) => equalsLikeTlc(element, right[index]));
 
-const equalsTlcFunctions = (fn: TlcFunction, left: Value, right: Value): boolean => {
+const equalsTlcFunctions = (functionValue: TlcFunction, left: Value, right: Value): boolean => {
   const other = toTlcFunction(right);
   if (!other) {
     if (isModelValue(right)) return equalsModelValueWith(right, left);
@@ -724,20 +736,21 @@ const equalsTlcFunctions = (fn: TlcFunction, left: Value, right: Value): boolean
       `Attempted to check equality of the function ${formatValue(left)} with the value:\n${formatValue(right)}`,
     );
   }
-  if (fn.range.length !== other.range.length) return false;
-  if (fn.low !== undefined && other.low !== undefined) {
+  if (functionValue.range.length !== other.range.length) return false;
+  if (functionValue.low !== undefined && other.low !== undefined) {
     return (
-      (fn.range.length === 0 || fn.low === other.low) &&
-      equalsElementsLikeTlc(fn.range, other.range)
+      (functionValue.range.length === 0 || functionValue.low === other.low) &&
+      equalsElementsLikeTlc(functionValue.range, other.range)
     );
   }
-  const intervalLow = fn.low ?? other.low;
+  const intervalLow = functionValue.low ?? other.low;
   if (intervalLow === undefined) {
     return (
-      equalsElementsLikeTlc(fn.domain, other.domain) && equalsElementsLikeTlc(fn.range, other.range)
+      equalsElementsLikeTlc(functionValue.domain, other.domain) &&
+      equalsElementsLikeTlc(functionValue.range, other.range)
     );
   }
-  const keys = fn.low === undefined ? fn.domain : other.domain;
+  const keys = functionValue.low === undefined ? functionValue.domain : other.domain;
   return (
     keys.every((key, index) => {
       if (typeof key !== "number") {
@@ -746,19 +759,22 @@ const equalsTlcFunctions = (fn: TlcFunction, left: Value, right: Value): boolean
         );
       }
       return key === intervalLow + index;
-    }) && equalsElementsLikeTlc(fn.range, other.range)
+    }) && equalsElementsLikeTlc(functionValue.range, other.range)
   );
 };
 
 const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: Value): boolean => {
-  const fn = toFiniteFunction(left);
-  const isTuple = left.kind === "Function" && getSequenceElements(fn) !== undefined;
+  const functionValue = toFiniteFunction(left);
+  const isTuple = left.kind === "Function" && getSequenceElements(functionValue) !== undefined;
   if (isTuple) {
     const tuple = isFunctionValue(right) ? getSequenceElements(right) : undefined;
-    if (!tuple) return equalsTlcFunctions({ ...fn, low: 1 }, left, right);
-    return fn.range.length === tuple.length && equalsElementsLikeTlc(fn.range, tuple);
+    if (!tuple) return equalsTlcFunctions({ ...functionValue, low: 1 }, left, right);
+    return (
+      functionValue.range.length === tuple.length &&
+      equalsElementsLikeTlc(functionValue.range, tuple)
+    );
   }
-  if (left.kind === "Function" && fn.domain.every((key) => typeof key === "string")) {
+  if (left.kind === "Function" && functionValue.domain.every((key) => typeof key === "string")) {
     const record = toTlcRecord(right);
     if (!record) {
       if (isModelValue(right)) return equalsModelValueWith(right, left);
@@ -767,12 +783,16 @@ const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: V
       );
     }
     return (
-      fn.domain.length === record.domain.length &&
-      equalsElementsLikeTlc(fn.domain, record.domain) &&
-      equalsElementsLikeTlc(fn.range, record.range)
+      functionValue.domain.length === record.domain.length &&
+      equalsElementsLikeTlc(functionValue.domain, record.domain) &&
+      equalsElementsLikeTlc(functionValue.range, record.range)
     );
   }
-  return equalsTlcFunctions({ ...fn, low: getIntervalLow(fn.domain) }, left, right);
+  return equalsTlcFunctions(
+    { ...functionValue, low: getIntervalLow(functionValue.domain) },
+    left,
+    right,
+  );
 };
 
 const equalsSetLikeTlc = (left: ObjectValue, right: Value): boolean => {
@@ -968,15 +988,15 @@ export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
 };
 
 export const createWrittenFunction = (pairs: [Value, Value][]) => {
-  const fn = createFunction(pairs);
+  const functionValue = createFunction(pairs);
   const isWrittenSorted =
-    fn.domain.length !== pairs.length ||
+    functionValue.domain.length !== pairs.length ||
     pairs.some((pair) => typeof pair[0] !== "string") ||
-    pairs.every((pair, index) => pair[0] === fn.domain[index]);
+    pairs.every((pair, index) => pair[0] === functionValue.domain[index]);
   return isWrittenSorted
-    ? fn
+    ? functionValue
     : setWrittenOrder(
-        fn,
+        functionValue,
         pairs.map((pair) => pair[0]),
       );
 };
@@ -1510,8 +1530,10 @@ const findIndex = (sortedValues: Value[], target: Value) => {
 
 export const getSequenceElements = (value: Value): Value[] | undefined => {
   if (typeof value !== "object" || !isFunctionValue(value)) return undefined;
-  const fn = toFiniteFunction(value);
-  return fn.domain.every((key, index) => key === index + 1) ? fn.range : undefined;
+  const functionValue = toFiniteFunction(value);
+  return functionValue.domain.every((key, index) => key === index + 1)
+    ? functionValue.range
+    : undefined;
 };
 
 const describeMembership = (element: Value, set: Value) =>
@@ -1571,27 +1593,30 @@ export const isElementOf = (element: Value, set: Value): boolean => {
         if (isModelValue(element)) return false;
         throw new TlaEvaluationError(describeMembership(element, set));
       }
-      const fn = toFiniteFunction(element);
-      const low = getIntervalLow(fn.domain);
+      const functionValue = toFiniteFunction(element);
+      const low = getIntervalLow(functionValue.domain);
       const isDomain =
         low === undefined
-          ? isEqualLikeTlc(set.domain, createSortedSet(fn.domain))
-          : isEqualLikeTlc({ kind: "Interval", low, high: low + fn.domain.length - 1 }, set.domain);
-      return isDomain && fn.range.every((item) => isElementOf(item, set.range));
+          ? isEqualLikeTlc(set.domain, createSortedSet(functionValue.domain))
+          : isEqualLikeTlc(
+              { kind: "Interval", low, high: low + functionValue.domain.length - 1 },
+              set.domain,
+            );
+      return isDomain && functionValue.range.every((item) => isElementOf(item, set.range));
     }
     case "RecordSet": {
-      const fn = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
-      if (!fn || !isRecordDomain(fn.domain)) {
+      const functionValue = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
+      if (!functionValue || !isRecordDomain(functionValue.domain)) {
         if (isModelValue(element)) return false;
         throw new TlaEvaluationError(
           `Attempted to check if non-record\n${formatValue(element)}\nis in the set of records:\n${formatValue(set)}`,
         );
       }
       return (
-        fn.domain.length === set.names.length &&
+        functionValue.domain.length === set.names.length &&
         set.names.every((name, index) => {
-          const position = findIndex(fn.domain, name);
-          return position !== -1 && isElementOf(fn.range[position], set.sets[index]);
+          const position = findIndex(functionValue.domain, name);
+          return position !== -1 && isElementOf(functionValue.range[position], set.sets[index]);
         })
       );
     }
@@ -1655,79 +1680,86 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
 
 const lambdaFunctions = new WeakSet<ObjectValue>();
 
-export const markLambdaFunction = <Fn extends FunctionValue | LazyFunctionValue>(fn: Fn) => {
-  lambdaFunctions.add(fn);
-  return fn;
+export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunctionValue>(
+  functionValue: FunctionLike,
+) => {
+  lambdaFunctions.add(functionValue);
+  return functionValue;
 };
 
-const describeMissingArgument = (fn: Value, argument: Value) =>
-  typeof fn === "object" && lambdaFunctions.has(fn)
-    ? `In applying the function\n${prettyPrint(formatValue(fn))},\nthe first argument is:\n${prettyPrint(formatValue(argument))}\nwhich is not in its domain.\n`
-    : `Attempted to apply function ${formatValue(fn)} to ${formatValue(argument)}, which is not in its domain`;
+const describeMissingArgument = (functionValue: Value, argument: Value) =>
+  typeof functionValue === "object" && lambdaFunctions.has(functionValue)
+    ? `In applying the function\n${prettyPrint(formatValue(functionValue))},\nthe first argument is:\n${prettyPrint(formatValue(argument))}\nwhich is not in its domain.\n`
+    : `Attempted to apply function ${formatValue(functionValue)} to ${formatValue(argument)}, which is not in its domain`;
 
 export const applyFunction = (
-  fn: Value,
+  functionValue: Value,
   argument: Value,
-  describeMissing?: (fn: FunctionValue) => string,
+  describeMissing?: (functionValue: FunctionValue) => string,
 ): Value => {
-  if (typeof fn === "object" && fn.kind === "LazyFunction") {
-    if (!isElementOf(argument, fn.domain)) {
+  if (typeof functionValue === "object" && functionValue.kind === "LazyFunction") {
+    if (!isElementOf(argument, functionValue.domain)) {
       throw new TlaEvaluationError(
-        lambdaFunctions.has(fn)
-          ? describeMissingArgument(fn, argument)
+        lambdaFunctions.has(functionValue)
+          ? describeMissingArgument(functionValue, argument)
           : `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
       );
     }
-    return fn.apply(argument);
+    return functionValue.apply(argument);
   }
-  if (typeof fn !== "object" || fn.kind !== "Function") {
-    throw new TlaEvaluationError(`Attempted to apply ${formatValue(fn)}, which is not a function`);
+  if (typeof functionValue !== "object" || functionValue.kind !== "Function") {
+    throw new TlaEvaluationError(
+      `Attempted to apply ${formatValue(functionValue)}, which is not a function`,
+    );
   }
-  const domain = fn.domain;
+  const domain = functionValue.domain;
   const first = domain[0];
   if (typeof argument === "number" && typeof first === "number") {
     const offset = argument - first;
-    if (domain[offset] === argument) return fn.range[offset];
+    if (domain[offset] === argument) return functionValue.range[offset];
   }
   if (domain.length <= 8) {
     for (let index = 0; index < domain.length; index++)
-      if (domain[index] === argument) return fn.range[index];
+      if (domain[index] === argument) return functionValue.range[index];
   }
   const position = findIndex(domain, argument);
   if (position === -1) {
-    throw new TlaEvaluationError(describeMissing?.(fn) ?? describeMissingArgument(fn, argument));
+    throw new TlaEvaluationError(
+      describeMissing?.(functionValue) ?? describeMissingArgument(functionValue, argument),
+    );
   }
-  return fn.range[position];
+  return functionValue.range[position];
 };
 
-export const getDomain = (fn: Value): Value => {
-  if (typeof fn === "object" && fn.kind === "LazyFunction") return fn.domain;
-  const domain = toFiniteFunction(fn).domain;
+export const getDomain = (functionValue: Value): Value => {
+  if (typeof functionValue === "object" && functionValue.kind === "LazyFunction")
+    return functionValue.domain;
+  const domain = toFiniteFunction(functionValue).domain;
   if (!isIntervalDomain(domain)) return createSortedSet(domain);
   return intervalArrays.get(domain) ?? getIntervalValue(domain.length);
 };
 
 export const updateFunction = (
-  fn: Value,
+  functionValue: Value,
   argument: Value,
   update: (previous: Value) => Value,
   isKeptLazy = false,
 ): Value => {
   const isLazy =
-    typeof fn === "object" &&
-    fn.kind === "LazyFunction" &&
-    (isKeptLazy || !isEnumerable(fn.domain));
+    typeof functionValue === "object" &&
+    functionValue.kind === "LazyFunction" &&
+    (isKeptLazy || !isEnumerable(functionValue.domain));
   if (isLazy) {
-    if (!isElementOf(argument, fn.domain)) return fn;
-    const updated = update(fn.apply(argument));
+    if (!isElementOf(argument, functionValue.domain)) return functionValue;
+    const updated = update(functionValue.apply(argument));
     return {
       kind: "LazyFunction",
-      domain: fn.domain,
-      apply: (key) => (isEqualLikeTlc(argument, key) ? updated : fn.apply(key)),
-      source: fn.source,
+      domain: functionValue.domain,
+      apply: (key) => (isEqualLikeTlc(argument, key) ? updated : functionValue.apply(key)),
+      source: functionValue.source,
     };
   }
-  const finite = toFiniteFunction(fn);
+  const finite = toFiniteFunction(functionValue);
   const position = findIndex(finite.domain, argument);
   if (position === -1) return finite;
   const range = [...finite.range];
@@ -1795,10 +1827,11 @@ const computeValueHash = (value: ObjectValue): number => {
     }
     return hash;
   }
-  const fn = toFiniteFunction(value);
+  const functionValue = toFiniteFunction(value);
   let hash = FUNCTION_HASH_SEED;
-  for (let index = 0; index < fn.domain.length; index++) {
-    hash = (hash + getEntryContribution(fn.domain[index], fn.range[index])) | 0;
+  for (let index = 0; index < functionValue.domain.length; index++) {
+    hash =
+      (hash + getEntryContribution(functionValue.domain[index], functionValue.range[index])) | 0;
   }
   return hash;
 };
@@ -1852,10 +1885,12 @@ const computeValueFingerprint = (value: ObjectValue): number => {
     }
     return fingerprint;
   }
-  const fn = toFiniteFunction(value);
+  const functionValue = toFiniteFunction(value);
   let fingerprint = 0x4cf5ad43;
-  for (let index = 0; index < fn.domain.length; index++) {
-    fingerprint = (fingerprint + getEntryFingerprint(fn.domain[index], fn.range[index])) | 0;
+  for (let index = 0; index < functionValue.domain.length; index++) {
+    fingerprint =
+      (fingerprint + getEntryFingerprint(functionValue.domain[index], functionValue.range[index])) |
+      0;
   }
   return fingerprint;
 };
@@ -1901,8 +1936,8 @@ const computeValueKey = (value: ObjectValue): string => {
     if (!isEnumerable(value)) return `<${value.kind} ${formatValue(value)}>`;
     return `{${toFiniteSet(value).elements.map(getValueKey).join(",")}}`;
   }
-  const fn = toFiniteFunction(value);
-  return `(${fn.domain.map((key, index) => `${getValueKey(key)}:${getValueKey(fn.range[index])}`).join(",")})`;
+  const functionValue = toFiniteFunction(value);
+  return `(${functionValue.domain.map((key, index) => `${getValueKey(key)}:${getValueKey(functionValue.range[index])}`).join(",")})`;
 };
 
 const formatString = (value: string) =>
@@ -2027,18 +2062,19 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
           .join(", ");
         return `[${parameters} |-> <expression ${source.body}>]`;
       }
-      const fn = toFiniteFunction(value);
-      if (fn.domain.every((key, index) => key === index + 1)) {
-        return `<<${fn.range.map(format).join(", ")}>>`;
+      const functionValue = toFiniteFunction(value);
+      if (functionValue.domain.every((key, index) => key === index + 1)) {
+        return `<<${functionValue.range.map(format).join(", ")}>>`;
       }
-      if (fn.domain.every((key) => typeof key === "string" && isFieldName(key))) {
-        const isSorted = isNormalized || fn.hash !== 0 || fn.fingerprint !== 0;
+      if (functionValue.domain.every((key) => typeof key === "string" && isFieldName(key))) {
+        const isSorted =
+          isNormalized || functionValue.hash !== 0 || functionValue.fingerprint !== 0;
         const pairs = isSorted
-          ? fn.domain.map((key, index) => [key, fn.range[index]])
-          : getWrittenPairs(fn);
+          ? functionValue.domain.map((key, index) => [key, functionValue.range[index]])
+          : getWrittenPairs(functionValue);
         return `[${pairs.map((pair) => `${String(pair[0])} |-> ${format(pair[1])}`).join(", ")}]`;
       }
-      return `(${fn.domain.map((key, index) => `${format(key)} :> ${format(fn.range[index])}`).join(" @@ ")})`;
+      return `(${functionValue.domain.map((key, index) => `${format(key)} :> ${format(functionValue.range[index])}`).join(" @@ ")})`;
     }
   }
 };

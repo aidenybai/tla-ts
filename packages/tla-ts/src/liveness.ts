@@ -869,12 +869,14 @@ export const createLivenessChecker = (
       successors.forEach((successor, edgeIndex) => {
         const known = values[edgeIndex];
         for (let position = 0; position < actionCount; position++) {
-          const id = ids[position];
-          if (known[id] === -1) {
+          const actionId = ids[position];
+          if (known[actionId] === -1) {
             const predicate = solution.actionChecks[position];
-            known[id] = evaluateLive(predicate, state, successor, environment, stateCache) ? 1 : 0;
+            known[actionId] = evaluateLive(predicate, state, successor, environment, stateCache)
+              ? 1
+              : 0;
           }
-          actions[edgeIndex * actionCount + position] = known[id];
+          actions[edgeIndex * actionCount + position] = known[actionId];
         }
       });
       check.actionResults[source] = actions;

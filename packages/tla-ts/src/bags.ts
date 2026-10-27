@@ -39,16 +39,17 @@ const toFunction = (value: Value) => (isFunctionValue(value) ? toFiniteFunction(
 
 const getFunction = (args: BuiltinArgument[], index: number, name: string) => {
   const value = getValue(args, index, name);
-  const fn = toFunction(value);
-  if (!fn) throw describeWrongValue(name, "a function with a finite domain", value);
-  return fn;
+  const functionValue = toFunction(value);
+  if (!functionValue) throw describeWrongValue(name, "a function with a finite domain", value);
+  return functionValue;
 };
 
 const getBagArgument = (args: BuiltinArgument[], index: number, name: string) => {
   const value = getValue(args, index, name);
-  const fn = toFunction(value);
-  if (!fn) throw describeWrongArgument(index === 0 ? "first" : "second", name, "bag", value);
-  return fn;
+  const functionValue = toFunction(value);
+  if (!functionValue)
+    throw describeWrongArgument(index === 0 ? "first" : "second", name, "bag", value);
+  return functionValue;
 };
 
 const getFiniteElements = (set: Value, describeError: () => TlaModuleError) => {
@@ -56,17 +57,17 @@ const getFiniteElements = (set: Value, describeError: () => TlaModuleError) => {
   return toFiniteSet(set).elements;
 };
 
-const isBag = (fn: FunctionValue) =>
-  fn.range.every((count) => typeof count === "number" && count > 0);
+const isBag = (functionValue: FunctionValue) =>
+  functionValue.range.every((count) => typeof count === "number" && count > 0);
 
 const getCount = (value: Value, name: string, bag: Value) => {
   if (typeof value !== "number") throw describeWrongValue(name, "a bag", bag);
   return value;
 };
 
-const findCount = (fn: FunctionValue, element: Value) => {
-  const position = fn.domain.findIndex((key) => valuesEqual(key, element));
-  return position === -1 ? undefined : fn.range[position];
+const findCount = (functionValue: FunctionValue, element: Value) => {
+  const position = functionValue.domain.findIndex((key) => valuesEqual(key, element));
+  return position === -1 ? undefined : functionValue.range[position];
 };
 
 const getMethod = (name: string, result: string, arity: number) =>
@@ -97,9 +98,14 @@ const addCounts = (left: Value, right: Value, method: string) => {
 };
 
 // TLC subtracts counts as Java ints, which wrap on overflow.
-const subtractCounts = (fn: FunctionValue, index: number, other: FunctionValue, method: string) => {
-  const removed = findCount(other, fn.domain[index]);
-  const count = toCount(fn.range[index], method);
+const subtractCounts = (
+  functionValue: FunctionValue,
+  index: number,
+  other: FunctionValue,
+  method: string,
+) => {
+  const removed = findCount(other, functionValue.domain[index]);
+  const count = toCount(functionValue.range[index], method);
   return removed === undefined ? count : (count - toCount(removed, method)) | 0;
 };
 
@@ -123,13 +129,13 @@ const EMPTY_BAG = createSortedFunction([], []);
 export const BAGS_OPERATORS: Builtin[] = [
   defineConstant("EmptyBag", EMPTY_BAG),
   defineOperator("IsABag", 1, (args) => {
-    const fn = toFunction(getValue(args, 0, "IsABag"));
-    return fn !== undefined && isBag(fn);
+    const functionValue = toFunction(getValue(args, 0, "IsABag"));
+    return functionValue !== undefined && isBag(functionValue);
   }),
   defineOperator("BagCardinality", 1, (args) => {
     const bag = getValue(args, 0, "BagCardinality");
-    const fn = getFunction(args, 0, "BagCardinality");
-    return fn.range.reduce<number>((total, count) => {
+    const functionValue = getFunction(args, 0, "BagCardinality");
+    return functionValue.range.reduce<number>((total, count) => {
       const copies = getCount(count, "BagCardinality", bag);
       if (copies <= 0) throw describeWrongValue("BagCardinality", "a bag", bag);
       return addCounts(total, copies, BAG_CARDINALITY);
@@ -151,8 +157,8 @@ export const BAGS_OPERATORS: Builtin[] = [
   }),
   defineOperator("\\oplus", 2, (args) => {
     const bags = [0, 1].map((index) => {
-      const fn = getBagArgument(args, index, "(+)");
-      if (!isBag(fn)) {
+      const functionValue = getBagArgument(args, index, "(+)");
+      if (!isBag(functionValue)) {
         throw describeWrongArgument(
           index === 0 ? "first" : "second",
           "(+)",
@@ -160,7 +166,7 @@ export const BAGS_OPERATORS: Builtin[] = [
           getValue(args, index, "(+)"),
         );
       }
-      return fn;
+      return functionValue;
     });
     return mergeBags(bags, BAG_ADD);
   }),
@@ -181,13 +187,13 @@ export const BAGS_OPERATORS: Builtin[] = [
     );
     if (elements.length < 2) return elements[0] ?? EMPTY_BAG;
     const bags = elements.map((element) => {
-      const fn = toFunction(element);
-      if (!fn) {
+      const functionValue = toFunction(element);
+      if (!functionValue) {
         throw new TlaModuleError(
           `Attempted to apply BagUnion to the following set, whose\nelement is not a bag:\n${formatValue(set)}`,
         );
       }
-      return fn;
+      return functionValue;
     });
     return mergeBags(bags, BAG_UNION);
   }),
@@ -205,13 +211,13 @@ export const BAGS_OPERATORS: Builtin[] = [
       );
     }
     const value = getValue(args, 1, "BagOfAll");
-    const fn = toFunction(value);
-    if (!fn) {
+    const functionValue = toFunction(value);
+    if (!functionValue) {
       throw describeWrongArgument("second", "BagOfAll", "function with a finite domain", value);
     }
     return mergeBags(
-      fn.domain.map((key, index) =>
-        createSortedFunction([operator.call([key])], [fn.range[index]]),
+      functionValue.domain.map((key, index) =>
+        createSortedFunction([operator.call([key])], [functionValue.range[index]]),
       ),
       BAG_OF_ALL,
     );
@@ -221,8 +227,8 @@ export const BAGS_OPERATORS: Builtin[] = [
     if (!isFunctionValue(value)) {
       throw new TlaEvaluationError(`DOMAIN expects a function but received ${formatValue(value)}`);
     }
-    const fn = toFiniteFunction(value);
-    const range = createSet(fn.range).elements;
+    const functionValue = toFiniteFunction(value);
+    const range = createSet(functionValue.range).elements;
     const invalid = range.find((count) => typeof count !== "number");
     if (invalid !== undefined) {
       const isFirst = typeof range[0] !== "number";
@@ -230,14 +236,14 @@ export const BAGS_OPERATORS: Builtin[] = [
         `The ${isFirst ? "first" : "second"} argument of >= should be an integer, but instead it is:\n${formatValue(isFirst ? range[0] : invalid)}`,
       );
     }
-    const counts = fn.range.filter((count) => typeof count === "number");
+    const counts = functionValue.range.filter((count) => typeof count === "number");
     if (counts.some((count) => count < 1)) {
       throw new TlaEvaluationError(
-        `Attempted to apply a function to ${formatValue(fn)}, which is not in its domain`,
+        `Attempted to apply a function to ${formatValue(functionValue)}, which is not in its domain`,
       );
     }
     return createSet(
-      fn.domain
+      functionValue.domain
         .reduce<[Value, Value][][]>(
           (subBags, key, index) =>
             subBags.flatMap((entries) => [
