@@ -7,6 +7,7 @@ export type TokenKind =
   | "String"
   | "Operator"
   | "Keyword"
+  | "Step"
   | "Separator"
   | "ModuleEnd"
   | "End";
@@ -20,19 +21,27 @@ export interface Token {
 }
 
 const KEYWORDS = new Set([
+  "ACTION",
+  "ACTIONS",
   "ASSUME",
   "ASSUMPTION",
   "AXIOM",
+  "BY",
   "CASE",
   "CHOOSE",
   "CONSTANT",
   "CONSTANTS",
   "COROLLARY",
+  "DEF",
+  "DEFINE",
+  "DEFS",
   "DOMAIN",
   "ELSE",
   "ENABLED",
   "EXCEPT",
   "EXTENDS",
+  "HAVE",
+  "HIDE",
   "IF",
   "IN",
   "INSTANCE",
@@ -41,18 +50,32 @@ const KEYWORDS = new Set([
   "LET",
   "LOCAL",
   "MODULE",
+  "NEW",
+  "OBVIOUS",
+  "OMITTED",
+  "ONLY",
   "OTHER",
+  "PICK",
   "PROOF",
   "PROPOSITION",
+  "PROVE",
+  "QED",
   "RECURSIVE",
+  "STATE",
   "SUBSET",
+  "SUFFICES",
+  "TAKE",
+  "TEMPORAL",
+  "TEMPORALS",
   "THEN",
   "THEOREM",
   "UNCHANGED",
   "UNION",
+  "USE",
   "VARIABLE",
   "VARIABLES",
   "WITH",
+  "WITNESS",
 ]);
 
 const BACKSLASH_OPERATORS = new Map([
@@ -280,6 +303,29 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
   return character === "\\" ? { text: "\\", length: 1 } : undefined;
 };
 
+const isDigit = (character: string | undefined) =>
+  character !== undefined && character >= "0" && character <= "9";
+
+const skipWhile = (source: string, index: number, isMatch: (character: string) => boolean) => {
+  const end = { value: index };
+  while (end.value < source.length && isMatch(source[end.value])) end.value++;
+  return end.value;
+};
+
+// The length of a step number such as <1>a., <+>, or <2>*., which SANY reads as one token wherever
+// it appears.
+const matchStep = (source: string, index: number) => {
+  if (source[index] !== "<") return 0;
+  const isImplicit = source[index + 1] === "+" || source[index + 1] === "*";
+  const levelEnd = isImplicit ? index + 2 : skipWhile(source, index + 1, isDigit);
+  if (levelEnd === index + 1 || source[levelEnd] !== ">") return 0;
+  const nameEnd = skipWhile(source, levelEnd + 1, isIdentifierCharacter);
+  const isDash = nameEnd === levelEnd + 1 && (source[nameEnd] === "*" || source[nameEnd] === "-");
+  return (
+    skipWhile(source, isDash ? nameEnd + 1 : nameEnd, (character) => character === ".") - index
+  );
+};
+
 const TAB_SIZE = 8;
 
 const getWidthAfter = (width: number, character: string | undefined) =>
@@ -421,6 +467,11 @@ export const tokenize = (source: string): Token[] => {
         continue;
       }
       pushToken(KEYWORDS.has(word) ? "Keyword" : "Identifier", word, word.length);
+      continue;
+    }
+    const stepLength = matchStep(source, cursor.index);
+    if (stepLength > 0) {
+      pushToken("Step", source.slice(cursor.index, cursor.index + stepLength), stepLength);
       continue;
     }
     const operator = matchOperator(source, cursor.index);
