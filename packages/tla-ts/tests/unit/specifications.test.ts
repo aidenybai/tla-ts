@@ -57,7 +57,7 @@ describe("SPECIFICATION matches TLC", () => {
     await expect(
       checkSpecification("SPECIFICATION ForallNext", "Specifications", "{1}"),
     ).rejects.toThrow(
-      new TlaEvaluationError("No next state actions defined to generate successor states from"),
+      new TlaEvaluationError("No next state actions defined to generate successor states from."),
     );
   });
 
@@ -66,7 +66,7 @@ describe("SPECIFICATION matches TLC", () => {
     async (name) => {
       await expect(checkSpecification(`SPECIFICATION ${name}`)).rejects.toThrow(
         new TlaConfigError(
-          "TLC does not support temporal existential, nor universal, quantification over state variables",
+          "TLC does not support temporal existential, nor universal, quantification over state variables.",
         ),
       );
     },

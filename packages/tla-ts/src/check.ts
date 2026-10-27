@@ -315,8 +315,11 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
     const conjunct = item.expression;
     if (isConstantTrue(item, environment, "spec")) return;
     if (conjunct.kind === "UnboundedQuantifier" && conjunct.isTemporal) {
-      throw new TlaConfigError(
-        "TLC does not support temporal existential, nor universal, quantification over state variables",
+      throw setExitCode(
+        new TlaConfigError(
+          "TLC does not support temporal existential, nor universal, quantification over state variables.",
+        ),
+        EXIT_STATUS.error,
       );
     }
     if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
@@ -1218,7 +1221,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   if (next === undefined) {
     if (states.length > 0) {
       throw new TlaEvaluationError(
-        "No next state actions defined to generate successor states from",
+        "No next state actions defined to generate successor states from.",
       );
     }
     return createResult("success");
