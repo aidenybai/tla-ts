@@ -36,11 +36,11 @@ const createReader = (bytes: Uint8Array) => {
     return start;
   };
   return {
-    u1: () => view.getUint8(advance(1)),
-    u2: () => view.getUint16(advance(2)),
-    u4: () => view.getUint32(advance(4)),
-    i4: () => view.getInt32(advance(4)),
-    bytes: (length: number) => bytes.subarray(advance(length), cursor.offset),
+    readUint8: () => view.getUint8(advance(1)),
+    readUint16: () => view.getUint16(advance(2)),
+    readUint32: () => view.getUint32(advance(4)),
+    readInt32: () => view.getInt32(advance(4)),
+    readBytes: (length: number) => bytes.subarray(advance(length), cursor.offset),
   };
 };
 
@@ -52,53 +52,53 @@ const getParameterCount = (descriptor: string) => {
 // The public static methods of a class file and their bytecode, as java.lang.Class lists them.
 const readMethods = (bytes: Uint8Array) => {
   const reader = createReader(bytes);
-  if (reader.u4() !== CLASS_MAGIC)
+  if (reader.readUint32() !== CLASS_MAGIC)
     throw new TlaSyntaxError("A module override is not a class file");
-  reader.u2();
-  reader.u2();
+  reader.readUint16();
+  reader.readUint16();
   const pool: PoolEntry[] = [];
-  const count = reader.u2();
+  const count = reader.readUint16();
   const decoder = new TextDecoder();
   for (let index = 1; index < count; index++) {
-    const tag = reader.u1();
+    const tag = reader.readUint8();
     const entry = { tag, text: "", value: 0, first: 0, second: 0 };
     pool[index] = entry;
-    if (tag === 1) entry.text = decoder.decode(reader.bytes(reader.u2()));
-    else if (tag === 3) entry.value = reader.i4();
-    else if (tag === 4) reader.u4();
+    if (tag === 1) entry.text = decoder.decode(reader.readBytes(reader.readUint16()));
+    else if (tag === 3) entry.value = reader.readInt32();
+    else if (tag === 4) reader.readUint32();
     else if (tag === 5 || tag === 6) {
-      reader.bytes(8);
+      reader.readBytes(8);
       index++;
     } else if (tag === 7 || tag === 8 || tag === 16 || tag === 19 || tag === 20) {
-      entry.first = reader.u2();
+      entry.first = reader.readUint16();
     } else if (tag === 15) {
-      reader.u1();
-      entry.first = reader.u2();
+      reader.readUint8();
+      entry.first = reader.readUint16();
     } else {
-      entry.first = reader.u2();
-      entry.second = reader.u2();
+      entry.first = reader.readUint16();
+      entry.second = reader.readUint16();
     }
   }
-  reader.u2();
-  reader.u2();
-  reader.u2();
-  reader.bytes(reader.u2() * 2);
-  for (let fields = reader.u2(); fields > 0; fields--) {
-    reader.bytes(6);
-    for (let attributes = reader.u2(); attributes > 0; attributes--) {
-      reader.u2();
-      reader.bytes(reader.u4());
+  reader.readUint16();
+  reader.readUint16();
+  reader.readUint16();
+  reader.readBytes(reader.readUint16() * 2);
+  for (let fields = reader.readUint16(); fields > 0; fields--) {
+    reader.readBytes(6);
+    for (let attributes = reader.readUint16(); attributes > 0; attributes--) {
+      reader.readUint16();
+      reader.readBytes(reader.readUint32());
     }
   }
   const methods: JavaMethod[] = [];
-  for (let remaining = reader.u2(); remaining > 0; remaining--) {
-    const access = reader.u2();
-    const name = pool[reader.u2()].text;
-    const descriptor = pool[reader.u2()].text;
+  for (let remaining = reader.readUint16(); remaining > 0; remaining--) {
+    const access = reader.readUint16();
+    const name = pool[reader.readUint16()].text;
+    const descriptor = pool[reader.readUint16()].text;
     const method: JavaMethod = { name, arity: getParameterCount(descriptor), code: undefined };
-    for (let attributes = reader.u2(); attributes > 0; attributes--) {
-      const attributeName = pool[reader.u2()].text;
-      const attribute = reader.bytes(reader.u4());
+    for (let attributes = reader.readUint16(); attributes > 0; attributes--) {
+      const attributeName = pool[reader.readUint16()].text;
+      const attribute = reader.readBytes(reader.readUint32());
       if (attributeName === "Code") {
         const length = new DataView(attribute.buffer, attribute.byteOffset + 4, 4).getUint32(0);
         method.code = attribute.subarray(8, 8 + length);
@@ -110,11 +110,13 @@ const readMethods = (bytes: Uint8Array) => {
   return { pool, methods };
 };
 
+const getClassName = (pool: PoolEntry[], index: number) => pool[pool[index].first].text;
+
 const getMember = (pool: PoolEntry[], index: number) => {
   const reference = pool[index];
   const nameAndType = pool[reference.second];
   return {
-    className: pool[pool[reference.first].first].text,
+    className: getClassName(pool, reference.first),
     name: pool[nameAndType.first].text,
   };
 };
@@ -188,7 +190,7 @@ const getReturnedLiteral = (
       stack.push({ kind: "Number", value, location });
       offset += 3;
     } else if (opcode === 0xbb) {
-      stack.push({ className: pool[pool[getIndex()].first].text, value: undefined });
+      stack.push({ className: getClassName(pool, getIndex()), value: undefined });
       offset += 3;
     } else if (opcode === 0xb7) {
       const constructor = getMember(pool, getIndex());
@@ -218,22 +220,21 @@ const getReturnedLiteral = (
   throw unsupported();
 };
 
-const getArity = (definition: Definition) =>
-  definition.kind === "Operator" ? definition.params.length : -1;
-
 // TLC loads a class named after each module and replaces every operator the module defines
 // with the public static method of the same name and arity.
 export const overrideDefinitions = (module: Module, bytes: Uint8Array | undefined): Module => {
   if (!bytes) return module;
-  const { pool, methods } = readMethods(bytes);
+  const classFile = readMethods(bytes);
   const definitions = module.definitions.map((definition): Definition => {
-    const method = methods.find(
-      (candidate) => candidate.name === definition.name && candidate.arity === getArity(definition),
+    if (definition.kind !== "Operator") return definition;
+    const method = classFile.methods.find(
+      (candidate) =>
+        candidate.name === definition.name && candidate.arity === definition.params.length,
     );
-    if (!method || definition.kind !== "Operator") return definition;
+    if (!method) return definition;
     return {
       ...definition,
-      body: getReturnedLiteral(method, pool, module.name, definition.location),
+      body: getReturnedLiteral(method, classFile.pool, module.name, definition.location),
     };
   });
   return { ...module, definitions };
