@@ -1,4 +1,4 @@
-import type { Assumption, Expression, SourceLocation } from "./ast";
+import type { Assumption, Definition, Expression, SourceLocation } from "./ast";
 import { parseConfig, type ConfigValue, type ModelConfig } from "./config";
 import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
@@ -25,6 +25,7 @@ import {
   type ScopedExpression,
   type TemporalProperty,
 } from "./liveness";
+import { createLevelAnalyzer } from "./levels";
 import { prettyPrint } from "./pretty-print";
 import {
   forEachInitialState,
@@ -143,13 +144,8 @@ const createIdentifier = (name: string): Expression => ({
   location: START,
 });
 
-const getDefinitionBody = (name: string, environment: Environment) => {
-  const definition = getDefinition(name, environment);
-  if (definition?.kind !== "Operator" || definition.params.length > 0) {
-    throw new TlaConfigError(`${name} is not defined as an operator without arguments`);
-  }
-  return definition.body;
-};
+// TLC leaves the kind out when it rejects arguments to the specification or a property.
+const UNNAMED_ARGUMENT_KINDS = new Set(["name", "property"]);
 
 const getConfigOperator = (kind: string, name: string, environment: Environment) => {
   const definition = getDefinition(name, environment);
@@ -160,7 +156,9 @@ const getConfigOperator = (kind: string, name: string, environment: Environment)
   }
   if (definition.kind === "Operator" && definition.params.length > 0) {
     throw new TlaConfigError(
-      `TLC requires ${kind} not to take any argument, but one was given: ${name}`,
+      UNNAMED_ARGUMENT_KINDS.has(kind)
+        ? `TLC requires ${name} not to take any argument.`
+        : `TLC requires ${kind} not to take any argument, but one was given: ${name}`,
     );
   }
   return definition;
@@ -172,6 +170,51 @@ const getConfigDefinition = (kind: string, name: string, environment: Environmen
     throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
   }
   return definition;
+};
+
+// TLC evaluates every constant definition before it reads the configuration. It keeps a literal
+// number or string, and a definition that fails to evaluate, as an operator.
+const getConstantValue = (name: string, definition: Definition, environment: Environment) => {
+  if (!isConstantLevel(definition, environment)) return undefined;
+  if (definition.body.kind === "Number" || definition.body.kind === "String") return undefined;
+  try {
+    return evaluate(createIdentifier(name), getContext(environment, undefined, undefined));
+  } catch (error) {
+    if (error instanceof TlaEvaluationError) return undefined;
+    throw error;
+  }
+};
+
+const getConfigPredicate = (kind: string, name: string, environment: Environment) => {
+  const definition = getConfigOperator(kind, name, environment);
+  const value = getConstantValue(name, definition, environment);
+  if (value !== undefined && value !== true) {
+    throw new TlaConfigError(`The ${kind} of ${name} is equal to ${formatValue(value)}`);
+  }
+  return value === undefined ? definition : undefined;
+};
+
+const getInvariants = (names: string[], environment: Environment) => {
+  const analyzer = createLevelAnalyzer({
+    constants: new Set(environment.constants.keys()),
+    variables: new Set(environment.variables),
+    getDefinition: (name) => getDefinition(name, environment),
+  });
+  return names.flatMap((name): NamedExpression[] => {
+    const definition = getConfigPredicate("invariant", name, environment);
+    if (!definition) return [];
+    const levels = analyzer.analyzeDefinition(definition, new Map());
+    if (levels.level >= ACTION_LEVEL) {
+      const note =
+        levels.params.size === 0
+          ? ""
+          : "\nNote that a bug can cause TLC to incorrectly report this error.\nIf you believe your TLA+ or PlusCal specification to be correct,\nplease check if this bug described in LevelNode.java starting at line 590ff affects you.";
+      throw new TlaConfigError(
+        `The invariant ${name} is not a state predicate (one with no primes or temporal operators).${note}`,
+      );
+    }
+    return [{ name, expression: createIdentifier(name), scope: undefined }];
+  });
 };
 
 const toAliasRecord = (value: Value, fieldOrder: string[]) => {
@@ -220,7 +263,7 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
   if (config.specification === undefined) {
     const getOperator = (name: string | undefined, description: string) => {
       if (name === undefined) return undefined;
-      const body = getDefinitionBody(name, environment);
+      const body = getConfigOperator(description, name, environment).body;
       const identifier = createIdentifier(name);
       // TLC evaluates a literal body later and reports that it is not a boolean.
       const isLiteral = body.kind === "Number" || body.kind === "String";
@@ -239,8 +282,14 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
   const initConjuncts: ScopedExpression[] = [];
   const nextActions: ScopedExpression[] = [];
   const temporals: ScopedExpression[] = [];
-  const body = getDefinitionBody(config.specification, environment);
-  expandTemporal(body, undefined, environment, false).forEach((item) => {
+  const definition = getConfigOperator("name", config.specification, environment);
+  const value = getConstantValue(config.specification, definition, environment);
+  if (value !== undefined) {
+    throw new TlaConfigError(
+      `The value of ${config.specification} is equal to ${formatValue(value)}`,
+    );
+  }
+  expandTemporal(definition.body, undefined, environment, false).forEach((item) => {
     const conjunct = item.expression;
     if (isConstantTrue(item, environment, "spec")) return;
     if (conjunct.kind === "UnboundedQuantifier" && conjunct.isTemporal) {
@@ -325,8 +374,9 @@ export const getProperties = (config: ModelConfig, environment: Environment): Pr
     liveness: [],
   };
   config.properties.forEach((name) => {
-    const body = getDefinitionBody(name, environment);
-    expandTemporal(body, undefined, environment, true).forEach((item) => {
+    const definition = getConfigPredicate("property", name, environment);
+    if (!definition) return;
+    expandTemporal(definition.body, undefined, environment, true).forEach((item) => {
       const conjunct = item.expression;
       if (isConstantTrue(item, environment, "property")) return;
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
@@ -359,11 +409,16 @@ export const getProperties = (config: ModelConfig, environment: Environment): Pr
   return properties;
 };
 
-export const getNamedExpressions = (names: string[], environment: Environment): NamedExpression[] =>
-  names.map((name) => {
-    getDefinitionBody(name, environment);
-    return { name, expression: createIdentifier(name), scope: undefined };
-  });
+export const getNamedExpressions = (
+  kind: string,
+  names: string[],
+  environment: Environment,
+): NamedExpression[] =>
+  names.flatMap((name) =>
+    getConfigPredicate(kind, name, environment)
+      ? [{ name, expression: createIdentifier(name), scope: undefined }]
+      : [],
+  );
 
 const getBodyRange = (name: string, environment: Environment) => {
   const definition = getDefinition(name, environment);
@@ -507,14 +562,10 @@ export const createSearch = (
   environment: Environment,
   getVariableOrder: () => string[],
 ): Search | undefined => {
-  if (config.periodic !== undefined) getConfigOperator("periodic", config.periodic, environment);
-  if (config.rlReward !== undefined) getConfigOperator("rlreward", config.rlReward, environment);
-  const properties = getProperties(config, environment);
-  const invariants = getStateChecks(
-    [...getNamedExpressions(config.invariants, environment), ...properties.invariants],
-    environment,
-  );
+  const configInvariants = getInvariants(config.invariants, environment);
   const spec = getSpecification(config, environment);
+  const properties = getProperties(config, environment);
+  const invariants = getStateChecks([...configInvariants, ...properties.invariants], environment);
   const isCheckingBehaviors =
     invariants.length > 0 ||
     properties.actionProperties.length > 0 ||
@@ -525,21 +576,31 @@ export const createSearch = (
       properties.initialPredicates.length > 0 ||
       environment.variables.length > 0)
   ) {
-    throw new TlaConfigError("The configuration file did not specify the initial state predicate");
+    throw new TlaConfigError("The configuration file did not specify the initial state predicate.");
   }
   if (spec.next === undefined && isCheckingBehaviors) {
-    throw new TlaConfigError("The configuration file did not specify the next state predicate");
+    throw new TlaConfigError("The configuration file did not specify the next state predicate.");
   }
+  const constraints = getStateChecks(
+    getNamedExpressions("constraint", config.constraints, environment),
+    environment,
+  );
+  const actionConstraints = getNamedExpressions(
+    "action constraint",
+    config.actionConstraints,
+    environment,
+  );
+  if (config.rlReward !== undefined) getConfigOperator("rlreward", config.rlReward, environment);
+  if (config.periodic !== undefined) getConfigOperator("periodic", config.periodic, environment);
+  const possible = getPossiblePredicates(config.possible, environment);
   if (environment.variables.length === 0) return undefined;
   const symmetryGroup =
     config.symmetry === undefined ? [] : getSymmetryGroup(config.symmetry, environment);
+  if (config.view !== undefined) getConfigOperator("view function", config.view, environment);
   const view =
-    config.view === undefined ? undefined : getNamedExpressions([config.view], environment)[0];
-  const constraints = getStateChecks(
-    getNamedExpressions(config.constraints, environment),
-    environment,
-  );
-  const actionConstraints = getNamedExpressions(config.actionConstraints, environment);
+    config.view === undefined
+      ? undefined
+      : { name: config.view, expression: createIdentifier(config.view), scope: undefined };
   const actionProperties = properties.actionProperties.map((property) => {
     const unchanged: Expression = {
       kind: "Unchanged",
@@ -548,7 +609,6 @@ export const createSearch = (
     };
     return { ...property, unchanged };
   });
-  const possible = getPossiblePredicates(config.possible, environment);
   const isActionPossible = (item: NamedExpression) =>
     getLevel(item.expression, undefined, environment) >= ACTION_LEVEL;
   const statePossible = possible.filter((item) => !isActionPossible(item));
@@ -723,12 +783,11 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     depth: runtime.generatedStates === 0 ? 0 : Math.max(statistics.depth, 1),
   });
 
-  const assumptionViolation = findAssumptionViolation(specification.assumptions, environment);
-  if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
-
   const search = createSearch(config, environment, () =>
     getTlcVariableOrder(options.source, options.loadModule),
   );
+  const assumptionViolation = findAssumptionViolation(specification.assumptions, environment);
+  if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
   if (!search) return createResult("success");
   const hasPostconditions = config.postconditions.length > 0 || config.possible.length > 0;
   const reportViolation = (

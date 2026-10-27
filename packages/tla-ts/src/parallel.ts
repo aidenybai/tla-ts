@@ -111,10 +111,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     files: { readFile: options.readFile, writeFile: options.writeFile },
   });
   const environment = specification.environment;
-  if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
   const search = createSearch(config, environment, () =>
     getTlcVariableOrder(options.source, loadModule),
   );
+  if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
   if (
     !search ||
     search.spec.init === undefined ||

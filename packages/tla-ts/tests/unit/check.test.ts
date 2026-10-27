@@ -1171,6 +1171,50 @@ describe("initial predicate and next-state relation match TLC", () => {
     ).rejects.toThrow(/The next state action Next cannot be a constant/);
   });
 
+  it("checks the configuration in the order TLC reads it, before any assumption", async () => {
+    await expect(
+      checkSource(
+        "VARIABLE x\nASSUME FALSE\nInit == x = 0\nNext == TRUE\nInv == {}",
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nPROPERTY Q",
+      ),
+    ).rejects.toThrow(new TlaConfigError("The invariant of Inv is equal to {}"));
+    await expect(
+      checkSource(
+        "VARIABLE x\nInit == x = 0\nNext == x' = x\nQ(a) == TRUE",
+        "INIT Init\nNEXT Next\nPROPERTY Q\nCONSTRAINT Nope",
+      ),
+    ).rejects.toThrow(new TlaConfigError("TLC requires Q not to take any argument."));
+    await expect(
+      checkSource(
+        "VARIABLE x\nInit == x = 0\nNext == x' = x\nC == FALSE",
+        "INIT Init\nNEXT Next\nCONSTRAINT C",
+      ),
+    ).rejects.toThrow(new TlaConfigError("The constraint of C is equal to FALSE"));
+  });
+
+  it("rejects an invariant that is not a state predicate", async () => {
+    await expect(
+      checkSource(
+        "VARIABLE x\nInit == x = 0\nNext == x' = x\nInv == []TRUE",
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ),
+    ).rejects.toThrow(
+      new TlaConfigError(
+        "The invariant Inv is not a state predicate (one with no primes or temporal operators).",
+      ),
+    );
+    await expect(
+      checkSource(
+        "VARIABLE x\nInit == x = 0\nNext == x' = x\nInv == x' = x",
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ),
+    ).rejects.toThrow(
+      new TlaConfigError(
+        "The invariant Inv is not a state predicate (one with no primes or temporal operators).\nNote that a bug can cause TLC to incorrectly report this error.\nIf you believe your TLA+ or PlusCal specification to be correct,\nplease check if this bug described in LevelNode.java starting at line 590ff affects you.",
+      ),
+    );
+  });
+
   it("reports initial states without a next-state action", async () => {
     await expect(checkSource("VARIABLE x\nInit == x \\in {1, 2}", "INIT Init")).rejects.toThrow(
       /No next state actions defined to generate successor states from/,
