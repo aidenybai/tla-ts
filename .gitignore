@@ -9,6 +9,7 @@ coverage
 # copied into the package by prepack
 packages/tla-ts/README.md
 packages/tla-ts/LICENSE
+packages/tsprover/LICENSE
 packages/tla-ts/tests/conformance/.corpora
 packages/tla-ts/tests/conformance/.library
 packages/tla-ts/tests/conformance/.results.json
