@@ -15,9 +15,6 @@ const isTypeReference = (type: ts.Type): type is ts.TypeReference =>
   (type.flags & ts.TypeFlags.Object) !== 0 &&
   ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0;
 
-const getTypeArguments = (type: ts.Type, checker: ts.TypeChecker) =>
-  isTypeReference(type) ? checker.getTypeArguments(type) : [];
-
 const getTypeName = (type: ts.Type) => type.getSymbol()?.getName() ?? "";
 
 const isSetType = (type: ts.Type) => ["Set", "ReadonlySet"].includes(getTypeName(type));
@@ -107,7 +104,10 @@ export const findDomain = (type: ts.Type, context: Context): string | Infinite =
   const literal = getLiteral(type, context);
   if (literal !== undefined) return `{${literal}}`;
   if (isSetType(type) || isMapType(type) || checker.isTupleType(type)) {
-    const elements = findDomains(getTypeArguments(type, checker), context);
+    const elements = findDomains(
+      isTypeReference(type) ? checker.getTypeArguments(type) : [],
+      context,
+    );
     if (!Array.isArray(elements)) return elements;
     if (isSetType(type)) return `SUBSET ${wrap(elements[0])}`;
     if (isMapType(type)) {

@@ -1,15 +1,16 @@
 import ts from "typescript";
-import { getUpdatedValue } from "./collections";
-import { type Context, getFunction, getSymbol, getTopLevelDeclaration } from "./context";
-import { TsproverError } from "./errors";
+import { getUpdatedValue, MUTATING_METHODS } from "./collections";
 import {
-  translateCondition,
-  translateExpression,
-  translateIndex,
-  translateNegatedCondition,
-} from "./expressions";
-import { and, DISABLED, type Formula, ifThenElse, letIn, text, wrap, wrapEquated } from "./formula";
-import { translateSwitch, translateThrow } from "./functions";
+  type Context,
+  getFunction,
+  getSymbol,
+  getTopLevelDeclaration,
+  isMethodCall,
+} from "./context";
+import { TsproverError } from "./errors";
+import { translateExpression, translateKey } from "./expressions";
+import { and, DISABLED, type Formula, letIn, text, wrap, wrapEquated } from "./formula";
+import { translateIf, translateSwitch, translateThrow } from "./functions";
 import { bindPattern, bindValues, type Scope } from "./scope";
 import { getKind } from "./types";
 
@@ -27,6 +28,11 @@ interface Target {
   selector: string;
 }
 
+interface Removed {
+  value: string;
+  path: Path;
+}
+
 interface Frame {
   // What follows the statements once they complete.
   next: (path: Path) => Formula;
@@ -37,15 +43,15 @@ interface Frame {
   inlining: Set<ts.Declaration>;
 }
 
-const MUTATING_METHODS = new Set([
-  "push",
-  "pop",
-  "shift",
-  "unshift",
-  "add",
-  "delete",
-  "clear",
-  "set",
+const COMPOUND_OPERATORS = new Map([
+  [ts.SyntaxKind.PlusEqualsToken, "+"],
+  [ts.SyntaxKind.MinusEqualsToken, "-"],
+  [ts.SyntaxKind.AsteriskEqualsToken, "*"],
+]);
+
+const INCREMENT_OPERATORS = new Map<ts.SyntaxKind, string>([
+  [ts.SyntaxKind.PlusPlusToken, "+"],
+  [ts.SyntaxKind.MinusMinusToken, "-"],
 ]);
 
 // The current value of an assignment target, and how to replace it.
@@ -70,15 +76,11 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
   }
   if (ts.isElementAccessExpression(node)) {
     const target = getTarget(node.expression, path, context);
-    const key =
-      getKind(node.expression, context) === "sequence"
-        ? translateIndex(node.argumentExpression, path.scope, context)
-        : translateExpression(node.argumentExpression, path.scope, context);
+    const key = translateKey(node, path.scope, context);
     return { ...target, selector: `${target.selector}[${key}]` };
   }
   if (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
+    isMethodCall(node) &&
     node.expression.name.text === "get" &&
     node.arguments.length === 1 &&
     getKind(node.expression.expression, context) === "map"
@@ -165,10 +167,15 @@ const assignPattern = (
 };
 
 // The value that a call like queue.shift() returns, before it changes the queue.
-const getRemovedValue = (node: ts.Expression, path: Path, context: Context) => {
-  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) {
-    return undefined;
+const getRemovedValue = (
+  node: ts.Expression,
+  path: Path,
+  context: Context,
+): Removed | undefined => {
+  if (ts.isNonNullExpression(node) || ts.isParenthesizedExpression(node)) {
+    return getRemovedValue(node.expression, path, context);
   }
+  if (!isMethodCall(node)) return undefined;
   const method = node.expression.name.text;
   if (method !== "shift" && method !== "pop") return undefined;
   const receiver = node.expression.expression;
@@ -182,10 +189,99 @@ const getRemovedValue = (node: ts.Expression, path: Path, context: Context) => {
   };
 };
 
-const unwrapInitializer = (node: ts.Expression): ts.Expression =>
-  ts.isNonNullExpression(node) || ts.isParenthesizedExpression(node)
-    ? unwrapInitializer(node.expression)
-    : node;
+// The path after an assignment, such as x = 1, x += 1, or x++.
+const getAssignedPath = (expression: ts.Expression, path: Path, context: Context) => {
+  if (ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression)) {
+    const operator = INCREMENT_OPERATORS.get(expression.operator);
+    return operator === undefined
+      ? undefined
+      : assign(expression.operand, path, context, (current) => `${wrap(current)} ${operator} 1`);
+  }
+  if (!ts.isBinaryExpression(expression)) return undefined;
+  const kind = expression.operatorToken.kind;
+  if (kind === ts.SyntaxKind.EqualsToken) {
+    const value = translateExpression(expression.right, path.scope, context);
+    return assignPattern(expression.left, expression.right, value, path, context);
+  }
+  const operator =
+    kind === ts.SyntaxKind.PlusEqualsToken && getKind(expression.left, context) === "string"
+      ? "\\o"
+      : COMPOUND_OPERATORS.get(kind);
+  if (operator === undefined) return undefined;
+  const value = wrap(translateExpression(expression.right, path.scope, context));
+  return assign(
+    expression.left,
+    path,
+    context,
+    (current) => `${wrap(current)} ${operator} ${value}`,
+  );
+};
+
+const translateCallStatement = (
+  expression: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const values = expression.arguments.map((argument) =>
+    translateExpression(argument, path.scope, context),
+  );
+  if (isMethodCall(expression)) {
+    const receiver = expression.expression.expression;
+    const method = expression.expression.name.text;
+    const isConsole = receiver.getText() === "console";
+    if (isConsole && method === "log") {
+      const value = values.length === 1 ? values[0] : `<<${values.join(", ")}>>`;
+      return and([text(`PrintT(${value})`), continueWith(path)]);
+    }
+    if (isConsole && method === "assert") {
+      const message = values[1] ?? JSON.stringify("Assertion failed");
+      return and([text(`Assert(${values[0]}, ${message})`), continueWith(path)]);
+    }
+    if (MUTATING_METHODS.has(method)) {
+      const kind = getKind(receiver, context);
+      return continueWith(
+        assign(receiver, path, context, (current) => {
+          const value = getUpdatedValue(current, kind, expression, path.scope, context);
+          if (value === undefined) {
+            throw new TsproverError(`Unsupported method: ${method}`, expression);
+          }
+          return value;
+        }),
+      );
+    }
+  }
+  // A helper that changes state runs inline, as part of the action.
+  const helper = getTopLevelDeclaration(getSymbol(expression.expression, context.checker));
+  const helperFunction = getFunction(helper);
+  if (helper === undefined || helperFunction?.body === undefined) {
+    throw new TsproverError(`Unsupported statement: ${expression.getText()}`, expression);
+  }
+  if (frame.inlining.has(helper)) {
+    throw new TsproverError("Helpers that change state can't call themselves", expression);
+  }
+  const bound = bindValues(
+    helperFunction.parameters.map((parameter) => parameter.name),
+    values,
+    path.scope,
+    context,
+  );
+  const body = ts.isBlock(helperFunction.body)
+    ? helperFunction.body.statements
+    : [ts.factory.createExpressionStatement(helperFunction.body)];
+  const afterCall = (inner: Path) =>
+    continueWith({ ...inner, scope: { ...inner.scope, previous: path.scope.previous } });
+  return letIn(
+    bound.definitions,
+    translateStatements(body, { ...path, scope: bound.scope }, context, {
+      next: afterCall,
+      exit: afterCall,
+      breakTo: undefined,
+      inlining: new Set([...frame.inlining, helper]),
+    }),
+  );
+};
 
 const translateExpressionStatement = (
   expression: ts.Expression,
@@ -197,175 +293,84 @@ const translateExpressionStatement = (
   if (ts.isParenthesizedExpression(expression)) {
     return translateExpressionStatement(expression.expression, path, context, frame, continueWith);
   }
-  const translate = (inner: ts.Expression) => translateExpression(inner, path.scope, context);
-  if (ts.isBinaryExpression(expression)) {
-    const kind = expression.operatorToken.kind;
-    if (kind === ts.SyntaxKind.EqualsToken) {
-      return continueWith(
-        assignPattern(
-          expression.left,
-          expression.right,
-          translate(expression.right),
-          path,
-          context,
-        ),
-      );
-    }
-    const operators = new Map([
-      [ts.SyntaxKind.PlusEqualsToken, getKind(expression.left, context) === "string" ? "\\o" : "+"],
-      [ts.SyntaxKind.MinusEqualsToken, "-"],
-      [ts.SyntaxKind.AsteriskEqualsToken, "*"],
-    ]);
-    const operator = operators.get(kind);
-    if (operator !== undefined) {
-      const value = wrap(translate(expression.right));
-      return continueWith(
-        assign(
-          expression.left,
-          path,
-          context,
-          (current) => `${wrap(current)} ${operator} ${value}`,
-        ),
-      );
-    }
-  }
-  if (
-    (ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression)) &&
-    (expression.operator === ts.SyntaxKind.PlusPlusToken ||
-      expression.operator === ts.SyntaxKind.MinusMinusToken)
-  ) {
-    const operator = expression.operator === ts.SyntaxKind.PlusPlusToken ? "+" : "-";
-    return continueWith(
-      assign(expression.operand, path, context, (current) => `${wrap(current)} ${operator} 1`),
-    );
-  }
   if (ts.isCallExpression(expression)) {
-    const callee = expression.expression;
-    const values = expression.arguments.map(translate);
-    if (ts.isPropertyAccessExpression(callee) && callee.expression.getText() === "console") {
-      if (callee.name.text === "log") {
-        const value = values.length === 1 ? values[0] : `<<${values.join(", ")}>>`;
-        return and([text(`PrintT(${value})`), continueWith(path)]);
-      }
-      if (callee.name.text === "assert") {
-        const message = values[1] ?? JSON.stringify("Assertion failed");
-        return and([text(`Assert(${values[0]}, ${message})`), continueWith(path)]);
-      }
-    }
-    if (ts.isPropertyAccessExpression(callee) && MUTATING_METHODS.has(callee.name.text)) {
-      const kind = getKind(callee.expression, context);
-      return continueWith(
-        assign(callee.expression, path, context, (current) => {
-          const value = getUpdatedValue(
-            current,
-            kind,
-            callee.name.text,
-            expression,
-            path.scope,
-            context,
-          );
-          if (value === undefined) {
-            throw new TsproverError(`Unsupported method: ${callee.name.text}`, expression);
-          }
-          return value;
-        }),
-      );
-    }
-    // A helper that changes state runs inline, as part of the action.
-    const helper = getTopLevelDeclaration(getSymbol(callee, context.checker));
-    const helperFunction = getFunction(helper);
-    if (helper !== undefined && helperFunction?.body !== undefined) {
-      if (frame.inlining.has(helper)) {
-        throw new TsproverError("Helpers that change state can't call themselves", expression);
-      }
-      const bound = bindValues(
-        helperFunction.parameters.map((parameter) => parameter.name),
-        values,
-        path.scope,
-        context,
-      );
-      const body = ts.isBlock(helperFunction.body)
-        ? helperFunction.body.statements
-        : [ts.factory.createExpressionStatement(helperFunction.body)];
-      const inlining = new Set([...frame.inlining, helper]);
-      const afterCall = (inner: Path) =>
-        continueWith({ ...inner, scope: { ...inner.scope, previous: path.scope.previous } });
-      return letIn(
-        bound.definitions,
-        translateStatements(body, 0, { ...path, scope: bound.scope }, context, {
-          next: afterCall,
-          exit: afterCall,
-          breakTo: undefined,
-          inlining,
-        }),
-      );
-    }
+    return translateCallStatement(expression, path, context, frame, continueWith);
   }
-  throw new TsproverError(`Unsupported statement: ${expression.getText()}`, expression);
+  const assigned = getAssignedPath(expression, path, context);
+  if (assigned === undefined) {
+    throw new TsproverError(`Unsupported statement: ${expression.getText()}`, expression);
+  }
+  return continueWith(assigned);
 };
 
-export const translateStatements = (
+// Binds each declared local to a LET definition. A let can change later, and a const can't.
+const translateDeclarations = (
+  declarations: readonly ts.VariableDeclaration[],
+  path: Path,
+  context: Context,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  if (declarations.length === 0) return continueWith(path);
+  const declaration = declarations[0];
+  const rest = declarations.slice(1);
+  if (declaration.initializer === undefined) {
+    throw new TsproverError("Declare locals with a value", declaration);
+  }
+  if (getFunction(declaration.initializer) !== undefined) {
+    return translateDeclarations(rest, path, context, continueWith);
+  }
+  const removed = getRemovedValue(declaration.initializer, path, context);
+  const value = removed?.value ?? translateExpression(declaration.initializer, path.scope, context);
+  const afterCall = removed?.path ?? path;
+  const bound = bindPattern(declaration.name, value, afterCall.scope, context);
+  const symbol = ts.isIdentifier(declaration.name)
+    ? getSymbol(declaration.name, context.checker)
+    : undefined;
+  const isLet = (declaration.parent.flags & ts.NodeFlags.Let) !== 0;
+  const mutable = isLet && symbol !== undefined ? new Set([...path.mutable, symbol]) : path.mutable;
+  return letIn(
+    bound.definitions,
+    translateDeclarations(
+      rest,
+      { ...afterCall, scope: bound.scope, mutable },
+      context,
+      continueWith,
+    ),
+  );
+};
+
+const translateStatements = (
   statements: readonly ts.Statement[],
-  index: number,
   path: Path,
   context: Context,
   frame: Frame,
 ): Formula => {
-  if (index === statements.length) return frame.next(path);
-  const statement = statements[index];
+  if (statements.length === 0) return frame.next(path);
+  const statement = statements[0];
   const continueWith = (inner: Path) =>
-    translateStatements(statements, index + 1, inner, context, frame);
+    translateStatements(statements.slice(1), inner, context, frame);
   if (ts.isBlock(statement)) {
-    return translateStatements(statement.statements, 0, path, context, {
+    return translateStatements(statement.statements, path, context, {
       ...frame,
       next: continueWith,
     });
   }
   if (ts.isEmptyStatement(statement)) return continueWith(path);
   if (ts.isVariableStatement(statement)) {
-    const isLet = (statement.declarationList.flags & ts.NodeFlags.Let) !== 0;
-    const translateDeclarations = (
-      declarations: readonly ts.VariableDeclaration[],
-      current: Path,
-    ): Formula => {
-      if (declarations.length === 0) return continueWith(current);
-      const declaration = declarations[0];
-      if (declaration.initializer === undefined) {
-        throw new TsproverError("Declare locals with a value", declaration);
-      }
-      if (getFunction(declaration.initializer) !== undefined) {
-        return translateDeclarations(declarations.slice(1), current);
-      }
-      const removed = getRemovedValue(unwrapInitializer(declaration.initializer), current, context);
-      const value =
-        removed?.value ?? translateExpression(declaration.initializer, current.scope, context);
-      const afterCall = removed?.path ?? current;
-      const bound = bindPattern(declaration.name, value, afterCall.scope, context);
-      const symbol = ts.isIdentifier(declaration.name)
-        ? getSymbol(declaration.name, context.checker)
-        : undefined;
-      const mutable =
-        isLet && symbol !== undefined ? new Set([...current.mutable, symbol]) : current.mutable;
-      return letIn(
-        bound.definitions,
-        translateDeclarations(declarations.slice(1), { ...afterCall, scope: bound.scope, mutable }),
-      );
-    };
-    return translateDeclarations(statement.declarationList.declarations, path);
+    return translateDeclarations(
+      statement.declarationList.declarations,
+      path,
+      context,
+      continueWith,
+    );
   }
   if (ts.isIfStatement(statement)) {
-    const condition = translateCondition(statement.expression, path.scope, context);
-    const branchFrame = { ...frame, next: continueWith };
-    const whenTrue = translateStatements([statement.thenStatement], 0, path, context, branchFrame);
-    const whenFalse =
-      statement.elseStatement === undefined
-        ? continueWith(path)
-        : translateStatements([statement.elseStatement], 0, path, context, branchFrame);
-    return ifThenElse(
-      condition,
-      whenTrue,
-      whenFalse,
-      translateNegatedCondition(statement.expression, path.scope, context),
+    return translateIf(
+      statement,
+      path.scope,
+      context,
+      (branch) => translateStatements([branch], path, context, { ...frame, next: continueWith }),
+      () => continueWith(path),
     );
   }
   if (ts.isReturnStatement(statement)) {
@@ -382,16 +387,15 @@ export const translateStatements = (
   if (ts.isSwitchStatement(statement)) {
     return translateSwitch(
       statement,
-      path,
       path.scope,
       context,
-      (clauseStatements, inner, after) =>
-        translateStatements(clauseStatements, 0, inner, context, {
+      (clause) =>
+        translateStatements(clause, path, context, {
           ...frame,
-          next: after,
-          breakTo: after,
+          next: continueWith,
+          breakTo: continueWith,
         }),
-      continueWith,
+      () => continueWith(path),
     );
   }
   if (ts.isExpressionStatement(statement)) {
@@ -431,7 +435,6 @@ export const translateAction = (
   };
   return translateStatements(
     statements,
-    0,
     { scope, mutable: new Set(context.variables.keys()), isAssigned: false },
     context,
     { next: finish, exit: finish, breakTo: undefined, inlining: new Set() },
@@ -439,11 +442,7 @@ export const translateAction = (
 };
 
 const getRoot = (node: ts.Expression): ts.Expression => {
-  if (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    node.expression.name.text === "get"
-  ) {
+  if (isMethodCall(node) && node.expression.name.text === "get") {
     return getRoot(node.expression.expression);
   }
   return ts.isPropertyAccessExpression(node) ||
@@ -455,7 +454,11 @@ const getRoot = (node: ts.Expression): ts.Expression => {
 };
 
 // Whether a function assigns a state variable, directly or through a helper it calls.
-export const writesState = (node: ts.Node, context: Context, visited: Set<ts.Node>): boolean => {
+export const writesState = (
+  node: ts.Node,
+  context: Context,
+  visited = new Set<ts.Node>(),
+): boolean => {
   const isStateRoot = (target: ts.Expression) => {
     const root = getRoot(target);
     const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
@@ -468,12 +471,10 @@ export const writesState = (node: ts.Node, context: Context, visited: Set<ts.Nod
     isStateRoot(node.left);
   const isUpdate =
     (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) &&
-    (node.operator === ts.SyntaxKind.PlusPlusToken ||
-      node.operator === ts.SyntaxKind.MinusMinusToken) &&
+    INCREMENT_OPERATORS.has(node.operator) &&
     isStateRoot(node.operand);
   const isMutation =
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
+    isMethodCall(node) &&
     MUTATING_METHODS.has(node.expression.name.text) &&
     isStateRoot(node.expression.expression);
   if (isAssignment || isUpdate || isMutation) return true;

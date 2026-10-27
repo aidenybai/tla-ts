@@ -41,7 +41,6 @@ export const bindNames = (scope: Scope, named: Named[]): Scope => ({
   previous: scope.previous,
 });
 
-// Gives a parameter a fresh TLA+ name.
 export const declareParameter = (
   parameter: ts.ParameterDeclaration,
   context: Context,

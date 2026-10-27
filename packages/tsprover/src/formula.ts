@@ -63,7 +63,7 @@ export const letIn = (definitions: string[], body: Formula): Formula => {
 const prefixLines = (lines: string[], first: string, rest: string) =>
   lines.map((line, index) => `${index === 0 ? first : rest}${line}`);
 
-export const renderLines = (formula: Formula): string[] => {
+const renderLines = (formula: Formula): string[] => {
   if (formula.kind === "disabled") return ["FALSE"];
   if (formula.kind === "text") return formula.text.split("\n");
   if (formula.kind === "and") {
@@ -130,7 +130,6 @@ const isAtomic = (expression: string) =>
   !expression.includes("\n") &&
   !getSurface(expression).includes(" ");
 
-// Parenthesizes an operand unless it is a single term.
 export const wrap = (expression: string) => (isAtomic(expression) ? expression : `(${expression})`);
 
 // Operators that bind no tighter than =, so that x = a = b would be ambiguous.

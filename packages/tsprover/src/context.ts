@@ -25,6 +25,10 @@ export interface Context {
   prelude: Set<"Null" | "Undefined" | "Rem" | "Quot">;
 }
 
+export interface MethodCall extends ts.CallExpression {
+  readonly expression: ts.PropertyAccessExpression;
+}
+
 export type FunctionNode = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
 
 export type HelperDeclaration = ts.FunctionDeclaration | ts.VariableDeclaration;
@@ -50,6 +54,9 @@ export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
     ? checker.getAliasedSymbol(symbol)
     : symbol;
 };
+
+export const isMethodCall = (node: ts.Node): node is MethodCall =>
+  ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression);
 
 // The declaration of a constant or function at the top level of a module, which becomes a TLA+
 // definition.

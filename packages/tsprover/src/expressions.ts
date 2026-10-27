@@ -12,7 +12,7 @@ import {
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
-  type HelperDeclaration,
+  isMethodCall,
   share,
   translateString,
 } from "./context";
@@ -51,13 +51,17 @@ const LOGICAL_OPERATORS = new Map([
   [ts.SyntaxKind.BarBarToken, "\\/"],
 ]);
 
-// The TLA+ index of a JavaScript index into a sequence, since sequences count from 1.
-export const translateIndex = (node: ts.Expression, scope: Scope, context: Context) =>
-  ts.isNumericLiteral(node)
-    ? String(Number(node.text) + 1)
-    : `${wrap(translateExpression(node, scope, context))} + 1`;
+// The key of an element access, which counts from 1 in a sequence where JavaScript counts from 0.
+export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, context: Context) => {
+  const key = node.argumentExpression;
+  if (getKind(node.expression, context) !== "sequence") {
+    return translateExpression(key, scope, context);
+  }
+  return ts.isNumericLiteral(key)
+    ? String(Number(key.text) + 1)
+    : `${wrap(translateExpression(key, scope, context))} + 1`;
+};
 
-// An array literal as a sequence, joining spread arrays with \o.
 const translateArrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope, context: Context) => {
   // Runs of plain elements become tuples, and each spread array stays a sequence of its own.
   const parts = node.elements.reduce<(string | string[])[]>((result, element) => {
@@ -81,7 +85,7 @@ const translateArrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope, co
   return sequences.length === 1 ? sequences[0] : sequences.map(wrap).join(" \\o ");
 };
 
-export const getField = (key: string) => (isNumericKey(key) ? `[${key}]` : `.${key}`);
+const getField = (key: string) => (isNumericKey(key) ? `[${key}]` : `.${key}`);
 
 const formatRecord = (fields: Field[]) =>
   fields.every((field) => isNumericKey(field.key))
@@ -231,25 +235,24 @@ const translateCall = (
   context: Context,
   isDefined: boolean,
 ) => {
-  const callee = node.expression;
-  const symbol = getSymbol(callee, context.checker);
+  const symbol = getSymbol(node.expression, context.checker);
   const helper = getTopLevelDeclaration(symbol);
   if (helper !== undefined) return translateHelperCall(helper, node, scope, context);
-  if (!ts.isPropertyAccessExpression(callee)) {
+  if (!isMethodCall(node)) {
     const operator = symbol === undefined ? undefined : scope.bindings.get(symbol);
     if (operator === undefined) return translateLocalCall(node, scope, context);
     const values = node.arguments.map((argument) => translateExpression(argument, scope, context));
     return `${operator}(${values.join(", ")})`;
   }
-  const receiver = callee.expression;
-  const method = callee.name.text;
+  const receiver = node.expression.expression;
+  const method = node.expression.name.text;
   const global = ts.isIdentifier(receiver) ? receiver.text : undefined;
   if (global === "Math") return translateMath(node, method, scope, context);
   const constructed =
     global === "Object" && method === "fromEntries"
       ? translateFunctionConstructor(node.arguments[0], scope, context)
-      : translateArrayConstructor(node, receiver, method, scope, context);
-  return constructed ?? translateMethod(node, receiver, method, scope, context, isDefined);
+      : translateArrayConstructor(node, scope, context);
+  return constructed ?? translateMethod(node, scope, context, isDefined);
 };
 
 // A value as a string, as JavaScript converts it in a template or beside a string in +.
@@ -329,12 +332,6 @@ const getPreviousVariable = (name: string, node: ts.Node, context: Context) => {
   return variable[1];
 };
 
-// A function passes as its operator's name, and a constant as its value.
-const translateReference = (declaration: HelperDeclaration, scope: Scope, context: Context) =>
-  getFunction(declaration) === undefined
-    ? translateHelperCall(declaration, undefined, scope, context)
-    : getDefinition(declaration, context).name;
-
 const translateEnumMember = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   const declaration = symbol.valueDeclaration;
   const value =
@@ -357,7 +354,11 @@ const translateDeclared = (
     return translateEnumMember(node, symbol, context);
   }
   const declaration = getTopLevelDeclaration(symbol);
-  return declaration === undefined ? undefined : translateReference(declaration, scope, context);
+  if (declaration === undefined) return undefined;
+  // A function passes as its operator's name, and a constant as its value.
+  return getFunction(declaration) === undefined
+    ? translateHelperCall(declaration, undefined, scope, context)
+    : getDefinition(declaration, context).name;
 };
 
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
@@ -417,10 +418,7 @@ const translateElementAccess = (
   context: Context,
 ) => {
   const value = wrap(translateExpression(node.expression, scope, context));
-  const index = node.argumentExpression;
-  return getKind(node.expression, context) === "sequence"
-    ? `${value}[${translateIndex(index, scope, context)}]`
-    : `${value}[${translateExpression(index, scope, context)}]`;
+  return `${value}[${translateKey(node, scope, context)}]`;
 };
 
 export const translateCondition = (node: ts.Expression, scope: Scope, context: Context) => {

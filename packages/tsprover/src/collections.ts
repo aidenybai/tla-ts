@@ -1,5 +1,12 @@
 import ts from "typescript";
-import { type Context, getCallee, getSymbol, share } from "./context";
+import {
+  type Context,
+  getCallee,
+  getSymbol,
+  isMethodCall,
+  type MethodCall,
+  share,
+} from "./context";
 import { TsproverError } from "./errors";
 import { translateExpression } from "./expressions";
 import { wrap, wrapEquated } from "./formula";
@@ -19,6 +26,10 @@ const SINGLE_USE_METHODS = new Set(["concat", "with", "filter"]);
 interface Element {
   variable: string;
   scope: Scope;
+}
+
+interface Update {
+  (current: string, values: string[], context: Context): string;
 }
 
 const getCallback = (callback: ts.Expression, context: Context) => {
@@ -84,7 +95,6 @@ const getEntries = (value: string, context: Context): Unordered => ({
   isMapped: false,
 });
 
-// The elements of a sequence as a set.
 const getElements = (value: string, context: Context) =>
   share(value, "sequence", context, (sequence) => {
     const index = context.names.getFresh("index");
@@ -112,9 +122,7 @@ const translateUnordered = (
     if (kind === "map") return getEntries(translate(spread), context);
     return translateUnordered(spread, scope, context);
   }
-  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) {
-    return undefined;
-  }
+  if (!isMethodCall(node)) return undefined;
   const receiver = node.expression.expression;
   const method = node.expression.name.text;
   if (ts.isIdentifier(receiver) && receiver.text === "Object") {
@@ -185,13 +193,7 @@ export const translateFunctionConstructor = (
   scope: Scope,
   context: Context,
 ) => {
-  if (
-    !ts.isCallExpression(node) ||
-    !ts.isPropertyAccessExpression(node.expression) ||
-    node.expression.name.text !== "map"
-  ) {
-    return undefined;
-  }
+  if (!isMethodCall(node) || node.expression.name.text !== "map") return undefined;
   const receiver = node.expression.expression;
   const source =
     translateUnordered(receiver, scope, context)?.set ??
@@ -226,13 +228,9 @@ export const translateFunctionConstructor = (
 };
 
 // A sequence from Array.from({ length: n }, callback) or new Array(n).fill(value).
-export const translateArrayConstructor = (
-  node: ts.CallExpression,
-  receiver: ts.Expression,
-  method: string,
-  scope: Scope,
-  context: Context,
-) => {
+export const translateArrayConstructor = (node: MethodCall, scope: Scope, context: Context) => {
+  const receiver = node.expression.expression;
+  const method = node.expression.name.text;
   const translateLength = (length: ts.Expression) =>
     wrap(translateExpression(length, scope, context));
   const callback = node.arguments[1];
@@ -289,15 +287,16 @@ const translateFirstIndex = (
 };
 
 const translateSequenceOperation = (
-  node: ts.CallExpression,
+  node: MethodCall,
   sequence: string,
-  method: string,
   scope: Scope,
   context: Context,
   isDefined: boolean,
 ) => {
+  const method = node.expression.name.text;
   const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
   const argument = node.arguments[0];
+  const wrapped = wrap(sequence);
   const isNegative = (inner: ts.Expression): inner is ts.PrefixUnaryExpression =>
     ts.isPrefixUnaryExpression(inner) && inner.operator === ts.SyntaxKind.MinusToken;
   // An index that may count back from the end, as slice() and at() take it.
@@ -308,95 +307,115 @@ const translateSequenceOperation = (
     context.prelude.add("Undefined");
     return `IF ${exists} THEN ${value} ELSE Undefined`;
   };
-  if (method === "at") {
-    const index = isNegative(argument)
-      ? `${getOffset(argument)} + 1`
-      : `${wrap(translate(argument))} + 1`;
-    return orUndefined(`${index} \\in DOMAIN ${wrap(sequence)}`, `${wrap(sequence)}[${index}]`);
-  }
-  if (method === "includes") {
+  const translateEach = (format: (index: string, body: string) => string) => () => {
     const index = context.names.getFresh("index");
-    return `\\E ${index} \\in DOMAIN ${wrap(sequence)} : ${wrap(sequence)}[${index}] = ${wrap(translate(argument))}`;
-  }
-  if (method === "indexOf") {
-    return share(translate(argument), "value", context, (value) => {
-      const index = context.names.getFresh("index");
-      const earlier = context.names.getFresh("earlier");
-      const isFound = `${wrap(sequence)}[${index}] = ${value}`;
-      return `IF \\E ${index} \\in DOMAIN ${wrap(sequence)} : ${isFound} THEN (CHOOSE ${index} \\in DOMAIN ${wrap(sequence)} : ${isFound} /\\ \\A ${earlier} \\in 1..(${index} - 1) : ${wrap(sequence)}[${earlier}] # ${value}) - 1 ELSE -1`;
-    });
-  }
-  if (method === "slice") {
-    const start = argument === undefined ? "0" : getOffset(argument);
-    const end = node.arguments[1] === undefined ? undefined : wrap(getOffset(node.arguments[1]));
-    const last =
-      end === undefined
-        ? `Len(${sequence})`
-        : `IF ${end} < Len(${sequence}) THEN ${end} ELSE Len(${sequence})`;
-    const first = /^\d+$/.test(start) ? String(Number(start) + 1) : `${wrap(start)} + 1`;
-    return `SubSeq(${sequence}, ${first}, ${last})`;
-  }
-  if (method === "concat") {
-    return [
-      sequence,
-      ...node.arguments.map((inner) =>
-        getKind(inner, context) === "sequence" ? translate(inner) : `<<${translate(inner)}>>`,
-      ),
-    ]
-      .map(wrap)
-      .join(" \\o ");
-  }
-  if (method === "with") {
-    return `[${wrap(sequence)} EXCEPT ![${wrap(translate(argument))} + 1] = ${wrapEquated(translate(node.arguments[1]))}]`;
-  }
-  if (method === "toReversed") {
-    const index = context.names.getFresh("index");
-    return `[${index} \\in DOMAIN ${wrap(sequence)} |-> ${wrap(sequence)}[Len(${sequence}) - ${index} + 1]]`;
-  }
-  if (method === "map" || method === "every" || method === "some") {
-    const index = context.names.getFresh("index");
-    const inner = bindIndexed(argument, `${wrap(sequence)}[${index}]`, index, scope, context);
-    const body = translateCallback(argument, inner, context);
-    if (method === "map") return `[${index} \\in DOMAIN ${wrap(sequence)} |-> ${body}]`;
-    return `${method === "every" ? "\\A" : "\\E"} ${index} \\in DOMAIN ${wrap(sequence)} : ${body}`;
-  }
-  if (method === "filter") {
-    rejectIndex(argument, "filter() can't take an index", context);
-    const element = bindElement(argument, scope, context);
-    return `SelectSeq(${sequence}, LAMBDA ${element.variable} : ${translateCallback(argument, element.scope, context)})`;
-  }
-  if (method === "find" || method === "findIndex") {
-    const result = translateFirstIndex(sequence, argument, scope, context);
-    if (method === "findIndex") return `IF ${result.exists} THEN (${result.first}) - 1 ELSE -1`;
-    return orUndefined(result.exists, `${wrap(sequence)}[${result.first}]`);
-  }
-  throw new TsproverError(`Unsupported array method: ${method}`, node);
-};
-
-const translateSequenceMethod = (
-  node: ts.CallExpression,
-  receiver: ts.Expression,
-  method: string,
-  scope: Scope,
-  context: Context,
-  isDefined: boolean,
-) => {
-  const sequence = translateExpression(receiver, scope, context);
-  const translateWith = (shared: string) =>
-    translateSequenceOperation(node, shared, method, scope, context, isDefined);
-  return SINGLE_USE_METHODS.has(method)
-    ? translateWith(sequence)
-    : share(sequence, "sequence", context, translateWith);
+    const inner = bindIndexed(argument, `${wrapped}[${index}]`, index, scope, context);
+    return format(index, translateCallback(argument, inner, context));
+  };
+  const operations = new Map<string, () => string>([
+    [
+      "at",
+      () => {
+        const index = isNegative(argument)
+          ? `${getOffset(argument)} + 1`
+          : `${wrap(translate(argument))} + 1`;
+        return orUndefined(`${index} \\in DOMAIN ${wrapped}`, `${wrapped}[${index}]`);
+      },
+    ],
+    [
+      "includes",
+      () => {
+        const index = context.names.getFresh("index");
+        return `\\E ${index} \\in DOMAIN ${wrapped} : ${wrapped}[${index}] = ${wrap(translate(argument))}`;
+      },
+    ],
+    [
+      "indexOf",
+      () =>
+        share(translate(argument), "value", context, (value) => {
+          const index = context.names.getFresh("index");
+          const earlier = context.names.getFresh("earlier");
+          const isFound = `${wrapped}[${index}] = ${value}`;
+          return `IF \\E ${index} \\in DOMAIN ${wrapped} : ${isFound} THEN (CHOOSE ${index} \\in DOMAIN ${wrapped} : ${isFound} /\\ \\A ${earlier} \\in 1..(${index} - 1) : ${wrapped}[${earlier}] # ${value}) - 1 ELSE -1`;
+        }),
+    ],
+    [
+      "slice",
+      () => {
+        const start = argument === undefined ? "0" : getOffset(argument);
+        const end =
+          node.arguments[1] === undefined ? undefined : wrap(getOffset(node.arguments[1]));
+        const last =
+          end === undefined
+            ? `Len(${sequence})`
+            : `IF ${end} < Len(${sequence}) THEN ${end} ELSE Len(${sequence})`;
+        const first = /^\d+$/.test(start) ? String(Number(start) + 1) : `${wrap(start)} + 1`;
+        return `SubSeq(${sequence}, ${first}, ${last})`;
+      },
+    ],
+    [
+      "concat",
+      () =>
+        [
+          sequence,
+          ...node.arguments.map((inner) =>
+            getKind(inner, context) === "sequence" ? translate(inner) : `<<${translate(inner)}>>`,
+          ),
+        ]
+          .map(wrap)
+          .join(" \\o "),
+    ],
+    [
+      "with",
+      () =>
+        `[${wrapped} EXCEPT ![${wrap(translate(argument))} + 1] = ${wrapEquated(translate(node.arguments[1]))}]`,
+    ],
+    [
+      "toReversed",
+      () => {
+        const index = context.names.getFresh("index");
+        return `[${index} \\in DOMAIN ${wrapped} |-> ${wrapped}[Len(${sequence}) - ${index} + 1]]`;
+      },
+    ],
+    ["map", translateEach((index, body) => `[${index} \\in DOMAIN ${wrapped} |-> ${body}]`)],
+    ["every", translateEach((index, body) => `\\A ${index} \\in DOMAIN ${wrapped} : ${body}`)],
+    ["some", translateEach((index, body) => `\\E ${index} \\in DOMAIN ${wrapped} : ${body}`)],
+    [
+      "filter",
+      () => {
+        rejectIndex(argument, "filter() can't take an index", context);
+        const element = bindElement(argument, scope, context);
+        return `SelectSeq(${sequence}, LAMBDA ${element.variable} : ${translateCallback(argument, element.scope, context)})`;
+      },
+    ],
+    [
+      "find",
+      () => {
+        const result = translateFirstIndex(sequence, argument, scope, context);
+        return orUndefined(result.exists, `${wrapped}[${result.first}]`);
+      },
+    ],
+    [
+      "findIndex",
+      () => {
+        const result = translateFirstIndex(sequence, argument, scope, context);
+        return `IF ${result.exists} THEN (${result.first}) - 1 ELSE -1`;
+      },
+    ],
+  ]);
+  const operation = operations.get(method);
+  if (operation === undefined) throw new TsproverError(`Unsupported array method: ${method}`, node);
+  return operation();
 };
 
 const translateUnorderedMethod = (
-  node: ts.CallExpression,
+  node: MethodCall,
   source: Unordered,
-  method: string,
   scope: Scope,
   context: Context,
   isDefined: boolean,
 ) => {
+  const method = node.expression.name.text;
   const argument = node.arguments[0];
   if (method === "includes" || method === "has") {
     return `${wrap(translateExpression(argument, scope, context))} \\in ${wrap(source.set)}`;
@@ -415,14 +434,9 @@ const translateUnorderedMethod = (
   return `IF \\E ${binding} THEN CHOOSE ${binding} ELSE Undefined`;
 };
 
-const translateSetMethod = (
-  node: ts.CallExpression,
-  receiver: ts.Expression,
-  method: string,
-  scope: Scope,
-  context: Context,
-) => {
-  const set = wrap(translateExpression(receiver, scope, context));
+const translateSetMethod = (node: MethodCall, scope: Scope, context: Context) => {
+  const method = node.expression.name.text;
+  const set = wrap(translateExpression(node.expression.expression, scope, context));
   const other =
     node.arguments[0] === undefined
       ? ""
@@ -443,14 +457,13 @@ const translateSetMethod = (
 };
 
 const translateMapMethod = (
-  node: ts.CallExpression,
-  receiver: ts.Expression,
-  method: string,
+  node: MethodCall,
   scope: Scope,
   context: Context,
   isDefined: boolean,
 ) => {
-  const map = wrap(translateExpression(receiver, scope, context));
+  const method = node.expression.name.text;
+  const map = wrap(translateExpression(node.expression.expression, scope, context));
   const key =
     node.arguments[0] === undefined
       ? ""
@@ -470,50 +483,73 @@ const translateMapMethod = (
   );
 };
 
+const UPDATES = new Map<Kind, Map<string, Update>>([
+  [
+    "sequence",
+    new Map<string, Update>([
+      [
+        "push",
+        (current, values) =>
+          values.length === 1
+            ? `Append(${current}, ${values[0]})`
+            : `${wrap(current)} \\o <<${values.join(", ")}>>`,
+      ],
+      ["unshift", (current, values) => `<<${values.join(", ")}>> \\o ${wrap(current)}`],
+      ["pop", (current) => `SubSeq(${current}, 1, Len(${current}) - 1)`],
+      ["shift", (current) => `Tail(${current})`],
+    ]),
+  ],
+  [
+    "set",
+    new Map<string, Update>([
+      ["add", (current, values) => `${wrap(current)} \\cup {${values[0]}}`],
+      ["delete", (current, values) => `${wrap(current)} \\ {${values[0]}}`],
+      ["clear", () => "{}"],
+    ]),
+  ],
+  [
+    "map",
+    new Map<string, Update>([
+      ["set", (current, values) => `(${values[0]} :> ${values[1]}) @@ ${wrap(current)}`],
+      [
+        "delete",
+        (current, values, context) => {
+          const key = context.names.getFresh("key");
+          return `[${key} \\in DOMAIN ${wrap(current)} \\ {${values[0]}} |-> ${wrap(current)}[${key}]]`;
+        },
+      ],
+      ["clear", () => "<<>>"],
+    ]),
+  ],
+]);
+
+export const MUTATING_METHODS = new Set(
+  [...UPDATES.values()].flatMap((updates) => [...updates.keys()]),
+);
+
 // The value of a collection after a mutating method call, or undefined if the method doesn't
 // mutate.
 export const getUpdatedValue = (
   current: string,
   kind: Kind,
-  method: string,
-  node: ts.CallExpression,
+  node: MethodCall,
   scope: Scope,
   context: Context,
 ) => {
   const values = node.arguments.map((argument) => translateExpression(argument, scope, context));
-  const value = wrap(current);
-  if (kind === "sequence" && method === "push") {
-    return values.length === 1
-      ? `Append(${current}, ${values[0]})`
-      : `${value} \\o <<${values.join(", ")}>>`;
-  }
-  if (kind === "sequence" && method === "unshift") return `<<${values.join(", ")}>> \\o ${value}`;
-  if (kind === "sequence" && method === "pop") return `SubSeq(${current}, 1, Len(${current}) - 1)`;
-  if (kind === "sequence" && method === "shift") return `Tail(${current})`;
-  if (kind === "set" && method === "add") return `${value} \\cup {${values[0]}}`;
-  if (kind === "set" && method === "delete") return `${value} \\ {${values[0]}}`;
-  if (kind === "set" && method === "clear") return "{}";
-  if (kind === "map" && method === "set") return `(${values[0]} :> ${values[1]}) @@ ${value}`;
-  if (kind === "map" && method === "delete") {
-    const key = context.names.getFresh("key");
-    return `[${key} \\in DOMAIN ${value} \\ {${values[0]}} |-> ${value}[${key}]]`;
-  }
-  if (kind === "map" && method === "clear") return "<<>>";
-  return undefined;
+  return UPDATES.get(kind)?.get(node.expression.name.text)?.(current, values, context);
 };
 
-// A method call on a collection.
 export const translateMethod = (
-  node: ts.CallExpression,
-  receiver: ts.Expression,
-  method: string,
+  node: MethodCall,
   scope: Scope,
   context: Context,
   isDefined: boolean,
 ) => {
+  const receiver = node.expression.expression;
   const unordered = translateUnordered(receiver, scope, context);
   if (unordered !== undefined) {
-    return translateUnorderedMethod(node, unordered, method, scope, context, isDefined);
+    return translateUnorderedMethod(node, unordered, scope, context, isDefined);
   }
   // A mutating method on a fresh copy, such as new Set(s).add(x), returns the updated copy.
   const isCopy =
@@ -523,21 +559,20 @@ export const translateMethod = (
     (receiver.expression.text === "Set" || receiver.expression.text === "Map");
   const kind = getKind(receiver, context);
   const updated = isCopy
-    ? getUpdatedValue(
-        translateExpression(receiver, scope, context),
-        kind,
-        method,
-        node,
-        scope,
-        context,
-      )
+    ? getUpdatedValue(translateExpression(receiver, scope, context), kind, node, scope, context)
     : undefined;
   if (updated !== undefined) return updated;
   if (kind === "sequence") {
-    return translateSequenceMethod(node, receiver, method, scope, context, isDefined);
+    const method = node.expression.name.text;
+    const sequence = translateExpression(receiver, scope, context);
+    const translateWith = (shared: string) =>
+      translateSequenceOperation(node, shared, scope, context, isDefined);
+    return SINGLE_USE_METHODS.has(method)
+      ? translateWith(sequence)
+      : share(sequence, "sequence", context, translateWith);
   }
-  if (kind === "set") return translateSetMethod(node, receiver, method, scope, context);
-  if (kind === "map") return translateMapMethod(node, receiver, method, scope, context, isDefined);
+  if (kind === "set") return translateSetMethod(node, scope, context);
+  if (kind === "map") return translateMapMethod(node, scope, context, isDefined);
   throw new TsproverError(`Unsupported call: ${node.expression.getText()}`, node);
 };
 
