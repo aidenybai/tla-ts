@@ -12,6 +12,7 @@ import {
   expectBoolean,
   forEachBinding,
   getBoundsDomain,
+  getChildren,
   getDefinition,
   getReevaluatedDefinitions,
   lookupScope,
@@ -245,6 +246,31 @@ const getReadLocals = (
     return child;
   });
   return result.isReadOnly ? names : undefined;
+};
+
+// TLC generates a successor for every disjunct and witness that holds, so an expression only
+// checks like a guard when it has neither.
+const hasBranches = (
+  expression: Expression,
+  environment: Environment,
+  visited: Set<Definition>,
+): boolean => {
+  if (expression.kind === "Or" || expression.kind === "Exists") return true;
+  const name =
+    expression.kind === "Identifier"
+      ? expression.name
+      : expression.kind === "Apply"
+        ? expression.operator
+        : undefined;
+  const definition =
+    name === undefined || isLocallyResolved(expression)
+      ? undefined
+      : getDefinition(name, environment);
+  if (definition && !visited.has(definition)) {
+    visited.add(definition);
+    if (hasBranches(definition.body, environment, visited)) return true;
+  }
+  return getChildren(expression).some((child) => hasBranches(child, environment, visited));
 };
 
 const toConjunct = (
@@ -629,7 +655,9 @@ const compileAction = (
     case "Forall": {
       const body = child(expression.body);
       const readLocals =
-        !isInit && getReadVariables(expression, environment) !== undefined
+        !isInit &&
+        getReadVariables(expression, environment) !== undefined &&
+        !hasBranches(expression.body, environment, new Set())
           ? getReadLocals(expression, NO_NAMES)
           : undefined;
       return (run, scope, partial, action, _isFixed, onComplete) => {
