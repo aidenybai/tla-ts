@@ -132,7 +132,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     encoder: createStateEncoder(),
     fingerprints: [] as number[],
   }));
-  const statistics = { generatedStates: 0, distinctStates: 0, depth: 0 };
+  const statistics = { generatedStates: 0, distinctStates: 0, queuedStates: 0, depth: 0 };
   for (const state of getInitialStates(search.spec.init, environment, search.spec.scope)) {
     canonicalize(state);
     statistics.generatedStates++;
