@@ -34,6 +34,7 @@ import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { getTlcFingerprint } from "./tlc-random";
 import { createCanonicalizer } from "./canonical";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
+import { createCounterExample } from "./tlc-ext";
 import {
   combineHash,
   formatValue,
@@ -694,11 +695,21 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     getTlcVariableOrder(options.source, options.loadModule),
   );
   if (!search) return createResult("success");
+  const hasPostconditions = config.postconditions.length > 0 || config.possible.length > 0;
   const reportViolation = (
     status: CheckStatus,
     violation: Omit<Violation, "loopStart"> & { loopStart?: number },
+    getLoopAction?: () => string | undefined,
   ) => {
+    if (hasPostconditions) {
+      const start = violation.loopStart;
+      runtime.counterExample = createCounterExample(
+        violation.trace,
+        start === undefined || !getLoopAction ? undefined : { start, action: getLoopAction() },
+      );
+    }
     const unwitnessed = search.findUnwitnessedPossible();
+    if (!unwitnessed) search.findPostconditionViolation();
     return createResult(status, unwitnessed ? { ...violation, unwitnessed } : violation);
   };
   const properties = search.properties;
@@ -996,11 +1007,20 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   const lasso = liveness?.findViolation();
   current.livenessSource = -1;
   if (lasso) {
-    return reportViolation("liveness-violation", {
-      name: lasso.name,
-      trace: getPathTrace([...lasso.prefix, ...lasso.cycle], lasso.prefix.length),
-      loopStart: lasso.prefix.length,
-    });
+    const path = [...lasso.prefix, ...lasso.cycle];
+    const trace = getPathTrace(path, lasso.prefix.length);
+    const back = path[lasso.prefix.length];
+    const last = path[path.length - 1];
+    return reportViolation(
+      "liveness-violation",
+      { name: lasso.name, trace, loopStart: lasso.prefix.length },
+      () =>
+        back === last
+          ? trace[trace.length - 1].action
+          : getTraceSuccessors(states[last]).find((successor) =>
+              isSameState(successor.state, states[back]),
+            )?.action,
+    );
   }
 
   const postconditionViolation = search.findPostconditionViolation();
