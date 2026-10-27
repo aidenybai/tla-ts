@@ -62,7 +62,6 @@ export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, con
     : `${wrap(translateExpression(key, scope, context))} + 1`;
 };
 
-// An array literal as a sequence, joining spread arrays with \o.
 const translateArrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope, context: Context) => {
   // Runs of plain elements become tuples, and each spread array stays a sequence of its own.
   const parts = node.elements.reduce<(string | string[])[]>((result, element) => {

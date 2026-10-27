@@ -25,7 +25,6 @@ export interface Context {
   prelude: Set<"Null" | "Undefined" | "Rem" | "Quot">;
 }
 
-// A call such as receiver.method(argument).
 export interface MethodCall extends ts.CallExpression {
   readonly expression: ts.PropertyAccessExpression;
 }

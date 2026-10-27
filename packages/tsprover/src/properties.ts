@@ -68,7 +68,6 @@ const getLeadsToTarget = (
     : `${targetDefinition.name}(${values.join(", ")})`;
 };
 
-// A function tagged with a property, such as @eventually or @constraint.
 export const translateProperty = (
   definition: Exported,
   tag: string,

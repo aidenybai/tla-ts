@@ -130,7 +130,6 @@ const isAtomic = (expression: string) =>
   !expression.includes("\n") &&
   !getSurface(expression).includes(" ");
 
-// Parenthesizes an operand unless it is a single term.
 export const wrap = (expression: string) => (isAtomic(expression) ? expression : `(${expression})`);
 
 // Operators that bind no tighter than =, so that x = a = b would be ambiguous.

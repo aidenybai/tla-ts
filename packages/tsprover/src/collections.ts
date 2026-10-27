@@ -95,7 +95,6 @@ const getEntries = (value: string, context: Context): Unordered => ({
   isMapped: false,
 });
 
-// The elements of a sequence as a set.
 const getElements = (value: string, context: Context) =>
   share(value, "sequence", context, (sequence) => {
     const index = context.names.getFresh("index");
@@ -484,8 +483,6 @@ const translateMapMethod = (
   );
 };
 
-// The value of a collection after each mutating method, given its current value and the method's
-// arguments.
 const UPDATES = new Map<Kind, Map<string, Update>>([
   [
     "sequence",
@@ -543,7 +540,6 @@ export const getUpdatedValue = (
   return UPDATES.get(kind)?.get(node.expression.name.text)?.(current, values, context);
 };
 
-// A method call on a collection.
 export const translateMethod = (
   node: MethodCall,
   scope: Scope,
