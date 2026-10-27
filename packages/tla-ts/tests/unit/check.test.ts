@@ -194,6 +194,23 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("prints empty intervals and keys that are not field names like TLC", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME PrintT(0..-2)\nASSUME PrintT(("<<>>" :> 0) @@ ("a b" :> 1))\nASSUME PrintT(("x1" :> 2) @@ ("y" :> 3))\nASSUME PrintT("x\u00b2" :> 4)\nASSUME PrintT("x\u0663" :> 5)\nInit == x = 0\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual([
+      "{}",
+      '("<<>>" :> 0 @@ "a b" :> 1)',
+      "[x1 |-> 2, y |-> 3]",
+      '("x\u00b2" :> 4)',
+      "[x\u0663 |-> 5]",
+    ]);
+  });
+
   it("bundles the Reals module, whose Real is not a set TLC can check", async () => {
     const result = await check({
       source:

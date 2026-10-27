@@ -1976,8 +1976,10 @@ const formatLazySet = (value: LazySetValue, isStrict: boolean): string => {
   }
 };
 
+// FcnRcdValue#isName: TLC prints a function as a record when every key consists of letters,
+// decimal digits, and underscores, with at least one letter.
 const isFieldName = (name: string) =>
-  /^[\p{L}\p{N}_]*$/u.test(name) &&
+  /^[\p{L}\p{Nd}_]*$/u.test(name) &&
   /\p{L}/u.test(name) &&
   (name.length < 4 || !/^[WS]F_/.test(name));
 
