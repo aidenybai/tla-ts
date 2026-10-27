@@ -270,7 +270,8 @@ const pickElement = (elements: Value[], random: JavaRandom) => {
 // separately, and otherwise indexes the enumerated set with nextDouble.
 export const getRandomElement = (set: Value, random: JavaRandom): Value => {
   if (typeof set === "object" && set.kind === "FunctionSet") {
-    const domain = getFunctionDomain(set.domain);
+    // TLC builds the chosen function without the interval its domain came from.
+    const domain = [...getFunctionDomain(set.domain)];
     return createSortedFunction(
       domain,
       domain.map(() => getRandomElement(set.range, random)),
