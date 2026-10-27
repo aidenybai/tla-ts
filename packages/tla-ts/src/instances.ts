@@ -7,6 +7,7 @@ import type {
   Module,
   OperatorParam,
   SourceLocation,
+  Theorem,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import { getChildren, isLocallyResolved } from "./evaluate";
@@ -713,13 +714,23 @@ const expandLetInstances = (
   return { kind: "Let", definitions, body: mapped.body, location: mapped.location };
 };
 
+// A named theorem's statement is linked as its definition.
+const getUnnamedStatement = (theorem: Theorem) =>
+  theorem.name === undefined && theorem.statement.kind !== "AssumeProve"
+    ? theorem.statement
+    : undefined;
+
 export const withLetInstances = (
   module: Module,
   instantiate: (instance: Instance, lets: Definition[]) => Definition[],
 ): Module => {
   const isExpanded =
     module.definitions.some((definition) => hasLetInstance(definition.body)) ||
-    module.assumptions.some((assumption) => hasLetInstance(assumption.expression));
+    module.assumptions.some((assumption) => hasLetInstance(assumption.expression)) ||
+    module.theorems.some((theorem) => {
+      const statement = getUnnamedStatement(theorem);
+      return statement !== undefined && hasLetInstance(statement);
+    });
   if (!isExpanded) return module;
   return {
     ...module,
@@ -730,5 +741,11 @@ export const withLetInstances = (
       ...assumption,
       expression: expandLetInstances(assumption.expression, instantiate, []),
     })),
+    theorems: module.theorems.map((theorem) => {
+      const statement = getUnnamedStatement(theorem);
+      return statement === undefined
+        ? theorem
+        : { ...theorem, statement: expandLetInstances(statement, instantiate, []) };
+    }),
   };
 };
