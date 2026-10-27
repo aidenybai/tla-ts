@@ -183,6 +183,19 @@ describe("nested module scoping matches SANY", () => {
     ).rejects.toThrow(/Multiply-defined module 'Shared'/);
   });
 
+  it("rejects modules that extend each other like SANY", async () => {
+    await expect(
+      checkSource("EXTENDS CycleA", {
+        CycleA: "---- MODULE CycleA ----\nEXTENDS CycleB\n====",
+        CycleB: "---- MODULE CycleB ----\nEXTENDS CycleA\n====",
+      }),
+    ).rejects.toThrow(
+      new TlaSyntaxError(
+        "Circular dependency among .tla files; dependency cycle is: CycleA.tla --> CycleB.tla --> CycleA.tla",
+      ),
+    );
+  });
+
   it("rejects an extended file that holds a module of another name", async () => {
     await expect(
       checkSource("EXTENDS test", { test: "---- MODULE Foo ----\nA == 1\n====" }),
