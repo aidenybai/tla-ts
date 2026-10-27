@@ -1,6 +1,5 @@
 import { TlaEvaluationError, TlaModuleError } from "./errors";
 import {
-  createJavaOverrideError,
   createOverflowError,
   defineArithmetic,
   defineBinary,
@@ -17,6 +16,7 @@ import {
   getJavaInteger,
   getValue,
   isOutOfRange,
+  overrideWithJava,
 } from "./builtins";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
@@ -25,6 +25,7 @@ import { createJsonOperators, type FileSystem } from "./json";
 import { createRandomizationOperators } from "./randomization";
 import { createPossibleOperators, createTlcExtOperators } from "./tlc-ext";
 import { createTlcOperators } from "./tlc-module";
+import { TLC_JAVA_METHODS } from "./tlc-modules";
 import {
   createSet,
   describeKind,
@@ -152,9 +153,6 @@ const DOT_DOT_SIGNATURE = getIntegersSignature("DotDot", "IntervalValue", 2);
 
 const NEG_SIGNATURE = getIntegersSignature("Neg", "IntValue", 1);
 
-const IS_FINITE_SET_SIGNATURE =
-  "public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value)";
-
 const NATURALS_OPERATORS: Builtin[] = [
   defineConstant("Nat", { kind: "InfiniteSet", name: "Nat" }),
   defineArithmetic("+", "Plus", (left, right) => left + right),
@@ -221,7 +219,16 @@ const getSequenceMessage = (position: string, name: string) =>
 const getEvaluatingMessage = (form: string, kind: string) =>
   `Evaluating an expression of the form ${form} when s is not a ${kind}:`;
 
-const SEQUENCES_OPERATORS: Builtin[] = [
+const withJavaMethods = (module: string, operators: Builtin[]) => {
+  const methods = TLC_JAVA_METHODS.get(module);
+  if (!methods) return operators;
+  return operators.map((operator) => {
+    const signature = methods.get(operator.name);
+    return signature ? overrideWithJava(operator, signature) : operator;
+  });
+};
+
+const SEQUENCES_OPERATORS = withJavaMethods("Sequences", [
   defineOperator("Seq", 1, (args) => ({ kind: "SequenceSet", base: getSet(args, 0, "Seq") })),
   defineOperator(
     "Len",
@@ -291,15 +298,14 @@ const SEQUENCES_OPERATORS: Builtin[] = [
       }),
     );
   }),
-];
+]);
 
-const FINITE_SETS_OPERATORS: Builtin[] = [
+const FINITE_SETS_OPERATORS = withJavaMethods("FiniteSets", [
   defineOperator("IsFiniteSet", 1, (args) => {
     const value = getValue(args, 0, "IsFiniteSet");
     if (isSetValue(value)) return isFiniteSet(value);
     if (typeof value === "object" && value.kind === "Function") return true;
-    throw createJavaOverrideError(
-      IS_FINITE_SET_SIGNATURE,
+    throw new TlaEvaluationError(
       typeof value === "object" && value.kind === "LazyFunction"
         ? `Attempted to check if the function:\n${formatValue(value)}\nis a finite set.`
         : `Attempted to check if the ${describeKind(value)} ${formatValue(value)} is a finite set.`,
@@ -317,7 +323,7 @@ const FINITE_SETS_OPERATORS: Builtin[] = [
     }
     return getCardinality(set);
   }),
-];
+]);
 
 // The modules that each standard module loads through EXTENDS and LOCAL INSTANCE in TLC.
 export const STANDARD_DEPENDENCIES = new Map([
@@ -348,7 +354,7 @@ export const getStandardModule = (
     case "FiniteSets":
       return { extends: [], operators: FINITE_SETS_OPERATORS };
     case "TLC":
-      return { extends: [], operators: createTlcOperators(print, runtime) };
+      return { extends: [], operators: withJavaMethods("TLC", createTlcOperators(print, runtime)) };
     case "Randomization":
       return { extends: [], operators: createRandomizationOperators(runtime) };
     case "_Possible":
