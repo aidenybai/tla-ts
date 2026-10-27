@@ -11,7 +11,7 @@ import { parseConfig, type ModelConfig } from "./config";
 import { createEnvironment } from "./environment";
 import { TlaEvaluationError } from "./errors";
 import { isImpure } from "./evaluate";
-import { createFingerprintTable, getFingerprintOwner, getStateFingerprint } from "./fingerprints";
+import { createFingerprintTable, getFingerprintOwner, writeStateFingerprint } from "./fingerprints";
 import { getInitialStates } from "./successors";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
@@ -168,7 +168,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     for (const state of getInitialStates(init, environment, search.spec.scope)) {
       canonicalize(state);
       statistics.generatedStates++;
-      getStateFingerprint(search.getFingerprintState(state), fingerprint);
+      writeStateFingerprint(search.getFingerprintState(state), fingerprint);
       if (!table.insert(fingerprint[0], fingerprint[1])) continue;
       if (search.findViolatedInvariant(state) || search.findFailedInitialPredicate(state)) {
         return false;

@@ -15,7 +15,7 @@ const mix = (hash: number) => {
   return second ^ (second >>> 16);
 };
 
-export const getStateFingerprint = (state: Value[], fingerprint: Int32Array) => {
+export const writeStateFingerprint = (state: Value[], fingerprint: Int32Array) => {
   let first = 0x811c9dc5;
   let second = 0x6a09e667;
   for (let index = 0; index < state.length; index++) {
