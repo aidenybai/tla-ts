@@ -288,7 +288,7 @@ const withJavaMethods = (module: string, operators: Builtin[]) => {
 };
 
 const SEQUENCES_OPERATORS = withJavaMethods("Sequences", [
-  defineOperator("Seq", 1, (args) => ({ kind: "SequenceSet", base: getSet(args, 0, "Seq") })),
+  defineOperator("Seq", 1, (args) => ({ kind: "SequenceSet", base: getValue(args, 0, "Seq") })),
   defineOperator(
     "Len",
     1,
