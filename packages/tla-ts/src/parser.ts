@@ -134,6 +134,20 @@ const POSTFIX_OPERATORS = new Set(["^+", "^*", "^#"]);
 
 const PREFIX_OPERATOR_REFERENCES = new Set(["-", "~", "-."]);
 
+const EXPRESSION_PREFIXES = new Set([
+  "-",
+  "~",
+  "/\\",
+  "\\/",
+  "SUBSET",
+  "UNION",
+  "DOMAIN",
+  "ENABLED",
+  "UNCHANGED",
+  "[]",
+  "<>",
+]);
+
 const OPERATOR_ARGUMENTS = new Set([
   "SUBSET",
   "UNION",
@@ -373,13 +387,40 @@ export const parseModule = (source: string): Module => {
     throw createError(`Expected a subscript but found ${describe(token)}`);
   };
 
+  const isDefinitionAhead = (operator: Token) => {
+    const token = peek(1);
+    const next = peek(2);
+    if (token.kind === "Identifier" && next.text === "==") return true;
+    if (token.line === operator.line) return false;
+    if (token.text === "-.") return true;
+    return (
+      token.kind === "Identifier" &&
+      (next.text === "(" ||
+        next.text === "[" ||
+        (next.kind === "Operator" && isAt("==", POSTFIX_OPERATORS.has(next.text) ? 3 : 4)))
+    );
+  };
+
+  const isStandalone = (operator: Token) => {
+    if (!EXPRESSION_PREFIXES.has(operator.text)) return true;
+    const token = peek(1);
+    return (
+      token.kind === "End" ||
+      token.kind === "ModuleEnd" ||
+      token.kind === "Separator" ||
+      isAt(",", 1) ||
+      isAt(")", 1) ||
+      (token.kind === "Keyword" && UNIT_KEYWORDS.has(token.text)) ||
+      isDefinitionAhead(operator)
+    );
+  };
+
   const parseArgument = (): Expression => {
     const token = peek();
-    const next = peek(1);
     const isOperatorAlone =
       token.kind === "Operator" &&
       (INFIX_OPERATORS.has(token.text) || PREFIX_OPERATOR_REFERENCES.has(token.text)) &&
-      (next.text === "," || next.text === ")");
+      isStandalone(token);
     if (isOperatorAlone) {
       cursor.index++;
       return withRange(
@@ -388,9 +429,7 @@ export const parseModule = (source: string): Module => {
       );
     }
     const isPrefixAlone =
-      token.kind !== "String" &&
-      OPERATOR_ARGUMENTS.has(token.text) &&
-      (next.text === "," || next.text === ")");
+      token.kind !== "String" && OPERATOR_ARGUMENTS.has(token.text) && isStandalone(token);
     if (isPrefixAlone) {
       cursor.index++;
       const location = getLocation(token);
