@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils";
 import { CodeFile } from "../code-file";
 import { usePlayground } from "./playground-context";
 
@@ -6,10 +5,7 @@ export const CodePane = () => {
   const playground = usePlayground();
   const example = playground.example;
   return (
-    <div
-      key={example.name}
-      className={cn("min-h-0 flex-1 overflow-auto border-t", playground.isResultShown && "hidden")}
-    >
+    <div key={example.name} className="min-h-0 flex-1 overflow-auto border-t">
       <CodeFile
         name={`${example.name}.tla`}
         contents={example.spec}

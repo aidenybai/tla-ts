@@ -31,12 +31,13 @@ export const App = () => (
       <section className="px-6 pt-8 pb-12 lg:min-h-0 lg:py-6 lg:pl-0">
         <Playground.Root>
           <Playground.Toolbar>
-            <Playground.Tabs />
             <Playground.SpecSelect />
+            <span className="flex-1" />
+            <Playground.Status />
             <Playground.CheckButton />
           </Playground.Toolbar>
           <Playground.CodePane />
-          <Playground.ResultPane />
+          <Playground.ResultDrawer />
         </Playground.Root>
       </section>
     </div>
