@@ -14,21 +14,21 @@ import {
   type Value,
 } from "./values";
 
-const describeArgument = (position: string, name: string, expected: string, value: string) =>
+const createArgumentError = (position: string, name: string, expected: string, value: string) =>
   new TlaModuleError(
     `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${value}`,
   );
 
 const getCount = (value: Value, position: string, name: string) => {
   if (typeof value !== "number" || value < 0) {
-    throw describeArgument(position, name, "nonnegative integer", formatValue(value));
+    throw createArgumentError(position, name, "nonnegative integer", formatValue(value));
   }
   return value;
 };
 
 const getFiniteElements = (value: Value, position: string, name: string, expected: string) => {
   if (!isSetValue(value) || !isEnumerable(value)) {
-    throw describeArgument(position, name, expected, formatValue(value));
+    throw createArgumentError(position, name, expected, formatValue(value));
   }
   return toFiniteSet(value).elements;
 };
@@ -41,25 +41,21 @@ const tossSubsets = (elements: Value[], picks: number, probability: number, rand
     ),
   );
 
-const checkPicks = (picks: number, size: number, name: string) => {
-  if (size < 31 && picks > 2 ** size) {
-    throw describeArgument(
-      "first",
-      name,
-      `nonnegative integer that is smaller than the subset's size of 2^${size}`,
-      String(picks),
-    );
-  }
-};
-
 const getRandomSetOfSubsets = (args: BuiltinArgument[], runtime: CheckerRuntime) => {
   const name = "RandomSetOfSubsets";
   const picks = getCount(getValue(args, 0, name), "first", name);
   const size = getCount(getValue(args, 1, name), "second", name);
   const elements = getFiniteElements(getValue(args, 2, name), "third", name, "finite set");
-  checkPicks(picks, elements.length, name);
+  if (elements.length < 31 && picks > 2 ** elements.length) {
+    throw createArgumentError(
+      "first",
+      name,
+      `nonnegative integer that is smaller than the subset's size of 2^${elements.length}`,
+      String(picks),
+    );
+  }
   if (elements.length < size) {
-    throw describeArgument(
+    throw createArgumentError(
       "second",
       name,
       "nonnegative integer in range 0..Cardinality(S)",
@@ -78,7 +74,7 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
   defineStateOperator("RandomSubset", 2, (args) => {
     const count = getValue(args, 0, "RandomSubset");
     if (typeof count !== "number") {
-      throw describeArgument("first", "RandomSubset", "nonnegative integer", formatValue(count));
+      throw createArgumentError("first", "RandomSubset", "nonnegative integer", formatValue(count));
     }
     if (count < 0) {
       throw new TlaEvaluationError(
@@ -87,7 +83,7 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
     }
     const set = getValue(args, 1, "RandomSubset");
     if (!isSetValue(set) || (!isEmptySet(set) && !isEnumerable(set))) {
-      throw describeArgument("second", "RandomSubset", "a finite set", formatValue(set));
+      throw createArgumentError("second", "RandomSubset", "a finite set", formatValue(set));
     }
     return createSet(getRandomSubset(count, set, runtime.getRandom()));
   }),
