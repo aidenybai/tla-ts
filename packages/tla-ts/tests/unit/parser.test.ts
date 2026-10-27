@@ -142,6 +142,21 @@ describe("parseModule reads proofs like SANY", () => {
     ]);
   });
 
+  it("cites a definition in a DEF clause once the NEW symbol of that name is out of scope", () => {
+    const module = parseProof(
+      [
+        "THEOREM ASSUME ASSUME NEW h PROVE TRUE PROVE TRUE",
+        "<1>1. ASSUME NEW g PROVE TRUE OBVIOUS",
+        "<1> DEFINE h == 1",
+        "<1> DEFINE g == 2",
+        "<1> QED BY DEF h, g",
+      ].join("\n"),
+    );
+    const proof = module.theorems[0].proof;
+    const qed = proof?.kind === "Steps" ? proof.steps[3].proof : undefined;
+    expect(qed?.kind === "By" && qed.defs).toMatchObject([{ name: "h" }, { name: "g" }]);
+  });
+
   it.each([
     ["a QED step at another level", "THEOREM TRUE\n<2>1. TRUE\n<1> QED"],
     ["a named <+> step", "THEOREM TRUE\n<1>1. TRUE\n<+>a. TRUE\n<2> QED\n<1> QED"],
@@ -149,6 +164,12 @@ describe("parseModule reads proofs like SANY", () => {
     ["a step number outside a proof", "THEOREM <1>1"],
     ["a proof without a QED step", "THEOREM TRUE\n<1>1. TRUE"],
     ["a bounded NEW operator", "THEOREM ASSUME NEW P(_) \\in {} PROVE TRUE"],
+    ["a variable in a DEF clause", "THEOREM TRUE BY DEF x"],
+    ["a NEW symbol in a DEF clause", "THEOREM ASSUME NEW xx PROVE TRUE\n  BY DEF xx"],
+    [
+      "a PICK name in a later DEF clause",
+      "THEOREM TRUE\n<1> PICK p : p = 1 OBVIOUS\n<1> QED BY DEF p",
+    ],
   ])("rejects %s", (_, proof) => {
     expect(() => parseProof(proof)).toThrow(TlaSyntaxError);
   });

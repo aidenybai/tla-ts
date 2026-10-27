@@ -270,6 +270,8 @@ export const parseModule = (source: string): Module => {
   // A RECURSIVE declaration covers the definitions of its own LET or module.
   const recursiveScopes: Set<string>[] = [];
   const factNames = new Set<string>();
+  // The NEW, TAKE, and PICK names in scope, which a DEF clause cannot cite.
+  const proofScopes: Set<string>[] = [];
   const openModules: Module[] = [];
 
   const isRecursiveName = (name: string) => recursiveScopes[recursiveScopes.length - 1].has(name);
@@ -1188,9 +1190,37 @@ export const parseModule = (source: string): Module => {
     );
   };
 
+  const declareProofSymbol = (name: string) => proofScopes[proofScopes.length - 1]?.add(name);
+
+  const withProofScope = <T>(parse: () => T) => {
+    proofScopes.push(new Set());
+    const result = parse();
+    proofScopes.pop();
+    return result;
+  };
+
+  const isDeclaredSymbol = (name: string) =>
+    proofScopes.some((scope) => scope.has(name)) ||
+    openModules.some(
+      (module) =>
+        module.constants.some((constant) => constant.name === name) ||
+        module.variables.some((variable) => variable.name === name),
+    );
+
+  const parseDefs = () => {
+    const defs = parseSeparated(parseFact);
+    const invalid = defs.find((def) => def.kind === "Identifier" && isDeclaredSymbol(def.name));
+    if (invalid) {
+      throw new TlaSyntaxError(
+        `DEF clause entry should describe a defined operator at line ${invalid.location.line}, column ${invalid.location.column}`,
+      );
+    }
+    return defs;
+  };
+
   const parseFacts = () => ({
     facts: isFactAhead() ? parseSeparated(parseFact) : [],
-    defs: accept("DEF") || accept("DEFS") ? parseSeparated(parseFact) : [],
+    defs: accept("DEF") || accept("DEFS") ? parseDefs() : [],
   });
 
   const parseUseOrHide = (): UseOrHide => {
@@ -1223,12 +1253,14 @@ export const parseModule = (source: string): Module => {
     if (level !== undefined) advance();
     if (level === "Variable") {
       const name = expectIdentifier();
+      declareProofSymbol(name);
       return withRange(
         { kind: "NewSymbol", name, arity: 0, level, set: undefined, location },
         start,
       );
     }
     const declaration = parseDeclaration();
+    declareProofSymbol(declaration.name);
     const isBounded = (level ?? "Constant") === "Constant" && isAt("\\in");
     if (isBounded && declaration.arity > 0) {
       throw createError("declared symbol with arguments before \\in");
@@ -1251,7 +1283,7 @@ export const parseModule = (source: string): Module => {
     const start = cursor.index;
     const location = getLocation(expect("ASSUME"));
     const assumptions = parseSeparated((): Expression | NewSymbol | AssumeProve => {
-      if (isAt("ASSUME")) return parseAssumeProve();
+      if (isAt("ASSUME")) return withProofScope(parseAssumeProve);
       if (peek().kind === "Keyword" && NEW_SYMBOL_STARTS.has(peek().text)) return parseNewSymbol();
       return parseExpression();
     });
@@ -1270,6 +1302,15 @@ export const parseModule = (source: string): Module => {
     return peek(offset.value).kind === "Identifier" && isAt(terminator, offset.value + 1);
   };
 
+  const declareProofSymbols = (names: string[], bounds: Bound[]) => {
+    names.forEach(declareProofSymbol);
+    bounds.forEach((bound) =>
+      (bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names).forEach(
+        declareProofSymbol,
+      ),
+    );
+  };
+
   const parseStepBody = (): StepBody => {
     const token = peek();
     if (isAt("USE") || isAt("HIDE")) return parseUseOrHide();
@@ -1286,9 +1327,11 @@ export const parseModule = (source: string): Module => {
     }
     if (accept("HAVE")) return { kind: "Have", expression: parseExpression() };
     if (accept("TAKE")) {
-      return isBoundAhead()
-        ? { kind: "Take", names: [], bounds: parseBounds() }
-        : { kind: "Take", names: parseSeparated(expectIdentifier), bounds: [] };
+      const isBounded = isBoundAhead();
+      const names = isBounded ? [] : parseSeparated(expectIdentifier);
+      const bounds = isBounded ? parseBounds() : [];
+      declareProofSymbols(names, bounds);
+      return { kind: "Take", names, bounds };
     }
     if (accept("WITNESS")) {
       return { kind: "Witness", expressions: parseSeparated(() => parseExpression()) };
@@ -1297,6 +1340,7 @@ export const parseModule = (source: string): Module => {
       const isNames = isNameListAhead(":");
       const names = isNames ? parseSeparated(expectIdentifier) : [];
       const bounds = isNames ? [] : parseBounds();
+      declareProofSymbols(names, bounds);
       expect(":");
       return { kind: "Pick", names, bounds, body: parseExpression() };
     }
@@ -1324,15 +1368,22 @@ export const parseModule = (source: string): Module => {
     return { name: getStepName(step), location: getLocation(step) };
   };
 
+  // The names an assertion assumes stay in its own proof, and other steps declare theirs for the rest
+  // of the enclosing proof.
   const parseStep = (): ProofStep => {
     const start = cursor.index;
     const step = parseStepStart(isAt("QED", 1));
+    const scope = new Set<string>();
+    proofScopes.push(scope);
     const body: StepBody = accept("QED") ? { kind: "Qed" } : parseStepBody();
     const hasProof = beginsProof(peek());
     if (hasProof && !PROVABLE_STEPS.has(body.kind)) {
       throw createError("Proof of a step that does not take a proof");
     }
-    return withRange({ ...step, body, proof: hasProof ? parseProof() : undefined }, start);
+    const proof = hasProof ? parseProof() : undefined;
+    proofScopes.pop();
+    if (body.kind !== "Assert" || body.isSuffices) scope.forEach(declareProofSymbol);
+    return withRange({ ...step, body, proof }, start);
   };
 
   const parseProofBody = (): Proof => {
@@ -1360,7 +1411,7 @@ export const parseModule = (source: string): Module => {
   const parseProof = (): Proof => {
     const start = cursor.index;
     proofLevels.push(-1);
-    const proof = parseProofBody();
+    const proof = withProofScope(parseProofBody);
     proofLevels.pop();
     return withRange(proof, start);
   };
@@ -1374,10 +1425,13 @@ export const parseModule = (source: string): Module => {
       factNames.add(name);
       advance();
     }
-    const statement = isAt("ASSUME") ? parseAssumeProve() : parseExpression();
-    const proof = beginsProof(peek()) ? parseProof() : undefined;
+    const parsed = withProofScope(() => {
+      const statement = isAt("ASSUME") ? parseAssumeProve() : parseExpression();
+      return { statement, proof: beginsProof(peek()) ? parseProof() : undefined };
+    });
+    const statement = parsed.statement;
     module.theorems.push(
-      withRange({ name, statement, proof, location: getLocation(keyword) }, start),
+      withRange({ name, statement, proof: parsed.proof, location: getLocation(keyword) }, start),
     );
     if (name === undefined || statement.kind === "AssumeProve") return;
     module.definitions.push(
