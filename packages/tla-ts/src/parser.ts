@@ -189,12 +189,16 @@ const THEOREM_KEYWORDS = new Set(["THEOREM", "LEMMA", "COROLLARY", "PROPOSITION"
 
 const PROOF_WORDS = new Set(["BY", "OBVIOUS", "OMITTED", "QED", "USE", "HIDE"]);
 
+const BUILTIN_CONSTANTS = new Set(["TRUE", "FALSE", "BOOLEAN", "STRING"]);
+
 const NO_OFFSIDE = -1;
 
 export const parseModule = (source: string): Module => {
   const tokens = tokenize(source);
   const cursor = { index: 0, limit: tokens.length, offsideColumns: [] as number[] };
   const recursiveNames = new Set<string>();
+  const factNames = new Set<string>();
+  const openModules: Module[] = [];
 
   const getLocation = (token: Token): SourceLocation => ({
     line: token.line,
@@ -885,10 +889,63 @@ export const parseModule = (source: string): Module => {
     );
   };
 
+  const isStepStart = (index: number) =>
+    tokens[index].text === "<" &&
+    tokens[index + 1]?.kind === "Number" &&
+    tokens[index + 2]?.text === ">";
+
+  const isDeclared = (name: string) =>
+    !factNames.has(name) &&
+    openModules.some(
+      (module) =>
+        module.constants.some((constant) => constant.name === name) ||
+        module.variables.includes(name) ||
+        module.definitions.some((definition) => definition.name === name),
+    );
+
+  const isHideFact = (fact: Token[]) => {
+    if (fact[0].text === "MODULE" || fact[0].text === "<") return true;
+    if (fact[0].kind !== "Identifier") return false;
+    if (fact.length > 1) return fact[1].text === "!";
+    return !BUILTIN_CONSTANTS.has(fact[0].text) && !isDeclared(fact[0].text);
+  };
+
+  const checkHideFacts = (hide: number) => {
+    const facts: Token[][] = [[]];
+    const depth = { value: 0 };
+    for (let index = hide + 1; ; index++) {
+      const token = tokens[index];
+      const previous = tokens[index - 1];
+      const isBracket = token.kind !== "String";
+      const isEnd =
+        depth.value === 0 &&
+        (token.kind === "End" ||
+          token.kind === "ModuleEnd" ||
+          token.kind === "Separator" ||
+          token.text === "DEF" ||
+          token.text === "DEFS" ||
+          (token.line > previous.line && isUnitStart(token, tokens[index + 1])) ||
+          (isStepStart(index) && index > hide + 1 && previous.text !== ","));
+      if (isEnd) break;
+      if (isBracket && ["(", "[", "{", "<<"].includes(token.text)) depth.value++;
+      if (isBracket && [")", "]", "}", ">>"].includes(token.text)) depth.value--;
+      if (depth.value === 0 && token.text === ",") facts.push([]);
+      else facts[facts.length - 1].push(token);
+    }
+    const invalid = facts.find((fact) => fact.length > 0 && !isHideFact(fact));
+    if (invalid) {
+      throw createError(
+        "The only expression allowed as a fact in a HIDE is the name of a theorem, assumption, or step",
+        invalid[0],
+      );
+    }
+  };
+
   const skipUnit = (start: Token) => {
     while (peekRaw().kind !== "End") {
       const token = peekRaw();
       if (token.line > start.line && isUnitStart(token, peekRaw(1))) return;
+      if (token.kind === "Identifier" && token.text === "HIDE") checkHideFacts(cursor.index);
       cursor.index++;
     }
   };
@@ -905,6 +962,7 @@ export const parseModule = (source: string): Module => {
 
   const parseTheorem = (): Definition | undefined => {
     const start = advance();
+    if (peek().kind === "Identifier" && isAt("==", 1)) factNames.add(peek().text);
     const isNamed = peek().kind === "Identifier" && isAt("==", 1) && !isAt("ASSUME", 2);
     if (!isNamed) {
       skipUnit(start);
@@ -937,6 +995,7 @@ export const parseModule = (source: string): Module => {
     const isAxiom = keyword.text === "AXIOM";
     if (peek().kind === "Identifier" && isAt("==", 1)) {
       const name = expectIdentifier();
+      factNames.add(name);
       advance();
       return { name, expression: parseExpression(), isAxiom, location };
     }
@@ -959,9 +1018,13 @@ export const parseModule = (source: string): Module => {
       instances: [],
       assumptions: [],
     };
+    openModules.push(module);
     while (true) {
       const token = peek();
-      if (token.kind === "ModuleEnd" || token.kind === "End") return module;
+      if (token.kind === "ModuleEnd" || token.kind === "End") {
+        openModules.pop();
+        return module;
+      }
       if (token.kind === "Separator") {
         if (isAt("MODULE", 1)) module.modules.push(parseNestedModule(getOuterScope(module)));
         else advance();
@@ -996,6 +1059,10 @@ export const parseModule = (source: string): Module => {
           }
           continue;
         }
+        case "USE":
+        case "HIDE":
+          skipUnit(token);
+          continue;
         case "RECURSIVE":
           advance();
           parseDeclarations().forEach((declaration) => recursiveNames.add(declaration.name));
