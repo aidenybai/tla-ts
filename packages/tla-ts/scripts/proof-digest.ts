@@ -1,3 +1,12 @@
+import type {
+  Fact,
+  Module,
+  Proof,
+  ProofStep,
+  SourceLocation,
+  Theorem,
+  UseOrHide,
+} from "../src/ast";
 import { getChild, getChildren, type XmlElement } from "./xml";
 
 // A proof tree reduced to what both SANY and tla-ts can report: each node's kind, name, and
@@ -139,21 +148,119 @@ export const digestSany = (document: XmlElement, moduleName: string): ModuleDige
     }
     return { kind: "instance", range: getRange(step) };
   };
-  const digestModule = (module: XmlElement): ModuleDigest => ({
-    name: getText(getChild(module, "uniquename")),
-    units: module.children.flatMap((child) => {
-      if (child.name === "TheoremNodeRef") return [digestTheorem(resolve(child), false)];
-      if (child.name === "UseOrHideNode") return [digestUse(child)];
-      return [];
-    }),
-    modules: getChildren(module, "ModuleNodeRef")
-      .map(resolve)
-      .filter((nested) => getText(getChild(nested, "uniquename")) !== moduleName)
-      .map(digestModule),
-  });
+  const getFilename = (node: XmlElement) => {
+    const location = getChild(node, "location");
+    return location && getText(getChild(location, "filename"));
+  };
+  // A module also lists the theorems of the modules it extends, which come from other files.
+  const digestModule = (module: XmlElement): ModuleDigest => {
+    const filename = getFilename(module);
+    return {
+      name: getText(getChild(module, "uniquename")),
+      units: module.children.flatMap((child) => {
+        const node = child.name === "TheoremNodeRef" ? resolve(child) : child;
+        if (getFilename(node) !== filename) return [];
+        if (node.name === "TheoremNode") return [digestTheorem(node, false)];
+        if (node.name === "UseOrHideNode") return [digestUse(node)];
+        return [];
+      }),
+      modules: getChildren(module, "ModuleNodeRef")
+        .map(resolve)
+        .filter((nested) => getText(getChild(nested, "uniquename")) !== moduleName)
+        .map(digestModule),
+    };
+  };
   const root = [...entries.values()].find(
     (node) => node.name === "ModuleNode" && getText(getChild(node, "uniquename")) === moduleName,
   );
   if (!root) throw new Error(`SANY's XML has no module ${moduleName}`);
   return digestModule(root);
 };
+
+const formatRange = (location: SourceLocation) => {
+  const range = location.range;
+  return range && `${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`;
+};
+
+const getFactDigest = (fact: Fact) =>
+  fact.kind === "ModuleFact" ? `module ${fact.name}` : (formatRange(fact.location) ?? fact.kind);
+
+const getDefName = (fact: Fact) => {
+  if (fact.kind === "ModuleFact" || fact.kind === "Identifier") return fact.name;
+  if (fact.kind === "OperatorReference" || fact.kind === "Apply") return fact.operator;
+  return fact.kind;
+};
+
+const STEP_DIGEST_KINDS = new Map([
+  ["Have", "have"],
+  ["Take", "take"],
+  ["Witness", "witness"],
+  ["Pick", "pick"],
+  ["Case", "case"],
+  ["Qed", "qed"],
+]);
+
+const digestParsedUse = (use: UseOrHide, location: SourceLocation): UseDigest => ({
+  kind: use.kind === "Use" ? "use" : "hide",
+  range: formatRange(location),
+  only: use.isOnly,
+  facts: use.facts.map(getFactDigest),
+  defs: use.defs.map(getDefName),
+});
+
+const digestParsedProof = (proof: Proof | undefined): ProofDigest | undefined => {
+  if (proof === undefined) return undefined;
+  const range = formatRange(proof.location);
+  if (proof.kind === "Obvious" || proof.kind === "Omitted") {
+    return { kind: proof.kind === "Obvious" ? "obvious" : "omitted", range };
+  }
+  if (proof.kind === "By") {
+    return {
+      kind: "by",
+      range,
+      only: proof.isOnly,
+      facts: proof.facts.map(getFactDigest),
+      defs: proof.defs.map(getDefName),
+    };
+  }
+  return { kind: "steps", range, level: proof.level, steps: proof.steps.map(digestParsedStep) };
+};
+
+const digestParsedStep = (step: ProofStep): StepDigest => {
+  const body = step.body;
+  const range = formatRange(step.location);
+  if (body.kind === "Use" || body.kind === "Hide") return digestParsedUse(body, step.location);
+  if (body.kind === "Instance") return { kind: "instance", range };
+  if (body.kind === "Define") {
+    return {
+      kind: "define",
+      range: formatRange(body.location),
+      names: body.definitions.map((definition) => definition.name ?? ""),
+    };
+  }
+  const isSuffices =
+    body.kind === "Assert" && body.isSuffices && body.statement.kind !== "AssumeProve";
+  return {
+    kind: STEP_DIGEST_KINDS.get(body.kind) ?? (isSuffices ? "suffices" : "assert"),
+    name: step.name,
+    range,
+    proof: digestParsedProof(step.proof),
+  };
+};
+
+const digestParsedTheorem = (theorem: Theorem): TheoremDigest => ({
+  kind: "theorem",
+  name: theorem.name,
+  range: formatRange(theorem.location),
+  proof: digestParsedProof(theorem.proof),
+});
+
+// The same digest of a module that tla-ts parsed.
+export const digestParsed = (module: Module): ModuleDigest => ({
+  name: module.name,
+  units: [
+    ...module.theorems.map(digestParsedTheorem),
+    ...module.uses.map((use) => digestParsedUse(use, use.location)),
+  ],
+  modules: module.modules.map(digestParsed),
+});
