@@ -10,6 +10,8 @@ describe("TLCGet matches TLC", () => {
     ["Rich", [1121, 128, 9]],
     ["Inst", [46, 9, 4]],
     ["Subst", [5, 3, 3]],
+    ["Unnamed", [5, 3, 3]],
+    ["Param", [13, 4, 2]],
   ])("describes the %s specification as TLC does", async (name, counts) => {
     const directory = join(FIXTURES, "tlc-spec");
     const result = await check({
