@@ -1,0 +1,20 @@
+@!!BEGIN
+@!!type:warning
+@!!msg:File "./Renamed.tla", line 1, character 1 to line 5, character 4 :
+Warning: module name "Other" does not match file name "Renamed.tla".
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:3:4:10
+@!!status:to be proved
+@!!obl:1 + 1 = 2
+
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:1
+@!!END
+

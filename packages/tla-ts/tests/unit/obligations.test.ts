@@ -3,9 +3,9 @@ import { getObligations } from "../../src/obligations";
 
 const getTexts = (body: string) =>
   getObligations(
-    { file: "M.tla", source: `---- MODULE M ----\nEXTENDS Naturals\n${body}\n====\n` },
+    [{ file: "M.tla", source: `---- MODULE M ----\nEXTENDS Naturals\n${body}\n====\n` }],
     () => undefined,
-  ).map((obligation) => obligation.text);
+  )[0].obligations.map((obligation) => obligation.text);
 
 describe("proof obligations match tlapm", () => {
   it("prints an @ that no earlier step defines", () => {
@@ -22,9 +22,9 @@ describe("proof obligations match tlapm", () => {
       ].join("\n"),
     );
     expect(texts).toEqual([
-      "ASSUME NEW VARIABLE x\nPROVE  x = 1",
-      "ASSUME NEW VARIABLE x\nPROVE  TRUE",
-      "ASSUME NEW VARIABLE x\nPROVE  @ = x",
+      "ASSUME NEW VARIABLE x\nPROVE  x = 1\n",
+      "ASSUME NEW VARIABLE x\nPROVE  TRUE\n",
+      "ASSUME NEW VARIABLE x\nPROVE  @ = x\n",
     ]);
   });
 });

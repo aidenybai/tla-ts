@@ -34,14 +34,15 @@ interface Outcome {
 
 const analyze = (path: string): Outcome => {
   try {
-    const obligations = getObligations(
-      { file: path, source: readFileSync(path, "utf8") },
+    const results = getObligations(
+      [{ file: path, source: readFileSync(path, "utf8") }],
       (name) =>
         readModule(join(dirname(path), `${name}.tla`)) ??
         readModule(libraryModules.get(name)) ??
         readModule(join(TLAPM_LIBRARY, `${name}.tla`)),
     );
-    return { status: "ok", obligations };
+    // A submodule reports its own obligations, before the module that contains it.
+    return { status: "ok", obligations: results.flatMap((result) => result.obligations) };
   } catch (error) {
     if (error instanceof TlaUnsupportedError)
       return { status: "unsupported", error: error.message, obligations: [] };

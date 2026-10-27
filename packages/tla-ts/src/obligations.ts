@@ -2,8 +2,8 @@
 
 import { TlaProofError } from "./errors";
 import { createAnonymizer } from "./obligation-anon";
-import type { Locus } from "./obligation-expression";
-import { createGenerator } from "./obligation-generate";
+import { getLocusPrefix, type Locus, type ObligationWarning } from "./obligation-expression";
+import { createGenerator, type LineRange } from "./obligation-generate";
 import {
   compareNames,
   expandInstance,
@@ -27,8 +27,21 @@ export interface ObligationSource {
 }
 
 export interface PrintedObligation {
+  id: number;
   location: string;
   text: string;
+}
+
+export interface ModuleObligations {
+  name: string;
+  obligations: PrintedObligation[];
+}
+
+export const WHOLE_MODULE: LineRange = { start: 0, end: Infinity };
+
+interface ObligationOptions {
+  lines?: LineRange;
+  onWarning?: (warning: ObligationWarning) => void;
 }
 
 const MODULE_HEADER = /-{4,} *MODULE/;
@@ -36,23 +49,53 @@ const MODULE_HEADER = /-{4,} *MODULE/;
 const formatLocus = (locus: Locus | undefined) =>
   locus ? `${locus.startLine}:${locus.startColumn}:${locus.endLine}:${locus.endColumn}` : "";
 
+// The closing ==== is on the line of the last token.
+const getModuleEnd = (source: string) => {
+  const lines = source.split("\n");
+  const line = tokenize(source).at(-1)?.line ?? lines.length;
+  return { line, column: lines[line - 1].indexOf("====") + 1, lines };
+};
+
 // tlapm's lexer rejects a TAB anywhere from the module header through the closing ====.
 const assertNoTabs = (source: string) => {
-  const lines = source.split("\n");
-  const endLine = tokenize(source).at(-1)?.line ?? lines.length;
-  const end =
-    lines.slice(0, endLine - 1).reduce((offset, line) => offset + line.length + 1, 0) +
-    lines[endLine - 1].indexOf("====");
-  if (source.slice(source.search(MODULE_HEADER), end).includes("\t"))
+  const end = getModuleEnd(source);
+  const offset =
+    end.lines.slice(0, end.line - 1).reduce((total, line) => total + line.length + 1, 0) +
+    end.column -
+    1;
+  if (source.slice(source.search(MODULE_HEADER), offset).includes("\t"))
     throw new TlaProofError(
       "Unexpected TAB character. TLAPS does not handle TAB characters in source files.",
     );
 };
 
-const loadMule = (input: ObligationSource, counter: Counter, isMain: boolean): Mule => {
+// Module.Save.parse_file warns when a module's name differs from its file's, then renames it.
+const loadMule = (
+  input: ObligationSource,
+  counter: Counter,
+  isMain: boolean,
+  onWarning: (warning: ObligationWarning) => void,
+): Mule => {
   const module = parseTlapmModule(input.source);
   assertNoTabs(input.source);
-  return createSource(input.file, input.source, counter, isMain).convertModule(module);
+  const mule = createSource(input.file, input.source, counter, isMain).convertModule(module);
+  const fileName = input.file.slice(input.file.lastIndexOf("/") + 1);
+  const name = fileName.replace(/\.tla$/, "");
+  if (mule.name === name) return mule;
+  const end = getModuleEnd(input.source);
+  const closing = end.lines[end.line - 1].slice(end.column - 1).match(/^=+/)?.[0] ?? "";
+  const locus = {
+    file: input.file,
+    startLine: module.location.line,
+    startColumn: module.location.column,
+    endLine: end.line,
+    endColumn: end.column + closing.length,
+  };
+  onWarning({
+    text: `${getLocusPrefix(locus)}Warning: module name ${JSON.stringify(mule.name)} does not match file name ${JSON.stringify(fileName)}.`,
+    isToolboxMessage: true,
+  });
+  return { ...mule, name };
 };
 
 // Module.Dep.schedule: dependencies first, visiting modules and their dependencies by name.
@@ -74,14 +117,21 @@ const schedule = (modules: Map<string, Mule>) => {
   return order;
 };
 
+// Each main module is one file given to tlapm. They load into one context and report in schedule
+// order, each numbering its obligations from 1.
 export const getObligations = (
-  main: ObligationSource,
+  mains: ObligationSource[],
   loadModule: (name: string) => ObligationSource | undefined,
-): PrintedObligation[] => {
+  options: ObligationOptions = {},
+): ModuleObligations[] => {
+  const lines = options.lines ?? WHOLE_MODULE;
+  const onWarning = options.onWarning ?? (() => {});
   const counter = { value: 0 };
-  const mainModule = { ...loadMule(main, counter, true), isImportant: true };
   const modules = new Map<string, Mule>(STANDARD_MODULES);
-  modules.set(mainModule.name, mainModule);
+  mains.forEach((main) => {
+    const module = { ...loadMule(main, counter, true, onWarning), isImportant: true };
+    modules.set(module.name, module);
+  });
   // Module.Save.complete_load: breadth first from every known module, by name.
   const queue = [...modules.values()].sort((left, right) => compareNames(left.name, right.name));
   // A missing module is fine only if some loaded module declares it as a submodule.
@@ -101,7 +151,7 @@ export const getObligations = (
         if (!modules.has(name)) requested.add(name);
         continue;
       }
-      const loaded = loadMule(input, counter, false);
+      const loaded = loadMule(input, counter, false, onWarning);
       modules.set(name, loaded);
       queue.push(loaded);
     }
@@ -109,10 +159,12 @@ export const getObligations = (
   const missing = [...requested].find((name) => !found.has(name));
   if (missing !== undefined) throw new TlaProofError(`Unknown module "${missing}"`);
   const pipeline: Pipeline = {
-    anonymizer: createAnonymizer(counter, (scope, definition) =>
-      expandInstance(pipeline, scope, definition),
+    anonymizer: createAnonymizer(
+      counter,
+      (scope, definition) => expandInstance(pipeline, scope, definition),
+      onWarning,
     ),
-    generator: createGenerator(counter, main.file),
+    generator: createGenerator(counter, new Set(mains.map((main) => main.file)), lines),
     salts: { value: 0 },
     latestModules: new Map(),
   };
@@ -121,17 +173,26 @@ export const getObligations = (
   );
   // Instances see each module as flattened, and as normalized once its turn has come.
   const normalized = new Map(order.map((module) => [module.name, module]));
-  return order.flatMap((module) => {
+  return order.flatMap((module): ModuleObligations[] => {
     if (module.isStandard) return [];
     const result = normalize(pipeline, normalized, undefined, module);
     if (!module.isImportant) return [];
-    return generate(pipeline, [], result).flatMap((obligation): PrintedObligation[] => {
-      if (obligation.kind.kind === "Omitted") return [];
-      const text =
-        obligation.kind.kind === "Error"
-          ? obligation.kind.message
-          : formatObligation(obligation.sequent);
-      return [{ location: formatLocus(obligation.location), text }];
-    });
+    // tlapm numbers the obligations, then drops the omitted ones and those outside the lines.
+    const obligations = generate(pipeline, [], result).flatMap(
+      (obligation, index): PrintedObligation[] => {
+        const location = obligation.location;
+        if (
+          obligation.kind.kind === "Omitted" ||
+          (location && (location.startLine < lines.start || location.endLine > lines.end))
+        )
+          return [];
+        const text =
+          obligation.kind.kind === "Error"
+            ? obligation.kind.message
+            : `${formatObligation(obligation.sequent)}\n`;
+        return [{ id: index + 1, location: formatLocus(location), text }];
+      },
+    );
+    return [{ name: module.name, obligations }];
   });
 };

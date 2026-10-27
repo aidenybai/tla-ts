@@ -1,0 +1,12 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:7:3:7:10
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:1
+@!!END
+

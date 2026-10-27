@@ -11,6 +11,24 @@ export interface Locus {
   endColumn: number;
 }
 
+// A warning tlapm sends as a toolbox message (Errors.err), or prints to stderr as is (Errors.warn).
+export interface ObligationWarning {
+  text: string;
+  isToolboxMessage: boolean;
+}
+
+// Errors.loc_to_string: Loc.string_of_locus and " :", where endColumn is the column after the end.
+export const getLocusPrefix = (locus: Locus | undefined) => {
+  if (!locus) return "";
+  const file = `File ${JSON.stringify(locus.file)}, line ${locus.startLine}`;
+  const end = locus.endColumn - 1;
+  if (locus.startLine !== locus.endLine)
+    return `${file}, character ${locus.startColumn} to line ${locus.endLine}, character ${end} :\n`;
+  return locus.startColumn >= end
+    ? `${file}, character ${locus.startColumn} :\n`
+    : `${file}, characters ${locus.startColumn}-${end} :\n`;
+};
+
 export type Builtin =
   | "TRUE"
   | "FALSE"
