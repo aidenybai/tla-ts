@@ -1,4 +1,5 @@
-import { TlaEvaluationError } from "./errors";
+import { TlaModuleError } from "./errors";
+import { EXIT_STATUS } from "./exit-codes";
 import type { Builtin } from "./evaluate";
 import {
   defineConstant,
@@ -7,6 +8,7 @@ import {
   defineStateOperator,
   getElements,
   getEnumerableSet,
+  getFunction,
   getOperator,
   getSequence,
   getValue,
@@ -20,7 +22,6 @@ import {
   createSet,
   createTuple,
   formatValue,
-  toFiniteFunction,
   type Value,
   rankString,
 } from "./values";
@@ -95,11 +96,11 @@ const getRuntimeValue = (
   }
   if (key.startsWith(NAMED_REGISTER_PREFIX)) {
     const value = getNamedRegisters(runtime).get(key);
-    if (value === undefined) throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
+    if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
     return value;
   }
   if (key.startsWith("-D")) return rankString(runtime.properties.get(key.slice(2)) ?? key);
-  throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
+  throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
 };
 
 const getPermutations = (elements: Value[]): Value[][] =>
@@ -128,8 +129,9 @@ export const createTlcOperators = (
   }),
   defineOperator("Assert", 2, (args) => {
     if (getValue(args, 0, "Assert") !== true) {
-      throw new TlaEvaluationError(
+      throw new TlaModuleError(
         `The first argument of Assert evaluated to FALSE; the second argument was:\n${formatValue(getValue(args, 1, "Assert"))}`,
+        EXIT_STATUS.assertViolation,
       );
     }
     return true;
@@ -139,8 +141,8 @@ export const createTlcOperators = (
     createFunction([[getValue(args, 0, ":>"), getValue(args, 1, ":>")]]),
   ),
   defineOperator("@@", 2, (args) => {
-    const left = toFiniteFunction(getValue(args, 0, "@@"));
-    const right = toFiniteFunction(getValue(args, 1, "@@"));
+    const left = getFunction(args, 0, "@@");
+    const right = getFunction(args, 1, "@@");
     return createFunction([
       ...left.domain.map((key, index): [Value, Value] => [key, left.range[index]]),
       ...right.domain.map((key, index): [Value, Value] => [key, right.range[index]]),
@@ -175,11 +177,11 @@ export const createTlcOperators = (
     const key = getValue(args, 0, "TLCGet");
     if (typeof key === "number" && key >= 0) {
       const value = runtime.registers.get(key);
-      if (value === undefined) throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
+      if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
       return value;
     }
     if (typeof key !== "string") {
-      throw new TlaEvaluationError(
+      throw new TlaModuleError(
         `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
       );
     }
@@ -211,7 +213,7 @@ export const createTlcOperators = (
       runtime.properties.set(key.slice(2), formatValue(value));
       return true;
     }
-    throw new TlaEvaluationError(
+    throw new TlaModuleError(
       `The first argument of TLCSet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
     );
   }),

@@ -1,5 +1,5 @@
 import { defineStateOperator, getValue } from "./builtins";
-import { TlaEvaluationError } from "./errors";
+import { TlaEvaluationError, TlaModuleError } from "./errors";
 import type { Builtin } from "./evaluate";
 import {
   checkInteger,
@@ -112,7 +112,7 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
     const value = getValue(args, 1, "ndJsonSerialize");
     const elements = getSequenceElements(value);
     if (!elements) {
-      throw new TlaEvaluationError(
+      throw new TlaModuleError(
         `The second argument of ndJsonSerialize should be a sequence, but instead it is:\n${formatValue(value)}`,
       );
     }
