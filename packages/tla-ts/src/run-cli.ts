@@ -11,6 +11,7 @@ import { spawnSync } from "node:child_process";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
 import type { CheckResult, CheckStatus, TraceStep } from "./check";
+import { defineCommand, type ParsedArgs } from "./cli-options";
 import { parseConfig } from "./config";
 import {
   getErrorExitCode,
@@ -44,24 +45,29 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   error: EXIT_STATUS.error,
 };
 
+const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {options}", [
+  { flag: "-config <Spec.cfg>" },
+  { flag: "-deadlock" },
+  { flag: "-lncheck <final|default>" },
+  { flag: "-seed <num>" },
+  { flag: "-workers <count|auto>" },
+]);
+
+const PROVE_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...", [
+  { flag: "-N", isRequired: true },
+  { flag: "--toolbox <start> <end>" },
+  { flag: "--line <num>" },
+  { flag: "--printallobs" },
+  { flag: "--summary" },
+  { flag: "--strict" },
+  { flag: "-I <directory>", isRepeatable: true },
+]);
+
 const USAGE = [
-  "Usage: tla-ts <Spec.tla|Spec.cfg|glob>... [-config <Spec.cfg>] [-deadlock] [-lncheck <final|default>] [-seed <num>] [-workers <count|auto>]",
-  "       tla-ts prove -N [--toolbox <start> <end>] [--line <num>] [--printallobs] [--summary] [--strict] [-I <directory>]... <Module.tla|glob>...",
+  `Usage: ${CHECK_COMMAND.usage}`,
+  `       ${PROVE_COMMAND.usage}`,
   "       tla-ts prove [<tlapm option>]... <Module.tla|glob>...",
 ].join("\n");
-
-const VALUE_FLAGS = new Set(["-config", "-lncheck", "-seed", "-workers"]);
-
-// The tlapm options that prove supports, with the number of values each takes.
-const PROVE_OPTIONS = new Map([
-  ["-N", 0],
-  ["--printallobs", 0],
-  ["--summary", 0],
-  ["--strict", 0],
-  ["-I", 1],
-  ["--line", 1],
-  ["--toolbox", 2],
-]);
 
 const GLOB_CHARACTERS = /[*?[{]/;
 
@@ -70,26 +76,23 @@ interface InputPath {
   isGlobbed: boolean;
 }
 
-// The arguments that are not flags or flag values, each glob expanded to the files it matches.
-const getInputPaths = (args: string[]): InputPath[] =>
-  args
-    .filter((arg, index) => !arg.startsWith("-") && !VALUE_FLAGS.has(args[index - 1]))
-    .flatMap((arg): InputPath[] =>
-      GLOB_CHARACTERS.test(arg)
-        ? globSync(arg)
-            .sort()
-            .map((path) => ({ path, isGlobbed: true }))
-        : [{ path: arg, isGlobbed: false }],
-    );
+const getInputPaths = (paths: string[]): InputPath[] =>
+  paths.flatMap((arg): InputPath[] =>
+    GLOB_CHARACTERS.test(arg)
+      ? globSync(arg)
+          .sort()
+          .map((path) => ({ path, isGlobbed: true }))
+      : [{ path: arg, isGlobbed: false }],
+  );
 
 const isJavaLong = (text: string) =>
   /^[+-]?\d+$/.test(text) && BigInt.asIntN(64, BigInt(text)) === BigInt(text);
 
-const getWorkerCount = (args: string[]) => {
-  const flag = args.indexOf("-workers");
-  if (flag === -1) return 1;
-  const value = args[flag + 1];
-  return value === "auto" ? availableParallelism() : Math.max(1, Number.parseInt(value, 10) || 1);
+const getWorkerCount = (values: string[] | undefined) => {
+  if (!values) return 1;
+  return values[0] === "auto"
+    ? availableParallelism()
+    : Math.max(1, Number.parseInt(values[0], 10) || 1);
 };
 
 const printState = (state: Record<string, Value>) => {
@@ -183,21 +186,21 @@ const printResult = (result: CheckResult) => {
   if (outDegree) console.log(outDegree);
 };
 
-const checkSpec = async (specPath: string, args: string[]) => {
+const checkSpec = async (specPath: string, args: ParsedArgs) => {
   if (!existsSync(specPath)) {
     console.error(`Cannot find the specification file ${specPath}`);
     return EXIT_STATUS.configParseError;
   }
-  const configFlag = args.indexOf("-config");
-  const configPath = configFlag === -1 ? specPath.replace(/\.tla$/, ".cfg") : args[configFlag + 1];
+  const configPath =
+    args.get("-config")?.[0] ??
+    (args.has("-config") ? undefined : specPath.replace(/\.tla$/, ".cfg"));
   if (!configPath || !existsSync(configPath)) {
     console.error(`Cannot find the configuration file ${configPath ?? ""}`);
     return EXIT_STATUS.configParseError;
   }
   const config = parseConfig(readFileSync(configPath, "utf8"));
-  if (args.includes("-deadlock")) config.checkDeadlock = false;
-  const seedFlag = args.indexOf("-seed");
-  const seed = seedFlag === -1 ? "0" : args[seedFlag + 1];
+  if (args.has("-deadlock")) config.checkDeadlock = false;
+  const seed = args.has("-seed") ? args.get("-seed")?.[0] : "0";
   if (seed === undefined) {
     console.error("Error: seed required.");
     return 1;
@@ -206,8 +209,7 @@ const checkSpec = async (specPath: string, args: string[]) => {
     console.error(`Error: An integer for seed required. But encountered ${seed}`);
     return 1;
   }
-  const livenessFlag = args.indexOf("-lncheck");
-  const livenessCheck = livenessFlag === -1 ? "default" : args[livenessFlag + 1]?.toLowerCase();
+  const livenessCheck = args.has("-lncheck") ? args.get("-lncheck")?.[0]?.toLowerCase() : "default";
   if (livenessCheck === undefined) {
     console.error("Error: expect a strategy such as final for -lncheck option.");
     return 1;
@@ -215,7 +217,7 @@ const checkSpec = async (specPath: string, args: string[]) => {
   const directory = dirname(specPath);
   console.log(`Checking ${basename(specPath)} with ${basename(configPath)}`);
   const result = await check({
-    workers: getWorkerCount(args),
+    workers: getWorkerCount(args.get("-workers")),
     livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
     seed: BigInt(seed),
     source: readFileSync(specPath, "utf8"),
@@ -299,11 +301,6 @@ const proveWithTlapm = (args: string[]) => {
 const readModule = (path: string) =>
   existsSync(path) ? { file: path, source: readFileSync(path, "utf8") } : undefined;
 
-interface ProveOption {
-  name: string;
-  values: string[];
-}
-
 // A message of tlapm's toolbox protocol, which it writes to stderr.
 const printToolboxMessage = (fields: string[]) =>
   console.error(`@!!BEGIN\n${fields.map((field) => `@!!${field}\n`).join("")}@!!END\n`);
@@ -363,47 +360,33 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
 
 const prove = (args: string[]) => {
   if (!args.includes("-N") && !args.includes("--summary")) return proveWithTlapm(args);
-  const options: ProveOption[] = [];
-  const paths: string[] = [];
-  for (let index = 0; index < args.length; index++) {
-    const arity = PROVE_OPTIONS.get(args[index]);
-    if (arity === undefined) {
-      paths.push(args[index]);
-      continue;
-    }
-    options.push({ name: args[index], values: args.slice(index + 1, index + 1 + arity) });
-    index += arity;
-  }
-  const unsupported = paths.find((path) => path.startsWith("-"));
+  const parsed = PROVE_COMMAND.parse(args);
+  const unsupported = parsed.unknown[0];
   if (unsupported !== undefined) {
     console.error(`Error: tla-ts prove does not support the tlapm option ${unsupported}.`);
     return 1;
   }
-  const incomplete = options.find(
-    (option) => option.values.length < (PROVE_OPTIONS.get(option.name) ?? 0),
-  );
-  if (incomplete) {
-    console.error(`Error: option '${incomplete.name}' needs an argument.`);
+  if (parsed.incomplete) {
+    console.error(`Error: option '${parsed.incomplete.name}' needs an argument.`);
     return 1;
   }
-  const nonInteger = options.find(
+  const nonInteger = parsed.options.find(
     (option) => option.name !== "-I" && option.values.some((value) => !/^-?\d+$/.test(value)),
   );
   if (nonInteger) {
     console.error(`Error: option '${nonInteger.name}' expects an integer.`);
     return 1;
   }
-  const hasOption = (name: string) => options.some((option) => option.name === name);
-  const files = expandGlobs(paths);
+  const files = expandGlobs(parsed.positionals);
   const modulePaths = files.map((path) => (path.endsWith(".tla") ? path : `${path}.tla`));
   if (modulePaths.length === 0) {
     console.error(USAGE);
     return 1;
   }
-  const isToolbox = hasOption("--toolbox") || hasOption("--line");
+  const isToolbox = parsed.has("--toolbox") || parsed.has("--line");
   if (isToolbox) printToolboxHeader(args);
   // Like tlapm, the last of --toolbox and --line wins, and a 0 means the whole module.
-  const lines = options.reduce<LineRange>((range, option) => {
+  const lines = parsed.options.reduce<LineRange>((range, option) => {
     const [start, end] = option.values.map(Number);
     if (option.name === "--toolbox") return { start, end: end === 0 ? Infinity : end };
     if (option.name === "--line") return start === 0 ? WHOLE_MODULE : { start, end: start };
@@ -412,7 +395,7 @@ const prove = (args: string[]) => {
   // tlapm searches the current directory and each module's, then its library, then each -I
   // directory, the last given first.
   const tlapmLibrary = getTlapmLibrary();
-  const includes = options.flatMap((option) => (option.name === "-I" ? option.values : []));
+  const includes = parsed.options.flatMap((option) => (option.name === "-I" ? option.values : []));
   const directories = modulePaths.reduce(
     (found, path) => (found.includes(dirname(path)) ? found : [dirname(path), ...found]),
     [".", ...(tlapmLibrary ? [tlapmLibrary] : []), ...includes.toReversed()],
@@ -444,7 +427,7 @@ const prove = (args: string[]) => {
   });
   if (!results) return TLAPM_FAILURE_STATUS;
   const failures = results.flatMap((result) => {
-    if (hasOption("--summary")) console.log(formatSummary(result));
+    if (parsed.has("--summary")) console.log(formatSummary(result));
     if (isToolbox) {
       result.obligations.forEach((obligation) =>
         printToolboxMessage([
@@ -452,13 +435,13 @@ const prove = (args: string[]) => {
           `id:${obligation.id}`,
           `loc:${obligation.location}`,
           "status:to be proved",
-          ...(hasOption("--printallobs") ? [`obl:${obligation.text}`] : []),
+          ...(parsed.has("--printallobs") ? [`obl:${obligation.text}`] : []),
         ]),
       );
       printToolboxMessage(["type:obligationsnumber", `count:${result.obligations.length}`]);
     }
-    if (!hasOption("--strict")) return [];
-    return checkStrictly(result, lines.start > 0 || lines.end < Infinity, hasOption("--summary"));
+    if (!parsed.has("--strict")) return [];
+    return checkStrictly(result, lines.start > 0 || lines.end < Infinity, parsed.has("--summary"));
   });
   return failures.includes(STRICT_EXIT_STATUS.incomplete)
     ? STRICT_EXIT_STATUS.incomplete
@@ -467,8 +450,9 @@ const prove = (args: string[]) => {
 
 const run = async (args: string[]) => {
   if (args[0] === "prove") return reportErrors(() => prove(args.slice(1)));
-  const inputs = getInputPaths(args);
-  const isConfigured = args.includes("-config");
+  const parsed = CHECK_COMMAND.parse(args);
+  const inputs = getInputPaths(parsed.positionals);
+  const isConfigured = parsed.has("-config");
   // A glob also matches modules that only other specs import, which have no configuration.
   const specPaths = inputs
     .map((input) => ({ ...input, path: input.path.replace(/\.cfg$/, ".tla") }))
@@ -486,7 +470,7 @@ const run = async (args: string[]) => {
     console.error("Error: -config applies to one specification, but several were given.");
     return 1;
   }
-  return runEach([...new Set(specPaths)], (path) => checkSpec(path, args));
+  return runEach([...new Set(specPaths)], (path) => checkSpec(path, parsed));
 };
 
 export const runCli = async () => {
