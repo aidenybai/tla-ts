@@ -54,7 +54,8 @@ const createBuiltinLocation = () =>
     ["module", "--TLA+ BUILTINS--"],
   ]);
 
-const toActionRecord = (action: string | undefined) =>
+// TLC's record for an action it doesn't store, such as every action in breadth-first search.
+export const createActionRecord = (action: string | undefined) =>
   createRecord([
     ["name", action ?? "UnnamedAction"],
     ["location", createBuiltinLocation()],
@@ -72,10 +73,16 @@ export const createCounterExample = (
   const steps = states
     .slice(1)
     .map((state, index) =>
-      createTuple([states[index], toActionRecord(trace[index + 1].action), state]),
+      createTuple([states[index], createActionRecord(trace[index + 1].action), state]),
     );
   const closing = loop
-    ? [createTuple([states[states.length - 1], toActionRecord(loop.action), states[loop.start]])]
+    ? [
+        createTuple([
+          states[states.length - 1],
+          createActionRecord(loop.action),
+          states[loop.start],
+        ]),
+      ]
     : [];
   return createRecord([
     ["action", createSet([...steps, ...closing])],
