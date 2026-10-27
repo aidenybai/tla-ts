@@ -61,6 +61,13 @@ export interface EnvironmentOptions {
 export interface Specification {
   environment: Environment;
   assumptions: Assumption[];
+  variableLocations: SourceLocation[];
+  instanceActions: Map<string, InstanceAction>;
+}
+
+export interface InstanceAction {
+  name: string;
+  location: SourceLocation;
 }
 
 const toValue = (value: ConfigValue): Value => {
@@ -86,6 +93,7 @@ interface LinkedModule {
   module: Module;
   constants: Declaration[];
   variables: string[];
+  variableLocations: SourceLocation[];
   visible: Symbols;
   exported: Symbols;
   modules: Map<string, LinkedModule>;
@@ -209,6 +217,7 @@ export const createEnvironment = (
   const copyCount = { value: 0 };
   const createName = (name: string) => `${name}#${copyCount.value++}`;
   const instanceChecks: InstanceCheck[] = [];
+  const instanceActions = new Map<string, InstanceAction>();
 
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
@@ -356,8 +365,12 @@ export const createEnvironment = (
         symbols.set(name, { key: instantiation.getKey(symbol.key), arity: symbol.arity });
         return;
       }
+      const key = instantiation.getQualifiedKey(symbol.key);
+      if (declarations.length > 0) {
+        instanceActions.set(key, { name: `${instance.name}!${name}`, location: instance.location });
+      }
       symbols.set(`${instance.name}!${name}`, {
-        key: instantiation.getQualifiedKey(symbol.key),
+        key,
         arity: symbol.arity + instance.params.length,
       });
     });
@@ -551,6 +564,7 @@ export const createEnvironment = (
     const extended: LinkedModule[] = [];
     const constants = [...parsed.constants];
     const variables = parsed.variables.map((variable) => variable.name);
+    const variableLocations = parsed.variables.map((variable) => variable.location);
     const addSymbols = (symbols: Symbols, isExported: boolean) =>
       symbols.forEach((symbol, name) => {
         visible.set(name, symbol);
@@ -569,7 +583,11 @@ export const createEnvironment = (
           constants.every((existing) => existing.name !== constant.name),
         ),
       );
-      variables.push(...linked.variables.filter((variable) => !variables.includes(variable)));
+      linked.variables.forEach((variable, index) => {
+        if (variables.includes(variable)) return;
+        variables.push(variable);
+        variableLocations.push(linked.variableLocations[index]);
+      });
       addSymbols(linked.exported, true);
       linked.modules.forEach((module, moduleName) => modules.set(moduleName, module));
       extended.push(linked);
@@ -663,7 +681,16 @@ export const createEnvironment = (
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });
-    const linked = { module, constants, variables, visible, exported, modules, extended };
+    const linked = {
+      module,
+      constants,
+      variables,
+      variableLocations,
+      visible,
+      exported,
+      modules,
+      extended,
+    };
     linkedList.push(linked);
     return linked;
   };
@@ -771,5 +798,10 @@ export const createEnvironment = (
       );
     }
   });
-  return { environment, assumptions };
+  return {
+    environment,
+    assumptions,
+    variableLocations: linkedRoot.variableLocations,
+    instanceActions,
+  };
 };

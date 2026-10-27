@@ -88,7 +88,7 @@ Workers run in Node, Bun, Deno, and the browser, and deduplicate states by 64-bi
 - **Configuration**: `INIT`, `NEXT`, `SPECIFICATION`, `CONSTANTS`, `INVARIANTS`, `PROPERTIES`, `CONSTRAINTS`, `ACTION_CONSTRAINTS`, `SYMMETRY`, `VIEW`, `ALIAS`, `POSTCONDITION`, `CHECK_DEADLOCK`, and `_POSSIBLE` properties
 - **Properties**: invariants, `[][A]_v`, and every temporal formula TLC accepts, checked through TLC's tableau construction under the fairness and temporal conjuncts of the specification
 - **Subexpression references**: selectors such as `F(2)!3`, `Op!<<`, `Op!>>`, `Op!:`, `Op!@`, and `Op!(x)`, labels such as `Op!lab`, and names of `THEOREM` formulas
-- **TLC semantics**: 32-bit integer overflow errors, `ENABLED`, `TLCGet` and `TLCSet` with TLC's counters and registers, and TLC's enumeration order for `CHOOSE` and quantifiers
+- **TLC semantics**: 32-bit integer overflow errors, `ENABLED`, `TLCGet` and `TLCSet` with TLC's counters, registers, and `TLCGet("spec")` record, and TLC's enumeration order for `CHOOSE` and quantifiers
 - **`STRING`, `Nat`, `Int`, and `Seq(S)`**: TLC has no Strings module. `STRING` is built in, as TLC's Java `Strings` class implements it. These sets compare only with each other and with model values, as in TLC's Java classes, and comparing one with any other set is an error
 
 `check` also accepts `_PERIODIC` and `_RL_REWARD` and, like TLC, requires each to name an operator without arguments. It does not evaluate them. TLC evaluates `_PERIODIC` on its progress interval, which is 60 seconds by default, and `_RL_REWARD` only in its reinforcement learning simulation mode.

@@ -85,6 +85,8 @@ const getRuntimeValue = (
         ["tag", "tla-ts"],
         ["calver", "0"],
       ]);
+    case "spec":
+      return runtime.getSpecification();
     case "action":
       return createRecord([
         ["name", "UnnamedAction"],
