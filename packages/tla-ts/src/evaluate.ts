@@ -125,6 +125,12 @@ export type Evaluator = (context: Context) => Value;
 
 type ArgumentBinder = (context: Context) => Binding;
 
+interface CompiledStep {
+  kind: "Field" | "Index";
+  name: string;
+  args: Evaluator[];
+}
+
 type GlobalName =
   | { kind: "Variable"; index: number }
   | { kind: "Value"; value: Value }
@@ -898,8 +904,12 @@ const callsImpureBuiltin = (expression: Expression, environment: Environment): b
   if (name !== undefined && !isLocallyResolved(expression)) {
     const definition = getDefinition(name, environment);
     if (!definition && isImpureBuiltin(name, environment)) return true;
-    if (definition && !isEvaluatedOnce(definition, environment)) {
-      if (isImpureDefinition(definition, environment)) return true;
+    if (
+      definition &&
+      !isEvaluatedOnce(definition, environment) &&
+      isImpureDefinition(definition, environment)
+    ) {
+      return true;
     }
   }
   return getChildren(expression).some((child) => callsImpureBuiltin(child, environment));
@@ -989,32 +999,24 @@ const computeIsClosedConstant = (
   if (expression.kind === "Identifier") {
     const global = findGlobalName(expression.name, environment);
     if (global?.kind === "Value") return true;
-    return (
-      global?.kind === "Definition" &&
-      global.definition.kind === "Operator" &&
-      global.definition.params.length === 0 &&
-      isConstantLevel(global.definition, environment)
-    );
+    return global?.kind === "Definition" && isEvaluatedOnce(global.definition, environment);
   }
   if (expression.kind === "Apply") {
     if (isImpureBuiltin(expression.operator, environment) || expression.operator === "~>") {
       return false;
     }
     const operator = resolveGlobalOperator(expression.operator, environment);
-    const isPure =
-      operator?.kind === "Builtin" ||
-      (operator?.kind === "Closure" &&
-        (() => {
-          const definition = environment.definitions.get(
-            environment.substitutions.get(expression.operator) ?? expression.operator,
-          );
-          return (
-            definition !== undefined &&
-            isConstantLevel(definition, environment) &&
-            !isImpureDefinition(definition, environment)
-          );
-        })());
-    if (!isPure || operator === undefined) return false;
+    if (operator?.kind !== "Builtin" && operator?.kind !== "Closure") return false;
+    if (operator.kind === "Closure") {
+      const definition = getDefinition(expression.operator, environment);
+      if (
+        !definition ||
+        !isConstantLevel(definition, environment) ||
+        isImpureDefinition(definition, environment)
+      ) {
+        return false;
+      }
+    }
     const params = operator.kind === "Closure" ? operator.params : [];
     const hasOperatorArgument = params.some((param) => param.arity > 0);
     if (hasOperatorArgument) return false;
@@ -1524,18 +1526,17 @@ const compileExcept = (
   if (isKeptLazy) keepLazy(expression.function);
   const evaluateFunction = getEvaluator(expression.function, environment);
   const updates = expression.updates.map((update) => ({
-    path: update.path.map((step) =>
+    path: update.path.map((step): CompiledStep =>
       step.kind === "Field"
-        ? { kind: "Field" as const, name: step.name, args: [] as Evaluator[] }
+        ? { kind: "Field", name: step.name, args: [] }
         : {
-            kind: "Index" as const,
+            kind: "Index",
             name: "",
             args: step.args.map((arg) => getEvaluator(arg, environment)),
           },
     ),
     value: getEvaluator(update.value, environment),
   }));
-  type CompiledStep = (typeof updates)[number]["path"][number];
   const getKey = (step: CompiledStep, context: Context) => {
     if (step.kind === "Field") return step.name;
     if (step.args.length === 1) return step.args[0](context);
@@ -1657,12 +1658,6 @@ const compileRecord = (recordFields: RecordField[], environment: Environment): E
       values.map((value) => value(context)),
     );
 };
-
-const createUnchanged = (expression: Expression, location: Expression["location"]): Expression => ({
-  kind: "Unchanged",
-  expression,
-  location,
-});
 
 const compile = (expression: Expression, environment: Environment): Evaluator => {
   const child = (node: Expression) => getEvaluator(node, environment);
@@ -1845,7 +1840,11 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "BoxAction":
     case "AngleAction": {
       const action = child(expression.action);
-      const unchanged = child(createUnchanged(expression.subscript, expression.location));
+      const unchanged = child({
+        kind: "Unchanged",
+        expression: expression.subscript,
+        location: expression.location,
+      });
       const isBox = expression.kind === "BoxAction";
       return (context) =>
         isBox
