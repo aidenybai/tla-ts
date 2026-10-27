@@ -34,12 +34,12 @@ interface Transfer {
   count: number;
 }
 
-const getBalancePlan = (sizes: number[]): Transfer[] => {
+const getBalancePlan = (sizes: number[]) => {
   const total = sizes.reduce((sum, size) => sum + size, 0);
   const average = total / sizes.length;
   if (Math.max(...sizes) - Math.min(...sizes) <= Math.max(64, average / 4)) return [];
   const targets = sizes.map(
-    (_, index) => Math.floor(total / sizes.length) + (index < total % sizes.length ? 1 : 0),
+    (_, index) => Math.floor(average) + (index < total % sizes.length ? 1 : 0),
   );
   const donors = sizes.flatMap((size, index) =>
     size > targets[index] ? [{ index, amount: size - targets[index] }] : [],
@@ -60,7 +60,7 @@ const getBalancePlan = (sizes: number[]): Transfer[] => {
   return transfers;
 };
 
-const getParentPort = async (): Promise<Port> => {
+const getParentPort = async () => {
   if (typeof (globalThis as { postMessage?: unknown }).postMessage === "function") {
     return globalThis as unknown as Port;
   }
@@ -117,11 +117,10 @@ const run = (start: StartMessage, parent: Port) => {
   const nextAction = search?.spec.next;
   if (!search || nextAction === undefined)
     return parent.postMessage({ type: "abort" } satisfies WorkerMessage);
-  const width = environment.variables.length;
   const count = start.count;
   const self = start.index;
   const canonicalize = createCanonicalizer();
-  const decode = createStateDecoder(width);
+  const decode = createStateDecoder(environment.variables.length);
   const table = createFingerprintTable();
   const known = createFingerprintTable();
   const fingerprint = new Int32Array(2);
@@ -160,10 +159,12 @@ const run = (start: StartMessage, parent: Port) => {
         if (owner === self) {
           if (!table.insert(fingerprint[0], fingerprint[1])) continue;
           if (search.findViolatedInvariant(successor.state, state)) return undefined;
-          if (search.satisfiesConstraints(successor.state, state)) {
-            next.push(successor.state);
-            newStates[origin]++;
-          } else table.remove(fingerprint[0], fingerprint[1]);
+          if (!search.satisfiesConstraints(successor.state, state)) {
+            table.remove(fingerprint[0], fingerprint[1]);
+            continue;
+          }
+          next.push(successor.state);
+          newStates[origin]++;
           continue;
         }
         if (!known.insert(fingerprint[0], fingerprint[1])) continue;
@@ -249,7 +250,7 @@ const run = (start: StartMessage, parent: Port) => {
         expanded.newStates,
       );
       if (!unmarks) return undefined;
-      send(reply.from, { phase: "sizes", level, from: self, unmarks, size: 0 }, [unmarks.buffer]);
+      send(reply.from, { phase: "sizes", level, from: self, unmarks }, [unmarks.buffer]);
     }
     const added = next.length;
     const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
