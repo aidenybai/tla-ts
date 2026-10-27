@@ -22,5 +22,17 @@
     "repository": "https://github.com/fabracht/tla-rs.git",
     "commit": "20dc20f7da178d3ab3c2b48a308270cd640fa355",
     "paths": ["test_cases"]
+  },
+  {
+    "name": "tlapm",
+    "repository": "https://github.com/tlaplus/tlapm.git",
+    "commit": "5f5037fdd061be5df4a1bd1291cb22d3f43b8f31",
+    "paths": ["library", "test", "examples"]
+  },
+  {
+    "name": "community",
+    "repository": "https://github.com/tlaplus/CommunityModules.git",
+    "commit": "1805e9d5e1cef05d74806309fb87788e69b48f26",
+    "paths": ["modules"]
   }
 ]
