@@ -8,17 +8,14 @@ import type {
   DefineStep,
   Definition,
   ExceptPathStep,
-  ExceptUpdate,
   Expression,
   Fact,
   Module,
   Instance,
-  InstanceSubstitution,
   NewSymbol,
   OperatorParam,
   Proof,
   ProofStep,
-  RecordField,
   Selector,
   SourceLocation,
   SourceRange,
@@ -34,7 +31,7 @@ interface InfixOperator {
   isAssociative: boolean;
 }
 
-const createInfix = (low: number, high: number, isAssociative: boolean): InfixOperator => ({
+const createInfix = (low: number, high: number, isAssociative: boolean) => ({
   low,
   high,
   isAssociative,
@@ -168,6 +165,9 @@ const OPERATOR_ARGUMENTS = new Set([
   ...POSTFIX_OPERATORS,
 ]);
 
+const isOperatorName = (text: string) =>
+  INFIX_OPERATORS.has(text) || POSTFIX_OPERATORS.has(text) || text === "-.";
+
 const getOperatorApplication = (
   operator: string,
   argument: Expression,
@@ -288,7 +288,7 @@ export const parseModule = (source: string): Module => {
   const tokenEnds: SourceLocation[] = [];
   const tokenRanges: SourceRange[] = [];
 
-  const getRange = (startIndex: number): SourceRange => {
+  const getRange = (startIndex: number) => {
     const endIndex = cursor.index - 1;
     const cached = startIndex === endIndex ? tokenRanges[startIndex] : undefined;
     if (cached) return cached;
@@ -322,9 +322,9 @@ export const parseModule = (source: string): Module => {
   };
 
   const describe = (token: Token) =>
-    token.kind === "End" ? "end of input" : `${JSON.stringify(token.text)}`;
+    token.kind === "End" ? "end of input" : JSON.stringify(token.text);
 
-  const createError = (message: string, token = peekRaw()) =>
+  const createError = (message: string, token: { line: number; column: number } = peekRaw()) =>
     new TlaSyntaxError(`${message} at line ${token.line}, column ${token.column}`);
 
   const isFieldName = (token: Token) => token.kind === "Identifier" || token.kind === "Keyword";
@@ -410,7 +410,7 @@ export const parseModule = (source: string): Module => {
     return { kind: "Tuple", names };
   };
 
-  const parseBounds = (): Bound[] =>
+  const parseBounds = () =>
     parseSeparated(() => {
       const patterns = parseSeparated(parsePattern);
       expect("\\in");
@@ -533,7 +533,7 @@ export const parseModule = (source: string): Module => {
       const location = getLocation(start);
       if (peek().kind === "Identifier" && (isAt("|->", 1) || isAt(":", 1))) {
         const kind = isAt("|->", 1) ? "Record" : "RecordSet";
-        const fields = parseSeparated((): RecordField => {
+        const fields = parseSeparated(() => {
           const name = expectIdentifier();
           expect(kind === "Record" ? "|->" : ":");
           return { name, value: parseExpression() };
@@ -555,7 +555,7 @@ export const parseModule = (source: string): Module => {
         return { kind: "FunctionSet", domain: expression, range, location };
       }
       if (accept("EXCEPT")) {
-        const updates = parseSeparated((): ExceptUpdate => {
+        const updates = parseSeparated(() => {
           expect("!");
           const path: ExceptPathStep[] = [];
           while (isAt(".") || isAt("[")) {
@@ -614,10 +614,9 @@ export const parseModule = (source: string): Module => {
 
   const parseTuple = (start: Token): Expression => {
     const location = getLocation(start);
-    const elements = withoutOffside(() => {
-      if (isAt(">>") || isAt(">>_")) return [];
-      return parseSeparated(() => parseExpression());
-    });
+    const elements = withoutOffside(() =>
+      isAt(">>") || isAt(">>_") ? [] : parseSeparated(() => parseExpression()),
+    );
     if (accept(">>_")) {
       if (elements.length !== 1)
         throw createError("Expected a single action inside <<A>>_v", start);
@@ -643,18 +642,16 @@ export const parseModule = (source: string): Module => {
 
   const parseCase = (start: Token): Expression => {
     const arms: CaseArm[] = [];
-    const other = { value: undefined as Expression | undefined };
     do {
       if (accept("OTHER")) {
         expect("->");
-        other.value = parseExpression();
-        break;
+        return { kind: "Case", arms, other: parseExpression(), location: getLocation(start) };
       }
       const condition = parseExpression();
       expect("->");
       arms.push({ condition, body: parseExpression() });
     } while (accept("[]"));
-    return { kind: "Case", arms, other: other.value, location: getLocation(start) };
+    return { kind: "Case", arms, other: undefined, location: getLocation(start) };
   };
 
   const isSelectorAhead = () => {
@@ -747,9 +744,7 @@ export const parseModule = (source: string): Module => {
         ? { kind: "Apply", operator, args: qualifiedArgs, location }
         : { kind: "Identifier", name: operator, location };
     }
-    const isOperatorName =
-      INFIX_OPERATORS.has(token.text) || POSTFIX_OPERATORS.has(token.text) || token.text === "-.";
-    if (token.kind === "Operator" && isOperatorName && isAt("("))
+    if (token.kind === "Operator" && isOperatorName(token.text) && isAt("("))
       return { kind: "Apply", operator: token.text, args: parseArguments(), location };
     switch (token.text) {
       case "(": {
@@ -936,7 +931,7 @@ export const parseModule = (source: string): Module => {
     return state.left;
   };
 
-  const parseParams = (): OperatorParam[] => {
+  const parseParams = () => {
     if (!accept("(")) return [];
     const params = parseDeclarations();
     expect(")");
@@ -959,29 +954,30 @@ export const parseModule = (source: string): Module => {
   const parseDefinitionUnit = (isLocal: boolean): Definition | Instance => {
     const token = peek();
     const location = getLocation(token);
+    const parseOperator = (name: string, params: OperatorParam[]): Definition => ({
+      kind: "Operator",
+      name,
+      params,
+      ...parseBody(),
+      isLocal,
+      isRecursive: isRecursiveName(name),
+      location,
+    });
     if (
       token.kind === "Identifier" &&
       peek(1).kind === "Operator" &&
-      INFIX_OPERATORS.has(peek(1).text)
+      INFIX_OPERATORS.has(peek(1).text) &&
+      peek(2).kind === "Identifier" &&
+      isAt("==", 3)
     ) {
-      if (peek(2).kind === "Identifier" && isAt("==", 3)) {
-        const left = expectIdentifier();
-        const operator = advance().text;
-        const right = expectIdentifier();
-        expect("==");
-        return {
-          kind: "Operator",
-          name: operator,
-          params: [
-            { name: left, arity: 0 },
-            { name: right, arity: 0 },
-          ],
-          ...parseBody(),
-          isLocal,
-          isRecursive: isRecursiveName(operator),
-          location,
-        };
-      }
+      const left = expectIdentifier();
+      const operator = advance().text;
+      const right = expectIdentifier();
+      expect("==");
+      return parseOperator(operator, [
+        { name: left, arity: 0 },
+        { name: right, arity: 0 },
+      ]);
     }
     const isPrefixDefinition = token.kind === "Operator" && token.text === "-.";
     const isPostfixDefinition =
@@ -991,15 +987,7 @@ export const parseModule = (source: string): Module => {
       cursor.index += isPrefixDefinition ? 1 : 2;
       const param = isPrefixDefinition ? expectIdentifier() : token.text;
       expect("==");
-      return {
-        kind: "Operator",
-        name: operator,
-        params: [{ name: param, arity: 0 }],
-        ...parseBody(),
-        isLocal,
-        isRecursive: isRecursiveName(operator),
-        location,
-      };
+      return parseOperator(operator, [{ name: param, arity: 0 }]);
     }
     const name = expectIdentifier();
     if (accept("[")) {
@@ -1019,15 +1007,7 @@ export const parseModule = (source: string): Module => {
     const params = parseParams();
     expect("==");
     if (isAt("INSTANCE")) return parseInstance(name, params, isLocal, location);
-    return {
-      kind: "Operator",
-      name,
-      params,
-      ...parseBody(),
-      isLocal,
-      isRecursive: isRecursiveName(name),
-      location,
-    };
+    return parseOperator(name, params);
   };
 
   const parseInstance = (
@@ -1039,7 +1019,7 @@ export const parseModule = (source: string): Module => {
     expect("INSTANCE");
     const module = expectIdentifier();
     const substitutions = accept("WITH")
-      ? parseSeparated((): InstanceSubstitution => {
+      ? parseSeparated(() => {
           const target = advance().text;
           expect("<-");
           return { name: target, expression: parseArgument() };
@@ -1132,7 +1112,7 @@ export const parseModule = (source: string): Module => {
     return `<${current < 0 && outer !== undefined ? outer : current}>${label}`;
   };
 
-  const beginsProof = (token: Token) => {
+  const isProofStart = (token: Token) => {
     if (token.kind === "Keyword") return PROOF_STARTS.has(token.text);
     if (token.kind !== "Step") return false;
     if (token.text[1] === "*") return proofLevels.length === 0;
@@ -1185,11 +1165,11 @@ export const parseModule = (source: string): Module => {
     const start = cursor.index;
     factStart.index = start;
     const token = peek();
-    const isOperatorName =
+    if (
       token.kind === "Operator" &&
       !EXPRESSION_PREFIXES.has(token.text) &&
-      (INFIX_OPERATORS.has(token.text) || POSTFIX_OPERATORS.has(token.text) || token.text === "-.");
-    if (isOperatorName) {
+      isOperatorName(token.text)
+    ) {
       cursor.index++;
       return withRange(
         { kind: "OperatorReference", operator: token.text, location: getLocation(token) },
@@ -1205,7 +1185,7 @@ export const parseModule = (source: string): Module => {
 
   const declareProofSymbol = (name: string) => proofScopes[proofScopes.length - 1]?.add(name);
 
-  const withProofScope = <T>(parse: () => T) => {
+  const withProofScope = <Result>(parse: () => Result) => {
     proofScopes.push(new Set());
     const result = parse();
     proofScopes.pop();
@@ -1224,9 +1204,7 @@ export const parseModule = (source: string): Module => {
     const defs = parseSeparated(parseFact);
     const invalid = defs.find((def) => def.kind === "Identifier" && isDeclaredSymbol(def.name));
     if (invalid) {
-      throw new TlaSyntaxError(
-        `DEF clause entry should describe a defined operator at line ${invalid.location.line}, column ${invalid.location.column}`,
-      );
+      throw createError("DEF clause entry should describe a defined operator", invalid.location);
     }
     return defs;
   };
@@ -1248,8 +1226,9 @@ export const parseModule = (source: string): Module => {
     };
     const invalid = use.kind === "Hide" ? use.facts.find((fact) => !isHideFact(fact)) : undefined;
     if (invalid) {
-      throw new TlaSyntaxError(
-        `The only expression allowed as a fact in a HIDE is the name of a theorem, assumption, or step at line ${invalid.location.line}, column ${invalid.location.column}`,
+      throw createError(
+        "The only expression allowed as a fact in a HIDE is the name of a theorem, assumption, or step",
+        invalid.location,
       );
     }
     return withRange(use, start);
@@ -1295,7 +1274,7 @@ export const parseModule = (source: string): Module => {
   const parseAssumeProve = (): AssumeProve => {
     const start = cursor.index;
     const location = getLocation(expect("ASSUME"));
-    const assumptions = parseSeparated((): Expression | NewSymbol | AssumeProve => {
+    const assumptions = parseSeparated(() => {
       if (isAt("ASSUME")) return withProofScope(parseAssumeProve);
       if (peek().kind === "Keyword" && NEW_SYMBOL_STARTS.has(peek().text)) return parseNewSymbol();
       return parseExpression();
@@ -1358,10 +1337,9 @@ export const parseModule = (source: string): Module => {
       return { kind: "Pick", names, bounds, body: parseExpression() };
     }
     if (accept("CASE")) return { kind: "Case", expression: parseExpression() };
-    const isSuffices = accept("SUFFICES");
     return {
       kind: "Assert",
-      isSuffices,
+      isSuffices: accept("SUFFICES"),
       statement: isAt("ASSUME") ? parseAssumeProve() : parseExpression(),
     };
   };
@@ -1389,7 +1367,7 @@ export const parseModule = (source: string): Module => {
     const scope = new Set<string>();
     proofScopes.push(scope);
     const body: StepBody = accept("QED") ? { kind: "Qed" } : parseStepBody();
-    const hasProof = beginsProof(peek());
+    const hasProof = isProofStart(peek());
     if (hasProof && !PROVABLE_STEPS.has(body.kind)) {
       throw createError("Proof of a step that does not take a proof");
     }
@@ -1440,7 +1418,7 @@ export const parseModule = (source: string): Module => {
     }
     const parsed = withProofScope(() => {
       const statement = isAt("ASSUME") ? parseAssumeProve() : parseExpression();
-      return { statement, proof: beginsProof(peek()) ? parseProof() : undefined };
+      return { statement, proof: isProofStart(peek()) ? parseProof() : undefined };
     });
     const statement = parsed.statement;
     module.theorems.push(
@@ -1513,7 +1491,9 @@ export const parseModule = (source: string): Module => {
         if (isAt("MODULE", 1)) {
           module.modules.push(parseModuleBody());
           expect("====");
-        } else advance();
+          continue;
+        }
+        advance();
         continue;
       }
       switch (token.text) {
