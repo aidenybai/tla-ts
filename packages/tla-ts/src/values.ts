@@ -175,6 +175,16 @@ export const getWrittenPairs = (fn: FunctionValue): [Value, Value][] => {
 export const createWrittenRecord = (names: Value[], range: Value[], writtenNames: Value[]) =>
   setWrittenOrder(createSortedFunction(names, range), writtenNames);
 
+// TLC sorts a value it compares even with itself, and every value inside it, so a value it has
+// hashed or fingerprinted is already sorted.
+const forgetWrittenOrder = (value: Value): void => {
+  if (typeof value !== "object" || (value.kind !== "Function" && value.kind !== "Set")) return;
+  if (value.hash !== 0 || value.fingerprint !== 0) return;
+  if (value.kind === "Set") return value.elements.forEach(forgetWrittenOrder);
+  writtenOrders.delete(value);
+  value.range.forEach(forgetWrittenOrder);
+};
+
 const isRecordDomain = (domain: Value[]) => domain.every((key) => typeof key === "string");
 
 // TLC compares a record only with another record, so comparing one with a function of another size
@@ -325,7 +335,10 @@ const compareAny = (other: Value): never => {
 };
 
 export const compareValues = (left: Value, right: Value): number => {
-  if (left === right) return left === ANY_SET ? compareAny(left) : 0;
+  if (left === right) {
+    if (writtenOrderUse.isUsed) forgetWrittenOrder(left);
+    return left === ANY_SET ? compareAny(left) : 0;
+  }
   if (typeof left === "object" && typeof right === "object") {
     const leftKind = left.kind;
     const rightKind = right.kind;
@@ -389,7 +402,10 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
 });
 
 export const valuesEqual = (left: Value, right: Value): boolean => {
-  if (left === right) return left !== ANY_SET || compareAny(left);
+  if (left === right) {
+    if (writtenOrderUse.isUsed) forgetWrittenOrder(left);
+    return left !== ANY_SET || compareAny(left);
+  }
   if (typeof left !== "object" || typeof right !== "object") {
     if (typeof left === typeof right) return false;
     if (typeof left === "object" || typeof right === "object") {

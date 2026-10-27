@@ -779,6 +779,17 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("sorts a record TLC compares with itself and the records inside it", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nASSUME PrintT([fld2 |-> 0])\nASSUME PrintT(ToString(LET r == <<[fld1 |-> 1, fld2 |-> 2]>> IN IF r = r THEN r ELSE r))\n====",
+      config: "",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints.slice(1)).toEqual(['"<<[fld2 |-> 2, fld1 |-> 1]>>"']);
+  });
+
   it("sorts a TLCEval argument only outside an instance that substitutes", async () => {
     const inner =
       '---- MODULE Inner ----\nEXTENDS TLC\nCONSTANT K\nMixed == 1 \\in TLCEval({1, "a"})\n====';
