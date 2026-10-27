@@ -755,6 +755,15 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("checks membership in a set enumeration TLC can't sort element by element", async () => {
+    const result = await checkModule(
+      'ASSUME 1 \\in {1, "a"}\nASSUME [e \\in {1, "a"} |-> e][1] = 1\nASSUME "a" \\in {1, "a"}',
+    );
+    expect(result.violation?.message).toBe(
+      'Attempted to check equality of integer 1 with non-integer:\n"a"',
+    );
+  });
+
   it("shows a record in the order the spec writes it until TLC sorts it", async () => {
     const prints: string[] = [];
     await check({
