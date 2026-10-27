@@ -57,6 +57,7 @@ const printResult = (result: CheckResult) => {
       "liveness-violation": `Error: Temporal property ${result.violation.name} was violated.`,
       "postcondition-violation": `Error: ${result.violation.message ?? `Postcondition ${result.violation.name} is false.`}`,
     }[result.status];
+    if (result.violation.counts) console.log(result.violation.counts);
     console.log(headline);
     if (result.violation.trace.length > 0) console.log("Error: The behavior up to this point is:");
     result.violation.trace.forEach((step, index) => {
@@ -73,6 +74,9 @@ const printResult = (result: CheckResult) => {
         isStuttering ? `State ${loopStart + 2}: Stuttering` : `Back to state ${loopStart + 1}`,
       );
     }
+    const unwitnessed = result.violation.unwitnessed;
+    if (unwitnessed?.counts) console.log(unwitnessed.counts);
+    if (unwitnessed) console.log(`Error: ${unwitnessed.message}`);
   } else {
     console.log("Model checking completed. No error has been found.");
   }
