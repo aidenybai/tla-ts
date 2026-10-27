@@ -43,7 +43,6 @@ import {
   getUnique,
   type Counter,
   type Proof,
-  type QedStep,
   type Step,
   type StepNumber,
   type UseDef,
@@ -262,8 +261,8 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
   const located = (core: ExprCore, location: Locus | undefined): Expr =>
     location ? { ...core, location } : core;
 
-  const getOperator = (name: string, location: Locus | undefined, isPrefix = false): Expr => {
-    const canonical = getCanonicalName(name, isPrefix);
+  const getOperator = (name: string, location: Locus | undefined): Expr => {
+    const canonical = getCanonicalName(name);
     const builtin = BUILTINS[canonical];
     return located(
       builtin ? { kind: "Internal", builtin } : { kind: "Opaque", name: canonical },
@@ -421,24 +420,10 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         }
         const args = expression.args.map(recurse);
         const operator = lookupOperator(expression.operator);
-        if (operator.fixity !== "Nonfix" || expression.operator === "-") {
+        if (operator.fixity !== "Nonfix") {
           return located(
-            {
-              kind: "Apply",
-              operator: getOperator(expression.operator, undefined, expression.operator === "-."),
-              args,
-            },
+            { kind: "Apply", operator: getOperator(expression.operator, undefined), args },
             getOperatorLocus(args, operator.fixity),
-          );
-        }
-        if (
-          expression.operator === "SUBSET" ||
-          expression.operator === "UNION" ||
-          expression.operator === "DOMAIN"
-        ) {
-          return located(
-            { kind: "Apply", operator: { kind: "Internal", builtin: expression.operator }, args },
-            getOperatorLocus(args, "Prefix"),
           );
         }
         return getName(expression.operator, args, location, expression.argumentCounts);
@@ -943,19 +928,15 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         // A <*> first step takes the enclosing level only after PROOF, and the top level
         // always counts as PROOF.
         const stepLevel = getTokenLevel(proof.steps[0]) ?? level;
-        const steps: Step[] = [];
-        let qed: QedStep | undefined;
-        for (const step of proof.steps) {
-          const number = getStepNumber(step, stepLevel);
-          const head = getRangeLocus(source.file, step.head);
-          if (step.body.kind === "Qed") {
-            const qedProof = convertProof(step.proof, stepLevel + 1, head);
-            qed = { proof: qedProof, location: mergeLoci(head, qedProof.location), step: number };
-            continue;
-          }
-          steps.push(convertStep(step, number, head, stepLevel));
-        }
-        if (!qed) throw new TlaUnsupportedError("Proof without a QED step");
+        // The parser ends the steps at the first QED.
+        const steps = proof.steps
+          .slice(0, -1)
+          .map((step) => convertStep(step, getStepNumber(step, stepLevel), stepLevel));
+        const last = proof.steps[proof.steps.length - 1];
+        const number = getStepNumber(last, stepLevel);
+        const head = getRangeLocus(source.file, last.head);
+        const qedProof = convertProof(last.proof, stepLevel + 1, head);
+        const qed = { proof: qedProof, location: mergeLoci(head, qedProof.location), step: number };
         const location = steps.reduce<Locus | undefined>(
           (merged, step) => mergeLoci(merged, step.location),
           qed.location,
@@ -973,7 +954,8 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
       use.defs.length > 0 ? getLocus(use.defs[use.defs.length - 1].location) : undefined,
     );
 
-  const convertStep = (step: ProofStep, number: StepNumber, head: Locus, level: number): Step => {
+  const convertStep = (step: ProofStep, number: StepNumber, level: number): Step => {
+    const head = getRangeLocus(source.file, step.head);
     const body = step.body;
     const withProof = (make: (proof: Proof) => Step): Step => {
       const proof = convertProof(step.proof, level + 1, head);

@@ -354,7 +354,8 @@ const LEVEL_NAMES = {
 };
 
 // hyps names the indices beyond the printer's own context, as the hypothesis deque does in E_fmt.
-const createPrinter = (context: Context, hyps: Hyp[] = []) => {
+const createPrinter = (hyps: Hyp[] = []) => {
+  const context = createContext();
   const printExpr = (expression: Expr): Doc => printMinimal(formatExpr(expression));
 
   const printLambda = (params: Param[], body: Expr) =>
@@ -897,9 +898,9 @@ const createPrinter = (context: Context, hyps: Hyp[] = []) => {
 };
 
 export const printExpression = (hyps: Hyp[], expression: Expr) =>
-  createPrinter(createContext(), hyps).printExpr(expression);
+  createPrinter(hyps).printExpr(expression);
 
 export const formatObligation = (sequent: Sequent) => {
-  const printer = createPrinter(createContext());
+  const printer = createPrinter();
   return renderDoc(format("@[<b0>%a@]", printer.printSequent(sequent))).trimEnd();
 };

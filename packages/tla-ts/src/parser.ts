@@ -1451,17 +1451,12 @@ const parse = (source: string, isTlapm: boolean): Module => {
     return withRange({ ...step, body, head, proof }, start);
   };
 
-  const getTokenRange = (token: Token): SourceRange => ({
-    module: openModules[openModules.length - 1].name,
-    start: getLocation(token),
-    end: { line: token.line, column: token.endColumn },
-  });
-
   const parseProofBody = (): Proof => {
     const location = getLocation(peek());
     if (isAt("BY") || (isAt("PROOF") && isAt("BY", 1))) {
       accept("PROOF");
-      const keyword = getTokenRange(advance());
+      advance();
+      const keyword = getRange(cursor.index - 1);
       return { kind: "By", isOnly: accept("ONLY"), ...parseFacts(), keyword, location };
     }
     const terminal = peek(isAt("PROOF") ? 1 : 0);
@@ -1470,13 +1465,14 @@ const parse = (source: string, isTlapm: boolean): Module => {
       (terminal.text === "OBVIOUS" || terminal.text === "OMITTED")
     ) {
       accept("PROOF");
-      const keyword = getTokenRange(advance());
+      advance();
+      const keyword = getRange(cursor.index - 1);
       return { kind: terminal.text === "OBVIOUS" ? "Obvious" : "Omitted", keyword, location };
     }
-    const isKeyword = accept("PROOF");
+    accept("PROOF");
     const steps = [parseStep()];
     while (steps[steps.length - 1].body.kind !== "Qed") steps.push(parseStep());
-    return { kind: "Steps", level: getProofLevel(), steps, isKeyword, location };
+    return { kind: "Steps", level: getProofLevel(), steps, location };
   };
 
   const parseProof = (): Proof => {
@@ -1633,24 +1629,19 @@ const parse = (source: string, isTlapm: boolean): Module => {
           advance();
           module.units.push({ kind: "Recursive", declarations: declareRecursive() });
           continue;
-        case "INSTANCE": {
-          const instance = withRange(
-            parseInstance(undefined, [], false, getLocation(token)),
-            tokenIndex,
+        case "INSTANCE":
+          addDefinitionUnit(
+            module,
+            withRange(parseInstance(undefined, [], false, getLocation(token)), tokenIndex),
           );
-          module.instances.push(instance);
-          module.units.push({ kind: "Instance", instance });
           continue;
-        }
         case "LOCAL": {
           advance();
           if (isAt("INSTANCE")) {
-            const instance = withRange(
-              parseInstance(undefined, [], true, getLocation(token)),
-              tokenIndex,
+            addDefinitionUnit(
+              module,
+              withRange(parseInstance(undefined, [], true, getLocation(token)), tokenIndex),
             );
-            module.instances.push(instance);
-            module.units.push({ kind: "Instance", instance });
             continue;
           }
           addDefinitionUnit(module, parseDefinition(true));

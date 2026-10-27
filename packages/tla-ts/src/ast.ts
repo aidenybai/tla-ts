@@ -403,8 +403,7 @@ export interface UseOrHide {
   location: SourceLocation;
 }
 
-// keyword is the range of the BY, OBVIOUS, or OMITTED token, and isKeyword records a PROOF keyword
-// before the first step.
+// keyword is the range of the BY, OBVIOUS, or OMITTED token.
 export type Proof =
   | { kind: "Obvious" | "Omitted"; keyword: SourceRange; location: SourceLocation }
   | {
@@ -419,7 +418,6 @@ export type Proof =
       kind: "Steps";
       level: number;
       steps: ProofStep[];
-      isKeyword: boolean;
       location: SourceLocation;
     };
 
