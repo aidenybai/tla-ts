@@ -567,6 +567,33 @@ describe("evaluation errors match TLC", () => {
         "The second argument of SelectSeq should be a operator, but instead it is:\n1",
       ],
       ["Cardinality(Nat) = 0", "Attempted to compute cardinality of the value\nNat"],
+      ...[
+        ['"a" + 1 = 0', "Plus", "StringValue"],
+        ['1 \\div "a" = 0', "Divide", "StringValue"],
+        ["{1} * 2 = 0", "Times", "SetEnumValue"],
+        ["2 % <<1>> = 0", "Mod", "TupleValue"],
+        ["2 ^ [a |-> 1] = 0", "Expt", "RecordValue"],
+        ["1 - TRUE = 0", "Minus", "BoolValue"],
+        ["Nat + 1 = 0", "Plus", "UserValue"],
+        ["[{1} -> {1}] + 1 = 0", "Plus", "SetOfFcnsValue"],
+        ["({1} \\X {1}) + 1 = 0", "Plus", "SetOfTuplesValue"],
+        ["[e \\in Nat |-> e] + 1 = 0", "Plus", "FcnLambdaValue"],
+      ].map((item) => [
+        item[0],
+        `Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.Integers.${item[1]}(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.${item[2]} to tlc2.value.impl.IntValue`,
+      ]),
+      [
+        '1 .. "a" = {}',
+        "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntervalValue tlc2.module.Integers.DotDot(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue",
+      ],
+      [
+        '-"a" = 0',
+        "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.Integers.Neg(tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue",
+      ],
+      [
+        'IsFiniteSet("a")',
+        'Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to check if the string "a" is a finite set.',
+      ],
       ['"a" \\in Nat', 'Attempted to check if the value:\n"a"\nis an element of Nat.'],
       ['"a" \\in 1..2', 'Attempted to check if the value:\n"a"\nis in the integer interval 1..2'],
       ["1 \\in TRUE", "Attempted to check if the value:\n1\nis an element of the boolean TRUE"],
@@ -577,6 +604,12 @@ describe("evaluation errors match TLC", () => {
       cases.map(async (item) => (await checkModule(`ASSUME ${item[0]}`)).violation?.message),
     );
     expect(messages).toEqual(cases.map((item) => item[1]));
+  });
+
+  it("treats a function as a finite set like TLC", async () => {
+    expect((await checkModule("ASSUME IsFiniteSet(<<1>>) /\\ IsFiniteSet([a |-> 1])")).status).toBe(
+      "success",
+    );
   });
 
   it("reports an overflowing cardinality without enumerating the set", async () => {
