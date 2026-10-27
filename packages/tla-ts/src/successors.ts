@@ -769,12 +769,16 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
   return found.value;
 };
 
-export const getInitialStates = (expression: Expression, environment: Environment): Value[][] => {
+export const getInitialStates = (
+  expression: Expression,
+  environment: Environment,
+  scope?: Scope,
+): Value[][] => {
   const states: Value[][] = [];
   const run: Run = { environment, isInit: true, current: undefined };
   getRunner(expression, environment, true)(
     run,
-    undefined,
+    scope,
     getEmptyState(environment),
     undefined,
     false,
@@ -799,12 +803,13 @@ export const getSuccessors = (
   expression: Expression,
   state: Value[],
   environment: Environment,
+  scope?: Scope,
 ): Successor[] => {
   const successors: Successor[] = [];
   const run: Run = { environment, isInit: false, current: state };
   getRunner(expression, environment, false)(
     run,
-    undefined,
+    scope,
     getEmptyState(environment),
     undefined,
     false,

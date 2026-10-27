@@ -143,7 +143,7 @@ const run = (start: StartMessage, parent: Port) => {
     }));
     const statistics = { generated: 0 };
     for (const state of states) {
-      const successors = getSuccessors(nextAction, state, environment);
+      const successors = getSuccessors(nextAction, state, environment, search.spec.scope);
       statistics.generated += successors.length;
       if (successors.length === 0 && start.config.checkDeadlock) return undefined;
       for (const successor of successors) {

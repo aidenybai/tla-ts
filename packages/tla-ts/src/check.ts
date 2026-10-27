@@ -2,7 +2,7 @@ import type { Assumption, Expression, SourceLocation } from "./ast";
 import { parseConfig, type ConfigValue, type ModelConfig } from "./config";
 import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
-import { TlaConfigError, TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import { TlaConfigError, TlaEvaluationError } from "./errors";
 import { EXIT_STATUS, setExitCode, setNextStatePhase, withLivenessExitCode } from "./exit-codes";
 import {
   evaluate,
@@ -21,7 +21,6 @@ import {
   expandTemporal,
   getLevel,
   TEMPORAL_LEVEL,
-  toUnscopedExpression,
   type LiveSuccessor,
   type ScopedExpression,
   type TemporalProperty,
@@ -115,6 +114,7 @@ export interface ActionProperty {
 export interface Specification {
   init: Expression | undefined;
   next: Expression | undefined;
+  scope: Scope | undefined;
   temporals: ScopedExpression[];
 }
 
@@ -225,27 +225,24 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
     return {
       init: getOperator(config.init, "initial predicate"),
       next: getOperator(config.next, "next state action"),
+      scope: undefined,
       temporals: [],
     };
   }
-  const initConjuncts: Expression[] = [];
-  const nextActions: Expression[] = [];
+  const initConjuncts: ScopedExpression[] = [];
+  const nextActions: ScopedExpression[] = [];
   const temporals: ScopedExpression[] = [];
   const body = getDefinitionBody(config.specification, environment);
-  const getUnscoped = (expression: Expression, scope: Scope | undefined) => {
-    const unscoped = toUnscopedExpression(expression, scope);
-    if (!unscoped) {
-      throw new TlaUnsupportedError(
-        `The specification ${config.specification} has an initial predicate or next-state relation inside a quantified formula`,
-      );
-    }
-    return unscoped;
-  };
-  expandTemporal(body, undefined, environment).forEach((item) => {
+  expandTemporal(body, undefined, environment, false).forEach((item) => {
     const conjunct = item.expression;
     if (isConstantTrue(item, environment, "spec")) return;
+    if (conjunct.kind === "UnboundedQuantifier" && conjunct.isTemporal) {
+      throw new TlaConfigError(
+        "TLC does not support temporal existential, nor universal, quantification over state variables",
+      );
+    }
     if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
-      nextActions.push(getUnscoped(conjunct.expression.action, item.scope));
+      nextActions.push({ expression: conjunct.expression.action, scope: item.scope });
       return;
     }
     if (
@@ -266,19 +263,49 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
         `TLC cannot handle the action-level conjunct of the specification ${config.specification}`,
       );
     }
-    initConjuncts.push(getUnscoped(conjunct, item.scope));
+    initConjuncts.push(item);
   });
   if (nextActions.length > 1) {
     throw new TlaConfigError(
       `The specification ${config.specification} must contain at most one [][Next]_vars`,
     );
   }
+  const items = [...initConjuncts, ...nextActions];
+  const getName = (index: number) => `$specification${index}`;
+  const scope = items.reduce<Scope | undefined>(
+    (parent, item, index) =>
+      item.scope === undefined
+        ? parent
+        : {
+            name: getName(index),
+            binding: {
+              kind: "Thunk",
+              expression: item.expression,
+              scope: item.scope,
+              state: undefined,
+              next: undefined,
+              cache: undefined,
+            },
+            parent,
+          },
+    undefined,
+  );
+  const getReference = (item: ScopedExpression, index: number): Expression =>
+    item.scope === undefined
+      ? item.expression
+      : {
+          kind: "Identifier",
+          name: getName(index),
+          location: item.expression.location,
+          resolution: { kind: "Local" },
+        };
   return {
     init:
       initConjuncts.length === 0
         ? undefined
-        : { kind: "And", operands: initConjuncts, location: START },
-    next: nextActions[0],
+        : { kind: "And", operands: initConjuncts.map(getReference), location: START },
+    next: nextActions.length === 0 ? undefined : getReference(nextActions[0], initConjuncts.length),
+    scope,
     temporals,
   };
 };
@@ -292,7 +319,7 @@ export const getProperties = (config: ModelConfig, environment: Environment): Pr
   };
   config.properties.forEach((name) => {
     const body = getDefinitionBody(name, environment);
-    expandTemporal(body, undefined, environment).forEach((item) => {
+    expandTemporal(body, undefined, environment, true).forEach((item) => {
       const conjunct = item.expression;
       if (isConstantTrue(item, environment, "property")) return;
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
@@ -765,9 +792,9 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     }));
   };
   const getSpecInitialStates = () =>
-    spec.init === undefined ? [] : getInitialStates(spec.init, environment);
+    spec.init === undefined ? [] : getInitialStates(spec.init, environment, spec.scope);
   const getTraceSuccessors = (state: Value[]) =>
-    spec.next === undefined ? [] : getSuccessors(spec.next, state, environment);
+    spec.next === undefined ? [] : getSuccessors(spec.next, state, environment, spec.scope);
   const hasFingerprint = (state: Value[], index: number) =>
     isSameState(getFingerprintState(state), fingerprintStates[index]);
   const findSuccessorWithFingerprint = (state: Value[], index: number) =>
@@ -940,7 +967,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     current.candidate = undefined;
     runtime.queueSize = states.length - index - 1;
     current.isExpanding = true;
-    const successors = getSuccessors(next, state, environment);
+    const successors = getSuccessors(next, state, environment, spec.scope);
     current.isExpanding = false;
     if (successors.length === 0 && config.checkDeadlock) {
       // TLC prints a deadlocked initial state without evaluating the alias.
