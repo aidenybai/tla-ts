@@ -860,7 +860,7 @@ export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue
   }
 };
 
-const EMPTY_SET = createSortedSet([]);
+export const EMPTY_SET = createSortedSet([]);
 
 export const differenceSorted = (left: SetValue, right: SetValue): SetValue => {
   if (left.elements.length === 0 || right.elements.length === 0) return left;
