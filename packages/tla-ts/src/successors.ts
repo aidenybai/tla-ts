@@ -604,6 +604,100 @@ const compileIdentifier = (
   };
 };
 
+// A PlusCal action starts with a guard such as pc[self] = "L1", and a process is a disjunction of
+// its actions. The labels an expression requires of one variable at one bound name let a
+// disjunction skip the operands whose guard is false without evaluating them.
+interface LabelGuard {
+  variable: number;
+  argument: string;
+  labels: Set<string>;
+}
+
+const getLabelGuard = (
+  expression: Expression,
+  environment: Environment,
+  visited: Set<Expression>,
+): LabelGuard | undefined => {
+  if (visited.has(expression)) return undefined;
+  visited.add(expression);
+  if (expression.kind === "And") {
+    const first = expression.operands[0];
+    if (first.kind !== "Apply" || first.operator !== "=" || isLocallyResolved(first)) {
+      return undefined;
+    }
+    const target = first.args[0];
+    const label = first.args[1];
+    if (target.kind !== "FunctionApplication" || label.kind !== "String") return undefined;
+    const argument = target.args.length === 1 ? target.args[0] : undefined;
+    if (argument?.kind !== "Identifier" || !isLocallyResolved(argument)) return undefined;
+    const variable = getStaticVariableIndex(target.function, environment, false);
+    if (variable === undefined) return undefined;
+    return { variable, argument: argument.name, labels: new Set([label.value]) };
+  }
+  if (expression.kind === "Or") {
+    const guards = expression.operands.map((operand) =>
+      getLabelGuard(operand, environment, visited),
+    );
+    const first = guards[0];
+    const isShared = guards.every(
+      (guard) =>
+        guard !== undefined &&
+        guard.variable === first?.variable &&
+        guard.argument === first.argument,
+    );
+    if (!first || !isShared) return undefined;
+    const labels = new Set(guards.flatMap((guard) => [...(guard?.labels ?? [])]));
+    return { variable: first.variable, argument: first.argument, labels };
+  }
+  if (expression.kind !== "Apply" || isLocallyResolved(expression)) return undefined;
+  const closure = resolveGlobalOperator(expression.operator, environment);
+  if (closure?.kind !== "Closure" || closure.scope !== undefined) return undefined;
+  const guard = getLabelGuard(closure.body, environment, visited);
+  const position = closure.params.findIndex(
+    (param) => param.arity === 0 && param.name === guard?.argument,
+  );
+  const argument = expression.args[position];
+  if (!guard || argument?.kind !== "Identifier" || !isLocallyResolved(argument)) {
+    return undefined;
+  }
+  return { variable: guard.variable, argument: argument.name, labels: guard.labels };
+};
+
+const getLabel = (run: Run, scope: Scope | undefined, guard: LabelGuard) => {
+  const binding = lookupScope(scope, guard.argument);
+  const fn = run.current?.[guard.variable];
+  if (binding?.kind !== "Value" || typeof fn !== "object" || fn.kind !== "Function") {
+    return undefined;
+  }
+  const position = fn.domain.indexOf(binding.value);
+  const label = position === -1 ? undefined : fn.range[position];
+  return typeof label === "string" ? label : undefined;
+};
+
+const compileDisjunction = (
+  operands: Expression[],
+  environment: Environment,
+  isInit: boolean,
+): Runner => {
+  const runners = operands.map((operand) => getRunner(operand, environment, isInit));
+  const guards = isInit
+    ? []
+    : operands.map((operand) => getLabelGuard(operand, environment, new Set()));
+  const dispatch = guards.find((guard) => guard !== undefined);
+  const labels = guards.map((guard) =>
+    guard?.variable === dispatch?.variable && guard?.argument === dispatch?.argument
+      ? guard?.labels
+      : undefined,
+  );
+  return (run, scope, partial, action, isFixed, onComplete) => {
+    const label = dispatch && getLabel(run, scope, dispatch);
+    for (let index = 0; index < runners.length && !run.isStopped; index++) {
+      if (label !== undefined && labels[index]?.has(label) === false) continue;
+      runners[index](run, scope, partial, action, isFixed, onComplete);
+    }
+  };
+};
+
 const compileAction = (
   expression: Expression,
   environment: Environment,
@@ -613,14 +707,8 @@ const compileAction = (
   switch (expression.kind) {
     case "And":
       return compileConjunction(expression.operands, environment, isInit);
-    case "Or": {
-      const operands = expression.operands.map(child);
-      return (run, scope, partial, action, isFixed, onComplete) => {
-        for (let index = 0; index < operands.length && !run.isStopped; index++) {
-          operands[index](run, scope, partial, action, isFixed, onComplete);
-        }
-      };
-    }
+    case "Or":
+      return compileDisjunction(expression.operands, environment, isInit);
     case "Exists": {
       const body = child(expression.body);
       const bound = expression.bounds[0];
