@@ -64,10 +64,31 @@ export const findModules = (): CorpusModule[] =>
       .map((path) => ({ id: `${corpus.name}/${relative(root, path)}`, path }));
   });
 
-// The libraries that modules in the corpora extend: TLAPS and the Community Modules.
-export const LIBRARY_DIRECTORIES = [
-  join(CORPORA_DIRECTORY, "tlapm/library"),
-  join(CORPORA_DIRECTORY, "community/modules"),
-];
+// tla2tools.jar ships these, and SANY reads a library's own copy of one, such as the Bags module in
+// TLAPS, only when that library comes first on its path.
+const STANDARD_MODULES = new Set([
+  "Bags",
+  "FiniteSets",
+  "Integers",
+  "Json",
+  "Naturals",
+  "Randomization",
+  "RealTime",
+  "Reals",
+  "Sequences",
+  "TLC",
+  "TLCExt",
+  "Toolbox",
+]);
+
+// The modules that the corpora extend from TLAPS and the Community Modules, by name.
+export const getLibraryModules = () =>
+  new Map(
+    ["tlapm/library", "community/modules"]
+      .flatMap((library) => listFiles(join(CORPORA_DIRECTORY, library)))
+      .filter((path) => path.endsWith(".tla") && !STANDARD_MODULES.has(basename(path, ".tla")))
+      .map((path): [string, string] => [basename(path, ".tla"), path])
+      .reverse(),
+  );
 
 export const getModuleName = (specPath: string) => basename(specPath, ".tla");
