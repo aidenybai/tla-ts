@@ -1121,6 +1121,15 @@ describe("name resolution matches SANY", () => {
     await expect(checkSource(source)).rejects.toThrow(TlaSyntaxError);
   });
 
+  it("names an unknown identifier and an unknown operator symbol like SANY", async () => {
+    await expect(checkSource("f == g")).rejects.toThrow(
+      "Unknown operator: `g' at line 2, column 6",
+    );
+    await expect(checkSource("f == 1 + 1")).rejects.toThrow(
+      "Could not find declaration or definition of symbol '+' at line 2, column 8",
+    );
+  });
+
   it("accepts USE and HIDE of theorems, assumptions, steps, and definitions", async () => {
     const result = await checkSource(
       "EXTENDS Naturals\nfoo == 1\nUSE foo, foo > 0 DEF foo\nASSUME A == foo \\in Nat\nHIDE A\nTHEOREM T == foo = 1\nHIDE T DEF foo\nTHEOREM U == ASSUME NEW n \\in Nat PROVE n >= 0\n<1>1. n >= 0\n  OBVIOUS\n<1>2. HIDE <1>1, T\n<1> QED\n  BY <1>1",
