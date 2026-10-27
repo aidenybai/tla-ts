@@ -2,6 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { check, TlaError, TlaSyntaxError, TlaUnsupportedError } from "../src";
 
+// The -seed that record-tlc.ts passes to TLC.
+const TLC_SEED = 4n;
+
 export interface ModelOutcome {
   status: string;
   violation?: string;
@@ -35,6 +38,7 @@ export const checkModel = async (specPath: string, configPath: string): Promise<
       return existsSync(filePath) ? readFileSync(filePath, "utf8") : undefined;
     },
     onPrint: () => {},
+    seed: TLC_SEED,
   });
   const milliseconds = Math.round(performance.now() - startedAt);
   if (result.status === "success") {

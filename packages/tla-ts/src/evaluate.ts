@@ -373,6 +373,11 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
     ),
   );
 
+const evaluateDefinitionBody = (definition: Definition, context: Context) =>
+  definition.kind === "Function"
+    ? createRecursiveFunction(definition, context)
+    : evaluate(definition.body, context);
+
 const evaluateDefinitionValue = (definition: Definition, context: Context): Value => {
   const isConstant = isConstantLevel(definition, context.environment);
   const cached = isConstant ? context.environment.definitionValues.get(definition) : undefined;
@@ -383,11 +388,11 @@ const evaluateDefinitionValue = (definition: Definition, context: Context): Valu
     );
   }
   const topLevel = withScope(context, undefined);
-  const value =
-    definition.kind === "Function"
-      ? createRecursiveFunction(definition, topLevel)
-      : evaluate(definition.body, topLevel);
-  if (isConstant) context.environment.definitionValues.set(definition, value);
+  if (!isConstant) return evaluateDefinitionBody(definition, topLevel);
+  const value = context.environment.runtime.evaluateAtStartup(() =>
+    evaluateDefinitionBody(definition, topLevel),
+  );
+  context.environment.definitionValues.set(definition, value);
   return value;
 };
 
