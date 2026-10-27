@@ -45,7 +45,7 @@ import {
 } from "./spec-description";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
-import { getTlcFingerprint } from "./tlc-random";
+import { createTlcFingerprinter, getTlcFingerprint } from "./tlc-random";
 import { createCanonicalizer } from "./canonical";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createCounterExample } from "./tlc-ext";
@@ -538,7 +538,7 @@ export interface Search {
   properties: Properties;
   spec: Specification;
   getFingerprintState: (state: Value[]) => Value[];
-  getStoredFingerprint: (state: Value[], fingerprintState: Value[]) => bigint;
+  getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
   findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
@@ -731,10 +731,16 @@ export const createSearch = (
     spec,
     isSymmetric: symmetryGroup.length > 0,
     getTlcOrder,
-    getStoredFingerprint: (state, fingerprintState) =>
-      order === undefined || view !== undefined || isFingerprintedLikeTlc
-        ? getTlcStateFingerprint(state)
-        : getTlcFingerprint(order.map((index) => fingerprintState[index])),
+    getStoredFingerprints: (states, fingerprintStates) => {
+      if (view !== undefined || isFingerprintedLikeTlc) {
+        return BigInt64Array.from(states, getTlcStateFingerprint);
+      }
+      const indices = getTlcOrder();
+      const getFingerprint = createTlcFingerprinter();
+      return BigInt64Array.from(fingerprintStates, (state) =>
+        getFingerprint(indices.map((index) => state[index])),
+      );
+    },
     getFingerprintState: (state) => {
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
       const representative =
@@ -898,11 +904,9 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       runtime.distinctStates,
       runtime.generatedStates,
       () =>
-        BigInt64Array.from(states, (state, index) =>
-          search
-            ? search.getStoredFingerprint(state, fingerprintStates[index])
-            : runtime.getFingerprint(state),
-        ),
+        search
+          ? search.getStoredFingerprints(states, fingerprintStates)
+          : BigInt64Array.from(states, runtime.getFingerprint),
     ),
   });
 
