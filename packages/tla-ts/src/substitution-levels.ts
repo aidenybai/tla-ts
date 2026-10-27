@@ -19,7 +19,7 @@ export interface InstanceCheck {
   location: SourceLocation;
 }
 
-export interface ModuleContext {
+interface ModuleContext {
   constants: Declaration[];
   variables: string[];
   definitions: Definition[];

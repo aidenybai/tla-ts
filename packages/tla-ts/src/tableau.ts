@@ -87,8 +87,8 @@ interface Triple {
 const STATE_LEVEL = 1;
 const MAXIMUM_DISJUNCTS = 2147483647;
 
-export const TRUE: LiveBoolean = { kind: "Boolean", value: true };
-export const FALSE: LiveBoolean = { kind: "Boolean", value: false };
+const TRUE: LiveBoolean = { kind: "Boolean", value: true };
+const FALSE: LiveBoolean = { kind: "Boolean", value: false };
 
 export const createBoolean = (value: boolean) => (value ? TRUE : FALSE);
 
