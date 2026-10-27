@@ -195,7 +195,13 @@ export const createTlcOperators = (
       if (value === true) runtime.isStopped = true;
       return true;
     }
-    if (key === "pause") return true;
+    if (key === "pause") {
+      if (value === true) {
+        print("Press enter to resume model checking.");
+        runtime.pause();
+      }
+      return true;
+    }
     if (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)) {
       runtime.namedRegisters.set(key, value);
       return true;
