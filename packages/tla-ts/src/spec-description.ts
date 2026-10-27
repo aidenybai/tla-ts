@@ -152,6 +152,33 @@ const tryCollect = <Item>(collect: () => Item[], fallback: () => Item[]) => {
   }
 };
 
+const getInstanceActions = (
+  instanceAction: InstanceAction,
+  expression: Expression,
+  scope: Scope | undefined,
+  called: Closure | undefined,
+  environment: Environment,
+): SpecAction[] => {
+  const args = getArguments(expression);
+  const callAction = (): SpecAction[] => [
+    { name: instanceAction.name, location: expression.location, parameters: [] },
+  ];
+  if (!called || args.length === 0) return [{ ...instanceAction, parameters: [] }];
+  if (args.some((arg) => getLevel(arg, scope, environment) !== 0)) return callAction();
+  return tryCollect(
+    () => [
+      {
+        ...instanceAction,
+        parameters: args.map((arg, index): [string, Value] => [
+          called.params[index].name.replace(/#\d+$/, ""),
+          evaluate(arg, getConstantContext(environment, scope)),
+        ]),
+      },
+    ],
+    callAction,
+  );
+};
+
 const getActions = (
   expression: Expression,
   scope: Scope | undefined,
@@ -201,8 +228,9 @@ const getActions = (
   const instanceAction = isLocallyResolved(expression)
     ? undefined
     : instanceActions.get(getOperatorName(expression) ?? "");
-  if (instanceAction) return [{ ...instanceAction, parameters: [] }];
   const called = resolveClosure(expression, scope, environment);
+  if (instanceAction)
+    return getInstanceActions(instanceAction, expression, scope, called, environment);
   if (!called) return [createSplitAction()];
   const args = getArguments(expression);
   const callAction = (): SpecAction[] => [
