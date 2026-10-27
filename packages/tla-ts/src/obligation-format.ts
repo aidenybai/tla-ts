@@ -261,7 +261,10 @@ type FormatArgument = string | Doc;
 
 const BOX_KINDS: Record<string, BoxKind> = { h: "h", v: "v", hv: "hv", hov: "hov", b: "b" };
 
-const text = (value: string): Command => ({ kind: "Text", text: value, size: getLength(value) });
+const getText = (value: string): Command => ({ kind: "Text", text: value, size: getLength(value) });
+
+// Prints a string as is, where format would read @ and % in it as directives.
+export const text = (value: string): Doc => (value === "" ? [] : [getText(value)]);
 
 const SPACE: Command = { kind: "Break", width: 1, offset: 0 };
 
@@ -287,13 +290,13 @@ export const format = (pattern: string, ...args: FormatArgument[]): Doc => {
   let pending = "";
   const flushText = () => {
     if (pending === "") return;
-    doc.push(text(pending));
+    doc.push(getText(pending));
     pending = "";
   };
   const pushArgument = () => {
     const argument = args[argumentIndex++];
     if (typeof argument === "string") {
-      if (argument !== "") doc.push(text(argument));
+      if (argument !== "") doc.push(getText(argument));
     } else doc.push(argument);
   };
   for (let index = 0; index < pattern.length; index++) {
@@ -354,7 +357,7 @@ export const format = (pattern: string, ...args: FormatArgument[]): Doc => {
 export const formatDelimited = <Item>(
   items: Item[],
   formatItem: (item: Item) => Doc,
-  separator: Doc = [text(","), SPACE],
+  separator: Doc = [getText(","), SPACE],
 ): Doc =>
   items.flatMap((item, index) =>
     index === 0 ? [formatItem(item)] : [separator, formatItem(item)],
