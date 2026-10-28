@@ -44,6 +44,8 @@ export interface StartMessage {
   ports: (Port | undefined)[];
   seed: EncodedStates;
   fingerprints: SharedFingerprints;
+  requests: Int32Array;
+  remaining: Int32Array;
 }
 
 export interface LevelMessage {
@@ -59,13 +61,11 @@ export type WorkerMessage =
   | { type: "ready" }
   | { type: "abort" }
   | { type: "paused" }
-  | { type: "expanded"; from: number; added: number }
   | LevelMessage;
 
 export type CoordinatorMessage =
   | { type: "level"; level: number }
-  | { type: "resize"; fingerprints: SharedFingerprints }
-  | { type: "balance"; sizes: number[] };
+  | { type: "resize"; fingerprints: SharedFingerprints };
 
 interface WorkerHandle {
   postMessage: (message: unknown, transfer?: unknown[]) => void;
@@ -225,6 +225,8 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       pending.resolve = resolve;
     });
   const ready = waitForReports(count);
+  const requests = new Int32Array(new SharedArrayBuffer(count * 4));
+  const remaining = new Int32Array(new SharedArrayBuffer(count * 4));
   const workers = await Promise.all(Array.from({ length: count }, () => spawnWorker(onMessage)));
   const terminate = () => workers.forEach((worker) => worker.terminate());
   const channels = new Map<string, MessageChannel>();
@@ -249,6 +251,8 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       ports,
       seed,
       fingerprints: shared.fingerprints,
+      requests,
+      remaining,
     };
     worker.postMessage(message, [...ports.filter((port) => port !== undefined), seed.words.buffer]);
   });
@@ -257,34 +261,25 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const send = (message: CoordinatorMessage) =>
     workers.forEach((worker) => worker.postMessage(message));
   // Workers pause when the shared table needs to grow, and resume once it has.
-  const collectExpansions = async (messages: WorkerMessage[]): Promise<WorkerMessage[]> => {
+  const collectLevels = async (messages: WorkerMessage[]): Promise<WorkerMessage[]> => {
     const paused = messages.filter((message) => message.type === "paused").length;
     if (paused === 0 || isAborted(messages)) return messages;
     shared.fingerprints = growSharedFingerprints(shared.fingerprints);
     const resumed = waitForReports(paused);
     send({ type: "resize", fingerprints: shared.fingerprints });
-    const expanded = messages.filter((message) => message.type !== "paused");
-    return [...expanded, ...(await collectExpansions(await resumed))];
+    const reported = messages.filter((message) => message.type !== "paused");
+    return [...reported, ...(await collectLevels(await resumed))];
   };
   if (isAborted(await ready)) {
     terminate();
     return fallBack();
   }
   for (let level = 1; ; level++) {
-    const expanding = waitForReports(count);
-    send({ type: "level", level });
-    const expansions = await collectExpansions(await expanding);
-    if (isAborted(expansions)) {
-      terminate();
-      return fallBack();
-    }
-    const sizes = Array.from({ length: count }, () => 0);
-    expansions.forEach((message) => {
-      if (message.type === "expanded") sizes[message.from] = message.added;
-    });
     const reported = waitForReports(count);
-    send({ type: "balance", sizes });
-    const messages = await reported;
+    // Every worker is idle, so peers can ask any of them for states once the level starts.
+    requests.forEach((_, index) => Atomics.store(requests, index, 0));
+    send({ type: "level", level });
+    const messages = await collectLevels(await reported);
     if (isAborted(messages)) {
       terminate();
       return fallBack();
