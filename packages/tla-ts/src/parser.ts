@@ -135,6 +135,8 @@ const INFIX_OPERATORS = new Map<string, InfixOperator>([
   ["^^", createInfix(14, 14, false)],
 ]);
 
+const NEGATION_PRECEDENCE = 12;
+
 const POSTFIX_OPERATORS = new Set(["^+", "^*", "^#"]);
 
 const PREFIX_OPERATOR_REFERENCES = new Set(["-", "~", "-."]);
@@ -977,7 +979,12 @@ const parse = (source: string, isTlapm: boolean): Module => {
           return { kind: "Apply", operator: "~", args: [parseExpression(5)], location };
         case "-":
           advance();
-          return { kind: "Apply", operator: "-.", args: [parseExpression(13)], location };
+          return {
+            kind: "Apply",
+            operator: "-.",
+            args: [parseExpression(NEGATION_PRECEDENCE + 1)],
+            location,
+          };
         case "[]":
           advance();
           return { kind: "Always", expression: parseExpression(16), location };
@@ -1054,6 +1061,10 @@ const parse = (source: string, isTlapm: boolean): Module => {
         }
       }
       advance();
+      // SANY reads - after an infix operator as prefix -, and rejects it after one that binds tighter.
+      if (infix.low > NEGATION_PRECEDENCE && isAt("-")) {
+        throw createError(`Precedence conflict between ${token.text} and -`, peek());
+      }
       const right = parseExpression(infix.high + 1);
       const left = state.left;
       if (token.text === "/\\" || token.text === "\\/") {
