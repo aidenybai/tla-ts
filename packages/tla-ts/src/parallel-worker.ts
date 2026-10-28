@@ -128,7 +128,11 @@ const run = (start: StartMessage, parent: Port) => {
         if (isSharedFingerprintsFull(shared.fingerprints)) return "paused";
         const successor = successors[expansion.index];
         if (search.findViolatedActionProperty(state, successor.state)) return undefined;
-        if (!search.satisfiesActionConstraints(state, successor.state)) continue;
+        if (!search.satisfiesActionConstraints(state, successor.state)) {
+          // TLC checks the invariants of every successor it has not seen, even outside the model.
+          if (search.findViolatedInvariant(successor.state, state)) return undefined;
+          continue;
+        }
         if (generatedStates) {
           writeStateFingerprint(successor.state, fingerprint);
           if (!generatedStates.insert(fingerprint[0], fingerprint[1])) continue;

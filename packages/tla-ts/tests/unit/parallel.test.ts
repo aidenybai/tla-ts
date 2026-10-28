@@ -61,6 +61,19 @@ describe("check with workers matches TLC", () => {
     expect(getTotals(parallel.outDegrees)).toEqual(getTotals(sequential.outDegrees));
   });
 
+  it("reports an invariant that a successor outside the action constraint violates", async () => {
+    const tlaTs = await loadPackage();
+    const result = await tlaTs.check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in 0..1\nNext == x < 5 /\\ x' = x + 1\nInv == x # 3\nSkip == x' # 3\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nACTION_CONSTRAINT Skip\nCHECK_DEADLOCK FALSE",
+      workers: 2,
+    });
+    expect(result.status).toBe("invariant-violation");
+    expect(result.violation?.name).toBe("Inv");
+    expect(result.violation?.trace).toHaveLength(3);
+  });
+
   it("grows the fingerprint table that workers share while they expand a level", async () => {
     const tlaTs = await loadPackage();
     const result = await tlaTs.check({
