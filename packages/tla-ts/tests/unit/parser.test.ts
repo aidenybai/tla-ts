@@ -75,6 +75,22 @@ describe("parseModule reads operators like SANY", () => {
 
   const INNER = "---- MODULE Inner ----\nVARIABLE x\nFoo == x\n====\nM(x) == INSTANCE Inner";
 
+  it.each(["7 * -2", "7 \\div -2", "2 ^ -1", "<<1>> \\o -1"])(
+    "rejects a negation after an operator that binds tighter in %s",
+    (expression) => {
+      expect(() => parseModule(`---- MODULE M ----\nA == ${expression}\n====`)).toThrow(
+        TlaSyntaxError,
+      );
+    },
+  );
+
+  it.each(["7 + -2", "7 - -2", "7 % -2", "1 .. -2", "-7 \\div 2"])(
+    "reads a negation after an operator that binds looser in %s",
+    (expression) => {
+      expect(() => parseModule(`---- MODULE M ----\nA == ${expression}\n====`)).not.toThrow();
+    },
+  );
+
   it("rejects an operator of a parameterized instance without the instance's arguments", () => {
     expect(() =>
       parseModule(`---- MODULE M ----\n${INNER}\nTHEOREM M!Foo(TRUE) => M!Foo(TRUE)\n====`),
