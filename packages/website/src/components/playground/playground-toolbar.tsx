@@ -26,7 +26,7 @@ export const SpecSelect = () => {
         if (index !== null) playground.selectExample(index);
       }}
     >
-      <Select.Trigger className="flex h-8 min-w-0 items-center gap-1.5 rounded-full bg-gray-300 pr-2.5 pl-3.5 text-sm font-medium text-gray-1200 outline-none select-none hover:bg-gray-400 focus-visible:ring-2 focus-visible:ring-blue-500/40 data-popup-open:bg-gray-400">
+      <Select.Trigger className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-gray-300 pr-2.5 pl-3.5 text-sm font-medium text-gray-1200 outline-none select-none hover:bg-gray-400 focus-visible:ring-2 focus-visible:ring-blue-500/40 data-popup-open:bg-gray-400">
         <Select.Value className="truncate" />
         <Select.Icon>
           <ChevronDown className="size-4 text-gray-1100" />
@@ -97,14 +97,14 @@ export const Status = () => {
       type="button"
       onClick={() => playground.setIsDrawerOpen(true)}
       className={cn(
-        "flex h-8 min-w-0 items-center gap-1.5 rounded-full px-3 text-sm font-medium",
+        "flex h-8 min-w-0 shrink items-center gap-1.5 rounded-full px-3 text-sm font-medium",
         isPassing
           ? "bg-green-50 text-green-700 hover:bg-green-100"
           : "bg-red-50 text-red-600 hover:bg-red-100",
       )}
     >
       <span aria-hidden>{isPassing ? "✓" : "✕"}</span>
-      <span className="truncate">
+      <span className="truncate max-[400px]:sr-only">
         {response.kind === "error"
           ? response.name
           : isPassing
