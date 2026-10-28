@@ -1,5 +1,11 @@
 # tla-ts
 
+## 0.0.3
+
+### Patch Changes
+
+- Add `tla-ts prove`, which prints proof obligations as `tlapm -N` does and runs tlapm otherwise. The CLI now checks several specs or a glob in one run. Parallel checking keeps tuple domains shared when states move between workers.
+
 ## 0.0.2
 
 ### Patch Changes
