@@ -9,6 +9,7 @@ import {
   isEnumerable,
   isFunctionValue,
   isModelValue,
+  isSameValue,
   isSetValue,
   toFiniteFunction,
   toFiniteSet,
@@ -163,7 +164,10 @@ const permuteValue = (value: Value, permutation: Permutation): Value => {
   if (size === 0 || size > CACHED_SIZE_LIMIT) return computePermutedValue(value, permutation);
   const cached = permutation.cache.get(value);
   if (cached !== undefined) return cached;
-  const permuted = computePermutedValue(value, permutation);
+  const computed = computePermutedValue(value, permutation);
+  // A permutation often maps a value to an equal one. Keeping the original lets the comparison
+  // with the smallest state so far stop at identity.
+  const permuted = computed !== value && isSameValue(computed, value) ? value : computed;
   if (permutation.cacheSize >= permutation.cacheLimit) {
     permutation.cache = new WeakMap();
     permutation.cacheSize = 0;
