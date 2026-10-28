@@ -735,6 +735,29 @@ const getFailureSummary = (result: CheckResult) => [
 ];
 
 describe("evaluation errors match TLC", () => {
+  it("reports a CASE with no true guard like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nASSUME CASE 1 = 2 -> 3\nInit == x = 0\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.violation?.message).toBe(
+      "Attempted to evaluate a CASE with no conditions true.\nline 3, col 8 to line 3, col 22 of module M",
+    );
+  });
+
+  it("reports a CASE with no true guard in the next-state relation like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == CASE x = 5 -> x' = 0\n  [] x = 6 -> x' = 1\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.message).toBe(
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, TLC encountered a CASE with no conditions true.\nline 4, col 9 to line 5, col 20 of module M",
+    );
+    expect(result.failure?.exitCode).toBe(75);
+  });
+
   it("reports the behavior up to a state whose invariant fails to evaluate", async () => {
     const result = await checkSteps(
       "Inv == 1 \\div (2 - x) >= 0",

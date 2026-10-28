@@ -2,7 +2,13 @@ import type { Assumption, Definition, Expression, SourceLocation } from "./ast";
 import { parseConfig, type ConfigValue, type ModelConfig } from "./config";
 import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
-import { getErrorExitCode, TlaConfigError, TlaEvaluationError, TlaModuleError } from "./errors";
+import {
+  getErrorExitCode,
+  TlaConfigError,
+  TlaEvaluationError,
+  TlaModuleError,
+  UNEXPECTED_EXCEPTION,
+} from "./errors";
 import { EXIT_STATUS, setExitCode, setNextStatePhase, withLivenessExitCode } from "./exit-codes";
 import {
   describeRange,
@@ -828,8 +834,7 @@ export const createSearch = (
         holdsLikeTlc(
           constraint.expression,
           getContext(environment, state, next),
-          (expression) =>
-            `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ${getExpectedBoolean(expression, environment)}`,
+          (expression) => `${UNEXPECTED_EXCEPTION}${getExpectedBoolean(expression, environment)}`,
         ),
       ),
     trackStatePossible:
