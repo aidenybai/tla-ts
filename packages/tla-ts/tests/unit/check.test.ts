@@ -295,6 +295,17 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([139, 14, 3]);
   });
 
+  it("ranks a string literal as written where SANY parses it", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nA == "b"\nB == "a"\nASSUME PrintT({ToString("a"), ToString("b")})\nInit == x = 0\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['{"\\"b\\"", "\\"a\\""}']);
+  });
+
   it("orders strings, record fields, and model values by when TLC interns them", async () => {
     const printed: string[] = [];
     const result = await check({

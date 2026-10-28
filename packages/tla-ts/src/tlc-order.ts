@@ -184,9 +184,18 @@ const isAdjacent = (left: Token, right: Token | undefined) =>
   right.line === left.line &&
   right.column === left.column + left.text.length;
 
+const STRING_ESCAPES: Record<string, string> = {
+  "\\": "\\\\",
+  '"': '\\"',
+  "\n": "\\n",
+  "\t": "\\t",
+  "\r": "\\r",
+  "\f": "\\f",
+};
+
 // The texts SANY interns while parsing, in order. SANY reads a proof step label such as <1>2 and
-// a module header such as ---- MODULE as one token, and interns a string literal's contents only
-// during semantic analysis.
+// a module header such as ---- MODULE as one token. It interns a string literal as written, quotes
+// included, and interns the literal's contents only during semantic analysis.
 const getParsedTexts = (tokens: Token[]) => {
   const texts: string[] = [];
   for (let index = 0; index < tokens.length; index++) {
@@ -202,7 +211,12 @@ const getParsedTexts = (tokens: Token[]) => {
       continue;
     }
     const isHeader = token.text === "MODULE" && tokens[index - 1]?.kind === "Separator";
-    if (token.kind !== "String" && !isHeader) texts.push(token.text);
+    if (isHeader) continue;
+    texts.push(
+      token.kind === "String"
+        ? `"${token.text.replace(/[\\"\n\t\r\f]/g, (character) => STRING_ESCAPES[character])}"`
+        : token.text,
+    );
   }
   return texts;
 };
