@@ -345,6 +345,8 @@ export const tokenize = (source: string): Token[] => {
   if (!headerMatch)
     throw new TlaSyntaxError("Expected a module header such as ---- MODULE Name ----");
   const tokens: Token[] = [];
+  // Each name is one string object, so looking a name up in a scope compares pointers.
+  const names = new Map<string, string>();
   const prefixLines = source.slice(0, headerMatch.index).split("\n");
   const cursor = {
     index: headerMatch.index,
@@ -481,7 +483,9 @@ export const tokenize = (source: string): Token[] => {
         pushToken("Keyword", word.slice(0, 3), 3);
         continue;
       }
-      pushToken(KEYWORDS.has(word) ? "Keyword" : "Identifier", word, word.length);
+      const name = names.get(word) ?? word;
+      names.set(name, name);
+      pushToken(KEYWORDS.has(word) ? "Keyword" : "Identifier", name, word.length);
       continue;
     }
     const stepLength = matchStep(source, cursor.index);
