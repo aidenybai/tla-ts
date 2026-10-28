@@ -1,9 +1,10 @@
 import type { Bound, Definition, Expression } from "./ast";
 import { getReadVariables } from "./dependencies";
-import { TlaEvaluationError } from "./errors";
+import { TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
+  describeRange,
   bindArgument,
   bindDefinitions,
   bindOperatorArguments,
@@ -804,7 +805,9 @@ const compileAction = (
         );
         const body = arm?.body ?? other;
         if (!body)
-          throw new TlaEvaluationError(`No CASE guard is true at ${describeLocation(expression)}`);
+          throw new TlaEvaluationError(
+            `${UNEXPECTED_EXCEPTION}In computing next states, TLC encountered a CASE with no conditions true.\n${describeRange(expression)}`,
+          );
         body(run, scope, partial, action, isFixed, onComplete);
       };
     }

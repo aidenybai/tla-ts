@@ -1757,7 +1757,9 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
           if (expectBoolean(arm.condition(context), "a CASE guard")) return arm.body(context);
         }
         if (other) return other(context);
-        throw new TlaEvaluationError(`No CASE guard is true at ${describeLocation(expression)}`);
+        throw new TlaEvaluationError(
+          `Attempted to evaluate a CASE with no conditions true.\n${describeRange(expression)}`,
+        );
       };
     }
     case "Let": {

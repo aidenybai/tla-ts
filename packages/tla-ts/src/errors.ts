@@ -1,5 +1,10 @@
 import { EXIT_STATUS, getExitCode, setModuleExitCode } from "./exit-codes";
 
+// How TLC reports a RuntimeException it did not expect, such as one raised while computing next
+// states.
+export const UNEXPECTED_EXCEPTION =
+  "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
+
 export class TlaError extends Error {
   constructor(message: string, cause?: unknown) {
     super(message, { cause });
