@@ -15,6 +15,7 @@ interface Pending {
   states: Value[][];
   origins: number[];
   fingerprints: number[];
+  fingerprintStates: Value[][];
 }
 
 interface PeerMessage {
@@ -123,6 +124,9 @@ const run = (start: StartMessage, parent: Port) => {
   const decode = createStateDecoder(environment.variables.length);
   const table = createFingerprintTable();
   const known = createFingerprintTable();
+  // Under symmetry, a successor the worker generated before has the representative it had then,
+  // so the worker skips the search for one.
+  const generatedStates = search.isSymmetric ? createFingerprintTable() : undefined;
   const fingerprint = new Int32Array(2);
   const inbox = createInbox();
   const peers = start.ports.flatMap((port, index) => (port ? [{ port, index }] : []));
@@ -137,11 +141,12 @@ const run = (start: StartMessage, parent: Port) => {
   const send = (index: number, message: PeerMessage, transfer: unknown[]) =>
     start.ports[index]?.postMessage(message, transfer);
 
-  const expand = (states: Value[][], next: Value[][]) => {
+  const expand = (states: Value[][], next: Value[][], nextFingerprintStates: Value[][]) => {
     const pending: Pending[] = Array.from({ length: count }, () => ({
       states: [],
       origins: [],
       fingerprints: [],
+      fingerprintStates: [],
     }));
     const statistics = { generated: 0 };
     const newStates = new Int32Array(states.length);
@@ -153,8 +158,13 @@ const run = (start: StartMessage, parent: Port) => {
       for (const successor of successors) {
         if (search.findViolatedActionProperty(state, successor.state)) return undefined;
         if (!search.satisfiesActionConstraints(state, successor.state)) continue;
+        if (generatedStates) {
+          writeStateFingerprint(successor.state, fingerprint);
+          if (!generatedStates.insert(fingerprint[0], fingerprint[1])) continue;
+        }
         canonicalize(successor.state);
-        writeStateFingerprint(search.getFingerprintState(successor.state), fingerprint);
+        const fingerprintState = search.getFingerprintState(successor.state);
+        writeStateFingerprint(fingerprintState, fingerprint);
         const owner = getFingerprintOwner(fingerprint[1], count);
         if (owner === self) {
           if (!table.insert(fingerprint[0], fingerprint[1])) continue;
@@ -164,6 +174,7 @@ const run = (start: StartMessage, parent: Port) => {
             continue;
           }
           next.push(successor.state);
+          nextFingerprintStates.push(fingerprintState);
           newStates[origin]++;
           continue;
         }
@@ -171,6 +182,7 @@ const run = (start: StartMessage, parent: Port) => {
         pending[owner].states.push(successor.state);
         pending[owner].origins.push(origin);
         pending[owner].fingerprints.push(fingerprint[0], fingerprint[1]);
+        pending[owner].fingerprintStates.push(fingerprintState);
       }
     }
     return { pending, generated: statistics.generated, newStates };
@@ -184,7 +196,13 @@ const run = (start: StartMessage, parent: Port) => {
     return bits;
   };
 
-  const commit = (pending: Pending, bits: Uint8Array, next: Value[][], newStates: Int32Array) => {
+  const commit = (
+    pending: Pending,
+    bits: Uint8Array,
+    next: Value[][],
+    nextFingerprintStates: Value[][],
+    newStates: Int32Array,
+  ) => {
     const unmarks: number[] = [];
     for (let index = 0; index < bits.length; index++) {
       if (bits[index] === 0) continue;
@@ -193,6 +211,7 @@ const run = (start: StartMessage, parent: Port) => {
       if (search.findViolatedInvariant(state, parentState)) return undefined;
       if (search.satisfiesConstraints(state, parentState)) {
         next.push(state);
+        nextFingerprintStates.push(pending.fingerprintStates[index]);
         newStates[pending.origins[index]]++;
         continue;
       }
@@ -230,7 +249,8 @@ const run = (start: StartMessage, parent: Port) => {
 
   const runLevel = async (level: number): Promise<LevelMessage | undefined> => {
     const next: Value[][] = [];
-    const expanded = expand(frontier.states, next);
+    const nextFingerprintStates: Value[][] = [];
+    const expanded = expand(frontier.states, next, nextFingerprintStates);
     if (!expanded || getRankedStringCount() !== startupStrings) return undefined;
     peers.forEach((peer) => {
       const fingerprints = Int32Array.from(expanded.pending[peer.index].fingerprints);
@@ -247,6 +267,7 @@ const run = (start: StartMessage, parent: Port) => {
         expanded.pending[reply.from],
         reply.bits ?? new Uint8Array(),
         next,
+        nextFingerprintStates,
         expanded.newStates,
       );
       if (!unmarks) return undefined;
@@ -255,9 +276,7 @@ const run = (start: StartMessage, parent: Port) => {
     const added = next.length;
     const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
     expanded.newStates.forEach((degree) => outDegrees[Math.min(degree, OUT_DEGREE_BUCKETS - 1)]++);
-    const fingerprints = BigInt64Array.from(next, (state) =>
-      environment.runtime.getFingerprint(state),
-    );
+    const fingerprints = search.getStoredFingerprints(next, nextFingerprintStates);
     const sizes = Array.from({ length: count }, () => 0);
     sizes[self] = added;
     peers.forEach((peer) =>
