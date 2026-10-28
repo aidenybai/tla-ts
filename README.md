@@ -126,7 +126,13 @@ The result has these fields:
 - `failure`: the message and trace when `status` is `"error"`.
 - `generatedStates`, `distinctStates`, and `depth`: TLC's state counts.
 
-Workers run in Node, Bun, Deno, and the browser, and deduplicate states by 64-bit fingerprint as TLC does. `check` runs on the calling thread for specs with liveness properties or impure operators such as `Print`. After a violation, it reruns there to return the exact trace.
+Workers run in Node, Bun, Deno, and cross-origin isolated pages in the browser. Like TLC's workers, they share one table of 64-bit fingerprints. `check` runs on the calling thread in these cases:
+
+- `SharedArrayBuffer` is unavailable, as on a page without cross-origin isolation.
+- The spec has liveness properties.
+- The spec uses impure operators such as `Print`.
+
+After a violation, `check` reruns on the calling thread to return the exact trace.
 
 `check` supports:
 

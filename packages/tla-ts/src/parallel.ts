@@ -11,7 +11,14 @@ import { parseConfig, type ModelConfig } from "./config";
 import { createEnvironment } from "./environment";
 import { TlaEvaluationError } from "./errors";
 import { isImpure } from "./evaluate";
-import { createFingerprintTable, getFingerprintOwner, writeStateFingerprint } from "./fingerprints";
+import {
+  createSharedFingerprints,
+  growSharedFingerprints,
+  insertSharedFingerprint,
+  isSharedFingerprintsFull,
+  writeStateFingerprint,
+  type SharedFingerprints,
+} from "./fingerprints";
 import { getInitialStates } from "./successors";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
@@ -34,10 +41,9 @@ export interface StartMessage {
   modules: [string, string | undefined][];
   classes: [string, Uint8Array | undefined][];
   index: number;
-  count: number;
   ports: (Port | undefined)[];
   seed: EncodedStates;
-  seedFingerprints: Int32Array;
+  fingerprints: SharedFingerprints;
 }
 
 export interface LevelMessage {
@@ -49,7 +55,17 @@ export interface LevelMessage {
   fingerprints: BigInt64Array;
 }
 
-export type WorkerMessage = { type: "ready" } | { type: "abort" } | LevelMessage;
+export type WorkerMessage =
+  | { type: "ready" }
+  | { type: "abort" }
+  | { type: "paused" }
+  | { type: "expanded"; from: number; added: number }
+  | LevelMessage;
+
+export type CoordinatorMessage =
+  | { type: "level"; level: number }
+  | { type: "resize"; fingerprints: SharedFingerprints }
+  | { type: "balance"; sizes: number[] };
 
 interface WorkerHandle {
   postMessage: (message: unknown, transfer?: unknown[]) => void;
@@ -90,6 +106,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const count = options.workers ?? 1;
   const isSequential =
     count < 2 ||
+    typeof SharedArrayBuffer !== "function" ||
     config.view !== undefined ||
     config.postconditions.length > 0 ||
     config.possible.length > 0;
@@ -131,12 +148,9 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   }
 
   const canonicalize = createCanonicalizer();
-  const table = createFingerprintTable();
+  const shared = { fingerprints: createSharedFingerprints() };
   const fingerprint = new Int32Array(2);
-  const seeds = Array.from({ length: count }, () => ({
-    encoder: createStateEncoder(),
-    fingerprints: [] as number[],
-  }));
+  const seeds = Array.from({ length: count }, createStateEncoder);
   const statistics = {
     generatedStates: 0,
     distinctStates: 0,
@@ -169,17 +183,15 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       canonicalize(state);
       statistics.generatedStates++;
       writeStateFingerprint(search.getFingerprintState(state), fingerprint);
-      if (!table.insert(fingerprint[0], fingerprint[1])) continue;
+      if (isSharedFingerprintsFull(shared.fingerprints)) {
+        shared.fingerprints = growSharedFingerprints(shared.fingerprints);
+      }
+      if (!insertSharedFingerprint(shared.fingerprints, fingerprint[0], fingerprint[1])) continue;
       if (search.findViolatedInvariant(state) || search.findFailedInitialPredicate(state)) {
         return false;
       }
-      if (!search.satisfiesConstraints(state)) {
-        table.remove(fingerprint[0], fingerprint[1]);
-        continue;
-      }
-      const seed = seeds[getFingerprintOwner(fingerprint[1], count)];
-      if (!seed.encoder.encode(state)) return false;
-      seed.fingerprints.push(fingerprint[0], fingerprint[1]);
+      if (!search.satisfiesConstraints(state)) continue;
+      if (!seeds[seeded.length % count].encode(state)) return false;
       seeded.push(state);
       statistics.distinctStates++;
     }
@@ -200,18 +212,19 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   if (statistics.distinctStates === 0) return createSuccess();
 
   const reports: WorkerMessage[] = [];
-  const pending = { resolve: (_reports: WorkerMessage[]) => {} };
+  const pending = { count, resolve: (_reports: WorkerMessage[]) => {} };
   const onMessage = (message: WorkerMessage) => {
     reports.push(message);
-    if (message.type === "abort" || reports.length === count) {
+    if (message.type === "abort" || reports.length === pending.count) {
       pending.resolve(reports.splice(0));
     }
   };
-  const waitForReports = () =>
+  const waitForReports = (expected: number) =>
     new Promise<WorkerMessage[]>((resolve) => {
+      pending.count = expected;
       pending.resolve = resolve;
     });
-  const ready = waitForReports();
+  const ready = waitForReports(count);
   const workers = await Promise.all(Array.from({ length: count }, () => spawnWorker(onMessage)));
   const terminate = () => workers.forEach((worker) => worker.terminate());
   const channels = new Map<string, MessageChannel>();
@@ -225,8 +238,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     const ports = Array.from({ length: count }, (_, peer) =>
       peer === index ? undefined : getPort(index, peer),
     );
-    const seed = seeds[index].encoder.finish();
-    const seedFingerprints = Int32Array.from(seeds[index].fingerprints);
+    const seed = seeds[index].finish();
     const message: StartMessage = {
       type: "start",
       source: options.source,
@@ -234,26 +246,44 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       modules: [...modules],
       classes: [...classes],
       index,
-      count,
       ports,
       seed,
-      seedFingerprints,
+      fingerprints: shared.fingerprints,
     };
-    worker.postMessage(message, [
-      ...ports.filter((port) => port !== undefined),
-      seed.words.buffer,
-      seedFingerprints.buffer,
-    ]);
+    worker.postMessage(message, [...ports.filter((port) => port !== undefined), seed.words.buffer]);
   });
   const isAborted = (messages: WorkerMessage[]) =>
     messages.some((message) => message.type === "abort");
+  const send = (message: CoordinatorMessage) =>
+    workers.forEach((worker) => worker.postMessage(message));
+  // Workers pause when the shared table needs to grow, and resume once it has.
+  const collectExpansions = async (messages: WorkerMessage[]): Promise<WorkerMessage[]> => {
+    const paused = messages.filter((message) => message.type === "paused").length;
+    if (paused === 0 || isAborted(messages)) return messages;
+    shared.fingerprints = growSharedFingerprints(shared.fingerprints);
+    const resumed = waitForReports(paused);
+    send({ type: "resize", fingerprints: shared.fingerprints });
+    const expanded = messages.filter((message) => message.type !== "paused");
+    return [...expanded, ...(await collectExpansions(await resumed))];
+  };
   if (isAborted(await ready)) {
     terminate();
     return fallBack();
   }
   for (let level = 1; ; level++) {
-    const reported = waitForReports();
-    workers.forEach((worker) => worker.postMessage({ type: "level", level }));
+    const expanding = waitForReports(count);
+    send({ type: "level", level });
+    const expansions = await collectExpansions(await expanding);
+    if (isAborted(expansions)) {
+      terminate();
+      return fallBack();
+    }
+    const sizes = Array.from({ length: count }, () => 0);
+    expansions.forEach((message) => {
+      if (message.type === "expanded") sizes[message.from] = message.added;
+    });
+    const reported = waitForReports(count);
+    send({ type: "balance", sizes });
     const messages = await reported;
     if (isAborted(messages)) {
       terminate();

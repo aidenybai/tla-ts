@@ -1,9 +1,20 @@
 import { createCanonicalizer } from "./canonical";
 import { createSearch } from "./check";
 import { createEnvironment } from "./environment";
-import { createFingerprintTable, getFingerprintOwner, writeStateFingerprint } from "./fingerprints";
-import type { LevelMessage, Port, StartMessage, WorkerMessage } from "./parallel";
-import { getSuccessors } from "./successors";
+import {
+  createFingerprintTable,
+  insertSharedFingerprint,
+  isSharedFingerprintsFull,
+  writeStateFingerprint,
+} from "./fingerprints";
+import type {
+  CoordinatorMessage,
+  LevelMessage,
+  Port,
+  StartMessage,
+  WorkerMessage,
+} from "./parallel";
+import { getSuccessors, type Successor } from "./successors";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
@@ -11,22 +22,21 @@ import { getRankedStringCount, setStringOrder, type Value } from "./values";
 
 const WORKER_THREADS_MODULE = "node:worker_threads";
 
-interface Pending {
-  states: Value[][];
-  origins: number[];
-  fingerprints: number[];
-  fingerprintStates: Value[][];
-}
-
 interface PeerMessage {
-  phase: "query" | "answer" | "sizes" | "balance";
+  phase: "balance";
   level: number;
   from: number;
-  fingerprints?: Int32Array;
-  bits?: Uint8Array;
-  states?: EncodedStates;
-  unmarks?: Int32Array;
-  size?: number;
+  states: EncodedStates;
+}
+
+interface Expansion {
+  origin: number;
+  successors: Successor[] | undefined;
+  index: number;
+  generated: number;
+  newStates: Int32Array;
+  next: Value[][];
+  fingerprintStates: Value[][];
 }
 
 interface Transfer {
@@ -118,12 +128,10 @@ const run = (start: StartMessage, parent: Port) => {
   const nextAction = search?.spec.next;
   if (!search || nextAction === undefined)
     return parent.postMessage({ type: "abort" } satisfies WorkerMessage);
-  const count = start.count;
   const self = start.index;
   const canonicalize = createCanonicalizer();
   const decode = createStateDecoder(environment.variables.length);
-  const table = createFingerprintTable();
-  const known = createFingerprintTable();
+  const shared = { fingerprints: start.fingerprints };
   // Under symmetry, a successor the worker generated before has the representative it had then,
   // so the worker skips the search for one.
   const generatedStates = search.isSymmetric ? createFingerprintTable() : undefined;
@@ -134,28 +142,24 @@ const run = (start: StartMessage, parent: Port) => {
     peer.port.addEventListener("message", (event) => inbox.deliver(event.data as PeerMessage));
     peer.port.start?.();
   });
-  for (let index = 0; index < start.seedFingerprints.length; index += 2) {
-    table.insert(start.seedFingerprints[index], start.seedFingerprints[index + 1]);
-  }
   const frontier = { states: decode(start.seed).map(canonicalize) };
   const send = (index: number, message: PeerMessage, transfer: unknown[]) =>
     start.ports[index]?.postMessage(message, transfer);
 
-  const expand = (states: Value[][], next: Value[][], nextFingerprintStates: Value[][]) => {
-    const pending: Pending[] = Array.from({ length: count }, () => ({
-      states: [],
-      origins: [],
-      fingerprints: [],
-      fingerprintStates: [],
-    }));
-    const statistics = { generated: 0 };
-    const newStates = new Int32Array(states.length);
-    for (let origin = 0; origin < states.length; origin++) {
-      const state = states[origin];
-      const successors = getSuccessors(nextAction, state, environment, search.spec.scope);
-      statistics.generated += successors.length;
-      if (successors.length === 0 && start.config.checkDeadlock) return undefined;
-      for (const successor of successors) {
+  // The worker pauses before a successor when the shared table needs to grow, and resumes there.
+  const expand = (expansion: Expansion) => {
+    const states = frontier.states;
+    for (; expansion.origin < states.length; expansion.origin++) {
+      const state = states[expansion.origin];
+      if (!expansion.successors) {
+        expansion.successors = getSuccessors(nextAction, state, environment, search.spec.scope);
+        expansion.generated += expansion.successors.length;
+        if (expansion.successors.length === 0 && start.config.checkDeadlock) return undefined;
+      }
+      const successors = expansion.successors;
+      for (; expansion.index < successors.length; expansion.index++) {
+        if (isSharedFingerprintsFull(shared.fingerprints)) return "paused";
+        const successor = successors[expansion.index];
         if (search.findViolatedActionProperty(state, successor.state)) return undefined;
         if (!search.satisfiesActionConstraints(state, successor.state)) continue;
         if (generatedStates) {
@@ -165,66 +169,17 @@ const run = (start: StartMessage, parent: Port) => {
         canonicalize(successor.state);
         const fingerprintState = search.getFingerprintState(successor.state);
         writeStateFingerprint(fingerprintState, fingerprint);
-        const owner = getFingerprintOwner(fingerprint[1], count);
-        if (owner === self) {
-          if (!table.insert(fingerprint[0], fingerprint[1])) continue;
-          if (search.findViolatedInvariant(successor.state, state)) return undefined;
-          if (!search.satisfiesConstraints(successor.state, state)) {
-            table.remove(fingerprint[0], fingerprint[1]);
-            continue;
-          }
-          next.push(successor.state);
-          nextFingerprintStates.push(fingerprintState);
-          newStates[origin]++;
-          continue;
-        }
-        if (!known.insert(fingerprint[0], fingerprint[1])) continue;
-        pending[owner].states.push(successor.state);
-        pending[owner].origins.push(origin);
-        pending[owner].fingerprints.push(fingerprint[0], fingerprint[1]);
-        pending[owner].fingerprintStates.push(fingerprintState);
+        if (!insertSharedFingerprint(shared.fingerprints, fingerprint[0], fingerprint[1])) continue;
+        if (search.findViolatedInvariant(successor.state, state)) return undefined;
+        if (!search.satisfiesConstraints(successor.state, state)) continue;
+        expansion.next.push(successor.state);
+        expansion.fingerprintStates.push(fingerprintState);
+        expansion.newStates[expansion.origin]++;
       }
+      expansion.successors = undefined;
+      expansion.index = 0;
     }
-    return { pending, generated: statistics.generated, newStates };
-  };
-
-  const answer = (fingerprints: Int32Array | number[]) => {
-    const bits = new Uint8Array(fingerprints.length / 2);
-    for (let index = 0; index < bits.length; index++) {
-      bits[index] = table.insert(fingerprints[index * 2], fingerprints[index * 2 + 1]) ? 1 : 0;
-    }
-    return bits;
-  };
-
-  const commit = (
-    pending: Pending,
-    bits: Uint8Array,
-    next: Value[][],
-    nextFingerprintStates: Value[][],
-    newStates: Int32Array,
-  ) => {
-    const unmarks: number[] = [];
-    for (let index = 0; index < bits.length; index++) {
-      if (bits[index] === 0) continue;
-      const state = pending.states[index];
-      const parentState = frontier.states[pending.origins[index]];
-      if (search.findViolatedInvariant(state, parentState)) return undefined;
-      if (search.satisfiesConstraints(state, parentState)) {
-        next.push(state);
-        nextFingerprintStates.push(pending.fingerprintStates[index]);
-        newStates[pending.origins[index]]++;
-        continue;
-      }
-      known.remove(pending.fingerprints[index * 2], pending.fingerprints[index * 2 + 1]);
-      unmarks.push(pending.fingerprints[index * 2], pending.fingerprints[index * 2 + 1]);
-    }
-    return Int32Array.from(unmarks);
-  };
-
-  const removeAll = (fingerprints: Int32Array) => {
-    for (let index = 0; index < fingerprints.length; index += 2) {
-      table.remove(fingerprints[index], fingerprints[index + 1]);
-    }
+    return "done";
   };
 
   const balance = async (level: number, next: Value[][], sizes: number[]) => {
@@ -241,60 +196,50 @@ const run = (start: StartMessage, parent: Port) => {
       send(index, { phase: "balance", level, from: self, states }, [states.words.buffer]);
     });
     const incoming = await inbox.receive("balance", level, peers.length);
-    incoming.forEach((message) => {
-      if (message.states) next.push(...decode(message.states).map(canonicalize));
-    });
+    incoming.forEach((message) => next.push(...decode(message.states).map(canonicalize)));
     return true;
   };
 
-  const runLevel = async (level: number): Promise<LevelMessage | undefined> => {
-    const next: Value[][] = [];
-    const nextFingerprintStates: Value[][] = [];
-    const expanded = expand(frontier.states, next, nextFingerprintStates);
-    if (!expanded || getRankedStringCount() !== startupStrings) return undefined;
-    peers.forEach((peer) => {
-      const fingerprints = Int32Array.from(expanded.pending[peer.index].fingerprints);
-      send(peer.index, { phase: "query", level, from: self, fingerprints }, [fingerprints.buffer]);
-    });
-    const queries = await inbox.receive("query", level, peers.length);
-    queries.forEach((query) => {
-      const bits = answer(query.fingerprints ?? []);
-      send(query.from, { phase: "answer", level, from: self, bits }, [bits.buffer]);
-    });
-    const answers = await inbox.receive("answer", level, peers.length);
-    for (const reply of answers) {
-      const unmarks = commit(
-        expanded.pending[reply.from],
-        reply.bits ?? new Uint8Array(),
-        next,
-        nextFingerprintStates,
-        expanded.newStates,
-      );
-      if (!unmarks) return undefined;
-      send(reply.from, { phase: "sizes", level, from: self, unmarks }, [unmarks.buffer]);
-    }
-    const added = next.length;
-    const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
-    expanded.newStates.forEach((degree) => outDegrees[Math.min(degree, OUT_DEGREE_BUCKETS - 1)]++);
-    const fingerprints = search.getStoredFingerprints(next, nextFingerprintStates);
-    const sizes = Array.from({ length: count }, () => 0);
-    sizes[self] = added;
-    peers.forEach((peer) =>
-      send(peer.index, { phase: "sizes", level, from: self, size: added }, []),
-    );
-    const received = await inbox.receive("sizes", level, peers.length * 2);
-    received.forEach((message) => {
-      if (message.unmarks) removeAll(message.unmarks);
-      else sizes[message.from] = message.size ?? 0;
-    });
-    if (getRankedStringCount() !== startupStrings) return undefined;
-    if (!(await balance(level, next, sizes))) return undefined;
-    frontier.states = next;
-    return { type: "level", level, generated: expanded.generated, added, outDegrees, fingerprints };
-  };
-
+  const waiters = { resume: () => {}, balance: (_sizes: number[]) => {} };
   const report = (message: WorkerMessage) =>
     parent.postMessage(message, message.type === "level" ? [message.fingerprints.buffer] : []);
+
+  const runLevel = async (level: number): Promise<LevelMessage | undefined> => {
+    const expansion: Expansion = {
+      origin: 0,
+      successors: undefined,
+      index: 0,
+      generated: 0,
+      newStates: new Int32Array(frontier.states.length),
+      next: [],
+      fingerprintStates: [],
+    };
+    for (let status = expand(expansion); status !== "done"; status = expand(expansion)) {
+      if (status === undefined) return undefined;
+      const resumed = new Promise<void>((resolve) => (waiters.resume = resolve));
+      report({ type: "paused" });
+      await resumed;
+    }
+    if (getRankedStringCount() !== startupStrings) return undefined;
+    const next = expansion.next;
+    const added = next.length;
+    const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
+    expansion.newStates.forEach((degree) => outDegrees[Math.min(degree, OUT_DEGREE_BUCKETS - 1)]++);
+    const fingerprints = search.getStoredFingerprints(next, expansion.fingerprintStates);
+    const sizes = new Promise<number[]>((resolve) => (waiters.balance = resolve));
+    report({ type: "expanded", from: self, added });
+    if (!(await balance(level, next, await sizes))) return undefined;
+    frontier.states = next;
+    return {
+      type: "level",
+      level,
+      generated: expansion.generated,
+      added,
+      outDegrees,
+      fingerprints,
+    };
+  };
+
   const step = (level: number) => {
     runLevel(level).then(
       (message) => report(message ?? { type: "abort" }),
@@ -302,8 +247,13 @@ const run = (start: StartMessage, parent: Port) => {
     );
   };
   parent.addEventListener("message", (event) => {
-    const message = event.data as { type: string; level: number };
+    const message = event.data as CoordinatorMessage;
     if (message.type === "level") step(message.level);
+    if (message.type === "resize") {
+      shared.fingerprints = message.fingerprints;
+      waiters.resume();
+    }
+    if (message.type === "balance") waiters.balance(message.sizes);
   });
   report({ type: "ready" });
 };

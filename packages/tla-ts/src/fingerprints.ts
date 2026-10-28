@@ -1,12 +1,10 @@
 import { getValueFingerprint, getValueHash, type Value } from "./values";
 
 const EMPTY = 0;
-const TOMBSTONE = 1;
 const INITIAL_CAPACITY = 1 << 12;
 
 interface FingerprintTable {
   insert: (first: number, second: number) => boolean;
-  remove: (first: number, second: number) => void;
 }
 
 const mix = (hash: number) => {
@@ -26,15 +24,13 @@ export const writeStateFingerprint = (state: Value[], fingerprint: Int32Array) =
   fingerprint[1] = mix(second);
 };
 
-export const getFingerprintOwner = (second: number, count: number) => (second >>> 0) % count;
-
 export const createFingerprintTable = (): FingerprintTable => {
   const table = { slots: new Int32Array(INITIAL_CAPACITY * 2), used: 0 };
   const findSlot = (slots: Int32Array, first: number, second: number) => {
     const mask = slots.length / 2 - 1;
     for (let index = first & mask; ; index = (index + 1) & mask) {
       const stored = slots[index * 2];
-      if (stored === EMPTY && slots[index * 2 + 1] === EMPTY) return index;
+      if (stored === EMPTY) return index;
       if (stored === first && slots[index * 2 + 1] === second) return index;
     }
   };
@@ -59,11 +55,50 @@ export const createFingerprintTable = (): FingerprintTable => {
       table.used++;
       return true;
     },
-    remove: (first, second) => {
-      const slot = findSlot(table.slots, first, second);
-      if (table.slots[slot * 2] !== first) return;
-      table.slots[slot * 2] = EMPTY;
-      table.slots[slot * 2 + 1] = TOMBSTONE;
-    },
   };
+};
+
+// Workers share one table of 64-bit fingerprints. The first word is never 0, so 0 marks an empty slot.
+export interface SharedFingerprints {
+  slots: BigInt64Array;
+  used: Int32Array;
+}
+
+const INITIAL_SHARED_CAPACITY = 1 << 10;
+
+const insertSharedKey = (slots: BigInt64Array, key: bigint) => {
+  const mask = slots.length - 1;
+  for (let index = Number(key >> 32n) & mask; ; index = (index + 1) & mask) {
+    const stored = Atomics.load(slots, index);
+    if (stored === key) return false;
+    if (stored !== 0n) continue;
+    const previous = Atomics.compareExchange(slots, index, 0n, key);
+    if (previous === 0n) return true;
+    if (previous === key) return false;
+  }
+};
+
+export const createSharedFingerprints = (): SharedFingerprints => ({
+  slots: new BigInt64Array(new SharedArrayBuffer(INITIAL_SHARED_CAPACITY * 8)),
+  used: new Int32Array(new SharedArrayBuffer(4)),
+});
+
+export const insertSharedFingerprint = (
+  table: SharedFingerprints,
+  first: number,
+  second: number,
+) => {
+  const key = BigInt.asIntN(64, (BigInt(first) << 32n) | BigInt(second >>> 0));
+  if (!insertSharedKey(table.slots, key)) return false;
+  Atomics.add(table.used, 0, 1);
+  return true;
+};
+
+export const isSharedFingerprintsFull = (table: SharedFingerprints) =>
+  Atomics.load(table.used, 0) * 2 >= table.slots.length;
+
+export const growSharedFingerprints = (table: SharedFingerprints): SharedFingerprints => {
+  const slots = new BigInt64Array(new SharedArrayBuffer(table.slots.byteLength * 2));
+  for (const key of table.slots) if (key !== 0n) insertSharedKey(slots, key);
+  return { slots, used: table.used };
 };
