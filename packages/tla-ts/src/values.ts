@@ -1762,12 +1762,16 @@ export const applyFunction = (
   return functionValue.range[position];
 };
 
+export const getDomainInterval = (domain: Value[]) =>
+  isIntervalDomain(domain)
+    ? (intervalArrays.get(domain) ?? getIntervalValue(domain.length))
+    : undefined;
+
 export const getDomain = (functionValue: Value): Value => {
   if (typeof functionValue === "object" && functionValue.kind === "LazyFunction")
     return functionValue.domain;
   const domain = toFiniteFunction(functionValue).domain;
-  if (!isIntervalDomain(domain)) return createSortedSet(domain);
-  return intervalArrays.get(domain) ?? getIntervalValue(domain.length);
+  return getDomainInterval(domain) ?? createSortedSet(domain);
 };
 
 export const updateFunction = (
