@@ -61,6 +61,18 @@ describe("check with workers matches TLC", () => {
     expect(getTotals(parallel.outDegrees)).toEqual(getTotals(sequential.outDegrees));
   });
 
+  it("grows the fingerprint table that workers share while they expand a level", async () => {
+    const tlaTs = await loadPackage();
+    const result = await tlaTs.check({
+      source:
+        "---- MODULE Grid ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == \\/ x < 99 /\\ x' = x + 1 /\\ y' = y\n        \\/ y < 99 /\\ y' = y + 1 /\\ x' = x\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      workers: 4,
+    });
+    expect(result.status).toBe("success");
+    expect(getCounts(result)).toEqual([19801, 10000, 199]);
+  });
+
   it("explores a queue that only grows to its bound", async () => {
     const result = await checkFixtureInParallel("queue", "Queue", 3);
     expect(result.status).toBe("success");
