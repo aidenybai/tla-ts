@@ -19,8 +19,12 @@ export const App = () => (
           <a href="https://lamport.azurewebsites.net/tla/tools.html" className={LINK_CLASS_NAME}>
             TLC
           </a>{" "}
-          and a full interpreter and model checker for TLA+, written in TypeScript. It runs in Node,
-          Bun and the browser, and it's 2× faster than TLC.
+          that's 2× faster.
+        </p>
+        <p className="text-pretty">
+          TLA+ lets you write formal models of a system, and TLC model checks them. But TLC is
+          written in Java and needs the JVM. tla-ts runs anywhere JavaScript runs, such as the
+          browser, Node and Bun.
         </p>
         <p>
           <a href="https://github.com/aidenybai/tla-ts" className={LINK_CLASS_NAME}>
