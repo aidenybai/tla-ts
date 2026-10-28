@@ -188,7 +188,15 @@ const computePermutedValue = (value: ObjectValue, permutation: Permutation) => {
     const domain = permuteElements(functionValue.domain, permutation);
     const range = permuteElements(functionValue.range, permutation) ?? functionValue.range;
     if (domain) {
-      return createFunction(domain.map((key, index): [Value, Value] => [key, range[index]]));
+      const permuted = createFunction(
+        domain.map((key, index): [Value, Value] => [key, range[index]]),
+      );
+      // A permutation often maps the domain to itself, such as a function over the symmetric set.
+      // Sharing the original domain array lets comparisons with other images skip the domain.
+      const isSameDomain = permuted.domain.every(
+        (key, index) => key === functionValue.domain[index],
+      );
+      return isSameDomain ? createSortedFunction(functionValue.domain, permuted.range) : permuted;
     }
     return range === functionValue.range
       ? functionValue
