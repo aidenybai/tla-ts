@@ -582,7 +582,7 @@ ASSUME TLCFP(a) = -887695703
     const result = await checkFixture("symmetry", "SymmetricLiveness");
     expect(result.status).toBe("liveness-violation");
     expect(result.violation?.name).toBe("Live");
-    expect(result.violation?.trace.map((step) => step.state.x)).toEqual([
+    expect(result.violation?.trace.map((step) => step.state.x)).toMatchObject([
       { kind: "ModelValue", name: "m1" },
     ]);
   });

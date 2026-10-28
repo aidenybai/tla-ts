@@ -5,6 +5,7 @@ export interface ModelValue {
   kind: "ModelValue";
   name: string;
   type: string | undefined;
+  rank: number;
 }
 
 export interface SetValue {
@@ -264,6 +265,7 @@ const stringOrder = { ranks: Object.create(null) as Record<string, number>, size
 export const setStringOrder = (texts: Iterable<string>) => {
   stringOrder.ranks = Object.create(null);
   stringOrder.size = 0;
+  modelValues.clear();
   for (const text of texts) rankString(text);
 };
 
@@ -353,7 +355,7 @@ export const compareValues = (left: Value, right: Value): number => {
       if (left.type !== undefined && right.type !== undefined) {
         checkModelValueTypes(left, right, false);
       }
-      return compareStrings(left.name, right.name);
+      return left.rank - right.rank;
     }
     if (leftKind === "ModelValue" || rightKind === "ModelValue") {
       checkModelValueTypes(left, right, false);
@@ -385,14 +387,15 @@ export const compareValues = (left: Value, right: Value): number => {
 
 const modelValues = new Map<string, ModelValue>();
 
+// A check ranks every model value's name when it creates the value, and creates its own values.
 export const createModelValue = (name: string): ModelValue => {
-  rankString(name);
   const known = modelValues.get(name);
   if (known) return known;
   const value: ModelValue = {
     kind: "ModelValue",
     name,
     type: name.length > 2 && name[1] === "_" ? name[0] : undefined,
+    rank: getStringRank(name),
   };
   modelValues.set(name, value);
   return value;
@@ -562,7 +565,7 @@ const equalsModelValueWith = (modelValue: ModelValue, other: Value) => {
 
 const compareModelValue = (left: ModelValue, right: Value) => {
   const type = getModelValueType(left);
-  if (type === undefined) return isModelValue(right) ? compareStrings(left.name, right.name) : -1;
+  if (type === undefined) return isModelValue(right) ? left.rank - right.rank : -1;
   if (!isModelValue(right)) {
     throw new TlaEvaluationError(
       `Attempted to compare the typed model value ${formatValue(left)} and non-model value\n${formatValue(right)}`,
@@ -574,7 +577,7 @@ const compareModelValue = (left: ModelValue, right: Value) => {
       `Attempted to compare the differently-typed model values ${formatValue(left)} and ${formatValue(right)}`,
     );
   }
-  return compareStrings(left.name, right.name);
+  return left.rank - right.rank;
 };
 
 const equalsModelValue = (left: ModelValue, right: Value) => {
