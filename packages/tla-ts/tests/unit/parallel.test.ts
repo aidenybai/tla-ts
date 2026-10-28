@@ -74,6 +74,20 @@ describe("check with workers matches TLC", () => {
     expect(result.violation?.trace).toHaveLength(3);
   });
 
+  it("prints what assumptions print once when it checks on the calling thread", async () => {
+    const tlaTs = await loadPackage();
+    const printed: string[] = [];
+    const result = await tlaTs.check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nASSUME PrintT("start")\nInit == x = 0\nNext == x\' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == <>(x = 2)\n====',
+      config: "SPECIFICATION Spec\nPROPERTY Live",
+      workers: 2,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(printed).toEqual(['"start"']);
+  });
+
   it("grows the fingerprint table that workers share while they expand a level", async () => {
     const tlaTs = await loadPackage();
     const result = await tlaTs.check({

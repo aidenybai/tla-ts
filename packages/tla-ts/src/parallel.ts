@@ -102,7 +102,17 @@ const spawnWorker = async (onMessage: (message: WorkerMessage) => void): Promise
 
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
-  const fallBack = () => checkSequentially({ ...options, config });
+  const print = options.onPrint ?? console.log;
+  const printed = { count: 0 };
+  // The search on the calling thread prints what this one printed while it started, so it skips that.
+  const fallBack = () => {
+    const skipped = { count: printed.count };
+    return checkSequentially({
+      ...options,
+      config,
+      onPrint: (text) => (skipped.count-- > 0 ? undefined : print(text)),
+    });
+  };
   const count = options.workers ?? 1;
   const isSequential =
     count < 2 ||
@@ -129,7 +139,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     source: options.source,
     loadModule,
     loadClass,
-    print: options.onPrint ?? console.log,
+    print: (text) => {
+      printed.count++;
+      print(text);
+    },
     files: { readFile: options.readFile, writeFile: options.writeFile },
   });
   const environment = specification.environment;
