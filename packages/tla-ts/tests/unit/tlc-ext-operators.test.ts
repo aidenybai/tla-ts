@@ -74,4 +74,13 @@ describe("TLCExt operators match TLC", () => {
       "In computing AssertError, a non-string expression (line 5, col 20) was used as the err of an AssertError(err, exp).",
     );
   });
+
+  it("stops checking when TLCGetAndSet sets the exit key", async () => {
+    const result = await checkModule(
+      'Init == x = 0\nNext == x < 5 /\\ x\' = x + 1 /\\ (x = 2 => TLCGetAndSet("exit", LAMBDA old, new : new, TRUE, FALSE) = FALSE)',
+      "INIT Init\nNEXT Next",
+    );
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.queuedStates]).toEqual([4, 4, 1]);
+  });
 });

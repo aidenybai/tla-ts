@@ -103,13 +103,33 @@ const getRegister = (runtime: CheckerRuntime, key: Value) => {
   return undefined;
 };
 
-const setRegister = (runtime: CheckerRuntime, key: Value, value: Value) => {
+// TLC's TLCSet. TLCExt's TLCGetAndSet is a TLA+ definition that calls it.
+export const setTlcValue = (
+  runtime: CheckerRuntime,
+  print: (text: string) => void,
+  key: Value,
+  value: Value,
+) => {
   if (typeof key === "number" && key >= 0) {
     runtime.registers.set(key, value);
     return;
   }
+  if (key === "exit") {
+    if (value === true) runtime.isStopped = true;
+    return;
+  }
+  if (key === "pause") {
+    if (value !== true) return;
+    print("Press enter to resume model checking.");
+    runtime.pause();
+    return;
+  }
   if (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)) {
     runtime.namedRegisters.set(key, value);
+    return;
+  }
+  if (typeof key === "string" && key.startsWith("-D")) {
+    runtime.properties.set(key.slice(2), formatValue(value));
     return;
   }
   throw new TlaModuleError(
@@ -195,7 +215,12 @@ export const createTlcExtOperators = (
         const key = getValue(args, 0, "TLCGetAndSet");
         const previous = getRegister(runtime, key) ?? getValue(args, 3, "TLCGetAndSet");
         const update = getOperator(args, 1, "TLCGetAndSet");
-        setRegister(runtime, key, update.call([previous, getValue(args, 2, "TLCGetAndSet")]));
+        setTlcValue(
+          runtime,
+          print,
+          key,
+          update.call([previous, getValue(args, 2, "TLCGetAndSet")]),
+        );
         return previous;
       }),
       isStateLevel: true,

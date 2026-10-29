@@ -15,7 +15,7 @@ import {
   getValue,
 } from "./builtins";
 import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "./runtime";
-import { createActionRecord } from "./tlc-ext";
+import { createActionRecord, setTlcValue } from "./tlc-ext";
 import { getRandomElement } from "./tlc-random";
 import {
   ANY_SET,
@@ -203,33 +203,8 @@ export const createTlcOperators = (
   }),
   defineStateOperator("TLCSet", 2, (args) => {
     const key = getValue(args, 0, "TLCSet");
-    const value = getValue(args, 1, "TLCSet");
-    if (typeof key === "number" && key >= 0) {
-      runtime.registers.set(key, value);
-      return true;
-    }
-    if (key === "exit") {
-      if (value === true) runtime.isStopped = true;
-      return true;
-    }
-    if (key === "pause") {
-      if (value === true) {
-        print("Press enter to resume model checking.");
-        runtime.pause();
-      }
-      return true;
-    }
-    if (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)) {
-      runtime.namedRegisters.set(key, value);
-      return true;
-    }
-    if (typeof key === "string" && key.startsWith("-D")) {
-      runtime.properties.set(key.slice(2), formatValue(value));
-      return true;
-    }
-    throw new TlaModuleError(
-      `The first argument of TLCSet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
-    );
+    setTlcValue(runtime, print, key, getValue(args, 1, "TLCSet"));
+    return true;
   }),
   defineConstant("Any", ANY_SET),
   defineOperator("RandomElement", 1, (args) =>
