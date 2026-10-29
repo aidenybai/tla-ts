@@ -18,10 +18,16 @@ import {
 } from "./table";
 import {
   binderTypes as plainBinderTypes,
+  flagsOf,
   funT,
+  HAS_ETA_REDEX,
+  HAS_REDEX,
+  HAS_VAR,
   isDependent,
   listComb,
+  maxidxOfTerm,
   mkAbs,
+  mkApp,
   mkBound,
   mkVar,
   substBound,
@@ -140,63 +146,53 @@ export const vupdate = (variable: Var, term: Term, envir: Envir): Envir => {
   return update(variable, term, envir);
 };
 
-export const couldBetaContract = (term: Term): boolean => {
-  if (term.kind === "App")
-    return term.fun.kind === "Abs" || couldBetaContract(term.fun) || couldBetaContract(term.arg);
-  if (term.kind === "Abs") return couldBetaContract(term.body);
-  return false;
-};
+export const couldBetaContract = (term: Term) => (flagsOf(term) & HAS_REDEX) !== 0;
 
 const normTerm1 = (tenv: TEnv, term: Term): Term => {
-  const norm = (current: Term): Term => {
-    switch (current.kind) {
-      case "Var": {
-        const assigned = lookup1(tenv, current);
-        return assigned === undefined ? current : norm(assigned);
-      }
-      case "Abs":
-        return updateAbs(current, norm(current.body));
-      case "App": {
-        if (current.fun.kind === "Abs") return norm(substBound(current.arg, current.fun.body));
-        const fun = norm(current.fun);
-        if (fun.kind === "Abs") return norm(substBound(current.arg, fun.body));
-        return updateApp(current, fun, norm(current.arg));
-      }
-      default:
-        return current;
+  if ((flagsOf(term) & (HAS_VAR | HAS_REDEX)) === 0) return term;
+  switch (term.kind) {
+    case "Var": {
+      const assigned = lookup1(tenv, term);
+      return assigned === undefined ? term : normTerm1(tenv, assigned);
     }
-  };
-  return norm(term);
+    case "Abs":
+      return updateAbs(term, normTerm1(tenv, term.body));
+    case "App": {
+      if (term.fun.kind === "Abs") return normTerm1(tenv, substBound(term.arg, term.fun.body));
+      const fun = normTerm1(tenv, term.fun);
+      if (fun.kind === "Abs") return normTerm1(tenv, substBound(term.arg, fun.body));
+      return updateApp(term, fun, normTerm1(tenv, term.arg));
+    }
+    default:
+      return term;
+  }
 };
 
 const normTerm2 = (envir: Envir, term: Term): Term => {
-  const normT = (type: Typ) => normType(envir.tyenv, type);
-  const norm = (current: Term): Term => {
-    switch (current.kind) {
-      case "Const":
-      case "Free": {
-        const type = normT(current.type);
-        return type === current.type ? current : { ...current, type };
-      }
-      case "Var": {
-        const assigned = lookup(envir, current);
-        if (assigned !== undefined) return norm(assigned);
-        const type = normT(current.type);
-        return type === current.type ? current : { ...current, type };
-      }
-      case "Abs":
-        return updateAbs(current, norm(current.body), normT(current.type));
-      case "App": {
-        if (current.fun.kind === "Abs") return norm(substBound(current.arg, current.fun.body));
-        const fun = norm(current.fun);
-        if (fun.kind === "Abs") return norm(substBound(current.arg, fun.body));
-        return updateApp(current, fun, norm(current.arg));
-      }
-      default:
-        return current;
+  if (maxidxOfTerm(term) < 0 && (flagsOf(term) & HAS_REDEX) === 0) return term;
+  switch (term.kind) {
+    case "Const":
+    case "Free": {
+      const type = normType(envir.tyenv, term.type);
+      return type === term.type ? term : { ...term, type };
     }
-  };
-  return norm(term);
+    case "Var": {
+      const assigned = lookup(envir, term);
+      if (assigned !== undefined) return normTerm2(envir, assigned);
+      const type = normType(envir.tyenv, term.type);
+      return type === term.type ? term : { ...term, type };
+    }
+    case "Abs":
+      return updateAbs(term, normTerm2(envir, term.body), normType(envir.tyenv, term.type));
+    case "App": {
+      if (term.fun.kind === "Abs") return normTerm2(envir, substBound(term.arg, term.fun.body));
+      const fun = normTerm2(envir, term.fun);
+      if (fun.kind === "Abs") return normTerm2(envir, substBound(term.arg, fun.body));
+      return updateApp(term, fun, normTerm2(envir, term.arg));
+    }
+    default:
+      return term;
+  }
 };
 
 // Envir.norm_term: instantiates the environment and beta-normalizes.
@@ -209,25 +205,23 @@ export const betaNorm = (term: Term) => normTerm(initEnvir, term);
 
 // Envir.head_norm: normalizes the head only, for unification.
 export const headNorm = (envir: Envir, term: Term): Term => {
-  const norm = (current: Term): Term => {
-    switch (current.kind) {
-      case "Var": {
-        const assigned = lookup(envir, current);
-        return assigned === undefined ? current : headNorm(envir, assigned);
-      }
-      case "Abs":
-        return updateAbs(current, norm(current.body));
-      case "App": {
-        if (current.fun.kind === "Abs") return norm(substBound(current.arg, current.fun.body));
-        const fun = norm(current.fun);
-        if (fun.kind === "Abs") return norm(substBound(current.arg, fun.body));
-        return fun === current.fun ? current : { kind: "App", fun, arg: current.arg };
-      }
-      default:
-        return current;
+  if ((flagsOf(term) & (HAS_VAR | HAS_REDEX)) === 0) return term;
+  switch (term.kind) {
+    case "Var": {
+      const assigned = lookup(envir, term);
+      return assigned === undefined ? term : headNorm(envir, assigned);
     }
-  };
-  return norm(term);
+    case "Abs":
+      return updateAbs(term, headNorm(envir, term.body));
+    case "App": {
+      if (term.fun.kind === "Abs") return headNorm(envir, substBound(term.arg, term.fun.body));
+      const fun = headNorm(envir, term.fun);
+      if (fun.kind === "Abs") return headNorm(envir, substBound(term.arg, fun.body));
+      return fun === term.fun ? term : mkApp(fun, term.arg);
+    }
+    default:
+      return term;
+  }
 };
 
 export const etaLong = (types: readonly Typ[], term: Term): Term => {
@@ -269,17 +263,10 @@ const decrementLoose = (term: Term, level: number): Term => {
   }
 };
 
-export const couldEtaContract = (term: Term): boolean => {
-  if (term.kind === "Abs")
-    return (
-      (term.body.kind === "App" && term.body.arg.kind === "Bound" && term.body.arg.index === 0) ||
-      couldEtaContract(term.body)
-    );
-  if (term.kind === "App") return couldEtaContract(term.fun) || couldEtaContract(term.arg);
-  return false;
-};
+export const couldEtaContract = (term: Term) => (flagsOf(term) & HAS_ETA_REDEX) !== 0;
 
 const etaSame = (term: Term): Term => {
+  if (!couldEtaContract(term)) return term;
   if (term.kind === "Abs") {
     const body = etaSame(term.body);
     if (body.kind === "App" && body.arg.kind === "Bound" && body.arg.index === 0) {
@@ -341,28 +328,36 @@ export const fastype = (envir: Envir, types: readonly Typ[], term: Term): Typ =>
 };
 
 // Envir.subst_term: instantiates without chasing variables.
-export const substTerm = (tyenv: TyEnv, tenv: TEnv, term: Term): Term => {
-  const substT = (type: Typ) => (isEmptyTable(tyenv) ? type : substType(tyenv, type));
-  const visit = (current: Term): Term => {
-    switch (current.kind) {
-      case "Const":
-      case "Free": {
-        const type = substT(current.type);
-        return type === current.type ? current : { ...current, type };
-      }
-      case "Var": {
-        const assigned = lookup1(tenv, current);
-        if (assigned !== undefined) return assigned;
-        const type = substT(current.type);
-        return type === current.type ? current : { ...current, type };
-      }
-      case "Bound":
-        return current;
-      case "Abs":
-        return updateAbs(current, visit(current.body), substT(current.type));
-      case "App":
-        return updateApp(current, visit(current.fun), visit(current.arg));
+const substTermAux = (tyenv: TyEnv, tenv: TEnv, term: Term): Term => {
+  if (maxidxOfTerm(term) < 0) return term;
+  switch (term.kind) {
+    case "Const":
+    case "Free": {
+      const type = isEmptyTable(tyenv) ? term.type : substType(tyenv, term.type);
+      return type === term.type ? term : { ...term, type };
     }
-  };
-  return isEmptyTable(tenv) && isEmptyTable(tyenv) ? term : visit(term);
+    case "Var": {
+      const assigned = lookup1(tenv, term);
+      if (assigned !== undefined) return assigned;
+      const type = isEmptyTable(tyenv) ? term.type : substType(tyenv, term.type);
+      return type === term.type ? term : { ...term, type };
+    }
+    case "Bound":
+      return term;
+    case "Abs":
+      return updateAbs(
+        term,
+        substTermAux(tyenv, tenv, term.body),
+        isEmptyTable(tyenv) ? term.type : substType(tyenv, term.type),
+      );
+    case "App":
+      return updateApp(
+        term,
+        substTermAux(tyenv, tenv, term.fun),
+        substTermAux(tyenv, tenv, term.arg),
+      );
+  }
 };
+
+export const substTerm = (tyenv: TyEnv, tenv: TEnv, term: Term) =>
+  isEmptyTable(tenv) && isEmptyTable(tyenv) ? term : substTermAux(tyenv, tenv, term);

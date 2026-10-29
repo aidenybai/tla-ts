@@ -9,7 +9,7 @@ import { allConst, mkImplies } from "./logic";
 import { unifyTypesEnvir } from "./pattern";
 import type { Thm } from "./thm";
 import { normType } from "./type";
-import { eqTyp, foldAterms, matchBvars, mkAbs, mkApp, mkVar, type Term, type Typ } from "./term";
+import { eqTyp, foldVars, matchBvars, mkAbs, mkApp, mkVar, type Term, type Typ } from "./term";
 import type { Tpair } from "./unify";
 
 const isImpApp = (
@@ -46,11 +46,7 @@ const stripLifted = (lifted: Term, term: Term): Term => {
 };
 
 const addVarNames = (term: Term, names: Set<string>) =>
-  foldAterms(
-    (atom, result: Set<string>) => (atom.kind === "Var" ? result.add(atom.name) : result),
-    term,
-    names,
-  );
+  foldVars((atom, result: Set<string>) => result.add(atom.name), term, names);
 
 const makeDistinct = (pairs: readonly [string, string][]) => {
   const table = new Map<string, string>();
@@ -153,9 +149,8 @@ export const normTermSkip = (envir: Envir, count: number, term: Term): Term => {
 export const unifyVarTypes = (first: Thm, second: Thm, envir: Envir): Envir | undefined => {
   const vars = new Map<string, Typ[]>();
   const add = (term: Term) =>
-    foldAterms(
+    foldVars(
       (atom, result: Map<string, Typ[]>) => {
-        if (atom.kind !== "Var") return result;
         const key = `${atom.index}:${atom.name}`;
         const types = result.get(key) ?? [];
         if (!types.some((type) => eqTyp(type, atom.type))) result.set(key, [atom.type, ...types]);

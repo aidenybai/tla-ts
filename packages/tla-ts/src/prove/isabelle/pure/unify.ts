@@ -2,6 +2,7 @@
 // bound of 60. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen,
 // and contributors, see LICENSE.
 
+import { checkInterrupt, type Limits } from "./interrupt";
 import { TlaIsabelleError } from "../../../errors";
 import {
   envBinderTypes,
@@ -22,7 +23,7 @@ import {
   consSeq,
   emptySeq,
   itRightSeq,
-  makeSeq,
+  deferSeq,
   mapSeq,
   mapsSeq,
   singleSeq,
@@ -34,6 +35,8 @@ import {
   aconv,
   eqTyp,
   funTs,
+  flagsOf,
+  HAS_VAR,
   headOf,
   incrBoundvars,
   listComb,
@@ -98,6 +101,7 @@ const sameIndexname = (
 
 const occursTerms = (seen: Var[], envir: Envir, variable: Var, terms: readonly Term[]): boolean => {
   const occur = (term: Term): boolean => {
+    if ((flagsOf(term) & HAS_VAR) === 0) return false;
     switch (term.kind) {
       case "Const":
       case "Bound":
@@ -380,7 +384,7 @@ const matchcopy = (name: string) => {
     ): Seq<Copy> => {
       const unified = unifyTypesEnvir(base, bodyType, envir);
       if (unified === undefined) return tail;
-      return makeSeq(() => {
+      return deferSeq(() => {
         try {
           const [withArgs, args] = makeArgs(name, types, unified, argTypes);
           const plugin = (arg: Term) => listComb(headOf(arg), targs);
@@ -395,7 +399,7 @@ const matchcopy = (name: string) => {
             tail,
           ];
         } catch (error) {
-          if (error instanceof CantUnify) return tail.pull();
+          if (error instanceof CantUnify) return tail;
           throw error;
         }
       });
@@ -655,6 +659,7 @@ export interface Unifier {
 }
 
 const hounifiers = (
+  limits: Limits | undefined,
   binders: readonly Binder[],
   envir: Envir,
   pairs: readonly Tpair[],
@@ -665,7 +670,10 @@ const hounifiers = (
     dpairs: readonly Dpair[],
     rest: Seq<Unifier>,
   ): Seq<Unifier> =>
-    makeSeq(() => {
+    // Isabelle pulls the alternatives inside its handler for CANTUNIFY, but each alternative
+    // handles its own, so handing them over to the caller's loop changes nothing.
+    deferSeq(() => {
+      if (limits !== undefined) checkInterrupt(limits);
       try {
         const simplified = simpl(envirIn, dpairs);
         if (simplified.flexrigid.length === 0) {
@@ -675,16 +683,16 @@ const hounifiers = (
           );
           return [{ envir: result[0], tpairs: result[1] }, rest];
         }
-        if (depth > SEARCH_BOUND) return rest.pull();
+        if (depth > SEARCH_BOUND) return rest;
         const [first, ...others] = simplified.flexrigid;
         return itRightSeq(
           (item: [Envir, readonly Dpair[]], tail: Seq<Unifier>) =>
             addUnify(depth + 1, item[0], item[1], tail),
           match(simplified.envir, first, [...others, ...simplified.flexflex]),
           rest,
-        ).pull();
+        );
       } catch (error) {
-        if (error instanceof CantUnify) return rest.pull();
+        if (error instanceof CantUnify) return rest;
         throw error;
       }
     });
@@ -697,12 +705,16 @@ const hounifiers = (
 };
 
 // Unify.unifiers: pattern unification first, Huet's procedure outside the pattern fragment.
-export const unifiers = (envir: Envir, pairs: readonly Tpair[]): Seq<Unifier> => {
+export const unifiers = (
+  limits: Limits | undefined,
+  envir: Envir,
+  pairs: readonly Tpair[],
+): Seq<Unifier> => {
   let current = envir;
   for (const pair of pairs) {
     const result = unifyPattern(pair[0], pair[1], current);
     if (result.kind === "clash") return emptySeq;
-    if (result.kind === "not a pattern") return hounifiers([], envir, pairs);
+    if (result.kind === "not a pattern") return hounifiers(limits, [], envir, pairs);
     current = result.envir;
   }
   return singleSeq({ envir: current, tpairs: [] });
@@ -729,9 +741,13 @@ const smashFlexflex1 = (pair: Tpair, envir: Envir): Envir => {
 
 // Unify.smash_unifiers: unifiers with no remaining flex-flex pairs. A pair whose side is not
 // flexible stops the sequence, as CANTUNIFY escapes Seq.map in Isabelle.
-export const smashUnifiers = (pairs: readonly Tpair[], envir: Envir): Seq<Envir> =>
+export const smashUnifiers = (
+  limits: Limits | undefined,
+  pairs: readonly Tpair[],
+  envir: Envir,
+): Seq<Envir> =>
   mapSeq(
     (unifier: Unifier) =>
       unifier.tpairs.reduceRight((state, pair) => smashFlexflex1(pair, state), unifier.envir),
-    unifiers(envir, pairs),
+    unifiers(limits, envir, pairs),
   );

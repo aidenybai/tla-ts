@@ -24,7 +24,7 @@ import {
   type GoalTactic,
   type Tactic,
 } from "./tactical";
-import type { Limits } from "./tactic";
+import type { Limits } from "./interrupt";
 import type { Thm } from "./thm";
 
 const withSolvers = (context: SimpContext, solvers: readonly Solver[]): SimpContext => ({

@@ -10,7 +10,8 @@ import { compIncr, forallIntrVars, protectI, revcutRl } from "../pure/drule";
 import { normHhf } from "../pure/simplifier";
 import { mkVar, propT } from "../pure/term";
 import { every, type Tactic } from "../pure/tactical";
-import { resolveTac, type Limits } from "../pure/tactic";
+import type { Limits } from "../pure/interrupt";
+import { resolveTac } from "../pure/tactic";
 import { assume, instantiate, type Thm } from "../pure/thm";
 import type { Statement } from "./statement";
 

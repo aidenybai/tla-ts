@@ -4,7 +4,8 @@
 import { TlaIsabelleError } from "../../../errors";
 import type { ProofContext } from "../isar/method";
 import { emptyNet } from "../pure/net";
-import { insertTaggedBrl, type Limits, type NetPair } from "../pure/tactic";
+import type { Limits } from "../pure/interrupt";
+import { insertTaggedBrl, type NetPair } from "../pure/tactic";
 import { blastDepthTac, blastTac, type BlastContext } from "../provers/blast/blast";
 import type { ClassicalContext } from "../provers/classical";
 import { blastHypSubstTac } from "../provers/hypsubst";
@@ -39,6 +40,8 @@ export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext =
     limits: context.limits,
     claset: context.claset,
     consts: logic.consts,
+    elimTemplates: new WeakMap(),
+    introTemplates: new WeakMap(),
     data: {
       trueprop: "PredicateLogic.Trueprop",
       equalityName: "PredicateLogic.eq",

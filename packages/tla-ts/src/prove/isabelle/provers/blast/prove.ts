@@ -8,7 +8,7 @@
 
 import type { Seq } from "../../pure/seq";
 import type { GoalTactic } from "../../pure/tactical";
-import { checkInterrupt } from "../../pure/tactic";
+import { checkInterrupt } from "../../pure/interrupt";
 import type { Thm } from "../../pure/thm";
 import {
   addLit,

@@ -1,8 +1,8 @@
 // Ported from Isabelle2025's Pure/tactic.ML, the basic resolution tactics. Copyright (c) 1986-2025
 // University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { TlaIsabelleError } from "../../../errors";
 import { cutRl, makeElim, thinRl } from "./drule";
+import { checkInterrupt, type Limits } from "./interrupt";
 import { stripAssumsConcl, stripAssumsHyp } from "./logic";
 import { insertTermNet, unifyTermNet, deleteTermSafe, emptyNet, type Net } from "./net";
 import {
@@ -34,33 +34,22 @@ import {
 } from "./tactical";
 import { eqThmProp } from "./tactical";
 
-// When a proof gives up: past the deadline, a time from Date.now(), or once the signal aborts.
-export interface Limits {
-  readonly deadline: number;
-  readonly signal?: AbortSignal;
-}
-
-// Isabelle interrupts a proof that runs out of time; tlapm reports no success.
-export const checkInterrupt = (limits: Limits) => {
-  if (Date.now() > limits.deadline || limits.signal?.aborted === true)
-    throw new TlaIsabelleError("Interrupt", "Interrupt");
-};
-
 export const assumeTac =
   (limits: Limits): GoalTactic =>
   (index) =>
     primSeq((state) => {
       checkInterrupt(limits);
-      return assumption(index, state);
+      return assumption(limits, index, state);
     });
 
 export const eqAssumeTac: GoalTactic = (index) => primitive((state) => eqAssumption(index, state));
 
 export const composeTac =
-  (isElim: boolean, rule: Thm, subgoals: number): GoalTactic =>
+  (limits: Limits, isElim: boolean, rule: Thm, subgoals: number): GoalTactic =>
   (index) =>
     primSeq((state) =>
       bicompose(
+        limits,
         { flatten: true, match: false, incremented: false },
         { isElim, rule, subgoals },
         index,
@@ -73,7 +62,7 @@ export const biresolveTac =
   (index) =>
     primSeq((state) => {
       checkInterrupt(limits);
-      return biresolution(false, rules, index, state);
+      return biresolution(limits, false, rules, index, state);
     });
 
 export const resolveTac = (limits: Limits, rules: readonly Thm[]) =>
@@ -102,7 +91,7 @@ export const bimatchTac =
   (index) =>
     primSeq((state) => {
       checkInterrupt(limits);
-      return biresolution(true, rules, index, state);
+      return biresolution(limits, true, rules, index, state);
     });
 
 export const matchTac = (limits: Limits, rules: readonly Thm[]) =>
@@ -117,12 +106,15 @@ export const ematchTac = (limits: Limits, rules: readonly Thm[]) =>
     rules.map((rule) => ({ isElim: true, rule })),
   );
 
-export const flexflexTac: Tactic = primSeq(flexflexRule);
+export const flexflexTac = (limits: Limits): Tactic =>
+  primSeq((state) => flexflexRule(limits, state));
 
 export const cutTac = (rule: Thm, index: number) =>
   thenTac(
-    primSeq((state) => biresolution(false, [{ isElim: false, rule: cutRl }], index, state)),
-    primSeq((state) => biresolution(false, [{ isElim: false, rule }], index + 1, state)),
+    primSeq((state) =>
+      biresolution(undefined, false, [{ isElim: false, rule: cutRl }], index, state),
+    ),
+    primSeq((state) => biresolution(undefined, false, [{ isElim: false, rule }], index + 1, state)),
   );
 
 export const cutRulesTac = (rules: readonly Thm[], index: number) =>
@@ -200,7 +192,7 @@ export const biresolutionFromNetsTac = <Tagged extends { isElim: boolean; rule: 
     ];
     return primSeq((state) => {
       checkInterrupt(limits);
-      return biresolution(match, order(rules), index, state);
+      return biresolution(limits, match, order(rules), index, state);
     });
   });
 
@@ -231,6 +223,7 @@ export const resolveFromNetTac = (
     return primSeq((state) => {
       checkInterrupt(limits);
       return biresolution(
+        limits,
         false,
         orderList(
           rules.map((rule) => ({ tag: rule.tag, item: { isElim: false, rule: rule.rule } })),

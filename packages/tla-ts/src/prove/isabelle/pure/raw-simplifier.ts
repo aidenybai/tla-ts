@@ -7,7 +7,7 @@
 import { TlaIsabelleError } from "../../../errors";
 import { etaContract } from "./envir";
 import { symmetricThm } from "./drule";
-import { destEquals, isEquals, stripImpConcl, stripImpPrems } from "./logic";
+import { destEquals, isEquals, occs, stripImpConcl, stripImpPrems } from "./logic";
 import { deleteTermSafe, emptyNet, insertNet, keyOfTerm, type Net } from "./net";
 import { isFirstOrder, isPattern, matches } from "./pattern";
 import { emptyTable, type Table } from "./table";
@@ -17,7 +17,7 @@ import {
   aconv,
   existsSubterm,
   existsType,
-  foldAterms,
+  foldVars,
   eqTyp,
   headOf,
   type Term,
@@ -26,7 +26,7 @@ import {
 } from "./term";
 import { rs, type Thm } from "./thm";
 import { eqThmProp, noTac, type GoalTactic } from "./tactical";
-import type { Limits } from "./tactic";
+import type { Limits } from "./interrupt";
 
 export interface Rrule {
   readonly thm: Thm;
@@ -94,12 +94,7 @@ export const congName = (term: Term): CongName | undefined =>
       ? { isConst: false, name: term.name }
       : undefined;
 
-const varsOf = (term: Term) =>
-  foldAterms(
-    (atom, result: Var[]) => (atom.kind === "Var" ? [...result, atom] : result),
-    term,
-    [] as Var[],
-  );
+const varsOf = (term: Term) => foldVars((atom, result: Var[]) => [...result, atom], term, []);
 
 const hasVar = (vars: readonly Var[], variable: Var) =>
   vars.some(
@@ -262,7 +257,7 @@ const mkRrule = (context: SimpContext, thm: Thm): RawRrule[] => {
 const defaultReorient = (prems: readonly Term[], lhs: Term, rhs: Term) =>
   rewriteRuleExtraVars(prems, lhs, [rhs]) ||
   headOf(lhs).kind === "Var" ||
-  [rhs, ...prems].some((term) => existsSubterm((sub) => aconv(lhs, sub), term)) ||
+  [rhs, ...prems].some((term) => occs(lhs, term)) ||
   (prems.length === 0 && matches(lhs, rhs, emptyTyEnv, emptyTEnv)) ||
   (lhs.kind === "Const" && rhs.kind !== "Const");
 

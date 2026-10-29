@@ -5,6 +5,7 @@
 import { TlaIsabelleError } from "../../../errors";
 import { makeNameContext, variantList, variantNames } from "./name";
 import {
+  aconv,
   addFreeNames,
   fastypeOf,
   funT,
@@ -21,11 +22,20 @@ import {
   mkFree,
   mkTVar,
   mkVar,
+  mayOccur,
   propT,
   substBounds,
   type Term,
   type Typ,
 } from "./term";
+
+// Logic.occs: whether a subterm of other is aconv to term.
+export const occs = (term: Term, other: Term): boolean =>
+  mayOccur(term, other) &&
+  (aconv(term, other) ||
+    (other.kind === "App"
+      ? occs(term, other.fun) || occs(term, other.arg)
+      : other.kind === "Abs" && occs(term, other.body)));
 
 export interface Binder {
   readonly name: string;

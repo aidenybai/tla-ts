@@ -8,7 +8,7 @@ import { hasMetaPrems } from "./logic";
 import { addSimps, emptySimpset } from "./raw-simplifier";
 import { rewriteCterm, simpleProver } from "./rewriter";
 import { emptySeq, singleSeq } from "./seq";
-import type { Limits } from "./tactic";
+import type { Limits } from "./interrupt";
 import type { GoalTactic } from "./tactical";
 import { reflexive, type Thm } from "./thm";
 

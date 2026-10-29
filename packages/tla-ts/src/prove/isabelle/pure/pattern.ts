@@ -23,6 +23,8 @@ import {
   eqTyp,
   fastypeOf,
   funTs,
+  flagsOf,
+  HAS_VAR,
   isOpen,
   listComb,
   looseBnos,
@@ -49,6 +51,7 @@ interface Binder {
 
 const occurs = (variable: Var, term: Term, envir: Envir): boolean => {
   const visit = (current: Term): boolean => {
+    if ((flagsOf(current) & HAS_VAR) === 0) return false;
     switch (current.kind) {
       case "Var": {
         const assigned = lookup(envir, current);
@@ -460,44 +463,50 @@ const updateNewTEnv = (tenv: TEnv, variable: Var, term: Term): TEnv => {
   );
 };
 
-const firstOrderMatch = (pattern: Term, object: Term, env: MatchEnv): MatchEnv => {
-  const visit = (isInAbs: boolean, state: MatchEnv, pat: Term, obj: Term): MatchEnv => {
-    if (pat.kind === "Var") {
-      if (isInAbs && isOpen(obj)) throw new Match();
-      const assigned = lookup1(state.tenv, pat);
-      if (assigned === undefined)
-        return {
-          tyenv: typMatch(pat.type, fastypeOf(obj), state.tyenv),
-          tenv: updateNewTEnv(state.tenv, pat, obj),
-        };
-      if (aeconv(obj, assigned)) return state;
-      throw new Match();
-    }
-    if (
-      (pat.kind === "Free" && obj.kind === "Free") ||
-      (pat.kind === "Const" && obj.kind === "Const")
-    ) {
-      if (pat.name !== obj.name) throw new Match();
-      return { tyenv: typMatch(pat.type, obj.type, state.tyenv), tenv: state.tenv };
-    }
-    if (pat.kind === "Bound" && obj.kind === "Bound") {
-      if (pat.index !== obj.index) throw new Match();
-      return state;
-    }
-    if (pat.kind === "Abs" && obj.kind === "Abs")
-      return visit(
-        true,
-        { tyenv: typMatch(pat.type, obj.type, state.tyenv), tenv: state.tenv },
-        pat.body,
-        obj.body,
-      );
-    if (pat.kind === "App" && obj.kind === "App")
-      return visit(isInAbs, visit(isInAbs, state, pat.fun, obj.fun), pat.arg, obj.arg);
-    if (obj.kind === "Abs") return visit(true, state, mkApp(incr(pat), mkBound(0)), obj.body);
+const firstOrderMatchAt = (isInAbs: boolean, state: MatchEnv, pat: Term, obj: Term): MatchEnv => {
+  if (pat.kind === "Var") {
+    if (isInAbs && isOpen(obj)) throw new Match();
+    const assigned = lookup1(state.tenv, pat);
+    if (assigned === undefined)
+      return {
+        tyenv: typMatch(pat.type, fastypeOf(obj), state.tyenv),
+        tenv: updateNewTEnv(state.tenv, pat, obj),
+      };
+    if (aeconv(obj, assigned)) return state;
     throw new Match();
-  };
-  return visit(false, env, pattern, object);
+  }
+  if (
+    (pat.kind === "Free" && obj.kind === "Free") ||
+    (pat.kind === "Const" && obj.kind === "Const")
+  ) {
+    if (pat.name !== obj.name) throw new Match();
+    return { tyenv: typMatch(pat.type, obj.type, state.tyenv), tenv: state.tenv };
+  }
+  if (pat.kind === "Bound" && obj.kind === "Bound") {
+    if (pat.index !== obj.index) throw new Match();
+    return state;
+  }
+  if (pat.kind === "Abs" && obj.kind === "Abs")
+    return firstOrderMatchAt(
+      true,
+      { tyenv: typMatch(pat.type, obj.type, state.tyenv), tenv: state.tenv },
+      pat.body,
+      obj.body,
+    );
+  if (pat.kind === "App" && obj.kind === "App")
+    return firstOrderMatchAt(
+      isInAbs,
+      firstOrderMatchAt(isInAbs, state, pat.fun, obj.fun),
+      pat.arg,
+      obj.arg,
+    );
+  if (obj.kind === "Abs")
+    return firstOrderMatchAt(true, state, mkApp(incr(pat), mkBound(0)), obj.body);
+  throw new Match();
 };
+
+const firstOrderMatch = (pattern: Term, object: Term, env: MatchEnv) =>
+  firstOrderMatchAt(false, env, pattern, object);
 
 const matchBind = (
   tenv: TEnv,

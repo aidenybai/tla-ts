@@ -38,7 +38,9 @@ export interface ConstType {
 export const GOAL_NAME = "*Goal*";
 export const FALSE_NAME = "*False*";
 
-export const mkBlastConst = (name: string, typargs: readonly BlastTerm[] = []): BlastTerm => ({
+const NO_TYPARGS: readonly BlastTerm[] = [];
+
+export const mkBlastConst = (name: string, typargs = NO_TYPARGS): BlastTerm => ({
   kind: "Const",
   name,
   typargs,
@@ -156,22 +158,21 @@ export const hasLooseBound0 = (term: BlastTerm, level = 0): boolean => {
   }
 };
 
-export const blastSubstBound = (arg: BlastTerm, body: BlastTerm): BlastTerm => {
-  const subst = (term: BlastTerm, level: number): BlastTerm => {
-    switch (term.kind) {
-      case "Bound":
-        if (term.index < level) return term;
-        return term.index === level ? incrBlastBoundvars(level, arg) : mkBlastBound(term.index - 1);
-      case "Abs":
-        return { kind: "Abs", name: term.name, body: subst(term.body, level + 1) };
-      case "App":
-        return mkBlastApp(subst(term.fun, level), subst(term.arg, level));
-      default:
-        return term;
-    }
-  };
-  return subst(body, 0);
+const substBoundAt = (arg: BlastTerm, level: number, term: BlastTerm): BlastTerm => {
+  switch (term.kind) {
+    case "Bound":
+      if (term.index < level) return term;
+      return term.index === level ? incrBlastBoundvars(level, arg) : mkBlastBound(term.index - 1);
+    case "Abs":
+      return { kind: "Abs", name: term.name, body: substBoundAt(arg, level + 1, term.body) };
+    case "App":
+      return mkBlastApp(substBoundAt(arg, level, term.fun), substBoundAt(arg, level, term.arg));
+    default:
+      return term;
+  }
 };
+
+export const blastSubstBound = (arg: BlastTerm, body: BlastTerm) => substBoundAt(arg, 0, body);
 
 // Normalizes, but not the bodies of abstractions.
 export const norm = (term: BlastTerm): BlastTerm => {
@@ -228,94 +229,185 @@ export const wkNorm = (term: BlastTerm): BlastTerm => {
 };
 
 // Does variable ref occur in term? Dangling bound variables count as occurrences too.
-export const varOccur = (ref: VarRef, term: BlastTerm): boolean => {
-  const occ = (level: number, current: BlastTerm): boolean => {
-    switch (current.kind) {
-      case "Var":
-        return (
-          ref === current.ref || (current.ref.value !== undefined && occ(level, current.ref.value))
-        );
-      case "Skolem":
-        return current.args.some((arg) => occ(level, mkBlastVar(arg)));
-      case "Bound":
-        return level <= current.index;
-      case "Abs":
-        return occ(level + 1, current.body);
-      case "App":
-        return occ(level, current.arg) || occ(level, current.fun);
-      default:
-        return false;
-    }
-  };
-  return occ(0, term);
+const occurs = (ref: VarRef, level: number, term: BlastTerm): boolean => {
+  switch (term.kind) {
+    case "Var":
+      return (
+        ref === term.ref || (term.ref.value !== undefined && occurs(ref, level, term.ref.value))
+      );
+    case "Skolem":
+      return term.args.some(
+        (arg) => ref === arg || (arg.value !== undefined && occurs(ref, level, arg.value)),
+      );
+    case "Bound":
+      return level <= term.index;
+    case "Abs":
+      return occurs(ref, level + 1, term.body);
+    case "App":
+      return occurs(ref, level, term.arg) || occurs(ref, level, term.fun);
+    default:
+      return false;
+  }
 };
 
-// Sign.const_typargs. Constants the map lacks are the ones a theory declares, which have none.
-const constTypargs = (consts: ReadonlyMap<string, ConstType>, name: string, type: Typ) => {
-  const declared = consts.get(name);
-  return declared === undefined ? [] : typargs(declared.typargs, type);
+export const varOccur = (ref: VarRef, term: BlastTerm) => occurs(ref, 0, term);
+
+// An entry of the association lists from schematic variables to prototerms that fromTerm keeps.
+export interface VarEntry {
+  readonly name: string;
+  readonly index: number;
+  readonly term: BlastTerm;
+}
+
+// AList.lookup, adding a fresh variable for a new one.
+const lookupVar = (entries: VarEntry[], name: string, index: number): BlastTerm => {
+  const known = entries.find((entry) => entry.index === index && entry.name === name);
+  if (known !== undefined) return known.term;
+  const fresh = mkBlastVar({ value: undefined });
+  entries.push({ name, index, term: fresh });
+  return fresh;
 };
 
-const fromType = (tvars: Map<string, BlastTerm>, type: Typ): BlastTerm => {
+const fromType = (tvars: VarEntry[], type: Typ): BlastTerm => {
   if (type.kind === "Type")
     return listBlastComb(
       mkBlastConst(type.name),
       type.args.map((arg) => fromType(tvars, arg)),
     );
   if (type.kind === "TFree") return { kind: "Free", name: type.name };
-  const key = `${type.name}.${type.index}`;
-  const known = tvars.get(key);
-  if (known !== undefined) return known;
-  const fresh = mkBlastVar({ value: undefined });
-  tvars.set(key, fresh);
-  return fresh;
+  return lookupVar(tvars, type.name, type.index);
 };
 
 export const fromConst = (
   consts: ReadonlyMap<string, ConstType>,
-  tvars: Map<string, BlastTerm>,
+  tvars: VarEntry[],
   name: string,
   type: Typ,
-) =>
-  mkBlastConst(
-    name,
-    constTypargs(consts, name, type).map((arg) => fromType(tvars, arg)),
-  );
+) => {
+  const declared = consts.get(name);
+  // Sign.const_typargs. Constants the map lacks are the ones a theory declares, which have none.
+  return declared === undefined || declared.typargs.length === 0
+    ? mkBlastConst(name)
+    : mkBlastConst(
+        name,
+        typargs(declared.typargs, type).map((arg) => fromType(tvars, arg)),
+      );
+};
+
+const fromTermAux = (
+  consts: ReadonlyMap<string, ConstType>,
+  vars: VarEntry[],
+  tvars: VarEntry[],
+  term: Term,
+): BlastTerm => {
+  switch (term.kind) {
+    case "Const":
+      return fromConst(consts, tvars, term.name, term.type);
+    case "Free":
+      return { kind: "Free", name: term.name };
+    case "Bound":
+      return mkBlastBound(term.index);
+    case "Var":
+      return lookupVar(vars, term.name, term.index);
+    case "Abs": {
+      const body = fromTermAux(consts, vars, tvars, term.body);
+      return body.kind === "App" &&
+        body.arg.kind === "Bound" &&
+        body.arg.index === 0 &&
+        !hasLooseBound0(body.fun)
+        ? incrBlastBoundvars(-1, body.fun)
+        : { kind: "Abs", name: term.name, body };
+    }
+    case "App":
+      return mkBlastApp(
+        fromTermAux(consts, vars, tvars, term.fun),
+        fromTermAux(consts, vars, tvars, term.arg),
+      );
+  }
+};
 
 // Converts a real term to a prototerm, eta-contracting it.
-export const fromTerm = (consts: ReadonlyMap<string, ConstType>, term: Term): BlastTerm => {
-  const vars = new Map<string, BlastTerm>();
-  const tvars = new Map<string, BlastTerm>();
-  const from = (current: Term): BlastTerm => {
-    switch (current.kind) {
-      case "Const":
-        return fromConst(consts, tvars, current.name, current.type);
-      case "Free":
-        return { kind: "Free", name: current.name };
-      case "Bound":
-        return mkBlastBound(current.index);
-      case "Var": {
-        const key = `${current.name}.${current.index}`;
-        const known = vars.get(key);
-        if (known !== undefined) return known;
-        const fresh = mkBlastVar({ value: undefined });
-        vars.set(key, fresh);
-        return fresh;
-      }
-      case "Abs": {
-        const body = from(current.body);
-        return body.kind === "App" &&
-          body.arg.kind === "Bound" &&
-          body.arg.index === 0 &&
-          !hasLooseBound0(body.fun)
-          ? incrBlastBoundvars(-1, body.fun)
-          : { kind: "Abs", name: current.name, body };
-      }
-      case "App":
-        return mkBlastApp(from(current.fun), from(current.arg));
+export const fromTerm = (consts: ReadonlyMap<string, ConstType>, term: Term): BlastTerm =>
+  fromTermAux(consts, [], [], term);
+
+// A prototerm with its variables and Skolem terms numbered, so that instantiating it with fresh
+// ones gives a copy that shares the parts without them, which blast never updates.
+export type Template =
+  | { readonly kind: "ground"; readonly term: BlastTerm }
+  | { readonly kind: "var"; readonly index: number }
+  | { readonly kind: "skolem"; readonly slot: number }
+  | { readonly kind: "const"; readonly name: string; readonly typargs: readonly Template[] }
+  | { readonly kind: "abs"; readonly name: string; readonly body: Template }
+  | { readonly kind: "app"; readonly fun: Template; readonly arg: Template };
+
+const isGround = (template: Template) => template.kind === "ground";
+
+// Numbers the variables in refs, adding new ones, and the Skolem terms by their place in skolems.
+export const toTemplate = (
+  refs: VarRef[],
+  skolems: readonly BlastTerm[],
+  term: BlastTerm,
+): Template => {
+  switch (term.kind) {
+    case "Var": {
+      const index = refs.indexOf(term.ref);
+      if (index >= 0) return { kind: "var", index };
+      refs.push(term.ref);
+      return { kind: "var", index: refs.length - 1 };
     }
-  };
-  return from(term);
+    case "Skolem": {
+      const slot = skolems.indexOf(term);
+      return slot >= 0 ? { kind: "skolem", slot } : { kind: "ground", term };
+    }
+    case "Const": {
+      const typargs = term.typargs.map((arg) => toTemplate(refs, skolems, arg));
+      return typargs.every(isGround)
+        ? { kind: "ground", term }
+        : { kind: "const", name: term.name, typargs };
+    }
+    case "Abs": {
+      const body = toTemplate(refs, skolems, term.body);
+      return isGround(body) ? { kind: "ground", term } : { kind: "abs", name: term.name, body };
+    }
+    case "App": {
+      const fun = toTemplate(refs, skolems, term.fun);
+      const arg = toTemplate(refs, skolems, term.arg);
+      return isGround(fun) && isGround(arg) ? { kind: "ground", term } : { kind: "app", fun, arg };
+    }
+    default:
+      return { kind: "ground", term };
+  }
+};
+
+export const instantiateTemplate = (
+  vars: readonly BlastTerm[],
+  skolems: readonly BlastTerm[],
+  template: Template,
+): BlastTerm => {
+  switch (template.kind) {
+    case "ground":
+      return template.term;
+    case "var":
+      return vars[template.index];
+    case "skolem":
+      return skolems[template.slot];
+    case "const":
+      return mkBlastConst(
+        template.name,
+        template.typargs.map((arg) => instantiateTemplate(vars, skolems, arg)),
+      );
+    case "abs":
+      return {
+        kind: "Abs",
+        name: template.name,
+        body: instantiateTemplate(vars, skolems, template.body),
+      };
+    case "app":
+      return mkBlastApp(
+        instantiateTemplate(vars, skolems, template.fun),
+        instantiateTemplate(vars, skolems, template.arg),
+      );
+  }
 };
 
 const dummyVar = mkVar("etc", 0, dummyT);

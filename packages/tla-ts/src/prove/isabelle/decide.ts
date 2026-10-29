@@ -36,8 +36,7 @@ export const decideIsabelle = (text: string, options: DecideOptions): Exclude<Ve
       ? "unsat"
       : "unknown";
   } catch (error) {
-    // Isabelle reports an error, or runs out of time, where this port runs out of stack.
-    if (error instanceof TlaIsabelleError || error instanceof RangeError) return "unknown";
+    if (error instanceof TlaIsabelleError) return "unknown";
     throw error;
   }
 };

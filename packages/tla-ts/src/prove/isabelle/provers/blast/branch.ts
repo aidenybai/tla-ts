@@ -53,14 +53,16 @@ export const negOfGoals = (state: BlastState, pairs: readonly Level[]): Level[] 
 
 // Replaces the atomic term old by new.
 const substAtomic = (old: BlastTerm, replacement: BlastTerm, term: BlastTerm): BlastTerm => {
-  const subst = (current: BlastTerm): BlastTerm => {
-    if (current.kind === "Var" && current.ref.value !== undefined) return subst(current.ref.value);
-    if (current.kind === "Abs")
-      return { kind: "Abs", name: current.name, body: subst(current.body) };
-    if (current.kind === "App") return mkBlastApp(subst(current.fun), subst(current.arg));
-    return blastAconv(current, old) ? replacement : current;
-  };
-  return subst(term);
+  if (term.kind === "Var" && term.ref.value !== undefined)
+    return substAtomic(old, replacement, term.ref.value);
+  if (term.kind === "Abs")
+    return { kind: "Abs", name: term.name, body: substAtomic(old, replacement, term.body) };
+  if (term.kind === "App")
+    return mkBlastApp(
+      substAtomic(old, replacement, term.fun),
+      substAtomic(old, replacement, term.arg),
+    );
+  return blastAconv(term, old) ? replacement : term;
 };
 
 // Eta-contracts a term from outside, just enough to reduce it to an atom.
@@ -180,26 +182,33 @@ export const equalSubst = (
 };
 
 // Tries to unify complementary literals, giving the tactic that closes the branch.
+const eAssumeTac = (state: BlastState) => orElseGoal(eqAssumeTac, assumeTac(state.context.limits));
+
+// contr_tac: trying eq_contr_tac first increases the effort, slowing reconstruction.
+const eContrTac = (state: BlastState) =>
+  thenGoal(ematchTac(state.context.limits, [state.context.data.notE]), eAssumeTac(state));
+
+const close = (
+  state: BlastState,
+  left: BlastTerm,
+  right: BlastTerm,
+  tactic: (state: BlastState) => GoalTactic,
+) => (unify(state, [], left, right) ? tactic(state) : undefined);
+
 export const tryClose = (
   state: BlastState,
   formula: BlastTerm,
   literal: BlastTerm,
 ): GoalTactic | undefined => {
-  const limits = state.context.limits;
-  const eAssumeTac = orElseGoal(eqAssumeTac, assumeTac(limits));
-  // contr_tac: trying eq_contr_tac first increases the effort, slowing reconstruction.
-  const eContrTac = thenGoal(ematchTac(limits, [state.context.data.notE]), eAssumeTac);
-  const close = (left: BlastTerm, right: BlastTerm, tactic: GoalTactic) =>
-    unify(state, [], left, right) ? tactic : undefined;
   const notName = state.context.data.notName;
   const formulaGoal = destConstApp(formula, GOAL_NAME);
-  if (formulaGoal !== undefined) return close(formulaGoal, literal, eAssumeTac);
+  if (formulaGoal !== undefined) return close(state, formulaGoal, literal, eAssumeTac);
   const literalGoal = destConstApp(literal, GOAL_NAME);
-  if (literalGoal !== undefined) return close(formula, literalGoal, eAssumeTac);
+  if (literalGoal !== undefined) return close(state, formula, literalGoal, eAssumeTac);
   const formulaNot = destConstApp(formula, notName);
-  if (formulaNot !== undefined) return close(formulaNot, literal, eContrTac);
+  if (formulaNot !== undefined) return close(state, formulaNot, literal, eContrTac);
   const literalNot = destConstApp(literal, notName);
-  if (literalNot !== undefined) return close(formula, literalNot, eContrTac);
+  if (literalNot !== undefined) return close(state, formula, literalNot, eContrTac);
   return undefined;
 };
 
