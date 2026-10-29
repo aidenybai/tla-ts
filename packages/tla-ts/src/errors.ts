@@ -83,13 +83,16 @@ export class TlapmBugError extends TlaProofError {
 // for an ill-formed term, type or theorem, and Interrupt when the time limit runs out.
 export type IsabelleException = "ERROR" | "TERM" | "TYPE" | "THM" | "Interrupt";
 
-export class TlaIsabelleError extends TlaError {
-  exception: IsabelleException;
+// Isabelle's tactics raise and handle these as control flow, often millions of times per proof, and
+// decideIsabelle answers "unknown" for any that escape. So unlike an Error, it skips the stack trace.
+export class TlaIsabelleError {
+  readonly name = "TlaIsabelleError";
+  readonly exception: IsabelleException;
+  readonly message: string;
 
   constructor(exception: IsabelleException, message: string) {
-    super(message);
-    this.name = "TlaIsabelleError";
     this.exception = exception;
+    this.message = message;
   }
 }
 

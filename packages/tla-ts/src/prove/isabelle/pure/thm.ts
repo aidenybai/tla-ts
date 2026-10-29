@@ -6,7 +6,6 @@
 
 import { TlaIsabelleError } from "../../../errors";
 import {
-  aeconv,
   betaNorm,
   emptyEnvir,
   etaContract,
@@ -543,7 +542,12 @@ export const assumption = (index: number, state: Thm): Seq<Thm> => {
 export const eqAssumption = (index: number, state: Thm): Thm => {
   const parts = destState(state, index);
   const problems = assumProblems(-1, parts.goal);
-  if (!problems.hyps.some((hyp) => aeconv(hyp, problems.conclusion)))
+  // Envir.aeconv against each assumption, contracting the conclusion only once.
+  const conclusion = etaContract(problems.conclusion);
+  const isFound = problems.hyps.some(
+    (hyp) => aconv(hyp, problems.conclusion) || aconv(etaContract(hyp), conclusion),
+  );
+  if (!isFound)
     throw new TlaIsabelleError("THM", "eq_assumption");
   return makeThm(
     state.maxidx,

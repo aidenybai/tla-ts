@@ -35,6 +35,7 @@ import {
 } from "../pure/tactic";
 import {
   abstractOver,
+  aconv,
   binderTypes,
   bodyType,
   existsSubterm,
@@ -107,7 +108,11 @@ const hasTVars = (term: Term) =>
   }, term);
 
 // Logic.occs: whether the term occurs in the other one.
-const occurs = (term: Term, other: Term) => existsSubterm((sub) => aeconv(sub, term), other);
+const occurs = (term: Term, other: Term): boolean =>
+  aconv(term, other) ||
+  (other.kind === "App"
+    ? occurs(term, other.fun) || occurs(term, other.arg)
+    : other.kind === "Abs" && occurs(term, other.body));
 
 // inspect_pair: true to use the equality as it is, false to reorient it first, with the variable
 // to substitute.
