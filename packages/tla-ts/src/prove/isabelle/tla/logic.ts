@@ -111,7 +111,7 @@ export interface TlaLogic {
   };
 }
 
-export const loadLogic = (): TlaLogic => {
+const parseLogic = (): TlaLogic => {
   const data: LogicJson = JSON.parse(LOGIC_DATA);
   const types: Typ[] = [];
   const getType = (id: number): Typ => {
@@ -208,3 +208,8 @@ export const loadLogic = (): TlaLogic => {
     },
   };
 };
+
+const loaded: { logic?: TlaLogic } = {};
+
+// Nothing changes the logic, so it parses once.
+export const loadLogic = (): TlaLogic => (loaded.logic ??= parseLogic());
