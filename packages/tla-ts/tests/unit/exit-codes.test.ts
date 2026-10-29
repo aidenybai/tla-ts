@@ -57,6 +57,15 @@ describe("CLI exit codes match TLC", () => {
     expect(await getFailureExitCode(`${STEP}\nInv == x < 1 \\/ 1 \\div 0 = 1`, config)).toBe(76);
   });
 
+  it.each([
+    ["an Assert", 'Assert(x < 1, "a")', 14],
+    ["a standard-module failure", "1 \\div (1 - x) = 1", 255],
+    ["a core failure", "<<1>>[x + 1] = 1", 75],
+  ])("exits for %s in an action property", async (_, action, code) => {
+    const definitions = `${STEP}\nSpec == Init /\\ [][Next]_x\nProp == [][${action}]_x`;
+    expect(await getFailureExitCode(definitions, "SPECIFICATION Spec\nPROPERTY Prop")).toBe(code);
+  });
+
   it("exits with 255 when a liveness property fails to evaluate", async () => {
     const definitions = `${STEP}\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nProp == <>(1 \\div 0 = x)`;
     expect(await getFailureExitCode(definitions, "SPECIFICATION Spec\nPROPERTY Prop")).toBe(255);

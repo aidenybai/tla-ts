@@ -1,4 +1,4 @@
-import { EXIT_STATUS, getExitCode, setModuleExitCode } from "./exit-codes";
+import { EXIT_STATUS, getExitCode } from "./exit-codes";
 
 // How TLC reports a RuntimeException it did not expect, such as one raised while computing next
 // states.
@@ -46,10 +46,12 @@ export class TlaEvaluationError extends TlaError {
 // An evaluation error that TLC raises as an EvalException from a standard module's Java code. It
 // keeps the name TlaEvaluationError, and index.ts doesn't export it.
 export class TlaModuleError extends TlaEvaluationError {
+  exitCode: number;
+
   constructor(message: string, exitCode: number = EXIT_STATUS.error) {
     super(message);
     this.name = "TlaEvaluationError";
-    setModuleExitCode(this, exitCode);
+    this.exitCode = exitCode;
   }
 }
 
