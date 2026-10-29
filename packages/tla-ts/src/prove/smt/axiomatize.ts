@@ -63,6 +63,7 @@ export const collectSymbols = (
   };
   entries.forEach((entry) => {
     if (typeof entry === "string") visit(entry);
+    else if ("omitted" in entry) visit(entry.omitted);
   });
   return { symbols, axioms };
 };

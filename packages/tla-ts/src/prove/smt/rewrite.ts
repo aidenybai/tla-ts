@@ -4,14 +4,23 @@
 import { TlaUnsupportedError } from "../../errors";
 import {
   normalizeApply,
+  shiftExpr,
   type Bound,
   type Builtin,
   type Expr,
   type Sequent,
 } from "../../obligation-expression";
 import { createContext, type Identifier } from "./context";
-import { createFlattener, getDepth, getVariable, type Entry } from "./flatten";
 import {
+  createFlattener,
+  getDepth,
+  getVariable,
+  removeUnprimable,
+  UNPRIMABLE,
+  type Entry,
+} from "./flatten";
+import {
+  APPEND,
   BOOL_SET,
   BUILTIN_SYMBOLS,
   call,
@@ -32,8 +41,10 @@ import {
   INT_RANGE,
   INT_SET,
   IS_SET_OF,
+  LEN,
   MEM,
   NAT_SET,
+  PROJ_INT,
   replaceToken,
   SEQ,
   SET_MINUS,
@@ -43,6 +54,7 @@ import {
   tla,
   TRIG_EQ,
   TT_IDV,
+  TUPLE_0,
   UNION,
 } from "./format";
 import { getIntegers } from "./axioms";
@@ -89,6 +101,8 @@ const resolveTriggers = (text: string, isTriggered: boolean): string => {
 };
 
 export interface Mode {
+  // Whether the text encodes a fact that tlapm leaves out, which may declare operators.
+  isOmitted?: boolean;
   polarity: Polarity;
   at: string | undefined;
   depth: number;
@@ -247,7 +261,7 @@ export const createEncoder = (session: EncodingSession) => {
     const symbol = flatten(
       "SetSt",
       body,
-      mode.depth,
+      mode,
       (name) => {
         const set = call(name, ["a", ...free]);
         const predicate = replaceToken(body, bound.variables[0], "x");
@@ -284,7 +298,7 @@ export const createEncoder = (session: EncodingSession) => {
     const symbol = flatten(
       `SetOf_${count}`,
       element,
-      mode.depth,
+      mode,
       (name) => {
         const sets = getNames("a", count);
         const variables = getNames("y", count);
@@ -359,7 +373,7 @@ export const createEncoder = (session: EncodingSession) => {
     const symbol = flatten(
       "FunFcn",
       body,
-      mode.depth,
+      mode,
       (name, axioms) => {
         const value = call(name, ["a", ...free]);
         const result = replaceToken(body, variable, "x");
@@ -415,7 +429,7 @@ export const createEncoder = (session: EncodingSession) => {
     const symbol = flatten(
       "Choose",
       body,
-      mode.depth,
+      mode,
       (name) => [
         axiom(
           "ChooseDef",
@@ -446,22 +460,31 @@ export const createEncoder = (session: EncodingSession) => {
     // are compared as values.
     const leftText = toIdv(leftTerm);
     const rightText = toIdv(rightTerm);
-    // Prep never removes the Unprimable that WITNESS wraps around its witness, and is_set doesn't
-    // see through it.
-    const isSet = (expression: Expr, text: string) =>
-      !(
-        expression.kind === "Apply" &&
-        expression.operator.kind === "Internal" &&
-        expression.operator.builtin === "Unprimable"
-      ) && isSetTerm(text);
     const triggered = `(${TRIG_EQ} ${leftText} ${rightText})`;
     const kept = isNegated ? `(distinct ${leftText} ${rightText})` : `(= ${leftText} ${rightText})`;
-    if (!isSet(left, leftText) && !isSet(right, rightText)) return kept;
+    if (!isSetTerm(leftText) && !isSetTerm(rightText)) return kept;
     const text = isNegated ? `(not ${triggered})` : triggered;
     // A cast around the equality may still trigger it, so both forms wait for resolveTriggers.
     return mode.polarity === (isNegated ? "Positive" : "Negative")
       ? `(${UNRESOLVED_TRIGGER} ${text} ${kept})`
       : text;
+  };
+
+  // Type.Synthesize: SelectSeq's test becomes the predicate LAMBDA x1 : Test(x1), its body the
+  // text Flatten compares.
+  const getSelectionTest = (test: Expr, env: Env | undefined, mode: Mode) => {
+    const lambda = test.kind === "Lambda" && test.params.length === 1 ? test : undefined;
+    const bound = bindVariables([lambda?.params[0].name ?? "x1"], env, neither(mode));
+    const body = encodeBool(
+      lambda?.body ?? {
+        kind: "Apply",
+        operator: shiftExpr(1, test),
+        args: [{ kind: "Ix", index: 1 }],
+      },
+      bound.env,
+      bound.mode,
+    );
+    return { body, apply: (term: string) => replaceToken(body, bound.variables[0], term) };
   };
 
   const encodeBuiltin = (
@@ -502,11 +525,69 @@ export const createEncoder = (session: EncodingSession) => {
         return bool(call(INT_LTEQ, idvs().toReversed()));
       case "Lt":
       case "Gt": {
-        const operands = builtin === "Lt" ? idvs() : idvs().toReversed();
-        return bool(`(and ${call(INT_LTEQ, operands)} (distinct ${operands.join(" ")}))`);
+        // Rewrite copies the operands before Flatten, which flattens each copy again.
+        const getOperands = () => (builtin === "Lt" ? idvs() : idvs().toReversed());
+        return bool(`(and ${call(INT_LTEQ, getOperands())} (distinct ${getOperands().join(" ")}))`);
       }
-      case "Unprimable":
-        return encode(args[0], env, neither(mode));
+      // Flatten: SelectSeq(s, Test) is a fresh operator of s and the bound variables Test uses.
+      case "SelectSeq": {
+        const test = getSelectionTest(args[1], env, mode);
+        const free = getFree(test.body, mode.depth);
+        const symbol = flatten(
+          "SelectSeq",
+          test.body,
+          mode,
+          (name) => {
+            const select = (sequence: string) => call(name, [sequence, ...free]);
+            const appended = select(`(${APPEND} s x)`);
+            return [
+              axiom(
+                "SeqSelectseqTyping",
+                [],
+                forall(
+                  [...free, "a", "s"],
+                  `(=> (${MEM} s (${SEQ} a)) (${MEM} ${select("s")} (${SEQ} a)))`,
+                  [[`(${MEM} s (${SEQ} a))`, select("s")]],
+                ),
+              ),
+              axiom(
+                "SeqSelectseqLen",
+                [],
+                forall(
+                  [...free, "s"],
+                  `(=> (${MEM} (${LEN} s) ${NAT_SET}) (<= (${PROJ_INT} (${LEN} ${select("s")})) (${PROJ_INT} (${LEN} s))))`,
+                  [[select("s")]],
+                ),
+              ),
+              axiom("SeqSelectseqNil", [], forall(free, `(= ${select(TUPLE_0)} ${TUPLE_0})`)),
+              axiom(
+                "SeqSelectseqApp",
+                [],
+                forall(
+                  [...free, "s", "x"],
+                  `(=> (${MEM} x (${FUN_DOM} ${select("s")})) ${test.apply(`(${FUN_APP} ${select("s")} x)`)})`,
+                  [[`(${FUN_APP} ${select("s")} x)`]],
+                ),
+              ),
+              axiom(
+                "SeqSelectseqAppend",
+                [],
+                forall(
+                  [...free, "s", "x"],
+                  `(and (=> ${test.apply("x")} (= ${appended} (${APPEND} ${select("s")} x))) (=> (not ${test.apply("x")}) (= ${appended} ${select("s")})))`,
+                  [[appended]],
+                ),
+              ),
+            ];
+          },
+          free.length + 1,
+        );
+        return idv(call(symbol, [encodeIdv(args[0], env, mode), ...free]));
+      }
+      case "Unprimable": {
+        const term = encode(args[0], env, neither(mode));
+        return { ...term, text: `(${UNPRIMABLE} ${term.text})` };
+      }
       default: {
         const symbol = BUILTIN_SYMBOLS[builtin];
         if (symbol === undefined) throw new TlaUnsupportedError(`the operator ${builtin}`);
@@ -546,6 +627,14 @@ export const createEncoder = (session: EncodingSession) => {
         const operands = args.map((arg, index) => {
           if (binding.shapes[index] === 0)
             return { isFirstOrder: true, text: encodeIdv(arg, env, mode) };
+          // An operator's name as the argument stands for the operator, which compare_expr
+          // matches by name.
+          if (arg.kind === "Ix") {
+            const argument = getBinding(env, arg.index);
+            if (argument.kind !== "operator")
+              throw new TlaUnsupportedError("an operator argument that isn't a LAMBDA");
+            return { isFirstOrder: false, text: argument.symbol };
+          }
           if (arg.kind !== "Lambda")
             throw new TlaUnsupportedError("an operator argument that isn't a LAMBDA");
           const bound = bindVariables(
@@ -553,7 +642,7 @@ export const createEncoder = (session: EncodingSession) => {
             env,
             neither(mode),
           );
-          return { isFirstOrder: false, text: encode(arg.body, bound.env, bound.mode).text };
+          return { isFirstOrder: false, text: encodeIdv(arg.body, bound.env, bound.mode) };
         });
         const firstOrder = operands.flatMap((operand) =>
           operand.isFirstOrder ? [operand.text] : [],
@@ -565,7 +654,7 @@ export const createEncoder = (session: EncodingSession) => {
         const symbol = flatten(
           "",
           higherOrder.join(" "),
-          mode.depth,
+          mode,
           () => [],
           firstOrder.length + free.length,
           binding.name,
@@ -677,7 +766,18 @@ export const createEncoder = (session: EncodingSession) => {
       (state, hyp) => {
         switch (hyp.kind) {
           case "Fresh": {
-            if (hyp.shape > 0) throw new TlaUnsupportedError("a second-order ASSUME");
+            if (hyp.shape > 0) {
+              if (!state.mode.isOmitted) throw new TlaUnsupportedError("a second-order ASSUME");
+              const variable = getVariable(hyp.name, state.mode.depth);
+              return {
+                env: push(state.env, { kind: "operator", symbol: variable, arity: hyp.shape }),
+                mode: { ...state.mode, depth: state.mode.depth + 1 },
+                wrappers: [
+                  ...state.wrappers,
+                  (body: string) => `(forall ((${variable} Idv)) ${body})`,
+                ],
+              };
+            }
             if (hyp.level !== "Constant")
               throw new TlaUnsupportedError("a NEW declaration that isn't constant");
             const domain = hyp.domain && encodeIdv(hyp.domain, state.env, state.mode);
@@ -866,7 +966,7 @@ export const createEncoder = (session: EncodingSession) => {
   // One fact or the goal, after the declarations of the symbols it flattens.
   const getEntries = (line: string): Entry[] => [
     ...flattener.takeIntroduced(),
-    resolveTriggers(line, false),
+    removeUnprimable(resolveTriggers(line, false)),
   ];
 
   return {

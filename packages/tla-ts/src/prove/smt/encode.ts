@@ -2,7 +2,7 @@
 // backend/smtlib.ml): TLA+ values share one sort Idv, set membership is the predicate TLA__Mem,
 // and each symbol the obligation uses brings the symbols and axioms encode/n_data.ml lists for it.
 
-import { adjoin, type Hyp, type Scope, type Sequent } from "../../obligation-expression";
+import { adjoin, type Expr, type Hyp, type Scope, type Sequent } from "../../obligation-expression";
 import { compareStrings } from "../ocaml";
 import { collectSymbols } from "./axiomatize";
 import { createPrinter } from "./context";
@@ -21,6 +21,11 @@ const isExpanded = (hyp: Extract<Hyp, { kind: "Defn" }>) =>
   hyp.definition.kind === "Bpragma" ||
   (hyp.definition.kind === "Operator" && hyp.visibility === "Visible");
 
+// Smtlib.is_sndord_fact: an ASSUME that declares an operator, which tlapm leaves out.
+const isSecondOrder = (expression: Expr) =>
+  expression.kind === "Sequent" &&
+  expression.sequent.context.some((hyp) => hyp.kind === "Fresh" && hyp.shape > 0);
+
 // Declares each hypothesis's names and asserts its facts, in order, as Smtlib.pp_print_obligation.
 // Visible definitions and TLAPS's pragmas are expanded, so they declare nothing.
 const encodeContext = (context: Hyp[], encoder: Encoder) =>
@@ -33,8 +38,6 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
       });
       switch (hyp.kind) {
         case "Fresh": {
-          if (hyp.level === "Temporal" || (hyp.shape > 0 && hyp.level !== "Constant"))
-            return next({ kind: "unsupported", reason: "a temporal declaration" });
           const symbol = encoder.getUniqueName(hyp.name);
           const binding: Binding =
             hyp.shape === 0
@@ -86,8 +89,17 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
         case "Fact": {
           const binding: Binding = { kind: "unsupported", reason: "a reference to a fact" };
           if (hyp.visibility === "Hidden") return next(binding);
-          const fact = `(assert ${encoder.encodeBool(hyp.expression, state.env, HYPOTHESIS)})`;
-          return next(binding, encoder.getEntries(fact));
+          if (!isSecondOrder(hyp.expression)) {
+            const fact = `(assert ${encoder.encodeBool(hyp.expression, state.env, HYPOTHESIS)})`;
+            return next(binding, encoder.getEntries(fact));
+          }
+          const fact = `(assert ${encoder.encodeBool(hyp.expression, state.env, { ...HYPOTHESIS, isOmitted: true })})`;
+          return next(
+            binding,
+            encoder
+              .getEntries(fact)
+              .map((entry) => (typeof entry === "string" ? { omitted: entry } : entry)),
+          );
         }
       }
     },
@@ -104,14 +116,12 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
   const sequent = simplified.kind === "Sequent" ? simplified.sequent : prepared;
   const encoder = createEncoder(session);
   const context = encodeContext(sequent.context, encoder);
-  const goal = encoder.encodeBool(sequent.active, context.env, {
-    ...HYPOTHESIS,
-    polarity: "Positive",
-  });
-  const entries = [
-    ...context.entries,
-    ...encoder.getEntries(`(assert (! (not ${goal}) :named |Goal|))`),
-  ];
+  const goal = isSecondOrder(sequent.active)
+    ? []
+    : encoder.getEntries(
+        `(assert (! (not ${encoder.encodeBool(sequent.active, context.env, { ...HYPOTHESIS, polarity: "Positive" })}) :named |Goal|))`,
+      );
+  const entries = [...context.entries, ...goal];
   const printer = createPrinter(encoder.declared);
   const collected = collectSymbols(
     entries,
@@ -131,7 +141,10 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
   const lines = [
     ...declarations,
     ...axioms,
-    ...entries.flatMap((entry) => (typeof entry === "string" ? [entry] : entry.getLines(keys))),
+    ...entries.flatMap((entry) => {
+      if (typeof entry === "string") return [entry];
+      return "omitted" in entry ? [] : entry.getLines(keys);
+    }),
   ];
   // Smtlib.collect_sorts declares Idv only when a symbol or a bound variable has that sort.
   // Type.Synthesize gives that sort to each definition left in the context, though none is printed.
