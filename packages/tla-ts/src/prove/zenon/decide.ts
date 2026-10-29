@@ -20,14 +20,16 @@ import { printIsar } from "./isar";
 import { parseZenon } from "./parse";
 import { separate } from "./phrase";
 import type { Proof } from "./proof";
-import { search, type SearchFailure } from "./search";
+import { getLimitFailure, search, type SearchFailure } from "./search";
 import { getBuiltInDefinitions, PREDEFINED_SYMBOLS } from "./tla/tla";
 
 export interface ZenonRun {
   proof: Proof | undefined;
-  // Why the search gave up. "zenon error" stands for the exceptions that stop Zenon mid-search.
+  // Why Zenon gave up: in the search, or at the limits while it printed the proof. "zenon error"
+  // stands for the exceptions that stop Zenon mid-search.
   failure: SearchFailure | "zenon error" | undefined;
-  // Zenon's -oisar output, once the checker accepts the proof.
+  // Zenon's -oisar output, once the checker accepts the proof and the printer ends within the
+  // limits.
   isar: string | undefined;
   nodesSearched: number;
   maxBranchFormulas: number;
@@ -38,7 +40,7 @@ export interface ZenonRun {
 // The search and its statistics, which match the -stats output of the OCaml Zenon. Throws
 // TlaZenonError when the text isn't a valid .znn file.
 export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
-  const deadline = Date.now() + options.timeLimitMs;
+  const limits = { deadline: Date.now() + options.timeLimitMs, signal: options.signal };
   const exprs = createExpressions();
   const parsed = parseZenon(exprs, text);
   const phrases = [...getBuiltInDefinitions(exprs), ...parsed];
@@ -56,7 +58,7 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
         { index, relations, exprs },
         separated.definitions,
         hypotheses,
-        { deadline, signal: options.signal },
+        limits,
         statistics,
       );
     } catch (error) {
@@ -71,17 +73,24 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
       hypotheses: phrases.flatMap((phrase) => (phrase.kind === "hyp" ? [phrase.formula] : [])),
       definitions: separated.definitions,
     });
+  const isar = isChecked
+    ? printIsar(proof, {
+        exprs,
+        phrases: parsed,
+        sharedProofs: statistics.reusedProofs,
+        relations,
+        limits,
+      })
+    : undefined;
   return {
     proof,
-    failure: typeof outcome === "string" ? outcome : undefined,
-    isar: isChecked
-      ? printIsar(proof, {
-          exprs,
-          phrases: parsed,
-          sharedProofs: statistics.reusedProofs,
-          relations,
-        })
-      : undefined,
+    failure:
+      typeof outcome === "string"
+        ? outcome
+        : isChecked && isar === undefined
+          ? getLimitFailure(limits)
+          : undefined,
+    isar,
     nodesSearched: statistics.inferences,
     maxBranchFormulas: index.getTopFormulaCount(),
     proofNodes: statistics.proofNodes,
@@ -94,9 +103,6 @@ export type ZenonDecision = { verdict: "unsat"; proof: string } | { verdict: "un
 // Zenon's verdict on a .znn file: "unsat" with the Isar proof that tlapm writes, when Zenon refutes
 // the hypotheses with a proof that the checker accepts and prints it within the time limit.
 export const decideZenon = (text: string, options: DecideOptions): ZenonDecision => {
-  const deadline = Date.now() + options.timeLimitMs;
   const isar = runZenon(text, options).isar;
-  return isar !== undefined && Date.now() <= deadline
-    ? { verdict: "unsat", proof: isar }
-    : { verdict: "unknown" };
+  return isar === undefined ? { verdict: "unknown" } : { verdict: "unsat", proof: isar };
 };

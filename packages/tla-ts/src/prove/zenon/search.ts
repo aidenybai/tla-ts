@@ -152,6 +152,15 @@ export interface SearchLimits {
   signal: AbortSignal | undefined;
 }
 
+// Why the limits stop Zenon now, if they do. The printer checks them too, as tlapm's clock runs
+// while Zenon prints the proof.
+export const getLimitFailure = (limits: SearchLimits) =>
+  Date.now() > limits.deadline
+    ? "time limit"
+    : limits.signal?.aborted === true
+      ? "aborted"
+      : undefined;
+
 // Zenon gives up once its heap passes 1 GB. The port bounds the nodes that the queues of the
 // current branch hold instead. On the corpus files where Zenon runs out of memory, its heap passes
 // 1 GB with 1.9 to 5.5 million of them, and no proof that Zenon finds needs more than 1.3 million.
@@ -251,8 +260,8 @@ export const search = (
   };
 
   for (;;) {
-    if (Date.now() > limits.deadline) return "time limit";
-    if (limits.signal?.aborted === true) return "aborted";
+    const limitFailure = getLimitFailure(limits);
+    if (limitFailure !== undefined) return limitFailure;
     if (queue.insertedCount > MAX_QUEUED_NODES) return "memory limit";
     if (formIndex < forms.length) {
       const entry = forms[formIndex++];

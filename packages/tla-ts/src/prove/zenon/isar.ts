@@ -12,6 +12,7 @@ import { printCaseLemma, printRecordLemma } from "./isar-case";
 import { optimise, type Lemma, type LlProof } from "./llproof";
 import { isMetaName, translateProof, type MlProof } from "./mltoll";
 import type { Phrase } from "./parse";
+import { getLimitFailure, type SearchLimits } from "./search";
 import { postprocessTla } from "./tla/llproof";
 
 const INFIXES: Record<string, string> = {
@@ -102,16 +103,19 @@ const getLastBranchIsOther = (branches: Expr[][]) => {
 const increment = (indent: number) => (indent >= 15 ? indent : indent + 1);
 
 // What the search knew when it found a proof: the .znn file's phrases, the proofs that it reused
-// and the properties of relations that the hypotheses stated.
+// and the properties of relations that the hypotheses stated. The printer stops at the search's
+// limits.
 export interface IsarContext {
   exprs: Expressions;
   phrases: Phrase[];
   sharedProofs: ReadonlySet<MlProof>;
   relations: Relations;
+  limits: SearchLimits;
 }
 
-// The Isar text that Zenon prints with -oisar for a proof that the search found.
-export const printIsar = (proof: MlProof, context: IsarContext): string => {
+// The Isar text that Zenon prints with -oisar for a proof that the search found, or undefined when
+// the limits stop the printer first.
+export const printIsar = (proof: MlProof, context: IsarContext): string | undefined => {
   const exprs = context.exprs;
   const numbers = new Map<Expr, number>();
   // Zenon's Index.get_number.
@@ -514,6 +518,7 @@ export const printIsar = (proof: MlProof, context: IsarContext): string => {
   const printNames = (formulas: Expr[]) => formulas.map(hname).join(" ");
 
   const printTree = (indent: number, dict: number, proof: LlProof): void => {
+    if (getLimitFailure(context.limits) !== undefined) return;
     const rule = proof.rule;
     switch (rule.kind) {
       case "connect": {
@@ -1163,6 +1168,7 @@ export const printIsar = (proof: MlProof, context: IsarContext): string => {
   };
 
   const printLemma = (indent: number, dict: number, lemma: Lemma) => {
+    if (getLimitFailure(context.limits) !== undefined) return;
     const params = lemma.params.flatMap((param) => {
       if (param[1].kind === "var") return [param[1].symbol];
       if (param[1].kind === "tau") return [];
@@ -1239,5 +1245,5 @@ export const printIsar = (proof: MlProof, context: IsarContext): string => {
   printTree(indent, printSequent(indent, dict, [exprs.enot(goal)]), theorem.proof);
   line(0, "qed\n");
   write("(* END-PROOF *)\n");
-  return output.join("");
+  return getLimitFailure(context.limits) === undefined ? output.join("") : undefined;
 };

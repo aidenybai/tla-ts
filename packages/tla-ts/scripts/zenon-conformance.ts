@@ -108,8 +108,7 @@ const results = runs.map((run) => {
   const start = performance.now();
   const zenon = runZenon(readFileSync(path, "utf8"), { timeLimitMs: TIME_LIMIT_MS });
   const elapsed = performance.now() - start;
-  // tlapm kills Zenon while it prints the proof too, as decideZenon does.
-  const isProved = zenon.isar !== undefined && elapsed <= TIME_LIMIT_MS;
+  const isProved = zenon.isar !== undefined;
   if (isFound !== isProved) console.log(`prover  ${isFound ? "miss" : "surplus"}      ${name}`);
   const reference = runReference(path);
   if (reference !== undefined && reference.isProved !== isProved)
