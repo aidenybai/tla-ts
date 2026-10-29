@@ -1,10 +1,8 @@
 // A port of tlapm's Backend.Zenon: an obligation as the input of Zenon's TLA+ front end, a $hyp for
-// each visible fact and a $goal, naming identifiers as Isabelle does. Before printing, the
-// obligation goes through what Backend.Prep does to every obligation it ships to Zenon.
+// each visible fact and a $goal, naming identifiers as Isabelle does.
 
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
 import { createContext, getBoundName, popNames, pushName } from "../../obligation-ctx";
-import { normalizeSequent } from "../../obligation-elab";
 import {
   shiftExpr,
   type Bound,
@@ -14,9 +12,7 @@ import {
   type Sequent,
 } from "../../obligation-expression";
 import { format, formatDelimited, renderDoc, text, type Doc } from "../../obligation-format";
-import { processObligation } from "../../obligation-frontend";
 import { pickle } from "../../obligation-pickle";
-import { expandDefs, expandEnabledCdot, flatten, getFrontends } from "../../obligation-prep";
 
 const SPACE = format("@ ");
 
@@ -100,8 +96,10 @@ const getSuccessors = (integer: string) => {
   return `${"(TLA.fapply TLA.Succ ".repeat(count)}0${")".repeat(count)}`;
 };
 
-// pp_print_obligation, where Unsupported in the goal fails the obligation and in a fact omits it.
-const printObligation = (id: number, sequent: Sequent) => {
+// pp_print_obligation: the text tlapm writes to the .znn file it hands Zenon, for an obligation
+// that Backend.Prep has shipped. Unsupported in the goal fails the obligation and in a fact omits
+// it.
+export const encodeZenon = (id: number, sequent: Sequent) => {
   const context = createContext();
   const adjoin = (name: string) => pushName(context, pickle(name));
   const bump = () => pushName(context, "");
@@ -443,17 +441,4 @@ const printObligation = (id: number, sequent: Sequent) => {
     }
   })();
   return renderDoc([format(";; obligation #%s@\n", String(id)), doc]);
-};
-
-interface ZenonObligation {
-  id: number;
-  sequent: Sequent;
-}
-
-// The text tlapm writes to the .znn file it hands Zenon: the obligation with its definitions
-// expanded, normalized, through the frontends its BY cites and the action frontend, and flattened.
-export const encodeZenon = (obligation: ZenonObligation) => {
-  const normalized = normalizeSequent(expandDefs(obligation.sequent));
-  const expanded = expandEnabledCdot(normalized, getFrontends(obligation.sequent));
-  return printObligation(obligation.id, flatten(processObligation(expanded)));
 };

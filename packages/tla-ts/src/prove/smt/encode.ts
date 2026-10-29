@@ -2,17 +2,8 @@
 // backend/smtlib.ml): TLA+ values share one sort Idv, set membership is the predicate TLA__Mem,
 // and each symbol the obligation uses brings the symbols and axioms encode/n_data.ml lists for it.
 
-import {
-  adjoin,
-  type Builtin,
-  type Hyp,
-  type Scope,
-  type Sequent,
-} from "../../obligation-expression";
-import { getLevelInfo } from "../../obligation-levels";
+import { adjoin, type Hyp, type Scope, type Sequent } from "../../obligation-expression";
 import { compareStrings } from "../ocaml";
-import { getMd5 } from "../prep/md5";
-import { getPragmaProver } from "../prep/pragma";
 import { collectSymbols } from "./axiomatize";
 import { createPrinter } from "./context";
 import type { Entry } from "./flatten";
@@ -21,18 +12,13 @@ import { simplifyRecordEqualities, sortRecordFields } from "./simplify";
 import { createEncoder, type Binding, type EncodingSession, type Env, type Mode } from "./rewrite";
 import { compareAxioms } from "./table";
 
-const LEVEL_PREFIXES = ["CONSTANT", "STATE", "ACTION", "TEMPORAL"];
-
-const COMMUTED_BUILTINS = new Set<Builtin>(["Prime", "UNCHANGED", "BoxTrue", "Diamond"]);
-
 type Encoder = ReturnType<typeof createEncoder>;
 
-const HYPOTHESIS: Mode = { isPrimed: false, polarity: "Negative", at: undefined, depth: 0 };
+const HYPOTHESIS: Mode = { polarity: "Negative", at: undefined, depth: 0 };
 
 // Prep.expand_defs substitutes visible definitions and pragmas, so they declare nothing.
 const isExpanded = (hyp: Extract<Hyp, { kind: "Defn" }>) =>
   hyp.definition.kind === "Bpragma" ||
-  getPragmaProver(hyp) !== undefined ||
   (hyp.definition.kind === "Operator" && hyp.visibility === "Visible");
 
 // Declares each hypothesis's names and asserts its facts, in order, as Smtlib.pp_print_obligation.
@@ -49,13 +35,11 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
         case "Fresh": {
           if (hyp.level === "Temporal" || (hyp.shape > 0 && hyp.level !== "Constant"))
             return next({ kind: "unsupported", reason: "a temporal declaration" });
-          const prefix =
-            hyp.level === "State" ? "STATE" : hyp.level === "Action" ? "ACTION" : "CONSTANT";
-          const symbol = encoder.getUniqueName(`${prefix}_${hyp.name}_`);
+          const symbol = encoder.getUniqueName(hyp.name);
           const binding: Binding =
             hyp.shape === 0
               ? { kind: "constant", symbol }
-              : { kind: "operator", symbol, arity: hyp.shape, opaque: undefined };
+              : { kind: "operator", symbol, arity: hyp.shape };
           const declaration = declare(symbol, hyp.shape);
           const domain = hyp.domain;
           if (!domain || hyp.domainVisibility === "Hidden") return next(binding, [declaration]);
@@ -63,10 +47,11 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
           const fact = `(assert (${MEM} ${symbol} ${encoder.encodeIdv(domain, state.env, HYPOTHESIS)}))`;
           return next(binding, [declaration, ...encoder.getEntries(fact)]);
         }
+        // Rewrite.elim_flex: a variable is two constants, the second for its primed value.
         case "Flex": {
-          const symbol = encoder.getUniqueName(`VARIABLE_${hyp.name}_`);
-          const primed = `${symbol}__prime`;
-          return next({ kind: "variable", symbol, primed }, [
+          const symbol = encoder.getUniqueName(hyp.name);
+          const primed = encoder.getUniqueName(`${hyp.name}_prime`);
+          return next({ kind: "variable", name: hyp.name, symbol, primed }, [
             declare(symbol, 0),
             declare(primed, 0),
           ]);
@@ -79,7 +64,7 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
             return next({ kind: "unsupported", reason: "an instance" });
           if (definition.kind === "Recursive") {
             const symbol = encoder.getUniqueName(`CONSTANT_${definition.name}_`);
-            return next({ kind: "operator", symbol, arity: definition.shape, opaque: undefined }, [
+            return next({ kind: "operator", symbol, arity: definition.shape }, [
               declare(symbol, definition.shape),
             ]);
           }
@@ -87,24 +72,14 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
             return next({ kind: "unsupported", reason: "a definition" });
           const body = definition.body;
           const params = body.kind === "Lambda" ? body.params : [];
-          // Action.process_eob expands an UNCHANGED, and commutes a prime, [] or <>, at the root
-          // of a definition into its argument. Levels.compute_level then keeps the level the
-          // argument had for the new root.
-          const isCommuted =
-            body.kind === "Apply" &&
-            body.operator.kind === "Internal" &&
-            COMMUTED_BUILTINS.has(body.operator.builtin);
-          const level = Math.min(
-            getLevelInfo(state.scope, isCommuted ? body.args[0] : body).level,
-            3,
-          );
-          const name = `${LEVEL_PREFIXES[level]}_${definition.name}_`;
           if (params.some((param) => param.shape > 0))
-            return next({ kind: "secondOrder", name, shapes: params.map((param) => param.shape) });
-          const symbol = encoder.getUniqueName(name);
-          // Coalesce.crypthash: the digest of the primed name.
-          const opaque = level > 0 ? `h${getMd5(`${name}'`).slice(0, 5)}` : undefined;
-          return next({ kind: "operator", symbol, arity: params.length, opaque }, [
+            return next({
+              kind: "secondOrder",
+              name: definition.name,
+              shapes: params.map((param) => param.shape),
+            });
+          const symbol = encoder.getUniqueName(definition.name);
+          return next({ kind: "operator", symbol, arity: params.length }, [
             declare(symbol, params.length),
           ]);
         }

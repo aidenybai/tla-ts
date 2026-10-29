@@ -9,7 +9,6 @@ import {
   type Expr,
   type Sequent,
 } from "../../obligation-expression";
-import { expandLet } from "../prep/elab";
 import { createContext, type Identifier } from "./context";
 import { createFlattener, getDepth, getVariable, type Entry } from "./flatten";
 import {
@@ -90,7 +89,6 @@ const resolveTriggers = (text: string, isTriggered: boolean): string => {
 };
 
 export interface Mode {
-  isPrimed: boolean;
   polarity: Polarity;
   at: string | undefined;
   depth: number;
@@ -98,8 +96,8 @@ export interface Mode {
 
 export type Binding =
   | { kind: "constant"; symbol: string }
-  | { kind: "variable"; symbol: string; primed: string }
-  | { kind: "operator"; symbol: string; arity: number; opaque: string | undefined }
+  | { kind: "variable"; name: string; symbol: string; primed: string }
+  | { kind: "operator"; symbol: string; arity: number }
   | { kind: "secondOrder"; name: string; shapes: number[] }
   | { kind: "unsupported"; reason: string };
 
@@ -205,16 +203,8 @@ export const createEncoder = (session: EncodingSession) => {
       return domain;
     });
 
-  // Coalesce names a bound variable by its kind. Visit gives a LAMBDA's parameters kind Unknown.
-  const bindVariables = (
-    names: string[],
-    env: Env | undefined,
-    mode: Mode,
-    kind: "CONSTANT" | "Unknown" = "CONSTANT",
-  ) => {
-    const variables = names.map((name, index) =>
-      getVariable(`${kind}_${name}_`, mode.depth + index),
-    );
+  const bindVariables = (names: string[], env: Env | undefined, mode: Mode) => {
+    const variables = names.map((name, index) => getVariable(name, mode.depth + index));
     const inner = variables.reduce<Env | undefined>(
       (current, symbol) => push(current, { kind: "constant", symbol }),
       env,
@@ -352,7 +342,7 @@ export const createEncoder = (session: EncodingSession) => {
     const domain =
       domains.length === 1 ? domains[0] : call(tla(`Product_${domains.length}`), domains);
     const variable = getVariable(
-      domains.length === 1 ? `CONSTANT_${expression.bounds[0].name}_` : "x",
+      domains.length === 1 ? expression.bounds[0].name : "x",
       mode.depth,
     );
     const inner = { ...neither(mode), depth: mode.depth + 1 };
@@ -515,9 +505,6 @@ export const createEncoder = (session: EncodingSession) => {
         const operands = builtin === "Lt" ? idvs() : idvs().toReversed();
         return bool(`(and ${call(INT_LTEQ, operands)} (distinct ${operands.join(" ")}))`);
       }
-      case "Prime":
-        if (mode.isPrimed) throw new TlaUnsupportedError("a doubly primed expression");
-        return encode(args[0], env, { ...mode, isPrimed: true });
       case "Unprimable":
         return encode(args[0], env, neither(mode));
       default: {
@@ -540,19 +527,16 @@ export const createEncoder = (session: EncodingSession) => {
         return idv(binding.symbol);
       case "variable":
         if (args.length > 0) throw new TlaUnsupportedError("an applied variable");
-        return idv(mode.isPrimed ? binding.primed : binding.symbol);
+        return idv(binding.symbol);
       case "operator": {
         if (args.length !== binding.arity)
           throw new TlaUnsupportedError("an operator applied to the wrong number of arguments");
-        const encoded = args.map((arg) => encodeIdv(arg, env, mode));
-        if (!mode.isPrimed || binding.opaque === undefined)
-          return idv(call(binding.symbol, encoded));
-        // Coalesce: a primed hidden definition that isn't constant is an opaque operator of its
-        // own, which Standardize names OPAQUE_ when it has no arguments.
-        const name =
-          binding.arity === 0 ? `Anon_OPAQUE_${binding.opaque}` : `Anon_${binding.opaque}`;
-        anonymous.set(name, binding.arity);
-        return idv(call(tla(name), encoded));
+        return idv(
+          call(
+            binding.symbol,
+            args.map((arg) => encodeIdv(arg, env, mode)),
+          ),
+        );
       }
       // Flatten: an application of a second-order operator, which has no axioms, is a fresh
       // operator of its first-order arguments and the bound variables its others use.
@@ -568,7 +552,6 @@ export const createEncoder = (session: EncodingSession) => {
             arg.params.map((param) => param.name),
             env,
             neither(mode),
-            "Unknown",
           );
           return { isFirstOrder: false, text: encode(arg.body, bound.env, bound.mode).text };
         });
@@ -592,6 +575,31 @@ export const createEncoder = (session: EncodingSession) => {
       case "unsupported":
         throw new TlaUnsupportedError(binding.reason);
     }
+  };
+
+  // Rewrite.elim_flex: the Action frontend's name#prime is the primed copy of the variable it
+  // names, which tlapm finds by name.
+  const getPrimed = (env: Env | undefined, name: string): string => {
+    if (!env) throw new TlaUnsupportedError(`a primed declaration that isn't a variable`);
+    const binding = env.binding;
+    return binding.kind === "variable" && binding.name === name
+      ? binding.primed
+      : getPrimed(env.rest, name);
+  };
+
+  // Standardize: an opaque name the Action frontend introduces is an anonymous operator, named
+  // OPAQUE_ when it has no arguments.
+  const encodeOpaque = (name: string, args: Expr[], env: Env | undefined, mode: Mode) => {
+    if (args.length === 0 && name.endsWith("#prime"))
+      return idv(getPrimed(env, name.slice(0, -"#prime".length)));
+    const anonymousName = args.length === 0 ? `Anon_OPAQUE_${name}` : `Anon_${name}`;
+    anonymous.set(anonymousName, args.length);
+    return idv(
+      call(
+        tla(anonymousName),
+        args.map((arg) => encodeIdv(arg, env, mode)),
+      ),
+    );
   };
 
   const encodeExcept = (
@@ -738,6 +746,8 @@ export const createEncoder = (session: EncodingSession) => {
           return encodeBuiltin(operator.builtin, expression.args, env, mode);
         if (operator.kind === "Ix")
           return encodeReference(getBinding(env, operator.index), expression.args, env, mode);
+        if (operator.kind === "Opaque")
+          return encodeOpaque(operator.name, expression.args, env, mode);
         if (operator.kind === "Lambda")
           return encode({ ...normalizeApply(operator, expression.args) }, env, mode);
         throw new TlaUnsupportedError(`an application of ${operator.kind}`);
@@ -763,8 +773,8 @@ export const createEncoder = (session: EncodingSession) => {
         const items = expression.items.map((item) => encodeBool(item, env, mode));
         return bool(expression.bullet === "Or" ? disjoin(items) : conjoin(items));
       }
-      case "Let":
-        return encode(expandLet(expression), env, mode);
+      case "Opaque":
+        return encodeOpaque(expression.name, [], env, mode);
       case "Quant":
         return bool(encodeQuantifier(expression, env, mode));
       case "Choose":
