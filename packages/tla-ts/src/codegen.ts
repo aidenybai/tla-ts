@@ -1,7 +1,5 @@
 import { getChildren, isLocallyResolved, type Expression } from "./ast";
-import { TlaEvaluationError } from "./errors";
 import {
-  describeLocation,
   bindValue,
   expectBoolean,
   findGlobalName,
@@ -18,13 +16,16 @@ import {
   isWorthCaching,
   keepLazy,
   resolveGlobalOperator,
+  createPrimeOutsideActionError,
+  createUnassignedError,
+  getSortedFields,
+  hasDuplicateFields,
   type Context,
   type Environment,
   type Evaluator,
 } from "./evaluate";
 import {
   applyFunction,
-  compareValues,
   createEnumeratedSet,
   createSortedFunction,
   createTuple,
@@ -82,14 +83,10 @@ const createRuntime = () => ({
   equal: valuesEqual,
   enumerate: getEnumeratedElements,
   unassigned: (name: string, expression: Expression): never => {
-    throw new TlaEvaluationError(
-      `The variable ${name} is not assigned at ${describeLocation(expression)}`,
-    );
+    throw createUnassignedError(name, expression);
   },
   primeOutsideAction: (expression: Expression): never => {
-    throw new TlaEvaluationError(
-      `A primed expression appears outside an action at ${describeLocation(expression)}`,
-    );
+    throw createPrimeOutsideActionError(expression);
   },
   prime: (context: Context): Context => ({
     environment: context.environment,
@@ -260,13 +257,8 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "FieldAccess":
       return `apply(${generate(expression.record)}, ${JSON.stringify(expression.field)}, ${addReference(generator, getFieldError(expression))})`;
     case "Record": {
-      const fields = [...expression.fields].sort((left, right) =>
-        compareValues(left.name, right.name),
-      );
-      const hasDuplicates = fields.some(
-        (field, index) => index > 0 && fields[index - 1].name === field.name,
-      );
-      if (hasDuplicates) return generateDelegate(generator, expression, frame);
+      const fields = getSortedFields(expression.fields);
+      if (hasDuplicateFields(fields)) return generateDelegate(generator, expression, frame);
       const names = addReference(
         generator,
         fields.map((field) => field.name),
