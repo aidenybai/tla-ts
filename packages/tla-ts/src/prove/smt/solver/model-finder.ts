@@ -29,6 +29,7 @@ import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import type { Context } from "./context";
 import { L_TRUE } from "./lbool";
 import { collectMacroCandidates, solveMacros } from "./model-macro-solver";
+import { ObjMap } from "./hashtable";
 import { FuncInterp, RandomGen, type ProtoModel } from "./proto-model";
 import { pullQuant } from "./pull-quant";
 import { Rewriter } from "./rewriter";
@@ -37,10 +38,14 @@ type Evaluate = (expr: number) => number | null;
 
 // instantiation_set: the S_{k,j} sets of the paper, with the generation of each term.
 export class InstantiationSet {
-  readonly elems = new Map<number, number>();
-  readonly inv = new Map<number, number>();
+  readonly elems: ObjMap<number>;
+  readonly inv: ObjMap<number>;
 
-  constructor(private manager: AstManager) {}
+  constructor(private manager: AstManager) {
+    const getHash = (expr: number) => manager.hashes[expr];
+    this.elems = new ObjMap(getHash);
+    this.inv = new ObjMap(getHash);
+  }
 
   insert(expr: number, generation: number) {
     if (this.elems.has(expr) || this.manager.containsModelValue(expr)) return;

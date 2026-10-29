@@ -3,6 +3,7 @@
 // model that the SMT kernel builds from a satisfying assignment, and that model-based quantifier
 // instantiation completes and checks.
 import { AstManager, KIND_APP, KIND_VAR, OP_AND, OP_EQ, OP_ITE, SORT_BOOL, SORT_INT } from "./ast";
+import { ObjHashtable } from "./hashtable";
 import { ModelEvaluator } from "./model-evaluator";
 
 interface FuncEntry {
@@ -174,8 +175,8 @@ export class ProtoModel {
   readonly constInterps = new Map<number, number>();
   readonly funcInterps = new Map<number, FuncInterp>();
   private auxDecls = new Set<number>();
-  // user_sort_factory and the arith_factory: the values of each sort, in creation order.
-  private values = new Map<number, Set<number>>();
+  // user_sort_factory and the arith_factory: the values of each sort, in Z3's hash order.
+  private values = new Map<number, ObjHashtable>();
   private nextValue = new Map<number, number>();
   private finiteSorts = new Set<number>();
   private boolRandom: RandomGen;
@@ -216,7 +217,7 @@ export class ProtoModel {
   private getValueSet(sort: number) {
     const existing = this.values.get(sort);
     if (existing !== undefined) return existing;
-    const created = new Set<number>();
+    const created = new ObjHashtable((value) => this.manager.hashes[value]);
     this.values.set(sort, created);
     return created;
   }
@@ -249,7 +250,7 @@ export class ProtoModel {
       return result;
     }
     if (set !== undefined && set.size > 0)
-      return set.values().next().value ?? this.mkValue(0, sort);
+      return set[Symbol.iterator]().next().value ?? this.mkValue(0, sort);
     return this.mkValue(0, sort);
   }
 

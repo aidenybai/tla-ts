@@ -1,6 +1,7 @@
 // Ported from Z3 (src/ast/ast.h, src/ast/ast.cpp), MIT license, see z3-license.txt.
 // A hash-consed DAG of applications, de Bruijn variables and quantifiers, as in Z3's ast_manager.
 import { SmtUnsupportedError } from "../../../errors";
+import { astArrayHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
 
 export const KIND_APP = 0;
 export const KIND_VAR = 1;
@@ -83,6 +84,45 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
   ["abs", FAMILY_ARITH, OP_ABS, SORT_INT],
 ];
 
+// Z3's family ids and decl kinds, which its AST hashes include.
+const Z3_BASIC_FAMILY = 0;
+const Z3_MODEL_VALUE_FAMILY = 3;
+const Z3_USER_SORT_FAMILY = 4;
+const Z3_ARITH_FAMILY = 5;
+const Z3_NULL = 0xffffffff;
+// The name, Z3 decl kind and arity of each builtin, whose Z3 declaration has this many arguments
+// whatever the number of arguments of the application (-1 for the arguments' own number).
+const Z3_BUILTINS = new Map<number, [string, number, number]>([
+  [OP_TRUE, ["true", 0, 0]],
+  [OP_FALSE, ["false", 1, 0]],
+  [OP_EQ, ["=", 2, 2]],
+  [OP_DISTINCT, ["distinct", 3, -1]],
+  [OP_ITE, ["if", 4, 3]],
+  [OP_AND, ["and", 5, 2]],
+  [OP_OR, ["or", 6, 2]],
+  [OP_XOR, ["xor", 7, 2]],
+  [OP_NOT, ["not", 8, 1]],
+  [OP_IMPLIES, ["=>", 9, 2]],
+  [OP_LE, ["<=", 2, 2]],
+  [OP_GE, [">=", 3, 2]],
+  [OP_LT, ["<", 4, 2]],
+  [OP_GT, [">", 5, 2]],
+  [OP_ADD, ["+", 6, 2]],
+  [OP_SUB, ["-", 7, 2]],
+  [OP_UMINUS, ["-", 8, 1]],
+  [OP_MUL, ["*", 9, 2]],
+  [OP_IDIV, ["div", 11, 2]],
+  [OP_MOD, ["mod", 16, 2]],
+  [OP_ABS, ["abs", 21, 1]],
+]);
+
+// symbol::hash, for string symbols.
+const getSymbolHash = (name: string) => stringHash(name, 17);
+
+// decl_info::hash.
+const getInfoHash = (family: number, kind: number, parameterHashes: number[]) =>
+  mkMix(family, kind, parameterHashes.length === 0 ? 0 : getCompositeHash(parameterHashes));
+
 export class AstManager {
   kinds: number[] = [];
   // The declaration of an application, the index of a variable, or the value of a numeral.
@@ -94,9 +134,18 @@ export class AstManager {
   freeVarBounds: number[] = [];
   hasQuantifierFlags: boolean[] = [];
   depths: number[] = [];
+  // Z3's hash of each expression, which orders Z3's hash tables.
+  hashes: number[] = [];
   quantifiers = new Map<number, QuantifierData>();
   funcDecls: FuncDecl[] = [];
   sortNames: string[] = ["Bool", "Int"];
+  private sortHashes = [
+    combineHash(getSymbolHash("Bool"), getInfoHash(Z3_BASIC_FAMILY, 0, [])),
+    combineHash(getSymbolHash("Int"), getInfoHash(Z3_ARITH_FAMILY, 1, [])),
+  ];
+  // The hash of each uninterpreted declaration, and of each builtin by its Z3 declaration.
+  private declHashes: number[] = [];
+  private builtinHashes = new Map<string, number>();
   private table = new Map<string, number>();
   private appTable = new Map<number, number[]>();
   private freshCounter = 0;
@@ -118,11 +167,53 @@ export class AstManager {
   }
 
   mkSort(name: string) {
+    this.sortHashes.push(
+      combineHash(
+        getSymbolHash(name),
+        getInfoHash(Z3_USER_SORT_FAMILY, this.sortNames.length - 2, []),
+      ),
+    );
     this.sortNames.push(name);
     return this.sortNames.length - 1;
   }
 
+  // The hash of a func_decl node: its name, range, info and domain.
+  private getFuncDeclHash(name: string, domain: number[], range: number, infoHash: number) {
+    return astArrayHash(
+      domain.map((sort) => this.sortHashes[sort]),
+      combineHash(combineHash(getSymbolHash(name), this.sortHashes[range]), infoHash),
+    );
+  }
+
+  private getBuiltinHash(op: number, args: number[], range: number) {
+    const builtin = Z3_BUILTINS.get(op);
+    if (builtin === undefined) throw new Error(`the operator ${op} has no Z3 declaration`);
+    const argSort = op === OP_ITE ? this.sorts[args[1]] : this.sorts[args[0]];
+    const arity = builtin[2] === -1 ? args.length : builtin[2];
+    const key = `${op}:${arity}:${argSort}:${range}`;
+    const existing = this.builtinHashes.get(key);
+    if (existing !== undefined) return existing;
+    const domain = Array.from({ length: arity }, (_, index) =>
+      op === OP_ITE && index === 0 ? SORT_BOOL : argSort,
+    );
+    const family = op < OP_NUM ? Z3_BASIC_FAMILY : Z3_ARITH_FAMILY;
+    const hash = this.getFuncDeclHash(
+      builtin[0],
+      domain,
+      range,
+      getInfoHash(family, builtin[1], []),
+    );
+    this.builtinHashes.set(key, hash);
+    return hash;
+  }
+
   mkFuncDecl(name: string, domain: number[], range: number, isSkolem = false) {
+    this.declHashes[this.funcDecls.length] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      isSkolem ? getInfoHash(Z3_NULL, Z3_NULL, []) : 0,
+    );
     this.funcDecls.push({
       name,
       family: FAMILY_USER,
@@ -146,16 +237,25 @@ export class AstManager {
     args: number[],
     sort: number,
     value: number,
+    getHash: () => number,
   ) {
     const existing = this.table.get(key);
     if (existing !== undefined) return existing;
-    const id = this.create(kind, decl, args, sort, value);
+    const id = this.create(kind, decl, args, sort, value, getHash());
     this.table.set(key, id);
     return id;
   }
 
-  private create(kind: number, decl: number, args: number[], sort: number, value: number) {
+  private create(
+    kind: number,
+    decl: number,
+    args: number[],
+    sort: number,
+    value: number,
+    hash: number,
+  ) {
     const id = this.kinds.length;
+    this.hashes.push(hash);
     this.kinds.push(kind);
     this.decls.push(decl);
     this.args.push(args);
@@ -195,7 +295,21 @@ export class AstManager {
           isSame = candidateArgs[index] === args[index];
         if (isSame) return candidate;
       }
-    const id = this.create(KIND_APP, decl, args, sort, 0);
+    const declHash =
+      this.funcDecls[decl].family === FAMILY_USER
+        ? this.declHashes[decl]
+        : this.getBuiltinHash(this.funcDecls[decl].op, args, sort);
+    const id = this.create(
+      KIND_APP,
+      decl,
+      args,
+      sort,
+      0,
+      astArrayHash(
+        args.map((arg) => this.hashes[arg]),
+        declHash,
+      ),
+    );
     if (bucket === undefined) this.appTable.set(hash, [id]);
     else bucket.push(id);
     return id;
@@ -204,7 +318,16 @@ export class AstManager {
   mkNumeral(value: number) {
     if (!Number.isSafeInteger(value))
       throw new SmtUnsupportedError(`the numeral ${value} is too large`);
-    return this.intern(`n${value}`, KIND_APP, OP_NUM, [], SORT_INT, value === 0 ? 0 : value);
+    // The Int numeral declaration has the parameters (value, is_int), and a rational hashes as
+    // |numerator| + 3 |denominator|.
+    return this.intern(`n${value}`, KIND_APP, OP_NUM, [], SORT_INT, value === 0 ? 0 : value, () =>
+      this.getFuncDeclHash(
+        "Int",
+        [],
+        SORT_INT,
+        getInfoHash(Z3_ARITH_FAMILY, 0, [(Math.abs(value) + 3) >>> 0, 1]),
+      ),
+    );
   }
 
   // mk_model_value: the element with this index in the universe of an uninterpreted sort.
@@ -220,7 +343,15 @@ export class AstManager {
       range: sort,
       isSkolem: false,
     });
-    return this.intern(key, KIND_APP, this.funcDecls.length - 1, [], sort, index);
+    const sortHash = this.sortHashes[sort];
+    return this.intern(key, KIND_APP, this.funcDecls.length - 1, [], sort, index, () =>
+      this.getFuncDeclHash(
+        this.funcDecls[this.funcDecls.length - 1].name,
+        [],
+        sort,
+        getInfoHash(Z3_MODEL_VALUE_FAMILY, 0, [index, sortHash]),
+      ),
+    );
   }
 
   mkFreshConst(prefix: string, sort: number) {
@@ -228,7 +359,9 @@ export class AstManager {
   }
 
   mkVar(index: number, sort: number) {
-    return this.intern(`v${index}:${sort}`, KIND_VAR, -1, [], sort, index);
+    return this.intern(`v${index}:${sort}`, KIND_VAR, -1, [], sort, index, () =>
+      combineHash(index, this.sortHashes[sort]),
+    );
   }
 
   mkQuantifier(data: QuantifierData) {
@@ -237,7 +370,16 @@ export class AstManager {
       .join(";")}:${data.weight}`;
     const existing = this.table.get(key);
     if (existing !== undefined) return existing;
-    const id = this.intern(key, KIND_QUANTIFIER, -1, [data.body], SORT_BOOL, 0);
+    const id = this.intern(key, KIND_QUANTIFIER, -1, [data.body], SORT_BOOL, 0, () =>
+      mkMix(
+        astArrayHash(
+          data.sorts.map((sort) => this.sortHashes[sort]),
+          data.isForall ? 31 : 19,
+        ),
+        data.patterns.length,
+        this.hashes[data.body],
+      ),
+    );
     const bodyBound = this.freeVarBounds[data.body];
     this.freeVarBounds[id] = Math.max(0, bodyBound - data.sorts.length);
     this.quantifiers.set(id, data);
