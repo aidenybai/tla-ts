@@ -1,0 +1,2 @@
+$hyp "h" (= (TLA.record "a" x "b" y) (TLA.record "b" z "a" w))
+$goal (= x w)

@@ -1,0 +1,4 @@
+$hyp "h" (P a)
+$hyp "e" (= (Q b) (P a))
+$hyp "q" (=> (Q b) r)
+$goal r

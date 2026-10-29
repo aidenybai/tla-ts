@@ -1,0 +1,1 @@
+$goal (TLA.in (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0)) arith.N)

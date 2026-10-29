@@ -1,0 +1,3 @@
+$hyp "h" (P (-. p))
+$hyp "n" p
+$goal (P F.)
