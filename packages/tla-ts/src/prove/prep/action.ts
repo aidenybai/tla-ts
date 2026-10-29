@@ -8,11 +8,13 @@ import {
   adjoin,
   applyBuiltin,
   at,
+  createContextMap,
   getBoundedFresh,
   getFresh,
   getScopeAt,
   getScopeHyps,
   mapAccumulate,
+  mapHyp,
   mapScoped,
   type Builtin,
   type Defn,
@@ -44,16 +46,16 @@ const isBuiltin = (expression: Expr, builtins: Builtin[]) =>
   builtins.includes(expression.operator.builtin);
 
 // Visit.map over a sequent: each hypothesis maps in the scope before it, hidden ones too if hyps
-// is "all".
-const mapSequent = (
-  scope: Scope | undefined,
-  sequent: Sequent,
-  map: Map,
-  hyps: "visible" | "all",
-): Sequent => {
-  const expression = mapScoped(scope, { kind: "Sequent", sequent }, map, adjoin, hyps);
-  if (expression.kind !== "Sequent") throw new TlapmBugError();
-  return expression.sequent;
+// is "all". The context maps by the obligation's own hypotheses, from which it derives.
+const createSequentMap = (map: Map, hyps: "visible" | "all") => {
+  const mapContext = createContextMap<Scope | undefined>(undefined, (scope, hyp) => {
+    const mapped = mapHyp(hyp, (inner) => map(scope, inner), hyps);
+    return [adjoin(scope, mapped), mapped];
+  });
+  return (keys: Hyp[], sequent: Sequent): Sequent => {
+    const mapped = mapContext(keys, sequent.context);
+    return { context: mapped.context, active: map(mapped.state, sequent.active) };
+  };
 };
 
 // Expr.Tla_norm.expand_action, then expand_unchanged.
@@ -229,22 +231,21 @@ const getOriginalLevel = (scope: Scope | undefined, hyp: Hyp) => {
 };
 
 // renameSequent on the obligation, with the levels of its definitions from before commuting.
-const renameObligation = (commuted: Sequent, original: Sequent): Sequent => {
-  const initial: RenameState = { scope: undefined, original: undefined };
-  const pairs = commuted.context.map((hyp, index) => ({ hyp, original: original.context[index] }));
-  const [inner, context] = mapAccumulate(initial, pairs, (current, pair) => {
-    const renamed = renameHyp(
-      current.scope,
-      pair.hyp,
-      getOriginalLevel(current.original, pair.original),
-    );
+const renameContext = createContextMap<RenameState>(
+  { scope: undefined, original: undefined },
+  (current, hyp, original) => {
+    const renamed = renameHyp(current.scope, hyp, getOriginalLevel(current.original, original));
     const next = {
       scope: adjoin(current.scope, renamed),
-      original: adjoin(current.original, pair.original),
+      original: adjoin(current.original, original),
     };
     return [next, renamed];
-  });
-  return { context, active: rename(inner.scope, commuted.active) };
+  },
+);
+
+const renameObligation = (commuted: Sequent, original: Sequent): Sequent => {
+  const renamed = renameContext(original.context, commuted.context);
+  return { context: renamed.context, active: rename(renamed.state.scope, commuted.active) };
 };
 
 const renameSequent = (scope: Scope | undefined, sequent: Sequent): Sequent => {
@@ -503,13 +504,17 @@ const coalesceModal: Map = (scope, expression) => {
 };
 
 // process_eob, on an obligation's sequent.
+const expandActionSequent = createSequentMap(expandAction, "all");
+
+const expandUnchangedSequent = createSequentMap(expandUnchanged, "all");
+
+const commuteSequent = createSequentMap(commuteSymbols, "all");
+
+const coalesceSequent = createSequentMap(coalesceModal, "visible");
+
 export const processObligation = (sequent: Sequent): Sequent => {
-  const expanded = mapSequent(
-    undefined,
-    mapSequent(undefined, sequent, expandAction, "all"),
-    expandUnchanged,
-    "all",
-  );
-  const commuted = mapSequent(undefined, expanded, commuteSymbols, "all");
-  return mapSequent(undefined, renameObligation(commuted, sequent), coalesceModal, "visible");
+  const keys = sequent.context;
+  const expanded = expandUnchangedSequent(keys, expandActionSequent(keys, sequent));
+  const commuted = commuteSequent(keys, expanded);
+  return coalesceSequent(keys, renameObligation(commuted, sequent));
 };

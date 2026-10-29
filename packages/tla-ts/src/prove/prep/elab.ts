@@ -6,10 +6,12 @@ import { TlaProofError } from "../../errors";
 import {
   at,
   consSubstitution,
+  createContextMap,
   getChildren,
   isEqualExpr,
   mapChildren,
   mapExceptSpecs,
+  mapHyp,
   shift,
   substituteExpr,
   type Expr,
@@ -130,11 +132,25 @@ const normalizeExcept = (expression: Expr): Expr => {
   return apply(normalizeExcept(except.function), mapExceptSpecs(except.specs, normalizeExcept));
 };
 
+// let_normalize on each hypothesis, and whether the context so far is non_temporal.
+const normalizeLetContext = createContextMap(true, (isContextNonTemporal, hyp) => [
+  isContextNonTemporal && getVisitedExprs(hyp).every(isNonTemporal),
+  mapHyp(hyp, normalizeLet, "all"),
+]);
+
+const normalizeExceptContext = createContextMap(undefined, (_state, hyp) => [
+  undefined,
+  mapHyp(hyp, normalizeExcept, "all"),
+]);
+
 // normalize, on an obligation as a sequent expression, as Backend.Prep.normalize_expr calls it.
 export const normalizeSequent = (sequent: Sequent): Sequent => {
-  const expression: Expr = { kind: "Sequent", sequent };
-  const inlined = normalizeLet(expression);
-  const normalized = isNonTemporal(expression) ? normalizeExcept(inlined) : inlined;
-  if (normalized.kind !== "Sequent") throw new TlaProofError("Backend.Prep.obl_from_expr");
-  return normalized.sequent;
+  const inlined = normalizeLetContext(sequent.context);
+  const active = normalizeLet(sequent.active);
+  return inlined.state && isNonTemporal(sequent.active)
+    ? {
+        context: normalizeExceptContext(sequent.context, inlined.context).context,
+        active: normalizeExcept(active),
+      }
+    : { context: inlined.context, active };
 };

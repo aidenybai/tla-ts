@@ -356,6 +356,44 @@ export const mapAccumulate = <State, Item, Result>(
   return [final, results];
 };
 
+// A mapped context prefix: the hypothesis its last key maps to, if any, and the state after it.
+interface MappedPrefix<State> {
+  state: State;
+  hyp: Hyp | undefined;
+  parent: MappedPrefix<State> | undefined;
+  next: WeakMap<Hyp, MappedPrefix<State>>;
+}
+
+// mapAccumulate over a context that maps each prefix of keys once, as the obligations of a module
+// share most of their context by identity. The input at each position must depend on the keys up
+// to it alone, and the step on the input, its key, and the state.
+export const createContextMap = <State>(
+  initial: State,
+  step: (state: State, input: Hyp, key: Hyp) => [State, Hyp | undefined],
+) => {
+  const empty: MappedPrefix<State> = {
+    state: initial,
+    hyp: undefined,
+    parent: undefined,
+    next: new WeakMap(),
+  };
+  return (keys: Hyp[], inputs = keys) => {
+    const last = keys.reduce((prefix, key, index) => {
+      const known = prefix.next.get(key);
+      if (known) return known;
+      const [state, hyp] = step(prefix.state, inputs[index], key);
+      const mapped: MappedPrefix<State> = { state, hyp, parent: prefix, next: new WeakMap() };
+      prefix.next.set(key, mapped);
+      return mapped;
+    }, empty);
+    const context: Hyp[] = [];
+    for (let prefix: MappedPrefix<State> | undefined = last; prefix; prefix = prefix.parent) {
+      if (prefix.hyp) context.push(prefix.hyp);
+    }
+    return { state: last.state, context: context.reverse() };
+  };
+};
+
 export const getFresh = (name: string, level: Level, shape = 0): Hyp => ({
   kind: "Fresh",
   name,
@@ -896,7 +934,7 @@ export const mapDefnBody = (definition: Defn, map: (body: Expr) => Expr): Defn =
     ? { ...definition, body: map(definition.body) }
     : definition;
 
-const mapHyp = (hyp: Hyp, map: (inner: Expr) => Expr, hyps: "visible" | "all"): Hyp => {
+export const mapHyp = (hyp: Hyp, map: (inner: Expr) => Expr, hyps: "visible" | "all"): Hyp => {
   if (hyp.kind === "Fresh") return hyp.domain ? { ...hyp, domain: map(hyp.domain) } : hyp;
   if (hyp.kind === "Flex" || (hyps === "visible" && hyp.visibility === "Hidden")) return hyp;
   if (hyp.kind === "Defn") return { ...hyp, definition: mapDefnBody(hyp.definition, map) };
