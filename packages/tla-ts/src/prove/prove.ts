@@ -68,10 +68,12 @@ export interface ProveOptions {
   onObligation?: (obligation: ProofObligation) => void;
 }
 
-// What one prover concluded about an obligation, as Fpfile keeps it.
+// What one prover concluded about an obligation, as Fpfile keeps it. Fpfile keeps one Isabelle
+// result, which only a method with the same tactic reuses.
 interface PriorResult {
   isProved: boolean;
   timeLimitMs: number;
+  tactic: string | undefined;
 }
 
 // What tlapm keeps across the obligations of one run: the SMT encoder's counters, and what each
@@ -89,7 +91,8 @@ interface Backend {
   decide: (text: string, options: DecideOptions) => Verdict;
 }
 
-// Action.process_obligation, the frontend for the first-order backends, then Prep.flatten.
+// Action.process_obligation, the frontend for every backend but LS4, Isabelle included, then
+// Prep.flatten.
 const shipFirstOrder = (sequent: Sequent) => flatten(processObligation(sequent));
 
 const SMT: Backend = {
@@ -171,14 +174,24 @@ const proveWithBackends = (
     status: "proved",
     prover,
   });
-  if (results.get(methods.provers[0].prover)?.isProved) return getProved(methods.provers[0].prover);
+  const getPrior = (method: Method) => {
+    const prior = results.get(method.prover);
+    return prior?.tactic === method.tactic ? prior : undefined;
+  };
+  const setPrior = (method: Method, isProved: boolean) =>
+    results.set(method.prover, {
+      isProved,
+      timeLimitMs: method.timeLimitMs,
+      tactic: method.tactic,
+    });
+  if (getPrior(methods.provers[0])?.isProved) return getProved(methods.provers[0].prover);
   const sequent = normalizeExpand(obligation.sequent, methods.frontends);
   if (obligation.kind.kind === "Support" && isTrivial(sequent))
     return { ...getBase(obligation), status: "trivial" };
   const reasons: string[] = [];
   const state = { isDecided: false };
   for (const method of methods.provers) {
-    const prior = results.get(method.prover);
+    const prior = getPrior(method);
     if (prior?.isProved) return getProved(method.prover);
     if (prior && prior.timeLimitMs >= method.timeLimitMs) {
       state.isDecided = true;
@@ -195,16 +208,13 @@ const proveWithBackends = (
     try {
       const text = backend.encode(obligation.id, sequent, method, run.session);
       const verdict = backend.decide(text, { timeLimitMs: method.timeLimitMs, signal });
-      results.set(method.prover, {
-        isProved: verdict === "unsat",
-        timeLimitMs: method.timeLimitMs,
-      });
+      setPrior(method, verdict === "unsat");
       if (verdict === "unsat") return getProved(method.prover);
       state.isDecided = true;
       reasons.push(`${method.prover} answered ${verdict}`);
     } catch (error) {
       if (error instanceof TlaProverError) {
-        results.set(method.prover, { isProved: false, timeLimitMs: method.timeLimitMs });
+        setPrior(method, false);
         state.isDecided = true;
         reasons.push(`${method.prover} failed: ${error.message}`);
         continue;
