@@ -6,7 +6,7 @@ import { fork } from "node:child_process";
 import type { ModuleProofRecord } from "./proof-records";
 
 // The results by module index. A module whose worker exits mid-module has none. In a worker, it
-// never resolves.
+// never resolves. A worker wraps each result, as a process can't send undefined.
 export const runModuleWorkers = async <Result>(
   records: ModuleProofRecord[],
   work: (record: ModuleProofRecord) => Promise<Result>,
@@ -14,7 +14,7 @@ export const runModuleWorkers = async <Result>(
 ): Promise<Map<number, Result>> => {
   if (process.argv.includes("--worker")) {
     process.on("message", (index: number) => {
-      void work(records[index]).then((result) => process.send?.(result));
+      void work(records[index]).then((result) => process.send?.({ result }));
     });
     return new Promise(() => {});
   }
@@ -32,8 +32,8 @@ export const runModuleWorkers = async <Result>(
         const index = queue.shift();
         if (index === undefined) return worker.disconnect();
         worker.send(index);
-        worker.once("message", (result: Result) => {
-          byModule.set(index, result);
+        worker.once("message", (message: { result: Result }) => {
+          byModule.set(index, message.result);
           console.error(`${byModule.size}/${records.length} ${records[index].id}`);
           next();
         });
