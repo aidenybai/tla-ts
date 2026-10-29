@@ -1,8 +1,13 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, join } from "node:path";
 import { TlaUnsupportedError } from "../src/errors";
-import { getObligations, type PrintedObligation } from "../src/obligations";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getLibraryModules } from "./corpora";
+import type { PrintedObligation } from "../src/obligations";
+import {
+  CONFORMANCE_DIRECTORY,
+  CORPORA_DIRECTORY,
+  getLibraryModules,
+  getModuleObligations,
+} from "./corpora";
 import {
   collapseWhitespace,
   getDigest,
@@ -18,14 +23,6 @@ const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".tlapm-results.json");
 
 const libraryModules = getLibraryModules();
 
-// tlapm searches the module's directory, then the -I library, then its own standard library.
-const TLAPM_LIBRARY = join(CORPORA_DIRECTORY, "tlapm/library");
-
-const readModule = (path: string | undefined) =>
-  path !== undefined && existsSync(path)
-    ? { file: path, source: readFileSync(path, "utf8") }
-    : undefined;
-
 interface Outcome {
   status: "ok" | "error" | "unsupported";
   error?: string;
@@ -34,15 +31,7 @@ interface Outcome {
 
 const analyze = (path: string): Outcome => {
   try {
-    const results = getObligations(
-      [{ file: path, source: readFileSync(path, "utf8") }],
-      (name) =>
-        readModule(join(dirname(path), `${name}.tla`)) ??
-        readModule(libraryModules.get(name)) ??
-        readModule(join(TLAPM_LIBRARY, `${name}.tla`)),
-    );
-    // A submodule reports its own obligations, before the module that contains it.
-    return { status: "ok", obligations: results.flatMap((result) => result.obligations) };
+    return { status: "ok", obligations: getModuleObligations(path, libraryModules) };
   } catch (error) {
     if (error instanceof TlaUnsupportedError)
       return { status: "unsupported", error: error.message, obligations: [] };
