@@ -1,6 +1,7 @@
 // Compares tla-ts's SMT-LIB encoding of each obligation with the file tlapm sent to its SMT
 // solver, as conformance:record-proofs recorded it. An encoding that differs only in the names of
-// bound variables and fresh symbols counts as "names", when the recorded input is available.
+// bound variables and fresh symbols counts as "names", when the recorded input is available. A
+// difference where tlapm is wrong counts as a deviation.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,8 +16,9 @@ import {
   PROOF_INPUTS_DIRECTORY,
   readProofRecords,
 } from "./proof-records";
+import { getDeviation } from "./tlapm-deviations";
 
-type Verdict = "match" | "names" | "mismatch" | "unsupported";
+type Verdict = "match" | "names" | "deviation" | "mismatch" | "unsupported";
 
 type Sexp = string | Sexp[];
 
@@ -173,6 +175,8 @@ const results = readProofRecords()
         return [{ ...base, verdict: "unsupported", reason: encoded.reason }];
       if (getInputDigest(encoded.text) === expected.smt.input)
         return [{ ...base, verdict: "match" }];
+      const deviation = getDeviation(record.id, expected.id);
+      if (deviation) return [{ ...base, verdict: "deviation", reason: deviation }];
       const inputPath = join(PROOF_INPUTS_DIRECTORY, record.id, `${expected.id}.smt`);
       if (!existsSync(inputPath)) return [{ ...base, verdict: "mismatch" }];
       const difference = findDifference(readFileSync(inputPath, "utf8"), encoded.text);
@@ -187,8 +191,8 @@ const results = readProofRecords()
 writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
 printResults(
   results,
-  ["match", "names", "mismatch", "unsupported"],
-  ["mismatch", "unsupported"],
+  ["match", "names", "deviation", "mismatch", "unsupported"],
+  ["deviation", "mismatch", "unsupported"],
   (result) =>
     [
       `${result.verdict} ${result.module} #${result.id}${result.reason ? `: ${result.reason}` : ""}`,

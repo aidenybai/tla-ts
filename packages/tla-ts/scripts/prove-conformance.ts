@@ -1,7 +1,8 @@
 // Proves each module with tla-ts's own backends and compares every obligation's status with the one
 // tlapm reached, as conformance:record-proofs recorded it. tla-ts should prove what tlapm proves,
 // find trivial what tlapm finds trivial, never prove what tlapm fails to prove, and prove each
-// obligation with the prover tlapm used. Worker processes take one module at a time, largest first,
+// obligation with the prover tlapm used. A difference where tlapm is wrong counts as a deviation
+// instead. Worker processes take one module at a time, largest first,
 // --jobs of them at once.
 
 import { fork } from "node:child_process";
@@ -17,8 +18,9 @@ import {
   type ModuleProofRecord,
   type ObligationRecord,
 } from "./proof-records";
+import { getDeviation } from "./tlapm-deviations";
 
-type Verdict = "agree" | "prover" | "missed" | "unsound" | "trivial" | "absent";
+type Verdict = "agree" | "deviation" | "prover" | "missed" | "unsound" | "trivial" | "absent";
 
 interface Result {
   module: string;
@@ -67,16 +69,19 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
   );
   return record.obligations.map((expected) => {
     const actual = byId.get(expected.id);
+    const verdict = getVerdict(expected, actual);
+    const deviation = verdict === "agree" ? undefined : getDeviation(record.id, expected.id);
     const reason =
-      proved instanceof TlaError
+      deviation ??
+      (proved instanceof TlaError
         ? proved.message
         : actual?.status === "failed" || actual?.status === "unsupported"
           ? actual.reason
-          : undefined;
+          : undefined);
     return {
       module: record.id,
       id: expected.id,
-      verdict: getVerdict(expected, actual),
+      verdict: deviation === undefined ? verdict : "deviation",
       expected: getExpected(expected),
       ...(actual ? { actual: getActual(actual) } : {}),
       ...(reason === undefined ? {} : { reason }),
@@ -131,14 +136,14 @@ if (process.argv.includes("--worker")) {
   writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
   printResults(
     results,
-    ["agree", "prover", "missed", "unsound", "trivial", "absent"],
-    ["unsound", "trivial", "absent", "prover"],
+    ["agree", "deviation", "prover", "missed", "unsound", "trivial", "absent"],
+    ["deviation", "unsound", "trivial", "absent", "prover"],
     (result) =>
       `${result.verdict} ${result.module} #${result.id}: tlapm ${result.expected}, tla-ts ${result.actual ?? "none"}${result.reason ? ` (${result.reason})` : ""}`,
   );
   // What tlapm reached and tla-ts didn't, by tlapm's status and what tla-ts reached.
   const differences = Map.groupBy(
-    results.filter((result) => result.verdict !== "agree"),
+    results.filter((result) => result.verdict !== "agree" && result.verdict !== "deviation"),
     (result) => `${result.verdict}: tlapm ${result.expected}, tla-ts ${result.actual}`,
   );
   [...differences]
