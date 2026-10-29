@@ -79,6 +79,20 @@ export class TlapmBugError extends TlaProofError {
   }
 }
 
+// The exceptions Isabelle raises: ERROR for a rejected theory or a failed proof, TERM, TYPE and THM
+// for an ill-formed term, type or theorem, and Interrupt when the time limit runs out.
+export type IsabelleException = "ERROR" | "TERM" | "TYPE" | "THM" | "Interrupt";
+
+export class TlaIsabelleError extends TlaError {
+  exception: IsabelleException;
+
+  constructor(exception: IsabelleException, message: string) {
+    super(message);
+    this.name = "TlaIsabelleError";
+    this.exception = exception;
+  }
+}
+
 export class TlaUnsupportedError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
