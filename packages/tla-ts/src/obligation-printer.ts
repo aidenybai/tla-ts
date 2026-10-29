@@ -14,6 +14,7 @@ import {
   type Sequent,
   type Shape,
 } from "./obligation-expression";
+import { createContext, getBoundName, popNames, pushName, withNames } from "./obligation-ctx";
 import { format, formatDelimited, renderDoc, text, type Doc } from "./obligation-format";
 
 export type Fixity = "Nonfix" | "Prefix" | "Postfix" | "InfixLeft" | "InfixNon" | "InfixRight";
@@ -187,59 +188,6 @@ const getStandardForm = (builtin: Builtin): Operator => {
   if (builtin === "Uminus") return { ...lookupOperator("-."), name: "-" };
   const name = STANDARD_NAMES[builtin];
   return name ? lookupOperator(name) : getNonfix(builtin);
-};
-
-interface Ident {
-  rep: string;
-  salt: number;
-}
-
-const getIdentName = (ident: Ident) =>
-  ident.salt === 0 ? ident.rep : `${ident.rep}_${ident.salt}`;
-
-// Ctx as a mutable stack: printing binds and unbinds names in strict nesting order.
-interface Context {
-  stack: Ident[];
-  idents: Map<string, Ident[]>;
-  defined: Map<string, number>;
-}
-
-const createContext = (): Context => ({ stack: [], idents: new Map(), defined: new Map() });
-
-const pushName = (context: Context, rep: string) => {
-  const previous = context.idents.get(rep)?.at(-1);
-  let ident: Ident = previous ? { rep, salt: previous.salt + 1 } : { rep, salt: 0 };
-  while (context.defined.has(getIdentName(ident))) ident = { rep, salt: ident.salt + 1 };
-  context.stack.push(ident);
-  const idents = context.idents.get(rep);
-  if (idents) idents.push(ident);
-  else context.idents.set(rep, [ident]);
-  const key = getIdentName(ident);
-  context.defined.set(key, (context.defined.get(key) ?? 0) + 1);
-  return key;
-};
-
-const popNames = (context: Context, count: number) => {
-  for (let index = 0; index < count; index++) {
-    const ident = context.stack.pop();
-    if (!ident) return;
-    context.idents.get(ident.rep)?.pop();
-    const key = getIdentName(ident);
-    const remaining = (context.defined.get(key) ?? 1) - 1;
-    if (remaining === 0) context.defined.delete(key);
-    else context.defined.set(key, remaining);
-  }
-};
-
-const withNames = <Result>(
-  context: Context,
-  names: string[],
-  body: (idents: string[]) => Result,
-) => {
-  const idents = names.map((name) => pushName(context, name));
-  const result = body(idents);
-  popNames(context, names.length);
-  return result;
 };
 
 type Assoc = "Left" | "Non" | "Right";
@@ -419,9 +367,7 @@ const createPrinter = (hyps: Hyp[] = []) => {
   const getIndexName = (index: number) => {
     if (index < 0) return `#$$${Math.abs(index)}`;
     if (index === 0) return "#$0";
-    if (index <= context.stack.length) {
-      return getIdentName(context.stack[context.stack.length - index]);
-    }
+    if (index <= context.stack.length) return getBoundName(context, index);
     const hyp = hyps[hyps.length - (index - context.stack.length)];
     if (hyp) return getHypName(hyp) ?? "??? FACT ???";
     return `#$${index}`;

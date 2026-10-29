@@ -79,6 +79,14 @@ export class TlapmBugError extends TlaProofError {
   }
 }
 
+// A backend can't take an obligation, which tlapm reports as not tried.
+export class TlaProverError extends TlaError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = "TlaProverError";
+  }
+}
+
 export class TlaUnsupportedError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);

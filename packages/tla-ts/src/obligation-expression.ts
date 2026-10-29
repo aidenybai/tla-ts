@@ -2,6 +2,7 @@
 // alpha-equivalence (E_eq).
 
 import { TlaProofError } from "./errors";
+import type { PragmaSetting } from "./obligation-pragma";
 
 export interface Locus {
   file: string;
@@ -217,7 +218,7 @@ type DefnCore =
   | { kind: "Recursive"; name: string; shape: Shape }
   | { kind: "Operator"; name: string; body: Expr }
   | { kind: "Instance"; name: string; instance: InstanceDefinition }
-  | { kind: "Bpragma"; name: string; body: Expr };
+  | { kind: "Bpragma"; name: string; body: Expr; methods: PragmaSetting[][] };
 
 export type WhereDefined = "Builtin" | "Proof" | "User";
 
