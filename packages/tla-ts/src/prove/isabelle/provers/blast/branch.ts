@@ -51,17 +51,19 @@ export const negOfGoals = (state: BlastState, pairs: readonly Level[]): Level[] 
     unsafe: level.unsafe,
   }));
 
-// Replaces the atomic term old by new.
+// Replaces the atomic term old by new, returning the very same term where nothing changes.
 const substAtomic = (old: BlastTerm, replacement: BlastTerm, term: BlastTerm): BlastTerm => {
   if (term.kind === "Var" && term.ref.value !== undefined)
     return substAtomic(old, replacement, term.ref.value);
-  if (term.kind === "Abs")
-    return { kind: "Abs", name: term.name, body: substAtomic(old, replacement, term.body) };
-  if (term.kind === "App")
-    return mkBlastApp(
-      substAtomic(old, replacement, term.fun),
-      substAtomic(old, replacement, term.arg),
-    );
+  if (term.kind === "Abs") {
+    const body = substAtomic(old, replacement, term.body);
+    return body === term.body ? term : { kind: "Abs", name: term.name, body };
+  }
+  if (term.kind === "App") {
+    const fun = substAtomic(old, replacement, term.fun);
+    const arg = substAtomic(old, replacement, term.arg);
+    return fun === term.fun && arg === term.arg ? term : mkBlastApp(fun, arg);
+  }
   return blastAconv(term, old) ? replacement : term;
 };
 

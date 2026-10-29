@@ -66,6 +66,7 @@ export const isGoal = (term: BlastTerm) => destConstApp(term, GOAL_NAME) !== und
 
 // Tests whether two terms are alpha-convertible, chasing instantiations.
 export const blastAconv = (left: BlastTerm, right: BlastTerm): boolean => {
+  if (left === right) return true;
   if (left.kind === "Const" && right.kind === "Const")
     return left.name === right.name && blastAconvs(left.typargs, right.typargs);
   if (left.kind === "Skolem" && right.kind === "Skolem") return left.name === right.name;
@@ -89,6 +90,9 @@ export const memTerm = (term: BlastTerm, terms: readonly BlastTerm[]) =>
 
 export const insTerm = (term: BlastTerm, terms: readonly BlastTerm[]) =>
   memTerm(term, terms) ? terms : [term, ...terms];
+
+export const sameVars = (left: readonly VarRef[], right: readonly VarRef[]) =>
+  left.length === right.length && left.every((ref, index) => ref === right[index]);
 
 export const memVar = (ref: VarRef, refs: readonly VarRef[]) => refs.includes(ref);
 
@@ -174,20 +178,28 @@ const substBoundAt = (arg: BlastTerm, level: number, term: BlastTerm): BlastTerm
 
 export const blastSubstBound = (arg: BlastTerm, body: BlastTerm) => substBoundAt(arg, 0, body);
 
-// Normalizes, but not the bodies of abstractions.
+// Normalizes, but not the bodies of abstractions. Returns the very same term where nothing
+// changes, so normalizing a normal formula allocates nothing.
 export const norm = (term: BlastTerm): BlastTerm => {
   switch (term.kind) {
-    case "Skolem":
-      return { kind: "Skolem", name: term.name, args: varsInVars(term.args) };
-    case "Const":
-      return mkBlastConst(term.name, term.typargs.map(norm));
+    case "Skolem": {
+      const args = varsInVars(term.args);
+      return sameVars(args, term.args) ? term : { kind: "Skolem", name: term.name, args };
+    }
+    case "Const": {
+      if (term.typargs.length === 0) return term;
+      const typargs = term.typargs.map(norm);
+      return typargs.every((arg, index) => arg === term.typargs[index])
+        ? term
+        : mkBlastConst(term.name, typargs);
+    }
     case "Var":
       return term.ref.value === undefined ? term : norm(term.ref.value);
     case "App": {
       const fun = norm(term.fun);
-      return fun.kind === "Abs"
-        ? norm(blastSubstBound(term.arg, fun.body))
-        : mkBlastApp(fun, norm(term.arg));
+      if (fun.kind === "Abs") return norm(blastSubstBound(term.arg, fun.body));
+      const arg = norm(term.arg);
+      return fun === term.fun && arg === term.arg ? term : mkBlastApp(fun, arg);
     }
     default:
       return term;

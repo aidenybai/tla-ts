@@ -39,6 +39,7 @@ import {
   addTermsVars,
   isGoal,
   norm,
+  sameVars,
   varsInVars,
   type BlastTerm,
   type VarRef,
@@ -58,9 +59,6 @@ type Step =
     };
 
 const done = (result: Seq<Thm>): Step => ({ kind: "done", result });
-
-const sameVars = (left: readonly VarRef[], right: readonly VarRef[]) =>
-  left.length === right.length && left.every((ref, index) => ref === right[index]);
 
 const addPremsVars = (prems: readonly (readonly BlastTerm[])[], vars: readonly VarRef[]) =>
   prems.reduceRight((result, prem) => addTermsVars(prem, result), vars);
