@@ -17,6 +17,7 @@ import { collectSymbols } from "./axiomatize";
 import { createPrinter } from "./context";
 import type { Entry } from "./flatten";
 import { declare, MEM } from "./format";
+import { simplifyRecordEqualities } from "./simplify";
 import { createEncoder, type Binding, type EncodingSession, type Env, type Mode } from "./rewrite";
 import { compareAxioms } from "./table";
 
@@ -118,7 +119,9 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
 // Smtlib.pp_print_obligation: the logic, the sort, the builtin symbols by name, their axioms,
 // then the hypotheses in order, the goal last. It throws a TlaUnsupportedError for what the
 // encoding can't express, where tlapm's encoder fails.
-export const encodeSmt = (sequent: Sequent, session: EncodingSession) => {
+export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
+  const simplified = simplifyRecordEqualities({ kind: "Sequent", sequent: prepared });
+  const sequent = simplified.kind === "Sequent" ? simplified.sequent : prepared;
   const encoder = createEncoder(session);
   const context = encodeContext(sequent.context, encoder);
   const goal = encoder.encodeBool(sequent.active, context.env, {
