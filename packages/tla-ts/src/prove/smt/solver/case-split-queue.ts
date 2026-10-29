@@ -1,6 +1,7 @@
 // Ported from Z3 (src/smt/smt_case_split_queue.cpp, src/util/heap.h), MIT license, see
 // z3-license.txt. Z3's default CS_ACTIVITY_DELAY_NEW queue: Boolean variables ordered by activity,
 // where variables created during the search wait in a delayed queue until the main one runs dry.
+// Without the delay, it is the CS_ACTIVITY queue of the model checker's auxiliary context.
 
 import { BoolVar, toBoolVar } from "./literal";
 
@@ -122,7 +123,10 @@ export class CaseSplitQueue {
   private queue: ActivityHeap;
   private delayedQueue: ActivityHeap;
 
-  constructor(private context: CaseSplitContext) {
+  constructor(
+    private context: CaseSplitContext,
+    private isDelayingNew: boolean,
+  ) {
     this.queue = new ActivityHeap(context.activity);
     this.delayedQueue = new ActivityHeap(context.activity);
   }
@@ -133,7 +137,7 @@ export class CaseSplitQueue {
   }
 
   mkVar(boolVar: BoolVar) {
-    if (this.context.getIsSearching()) this.delayedQueue.insert(boolVar);
+    if (this.isDelayingNew && this.context.getIsSearching()) this.delayedQueue.insert(boolVar);
     else this.queue.insert(boolVar);
   }
 

@@ -107,6 +107,7 @@ export abstract class Internalizer {
   constructor(
     readonly manager: AstManager,
     isRelevancyEnabled: boolean,
+    isDelayingNewCaseSplits: boolean,
   ) {
     this.rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: KERNEL_ARITH_OPTIONS });
     this.relevancy = new RelevancyPropagator(
@@ -118,13 +119,16 @@ export abstract class Internalizer {
       },
       isRelevancyEnabled,
     );
-    this.caseSplitQueue = new CaseSplitQueue({
-      activity: this.activity,
-      getIsSearching: () => this.isSearching,
-      getRandomValue: () => this.getRandomValue(),
-      getNumBoolVars: () => this.boolVar2Expr.length,
-      isUnassigned: (boolVar) => this.assignment[mkLiteral(boolVar)] === L_UNDEF,
-    });
+    this.caseSplitQueue = new CaseSplitQueue(
+      {
+        activity: this.activity,
+        getIsSearching: () => this.isSearching,
+        getRandomValue: () => this.getRandomValue(),
+        getNumBoolVars: () => this.boolVar2Expr.length,
+        isUnassigned: (boolVar) => this.assignment[mkLiteral(boolVar)] === L_UNDEF,
+      },
+      isDelayingNewCaseSplits,
+    );
     this.mkBoolVar(manager.trueExpr);
     this.assignment[0] = L_TRUE;
     this.assignment[1] = L_FALSE;
@@ -891,15 +895,16 @@ export abstract class Internalizer {
     return clause;
   }
 
+  protected deleteClause(clause: Clause) {
+    if (clause.isDeleted) return;
+    this.removeWatchLiteral(clause, 0);
+    this.removeWatchLiteral(clause, 1);
+    clause.isDeleted = true;
+  }
+
   protected deleteClauses(clauses: Clause[], oldSize: number) {
-    for (let index = clauses.length - 1; index >= oldSize; index--) {
-      const clause = clauses[index];
-      if (!clause.isDeleted) {
-        this.removeWatchLiteral(clause, 0);
-        this.removeWatchLiteral(clause, 1);
-        clause.isDeleted = true;
-      }
-    }
+    for (let index = clauses.length - 1; index >= oldSize; index--)
+      this.deleteClause(clauses[index]);
     clauses.length = oldSize;
   }
 }

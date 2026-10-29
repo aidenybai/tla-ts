@@ -64,34 +64,43 @@ const isGreater = (manager: AstManager, left: number, right: number): boolean =>
   return false;
 };
 
+// update_substitution: the first entry for a key wins, as in scoped_expr_substitution.
 const updateSubstitution = (
   manager: AstManager,
   expr: number,
   substitution: Map<number, number>,
 ) => {
+  const insert = (key: number, value: number) => {
+    if (!substitution.has(key)) substitution.set(key, value);
+  };
   if (manager.isGround(expr) && manager.getOp(expr) === OP_EQ) {
     const left = manager.args[expr][0];
     const right = manager.args[expr][1];
     if (isGreater(manager, left, right)) {
-      substitution.set(left, right);
+      insert(left, right);
       return;
     }
     if (isGreater(manager, right, left)) {
-      substitution.set(right, left);
+      insert(right, left);
       return;
     }
   }
-  if (manager.isNot(expr)) substitution.set(manager.args[expr][0], manager.falseExpr);
-  else substitution.set(expr, manager.trueExpr);
+  if (manager.isNot(expr)) insert(manager.args[expr][0], manager.falseExpr);
+  else insert(expr, manager.trueExpr);
 };
 
 // asserted_formulas::propagate_values: a forward and a backward pass that rewrite each formula with
-// the units of the formulas before it. Z3 stops after one round, since the passes add no formula.
-// When a formula changed, reduce-asserted rewrites them all.
-const propagateValues = (manager: AstManager, rewriter: Rewriter, formulas: number[]) => {
+// the committed substitution and the units of the formulas before it. Z3 stops after one round,
+// since the passes add no formula. When a formula changed, reduce-asserted rewrites them all.
+const propagateValues = (
+  manager: AstManager,
+  rewriter: Rewriter,
+  formulas: number[],
+  committed: Map<number, number>,
+) => {
   let isChanged = false;
   for (const isForward of [true, false]) {
-    const substitution = new Map<number, number>();
+    const substitution = new Map(committed);
     rewriter.setSubstitution(substitution);
     for (const step of formulas.keys()) {
       const index = isForward ? step : formulas.length - 1 - step;
@@ -101,7 +110,7 @@ const propagateValues = (manager: AstManager, rewriter: Rewriter, formulas: numb
       updateSubstitution(manager, rewritten, substitution);
     }
   }
-  rewriter.setSubstitution(new Map());
+  rewriter.setSubstitution(committed);
   if (!isChanged) return formulas;
   const reduced: number[] = [];
   for (const formula of formulas) {
@@ -155,29 +164,57 @@ const flattenClauses = (manager: AstManager, rewriter: Rewriter, formulas: numbe
   return current;
 };
 
-export const preprocess = (manager: AstManager, assertions: number[]) => {
-  const simplifier = new Rewriter(manager, {
-    isEliminatingAnd: false,
-    arith: TACTIC_ARITH_OPTIONS,
-  });
-  const reducer = new Rewriter(manager, { isEliminatingAnd: true, arith: KERNEL_ARITH_OPTIONS });
-  const initial: number[] = [];
-  for (const assertion of assertions) {
-    const simplified = simplifier.rewrite(assertion);
-    pushAssertion(manager, simplifier, simplified, initial);
+// asserted_formulas: the assertions of a context. Each assertion is rewritten when it is asserted,
+// and reduce preprocesses the new ones. Their units and oriented equalities then rewrite the later
+// assertions.
+export class AssertedFormulas {
+  private formulas: number[] = [];
+  private qhead = 0;
+  private substitution = new Map<number, number>();
+  private simplifier: Rewriter;
+  private reducer: Rewriter;
+  private names = new Map<number, number>();
+
+  constructor(private manager: AstManager) {
+    this.simplifier = new Rewriter(manager, {
+      isEliminatingAnd: false,
+      arith: TACTIC_ARITH_OPTIONS,
+    });
+    this.reducer = new Rewriter(manager, { isEliminatingAnd: true, arith: KERNEL_ARITH_OPTIONS });
   }
-  const propagated = propagateValues(manager, simplifier, initial);
-  const names = new Map<number, number>();
-  const normalized: number[] = [];
-  for (const formula of propagated)
-    for (const normal of toNnf(manager, formula, names)) {
-      const reduced = reducer.rewrite(normal);
-      pushAssertion(
-        manager,
-        reducer,
-        reducer.rewrite(inferAllPatterns(manager, reduced)),
-        normalized,
-      );
+
+  assertExpr(expr: number) {
+    pushAssertion(this.manager, this.simplifier, this.simplifier.rewrite(expr), this.formulas);
+  }
+
+  getNumFormulas() {
+    return this.formulas.length;
+  }
+
+  // reduce and commit: the new formulas after preprocessing, which the context internalizes.
+  reduce() {
+    const manager = this.manager;
+    const reducer = this.reducer;
+    const pending = this.formulas.splice(this.qhead);
+    if (pending.length === 0) return pending;
+    const propagated = propagateValues(manager, this.simplifier, pending, this.substitution);
+    reducer.setSubstitution(this.substitution);
+    const normalized: number[] = [];
+    for (const formula of propagated)
+      for (const normal of toNnf(manager, formula, this.names))
+        pushAssertion(
+          manager,
+          reducer,
+          reducer.rewrite(inferAllPatterns(manager, reducer.rewrite(normal))),
+          normalized,
+        );
+    const result = flattenClauses(manager, reducer, normalized);
+    this.simplifier.setSubstitution(this.substitution);
+    for (const formula of result) {
+      this.formulas.push(formula);
+      updateSubstitution(manager, formula, this.substitution);
     }
-  return flattenClauses(manager, reducer, normalized);
-};
+    this.qhead = this.formulas.length;
+    return result;
+  }
+}

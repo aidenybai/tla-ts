@@ -2,8 +2,8 @@
 // the candidate model satisfies each relevant quantifier: the negated body, with the model's
 // interpretations in place of the uninterpreted symbols, goes to an auxiliary context. A model of it
 // is a counterexample that becomes an instance of the quantifier.
-import { KIND_APP, type AstManager } from "./ast";
-import { preprocess } from "./asserted-formulas";
+import { KIND_APP, SORT_BOOL, type AstManager } from "./ast";
+import { AssertedFormulas } from "./asserted-formulas";
 import { Context } from "./context";
 import type { Enode } from "./enode";
 import { L_FALSE, L_TRUE } from "./lbool";
@@ -22,30 +22,51 @@ interface Instance {
   generation: number;
 }
 
-// The auxiliary context of one check: Z3 keeps one context and pushes a scope per check, so the
+// The auxiliary context: Z3 keeps one context for every check and pushes a scope per check, so the
 // restricted checks continue from the complete check, with its phases and activities. It runs without
-// MBQI and with relevancy level 0.
+// MBQI and with relevancy level 0, and preprocesses the assertions of a check together.
 class AuxContext {
   private context: Context;
+  private asserted: AssertedFormulas;
+  // theory_polymorphism's m_qhead: the number of formulas when it last added an assumption.
+  private polyQhead = 0;
 
   constructor(private manager: AstManager) {
     this.context = new Context(manager, { isMbqi: false, relevancyLevel: 0 });
+    this.asserted = new AssertedFormulas(manager);
   }
 
-  assert(formulas: number[]) {
+  push() {
+    this.context.push();
+    this.asserted = new AssertedFormulas(this.manager);
+    this.polyQhead = 0;
+  }
+
+  pop() {
+    this.context.pop(1);
+  }
+
+  assert(formula: number) {
+    this.asserted.assertExpr(formula);
+  }
+
+  // A model of the assertions, or whether they are unsatisfiable or undecided. Z3 registers
+  // theory_polymorphism, which assumes a fresh constant whenever formulas were asserted since its
+  // last assumption.
+  check() {
     const context = this.context;
     context.popToBaseLevel();
-    for (const formula of preprocess(this.manager, formulas)) {
+    for (const formula of this.asserted.reduce()) {
       if (context.isInconsistent()) break;
       context.internalizeAssertion(formula, 0);
     }
-  }
-
-  // A model of the assertions, or whether they are unsatisfiable or undecided.
-  check() {
-    const result = this.context.search();
+    const numFormulas = this.asserted.getNumFormulas();
+    const isAssuming = numFormulas !== this.polyQhead;
+    this.polyQhead = numFormulas;
+    context.initAssumptions(isAssuming ? [this.manager.mkFreshConst("poly", SORT_BOOL)] : []);
+    const result = context.search();
     return result === L_TRUE
-      ? this.context.mkProtoModel().model
+      ? context.mkProtoModel().model
       : result === L_FALSE
         ? "unsat"
         : "unknown";
@@ -59,6 +80,7 @@ export class ModelChecker {
   private root2value = new Map<Enode, number>();
   private value2expr: Map<number, number> | null = null;
   private freshExprs: number[] = [];
+  private aux: AuxContext | null = null;
 
   constructor(
     private context: Context,
@@ -125,11 +147,11 @@ export class ModelChecker {
       const sk = manager.mkFreshConst("x", sort);
       sks[numDecls - index - 1] = sk;
       if (model.isFinite(sort))
-        aux.assert([
+        aux.assert(
           manager.mkOr(model.getKnownUniverse(sort).map((value) => manager.mkEq(sk, value))),
-        ]);
+        );
     }
-    aux.assert([manager.mkNot(substitute(manager, body, sks))]);
+    aux.assert(manager.mkNot(substitute(manager, body, sks)));
     return sks;
   }
 
@@ -162,14 +184,23 @@ export class ModelChecker {
   // check(q): whether the model satisfies the quantifier. A counterexample becomes an instance.
   private checkQuantifier(quantifier: number, model: ProtoModel) {
     const manager = this.manager;
-    const aux = new AuxContext(manager);
+    const aux = this.aux ?? new AuxContext(manager);
+    this.aux = aux;
+    aux.push();
+    const isSatisfied = this.checkInScope(aux, quantifier, model);
+    aux.pop();
+    return isSatisfied;
+  }
+
+  private checkInScope(aux: AuxContext, quantifier: number, model: ProtoModel) {
+    const manager = this.manager;
     const flatQ = this.modelFinder.getFlatQuantifier(quantifier);
     const sks = this.assertNegQM(aux, flatQ, model);
     const completeCex = aux.check();
     if (completeCex === "unsat") return true;
     if (completeCex === "unknown") return false;
     // Try to find instances from the instantiation sets first.
-    this.modelFinder.restrictSksToInstSet(quantifier, sks, (expr) => aux.assert([expr]));
+    this.modelFinder.restrictSksToInstSet(quantifier, sks, (expr) => aux.assert(expr));
     let numNewInstances = 0;
     for (;;) {
       const cex = aux.check();
@@ -177,13 +208,13 @@ export class ModelChecker {
       numNewInstances++;
       if (numNewInstances >= this.maxCexs) break;
       // add_blocking_clause.
-      aux.assert([
+      aux.assert(
         manager.mkOr(
           sks.map((sk) =>
             manager.mkNot(manager.mkEq(sk, cex.getSomeConstInterp(manager.decls[sk]))),
           ),
         ),
-      ]);
+      );
     }
     if (numNewInstances === 0) this.addInstance(quantifier, completeCex, sks, false);
     return false;

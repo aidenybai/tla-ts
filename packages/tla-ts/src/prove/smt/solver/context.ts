@@ -3,7 +3,7 @@
 // relevancy propagation, the arithmetic theory and quantifier instantiation, with Z3's default
 // parameters for UFNIA.
 import { AstManager, FAMILY_ARITH, KIND_APP, KIND_QUANTIFIER, KIND_VAR } from "./ast";
-import { BJustification, CLS_LEARNED } from "./clause";
+import { BJustification, Clause, CLS_LEARNED } from "./clause";
 import { ConflictResolution } from "./conflict-resolution";
 import {
   Enode,
@@ -34,6 +34,13 @@ const RESTART_FACTOR = 1.1;
 const PHASE_CACHING_ON = 400;
 const PHASE_CACHING_OFF = 100;
 const AGILITY_FACTOR = 0.9999;
+// The LGC_FIXED lemma garbage collection: lemma_gc_initial conflicts between collections, and the
+// activity and unassigned literal thresholds of del_inactive_lemmas2.
+const LEMMA_GC_INITIAL = 5000;
+const NEW_OLD_RATIO = 16;
+const OLD_CLAUSE_ACTIVITY = 500;
+const NEW_CLAUSE_RELEVANCY = 45;
+const OLD_CLAUSE_RELEVANCY = 6;
 const RESTART_AGILITY_THRESHOLD = 0.18;
 
 export const CHECK_MODEL_SAT = 0;
@@ -45,8 +52,9 @@ export const FAILURE_OK = 0;
 export const FAILURE_THEORY = 1;
 export const FAILURE_QUANTIFIERS = 2;
 
-// smt_params: the kernel runs model-based quantifier instantiation with relevancy level 2. The
-// model checker's auxiliary context runs neither, as Z3 sets its relevancy level to 0.
+// smt_params: the kernel runs model-based quantifier instantiation with relevancy level 2 and the
+// CS_ACTIVITY_DELAY_NEW case split queue. The model checker's auxiliary context runs neither, as Z3
+// sets its relevancy level to 0 and its case split strategy to CS_ACTIVITY.
 export interface SmtParams {
   isMbqi: boolean;
   relevancyLevel: 0 | 2;
@@ -60,6 +68,8 @@ export class Context extends Internalizer {
   private scopeAssignedLimits: number[] = [];
   private scopeAuxClauseLimits: number[] = [];
   private scopeTrailLimits: number[] = [];
+  // The number of lemmas when each user scope began.
+  private baseScopeLemmaLimits: number[] = [];
   private atomPropagationQueue: Literal[] = [];
   private thEqQueue: number[] = [];
   private thDiseqQueue: number[] = [];
@@ -67,6 +77,7 @@ export class Context extends Internalizer {
   private agility = 0;
   private numConflicts = 0;
   private numConflictsSinceRestart = 0;
+  private numConflictsSinceLemmaGc = 0;
   private restartThreshold = RESTART_INITIAL;
   private restartOuterThreshold = RESTART_INITIAL;
   private isPhaseCacheOn = true;
@@ -76,7 +87,7 @@ export class Context extends Internalizer {
   private lastSearchFailure = FAILURE_OK;
 
   constructor(manager: AstManager, params: SmtParams) {
-    super(manager, params.relevancyLevel > 0);
+    super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
     this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
   }
 
@@ -689,6 +700,10 @@ export class Context extends Internalizer {
     const newLevel = this.scopeLevel - numScopes;
     this.cacheGeneration(newLevel, visited);
     this.qmanager.pop(numScopes);
+    if (newLevel < this.baseLevel) {
+      this.deleteClauses(this.lemmas, this.baseScopeLemmaLimits[newLevel]);
+      this.baseScopeLemmaLimits.length = newLevel;
+    }
     this.conflict = undefined;
     this.notLiteral = null;
     this.deleteClauses(this.auxClauses, this.scopeAuxClauseLimits[newLevel]);
@@ -706,6 +721,10 @@ export class Context extends Internalizer {
     this.scopeAuxClauseLimits.length = newLevel;
     this.scopeTrailLimits.length = newLevel;
     this.scopeLevel = newLevel;
+    if (newLevel < this.baseLevel) {
+      this.baseLevel = newLevel;
+      this.searchLevel = newLevel;
+    }
     const numBoolVars = this.boolVar2Expr.length;
     this.reinitClauses(numScopes, numBoolVars);
     return numBoolVars;
@@ -786,6 +805,7 @@ export class Context extends Internalizer {
   private resolveConflict() {
     this.numConflicts++;
     this.numConflictsSinceRestart++;
+    this.numConflictsSinceLemmaGc++;
     this.atomPropagationQueue = [];
     this.eqPropagationQueue = [];
     this.thEqQueue = [];
@@ -856,6 +876,7 @@ export class Context extends Internalizer {
           )
             return L_UNDEF;
         }
+        if (this.numConflictsSinceLemmaGc > LEMMA_GC_INITIAL) this.delInactiveLemmas();
       }
       if (this.checkCanceled()) return L_UNDEF;
       if (!this.decide()) {
@@ -943,16 +964,91 @@ export class Context extends Internalizer {
     return undefined;
   }
 
+  // can_delete: a lemma that justifies neither of its watched literals.
+  private isDeletable(clause: Clause) {
+    if (clause.isReinit) return false;
+    return (
+      this.justifications[getVar(clause.literals[0])] !== clause &&
+      this.justifications[getVar(clause.literals[1])] !== clause
+    );
+  }
+
+  private hasMoreThanKUnassignedLiterals(clause: Clause, limit: number) {
+    let remaining = limit;
+    for (const literal of clause.literals)
+      if (this.assignment[literal] === L_UNDEF && --remaining === 0) return true;
+    return false;
+  }
+
+  // del_inactive_lemmas2: deletes the lemmas of the current user scope with low activity and many
+  // unassigned literals. The newest sixteenth of them tolerates more unassigned literals.
+  private delInactiveLemmas() {
+    const lemmas = this.lemmas;
+    const startAt = this.baseLevel === 0 ? 0 : this.baseScopeLemmaLimits[this.baseLevel - 1];
+    const realSize = lemmas.length - startAt;
+    const newFirstIndex = startAt + Math.trunc(realSize / NEW_OLD_RATIO) * (NEW_OLD_RATIO - 1);
+    let kept = startAt;
+    for (let index = startAt; index < lemmas.length; index++) {
+      const clause = lemmas[index];
+      if (
+        this.isDeletable(clause) &&
+        (clause.isDeleted ||
+          (clause.activity < OLD_CLAUSE_ACTIVITY &&
+            this.hasMoreThanKUnassignedLiterals(
+              clause,
+              index >= newFirstIndex ? NEW_CLAUSE_RELEVANCY : OLD_CLAUSE_RELEVANCY,
+            )))
+      ) {
+        this.deleteClause(clause);
+        continue;
+      }
+      lemmas[kept++] = clause;
+    }
+    lemmas.length = kept;
+    this.numConflictsSinceLemmaGc = 0;
+  }
+
+  // push: a user scope, which pop removes with everything asserted in it.
+  push() {
+    this.popToBaseLevel();
+    this.pushScope();
+    this.baseScopeLemmaLimits.push(this.lemmas.length);
+    this.baseLevel++;
+    this.searchLevel++;
+  }
+
+  pop(numScopes: number) {
+    this.popToBaseLevel();
+    this.popScope(numScopes);
+  }
+
   // pop_to_base_lvl: undoes the decisions of the last search, before new assertions.
   popToBaseLevel() {
     if (this.scopeLevel > this.baseLevel) this.popScope(this.scopeLevel - this.baseLevel);
+  }
+
+  // init_assumptions: the search runs above a scope where the assumptions hold.
+  initAssumptions(assumptions: number[]) {
+    if (assumptions.length > 0) {
+      this.propagate();
+      if (this.isInconsistent()) return;
+      this.delInactiveLemmas();
+      this.pushScope();
+      for (const assumption of assumptions) {
+        if (this.isInconsistent()) break;
+        this.internalizeAssertion(assumption, 0);
+      }
+    }
+    this.searchLevel = this.scopeLevel;
   }
 
   search() {
     if (this.isInconsistent()) return L_FALSE;
     this.theory.initSearchEh();
     this.qmanager.initSearchEh();
+    this.numConflicts = 0;
     this.numConflictsSinceRestart = 0;
+    this.numConflictsSinceLemmaGc = 0;
     this.restartThreshold = RESTART_INITIAL;
     this.restartOuterThreshold = RESTART_INITIAL;
     this.agility = 0;
@@ -960,12 +1056,14 @@ export class Context extends Internalizer {
     this.lastSearchFailure = FAILURE_OK;
     this.isSearching = true;
     const currentLevel = this.scopeLevel;
-    for (;;) {
+    let result: number | undefined;
+    while (result === undefined) {
       const status = this.boundedSearch();
-      if (status !== L_FALSE && this.checkCanceled()) return L_UNDEF;
-      const result = this.restart(status, currentLevel);
-      if (result !== undefined) return result;
+      result =
+        status !== L_FALSE && this.checkCanceled() ? L_UNDEF : this.restart(status, currentLevel);
     }
+    this.isSearching = false;
+    return result;
   }
 
   getNumConflicts() {

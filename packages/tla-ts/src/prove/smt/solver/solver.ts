@@ -3,7 +3,7 @@
 // smt.MBQI=true` does for tlapm's UFNIA obligations.
 import { SmtCanceledError, SmtUnsupportedError } from "../../../errors";
 import type { Verdict } from "../../verdict";
-import { preprocess } from "./asserted-formulas";
+import { AssertedFormulas } from "./asserted-formulas";
 import { Context } from "./context";
 import { L_FALSE, L_TRUE } from "./lbool";
 import { applyUfniaTactic } from "./quant-tactics";
@@ -27,10 +27,10 @@ export const checkSmt = (text: string, options: DecideSmtOptions): SmtCheck => {
     new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
   );
   if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
-  const formulas = preprocess(
-    problem.manager,
-    applyUfniaTactic(problem.manager, problem.assertions),
-  );
+  const asserted = new AssertedFormulas(problem.manager);
+  for (const assertion of applyUfniaTactic(problem.manager, problem.assertions))
+    asserted.assertExpr(assertion);
+  const formulas = asserted.reduce();
   const context = new Context(problem.manager, { isMbqi: true, relevancyLevel: 2 });
   for (const formula of formulas) {
     if (context.isInconsistent()) break;
