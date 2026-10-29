@@ -2,7 +2,8 @@
 // der.cpp), MIT license, see z3-license.txt. Only the rewrites that tlapm's encoding
 // exercises are ported.
 import { SmtCanceledError } from "../../../errors";
-import { ArithRewriter, ArithRewriterOptions } from "./arith-rewriter";
+import { ArithRewriter } from "./arith-rewriter";
+import type { ArithRewriterOptions } from "./poly-rewriter";
 import { isAstLess } from "./ast-lt";
 import {
   AstManager,
