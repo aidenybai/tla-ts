@@ -25,7 +25,7 @@ import {
   type Pipeline,
 } from "./obligation-module";
 import { formatObligation } from "./obligation-printer";
-import type { Counter } from "./obligation-proof";
+import type { Counter, Obligation } from "./obligation-proof";
 import { createSource } from "./obligation-source";
 import { tokenize } from "./lexer";
 import { parseTlapmModule } from "./parser";
@@ -40,6 +40,7 @@ export interface PrintedObligation {
   id: number;
   location: string;
   text: string;
+  obligation: Obligation;
 }
 
 export interface ModuleObligations {
@@ -307,7 +308,7 @@ export const getObligations = (
         obligation.kind.kind === "Error"
           ? obligation.kind.message
           : `${formatObligation(obligation.sequent)}\n`;
-      return [{ id: index + 1, location: formatLocus(location), text }];
+      return [{ id: index + 1, location: formatLocus(location), text, obligation }];
     });
     return [
       { name: module.name, location: module.location, obligations, summary: generated.summary },
