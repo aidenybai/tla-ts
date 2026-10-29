@@ -734,6 +734,21 @@ ASSUME TLCFP(a) = -887695703
       new TlaConfigError("The operator Five, which equals 5,\ncannot be used as a property"),
     );
   });
+
+  it.each([
+    "Prop == LET E == {x} IN [](\\A e \\in E : e < 1)",
+    "Holds(S) == [](\\A e \\in S : e < 1)\nProp == Holds({x})",
+  ])("checks a []P property whose LET or argument reads a variable: %s", async (property) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\n${property}\n====`,
+      config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "invariant-violation",
+      2,
+      2,
+    ]);
+  });
 });
 
 describe("formatValue matches TLC", () => {
