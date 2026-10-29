@@ -1,0 +1,15 @@
+;; obligation #1
+$hyp "v'19" a_STATEunde_Dunde_a
+$hyp "v'20" a_STATEunde_Funde_a
+$hyp "v'21" a_CONSTANTunde_Gunde_a
+$hyp "v'22" a_TEMPORALunde_Hunde_a
+$hyp "v'23" a_STATEunde_Iunde_a
+$hyp "v'24" a_TEMPORALunde_Kunde_a
+$hyp "v'25" (h9741b a_VARIABLEunde_xunde_a)
+$hyp "v'26" (a_ACTIONunde_Lunde_a a_CONSTANTunde_cunde_a)
+$hyp "v'27" a_ACTIONunde_Munde_a
+$hyp "v'28" h816fb
+$hyp "v'29" (= (arith.add a_VARIABLEunde_xunde_hash_primea
+(TLA.fapply TLA.Succ 0))
+a_CONSTANTunde_cunde_a)
+$goal a_ACTIONunde_Eunde_a

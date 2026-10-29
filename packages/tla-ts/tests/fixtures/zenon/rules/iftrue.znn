@@ -1,0 +1,1 @@
+$goal (= (TLA.cond T. a b) a)

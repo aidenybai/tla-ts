@@ -1,0 +1,11 @@
+;; obligation #14
+$hyp "a_CONSTANTunde_Aunde_a_in" (TLA.in a_CONSTANTunde_Aunde_a (TLA.FuncSet (arith.intrange (TLA.fapply TLA.Succ 0)
+a_CONSTANTunde_Nunde_a) arith.Z))
+$hyp "a_CONSTANTunde_iunde_a_in" (TLA.in a_CONSTANTunde_iunde_a (arith.intrange (TLA.fapply TLA.Succ 0)
+a_CONSTANTunde_Nunde_a))
+$hyp "a_CONSTANTunde_junde_a_in" (TLA.in a_CONSTANTunde_junde_a (arith.intrange (TLA.fapply TLA.Succ 0)
+a_CONSTANTunde_Nunde_a))
+$goal (= (TLA.except (TLA.except a_CONSTANTunde_Aunde_a a_CONSTANTunde_iunde_a (TLA.fapply a_CONSTANTunde_Aunde_a a_CONSTANTunde_junde_a)) a_CONSTANTunde_junde_a (TLA.fapply a_CONSTANTunde_Aunde_a a_CONSTANTunde_iunde_a))
+(TLA.Fcn (arith.intrange (TLA.fapply TLA.Succ 0)
+a_CONSTANTunde_Nunde_a) ((a_CONSTANTunde_iunde_a_1) (TLA.fapply a_CONSTANTunde_Aunde_a (TLA.fapply (TLA.except (TLA.except (TLA.Fcn (arith.intrange (TLA.fapply TLA.Succ 0)
+a_CONSTANTunde_Nunde_a) ((a_CONSTANTunde_iunde_a_2) a_CONSTANTunde_iunde_a_2)) a_CONSTANTunde_iunde_a a_CONSTANTunde_junde_a) a_CONSTANTunde_junde_a a_CONSTANTunde_iunde_a) a_CONSTANTunde_iunde_a_1)))))

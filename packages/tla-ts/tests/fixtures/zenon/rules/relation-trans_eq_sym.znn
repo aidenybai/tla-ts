@@ -1,0 +1,6 @@
+$hyp "trans" (A. ((x) (A. ((y) (A. ((z) (=> (/\ (R x y) (R y z)) (R x z))))))))
+$hyp "sym" (A. ((x) (A. ((y) (=> (R x y) (R y x))))))
+$hyp "e" (= (g b) (f a))
+$hyp "h1" (A. ((y) (R (g y) (g b))))
+$hyp "h2" (A. ((x) (R (f a) (f x))))
+$goal (R (f c) (g d))

@@ -1,0 +1,1 @@
+$goal (= (TLA.DOMAIN (TLA.record "a" x "b" y)) (TLA.set "a" "b"))

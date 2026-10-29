@@ -1,0 +1,9 @@
+;; obligation #261
+$hyp "v'49" (TLA.bAll (TLA.FuncSet arith.N arith.N) ((a_CONSTANTunde_ffunde_a) (=> (TLA.bAll arith.N ((a_CONSTANTunde_nunde_a) (arith.lt (TLA.fapply a_CONSTANTunde_ffunde_a (arith.add a_CONSTANTunde_nunde_a
+(TLA.fapply TLA.Succ 0)))
+(TLA.fapply a_CONSTANTunde_ffunde_a a_CONSTANTunde_nunde_a)))) F.)))
+$goal (-. (TLA.bEx (TLA.FuncSet arith.N arith.N) ((a_CONSTANTunde_funde_a) (TLA.bAll arith.N ((a_CONSTANTunde_nunde_a) (TLA.in (TLA.tuple (TLA.fapply a_CONSTANTunde_funde_a (arith.add a_CONSTANTunde_nunde_a
+(TLA.fapply TLA.Succ 0)))
+(TLA.fapply a_CONSTANTunde_funde_a a_CONSTANTunde_nunde_a))
+(TLA.subsetOf (TLA.prod arith.N arith.N) ((a_CONSTANTunde_ssunde_a) (arith.lt (TLA.fapply a_CONSTANTunde_ssunde_a (TLA.fapply TLA.Succ 0))
+(TLA.fapply a_CONSTANTunde_ssunde_a (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0))))))))))))

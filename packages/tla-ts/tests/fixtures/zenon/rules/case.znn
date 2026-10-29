@@ -1,0 +1,4 @@
+$hyp "c" (\/ c1 c2)
+$hyp "a" (P a)
+$hyp "b" (P b)
+$goal (P (TLA.CASE c1 a c2 b))
