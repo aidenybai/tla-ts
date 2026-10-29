@@ -1,5 +1,6 @@
 // tlapm's method pragmas: the (*{ by (prover:"zenon"; timeout:@) }*) after a definition, which
-// E_parser.read_new_method reads, and which makes the definition a Bpragma.
+// E_parser.read_new_method reads, and which makes the definition a Bpragma, and the older
+// (*{ by (zenon) }*), which Method_prs reads.
 
 export type PragmaValue =
   | { kind: "Default" }
@@ -73,6 +74,69 @@ const getValue = (token: Token | undefined): PragmaValue | undefined => {
   if (token?.kind === "String") return { kind: "String", value: token.text };
   if (token?.kind === "Number") return { kind: "Float", value: Number.parseFloat(token.text) };
   return token?.kind === "Punct" && token.text === "@" ? { kind: "Default" } : undefined;
+};
+
+// The methods of Method_prs's old pragma syntax, by the name Method.prover_meth_of_tac gives them.
+const OLD_METHODS = new Map([
+  ["smt", "smt"],
+  ["cvc3", "cvc4"],
+  ["yices", "yices"],
+  ["z3", "z3"],
+  ["cooper", "cooper"],
+  ["presburger", "cooper"],
+  ["fail", "fail"],
+  ["smt2lib", "smt"],
+  ["smt2z3", "z3"],
+  ["smt3", "smt"],
+  ["z33", "z3"],
+  ["cvc33", "cvc4"],
+  ["yices3", "yices"],
+  ["verit", "verit"],
+  ["zipper", "zipper"],
+  ["spass", "spass"],
+  ["tptp", "tptp"],
+  ["ls4", "ls4"],
+  ["expandenabled", "expandenabled"],
+  ["expandcdot", "expandcdot"],
+  ["autouse", "autouse"],
+  ["lambdify", "lambdify"],
+  ["enabledaxioms", "enabledaxioms"],
+  ["levelcomparison", "levelcomparison"],
+  ["trivial", "trivial"],
+]);
+
+// Method_prs.read_method: the (*{ by (zenon) }*) after a BY, OBVIOUS, proof step, theorem, or
+// axiom, which names one method, isabelle with a tactic, or zenon with a timeout and a fallback.
+export const readOldMethod = (lines: string[], start: Position) => {
+  const tokens = tokenizePragma(lines, start);
+  if (!tokens) return undefined;
+  let index = 0;
+  const isPunct = (text: string) => tokens[index]?.kind === "Punct" && tokens[index].text === text;
+  const skipNumber = () => {
+    if (tokens[index]?.kind === "Number") index++;
+  };
+  const readMethod = (): string | undefined => {
+    if (!isPunct("(")) return undefined;
+    index++;
+    const name = tokens[index++];
+    if (name?.kind !== "Ident") return undefined;
+    if (name.text === "isabelle") {
+      if (tokens[index]?.kind !== "String") return undefined;
+      index++;
+      skipNumber();
+    } else if (name.text === "zenon") {
+      skipNumber();
+      if (isPunct("(") && !readMethod()) return undefined;
+    } else if (!OLD_METHODS.has(name.text)) {
+      return undefined;
+    }
+    if (!isPunct(")")) return undefined;
+    index++;
+    return OLD_METHODS.get(name.text) ?? name.text;
+  };
+  if (tokens[index]?.kind !== "Ident" || tokens[index++].text !== "by") return undefined;
+  const method = readMethod();
+  return index === tokens.length ? method : undefined;
 };
 
 // read_new_method: by (hint: value; ...), repeated, where a value is a string, a number, or @ for

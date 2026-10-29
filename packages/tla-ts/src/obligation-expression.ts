@@ -250,7 +250,7 @@ type HypCore =
       // in a proof, such as a step or a DEFINE, has no judgment, so tlapm never counts it constant.
       isConstnessUnset?: boolean;
     }
-  | { kind: "Fact"; expression: Expr; visibility: Visibility; time: Time };
+  | { kind: "Fact"; expression: Expr; visibility: Visibility; time: Time; useLocation?: Locus };
 
 export interface Sequent {
   context: Hyp[];
