@@ -21,11 +21,11 @@ import {
   type Scope,
   type Sequent,
   type Substitution,
-} from "../../obligation-expression";
-import { renderDoc } from "../../obligation-format";
-import { getLevelInfo } from "../../obligation-levels";
-import { printExpression } from "../../obligation-printer";
-import { expandAction, expandFairness, expandLeadsto, getTime } from "../../obligation-temporal";
+} from "../../obligations/expression";
+import { renderDoc } from "../../obligations/format";
+import { getLevelInfo } from "../../obligations/levels";
+import { printExpression } from "../../obligations/printer";
+import { expandAction, expandFairness, expandLeadsto, getTime } from "../../obligations/temporal";
 import { getMd5 } from "../prep/md5";
 
 const KIND_NAMES: Record<Level, string> = {

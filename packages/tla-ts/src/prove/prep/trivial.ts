@@ -4,7 +4,7 @@ import {
   shiftExpr,
   type Expr,
   type Sequent,
-} from "../../obligation-expression";
+} from "../../obligations/expression";
 
 // Prep.trivial: the goal is TRUE, or find_fact finds it as a hypothesis, visible or not: a fact
 // alpha-equivalent to it, or the x \in S of a declaration NEW x \in S.

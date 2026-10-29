@@ -1,7 +1,7 @@
 // A port of tlapm's Expr.Deref: a subexpression reference such as Op!2!<< resolves to the
 // subexpression it names, abstracted over the bound names it uses.
 
-import { TlaProofError, TlapmBugError } from "./errors";
+import { TlaProofError, TlapmBugError } from "../errors";
 import {
   at,
   consAll,
@@ -20,7 +20,7 @@ import {
   type ObligationWarning,
   type Param,
   type Selector,
-} from "./obligation-expression";
+} from "./expression";
 
 interface Deref {
   params: Param[];

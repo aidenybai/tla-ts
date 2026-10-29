@@ -1,7 +1,7 @@
 // A port of tlapm's proof simplification (Proof.Simplify) and obligation generation (Proof.Gen):
 // leaf proofs become obligations whose context is everything the proof may use at that point.
 
-import { TlapmBugError, TlaProofError } from "./errors";
+import { TlapmBugError, TlaProofError } from "../errors";
 import {
   applyBuiltin,
   at,
@@ -26,11 +26,11 @@ import {
   type Visibility,
   mapChildren,
   stripProps,
-} from "./obligation-expression";
-import { format, renderDoc, type Doc } from "./obligation-format";
-import { printExpression } from "./obligation-printer";
-import type { OldMethod } from "./obligation-pragma";
-import { getScopeTime } from "./obligation-temporal";
+} from "./expression";
+import { format, renderDoc, type Doc } from "./format";
+import { printExpression } from "./printer";
+import type { OldMethod } from "./pragma";
+import { getScopeTime } from "./temporal";
 import {
   getStepName,
   getUnique,
@@ -42,7 +42,7 @@ import {
   type StepNumber,
   type UseDef,
   type Usable,
-} from "./obligation-proof";
+} from "./proof";
 
 const AT_NOWHERE: Expr = { kind: "At", isExcept: false };
 

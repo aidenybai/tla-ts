@@ -13,7 +13,7 @@ import {
   type Hyp,
   type Scope,
   type Time,
-} from "./obligation-expression";
+} from "./expression";
 
 const isApplied = (expression: Expr, builtins: Builtin[]) =>
   expression.kind === "Apply" &&

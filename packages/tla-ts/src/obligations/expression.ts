@@ -1,8 +1,8 @@
 // tlapm's expression IR (E_t) with de Bruijn indices, and its substitutions (E_subst) and
 // alpha-equivalence (E_eq).
 
-import { TlaProofError } from "./errors";
-import type { OldMethod, PragmaSetting } from "./obligation-pragma";
+import { TlaProofError } from "../errors";
+import type { OldMethod, PragmaSetting } from "./pragma";
 
 export interface Locus {
   file: string;

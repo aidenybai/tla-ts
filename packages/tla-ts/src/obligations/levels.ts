@@ -2,7 +2,7 @@
 // 3 temporal, 4 undefined), the weights of an operator's arguments, and the declared names the
 // level depends on.
 
-import { TlaProofError, TlapmBugError } from "./errors";
+import { TlaProofError, TlapmBugError } from "../errors";
 import {
   adjoin,
   getBoundedFresh,
@@ -14,7 +14,7 @@ import {
   type Expr,
   type Level,
   type Scope,
-} from "./obligation-expression";
+} from "./expression";
 
 interface LevelInfo {
   level: number;

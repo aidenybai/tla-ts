@@ -18,7 +18,7 @@ import {
   type ExceptPoint,
   type Hyp,
   type Sequent,
-} from "../../obligation-expression";
+} from "../../obligations/expression";
 
 type ExceptExpr = Extract<Expr, { kind: "Except" }>;
 

@@ -1,7 +1,7 @@
 import { TlapmBugError } from "../../errors";
-import { expandActionOperators, lambdify } from "../../obligation-action";
-import { createAnonymizer } from "../../obligation-anon";
-import type { Expr, Sequent } from "../../obligation-expression";
+import { expandActionOperators, lambdify } from "../../obligations/action";
+import { createAnonymizer } from "../../obligations/anon";
+import type { Expr, Sequent } from "../../obligations/expression";
 import { implicationToEnabled } from "./enabled-axioms";
 import { checkLevelChange } from "./level-comparison";
 

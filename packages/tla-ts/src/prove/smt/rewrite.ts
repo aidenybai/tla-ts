@@ -10,7 +10,7 @@ import {
   type Builtin,
   type Expr,
   type Sequent,
-} from "../../obligation-expression";
+} from "../../obligations/expression";
 import { createContext, type Identifier } from "./context";
 import {
   createFlattener,

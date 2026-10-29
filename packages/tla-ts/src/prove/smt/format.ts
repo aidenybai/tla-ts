@@ -1,6 +1,6 @@
 // backend/smtlib.ml's names and the SMT-LIB terms the encoding builds.
 
-import type { Builtin } from "../../obligation-expression";
+import type { Builtin } from "../../obligations/expression";
 
 // Smtlib.format_smt: spells out each special character, then doubles each underscore.
 const SPELLED: Record<string, string> = {

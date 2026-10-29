@@ -3,8 +3,8 @@
 // in its scope that soundness needs expanded. The ExpandENABLED and ExpandCdot frontends then
 // replace each LAMBDA with an existential quantifier.
 
-import { TlaProofError, TlapmBugError, TlaProverError } from "./errors";
-import type { Anonymizer } from "./obligation-anon";
+import { TlaProofError, TlapmBugError, TlaProverError } from "../errors";
+import type { Anonymizer } from "./anon";
 import {
   adjoin,
   adjoinAll,
@@ -26,8 +26,8 @@ import {
   type Param,
   type Scope,
   type Substitution,
-} from "./obligation-expression";
-import { getLevelInfo, LEVEL_NUMBERS } from "./obligation-levels";
+} from "./expression";
+import { getLevelInfo, LEVEL_NUMBERS } from "./levels";
 
 // Which of ENABLED and \cdot a pass handles, and whether it may expand the definitions that
 // soundness needs expanded, as the AutoUSE directive allows.

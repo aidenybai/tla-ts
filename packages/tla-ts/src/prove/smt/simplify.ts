@@ -1,6 +1,6 @@
 // The rewrites of encode/n_rewrite.ml that run on the sequent before Type.Synthesize.
 
-import { applyBuiltin, at, mapChildren, type Expr } from "../../obligation-expression";
+import { applyBuiltin, at, mapChildren, type Expr } from "../../obligations/expression";
 import { compareStrings } from "../ocaml";
 
 type RecordExpr = Extract<Expr, { kind: "Record" }>;
