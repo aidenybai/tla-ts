@@ -177,7 +177,7 @@ const result = await prove({
 | `signal`       | An `AbortSignal` that stops proving                                                       |
 | `onObligation` | Receives each obligation as soon as its status is known                                   |
 
-The `"tla-ts"` backend tries each obligation in tlapm's default order. It checks whether the obligation is trivial, then sends it to an SMT solver with the same SMT-LIB encoding as tlapm. `SMTT(n)` gives the solver `n` seconds, and the default is 5 s. A step proved with `Zenon`, `PTL` or another prover is `"unsupported"` for now. The `"tlapm"` backend runs `tlapm --toolbox 0 0` from your `PATH`, so it works only in Node and Bun. It throws `TlaUnsupportedError` in a browser or when tlapm is missing.
+The `"tla-ts"` backend tries each obligation in tlapm's default order. It checks whether the obligation is trivial, then tries the provers its step cites, or tlapm's defaults: SMT, Zenon, then Isabelle. Each prover receives the same input as tlapm's, and `PTL` decides as LS4 does. `SMTT(n)` gives the solver `n` seconds, and the default is 5 s. The `"tlapm"` backend runs `tlapm --toolbox 0 0` from your `PATH`, so it works only in Node and Bun. It throws `TlaUnsupportedError` in a browser or when tlapm is missing.
 
 The result has these fields:
 
