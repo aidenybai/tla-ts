@@ -417,11 +417,86 @@ export class Rewriter {
     const manager = this.manager;
     if (manager.getOp(ite) !== OP_ITE) return undefined;
     const args = manager.args[ite];
-    const isDistinct = (expr: number) =>
-      expr !== other && manager.isUniqueValue(expr) && manager.isUniqueValue(other);
-    if (args[1] === other && isDistinct(args[2])) return args[0];
-    if (args[2] === other && isDistinct(args[1])) return this.mkNot(args[0]);
+    if (args[1] === other && this.areDistinct(args[2], other)) return args[0];
+    if (args[2] === other && this.areDistinct(args[1], other)) return this.mkNot(args[0]);
     return undefined;
+  }
+
+  private isIte(expr: number) {
+    return this.manager.getOp(expr) === OP_ITE;
+  }
+
+  private areDistinct(first: number, second: number) {
+    const manager = this.manager;
+    return first !== second && manager.isUniqueValue(first) && manager.isUniqueValue(second);
+  }
+
+  // The ite_extra_rules of mk_eq_core: an ite against a value, or two ites of values.
+  private mkIteValueEq(left: number, right: number) {
+    const manager = this.manager;
+    if (this.isIte(left) && manager.isUniqueValue(right)) return this.tryIteValue(left, right);
+    if (this.isIte(right) && manager.isUniqueValue(left)) return this.tryIteValue(right, left);
+    const leftArgs = manager.args[left];
+    const rightArgs = manager.args[right];
+    if (
+      !this.isIte(left) ||
+      !this.isIte(right) ||
+      ![leftArgs[1], leftArgs[2], rightArgs[1], rightArgs[2]].every((arg) =>
+        manager.isUniqueValue(arg),
+      )
+    )
+      return undefined;
+    const leftNot = this.mkNot(leftArgs[0]);
+    const rightNot = this.mkNot(rightArgs[0]);
+    return this.mkAnd([
+      this.mkOr([leftArgs[0], rightArgs[0], this.mkEq(leftArgs[2], rightArgs[2])]),
+      this.mkOr([leftNot, rightNot, this.mkEq(leftArgs[1], rightArgs[1])]),
+      this.mkOr([leftNot, rightArgs[0], this.mkEq(leftArgs[1], rightArgs[2])]),
+      this.mkOr([leftArgs[0], rightNot, this.mkEq(leftArgs[2], rightArgs[1])]),
+    ]);
+  }
+
+  // try_ite_value: (ite c t e) = v for a value v.
+  private tryIteValue(ite: number, value: number): number | undefined {
+    const manager = this.manager;
+    const args = manager.args[ite];
+    const condition = args[0];
+    const thenExpr = args[1];
+    const elseExpr = args[2];
+    if (this.areDistinct(value, elseExpr))
+      return this.mkAnd([this.mkEq(thenExpr, value), condition]);
+    if (this.areDistinct(value, thenExpr))
+      return this.mkAnd([this.mkEq(elseExpr, value), this.mkNot(condition)]);
+    if (value === thenExpr)
+      return value === elseExpr
+        ? manager.trueExpr
+        : this.mkOr([this.mkEq(elseExpr, value), condition]);
+    if (value === elseExpr) return this.mkOr([this.mkEq(thenExpr, value), this.mkNot(condition)]);
+    const isValueIte = (expr: number) =>
+      this.isIte(expr) &&
+      manager.isUniqueValue(manager.args[expr][1]) &&
+      manager.isUniqueValue(manager.args[expr][2]);
+    const thenEq = isValueIte(thenExpr) ? this.tryIteValue(thenExpr, value) : undefined;
+    if (thenEq !== undefined) return this.mkIte(condition, thenEq, this.mkEq(elseExpr, value));
+    const elseEq = isValueIte(elseExpr) ? this.tryIteValue(elseExpr, value) : undefined;
+    if (elseEq !== undefined) return this.mkIte(condition, this.mkEq(thenExpr, value), elseEq);
+    return this.isDisjointFrom(ite, value) ? manager.falseExpr : undefined;
+  }
+
+  // simplify_eq_ite: whether every leaf of a tree of ites is a value distinct from the value.
+  private isDisjointFrom(ite: number, value: number) {
+    const manager = this.manager;
+    const visited = new Set<number>();
+    const todo = [ite];
+    while (todo.length > 0) {
+      const expr = todo.pop() ?? ite;
+      if (visited.has(expr)) continue;
+      visited.add(expr);
+      if (this.areDistinct(expr, value)) continue;
+      if (!this.isIte(expr)) return false;
+      todo.push(manager.args[expr][1], manager.args[expr][2]);
+    }
+    return true;
   }
 
   // bool_rewriter::mk_eq_core, after arith_rewriter::mk_eq_core folds numerals.
@@ -432,6 +507,8 @@ export class Rewriter {
       return manager.falseExpr;
     const iteEq = this.tryIteEq(inputLeft, inputRight) ?? this.tryIteEq(inputRight, inputLeft);
     if (iteEq !== undefined) return iteEq;
+    const iteValueEq = this.mkIteValueEq(inputLeft, inputRight);
+    if (iteValueEq !== undefined) return iteValueEq;
     if (manager.sorts[inputLeft] !== SORT_BOOL) return manager.mkEq(inputLeft, inputRight);
     const isUnfolded = manager.isNot(inputLeft) && manager.isNot(inputRight);
     const left = isUnfolded ? manager.args[inputLeft][0] : inputLeft;
@@ -457,20 +534,67 @@ export class Rewriter {
     return this.mkAnd(pairs);
   }
 
+  // bool_rewriter::mk_ite_core, with elim_ite and ite_extra_rules.
   mkIte(condition: number, thenExpr: number, elseExpr: number): number {
     const manager = this.manager;
+    // (ite (not c) a b) is (ite c b a).
+    if (manager.isNot(condition)) return this.mkIte(manager.args[condition][0], elseExpr, thenExpr);
+    const isThenIte = manager.getOp(thenExpr) === OP_ITE;
+    const isElseIte = manager.getOp(elseExpr) === OP_ITE;
+    const thenArgs = manager.args[thenExpr];
+    const elseArgs = manager.args[elseExpr];
+    // (ite c (ite c t1 t2) t3) is (ite c t1 t3).
+    if (isThenIte && thenArgs[0] === condition) return this.mkIte(condition, thenArgs[1], elseExpr);
+    // (ite c t1 (ite c2 t1 t2)) is (ite (or c c2) t1 t2).
+    if (isElseIte && elseArgs[1] === thenExpr)
+      return this.mkIte(this.mkOr([condition, elseArgs[0]]), thenExpr, elseArgs[2]);
+    // (ite c t1 (ite c t2 t3)) is (ite c t1 t3).
+    if (isElseIte && elseArgs[0] === condition) return this.mkIte(condition, thenExpr, elseArgs[2]);
     if (manager.isTrue(condition)) return thenExpr;
     if (manager.isFalse(condition)) return elseExpr;
     if (thenExpr === elseExpr) return thenExpr;
-    if (manager.isNot(condition)) return this.mkIte(manager.args[condition][0], elseExpr, thenExpr);
     if (manager.sorts[thenExpr] === SORT_BOOL) {
-      if (manager.isTrue(thenExpr)) return this.mkOr([condition, elseExpr]);
-      if (manager.isFalse(thenExpr)) return this.mkAnd([this.mkNot(condition), elseExpr]);
+      if (manager.isTrue(thenExpr))
+        return manager.isFalse(elseExpr) ? condition : this.mkOr([condition, elseExpr]);
+      if (manager.isFalse(thenExpr))
+        return manager.isTrue(elseExpr)
+          ? this.mkNot(condition)
+          : this.mkAnd([this.mkNot(condition), elseExpr]);
       if (manager.isTrue(elseExpr)) return this.mkOr([this.mkNot(condition), thenExpr]);
       if (manager.isFalse(elseExpr)) return this.mkAnd([condition, thenExpr]);
-      if (thenExpr === condition) return this.mkOr([condition, elseExpr]);
       if (elseExpr === condition) return this.mkAnd([condition, thenExpr]);
+      if (thenExpr === condition) return this.mkOr([condition, elseExpr]);
+      if (manager.isComplement(thenExpr, elseExpr)) return this.mkEq(condition, thenExpr);
     }
+    if (isThenIte) {
+      // (ite c1 (ite c2 t1 t2) t1) is (ite (and c1 (not c2)) t2 t1).
+      if (elseExpr === thenArgs[1])
+        return this.mkIte(this.mkAnd([condition, this.mkNot(thenArgs[0])]), thenArgs[2], elseExpr);
+      // (ite c1 (ite c2 t1 t2) t2) is (ite (and c1 c2) t1 t2).
+      if (elseExpr === thenArgs[2])
+        return this.mkIte(this.mkAnd([condition, thenArgs[0]]), thenArgs[1], elseExpr);
+      // (ite c1 (ite c2 t1 t2) (ite c3 t1 t2)) is (ite (or (and c1 c2) (and (not c1) c3)) t1 t2),
+      // and with (ite c3 t2 t1) the last conjunct is (not c3).
+      const isSameBranches =
+        isElseIte && thenArgs[1] === elseArgs[1] && thenArgs[2] === elseArgs[2];
+      const isSwappedBranches =
+        isElseIte && thenArgs[1] === elseArgs[2] && thenArgs[2] === elseArgs[1];
+      if (isSameBranches || isSwappedBranches)
+        return this.mkIte(
+          this.mkOr([
+            this.mkAnd([condition, thenArgs[0]]),
+            this.mkAnd([
+              this.mkNot(condition),
+              isSameBranches ? elseArgs[0] : this.mkNot(elseArgs[0]),
+            ]),
+          ]),
+          thenArgs[1],
+          thenArgs[2],
+        );
+    }
+    // (ite c1 t1 (ite c2 t2 t1)) is (ite (or c1 (not c2)) t1 t2).
+    if (isElseIte && thenExpr === elseArgs[2])
+      return this.mkIte(this.mkOr([condition, this.mkNot(elseArgs[0])]), thenExpr, elseArgs[1]);
     return manager.mkApp(OP_ITE, [condition, thenExpr, elseExpr], manager.sorts[thenExpr]);
   }
 
