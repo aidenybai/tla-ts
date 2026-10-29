@@ -889,14 +889,29 @@ const IMPURE_BUILTINS = new Set([
 export const isImpureBuiltin = (name: string, environment: Environment) =>
   IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;
 
-const impureDefinitions = new WeakMap<Definition, boolean>();
+interface Impurity {
+  builtins: Set<string>;
+  definitions: WeakMap<Definition, boolean>;
+}
+
+const ANY_EFFECT: Impurity = { builtins: IMPURE_BUILTINS, definitions: new WeakMap() };
+
+// An Assert that held holds again, so evaluating it twice looks the same as evaluating it once.
+const REPEATED_EFFECT: Impurity = {
+  builtins: new Set([...IMPURE_BUILTINS].filter((name) => name !== "Assert")),
+  definitions: new WeakMap(),
+};
 
 const isEvaluatedOnce = (definition: Definition, environment: Environment) =>
   definition.kind === "Operator" &&
   definition.params.length === 0 &&
   isConstantLevel(definition, environment);
 
-const callsImpureBuiltin = (expression: Expression, environment: Environment): boolean => {
+const callsImpureBuiltin = (
+  expression: Expression,
+  environment: Environment,
+  impurity: Impurity,
+): boolean => {
   const name =
     expression.kind === "Identifier"
       ? expression.name
@@ -905,29 +920,35 @@ const callsImpureBuiltin = (expression: Expression, environment: Environment): b
         : undefined;
   if (name !== undefined && !isLocallyResolved(expression)) {
     const definition = getDefinition(name, environment);
-    if (!definition && isImpureBuiltin(name, environment)) return true;
+    const isImpureCall =
+      impurity.builtins.has(name) || environment.builtins.get(name)?.isStateLevel === true;
+    if (!definition && isImpureCall) return true;
     if (
       definition &&
       !isEvaluatedOnce(definition, environment) &&
-      isImpureDefinition(definition, environment)
+      isImpureDefinition(definition, environment, impurity)
     ) {
       return true;
     }
   }
-  return getChildren(expression).some((child) => callsImpureBuiltin(child, environment));
+  return getChildren(expression).some((child) => callsImpureBuiltin(child, environment, impurity));
 };
 
 // TLC evaluates a constant definition without parameters once, so only other definitions pass
 // on the side effects and random choices of the builtins they call.
-const isImpureDefinition = (definition: Definition, environment: Environment): boolean => {
-  const cached = impureDefinitions.get(definition);
+const isImpureDefinition = (
+  definition: Definition,
+  environment: Environment,
+  impurity = ANY_EFFECT,
+): boolean => {
+  const cached = impurity.definitions.get(definition);
   if (cached !== undefined) return cached;
-  impureDefinitions.set(definition, false);
+  impurity.definitions.set(definition, false);
   const isImpure =
-    callsImpureBuiltin(definition.body, environment) ||
+    callsImpureBuiltin(definition.body, environment, impurity) ||
     (definition.kind === "Function" &&
-      definition.bounds.some((bound) => callsImpureBuiltin(bound.set, environment)));
-  impureDefinitions.set(definition, isImpure);
+      definition.bounds.some((bound) => callsImpureBuiltin(bound.set, environment, impurity)));
+  impurity.definitions.set(definition, isImpure);
   return isImpure;
 };
 
@@ -939,6 +960,12 @@ export const getReevaluatedDefinitions = (definitions: Definition[], environment
 export const isImpure = (environment: Environment) =>
   [...environment.definitions.values()].some((definition) =>
     isImpureDefinition(definition, environment),
+  );
+
+// Whether evaluating a definition again can show, such as by printing twice.
+export const hasRepeatedEffects = (environment: Environment) =>
+  [...environment.definitions.values()].some((definition) =>
+    isImpureDefinition(definition, environment, REPEATED_EFFECT),
   );
 
 const closedConstants = new WeakMap<Expression, boolean>();

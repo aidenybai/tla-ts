@@ -1,4 +1,4 @@
-import type { LivenessChecker } from "./liveness";
+import type { LivenessChecker } from "./live-check";
 
 // TLC's exit statuses, from EC.ExitStatus.
 export const EXIT_STATUS = {
@@ -39,37 +39,27 @@ export const setModuleExitCode = (error: Error, code: number) => {
 export const getExitCode = (error: Error) => exitCodes.get(error) ?? moduleExitCodes.get(error);
 
 // TLC exits with 255 when it fails to process or evaluate a liveness property, in any phase.
-export const withLivenessExitCode = (
-  create: () => LivenessChecker | undefined,
-): LivenessChecker | undefined => {
+const withErrorExitCode = <Result>(run: () => Result) => {
   try {
-    const checker = create();
-    return (
-      checker && {
-        addInitialState: (index, state) => {
-          try {
-            checker.addInitialState(index, state);
-          } catch (error) {
-            throw setExitCode(error, EXIT_STATUS.error);
-          }
-        },
-        addState: (index, state, successors) => {
-          try {
-            return checker.addState(index, state, successors);
-          } catch (error) {
-            throw setExitCode(error, EXIT_STATUS.error);
-          }
-        },
-        findViolation: () => {
-          try {
-            return checker.findViolation();
-          } catch (error) {
-            throw setExitCode(error, EXIT_STATUS.error);
-          }
-        },
-      }
-    );
+    return run();
   } catch (error) {
     throw setExitCode(error, EXIT_STATUS.error);
   }
+};
+
+export const withLivenessExitCode = (
+  create: () => LivenessChecker | undefined,
+): LivenessChecker | undefined => {
+  const checker = withErrorExitCode(create);
+  return (
+    checker && {
+      addInitialState: (index, state) =>
+        withErrorExitCode(() => checker.addInitialState(index, state)),
+      addState: (index, state, successors) =>
+        withErrorExitCode(() => checker.addState(index, state, successors)),
+      findViolation: () => withErrorExitCode(() => checker.findViolation()),
+      getViolatedProperties: (path, cycleStart) =>
+        withErrorExitCode(() => checker.getViolatedProperties(path, cycleStart)),
+    }
+  );
 };

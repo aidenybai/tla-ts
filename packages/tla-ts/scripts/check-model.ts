@@ -61,10 +61,13 @@ export const checkModel = async (specPath: string, configPath: string): Promise<
       milliseconds,
     };
   }
+  const trace = result.violation?.trace;
+  // TLC numbers the stuttering step at the end of a lasso like a state.
+  const isStuttering = trace !== undefined && result.violation?.loopStart === trace.length - 1;
   return {
     status: result.status,
     violation: result.violation?.name,
-    traceLength: result.violation?.trace.length,
+    traceLength: trace && trace.length + (isStuttering ? 1 : 0),
     milliseconds,
   };
 };
