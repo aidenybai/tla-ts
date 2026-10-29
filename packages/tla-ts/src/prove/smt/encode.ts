@@ -29,6 +29,12 @@ type Encoder = ReturnType<typeof createEncoder>;
 
 const HYPOTHESIS: Mode = { isPrimed: false, polarity: "Negative", at: undefined, depth: 0 };
 
+// Prep.expand_defs substitutes visible definitions and pragmas, so they declare nothing.
+const isExpanded = (hyp: Extract<Hyp, { kind: "Defn" }>) =>
+  hyp.definition.kind === "Bpragma" ||
+  getPragmaProver(hyp) !== undefined ||
+  (hyp.definition.kind === "Operator" && hyp.visibility === "Visible");
+
 // Declares each hypothesis's names and asserts its facts, in order, as Smtlib.pp_print_obligation.
 // Visible definitions and TLAPS's pragmas are expanded, so they declare nothing.
 const encodeContext = (context: Hyp[], encoder: Encoder) =>
@@ -67,11 +73,8 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
         }
         case "Defn": {
           const definition = hyp.definition;
-          const isExpanded =
-            definition.kind === "Bpragma" ||
-            getPragmaProver(hyp) !== undefined ||
-            (definition.kind === "Operator" && hyp.visibility === "Visible");
-          if (isExpanded) return next({ kind: "unsupported", reason: "an expanded definition" });
+          if (isExpanded(hyp))
+            return next({ kind: "unsupported", reason: "an expanded definition" });
           if (definition.kind === "Instance")
             return next({ kind: "unsupported", reason: "an instance" });
           if (definition.kind === "Recursive") {
@@ -156,7 +159,15 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
     ...entries.flatMap((entry) => (typeof entry === "string" ? [entry] : entry.getLines(keys))),
   ];
   // Smtlib.collect_sorts declares Idv only when a symbol or a bound variable has that sort.
-  const isIdvUsed = lines.some((line) => /\bIdv\b/.test(line));
+  // Type.Synthesize gives that sort to each definition left in the context, though none is printed.
+  const isIdvUsed =
+    lines.some((line) => /\bIdv\b/.test(line)) ||
+    sequent.context.some(
+      (hyp) =>
+        hyp.kind === "Defn" &&
+        (hyp.definition.kind === "Operator" || hyp.definition.kind === "Recursive") &&
+        !isExpanded(hyp),
+    );
   return ["(set-logic UFNIA)", ...(isIdvUsed ? ["(declare-sort Idv 0)"] : []), ...lines]
     .map(printer.resolve)
     .concat("(check-sat)", "(exit)")
