@@ -142,6 +142,8 @@ export interface SearchStatistics {
 export type SearchFailure = "exhausted" | "time limit" | "memory limit" | "aborted";
 
 // When the search gives up: past the deadline, a time from Date.now(), or once the signal aborts.
+// The search checks them before each formula it adds and each node it takes, so it stops within a
+// step of the deadline, where tlapm kills Zenon at once.
 export interface SearchLimits {
   deadline: number;
   signal: AbortSignal | undefined;

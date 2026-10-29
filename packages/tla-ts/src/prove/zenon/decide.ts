@@ -1,10 +1,14 @@
 // Ported from Zenon's main.ml, as shipped in tlapm. Copyright 1997 INRIA, see LICENSE.
 //
-// Runs Zenon with tlapm's options, -x tla -max-time 1d, on a .znn file. A proof counts only once
-// the independent checker accepts it.
+// Runs Zenon as tlapm does on a .znn file. A proof counts only once the independent checker
+// accepts it.
+//
+// tlapm passes -max-time 1d, so Zenon's own clock never stops it. The time limit is tlapm's
+// timeout instead: Schedule.run kills Zenon once the wall clock passes its launch time plus the
+// timeout, whether Zenon is still reading the file or searching.
 
 import { TlaZenonError } from "../../errors";
-import type { Verdict } from "../verdict";
+import type { DecideOptions, Verdict } from "../verdict";
 import { checkProof } from "./check/check";
 import { createRelations } from "./eqrel";
 import { createExpressions } from "./expr";
@@ -14,11 +18,6 @@ import { separate } from "./phrase";
 import type { Proof } from "./proof";
 import { search, type SearchFailure } from "./search";
 import { getBuiltInDefinitions, PREDEFINED_SYMBOLS } from "./tla/tla";
-
-export interface ZenonOptions {
-  timeLimitMs: number;
-  signal?: AbortSignal;
-}
 
 export interface ZenonRun {
   proof: Proof | undefined;
@@ -33,7 +32,7 @@ export interface ZenonRun {
 
 // The search and its statistics, which match the -stats output of the OCaml Zenon. Throws
 // TlaZenonError when the text isn't a valid .znn file.
-export const runZenon = (text: string, options: ZenonOptions): ZenonRun => {
+export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
   const deadline = Date.now() + options.timeLimitMs;
   const exprs = createExpressions();
   const phrases = [...getBuiltInDefinitions(exprs), ...parseZenon(exprs, text)];
@@ -78,5 +77,5 @@ export const runZenon = (text: string, options: ZenonOptions): ZenonRun => {
 
 // Zenon's verdict on a .znn file: "unsat" when it refutes the hypotheses with a proof that the
 // checker accepts, within the time limit.
-export const decideZenon = (text: string, options: ZenonOptions): Exclude<Verdict, "sat"> =>
+export const decideZenon = (text: string, options: DecideOptions): Exclude<Verdict, "sat"> =>
   runZenon(text, options).isChecked ? "unsat" : "unknown";

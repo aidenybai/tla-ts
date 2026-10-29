@@ -46,6 +46,12 @@ describe("Zenon agrees with tlapm's Zenon", () => {
     },
     2 * TIME_LIMIT_MS,
   );
+
+  // The search runs for seconds before it runs out of memory, so it gives up at the deadline first.
+  it("stops at the deadline, where tlapm kills Zenon", () => {
+    const text = readFileSync(join(FIXTURES, "memory/PaxosCommit_proof-253.znn"), "utf8");
+    expect(runZenon(text, { timeLimitMs: 200 }).failure).toBe("time limit");
+  });
 });
 
 // Each goal is false, next to a true one, so no sound search proves it.
