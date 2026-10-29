@@ -18,6 +18,8 @@ import {
   type CorpusModule,
 } from "./corpora";
 import {
+  getIsabelleDigest,
+  getIsabelleVerdict,
   getLs4Digest,
   getLs4Verdict,
   getInputDigest,
@@ -39,7 +41,7 @@ const CONCURRENCY = Math.max(1, Math.floor(availableParallelism() / 2));
 
 const HAS_PROOF = /\b(PROOF|BY|OBVIOUS|OMITTED)\b/;
 
-const OBLIGATION_HEADER = /^;; (?:Proof obligation|obligation) #(\d+)/im;
+const OBLIGATION_HEADER = /^(?:;; (?:Proof obligation|obligation) #|lemma ob')(\d+)/im;
 
 const tlapmPath = process.env.TLAPM;
 if (!tlapmPath || !existsSync(tlapmPath)) {
@@ -154,7 +156,8 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
     getVerdict: (output: string) => Verdict,
   ) =>
     files
-      .filter((path) => path.endsWith(extension))
+      // tlapm also writes a theory of the whole module, which no backend runs.
+      .filter((path) => basename(path).startsWith("tlapm_") && path.endsWith(extension))
       .map((path) => ({ path, text: readFileSync(path, "utf8") }))
       // tlapm sometimes leaves an empty input behind, which belongs to no obligation.
       .filter((file) => file.text !== "")
@@ -170,6 +173,7 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
 
   const smtRuns = getBackendRecords(".smt", getInputDigest, getSmtVerdict);
   const zenonRuns = getBackendRecords(".znn", getInputDigest, getZenonVerdict);
+  const isabelleRuns = getBackendRecords(".thy", getIsabelleDigest, getIsabelleVerdict);
   const ls4Runs = getBackendRecords(".ls4", getLs4Digest, getLs4Verdict).sort((left, right) =>
     left.record.input < right.record.input ? -1 : 1,
   );
@@ -184,6 +188,12 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
     if (obligation && "prover" in obligation) obligation.zenon = run.record;
     writeFileSync(join(inputsDirectory, `${run.obligationId}.znn`), run.text);
     writeFileSync(join(inputsDirectory, `${run.obligationId}.znn.out`), run.backendOutput);
+  });
+  isabelleRuns.forEach((run) => {
+    const obligation = obligations.get(run.obligationId);
+    if (obligation && "prover" in obligation) obligation.isabelle = run.record;
+    writeFileSync(join(inputsDirectory, `${run.obligationId}.thy`), run.text);
+    writeFileSync(join(inputsDirectory, `${run.obligationId}.thy.out`), run.backendOutput);
   });
   ls4Runs.forEach((run, index) => {
     writeFileSync(join(inputsDirectory, `${index}.ls4`), run.text);
