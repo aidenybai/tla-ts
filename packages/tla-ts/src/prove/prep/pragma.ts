@@ -72,11 +72,24 @@ const PRAGMA_PROVERS: Record<string, string> = {
   Trivial: "trivial",
 };
 
-// A prover a step cites, named as tlapm names it, with the time it gives the prover, if any.
+// A prover a step cites, named as tlapm names it, with the time or the Z3 resource budget it
+// gives the prover, if any.
 export interface Method {
   prover: string;
   timeLimitMs: number | undefined;
+  rlimit: number | undefined;
 }
+
+// Method.rlimit_base and Method.max_rlimit.
+const RLIMIT_BASE = 3_000_000;
+const MAX_RLIMIT = 0xffff_ffff;
+
+// Prep.compute_meth's parse_rlimit: "rN" is N times the base resource count, at least 1.
+const getRlimit = (budget: string) => {
+  const count = Number.parseFloat(budget.slice(1));
+  if (!/^[rR]/.test(budget) || !Number.isFinite(count) || count <= 0) return undefined;
+  return Math.max(1, Math.trunc(Math.min(count * RLIMIT_BASE, MAX_RLIMIT)));
+};
 
 export const getPragmaProver = (hyp: Hyp | undefined) => {
   if (hyp?.kind !== "Defn" || hyp.definition.kind !== "Operator") return undefined;
@@ -94,13 +107,13 @@ const getPragmaMethod = (context: Hyp[], index: number, expression: Expr): Metho
   const prover = getPragmaProver(context[index - operator.index]);
   if (prover === undefined) return undefined;
   const argument = expression.kind === "Apply" ? expression.args.at(-1) : undefined;
-  // Prep.compute_meth: SMTT(n) gives the prover n seconds. tla-ts's provers have no resource
-  // limit, so SMTT("rN") keeps the default time.
+  // Prep.compute_meth: SMTT(n) gives the prover n seconds, and SMTT("rN") a resource budget.
   const timeLimitMs =
     argument?.kind === "Num"
       ? Number(`${argument.integer}.${argument.fraction || "0"}`) * 1000
       : undefined;
-  return { prover, timeLimitMs };
+  const rlimit = argument?.kind === "String" ? getRlimit(argument.value) : undefined;
+  return { prover, timeLimitMs, rlimit };
 };
 
 // Prep.find_meth takes the provers from the pragmas the obligation cites. tla-ts doesn't record

@@ -7,7 +7,7 @@ import { processObligation } from "./prep/action";
 import { expandDefinitions } from "./prep/defs";
 import { expandEnabledCdot, FRONTENDS } from "./prep/enabled";
 import { splitFacts } from "./prep/flatten";
-import { findMethods } from "./prep/pragma";
+import { findMethods, type Method } from "./prep/pragma";
 import { isTrivial } from "./prep/trivial";
 import { encodeSmt } from "./smt/encode";
 import type { EncodingSession } from "./smt/rewrite";
@@ -77,7 +77,7 @@ interface Backend {
   isDefault: boolean;
   // The text tlapm sends the backend, after the frontend it applies first. It throws a
   // TlaUnsupportedError for what tla-ts can't encode.
-  encode: (sequent: Sequent, run: ProveRun) => string;
+  encode: (sequent: Sequent, method: Method, run: ProveRun) => string;
   decide: (text: string, options: DecideOptions) => Verdict;
 }
 
@@ -88,7 +88,10 @@ const BACKENDS: Backend[] = [
     provers: ["smt"],
     timeLimitMs: 5000,
     isDefault: true,
-    encode: (sequent, run) => encodeSmt(splitFacts(processObligation(sequent)), run.session),
+    // Prep.gen_smt_solve writes the resource budget before the encoding.
+    encode: (sequent, method, run) =>
+      (method.rlimit === undefined ? "" : `(set-option :rlimit ${method.rlimit})\n`) +
+      encodeSmt(splitFacts(processObligation(sequent)), run.session),
     decide: decideSmt,
   },
 ];
@@ -122,7 +125,13 @@ const prepare = (obligation: PrintedObligation) => {
 export const encodeForBackend = (obligation: PrintedObligation, name: string, run: ProveRun) => {
   const backend = BACKENDS.find((candidate) => candidate.name === name);
   if (!backend) throw new TlaUnsupportedError(`the backend ${name}`);
-  return backend.encode(prepare(obligation).sequent, run);
+  const prepared = prepare(obligation);
+  const method = prepared.provers.find((candidate) => backend.provers.includes(candidate.prover));
+  return backend.encode(
+    prepared.sequent,
+    method ?? { prover: name, timeLimitMs: undefined, rlimit: undefined },
+    run,
+  );
 };
 
 // Prep.ship: the provers the step cites, or tlapm's default ones when it cites none, each tried in
@@ -143,10 +152,11 @@ const proveWithBackends = (
       : BACKENDS.filter((backend) => backend.isDefault).map((backend) => ({
           prover: backend.provers[0],
           timeLimitMs: undefined,
+          rlimit: undefined,
         }))
   ).flatMap((method) => {
     const backend = BACKENDS.find((candidate) => candidate.provers.includes(method.prover));
-    return backend ? [{ backend, timeLimitMs: method.timeLimitMs ?? backend.timeLimitMs }] : [];
+    return backend ? [{ backend, method }] : [];
   });
   if (attempts.length === 0) {
     const provers = new Set(prepared.provers.map((method) => method.prover));
@@ -156,8 +166,11 @@ const proveWithBackends = (
   const state = { isDecided: false };
   for (const attempt of attempts) {
     try {
-      const text = attempt.backend.encode(prepared.sequent, run);
-      const verdict = attempt.backend.decide(text, { timeLimitMs: attempt.timeLimitMs, signal });
+      const text = attempt.backend.encode(prepared.sequent, attempt.method, run);
+      const verdict = attempt.backend.decide(text, {
+        timeLimitMs: attempt.method.timeLimitMs ?? attempt.backend.timeLimitMs,
+        signal,
+      });
       if (verdict === "unsat")
         return { ...getBase(obligation), status: "proved", prover: attempt.backend.name };
       state.isDecided = true;
