@@ -29,7 +29,7 @@ import {
   SORT_BOOL,
   SORT_INT,
 } from "./ast";
-import { collectUsedVars, replaceFreeVars, shiftVars, substitute } from "./var-subst";
+import { collectUsedVars, elimUnusedVars, replaceFreeVars, shiftVars } from "./var-subst";
 
 // Substitutes the variables with de Bruijn index i < map.length that have a definition in map,
 // which may contain variables of the same scope, and keeps every other variable.
@@ -38,41 +38,6 @@ const substitutePartial = (manager: AstManager, expr: number, map: (number | und
     const definition = index < map.length ? map[index] : undefined;
     return definition === undefined ? variable : shiftVars(manager, definition, 0, shift, 0);
   });
-
-// unused_vars_eliminator: drops the variables that neither the body nor a pattern uses.
-const elimUnusedVars = (manager: AstManager, expr: number) => {
-  if (manager.kinds[expr] !== KIND_QUANTIFIER) return expr;
-  const data = manager.getQuantifier(expr);
-  if (manager.isGround(data.body)) return data.body;
-  const count = data.sorts.length;
-  const used = collectUsedVars(manager, data.body, count);
-  for (const pattern of data.patterns)
-    for (const term of pattern)
-      collectUsedVars(manager, term, count).forEach((isUsed, index) => {
-        if (isUsed) used[index] = true;
-      });
-  if (used.every((isUsed) => isUsed)) return expr;
-  const numKept = used.filter(Boolean).length;
-  const bindings: number[] = [];
-  const keptSorts: number[] = [];
-  let nextIndex = numKept;
-  for (let declIndex = 0; declIndex < count; declIndex++) {
-    const varIndex = count - 1 - declIndex;
-    if (used[varIndex]) {
-      nextIndex--;
-      bindings[declIndex] = manager.mkVar(nextIndex, data.sorts[declIndex]);
-      keptSorts.push(data.sorts[declIndex]);
-    } else bindings[declIndex] = manager.mkVar(0, data.sorts[declIndex]);
-  }
-  const remap = (term: number) => substitute(manager, term, bindings, numKept);
-  if (numKept === 0) return remap(data.body);
-  return manager.mkQuantifier({
-    ...data,
-    sorts: keptSorts,
-    body: remap(data.body),
-    patterns: data.patterns.map((pattern) => pattern.map(remap)),
-  });
-};
 
 const flattenOr = (manager: AstManager, expr: number, result: number[]) => {
   const op = manager.getOp(expr);

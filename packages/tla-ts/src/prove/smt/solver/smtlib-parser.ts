@@ -183,15 +183,6 @@ export const parseSmtlib = (text: string): SmtProblem => {
                       ? isArity(2, 2) && isAll(SORT_INT)
                       : isArity(1, Infinity) && isAll(SORT_INT);
     if (!isWellSorted) throw new SmtParseError(`ill-sorted application of ${name}`);
-    const isConnective =
-      op === OP_AND ||
-      op === OP_OR ||
-      op === OP_NOT ||
-      op === OP_IMPLIES ||
-      op === OP_XOR ||
-      ((op === OP_ITE || op === OP_EQ) && argSorts[1] === SORT_BOOL);
-    if (!isConnective && args.some((arg) => manager.hasQuantifierFlags[arg]))
-      throw new SmtUnsupportedError(`a quantifier inside an application of ${name}`);
     return manager.mkApp(decl, args, sort);
   };
 

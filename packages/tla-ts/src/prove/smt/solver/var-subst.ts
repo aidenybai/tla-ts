@@ -1,6 +1,6 @@
 // Ported from Z3 (src/ast/rewriter/var_subst.cpp), MIT license, see z3-license.txt. Substitution and
 // shifting of de Bruijn variables.
-import { KIND_APP, KIND_VAR, type AstManager } from "./ast";
+import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, type AstManager } from "./ast";
 
 // Rebuilds expr with each free variable replaced. replace gets the variable, its de Bruijn index
 // relative to expr, and the number of binders above it.
@@ -78,4 +78,50 @@ export const collectUsedVars = (manager: AstManager, expr: number, count: number
     return variable;
   });
   return used;
+};
+
+// The sorts of the free variables, indexed by de Bruijn index, undefined for a variable that does not
+// occur.
+export const getFreeVarSorts = (manager: AstManager, expr: number, count: number) => {
+  const sorts: (number | undefined)[] = Array.from({ length: count }, () => undefined);
+  replaceFreeVars(manager, expr, (variable, index) => {
+    if (index < count) sorts[index] = manager.sorts[variable];
+    return variable;
+  });
+  return sorts;
+};
+
+// unused_vars_eliminator: drops the variables that neither the body nor a pattern uses.
+export const elimUnusedVars = (manager: AstManager, expr: number) => {
+  if (manager.kinds[expr] !== KIND_QUANTIFIER) return expr;
+  const data = manager.getQuantifier(expr);
+  if (manager.isGround(data.body)) return data.body;
+  const count = data.sorts.length;
+  const used = collectUsedVars(manager, data.body, count);
+  for (const pattern of data.patterns)
+    for (const term of pattern)
+      collectUsedVars(manager, term, count).forEach((isUsed, index) => {
+        if (isUsed) used[index] = true;
+      });
+  if (used.every((isUsed) => isUsed)) return expr;
+  const numKept = used.filter(Boolean).length;
+  const bindings: number[] = [];
+  const keptSorts: number[] = [];
+  let nextIndex = numKept;
+  for (let declIndex = 0; declIndex < count; declIndex++) {
+    const varIndex = count - 1 - declIndex;
+    if (used[varIndex]) {
+      nextIndex--;
+      bindings[declIndex] = manager.mkVar(nextIndex, data.sorts[declIndex]);
+      keptSorts.push(data.sorts[declIndex]);
+    } else bindings[declIndex] = manager.mkVar(0, data.sorts[declIndex]);
+  }
+  const remap = (term: number) => substitute(manager, term, bindings, numKept);
+  if (numKept === 0) return remap(data.body);
+  return manager.mkQuantifier({
+    ...data,
+    sorts: keptSorts,
+    body: remap(data.body),
+    patterns: data.patterns.map((pattern) => pattern.map(remap)),
+  });
 };

@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
+import { SmtParseError } from "../src/errors";
 import { decideSmt } from "../src/prove/smt/solver/solver";
 import { CONFORMANCE_DIRECTORY } from "./corpora";
 import { getSmtVerdict, PROOF_INPUTS_DIRECTORY, type BackendVerdict } from "./proof-records";
@@ -20,6 +21,16 @@ const listInputs = (directory: string): string[] =>
       return statSync(path).isDirectory() ? listInputs(path) : path.endsWith(".smt") ? [path] : [];
     });
 
+// Z3 rejects malformed input with an error, which counts as unknown.
+const decide = (text: string) => {
+  try {
+    return decideSmt(text, { timeLimitMs: TIME_LIMIT_MS });
+  } catch (error) {
+    if (error instanceof SmtParseError) return "unknown";
+    throw error;
+  }
+};
+
 const getOutcome = (z3: BackendVerdict, ours: BackendVerdict): Outcome => {
   if (ours === "unsat") return z3 === "unsat" ? "proved" : z3 === "sat" ? "unsound" : "extra";
   if (ours === "sat" && z3 === "unsat") return "unsound";
@@ -39,7 +50,7 @@ if (inputs.length === 0)
 const results = inputs.map((path) => {
   const z3 = getSmtVerdict(readFileSync(`${path}.out`, "utf8"));
   const start = performance.now();
-  const ours = decideSmt(readFileSync(path, "utf8"), { timeLimitMs: TIME_LIMIT_MS });
+  const ours = decide(readFileSync(path, "utf8"));
   const timeMs = Math.round(performance.now() - start);
   const outcome = getOutcome(z3, ours);
   const id = relative(PROOF_INPUTS_DIRECTORY, path);

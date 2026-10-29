@@ -1,11 +1,13 @@
 // Ported from Z3 (src/ast/normal_forms/nnf.cpp), MIT license, see z3-license.txt.
 // Negation normal form in Z3's default NNF_SKOLEM mode: only subformulas that contain quantifiers
 // are normalized, and existential quantifiers in positive positions become Skolem functions of the
-// enclosing universal variables.
+// enclosing universal variables. A quantifier inside an atom gets a name, a fresh predicate over its
+// free variables, with a definition that is normalized too (src/ast/normal_forms/name_exprs.cpp,
+// src/ast/normal_forms/defined_names.cpp).
 import {
   AstManager,
+  KIND_APP,
   KIND_QUANTIFIER,
-  KIND_VAR,
   OP_AND,
   OP_EQ,
   OP_IMPLIES,
@@ -13,42 +15,83 @@ import {
   OP_NOT,
   OP_OR,
   OP_XOR,
+  SORT_BOOL,
 } from "./ast";
-import { collectUsedVars, substitute } from "./var-subst";
+import { elimUnusedVars, getFreeVarSorts, substitute } from "./var-subst";
 
-export const toNnf = (manager: AstManager, expr: number) => {
+// Returns the definitions of the names it introduced, then the normal form of expr. names maps each
+// named quantifier to its name, across the formulas of a problem.
+export const toNnf = (manager: AstManager, expr: number, names: Map<number, number>) => {
   const cache = new Map<string, number>();
+  const todoDefs: number[] = [];
+
+  // defined_names::mk_name: (n x1 ... xk) for the free variables x1 ... xk of the quantifier, with
+  // n => q and q => n as the definition, under a universal quantifier whose pattern is the name.
+  const mkName = (quantifier: number) => {
+    const existing = names.get(quantifier);
+    if (existing !== undefined) return existing;
+    const bound = manager.freeVarBounds[quantifier];
+    const freeVarSorts = getFreeVarSorts(manager, quantifier, bound);
+    // A variable that does not occur still takes a position, filled with true.
+    const varSorts = freeVarSorts.map((sort) => sort ?? SORT_BOOL);
+    const args = freeVarSorts.map((sort, index) =>
+      sort === undefined ? manager.trueExpr : manager.mkVar(index, sort),
+    );
+    const name = manager.mkApp(
+      manager.mkFreshFuncDecl("z3name", varSorts, SORT_BOOL, true),
+      args,
+      SORT_BOOL,
+    );
+    names.set(quantifier, name);
+    const boundVars = (conjunct: number) =>
+      bound === 0
+        ? conjunct
+        : elimUnusedVars(
+            manager,
+            manager.mkQuantifier({
+              isForall: true,
+              sorts: varSorts.toReversed(),
+              body: conjunct,
+              patterns: [[name]],
+              weight: 1,
+              qid: "",
+            }),
+          );
+    todoDefs.push(
+      manager.mkAnd([
+        boundVars(manager.mkOr([manager.mkNot(name), quantifier])),
+        boundVars(manager.mkOr([name, manager.mkNot(quantifier)])),
+      ]),
+    );
+    return name;
+  };
+
+  // name_quantifier_labels: replaces each outermost quantifier of an atom by its name.
+  const nameQuantifiers = (current: number): number => {
+    if (!manager.hasQuantifierFlags[current]) return current;
+    if (manager.kinds[current] === KIND_QUANTIFIER) return mkName(current);
+    return manager.kinds[current] === KIND_APP
+      ? manager.mkApp(
+          manager.decls[current],
+          manager.args[current].map(nameQuantifiers),
+          manager.sorts[current],
+        )
+      : current;
+  };
 
   // skolemizer::process: the Skolem function takes the free variables of the quantifier.
   const skolemize = (quantifier: number) => {
     const data = manager.getQuantifier(quantifier);
     const count = data.sorts.length;
-    const bound = manager.freeVarBounds[data.body];
-    const used = collectUsedVars(manager, data.body, bound);
+    const sorts = getFreeVarSorts(manager, data.body, manager.freeVarBounds[data.body]);
     const argVars: number[] = [];
     const argSorts: number[] = [];
-    const sortOf = new Map<number, number>();
-    const collectSorts = (current: number, shift: number) => {
-      if (manager.freeVarBounds[current] <= shift) return;
-      if (manager.kinds[current] === KIND_VAR) {
-        sortOf.set(manager.values[current] - shift, manager.sorts[current]);
-        return;
-      }
-      if (manager.kinds[current] === KIND_QUANTIFIER) {
-        const inner = manager.getQuantifier(current);
-        collectSorts(inner.body, shift + inner.sorts.length);
-        return;
-      }
-      for (const arg of manager.args[current]) collectSorts(arg, shift);
-    };
-    collectSorts(data.body, 0);
-    for (let index = count; index < bound; index++)
-      if (used[index]) {
-        const sort = sortOf.get(index);
-        if (sort === undefined) continue;
-        argVars.push(manager.mkVar(index - count, sort));
-        argSorts.push(sort);
-      }
+    for (let index = count; index < sorts.length; index++) {
+      const sort = sorts[index];
+      if (sort === undefined) continue;
+      argVars.push(manager.mkVar(index - count, sort));
+      argSorts.push(sort);
+    }
     const bindings = data.sorts.map((sort) =>
       manager.mkApp(manager.mkFreshFuncDecl("sk", argSorts, sort, true), argVars, sort),
     );
@@ -72,7 +115,9 @@ export const toNnf = (manager: AstManager, expr: number) => {
       } else result = visit(skolemize(current), !data.isForall);
     } else {
       const args = manager.args[current];
-      switch (manager.getOp(current)) {
+      // process_eq: an equality between terms is an atom.
+      const op = manager.getOp(current);
+      switch (op === OP_EQ && !manager.isBool(args[0]) ? -1 : op) {
         case OP_AND:
         case OP_OR: {
           const newArgs = args.map((innerArg) => visit(innerArg, isPositive));
@@ -114,14 +159,18 @@ export const toNnf = (manager: AstManager, expr: number) => {
               : manager.mkAnd([manager.mkOr([left, right]), manager.mkOr([notLeft, notRight])]);
           break;
         }
-        // The parser only lets quantifiers occur under Boolean connectives.
-        default:
-          result = isPositive ? current : manager.mkNot(current);
+        default: {
+          const named = nameQuantifiers(current);
+          result = isPositive ? named : manager.mkNot(named);
+        }
       }
     }
     cache.set(key, result);
     return result;
   };
 
-  return visit(expr, true);
+  const result = visit(expr, true);
+  const defs: number[] = [];
+  for (let index = 0; index < todoDefs.length; index++) defs.push(visit(todoDefs[index], true));
+  return [...defs.reverse(), result];
 };

@@ -203,15 +203,17 @@ export const preprocess = (manager: AstManager, assertions: number[]) => {
     pushAssertion(manager, simplifier, simplified, initial);
   }
   const propagated = propagateValues(manager, simplifier, initial);
+  const names = new Map<number, number>();
   const normalized: number[] = [];
-  for (const formula of propagated) {
-    const reduced = reducer.rewrite(toNnf(manager, formula));
-    pushAssertion(
-      manager,
-      reducer,
-      reducer.rewrite(inferAllPatterns(manager, reduced)),
-      normalized,
-    );
-  }
+  for (const formula of propagated)
+    for (const normal of toNnf(manager, formula, names)) {
+      const reduced = reducer.rewrite(normal);
+      pushAssertion(
+        manager,
+        reducer,
+        reducer.rewrite(inferAllPatterns(manager, reduced)),
+        normalized,
+      );
+    }
   return flattenClauses(manager, reducer, normalized);
 };
