@@ -48,6 +48,7 @@ import {
   stripComb,
   substBound,
   dummyT,
+  type App,
   type Term,
   type Var,
 } from "./term";
@@ -186,6 +187,58 @@ const sortRrules = (rrules: readonly Rrule[]) => {
   return [...simple, ...conditional];
 };
 
+// rewritec's rew: rewrites the eta-contracted term with one rule.
+const rew = (
+  prover: Prover,
+  maxt: number,
+  context: SimpContext,
+  etaThm: Thm,
+  rrule: Rrule,
+): Rewritten | undefined => {
+  const etaTerm = rhsOf(etaThm);
+  const [rthm, elhs] =
+    maxt === -1 || !rrule.extra
+      ? [rrule.thm, rrule.elhs]
+      : [incrIndexesThm(maxt + 1, rrule.thm), incrementTerm(maxt + 1, rrule.elhs)];
+  const env = rrule.fo
+    ? firstOrderMatchPattern(elhs, etaTerm, { tyenv: emptyTyEnv, tenv: emptyTEnv })
+    : matchPattern(elhs, etaTerm, { tyenv: emptyTyEnv, tenv: emptyTEnv });
+  if (env === undefined) return undefined;
+  const instantiated = instantiateMatch(env, renameBoundvars(rrule.lhs, etaTerm, rthm));
+  const prop = instantiated.prop;
+  const isUnconditional = !isImplies(prop);
+  const [lhs, rhs] = destEquals(stripImpConcl(prop));
+  if (rrule.perm && termOrd(rhs, lhs) >= 0) return undefined;
+  if (isUnconditional) {
+    const joined = checkConv(etaThm, instantiated);
+    if (joined === undefined) throw new TlaIsabelleError("ERROR", "check_conv");
+    const [ruleLhs, ruleRhs] = destEquals(rrule.thm.prop);
+    return { thm: joined, skel: uncondSkel(context, ruleLhs, ruleRhs) };
+  }
+  if (context.simpset.depth > SIMP_DEPTH_LIMIT) return undefined;
+  const proved = prover(context, instantiated);
+  if (proved === undefined) return undefined;
+  const joined = checkConv(etaThm, proved);
+  if (joined === undefined) return undefined;
+  const [ruleLhs, ruleRhs] = destEquals(stripImpConcl(rrule.thm.prop));
+  return { thm: joined, skel: condSkel(context, ruleLhs, ruleRhs) };
+};
+
+// rewritec's rews: the first rule that rewrites the term.
+const rews = (
+  prover: Prover,
+  maxt: number,
+  context: SimpContext,
+  etaThm: Thm,
+  rrules: readonly Rrule[],
+): Rewritten | undefined => {
+  for (const rrule of rrules) {
+    const result = rew(prover, maxt, context, etaThm, rrule);
+    if (result !== undefined) return result;
+  }
+  return undefined;
+};
+
 // rewritec: one rewrite step at the root of a term.
 const rewritec = (
   prover: Prover,
@@ -196,57 +249,24 @@ const rewritec = (
   checkInterrupt(context.limits);
   const etaThm = etaConversion(term);
   const etaTerm = rhsOf(etaThm);
-  const rew = (rrule: Rrule): Rewritten | undefined => {
-    const [rthm, elhs] =
-      maxt === -1 || !rrule.extra
-        ? [rrule.thm, rrule.elhs]
-        : [incrIndexesThm(maxt + 1, rrule.thm), incrementTerm(maxt + 1, rrule.elhs)];
-    const env = rrule.fo
-      ? firstOrderMatchPattern(elhs, etaTerm, { tyenv: emptyTyEnv, tenv: emptyTEnv })
-      : matchPattern(elhs, etaTerm, { tyenv: emptyTyEnv, tenv: emptyTEnv });
-    if (env === undefined) return undefined;
-    const instantiated = instantiateMatch(env, renameBoundvars(rrule.lhs, etaTerm, rthm));
-    const prop = instantiated.prop;
-    const isUnconditional = !isImplies(prop);
-    const [lhs, rhs] = destEquals(stripImpConcl(prop));
-    if (rrule.perm && termOrd(rhs, lhs) >= 0) return undefined;
-    if (isUnconditional) {
-      const joined = checkConv(etaThm, instantiated);
-      if (joined === undefined) throw new TlaIsabelleError("ERROR", "check_conv");
-      const [ruleLhs, ruleRhs] = destEquals(rrule.thm.prop);
-      return { thm: joined, skel: uncondSkel(context, ruleLhs, ruleRhs) };
-    }
-    if (context.simpset.depth > SIMP_DEPTH_LIMIT) return undefined;
-    const proved = prover(context, instantiated);
-    if (proved === undefined) return undefined;
-    const joined = checkConv(etaThm, proved);
-    if (joined === undefined) return undefined;
-    const [ruleLhs, ruleRhs] = destEquals(stripImpConcl(rrule.thm.prop));
-    return { thm: joined, skel: condSkel(context, ruleLhs, ruleRhs) };
-  };
-  const rews = (rrules: readonly Rrule[]): Rewritten | undefined => {
-    for (const rrule of rrules) {
-      const result = rew(rrule);
-      if (result !== undefined) return result;
-    }
-    return undefined;
-  };
-  const procRews = (procs: readonly Procedure[]): Rewritten | undefined => {
-    for (const proc of procs) {
-      if (!matches(proc.lhs, term, emptyTyEnv, emptyTEnv)) continue;
-      const raw = proc.proc(context, etaTerm);
-      if (raw === undefined) continue;
-      const result = rews(mkProcrule(raw));
-      if (result !== undefined) return result;
-    }
-    return undefined;
-  };
   if (etaTerm.kind === "App" && etaTerm.fun.kind === "Abs")
     return { thm: transitive(etaThm, betaConversion(false, etaTerm)), skel: SKEL0 };
-  return (
-    rews(sortRrules(matchTermNet(context.simpset.rules, etaTerm))) ??
-    procRews(matchTermNet(context.simpset.simprocs as Net<Procedure>, etaTerm))
+  const rewritten = rews(
+    prover,
+    maxt,
+    context,
+    etaThm,
+    sortRrules(matchTermNet(context.simpset.rules, etaTerm)),
   );
+  if (rewritten !== undefined) return rewritten;
+  for (const proc of matchTermNet(context.simpset.simprocs as Net<Procedure>, etaTerm)) {
+    if (!matches(proc.lhs, term, emptyTyEnv, emptyTEnv)) continue;
+    const raw = proc.proc(context, etaTerm);
+    if (raw === undefined) continue;
+    const result = rews(prover, maxt, context, etaThm, mkProcrule(raw));
+    if (result !== undefined) return result;
+  }
+  return undefined;
 };
 
 const incrementTerm = (increment: number, term: Term) => incrIndexes([], increment, term);
@@ -276,6 +296,9 @@ class MatchFailure {}
 const transitive1 = (first: Thm | undefined, second: Thm | undefined) =>
   first === undefined ? second : second === undefined ? first : transitive(first, second);
 
+const chainSteps = (steps: readonly Thm[], last: Thm | undefined) =>
+  steps.reduceRight<Thm | undefined>((result, thm) => transitive1(thm, result), last);
+
 const instantiateABC = (rule: Thm, termA: Term, termB: Term, termC: Term) =>
   instantiate(
     [
@@ -304,15 +327,13 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
   // limit rather than out of stack.
   const botc = (skel: Term, context: SimpContext, term: Term): Thm | undefined => {
     const steps: Thm[] = [];
-    const chain = (last: Thm | undefined) =>
-      steps.reduceRight<Thm | undefined>((result, thm) => transitive1(thm, result), last);
     let currentSkel = skel;
     let current = term;
     for (;;) {
-      if (currentSkel.kind === "Var") return chain(undefined);
+      if (currentSkel.kind === "Var") return chainSteps(steps, undefined);
       const sub = subc(currentSkel, context, current);
       const step = rewritec(prover, maxidx, context, sub === undefined ? current : rhsOf(sub));
-      if (step === undefined) return chain(sub);
+      if (step === undefined) return chainSteps(steps, sub);
       steps.push(sub === undefined ? step.thm : transitive(sub, step.thm));
       currentSkel = step.skel;
       current = rhsOf(step.thm);
@@ -320,6 +341,12 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
   };
   const tryBotc = (context: SimpContext, term: Term) =>
     botc(SKEL0, context, term) ?? reflexive(term);
+  const appc = (skel: Term, context: SimpContext, term: App): Thm | undefined => {
+    const funThm = botc(skelFun(skel), context, term.fun);
+    const argThm = botc(skelArg(skel), context, term.arg);
+    if (funThm !== undefined) return combination(funThm, argThm ?? reflexive(term.arg));
+    return argThm === undefined ? undefined : combination(reflexive(term.fun), argThm);
+  };
   const subc = (skel: Term, context: SimpContext, term: Term): Thm | undefined => {
     if (term.kind === "Abs") {
       const variable = mkFree(boundName(context.bounds), term.type);
@@ -336,16 +363,10 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
       const rest = subc(SKEL0, context, rhsOf(beta));
       return rest === undefined ? beta : transitive(beta, rest);
     }
-    const appc = (): Thm | undefined => {
-      const funThm = botc(skelFun(skel), context, term.fun);
-      const argThm = botc(skelArg(skel), context, term.arg);
-      if (funThm !== undefined) return combination(funThm, argThm ?? reflexive(term.arg));
-      return argThm === undefined ? undefined : combination(reflexive(term.fun), argThm);
-    };
     const [headTerm, args] = stripComb(head);
     const name = congName(headTerm);
     const cong = name === undefined ? undefined : lookupTable(context.simpset.congs, congKey(name));
-    if (cong === undefined) return appc();
+    if (cong === undefined) return appc(skel, context, term);
     try {
       const thm = congc((rule) => prover(context, rule), maxidx, cong, term);
       const result = thm === undefined ? term : rhsOf(thm);
@@ -357,7 +378,7 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
       const inner = botc(congSkel, context, left);
       return inner === undefined ? thm : transitive1(thm, combination(inner, reflexive(right)));
     } catch (error) {
-      if (error instanceof MatchFailure) return appc();
+      if (error instanceof MatchFailure) return appc(skel, context, term);
       throw error;
     }
   };

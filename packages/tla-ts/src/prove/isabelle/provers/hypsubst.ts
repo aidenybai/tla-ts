@@ -39,6 +39,7 @@ import {
   headOf,
   incrBoundvars,
   looseBvar1,
+  maxidxOfTyp,
   mkAbs,
   mkBound,
   mkVar,
@@ -94,12 +95,7 @@ const inspectContract = (term: Term) => {
 };
 
 const hasVars = (term: Term) => (flagsOf(term) & HAS_VAR) !== 0;
-const hasTVars = (term: Term) =>
-  existsType((type) => {
-    const visit = (current: typeof type): boolean =>
-      current.kind === "TVar" || (current.kind === "Type" && current.args.some(visit));
-    return visit(type);
-  }, term);
+const hasTVars = (term: Term) => existsType((type) => maxidxOfTyp(type) >= 0, term);
 
 // inspect_pair: true to use the equality as it is, false to reorient it first, with the variable
 // to substitute.

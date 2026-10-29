@@ -16,16 +16,24 @@ export const makeSeq = <Item>(pull: () => Cell<Item>): Seq<Item> => ({ pull });
 
 // A sequence whose step may hand over to another sequence where Isabelle would pull it in tail
 // position. Pulling follows the hand-overs in a loop, so a long run of empty alternatives, which
-// Poly/ML's growing stack absorbs, doesn't exhaust this one.
-export const deferSeq = <Item>(step: () => Step<Item>): Seq<Item> => ({
-  step,
-  pull: () => {
-    let result = step();
+// Poly/ML's growing stack absorbs, doesn't exhaust this one. A class, so that pull is shared
+// rather than a new closure for every sequence.
+class DeferredSeq<Item> implements Seq<Item> {
+  readonly step: () => Step<Item>;
+
+  constructor(step: () => Step<Item>) {
+    this.step = step;
+  }
+
+  pull(): Cell<Item> {
+    let result = this.step();
     while (result !== undefined && "pull" in result)
       result = result.step === undefined ? result.pull() : result.step();
     return result;
-  },
-});
+  }
+}
+
+export const deferSeq = <Item>(step: () => Step<Item>): Seq<Item> => new DeferredSeq(step);
 
 export const emptySeq: Seq<never> = makeSeq(() => undefined);
 
@@ -64,14 +72,11 @@ export const listOfSeq = <Item>(seq: Seq<Item>): Item[] => {
   return items;
 };
 
-export const appendSeq = <Item>(first: Seq<Item>, second: Seq<Item>): Seq<Item> => {
-  const copy = (current: Seq<Item>): Seq<Item> =>
-    deferSeq(() => {
-      const cell = current.pull();
-      return cell === undefined ? second : [cell[0], copy(cell[1])];
-    });
-  return copy(first);
-};
+export const appendSeq = <Item>(first: Seq<Item>, second: Seq<Item>): Seq<Item> =>
+  deferSeq(() => {
+    const cell = first.pull();
+    return cell === undefined ? second : [cell[0], appendSeq(cell[1], second)];
+  });
 
 export const mappSeq = <Item, Result>(
   map: (item: Item) => Result,

@@ -297,23 +297,26 @@ export const updateAbs = (term: Abs, body: Term, type: Typ = term.type): Term =>
   body === term.body && type === term.type ? term : mkAbs(term.name, type, body);
 
 // incr_bv: increments the bound variables at or above level by increment.
-export const incrBv = (increment: number, level: number, term: Term): Term => {
-  if (increment === 0) return term;
-  const visit = (current: Term, depth: number): Term => {
-    if (looseOf(current) <= depth) return current;
-    switch (current.kind) {
-      case "Bound":
-        return mkBound(current.index + increment);
-      case "Abs":
-        return updateAbs(current, visit(current.body, depth + 1));
-      case "App":
-        return updateApp(current, visit(current.fun, depth), visit(current.arg, depth));
-      default:
-        return current;
-    }
-  };
-  return visit(term, level);
+const incrBvAt = (increment: number, level: number, term: Term): Term => {
+  if (looseOf(term) <= level) return term;
+  switch (term.kind) {
+    case "Bound":
+      return mkBound(term.index + increment);
+    case "Abs":
+      return updateAbs(term, incrBvAt(increment, level + 1, term.body));
+    case "App":
+      return updateApp(
+        term,
+        incrBvAt(increment, level, term.fun),
+        incrBvAt(increment, level, term.arg),
+      );
+    default:
+      return term;
+  }
 };
+
+export const incrBv = (increment: number, level: number, term: Term) =>
+  increment === 0 ? term : incrBvAt(increment, level, term);
 
 export const incrBoundvars = (increment: number, term: Term) => incrBv(increment, 0, term);
 
@@ -362,25 +365,28 @@ export const looseBnos = (term: Term): number[] => {
 };
 
 // subst_bounds: Bound i becomes args[i]; loose bound variables beyond shift down.
-export const substBounds = (args: readonly Term[], body: Term): Term => {
-  if (args.length === 0) return body;
-  const count = args.length;
-  const visit = (current: Term, level: number): Term => {
-    if (looseOf(current) <= level) return current;
-    switch (current.kind) {
-      case "Bound":
-        if (current.index - level < count) return incrBoundvars(level, args[current.index - level]);
-        return mkBound(current.index - count);
-      case "Abs":
-        return updateAbs(current, visit(current.body, level + 1));
-      case "App":
-        return updateApp(current, visit(current.fun, level), visit(current.arg, level));
-      default:
-        return current;
-    }
-  };
-  return visit(body, 0);
+const substBoundsAt = (args: readonly Term[], level: number, term: Term): Term => {
+  if (looseOf(term) <= level) return term;
+  switch (term.kind) {
+    case "Bound":
+      return term.index - level < args.length
+        ? incrBoundvars(level, args[term.index - level])
+        : mkBound(term.index - args.length);
+    case "Abs":
+      return updateAbs(term, substBoundsAt(args, level + 1, term.body));
+    case "App":
+      return updateApp(
+        term,
+        substBoundsAt(args, level, term.fun),
+        substBoundsAt(args, level, term.arg),
+      );
+    default:
+      return term;
+  }
 };
+
+export const substBounds = (args: readonly Term[], body: Term) =>
+  args.length === 0 ? body : substBoundsAt(args, 0, body);
 
 export const substBound = (arg: Term, body: Term) => substBounds([arg], body);
 
@@ -431,17 +437,18 @@ export const eqTerm = (left: Term, right: Term): boolean => {
 };
 
 // could_unify: a fast filter, false only if the normal terms can't unify.
+const matchRands = (left: Term, right: Term): boolean => {
+  let currentLeft = left;
+  let currentRight = right;
+  while (currentLeft.kind === "App" && currentRight.kind === "App") {
+    if (!couldUnify(currentLeft.arg, currentRight.arg)) return false;
+    currentLeft = currentLeft.fun;
+    currentRight = currentRight.fun;
+  }
+  return true;
+};
+
 export const couldUnify = (left: Term, right: Term): boolean => {
-  const matchRands = (leftTerm: Term, rightTerm: Term): boolean => {
-    let currentLeft = leftTerm;
-    let currentRight = rightTerm;
-    while (currentLeft.kind === "App" && currentRight.kind === "App") {
-      if (!couldUnify(currentLeft.arg, currentRight.arg)) return false;
-      currentLeft = currentLeft.fun;
-      currentRight = currentRight.fun;
-    }
-    return true;
-  };
   const leftHead = headOf(left);
   const rightHead = headOf(right);
   if (rightHead.kind === "Var" || leftHead.kind === "Var") return true;
@@ -456,21 +463,24 @@ export const couldUnify = (left: Term, right: Term): boolean => {
 };
 
 // abstract_over: replaces the occurrences of pattern with Bound, ready to become an Abs body.
-export const abstractOver = (pattern: Term, body: Term): Term => {
-  const visit = (current: Term, level: number): Term => {
-    if (!mayOccur(pattern, current)) return current;
-    if (aconv(pattern, current)) return mkBound(level);
-    switch (current.kind) {
-      case "Abs":
-        return updateAbs(current, visit(current.body, level + 1));
-      case "App":
-        return updateApp(current, visit(current.fun, level), visit(current.arg, level));
-      default:
-        return current;
-    }
-  };
-  return visit(body, 0);
+const abstractAt = (pattern: Term, level: number, term: Term): Term => {
+  if (!mayOccur(pattern, term)) return term;
+  if (aconv(pattern, term)) return mkBound(level);
+  switch (term.kind) {
+    case "Abs":
+      return updateAbs(term, abstractAt(pattern, level + 1, term.body));
+    case "App":
+      return updateApp(
+        term,
+        abstractAt(pattern, level, term.fun),
+        abstractAt(pattern, level, term.arg),
+      );
+    default:
+      return term;
+  }
 };
+
+export const abstractOver = (pattern: Term, body: Term) => abstractAt(pattern, 0, body);
 
 const baseName = (name: string) => name.slice(name.lastIndexOf(".") + 1);
 

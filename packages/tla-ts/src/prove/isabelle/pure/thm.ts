@@ -64,7 +64,6 @@ import {
   stripAllVars,
   substBound,
   type Term,
-  type Typ,
   type Var,
 } from "./term";
 import type { Limits } from "./interrupt";
@@ -419,26 +418,30 @@ export const instantiate = (insts: readonly Instantiation[], thm: Thm): Thm => {
 };
 
 // Thm.instantiate for type variables.
+const instantiateTypesTerm = (tyenv: TyEnv, term: Term): Term => {
+  if (maxidxOfTerm(term) < 0) return term;
+  switch (term.kind) {
+    case "Const":
+      return mkConst(term.name, substType(tyenv, term.type));
+    case "Free":
+      return { kind: "Free", name: term.name, type: substType(tyenv, term.type) };
+    case "Var":
+      return mkVar(term.name, term.index, substType(tyenv, term.type));
+    case "Bound":
+      return term;
+    case "Abs":
+      return mkAbs(term.name, substType(tyenv, term.type), instantiateTypesTerm(tyenv, term.body));
+    case "App":
+      return mkApp(instantiateTypesTerm(tyenv, term.fun), instantiateTypesTerm(tyenv, term.arg));
+  }
+};
+
 export const instantiateTypes = (tyenv: TyEnv, thm: Thm): Thm => {
-  const substT = (type: Typ) => substType(tyenv, type);
-  const subst = (term: Term): Term => {
-    switch (term.kind) {
-      case "Const":
-        return mkConst(term.name, substT(term.type));
-      case "Free":
-        return { kind: "Free", name: term.name, type: substT(term.type) };
-      case "Var":
-        return mkVar(term.name, term.index, substT(term.type));
-      case "Bound":
-        return term;
-      case "Abs":
-        return mkAbs(term.name, substT(term.type), subst(term.body));
-      case "App":
-        return mkApp(subst(term.fun), subst(term.arg));
-    }
-  };
-  const prop = subst(thm.prop);
-  const tpairs = thm.tpairs.map((pair): Tpair => [subst(pair[0]), subst(pair[1])]);
+  const prop = instantiateTypesTerm(tyenv, thm.prop);
+  const tpairs = thm.tpairs.map((pair): Tpair => [
+    instantiateTypesTerm(tyenv, pair[0]),
+    instantiateTypesTerm(tyenv, pair[1]),
+  ]);
   return makeThm(maxidxTpairs(tpairs, maxidxOfTerm(prop)), thm.hyps, tpairs, prop);
 };
 
