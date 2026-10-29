@@ -22,14 +22,33 @@ export interface VarRef {
   value: BlastTerm | undefined;
 }
 
+// The fields of every kind of prototerm. A prototerm has all of them, with the ones its kind
+// doesn't use undefined, and the constructors below list them in this order. So all prototerms
+// share one object layout, and V8 compiles the many switches on kind to monomorphic loads.
+interface Fields {
+  readonly name: string;
+  readonly typargs: readonly BlastTerm[];
+  readonly args: readonly VarRef[];
+  readonly ref: VarRef;
+  readonly index: number;
+  readonly body: BlastTerm;
+  readonly fun: BlastTerm;
+  readonly arg: BlastTerm;
+}
+
+type Prototerm<Kind extends string, Used extends keyof Fields> = { readonly kind: Kind } & Pick<
+  Fields,
+  Used
+> & { readonly [Key in Exclude<keyof Fields, Used>]: undefined };
+
 export type BlastTerm =
-  | { readonly kind: "Const"; readonly name: string; readonly typargs: readonly BlastTerm[] }
-  | { readonly kind: "Skolem"; readonly name: string; readonly args: readonly VarRef[] }
-  | { readonly kind: "Free"; readonly name: string }
-  | { readonly kind: "Var"; readonly ref: VarRef }
-  | { readonly kind: "Bound"; readonly index: number }
-  | { readonly kind: "Abs"; readonly name: string; readonly body: BlastTerm }
-  | { readonly kind: "App"; readonly fun: BlastTerm; readonly arg: BlastTerm };
+  | Prototerm<"Const", "name" | "typargs">
+  | Prototerm<"Skolem", "name" | "args">
+  | Prototerm<"Free", "name">
+  | Prototerm<"Var", "ref">
+  | Prototerm<"Bound", "index">
+  | Prototerm<"Abs", "name" | "body">
+  | Prototerm<"App", "fun" | "arg">;
 
 export interface ConstType {
   readonly typargs: readonly TypargPosition[];
@@ -44,11 +63,76 @@ export const mkBlastConst = (name: string, typargs = NO_TYPARGS): BlastTerm => (
   kind: "Const",
   name,
   typargs,
+  args: undefined,
+  ref: undefined,
+  index: undefined,
+  body: undefined,
+  fun: undefined,
+  arg: undefined,
 });
-export const mkBlastVar = (ref: VarRef): BlastTerm => ({ kind: "Var", ref });
-export const mkBlastBound = (index: number): BlastTerm => ({ kind: "Bound", index });
+export const mkBlastSkolem = (name: string, args: readonly VarRef[]): BlastTerm => ({
+  kind: "Skolem",
+  name,
+  typargs: undefined,
+  args,
+  ref: undefined,
+  index: undefined,
+  body: undefined,
+  fun: undefined,
+  arg: undefined,
+});
+export const mkBlastFree = (name: string): BlastTerm => ({
+  kind: "Free",
+  name,
+  typargs: undefined,
+  args: undefined,
+  ref: undefined,
+  index: undefined,
+  body: undefined,
+  fun: undefined,
+  arg: undefined,
+});
+export const mkBlastVar = (ref: VarRef): BlastTerm => ({
+  kind: "Var",
+  name: undefined,
+  typargs: undefined,
+  args: undefined,
+  ref,
+  index: undefined,
+  body: undefined,
+  fun: undefined,
+  arg: undefined,
+});
+export const mkBlastBound = (index: number): BlastTerm => ({
+  kind: "Bound",
+  name: undefined,
+  typargs: undefined,
+  args: undefined,
+  ref: undefined,
+  index,
+  body: undefined,
+  fun: undefined,
+  arg: undefined,
+});
+export const mkBlastAbs = (name: string, body: BlastTerm): BlastTerm => ({
+  kind: "Abs",
+  name,
+  typargs: undefined,
+  args: undefined,
+  ref: undefined,
+  index: undefined,
+  body,
+  fun: undefined,
+  arg: undefined,
+});
 export const mkBlastApp = (fun: BlastTerm, arg: BlastTerm): BlastTerm => ({
   kind: "App",
+  name: undefined,
+  typargs: undefined,
+  args: undefined,
+  ref: undefined,
+  index: undefined,
+  body: undefined,
   fun,
   arg,
 });
@@ -137,7 +221,7 @@ const incrBv = (increment: number, level: number, term: BlastTerm): BlastTerm =>
     case "Bound":
       return term.index >= level ? mkBlastBound(term.index + increment) : term;
     case "Abs":
-      return { kind: "Abs", name: term.name, body: incrBv(increment, level + 1, term.body) };
+      return mkBlastAbs(term.name, incrBv(increment, level + 1, term.body));
     case "App":
       return mkBlastApp(incrBv(increment, level, term.fun), incrBv(increment, level, term.arg));
     default:
@@ -168,7 +252,7 @@ const substBoundAt = (arg: BlastTerm, level: number, term: BlastTerm): BlastTerm
       if (term.index < level) return term;
       return term.index === level ? incrBlastBoundvars(level, arg) : mkBlastBound(term.index - 1);
     case "Abs":
-      return { kind: "Abs", name: term.name, body: substBoundAt(arg, level + 1, term.body) };
+      return mkBlastAbs(term.name, substBoundAt(arg, level + 1, term.body));
     case "App":
       return mkBlastApp(substBoundAt(arg, level, term.fun), substBoundAt(arg, level, term.arg));
     default:
@@ -184,7 +268,7 @@ export const norm = (term: BlastTerm): BlastTerm => {
   switch (term.kind) {
     case "Skolem": {
       const args = varsInVars(term.args);
-      return sameVars(args, term.args) ? term : { kind: "Skolem", name: term.name, args };
+      return sameVars(args, term.args) ? term : mkBlastSkolem(term.name, args);
     }
     case "Const": {
       if (term.typargs.length === 0) return term;
@@ -221,10 +305,10 @@ const wkNormAux = (term: BlastTerm): BlastTerm => {
     }
     case "Abs": {
       const body = wkNormAux(term.body);
-      if (body.kind !== "App") return { kind: "Abs", name: term.name, body };
+      if (body.kind !== "App") return mkBlastAbs(term.name, body);
       const arg = wkNorm(body.arg);
       return hasLooseBound0(body.fun) || arg.kind !== "Bound" || arg.index !== 0
-        ? { kind: "Abs", name: term.name, body }
+        ? mkBlastAbs(term.name, body)
         : wkNorm(incrBlastBoundvars(-1, body.fun));
     }
     default:
@@ -286,7 +370,7 @@ const fromType = (tvars: VarEntry[], type: Typ): BlastTerm => {
       mkBlastConst(type.name),
       type.args.map((arg) => fromType(tvars, arg)),
     );
-  if (type.kind === "TFree") return { kind: "Free", name: type.name };
+  if (type.kind === "TFree") return mkBlastFree(type.name);
   return lookupVar(tvars, type.name, type.index);
 };
 
@@ -316,7 +400,7 @@ const fromTermAux = (
     case "Const":
       return fromConst(consts, tvars, term.name, term.type);
     case "Free":
-      return { kind: "Free", name: term.name };
+      return mkBlastFree(term.name);
     case "Bound":
       return mkBlastBound(term.index);
     case "Var":
@@ -328,7 +412,7 @@ const fromTermAux = (
         body.arg.index === 0 &&
         !hasLooseBound0(body.fun)
         ? incrBlastBoundvars(-1, body.fun)
-        : { kind: "Abs", name: term.name, body };
+        : mkBlastAbs(term.name, body);
     }
     case "App":
       return mkBlastApp(
@@ -409,11 +493,7 @@ export const instantiateTemplate = (
         template.typargs.map((arg) => instantiateTemplate(vars, skolems, arg)),
       );
     case "abs":
-      return {
-        kind: "Abs",
-        name: template.name,
-        body: instantiateTemplate(vars, skolems, template.body),
-      };
+      return mkBlastAbs(template.name, instantiateTemplate(vars, skolems, template.body));
     case "app":
       return mkBlastApp(
         instantiateTemplate(vars, skolems, template.fun),

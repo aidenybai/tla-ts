@@ -30,6 +30,7 @@ import {
   fromTerm,
   instantiateTemplate,
   mkBlastConst,
+  mkBlastSkolem,
   mkBlastVar,
   mkGoal,
   stripBlastImpConcl,
@@ -83,7 +84,7 @@ const deleteConcl = (state: BlastState, prems: readonly BlastTerm[]): BlastTerm[
 const skoPrem = (skolems: BlastTerm[], prem: BlastTerm): BlastTerm => {
   const body = destConstApp(prem, "Pure.all");
   if (body?.kind !== "Abs") return prem;
-  const skolem: BlastTerm = { kind: "Skolem", name: "", args: [] };
+  const skolem = mkBlastSkolem("", []);
   skolems.push(skolem);
   return skoPrem(skolems, blastSubstBound(skolem, body.body));
 };
@@ -264,7 +265,7 @@ const instantiateRule = (
   if (known === undefined) templates.set(rule, template);
   const skolems: BlastTerm[] = [];
   for (let slot = 0; slot < template.skolems; slot += 1)
-    skolems.push({ kind: "Skolem", name: gensym(state, "S"), args: vars });
+    skolems.push(mkBlastSkolem(gensym(state, "S"), vars));
   if (template.major === undefined) return undefined;
   const fresh: BlastTerm[] = [];
   for (let index = 0; index < template.count; index += 1)

@@ -22,6 +22,7 @@ import {
   incrBlastBoundvars,
   insTerm,
   isGoal,
+  mkBlastAbs,
   mkBlastApp,
   mkBlastConst,
   mkBlastVar,
@@ -57,7 +58,7 @@ const substAtomic = (old: BlastTerm, replacement: BlastTerm, term: BlastTerm): B
     return substAtomic(old, replacement, term.ref.value);
   if (term.kind === "Abs") {
     const body = substAtomic(old, replacement, term.body);
-    return body === term.body ? term : { kind: "Abs", name: term.name, body };
+    return body === term.body ? term : mkBlastAbs(term.name, body);
   }
   if (term.kind === "App") {
     const fun = substAtomic(old, replacement, term.fun);
