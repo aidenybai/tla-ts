@@ -1,7 +1,8 @@
-import { TlapmBugError, TlaUnsupportedError } from "../../errors";
+import { TlapmBugError } from "../../errors";
 import { expandActionOperators, lambdify } from "../../obligation-action";
 import { createAnonymizer } from "../../obligation-anon";
 import type { Expr, Sequent } from "../../obligation-expression";
+import { implicationToEnabled } from "./enabled-axioms";
 import { checkLevelChange } from "./level-comparison";
 
 // expand_enabled_cdot: the first frontend the methods cite, in tlapm's order, transforms the
@@ -13,7 +14,7 @@ export const expandEnabledCdot = (sequent: Sequent, frontends: Set<string>): Seq
   const isLambdify = frontends.has("lambdify");
   if (!isEnabled && !isCdot && !isLambdify) {
     if (frontends.has("levelcomparison")) return checkLevelChange(sequent);
-    if (frontends.has("enabledaxioms")) throw new TlaUnsupportedError("the ENABLEDaxioms frontend");
+    if (frontends.has("enabledaxioms")) return implicationToEnabled(sequent);
     return sequent;
   }
   // Expr.Anon's anon, which only meets the names that lambdification binds.
