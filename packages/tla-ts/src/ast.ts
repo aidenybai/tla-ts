@@ -486,3 +486,93 @@ export interface Module {
   uses: UseOrHide[];
   units: ModuleUnit[];
 }
+
+export const getChildren = (expression: Expression): Expression[] => {
+  switch (expression.kind) {
+    case "Number":
+    case "Decimal":
+    case "String":
+    case "Identifier":
+    case "OperatorReference":
+    case "ExceptAt":
+      return [];
+    case "Apply":
+      return expression.args;
+    case "Lambda":
+      return [expression.body];
+    case "And":
+    case "Or":
+      return expression.operands;
+    case "Prime":
+    case "Unchanged":
+    case "Enabled":
+    case "Always":
+    case "Eventually":
+      return [expression.expression];
+    case "If":
+      return [expression.condition, expression.consequent, expression.alternative];
+    case "Case":
+      return [
+        ...expression.arms.flatMap((arm) => [arm.condition, arm.body]),
+        ...(expression.other ? [expression.other] : []),
+      ];
+    case "Let":
+      return [
+        ...expression.definitions.flatMap((definition) =>
+          definition.kind === "Function"
+            ? [...definition.bounds.map((bound) => bound.set), definition.body]
+            : [definition.body],
+        ),
+        expression.body,
+      ];
+    case "Forall":
+    case "Exists":
+      return [...expression.bounds.map((bound) => bound.set), expression.body];
+    case "UnboundedQuantifier":
+      return [expression.body];
+    case "Choose":
+      return [...(expression.set ? [expression.set] : []), expression.body];
+    case "SetEnumeration":
+    case "Tuple":
+      return expression.elements;
+    case "SetFilter":
+      return [expression.bound.set, expression.predicate];
+    case "SetMap":
+      return [expression.expression, ...expression.bounds.map((bound) => bound.set)];
+    case "FunctionConstruction":
+      return [...expression.bounds.map((bound) => bound.set), expression.body];
+    case "FunctionSet":
+      return [expression.domain, expression.range];
+    case "Record":
+    case "RecordSet":
+      return expression.fields.map((field) => field.value);
+    case "Except":
+      return [
+        expression.function,
+        ...expression.updates.flatMap((update) => [
+          ...update.path.flatMap((step) => (step.kind === "Index" ? step.args : [])),
+          update.value,
+        ]),
+      ];
+    case "FunctionApplication":
+      return [expression.function, ...expression.args];
+    case "FieldAccess":
+      return [expression.record];
+    case "Product":
+      return expression.factors;
+    case "BoxAction":
+    case "AngleAction":
+      return [expression.action, expression.subscript];
+    case "WeakFairness":
+    case "StrongFairness":
+      return [expression.subscript, expression.action];
+    case "Label":
+      return [expression.body];
+    case "Subexpression":
+      return expression.selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
+  }
+};
+
+export const isLocallyResolved = (expression: Expression) =>
+  (expression.kind === "Identifier" || expression.kind === "Apply") &&
+  expression.resolution?.kind === "Local";

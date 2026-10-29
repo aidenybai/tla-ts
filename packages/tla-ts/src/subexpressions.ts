@@ -1,15 +1,15 @@
-import type {
-  Bound,
-  Definition,
-  Expression,
-  Instance,
-  Module,
-  OperatorParam,
-  Selector,
-  SourceLocation,
+import {
+  getChildren,
+  type Bound,
+  type Definition,
+  type Expression,
+  type Instance,
+  type Module,
+  type OperatorParam,
+  type Selector,
+  type SourceLocation,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { getChildren } from "./evaluate";
 import { getSourceName, mapChildren, mapDefinition } from "./instances";
 import { getArity, getBoundNames, getPatternNames, LOCAL_RESOLUTION } from "./resolve";
 

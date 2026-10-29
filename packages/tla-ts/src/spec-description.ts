@@ -1,4 +1,10 @@
-import type { Definition, Expression, SourceLocation, SourceRange } from "./ast";
+import {
+  isLocallyResolved,
+  type Definition,
+  type Expression,
+  type SourceLocation,
+  type SourceRange,
+} from "./ast";
 import type { ModelConfig } from "./config";
 import type { InstanceAction } from "./environment";
 import { TlaError } from "./errors";
@@ -10,7 +16,6 @@ import {
   formatRange,
   getDefinition,
   isConstantLevel,
-  isLocallyResolved,
   lookupScope,
   resolveGlobalOperator,
   type Closure,

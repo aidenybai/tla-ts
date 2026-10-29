@@ -1,4 +1,4 @@
-import type { Definition, Expression } from "./ast";
+import { isLocallyResolved, type Definition, type Expression } from "./ast";
 import { TlaConfigError, TlaEvaluationError } from "./errors";
 import {
   describeLocation,
@@ -8,7 +8,6 @@ import {
   expectBoolean,
   forEachBinding,
   getDefinition,
-  isLocallyResolved,
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,

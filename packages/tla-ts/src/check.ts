@@ -1,4 +1,11 @@
-import type { Assumption, Definition, Expression, SourceLocation } from "./ast";
+import {
+  getChildren,
+  isLocallyResolved,
+  type Assumption,
+  type Definition,
+  type Expression,
+  type SourceLocation,
+} from "./ast";
 import { parseConfig, type ConfigValue, type ModelConfig } from "./config";
 import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
@@ -15,11 +22,9 @@ import {
   evaluate,
   expectBoolean,
   formatRange,
-  getChildren,
   getDefinition,
   isConstantLevel,
   isImpure,
-  isLocallyResolved,
   type Context,
   type Environment,
   type Scope,

@@ -1,5 +1,5 @@
-import type { Definition, Expression } from "./ast";
-import { getChildren, isImpureBuiltin, type Environment } from "./evaluate";
+import { getChildren, type Definition, type Expression } from "./ast";
+import { isImpureBuiltin, type Environment } from "./evaluate";
 
 const STATE_INDEPENDENT_KINDS = new Set([
   "Prime",
