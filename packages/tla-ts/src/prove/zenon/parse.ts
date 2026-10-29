@@ -3,25 +3,8 @@
 //
 // Reads Zenon's native input format, the .znn files that tlapm writes.
 
-import { TlaZenonError } from "../errors";
-import {
-  eall,
-  eand,
-  eapp,
-  eequiv,
-  eex,
-  FALSE,
-  eimply,
-  elam,
-  enot,
-  eor,
-  etau,
-  TRUE,
-  evar,
-  GOAL_NAME,
-  UNIVERSE,
-  type Expr,
-} from "./expr";
+import { TlaZenonError } from "../../errors";
+import { FALSE, GOAL_NAME, TRUE, UNIVERSE, type Expr, type Expressions } from "./expr";
 
 export type Definition =
   | { kind: "real"; symbol: string; params: Expr[]; body: Expr }
@@ -62,9 +45,6 @@ const IDENT_START = /[A-Za-z_0-9]/;
 const IDENT_CHAR = /[A-Za-z0-9_'.]/;
 const STRING_ESCAPE = /^\\([abfnrtv'"\\?]|x[0-9A-Fa-f]{2})/;
 
-const fail = (line: number, message: string) =>
-  new TlaZenonError(`Zenon: line ${line}: ${message}`);
-
 const tokenize = (text: string) => {
   const tokens: Token[] = [];
   let line = 1;
@@ -89,17 +69,18 @@ const tokenize = (text: string) => {
       } else if (keyword !== undefined) {
         tokens.push({ kind: "keyword", text: keyword, line });
         index += keyword.length;
-      } else throw fail(line, "bad character '$'");
+      } else throw new TlaZenonError(`Zenon: line ${line}: bad character '$'`);
     } else if (char === '"') {
       let end = index + 1;
       while (end < text.length && text[end] !== '"') {
         const escape = text[end] === "\\" ? STRING_ESCAPE.exec(text.slice(end, end + 4)) : null;
-        if (text[end] === "\\" && escape === null) throw fail(line, "bad escape in string");
+        if (text[end] === "\\" && escape === null)
+          throw new TlaZenonError(`Zenon: line ${line}: bad escape in string`);
         if (escape === null && (text.charCodeAt(end) < 32 || text.charCodeAt(end) >= 127))
-          throw fail(line, "bad character in string");
+          throw new TlaZenonError(`Zenon: line ${line}: bad character in string`);
         end += escape === null ? 1 : escape[0].length;
       }
-      if (end >= text.length) throw fail(line, "unterminated string");
+      if (end >= text.length) throw new TlaZenonError(`Zenon: line ${line}: unterminated string`);
       tokens.push({ kind: "string", text: text.slice(index + 1, end), line });
       index = end + 1;
     } else if (IDENT_START.test(char)) {
@@ -110,7 +91,8 @@ const tokenize = (text: string) => {
       index = end;
     } else {
       const operator = OPERATORS.find((candidate) => text.startsWith(candidate, index));
-      if (operator === undefined) throw fail(line, `bad character '${char}'`);
+      if (operator === undefined)
+        throw new TlaZenonError(`Zenon: line ${line}: bad character '${char}'`);
       tokens.push({ kind: "operator", text: operator, line });
       index += operator.length;
     }
@@ -123,20 +105,18 @@ const tokenize = (text: string) => {
 const foldRight = (combine: (left: Expr, right: Expr) => Expr, first: Expr, rest: Expr[]): Expr =>
   rest.length === 0 ? first : combine(first, foldRight(combine, rest[0], rest.slice(1)));
 
-const BINDERS: Record<string, (variable: Expr, type: string, body: Expr) => Expr> = {
-  "A.": eall,
-  "E.": eex,
-};
-
-const CONNECTIVES: Record<string, (left: Expr, right: Expr) => Expr> = {
-  "/\\": eand,
-  "\\/": eor,
-  "=>": eimply,
-  "<=": (left, right) => eimply(right, left),
-  "<=>": eequiv,
-};
-
-export const parseZenon = (text: string): Phrase[] => {
+export const parseZenon = (exprs: Expressions, text: string): Phrase[] => {
+  const binders: Record<string, (variable: Expr, type: string, body: Expr) => Expr> = {
+    "A.": exprs.eall,
+    "E.": exprs.eex,
+  };
+  const connectives: Record<string, (left: Expr, right: Expr) => Expr> = {
+    "/\\": exprs.eand,
+    "\\/": exprs.eor,
+    "=>": exprs.eimply,
+    "<=": (left, right) => exprs.eimply(right, left),
+    "<=>": exprs.eequiv,
+  };
   const tokens = tokenize(text);
   let position = 0;
   const peek = (offset = 0) => tokens[position + offset];
@@ -144,7 +124,7 @@ export const parseZenon = (text: string): Phrase[] => {
   const expect = (kind: TokenKind, value?: string) => {
     const token = next();
     if (token.kind !== kind || (value !== undefined && token.text !== value))
-      throw fail(token.line, "syntax error");
+      throw new TlaZenonError(`Zenon: line ${token.line}: syntax error`);
     return token;
   };
   const isAt = (kind: TokenKind, value?: string) =>
@@ -165,7 +145,11 @@ export const parseZenon = (text: string): Phrase[] => {
   const bindAll = (
     bind: (variable: Expr, type: string, body: Expr) => Expr,
     lambda: { names: string[]; type: string; body: Expr },
-  ) => lambda.names.reduceRight((body, name) => bind(evar(name), lambda.type, body), lambda.body);
+  ) =>
+    lambda.names.reduceRight(
+      (body, name) => bind(exprs.evar(name), lambda.type, body),
+      lambda.body,
+    );
 
   const parseList = () => {
     const expressions: Expr[] = [];
@@ -175,56 +159,57 @@ export const parseZenon = (text: string): Phrase[] => {
 
   const parseExpr = (): Expr => {
     const token = next();
-    if (token.kind === "ident") return evar(token.text);
-    if (token.kind === "string") return eapp("$string", [evar(`"${token.text}"`)]);
+    if (token.kind === "ident") return exprs.evar(token.text);
+    if (token.kind === "string") return exprs.eapp("$string", [exprs.evar(`"${token.text}"`)]);
     if (token.kind === "keyword" && token.text === "T.") return TRUE;
     if (token.kind === "keyword" && token.text === "F.") return FALSE;
-    if (token.kind !== "open") throw fail(token.line, "syntax error");
+    if (token.kind !== "open") throw new TlaZenonError(`Zenon: line ${token.line}: syntax error`);
     const head = next();
     if (head.kind === "open") {
       position--;
-      return bindAll(elam, parseLambda());
+      return bindAll(exprs.elam, parseLambda());
     }
     if (head.kind === "ident") {
       const args = parseList();
       expect("close");
-      return eapp(head.text, args);
+      return exprs.eapp(head.text, args);
     }
     if (head.kind === "operator" && head.text === "-.") {
       const operand = parseExpr();
       expect("close");
-      return enot(operand);
+      return exprs.enot(operand);
     }
     if (head.kind === "operator" && head.text === "=") {
       const left = parseExpr();
       const right = parseExpr();
       expect("close");
-      return eapp("=", [left, right]);
+      return exprs.eapp("=", [left, right]);
     }
     if (head.kind === "operator") {
       const first = parseExpr();
       const rest = parseList();
       expect("close");
-      return foldRight(CONNECTIVES[head.text], first, rest);
+      return foldRight(connectives[head.text], first, rest);
     }
     if (head.kind === "keyword" && (head.text === "T." || head.text === "F.")) {
       expect("close");
       return head.text === "T." ? TRUE : FALSE;
     }
-    if (head.kind === "keyword" && head.text in BINDERS) {
+    if (head.kind === "keyword" && head.text in binders) {
       expect("open");
       const lambda = parseLambda();
       expect("close");
-      return bindAll(BINDERS[head.text], lambda);
+      return bindAll(binders[head.text], lambda);
     }
     if (head.kind === "keyword" && head.text === "t.") {
       expect("open");
       const lambda = parseLambda();
       expect("close");
-      if (lambda.names.length !== 1) throw fail(head.line, "syntax error");
-      return etau(evar(lambda.names[0]), lambda.type, lambda.body);
+      if (lambda.names.length !== 1)
+        throw new TlaZenonError(`Zenon: line ${head.line}: syntax error`);
+      return exprs.etau(exprs.evar(lambda.names[0]), lambda.type, lambda.body);
     }
-    throw fail(head.line, `unsupported construct ${head.text}`);
+    throw new TlaZenonError(`Zenon: line ${head.line}: unsupported construct ${head.text}`);
   };
 
   const phrases: Phrase[] = [];
@@ -235,20 +220,20 @@ export const parseZenon = (text: string): Phrase[] => {
       const name = expect("string").text;
       phrases.push({ kind: "hyp", name, formula: parseExpr(), goalness });
     } else if (token.kind === "keyword" && token.text === "$goal") {
-      phrases.push({ kind: "hyp", name: GOAL_NAME, formula: enot(parseExpr()), goalness: 0 });
+      phrases.push({ kind: "hyp", name: GOAL_NAME, formula: exprs.enot(parseExpr()), goalness: 0 });
     } else if (token.kind === "keyword" && token.text === "$def") {
       expect("string");
       expect("open");
       const symbol = expect("ident").text;
       const params: Expr[] = [];
-      while (isAt("ident")) params.push(evar(next().text));
+      while (isAt("ident")) params.push(exprs.evar(next().text));
       expect("close");
       const body = parseExpr();
       phrases.push({
         kind: "def",
         definition: { kind: "real", symbol, params, body },
       });
-    } else throw fail(token.line, `unsupported phrase ${token.text}`);
+    } else throw new TlaZenonError(`Zenon: line ${token.line}: unsupported phrase ${token.text}`);
   }
   return phrases;
 };

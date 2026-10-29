@@ -4,8 +4,8 @@
 // transitive relations, and the cache of proved lemmas. Formulas are added and removed in LIFO
 // order as the search descends and backtracks. Lists keep Zenon's order, latest first.
 
-import { eapp, enot, type Expr } from "./expr";
-import type { Proof } from "./node";
+import { type Expr, type Expressions } from "./expr";
+import type { Proof } from "./proof";
 import type { Definition } from "./parse";
 
 interface LemmaRecord {
@@ -84,21 +84,11 @@ const removeElement = <Key>(table: Map<Key, Expr[]>, key: Key, value: Expr) => {
 const getValues = <Key>(table: Map<Key, Expr[]>, key: Key) => getLatestFirst(table, key);
 
 // Keys pair a relation with a head. Heads that are expressions are told apart by identity.
-const expressionIds = new WeakMap<Expr, number>();
-let nextExpressionId = 0;
-
-const getHeadId = (head: Head) => {
-  if (typeof head === "string") return `s${head}`;
-  const existing = expressionIds.get(head);
-  if (existing !== undefined) return `e${existing}`;
-  const id = nextExpressionId++;
-  expressionIds.set(head, id);
-  return `e${id}`;
-};
+const getHeadId = (head: Head) => (typeof head === "string" ? `s${head}` : `e${head.id}`);
 
 const getRelationKey = (relation: string, head: Head) => `${relation}\u0000${getHeadId(head)}`;
 
-export const createIndex = () => {
+export const createIndex = (exprs: Expressions) => {
   const formulas = new Map<Expr, number[]>();
   const positive = new Map<string, Expr[]>();
   const negative = new Map<string, Expr[]>();
@@ -309,8 +299,12 @@ export const createIndex = () => {
     findEqualRight: (term: Expr) => getLatestFirst(equalLeftRight, term),
     findEqualLeft: (term: Expr) => getLatestFirst(equalRightLeft, term),
     findDisequalities: (term: Expr) => [
-      ...getLatestFirst(unequalLeftRight, term).map((other) => enot(eapp("=", [term, other]))),
-      ...getLatestFirst(unequalRightLeft, term).map((other) => enot(eapp("=", [other, term]))),
+      ...getLatestFirst(unequalLeftRight, term).map((other) =>
+        exprs.enot(exprs.eapp("=", [term, other])),
+      ),
+      ...getLatestFirst(unequalRightLeft, term).map((other) =>
+        exprs.enot(exprs.eapp("=", [other, term])),
+      ),
     ],
     getStringEqualities: () => stringEqualities,
     getReversedStringEqualities: () => reversedStringEqualities,

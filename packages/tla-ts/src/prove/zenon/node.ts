@@ -1,20 +1,11 @@
-// Ported from Zenon's node.ml, heap.ml and mlproof.ml, as shipped in tlapm. Copyright 2001-2004
-// INRIA, see LICENSE.
+// Ported from Zenon's node.ml and heap.ml, as shipped in tlapm. Copyright 2001-2004 INRIA, see
+// LICENSE.
 //
 // Tableau nodes and the queue that orders them. The search keeps the queue of every open branch,
 // so the queue is persistent: inserting or removing returns a new queue and shares the rest.
 
 import type { Expr } from "./expr";
-import type { Definition } from "./parse";
-
-// A rule application, as in Zenon's Mlproof.rule. `symbol` names a relation, or the extension
-// rule for "ext". `definition` is the definition that "definition" unfolds.
-export interface Rule {
-  name: string;
-  symbol: string;
-  args: Expr[];
-  definition?: Definition;
-}
+import type { Rule } from "./proof";
 
 export type Priority = "prop" | "arity" | "arity_eq" | { instance: Expr };
 
@@ -25,21 +16,6 @@ export interface Node {
   goalness: number;
   branches: Expr[][];
 }
-
-// A proof of the formulas in `conclusions`: the node's rule applied to `uses`, with a subproof for
-// each of its branches.
-export interface Proof {
-  conclusions: Expr[];
-  rule: Rule;
-  uses: Expr[];
-  subproofs: Proof[];
-}
-
-export const makeRule = (name: string, args: Expr[], symbol = ""): Rule => ({
-  name,
-  symbol,
-  args,
-});
 
 export interface Cons<Item> {
   head: Item;
@@ -56,8 +32,14 @@ const reverse = <Item>(list: List<Item>) => {
   return result;
 };
 
-interface Tree {
+// A node in the instance heap, with the size of the term that instantiates its formula.
+interface Entry {
   node: Node;
+  size: number;
+}
+
+interface Tree {
+  entry: Entry;
   left: Tree | undefined;
   right: Tree | undefined;
 }
@@ -71,43 +53,39 @@ interface Heap {
 const META_WEIGHT = 5;
 const TAU_DIVISOR = 8;
 
-const getInstanceSize = (node: Node) => {
-  const term = node.rule.args[1];
-  return term.size + term.metas.length * META_WEIGHT + Math.floor(term.taus / TAU_DIVISOR);
-};
+const getInstanceSize = (term: Expr) =>
+  term.size + term.metas.length * META_WEIGHT + Math.floor(term.taus / TAU_DIVISOR);
 
-const compareNodes = (left: Node, right: Node) => getInstanceSize(left) - getInstanceSize(right);
-
-const insertTree = (tree: Tree | undefined, node: Node, path: number): Tree => {
-  if (tree === undefined) return { node, left: undefined, right: undefined };
-  const isSmaller = compareNodes(node, tree.node) < 0;
-  const here = isSmaller ? node : tree.node;
-  const next = isSmaller ? tree.node : node;
+const insertTree = (tree: Tree | undefined, entry: Entry, path: number): Tree => {
+  if (tree === undefined) return { entry, left: undefined, right: undefined };
+  const isSmaller = entry.size < tree.entry.size;
+  const here = isSmaller ? entry : tree.entry;
+  const next = isSmaller ? tree.entry : entry;
   const nextPath = Math.floor(path / 2);
   return path % 2 === 0
-    ? { node: here, left: insertTree(tree.left, next, nextPath), right: tree.right }
-    : { node: here, left: tree.left, right: insertTree(tree.right, next, nextPath) };
+    ? { entry: here, left: insertTree(tree.left, next, nextPath), right: tree.right }
+    : { entry: here, left: tree.left, right: insertTree(tree.right, next, nextPath) };
 };
 
-const insertHeap = (heap: Heap, node: Node): Heap => ({
-  tree: insertTree(heap.tree, node, heap.path),
+const insertHeap = (heap: Heap, entry: Entry): Heap => ({
+  tree: insertTree(heap.tree, entry, heap.path),
   path: heap.path + 1,
 });
 
-const removeTree = (tree: Tree): [Node, Tree | undefined] => {
-  if (tree.left === undefined) return [tree.node, tree.right];
-  if (tree.right === undefined) return [tree.node, tree.left];
-  const isLeftFirst = compareNodes(tree.left.node, tree.right.node) < 0;
+const removeTree = (tree: Tree): [Entry, Tree | undefined] => {
+  if (tree.left === undefined) return [tree.entry, tree.right];
+  if (tree.right === undefined) return [tree.entry, tree.left];
+  const isLeftFirst = tree.left.entry.size < tree.right.entry.size;
   const first = isLeftFirst ? tree.left : tree.right;
   const second = isLeftFirst ? tree.right : tree.left;
   const removed = removeTree(first);
-  return [tree.node, { node: removed[0], left: removed[1], right: second }];
+  return [tree.entry, { entry: removed[0], left: removed[1], right: second }];
 };
 
 const removeHeap = (heap: Heap): [Node, Heap] | undefined => {
   if (heap.tree === undefined) return undefined;
   const removed = removeTree(heap.tree);
-  return [removed[0], { tree: removed[1], path: heap.path }];
+  return [removed[0].node, { tree: removed[1], path: heap.path }];
 };
 
 export interface Queue {
@@ -149,19 +127,19 @@ export const EMPTY_QUEUE: Queue = {
   insertedCount: 0,
 };
 
-const insertByGoalness = (list: List<[number, Heap]>, node: Node): List<[number, Heap]> => {
-  const goalness = node.goalness;
+const insertByGoalness = (list: List<[number, Heap]>, entry: Entry): List<[number, Heap]> => {
+  const goalness = entry.node.goalness;
   let heap: Heap = { tree: undefined, path: 0 };
   for (let cell = list; cell !== undefined; cell = cell.tail)
     if (cell.head[0] === goalness) {
       heap = cell.head[1];
       break;
     }
-  const entry: [number, Heap] = [goalness, insertHeap(heap, node)];
+  const inserted: [number, Heap] = [goalness, insertHeap(heap, entry)];
   const insert = (rest: List<[number, Heap]>): Cons<[number, Heap]> => {
-    if (rest === undefined) return cons(entry, undefined);
-    if (rest.head[0] === goalness) return cons(entry, rest.tail);
-    if (rest.head[0] > goalness) return cons(entry, rest);
+    if (rest === undefined) return cons(inserted, undefined);
+    if (rest.head[0] === goalness) return cons(inserted, rest.tail);
+    if (rest.head[0] > goalness) return cons(inserted, rest);
     return cons(rest.head, insert(rest.tail));
   };
   return insert(list);
@@ -207,11 +185,15 @@ export const insertNode = (previous: Queue, node: Node): Queue => {
       : rule.name === "not_ex" && rule.args[0].kind === "not"
         ? rule.args[0].args[0]
         : undefined;
-  if (quantified !== undefined && canInstantiate(quantified, rule.args[1]))
+  if (
+    (rule.name === "all" || rule.name === "not_ex") &&
+    quantified !== undefined &&
+    canInstantiate(quantified, rule.args[1])
+  )
     return {
       ...queue,
       instBack: cons(node, queue.instBack),
-      instSize: insertByGoalness(queue.instSize, node),
+      instSize: insertByGoalness(queue.instSize, { node, size: getInstanceSize(rule.args[1]) }),
     };
   return { ...queue, instBack: cons(node, queue.instBack) };
 };
@@ -235,14 +217,13 @@ const removeAt = (
 const removeByGoalness = (state: number, list: List<[number, Heap]>) => {
   if (state % 2 === 0) return removeAt(0, list);
   let best = 0;
-  let bestNode: Node | undefined = undefined;
+  let bestSize: number | undefined = undefined;
   for (let cell = list; cell !== undefined; cell = cell.tail) {
-    const head = cell.head[1].tree?.node;
-    const isBetter =
-      head !== undefined && (bestNode === undefined || compareNodes(head, bestNode) < 0);
+    const head = cell.head[1].tree?.entry;
+    const isBetter = head !== undefined && (bestSize === undefined || head.size < bestSize);
     if (isBetter) {
       best = cell.head[0];
-      bestNode = head;
+      bestSize = head.size;
     }
   }
   return removeAt(best, list);

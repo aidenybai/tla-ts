@@ -1,12 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { encodeZenon } from "../src/obligation-zenon";
+import { encodeZenon } from "../src/prove/zenon/encode";
 import type { PrintedObligation } from "../src/obligations";
-import { proveZenon } from "../src/zenon/zenon";
+import { decideZenon } from "../src/prove/zenon/decide";
 import { CORPORA_DIRECTORY, getLibraryModules, getModuleObligations } from "./corpora";
 import {
-  getZenonDigest,
+  getInputDigest,
   getZenonVerdict,
   PROOF_INPUTS_DIRECTORY,
   PROOFS_PATH,
@@ -40,6 +40,7 @@ const runs = records
   .filter((module) => filter === undefined || module.id.includes(filter))
   .flatMap((module) =>
     module.obligations.flatMap((obligation) =>
+      (obligation.status !== "proved" && obligation.status !== "failed") ||
       obligation.zenon === undefined
         ? []
         : [{ moduleId: module.id, id: obligation.id, record: obligation.zenon }],
@@ -70,7 +71,7 @@ const getEncoderOutcome = (moduleId: string, id: number, input: string) => {
   const obligation = obligations.get(id);
   if (obligation === undefined) return "missing";
   try {
-    return getZenonDigest(encodeZenon(obligation)) === input ? "match" : "mismatch";
+    return getInputDigest(encodeZenon(obligation)) === input ? "match" : "mismatch";
   } catch (error) {
     if (error instanceof Error) return error.name;
     throw error;
@@ -98,7 +99,7 @@ const results = runs.map((run) => {
   const isFound = run.record.verdict === "unsat";
   const start = performance.now();
   const isProved =
-    proveZenon(readFileSync(path, "utf8"), { timeLimitMs: TIME_LIMIT_MS }) === "proved";
+    decideZenon(readFileSync(path, "utf8"), { timeLimitMs: TIME_LIMIT_MS }) === "unsat";
   const elapsed = performance.now() - start;
   if (isFound !== isProved) console.log(`prover  ${isFound ? "miss" : "surplus"}      ${name}`);
   return {

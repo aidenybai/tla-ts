@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { checkProof } from "../../src/zenon/check";
-import { eall, eand, eapp, eimply, enot, evar, UNIVERSE, type Expr } from "../../src/zenon/expr";
-import { makeRule, type Proof } from "../../src/zenon/node";
-import { proveZenon, runZenon } from "../../src/zenon/zenon";
+import { TlaZenonError } from "../../src/errors";
+import { checkProof } from "../../src/prove/zenon/check/check";
+import { createExpressions, UNIVERSE, type Expr } from "../../src/prove/zenon/expr";
+import { makeRelationRule, makeRule, type Proof } from "../../src/prove/zenon/proof";
+import { decideZenon, runZenon } from "../../src/prove/zenon/decide";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/zenon");
 
@@ -29,8 +30,8 @@ describe("Zenon agrees with tlapm's Zenon", () => {
     expect({ nodesSearched: run.nodesSearched, proofNodes: run.proofNodes }).toEqual(
       fixture.expected,
     );
-    expect(proveZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS })).toBe(
-      fixture.path.startsWith("unknown/") ? "unknown" : "proved",
+    expect(decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS })).toBe(
+      fixture.path.startsWith("unknown/") ? "unknown" : "unsat",
     );
     if (fixture.path.startsWith("unknown/")) expect(run.failure).toBe("exhausted");
   });
@@ -68,7 +69,7 @@ const FALSE_GOALS = {
 
 describe("Zenon finds no proof of a false goal", () => {
   it.each(Object.entries(FALSE_GOALS))("%s", (_, text) => {
-    expect(proveZenon(text, { timeLimitMs: 1000 })).toBe("unknown");
+    expect(decideZenon(text, { timeLimitMs: 1000 })).toBe("unknown");
   });
 
   it("rejects the proof that Zenon's not_subseteq_cap rule gives", () => {
@@ -78,21 +79,42 @@ describe("Zenon finds no proof of a false goal", () => {
     const run = runZenon(text, { timeLimitMs: TIME_LIMIT_MS });
     expect(run.proof).toBeDefined();
     expect(run.isChecked).toBe(false);
-    expect(proveZenon(text, { timeLimitMs: TIME_LIMIT_MS })).toBe("unknown");
+    expect(decideZenon(text, { timeLimitMs: TIME_LIMIT_MS })).toBe("unknown");
+  });
+});
+
+describe("Zenon's input", () => {
+  it.each([
+    ["an unclosed parenthesis", "$goal (= a b"],
+    ["an unknown phrase", "$sig a"],
+    ["a bad string escape", '$goal (= "\\q" a)'],
+  ])("rejects %s", (_, text) => {
+    expect(() => decideZenon(text, { timeLimitMs: TIME_LIMIT_MS })).toThrow(TlaZenonError);
+  });
+
+  it("gives up once the signal aborts", () => {
+    const controller = new AbortController();
+    controller.abort();
+    const run = runZenon("$goal (= a a)", {
+      timeLimitMs: TIME_LIMIT_MS,
+      signal: controller.signal,
+    });
+    expect(run.failure).toBe("aborted");
   });
 });
 
 describe("the proof checker", () => {
-  const first = evar("p");
-  const second = evar("q");
+  const exprs = createExpressions();
+  const first = exprs.evar("p");
+  const second = exprs.evar("q");
   const getClosure = (formula: Expr): Proof => ({
     conclusions: [],
     rule: makeRule("close", [formula]),
     uses: [],
     subproofs: [],
   });
-  const conjunction = eand(first, second);
-  const getSplit = (name: string): Proof => ({
+  const conjunction = exprs.eand(first, second);
+  const getSplit = (name: "and" | "or"): Proof => ({
     conclusions: [],
     rule: makeRule(name, [first, second]),
     uses: [],
@@ -100,7 +122,7 @@ describe("the proof checker", () => {
   });
 
   it("accepts a closure on a formula and its negation", () => {
-    const hypotheses = [first, enot(first)];
+    const hypotheses = [first, exprs.enot(first)];
     expect(checkProof(getClosure(first), { hypotheses, definitions: [] })).toBe(true);
   });
 
@@ -109,37 +131,41 @@ describe("the proof checker", () => {
   });
 
   it("accepts a conjunction split into its conjuncts", () => {
-    const hypotheses = [conjunction, enot(first)];
+    const hypotheses = [conjunction, exprs.enot(first)];
     expect(checkProof(getSplit("and"), { hypotheses, definitions: [] })).toBe(true);
   });
 
   it("rejects a rule whose premise isn't a hypothesis", () => {
-    const hypotheses = [eand(second, first), enot(first)];
+    const hypotheses = [exprs.eand(second, first), exprs.enot(first)];
     expect(checkProof(getSplit("and"), { hypotheses, definitions: [] })).toBe(false);
   });
 
   it("rejects a disjunction rule on a conjunction", () => {
-    const hypotheses = [conjunction, enot(first)];
+    const hypotheses = [conjunction, exprs.enot(first)];
     expect(checkProof(getSplit("or"), { hypotheses, definitions: [] })).toBe(false);
   });
 
   describe("on a relation other than =", () => {
-    const left = evar("a");
-    const right = evar("b");
+    const left = exprs.evar("a");
+    const right = exprs.evar("b");
     const swapped = {
       conclusions: [],
-      rule: makeRule("close_sym", [left, right], "R"),
+      rule: makeRelationRule("close_sym", "R", [left, right]),
       uses: [],
       subproofs: [],
     };
-    const relates = [eapp("R", [left, right]), enot(eapp("R", [right, left]))];
+    const relates = [exprs.eapp("R", [left, right]), exprs.enot(exprs.eapp("R", [right, left]))];
     const getSymmetry = (symbol: string) => {
-      const from = evar("x");
-      const to = evar("y");
-      return eall(
+      const from = exprs.evar("x");
+      const to = exprs.evar("y");
+      return exprs.eall(
         from,
         UNIVERSE,
-        eall(to, UNIVERSE, eimply(eapp(symbol, [from, to]), eapp(symbol, [to, from]))),
+        exprs.eall(
+          to,
+          UNIVERSE,
+          exprs.eimply(exprs.eapp(symbol, [from, to]), exprs.eapp(symbol, [to, from])),
+        ),
       );
     };
 

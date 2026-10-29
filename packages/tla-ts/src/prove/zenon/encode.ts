@@ -2,9 +2,9 @@
 // each visible fact and a $goal, naming identifiers as Isabelle does. Before printing, the
 // obligation goes through what Backend.Prep does to every obligation it ships to Zenon.
 
-import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "./errors";
-import { createContext, getBoundName, popNames, pushName } from "./obligation-ctx";
-import { normalizeSequent } from "./obligation-elab";
+import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
+import { createContext, getBoundName, popNames, pushName } from "../../obligation-ctx";
+import { normalizeSequent } from "../../obligation-elab";
 import {
   shiftExpr,
   type Bound,
@@ -12,11 +12,11 @@ import {
   type Expr,
   type Hyp,
   type Sequent,
-} from "./obligation-expression";
-import { format, formatDelimited, renderDoc, text, type Doc } from "./obligation-format";
-import { processObligation } from "./obligation-frontend";
-import { pickle } from "./obligation-pickle";
-import { expandDefs, expandEnabledCdot, flatten, getFrontends } from "./obligation-prep";
+} from "../../obligation-expression";
+import { format, formatDelimited, renderDoc, text, type Doc } from "../../obligation-format";
+import { processObligation } from "../../obligation-frontend";
+import { pickle } from "../../obligation-pickle";
+import { expandDefs, expandEnabledCdot, flatten, getFrontends } from "../../obligation-prep";
 
 const SPACE = format("@ ");
 

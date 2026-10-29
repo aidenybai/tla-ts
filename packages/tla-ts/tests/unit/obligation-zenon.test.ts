@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { TlaProverError } from "../../src/errors";
 import { getObligations } from "../../src/obligations";
-import { encodeZenon } from "../../src/obligation-zenon";
+import { encodeZenon } from "../../src/prove/zenon/encode";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/zenon-encoder");
 

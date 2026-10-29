@@ -29,17 +29,13 @@ const finalMix = (hash: number) => {
 };
 
 // A string's UTF-8 bytes as the little-endian words that caml_hash_mix_string mixes, the last one
-// partial, kept per string because Zenon hashes the same variable names over and over.
+// partial.
 interface StringWords {
   words: number[];
   length: number;
 }
 
-const stringWords = new Map<string, StringWords>();
-
-const getStringWords = (value: string) => {
-  const cached = stringWords.get(value);
-  if (cached !== undefined) return cached;
+const getStringWords = (value: string): StringWords => {
   const bytes = encoder.encode(value);
   const words: number[] = [];
   for (let index = 0; index < bytes.length; index += 4)
@@ -49,13 +45,10 @@ const getStringWords = (value: string) => {
         ((bytes[index + 2] ?? 0) << 16) |
         ((bytes[index + 3] ?? 0) << 24),
     );
-  const result = { words, length: bytes.length };
-  stringWords.set(value, result);
-  return result;
+  return { words, length: bytes.length };
 };
 
-const mixString = (hash: number, value: string) => {
-  const encoded = getStringWords(value);
+const mixWords = (hash: number, encoded: StringWords) => {
   let mixed = hash;
   for (const word of encoded.words) mixed = mix(mixed, word);
   return mixed ^ encoded.length;
@@ -68,25 +61,36 @@ const mixInt = (hash: number, high: number, low: number) => {
   return mix(hash, (taggedHigh ^ (taggedHigh < 0 ? -1 : 0) ^ taggedLow) | 0);
 };
 
-const stringHashes = new Map<string, number>();
-
-export const hashString = (value: string) => {
-  const cached = stringHashes.get(value);
-  if (cached !== undefined) return cached;
-  const hash = finalMix(mixString(0, value));
-  stringHashes.set(value, hash);
-  return hash;
-};
-
-export const hashIntAndStrings = (high: number, low: number, strings: string[]) => {
-  let hash = mixInt(mix(0, PAIR_HEADER), high, low);
-  let meaningful = MEANINGFUL_LIMIT - 1;
-  for (const value of strings) {
-    if (meaningful === 0) return finalMix(hash);
-    hash = mixString(mix(hash, PAIR_HEADER), value);
-    meaningful--;
-  }
-  return finalMix(meaningful === 0 ? hash : mixInt(hash, 0, 0));
+// Hashtbl.hash on strings and on (int, string list) pairs. It keeps each string's words and hash,
+// because Zenon hashes the same variable names over and over.
+export const createHasher = () => {
+  const stringWords = new Map<string, StringWords>();
+  const stringHashes = new Map<string, number>();
+  const mixString = (hash: number, value: string) => {
+    const cached = stringWords.get(value);
+    const encoded = cached ?? getStringWords(value);
+    if (cached === undefined) stringWords.set(value, encoded);
+    return mixWords(hash, encoded);
+  };
+  return {
+    hashString: (value: string) => {
+      const cached = stringHashes.get(value);
+      if (cached !== undefined) return cached;
+      const hash = finalMix(mixString(0, value));
+      stringHashes.set(value, hash);
+      return hash;
+    },
+    hashIntAndStrings: (high: number, low: number, strings: string[]) => {
+      let hash = mixInt(mix(0, PAIR_HEADER), high, low);
+      let meaningful = MEANINGFUL_LIMIT - 1;
+      for (const value of strings) {
+        if (meaningful === 0) return finalMix(hash);
+        hash = mixString(mix(hash, PAIR_HEADER), value);
+        meaningful--;
+      }
+      return finalMix(meaningful === 0 ? hash : mixInt(hash, 0, 0));
+    },
+  };
 };
 
 const wrapHigh = (value: number) => {

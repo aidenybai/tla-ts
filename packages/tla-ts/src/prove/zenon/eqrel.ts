@@ -3,7 +3,7 @@
 // Finds the hypotheses that make a relation reflexive, symmetric or transitive. The prover then
 // reasons with those properties directly, and drops the hypotheses that only state them.
 
-import { eimply, enot, eor, type Expr } from "./expr";
+import { type Expr, type Expressions } from "./expr";
 
 interface RelationInfo {
   isReflexive: boolean;
@@ -19,7 +19,7 @@ interface Leaves {
   leaves: Expr[];
 }
 
-const getLeaves = (env: string[], formula: Expr): Leaves => {
+const getLeaves = (exprs: Expressions, env: string[], formula: Expr): Leaves => {
   const leaves: Expr[] = [];
   let symbol: string | undefined = undefined;
   const isVariable = (term: Expr) => term.kind === "var" && env.includes(term.symbol);
@@ -38,11 +38,12 @@ const getLeaves = (env: string[], formula: Expr): Leaves => {
   };
   const visit = (disjunct: Expr): boolean => {
     if (disjunct.kind === "or") return visit(disjunct.args[0]) && visit(disjunct.args[1]);
-    if (disjunct.kind === "imply") return visit(enot(disjunct.args[0])) && visit(disjunct.args[1]);
+    if (disjunct.kind === "imply")
+      return visit(exprs.enot(disjunct.args[0])) && visit(disjunct.args[1]);
     if (disjunct.kind === "not") {
       const operand = disjunct.args[0];
       if (operand.kind === "and")
-        return visit(enot(operand.args[0])) && visit(enot(operand.args[1]));
+        return visit(exprs.enot(operand.args[0])) && visit(exprs.enot(operand.args[1]));
       if (operand.kind === "not") return visit(operand.args[0]);
       if (operand.kind === "true") return true;
     }
@@ -52,7 +53,7 @@ const getLeaves = (env: string[], formula: Expr): Leaves => {
   return visit(formula) ? { env, leaves } : { env, leaves: [] };
 };
 
-const getConjuncts = (formula: Expr) => {
+const getConjuncts = (exprs: Expressions, formula: Expr) => {
   const conjuncts: Leaves[] = [];
   const visit = (env: string[], conjunct: Expr) => {
     const operand = conjunct.kind === "not" ? conjunct.args[0] : undefined;
@@ -62,22 +63,22 @@ const getConjuncts = (formula: Expr) => {
     } else if (conjunct.kind === "all") {
       visit([conjunct.args[0].symbol, ...env], conjunct.args[1]);
     } else if (operand?.kind === "or") {
-      visit(env, enot(operand.args[0]));
-      visit(env, enot(operand.args[1]));
+      visit(env, exprs.enot(operand.args[0]));
+      visit(env, exprs.enot(operand.args[1]));
     } else if (operand?.kind === "imply") {
       visit(env, operand.args[0]);
-      visit(env, enot(operand.args[1]));
+      visit(env, exprs.enot(operand.args[1]));
     } else if (operand?.kind === "ex") {
-      visit([operand.args[0].symbol, ...env], enot(operand.args[1]));
+      visit([operand.args[0].symbol, ...env], exprs.enot(operand.args[1]));
     } else if (operand?.kind === "not") {
       visit(env, operand.args[0]);
     } else if (conjunct.kind === "equiv") {
-      visit(env, eimply(conjunct.args[0], conjunct.args[1]));
-      visit(env, eimply(conjunct.args[1], conjunct.args[0]));
+      visit(env, exprs.eimply(conjunct.args[0], conjunct.args[1]));
+      visit(env, exprs.eimply(conjunct.args[1], conjunct.args[0]));
     } else if (operand?.kind === "equiv") {
-      visit(env, eor(operand.args[0], operand.args[1]));
-      visit(env, eor(enot(operand.args[0]), enot(operand.args[1])));
-    } else conjuncts.unshift(getLeaves(env, conjunct));
+      visit(env, exprs.eor(operand.args[0], operand.args[1]));
+      visit(env, exprs.eor(exprs.enot(operand.args[0]), exprs.enot(operand.args[1])));
+    } else conjuncts.unshift(getLeaves(exprs, env, conjunct));
   };
   visit([], formula);
   return conjuncts;
@@ -150,7 +151,7 @@ const getSymbol = (leaves: Expr[]) => {
   return atom.symbol;
 };
 
-export const createRelations = () => {
+export const createRelations = (exprs: Expressions) => {
   const relations = new Map<string, RelationInfo>([
     [
       "=",
@@ -172,7 +173,7 @@ export const createRelations = () => {
   };
 
   const analyse = (formula: Expr) => {
-    for (const conjunct of getConjuncts(formula)) {
+    for (const conjunct of getConjuncts(exprs, formula)) {
       const leaves = conjunct.leaves;
       const properties = {
         isReflexive: isReflexive(leaves),
@@ -190,7 +191,7 @@ export const createRelations = () => {
   };
 
   const isSubsumed = (formula: Expr) =>
-    getConjuncts(formula).every((conjunct) => {
+    getConjuncts(exprs, formula).every((conjunct) => {
       const leaves = conjunct.leaves;
       if (isReflexive(leaves)) return getRecord(getSymbol(leaves)).isReflexive;
       if (isSymmetric(leaves)) return getRecord(getSymbol(leaves)).isSymmetric;
