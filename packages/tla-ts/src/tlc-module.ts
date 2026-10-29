@@ -39,11 +39,17 @@ const formatCalendarVersion = (date: Date) =>
 const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
   createFunction([...registers].map(([key, value]): [Value, Value] => [key, createTuple([value])]));
 
+// TLC creates its model checker after it processes the spec, so these are undefined before then.
+const CHECKER_KEYS = new Set(["diameter", "generated", "distinct", "queue", "stats", "config"]);
+
 const getRuntimeValue = (
   runtime: CheckerRuntime,
   key: string,
   state: (Value | undefined)[] | undefined,
 ) => {
+  if (!runtime.isStarted && CHECKER_KEYS.has(key)) {
+    throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
+  }
   const duration = Math.floor((Date.now() - runtime.startedAt) / 1000);
   switch (key) {
     case "level":

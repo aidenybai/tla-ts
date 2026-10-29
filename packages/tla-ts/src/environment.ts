@@ -17,7 +17,8 @@ import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   createBigNumberError,
   createRealNumberError,
-  isConstantLevel,
+  evaluate,
+  getDefinition,
   isTlcInteger,
   type Builtin,
   type Environment,
@@ -44,7 +45,7 @@ import {
 import { createRuntime } from "./runtime";
 import { CORE_OPERATORS, getStandardModule, STANDARD_DEPENDENCIES } from "./standard-modules";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
-import { checkModuleLevels } from "./levels";
+import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import { checkInstances, type InstanceCheck } from "./substitution-levels";
 import {
   checkInteger,
@@ -942,18 +943,41 @@ export const createEnvironment = (
       getDefinition: (symbol) => definitions.get(linked.visible.get(symbol)?.key ?? symbol),
     };
   });
+  // TLC evaluates a substitute at startup and rejects it only when that fails and the level bound it
+  // computes is above constant. The bound counts the operators that TLC's Java code overrides with
+  // a minimum level as state-level, so the analyzer takes them for variables.
+  const analyzer = createLevelAnalyzer({
+    constants: new Set(constants.keys()),
+    variables: new Set([
+      ...variables,
+      ...["TLCGet", "Trace", "CounterExample"].filter((name) => builtins.has(name)),
+    ]),
+    getDefinition: (name) => getDefinition(name, environment),
+  });
+  const isEvaluable = (body: Expression) => {
+    try {
+      evaluate(body, { environment, scope: undefined, state: undefined, next: undefined });
+      return true;
+    } catch (error) {
+      if (error instanceof TlaEvaluationError) return false;
+      throw error;
+    }
+  };
   substitutions.forEach((target, name) => {
     const definition = definitions.get(target);
     if (
       declaredConstants.includes(name) &&
-      definition &&
-      !isConstantLevel(definition, environment)
+      definition?.kind === "Operator" &&
+      definition.params.length === 0 &&
+      analyzer.analyzeDefinition(definition, new Map()).level > 0 &&
+      !isEvaluable(definition.body)
     ) {
       throw new TlaConfigError(
         `The configuration file substitutes constant ${name} with non-constant ${target}`,
       );
     }
   });
+  runtime.isStarted = true;
   return {
     environment,
     assumptions,

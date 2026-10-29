@@ -621,9 +621,29 @@ ASSUME TLCFP(a) = -887695703
       TlaConfigError,
     );
     expect((await checkModule("CONSTANT C\nFoo == 1", "CONSTANT C <- Foo")).status).toBe("success");
+    // TLC rejects a state-level substitute only when evaluating it at startup fails.
+    expect(
+      (await checkModule('CONSTANT C\nFoo == TLCGet("level")', "CONSTANT C <- Foo")).status,
+    ).toBe("success");
     await expect(
-      checkModule('CONSTANT C\nFoo == TLCGet("level")', "CONSTANT C <- Foo"),
+      checkModule('CONSTANT C\nFoo == TLCGet("diameter")', "CONSTANT C <- Foo"),
     ).rejects.toThrow(TlaConfigError);
+    expect(
+      (await checkModule("CONSTANT C\nFoo == RandomElement({1})", "CONSTANT C <- Foo")).status,
+    ).toBe("success");
+  });
+
+  it("accepts a substitute that a constant-level standard operator defines", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Json\nCONSTANT C\nVARIABLE x\nTrace == JsonDeserialize("missing.json")\nInit == x = 0\nNext == x\' = x\n====',
+      config: "CONSTANT C <- Trace\nINIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
   });
 
   it("overrides definitions and ignores undeclared names assigned by the configuration", async () => {
