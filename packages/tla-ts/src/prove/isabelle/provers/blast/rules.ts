@@ -27,14 +27,17 @@ import {
   GOAL_NAME,
   blastSubstBound,
   destConstApp,
-  fromRuleTemplate,
-  makeRuleTemplate,
+  fromTerm,
+  instantiateTemplate,
   mkBlastConst,
+  mkBlastVar,
   mkGoal,
   stripBlastImpConcl,
   stripBlastImpPrems,
+  toTemplate,
   toTerm,
   type BlastTerm,
+  type Template,
   type VarRef,
 } from "./term";
 
@@ -45,6 +48,18 @@ export interface TableauRule {
   readonly major: BlastTerm;
   readonly prems: readonly (readonly BlastTerm[])[];
   readonly tactic: (isUpdated: boolean, isDup: boolean, isRotated: boolean) => GoalTactic;
+}
+
+// Blast converts each rule it looks up afresh, with fresh variables and Skolem terms. This
+// converts each rule once, numbering them: concl is the conclusion's variable, which conversion
+// sets to *False*, and skolems counts the Skolem terms, which take fresh names in this order. An
+// ill-formed rule has no major premise, but still takes the names its conversion took.
+export interface RuleTemplate {
+  readonly count: number;
+  readonly concl: number | undefined;
+  readonly skolems: number;
+  readonly major: Template | undefined;
+  readonly prems: readonly (readonly Template[])[];
 }
 
 // The conclusion becomes the goal or the negated assumption *False*: delete it. A premise without
@@ -63,35 +78,76 @@ const deleteConcl = (state: BlastState, prems: readonly BlastTerm[]): BlastTerm[
   return position === -1 ? undefined : [...prems.slice(0, position), ...prems.slice(position + 1)];
 };
 
-const skoPrem = (state: BlastState, vars: readonly VarRef[], prem: BlastTerm): BlastTerm => {
+// Skolemizes a premise with placeholder Skolem terms, adding them to skolems in the order that
+// blast names them.
+const skoPrem = (skolems: BlastTerm[], prem: BlastTerm): BlastTerm => {
   const body = destConstApp(prem, "Pure.all");
-  return body?.kind === "Abs"
-    ? skoPrem(
-        state,
-        vars,
-        blastSubstBound({ kind: "Skolem", name: gensym(state, "S"), args: vars }, body.body),
-      )
-    : prem;
+  if (body?.kind !== "Abs") return prem;
+  const skolem: BlastTerm = { kind: "Skolem", name: "", args: [] };
+  skolems.push(skolem);
+  return skoPrem(skolems, blastSubstBound(skolem, body.body));
 };
 
-// Expects an elimination rule to have a formula variable as its conclusion.
-const convertRule = (state: BlastState, vars: readonly VarRef[], term: BlastTerm) => {
+const illFormed = (skolems: number): RuleTemplate => ({
+  count: 0,
+  concl: undefined,
+  skolems,
+  major: undefined,
+  prems: [],
+});
+
+// fromRule's convertRule, which expects an elimination rule to have a formula variable as its
+// conclusion.
+const makeElimTemplate = (state: BlastState, rule: Thm): RuleTemplate => {
   const trueprop = state.context.data.trueprop;
+  const term = fromTerm(state.context.consts, rule.prop);
+  const refs: VarRef[] = [];
+  toTemplate(refs, [], term);
   const prems = stripBlastImpPrems(trueprop, term);
   const concl = stripBlastImpConcl(trueprop, term);
-  if (prems.length === 0 || concl.kind !== "Var") return undefined;
+  if (prems.length === 0 || concl.kind !== "Var") return illFormed(0);
   concl.ref.value = mkBlastConst(FALSE_NAME);
+  const skolems: BlastTerm[] = [];
   const converted: BlastTerm[][] = [];
   for (const prem of prems.slice(1)) {
-    const skolemized = skoPrem(state, vars, prem);
+    const skolemized = skoPrem(skolems, prem);
     const deleted = deleteConcl(state, [
       mkGoal(stripBlastImpConcl(trueprop, skolemized)),
       ...stripBlastImpPrems(trueprop, skolemized),
     ]);
-    if (deleted === undefined) return undefined;
+    if (deleted === undefined) return illFormed(skolems.length);
     converted.push(deleted);
   }
-  return { major: prems[0], prems: converted };
+  return {
+    count: refs.length,
+    concl: refs.indexOf(concl.ref),
+    skolems: skolems.length,
+    major: toTemplate(refs, skolems, prems[0]),
+    prems: converted.map((prem) => prem.map((item) => toTemplate(refs, skolems, item))),
+  };
+};
+
+// fromIntrRule's conversion.
+const makeIntroTemplate = (state: BlastState, rule: Thm): RuleTemplate => {
+  const trueprop = state.context.data.trueprop;
+  const term = fromTerm(state.context.consts, rule.prop);
+  const refs: VarRef[] = [];
+  toTemplate(refs, [], term);
+  const skolems: BlastTerm[] = [];
+  const converted = stripBlastImpPrems(trueprop, term).map((prem) => {
+    const skolemized = skoPrem(skolems, prem);
+    return [
+      mkGoal(stripBlastImpConcl(trueprop, skolemized)),
+      ...stripBlastImpPrems(trueprop, skolemized),
+    ];
+  });
+  return {
+    count: refs.length,
+    concl: undefined,
+    skolems: skolems.length,
+    major: toTemplate(refs, skolems, mkGoal(stripBlastImpConcl(trueprop, term))),
+    prems: converted.map((prem) => prem.map((item) => toTemplate(refs, skolems, item))),
+  };
 };
 
 // Like dup_elim, but puts the duplicated major premise first.
@@ -125,27 +181,6 @@ const emtac = (state: BlastState, isUpdated: boolean, rule: Thm): GoalTactic =>
 const rmtac = (state: BlastState, isUpdated: boolean, rule: Thm): GoalTactic =>
   isUpdated ? resolveTac(state.context.limits, [rule]) : matchTac(state.context.limits, [rule]);
 
-// fromTerm of the rule's proposition.
-const ruleTerm = (state: BlastState, rule: Thm) => {
-  const known = state.context.templates.get(rule);
-  if (known !== undefined) return fromRuleTemplate(known);
-  const made = makeRuleTemplate(state.context.consts, rule.prop);
-  state.context.templates.set(rule, made);
-  return fromRuleTemplate(made);
-};
-
-// A tableau rule from an elimination rule, or undefined for an ill-formed one.
-const fromRule = (
-  state: BlastState,
-  vars: readonly VarRef[],
-  rule: Thm,
-): TableauRule | undefined => {
-  const converted = convertRule(state, vars, ruleTerm(state, rule));
-  return converted === undefined
-    ? undefined
-    : { ...converted, tactic: elimRuleTactic(state, rule, converted.prems) };
-};
-
 const elimRuleTactic =
   (state: BlastState, rule: Thm, prems: readonly (readonly BlastTerm[])[]) =>
   (isUpdated: boolean, isDup: boolean, isRotated: boolean) =>
@@ -168,21 +203,80 @@ const intrRuleTactic =
       rotSubgoalsTac(isRotated, prems)(index),
     );
 
-// A tableau rule from an introduction rule. Since unsafe rules are delayed, dup is always false
-// for introduction rules.
-const fromIntrRule = (state: BlastState, vars: readonly VarRef[], rule: Thm): TableauRule => {
-  const trueprop = state.context.data.trueprop;
-  const term = ruleTerm(state, rule);
-  const prems = stripBlastImpPrems(trueprop, term);
-  const concl = stripBlastImpConcl(trueprop, term);
-  const converted = prems.map((prem) => {
-    const skolemized = skoPrem(state, vars, prem);
-    return [
-      mkGoal(stripBlastImpConcl(trueprop, skolemized)),
-      ...stripBlastImpPrems(trueprop, skolemized),
-    ];
-  });
-  return { major: mkGoal(concl), prems: converted, tactic: intrRuleTactic(state, rule, converted) };
+// A tableau rule from a rule's template. Blast tries the rules in order until one's major premise
+// unifies, so this instantiates the premises only when they are used.
+class InstantiatedRule implements TableauRule {
+  readonly major: BlastTerm;
+  private readonly state: BlastState;
+  private readonly rule: Thm;
+  private readonly isIntro: boolean;
+  private readonly premTemplates: readonly (readonly Template[])[];
+  private readonly vars: readonly BlastTerm[];
+  private readonly skolems: readonly BlastTerm[];
+  private instantiated: readonly (readonly BlastTerm[])[] | undefined;
+
+  constructor(
+    state: BlastState,
+    rule: Thm,
+    isIntro: boolean,
+    major: Template,
+    premTemplates: readonly (readonly Template[])[],
+    vars: readonly BlastTerm[],
+    skolems: readonly BlastTerm[],
+  ) {
+    this.state = state;
+    this.rule = rule;
+    this.isIntro = isIntro;
+    this.premTemplates = premTemplates;
+    this.vars = vars;
+    this.skolems = skolems;
+    this.major = instantiateTemplate(vars, skolems, major);
+  }
+
+  get prems() {
+    this.instantiated ??= this.premTemplates.map((prem) =>
+      prem.map((template) => instantiateTemplate(this.vars, this.skolems, template)),
+    );
+    return this.instantiated;
+  }
+
+  // Since unsafe rules are delayed, dup is always false for introduction rules.
+  tactic(isUpdated: boolean, isDup: boolean, isRotated: boolean) {
+    return (this.isIntro ? intrRuleTactic : elimRuleTactic)(this.state, this.rule, this.prems)(
+      isUpdated,
+      isDup,
+      isRotated,
+    );
+  }
+}
+
+// fromRule or fromIntrRule: undefined for an ill-formed rule.
+const instantiateRule = (
+  state: BlastState,
+  vars: readonly VarRef[],
+  rule: Thm,
+  isIntro: boolean,
+): TableauRule | undefined => {
+  const templates = isIntro ? state.context.introTemplates : state.context.elimTemplates;
+  const known = templates.get(rule);
+  const template =
+    known ?? (isIntro ? makeIntroTemplate(state, rule) : makeElimTemplate(state, rule));
+  if (known === undefined) templates.set(rule, template);
+  const skolems: BlastTerm[] = [];
+  for (let slot = 0; slot < template.skolems; slot += 1)
+    skolems.push({ kind: "Skolem", name: gensym(state, "S"), args: vars });
+  if (template.major === undefined) return undefined;
+  const refs = Array.from({ length: template.count }, (): VarRef => ({ value: undefined }));
+  if (template.concl !== undefined) refs[template.concl].value = mkBlastConst(FALSE_NAME);
+  return new InstantiatedRule(
+    state,
+    rule,
+    isIntro,
+    template.major,
+    template.prems,
+    refs.map(mkBlastVar),
+    skolems,
+  );
 };
 
 // Too flexible assertions or goals, such as those of (!!P. ~P) ==> 0 == 1.
@@ -202,14 +296,14 @@ export const netMkRules = (
   const goal = destConstApp(formula, GOAL_NAME);
   if (goal !== undefined) {
     const pattern = mkApp(trueprop, toTerm(2, goal));
-    return orderRules(netpairs.flatMap((netpair) => unifyTermNet(netpair.intro, pattern))).map(
-      (rule) => fromIntrRule(state, vars, rule),
+    return orderRules(netpairs.flatMap((netpair) => unifyTermNet(netpair.intro, pattern))).flatMap(
+      (rule) => instantiateRule(state, vars, rule, true) ?? [],
     );
   }
   if (isVarForm(state, formula)) return [];
   const pattern = mkApp(trueprop, toTerm(3, formula));
   return orderRules(netpairs.flatMap((netpair) => unifyTermNet(netpair.elim, pattern))).flatMap(
-    (rule) => fromRule(state, vars, rule) ?? [],
+    (rule) => instantiateRule(state, vars, rule, false) ?? [],
   );
 };
 

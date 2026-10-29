@@ -328,24 +328,24 @@ const fromTermAux = (
 export const fromTerm = (consts: ReadonlyMap<string, ConstType>, term: Term): BlastTerm =>
   fromTermAux(consts, [], [], term);
 
-// A prototerm with its variables numbered. Blast converts a rule afresh each time it tries it;
-// converting it once and instantiating this with fresh variables gives the same prototerm, sharing
-// the parts without variables, which blast never updates.
-type Template =
+// A prototerm with its variables and Skolem terms numbered, so that instantiating it with fresh
+// ones gives a copy that shares the parts without them, which blast never updates.
+export type Template =
   | { readonly kind: "ground"; readonly term: BlastTerm }
   | { readonly kind: "var"; readonly index: number }
+  | { readonly kind: "skolem"; readonly slot: number }
   | { readonly kind: "const"; readonly name: string; readonly typargs: readonly Template[] }
   | { readonly kind: "abs"; readonly name: string; readonly body: Template }
   | { readonly kind: "app"; readonly fun: Template; readonly arg: Template };
 
-export interface RuleTemplate {
-  readonly template: Template;
-  readonly count: number;
-}
-
 const isGround = (template: Template) => template.kind === "ground";
 
-const toTemplate = (refs: VarRef[], term: BlastTerm): Template => {
+// Numbers the variables in refs, adding new ones, and the Skolem terms by their place in skolems.
+export const toTemplate = (
+  refs: VarRef[],
+  skolems: readonly BlastTerm[],
+  term: BlastTerm,
+): Template => {
   switch (term.kind) {
     case "Var": {
       const index = refs.indexOf(term.ref);
@@ -353,19 +353,23 @@ const toTemplate = (refs: VarRef[], term: BlastTerm): Template => {
       refs.push(term.ref);
       return { kind: "var", index: refs.length - 1 };
     }
+    case "Skolem": {
+      const slot = skolems.indexOf(term);
+      return slot >= 0 ? { kind: "skolem", slot } : { kind: "ground", term };
+    }
     case "Const": {
-      const typargs = term.typargs.map((arg) => toTemplate(refs, arg));
+      const typargs = term.typargs.map((arg) => toTemplate(refs, skolems, arg));
       return typargs.every(isGround)
         ? { kind: "ground", term }
         : { kind: "const", name: term.name, typargs };
     }
     case "Abs": {
-      const body = toTemplate(refs, term.body);
+      const body = toTemplate(refs, skolems, term.body);
       return isGround(body) ? { kind: "ground", term } : { kind: "abs", name: term.name, body };
     }
     case "App": {
-      const fun = toTemplate(refs, term.fun);
-      const arg = toTemplate(refs, term.arg);
+      const fun = toTemplate(refs, skolems, term.fun);
+      const arg = toTemplate(refs, skolems, term.arg);
       return isGround(fun) && isGround(arg) ? { kind: "ground", term } : { kind: "app", fun, arg };
     }
     default:
@@ -373,38 +377,35 @@ const toTemplate = (refs: VarRef[], term: BlastTerm): Template => {
   }
 };
 
-export const makeRuleTemplate = (consts: ReadonlyMap<string, ConstType>, term: Term) => {
-  const refs: VarRef[] = [];
-  const template = toTemplate(refs, fromTerm(consts, term));
-  return { template, count: refs.length };
-};
-
-const instantiateTemplate = (vars: readonly BlastTerm[], template: Template): BlastTerm => {
+export const instantiateTemplate = (
+  vars: readonly BlastTerm[],
+  skolems: readonly BlastTerm[],
+  template: Template,
+): BlastTerm => {
   switch (template.kind) {
     case "ground":
       return template.term;
     case "var":
       return vars[template.index];
+    case "skolem":
+      return skolems[template.slot];
     case "const":
       return mkBlastConst(
         template.name,
-        template.typargs.map((arg) => instantiateTemplate(vars, arg)),
+        template.typargs.map((arg) => instantiateTemplate(vars, skolems, arg)),
       );
     case "abs":
-      return { kind: "Abs", name: template.name, body: instantiateTemplate(vars, template.body) };
+      return {
+        kind: "Abs",
+        name: template.name,
+        body: instantiateTemplate(vars, skolems, template.body),
+      };
     case "app":
       return mkBlastApp(
-        instantiateTemplate(vars, template.fun),
-        instantiateTemplate(vars, template.arg),
+        instantiateTemplate(vars, skolems, template.fun),
+        instantiateTemplate(vars, skolems, template.arg),
       );
   }
-};
-
-// fromTerm of the rule the template came from.
-export const fromRuleTemplate = (rule: RuleTemplate) => {
-  const vars: BlastTerm[] = [];
-  for (let index = 0; index < rule.count; index += 1) vars.push(mkBlastVar({ value: undefined }));
-  return instantiateTemplate(vars, rule.template);
 };
 
 const dummyVar = mkVar("etc", 0, dummyT);
