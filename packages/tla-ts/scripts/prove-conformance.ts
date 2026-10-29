@@ -5,12 +5,12 @@
 // instead. Worker processes take one module at a time, largest first,
 // --jobs of them at once.
 
-import { fork } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { prove, type ProofObligation, TlaError } from "../src";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY } from "./corpora";
+import { runModuleWorkers } from "./module-workers";
 import {
   getModuleLoader,
   printResults,
@@ -95,63 +95,32 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
 };
 
 const records = readProofRecords();
-
-// A worker proves each module the parent sends it, by index, and sends back its results.
-if (process.argv.includes("--worker")) {
-  process.on("message", (index: number) => {
-    void proveModule(records[index]).then((results) => process.send?.(results));
-  });
-} else {
-  const jobsIndex = process.argv.indexOf("--jobs");
-  const jobs = jobsIndex === -1 ? availableParallelism() : Number(process.argv[jobsIndex + 1]);
-  const queue = records
-    .map((record, index) => ({ index, size: record.obligations.length }))
-    .toSorted((left, right) => right.size - left.size)
-    .map((entry) => entry.index);
-  const byModule = new Map<number, Result[]>();
-  await Promise.all(
-    Array.from({ length: Math.min(jobs, queue.length) }, async () => {
-      const worker = fork(process.argv[1], [...process.argv.slice(2), "--worker"]);
-      const next = () => {
-        const index = queue.shift();
-        if (index === undefined) return worker.disconnect();
-        worker.send(index);
-        worker.once("message", (results: Result[]) => {
-          byModule.set(index, results);
-          console.error(`${byModule.size}/${records.length} ${records[index].id}`);
-          next();
-        });
-      };
-      next();
-      await new Promise((resolve) => worker.on("exit", resolve));
-    }),
-  );
-  // A worker that exits mid-module leaves that module's obligations absent.
-  const results = records.flatMap(
-    (record, index) =>
-      byModule.get(index) ??
-      record.obligations.map((expected): Result => ({
-        module: record.id,
-        id: expected.id,
-        verdict: "absent",
-        expected: getExpected(expected),
-        reason: "the worker exited",
-      })),
-  );
-  writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
-  printResults(
-    results,
-    ["agree", "deviation", "prover", "missed", "unsound", "trivial", "absent"],
-    ["deviation", "unsound", "trivial", "absent", "prover"],
-    (result) =>
-      `${result.verdict} ${result.module} #${result.id}: tlapm ${result.expected}, tla-ts ${result.actual ?? "none"}${result.reason ? ` (${result.reason})` : ""}`,
-  );
-  // What tlapm reached and tla-ts didn't, by tlapm's status and what tla-ts reached.
-  const differences = Map.groupBy(
-    results.filter((result) => result.verdict !== "agree" && result.verdict !== "deviation"),
-    (result) => `${result.verdict}: tlapm ${result.expected}, tla-ts ${result.actual}`,
-  );
-  [...differences]
-    .toSorted((left, right) => right[1].length - left[1].length)
-    .forEach((group) => console.log(`  ${group[0]}: ${group[1].length}`));
-}
+const byModule = await runModuleWorkers(records, proveModule, availableParallelism());
+// A worker that exits mid-module leaves that module's obligations absent.
+const results = records.flatMap(
+  (record, index) =>
+    byModule.get(index) ??
+    record.obligations.map((expected): Result => ({
+      module: record.id,
+      id: expected.id,
+      verdict: "absent",
+      expected: getExpected(expected),
+      reason: "the worker exited",
+    })),
+);
+writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
+printResults(
+  results,
+  ["agree", "deviation", "prover", "missed", "unsound", "trivial", "absent"],
+  ["deviation", "unsound", "trivial", "absent", "prover"],
+  (result) =>
+    `${result.verdict} ${result.module} #${result.id}: tlapm ${result.expected}, tla-ts ${result.actual ?? "none"}${result.reason ? ` (${result.reason})` : ""}`,
+);
+// What tlapm reached and tla-ts didn't, by tlapm's status and what tla-ts reached.
+const differences = Map.groupBy(
+  results.filter((result) => result.verdict !== "agree" && result.verdict !== "deviation"),
+  (result) => `${result.verdict}: tlapm ${result.expected}, tla-ts ${result.actual}`,
+);
+[...differences]
+  .toSorted((left, right) => right[1].length - left[1].length)
+  .forEach((group) => console.log(`  ${group[0]}: ${group[1].length}`));
