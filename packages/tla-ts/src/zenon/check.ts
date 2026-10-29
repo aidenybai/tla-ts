@@ -1066,9 +1066,146 @@ const getPropositionEqualitySpec = (
   };
 };
 
-const getTransitivitySpec = (args: Term[], isSymmetric: boolean): RuleSpec => {
-  const positive = expectApp(args[0], "=", 2);
-  const negative = expectApp(expectNot(args[1]), "=", 2);
+type RelationProperty = "reflexive" | "symmetric" | "transitive";
+
+type Polarity = "positive" | "negative" | "both";
+
+// A hypothesis as a test on how a relation holds among three elements: `values` gives the bound
+// variables their elements and bit 3 * i + j of `holds` says whether the relation holds from
+// element i to element j.
+type GroundTest = (values: number[], holds: number) => boolean;
+
+const ELEMENTS = [0, 1, 2];
+
+// The type Zenon gives a variable that its binder leaves untyped, which ranges over everything.
+const UNTYPED = "zenon_U";
+
+// The ground instances of a hypothesis over three elements. A universal quantifier where the
+// hypothesis asserts it, or an existential where it denies it, becomes a test over the three
+// elements, which the hypothesis implies. Undefined when the hypothesis says anything but how the
+// relation holds between bound variables, so that it's left out.
+const getGroundTest = (
+  formula: Term,
+  symbol: string,
+  bound: string[],
+  polarity: Polarity,
+): GroundTest | undefined => {
+  const flip = (): Polarity =>
+    polarity === "both" ? "both" : polarity === "positive" ? "negative" : "positive";
+  switch (formula.kind) {
+    case "true":
+      return () => true;
+    case "false":
+      return () => false;
+    case "not": {
+      const operand = getGroundTest(formula.args[0], symbol, bound, flip());
+      return operand && ((values, holds) => !operand(values, holds));
+    }
+    case "and":
+    case "or":
+    case "imply":
+    case "equiv": {
+      const left = getGroundTest(
+        formula.args[0],
+        symbol,
+        bound,
+        formula.kind === "imply" ? flip() : formula.kind === "equiv" ? "both" : polarity,
+      );
+      const right = getGroundTest(
+        formula.args[1],
+        symbol,
+        bound,
+        formula.kind === "equiv" ? "both" : polarity,
+      );
+      if (left === undefined || right === undefined) return undefined;
+      if (formula.kind === "and")
+        return (values, holds) => left(values, holds) && right(values, holds);
+      if (formula.kind === "or")
+        return (values, holds) => left(values, holds) || right(values, holds);
+      if (formula.kind === "imply")
+        return (values, holds) => !left(values, holds) || right(values, holds);
+      return (values, holds) => left(values, holds) === right(values, holds);
+    }
+    case "all":
+    case "ex": {
+      const isUniversal =
+        formula.kind === "all" ? polarity === "positive" : polarity === "negative";
+      if (!isUniversal || formula.symbol !== UNTYPED) return undefined;
+      const body = getGroundTest(
+        formula.args[1],
+        symbol,
+        [...bound, formula.args[0].symbol],
+        polarity,
+      );
+      if (body === undefined) return undefined;
+      return formula.kind === "all"
+        ? (values, holds) => ELEMENTS.every((element) => body([...values, element], holds))
+        : (values, holds) => ELEMENTS.some((element) => body([...values, element], holds));
+    }
+    case "app": {
+      if (formula.symbol !== symbol || formula.args.length !== 2) return undefined;
+      const positions = formula.args.map((inner) =>
+        inner.kind === "var" ? bound.lastIndexOf(inner.symbol) : -1,
+      );
+      if (positions.includes(-1)) return undefined;
+      return (values, holds) =>
+        ((holds >> (3 * values[positions[0]] + values[positions[1]])) & 1) === 1;
+    }
+    default:
+      return undefined;
+  }
+};
+
+const relationProperties = new WeakMap<CheckContext, Map<string, boolean>>();
+
+// Whether the hypotheses make a relation reflexive, symmetric or transitive, which Zenon's rules
+// for relations other than = rely on. The property holds when no way for the relation to hold among
+// three elements satisfies the ground instances of the hypotheses and breaks the property.
+const hasRelationProperty = (context: CheckContext, symbol: string, property: RelationProperty) => {
+  const cache = relationProperties.get(context) ?? new Map<string, boolean>();
+  relationProperties.set(context, cache);
+  const key = `${property}:${symbol}`;
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  const tests = context.hypotheses.flatMap((hypothesis) => {
+    const test = getGroundTest(hypothesis, symbol, [], "positive");
+    return test === undefined ? [] : [test];
+  });
+  const has = (holds: number, from: number, to: number) => ((holds >> (3 * from + to)) & 1) === 1;
+  const isBroken = (holds: number) =>
+    property === "reflexive"
+      ? !has(holds, 0, 0)
+      : property === "symmetric"
+        ? has(holds, 0, 1) && !has(holds, 1, 0)
+        : has(holds, 0, 1) && has(holds, 1, 2) && !has(holds, 0, 2);
+  const result = [...Array(512).keys()].every(
+    (holds) => !isBroken(holds) || !tests.every((test) => test([], holds)),
+  );
+  cache.set(key, result);
+  return result;
+};
+
+// = has every property. Another relation has the ones the hypotheses give it.
+const ensureRelation = (context: CheckContext, symbol: string, properties: RelationProperty[]) =>
+  ensure(
+    symbol === "=" ||
+      properties.every((property) => hasRelationProperty(context, symbol, property)),
+  );
+
+const relate = (symbol: string, left: Term, right: Term) => app(symbol, [left, right]);
+
+// The two branches that the relation fails to link and the ends differ. The ends come from
+// r(a, b) and ~r(c, d) in the order that Zenon's Trans or Trans_sym takes them.
+const getTransitivitySpec = (
+  context: CheckContext,
+  args: Term[],
+  isSymmetric: boolean,
+): RuleSpec => {
+  const negated = expectNot(args[1]);
+  const symbol = negated.symbol;
+  const positive = expectApp(args[0], symbol, 2);
+  const negative = expectApp(negated, symbol, 2);
+  ensureRelation(context, symbol, isSymmetric ? ["transitive", "symmetric"] : ["transitive"]);
   const left = positive[0];
   const right = positive[1];
   const negatedLeft = negative[0];
@@ -1078,17 +1215,29 @@ const getTransitivitySpec = (args: Term[], isSymmetric: boolean): RuleSpec => {
     : [negatedLeft, left, right, negatedRight];
   return {
     premises: [args[0], args[1]],
-    branches: [[not(equal(ends[0], ends[1]))], [not(equal(ends[2], ends[3]))]],
+    branches: [
+      [not(equal(ends[0], ends[1])), not(relate(symbol, ends[0], ends[1]))],
+      [not(equal(ends[2], ends[3])), not(relate(symbol, ends[2], ends[3]))],
+    ],
   };
 };
 
+// a = b against ~r(c, d), in the order of Zenon's TransEq, TransEq_sym or TransEq2.
 const getTransitiveEqualitySpec = (
+  context: CheckContext,
   args: Term[],
   order: "trans_eq" | "trans_eq_sym" | "trans_eq2",
 ) => {
   const left = args[0];
   const right = args[1];
-  const negative = expectApp(expectNot(args[2]), "=", 2);
+  const negated = expectNot(args[2]);
+  const symbol = negated.symbol;
+  const negative = expectApp(negated, symbol, 2);
+  ensureRelation(
+    context,
+    symbol,
+    order === "trans_eq_sym" ? ["transitive", "symmetric"] : ["transitive"],
+  );
   const negatedLeft = negative[0];
   const negatedRight = negative[1];
   const ends =
@@ -1097,11 +1246,15 @@ const getTransitiveEqualitySpec = (
       : order === "trans_eq_sym"
         ? [negatedRight, left, right, negatedLeft]
         : [negatedLeft, right, left, negatedRight];
-  const first = not(equal(ends[0], ends[1]));
-  const second = not(equal(ends[2], ends[3]));
+  const first = not(relate(symbol, ends[0], ends[1]));
+  const second = not(relate(symbol, ends[2], ends[3]));
   return {
     premises: [equal(left, right), args[2]],
-    branches: [[first], [first, second], [second]],
+    branches: [
+      [not(equal(ends[0], ends[1])), first],
+      [first, second],
+      [not(equal(ends[2], ends[3])), second],
+    ],
   };
 };
 
@@ -1226,13 +1379,22 @@ const getRuleSpec = (proof: Proof, context: CheckContext): RuleSpec => {
     case "not_true":
       return { premises: [not(TRUE)], branches: [] };
     case "close_refl":
-      ensure(rule.symbol === "=");
-      return { premises: [not(equal(args[0], args[0]))], branches: [] };
+      ensureRelation(context, rule.symbol, ["reflexive"]);
+      return { premises: [not(relate(rule.symbol, args[0], args[0]))], branches: [] };
     case "close_sym":
-      ensure(rule.symbol === "=");
+      ensureRelation(context, rule.symbol, ["symmetric"]);
       return {
-        premises: [equal(args[0], args[1]), not(equal(args[1], args[0]))],
+        premises: [
+          relate(rule.symbol, args[0], args[1]),
+          not(relate(rule.symbol, args[1], args[0])),
+        ],
         branches: [],
+      };
+    case "refl":
+      ensureRelation(context, rule.symbol, ["reflexive"]);
+      return {
+        premises: [not(relate(rule.symbol, args[0], args[1]))],
+        branches: [[not(equal(args[0], args[1]))]],
       };
     case "conj_tree":
       return { premises: [args[0]], branches: [getConjuncts(args[0])] };
@@ -1330,13 +1492,22 @@ const getRuleSpec = (proof: Proof, context: CheckContext): RuleSpec => {
         branches: left.map((inner, index) => [not(equal(inner, right[index]))]),
       };
     }
+    case "p_not_p_sym": {
+      ensureRelation(context, rule.symbol, ["symmetric"]);
+      const left = expectApp(args[0], rule.symbol, 2);
+      const right = expectApp(expectNot(args[1]), rule.symbol, 2);
+      return {
+        premises: [args[0], args[1]],
+        branches: [[not(equal(left[1], right[0]))], [not(equal(left[0], right[1]))]],
+      };
+    }
     case "trans":
     case "trans_sym":
-      return getTransitivitySpec(args, rule.name === "trans_sym");
+      return getTransitivitySpec(context, args, rule.name === "trans_sym");
     case "trans_eq":
     case "trans_eq_sym":
     case "trans_eq2":
-      return getTransitiveEqualitySpec(args, rule.name);
+      return getTransitiveEqualitySpec(context, args, rule.name);
     case "cut":
       return { premises: [], branches: [[args[0]], [not(args[0])]] };
     case "congruence_lr":

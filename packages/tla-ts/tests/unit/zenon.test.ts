@@ -2,13 +2,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { checkProof } from "../../src/zenon/check";
-import { eand, enot, evar, type Expr } from "../../src/zenon/expr";
+import { eall, eand, eapp, eimply, enot, evar, UNIVERSE, type Expr } from "../../src/zenon/expr";
 import { makeRule, type Proof } from "../../src/zenon/node";
 import { proveZenon, runZenon } from "../../src/zenon/zenon";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/zenon");
 
-// Real .znn files that tlapm wrote, with what tlapm's Zenon reports for them under -stats.
+// Real .znn files that tlapm wrote, and in rules/ small true goals that need the rule in their name,
+// which no corpus proof uses. Each comes with what tlapm's Zenon reports for it under -stats.
 const statistics: Record<string, { nodesSearched: number; proofNodes: number }> = JSON.parse(
   readFileSync(join(FIXTURES, "statistics.json"), "utf8"),
 );
@@ -29,7 +30,7 @@ describe("Zenon agrees with tlapm's Zenon", () => {
       fixture.expected,
     );
     expect(proveZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS })).toBe(
-      fixture.path.startsWith("proved/") ? "proved" : "unknown",
+      fixture.path.startsWith("unknown/") ? "unknown" : "proved",
     );
   });
 });
@@ -53,6 +54,9 @@ const FALSE_GOALS = {
   "every set is a subset": "$goal (TLA.in a (TLA.SUBSET b))",
   "subset is symmetric": '$hyp "h" (TLA.subseteq a b)\n$goal (TLA.subseteq b a)',
   "records with different fields are equal": '$goal (= (TLA.record "a" x) (TLA.record "a" y))',
+  "a relation is symmetric": '$hyp "h" (R a b)\n$goal (R b a)',
+  "a symmetric relation is transitive":
+    '$hyp "sym" (A. ((x) (A. ((y) (=> (R x y) (R y x))))))\n$hyp "h1" (R a b)\n$hyp "h2" (R b c)\n$goal (R a c)',
 };
 
 describe("Zenon finds no proof of a false goal", () => {
@@ -110,5 +114,36 @@ describe("the proof checker", () => {
   it("rejects a disjunction rule on a conjunction", () => {
     const hypotheses = [conjunction, enot(first)];
     expect(checkProof(getSplit("or"), { hypotheses, definitions: [] })).toBe(false);
+  });
+
+  describe("on a relation other than =", () => {
+    const left = evar("a");
+    const right = evar("b");
+    const swapped = {
+      conclusions: [],
+      rule: makeRule("close_sym", [left, right], "R"),
+      uses: [],
+      subproofs: [],
+    };
+    const relates = [eapp("R", [left, right]), enot(eapp("R", [right, left]))];
+    const getSymmetry = (symbol: string) => {
+      const from = evar("x");
+      const to = evar("y");
+      return eall(
+        from,
+        UNIVERSE,
+        eall(to, UNIVERSE, eimply(eapp(symbol, [from, to]), eapp(symbol, [to, from]))),
+      );
+    };
+
+    it("accepts a symmetric closure when a hypothesis makes the relation symmetric", () => {
+      const hypotheses = [getSymmetry("R"), ...relates];
+      expect(checkProof(swapped, { hypotheses, definitions: [] })).toBe(true);
+    });
+
+    it("rejects a symmetric closure without that hypothesis", () => {
+      const hypotheses = [getSymmetry("S"), ...relates];
+      expect(checkProof(swapped, { hypotheses, definitions: [] })).toBe(false);
+    });
   });
 });

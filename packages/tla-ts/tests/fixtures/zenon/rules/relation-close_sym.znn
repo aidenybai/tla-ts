@@ -1,0 +1,3 @@
+$hyp "sym" (A. ((x) (A. ((y) (=> (R x y) (R y x))))))
+$hyp "h" (R (f a) b)
+$goal (R b (f a))

@@ -19,6 +19,15 @@
   "proved/WellFoundedInduction_proofs-261.znn": { "nodesSearched": 179, "proofNodes": 31 },
   "proved/bcastByz-720.znn": { "nodesSearched": 30, "proofNodes": 24 },
   "proved/setEuclid_test-105.znn": { "nodesSearched": 46, "proofNodes": 22 },
+  "rules/relation-close_sym.znn": { "nodesSearched": 1, "proofNodes": 1 },
+  "rules/relation-p_not_p_sym.znn": { "nodesSearched": 3, "proofNodes": 3 },
+  "rules/relation-refl.znn": { "nodesSearched": 2, "proofNodes": 2 },
+  "rules/relation-trans.znn": { "nodesSearched": 5, "proofNodes": 5 },
+  "rules/relation-trans_eq.znn": { "nodesSearched": 6, "proofNodes": 5 },
+  "rules/relation-trans_eq2.znn": { "nodesSearched": 144, "proofNodes": 14 },
+  "rules/relation-trans_eq_sym.znn": { "nodesSearched": 176, "proofNodes": 27 },
+  "rules/relation-trans_sym.znn": { "nodesSearched": 3, "proofNodes": 3 },
+  "rules/relation-transsym.znn": { "nodesSearched": 152, "proofNodes": 19 },
   "unknown/DiningPhilosophers_proof-304.znn": { "nodesSearched": 691, "proofNodes": 57 },
   "unknown/DiningPhilosophers_proof-464.znn": { "nodesSearched": 20, "proofNodes": 0 }
 }
