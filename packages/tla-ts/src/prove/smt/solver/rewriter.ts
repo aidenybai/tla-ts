@@ -228,6 +228,29 @@ export interface RewriterOptions {
   arith: ArithRewriterOptions;
 }
 
+// The distinct literals of a flat conjunction or disjunction. It finds a complementary pair through
+// the atoms of the negated literals, without creating each negation.
+class FlatLiterals {
+  readonly list: number[] = [];
+  private seen = new Set<number>();
+  private negatedAtoms = new Set<number>();
+
+  constructor(private manager: AstManager) {}
+
+  // Adds a literal, and returns whether its complement is already there.
+  add(literal: number) {
+    const manager = this.manager;
+    if (this.seen.has(literal)) return false;
+    const isNegated = manager.isNot(literal);
+    if (isNegated ? this.seen.has(manager.args[literal][0]) : this.negatedAtoms.has(literal))
+      return true;
+    this.seen.add(literal);
+    if (isNegated) this.negatedAtoms.add(manager.args[literal][0]);
+    this.list.push(literal);
+    return false;
+  }
+}
+
 export class Rewriter {
   private cache = new Map<number, number>();
   private arith: ArithRewriter;
@@ -364,28 +387,22 @@ export class Rewriter {
   // complementary pair.
   mkOr(args: number[]): number {
     const manager = this.manager;
-    const result: number[] = [];
-    const seen = new Set<number>();
+    const literals = new FlatLiterals(manager);
     const add = (arg: number): boolean => {
       if (manager.getOp(arg) === OP_OR) {
         for (const innerArg of manager.args[arg]) if (add(innerArg)) return true;
         return false;
       }
       if (manager.isTrue(arg)) return true;
-      if (manager.isFalse(arg) || seen.has(arg)) return false;
-      if (seen.has(this.mkNot(arg))) return true;
-      seen.add(arg);
-      result.push(arg);
-      return false;
+      return !manager.isFalse(arg) && literals.add(arg);
     };
     for (const arg of args) if (add(arg)) return manager.trueExpr;
-    return manager.mkOr(result);
+    return manager.mkOr(literals.list);
   }
 
   mkAnd(args: number[]): number {
     const manager = this.manager;
-    const result: number[] = [];
-    const seen = new Set<number>();
+    const literals = new FlatLiterals(manager);
     const add = (arg: number): boolean => {
       if (manager.getOp(arg) === OP_AND) {
         for (const innerArg of manager.args[arg]) if (add(innerArg)) return true;
@@ -401,13 +418,10 @@ export class Rewriter {
         return false;
       }
       if (manager.isFalse(arg)) return true;
-      if (manager.isTrue(arg) || seen.has(arg)) return false;
-      if (seen.has(this.mkNot(arg))) return true;
-      seen.add(arg);
-      result.push(arg);
-      return false;
+      return !manager.isTrue(arg) && literals.add(arg);
     };
     for (const arg of args) if (add(arg)) return manager.falseExpr;
+    const result = literals.list;
     if (result.length <= 1 || !this.options.isEliminatingAnd) return manager.mkAnd(result);
     return this.mkNot(this.mkOr(result.map((innerArg) => this.mkNot(innerArg))));
   }
@@ -463,10 +477,12 @@ export class Rewriter {
     const condition = args[0];
     const thenExpr = args[1];
     const elseExpr = args[2];
-    if (this.areDistinct(value, elseExpr))
-      return this.mkAnd([this.mkEq(thenExpr, value), condition]);
+    // Z3 rewrites the equality of a branch only below depth 500.
+    const mkBranchEq = (branch: number) =>
+      manager.depths[branch] < 500 ? this.mkEq(branch, value) : manager.mkEq(branch, value);
+    if (this.areDistinct(value, elseExpr)) return this.mkAnd([mkBranchEq(thenExpr), condition]);
     if (this.areDistinct(value, thenExpr))
-      return this.mkAnd([this.mkEq(elseExpr, value), this.mkNot(condition)]);
+      return this.mkAnd([mkBranchEq(elseExpr), this.mkNot(condition)]);
     if (value === thenExpr)
       return value === elseExpr
         ? manager.trueExpr
