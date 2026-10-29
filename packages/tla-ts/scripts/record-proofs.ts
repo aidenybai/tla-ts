@@ -206,14 +206,24 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
 rmSync(LIBRARY_PATH, { recursive: true, force: true });
 mkdirSync(LIBRARY_PATH);
 getLibraryModules().forEach((path, name) => symlinkSync(path, join(LIBRARY_PATH, `${name}.tla`)));
-const modules = findModules().filter((module) => HAS_PROOF.test(readFileSync(module.path, "utf8")));
-const results: ModuleProofRecord[] = [];
+// Module ids on the command line rerecord just those modules into the existing proofs.json.
+const moduleIds = new Set(process.argv.slice(2));
+const modules = findModules().filter((module) =>
+  moduleIds.size > 0 ? moduleIds.has(module.id) : HAS_PROOF.test(readFileSync(module.path, "utf8")),
+);
+const results: ModuleProofRecord[] =
+  moduleIds.size > 0
+    ? JSON.parse(readFileSync(PROOFS_PATH, "utf8")).filter(
+        (record: ModuleProofRecord) => !moduleIds.has(record.id),
+      )
+    : [];
+const keptCount = results.length;
 const queue = [...modules];
 await Promise.all(
   Array.from({ length: CONCURRENCY }, async () => {
     for (let module = queue.shift(); module; module = queue.shift()) {
       results.push(await recordModule(module));
-      console.log(`${results.length}/${modules.length} ${module.id}`);
+      console.log(`${results.length - keptCount}/${modules.length} ${module.id}`);
     }
   }),
 );
