@@ -105,6 +105,14 @@ const OLD_METHODS = new Map([
   ["trivial", "trivial"],
 ]);
 
+// An old-style method, with the tactic an isabelle method takes and the timeout in seconds an
+// isabelle or zenon method may take.
+export interface OldMethod {
+  name: string;
+  tactic?: string;
+  timeout?: number;
+}
+
 // Method_prs.read_method: the (*{ by (zenon) }*) after a BY, OBVIOUS, proof step, theorem, or
 // axiom, which names one method, isabelle with a tactic, or zenon with a timeout and a fallback.
 export const readOldMethod = (lines: string[], start: Position) => {
@@ -112,27 +120,35 @@ export const readOldMethod = (lines: string[], start: Position) => {
   if (!tokens) return undefined;
   let index = 0;
   const isPunct = (text: string) => tokens[index]?.kind === "Punct" && tokens[index].text === text;
-  const skipNumber = () => {
-    if (tokens[index]?.kind === "Number") index++;
+  const readTimeout = () => {
+    const token = tokens[index];
+    if (token?.kind !== "Number") return {};
+    index++;
+    return { timeout: Number.parseFloat(token.text) };
   };
-  const readMethod = (): string | undefined => {
+  const readMethod = (): OldMethod | undefined => {
     if (!isPunct("(")) return undefined;
     index++;
     const name = tokens[index++];
     if (name?.kind !== "Ident") return undefined;
-    if (name.text === "isabelle") {
-      if (tokens[index]?.kind !== "String") return undefined;
-      index++;
-      skipNumber();
-    } else if (name.text === "zenon") {
-      skipNumber();
-      if (isPunct("(") && !readMethod()) return undefined;
-    } else if (!OLD_METHODS.has(name.text)) {
-      return undefined;
-    }
-    if (!isPunct(")")) return undefined;
+    const method = ((): OldMethod | undefined => {
+      if (name.text === "isabelle") {
+        const tactic = tokens[index];
+        if (tactic?.kind !== "String") return undefined;
+        index++;
+        return { name: name.text, tactic: tactic.text, ...readTimeout() };
+      }
+      if (name.text === "zenon") {
+        const timeout = readTimeout();
+        if (isPunct("(") && !readMethod()) return undefined;
+        return { name: name.text, ...timeout };
+      }
+      const known = OLD_METHODS.get(name.text);
+      return known === undefined ? undefined : { name: known };
+    })();
+    if (!method || !isPunct(")")) return undefined;
     index++;
-    return OLD_METHODS.get(name.text) ?? name.text;
+    return method;
   };
   if (tokens[index]?.kind !== "Ident" || tokens[index++].text !== "by") return undefined;
   const method = readMethod();

@@ -29,6 +29,7 @@ import {
 } from "./obligation-expression";
 import { format, renderDoc, type Doc } from "./obligation-format";
 import { printExpression } from "./obligation-printer";
+import type { OldMethod } from "./obligation-pragma";
 import { getScopeTime } from "./obligation-temporal";
 import {
   getStepName,
@@ -303,7 +304,7 @@ const getWitnessProof = (step: Step, aux: Expr[]): Proof => {
 
 const obligate = (
   sequent: Sequent,
-  from: { location?: Locus; method?: string },
+  from: { location?: Locus; method?: OldMethod },
   kind: ObligationKind,
 ): Obligation => ({ sequent, location: from.location, kind, method: from.method });
 
