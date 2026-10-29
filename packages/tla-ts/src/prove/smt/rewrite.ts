@@ -64,6 +64,32 @@ export interface EncodingSession {
 
 type Polarity = "Positive" | "Negative" | "Neither";
 
+// The head of a set equality whose polarity keeps it from triggering set extensionality unless a
+// cast encloses it: (?trigger triggered kept).
+const UNRESOLVED_TRIGGER = "?trigger";
+
+// Picks the triggered or the kept form of each unresolved set equality in text.
+const resolveTriggers = (text: string, isTriggered: boolean): string => {
+  const start = text.indexOf(`(${UNRESOLVED_TRIGGER} `);
+  if (start === -1) return text;
+  const getEnd = (from: number) => {
+    const end = { depth: 0, index: from };
+    for (; end.index < text.length; end.index++) {
+      if (text[end.index] === "(") end.depth++;
+      if (text[end.index] === ")") end.depth--;
+      if (end.depth === 0) return end.index + 1;
+    }
+    return text.length;
+  };
+  const triggeredStart = start + UNRESOLVED_TRIGGER.length + 2;
+  const triggeredEnd = getEnd(triggeredStart);
+  const keptEnd = getEnd(triggeredEnd + 1);
+  const chosen = isTriggered
+    ? text.slice(triggeredStart, triggeredEnd)
+    : text.slice(triggeredEnd + 1, keptEnd);
+  return text.slice(0, start) + chosen + resolveTriggers(text.slice(keptEnd + 1), isTriggered);
+};
+
 export interface Mode {
   isPrimed: boolean;
   polarity: Polarity;
@@ -97,6 +123,7 @@ const isSetTerm = (text: string) => {
   );
 };
 
+
 const sortFields = <Field extends { name: string }>(fields: Field[]) =>
   fields.toSorted((left, right) => compareStrings(left.name, right.name));
 
@@ -111,9 +138,13 @@ export const createEncoder = (session: EncodingSession) => {
   // The salted name of each declared user symbol, for the printer's context.
   const declared = new Map<string, Identifier>();
 
-  const toBool = (term: Term) => (term.isBool ? term.text : `(= ${term.text} ${TT_IDV})`);
+  // Standardize wraps a cast term in an application, and set_extensionality_visitor visits the
+  // arguments of an application with neither polarity, so a cast triggers every set equality in it.
+  const toBool = (term: Term) =>
+    term.isBool ? term.text : `(= ${resolveTriggers(term.text, true)} ${TT_IDV})`;
 
-  const toIdv = (term: Term) => (term.isBool ? `(${CAST_BOOL} ${term.text})` : term.text);
+  const toIdv = (term: Term) =>
+    term.isBool ? `(${CAST_BOOL} ${resolveTriggers(term.text, true)})` : term.text;
 
   const bool = (text: string): Term => ({ isBool: true, text });
 
@@ -438,14 +469,14 @@ export const createEncoder = (session: EncodingSession) => {
         expression.operator.kind === "Internal" &&
         expression.operator.builtin === "Unprimable"
       ) && isSetTerm(text);
-    const isTriggered =
-      (isSet(left, leftText) || isSet(right, rightText)) &&
-      mode.polarity !== (isNegated ? "Positive" : "Negative");
-    const equality = isTriggered
-      ? `(${TRIG_EQ} ${leftText} ${rightText})`
-      : `(= ${leftText} ${rightText})`;
-    if (!isNegated) return equality;
-    return isTriggered ? `(not ${equality})` : `(distinct ${leftText} ${rightText})`;
+    const triggered = `(${TRIG_EQ} ${leftText} ${rightText})`;
+    const kept = isNegated ? `(distinct ${leftText} ${rightText})` : `(= ${leftText} ${rightText})`;
+    if (!isSet(left, leftText) && !isSet(right, rightText)) return kept;
+    const text = isNegated ? `(not ${triggered})` : triggered;
+    // A cast around the equality may still trigger it, so both forms wait for resolveTriggers.
+    return mode.polarity === (isNegated ? "Positive" : "Negative")
+      ? `(${UNRESOLVED_TRIGGER} ${text} ${kept})`
+      : text;
   };
 
   const encodeBuiltin = (
@@ -620,7 +651,7 @@ export const createEncoder = (session: EncodingSession) => {
     if (isInteger) {
       const integer = expression.arms.reduceRight(
         (rest, arm, index) =>
-          `(ite ${encodeBool(arm.condition, env, mode)} ${bodies[index].integer} ${rest})`,
+          `(ite ${encodeBool(arm.condition, env, neither(mode))} ${bodies[index].integer} ${rest})`,
         other.integer ?? "",
       );
       return { isBool: false, text: `(${CAST_INT} ${integer})`, integer };
@@ -726,7 +757,7 @@ export const createEncoder = (session: EncodingSession) => {
         const consequent = encode(expression.consequent, env, mode);
         const alternative = encode(expression.alternative, env, mode);
         if (consequent.integer !== undefined && alternative.integer !== undefined) {
-          const integer = `(ite ${condition} ${consequent.integer} ${alternative.integer})`;
+          const integer = `(ite ${resolveTriggers(condition, true)} ${consequent.integer} ${alternative.integer})`;
           return { isBool: false, text: `(${CAST_INT} ${integer})`, integer };
         }
         return consequent.isBool && alternative.isBool
@@ -829,7 +860,10 @@ export const createEncoder = (session: EncodingSession) => {
   };
 
   // One fact or the goal, after the declarations of the symbols it flattens.
-  const getEntries = (line: string): Entry[] => [...flattener.takeIntroduced(), line];
+  const getEntries = (line: string): Entry[] => [
+    ...flattener.takeIntroduced(),
+    resolveTriggers(line, false),
+  ];
 
   return {
     encodeIdv,
