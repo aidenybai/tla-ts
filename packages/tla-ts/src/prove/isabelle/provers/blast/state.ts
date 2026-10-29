@@ -124,6 +124,51 @@ export const clearTo = (state: BlastState, count: number) => {
 
 // First-order unification with bound variables. The variables of vars are local to a rule: their
 // assignments are not trailed.
+const updateVar = (
+  state: BlastState,
+  vars: readonly VarRef[],
+  variable: Extract<BlastTerm, { kind: "Var" }>,
+  term: BlastTerm,
+): boolean => {
+  if (blastAconv(variable, term)) return true;
+  if (varOccur(variable.ref, term)) return false;
+  if (vars.includes(variable.ref)) variable.ref.value = term;
+  else if (term.kind === "Var" && vars.includes(term.ref)) term.ref.value = variable;
+  else {
+    variable.ref.value = term;
+    state.trail.push(variable.ref);
+  }
+  return true;
+};
+
+const unifyAux = (
+  state: BlastState,
+  vars: readonly VarRef[],
+  left: BlastTerm,
+  right: BlastTerm,
+): boolean => {
+  const normalLeft = wkNorm(left);
+  const normalRight = wkNorm(right);
+  if (normalLeft.kind === "Var") return updateVar(state, vars, normalLeft, normalRight);
+  if (normalRight.kind === "Var") return updateVar(state, vars, normalRight, normalLeft);
+  if (normalLeft.kind === "Const" && normalRight.kind === "Const")
+    return (
+      normalLeft.name === normalRight.name &&
+      normalLeft.typargs.length === normalRight.typargs.length &&
+      normalLeft.typargs.every((arg, index) =>
+        unifyAux(state, vars, arg, normalRight.typargs[index]),
+      )
+    );
+  if (normalLeft.kind === "Abs" && normalRight.kind === "Abs")
+    return unifyAux(state, vars, normalLeft.body, normalRight.body);
+  if (normalLeft.kind === "App" && normalRight.kind === "App")
+    return (
+      unifyAux(state, vars, normalLeft.fun, normalRight.fun) &&
+      unifyAux(state, vars, normalLeft.arg, normalRight.arg)
+    );
+  return blastAconv(normalLeft, normalRight);
+};
+
 export const unify = (
   state: BlastState,
   vars: readonly VarRef[],
@@ -131,35 +176,7 @@ export const unify = (
   right: BlastTerm,
 ): boolean => {
   const start = state.trail.length;
-  const update = (variable: Extract<BlastTerm, { kind: "Var" }>, term: BlastTerm): boolean => {
-    if (blastAconv(variable, term)) return true;
-    if (varOccur(variable.ref, term)) return false;
-    if (vars.includes(variable.ref)) variable.ref.value = term;
-    else if (term.kind === "Var" && vars.includes(term.ref)) term.ref.value = variable;
-    else {
-      variable.ref.value = term;
-      state.trail.push(variable.ref);
-    }
-    return true;
-  };
-  const unifyAux = (leftTerm: BlastTerm, rightTerm: BlastTerm): boolean => {
-    const normalLeft = wkNorm(leftTerm);
-    const normalRight = wkNorm(rightTerm);
-    if (normalLeft.kind === "Var") return update(normalLeft, normalRight);
-    if (normalRight.kind === "Var") return update(normalRight, normalLeft);
-    if (normalLeft.kind === "Const" && normalRight.kind === "Const")
-      return (
-        normalLeft.name === normalRight.name &&
-        normalLeft.typargs.length === normalRight.typargs.length &&
-        normalLeft.typargs.every((arg, index) => unifyAux(arg, normalRight.typargs[index]))
-      );
-    if (normalLeft.kind === "Abs" && normalRight.kind === "Abs")
-      return unifyAux(normalLeft.body, normalRight.body);
-    if (normalLeft.kind === "App" && normalRight.kind === "App")
-      return unifyAux(normalLeft.fun, normalRight.fun) && unifyAux(normalLeft.arg, normalRight.arg);
-    return blastAconv(normalLeft, normalRight);
-  };
-  if (unifyAux(left, right)) return true;
+  if (unifyAux(state, vars, left, right)) return true;
   clearTo(state, start);
   return false;
 };

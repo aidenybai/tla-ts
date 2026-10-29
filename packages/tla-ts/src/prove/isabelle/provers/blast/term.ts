@@ -158,22 +158,21 @@ export const hasLooseBound0 = (term: BlastTerm, level = 0): boolean => {
   }
 };
 
-export const blastSubstBound = (arg: BlastTerm, body: BlastTerm): BlastTerm => {
-  const subst = (term: BlastTerm, level: number): BlastTerm => {
-    switch (term.kind) {
-      case "Bound":
-        if (term.index < level) return term;
-        return term.index === level ? incrBlastBoundvars(level, arg) : mkBlastBound(term.index - 1);
-      case "Abs":
-        return { kind: "Abs", name: term.name, body: subst(term.body, level + 1) };
-      case "App":
-        return mkBlastApp(subst(term.fun, level), subst(term.arg, level));
-      default:
-        return term;
-    }
-  };
-  return subst(body, 0);
+const substBoundAt = (arg: BlastTerm, level: number, term: BlastTerm): BlastTerm => {
+  switch (term.kind) {
+    case "Bound":
+      if (term.index < level) return term;
+      return term.index === level ? incrBlastBoundvars(level, arg) : mkBlastBound(term.index - 1);
+    case "Abs":
+      return { kind: "Abs", name: term.name, body: substBoundAt(arg, level + 1, term.body) };
+    case "App":
+      return mkBlastApp(substBoundAt(arg, level, term.fun), substBoundAt(arg, level, term.arg));
+    default:
+      return term;
+  }
 };
+
+export const blastSubstBound = (arg: BlastTerm, body: BlastTerm) => substBoundAt(arg, 0, body);
 
 // Normalizes, but not the bodies of abstractions.
 export const norm = (term: BlastTerm): BlastTerm => {
@@ -230,27 +229,26 @@ export const wkNorm = (term: BlastTerm): BlastTerm => {
 };
 
 // Does variable ref occur in term? Dangling bound variables count as occurrences too.
-export const varOccur = (ref: VarRef, term: BlastTerm): boolean => {
-  const occ = (level: number, current: BlastTerm): boolean => {
-    switch (current.kind) {
-      case "Var":
-        return (
-          ref === current.ref || (current.ref.value !== undefined && occ(level, current.ref.value))
-        );
-      case "Skolem":
-        return current.args.some((arg) => occ(level, mkBlastVar(arg)));
-      case "Bound":
-        return level <= current.index;
-      case "Abs":
-        return occ(level + 1, current.body);
-      case "App":
-        return occ(level, current.arg) || occ(level, current.fun);
-      default:
-        return false;
-    }
-  };
-  return occ(0, term);
+const occurs = (ref: VarRef, level: number, term: BlastTerm): boolean => {
+  switch (term.kind) {
+    case "Var":
+      return (
+        ref === term.ref || (term.ref.value !== undefined && occurs(ref, level, term.ref.value))
+      );
+    case "Skolem":
+      return term.args.some((arg) => occurs(ref, level, mkBlastVar(arg)));
+    case "Bound":
+      return level <= term.index;
+    case "Abs":
+      return occurs(ref, level + 1, term.body);
+    case "App":
+      return occurs(ref, level, term.arg) || occurs(ref, level, term.fun);
+    default:
+      return false;
+  }
 };
+
+export const varOccur = (ref: VarRef, term: BlastTerm) => occurs(ref, 0, term);
 
 // An entry of the association lists from schematic variables to prototerms that fromTerm keeps.
 export interface VarEntry {

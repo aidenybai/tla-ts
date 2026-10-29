@@ -141,18 +141,32 @@ const fromRule = (
   rule: Thm,
 ): TableauRule | undefined => {
   const converted = convertRule(state, vars, ruleTerm(state, rule));
-  if (converted === undefined) return undefined;
-  return {
-    ...converted,
-    tactic:
-      (isUpdated, isDup, isRotated) =>
-      (index): Tactic =>
-        thenTac(
-          emtac(state, isUpdated, isDup ? revDupElim(rule) : rule)(index),
-          rotSubgoalsTac(isRotated, converted.prems)(index),
-        ),
-  };
+  return converted === undefined
+    ? undefined
+    : { ...converted, tactic: elimRuleTactic(state, rule, converted.prems) };
 };
+
+const elimRuleTactic =
+  (state: BlastState, rule: Thm, prems: readonly (readonly BlastTerm[])[]) =>
+  (isUpdated: boolean, isDup: boolean, isRotated: boolean) =>
+  (index: number): Tactic =>
+    thenTac(
+      emtac(state, isUpdated, isDup ? revDupElim(rule) : rule)(index),
+      rotSubgoalsTac(isRotated, prems)(index),
+    );
+
+const intrRuleTactic =
+  (state: BlastState, rule: Thm, prems: readonly (readonly BlastTerm[])[]) =>
+  (isUpdated: boolean, isDup: boolean, isRotated: boolean) =>
+  (index: number): Tactic =>
+    thenTac(
+      rmtac(
+        state,
+        isUpdated,
+        isDup ? zeroVarIndexes(rs(rule, state.context.data.classical)) : rule,
+      )(index),
+      rotSubgoalsTac(isRotated, prems)(index),
+    );
 
 // A tableau rule from an introduction rule. Since unsafe rules are delayed, dup is always false
 // for introduction rules.
@@ -168,21 +182,7 @@ const fromIntrRule = (state: BlastState, vars: readonly VarRef[], rule: Thm): Ta
       ...stripBlastImpPrems(trueprop, skolemized),
     ];
   });
-  return {
-    major: mkGoal(concl),
-    prems: converted,
-    tactic:
-      (isUpdated, isDup, isRotated) =>
-      (index): Tactic =>
-        thenTac(
-          rmtac(
-            state,
-            isUpdated,
-            isDup ? zeroVarIndexes(rs(rule, state.context.data.classical)) : rule,
-          )(index),
-          rotSubgoalsTac(isRotated, converted)(index),
-        ),
-  };
+  return { major: mkGoal(concl), prems: converted, tactic: intrRuleTactic(state, rule, converted) };
 };
 
 // Too flexible assertions or goals, such as those of (!!P. ~P) ==> 0 == 1.
