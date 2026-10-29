@@ -37,6 +37,7 @@ interface Job {
 
 interface Result {
   name: string;
+  expected: "unsat" | "unknown";
   wall: Outcome;
   cpu: Outcome;
   wallMilliseconds: number;
@@ -96,6 +97,7 @@ const classify = (job: Job, decision: Decision): Result => {
   };
   return {
     name: job.name,
+    expected: job.expected,
     wall: getOutcome(decision.wallMilliseconds),
     cpu: getOutcome(decision.cpuMilliseconds),
     wallMilliseconds: decision.wallMilliseconds,
@@ -103,10 +105,10 @@ const classify = (job: Job, decision: Decision): Result => {
   };
 };
 
-const report = (result: Result, expected: string) => {
+const report = (result: Result) => {
   if (result.wall === "match" && result.cpu === "match") return;
   console.log(
-    `wall ${result.wall.padEnd(8)} cpu ${result.cpu.padEnd(8)} ${result.name} (Isabelle: ${expected}, ${result.wallMilliseconds} ms wall, ${result.cpuMilliseconds} ms cpu)`,
+    `wall ${result.wall.padEnd(8)} cpu ${result.cpu.padEnd(8)} ${result.name} (Isabelle: ${result.expected}, ${result.wallMilliseconds} ms wall, ${result.cpuMilliseconds} ms cpu)`,
   );
 };
 
@@ -119,15 +121,23 @@ for (const module of modules) {
     if (!("isabelle" in obligation) || obligation.isabelle === undefined) continue;
     const name = `${module.id}/${obligation.id}`;
     const path = join(PROOF_INPUTS_DIRECTORY, module.id, `${obligation.id}.thy`);
+    const expected = obligation.isabelle.verdict;
     const skipped = (outcome: Outcome) =>
-      results.push({ name, wall: outcome, cpu: outcome, wallMilliseconds: 0, cpuMilliseconds: 0 });
+      results.push({
+        name,
+        expected,
+        wall: outcome,
+        cpu: outcome,
+        wallMilliseconds: 0,
+        cpuMilliseconds: 0,
+      });
     if (!existsSync(path)) {
       skipped("missing");
       continue;
     }
     const text = readFileSync(path, "utf8");
     if (getIsabelleDigest(text) !== obligation.isabelle.input) skipped("stale");
-    else jobs.push({ name, text, expected: obligation.isabelle.verdict });
+    else jobs.push({ name, text, expected });
   }
 }
 
@@ -141,7 +151,7 @@ const run = async () => {
       worker = await spawnWorker();
     }
     const result = classify(job, decision);
-    report(result, job.expected);
+    report(result);
     results.push(result);
   }
   await worker.terminate();
@@ -156,10 +166,16 @@ const summarize = (view: "wall" | "cpu") => {
   return counts.get("unsound") ?? 0;
 };
 const unsound = summarize("wall") + summarize("cpu");
-const slowest = results.toSorted((left, right) => right.cpuMilliseconds - left.cpuMilliseconds)[0];
-if (slowest !== undefined)
-  console.log(
-    `\nslowest: ${slowest.name} (${slowest.cpuMilliseconds} ms cpu, ${slowest.wallMilliseconds} ms wall)`,
+// The proofs that come closest to the limit. The theories Isabelle can't prove mostly run out of time.
+console.log("\nslowest proofs:");
+results
+  .filter((result) => result.expected === "unsat")
+  .toSorted((left, right) => right.cpuMilliseconds - left.cpuMilliseconds)
+  .slice(0, 10)
+  .forEach((result) =>
+    console.log(
+      `  ${result.name} (${result.cpuMilliseconds} ms cpu, ${result.wallMilliseconds} ms wall)`,
+    ),
   );
 console.log(`obligations: ${results.length}`);
 if (unsound > 0) process.exitCode = 1;
