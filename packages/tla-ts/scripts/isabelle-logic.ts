@@ -10,8 +10,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { keyOfTerm } from "../src/prove/isabelle/pure/net";
 import { etaContract } from "../src/prove/isabelle/pure/envir";
-import { destEquals, stripAssumsConcl, stripImpConcl, stripImpPrems } from "../src/prove/isabelle/pure/logic";
-import { mkAbs, mkApp, mkBound, mkConst, mkFree, mkTFree, mkTVar, mkType, mkVar } from "../src/prove/isabelle/pure/term";
+import {
+  destEquals,
+  stripAssumsConcl,
+  stripImpConcl,
+  stripImpPrems,
+} from "../src/prove/isabelle/pure/logic";
+import {
+  mkAbs,
+  mkApp,
+  mkBound,
+  mkConst,
+  mkFree,
+  mkTFree,
+  mkTVar,
+  mkType,
+  mkVar,
+} from "../src/prove/isabelle/pure/term";
 import type { Term, Typ } from "../src/prove/isabelle/pure/term";
 
 type RawType = ["T", string, number[]] | ["F", string, string[]] | ["V", string, number, string[]];
@@ -57,18 +72,31 @@ interface RawLogic {
 }
 
 const install = process.argv[2];
-if (install === undefined) throw new Error("Usage: pnpm tsx scripts/isabelle-logic.ts <Isabelle-install>");
+if (install === undefined)
+  throw new Error("Usage: pnpm tsx scripts/isabelle-logic.ts <Isabelle-install>");
 
 const work = mkdtempSync(join(tmpdir(), "isabelle-logic-"));
 copyFileSync(new URL("isabelle/Export.thy", import.meta.url), join(work, "Export.thy"));
 copyFileSync(new URL("isabelle/export.ML", import.meta.url), join(work, "export.ML"));
 const output = join(work, "logic.json");
-const heaps = ["Pure", "TLA+", "Options"].map((heap) => JSON.stringify(join(install, "heaps", heap)));
+const heaps = ["Pure", "TLA+", "Options"].map((heap) =>
+  JSON.stringify(join(install, "heaps", heap)),
+);
 const result = spawnSync(
   join(install, "poly", "poly"),
-  ["--eval", `PolyML.SaveState.loadHierarchy [${heaps.join(", ")}]`, "--eval", `use_thy ${JSON.stringify(join(work, "Export"))}`],
+  [
+    "--eval",
+    `PolyML.SaveState.loadHierarchy [${heaps.join(", ")}]`,
+    "--eval",
+    `use_thy ${JSON.stringify(join(work, "Export"))}`,
+  ],
   {
-    env: { ...process.env, ISABELLE_HOME: install, ML_HOME: join(install, "poly"), ISABELLE_LOGIC_OUT: output },
+    env: {
+      ...process.env,
+      ISABELLE_HOME: install,
+      ML_HOME: join(install, "poly"),
+      ISABELLE_LOGIC_OUT: output,
+    },
     stdio: ["ignore", "inherit", "inherit"],
   },
 );
@@ -87,7 +115,11 @@ const internString = (text: string) => {
 };
 
 const types = raw.types.map((type): number[] =>
-  type[0] === "T" ? [0, internString(type[1]), ...type[2]] : type[0] === "F" ? [1, internString(type[1])] : [2, internString(type[1]), type[2]],
+  type[0] === "T"
+    ? [0, internString(type[1]), ...type[2]]
+    : type[0] === "F"
+      ? [1, internString(type[1])]
+      : [2, internString(type[1]), type[2]],
 );
 
 const terms: number[][] = [];
@@ -117,7 +149,11 @@ const thms = raw.thms.map(internTerm);
 
 const toTyp = (id: number): Typ => {
   const type = raw.types[id];
-  return type[0] === "T" ? mkType(type[1], type[2].map(toTyp)) : type[0] === "F" ? mkTFree(type[1]) : mkTVar(type[1], type[2]);
+  return type[0] === "T"
+    ? mkType(type[1], type[2].map(toTyp))
+    : type[0] === "F"
+      ? mkTFree(type[1])
+      : mkTVar(type[1], type[2]);
 };
 
 const toTerm = (term: RawTerm): Term =>
@@ -144,7 +180,11 @@ const checkKey = (expected: string, term: Term, what: string) => {
 };
 
 for (const [name, thm, key] of raw.simps)
-  checkKey(key, etaContract(destEquals(stripImpConcl(toTerm(raw.thms[thm])))[0]), `simp ${name[0]}`);
+  checkKey(
+    key,
+    etaContract(destEquals(stripImpConcl(toTerm(raw.thms[thm])))[0]),
+    `simp ${name[0]}`,
+  );
 
 const brlKey = (isElim: boolean, thm: number) => {
   const prop = toTerm(raw.thms[thm]);
@@ -177,7 +217,9 @@ const data = {
   ),
   names: raw.names.filter((entry) => raw.consts.some((constant) => constant[0] === entry[1])),
   facts: raw.facts,
-  factNames: raw.factNames.filter((entry) => entry[0] !== entry[1] && raw.facts.some((fact) => fact[0] === entry[1])),
+  factNames: raw.factNames.filter(
+    (entry) => entry[0] !== entry[1] && raw.facts.some((fact) => fact[0] === entry[1]),
+  ),
   simps: raw.simps.map((entry) => entry[1]),
   congs: raw.congs,
   weakCongs: raw.weakCongs,
@@ -198,7 +240,10 @@ const data = {
     dup: items(raw.claset.dup),
     extra: extraItems(raw.claset.extra),
   },
-  contextRules: { bang: extraItems(raw.contextRules.bang), plain: extraItems(raw.contextRules.plain) },
+  contextRules: {
+    bang: extraItems(raw.contextRules.bang),
+    plain: extraItems(raw.contextRules.plain),
+  },
 };
 
 writeFileSync(
