@@ -29,6 +29,7 @@ import {
   type Sequent,
 } from "./obligation-expression";
 import type { ModuleUnit, Mule } from "./obligation-module";
+import { readNewMethod } from "./obligation-pragma";
 import {
   expandChoose,
   expandFcn,
@@ -376,8 +377,14 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         const [integer, fraction] = expression.text.split(".");
         return at({ kind: "Num", integer, fraction }, { location });
       }
-      case "String":
-        return at({ kind: "String", value: expression.value }, { location });
+      case "String": {
+        // tlapm's lexer keeps a string's escapes as written. The location ends at the closing
+        // quote.
+        const written = /"((?:[^"\\]|\\.)*)"$/.exec(
+          (lines[location.endLine - 1] ?? "").slice(0, location.endColumn - 1),
+        );
+        return at({ kind: "String", value: written?.[1] ?? expression.value }, { location });
+      }
       case "Identifier":
         return getName(expression.name, [], location);
       case "Apply": {
@@ -766,24 +773,26 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         location,
       };
     }
-    if (definition.params.length === 0) return { kind: "Operator", name, body, location };
-    return {
-      kind: "Operator",
-      name,
-      body: at(
-        {
-          kind: "Lambda",
-          params: definition.params.map((param) => ({
-            name: getCanonicalName(param.name),
-            shape: param.arity,
-            ...(param.location && { location: getNameLocus(param.name, param.location) }),
-          })),
-          body,
-        },
-        { location },
-      ),
-      location,
-    };
+    const operatorBody =
+      definition.params.length === 0
+        ? body
+        : at(
+            {
+              kind: "Lambda",
+              params: definition.params.map((param) => ({
+                name: getCanonicalName(param.name),
+                shape: param.arity,
+                ...(param.location && { location: getNameLocus(param.name, param.location) }),
+              })),
+              body,
+            },
+            { location },
+          );
+    const end = definition.location.range?.end;
+    const methods = end && readNewMethod(lines, { line: end.line - 1, column: end.column });
+    return methods
+      ? { kind: "Bpragma", name, body: operatorBody, methods, location }
+      : { kind: "Operator", name, body: operatorBody, location };
   };
 
   const convertNewSymbol = (symbol: NewSymbol): Hyp => {

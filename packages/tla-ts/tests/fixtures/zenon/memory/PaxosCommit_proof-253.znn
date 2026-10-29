@@ -1,0 +1,52 @@
+;; obligation #253
+$hyp "v'152" (/\ (/\ (/\ (/\ (TLA.in a_VARIABLEunde_rmStateunde_a
+(TLA.FuncSet a_CONSTANTunde_RMunde_a (TLA.set "working" "prepared" "committed" "aborted")))
+(TLA.in a_VARIABLEunde_aStateunde_a
+(TLA.FuncSet a_CONSTANTunde_RMunde_a (TLA.FuncSet a_CONSTANTunde_Acceptorunde_a (TLA.recordset "mbal" a_CONSTANTunde_Ballotunde_a "bal" (TLA.cup a_CONSTANTunde_Ballotunde_a
+(TLA.set (arith.minus (TLA.fapply TLA.Succ 0)))) "val" (TLA.set "prepared" "aborted" "none")))))
+(TLA.in a_VARIABLEunde_msgsunde_a
+(TLA.SUBSET (TLA.cup (TLA.cup (TLA.cup (TLA.cup (TLA.recordset "type" (TLA.set "phase1a") "ins" a_CONSTANTunde_RMunde_a "bal" (TLA.setminus a_CONSTANTunde_Ballotunde_a
+(TLA.set 0)))
+(TLA.recordset "type" (TLA.set "phase1b") "ins" a_CONSTANTunde_RMunde_a "mbal" a_CONSTANTunde_Ballotunde_a "bal" (TLA.cup a_CONSTANTunde_Ballotunde_a
+(TLA.set (arith.minus (TLA.fapply TLA.Succ 0)))) "val" (TLA.set "prepared" "aborted" "none") "acc" a_CONSTANTunde_Acceptorunde_a))
+(TLA.recordset "type" (TLA.set "phase2a") "ins" a_CONSTANTunde_RMunde_a "bal" a_CONSTANTunde_Ballotunde_a "val" (TLA.set "prepared" "aborted")))
+(TLA.recordset "type" (TLA.set "phase2b") "acc" a_CONSTANTunde_Acceptorunde_a "ins" a_CONSTANTunde_RMunde_a "bal" a_CONSTANTunde_Ballotunde_a "val" (TLA.set "prepared" "aborted")))
+(TLA.recordset "type" (TLA.set "Commit" "Abort"))))))
+(TLA.bAll a_CONSTANTunde_RMunde_a ((a_CONSTANTunde_rmunde_a) (TLA.bAll a_CONSTANTunde_Acceptorunde_a ((a_CONSTANTunde_acunde_a) (<=> (= (TLA.fapply (TLA.fapply (TLA.fapply a_VARIABLEunde_aStateunde_a a_CONSTANTunde_rmunde_a) a_CONSTANTunde_acunde_a) "val")
+"none")
+(= (TLA.fapply (TLA.fapply (TLA.fapply a_VARIABLEunde_aStateunde_a a_CONSTANTunde_rmunde_a) a_CONSTANTunde_acunde_a) "bal")
+(arith.minus (TLA.fapply TLA.Succ 0)))))))))
+(TLA.bAll a_VARIABLEunde_msgsunde_a ((a_CONSTANTunde_munde_a) (=> (/\ (= (TLA.fapply a_CONSTANTunde_munde_a "type")
+"phase1b") (-. (= (TLA.fapply a_CONSTANTunde_munde_a "bal")
+(arith.minus (TLA.fapply TLA.Succ 0)))))
+(TLA.in (TLA.fapply a_CONSTANTunde_munde_a "val")
+(TLA.set "prepared" "aborted"))))))
+(a_CONSTANTunde_IsFiniteSetunde_a a_VARIABLEunde_msgsunde_a))
+$hyp "v'153" (\/ a_ACTIONunde_PCNextunde_a
+(/\ (= a_VARIABLEunde_rmStateunde_hash_primea a_VARIABLEunde_rmStateunde_a)
+(= a_VARIABLEunde_aStateunde_hash_primea a_VARIABLEunde_aStateunde_a)
+(= a_VARIABLEunde_msgsunde_hash_primea
+a_VARIABLEunde_msgsunde_a)))
+$hyp "v'156" (/\ (TLA.subseteq a_CONSTANTunde_Ballotunde_a arith.N) (TLA.in 0
+a_CONSTANTunde_Ballotunde_a) (TLA.subseteq a_CONSTANTunde_Majorityunde_a
+(TLA.SUBSET a_CONSTANTunde_Acceptorunde_a))
+(TLA.bAll a_CONSTANTunde_Majorityunde_a ((a_CONSTANTunde_MS1unde_a) (TLA.bAll a_CONSTANTunde_Majorityunde_a ((a_CONSTANTunde_MS2unde_a) (-. (= (TLA.cap a_CONSTANTunde_MS1unde_a
+a_CONSTANTunde_MS2unde_a)
+TLA.emptyset)))))))
+$hyp "a_CONSTANTunde_bunde_a_in" (TLA.in a_CONSTANTunde_bunde_a (TLA.setminus a_CONSTANTunde_Ballotunde_a
+(TLA.set 0)))
+$hyp "a_CONSTANTunde_rmunde_a_in" (TLA.in a_CONSTANTunde_rmunde_a a_CONSTANTunde_RMunde_a)
+$hyp "a_CONSTANTunde_MSunde_a_in" (TLA.in a_CONSTANTunde_MSunde_a a_CONSTANTunde_Majorityunde_a)
+$hyp "v'178" (a_CONSTANTunde_IsFiniteSetunde_a (TLA.subsetOf a_VARIABLEunde_msgsunde_a ((a_CONSTANTunde_munde_a) (/\ (= (TLA.fapply a_CONSTANTunde_munde_a "type")
+"phase1b") (= (TLA.fapply a_CONSTANTunde_munde_a "ins")
+a_CONSTANTunde_rmunde_a) (= (TLA.fapply a_CONSTANTunde_munde_a "mbal")
+a_CONSTANTunde_bunde_a) (TLA.in (TLA.fapply a_CONSTANTunde_munde_a "acc")
+a_CONSTANTunde_MSunde_a)))))
+$hyp "v'179" (A. ((a_CONSTANTunde_Sunde_a) (=> (a_CONSTANTunde_IsFiniteSetunde_a a_CONSTANTunde_Sunde_a) (A. ((a_CONSTANTunde_Opunde_a) (/\ (a_CONSTANTunde_IsFiniteSetunde_a (TLA.setOfAll a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_xunde_a) (a_CONSTANTunde_Opunde_a a_CONSTANTunde_xunde_a))))
+(arith.le (a_CONSTANTunde_Cardinalityunde_a (TLA.setOfAll a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_xunde_a) (a_CONSTANTunde_Opunde_a a_CONSTANTunde_xunde_a))))
+(a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Sunde_a))))))))
+$goal (a_CONSTANTunde_IsFiniteSetunde_a (TLA.setOfAll (TLA.subsetOf a_VARIABLEunde_msgsunde_a ((a_CONSTANTunde_munde_a) (/\ (= (TLA.fapply a_CONSTANTunde_munde_a "type")
+"phase1b") (= (TLA.fapply a_CONSTANTunde_munde_a "ins")
+a_CONSTANTunde_rmunde_a) (= (TLA.fapply a_CONSTANTunde_munde_a "mbal")
+a_CONSTANTunde_bunde_a) (TLA.in (TLA.fapply a_CONSTANTunde_munde_a "acc")
+a_CONSTANTunde_MSunde_a)))) ((a_CONSTANTunde_munde_a) (TLA.fapply a_CONSTANTunde_munde_a "bal"))))

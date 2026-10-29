@@ -1,0 +1,2 @@
+$hyp "h" (TLA.subseteq (TLA.cup a b) c)
+$goal (TLA.subseteq b c)

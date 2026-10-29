@@ -1,16 +1,19 @@
-// tlapm's Expr.Action.lambdify, which instantiation applies to each definition and theorem. Each
+// A port of tlapm's Expr.Action. Instantiation lambdifies each definition and theorem: each
 // ENABLED and \cdot takes a LAMBDA over the variables it binds, after expanding the definitions
-// in its scope that soundness needs expanded.
+// in its scope that soundness needs expanded. The ExpandENABLED and ExpandCdot frontends then
+// replace each LAMBDA with an existential quantifier.
 
-import { TlaProofError, TlapmBugError } from "./errors";
+import { TlaProofError, TlapmBugError, TlaProverError } from "./errors";
 import type { Anonymizer } from "./obligation-anon";
 import {
   adjoin,
+  adjoinAll,
   applyBuiltin,
   at,
   bumpBy,
   getAtPrefix,
   getErrorNote,
+  getFresh,
   getLocusText,
   getScopeAt,
   mapScoped,
@@ -20,15 +23,41 @@ import {
   substituteExpr,
   type Expr,
   type ObligationWarning,
+  type Param,
   type Scope,
   type Substitution,
 } from "./obligation-expression";
 import { getLevelInfo, LEVEL_NUMBERS } from "./obligation-levels";
 
+// Which of ENABLED and \cdot a pass handles, and whether it may expand the definitions that
+// soundness needs expanded, as the AutoUSE directive allows.
+export interface ActionOptions {
+  isEnabled: boolean;
+  isCdot: boolean;
+  isAutoUse: boolean;
+}
+
 interface FreshNames {
   names: string[];
   depth: number;
 }
+
+type Warn = (warning: ObligationWarning) => void;
+
+const ENABLED_WRAPPER = "EnabledWrapper";
+const CDOT_WRAPPER = "CdotWrapper";
+
+const NESTED_ENABLED =
+  "Nested occurrence of the operator `ENABLED` found in scope of `\\cdot` when expanding `\\cdot`. Using the proof directive `ExpandENABLED` from the module `TLAPS` is expected to avoid this error.For example, writing `BY ExpandENABLED`.";
+
+const NESTED_CDOT =
+  "Nested occurrence of the operator `\\cdot` found in scope of `ENABLED` when expanding `ENABLED`. Using the proof directive `ExpandCdot` from the module `TLAPS` is expected to avoid this error.";
+
+// Util.eprintf ~at:from "%s" printed, then failwith failure, which keeps a backend from running.
+const fail = (onWarning: Warn, from: Expr, printed: string, failure = printed): never => {
+  onWarning(getErrorNote(from.location, printed));
+  throw new TlaProverError(failure);
+};
 
 const getHyp = (scope: Scope | undefined, index: number) => {
   const hyp = getScopeAt(scope, index - 1)?.hyp;
@@ -42,14 +71,20 @@ const isActionOperator = (
   expression.kind === "Internal" &&
   (expression.builtin === "ENABLED" || expression.builtin === "Cdot");
 
+const isWrapper = (expression: Expr) =>
+  expression.kind === "Opaque" &&
+  (expression.name === ENABLED_WRAPPER || expression.name === CDOT_WRAPPER);
+
 const isLambdified = (expression: Expr) =>
   expression.kind === "Apply" &&
   expression.args.length === 1 &&
   expression.args[0].kind === "Lambda" &&
-  (isActionOperator(expression.operator) ||
-    (expression.operator.kind === "Opaque" &&
-      (expression.operator.name === "EnabledWrapper" ||
-        expression.operator.name === "CdotWrapper")));
+  (isActionOperator(expression.operator) || isWrapper(expression.operator));
+
+const isBuiltinApply = (expression: Expr, builtin: "ENABLED" | "Cdot") =>
+  expression.kind === "Apply" &&
+  expression.operator.kind === "Internal" &&
+  expression.operator.builtin === builtin;
 
 const getInitialLevel = (level: number | undefined) =>
   level === undefined ? 2 : Math.min(2, level);
@@ -60,13 +95,14 @@ const getDecrementedLevel = (level: number | undefined) =>
 // auto_expansion_of_defs. ENABLED and the first argument of \cdot need every definition of action
 // level expanded, a prime lowers that bound to 1, and so does the second argument of \cdot.
 const expandDefinitions = (
-  onWarning: (warning: ObligationWarning) => void,
+  options: ActionOptions,
+  onWarning: Warn,
   scope: Scope | undefined,
   expression: Expr,
   level: number | undefined,
 ): Expr => {
   const recurse = (inner: Expr, innerLevel = level) =>
-    expandDefinitions(onWarning, scope, inner, innerLevel);
+    expandDefinitions(options, onWarning, scope, inner, innerLevel);
   if (isLambdified(expression)) return expression;
   if (expression.kind === "Sub") {
     return {
@@ -79,10 +115,29 @@ const expandDefinitions = (
     const builtin = expression.operator.builtin;
     const [first, second] = expression.args;
     if (builtin === "Cdot" && expression.args.length === 2) {
-      return { ...expression, args: [recurse(first, getInitialLevel(level)), recurse(second, 1)] };
+      if (level !== undefined && !options.isCdot) {
+        fail(
+          onWarning,
+          expression,
+          `${NESTED_CDOT}For example, writing \`BY ExpandCdot\`.`,
+          "Expr.Action",
+        );
+      }
+      return {
+        ...expression,
+        args: options.isCdot
+          ? [recurse(first, getInitialLevel(level)), recurse(second, 1)]
+          : [recurse(first), recurse(second)],
+      };
     }
     if (builtin === "ENABLED" && expression.args.length === 1) {
-      return { ...expression, args: [recurse(first, getInitialLevel(level))] };
+      if (level !== undefined && !options.isEnabled) {
+        fail(onWarning, expression, NESTED_ENABLED, "Expr.Action");
+      }
+      return {
+        ...expression,
+        args: [options.isEnabled ? recurse(first, getInitialLevel(level)) : recurse(first)],
+      };
     }
     if ((builtin === "Prime" || builtin === "UNCHANGED") && expression.args.length === 1) {
       return { ...expression, args: [recurse(first, getDecrementedLevel(level))] };
@@ -96,7 +151,7 @@ const expandDefinitions = (
     return mapScoped(
       scope,
       expression,
-      (inner, child) => expandDefinitions(onWarning, inner, child, level),
+      (inner, child) => expandDefinitions(options, onWarning, inner, child, level),
       adjoin,
     );
   }
@@ -131,6 +186,25 @@ const expandDefinitions = (
   if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
     throw new TlapmBugError();
   }
+  if (!options.isAutoUse) {
+    const names =
+      options.isEnabled && options.isCdot
+        ? [
+            "the operators `ENABLED` and `\\cdot`",
+            "the proof directives `ExpandENABLED` and `ExpandCdot`",
+          ]
+        : options.isEnabled
+          ? ["the operator `ENABLED`", "`ExpandENABLED` proof directive"]
+          : ["the operator `\\cdot`", "`ExpandCdot` proof directive"];
+    const body = definition.body.kind === "Lambda" ? definition.body.body : definition.body;
+    const getAt = (from: Expr) =>
+      from.location ? getLocusText(from.location) : "<unknown location>";
+    fail(
+      onWarning,
+      expression,
+      `Hidden definition of operator \`${definition.name}\` needs expansion for soundly expanding ${names[0]} (using rigid quantification).\nThe expansion of ${names[0]} has been activated with the ${names[1]} from the module \`TLAPS\`.\nThe operator \`${definition.name}\` is defined at: \n\t${getAt(body)}\nand the operator \`${definition.name}\` occurs at: \n\t${getAt(expression)}\nUsing the proof directive \`AutoUSE\` from the module \`TLAPS\`, or \`BY DEF ${definition.name}\` is expected to avoid this error.\n`,
+    );
+  }
   onWarning({
     text: `${getAtPrefix(expression.location)}[INFO]: Auto-expanding the definition of operator:  ${definition.name}\n`,
     channel: "stdout",
@@ -145,7 +219,7 @@ const getEquality = (expression: Expr): Expr =>
   applyBuiltin("Eq", [applyBuiltin("Prime", [expression], expression), expression], expression);
 
 // E_tla_norm.rewrite_unch: UNCHANGED <<x, <<y>>>> as x' = x /\ y' = y.
-const rewriteUnchanged = (expression: Expr): Expr => {
+export const rewriteUnchanged = (expression: Expr): Expr => {
   const flatten = (inner: Expr): Expr[] =>
     inner.kind === "Tuple" ? inner.elements.flatMap(flatten) : [inner];
   const items = flatten(expression);
@@ -212,13 +286,14 @@ const getHashtblKeys = (names: string[]) => {
 // into primed. ENABLED A binds the primes of A, and A \cdot B binds those of A and the unprimed
 // variables of B, each as an opaque name such as x#enabled#prime1.
 const bindVariables = (
-  onWarning: (warning: ObligationWarning) => void,
+  options: ActionOptions,
+  onWarning: Warn,
   current: FreshNames | undefined,
   primed: FreshNames | undefined,
   scope: Scope | undefined,
   expression: Expr,
 ): Expr => {
-  const recurse = (inner: Expr) => bindVariables(onWarning, current, primed, scope, inner);
+  const recurse = (inner: Expr) => bindVariables(options, onWarning, current, primed, scope, inner);
   const isInScope = current !== undefined || primed !== undefined;
   const lambdifyOperator = (operator: Expr, args: Expr[]) => {
     const fresh: FreshNames = {
@@ -227,8 +302,8 @@ const bindVariables = (
     };
     const [first, second] = args;
     const bound = [
-      bindVariables(onWarning, current, fresh, scope, first),
-      ...(second ? [bindVariables(onWarning, fresh, primed, scope, second)] : []),
+      bindVariables(options, onWarning, current, fresh, scope, first),
+      ...(second ? [bindVariables(options, onWarning, fresh, primed, scope, second)] : []),
     ];
     const params = fresh.names.length === 0 ? ["r#0"] : getHashtblKeys(fresh.names);
     return at(
@@ -250,13 +325,23 @@ const bindVariables = (
   if (expression.kind === "Apply" && expression.operator.kind === "Internal") {
     const builtin = expression.operator.builtin;
     if (
-      (builtin === "ENABLED" && expression.args.length === 1) ||
-      (builtin === "Cdot" && expression.args.length === 2)
+      (options.isEnabled && builtin === "ENABLED" && expression.args.length === 1) ||
+      (options.isCdot && builtin === "Cdot" && expression.args.length === 2)
     ) {
       return lambdifyOperator(expression.operator, expression.args);
     }
+    if (builtin === "ENABLED" && isInScope)
+      fail(onWarning, expression, NESTED_ENABLED, "Expr.Action");
+    if (builtin === "Cdot" && isInScope) {
+      fail(
+        onWarning,
+        expression,
+        `${NESTED_CDOT} For example, writing \`BY ExpandCdot\`.`,
+        "Expr.Action",
+      );
+    }
     if (builtin === "Prime" && expression.args.length === 1) {
-      const arg = bindVariables(onWarning, primed, undefined, scope, expression.args[0]);
+      const arg = bindVariables(options, onWarning, primed, undefined, scope, expression.args[0]);
       return primed ? arg : { ...expression, args: [arg] };
     }
     if (builtin === "UNCHANGED" && isInScope) return recurse(expandPropositional(expression));
@@ -285,7 +370,7 @@ const bindVariables = (
   return mapScoped(
     scope,
     expression,
-    (inner, child) => bindVariables(onWarning, current, primed, inner, child),
+    (inner, child) => bindVariables(options, onWarning, current, primed, inner, child),
     adjoin,
   );
 };
@@ -323,23 +408,26 @@ const shiftIndices = (substitution: Substitution, expression: Expr): Expr => {
   return mapScoped(substitution, expression, shiftIndices, (current) => bumpBy(1, current));
 };
 
-// normalize_lambda_param_names: the parameters become r#0, r#1, ... and the operator
-// EnabledWrapper or CdotWrapper.
-const renameParams = (expression: Expr): Expr => {
+// normalize_lambda_param_names: the parameters keep their names or become r#0, r#1, ..., and the
+// operator becomes EnabledWrapper or CdotWrapper.
+const renameParams = (isKeepingNames: boolean, expression: Expr): Expr => {
   if (expression.kind === "Apply" && isActionOperator(expression.operator)) {
     const [lambda] = expression.args;
     if (expression.args.length !== 1 || lambda.kind !== "Lambda" || lambda.params[0].name === "_") {
       throw new TlapmBugError();
     }
-    const name = expression.operator.builtin === "Cdot" ? "CdotWrapper" : "EnabledWrapper";
+    const name = expression.operator.builtin === "Cdot" ? CDOT_WRAPPER : ENABLED_WRAPPER;
     return {
       kind: "Apply",
       operator: at({ kind: "Opaque", name }, expression.operator),
       args: [
         {
           kind: "Lambda",
-          params: lambda.params.map((_param, index) => ({ name: `r#${index}`, shape: 0 })),
-          body: renameParams(lambda.body),
+          params: lambda.params.map((param, index) => ({
+            name: isKeepingNames ? param.name : `r#${index}`,
+            shape: 0,
+          })),
+          body: renameParams(isKeepingNames, lambda.body),
         },
       ],
     };
@@ -347,7 +435,7 @@ const renameParams = (expression: Expr): Expr => {
   return mapScoped(
     undefined,
     expression,
-    (_state, child) => renameParams(child),
+    (_state, child) => renameParams(isKeepingNames, child),
     () => undefined,
   );
 };
@@ -369,16 +457,149 @@ const checkArity = (expression: Expr): Expr => {
   );
 };
 
-export const lambdify = (
+// lambdify_action_operators#expand: binding, shifting, anonymizing the bound names, and renaming.
+const lambdifyOperators = (
   anonymizer: Anonymizer,
-  onWarning: (warning: ObligationWarning) => void,
+  onWarning: Warn,
   scope: Scope | undefined,
   expression: Expr,
+  options: ActionOptions,
+  isKeepingNames: boolean,
 ) => {
-  const expanded = expandDefinitions(onWarning, scope, expression, undefined);
-  const bound = shiftIndices(
-    shift(0),
-    bindVariables(onWarning, undefined, undefined, scope, expanded),
+  const bound = bindVariables(options, onWarning, undefined, undefined, scope, expression);
+  return renameParams(isKeepingNames, anonymizer.expr(scope, shiftIndices(shift(0), bound)));
+};
+
+const LAMBDIFY_ALL: ActionOptions = { isEnabled: true, isCdot: true, isAutoUse: true };
+
+export const lambdify = (
+  anonymizer: Anonymizer,
+  onWarning: Warn,
+  scope: Scope | undefined,
+  expression: Expr,
+  options = LAMBDIFY_ALL,
+) => {
+  const expanded = expandDefinitions(options, onWarning, scope, expression, undefined);
+  return checkArity(lambdifyOperators(anonymizer, onWarning, scope, expanded, options, false));
+};
+
+// replace_action_operators_with_quantifiers: each lambdified ENABLED or \cdot that the frontend
+// expands becomes \E over the parameters of its LAMBDA.
+const replaceWithQuantifiers = (
+  options: ActionOptions,
+  onWarning: Warn,
+  scope: Scope | undefined,
+  expression: Expr,
+  isInScope: boolean,
+): Expr => {
+  const quantify = (params: Param[], body: Expr): Expr => ({
+    kind: "Quant",
+    quantifier: "Exists",
+    bounds: params.map((param) => ({
+      name: param.name,
+      level: "Constant",
+      domain: { kind: "NoDomain" },
+    })),
+    body: replaceWithQuantifiers(
+      options,
+      onWarning,
+      adjoinAll(
+        scope,
+        params.map((param) => getFresh(param.name, "Unknown", param.shape)),
+      ),
+      body,
+      true,
+    ),
+  });
+  const isExpanded = (builtin: "ENABLED" | "Cdot") =>
+    builtin === "ENABLED" ? options.isEnabled : options.isCdot;
+  if (expression.kind === "Apply" && expression.args.length === 1) {
+    const operator = expression.operator;
+    const [lambda] = expression.args;
+    if (lambda.kind === "Lambda") {
+      if (
+        operator.kind === "Opaque" &&
+        ((options.isEnabled && operator.name === ENABLED_WRAPPER) ||
+          (options.isCdot && operator.name === CDOT_WRAPPER))
+      ) {
+        return quantify(lambda.params, lambda.body);
+      }
+      if (operator.kind === "Ix" && (options.isEnabled || options.isCdot)) {
+        const hyp = getHyp(scope, operator.index);
+        const isWrapperDefinition =
+          hyp.kind === "Defn" &&
+          hyp.definition.kind === "Operator" &&
+          (hyp.definition.name === ENABLED_WRAPPER || hyp.definition.name === CDOT_WRAPPER);
+        if (isWrapperDefinition) return quantify(lambda.params, lambda.body);
+      }
+      if (isActionOperator(operator) && isExpanded(operator.builtin)) {
+        return quantify(lambda.params, lambda.body);
+      }
+    }
+    if (isActionOperator(operator) && isExpanded(operator.builtin)) {
+      return replaceWithQuantifiers(options, onWarning, scope, lambda, true);
+    }
+  }
+  if (isBuiltinApply(expression, "ENABLED") && isInScope) {
+    fail(onWarning, expression, NESTED_ENABLED, "Expr.Action");
+  }
+  if (isBuiltinApply(expression, "Cdot") && isInScope) {
+    fail(
+      onWarning,
+      expression,
+      `${NESTED_CDOT} For example, writing \`BY ExpandCdot\`.`,
+      "Expr.Action",
+    );
+  }
+  return mapScoped(
+    scope,
+    expression,
+    (inner, child) => replaceWithQuantifiers(options, onWarning, inner, child, isInScope),
+    adjoin,
   );
-  return checkArity(renameParams(anonymizer.expr(scope, bound)));
+};
+
+// commute_exists_disjunction: \E x : A \/ B as (\E x : A) \/ (\E x : B), everywhere.
+const commuteExistsDisjunction = (expression: Expr): Expr => {
+  if (expression.kind === "Quant" && expression.quantifier === "Exists") {
+    const body = expression.body;
+    if (body.kind === "List" && body.bullet === "Or") {
+      return commuteExistsDisjunction({
+        ...body,
+        items: body.items.map((item) => ({ ...expression, body: item })),
+      });
+    }
+    if (
+      body.kind === "Apply" &&
+      body.operator.kind === "Internal" &&
+      body.operator.builtin === "Disj"
+    ) {
+      if (body.args.length !== 2) throw new TlapmBugError();
+      return commuteExistsDisjunction({
+        ...body,
+        args: body.args.map((arg) => ({ ...expression, body: arg })),
+      });
+    }
+  }
+  return mapScoped(
+    undefined,
+    expression,
+    (_state, child) => commuteExistsDisjunction(child),
+    () => undefined,
+  );
+};
+
+// expand_action_operators, the ExpandENABLED and ExpandCdot frontends.
+export const expandActionOperators = (
+  anonymizer: Anonymizer,
+  onWarning: Warn,
+  scope: Scope | undefined,
+  expression: Expr,
+  options: ActionOptions,
+) => {
+  const expanded = expandDefinitions(options, onWarning, scope, expression, undefined);
+  const lambdified = lambdifyOperators(anonymizer, onWarning, scope, expanded, options, true);
+  return commuteExistsDisjunction(
+    replaceWithQuantifiers(options, onWarning, scope, lambdified, false),
+  );
 };

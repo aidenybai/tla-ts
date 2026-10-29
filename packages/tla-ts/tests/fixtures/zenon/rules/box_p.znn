@@ -1,0 +1,2 @@
+$hyp "h" (TLA.box p)
+$goal p

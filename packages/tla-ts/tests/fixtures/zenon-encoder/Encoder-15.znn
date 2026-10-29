@@ -1,0 +1,5 @@
+;; obligation #15
+$goal (= (TLA.cup (TLA.setOfAll a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_qunde_a) (a_CONSTANTunde_Opunde_a a_CONSTANTunde_qunde_a)))
+(TLA.subsetOf a_CONSTANTunde_Tunde_a ((a_CONSTANTunde_qunde_a) (-. (= a_CONSTANTunde_qunde_a
+a_CONSTANTunde_cunde_a)))))
+(TLA.fapply (TLA.Fcn a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_qunde_a) a_CONSTANTunde_qunde_a)) a_CONSTANTunde_cunde_a))

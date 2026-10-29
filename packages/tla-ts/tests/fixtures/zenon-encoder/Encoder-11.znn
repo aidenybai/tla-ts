@@ -1,0 +1,4 @@
+;; obligation #11
+$goal (TLA.CASE (= a_CONSTANTunde_cunde_a
+(TLA.fapply TLA.Succ 0)) T. (-. (= a_CONSTANTunde_cunde_a
+(TLA.fapply TLA.Succ 0))))

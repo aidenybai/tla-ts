@@ -1,0 +1,53 @@
+;; obligation #116
+$hyp "v'41" (/\ (TLA.in a_VARIABLEunde_numunde_a
+(TLA.FuncSet a_CONSTANTunde_Punde_a arith.N))
+(TLA.in a_VARIABLEunde_flagunde_a
+(TLA.FuncSet a_CONSTANTunde_Punde_a (TLA.set T. F.)))
+(TLA.in a_VARIABLEunde_unreadunde_a
+(TLA.FuncSet a_CONSTANTunde_Punde_a (TLA.SUBSET a_CONSTANTunde_Punde_a)))
+(TLA.bAll a_CONSTANTunde_Punde_a ((a_CONSTANTunde_iunde_a) (=> (TLA.in (TLA.fapply a_VARIABLEunde_pcunde_a a_CONSTANTunde_iunde_a)
+(TLA.set "p2" "p5" "p6")) (-. (TLA.in a_CONSTANTunde_iunde_a
+(TLA.fapply a_VARIABLEunde_unreadunde_a a_CONSTANTunde_iunde_a))))))
+(TLA.in a_VARIABLEunde_maxunde_a
+(TLA.FuncSet a_CONSTANTunde_Punde_a arith.N))
+(TLA.in a_VARIABLEunde_nxtunde_a
+(TLA.FuncSet a_CONSTANTunde_Punde_a a_CONSTANTunde_Punde_a))
+(TLA.bAll a_CONSTANTunde_Punde_a ((a_CONSTANTunde_iunde_a) (=> (= (TLA.fapply a_VARIABLEunde_pcunde_a a_CONSTANTunde_iunde_a)
+"p6") (-. (= (TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_iunde_a)
+a_CONSTANTunde_iunde_a))))) (TLA.in a_VARIABLEunde_pcunde_a
+(TLA.FuncSet a_CONSTANTunde_Punde_a (TLA.set "p1" "p2" "p3" "p4" "p5" "p6" "p7" "p8"))))
+$hyp "v'42" a_ACTIONunde_Nextunde_a
+$hyp "a_CONSTANTunde_selfunde_a_in" (TLA.in a_CONSTANTunde_selfunde_a a_CONSTANTunde_Punde_a)
+$hyp "v'44" (a_ACTIONunde_punde_a a_CONSTANTunde_selfunde_a)
+$hyp "v'56" (= (TLA.fapply a_VARIABLEunde_pcunde_a a_CONSTANTunde_selfunde_a)
+"p7")
+$hyp "v'57" (= a_VARIABLEunde_pcunde_hash_primea
+(TLA.except a_VARIABLEunde_pcunde_a a_CONSTANTunde_selfunde_a "p8"))
+$hyp "v'58" (= a_VARIABLEunde_numunde_hash_primea
+a_VARIABLEunde_numunde_a)
+$hyp "v'59" (= a_VARIABLEunde_flagunde_hash_primea
+a_VARIABLEunde_flagunde_a)
+$hyp "v'60" (= a_VARIABLEunde_unreadunde_hash_primea
+a_VARIABLEunde_unreadunde_a)
+$hyp "v'61" (= a_VARIABLEunde_maxunde_hash_primea
+a_VARIABLEunde_maxunde_a)
+$hyp "v'62" (= a_VARIABLEunde_nxtunde_hash_primea
+a_VARIABLEunde_nxtunde_a)
+$goal (/\ (TLA.in a_VARIABLEunde_numunde_hash_primea
+(TLA.FuncSet a_CONSTANTunde_Punde_a arith.N))
+(TLA.in a_VARIABLEunde_flagunde_hash_primea
+(TLA.FuncSet a_CONSTANTunde_Punde_a (TLA.set T. F.)))
+(TLA.in a_VARIABLEunde_unreadunde_hash_primea
+(TLA.FuncSet a_CONSTANTunde_Punde_a (TLA.SUBSET a_CONSTANTunde_Punde_a)))
+(TLA.bAll a_CONSTANTunde_Punde_a ((a_CONSTANTunde_iunde_a) (=> (TLA.in (TLA.fapply a_VARIABLEunde_pcunde_hash_primea a_CONSTANTunde_iunde_a)
+(TLA.set "p2" "p5" "p6")) (-. (TLA.in a_CONSTANTunde_iunde_a
+(TLA.fapply a_VARIABLEunde_unreadunde_hash_primea a_CONSTANTunde_iunde_a))))))
+(TLA.in a_VARIABLEunde_maxunde_hash_primea
+(TLA.FuncSet a_CONSTANTunde_Punde_a arith.N))
+(TLA.in a_VARIABLEunde_nxtunde_hash_primea
+(TLA.FuncSet a_CONSTANTunde_Punde_a a_CONSTANTunde_Punde_a))
+(TLA.bAll a_CONSTANTunde_Punde_a ((a_CONSTANTunde_iunde_a) (=> (= (TLA.fapply a_VARIABLEunde_pcunde_hash_primea a_CONSTANTunde_iunde_a)
+"p6")
+(-. (= (TLA.fapply a_VARIABLEunde_nxtunde_hash_primea a_CONSTANTunde_iunde_a)
+a_CONSTANTunde_iunde_a))))) (TLA.in a_VARIABLEunde_pcunde_hash_primea
+(TLA.FuncSet a_CONSTANTunde_Punde_a (TLA.set "p1" "p2" "p3" "p4" "p5" "p6" "p7" "p8"))))

@@ -1,0 +1,7 @@
+;; obligation #19
+$hyp "v'26" (= a_VARIABLEunde_xunde_a
+0)
+$goal (E. ((a_CONSTANTunde_yhash_enabledhash_prime1unde_a) (E. ((a_CONSTANTunde_xhash_enabledhash_prime1unde_a) (/\ (= a_CONSTANTunde_xhash_enabledhash_prime1unde_a
+(arith.add a_VARIABLEunde_xunde_a (TLA.fapply TLA.Succ 0)))
+(= a_CONSTANTunde_yhash_enabledhash_prime1unde_a
+a_VARIABLEunde_yunde_a))))))

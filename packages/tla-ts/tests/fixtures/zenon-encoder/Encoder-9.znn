@@ -1,0 +1,4 @@
+;; obligation #9
+$goal (= (TLA.fapply (TLA.except (TLA.except a_CONSTANTunde_runde_a a_CONSTANTunde_iunde_a (arith.add (TLA.fapply a_CONSTANTunde_runde_a a_CONSTANTunde_iunde_a)
+(TLA.fapply TLA.Succ 0))) "g" (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0)))) "g")
+(TLA.fapply TLA.Succ (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0))))

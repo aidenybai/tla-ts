@@ -71,6 +71,7 @@
     "conformance:smt-encode": "tsx scripts/smt-encode-conformance.ts",
     "conformance:prove": "tsx scripts/prove-conformance.ts",
     "conformance:tlapm": "tsx scripts/tlapm-conformance.ts",
+    "conformance:zenon": "tsx scripts/zenon-conformance.ts",
     "publint": "publint",
     "test": "vp test",
     "typecheck": "tsc --noEmit"

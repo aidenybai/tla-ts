@@ -1,0 +1,4 @@
+;; obligation #643
+$hyp "v'623" a_CONSTANTunde_RcdSetIsFcnSetunde_a
+$goal (= (a_CONSTANTunde_Fingerprintunde_a (TLA.recordset "n1" (TLA.set "a")))
+(a_CONSTANTunde_Fingerprintunde_a (TLA.FuncSet (TLA.set "n1") (TLA.set "a"))))

@@ -1,0 +1,24 @@
+;; obligation #304
+$hyp "a_CONSTANTunde_qunde_a_in" (TLA.in a_CONSTANTunde_qunde_a a_CONSTANTunde_Punde_a)
+$hyp "v'180" a_STATEunde_Invunde_a
+$hyp "v'181" (a_STATEunde_Eatingunde_a a_CONSTANTunde_qunde_a)
+$hyp "v'189" (TLA.in a_VARIABLEunde_philosophersunde_a
+(TLA.FuncSet a_CONSTANTunde_Punde_a (TLA.SUBSET a_CONSTANTunde_Punde_a)))
+$hyp "v'190" (= (TLA.fapply a_VARIABLEunde_philosophersunde_a a_CONSTANTunde_qunde_a)
+(TLA.set (a_CONSTANTunde_LeftForkunde_a a_CONSTANTunde_qunde_a) (a_CONSTANTunde_RightForkunde_a a_CONSTANTunde_qunde_a)))
+$hyp "v'191" (-. (= (TLA.tuple (TLA.except a_VARIABLEunde_philosophersunde_a a_CONSTANTunde_qunde_a TLA.emptyset)
+(TLA.cup a_VARIABLEunde_forksunde_a
+(TLA.set (a_CONSTANTunde_LeftForkunde_a a_CONSTANTunde_qunde_a) (a_CONSTANTunde_RightForkunde_a a_CONSTANTunde_qunde_a))))
+(TLA.tuple a_VARIABLEunde_philosophersunde_a
+a_VARIABLEunde_forksunde_a)))
+$goal (E. ((a_CONSTANTunde_philosophershash_enabledhash_prime1unde_a) (E. ((a_CONSTANTunde_forkshash_enabledhash_prime1unde_a) (/\ (/\ (= (TLA.fapply a_VARIABLEunde_philosophersunde_a a_CONSTANTunde_qunde_a)
+(TLA.set (a_CONSTANTunde_LeftForkunde_a a_CONSTANTunde_qunde_a) (a_CONSTANTunde_RightForkunde_a a_CONSTANTunde_qunde_a)))
+(= a_CONSTANTunde_forkshash_enabledhash_prime1unde_a
+(TLA.cup a_VARIABLEunde_forksunde_a
+(TLA.set (a_CONSTANTunde_LeftForkunde_a a_CONSTANTunde_qunde_a) (a_CONSTANTunde_RightForkunde_a a_CONSTANTunde_qunde_a))))
+(= a_CONSTANTunde_philosophershash_enabledhash_prime1unde_a
+(TLA.except a_VARIABLEunde_philosophersunde_a a_CONSTANTunde_qunde_a TLA.emptyset)))
+(-. (/\ (= a_CONSTANTunde_philosophershash_enabledhash_prime1unde_a
+a_VARIABLEunde_philosophersunde_a)
+(= a_CONSTANTunde_forkshash_enabledhash_prime1unde_a
+a_VARIABLEunde_forksunde_a))))))))

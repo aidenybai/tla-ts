@@ -203,6 +203,16 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
     }
     case "Apply": {
       const operator = expression.operator;
+      // The action frontend commutes a prime onto an operator, and tlapm keeps the level that
+      // the application had.
+      if (
+        operator.kind === "Apply" &&
+        operator.operator.kind === "Internal" &&
+        operator.operator.builtin === "Prime" &&
+        operator.args.length === 1
+      ) {
+        return recurse({ ...expression, operator: operator.args[0] });
+      }
       if (operator.kind === "Opaque") {
         return applyOperator(getInfo(0, expression.args.length), expression.args.map(recurse));
       }

@@ -1,0 +1,6 @@
+;; obligation #630
+$hyp "v'620" a_CONSTANTunde_TupEmptyFcnSetSymunde_a
+$hyp "v'621" (= (TLA.prod (TLA.set "ref") TLA.emptyset)
+TLA.emptyset)
+$goal (= (a_CONSTANTunde_Fingerprintunde_a (TLA.prod (TLA.FuncSet arith.N TLA.emptyset) (TLA.set "d1")))
+(a_CONSTANTunde_Fingerprintunde_a TLA.emptyset))

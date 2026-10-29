@@ -1,0 +1,7 @@
+;; obligation #3
+$hyp "a_CONSTANTunde_aunde_a_in" (TLA.in a_CONSTANTunde_aunde_a a_CONSTANTunde_Sunde_a)
+$hyp "a_CONSTANTunde_bunde_a_in" (TLA.in a_CONSTANTunde_bunde_a a_CONSTANTunde_Sunde_a)
+$hyp "v'22" (= a_CONSTANTunde_aunde_a
+a_CONSTANTunde_bunde_a)
+$goal (= a_CONSTANTunde_bunde_a
+a_CONSTANTunde_aunde_a)
