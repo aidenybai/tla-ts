@@ -75,14 +75,15 @@ export class Goal {
   }
 
   // update: the first conjunct replaces the formula and the others are added at the end. When the
-  // first conjunct is false, the whole formula is added instead.
+  // first conjunct is false, Z3 adds the whole formula (goal.cpp:312), and this adds false, so the
+  // goal becomes inconsistent.
   update(index: number, form: number) {
     const manager = this.manager;
     if (this.isInconsistent) return;
     manager.incRef(form);
     const first = this.quickProcess(form, true);
     if (!this.isInconsistent) {
-      if (manager.isFalse(first)) this.pushBack(form);
+      if (manager.isFalse(first)) this.pushBack(first);
       else this.forms.set(index, first);
     }
     manager.decRef(first);
