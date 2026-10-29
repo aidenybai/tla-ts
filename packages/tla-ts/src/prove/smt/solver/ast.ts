@@ -185,23 +185,29 @@ export class AstManager {
     );
   }
 
-  private getBuiltinHash(op: number, args: number[], range: number) {
+  // The name, Z3 decl kind and domain of the Z3 declaration of a builtin application.
+  getBuiltinSignature(op: number, args: number[]) {
     const builtin = Z3_BUILTINS.get(op);
     if (builtin === undefined) throw new Error(`the operator ${op} has no Z3 declaration`);
     const argSort = op === OP_ITE ? this.sorts[args[1]] : this.sorts[args[0]];
     const arity = builtin[2] === -1 ? args.length : builtin[2];
-    const key = `${op}:${arity}:${argSort}:${range}`;
-    const existing = this.builtinHashes.get(key);
-    if (existing !== undefined) return existing;
     const domain = Array.from({ length: arity }, (_, index) =>
       op === OP_ITE && index === 0 ? SORT_BOOL : argSort,
     );
+    return { name: builtin[0], kind: builtin[1], domain };
+  }
+
+  private getBuiltinHash(op: number, args: number[], range: number) {
+    const signature = this.getBuiltinSignature(op, args);
+    const key = `${op}:${signature.domain.join(",")}:${range}`;
+    const existing = this.builtinHashes.get(key);
+    if (existing !== undefined) return existing;
     const family = op < OP_NUM ? Z3_BASIC_FAMILY : Z3_ARITH_FAMILY;
     const hash = this.getFuncDeclHash(
-      builtin[0],
-      domain,
+      signature.name,
+      signature.domain,
       range,
-      getInfoHash(family, builtin[1], []),
+      getInfoHash(family, signature.kind, []),
     );
     this.builtinHashes.set(key, hash);
     return hash;

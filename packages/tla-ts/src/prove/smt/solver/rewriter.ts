@@ -2,6 +2,7 @@
 // der.cpp), MIT license, see z3-license.txt. Only the rewrites that tlapm's encoding
 // exercises are ported.
 import { ArithRewriter, ArithRewriterOptions } from "./arith-rewriter";
+import { isAstLess } from "./ast-lt";
 import {
   AstManager,
   KIND_APP,
@@ -383,21 +384,36 @@ export class Rewriter {
     return manager.mkNot(arg);
   }
 
-  // bool_rewriter::mk_nflat_or_core: flattens, drops false and duplicates, and detects true or a
-  // complementary pair.
+  // bool_rewriter::mk_flat_or_core and mk_nflat_or_core: flattens, drops false and duplicates, and
+  // detects true or a complementary pair. With sort_disjunctions, a disjunction that changed or is
+  // out of ast_lt's order is stably sorted by id.
   mkOr(args: number[]): number {
     const manager = this.manager;
     const literals = new FlatLiterals(manager);
+    let isChanged = false;
+    let numCandidates = 0;
     const add = (arg: number): boolean => {
       if (manager.getOp(arg) === OP_OR) {
+        isChanged = true;
         for (const innerArg of manager.args[arg]) if (add(innerArg)) return true;
         return false;
       }
       if (manager.isTrue(arg)) return true;
-      return !manager.isFalse(arg) && literals.add(arg);
+      if (manager.isFalse(arg)) {
+        isChanged = true;
+        return false;
+      }
+      numCandidates++;
+      return literals.add(arg);
     };
     for (const arg of args) if (add(arg)) return manager.trueExpr;
-    return manager.mkOr(literals.list);
+    const result = literals.list;
+    const isOutOfOrder = result.some(
+      (arg, index) => index > 0 && isAstLess(manager, arg, result[index - 1]),
+    );
+    if (isChanged || numCandidates !== result.length || isOutOfOrder)
+      result.sort((first, second) => first - second);
+    return manager.mkOr(result);
   }
 
   mkAnd(args: number[]): number {
