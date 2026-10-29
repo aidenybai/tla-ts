@@ -55,12 +55,16 @@ export const getTupleNodes = (literal: Literal): Item[] | undefined => {
   const formula = literal.formula;
   const isNegated = literal.isNegated;
   const atom = literal.atom;
-  const left = literal.left;
-  const right = literal.right;
-  const isEquality = literal.isEquality;
-  const isMembership = literal.isMembership;
+  const relation = literal.relation;
   const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
     makeExtensionNode(literal, priority, rule, branches);
+  if (isNegated && isApp(atom, "TLA.isASeq", 1) && isApp(atom.args[0], "TLA.tuple"))
+    return node("prop", makeRule("tuple_notisaseq", [formula]), []);
+  if (relation === undefined) return undefined;
+  const left = relation.args[0];
+  const right = relation.args[1];
+  const isEquality = relation.symbol === "=";
+  const isMembership = relation.symbol === "TLA.in";
   if (!isNegated && isEquality && isApp(left, "TLA.tuple") && isApp(right, "TLA.tuple")) {
     if (left.args.length !== right.args.length)
       return node("prop", makeRule("tuple_eq_mismatch", [formula, formula]), []);
@@ -110,8 +114,6 @@ export const getTupleNodes = (literal: Literal): Item[] | undefined => {
       getBranches(formulas),
     );
   }
-  if (isNegated && isApp(atom, "TLA.isASeq", 1) && isApp(left, "TLA.tuple"))
-    return node("prop", makeRule("tuple_notisaseq", [formula]), []);
   return undefined;
 };
 
@@ -120,12 +122,16 @@ export const getRecordNodes = (literal: Literal): Item[] | undefined => {
   const formula = literal.formula;
   const isNegated = literal.isNegated;
   const atom = literal.atom;
-  const left = literal.left;
-  const right = literal.right;
-  const isEquality = literal.isEquality;
-  const isMembership = literal.isMembership;
+  const relation = literal.relation;
   const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
     makeExtensionNode(literal, priority, rule, branches);
+  if (isNegated && isApp(atom, "TLA.isAFcn", 1) && isApp(atom.args[0], "TLA.record"))
+    return node("prop", makeRule("record_notisafcn", [formula]), []);
+  if (relation === undefined) return undefined;
+  const left = relation.args[0];
+  const right = relation.args[1];
+  const isEquality = relation.symbol === "=";
+  const isMembership = relation.symbol === "TLA.in";
   if (isEquality && isApp(left, "TLA.record") && isApp(right, "TLA.record")) {
     const leftFields = sortPairs(getPairs(left.args));
     const rightFields = sortPairs(getPairs(right.args));
@@ -215,7 +221,5 @@ export const getRecordNodes = (literal: Literal): Item[] | undefined => {
       getBranches(formulas),
     );
   }
-  if (isNegated && isApp(atom, "TLA.isAFcn", 1) && isApp(left, "TLA.record"))
-    return node("prop", makeRule("record_notisafcn", [formula]), []);
   return undefined;
 };

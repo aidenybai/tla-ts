@@ -4,7 +4,7 @@
 // nodes it makes.
 
 import { TlaZenonError } from "../../../errors";
-import { isApp, type Expr, type Expressions } from "../expr";
+import { isApp, isRelation, type Expr, type Expressions, type RelationExpr } from "../expr";
 import type { Index } from "../index-table";
 import type { Node, Priority } from "../node";
 import { makeRule, type Rule } from "../proof";
@@ -84,7 +84,7 @@ export const domain = (exprs: Expressions, fcn: Expr) => exprs.eapp("TLA.DOMAIN"
 export const getBranches = (formulas: Expr[]) => formulas.map((formula) => [formula]);
 
 export const makeNatural = (exprs: Expressions, count: number) => {
-  let result = exprs.evar("0");
+  let result: Expr = exprs.evar("0");
   for (let index = 0; index < count; index++)
     result = fapply(exprs, exprs.evar("TLA.Succ"), result);
   return result;
@@ -107,33 +107,26 @@ export interface TlaContext {
   exprs: Expressions;
 }
 
-// A formula that the propositional rules look at: a literal, its atom and the atom's first two
-// arguments.
+// A formula that the propositional rules look at: a literal, its atom and, when the atom relates
+// two terms, the atom as a relation.
 export interface Literal {
   context: TlaContext;
   formula: Expr;
   goalness: number;
   isNegated: boolean;
   atom: Expr;
-  left: Expr;
-  right: Expr;
-  isEquality: boolean;
-  isMembership: boolean;
+  relation: RelationExpr | undefined;
 }
 
 export const getLiteral = (context: TlaContext, formula: Expr, goalness: number): Literal => {
-  const isNegated = formula.kind === "not";
-  const atom = isNegated ? formula.args[0] : formula;
+  const atom = formula.kind === "not" ? formula.args[0] : formula;
   return {
     context,
     formula,
     goalness,
-    isNegated,
+    isNegated: formula.kind === "not",
     atom,
-    left: atom.args[0],
-    right: atom.args[1],
-    isEquality: isApp(atom, "=", 2),
-    isMembership: isApp(atom, "TLA.in", 2),
+    relation: isRelation(atom) ? atom : undefined,
   };
 };
 

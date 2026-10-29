@@ -4,7 +4,16 @@
 // formula used as a term, or replacing the subterm with an equal one from the branch.
 
 import { TlaZenonError } from "../../../errors";
-import { FALSE, isApp, TRUE, type Expr, type Expressions } from "../expr";
+import {
+  FALSE,
+  isApp,
+  isRelation,
+  TRUE,
+  type BinderExpr,
+  type Expr,
+  type Expressions,
+  type VarExpr,
+} from "../expr";
 import type { Index } from "../index-table";
 import type { Node } from "../node";
 import { makeRule, type Rule } from "../proof";
@@ -81,7 +90,7 @@ const SET_HEADS = [
 const getRewrites = (
   context: TlaContext,
   isInTerm: boolean,
-  hole: Expr,
+  hole: VarExpr,
   frame: Expr,
   term: Expr,
   make: MakeRewrite,
@@ -275,22 +284,22 @@ const getRewrites = (
     return makeHoleRewrites("TLA.DOMAIN", ["TLA.Fcn", "TLA.except", "TLA.record"], fcn);
   }
   if (isInTerm) {
-    const first = term.args[0];
-    const second = term.args[1];
     if (term.kind === "not")
-      return makeBoolCase((prefix) => makeRule("boolcase_not", [...prefix, first]));
+      return makeBoolCase((prefix) => makeRule("boolcase_not", [...prefix, term.args[0]]));
     if (term.kind === "and")
-      return makeBoolCase((prefix) => makeRule("boolcase_and", [...prefix, first, second]));
+      return makeBoolCase((prefix) => makeRule("boolcase_and", [...prefix, ...term.args]));
     if (term.kind === "or")
-      return makeBoolCase((prefix) => makeRule("boolcase_or", [...prefix, first, second]));
+      return makeBoolCase((prefix) => makeRule("boolcase_or", [...prefix, ...term.args]));
     if (term.kind === "imply")
-      return makeBoolCase((prefix) => makeRule("boolcase_imply", [...prefix, first, second]));
+      return makeBoolCase((prefix) => makeRule("boolcase_imply", [...prefix, ...term.args]));
     if (term.kind === "equiv")
-      return makeBoolCase((prefix) => makeRule("boolcase_equiv", [...prefix, first, second]));
-    if (isApp(term, "=", 2))
-      return makeBoolCase((prefix) => makeRule("boolcase_equal", [...prefix, first, second]));
+      return makeBoolCase((prefix) => makeRule("boolcase_equiv", [...prefix, ...term.args]));
+    if (isRelation(term) && term.symbol === "=")
+      return makeBoolCase((prefix) =>
+        makeRule("boolcase_equal", [...prefix, term.args[0], term.args[1]]),
+      );
     if (term.kind === "all" || term.kind === "ex") {
-      const predicate = exprs.elam(first, term.symbol, second);
+      const predicate = exprs.elam(term.args[0], term.symbol, term.args[1]);
       return makeBoolCase((prefix) =>
         makeRule(term.kind === "all" ? "boolcase_all" : "boolcase_ex", [...prefix, predicate]),
       );
@@ -375,7 +384,7 @@ const getRewrites = (
   return [];
 };
 
-const hasExistential = (exprs: Expressions, index: Index, choice: Expr) => {
+const hasExistential = (exprs: Expressions, index: Index, choice: BinderExpr) => {
   const body = choice.args[1];
   if (body.kind === "not")
     return (
@@ -390,7 +399,7 @@ const hasExistential = (exprs: Expressions, index: Index, choice: Expr) => {
 const findRewrites = (
   context: TlaContext,
   isInTerm: boolean,
-  hole: Expr,
+  hole: VarExpr,
   frame: Expr,
   term: Expr,
   make: MakeRewrite,

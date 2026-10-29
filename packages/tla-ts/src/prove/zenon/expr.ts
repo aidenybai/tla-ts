@@ -7,30 +7,9 @@
 import { TlaZenonError } from "../../errors";
 import { combine, createHasher, toInt63, type Int63 } from "./ocaml";
 
-export type ExprKind =
-  | "var"
-  | "meta"
-  | "app"
-  | "not"
-  | "and"
-  | "or"
-  | "imply"
-  | "equiv"
-  | "true"
-  | "false"
-  | "all"
-  | "ex"
-  | "tau"
-  | "lam";
-
-// `symbol` names a variable or applied symbol, or a binder's type. `args` holds an application's
-// arguments, the operand of a negation or a metavariable's quantifier, the two sides of a binary
-// connective, or a binder's variable and body.
-export interface Expr {
+// What every expression caches about itself.
+interface ExprData {
   id: number;
-  kind: ExprKind;
-  symbol: string;
-  args: Expr[];
   hash: number;
   skeleton: Int63;
   freeVars: string[];
@@ -38,6 +17,59 @@ export interface Expr {
   taus: number;
   metas: Expr[];
 }
+
+export interface VarExpr extends ExprData {
+  kind: "var";
+  symbol: string;
+  args: [];
+}
+
+// A metavariable stands for a term that instantiates its quantifier.
+export interface MetaExpr extends ExprData {
+  kind: "meta";
+  symbol: "";
+  args: [Expr];
+}
+
+export interface AppExpr extends ExprData {
+  kind: "app";
+  symbol: string;
+  args: Expr[];
+}
+
+export interface NotExpr extends ExprData {
+  kind: "not";
+  symbol: "";
+  args: [Expr];
+}
+
+export interface BinaryExpr extends ExprData {
+  kind: "and" | "or" | "imply" | "equiv";
+  symbol: "";
+  args: [Expr, Expr];
+}
+
+export interface ConstantExpr extends ExprData {
+  kind: "true" | "false";
+  symbol: "";
+  args: [];
+}
+
+// `symbol` is the type of the bound variable.
+export interface BinderExpr extends ExprData {
+  kind: "all" | "ex" | "tau" | "lam";
+  symbol: string;
+  args: [VarExpr, Expr];
+}
+
+export type Expr = VarExpr | MetaExpr | AppExpr | NotExpr | BinaryExpr | ConstantExpr | BinderExpr;
+
+export type ExprKind = Expr["kind"];
+
+// An application to two arguments, such as an equality or another relation between two terms.
+export type RelationExpr = AppExpr & { args: [Expr, Expr] };
+
+export type NegatedRelationExpr = NotExpr & { args: [RelationExpr] };
 
 const VAR_PREFIX = "zenon_V";
 export const UNIVERSE = "zenon_U";
@@ -61,7 +93,7 @@ const SKELETONS = {
 
 const ZERO = toInt63(0);
 
-const makeConstant = (kind: "true" | "false", id: number, skeleton: Int63): Expr => ({
+const makeConstant = (kind: "true" | "false", id: number, skeleton: Int63): ConstantExpr => ({
   id,
   kind,
   symbol: "",
@@ -76,6 +108,18 @@ const makeConstant = (kind: "true" | "false", id: number, skeleton: Int63): Expr
 
 export const TRUE = makeConstant("true", 0, SKELETONS.true);
 export const FALSE = makeConstant("false", 1, SKELETONS.false);
+
+const isBinary = (expression: Expr): expression is BinaryExpr =>
+  expression.kind === "and" ||
+  expression.kind === "or" ||
+  expression.kind === "imply" ||
+  expression.kind === "equiv";
+
+export const isBinder = (expression: Expr): expression is BinderExpr =>
+  expression.kind === "all" ||
+  expression.kind === "ex" ||
+  expression.kind === "tau" ||
+  expression.kind === "lam";
 
 // Zenon's str_union: the names of the first list missing from the second, in reverse, then the
 // second. Hashes depend on this order.
@@ -122,20 +166,22 @@ const isEqualInEnv = (leftEnv: Expr[], rightEnv: Expr[], left: Expr, right: Expr
     case "var":
       return isSameBinding(leftEnv, left, rightEnv, right);
     case "meta":
-      return left.args[0] === right.args[0];
+      return right.kind === "meta" && left.args[0] === right.args[0];
     case "app":
       return (
+        right.kind === "app" &&
         left.symbol === right.symbol &&
         left.args.length === right.args.length &&
         left.args.every((inner, index) => isEqualInEnv(leftEnv, rightEnv, inner, right.args[index]))
       );
     case "not":
-      return isEqualInEnv(leftEnv, rightEnv, left.args[0], right.args[0]);
+      return right.kind === "not" && isEqualInEnv(leftEnv, rightEnv, left.args[0], right.args[0]);
     case "and":
     case "or":
     case "imply":
     case "equiv":
       return (
+        isBinary(right) &&
         isEqualInEnv(leftEnv, rightEnv, left.args[0], right.args[0]) &&
         isEqualInEnv(leftEnv, rightEnv, left.args[1], right.args[1])
       );
@@ -144,6 +190,7 @@ const isEqualInEnv = (leftEnv: Expr[], rightEnv: Expr[], left: Expr, right: Expr
       return true;
     default:
       return (
+        isBinder(right) &&
         left.args[1].freeVars.includes(left.args[0].symbol) ===
           right.args[1].freeVars.includes(right.args[0].symbol) &&
         isEqualInEnv(
@@ -166,19 +213,31 @@ const isEqualBody = (leftVar: Expr, rightVar: Expr, left: Expr, right: Expr) => 
 };
 
 // Zenon's HashedExpr.equal on two binders whose children are already hash-consed.
-const isSameBinder = (left: Expr, right: Expr) =>
+const isSameBinder = (left: BinderExpr, right: BinderExpr) =>
   left.kind === right.kind &&
   left.symbol === right.symbol &&
   (left.args[0] === right.args[0]
     ? left.args[1] === right.args[1]
     : isEqualBody(left.args[0], right.args[0], left.args[1], right.args[1]));
 
-export const isApp = (expression: Expr, symbol: string, arity?: number) =>
+// The symbol is part of the narrowed type, so a failed test for one symbol keeps the expression an
+// application for the next test.
+export const isApp = <Symbol extends string>(
+  expression: Expr,
+  symbol: Symbol,
+  arity?: number,
+): expression is AppExpr & { symbol: Symbol } =>
   expression.kind === "app" &&
   expression.symbol === symbol &&
   (arity === undefined || expression.args.length === arity);
 
-export const isMeta = (expression: Expr) => expression.kind === "meta";
+export const isMeta = (expression: Expr): expression is MetaExpr => expression.kind === "meta";
+
+export const isRelation = (expression: Expr): expression is RelationExpr =>
+  expression.kind === "app" && expression.args.length === 2;
+
+export const isNegatedRelation = (expression: Expr): expression is NegatedRelationExpr =>
+  expression.kind === "not" && isRelation(expression.args[0]);
 
 // Zenon orders by hash, and only breaks ties structurally.
 export const compareExprs = (left: Expr, right: Expr): number => {
@@ -210,7 +269,7 @@ export const createExpressions = () => {
   // Binders are hash-consed by hash, since they're equal up to the names of their variables. Other
   // expressions are equal exactly when their kind, symbol and children are, so they're found by
   // those before their hash is computed.
-  const binders = new Map<number, Expr[]>();
+  const binders = new Map<number, BinderExpr[]>();
   const interned = new Map<number, Expr[]>();
   // Numbers for the symbols, so an expression hashes by its symbol and children without strings.
   const symbolIds = new Map<string, number>();
@@ -218,20 +277,16 @@ export const createExpressions = () => {
   let createdCount = 0;
   let nameCounter = "";
 
-  const create = (
-    kind: ExprKind,
-    symbol: string,
-    args: Expr[],
+  const create = <Shape extends Pick<Expr, "kind" | "symbol" | "args">>(
+    shape: Shape,
     skeleton: Int63,
     freeVars: string[],
     size: number,
     taus: number,
     metas: Expr[],
-  ): Expr => ({
+  ) => ({
+    ...shape,
     id: nextId++,
-    kind,
-    symbol,
-    args,
     hash: hasher.hashIntAndStrings(skeleton.high, skeleton.low, freeVars),
     skeleton,
     freeVars,
@@ -240,7 +295,7 @@ export const createExpressions = () => {
     metas,
   });
 
-  const mergeBinder = (candidate: Expr) => {
+  const mergeBinder = (candidate: BinderExpr) => {
     const bucket = binders.get(candidate.hash);
     const existing = bucket?.find((inner) => isSameBinder(inner, candidate));
     if (existing !== undefined) return existing;
@@ -257,12 +312,17 @@ export const createExpressions = () => {
     return symbolIds.size - 1;
   };
 
-  const intern = (kind: ExprKind, symbol: string, args: Expr[], build: () => Expr) => {
+  const intern = <Result extends Expr>(
+    kind: ExprKind,
+    symbol: string,
+    args: Expr[],
+    build: () => Result,
+  ): Result => {
     let key = getSymbolId(symbol);
     for (const arg of args) key = Math.imul(key, 0x01000193) ^ arg.id;
     const bucket = interned.get(key);
     const existing = bucket?.find(
-      (inner) =>
+      (inner): inner is Result =>
         inner.kind === kind &&
         inner.symbol === symbol &&
         inner.args.length === args.length &&
@@ -277,17 +337,24 @@ export const createExpressions = () => {
   };
 
   const evar = (name: string) =>
-    intern("var", name, [], () => create("var", name, [], ZERO, [name], 1, 0, []));
+    intern("var", name, [], (): VarExpr =>
+      create({ kind: "var", symbol: name, args: [] }, ZERO, [name], 1, 0, []),
+    );
 
   const emeta = (quantified: Expr) =>
-    intern("meta", "", [quantified], () =>
-      create("meta", "", [quantified], combine(SKELETONS.meta, quantified.skeleton), [], 1, 0, [
-        quantified,
-      ]),
+    intern("meta", "", [quantified], (): MetaExpr =>
+      create(
+        { kind: "meta", symbol: "", args: [quantified] },
+        combine(SKELETONS.meta, quantified.skeleton),
+        [],
+        1,
+        0,
+        [quantified],
+      ),
     );
 
   const eapp = (symbol: string, args: Expr[]) =>
-    intern("app", symbol, args, () => {
+    intern("app", symbol, args, (): AppExpr => {
       let skeleton = toInt63(hasher.hashString(symbol));
       let freeVars: string[] = [];
       let size = 1;
@@ -301,9 +368,7 @@ export const createExpressions = () => {
         metas = union(arg.metas, metas);
       }
       return create(
-        "app",
-        symbol,
-        args,
+        { kind: "app", symbol, args },
         combine(SKELETONS.app, skeleton),
         freeVars,
         size,
@@ -313,11 +378,9 @@ export const createExpressions = () => {
     });
 
   const enot = (operand: Expr) =>
-    intern("not", "", [operand], () =>
+    intern("not", "", [operand], (): NotExpr =>
       create(
-        "not",
-        "",
-        [operand],
+        { kind: "not", symbol: "", args: [operand] },
         combine(SKELETONS.not, operand.skeleton),
         operand.freeVars,
         operand.size + 1,
@@ -327,11 +390,9 @@ export const createExpressions = () => {
     );
 
   const binary = (kind: "and" | "or" | "imply" | "equiv", left: Expr, right: Expr) =>
-    intern(kind, "", [left, right], () =>
+    intern(kind, "", [left, right], (): BinaryExpr =>
       create(
-        kind,
-        "",
-        [left, right],
+        { kind, symbol: "", args: [left, right] },
         combine(SKELETONS[kind], combine(left.skeleton, right.skeleton)),
         unionNames(left.freeVars, right.freeVars),
         left.size + right.size + 1,
@@ -340,12 +401,15 @@ export const createExpressions = () => {
       ),
     );
 
-  const binder = (kind: "all" | "ex" | "tau" | "lam", variable: Expr, type: string, body: Expr) =>
+  const binder = (
+    kind: "all" | "ex" | "tau" | "lam",
+    variable: VarExpr,
+    type: string,
+    body: Expr,
+  ) =>
     mergeBinder(
       create(
-        kind,
-        type,
-        [variable, body],
+        { kind, symbol: type, args: [variable, body] },
         combine(SKELETONS[kind], combine(toInt63(hasher.hashString(type)), body.skeleton)),
         removeName(variable.symbol, body.freeVars),
         kind === "tau" || kind === "lam" ? 1 : body.size + 1,
@@ -354,27 +418,12 @@ export const createExpressions = () => {
       ),
     );
 
-  const rebuild = (expression: Expr, args: Expr[]): Expr => {
-    switch (expression.kind) {
-      case "var":
-      case "true":
-      case "false":
-        return expression;
-      case "meta":
-        return emeta(args[0]);
-      case "app":
-        return eapp(expression.symbol, args);
-      case "not":
-        return enot(args[0]);
-      case "and":
-      case "or":
-      case "imply":
-      case "equiv":
-        return binary(expression.kind, args[0], args[1]);
-      default:
-        return binder(expression.kind, args[0], expression.symbol, args[1]);
-    }
-  };
+  const rebuild = (expression: AppExpr | NotExpr | BinaryExpr, args: Expr[]): Expr =>
+    expression.kind === "app"
+      ? eapp(expression.symbol, args)
+      : expression.kind === "not"
+        ? enot(args[0])
+        : binary(expression.kind, args[0], args[1]);
 
   const newVar = () => {
     const letters = [...nameCounter];
@@ -388,7 +437,7 @@ export const createExpressions = () => {
 
   // A binder's variable for a substitution, renamed when the substituted values capture it, and
   // the substitution to apply to its body.
-  const enterBinder = (expression: Expr, map: Substitution): [Expr, Substitution] => {
+  const enterBinder = (expression: BinderExpr, map: Substitution): [VarExpr, Substitution] => {
     const variable = expression.args[0];
     const rest = map.filter((pair) => pair[0] !== variable);
     if (!hasConflict(variable, rest)) return [variable, rest];
@@ -410,7 +459,12 @@ export const createExpressions = () => {
       case "tau":
       case "lam": {
         const entered = enterBinder(expression, map);
-        return rebuild(expression, [entered[0], substitute(entered[1], expression.args[1])]);
+        return binder(
+          expression.kind,
+          entered[0],
+          expression.symbol,
+          substitute(entered[1], expression.args[1]),
+        );
       }
       default:
         return rebuild(
@@ -457,7 +511,9 @@ export const createExpressions = () => {
       case "lam": {
         const entered = enterBinder(expression, map);
         const body = substituteSecondOrder(entered[1], expression.args[1]);
-        return body === undefined ? undefined : rebuild(expression, [entered[0], body]);
+        return body === undefined
+          ? undefined
+          : binder(expression.kind, entered[0], expression.symbol, body);
       }
       default: {
         const args = substituteAll(map, expression.args);
@@ -475,10 +531,10 @@ export const createExpressions = () => {
     eor: (left: Expr, right: Expr) => binary("or", left, right),
     eimply: (left: Expr, right: Expr) => binary("imply", left, right),
     eequiv: (left: Expr, right: Expr) => binary("equiv", left, right),
-    eall: (variable: Expr, type: string, body: Expr) => binder("all", variable, type, body),
-    eex: (variable: Expr, type: string, body: Expr) => binder("ex", variable, type, body),
-    etau: (variable: Expr, type: string, body: Expr) => binder("tau", variable, type, body),
-    elam: (variable: Expr, type: string, body: Expr) => binder("lam", variable, type, body),
+    eall: (variable: VarExpr, type: string, body: Expr) => binder("all", variable, type, body),
+    eex: (variable: VarExpr, type: string, body: Expr) => binder("ex", variable, type, body),
+    etau: (variable: VarExpr, type: string, body: Expr) => binder("tau", variable, type, body),
+    elam: (variable: VarExpr, type: string, body: Expr) => binder("lam", variable, type, body),
     newVar,
     substitute,
     substituteSecondOrder,

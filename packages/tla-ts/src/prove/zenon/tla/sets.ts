@@ -32,16 +32,14 @@ export const getMembershipNodes = (literal: Literal): Item[] | undefined => {
   const exprs = literal.context.exprs;
   const formula = literal.formula;
   const isNegated = literal.isNegated;
-  const left = literal.left;
-  const right = literal.right;
-  const isMembership = literal.isMembership;
+  const relation = literal.relation;
   const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
     makeExtensionNode(literal, priority, rule, branches);
   const instance = (priority: Priority, quantified: Expr, term: Expr) =>
     makeInstanceNode(literal, priority, quantified, term);
-  if (isMembership) {
-    const element = left;
-    const set = right;
+  if (relation?.symbol === "TLA.in") {
+    const element = relation.args[0];
+    const set = relation.args[1];
     if (!isNegated && isVariable(set, "TLA.emptyset"))
       return node("prop", makeRule("in_emptyset", [formula, element]), []);
     if (isApp(set, "TLA.upair", 2)) {
@@ -208,25 +206,23 @@ export const getSetEqualityNodes = (literal: Literal): Item[] | undefined => {
   const exprs = literal.context.exprs;
   const formula = literal.formula;
   const isNegated = literal.isNegated;
-  const left = literal.left;
-  const right = literal.right;
-  const isEquality = literal.isEquality;
+  const relation = literal.relation;
   const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
     makeExtensionNode(literal, priority, rule, branches);
-  if (!isNegated && isEquality && isVariable(right, "TLA.emptyset")) {
+  if (relation?.symbol !== "=") return undefined;
+  const left = relation.args[0];
+  const right = relation.args[1];
+  if (!isNegated && isVariable(right, "TLA.emptyset")) {
     const bound = exprs.newVar();
     const empty = exprs.eall(bound, "", exprs.enot(member(exprs, bound, left)));
     return node("arity", makeRule("setequalempty", [formula, empty, left]), [[empty]]);
   }
-  if (!isNegated && isEquality && isVariable(left, "TLA.emptyset")) {
+  if (!isNegated && isVariable(left, "TLA.emptyset")) {
     const bound = exprs.newVar();
     const empty = exprs.eall(bound, "", exprs.enot(member(exprs, bound, right)));
     return node("arity", makeRule("setemptyequal", [formula, empty, right]), [[empty]]);
   }
-  if (
-    isEquality &&
-    (isConstructor(SET_CONSTRUCTORS, left) || isConstructor(SET_CONSTRUCTORS, right))
-  ) {
+  if (isConstructor(SET_CONSTRUCTORS, left) || isConstructor(SET_CONSTRUCTORS, right)) {
     const bound = exprs.newVar();
     const extensional = exprs.eall(
       bound,
@@ -247,15 +243,13 @@ export const getSetEqualityNodes = (literal: Literal): Item[] | undefined => {
 export const getMetaMembershipNodes = (literal: Literal): Item[] | undefined => {
   const exprs = literal.context.exprs;
   const index = literal.context.index;
-  const left = literal.left;
-  const right = literal.right;
-  const isMembership = literal.isMembership;
+  const relation = literal.relation;
   const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
     makeExtensionNode(literal, priority, rule, branches);
-  if (isMembership && left.kind === "meta") {
+  if (relation?.symbol === "TLA.in" && relation.args[0].kind === "meta") {
     const bound = exprs.newVar();
-    return index.findDisequalities(right).flatMap((disequality) => {
-      const sides = disequality.args[0].args;
+    return index.findDisequalities(relation.args[1]).flatMap((disequality) => {
+      const sides: Expr[] = disequality.args[0].args;
       const different = exprs.enot(
         exprs.eall(
           bound,
@@ -277,12 +271,12 @@ export const getSubsetNodes = (literal: Literal): Item[] | undefined => {
   const exprs = literal.context.exprs;
   const formula = literal.formula;
   const isNegated = literal.isNegated;
-  const atom = literal.atom;
-  const left = literal.left;
-  const right = literal.right;
+  const relation = literal.relation;
   const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
     makeExtensionNode(literal, priority, rule, branches);
-  if (isApp(atom, "TLA.subseteq", 2)) {
+  if (relation?.symbol === "TLA.subseteq") {
+    const left = relation.args[0];
+    const right = relation.args[1];
     if (isApp(left, "TLA.cup", 2)) {
       const first = exprs.eapp("TLA.subseteq", [left.args[0], right]);
       const second = exprs.eapp("TLA.subseteq", [left.args[1], right]);

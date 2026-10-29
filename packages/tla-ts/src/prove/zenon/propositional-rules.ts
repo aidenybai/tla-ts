@@ -215,28 +215,28 @@ export const addBeta: SearchRule = (context, queue, formula, goalness) => {
     insertNode(queue, makeNode([formula], rule, "prop", goalness, branches)),
     true,
   ];
-  const left = formula.args[0];
-  const right = formula.args[1];
-  if (formula.kind === "or") return add(makeRule("or", [left, right]), [[left], [right]]);
-  if (formula.kind === "imply")
-    return add(makeRule("impl", [left, right]), [[exprs.enot(left)], [right]]);
-  if (formula.kind === "equiv")
+  if (formula.kind === "or" || formula.kind === "imply" || formula.kind === "equiv") {
+    const left = formula.args[0];
+    const right = formula.args[1];
+    if (formula.kind === "or") return add(makeRule("or", [left, right]), [[left], [right]]);
+    if (formula.kind === "imply")
+      return add(makeRule("impl", [left, right]), [[exprs.enot(left)], [right]]);
     return add(makeRule("equiv", [left, right]), [
       [exprs.enot(left), exprs.enot(right)],
       [left, right],
     ]);
+  }
   if (formula.kind !== "not") return [queue, false];
   const operand = formula.args[0];
+  if (operand.kind !== "and" && operand.kind !== "equiv") return [queue, false];
   const first = operand.args[0];
   const second = operand.args[1];
   if (operand.kind === "and")
     return add(makeRule("not_and", [first, second]), [[exprs.enot(first)], [exprs.enot(second)]]);
-  if (operand.kind === "equiv")
-    return add(makeRule("not_equiv", [first, second]), [
-      [exprs.enot(first), second],
-      [first, exprs.enot(second)],
-    ]);
-  return [queue, false];
+  return add(makeRule("not_equiv", [first, second]), [
+    [exprs.enot(first), second],
+    [first, exprs.enot(second)],
+  ]);
 };
 
 export const addDelta: SearchRule = (context, queue, formula, goalness) => {

@@ -21,14 +21,12 @@ export const getFunctionSetNodes = (literal: Literal): Item[] | undefined => {
   const exprs = literal.context.exprs;
   const formula = literal.formula;
   const isNegated = literal.isNegated;
-  const left = literal.left;
-  const right = literal.right;
-  const isMembership = literal.isMembership;
+  const relation = literal.relation;
   const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
     makeExtensionNode(literal, priority, rule, branches);
-  const element = left;
-  const set = right;
-  if (isMembership) {
+  if (relation?.symbol === "TLA.in") {
+    const element = relation.args[0];
+    const set = relation.args[1];
     if (isApp(set, "TLA.FuncSet", 2)) {
       const fcn = element;
       const source = set.args[0];
@@ -95,9 +93,7 @@ export const getFunctionNodes = (literal: Literal): Item[] | undefined => {
   const formula = literal.formula;
   const isNegated = literal.isNegated;
   const atom = literal.atom;
-  const left = literal.left;
-  const right = literal.right;
-  const isEquality = literal.isEquality;
+  const relation = literal.relation;
   const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
     makeExtensionNode(literal, priority, rule, branches);
   if (isNegated && isApp(atom, "TLA.isAFcn", 1)) {
@@ -115,10 +111,10 @@ export const getFunctionNodes = (literal: Literal): Item[] | undefined => {
     if (isApp(fcn, "TLA.extend", 2))
       return node("prop", makeRule("notisafcn_extend", [formula, fcn.args[0], fcn.args[1]]), []);
   }
-  if (
-    isEquality &&
-    (isConstructor(FUNCTION_CONSTRUCTORS, left) || isConstructor(FUNCTION_CONSTRUCTORS, right))
-  ) {
+  if (relation?.symbol !== "=") return undefined;
+  const left = relation.args[0];
+  const right = relation.args[1];
+  if (isConstructor(FUNCTION_CONSTRUCTORS, left) || isConstructor(FUNCTION_CONSTRUCTORS, right)) {
     const bound = exprs.newVar();
     const sameDomain = equal(exprs, domain(exprs, left), domain(exprs, right));
     const sameValue = equal(exprs, fapply(exprs, left, bound), fapply(exprs, right, bound));

@@ -4,7 +4,15 @@
 // Reads Zenon's native input format, the .znn files that tlapm writes.
 
 import { TlaZenonError } from "../../errors";
-import { FALSE, GOAL_NAME, TRUE, UNIVERSE, type Expr, type Expressions } from "./expr";
+import {
+  FALSE,
+  GOAL_NAME,
+  TRUE,
+  UNIVERSE,
+  type Expr,
+  type Expressions,
+  type VarExpr,
+} from "./expr";
 
 export type Definition =
   | { kind: "real"; symbol: string; params: Expr[]; body: Expr }
@@ -106,7 +114,7 @@ const foldRight = (combine: (left: Expr, right: Expr) => Expr, first: Expr, rest
   rest.length === 0 ? first : combine(first, foldRight(combine, rest[0], rest.slice(1)));
 
 export const parseZenon = (exprs: Expressions, text: string): Phrase[] => {
-  const binders: Record<string, (variable: Expr, type: string, body: Expr) => Expr> = {
+  const binders: Record<string, (variable: VarExpr, type: string, body: Expr) => Expr> = {
     "A.": exprs.eall,
     "E.": exprs.eex,
   };
@@ -143,7 +151,7 @@ export const parseZenon = (exprs: Expressions, text: string): Phrase[] => {
   };
 
   const bindAll = (
-    bind: (variable: Expr, type: string, body: Expr) => Expr,
+    bind: (variable: VarExpr, type: string, body: Expr) => Expr,
     lambda: { names: string[]; type: string; body: Expr },
   ) =>
     lambda.names.reduceRight(

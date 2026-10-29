@@ -4,7 +4,15 @@
 // transitive relations, and the cache of proved lemmas. Formulas are added and removed in LIFO
 // order as the search descends and backtracks. Lists keep Zenon's order, latest first.
 
-import { type Expr, type Expressions } from "./expr";
+import {
+  isNegatedRelation,
+  isRelation,
+  type Expr,
+  type Expressions,
+  type NegatedRelationExpr,
+  type NotExpr,
+  type RelationExpr,
+} from "./expr";
 import type { Proof } from "./proof";
 import type { Definition } from "./parse";
 
@@ -66,14 +74,14 @@ const getHeadKey = (head: Head) =>
 
 // Zenon's add_element and remove_element on a table of lists. Removing from a one-element list
 // drops the key whatever the element, as Zenon does.
-const addElement = <Key>(table: Map<Key, Expr[]>, key: Key, value: Expr) => {
+const addElement = <Key, Value>(table: Map<Key, Value[]>, key: Key, value: Value) => {
   const values = table.get(key);
   if (values === undefined) table.set(key, [value]);
   else values.push(value);
 };
 
 // False stands for Zenon's Not_found.
-const removeElement = <Key>(table: Map<Key, Expr[]>, key: Key, value: Expr) => {
+const removeElement = <Key, Value>(table: Map<Key, Value[]>, key: Key, value: Value) => {
   const values = table.get(key);
   if (values === undefined) return false;
   if (values.length === 1) table.delete(key);
@@ -81,7 +89,7 @@ const removeElement = <Key>(table: Map<Key, Expr[]>, key: Key, value: Expr) => {
   return true;
 };
 
-const getValues = <Key>(table: Map<Key, Expr[]>, key: Key) => getLatestFirst(table, key);
+const getValues = <Key, Value>(table: Map<Key, Value[]>, key: Key) => getLatestFirst(table, key);
 
 // Keys pair a relation with a head. Heads that are expressions are told apart by identity.
 const getHeadId = (head: Head) => (typeof head === "string" ? `s${head}` : `e${head.id}`);
@@ -91,13 +99,13 @@ const getRelationKey = (relation: string, head: Head) => `${relation}\u0000${get
 export const createIndex = (exprs: Expressions) => {
   const formulas = new Map<Expr, number[]>();
   const positive = new Map<string, Expr[]>();
-  const negative = new Map<string, Expr[]>();
-  const transLeft = new Map<string, Expr[]>();
-  const transRight = new Map<string, Expr[]>();
-  const negTransLeft = new Map<string, Expr[]>();
-  const negTransRight = new Map<string, Expr[]>();
-  const allNegTransLeft = new Map<string, Expr[]>();
-  const allNegTransRight = new Map<string, Expr[]>();
+  const negative = new Map<string, NotExpr[]>();
+  const transLeft = new Map<string, RelationExpr[]>();
+  const transRight = new Map<string, RelationExpr[]>();
+  const negTransLeft = new Map<string, NegatedRelationExpr[]>();
+  const negTransRight = new Map<string, NegatedRelationExpr[]>();
+  const allNegTransLeft = new Map<string, NegatedRelationExpr[]>();
+  const allNegTransRight = new Map<string, NegatedRelationExpr[]>();
   const equalLeftRight = new Map<Expr, Expr[]>();
   const equalRightLeft = new Map<Expr, Expr[]>();
   const unequalLeftRight = new Map<Expr, Expr[]>();
@@ -118,14 +126,25 @@ export const createIndex = (exprs: Expressions) => {
     return goalnesses === undefined ? 0 : goalnesses[goalnesses.length - 1];
   };
 
-  const withGoalness = (list: Expr[]): [Expr, number][] =>
+  const withGoalness = <Formula extends Expr>(list: Formula[]): [Formula, number][] =>
     list.map((formula) => [formula, getGoalness(formula)]);
 
   // Zenon's negpos: a negation under the head of its operand, anything else under its own head.
-  const actOnHead = (action: (table: Map<string, Expr[]>, key: string) => void, formula: Expr) => {
-    const table = formula.kind === "not" ? negative : positive;
-    const head = getHead(formula.kind === "not" ? formula.args[0] : formula);
-    if (head !== undefined) action(table, getHeadKey(head));
+  const actOnHead = (
+    formula: Expr,
+    action: <Formula extends Expr>(
+      table: Map<string, Formula[]>,
+      key: string,
+      value: Formula,
+    ) => void,
+  ) => {
+    if (formula.kind === "not") {
+      const head = getHead(formula.args[0]);
+      if (head !== undefined) action(negative, getHeadKey(head), formula);
+      return;
+    }
+    const head = getHead(formula);
+    if (head !== undefined) action(positive, getHeadKey(head), formula);
   };
 
   const getStringLiteral = (expression: Expr) =>
@@ -168,14 +187,14 @@ export const createIndex = (exprs: Expressions) => {
       ]);
     formulaCount++;
     topFormulaCount = Math.max(topFormulaCount, formulaCount);
-    actOnHead((table, key) => addElement(table, key, formula), formula);
+    actOnHead(formula, addElement);
     const lemma = lemmas.get(formula);
     if (lemma !== undefined) lemma.isPresent = true;
     newFormulas.unshift(formula);
   };
 
   const removeTrans = (formula: Expr) => {
-    if (formula.kind !== "app" || formula.args.length !== 2) return;
+    if (!isRelation(formula)) return;
     const leftHead = getHead(formula.args[0]);
     if (leftHead !== undefined)
       removeElement(transLeft, getRelationKey(formula.symbol, leftHead), formula);
@@ -185,9 +204,8 @@ export const createIndex = (exprs: Expressions) => {
   };
 
   const removeNegTrans = (formula: Expr) => {
-    if (formula.kind !== "not") return;
+    if (!isNegatedRelation(formula)) return;
     const relation = formula.args[0];
-    if (relation.kind !== "app" || relation.args.length !== 2) return;
     const leftHead = getHead(relation.args[0]);
     if (
       leftHead !== undefined &&
@@ -206,7 +224,7 @@ export const createIndex = (exprs: Expressions) => {
     formulaCount--;
     removeTrans(formula);
     removeNegTrans(formula);
-    actOnHead((table, key) => removeElement(table, key, formula), formula);
+    actOnHead(formula, removeElement);
     const stringEquality = getStringEquality(formula);
     if (stringEquality !== undefined)
       (stringEquality.isReversed ? reversedStringEqualities : stringEqualities).shift();
@@ -223,7 +241,7 @@ export const createIndex = (exprs: Expressions) => {
   };
 
   // Zenon's add_trans, which stops at the first side without a head. False means No_head.
-  const addTrans = (formula: Expr) => {
+  const addTrans = (formula: RelationExpr) => {
     const leftHead = getHead(formula.args[0]);
     if (leftHead === undefined) return false;
     addElement(transLeft, getRelationKey(formula.symbol, leftHead), formula);
@@ -233,7 +251,7 @@ export const createIndex = (exprs: Expressions) => {
     return true;
   };
 
-  const addNegTrans = (formula: Expr) => {
+  const addNegTrans = (formula: NegatedRelationExpr) => {
     const relation = formula.args[0];
     const leftHead = getHead(relation.args[0]);
     if (leftHead !== undefined) {

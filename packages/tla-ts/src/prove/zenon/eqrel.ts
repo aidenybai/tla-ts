@@ -86,7 +86,8 @@ const getConjuncts = (exprs: Expressions, formula: Expr) => {
 
 const getPair = (leaf: Expr) => {
   const atom = leaf.kind === "not" ? leaf.args[0] : leaf;
-  return [atom.args[0].symbol, atom.args[1].symbol];
+  const args: Expr[] = atom.args;
+  return [args[0].symbol, args[1].symbol];
 };
 
 // The leaves as Zenon's partition returns them: positive and negative, each reversed.

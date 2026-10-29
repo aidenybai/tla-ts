@@ -3,7 +3,15 @@
 // The TLA+ extension: rules for set theory, functions, records, tuples, CHOOSE, IF and CASE, and
 // rewriting a subterm with an equality on the branch.
 
-import { FALSE, isApp, TRUE, type Expr, type Expressions } from "../expr";
+import {
+  FALSE,
+  isApp,
+  TRUE,
+  type Expr,
+  type Expressions,
+  type NegatedRelationExpr,
+  type RelationExpr,
+} from "../expr";
 import type { Node, Priority } from "../node";
 import type { Phrase } from "../parse";
 import { makeRule, type Rule } from "../proof";
@@ -104,34 +112,35 @@ const getBooleanNodes = (literal: Literal): Item[] | undefined => {
   const formula = literal.formula;
   const isNegated = literal.isNegated;
   const atom = literal.atom;
-  const left = literal.left;
-  const right = literal.right;
-  const isEquality = literal.isEquality;
+  const relation = literal.relation;
   const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
     makeExtensionNode(literal, priority, rule, branches);
   const instance = (priority: Priority, quantified: Expr, term: Expr) =>
     makeInstanceNode(literal, priority, quantified, term);
-  if (isEquality && right.kind === "true")
+  if (atom.kind === "meta") return instance("arity", atom.args[0], isNegated ? TRUE : FALSE);
+  if (relation?.symbol !== "=") return undefined;
+  const left = relation.args[0];
+  const right = relation.args[1];
+  if (right.kind === "true")
     return isNegated
       ? node("prop", makeRule("noteq_x_true", [formula, exprs.enot(left), left]), [
           [exprs.enot(left)],
         ])
       : node("prop", makeRule("eq_x_true", [formula, left, left]), [[left]]);
-  if (isEquality && left.kind === "true")
+  if (left.kind === "true")
     return isNegated
       ? node("prop", makeRule("noteq_true_x", [formula, exprs.enot(right), right]), [
           [exprs.enot(right)],
         ])
       : node("prop", makeRule("eq_true_x", [formula, right, right]), [[right]]);
-  if (!isNegated && isEquality && right.kind === "false")
+  if (!isNegated && right.kind === "false")
     return node("prop", makeRule("eq_x_false", [formula, exprs.enot(left), left]), [
       [exprs.enot(left)],
     ]);
-  if (!isNegated && isEquality && left.kind === "false")
+  if (!isNegated && left.kind === "false")
     return node("prop", makeRule("eq_false_x", [formula, exprs.enot(right), right]), [
       [exprs.enot(right)],
     ]);
-  if (atom.kind === "meta") return instance("arity", atom.args[0], isNegated ? TRUE : FALSE);
   return undefined;
 };
 
@@ -140,12 +149,13 @@ const getChoiceNodes = (literal: Literal): Item[] | undefined => {
   const formula = literal.formula;
   const goalness = literal.goalness;
   const isNegated = literal.isNegated;
-  const atom = literal.atom;
-  const left = literal.left;
-  const right = literal.right;
-  const isEquality = literal.isEquality;
+  const relation = literal.relation;
   const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
     makeExtensionNode(literal, priority, rule, branches);
+  if (relation === undefined) return undefined;
+  const left = relation.args[0];
+  const right = relation.args[1];
+  const isEquality = relation.symbol === "=";
   if (
     isNegated &&
     isEquality &&
@@ -169,10 +179,10 @@ const getChoiceNodes = (literal: Literal): Item[] | undefined => {
       [[differ]],
     );
   }
-  if (!isNegated && isApp(atom, "$notequiv", 2))
+  if (!isNegated && relation.symbol === "$notequiv")
     return node("arity", makeRule("notequivdef", []), [[exprs.enot(exprs.eequiv(left, right))]]);
-  if (isNegated && isEquality && (right.kind === "tau" || left.kind === "tau")) {
-    const choice = right.kind === "tau" ? right : left;
+  const choice = right.kind === "tau" ? right : left.kind === "tau" ? left : undefined;
+  if (isNegated && isEquality && choice !== undefined) {
     const term = right.kind === "tau" ? left : right;
     const exists = exprs.eex(choice.args[0], choice.symbol, choice.args[1]);
     const notExists = exprs.enot(exists);
@@ -242,14 +252,13 @@ const getNaturalNodes = (literal: Literal): Item[] | undefined => {
   const exprs = literal.context.exprs;
   const formula = literal.formula;
   const isNegated = literal.isNegated;
-  const left = literal.left;
-  const right = literal.right;
-  const isMembership = literal.isMembership;
+  const relation = literal.relation;
   const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
     makeExtensionNode(literal, priority, rule, branches);
   const instance = (priority: Priority, quantified: Expr, term: Expr) =>
     makeInstanceNode(literal, priority, quantified, term);
-  if (isNegated && isMembership && isVariable(right, "arith.N")) {
+  if (isNegated && relation?.symbol === "TLA.in" && isVariable(relation.args[1], "arith.N")) {
+    const left = relation.args[0];
     if (isVariable(left, "0")) return node("prop", makeRule("in_nat_0", [formula]), []);
     if (isApp(left, "TLA.fapply", 2) && isVariable(left.args[0], "TLA.Succ")) {
       const previous = exprs.enot(member(exprs, left.args[1], exprs.evar("arith.N")));
@@ -274,8 +283,8 @@ const getPropNodes = (context: TlaContext, formula: Expr, goalness: number): Ite
     getNaturalNodes(literal) ??
     getMetaMembershipNodes(literal) ??
     (!literal.isNegated && isApp(literal.atom, "TLA.box", 1)
-      ? makeExtensionNode(literal, "prop", makeRule("box_p", [formula, literal.left]), [
-          [literal.left],
+      ? makeExtensionNode(literal, "prop", makeRule("box_p", [formula, literal.atom.args[0]]), [
+          [literal.atom.args[0]],
         ])
       : undefined) ??
     getTupleNodes(literal) ??
@@ -313,7 +322,7 @@ const getBoundedInstances = (context: TlaContext, formula: Expr, goalness: numbe
       .findPositive("TLA.in")
       .map((entry) => entry[0])
       .filter(
-        (membership) =>
+        (membership): membership is RelationExpr =>
           isApp(membership, "TLA.in", 2) &&
           membership.args[0].metas.length === 0 &&
           membership.args[1] === set,
@@ -324,12 +333,15 @@ const getBoundedInstances = (context: TlaContext, formula: Expr, goalness: numbe
     const universals = index
       .findPositive("TLA.bAll")
       .map((entry) => entry[0])
-      .filter((bounded) => isApp(bounded, "TLA.bAll", 2) && bounded.args[0] === set);
+      .filter(
+        (bounded): bounded is RelationExpr =>
+          isApp(bounded, "TLA.bAll", 2) && bounded.args[0] === set,
+      );
     const existentials = index
       .findNegative("TLA.bEx")
       .map((entry) => entry[0])
       .filter(
-        (bounded) =>
+        (bounded): bounded is NegatedRelationExpr =>
           bounded.kind === "not" &&
           isApp(bounded.args[0], "TLA.bEx", 2) &&
           bounded.args[0].args[0] === set,
@@ -372,7 +384,7 @@ const makePropositionEqualityNode = (
 ): Node => {
   const isNegated = name === "np_eq_l" || name === "np_eq_r";
   const isLeft = name === "p_eq_l" || name === "np_eq_l";
-  const proposition = isNegated ? formula.args[0] : formula;
+  const proposition = isNegated && formula.kind === "not" ? formula.args[0] : formula;
   const equality = equal(exprs, left, right);
   const differ = exprs.enot(equal(exprs, proposition, isLeft ? left : right));
   const other = isLeft ? right : left;
@@ -397,7 +409,7 @@ const getPropositionEqualityNodes = (context: TlaContext, formula: Expr, goalnes
   const atom = formula.kind === "not" ? formula.args[0] : formula;
   if (atom.kind !== "app") return [];
   const isNegated = formula.kind === "not";
-  const make = (isLeft: boolean) => (entry: [Expr, number]) =>
+  const make = (isLeft: boolean) => (entry: [RelationExpr, number]) =>
     makePropositionEqualityNode(
       exprs,
       isNegated ? (isLeft ? "np_eq_l" : "np_eq_r") : isLeft ? "p_eq_l" : "p_eq_r",

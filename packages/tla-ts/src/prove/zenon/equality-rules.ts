@@ -4,7 +4,17 @@
 // literal against its negation, congruence, reflexivity, symmetry and transitivity.
 
 import { TlaZenonError } from "../../errors";
-import { isApp, isMeta, type Expr, type Expressions } from "./expr";
+import {
+  isApp,
+  isNegatedRelation,
+  isRelation,
+  isMeta,
+  type Expr,
+  type NegatedRelationExpr,
+  type NotExpr,
+  type RelationExpr,
+  type Expressions,
+} from "./expr";
 import { getHead } from "./index-table";
 import { insertNode, type Priority, type Queue } from "./node";
 import { makeRelationRule, makeRule } from "./proof";
@@ -57,12 +67,14 @@ const isGoodMatch = (left: Expr, right: Expr): boolean => {
     case "app":
       return left.symbol === right.symbol;
     case "not":
-      return isGoodMatch(left.args[0], right.args[0]);
+      return right.kind === "not" && isGoodMatch(left.args[0], right.args[0]);
     case "and":
     case "or":
     case "imply":
-    case "equiv":
-      return isGoodMatch(left.args[0], right.args[0]) || isGoodMatch(left.args[1], right.args[1]);
+    case "equiv": {
+      const rightArgs: Expr[] = right.args;
+      return isGoodMatch(left.args[0], rightArgs[0]) || isGoodMatch(left.args[1], rightArgs[1]);
+    }
     case "true":
     case "false":
       return true;
@@ -78,25 +90,25 @@ const makeNotEquiv = (
   queue: Queue,
   isSymmetric: boolean,
   positive: [Expr, number],
-  negative: [Expr, number],
+  negative: [NotExpr, number],
 ): Queue => {
   const atom = positive[0];
   const negation = negative[0];
   const negated = negation.args[0];
+  const args: Expr[] = atom.args;
+  const negatedArgs: Expr[] = negated.args;
   if (
     isApp(atom, "TLA.in", 2) &&
-    atom.args[1].kind === "var" &&
-    negated.args.length === 2 &&
-    atom.args[1] !== negated.args[1] &&
-    !isMeta(atom.args[0]) &&
-    !isMeta(atom.args[1]) &&
-    !isMeta(negated.args[0]) &&
-    !isMeta(negated.args[1]) &&
-    atom.args[0] !== negated.args[0]
+    args[1].kind === "var" &&
+    negatedArgs.length === 2 &&
+    args[1] !== negatedArgs[1] &&
+    !isMeta(args[0]) &&
+    !isMeta(args[1]) &&
+    !isMeta(negatedArgs[0]) &&
+    !isMeta(negatedArgs[1]) &&
+    args[0] !== negatedArgs[0]
   )
     return queue;
-  const args = atom.args;
-  const negatedArgs = negated.args;
   if ((isSymmetric && negatedArgs.length !== 2) || args.length !== negatedArgs.length) return queue;
   const isGood = args.every((inner, index) => isGoodMatch(inner, negatedArgs[index]));
   const priority: Priority = isGood
@@ -228,8 +240,8 @@ export const addCongruence: SearchRule = (context, queue, formula, goalness) => 
 const makeTransNode = (
   exprs: Expressions,
   isSymmetric: boolean,
-  positive: [Expr, number],
-  negative: [Expr, number],
+  positive: [RelationExpr, number],
+  negative: [NegatedRelationExpr, number],
 ) => {
   const atom = positive[0];
   const negated = negative[0].args[0];
@@ -256,8 +268,8 @@ const makeTransNode = (
 const makeTransEqualityNode = (
   context: SearchContext,
   isSymmetric: boolean,
-  equality: [Expr, number],
-  negative: [Expr, number],
+  equality: [RelationExpr, number],
+  negative: [NegatedRelationExpr, number],
 ) => {
   const exprs = context.exprs;
   const left = equality[0].args[0];
@@ -292,20 +304,23 @@ export const addTransitivity: SearchRule = (context, queue, formula, goalness) =
   const exprs = context.exprs;
   const index = context.index;
   const relations = context.relations;
-  const entry: [Expr, number] = [formula, goalness];
-  const transEq = (isSymmetric: boolean) => (match: [Expr, number]) =>
-    makeTransEqualityNode(context, isSymmetric, entry, match);
-  const trans = (isSymmetric: boolean) => (match: [Expr, number]) =>
-    makeTransNode(exprs, isSymmetric, entry, match);
-  const negTrans = (isSymmetric: boolean) => (match: [Expr, number]) =>
-    makeTransNode(exprs, isSymmetric, match, entry);
-  const negTransEq = (isSymmetric: boolean) => (match: [Expr, number]) =>
-    makeTransEqualityNode(context, isSymmetric, match, entry);
-  if (isApp(formula, "=", 2)) {
+  if (isRelation(formula) && formula.symbol === "=") {
+    const entry: [RelationExpr, number] = [formula, goalness];
+    const transEq = (isSymmetric: boolean) => (match: [NegatedRelationExpr, number]) =>
+      makeTransEqualityNode(context, isSymmetric, entry, match);
     const left = formula.args[0];
     const right = formula.args[1];
     if (left.kind === "meta" && right.kind === "meta")
-      return [insertAll(queue, index.findNegative("=").map(transEq(false))), false];
+      return [
+        insertAll(
+          queue,
+          index
+            .findNegative("=")
+            .filter((match): match is [NegatedRelationExpr, number] => isNegatedRelation(match[0]))
+            .map(transEq(false)),
+        ),
+        false,
+      ];
     if (!index.addTrans(formula)) return [queue, false];
     const leftHead = getHead(left);
     const rightHead = getHead(right);
@@ -320,11 +335,10 @@ export const addTransitivity: SearchRule = (context, queue, formula, goalness) =
       false,
     ];
   }
-  if (
-    formula.kind === "app" &&
-    formula.args.length === 2 &&
-    relations.isTransitive(formula.symbol)
-  ) {
+  if (isRelation(formula) && relations.isTransitive(formula.symbol)) {
+    const entry: [RelationExpr, number] = [formula, goalness];
+    const trans = (isSymmetric: boolean) => (match: [NegatedRelationExpr, number]) =>
+      makeTransNode(exprs, isSymmetric, entry, match);
     if (!index.addTrans(formula)) return [queue, false];
     const relation = formula.symbol;
     const leftHead = getHead(formula.args[0]);
@@ -341,10 +355,14 @@ export const addTransitivity: SearchRule = (context, queue, formula, goalness) =
       false,
     ];
   }
-  if (formula.kind !== "not") return [queue, false];
+  if (!isNegatedRelation(formula)) return [queue, false];
   const atom = formula.args[0];
-  if (atom.kind !== "app" || atom.args.length !== 2 || !relations.isTransitive(atom.symbol))
-    return [queue, false];
+  if (!relations.isTransitive(atom.symbol)) return [queue, false];
+  const entry: [NegatedRelationExpr, number] = [formula, goalness];
+  const negTrans = (isSymmetric: boolean) => (match: [RelationExpr, number]) =>
+    makeTransNode(exprs, isSymmetric, match, entry);
+  const negTransEq = (isSymmetric: boolean) => (match: [RelationExpr, number]) =>
+    makeTransEqualityNode(context, isSymmetric, match, entry);
   const relation = atom.symbol;
   index.addNegTrans(formula);
   const leftHead = getHead(atom.args[0]);
@@ -379,7 +397,8 @@ export const addSymmetricMatches: SearchRule = (context, queue, formula, goalnes
       context.index
         .findPositive(atom.symbol)
         .reduce(
-          (current, match) => makeNotEquiv(context.exprs, current, true, match, entry),
+          (current, match) =>
+            makeNotEquiv(context.exprs, current, true, match, [formula, goalness]),
           queue,
         ),
       false,
@@ -401,7 +420,8 @@ export const addMatches: SearchRule = (context, queue, formula, goalness) => {
       context.index
         .findPositive(atom.symbol)
         .reduce(
-          (current, match) => makeNotEquiv(context.exprs, current, false, match, entry),
+          (current, match) =>
+            makeNotEquiv(context.exprs, current, false, match, [formula, goalness]),
           queue,
         ),
       true,
