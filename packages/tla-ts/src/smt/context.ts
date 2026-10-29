@@ -38,6 +38,7 @@ import {
   mkLiteralEqJustification,
 } from "./enode";
 import { RelevancyPropagator } from "./relevancy";
+import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { Rewriter } from "./rewriter";
 
 export const L_TRUE = 1;
@@ -56,7 +57,10 @@ const ACTIVITY_LIMIT = 1e100;
 const INV_ACTIVITY_LIMIT = 1e-100;
 const INV_DECAY = 1.052;
 const RESTART_INITIAL = 100;
-const RESTART_FACTOR = 1.5;
+const RESTART_FACTOR = 1.1;
+// phase_caching_on and phase_caching_off: the numbers of conflicts while phase caching is on and off.
+const PHASE_CACHING_ON = 400;
+const PHASE_CACHING_OFF = 100;
 const AGILITY_FACTOR = 0.9999;
 const RESTART_AGILITY_THRESHOLD = 0.18;
 
@@ -185,6 +189,9 @@ export class Context {
   private numConflicts = 0;
   private numConflictsSinceRestart = 0;
   private restartThreshold = RESTART_INITIAL;
+  private restartOuterThreshold = RESTART_INITIAL;
+  private isPhaseCacheOn = true;
+  private phaseCounter = 0;
   private finalCheckIndex = 0;
   private r1ParentGenerations = new Map<Enode, number>();
   private isCanceled = false;
@@ -193,7 +200,7 @@ export class Context {
     readonly manager: AstManager,
     private deadline: number,
   ) {
-    this.rewriter = new Rewriter(manager, { isEliminatingAnd: false });
+    this.rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: KERNEL_ARITH_OPTIONS });
     this.conflictResolution = new ConflictResolution(this);
     this.relevancy = new RelevancyPropagator({
       manager,
@@ -264,6 +271,11 @@ export class Context {
 
   findCongruent(decl: number, args: Enode[]) {
     return this.cgTable.findFor(decl, args, decl === OP_EQ);
+  }
+
+  // is_diseq: an equality between the two classes is false.
+  isDiseq(first: Enode, second: Enode) {
+    return this.cgTable.findFor(OP_EQ, [first, second], true)?.root === this.falseEnode;
   }
 
   enodesOf(decl: number) {
@@ -405,7 +417,8 @@ export class Context {
     if (!isSuppressingArgs)
       for (const arg of manager.args[expr]) {
         const argNode = this.exprToEnode[arg];
-        if (argNode === undefined) throw new SmtUnsupportedError("an argument was not internalized");
+        if (argNode === undefined)
+          throw new SmtUnsupportedError("an argument was not internalized");
         args.push(argNode);
       }
     const isEq = !isSuppressingArgs && manager.getOp(expr) === OP_EQ;
@@ -427,10 +440,7 @@ export class Context {
     this.enodes.push(node);
     if (args.length > 0) {
       if (node.isTrueEq()) {
-        this.assign(
-          this.getBoolVar(expr) * 2,
-          new EqPropagationJustification(args[0], args[1]),
-        );
+        this.assign(this.getBoolVar(expr) * 2, new EqPropagationJustification(args[0], args[1]));
         this.pushEq(node, this.trueEnode, AXIOM_EQ_JUSTIFICATION);
       } else if (isCgcEnabled) {
         const result = this.cgTable.insert(node);
@@ -594,9 +604,12 @@ export class Context {
       return;
     }
     const op = manager.getOp(expr);
-    if (op === OP_EQ && !manager.isBool(manager.args[expr][0])) this.internalizeEq(expr, isGateContext);
-    else if (op === OP_DISTINCT) throw new SmtUnsupportedError("distinct should have been simplified");
-    else if (manager.kinds[expr] === KIND_APP && this.internalizeTheoryAtom(expr, isGateContext)) return;
+    if (op === OP_EQ && !manager.isBool(manager.args[expr][0]))
+      this.internalizeEq(expr, isGateContext);
+    else if (op === OP_DISTINCT)
+      throw new SmtUnsupportedError("distinct should have been simplified");
+    else if (manager.kinds[expr] === KIND_APP && this.internalizeTheoryAtom(expr, isGateContext))
+      return;
     else if (manager.kinds[expr] === KIND_QUANTIFIER) this.internalizeQuantifier(expr);
     else this.internalizeFormulaCore(expr, isGateContext);
   }
@@ -908,7 +921,8 @@ export class Context {
       literals = [...input];
       const removed: number[] = [];
       if (!this.simplifyAuxClauseLiterals(literals, removed)) return null;
-      if (removed.length > 0) justification = new UnitResolutionJustification(justification, removed);
+      if (removed.length > 0)
+        justification = new UnitResolutionJustification(justification, removed);
     }
     if (literals.length === 0) {
       this.setConflict(justification ?? "axiom", -1);
@@ -1129,7 +1143,8 @@ export class Context {
     const boolVar = this.getBoolVar(expr);
     if (boolVar >= 0 && this.isAtom(boolVar)) {
       const value = this.assignment[boolVar * 2];
-      if (value !== L_UNDEF) this.atomPropagationQueue.push(boolVar * 2 + (value === L_FALSE ? 1 : 0));
+      if (value !== L_UNDEF)
+        this.atomPropagationQueue.push(boolVar * 2 + (value === L_FALSE ? 1 : 0));
     }
     if (this.manager.kinds[expr] !== KIND_APP) return;
     const node = this.exprToEnode[expr];
@@ -1430,7 +1445,8 @@ export class Context {
       parent.cg = result.node;
       if (result.node === parent) parent.generation = generation;
     }
-    if (r2.thVar >= 0 && this.theory !== null && this.theory.getEnode(r2.thVar).root !== r2) r2.thVar = -1;
+    if (r2.thVar >= 0 && this.theory !== null && this.theory.getEnode(r2.thVar).root !== r2)
+      r2.thVar = -1;
     n1.transTarget = null;
     n1.transJustification = AXIOM_EQ_JUSTIFICATION;
     this.invertTrans(r1);
@@ -1461,7 +1477,8 @@ export class Context {
     let target = start;
     do {
       const boolVar = this.getBoolVar(target.owner);
-      if (this.assignment[boolVar * 2] !== value) this.assign(boolVar * 2 + sign, this.mkMpIff(source, target));
+      if (this.assignment[boolVar * 2] !== value)
+        this.assign(boolVar * 2 + sign, this.mkMpIff(source, target));
       target = target.next;
     } while (target !== start);
   }
@@ -1507,7 +1524,8 @@ export class Context {
   incBvarActivity(boolVar: number) {
     this.activity[boolVar] += this.bvarInc;
     if (this.activity[boolVar] > ACTIVITY_LIMIT) {
-      for (let index = 0; index < this.activity.length; index++) this.activity[index] *= INV_ACTIVITY_LIMIT;
+      for (let index = 0; index < this.activity.length; index++)
+        this.activity[index] *= INV_ACTIVITY_LIMIT;
       this.bvarInc *= INV_ACTIVITY_LIMIT;
     }
     this.caseSplitQueue.activityIncreased(boolVar);
@@ -1536,7 +1554,8 @@ export class Context {
           if (node.iscopeLevel <= newLevel) continue;
           this.cachedGeneration.set(current, this.getGeneration(node));
         }
-        for (const arg of manager.args[current]) if (manager.kinds[arg] !== KIND_VAR) todo.push(arg);
+        for (const arg of manager.args[current])
+          if (manager.kinds[arg] !== KIND_VAR) todo.push(arg);
       } else if (manager.kinds[current] === KIND_QUANTIFIER && this.isBInternalized(current)) {
         this.cachedGeneration.set(current, this.qmanager?.getGeneration(current) ?? 0);
         todo.push(manager.getQuantifier(current).body);
@@ -1629,7 +1648,8 @@ export class Context {
           this.addWatchLiteral(clause, 0);
           this.addWatchLiteral(clause, 1);
           if (this.assignment[clause.literals[0]] === L_FALSE) this.setConflict(clause, -1);
-          else if (this.assignment[clause.literals[1]] === L_FALSE) this.assign(clause.literals[0], clause);
+          else if (this.assignment[clause.literals[1]] === L_FALSE)
+            this.assign(clause.literals[0], clause);
           isKept = true;
         }
         if (isKept && this.scopeLevel > this.baseLevel) {
@@ -1644,9 +1664,18 @@ export class Context {
     }
   }
 
+  // guess with PS_CACHING_CONSERVATIVE: the cached phase while phase caching is on, else false.
   private guess(boolVar: number) {
     if (this.manager.kinds[this.boolVar2Expr[boolVar]] === KIND_QUANTIFIER) return false;
-    return this.isTrueFirstFlags[boolVar];
+    if (this.isTrueFirstFlags[boolVar]) return true;
+    return this.isPhaseCacheOn && this.phaseAvailable[boolVar] && this.phases[boolVar];
+  }
+
+  private updatePhaseCacheCounter() {
+    this.phaseCounter++;
+    if (this.phaseCounter < (this.isPhaseCacheOn ? PHASE_CACHING_ON : PHASE_CACHING_OFF)) return;
+    this.phaseCounter = 0;
+    this.isPhaseCacheOn = !this.isPhaseCacheOn;
   }
 
   private decide() {
@@ -1665,13 +1694,18 @@ export class Context {
     this.eqPropagationQueue = [];
     this.thEqQueue = [];
     this.thDiseqQueue = [];
+    const head = this.scopeLevel === 0 ? 0 : this.scopeAssignedLimits[this.scopeLevel - 1];
+    for (let index = head; index < this.assignedLiterals.length; index++)
+      this.phaseAvailable[this.assignedLiterals[index] >> 1] = false;
     const resolution = this.conflictResolution;
-    if (this.conflict === undefined || !resolution.resolve(this.conflict, this.notLiteral)) return false;
+    if (this.conflict === undefined || !resolution.resolve(this.conflict, this.notLiteral))
+      return false;
     const newLevel = resolution.newScopeLevel;
     const literals = resolution.lemma;
     const atoms = resolution.lemmaAtoms;
     const visited = new Set<number>();
-    if (resolution.lemmaIscopeLevel > newLevel) this.cacheGenerationOfLiterals(literals, newLevel, visited);
+    if (resolution.lemmaIscopeLevel > newLevel)
+      this.cacheGenerationOfLiterals(literals, newLevel, visited);
     const wasRelevant = literals.map((literal) => this.isRelevant(this.boolVar2Expr[literal >> 1]));
     const numBoolVars = this.popScopeCore(this.scopeLevel - newLevel, visited);
     if (resolution.lemmaIscopeLevel > this.scopeLevel)
@@ -1686,6 +1720,7 @@ export class Context {
     this.cachedGeneration.clear();
     this.mkClause([...literals], null, CLS_LEARNED);
     this.bvarInc *= INV_DECAY;
+    this.updatePhaseCacheCounter();
     return true;
   }
 
@@ -1738,6 +1773,7 @@ export class Context {
     this.qmanager?.initSearchEh();
     this.numConflictsSinceRestart = 0;
     this.restartThreshold = RESTART_INITIAL;
+    this.restartOuterThreshold = RESTART_INITIAL;
     this.agility = 0;
     this.finalCheckIndex = 0;
     this.isSearching = true;
@@ -1749,8 +1785,14 @@ export class Context {
       if (status === L_TRUE) return this.qmanager?.hasQuantifiers() ? L_UNDEF : L_TRUE;
       if (status === L_UNDEF && this.numConflictsSinceRestart <= this.restartThreshold)
         return L_UNDEF;
-      if (this.numConflictsSinceRestart >= this.restartThreshold)
+      // inc_limits with RS_IN_OUT_GEOMETRIC.
+      if (this.numConflictsSinceRestart >= this.restartThreshold) {
         this.restartThreshold = Math.trunc(this.restartThreshold * RESTART_FACTOR);
+        if (this.restartThreshold > this.restartOuterThreshold) {
+          this.restartThreshold = RESTART_INITIAL;
+          this.restartOuterThreshold = Math.trunc(this.restartOuterThreshold * RESTART_FACTOR);
+        }
+      }
       this.numConflictsSinceRestart = 0;
       if (this.agility < RESTART_AGILITY_THRESHOLD) {
         if (this.scopeLevel > currentLevel) this.popScope(this.scopeLevel - currentLevel);

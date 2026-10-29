@@ -82,9 +82,7 @@ export class RelevancyPropagator {
     for (let index = this.trailKinds.length - 1; index >= trailLimit; index--) {
       const kind = this.trailKinds[index];
       const map =
-        kind === TRAIL_HANDLER
-          ? this.handlers
-          : this.watches[kind === TRAIL_POS_WATCH ? 1 : 0];
+        kind === TRAIL_HANDLER ? this.handlers : this.watches[kind === TRAIL_POS_WATCH ? 1 : 0];
       const list = map.get(this.trailExprs[index]);
       if (list === undefined) continue;
       list.pop();

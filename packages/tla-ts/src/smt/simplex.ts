@@ -98,7 +98,8 @@ export class Simplex {
     }
     this.lowers[variable] = bound;
     this.lowerReasons[variable] = reason;
-    if (!this.isBasic(variable) && this.values[variable].compare(bound) < 0) this.update(variable, bound);
+    if (!this.isBasic(variable) && this.values[variable].compare(bound) < 0)
+      this.update(variable, bound);
   }
 
   setUpper(variable: number, bound: Rational, reason: BoundReason | null, isScoped: boolean) {
@@ -112,7 +113,8 @@ export class Simplex {
     }
     this.uppers[variable] = bound;
     this.upperReasons[variable] = reason;
-    if (!this.isBasic(variable) && this.values[variable].compare(bound) > 0) this.update(variable, bound);
+    if (!this.isBasic(variable) && this.values[variable].compare(bound) > 0)
+      this.update(variable, bound);
   }
 
   isFixed(variable: number) {
@@ -140,7 +142,7 @@ export class Simplex {
     for (const entry of newCoeffs) this.columns[entry[0]].add(rowIndex);
     this.basicRows[leaving] = -1;
     this.basicRows[entering] = rowIndex;
-    for (const otherIndex of [...this.columns[entering]]) {
+    for (const otherIndex of Array.from(this.columns[entering])) {
       if (otherIndex === rowIndex) continue;
       const other = this.rows[otherIndex];
       const factor = other.coeffs.get(entering);
@@ -171,7 +173,8 @@ export class Simplex {
       if (otherIndex === rowIndex) continue;
       const other = this.rows[otherIndex];
       const factor = other.coeffs.get(entering);
-      if (factor !== undefined) this.values[other.basic] = this.values[other.basic].add(factor.mul(theta));
+      if (factor !== undefined)
+        this.values[other.basic] = this.values[other.basic].add(factor.mul(theta));
     }
     this.pivot(rowIndex, entering);
   }
@@ -185,7 +188,10 @@ export class Simplex {
       const value = this.values[basic];
       const lower = this.lowers[basic];
       const upper = this.uppers[basic];
-      if ((lower !== null && value.compare(lower) < 0) || (upper !== null && value.compare(upper) > 0)) {
+      if (
+        (lower !== null && value.compare(lower) < 0) ||
+        (upper !== null && value.compare(upper) > 0)
+      ) {
         bestRow = rowIndex;
         bestVar = basic;
       }
@@ -208,9 +214,21 @@ export class Simplex {
         const variable = entry[0];
         if (entering !== -1 && variable > entering) continue;
         const isPositive = entry[1].isPositive();
-        const canIncrease = this.uppers[variable] === null || this.values[variable].compare(this.uppers[variable] ?? Rational.zero) < 0;
-        const canDecrease = this.lowers[variable] === null || this.values[variable].compare(this.lowers[variable] ?? Rational.zero) > 0;
-        if (isBelow ? (isPositive ? canIncrease : canDecrease) : isPositive ? canDecrease : canIncrease)
+        const canIncrease =
+          this.uppers[variable] === null ||
+          this.values[variable].compare(this.uppers[variable] ?? Rational.zero) < 0;
+        const canDecrease =
+          this.lowers[variable] === null ||
+          this.values[variable].compare(this.lowers[variable] ?? Rational.zero) > 0;
+        if (
+          isBelow
+            ? isPositive
+              ? canIncrease
+              : canDecrease
+            : isPositive
+              ? canDecrease
+              : canIncrease
+        )
           entering = variable;
       }
       if (entering === -1) {

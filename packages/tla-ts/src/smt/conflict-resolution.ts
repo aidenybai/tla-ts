@@ -35,7 +35,9 @@ export class ConflictResolution {
   markEq(first: Enode, second: Enode) {
     if (first === second) return;
     const key =
-      first.owner < second.owner ? `${first.owner}:${second.owner}` : `${second.owner}:${first.owner}`;
+      first.owner < second.owner
+        ? `${first.owner}:${second.owner}`
+        : `${second.owner}:${first.owner}`;
     if (this.processedEqs.has(key)) return;
     this.processedEqs.add(key);
     this.todoEqs.push(first, second);
@@ -52,14 +54,16 @@ export class ConflictResolution {
   }
 
   private findCommonAncestor(first: Enode, second: Enode) {
-    for (let node: Enode | null = first; node !== null; node = node.transTarget) node.isMarked2 = true;
+    for (let node: Enode | null = first; node !== null; node = node.transTarget)
+      node.isMarked2 = true;
     let result = second;
     while (!result.isMarked2) {
       const target = result.transTarget;
       if (target === null) break;
       result = target;
     }
-    for (let node: Enode | null = first; node !== null; node = node.transTarget) node.isMarked2 = false;
+    for (let node: Enode | null = first; node !== null; node = node.transTarget)
+      node.isMarked2 = false;
     return result;
   }
 
@@ -71,7 +75,9 @@ export class ConflictResolution {
       if (justification.isCommutative) {
         this.markEq(lhs.args[0], rhs.args[1]);
         this.markEq(lhs.args[1], rhs.args[0]);
-      } else for (let index = 0; index < lhs.args.length; index++) this.markEq(lhs.args[index], rhs.args[index]);
+      } else
+        for (let index = 0; index < lhs.args.length; index++)
+          this.markEq(lhs.args[index], rhs.args[index]);
     }
   }
 
@@ -293,7 +299,8 @@ export class ConflictResolution {
         const literals = justification.literals;
         const position = literals[1] >> 1 === boolVar ? 1 : 0;
         for (let index = 0; index < literals.length && isImplied; index++)
-          if (index !== position) isImplied = this.processAntecedentForMinimization(literals[index] ^ 1);
+          if (index !== position)
+            isImplied = this.processAntecedentForMinimization(literals[index] ^ 1);
         if (isImplied && justification.justification !== null)
           isImplied = this.processJustificationForMinimization(justification.justification);
       }

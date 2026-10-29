@@ -94,7 +94,8 @@ export class TheoryLra implements Theory {
     }
     if (op === OP_SUB) {
       this.linearize(args[0], coeff, result);
-      for (let index = 1; index < args.length; index++) this.linearize(args[index], coeff.neg(), result);
+      for (let index = 1; index < args.length; index++)
+        this.linearize(args[index], coeff.neg(), result);
       return;
     }
     if (op === OP_UMINUS) {
@@ -163,7 +164,12 @@ export class TheoryLra implements Theory {
       this.simplex.setUpper(variable, value, null, false);
       return variable;
     }
-    if (op === OP_ADD || op === OP_SUB || op === OP_UMINUS || (op === OP_MUL && !this.isNonlinear(expr))) {
+    if (
+      op === OP_ADD ||
+      op === OP_SUB ||
+      op === OP_UMINUS ||
+      (op === OP_MUL && !this.isNonlinear(expr))
+    ) {
       const linearized: Linearized = { coeffs: new Map(), constant: Rational.zero };
       this.linearize(expr, Rational.one, linearized);
       if (!linearized.constant.isZero()) linearized.coeffs.set(this.oneVar, linearized.constant);
@@ -300,21 +306,29 @@ export class TheoryLra implements Theory {
         const lower = atom.isUpper ? other : atom;
         const upperLiteral = atom.isUpper ? literal : otherLiteral;
         const lowerLiteral = atom.isUpper ? otherLiteral : literal;
-        if (lower.bound.compare(upper.bound) > 0) this.context.mkThAxiom([upperLiteral ^ 1, lowerLiteral ^ 1]);
+        if (lower.bound.compare(upper.bound) > 0)
+          this.context.mkThAxiom([upperLiteral ^ 1, lowerLiteral ^ 1]);
         else if (lower.bound.compare(upper.bound.add(Rational.one)) <= 0)
           this.context.mkThAxiom([upperLiteral, lowerLiteral]);
         continue;
       }
       const comparison = other.bound.compare(atom.bound);
-      if (comparison <= 0 && (closestBelow === undefined || other.bound.compare(closestBelow.atom.bound) > 0))
+      if (
+        comparison <= 0 &&
+        (closestBelow === undefined || other.bound.compare(closestBelow.atom.bound) > 0)
+      )
         closestBelow = occurrence;
-      if (comparison >= 0 && (closestAbove === undefined || other.bound.compare(closestAbove.atom.bound) < 0))
+      if (
+        comparison >= 0 &&
+        (closestAbove === undefined || other.bound.compare(closestAbove.atom.bound) < 0)
+      )
         closestAbove = occurrence;
     }
     // For upper bounds, x <= a implies x <= b when a <= b, and dually for lower bounds.
     const weaker = atom.isUpper ? closestAbove : closestBelow;
     const stronger = atom.isUpper ? closestBelow : closestAbove;
-    if (weaker !== undefined) this.context.mkThAxiom([literal ^ 1, this.getAtomLiteral(weaker.boolVar, true)]);
+    if (weaker !== undefined)
+      this.context.mkThAxiom([literal ^ 1, this.getAtomLiteral(weaker.boolVar, true)]);
     if (stronger !== undefined)
       this.context.mkThAxiom([this.getAtomLiteral(stronger.boolVar, false), literal]);
     list.push({ boolVar, atom });
@@ -326,7 +340,11 @@ export class TheoryLra implements Theory {
     if (atom === undefined) return;
     const reason: BoundReason = { literals: [this.getAtomLiteral(boolVar, isTrue)] };
     const isUpper = isTrue ? atom.isUpper : !atom.isUpper;
-    const bound = isTrue ? atom.bound : atom.isUpper ? atom.bound.add(Rational.one) : atom.bound.sub(Rational.one);
+    const bound = isTrue
+      ? atom.bound
+      : atom.isUpper
+        ? atom.bound.add(Rational.one)
+        : atom.bound.sub(Rational.one);
     this.assertBound(atom.variable, isUpper, bound, reason);
   }
 
@@ -357,7 +375,8 @@ export class TheoryLra implements Theory {
 
   private collectLiterals(reasons: (BoundReason | null)[]) {
     const literals: number[] = [];
-    for (const reason of reasons) if (reason !== null) for (const literal of reason.literals) literals.push(literal);
+    for (const reason of reasons)
+      if (reason !== null) for (const literal of reason.literals) literals.push(literal);
     return literals;
   }
 
@@ -372,7 +391,11 @@ export class TheoryLra implements Theory {
     if (node === undefined || value === null) return;
     const key = value.toString();
     const other = this.fixedVars.get(key);
-    if (other === undefined || this.varEnodes[other] === undefined || !this.simplex.isFixed(other)) {
+    if (
+      other === undefined ||
+      this.varEnodes[other] === undefined ||
+      !this.simplex.isFixed(other)
+    ) {
       const saved = other;
       this.fixedVars.set(key, variable);
       this.context.pushTrail(() => {
@@ -390,7 +413,11 @@ export class TheoryLra implements Theory {
       simplex.lowerReasons[other],
       simplex.upperReasons[other],
     ]);
-    this.context.pushEq(node, otherNode, mkJustificationEqJustification(new TheoryJustification(literals, [])));
+    this.context.pushEq(
+      node,
+      otherNode,
+      mkJustificationEqJustification(new TheoryJustification(literals, [])),
+    );
   }
 
   // arith_eq_adapter.
@@ -475,12 +502,63 @@ export class TheoryLra implements Theory {
     const op = manager.getOp(expr);
     if (op !== OP_IDIV && op !== OP_MOD) return;
     const args = manager.args[expr];
-    if (!manager.isNumeral(args[1]) || manager.values[args[1]] === 0) return;
+    if (manager.isNumeral(args[1]) && manager.values[args[1]] === 0) return;
     const key = `${args[0]}:${args[1]}`;
     if (this.processedDivMods.has(key)) return;
     this.processedDivMods.add(key);
     this.context.pushTrail(() => this.processedDivMods.delete(key));
-    this.mkDivModAxioms(args[0], args[1]);
+    if (manager.isNumeral(args[1])) this.mkDivModAxioms(args[0], args[1]);
+    else this.mkVariableDivModAxioms(args[0], args[1]);
+  }
+
+  private mkLiteral(atom: number) {
+    this.context.internalize(atom, true);
+    return this.context.getLiteral(atom);
+  }
+
+  // mk_idiv_mod_axioms for a divisor q that is not a numeral:
+  //   q = 0 or p = q * (div p q) + (mod p q)
+  //   q = 0 or (mod p q) >= 0
+  //   q <= 0 or (mod p q) - q <= -1
+  //   q >= 0 or (mod p q) + q <= -1
+  //   q = 0 or p - q * (div p q) >= 0
+  private mkVariableDivModAxioms(dividend: number, divisor: number) {
+    const manager = this.manager;
+    const context = this.context;
+    const rewriter = context.rewriter;
+    const quotient = manager.mkApp(OP_IDIV, [dividend, divisor], SORT_INT);
+    const remainder = manager.mkApp(OP_MOD, [dividend, divisor], SORT_INT);
+    const zero = manager.mkNumeral(0);
+    const minusOne = manager.mkNumeral(-1);
+    const product = manager.mkApp(OP_MUL, [divisor, quotient], SORT_INT);
+    const isZero = this.mkLiteral(manager.mkEq(divisor, zero));
+    const sum = manager.mkApp(OP_ADD, [product, remainder], SORT_INT);
+    context.mkThAxiom([isZero, this.mkLiteral(manager.mkEq(sum, dividend))]);
+    context.mkThAxiom([isZero, this.mkLiteral(manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL))]);
+    const lowerBound = manager.mkApp(
+      OP_ADD,
+      [remainder, manager.mkApp(OP_MUL, [minusOne, divisor], SORT_INT)],
+      SORT_INT,
+    );
+    context.mkThAxiom([
+      this.mkLiteral(manager.mkApp(OP_LE, [divisor, zero], SORT_BOOL)),
+      this.mkLiteral(manager.mkApp(OP_LE, [lowerBound, minusOne], SORT_BOOL)),
+    ]);
+    context.mkThAxiom([
+      this.mkLiteral(manager.mkApp(OP_GE, [divisor, zero], SORT_BOOL)),
+      this.mkLiteral(
+        manager.mkApp(
+          OP_LE,
+          [manager.mkApp(OP_ADD, [remainder, divisor], SORT_INT), minusOne],
+          SORT_BOOL,
+        ),
+      ),
+    ]);
+    const difference = manager.mkApp(OP_SUB, [dividend, product], SORT_INT);
+    context.mkThAxiom([
+      isZero,
+      this.mkLiteral(rewriter.rewrite(manager.mkApp(OP_GE, [difference, zero], SORT_BOOL))),
+    ]);
   }
 
   // mk_idiv_mod_axioms for a numeral divisor k: k * (div p k) + (mod p k) = p, 0 <= mod < |k|.
@@ -592,7 +670,8 @@ export class TheoryLra implements Theory {
         continue;
       }
       const otherNode = this.varEnodes[other];
-      if (otherNode !== undefined && otherNode.root !== node.root) candidates.push([variable, other]);
+      if (otherNode !== undefined && otherNode.root !== node.root)
+        candidates.push([variable, other]);
     }
     for (const candidate of candidates) {
       const first = this.varEnodes[candidate[0]];

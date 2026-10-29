@@ -8,32 +8,55 @@ export interface CgInsertResult {
   isCommutative: boolean;
 }
 
-export class CgTable {
-  private table = new Map<string, Enode>();
-
-  private getKey(node: Enode) {
-    return this.getKeyFor(node.decl, node.args, node.isEq);
+const getHash = (decl: number, args: Enode[], isEq: boolean) => {
+  if (isEq) {
+    const first = args[0].root.owner;
+    const second = args[1].root.owner;
+    return first < second
+      ? (Math.imul(Math.imul(decl, 0x9e3779b1) + first, 0x85ebca6b) + second) | 0
+      : (Math.imul(Math.imul(decl, 0x9e3779b1) + second, 0x85ebca6b) + first) | 0;
   }
+  let hash = decl;
+  for (let index = 0; index < args.length; index++)
+    hash = (Math.imul(hash, 0x9e3779b1) + args[index].root.owner) | 0;
+  return hash;
+};
 
-  private getKeyFor(decl: number, args: Enode[], isEq: boolean) {
-    if (isEq) {
-      const first = args[0].root.owner;
-      const second = args[1].root.owner;
-      return first < second ? `${decl}=${first},${second}` : `${decl}=${second},${first}`;
-    }
-    if (args.length === 1) return `${decl}:${args[0].root.owner}`;
-    if (args.length === 2) return `${decl}:${args[0].root.owner},${args[1].root.owner}`;
-    let key = `${decl}:`;
-    for (let index = 0; index < args.length; index++) key += `${args[index].root.owner},`;
-    return key;
+const isCongruentTo = (node: Enode, decl: number, args: Enode[], isEq: boolean) => {
+  if (node.decl !== decl || node.args.length !== args.length) return false;
+  if (isEq) {
+    const first = args[0].root;
+    const second = args[1].root;
+    const nodeFirst = node.args[0].root;
+    const nodeSecond = node.args[1].root;
+    return (
+      (nodeFirst === first && nodeSecond === second) ||
+      (nodeFirst === second && nodeSecond === first)
+    );
+  }
+  for (let index = 0; index < args.length; index++)
+    if (node.args[index].root !== args[index].root) return false;
+  return true;
+};
+
+export class CgTable {
+  private table = new Map<number, Enode[]>();
+
+  private find(decl: number, args: Enode[], isEq: boolean, hash: number) {
+    const bucket = this.table.get(hash);
+    if (bucket === undefined) return undefined;
+    for (const node of bucket) if (isCongruentTo(node, decl, args, isEq)) return node;
+    return undefined;
   }
 
   // Returns the congruence root for node, which is node itself when it is new.
   insert(node: Enode): CgInsertResult {
-    const key = this.getKey(node);
-    const existing = this.table.get(key);
+    const hash = getHash(node.decl, node.args, node.isEq);
+    const existing = this.find(node.decl, node.args, node.isEq, hash);
     if (existing === undefined) {
-      this.table.set(key, node);
+      const bucket = this.table.get(hash);
+      if (bucket === undefined) this.table.set(hash, [node]);
+      else bucket.push(node);
       return { node, isCommutative: false };
     }
     const isCommutative = node.isEq && existing.args[0].root !== node.args[0].root;
@@ -42,15 +65,24 @@ export class CgTable {
 
   // get_enode_eq_to: the congruence root of decl applied to nodes equal to args, if any.
   findFor(decl: number, args: Enode[], isEq: boolean) {
-    return this.table.get(this.getKeyFor(decl, args, isEq));
+    return this.find(decl, args, isEq, getHash(decl, args, isEq));
   }
 
   erase(node: Enode) {
-    const key = this.getKey(node);
-    if (this.table.get(key) === node) this.table.delete(key);
+    const hash = getHash(node.decl, node.args, node.isEq);
+    const bucket = this.table.get(hash);
+    if (bucket === undefined) return;
+    const index = bucket.indexOf(node);
+    if (index === -1) return;
+    if (bucket.length === 1) this.table.delete(hash);
+    else {
+      bucket[index] = bucket[bucket.length - 1];
+      bucket.pop();
+    }
   }
 
   contains(node: Enode) {
-    return this.table.get(this.getKey(node)) === node;
+    const bucket = this.table.get(getHash(node.decl, node.args, node.isEq));
+    return bucket !== undefined && bucket.includes(node);
   }
 }

@@ -1,0 +1,178 @@
+{
+  "Allocator-37.smt": {
+    "z3": "unsat",
+    "source": "tlapm/examples/Allocator.tla/37.smt"
+  },
+  "Barriers-63.smt": {
+    "z3": "unsat",
+    "source": "examples/specifications/barriers/Barriers.tla/63.smt"
+  },
+  "CRDT_proof-49.smt": {
+    "z3": "unsat",
+    "source": "examples/specifications/FiniteMonotonic/CRDT_proof.tla/49.smt"
+  },
+  "CigaretteSmokers_proof-30.smt": {
+    "z3": "unsat",
+    "source": "examples/specifications/CigaretteSmokers/CigaretteSmokers_proof.tla/30.smt"
+  },
+  "Dekker-146.smt": {
+    "z3": "unsat",
+    "source": "tlapm/examples/Dekker/Dekker.tla/146.smt"
+  },
+  "DieHard_proof-46.smt": {
+    "z3": "unsat",
+    "source": "examples/specifications/DieHard/DieHard_proof.tla/46.smt"
+  },
+  "DiningPhilosophers_proof-323.smt": {
+    "z3": "unsat",
+    "source": "examples/specifications/DiningPhilosophers/DiningPhilosophers_proof.tla/323.smt"
+  },
+  "ENABLED_INSTANCE_nullary_op_two_vars_test-1.smt": {
+    "z3": "sat",
+    "source": "tlapm/test/fast/enabled_cdot/ENABLED_INSTANCE_nullary_op_two_vars_test.tla/1.smt"
+  },
+  "ENABLED_INSTANCE_op_with_args_test-1.smt": {
+    "z3": "sat",
+    "source": "tlapm/test/fast/enabled_cdot/ENABLED_INSTANCE_op_with_args_test.tla/1.smt"
+  },
+  "ENABLEDaxioms_test-96.smt": {
+    "z3": "unsat",
+    "source": "tlapm/test/fast/enabled_cdot/ENABLEDaxioms_test.tla/96.smt"
+  },
+  "EWD840_proof-49.smt": {
+    "z3": "unsat",
+    "source": "examples/specifications/ewd840/EWD840_proof.tla/49.smt"
+  },
+  "EmptySetEqCases_proofs-1004.smt": {
+    "z3": "unsat",
+    "source": "tlc/tlatools/org.lamport.tlatools/test-model/EmptySetEqCases_proofs.tla/1004.smt"
+  },
+  "EmptySetEqTheorems_proofs-453.smt": {
+    "z3": "unsat",
+    "source": "tlc/tlatools/org.lamport.tlatools/test-model/EmptySetEqTheorems_proofs.tla/453.smt"
+  },
+  "Enabled_test-43.smt": {
+    "z3": "unsat",
+    "source": "tlapm/test/fast/enabled_cdot/Enabled_test.tla/43.smt"
+  },
+  "FingerprintVariablesParameters_test-1.smt": {
+    "z3": "sat",
+    "source": "tlapm/test/fast/fingerprint/FingerprintVariablesParameters_test.tla/1.smt"
+  },
+  "FingerprintVariablesParameters_test-2.smt": {
+    "z3": "sat",
+    "source": "tlapm/test/fast/fingerprint/FingerprintVariablesParameters_test.tla/2.smt"
+  },
+  "FiniteSetTheorems_proofs-238.smt": {
+    "z3": "unsat",
+    "source": "tlapm/library/FiniteSetTheorems_proofs.tla/238.smt"
+  },
+  "FiniteSetsExtTheorems_proofs-202.smt": {
+    "z3": "unsat",
+    "source": "community/modules/FiniteSetsExtTheorems_proofs.tla/202.smt"
+  },
+  "FunctionTheorems_proofs-779.smt": {
+    "z3": "unsat",
+    "source": "community/modules/FunctionTheorems_proofs.tla/779.smt"
+  },
+  "GFX_test-729.smt": {
+    "z3": "unsat",
+    "source": "tlapm/test/medium/regression/snapshot/GFX_test.tla/729.smt"
+  },
+  "NaturalsInduction_proofs-228.smt": {
+    "z3": "unsat",
+    "source": "tlapm/library/NaturalsInduction_proofs.tla/228.smt"
+  },
+  "Quicksort-149.smt": {
+    "z3": "unsat",
+    "source": "examples/specifications/LoopInvariance/Quicksort.tla/149.smt"
+  },
+  "Sets-174.smt": {
+    "z3": "unsat",
+    "source": "tlapm/test/fast/regression/consensus/Sets.tla/174.smt"
+  },
+  "Sets-3.smt": {
+    "z3": "unsat",
+    "source": "tlapm/test/fast/regression/consensus/Sets.tla/3.smt"
+  },
+  "SnapShot_test-1731.smt": {
+    "z3": "unsat",
+    "source": "tlapm/test/medium/regression/snapshot/SnapShot_test.tla/1731.smt"
+  },
+  "SubrefLL_test-39.smt": {
+    "z3": "unsat",
+    "source": "tlapm/test/fast/language/SubrefLL_test.tla/39.smt"
+  },
+  "Subref_test-22.smt": {
+    "z3": "unsat",
+    "source": "tlapm/test/fast/language/Subref_test.tla/22.smt"
+  },
+  "VoteProof-82.smt": {
+    "z3": "unsat",
+    "source": "tlapm/examples/ByzPaxos/VoteProof.tla/82.smt"
+  },
+  "VoteProof-83.smt": {
+    "z3": "unsat",
+    "source": "examples/specifications/byzpaxos/VoteProof.tla/83.smt"
+  },
+  "WellFoundedInduction_proofs-226.smt": {
+    "z3": "sat",
+    "source": "tlapm/library/WellFoundedInduction_proofs.tla/226.smt"
+  },
+  "WellFoundedInduction_proofs-317.smt": {
+    "z3": "unsat",
+    "source": "tlapm/library/WellFoundedInduction_proofs.tla/317.smt"
+  },
+  "bcastByz-314.smt": {
+    "z3": "unsat",
+    "source": "examples/specifications/bcastByz/bcastByz.tla/314.smt"
+  },
+  "clean_proof-39.smt": {
+    "z3": "unsat",
+    "source": "examples/specifications/glowingRaccoon/clean_proof.tla/39.smt"
+  },
+  "hidedef_test-1.smt": {
+    "z3": "sat",
+    "source": "tlapm/test/bugs/hidedef_test.tla/1.smt"
+  },
+  "nonexistent_test-1.smt": {
+    "z3": "sat",
+    "source": "tlapm/test/fast/basic/nonexistent_test.tla/1.smt"
+  },
+  "quant_level_test-1.smt": {
+    "z3": "sat",
+    "source": "tlapm/test/bugs/quant_level_test.tla/1.smt"
+  },
+  "recorddom_test-1.smt": {
+    "z3": "unsat",
+    "source": "tlapm/test/unit/h_records/recorddom_test.tla/1.smt"
+  },
+  "recordeq_swap_stest-1.smt": {
+    "z3": "sat",
+    "source": "tlapm/test/soundness_tests/recordeq_swap_stest.tla/1.smt"
+  },
+  "setext_test-1.smt": {
+    "z3": "unsat",
+    "source": "tlapm/test/unit/c_sets/setext_test.tla/1.smt"
+  },
+  "smt_false_test-1.smt": {
+    "z3": "sat",
+    "source": "tlapm/test/fast/basic/smt_false_test.tla/1.smt"
+  },
+  "sndord_bis_test-2.smt": {
+    "z3": "sat",
+    "source": "tlapm/test/bugs/sndord_bis_test.tla/2.smt"
+  },
+  "sndord_test-2.smt": {
+    "z3": "sat",
+    "source": "tlapm/test/bugs/sndord_test.tla/2.smt"
+  },
+  "sndordthm_test-2.smt": {
+    "z3": "sat",
+    "source": "tlapm/test/unit/a_lang/sndordthm_test.tla/2.smt"
+  },
+  "test213-5.smt": {
+    "z3": "sat",
+    "source": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test213.tla/5.smt"
+  }
+}
