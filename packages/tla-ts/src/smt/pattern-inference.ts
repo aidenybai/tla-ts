@@ -127,7 +127,7 @@ class PatternInference {
   // smaller_pattern: whether second is an instance of first.
   private isSmaller(first: number, second: number) {
     const manager = this.manager;
-    const bindings = new Array<number>(this.numBindings).fill(-1);
+    const bindings = Array.from({ length: this.numBindings }, () => -1);
     const todo: [number, number][] = [[first, second]];
     while (todo.length > 0) {
       const pair = todo.pop();

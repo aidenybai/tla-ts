@@ -584,10 +584,10 @@ export class Mam {
       const seen = new Set<Enode>();
       for (const node of candidates) {
         if (seen.has(node) || !node.isCgr()) continue;
+        if (this.context.checkCanceled()) return;
         seen.add(node);
         for (const trigger of tree.triggers) this.matchTrigger(trigger, node);
       }
-      if (this.context.checkCanceled()) return;
     }
     // match_new_patterns: one temporary tree per label, in the order the labels first appear.
     const byLabel = new Map<number, Trigger[]>();
@@ -612,9 +612,11 @@ export class Mam {
     for (const label of labels) {
       const tree = this.trees.get(label);
       if (tree === undefined) continue;
-      for (const node of this.context.enodesOf(label))
+      for (const node of this.context.enodesOf(label)) {
+        if (this.context.checkCanceled()) return;
         if (this.context.isRelevant(node.owner))
           for (const trigger of tree.triggers) this.matchTrigger(trigger, node);
+      }
     }
   }
 
