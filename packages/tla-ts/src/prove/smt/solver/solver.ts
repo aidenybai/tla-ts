@@ -1,11 +1,12 @@
 // Ported from Z3 (src/smt/smt_solver.cpp, src/smt/smt_kernel.cpp, src/smt/smt_setup.cpp), MIT
 // license, see z3-license.txt. Decides an SMT-LIB problem the way `z3 -smt2 AUTO_CONFIG=false
 // smt.MBQI=true` does for tlapm's UFNIA obligations.
-import { SmtUnsupportedError } from "../../../errors";
+import { SmtCanceledError, SmtUnsupportedError } from "../../../errors";
 import type { Verdict } from "../../verdict";
 import { preprocess } from "./asserted-formulas";
 import { Context } from "./context";
 import { L_FALSE, L_TRUE } from "./lbool";
+import { ResourceLimit } from "./rlimit";
 import { parseSmtlib } from "./smtlib-parser";
 
 export interface DecideSmtOptions {
@@ -20,14 +21,13 @@ interface SmtCheck {
 
 // The verdict, and the number of quantifier instances the search made.
 export const checkSmt = (text: string, options: DecideSmtOptions): SmtCheck => {
-  const problem = parseSmtlib(text);
+  const problem = parseSmtlib(
+    text,
+    new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
+  );
   if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
   const formulas = preprocess(problem.manager, problem.assertions);
-  const context = new Context(
-    problem.manager,
-    { deadline: Date.now() + options.timeLimitMs, signal: options.signal },
-    { isMbqi: true, relevancyLevel: 2 },
-  );
+  const context = new Context(problem.manager, { isMbqi: true, relevancyLevel: 2 });
   for (const formula of formulas) {
     if (context.isInconsistent()) break;
     context.internalizeAssertion(formula, 0);
@@ -45,7 +45,7 @@ export const decideSmt = (text: string, options: DecideSmtOptions): Verdict => {
   try {
     return checkSmt(text, options).verdict;
   } catch (error) {
-    if (error instanceof SmtUnsupportedError) return "unknown";
+    if (error instanceof SmtUnsupportedError || error instanceof SmtCanceledError) return "unknown";
     throw error;
   }
 };

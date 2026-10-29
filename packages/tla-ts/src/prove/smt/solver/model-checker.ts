@@ -4,7 +4,7 @@
 // is a counterexample that becomes an instance of the quantifier.
 import { KIND_APP, type AstManager } from "./ast";
 import { preprocess } from "./asserted-formulas";
-import { Context, type SearchLimits } from "./context";
+import { Context } from "./context";
 import type { Enode } from "./enode";
 import { L_FALSE, L_TRUE } from "./lbool";
 import type { ModelFinder } from "./model-finder";
@@ -28,11 +28,8 @@ interface Instance {
 class AuxContext {
   private context: Context;
 
-  constructor(
-    private manager: AstManager,
-    limits: SearchLimits,
-  ) {
-    this.context = new Context(manager, limits, { isMbqi: false, relevancyLevel: 0 });
+  constructor(private manager: AstManager) {
+    this.context = new Context(manager, { isMbqi: false, relevancyLevel: 0 });
   }
 
   assert(formulas: number[]) {
@@ -165,7 +162,7 @@ export class ModelChecker {
   // check(q): whether the model satisfies the quantifier. A counterexample becomes an instance.
   private checkQuantifier(quantifier: number, model: ProtoModel) {
     const manager = this.manager;
-    const aux = new AuxContext(manager, this.context.limits);
+    const aux = new AuxContext(manager);
     const flatQ = this.modelFinder.getFlatQuantifier(quantifier);
     const sks = this.assertNegQM(aux, flatQ, model);
     const completeCex = aux.check();

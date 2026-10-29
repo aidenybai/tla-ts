@@ -1,6 +1,7 @@
 // Ported from Z3 (src/ast/rewriter/th_rewriter.cpp, bool_rewriter.cpp, arith_rewriter.cpp,
 // der.cpp), MIT license, see z3-license.txt. Only the rewrites that tlapm's encoding
 // exercises are ported.
+import { SmtCanceledError } from "../../../errors";
 import { ArithRewriter, ArithRewriterOptions } from "./arith-rewriter";
 import { isAstLess } from "./ast-lt";
 import {
@@ -255,6 +256,7 @@ class FlatLiterals {
 export class Rewriter {
   private cache = new Map<number, number>();
   private arith: ArithRewriter;
+  private numSteps = 0;
 
   constructor(
     private manager: AstManager,
@@ -328,8 +330,11 @@ export class Rewriter {
     return new Rewriter(manager, this.options, true).rewrite(eliminated);
   }
 
+  // Throws SmtCanceledError when the resource limit cancels the rewrite, like rewriter_tpl's
+  // main_loop. The check runs every 256 steps rather than once per rewrite.
   mkAppCore(decl: number, args: number[], sort: number): number {
     const manager = this.manager;
+    if ((++this.numSteps & 255) === 0 && !manager.limit.inc()) throw new SmtCanceledError();
     const op = manager.funcDecls[decl].op;
     switch (op) {
       case OP_AND:

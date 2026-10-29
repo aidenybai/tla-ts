@@ -2,6 +2,7 @@
 // A hash-consed DAG of applications, de Bruijn variables and quantifiers, as in Z3's ast_manager.
 import { SmtUnsupportedError } from "../../../errors";
 import { astArrayHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
+import type { ResourceLimit } from "./rlimit";
 
 export const KIND_APP = 0;
 export const KIND_VAR = 1;
@@ -152,7 +153,7 @@ export class AstManager {
   readonly trueExpr: number;
   readonly falseExpr: number;
 
-  constructor() {
+  constructor(readonly limit: ResourceLimit) {
     for (const builtin of BUILTIN_DECLS)
       this.funcDecls.push({
         name: builtin[0],

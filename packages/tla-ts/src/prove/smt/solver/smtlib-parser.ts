@@ -26,6 +26,7 @@ import {
   SORT_BOOL,
   SORT_INT,
 } from "./ast";
+import type { ResourceLimit } from "./rlimit";
 import { shiftVars } from "./var-subst";
 
 type SExpr = string | SExpr[];
@@ -125,8 +126,8 @@ const expectSymbol = (sexpr: SExpr | undefined): string => {
   return sexpr;
 };
 
-export const parseSmtlib = (text: string): SmtProblem => {
-  const manager = new AstManager();
+export const parseSmtlib = (text: string, limit: ResourceLimit): SmtProblem => {
+  const manager = new AstManager(limit);
   const sorts = new Map<string, number>([
     ["Bool", SORT_BOOL],
     ["Int", SORT_INT],
