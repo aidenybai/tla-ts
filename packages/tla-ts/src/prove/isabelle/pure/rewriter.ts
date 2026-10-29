@@ -3,12 +3,12 @@
 // Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
+import { gconvRule, impCongRule } from "./conv";
 import { impCong, swapPremsEq } from "./drule";
 import { emptyTEnv } from "./envir";
 import {
   destEquals,
   destImplies,
-  implies,
   incrIndexes,
   isImplies,
   listImplies,
@@ -57,7 +57,6 @@ import {
   assume,
   betaConversion,
   combination,
-  equalElim,
   etaConversion,
   flexflexRule,
   impliesElim,
@@ -66,8 +65,6 @@ import {
   instantiate,
   instantiateTypes,
   nprems,
-  permutePrems,
-  premOf,
   reflexive,
   renamedProp,
   symmetric,
@@ -75,11 +72,15 @@ import {
   type Instantiation,
   type Thm,
 } from "./thm";
-import { checkInterrupt } from "./tactic";
-import { listOfSeq, singleSeq, emptySeq, type Seq } from "./seq";
-import { eqThm } from "./tactical";
+import { checkInterrupt, resolveTac } from "./tactic";
+import { listOfSeq, seqHead, singleSeq, emptySeq, type Seq } from "./seq";
+import { allGoals, eqThm } from "./tactical";
 
 export type Prover = (context: SimpContext, thm: Thm) => Thm | undefined;
+
+// simple_prover: proves the premises of a rewrite rule with the premises of the simpset.
+export const simpleProver: Prover = (context, thm) =>
+  seqHead(allGoals(resolveTac(context.limits, context.simpset.prems))(thm));
 
 const isThmError = (error: unknown) =>
   error instanceof TlaIsabelleError && error.exception === "THM";
@@ -274,7 +275,7 @@ const congc = (
   return aconv(lhs, rhs) ? undefined : joined;
 };
 
-class MatchFailure extends Error {}
+class MatchFailure {}
 
 const transitive1 = (first: Thm | undefined, second: Thm | undefined) =>
   first === undefined ? second : second === undefined ? first : transitive(first, second);
@@ -288,9 +289,6 @@ const instantiateABC = (rule: Thm, termA: Term, termB: Term, termC: Term) =>
     ],
     rule,
   );
-
-const impCongRule = (first: Thm, second: Thm) =>
-  combination(combination(reflexive(implies), first), second);
 
 export interface RewriteMode {
   readonly simprem: boolean;
@@ -572,26 +570,6 @@ export const rewriteCterm = (
     return result === undefined ? undefined : flexflexUnique(result);
   };
   return bottomc(mode, wrapped, maxidxOfTerm(term))(inner, term);
-};
-
-// Conv.gconv_rule: rewrites goal index of a state.
-export const gconvRule = (convert: (term: Term) => Thm, index: number, state: Thm): Thm => {
-  if (index < 1 || index > nprems(state)) throw new TlaIsabelleError("THM", `gconv_rule ${index}`);
-  const eq = convert(premOf(state, index));
-  const [lhs, rhs] = destEquals(eq.prop);
-  if (aconv(lhs, rhs)) return state;
-  const rotated = permutePrems(0, index - 1, state);
-  const rest = rotated.prop;
-  if (!isImplies(rest)) throw new TlaIsabelleError("THM", "gconv_rule");
-  const converted = equalElim(impCongRule(eq, reflexive(destImplies(rest)[1])), rotated);
-  return permutePrems(0, 1 - index, converted);
-};
-
-// Conv.fconv_rule: rewrites a theorem's proposition.
-export const fconvRule = (convert: (term: Term) => Thm, thm: Thm): Thm => {
-  const eq = convert(thm.prop);
-  const [lhs, rhs] = destEquals(eq.prop);
-  return aconv(lhs, rhs) ? thm : equalElim(eq, thm);
 };
 
 export const genericRewriteGoalTac =

@@ -8,9 +8,12 @@
 import { TlaIsabelleError } from "../../../errors";
 import { revcutRl, thinRl, zeroVarIndexes, makeElim } from "../pure/drule";
 import { selectGoal } from "../pure/goal";
-import { aconv } from "../pure/term";
+import { aconv, sizeOfTerm } from "../pure/term";
 import { stripAssumsConcl, stripAssumsHyp } from "../pure/logic";
 import { listOfSeq, seqHead } from "../pure/seq";
+import { trade } from "../pure/variable";
+import { atomizePremsTac } from "../pure/object-logic";
+import { bestFirst } from "../pure/search";
 import {
   allGoals,
   allTac,
@@ -45,19 +48,7 @@ import {
   type NetPair,
   type TaggedRule,
 } from "../pure/tactic";
-import {
-  assumption,
-  biresolution,
-  generalize,
-  instantiate,
-  nprems,
-  premsOf,
-  rs,
-  rsn,
-  type Thm,
-} from "../pure/thm";
-import { addFreeNames, addVars, mkFree, type Var } from "../pure/term";
-import { variantList } from "../pure/name";
+import { assumption, biresolution, nprems, premsOf, rs, rsn, type Thm } from "../pure/thm";
 
 // A rule as the user gave it, as the nets use it, and as the complete search duplicates it, each
 // with its swapped forms for negated assumptions.
@@ -151,20 +142,15 @@ const swapify = (data: ClassicalData, rules: readonly Thm[]) =>
 const dupIntr = (data: ClassicalData, rule: Thm) => zeroVarIndexes(rs(rule, data.classical));
 
 // Drule.rule_by_tactic: runs the tactic on the rule with its variables fixed.
-const ruleByTactic = (tactic: Tactic, rule: Thm): Thm => {
-  const vars = addVars(rule.prop, [] as Var[]);
-  const names = variantList(
-    addFreeNames(rule.prop, []),
-    vars.map((variable) => variable.name),
+// Tactic.rule_by_tactic
+const ruleByTactic = (tactic: Tactic, rule: Thm): Thm =>
+  zeroVarIndexes(
+    trade((fixed) => {
+      const result = seqHead(tactic(fixed));
+      if (result === undefined) throw new TlaIsabelleError("THM", "rule_by_tactic");
+      return [result];
+    }, rule)[0],
   );
-  const fixed = instantiate(
-    vars.map((variable, index) => ({ variable, term: mkFree(names[index], variable.type) })),
-    rule,
-  );
-  const result = seqHead(tactic(fixed));
-  if (result === undefined) throw new TlaIsabelleError("THM", "rule_by_tactic");
-  return generalize(names, result.maxidx + 1, result);
-};
 
 const dupElim = (limits: Limits, rule: Thm) => {
   const duplicated = seqHead(assumption(2, rsn(rule, 2, revcutRl)));
@@ -377,11 +363,25 @@ export const unsafeStepTac = (context: ClassicalContext): GoalTactic =>
   biresolveFromNetsTac(context.limits, context.claset.unsafe);
 
 // step_tac: a safe step, or else an unsafe one.
-const stepTac =
+export const stepTac =
   (context: ClassicalContext): GoalTactic =>
   (index) =>
     orElse(
       safeTac(context),
       appWrappers(context, orElseGoal(instStepTac(context), unsafeStepTac(context)))(index),
     );
-export { stepTac };
+
+// Drule.size_of_thm, the sizef of Isabelle/TLA+'s Classical: the size of the proposition with its
+// flex-flex pairs.
+const sizeOfThm = (thm: Thm) =>
+  thm.tpairs.reduce(
+    (size, pair) => size + 2 + sizeOfTerm(pair[0]) + sizeOfTerm(pair[1]),
+    sizeOfTerm(thm.prop),
+  );
+
+// first_best_tac: best-first search with step_tac on the first goal.
+export const firstBestTac = (context: ClassicalContext, atomizeRules: readonly Thm[]): GoalTactic =>
+  thenGoal(
+    atomizePremsTac(context.limits, atomizeRules),
+    selectGoal(bestFirst(hasFewerPrems(1), sizeOfThm, firstGoalTac(stepTac(context)))),
+  );

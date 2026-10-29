@@ -83,9 +83,9 @@ export interface HypsubstContext {
 }
 
 // The equality offers no variable to eliminate.
-class NoMatch extends Error {}
+class NoMatch {}
 // The subgoal has no suitable equality.
-class EqVar extends Error {}
+class EqVar {}
 
 const isTermError = (error: unknown) =>
   error instanceof TlaIsabelleError && error.exception === "TERM";

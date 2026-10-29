@@ -38,9 +38,9 @@ import {
 } from "./term";
 import { emptyTyEnv, matchTypes, normType, substType, unifyTypes, type TyEnv } from "./type";
 
-class Unif extends Error {}
-class NotPattern extends Error {}
-class Match extends Error {}
+class Unif {}
+class NotPattern {}
+class Match {}
 
 interface Binder {
   name: string;

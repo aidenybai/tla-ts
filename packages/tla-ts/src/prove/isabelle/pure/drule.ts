@@ -12,7 +12,7 @@ import {
   type IndexKey,
 } from "./table";
 import { TlaIsabelleError } from "../../../errors";
-import { allConst, isProtected, mkEquals, mkImplies, protect } from "./logic";
+import { allConst, isProtected, mkEquals, mkImplies, mkTerm, protect } from "./logic";
 import { listOfSeq } from "./seq";
 import { eqThm } from "./tactical";
 import {
@@ -59,6 +59,9 @@ export const revcutRl = axiomThm(
 );
 export const thinRl = axiomThm(mkImplies(propVar("V"), mkImplies(propVar("W"), propVar("W"))));
 export const asmRl = axiomThm(mkImplies(propVar("psi"), propVar("psi")));
+export const remdupsRl = axiomThm(
+  mkImplies(propVar("phi"), mkImplies(propVar("phi"), mkImplies(propVar("psi"), propVar("psi")))),
+);
 export const protectI = axiomThm(mkImplies(propVar("A"), protect(propVar("A"))));
 export const protectD = axiomThm(mkImplies(protect(propVar("A")), propVar("A")));
 export const reflexiveThm = axiomThm(
@@ -66,6 +69,8 @@ export const reflexiveThm = axiomThm(
 );
 
 const typeA = mkTVar("'a", 0);
+
+export const termI = axiomThm(mkTerm(mkVar("x", 0, typeA)));
 
 export const impCong = axiomThm(
   mkImplies(

@@ -773,7 +773,7 @@ export interface ComposeRule {
   readonly subgoals: number;
 }
 
-class Compose extends Error {}
+class Compose {}
 
 const bicomposeAux = (
   flags: ComposeFlags,

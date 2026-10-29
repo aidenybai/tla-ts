@@ -58,8 +58,8 @@ interface Dpair {
 
 export type Tpair = readonly [Term, Term];
 
-class CantUnify extends Error {}
-class ChangeFail extends Error {}
+class CantUnify {}
+class ChangeFail {}
 
 const binderTypes = (binders: readonly Binder[]) => binders.map((binder) => binder.type);
 

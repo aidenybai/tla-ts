@@ -5,10 +5,11 @@
 import { genAll, isNormHhf, normHhfEq } from "./drule";
 import { preferGoal } from "./goal";
 import { addSimps, emptySimpset, type SimpContext, type Solver } from "./raw-simplifier";
+import { fconvRule } from "./conv";
 import {
-  fconvRule,
   genericRewriteGoalTac,
   rewriteCterm,
+  simpleProver,
   type Prover,
   type RewriteMode,
 } from "./rewriter";
@@ -101,7 +102,7 @@ export const normHhf = (limits: Limits, thm: Thm): Thm => {
       (term) =>
         rewriteCterm(
           { simprem: true, useprem: false, mutsimp: false },
-          () => undefined,
+          simpleProver,
           context,
           term,
         ),
