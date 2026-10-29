@@ -26,6 +26,7 @@ import {
   listImplies,
   mkEquals,
   mkImplies,
+  occs,
   stripImpConcl,
   stripImpPrems,
   stripPrems,
@@ -162,7 +163,7 @@ export const impliesElim = (major: Thm, minor: Thm): Thm => {
 };
 
 const occursIn = (variable: Term, terms: readonly Term[], tpairs: readonly Tpair[]) => {
-  const occurs = (term: Term) => existsSubterm((sub) => aconv(variable, sub), term);
+  const occurs = (term: Term) => occs(variable, term);
   return terms.some(occurs) || tpairs.some((pair) => occurs(pair[0]) || occurs(pair[1]));
 };
 

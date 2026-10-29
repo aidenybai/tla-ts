@@ -18,10 +18,16 @@ import {
 } from "./table";
 import {
   binderTypes as plainBinderTypes,
+  flagsOf,
   funT,
+  HAS_ETA_REDEX,
+  HAS_REDEX,
+  HAS_VAR,
   isDependent,
   listComb,
+  maxidxOfTerm,
   mkAbs,
+  mkApp,
   mkBound,
   mkVar,
   substBound,
@@ -140,15 +146,11 @@ export const vupdate = (variable: Var, term: Term, envir: Envir): Envir => {
   return update(variable, term, envir);
 };
 
-export const couldBetaContract = (term: Term): boolean => {
-  if (term.kind === "App")
-    return term.fun.kind === "Abs" || couldBetaContract(term.fun) || couldBetaContract(term.arg);
-  if (term.kind === "Abs") return couldBetaContract(term.body);
-  return false;
-};
+export const couldBetaContract = (term: Term) => (flagsOf(term) & HAS_REDEX) !== 0;
 
 const normTerm1 = (tenv: TEnv, term: Term): Term => {
   const norm = (current: Term): Term => {
+    if ((flagsOf(current) & (HAS_VAR | HAS_REDEX)) === 0) return current;
     switch (current.kind) {
       case "Var": {
         const assigned = lookup1(tenv, current);
@@ -172,6 +174,7 @@ const normTerm1 = (tenv: TEnv, term: Term): Term => {
 const normTerm2 = (envir: Envir, term: Term): Term => {
   const normT = (type: Typ) => normType(envir.tyenv, type);
   const norm = (current: Term): Term => {
+    if (maxidxOfTerm(current) < 0 && (flagsOf(current) & HAS_REDEX) === 0) return current;
     switch (current.kind) {
       case "Const":
       case "Free": {
@@ -210,6 +213,7 @@ export const betaNorm = (term: Term) => normTerm(initEnvir, term);
 // Envir.head_norm: normalizes the head only, for unification.
 export const headNorm = (envir: Envir, term: Term): Term => {
   const norm = (current: Term): Term => {
+    if ((flagsOf(current) & (HAS_VAR | HAS_REDEX)) === 0) return current;
     switch (current.kind) {
       case "Var": {
         const assigned = lookup(envir, current);
@@ -221,7 +225,7 @@ export const headNorm = (envir: Envir, term: Term): Term => {
         if (current.fun.kind === "Abs") return norm(substBound(current.arg, current.fun.body));
         const fun = norm(current.fun);
         if (fun.kind === "Abs") return norm(substBound(current.arg, fun.body));
-        return fun === current.fun ? current : { kind: "App", fun, arg: current.arg };
+        return fun === current.fun ? current : mkApp(fun, current.arg);
       }
       default:
         return current;
@@ -269,17 +273,10 @@ const decrementLoose = (term: Term, level: number): Term => {
   }
 };
 
-export const couldEtaContract = (term: Term): boolean => {
-  if (term.kind === "Abs")
-    return (
-      (term.body.kind === "App" && term.body.arg.kind === "Bound" && term.body.arg.index === 0) ||
-      couldEtaContract(term.body)
-    );
-  if (term.kind === "App") return couldEtaContract(term.fun) || couldEtaContract(term.arg);
-  return false;
-};
+export const couldEtaContract = (term: Term) => (flagsOf(term) & HAS_ETA_REDEX) !== 0;
 
 const etaSame = (term: Term): Term => {
+  if (!couldEtaContract(term)) return term;
   if (term.kind === "Abs") {
     const body = etaSame(term.body);
     if (body.kind === "App" && body.arg.kind === "Bound" && body.arg.index === 0) {
@@ -344,6 +341,7 @@ export const fastype = (envir: Envir, types: readonly Typ[], term: Term): Typ =>
 export const substTerm = (tyenv: TyEnv, tenv: TEnv, term: Term): Term => {
   const substT = (type: Typ) => (isEmptyTable(tyenv) ? type : substType(tyenv, type));
   const visit = (current: Term): Term => {
+    if (maxidxOfTerm(current) < 0) return current;
     switch (current.kind) {
       case "Const":
       case "Free": {

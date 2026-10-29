@@ -16,7 +16,7 @@ import { allConst, isProtected, mkEquals, mkImplies, mkTerm, protect } from "./l
 import { listOfSeq } from "./seq";
 import { eqThm } from "./tactical";
 import {
-  foldAterms,
+  foldVars,
   foldAtyps,
   foldTypes,
   funT,
@@ -157,9 +157,8 @@ export const genAll = (thm: Thm) => {
 export const forallIntrVars = (thm: Thm) => {
   const vars = fullProps(thm).reduce(
     (result, term) =>
-      foldAterms(
+      foldVars(
         (atom, current: Var[]) =>
-          atom.kind === "Var" &&
           !current.some((other) => other.name === atom.name && other.index === atom.index)
             ? [...current, atom]
             : current,
@@ -204,9 +203,9 @@ export const zeroVarIndexes = (thm: Thm): Thm => {
   }
   const vars = terms.reduce(
     (table, term) =>
-      foldAterms(
+      foldVars(
         (atom, current: typeof table) =>
-          atom.kind === "Var" && lookupTable(current, atom) === undefined
+          lookupTable(current, atom) === undefined
             ? updateTable(current, atom, mkVar(atom.name, atom.index, normType(tyenv, atom.type)))
             : current,
         term,

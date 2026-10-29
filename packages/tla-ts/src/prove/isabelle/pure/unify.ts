@@ -34,6 +34,8 @@ import {
   aconv,
   eqTyp,
   funTs,
+  flagsOf,
+  HAS_VAR,
   headOf,
   incrBoundvars,
   listComb,
@@ -98,6 +100,7 @@ const sameIndexname = (
 
 const occursTerms = (seen: Var[], envir: Envir, variable: Var, terms: readonly Term[]): boolean => {
   const occur = (term: Term): boolean => {
+    if ((flagsOf(term) & HAS_VAR) === 0) return false;
     switch (term.kind) {
       case "Const":
       case "Bound":

@@ -6,7 +6,7 @@
 import { TlaIsabelleError } from "../../../errors";
 import { asmRl, compIncr, revcutRl, thinRl, zeroVarIndexes } from "../pure/drule";
 import { aeconv, etaContract } from "../pure/envir";
-import { stripAssumsConcl, stripAssumsHyp, stripParams } from "../pure/logic";
+import { occs, stripAssumsConcl, stripAssumsHyp, stripParams } from "../pure/logic";
 import { isBoundName } from "../pure/name";
 import { emptySimpset, type SimpContext } from "../pure/raw-simplifier";
 import { listOfSeq } from "../pure/seq";
@@ -35,10 +35,10 @@ import {
 } from "../pure/tactic";
 import {
   abstractOver,
-  aconv,
   binderTypes,
   bodyType,
-  existsSubterm,
+  flagsOf,
+  HAS_VAR,
   existsType,
   fastypeOf1,
   funTs,
@@ -99,20 +99,13 @@ const inspectContract = (term: Term) => {
   return contracted.kind === "Free" && isBoundName(contracted.name) ? mkBound(0) : contracted;
 };
 
-const hasVars = (term: Term) => existsSubterm((sub) => sub.kind === "Var", term);
+const hasVars = (term: Term) => (flagsOf(term) & HAS_VAR) !== 0;
 const hasTVars = (term: Term) =>
   existsType((type) => {
     const visit = (current: typeof type): boolean =>
       current.kind === "TVar" || (current.kind === "Type" && current.args.some(visit));
     return visit(type);
   }, term);
-
-// Logic.occs: whether the term occurs in the other one.
-const occurs = (term: Term, other: Term): boolean =>
-  aconv(term, other) ||
-  (other.kind === "App"
-    ? occurs(term, other.fun) || occurs(term, other.arg)
-    : other.kind === "Abs" && occurs(term, other.body));
 
 // inspect_pair: true to use the equality as it is, false to reorient it first, with the variable
 // to substitute.
@@ -135,13 +128,11 @@ const inspectPair = (
     return [false, rightContracted];
   }
   if (leftContracted.kind === "Free") {
-    if (isBound || occurs(leftContracted, right) || (isNoVars && hasVars(right)))
-      throw new NoMatch();
+    if (isBound || occs(leftContracted, right) || (isNoVars && hasVars(right))) throw new NoMatch();
     return [true, leftContracted];
   }
   if (rightContracted.kind === "Free") {
-    if (isBound || occurs(rightContracted, left) || (isNoVars && hasVars(left)))
-      throw new NoMatch();
+    if (isBound || occs(rightContracted, left) || (isNoVars && hasVars(left))) throw new NoMatch();
     return [false, rightContracted];
   }
   throw new NoMatch();
@@ -162,7 +153,7 @@ const eqVar = (
     variable: Term,
   ): [boolean, boolean] => {
     if (variable.kind !== "Free") return [orientation, false];
-    if (!isCheckingFrees || !orientation || terms.some((term) => occurs(variable, term)))
+    if (!isCheckingFrees || !orientation || terms.some((term) => occs(variable, term)))
       return [orientation, true];
     throw new NoMatch();
   };

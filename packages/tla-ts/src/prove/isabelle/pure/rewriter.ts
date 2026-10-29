@@ -37,7 +37,7 @@ import {
   aconv,
   existsSubterm,
   eqTyp,
-  foldAterms,
+  foldVars,
   listComb,
   maxidxOfTerm,
   mkBound,
@@ -148,12 +148,7 @@ const isWeakCong = (context: SimpContext, lhs: Term) => {
 const uncondSkel = (context: SimpContext, lhs: Term, rhs: Term) =>
   isWeakCong(context, lhs) ? SKEL0 : rhs;
 
-const varsOf = (term: Term) =>
-  foldAterms(
-    (atom, result: Var[]) => (atom.kind === "Var" ? [...result, atom] : result),
-    term,
-    [] as Var[],
-  );
+const varsOf = (term: Term) => foldVars((atom, result: Var[]) => [...result, atom], term, []);
 
 const condSkel = (context: SimpContext, lhs: Term, rhs: Term) => {
   const lhsVars = varsOf(lhs);

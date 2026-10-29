@@ -4,13 +4,25 @@
 // Simply typed lambda terms with de Bruijn indices. Functions that rebuild a term return the
 // very same object when nothing changes, as Isabelle's Same.SAME does, so pointer equality stays a
 // fast path.
+//
+// Unlike Isabelle, applications, abstractions and compound types record what their subterms
+// contain when built: the largest index (maxidx), a bound above every loose bound variable (loose),
+// whether a schematic variable, a beta redex or an eta redex occurs, and a bit for the name of each
+// free variable (flags). A term has every flag of its subterms. Traversals use this to skip
+// subterms they would return unchanged, which gives the same results while touching only the parts
+// that change.
 
 import { TlaIsabelleError } from "../../../errors";
 
 export type Sort = readonly string[];
 
 export type Typ =
-  | { readonly kind: "Type"; readonly name: string; readonly args: readonly Typ[] }
+  | {
+      readonly kind: "Type";
+      readonly name: string;
+      readonly args: readonly Typ[];
+      readonly maxidx: number;
+    }
   | { readonly kind: "TFree"; readonly name: string; readonly sort: Sort }
   | { readonly kind: "TVar"; readonly name: string; readonly index: number; readonly sort: Sort };
 
@@ -19,8 +31,23 @@ export type Term =
   | { readonly kind: "Free"; readonly name: string; readonly type: Typ }
   | { readonly kind: "Var"; readonly name: string; readonly index: number; readonly type: Typ }
   | { readonly kind: "Bound"; readonly index: number }
-  | { readonly kind: "Abs"; readonly name: string; readonly type: Typ; readonly body: Term }
-  | { readonly kind: "App"; readonly fun: Term; readonly arg: Term };
+  | {
+      readonly kind: "Abs";
+      readonly name: string;
+      readonly type: Typ;
+      readonly body: Term;
+      readonly loose: number;
+      readonly maxidx: number;
+      readonly flags: number;
+    }
+  | {
+      readonly kind: "App";
+      readonly fun: Term;
+      readonly arg: Term;
+      readonly loose: number;
+      readonly maxidx: number;
+      readonly flags: number;
+    };
 
 export type Var = Extract<Term, { kind: "Var" }>;
 export type Abs = Extract<Term, { kind: "Abs" }>;
@@ -32,10 +59,57 @@ export interface Indexname {
   readonly index: number;
 }
 
+export const HAS_VAR = 1;
+export const HAS_REDEX = 2;
+export const HAS_ETA_REDEX = 4;
+
+export const maxidxOfTyp = (type: Typ, maxidx = -1) =>
+  Math.max(maxidx, type.kind === "TFree" ? -1 : type.kind === "TVar" ? type.index : type.maxidx);
+
+export const maxidxOfTerm = (term: Term, maxidx = -1): number => {
+  switch (term.kind) {
+    case "Var":
+      return Math.max(maxidx, term.index, maxidxOfTyp(term.type));
+    case "Const":
+    case "Free":
+      return maxidxOfTyp(term.type, maxidx);
+    case "Bound":
+      return maxidx;
+    default:
+      return Math.max(maxidx, term.maxidx);
+  }
+};
+
+// The bound on loose bound variables: every one is below it.
+export const looseOf = (term: Term) =>
+  term.kind === "Bound"
+    ? term.index + 1
+    : term.kind === "App" || term.kind === "Abs"
+      ? term.loose
+      : 0;
+
+// One of the 28 bits above the others, picked by a cheap hash of the name.
+const freeBit = (name: string) =>
+  8 <<
+  ((name.length * 31 + (name.charCodeAt(0) | 0) * 7 + (name.charCodeAt(name.length - 1) | 0)) % 28);
+
+export const flagsOf = (term: Term) =>
+  term.kind === "Var"
+    ? HAS_VAR
+    : term.kind === "Free"
+      ? freeBit(term.name)
+      : term.kind === "App" || term.kind === "Abs"
+        ? term.flags
+        : 0;
+
+// Whether a subterm aconv to pattern could occur in term.
+export const mayOccur = (pattern: Term, term: Term) => (flagsOf(pattern) & ~flagsOf(term)) === 0;
+
 export const mkType = (name: string, args: readonly Typ[] = []): Typ => ({
   kind: "Type",
   name,
   args,
+  maxidx: args.reduce((result, arg) => maxidxOfTyp(arg, result), -1),
 });
 export const mkTFree = (name: string, sort: Sort = []): Typ => ({ kind: "TFree", name, sort });
 export const mkTVar = (name: string, index: number, sort: Sort = []): Typ => ({
@@ -59,8 +133,20 @@ export const mkAbs = (name: string, type: Typ, body: Term): Term => ({
   name,
   type,
   body,
+  loose: Math.max(looseOf(body) - 1, 0),
+  maxidx: maxidxOfTerm(body, maxidxOfTyp(type)),
+  flags:
+    flagsOf(body) |
+    (body.kind === "App" && body.arg.kind === "Bound" && body.arg.index === 0 ? HAS_ETA_REDEX : 0),
 });
-export const mkApp = (fun: Term, arg: Term): Term => ({ kind: "App", fun, arg });
+export const mkApp = (fun: Term, arg: Term): Term => ({
+  kind: "App",
+  fun,
+  arg,
+  loose: Math.max(looseOf(fun), looseOf(arg)),
+  maxidx: maxidxOfTerm(arg, maxidxOfTerm(fun)),
+  flags: flagsOf(fun) | flagsOf(arg) | (fun.kind === "Abs" ? HAS_REDEX : 0),
+});
 
 export const dummyT = mkType("dummy");
 export const propT = mkType("prop");
@@ -214,9 +300,10 @@ export const updateAbs = (term: Abs, body: Term, type: Typ = term.type): Term =>
 export const incrBv = (increment: number, level: number, term: Term): Term => {
   if (increment === 0) return term;
   const visit = (current: Term, depth: number): Term => {
+    if (looseOf(current) <= depth) return current;
     switch (current.kind) {
       case "Bound":
-        return current.index >= depth ? mkBound(current.index + increment) : current;
+        return mkBound(current.index + increment);
       case "Abs":
         return updateAbs(current, visit(current.body, depth + 1));
       case "App":
@@ -231,20 +318,10 @@ export const incrBv = (increment: number, level: number, term: Term): Term => {
 export const incrBoundvars = (increment: number, term: Term) => incrBv(increment, 0, term);
 
 // loose_bvar: whether term has a loose bound variable at level or beyond.
-export const looseBvar = (term: Term, level: number): boolean => {
-  switch (term.kind) {
-    case "Bound":
-      return term.index >= level;
-    case "App":
-      return looseBvar(term.fun, level) || looseBvar(term.arg, level);
-    case "Abs":
-      return looseBvar(term.body, level + 1);
-    default:
-      return false;
-  }
-};
+export const looseBvar = (term: Term, level: number) => looseOf(term) > level;
 
 export const looseBvar1 = (term: Term, level: number): boolean => {
+  if (looseOf(term) <= level) return false;
   switch (term.kind) {
     case "Bound":
       return term.index === level;
@@ -289,9 +366,9 @@ export const substBounds = (args: readonly Term[], body: Term): Term => {
   if (args.length === 0) return body;
   const count = args.length;
   const visit = (current: Term, level: number): Term => {
+    if (looseOf(current) <= level) return current;
     switch (current.kind) {
       case "Bound":
-        if (current.index < level) return current;
         if (current.index - level < count) return incrBoundvars(level, args[current.index - level]);
         return mkBound(current.index - count);
       case "Abs":
@@ -381,6 +458,7 @@ export const couldUnify = (left: Term, right: Term): boolean => {
 // abstract_over: replaces the occurrences of pattern with Bound, ready to become an Abs body.
 export const abstractOver = (pattern: Term, body: Term): Term => {
   const visit = (current: Term, level: number): Term => {
+    if (!mayOccur(pattern, current)) return current;
     if (aconv(pattern, current)) return mkBound(level);
     switch (current.kind) {
       case "Abs":
@@ -466,6 +544,25 @@ export const foldAterms = <State>(
   }
 };
 
+// fold_aterms over the schematic variables only, skipping the subterms without one.
+export const foldVars = <State>(
+  visit: (variable: Var, state: State) => State,
+  term: Term,
+  state: State,
+): State => {
+  if ((flagsOf(term) & HAS_VAR) === 0) return state;
+  switch (term.kind) {
+    case "App":
+      return foldVars(visit, term.arg, foldVars(visit, term.fun, state));
+    case "Abs":
+      return foldVars(visit, term.body, state);
+    case "Var":
+      return visit(term, state);
+    default:
+      return state;
+  }
+};
+
 export const foldAtyps = <State>(
   visit: (type: Typ, state: State) => State,
   type: Typ,
@@ -529,11 +626,9 @@ const sameVar = (left: Var, right: Var) =>
 
 // add_vars: the schematic variables, latest first, as Isabelle's insert builds the list.
 export const addVars = (term: Term, vars: Var[]): Var[] =>
-  foldAterms(
+  foldVars(
     (current, result: Var[]) =>
-      current.kind === "Var" && !result.some((other) => sameVar(other, current))
-        ? [current, ...result]
-        : result,
+      !result.some((other) => sameVar(other, current)) ? [current, ...result] : result,
     term,
     vars,
   );
@@ -592,32 +687,7 @@ export const addTFreeNames = (term: Term, names: string[]): string[] =>
     names,
   );
 
-export const maxidxOfTyp = (type: Typ, maxidx = -1): number =>
-  type.kind === "TVar"
-    ? Math.max(maxidx, type.index)
-    : type.kind === "Type"
-      ? type.args.reduce((result, arg) => maxidxOfTyp(arg, result), maxidx)
-      : maxidx;
-
-export const maxidxOfTerm = (term: Term, maxidx = -1): number => {
-  switch (term.kind) {
-    case "Var":
-      return maxidxOfTyp(term.type, Math.max(maxidx, term.index));
-    case "Const":
-    case "Free":
-      return maxidxOfTyp(term.type, maxidx);
-    case "Bound":
-      return maxidx;
-    case "Abs":
-      return maxidxOfTerm(term.body, maxidxOfTyp(term.type, maxidx));
-    case "App":
-      return maxidxOfTerm(term.arg, maxidxOfTerm(term.fun, maxidx));
-  }
-};
-
-export const isSchematic = (term: Term) =>
-  existsSubterm((current) => current.kind === "Var", term) ||
-  existsType((type) => existsSubtype((inner) => inner.kind === "TVar", type), term);
+export const isSchematic = (term: Term) => maxidxOfTerm(term) >= 0;
 
 // match_bvs: the pairs of corresponding abstraction names while two terms look alike.
 export const matchBvs = (

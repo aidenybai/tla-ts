@@ -2,7 +2,7 @@
 // Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { fastIndexnameOrd, fastStringOrd, indexnameOrd } from "./table";
-import { sizeOfTerm, type Term, type Typ } from "./term";
+import { mkType, sizeOfTerm, type Term, type Typ } from "./term";
 
 const intOrd = (left: number, right: number) => (left < right ? -1 : left > right ? 1 : 0);
 
@@ -105,7 +105,7 @@ const hdDepth = (term: Term): [Term, number] => {
   return [current, depth];
 };
 
-const dummyT: Typ = { kind: "Type", name: "dummy", args: [] };
+const dummyT = mkType("dummy");
 
 const destHd = (term: Term): [{ name: string; index: number }, Typ, number] => {
   switch (term.kind) {

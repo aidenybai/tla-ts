@@ -23,6 +23,8 @@ import {
   eqTyp,
   fastypeOf,
   funTs,
+  flagsOf,
+  HAS_VAR,
   isOpen,
   listComb,
   looseBnos,
@@ -49,6 +51,7 @@ interface Binder {
 
 const occurs = (variable: Var, term: Term, envir: Envir): boolean => {
   const visit = (current: Term): boolean => {
+    if ((flagsOf(current) & HAS_VAR) === 0) return false;
     switch (current.kind) {
       case "Var": {
         const assigned = lookup(envir, current);
