@@ -127,6 +127,19 @@ export class Context extends Internalizer {
       const literal = this.assignedLiterals[this.qhead];
       this.qhead++;
       const notLiteral = negate(literal);
+      const binary = this.binaryWatches[literal];
+      if (binary.length > 0) {
+        const justification = this.getBinJustification(literal);
+        for (let index = binary.length - 1; index >= 0; index--) {
+          const other = binary[index];
+          const value = this.assignment[other];
+          if (value === L_FALSE) {
+            this.setConflict(justification, negate(other));
+            return false;
+          }
+          if (value === L_UNDEF) this.assignCore(other, justification, false);
+        }
+      }
       const list = this.watches[literal];
       let kept = 0;
       let index = 0;

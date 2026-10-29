@@ -7,8 +7,13 @@ export const CLS_AUX = 0;
 export const CLS_LEARNED = 1;
 export const CLS_TH_AXIOM = 2;
 
-// b_justification: a clause, a theory justification, an axiom, or a decision (null).
-export type BJustification = Clause | Justification | "axiom" | null;
+// b_justification(l) of BIN_CLAUSE kind: a binary clause propagated because the literal l became true.
+export class BinJustification {
+  constructor(readonly literal: Literal) {}
+}
+
+// b_justification: a clause, a binary clause, a theory justification, an axiom, or a decision (null).
+export type BJustification = Clause | BinJustification | Justification | "axiom" | null;
 
 export class Clause {
   isDeleted = false;

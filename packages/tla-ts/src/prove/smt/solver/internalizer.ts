@@ -20,7 +20,14 @@ import {
 import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { CaseSplitQueue } from "./case-split-queue";
 import { CgTable } from "./cg-table";
-import { BJustification, CLS_AUX, CLS_LEARNED, CLS_TH_AXIOM, Clause } from "./clause";
+import {
+  BinJustification,
+  BJustification,
+  CLS_AUX,
+  CLS_LEARNED,
+  CLS_TH_AXIOM,
+  Clause,
+} from "./clause";
 import {
   AXIOM_EQ_JUSTIFICATION,
   Enode,
@@ -80,6 +87,10 @@ export abstract class Internalizer {
   // Per literal.
   protected assignment: number[] = [];
   protected watches: Clause[][] = [];
+  // The binary clauses of the binary clause optimization: the literals each literal propagates when it
+  // becomes true, which Z3 visits newest first and before the clauses.
+  protected binaryWatches: Literal[][] = [];
+  private binJustifications: BinJustification[] = [];
   // Per expression.
   protected exprToBoolVar: (BoolVar | undefined)[] = [];
   protected exprToEnode: (Enode | undefined)[] = [];
@@ -285,6 +296,7 @@ export abstract class Internalizer {
     this.isTrueFirstFlags.push(false);
     this.assignment.push(L_UNDEF, L_UNDEF);
     this.watches.push([], []);
+    this.binaryWatches.push([], []);
     this.caseSplitQueue.mkVar(boolVar);
     this.trail.push(() => this.undoMkBoolVar());
     return boolVar;
@@ -311,6 +323,8 @@ export abstract class Internalizer {
     this.isTrueFirstFlags.pop();
     this.assignment.length -= 2;
     this.watches.length -= 2;
+    this.binaryWatches.length -= 2;
+    this.binJustifications.length = Math.min(this.binJustifications.length, this.watches.length);
   }
 
   protected isAtom(boolVar: BoolVar) {
@@ -837,6 +851,24 @@ export abstract class Internalizer {
     if (position !== -1) list.splice(position, 1);
   }
 
+  protected getBinJustification(literal: Literal) {
+    const existing = this.binJustifications[literal];
+    if (existing !== undefined) return existing;
+    const created = new BinJustification(literal);
+    this.binJustifications[literal] = created;
+    return created;
+  }
+
+  // use_binary_clause_opt: a clause of two literals at the base level of the first scope, over
+  // variables created there, becomes a pair of binary watches. With relevancy, lemmas stay clauses so
+  // their propagations can mark literals as relevant.
+  private isUsingBinaryClauseOpt(first: Literal, second: Literal, isLemma: boolean) {
+    if (isLemma && this.relevancy.isEnabled) return false;
+    if (this.baseLevel > 0) return false;
+    if (!isLemma && this.scopeLevel > 0) return false;
+    return this.internLevels[getVar(first)] === 0 && this.internLevels[getVar(second)] === 0;
+  }
+
   private getMaxIscopeLevel(literals: Literal[]) {
     let result = 0;
     for (const literal of literals) result = Math.max(result, this.internLevels[getVar(literal)]);
@@ -869,6 +901,17 @@ export abstract class Internalizer {
       return null;
     }
     const isLemma = kind === CLS_LEARNED;
+    if (literals.length === 2 && this.isUsingBinaryClauseOpt(literals[0], literals[1], isLemma)) {
+      const first = literals[0];
+      const second = literals[1];
+      this.binaryWatches[negate(first)].push(second);
+      this.binaryWatches[negate(second)].push(first);
+      if (this.assignment[first] === L_FALSE)
+        this.assign(second, this.getBinJustification(negate(first)));
+      else if (this.assignment[second] === L_FALSE)
+        this.assign(first, this.getBinJustification(negate(second)));
+      return null;
+    }
     const iscopeLevel = isLemma ? this.getMaxIscopeLevel(literals) : 0;
     const isSavingAtoms = isLemma && iscopeLevel > this.baseLevel;
     const clause = new Clause(

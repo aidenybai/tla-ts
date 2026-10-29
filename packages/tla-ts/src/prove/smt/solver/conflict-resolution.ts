@@ -1,7 +1,7 @@
 // Ported from Z3 (src/smt/smt_conflict_resolution.cpp), MIT license, see z3-license.txt.
 // First-UIP conflict resolution with lemma minimization. Equalities in a conflict are explained
 // by walking the transitivity branches of the E-graph down to literals.
-import type { BJustification } from "./clause";
+import { BinJustification, type BJustification } from "./clause";
 import type { Context } from "./context";
 import { Enode, EqJustification, Justification } from "./enode";
 import { BoolVar, getVar, Literal, negate } from "./literal";
@@ -154,6 +154,8 @@ export class ConflictResolution {
     let result = consequent !== context.falseLiteral ? context.getAssignLevel(consequent) : 0;
     if (justification instanceof Justification)
       return Math.max(result, this.getJustificationMaxLevel(justification));
+    if (justification instanceof BinJustification)
+      return Math.max(result, context.getAssignLevel(justification.literal));
     if (justification === null || justification === "axiom") return result;
     const literals = justification.literals;
     let start = 0;
@@ -209,6 +211,8 @@ export class ConflictResolution {
     if (notLiteral !== null) this.processAntecedent(notLiteral, marks);
     do {
       if (justification instanceof Justification) this.processJustification(justification, marks);
+      else if (justification instanceof BinJustification)
+        this.processAntecedent(justification.literal, marks);
       else if (justification !== null && justification !== "axiom") {
         const clause = justification;
         if (clause.isLemma()) clause.activity++;
@@ -289,6 +293,8 @@ export class ConflictResolution {
       let isImplied = true;
       if (justification instanceof Justification)
         isImplied = this.processJustificationForMinimization(justification);
+      else if (justification instanceof BinJustification)
+        isImplied = this.processAntecedentForMinimization(justification.literal);
       else if (justification === null || justification === "axiom")
         isImplied = context.levels[boolVar] <= context.baseLevel;
       else {
