@@ -1,7 +1,6 @@
-// Ported from Z3 (src/solver/assertions/asserted_formulas.cpp, src/tactic/smtlogics/
-// quant_tactics.cpp, src/qe/lite/qe_lite_tactic.cpp), MIT license, see z3-license.txt.
-// The preprocessing that Z3's ufnia tactic and the SMT kernel run before search.
-import { AstManager, KIND_APP, KIND_QUANTIFIER, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR } from "./ast";
+// Ported from Z3 (src/solver/assertions/asserted_formulas.cpp), MIT license, see z3-license.txt. The
+// preprocessing that the SMT kernel runs on its assertions before search.
+import { AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR } from "./ast";
 import { toNnf } from "./nnf";
 import { inferPatterns } from "./pattern-inference";
 import { KERNEL_ARITH_OPTIONS, TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
@@ -65,42 +64,6 @@ const isGreater = (manager: AstManager, left: number, right: number): boolean =>
   return false;
 };
 
-const rewriteWithSubstitution = (
-  manager: AstManager,
-  rewriter: Rewriter,
-  expr: number,
-  substitution: Map<number, number>,
-) => {
-  if (substitution.size === 0) return rewriter.rewrite(expr);
-  const cache = new Map<number, number>();
-  const visit = (current: number): number => {
-    const cached = cache.get(current);
-    if (cached !== undefined) return cached;
-    const replacement = substitution.get(current);
-    let result: number;
-    if (replacement !== undefined) result = replacement;
-    else if (manager.kinds[current] === KIND_APP && manager.args[current].length > 0)
-      result = rewriter.mkAppCore(
-        manager.decls[current],
-        manager.args[current].map(visit),
-        manager.sorts[current],
-      );
-    else if (manager.kinds[current] === KIND_QUANTIFIER) {
-      const data = manager.getQuantifier(current);
-      result = rewriter.rewrite(
-        manager.mkQuantifier({
-          ...data,
-          body: visit(data.body),
-          patterns: data.patterns.map((pattern) => pattern.map(visit)),
-        }),
-      );
-    } else result = current;
-    cache.set(current, result);
-    return result;
-  };
-  return visit(expr);
-};
-
 const updateSubstitution = (
   manager: AstManager,
   expr: number,
@@ -123,29 +86,30 @@ const updateSubstitution = (
 };
 
 // asserted_formulas::propagate_values: a forward and a backward pass that rewrite each formula with
-// the units of the other formulas.
+// the units of the formulas before it. Z3 stops after one round, since the passes add no formula.
+// When a formula changed, reduce-asserted rewrites them all.
 const propagateValues = (manager: AstManager, rewriter: Rewriter, formulas: number[]) => {
-  let current = formulas;
-  for (let round = 0; round < 4; round++) {
-    let changes = 0;
-    for (const isForward of [true, false]) {
-      const substitution = new Map<number, number>();
-      const order = current.map((_formula, index) =>
-        isForward ? index : current.length - 1 - index,
-      );
-      for (const index of order) {
-        const rewritten = rewriteWithSubstitution(manager, rewriter, current[index], substitution);
-        if (rewritten !== current[index]) changes++;
-        current[index] = rewritten;
-        updateSubstitution(manager, rewritten, substitution);
-      }
+  let isChanged = false;
+  for (const isForward of [true, false]) {
+    const substitution = new Map<number, number>();
+    rewriter.setSubstitution(substitution);
+    for (const step of formulas.keys()) {
+      const index = isForward ? step : formulas.length - 1 - step;
+      const rewritten = rewriter.rewrite(formulas[index]);
+      if (rewritten !== formulas[index]) isChanged = true;
+      formulas[index] = rewritten;
+      updateSubstitution(manager, rewritten, substitution);
     }
-    const split: number[] = [];
-    for (const formula of current) pushAssertion(manager, rewriter, formula, split);
-    current = split;
-    if (changes <= current.length / 20) break;
   }
-  return current;
+  rewriter.setSubstitution(new Map());
+  if (!isChanged) return formulas;
+  const reduced: number[] = [];
+  for (const formula of formulas) {
+    const rewritten = rewriter.rewrite(formula);
+    if (rewritten === formula) reduced.push(formula);
+    else pushAssertion(manager, rewriter, rewritten, reduced);
+  }
+  return reduced;
 };
 
 // asserted_formulas::flatten_clauses: an ite at the top becomes two clauses, and a conjunction
