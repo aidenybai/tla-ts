@@ -26,7 +26,7 @@ export const checkSmt = (text: string, options: DecideSmtOptions): SmtCheck => {
   const context = new Context(
     problem.manager,
     { deadline: Date.now() + options.timeLimitMs, signal: options.signal },
-    true,
+    { isMbqi: true, relevancyLevel: 2 },
   );
   for (const formula of formulas) {
     if (context.isInconsistent()) break;

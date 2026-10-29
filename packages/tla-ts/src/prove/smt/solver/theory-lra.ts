@@ -247,6 +247,8 @@ export class TheoryLra {
     this.getVarOfTerm(expr);
     if ((op === OP_IDIV || op === OP_MOD) && !manager.isNumeral(manager.args[expr][1]))
       this.unsupportedTerms.push(expr);
+    // Without relevancy, the axioms of div and mod come with the term.
+    if (!context.relevancy.isEnabled) this.relevantEh(expr);
     return true;
   }
 

@@ -47,6 +47,13 @@ export const FAILURE_QUANTIFIERS = 2;
 
 // The search stops with unknown at the deadline, in milliseconds since the epoch, or when the signal
 // aborts.
+// smt_params: the kernel runs model-based quantifier instantiation with relevancy level 2. The
+// model checker's auxiliary context runs neither, as Z3 sets its relevancy level to 0.
+export interface SmtParams {
+  isMbqi: boolean;
+  relevancyLevel: 0 | 2;
+}
+
 export interface SearchLimits {
   deadline: number;
   signal?: AbortSignal;
@@ -76,15 +83,13 @@ export class Context extends Internalizer {
   private isCanceled = false;
   private lastSearchFailure = FAILURE_OK;
 
-  // isMbqi turns on model-based quantifier instantiation. The auxiliary contexts of the model
-  // checker run without it.
   constructor(
     manager: AstManager,
     readonly limits: SearchLimits,
-    isMbqi: boolean,
+    params: SmtParams,
   ) {
-    super(manager);
-    this.qmanager = new DefaultQuantifierManager(this, isMbqi);
+    super(manager, params.relevancyLevel > 0);
+    this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
   }
 
   checkCanceled() {
@@ -952,6 +957,11 @@ export class Context extends Internalizer {
       }
     }
     return undefined;
+  }
+
+  // pop_to_base_lvl: undoes the decisions of the last search, before new assertions.
+  popToBaseLevel() {
+    if (this.scopeLevel > this.baseLevel) this.popScope(this.scopeLevel - this.baseLevel);
   }
 
   search() {

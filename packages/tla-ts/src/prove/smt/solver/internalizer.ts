@@ -104,14 +104,20 @@ export abstract class Internalizer {
   private randomSeed = 0;
   isSearching = false;
 
-  constructor(readonly manager: AstManager) {
+  constructor(
+    readonly manager: AstManager,
+    isRelevancyEnabled: boolean,
+  ) {
     this.rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: KERNEL_ARITH_OPTIONS });
-    this.relevancy = new RelevancyPropagator({
-      manager,
-      findAssignment: (expr) => this.findAssignment(expr),
-      findEnode: (expr) => this.exprToEnode[expr],
-      relevantEh: (expr) => this.relevantEh(expr),
-    });
+    this.relevancy = new RelevancyPropagator(
+      {
+        manager,
+        findAssignment: (expr) => this.findAssignment(expr),
+        findEnode: (expr) => this.exprToEnode[expr],
+        relevantEh: (expr) => this.relevantEh(expr),
+      },
+      isRelevancyEnabled,
+    );
     this.caseSplitQueue = new CaseSplitQueue({
       activity: this.activity,
       getIsSearching: () => this.isSearching,
