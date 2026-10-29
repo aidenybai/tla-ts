@@ -5,21 +5,42 @@ import { collapseWhitespace, getDigest } from "./tlapm-digest";
 export type BackendVerdict = "unsat" | "sat" | "unknown";
 
 // One backend run: a digest of the input tlapm sent and what the backend answered. tlapm frames an
-// obligation as unsat when the backend proves it.
-export interface BackendRecord {
+// obligation as unsat when the backend proves it. Zenon only ever finds a proof or gives up.
+export interface BackendRecord<Verdict extends BackendVerdict = BackendVerdict> {
   input: string;
-  verdict: BackendVerdict;
+  verdict: Verdict;
 }
 
-export interface ObligationRecord {
+// tlapm proves a trivial obligation itself, without a backend.
+interface TrivialObligationRecord {
   id: number;
   loc: string;
-  status: string;
-  prover?: string;
+  status: "trivial";
+}
+
+interface DecidedObligationRecord {
+  id: number;
+  loc: string;
+  status: "proved" | "failed";
+  prover: string;
   timeUsed?: number;
   smt?: BackendRecord;
-  zenon?: BackendRecord;
+  zenon?: BackendRecord<"unsat" | "unknown">;
 }
+
+// tlapm stopped before a backend answered.
+interface UnfinishedObligationRecord {
+  id: number;
+  loc: string;
+  status: "to be proved" | "being proved" | "interrupted";
+}
+
+export type ObligationRecord =
+  | TrivialObligationRecord
+  | DecidedObligationRecord
+  | UnfinishedObligationRecord;
+
+export type ObligationStatus = ObligationRecord["status"];
 
 // LS4 inputs don't name their obligation, so they're kept per module, in the order of their digests.
 export interface ModuleProofRecord {
@@ -41,9 +62,8 @@ const removeComments = (text: string) =>
     .filter((line) => !line.startsWith(";"))
     .join("\n");
 
-export const getSmtDigest = (text: string) => getDigest(collapseWhitespace(removeComments(text)));
-
-export const getZenonDigest = (text: string) => getDigest(collapseWhitespace(removeComments(text)));
+// Digests an SMT-LIB or Zenon input.
+export const getInputDigest = (text: string) => getDigest(collapseWhitespace(removeComments(text)));
 
 // tlapm names each atom of a PTL formula with a hash, so atoms are renumbered by first appearance.
 export const getLs4Digest = (text: string) => {
@@ -63,7 +83,7 @@ export const getSmtVerdict = (output: string): BackendVerdict => {
   return answer === "unsat" || answer === "sat" ? answer : "unknown";
 };
 
-export const getZenonVerdict = (output: string): BackendVerdict =>
+export const getZenonVerdict = (output: string): "unsat" | "unknown" =>
   output.startsWith("(* PROOF-FOUND *)") ? "unsat" : "unknown";
 
 export const getLs4Verdict = (output: string): BackendVerdict => {

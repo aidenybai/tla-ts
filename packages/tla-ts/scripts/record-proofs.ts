@@ -20,15 +20,15 @@ import {
 import {
   getLs4Digest,
   getLs4Verdict,
-  getSmtDigest,
+  getInputDigest,
   getSmtVerdict,
-  getZenonDigest,
   getZenonVerdict,
   PROOF_INPUTS_DIRECTORY,
   PROOFS_PATH,
-  type BackendRecord,
+  type BackendVerdict,
   type ModuleProofRecord,
   type ObligationRecord,
+  type ObligationStatus,
 } from "./proof-records";
 
 const LIBRARY_PATH = join(CONFORMANCE_DIRECTORY, ".library");
@@ -98,6 +98,33 @@ const listFiles = (directory: string): string[] =>
     entry.isDirectory() ? listFiles(join(directory, entry.name)) : [join(directory, entry.name)],
   );
 
+const OBLIGATION_STATUSES = new Set<string>([
+  "trivial",
+  "proved",
+  "failed",
+  "to be proved",
+  "being proved",
+  "interrupted",
+]);
+
+const isObligationStatus = (status: string): status is ObligationStatus =>
+  OBLIGATION_STATUSES.has(status);
+
+const getObligationRecord = (id: number, fields: Map<string, string>): ObligationRecord => {
+  const loc = fields.get("loc") ?? "";
+  const status = fields.get("status") ?? "";
+  if (!isObligationStatus(status)) throw new Error(`tlapm sent unknown status "${status}"`);
+  if (status !== "proved" && status !== "failed") return { id, loc, status };
+  const timeUsed = fields.get("meth")?.match(/time-used: ([\d.]+)/)?.[1];
+  return {
+    id,
+    loc,
+    status,
+    prover: fields.get("prover") ?? "",
+    ...(timeUsed !== undefined && { timeUsed: Number(timeUsed) }),
+  };
+};
+
 const readOutput = (path: string) =>
   existsSync(`${path}.out`) ? readFileSync(`${path}.out`, "utf8") : "";
 
@@ -109,27 +136,22 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
   mkdirSync(inputsDirectory, { recursive: true });
 
   // tlapm sends a message each time an obligation's status changes, so later fields win.
-  const obligations = new Map<number, ObligationRecord>();
+  const fieldsById = new Map<number, Map<string, string>>();
   parseMessages(output)
     .filter((fields) => fields.get("type") === "obligation")
     .forEach((fields) => {
       const id = Number(fields.get("id"));
-      const previous = obligations.get(id) ?? { id, loc: "", status: "" };
-      const timeUsed = fields.get("meth")?.match(/time-used: ([\d.]+)/)?.[1];
-      obligations.set(id, {
-        ...previous,
-        loc: fields.get("loc") ?? previous.loc,
-        status: fields.get("status") ?? previous.status,
-        ...(fields.has("prover") && { prover: fields.get("prover") }),
-        ...(timeUsed !== undefined && { timeUsed: Number(timeUsed) }),
-      });
+      fieldsById.set(id, new Map([...(fieldsById.get(id) ?? []), ...fields]));
     });
+  const obligations = new Map(
+    [...fieldsById].map(([id, fields]) => [id, getObligationRecord(id, fields)]),
+  );
 
   const files = listFiles(cacheDirectory);
-  const getBackendRecords = (
+  const getBackendRecords = <Verdict extends BackendVerdict>(
     extension: string,
-    getInputDigest: (text: string) => string,
-    getVerdict: (output: string) => BackendRecord["verdict"],
+    getDigest: (text: string) => string,
+    getVerdict: (output: string) => Verdict,
   ) =>
     files
       .filter((path) => path.endsWith(extension))
@@ -142,24 +164,24 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
           obligationId: Number(file.text.match(OBLIGATION_HEADER)?.[1] ?? Number.NaN),
           text: file.text,
           backendOutput,
-          record: { input: getInputDigest(file.text), verdict: getVerdict(backendOutput) },
+          record: { input: getDigest(file.text), verdict: getVerdict(backendOutput) },
         };
       });
 
-  const smtRuns = getBackendRecords(".smt", getSmtDigest, getSmtVerdict);
-  const zenonRuns = getBackendRecords(".znn", getZenonDigest, getZenonVerdict);
+  const smtRuns = getBackendRecords(".smt", getInputDigest, getSmtVerdict);
+  const zenonRuns = getBackendRecords(".znn", getInputDigest, getZenonVerdict);
   const ls4Runs = getBackendRecords(".ls4", getLs4Digest, getLs4Verdict).sort((left, right) =>
     left.record.input < right.record.input ? -1 : 1,
   );
   smtRuns.forEach((run) => {
     const obligation = obligations.get(run.obligationId);
-    if (obligation) obligation.smt = run.record;
+    if (obligation && "prover" in obligation) obligation.smt = run.record;
     writeFileSync(join(inputsDirectory, `${run.obligationId}.smt`), run.text);
     writeFileSync(join(inputsDirectory, `${run.obligationId}.smt.out`), run.backendOutput);
   });
   zenonRuns.forEach((run) => {
     const obligation = obligations.get(run.obligationId);
-    if (obligation) obligation.zenon = run.record;
+    if (obligation && "prover" in obligation) obligation.zenon = run.record;
     writeFileSync(join(inputsDirectory, `${run.obligationId}.znn`), run.text);
     writeFileSync(join(inputsDirectory, `${run.obligationId}.znn.out`), run.backendOutput);
   });
