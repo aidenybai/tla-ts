@@ -1,7 +1,9 @@
 // Prep.find_meth and Prep.compute_meth: the methods the pragmas an obligation cites select, each a
-// prover with its time limit, or a frontend that rewrites the obligation first.
+// prover with its time limit, or a frontend that rewrites the obligation first. A malformed method
+// throws a TlaProverError, since Prep.ship catches compute_meth's failure and fails only that
+// obligation.
 
-import { TlapmBugError, TlaProofError } from "../../errors";
+import { TlapmBugError, TlaProverError } from "../../errors";
 import type { Expr, Hyp, Locus, Sequent } from "../../obligation-expression";
 import type { PragmaSetting } from "../../obligation-pragma";
 
@@ -74,9 +76,9 @@ const getProverMethod = (
   tactic: string | undefined,
 ): Method => {
   const known = PROVERS[name];
-  if (!known) throw new TlaProofError(`Unknown prover: ${name}`);
+  if (!known) throw new TlaProverError(`Unknown prover: ${name}`);
   if (rlimit !== undefined && !known.isBudgeted)
-    throw new TlaProofError(
+    throw new TlaProverError(
       'A Z3 rlimit budget ("rN") is only supported by the SMT and Z3 backends.',
     );
   return {
@@ -91,7 +93,7 @@ const getProverMethod = (
 const getRlimit = (budget: string) => {
   const count = Number.parseFloat(budget.slice(1));
   if (!/^[rR]./.test(budget) || !Number.isFinite(count) || count <= 0)
-    throw new TlaProofError(`Invalid SMT budget "${budget}"`);
+    throw new TlaProverError(`Invalid SMT budget "${budget}"`);
   return Math.max(1, Math.trunc(Math.min(count * RLIMIT_BASE, MAX_RLIMIT)));
 };
 
@@ -110,7 +112,7 @@ const computeMethod = (settings: PragmaSetting[], args: Expr[]): Method => {
       const argument = value.kind === "Default" ? state.args[0] : undefined;
       const rest = value.kind === "Default" ? state.args.slice(1) : state.args;
       if (value.kind === "Default" && !argument)
-        throw new TlaProofError("Some arguments are missing");
+        throw new TlaProverError("Some arguments are missing");
       const text =
         value.kind === "String"
           ? value.value
@@ -120,13 +122,13 @@ const computeMethod = (settings: PragmaSetting[], args: Expr[]): Method => {
       switch (setting.hint) {
         case "prover":
         case "tactic":
-          if (text === undefined) throw new TlaProofError(`This argument should be a string`);
+          if (text === undefined) throw new TlaProverError(`This argument should be a string`);
           return { ...state, args: rest, [setting.hint]: text };
         case "timeout": {
           if (value.kind === "Float") return { ...state, args: rest, timeout: value.value };
           if (text !== undefined) return { ...state, args: rest, rlimit: getRlimit(text) };
           if (argument?.kind !== "Num")
-            throw new TlaProofError("This argument should be a number of seconds");
+            throw new TlaProverError("This argument should be a number of seconds");
           return {
             ...state,
             args: rest,
@@ -134,13 +136,13 @@ const computeMethod = (settings: PragmaSetting[], args: Expr[]): Method => {
           };
         }
         default:
-          throw new TlaProofError(`Unknown keyword in proof method definition: ${setting.hint}`);
+          throw new TlaProverError(`Unknown keyword in proof method definition: ${setting.hint}`);
       }
     },
     { args },
   );
-  if (values.args.length > 0) throw new TlaProofError("Too many arguments");
-  if (values.prover === undefined) throw new TlaProofError("Missing prover name");
+  if (values.args.length > 0) throw new TlaProverError("Too many arguments");
+  if (values.prover === undefined) throw new TlaProverError("Missing prover name");
   return getProverMethod(values.prover, values.timeout, values.rlimit, values.tactic);
 };
 

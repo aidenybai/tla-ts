@@ -88,6 +88,15 @@ describe("prove follows tlapm's default method", () => {
     await expect(proving).rejects.toThrow(controller.signal.reason);
   });
 
+  // tlapm/test/fast/basic/smt_rlimit_bad_test.tla
+  it("fails only the obligation whose method is malformed", async () => {
+    const result = await proveFixture("smt_rlimit_bad_test");
+    expect(result.obligations.map((obligation) => [obligation.id, obligation.status])).toEqual([
+      [1, "failed"],
+      [2, "trivial"],
+    ]);
+  });
+
   it("needs tlapm on the PATH for the tlapm backend", async () => {
     vi.stubEnv("PATH", "");
     await expect(proveFixture("HourClock_proof", { backend: "tlapm" })).rejects.toThrow(
