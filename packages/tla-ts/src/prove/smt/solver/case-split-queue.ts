@@ -1,19 +1,23 @@
 // Ported from Z3 (src/smt/smt_case_split_queue.cpp, src/util/heap.h), MIT license, see
 // z3-license.txt. Z3's default CS_ACTIVITY_DELAY_NEW queue: Boolean variables ordered by activity,
 // where variables created during the search wait in a delayed queue until the main one runs dry.
+// Without the delay, it is the CS_ACTIVITY queue of the model checker's auxiliary context.
+
+import { BoolVar, toBoolVar } from "./literal";
 
 // heap<bool_var_act_lt>: a binary min-heap over activities negated, so the most active is first.
 class ActivityHeap {
-  private values = [-1];
+  // The heap is 1-based, so the first slot is unused.
+  private values: BoolVar[] = [toBoolVar(-1)];
   private indices: number[] = [];
 
   constructor(private activity: number[]) {}
 
-  private isLess(first: number, second: number) {
+  private isLess(first: BoolVar, second: BoolVar) {
     return this.activity[first] > this.activity[second];
   }
 
-  contains(value: number) {
+  contains(value: BoolVar) {
     return (this.indices[value] ?? 0) !== 0;
   }
 
@@ -21,7 +25,7 @@ class ActivityHeap {
     return this.values.length === 1;
   }
 
-  insert(value: number) {
+  insert(value: BoolVar) {
     this.values.push(value);
     this.indices[value] = this.values.length - 1;
     this.moveUp(this.values.length - 1);
@@ -29,7 +33,8 @@ class ActivityHeap {
 
   eraseMin() {
     const result = this.values[1];
-    const last = this.values.pop() ?? -1;
+    const last = this.values[this.values.length - 1];
+    this.values.length--;
     this.indices[result] = 0;
     if (this.values.length > 1) {
       this.values[1] = last;
@@ -39,14 +44,15 @@ class ActivityHeap {
     return result;
   }
 
-  erase(value: number) {
+  erase(value: BoolVar) {
     const index = this.indices[value];
     if (index === this.values.length - 1) {
       this.indices[value] = 0;
       this.values.pop();
       return;
     }
-    const last = this.values.pop() ?? -1;
+    const last = this.values[this.values.length - 1];
+    this.values.length--;
     this.values[index] = last;
     this.indices[last] = index;
     this.indices[value] = 0;
@@ -55,12 +61,8 @@ class ActivityHeap {
     else this.moveDown(index);
   }
 
-  decreased(value: number) {
+  decreased(value: BoolVar) {
     this.moveUp(this.indices[value]);
-  }
-
-  increased(value: number) {
-    this.moveDown(this.indices[value]);
   }
 
   swap(other: ActivityHeap) {
@@ -111,7 +113,7 @@ export interface CaseSplitContext {
   getIsSearching(): boolean;
   getRandomValue(): number;
   getNumBoolVars(): number;
-  isUnassigned(boolVar: number): boolean;
+  isUnassigned(boolVar: BoolVar): boolean;
 }
 
 const RANDOM_VAR_FREQ = 0.01;
@@ -121,35 +123,38 @@ export class CaseSplitQueue {
   private queue: ActivityHeap;
   private delayedQueue: ActivityHeap;
 
-  constructor(private context: CaseSplitContext) {
+  constructor(
+    private context: CaseSplitContext,
+    private isDelayingNew: boolean,
+  ) {
     this.queue = new ActivityHeap(context.activity);
     this.delayedQueue = new ActivityHeap(context.activity);
   }
 
-  activityIncreased(boolVar: number) {
+  activityIncreased(boolVar: BoolVar) {
     if (this.queue.contains(boolVar)) this.queue.decreased(boolVar);
     if (this.delayedQueue.contains(boolVar)) this.delayedQueue.decreased(boolVar);
   }
 
-  mkVar(boolVar: number) {
-    if (this.context.getIsSearching()) this.delayedQueue.insert(boolVar);
+  mkVar(boolVar: BoolVar) {
+    if (this.isDelayingNew && this.context.getIsSearching()) this.delayedQueue.insert(boolVar);
     else this.queue.insert(boolVar);
   }
 
-  delVar(boolVar: number) {
+  delVar(boolVar: BoolVar) {
     if (this.queue.contains(boolVar)) this.queue.erase(boolVar);
     if (this.delayedQueue.contains(boolVar)) this.delayedQueue.erase(boolVar);
   }
 
-  unassignVar(boolVar: number) {
+  unassignVar(boolVar: BoolVar) {
     if (!this.queue.contains(boolVar)) this.queue.insert(boolVar);
   }
 
-  // Returns the next variable to split on, or -1 when every variable is assigned.
+  // Returns the next variable to split on, or undefined when every variable is assigned.
   nextCaseSplit() {
     const context = this.context;
     if (context.getRandomValue() < Math.trunc(RANDOM_VAR_FREQ * RANDOM_MAX_VALUE)) {
-      const next = context.getRandomValue() % context.getNumBoolVars();
+      const next = toBoolVar(context.getRandomValue() % context.getNumBoolVars());
       if (context.isUnassigned(next)) return next;
     }
     while (!this.queue.isEmpty()) {
@@ -161,6 +166,6 @@ export class CaseSplitQueue {
       const next = this.queue.eraseMin();
       if (context.isUnassigned(next)) return next;
     }
-    return -1;
+    return undefined;
   }
 }

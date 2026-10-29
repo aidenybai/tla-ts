@@ -1,6 +1,6 @@
 // Ported from Z3 (src/parsers/smt2/smt2parser.cpp), MIT license, see z3-license.txt.
 // Parses the SMT-LIB subset that tlapm emits into Z3-style expressions.
-import { SmtParseError, SmtUnsupportedError } from "../errors";
+import { SmtParseError, SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
   OP_ABS,
@@ -21,11 +21,12 @@ import {
   OP_OR,
   OP_SUB,
   OP_UMINUS,
+  OP_UNINTERPRETED,
   OP_XOR,
   SORT_BOOL,
   SORT_INT,
 } from "./ast";
-import { shiftVars } from "./rewriter";
+import { shiftVars } from "./var-subst";
 
 type SExpr = string | SExpr[];
 
@@ -37,7 +38,6 @@ interface Binding {
 }
 
 export interface SmtProblem {
-  manager: AstManager;
   assertions: number[];
   // Z3 prints no answer for a script without check-sat.
   hasCheckSat: boolean;
@@ -124,8 +124,13 @@ const expectSymbol = (sexpr: SExpr | undefined): string => {
   return sexpr;
 };
 
-export const parseSmtlib = (text: string): SmtProblem => {
-  const manager = new AstManager();
+// Parses a script, and hands each assertion to assertExpr as Z3's cmd_context does, before it parses
+// the next command. Expressions are created in the order of Z3's parser, and live as long as there.
+export const parseSmtlib = (
+  text: string,
+  manager: AstManager,
+  assertExpr: (assertion: number) => void,
+): SmtProblem => {
   const sorts = new Map<string, number>([
     ["Bool", SORT_BOOL],
     ["Int", SORT_INT],
@@ -137,7 +142,7 @@ export const parseSmtlib = (text: string): SmtProblem => {
 
   const parseSort = (sexpr: SExpr) => {
     const sort = sorts.get(expectSymbol(sexpr));
-    if (sort === undefined) throw new SmtUnsupportedError(`unknown sort ${String(sexpr)}`);
+    if (sort === undefined) throw new SmtParseError(`unknown sort ${String(sexpr)}`);
     return sort;
   };
 
@@ -149,11 +154,52 @@ export const parseSmtlib = (text: string): SmtProblem => {
     return undefined;
   };
 
+  // Checks the sorts and the arity of an application, so the solver only sees well-sorted terms,
+  // and that quantifiers occur only under Boolean connectives.
+  const mkApp = (decl: number, args: number[], sort: number) => {
+    const op = manager.funcDecls[decl].op;
+    const name = manager.funcDecls[decl].name;
+    const argSorts = args.map((arg) => manager.sorts[arg]);
+    const isAll = (expected: number) => argSorts.every((argSort) => argSort === expected);
+    const isArity = (min: number, max: number) => args.length >= min && args.length <= max;
+    const isWellSorted =
+      op === OP_UNINTERPRETED
+        ? argSorts.length === manager.funcDecls[decl].domain.length &&
+          argSorts.every((argSort, index) => argSort === manager.funcDecls[decl].domain[index])
+        : op === OP_AND || op === OP_OR
+          ? isAll(SORT_BOOL)
+          : op === OP_NOT
+            ? isArity(1, 1) && isAll(SORT_BOOL)
+            : op === OP_IMPLIES || op === OP_XOR
+              ? isArity(2, 2) && isAll(SORT_BOOL)
+              : op === OP_ITE
+                ? isArity(3, 3) && argSorts[0] === SORT_BOOL && argSorts[1] === argSorts[2]
+                : op === OP_EQ || op === OP_DISTINCT
+                  ? isArity(2, Infinity) && isAll(argSorts[0])
+                  : op === OP_UMINUS || op === OP_ABS
+                    ? isArity(1, 1) && isAll(SORT_INT)
+                    : op === OP_IDIV ||
+                        op === OP_MOD ||
+                        op === OP_LE ||
+                        op === OP_GE ||
+                        op === OP_LT ||
+                        op === OP_GT
+                      ? isArity(2, 2) && isAll(SORT_INT)
+                      : isArity(1, Infinity) && isAll(SORT_INT);
+    if (!isWellSorted) throw new SmtParseError(`ill-sorted application of ${name}`);
+    return manager.mkApp(decl, args, sort);
+  };
+
   const mkChain = (op: number, args: number[]) => {
     const pairs: number[] = [];
     for (let index = 0; index + 1 < args.length; index++)
-      pairs.push(manager.mkApp(op, [args[index], args[index + 1]], SORT_BOOL));
-    return pairs.length === 1 ? pairs[0] : manager.mkApp(OP_AND, pairs, SORT_BOOL);
+      pairs.push(mkApp(op, [args[index], args[index + 1]], SORT_BOOL));
+    return pairs.length === 1 ? pairs[0] : mkApp(OP_AND, pairs, SORT_BOOL);
+  };
+
+  const expectBool = (expr: number) => {
+    if (manager.sorts[expr] !== SORT_BOOL) throw new SmtParseError("expected a formula");
+    return expr;
   };
 
   const parseQuantifier = (list: SExpr[], isForall: boolean) => {
@@ -167,25 +213,39 @@ export const parseSmtlib = (text: string): SmtProblem => {
     });
     scopes.push(scope);
     depth += varSorts.length;
-    let bodySExpr = list[2];
-    const patterns: number[][] = [];
+    // parse_sorted_vars: the variables are created first, the first declared with the largest index,
+    // and the parser's stack holds them until the quantifier is created.
+    const boundVars = varSorts.map((sort, index) =>
+      manager.mkVar(varSorts.length - 1 - index, sort),
+    );
+    for (const boundVar of boundVars) manager.incRef(boundVar);
+    const bodySExpr = list[2];
+    const isAnnotated = Array.isArray(bodySExpr) && bodySExpr[0] === "!";
+    const body = expectBool(parseTerm(isAnnotated ? bodySExpr[1] : bodySExpr));
+    const patterns: number[] = [];
     let weight = 1;
     let qid = "";
-    if (Array.isArray(bodySExpr) && bodySExpr[0] === "!") {
-      const annotated = bodySExpr;
-      for (let index = 2; index < annotated.length; index += 2) {
-        const keyword = annotated[index];
-        const value = annotated[index + 1];
-        if (keyword === ":pattern") patterns.push(expectList(value).map(parseTerm));
+    if (isAnnotated)
+      for (let index = 2; index < bodySExpr.length; index += 2) {
+        const keyword = bodySExpr[index];
+        const value = bodySExpr[index + 1];
+        if (keyword === ":pattern")
+          patterns.push(manager.mkPattern(expectList(value).map(parseTerm)));
         else if (keyword === ":weight") weight = Number(value);
         else if (keyword === ":qid") qid = expectSymbol(value);
       }
-      bodySExpr = annotated[1];
-    }
-    const body = parseTerm(bodySExpr);
     scopes.pop();
     depth -= varSorts.length;
-    return manager.mkQuantifier({ isForall, sorts: varSorts, body, patterns, weight, qid });
+    const quantifier = manager.mkQuantifier({
+      isForall,
+      sorts: varSorts,
+      body,
+      patterns,
+      weight,
+      qid,
+    });
+    for (const boundVar of boundVars) manager.decRef(boundVar);
+    return quantifier;
   };
 
   const parseLet = (list: SExpr[]) => {
@@ -210,10 +270,8 @@ export const parseSmtlib = (text: string): SmtProblem => {
     const chainable = CHAINABLE_OPS.get(name);
     if (chainable !== undefined) return mkChain(chainable, args);
     if (name === "-")
-      return args.length === 1
-        ? manager.mkApp(OP_UMINUS, args, SORT_INT)
-        : manager.mkApp(OP_SUB, args, SORT_INT);
-    if (name === "+") return manager.mkApp(OP_ADD, args, SORT_INT);
+      return args.length === 1 ? mkApp(OP_UMINUS, args, SORT_INT) : mkApp(OP_SUB, args, SORT_INT);
+    if (name === "+") return mkApp(OP_ADD, args, SORT_INT);
     const op = BUILTIN_OPS.get(name);
     if (op !== undefined) {
       const sort =
@@ -222,11 +280,11 @@ export const parseSmtlib = (text: string): SmtProblem => {
           : op === OP_MUL || op === OP_IDIV || op === OP_MOD || op === OP_ABS
             ? SORT_INT
             : SORT_BOOL;
-      return manager.mkApp(op, args, sort);
+      return mkApp(op, args, sort);
     }
     const decl = funcs.get(name);
-    if (decl === undefined) throw new SmtUnsupportedError(`unknown function ${name}`);
-    return manager.mkApp(decl, args, manager.funcDecls[decl].range);
+    if (decl === undefined) throw new SmtParseError(`unknown function ${name}`);
+    return mkApp(decl, args, manager.funcDecls[decl].range);
   };
 
   const parseTerm = (sexpr: SExpr): number => {
@@ -238,13 +296,18 @@ export const parseSmtlib = (text: string): SmtProblem => {
       if (binding !== undefined)
         return binding.isBoundVar
           ? manager.mkVar(depth - 1 - binding.depth, binding.sort)
-          : shiftVars(manager, binding.expr, depth - binding.depth);
+          : shiftVars(manager, binding.expr, 0, depth - binding.depth, 0);
       return parseApp(sexpr, []);
     }
     const head = sexpr[0];
     if (head === "forall" || head === "exists") return parseQuantifier(sexpr, head === "forall");
     if (head === "let") return parseLet(sexpr);
-    if (head === "!") return parseTerm(sexpr[1]);
+    if (head === "!") {
+      const named = parseTerm(sexpr[1]);
+      // name_expr: cmd_context keeps a named expression as a macro.
+      if (sexpr.includes(":named")) manager.incRef(named);
+      return named;
+    }
     return parseApp(expectSymbol(head), sexpr.slice(1).map(parseTerm));
   };
 
@@ -259,13 +322,25 @@ export const parseSmtlib = (text: string): SmtProblem => {
     } else if (name === "declare-fun" || name === "declare-const") {
       const domain = name === "declare-fun" ? expectList(list[2]).map(parseSort) : [];
       const range = parseSort(name === "declare-fun" ? list[3] : list[2]);
+      // builtin_signature_collides and is_transcendental_shadow_decl each apply the builtin of that
+      // name to fresh variables, which they then release.
+      for (let round = 0; round < 2; round++) {
+        const vars = domain.map((sort, index) => manager.mkVar(index, sort));
+        for (const domainVar of vars) manager.incRef(domainVar);
+        for (const domainVar of vars) manager.decRef(domainVar);
+      }
       funcs.set(expectSymbol(list[1]), manager.mkFuncDecl(expectSymbol(list[1]), domain, range));
-    } else if (name === "assert") assertions.push(parseTerm(list[1]));
-    else if (name === "check-sat") {
+    } else if (name === "assert") {
+      // cmd_context::assert_expr keeps the assertion, and passes it to the solver.
+      const assertion = expectBool(parseTerm(list[1]));
+      manager.incRef(assertion);
+      assertions.push(assertion);
+      assertExpr(assertion);
+    } else if (name === "check-sat") {
       hasCheckSat = true;
       break;
     } else if (name === "push" || name === "pop" || name === "define-fun" || name === "define-sort")
       throw new SmtUnsupportedError(`the command ${name} is not supported`);
   }
-  return { manager, assertions, hasCheckSat };
+  return { assertions, hasCheckSat };
 };

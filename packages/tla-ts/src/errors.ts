@@ -128,6 +128,16 @@ export class SmtUnsupportedError extends TlaError {
   }
 }
 
+// The SMT solver ran past its time limit, or its signal aborted, in the middle of a rewrite. The
+// solver answers unknown.
+export class SmtCanceledError extends TlaError {
+  constructor() {
+    super("the SMT solver was canceled");
+    this.name = "SmtCanceledError";
+  }
+}
+
+// The SMT-LIB input is malformed: a syntax error, an undeclared symbol, or an ill-sorted application.
 export class SmtParseError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);

@@ -29,13 +29,18 @@ export class RelevancyPropagator {
   private scopes: number[] = [];
   private isPropagating = false;
 
-  constructor(private context: RelevancyContext) {}
+  // At relevancy level 0 every expression is relevant and nothing propagates.
+  constructor(
+    private context: RelevancyContext,
+    readonly isEnabled: boolean,
+  ) {}
 
   isRelevant(expr: number) {
-    return this.isRelevantSet.has(expr);
+    return !this.isEnabled || this.isRelevantSet.has(expr);
   }
 
   addHandler(source: number, handler: RelevancyHandler) {
+    if (!this.isEnabled) return;
     if (this.isRelevant(source)) {
       handler();
       return;
@@ -53,6 +58,7 @@ export class RelevancyPropagator {
   }
 
   addWatch(expr: number, value: boolean, handler: RelevancyHandler) {
+    if (!this.isEnabled) return;
     const assignment = this.context.findAssignment(expr) * (value ? 1 : -1);
     if (assignment < 0) return;
     if (assignment > 0) {

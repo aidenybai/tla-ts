@@ -635,6 +635,7 @@ export class Mam {
   private goalNodes: Enode[] = [];
   private goalTop = 0;
   private stepIndex = 0;
+  private numSteps = 0;
 
   private matchTrigger(trigger: Trigger, candidate: Enode) {
     const manager = this.manager;
@@ -726,6 +727,7 @@ export class Mam {
     } else {
       const patternArgs = this.manager.args[step.pattern];
       for (const node of this.getCandidates(step)) {
+        if ((++this.numSteps & 1023) === 0 && context.checkCanceled()) break;
         if (
           node.args.length !== patternArgs.length ||
           !node.isCgr() ||

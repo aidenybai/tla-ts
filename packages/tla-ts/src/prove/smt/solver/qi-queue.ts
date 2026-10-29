@@ -5,7 +5,7 @@
 import { KIND_APP, KIND_VAR, OP_AND, OP_EQ, OP_FALSE, OP_ITE, OP_NOT, OP_OR, OP_TRUE } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
-import { substitute } from "./rewriter";
+import { substitute } from "./var-subst";
 
 const EAGER_COST_THRESHOLD = 10;
 const LAZY_COST_THRESHOLD = 20;
