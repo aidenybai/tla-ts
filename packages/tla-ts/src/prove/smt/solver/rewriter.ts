@@ -66,6 +66,7 @@ export class Rewriter {
   private cache = new Map<number, number>();
   private arith: ArithRewriter;
   private numSteps = 0;
+  private substitution = new Map<number, number>();
 
   constructor(
     private manager: AstManager,
@@ -90,7 +91,16 @@ export class Rewriter {
     );
   }
 
+  // th_rewriter::set_substitution: rewrites replace each key of the substitution with its value, and
+  // the cache is reset. The caller may extend the substitution between rewrites without a reset.
+  setSubstitution(substitution: Map<number, number>) {
+    this.substitution = substitution;
+    this.cache.clear();
+  }
+
   rewrite(expr: number): number {
+    const replacement = this.substitution.get(expr);
+    if (replacement !== undefined) return replacement;
     const cached = this.cache.get(expr);
     if (cached !== undefined) return cached;
     const manager = this.manager;
@@ -127,7 +137,7 @@ export class Rewriter {
             body: nested.body,
             weight: Math.min(data.weight, nested.weight),
           })
-        : manager.mkQuantifier({ ...data, body });
+        : manager.mkQuantifier({ ...data, body, patterns: this.substitutePatterns(data.patterns) });
     const reduced = elimUnusedVars(manager, merged);
     if (
       manager.kinds[reduced] !== KIND_QUANTIFIER ||
@@ -137,6 +147,29 @@ export class Rewriter {
     const eliminated = applyDer(manager, reduced);
     if (eliminated === reduced || this.isNestedDer) return eliminated;
     return new Rewriter(manager, this.options, true).rewrite(eliminated);
+  }
+
+  // th_rewriter_cfg::apply_subst: the substitution replaces terms in the patterns without rewriting
+  // them, like expr_safe_replace.
+  private substitutePatterns(patterns: number[][]) {
+    const manager = this.manager;
+    if (this.substitution.size === 0) return patterns;
+    const cache = new Map<number, number>();
+    const replace = (expr: number): number => {
+      const replacement = this.substitution.get(expr);
+      if (replacement !== undefined) return replacement;
+      if (manager.kinds[expr] !== KIND_APP || manager.args[expr].length === 0) return expr;
+      const cached = cache.get(expr);
+      if (cached !== undefined) return cached;
+      const result = manager.mkApp(
+        manager.decls[expr],
+        manager.args[expr].map(replace),
+        manager.sorts[expr],
+      );
+      cache.set(expr, result);
+      return result;
+    };
+    return patterns.map((pattern) => pattern.map(replace));
   }
 
   // Throws SmtCanceledError when the resource limit cancels the rewrite, like rewriter_tpl's

@@ -6,6 +6,7 @@ import type { Verdict } from "../../verdict";
 import { preprocess } from "./asserted-formulas";
 import { Context } from "./context";
 import { L_FALSE, L_TRUE } from "./lbool";
+import { applyUfniaTactic } from "./quant-tactics";
 import { ResourceLimit } from "./rlimit";
 import { parseSmtlib } from "./smtlib-parser";
 
@@ -26,7 +27,10 @@ export const checkSmt = (text: string, options: DecideSmtOptions): SmtCheck => {
     new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
   );
   if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
-  const formulas = preprocess(problem.manager, problem.assertions);
+  const formulas = preprocess(
+    problem.manager,
+    applyUfniaTactic(problem.manager, problem.assertions),
+  );
   const context = new Context(problem.manager, { isMbqi: true, relevancyLevel: 2 });
   for (const formula of formulas) {
     if (context.isInconsistent()) break;
