@@ -1,6 +1,7 @@
 // tlapm's proof IR (P_t).
 
 import type { Bound, Defn, Expr, Locus, Sequent } from "./obligation-expression";
+import type { OldMethod } from "./obligation-pragma";
 
 export type StepNumber =
   | { kind: "Named"; level: number; label: string; isAnonymous: boolean }
@@ -28,7 +29,7 @@ export interface Obligation {
   sequent: Sequent;
   location: Locus | undefined;
   kind: ObligationKind;
-  method?: string;
+  method?: OldMethod;
 }
 
 // useLocation is where a USE step comes from, so find_meth can tell apart the facts of each BY.
@@ -37,7 +38,7 @@ interface ProofProps {
   step?: StepNumber;
   isSuppressed?: boolean;
   obligations?: Obligation[];
-  method?: string;
+  method?: OldMethod;
   useLocation?: Locus;
 }
 

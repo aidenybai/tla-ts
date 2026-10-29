@@ -2,7 +2,7 @@
 // alpha-equivalence (E_eq).
 
 import { TlaProofError } from "./errors";
-import type { PragmaSetting } from "./obligation-pragma";
+import type { OldMethod, PragmaSetting } from "./obligation-pragma";
 
 export interface Locus {
   file: string;
@@ -172,7 +172,7 @@ export type ExprCore =
   | { kind: "Sequent"; sequent: Sequent }
   | { kind: "Bang"; expression: Expr; selectors: Selector[] }
   | { kind: "Apply"; operator: Expr; args: Expr[] }
-  | { kind: "With"; expression: Expr; method: string }
+  | { kind: "With"; expression: Expr; method: OldMethod }
   | { kind: "If"; condition: Expr; consequent: Expr; alternative: Expr }
   | { kind: "List"; bullet: "And" | "Or" | "Refs"; items: Expr[] }
   | { kind: "Let"; definitions: Defn[]; body: Expr }

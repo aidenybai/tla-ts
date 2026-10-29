@@ -3,7 +3,7 @@
 
 import { TlapmBugError, TlaProofError } from "../../errors";
 import type { Expr, Hyp, Locus, Sequent } from "../../obligation-expression";
-import type { PragmaSetting } from "../../obligation-pragma";
+import type { OldMethod, PragmaSetting } from "../../obligation-pragma";
 
 // A method, named after the Method.t constructor tlapm reports it by. A Z3 resource budget turns
 // the time limit off.
@@ -144,12 +144,13 @@ const computeMethod = (settings: PragmaSetting[], args: Expr[]): Method => {
   return getProverMethod(values.prover, values.timeout, values.rlimit, values.tactic);
 };
 
-// An old-style method, as Method_prs reads it, with its default time.
-const getOldMethod = (name: string) => getProverMethod(name, undefined, undefined, undefined);
+// An old-style method, as Method_prs reads it, with its default time unless it names one.
+const getOldMethod = (method: OldMethod) =>
+  getProverMethod(method.name, method.timeout, undefined, method.tactic);
 
 type Cited =
   | { kind: "Premeth"; groups: PragmaSetting[][] }
-  | { kind: "Meth"; method: string }
+  | { kind: "Meth"; method: OldMethod }
   | undefined;
 
 // find_meth: an obligation whose proof names a method keeps it. Otherwise each visible fact that
@@ -203,7 +204,7 @@ const getCitedMethods = (sequent: Sequent) => {
 
 // The methods find_meth selects: the frontends to apply, and the provers to try in order, which
 // are tlapm's default ones when the obligation cites only frontends or nothing.
-export const findMethods = (obligation: { sequent: Sequent; method?: string }) => {
+export const findMethods = (obligation: { sequent: Sequent; method?: OldMethod }) => {
   const methods =
     obligation.method === undefined
       ? getCitedMethods(obligation.sequent)

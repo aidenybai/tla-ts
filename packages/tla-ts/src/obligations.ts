@@ -27,6 +27,7 @@ import {
 } from "./obligation-module";
 import { formatObligation } from "./obligation-printer";
 import type { Counter, ObligationKind } from "./obligation-proof";
+import type { OldMethod } from "./obligation-pragma";
 import { createSource } from "./obligation-source";
 import { tokenize } from "./lexer";
 import { parseTlapmModule } from "./parser";
@@ -43,7 +44,7 @@ export interface PrintedObligation {
   text: string;
   kind: ObligationKind;
   sequent: Sequent;
-  method?: string;
+  method?: OldMethod;
 }
 
 export interface ModuleObligations {
