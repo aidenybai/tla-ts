@@ -148,13 +148,14 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
       entry.formula === undefined ? [] : [`(assert (! ${entry.formula} :named |${entry.label}|))`],
     );
   const keys = new Set(collected.axioms.keys());
-  return [
-    "(set-logic UFNIA)",
-    "(declare-sort Idv 0)",
+  const lines = [
     ...declarations,
     ...axioms,
     ...entries.flatMap((entry) => (typeof entry === "string" ? [entry] : entry.getLines(keys))),
-  ]
+  ];
+  // Smtlib.collect_sorts declares Idv only when a symbol or a bound variable has that sort.
+  const isIdvUsed = lines.some((line) => /\bIdv\b/.test(line));
+  return ["(set-logic UFNIA)", ...(isIdvUsed ? ["(declare-sort Idv 0)"] : []), ...lines]
     .map(printer.resolve)
     .concat("(check-sat)", "(exit)")
     .join("\n");
