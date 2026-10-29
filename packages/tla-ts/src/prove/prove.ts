@@ -4,12 +4,13 @@ import { TlaProverError, TlaUnsupportedError } from "../errors";
 import type { Sequent } from "../obligation-expression";
 import { getObligations, type PrintedObligation } from "../obligations";
 import { solveSmt } from "../smt/solver";
+import { decideIsabelle } from "./isabelle/decide";
+import { encodeIsabelle } from "./isabelle/encode";
 import { processObligation } from "./prep/action";
 import { expandDefs } from "./prep/defs";
 import { normalizeSequent } from "./prep/elab";
 import { expandEnabledCdot } from "./prep/enabled";
 import { getFingerprint } from "./prep/fingerprint";
-import { encodeIsabelle } from "./isabelle/encode";
 import { flatten } from "./prep/flatten";
 import { findMethods, type Method } from "./prep/pragma";
 import { isTrivial } from "./prep/trivial";
@@ -89,8 +90,7 @@ interface Backend {
   // frontend and Prep.flatten that Prep.ship applies first. It throws a TlaUnsupportedError for
   // what tla-ts can't encode.
   encode: (id: number, sequent: Sequent, method: Method, session: EncodingSession) => string;
-  // tla-ts has no Isabelle of its own, so that backend only encodes.
-  decide?: (text: string, options: DecideOptions) => Verdict;
+  decide: (text: string, options: DecideOptions) => Verdict;
 }
 
 // Action.process_obligation, the frontend for every backend but LS4, Isabelle included, then
@@ -117,6 +117,7 @@ const BACKENDS: Record<string, Backend> = {
   isabelle: {
     encode: (id, sequent, method) =>
       encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto", `tlapm_${id}`),
+    decide: decideIsabelle,
   },
   // Pltl.process_obligation is LS4's frontend.
   ls4: { encode: (_id, sequent) => encodePtl(sequent), decide: decidePtl },
@@ -208,7 +209,7 @@ const proveWithBackends = (
     // Prep.prove_with: the Trivial method proves anything.
     if (method.prover === "trivial") return getProved(method.prover);
     const backend = BACKENDS[method.prover];
-    if (!backend?.decide) {
+    if (!backend) {
       reasons.push(`tla-ts has no ${method.prover} backend`);
       continue;
     }
