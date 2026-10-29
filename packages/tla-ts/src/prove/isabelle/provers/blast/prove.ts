@@ -46,6 +46,19 @@ import {
 
 export type Continuation = (tactics: readonly GoalTactic[], choices: readonly Choice[]) => Seq<Thm>;
 
+// A step either finishes the search or continues the same branches without a choice point, which
+// blast.ML does by a tail call. prv loops on the latter, so a long search can't exhaust the stack.
+type Step =
+  | { readonly kind: "done"; readonly result: Seq<Thm> }
+  | {
+      readonly kind: "next";
+      readonly tactics: readonly GoalTactic[];
+      readonly choices: readonly Choice[];
+      readonly brs: readonly Branch[];
+    };
+
+const done = (result: Seq<Thm>): Step => ({ kind: "done", result });
+
 const sameVars = (left: readonly VarRef[], right: readonly VarRef[]) =>
   left.length === right.length && left.every((ref, index) => ref === right[index]);
 
@@ -66,7 +79,7 @@ export const prove = (
     tactics: readonly GoalTactic[],
     choices: readonly Choice[],
     brs: readonly Branch[],
-  ): Seq<Thm> => {
+  ): Step => {
     const token = {};
     const branch = brs[0];
     const rest = brs.slice(1);
@@ -153,29 +166,41 @@ export const prove = (
     if (branch.lim < 0) return backtrack(choices);
     const substituted = equalSubst(state, formula, { ...branch, pairs });
     if (substituted !== undefined)
-      return prv([context.data.hypSubstTac(context.limits), ...tactics], choices, [
-        substituted,
-        ...rest,
-      ]);
+      return {
+        kind: "next",
+        tactics: [context.data.hypSubstTac(context.limits), ...tactics],
+        choices,
+        brs: [substituted, ...rest],
+      };
     const closed = closeF(branch.lits) ?? closeFl(pairs) ?? deeper();
-    if (closed !== undefined) return closed;
+    if (closed !== undefined) return done(closed);
     if (netMkRules(state, formula, branch.vars, unsafeList).length === 0)
       // There are no plausible unsafe rules: the formula becomes a literal.
-      return prv(tactics, choices, [
-        { pairs, lits: addLit(state, formula, branch.lits), vars: branch.vars, lim: branch.lim },
-        ...rest,
-      ]);
+      return {
+        kind: "next",
+        tactics,
+        choices,
+        brs: [
+          { pairs, lits: addLit(state, formula, branch.lits), vars: branch.vars, lim: branch.lim },
+          ...rest,
+        ],
+      };
     // The formula admits some unsafe rules: try them later.
     const deferred: Formula = { term: negOfGoal(state, formula), md };
-    return prv(isGoal(formula) ? [negOfGoalTac(state), ...tactics] : tactics, choices, [
-      {
-        pairs: [{ safe: queued.safe, unsafe: [...queued.unsafe, deferred] }, ...pairs.slice(1)],
-        lits: branch.lits,
-        vars: branch.vars,
-        lim: branch.lim,
-      },
-      ...rest,
-    ]);
+    return {
+      kind: "next",
+      tactics: isGoal(formula) ? [negOfGoalTac(state), ...tactics] : tactics,
+      choices,
+      brs: [
+        {
+          pairs: [{ safe: queued.safe, unsafe: [...queued.unsafe, deferred] }, ...pairs.slice(1)],
+          lits: branch.lits,
+          vars: branch.vars,
+          lim: branch.lim,
+        },
+        ...rest,
+      ],
+    };
   };
 
   // No safe steps are possible at any level: applies an unsafe rule.
@@ -183,7 +208,7 @@ export const prove = (
     tactics: readonly GoalTactic[],
     choices: readonly Choice[],
     brs: readonly Branch[],
-  ): Seq<Thm> => {
+  ): Step => {
     const token = {};
     const branch = brs[0];
     const rest = brs.slice(1);
@@ -253,10 +278,14 @@ export const prove = (
       return undefined;
     };
     if (branch.lim < 1) return backtrack(choices);
+    const closed = deeper();
+    if (closed !== undefined) return done(closed);
     // If no rule closes the branch, the formula becomes a literal.
-    return (
-      deeper() ??
-      prv(tactics, choices, [
+    return {
+      kind: "next",
+      tactics,
+      choices,
+      brs: [
         {
           pairs: [{ safe: [], unsafe: others }],
           lits: [formula, ...branch.lits],
@@ -264,24 +293,38 @@ export const prove = (
           lim: branch.lim,
         },
         ...rest,
-      ])
-    );
+      ],
+    };
   };
 
   const prv = (
-    tactics: readonly GoalTactic[],
-    choices: readonly Choice[],
+    initialTactics: readonly GoalTactic[],
+    initialChoices: readonly Choice[],
     branches: readonly Branch[],
   ): Seq<Thm> => {
-    checkInterrupt(context.limits);
+    let tactics = initialTactics;
+    let choices = initialChoices;
     let brs = branches;
     for (;;) {
+      checkInterrupt(context.limits);
       // All branches closed.
       if (brs.length === 0) return cont(tactics, choices);
       const branch = brs[0];
       const head = branch.pairs[0];
       if (head === undefined) return backtrack(choices);
-      if (head.safe.length > 0) return safeStep(tactics, choices, brs);
+      const step =
+        head.safe.length > 0
+          ? safeStep(tactics, choices, brs)
+          : branch.pairs.length === 1 && head.unsafe.length > 0
+            ? unsafeStep(tactics, choices, brs)
+            : undefined;
+      if (step?.kind === "done") return step.result;
+      if (step !== undefined) {
+        tactics = step.tactics;
+        choices = step.choices;
+        brs = step.brs;
+        continue;
+      }
       if (branch.pairs.length > 1) {
         // No more safe formulae: transfers the unsafe ones down a level.
         const below = branch.pairs[1];
@@ -299,7 +342,6 @@ export const prove = (
         ];
         continue;
       }
-      if (head.unsafe.length > 0) return unsafeStep(tactics, choices, brs);
       return backtrack(choices);
     }
   };
