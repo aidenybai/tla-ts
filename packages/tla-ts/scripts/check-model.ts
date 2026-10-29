@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { check, TlaError, TlaSyntaxError, TlaUnsupportedError } from "../src";
-import { TLC_SEED } from "./corpora";
+import { getLibraryModules, TLC_SEED } from "./corpora";
 
 export interface ModelOutcome {
   status: string;
@@ -13,6 +13,8 @@ export interface ModelOutcome {
   error?: string;
   milliseconds: number;
 }
+
+const libraryModules = getLibraryModules();
 
 export const checkModel = async (specPath: string, configPath: string): Promise<ModelOutcome> => {
   const directory = dirname(specPath);
@@ -27,9 +29,13 @@ export const checkModel = async (specPath: string, configPath: string): Promise<
   const result = await check({
     source,
     config: readFileSync(configPath, "utf8"),
+    // TLC reads a module beside the spec before one on its library path.
     loadModule: (name) => {
       const modulePath = join(directory, `${name}.tla`);
-      return existsSync(modulePath) ? readFileSync(modulePath, "utf8") : undefined;
+      const libraryPath = libraryModules.get(name);
+      return existsSync(modulePath)
+        ? readFileSync(modulePath, "utf8")
+        : libraryPath && readFileSync(libraryPath, "utf8");
     },
     loadClass: (name) => {
       const classPath = join(directory, `${name}.class`);
