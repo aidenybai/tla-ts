@@ -47,10 +47,17 @@ import {
 } from "./successors";
 import {
   getActionLabel,
+  getActionSignature,
   getNextActions,
   getSpecificationValue,
   type SpecAction,
 } from "./spec-description";
+import {
+  createStateWriter,
+  type GraphState,
+  type StateDump,
+  type StateWriter,
+} from "./state-graph";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { createTlcFingerprinter, getTlcFingerprint } from "./tlc-random";
@@ -60,6 +67,7 @@ import { createCounterExample } from "./tlc-ext";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import {
   combineHash,
+  formatState,
   formatValue,
   getValueHash,
   isFunctionValue,
@@ -83,6 +91,8 @@ export interface CheckOptions {
   workers?: number;
   // TLC's -lncheck: "final" checks liveness only on the complete state graph.
   livenessCheck?: "default" | "final";
+  // TLC's -dump: writes the reachable states, or with `dot` the state graph, through writeFile.
+  dump?: StateDump;
 }
 
 export type CheckStatus =
@@ -883,7 +893,15 @@ const withHeadline = (error: unknown, headline: string) =>
       )
     : error;
 
+// TLC finishes the -dump file whether or not the search finds a violation.
 export const checkSequentially = (options: CheckOptions): CheckResult => {
+  const stateWriter = options.dump && createStateWriter(options.dump, options.writeFile);
+  const result = searchStates(options, stateWriter);
+  stateWriter?.close();
+  return result;
+};
+
+const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefined): CheckResult => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   const onPrint = options.onPrint ?? console.log;
   // TLC prints again while it rebuilds a trace, between the states it prints. Printing those lines
@@ -1030,11 +1048,16 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     position: number,
     loopStart: number | undefined,
   ) => {
-    const state = steps[position].state;
-    const next = (steps[position + 1] ?? steps[loopStart ?? position]).state;
     // TLC evaluates TLCGet("level") and Trace in an alias at the state's position in the trace.
     runtime.getLevel = () => position + 1;
     runtime.getBehavior = () => steps.slice(0, position + 1).map((step) => step.state);
+    return evaluateAlias(
+      alias,
+      steps[position].state,
+      (steps[position + 1] ?? steps[loopStart ?? position]).state,
+    );
+  };
+  const evaluateAlias = (alias: string, state: Value[], next: Value[] | undefined) => {
     try {
       const body = getConfigDefinition("alias", alias, environment).body;
       const value = evaluate(createIdentifier(alias), getContext(environment, state, next));
@@ -1235,6 +1258,18 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     return current.isExpanding ? depths[current.index] + 1 : 0;
   };
 
+  const getGraphState = (state: Value[], level: number): GraphState => ({
+    fingerprint: BigInt.asIntN(64, runtime.getFingerprint(state)),
+    level,
+    getLabel: () =>
+      formatState(
+        config.alias === undefined
+          ? toRecord(state)
+          : evaluateAlias(config.alias, state, undefined),
+      ),
+    getText: () => formatState(toRecord(state)),
+  });
+
   const visitInitialState = (state: Value[]) => {
     canonicalizeState(state);
     runtime.generatedStates++;
@@ -1251,6 +1286,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       countDistinctState(1);
       runtime.queueSize++;
       liveness?.addInitialState(states.length, state);
+      stateWriter?.writeInitialState(getGraphState(state, 1));
     }
     const violated = search.findViolatedInvariant(state);
     if (violated) {
@@ -1271,7 +1307,13 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     addState(state, fingerprintState, -1, undefined);
     return undefined;
   };
-  const visitSuccessor = (index: number, successor: Successor, liveSuccessors: LiveSuccessor[]) => {
+  const visitSuccessor = (
+    index: number,
+    successor: Successor,
+    liveSuccessors: LiveSuccessor[],
+    source: GraphState | undefined,
+    action: SpecAction | undefined,
+  ) => {
     const state = states[index];
     runtime.generatedStates++;
     current.candidate = successor.state;
@@ -1285,6 +1327,14 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
     if (isInModel) search.trackActionPossible(state, successor.state);
     const existing = isInModel ? found : -1;
+    if (source && isInModel) {
+      stateWriter?.writeSuccessor(
+        source,
+        getGraphState(successor.state, depths[index] + 1),
+        existing !== -1,
+        action && { name: action.name, signature: getActionSignature(action) },
+      );
+    }
     if (existing !== -1 && liveness) {
       const stored = states[existing];
       const isStored = stored.every((value, position) => value === successor.state[position]);
@@ -1356,23 +1406,55 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     }
     return createSuccess();
   }
+  // TLC labels and colors an edge of the -dump state graph by the action that generated it. When
+  // the graph names its edges, the search generates successors action by action, as TLC does.
+  const isNamingEdges = Boolean(
+    options.dump?.dot && (options.dump.actionLabels || options.dump.colorize),
+  );
+  const forEachActionSuccessor = (
+    state: Value[],
+    onSuccessor: (successor: Successor, action: SpecAction | undefined) => boolean,
+  ) => {
+    if (!isNamingEdges) {
+      return forEachSuccessor(
+        next,
+        state,
+        environment,
+        (successor) => onSuccessor(successor, undefined),
+        spec.scope,
+      );
+    }
+    nextActions.value ??= getNextActions(config, environment, specification.instanceActions);
+    const progress = { isStopped: false };
+    return nextActions.value.reduce((count, action) => {
+      if (progress.isStopped) return count;
+      return (
+        count +
+        forEachSuccessor(
+          action.expression,
+          state,
+          environment,
+          (successor) => {
+            progress.isStopped = onSuccessor(successor, action);
+            return progress.isStopped;
+          },
+          action.scope,
+        )
+      );
+    }, 0);
+  };
   const expandState = (index: number) => {
     const state = states[index];
     const liveSuccessors: LiveSuccessor[] = [];
-    const successorCount = forEachSuccessor(
-      next,
-      state,
-      environment,
-      (successor) => {
-        try {
-          outcome.result = visitSuccessor(index, successor, liveSuccessors);
-        } catch (error) {
-          outcome.result = toFailure(error, getTrace(index, successor));
-        }
-        return outcome.result !== undefined;
-      },
-      spec.scope,
-    );
+    const source = stateWriter && getGraphState(state, depths[index]);
+    const successorCount = forEachActionSuccessor(state, (successor, action) => {
+      try {
+        outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
+      } catch (error) {
+        outcome.result = toFailure(error, getTrace(index, successor));
+      }
+      return outcome.result !== undefined;
+    });
     current.isExpanding = false;
     if (outcome.result) return outcome.result;
     if (successorCount === 0 && config.checkDeadlock) {

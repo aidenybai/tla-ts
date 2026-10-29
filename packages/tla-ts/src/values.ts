@@ -2116,3 +2116,14 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
     }
   }
 };
+
+// TLC's TLCState.toString: a line per variable, as a conjunction when there are several.
+export const formatState = (state: Record<string, Value>) => {
+  const entries = Object.entries(state);
+  return entries
+    .map(
+      ([name, value]) =>
+        `${entries.length === 1 ? "" : "/\\ "}${name} = ${prettyPrint(formatValue(value))}\n`,
+    )
+    .join("");
+};

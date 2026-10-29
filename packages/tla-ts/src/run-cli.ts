@@ -27,14 +27,14 @@ import { getAtPrefix, getLocusText } from "./obligation-expression";
 import { formatSummary, getObligations, WHOLE_MODULE, type ModuleObligations } from "./obligations";
 import { check } from "./parallel";
 import { parseModule } from "./parser";
-import { prettyPrint } from "./pretty-print";
+import type { StateDump } from "./state-graph";
 import {
   formatProbability,
   getActualProbability,
   getOptimisticProbability,
   getOutDegreeSummary,
 } from "./tlc-summary";
-import { formatValue, type Value } from "./values";
+import { formatState, type Value } from "./values";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: EXIT_STATUS.success,
@@ -50,6 +50,11 @@ const EXIT_CODES: Record<CheckStatus, number> = {
 const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {options}", [
   { flag: "-config <Spec.cfg>" },
   { flag: "-deadlock" },
+  // Like TLC, -dump takes a format only when the next argument starts with dot and a file follows.
+  {
+    flag: "-dump [<format>] <file>",
+    getArity: (rest) => (rest.length > 1 && rest[0].startsWith("dot") ? 2 : 1),
+  },
   { flag: "-lncheck <final|default>" },
   { flag: "-seed <num>" },
   { flag: "-workers <count|auto>" },
@@ -97,14 +102,24 @@ const getWorkerCount = (values: string[] | undefined) => {
     : Math.max(1, Number.parseInt(values[0], 10) || 1);
 };
 
-const printState = (state: Record<string, Value>) => {
-  const entries = Object.entries(state);
-  entries.forEach(([name, value]) =>
-    console.log(
-      `${entries.length === 1 ? "" : "/\\ "}${name} = ${prettyPrint(formatValue(value))}`,
-    ),
-  );
-  console.log("");
+const printState = (state: Record<string, Value>) => console.log(formatState(state));
+
+const UNSUPPORTED_DUMP_FORMATS = ["constrained", "stuttering", "strict"];
+
+// TLC names the file of a -dump by its format unless the name already ends that way.
+const getDumpPath = (path: string, extension: string) =>
+  path.endsWith(extension) ? path : `${path}${extension}`;
+
+const getDump = (values: string[]): StateDump => {
+  if (values.length === 1) return { path: getDumpPath(values[0], ".dump") };
+  const format = values[0].toLowerCase();
+  return {
+    path: getDumpPath(values[1], ".dot"),
+    dot: true,
+    colorize: format.includes("colorize"),
+    actionLabels: format.includes("actionlabels"),
+    snapshot: format.includes("snapshot"),
+  };
 };
 
 const printTrace = (trace: TraceStep[], heading = "Error: The behavior up to this point is:") => {
@@ -231,12 +246,25 @@ const checkSpec = async (specPath: string, args: ParsedArgs) => {
     console.error("Error: expect a strategy such as final for -lncheck option.");
     return 1;
   }
+  const dumpValues = args.get("-dump");
+  if (dumpValues?.length === 0) {
+    console.error("Error: A file name for dumping states required.");
+    return 1;
+  }
+  const unsupportedFormat =
+    dumpValues?.length === 2 &&
+    UNSUPPORTED_DUMP_FORMATS.find((format) => dumpValues[0].toLowerCase().includes(format));
+  if (unsupportedFormat) {
+    console.error(`Error: tla-ts does not support the -dump format ${unsupportedFormat}.`);
+    return 1;
+  }
   const directory = dirname(specPath);
   console.log(`Checking ${basename(specPath)} with ${basename(configPath)}`);
   const result = await check({
     workers: getWorkerCount(args.get("-workers")),
     livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
     seed: BigInt(seed),
+    dump: dumpValues && getDump(dumpValues),
     source,
     config,
     onPause: () => readSync(0, Buffer.alloc(1)),
