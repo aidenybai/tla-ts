@@ -205,40 +205,63 @@ const intrRuleTactic =
     );
 
 // A tableau rule from a rule's template. Blast tries the rules in order until one's major premise
-// unifies, so this instantiates the premises only when they are used.
+// unifies, and often only checks that a rule exists, so this instantiates the template with fresh
+// variables only when the major premise is used, and the premises only when they are.
 class InstantiatedRule implements TableauRule {
-  readonly major: BlastTerm;
   private readonly state: BlastState;
   private readonly rule: Thm;
   private readonly isIntro: boolean;
-  private readonly premTemplates: readonly (readonly Template[])[];
-  private readonly vars: readonly BlastTerm[];
+  private readonly template: RuleTemplate;
+  private readonly majorTemplate: Template;
   private readonly skolems: readonly BlastTerm[];
-  private instantiated: readonly (readonly BlastTerm[])[] | undefined;
+  private vars: readonly BlastTerm[] | undefined;
+  private instantiatedMajor: BlastTerm | undefined;
+  private instantiatedPrems: readonly (readonly BlastTerm[])[] | undefined;
 
   constructor(
     state: BlastState,
     rule: Thm,
     isIntro: boolean,
-    major: Template,
-    premTemplates: readonly (readonly Template[])[],
-    vars: readonly BlastTerm[],
+    template: RuleTemplate,
+    majorTemplate: Template,
     skolems: readonly BlastTerm[],
   ) {
     this.state = state;
     this.rule = rule;
     this.isIntro = isIntro;
-    this.premTemplates = premTemplates;
-    this.vars = vars;
+    this.template = template;
+    this.majorTemplate = majorTemplate;
     this.skolems = skolems;
-    this.major = instantiateTemplate(vars, skolems, major);
+  }
+
+  // Fresh variables for the template's, with the conclusion's set to *False*.
+  private getVars() {
+    if (this.vars !== undefined) return this.vars;
+    const vars: BlastTerm[] = [];
+    for (let index = 0; index < this.template.count; index += 1)
+      vars.push(
+        mkBlastVar({
+          value: index === this.template.concl ? mkBlastConst(FALSE_NAME) : undefined,
+        }),
+      );
+    this.vars = vars;
+    return vars;
+  }
+
+  get major() {
+    this.instantiatedMajor ??= instantiateTemplate(
+      this.getVars(),
+      this.skolems,
+      this.majorTemplate,
+    );
+    return this.instantiatedMajor;
   }
 
   get prems() {
-    this.instantiated ??= this.premTemplates.map((prem) =>
-      prem.map((template) => instantiateTemplate(this.vars, this.skolems, template)),
+    this.instantiatedPrems ??= this.template.prems.map((prem) =>
+      prem.map((template) => instantiateTemplate(this.getVars(), this.skolems, template)),
     );
-    return this.instantiated;
+    return this.instantiatedPrems;
   }
 
   // Since unsafe rules are delayed, dup is always false for introduction rules.
@@ -251,7 +274,8 @@ class InstantiatedRule implements TableauRule {
   }
 }
 
-// fromRule or fromIntrRule: undefined for an ill-formed rule.
+// fromRule or fromIntrRule: undefined for an ill-formed rule. Its Skolem terms take their names
+// now, as blast converts all the rules it looks up at once.
 const instantiateRule = (
   state: BlastState,
   vars: readonly VarRef[],
@@ -266,13 +290,9 @@ const instantiateRule = (
   const skolems: BlastTerm[] = [];
   for (let slot = 0; slot < template.skolems; slot += 1)
     skolems.push(mkBlastSkolem(gensym(state, "S"), vars));
-  if (template.major === undefined) return undefined;
-  const fresh: BlastTerm[] = [];
-  for (let index = 0; index < template.count; index += 1)
-    fresh.push(
-      mkBlastVar({ value: index === template.concl ? mkBlastConst(FALSE_NAME) : undefined }),
-    );
-  return new InstantiatedRule(state, rule, isIntro, template.major, template.prems, fresh, skolems);
+  return template.major === undefined
+    ? undefined
+    : new InstantiatedRule(state, rule, isIntro, template, template.major, skolems);
 };
 
 // Too flexible assertions or goals, such as those of (!!P. ~P) ==> 0 == 1.
