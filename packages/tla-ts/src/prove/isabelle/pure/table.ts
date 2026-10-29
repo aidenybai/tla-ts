@@ -141,18 +141,32 @@ export const minTable = <Key, Value>(table: Table<Key, Value>): [Key, Value] | u
   return [node.key, node.value];
 };
 
-// The entries in key order, as Table.fold and Table.dest visit them.
-export const tableEntries = <Key, Value>(table: Table<Key, Value>): [Key, Value][] => {
-  const entries: [Key, Value][] = [];
-  const visit = (node: Node<Key, Value>) => {
-    if (!node) return;
-    visit(node.left);
-    entries.push([node.key, node.value]);
-    visit(node.right);
-  };
-  visit(table.root);
-  return entries;
-};
+const foldNode = <Key, Value, State>(
+  visit: (key: Key, value: Value, state: State) => State,
+  node: Node<Key, Value>,
+  state: State,
+): State =>
+  node
+    ? foldNode(visit, node.right, visit(node.key, node.value, foldNode(visit, node.left, state)))
+    : state;
+
+// Table.fold: visits the entries in key order.
+export const foldTable = <Key, Value, State>(
+  visit: (key: Key, value: Value, state: State) => State,
+  table: Table<Key, Value>,
+  state: State,
+) => foldNode(visit, table.root, state);
+
+// The entries in key order, as Table.dest lists them.
+export const tableEntries = <Key, Value>(table: Table<Key, Value>) =>
+  foldTable<Key, Value, [Key, Value][]>(
+    (key, value, entries) => {
+      entries.push([key, value]);
+      return entries;
+    },
+    table,
+    [],
+  );
 
 export const tableSize = <Key, Value>(table: Table<Key, Value>): number => {
   const count = (node: Node<Key, Value>): number =>

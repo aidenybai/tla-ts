@@ -5,6 +5,7 @@ import { boundName } from "./name";
 import {
   emptyTable,
   fastStringOrd,
+  foldTable,
   isEmptyTable,
   lookupTable,
   tableEntries,
@@ -159,53 +160,63 @@ export const deleteTermSafe = <Item>(
   net: Net<Item>,
 ) => deleteNet(isEqual, keyOfTerm(term), item, net) ?? net;
 
-const netSkip = <Item>(net: Net<Item>, nets: Net<Item>[]): Net<Item>[] => {
+// The lists of nets that matching conses up, as Isabelle's lists.
+type Nets<Item> = { readonly head: Net<Item>; readonly tail: Nets<Item> } | undefined;
+
+const toArray = <Item>(nets: Nets<Item>) => {
+  const array: Net<Item>[] = [];
+  for (let current = nets; current !== undefined; current = current.tail) array.push(current.head);
+  return array;
+};
+
+const netSkip = <Item>(net: Net<Item>, nets: Nets<Item>): Nets<Item> => {
   if (net.kind === "Leaf") return nets;
-  const base = tableEntries(net.atoms).reduce<Net<Item>[]>(
-    (result, entry) => [entry[1], ...result],
-    [net.var, ...nets],
+  const children = toArray(netSkip(net.comb, undefined));
+  let result = foldTable<string, Net<Item>, Nets<Item>>(
+    (_name, child, tail) => ({ head: child, tail }),
+    net.atoms,
+    { head: net.var, tail: nets },
   );
-  return netSkip(net.comb, []).reduceRight((result, child) => netSkip(child, result), base);
+  for (let index = children.length - 1; index >= 0; index -= 1)
+    result = netSkip(children[index], result);
+  return result;
 };
 
-const look1 = <Item>(atoms: Table<string, Net<Item>>, name: string, nets: Net<Item>[]) => {
+const look1 = <Item>(atoms: Table<string, Net<Item>>, name: string, nets: Nets<Item>) => {
   const net = lookupTable(atoms, name);
-  return net === undefined ? nets : [net, ...nets];
+  return net === undefined ? nets : { head: net, tail: nets };
 };
 
-const matching = <Item>(
-  isUnif: boolean,
-  term: Term,
-  net: Net<Item>,
-  nets: Net<Item>[],
-): Net<Item>[] => {
-  const rands = (current: Term, node: Net<Item>, result: Net<Item>[]): Net<Item>[] => {
-    if (node.kind === "Leaf") return result;
-    if (current.kind === "App")
-      return rands(current.fun, node.comb, []).reduceRight(
-        (accumulated, child) => matching(isUnif, current.arg, child, accumulated),
-        result,
-      );
-    if (current.kind === "Const" || current.kind === "Free")
-      return look1(node.atoms, current.name, result);
-    if (current.kind === "Bound") return look1(node.atoms, boundName(current.index), result);
+const rands = <Item>(isUnif: boolean, term: Term, net: Net<Item>, nets: Nets<Item>): Nets<Item> => {
+  if (net.kind === "Leaf") return nets;
+  if (term.kind === "App") {
+    const children = toArray(rands(isUnif, term.fun, net.comb, undefined));
+    let result = nets;
+    for (let index = children.length - 1; index >= 0; index -= 1)
+      result = matching(isUnif, term.arg, children[index], result);
     return result;
-  };
+  }
+  if (term.kind === "Const" || term.kind === "Free") return look1(net.atoms, term.name, nets);
+  if (term.kind === "Bound") return look1(net.atoms, boundName(term.index), nets);
+  return nets;
+};
+
+const matching = <Item>(isUnif: boolean, term: Term, net: Net<Item>, nets: Nets<Item>) => {
   if (net.kind === "Leaf") return nets;
   const head = headOf(term);
   if (head.kind === "Var" || head.kind === "Abs")
-    return isUnif ? netSkip(net, nets) : [net.var, ...nets];
-  return rands(term, net, [net.var, ...nets]);
+    return isUnif ? netSkip(net, nets) : { head: net.var, tail: nets };
+  return rands(isUnif, term, net, { head: net.var, tail: nets });
 };
 
-const extractLeaves = <Item>(nets: readonly Net<Item>[]) =>
-  nets.flatMap((net) => (net.kind === "Leaf" ? net.items : []));
+const extractLeaves = <Item>(nets: Nets<Item>) =>
+  toArray(nets).flatMap((net) => (net.kind === "Leaf" ? net.items : []));
 
 export const matchTermNet = <Item>(net: Net<Item>, term: Term) =>
-  extractLeaves(matching(false, term, net, []));
+  extractLeaves(matching(false, term, net, undefined));
 
 export const unifyTermNet = <Item>(net: Net<Item>, term: Term) =>
-  extractLeaves(matching(true, term, net, []));
+  extractLeaves(matching(true, term, net, undefined));
 
 // Net.content: every item, by the order of Net.dest.
 export const netContent = <Item>(net: Net<Item>): Item[] => {
