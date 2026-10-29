@@ -95,6 +95,23 @@ export class TlaZenonError extends TlaError {
   }
 }
 
+// The exceptions Isabelle raises: ERROR for a rejected theory or a failed proof, TERM, TYPE and THM
+// for an ill-formed term, type or theorem, and Interrupt when the time limit runs out.
+export type IsabelleException = "ERROR" | "TERM" | "TYPE" | "THM" | "Interrupt";
+
+// Isabelle's tactics raise and handle these as control flow, often millions of times per proof, and
+// decideIsabelle answers "unknown" for any that escape. So unlike an Error, it skips the stack trace.
+export class TlaIsabelleError {
+  readonly name = "TlaIsabelleError";
+  readonly exception: IsabelleException;
+  readonly message: string;
+
+  constructor(exception: IsabelleException, message: string) {
+    this.exception = exception;
+    this.message = message;
+  }
+}
+
 export class TlaUnsupportedError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
