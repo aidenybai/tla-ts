@@ -74,8 +74,14 @@ val consts_json = "[" ^ commas (map (fn (c, (T, rhs)) =>
   "[" ^ esc c ^ "," ^ jint (typ_id T) ^
   (case rhs of NONE => "" | SOME t => "," ^ term_json t) ^ "]") constants) ^ "]";
 
+(* the constant each base name resolves to *)
+val names_json = "[" ^ commas (map (fn base => "[" ^ esc base ^ "," ^ esc (Sign.intern_const thy base) ^ "]")
+  (distinct (op =) (map (Long_Name.base_name o #1) constants))) ^ "]";
+
 (* facts *)
 val facts = Facts.dest_static true [] (Global_Theory.facts_of thy);
+val fact_names_json = "[" ^ commas (map (fn base => "[" ^ esc base ^ "," ^ esc (Global_Theory.intern_fact thy base) ^ "]")
+  (distinct (op =) (map (Long_Name.base_name o #1) facts))) ^ "]";
 val facts_json = "[" ^ commas (map (fn (a, ths) =>
   "[" ^ esc a ^ ",[" ^ commas (map (jint o thm_id) ths) ^ "]]") facts) ^ "]";
 
@@ -136,7 +142,9 @@ val context_rules_json =
 val json =
   "{\"types\":[" ^ commas (! type_out) ^ "]" ^
   ",\"consts\":" ^ consts_json ^
+  ",\"names\":" ^ names_json ^
   ",\"facts\":" ^ facts_json ^
+  ",\"factNames\":" ^ fact_names_json ^
   ",\"simps\":" ^ simps_json ^
   ",\"congs\":" ^ congs_json ^
   ",\"weakCongs\":" ^ weak_json ^

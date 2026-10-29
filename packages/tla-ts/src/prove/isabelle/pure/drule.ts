@@ -2,12 +2,41 @@
 // Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and
 // contributors, see LICENSE.
 
-import { emptyNameContext, variantName, type NameContext } from "./name";
+import { cleanName, emptyNameContext, variantList, variantName, type NameContext } from "./name";
 import { emptyTable, fastIndexnameOrd, tableEntries, updateTable, lookupTable, type IndexKey } from "./table";
-import { allConst, mkEquals, mkImplies } from "./logic";
-import { foldAterms, foldAtyps, foldTypes, mkAbs, mkApp, mkTVar, mkVar, propT, type Typ, type Var } from "./term";
+import { TlaIsabelleError } from "../../../errors";
+import { allConst, isProtected, mkEquals, mkImplies, protect } from "./logic";
+import { listOfSeq } from "./seq";
+import { eqThm } from "./tactical";
+import {
+  foldAterms,
+  foldAtyps,
+  foldTypes,
+  funT,
+  mkAbs,
+  mkApp,
+  mkBound,
+  mkTVar,
+  mkVar,
+  propT,
+  stripAllVars,
+  type Term,
+  type Typ,
+  type Var,
+} from "./term";
 import { normType, type TyEnv } from "./type";
-import { axiomThm, instantiate, instantiateTypes, rs, type Instantiation, type Thm } from "./thm";
+import {
+  axiomThm,
+  bicompose,
+  forallElim,
+  forallIntr,
+  incrIndexesThm,
+  instantiate,
+  instantiateTypes,
+  rs,
+  type Instantiation,
+  type Thm,
+} from "./thm";
 
 const propVar = (name: string) => mkVar(name, 0, propT);
 
@@ -20,6 +49,7 @@ export const revcutRl = axiomThm(
 );
 export const thinRl = axiomThm(mkImplies(propVar("V"), mkImplies(propVar("W"), propVar("W"))));
 export const asmRl = axiomThm(mkImplies(propVar("psi"), propVar("psi")));
+export const protectI = axiomThm(mkImplies(propVar("A"), protect(propVar("A"))));
 
 const typeA = mkTVar("'a", 0);
 
@@ -41,6 +71,69 @@ export const symmetricThm = axiomThm(
 export const trivForallEquality = axiomThm(
   mkEquals(mkApp(allConst(typeA), mkAbs("x", typeA, propVar("V"))), propVar("V")),
 );
+
+// Drule.norm_hhf_eq: (PROP ?phi ==> (!!x. PROP ?psi x)) == (!!x. PROP ?phi ==> PROP ?psi x).
+export const normHhfEq = axiomThm(
+  mkEquals(
+    mkImplies(propVar("phi"), mkApp(allConst(typeA), mkAbs("x", typeA, mkApp(mkVar("psi", 0, funT(typeA, propT)), mkBound(0))))),
+    mkApp(
+      allConst(typeA),
+      mkAbs("x", typeA, mkImplies(propVar("phi"), mkApp(mkVar("psi", 0, funT(typeA, propT)), mkBound(0)))),
+    ),
+  ),
+);
+
+// Drule.is_norm_hhf: no quantifier right of an implication and no beta redex.
+export const isNormHhf = (isProtecting: boolean, term: Term): boolean => {
+  if (term.kind === "Const") return term.name !== "Pure.sort_constraint";
+  if (term.kind === "Abs") return isNormHhf(isProtecting, term.body);
+  if (term.kind !== "App") return true;
+  if (term.fun.kind === "Abs") return false;
+  if (
+    term.fun.kind === "App" &&
+    term.fun.fun.kind === "Const" &&
+    term.fun.fun.name === "Pure.imp" &&
+    term.arg.kind === "App" &&
+    term.arg.fun.kind === "Const" &&
+    term.arg.fun.name === "Pure.all"
+  )
+    return false;
+  if (isProtected(term)) return isProtecting || isNormHhf(isProtecting, term.arg);
+  return isNormHhf(isProtecting, term.fun) && isNormHhf(isProtecting, term.arg);
+};
+
+// Drule.outer_params: the outermost parameters, named apart.
+export const outerParams = (term: Term) => {
+  const vars = stripAllVars(term);
+  const names = variantList(
+    [],
+    vars.map((variable) => cleanName(variable.name)),
+  );
+  return vars.map((variable, index) => ({ name: names[index], type: variable.type }));
+};
+
+// Variable.gen_all: the outermost parameters become schematic variables.
+export const genAll = (thm: Thm) => {
+  const index = Math.max(thm.maxidx, -1) + 1;
+  return outerParams(thm.prop).reduce((result, param) => forallElim(mkVar(param.name, index, param.type), result), thm);
+};
+
+// Thm.forall_intr_vars: quantifies the schematic variables in order of appearance.
+export const forallIntrVars = (thm: Thm) => {
+  const vars = fullProps(thm).reduce(
+    (result, term) =>
+      foldAterms(
+        (atom, current: Var[]) =>
+          atom.kind === "Var" && !current.some((other) => other.name === atom.name && other.index === atom.index)
+            ? [...current, atom]
+            : current,
+        term,
+        result,
+      ),
+    [] as Var[],
+  );
+  return vars.reduceRight((result, variable) => forallIntr(variable, result), thm);
+};
 
 const variantBound = (name: string, used: NameContext) => variantName(name.startsWith(":") ? "u" : name, used);
 
@@ -96,3 +189,15 @@ export const zeroVarIndexes = (thm: Thm): Thm => {
 
 // Tactic.make_elim: turns a destruction rule into an elimination rule.
 export const makeElim = (rule: Thm) => zeroVarIndexes(rs(rule, revcutRl));
+
+// Drule.compose: resolves tha into premise index of thb without lifting, with a unique result.
+export const compose = (tha: Thm, index: number, thb: Thm): Thm => {
+  const results = listOfSeq(
+    bicompose({ flatten: true, match: false, incremented: true }, { isElim: false, rule: tha, subgoals: 0 }, index, thb),
+  ).filter((result, position, all) => all.findIndex((other) => eqThm(other, result)) === position);
+  if (results.length !== 1) throw new TlaIsabelleError("THM", `compose: unique result expected ${index}`);
+  return results[0];
+};
+
+// COMP_INCR
+export const compIncr = (tha: Thm, thb: Thm) => compose(tha, 1, incrIndexesThm(tha.maxidx + 1, thb));

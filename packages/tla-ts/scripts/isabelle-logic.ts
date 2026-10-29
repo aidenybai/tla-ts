@@ -29,7 +29,9 @@ type RawRule = [number, number, number[], number, number[]];
 interface RawLogic {
   types: RawType[];
   consts: [string, number, RawTerm?][];
+  names: [string, string][];
   facts: [string, number[]][];
+  factNames: [string, string][];
   simps: [[string, number], number, string][];
   congs: [boolean, string, number][];
   weakCongs: [boolean, string][];
@@ -170,8 +172,12 @@ const data = {
   types,
   terms,
   thms,
-  consts: raw.consts.map((entry) => [entry[0], entry[1]]),
+  consts: raw.consts.map((entry) =>
+    entry[2] === undefined ? [entry[0], entry[1]] : [entry[0], entry[1], internTerm(entry[2])],
+  ),
+  names: raw.names.filter((entry) => raw.consts.some((constant) => constant[0] === entry[1])),
   facts: raw.facts,
+  factNames: raw.factNames.filter((entry) => entry[0] !== entry[1] && raw.facts.some((fact) => fact[0] === entry[1])),
   simps: raw.simps.map((entry) => entry[1]),
   congs: raw.congs,
   weakCongs: raw.weakCongs,

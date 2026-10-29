@@ -15,7 +15,7 @@ import { emptyTEnv } from "./envir";
 import { emptyTyEnv } from "./type";
 import { aconv, existsSubterm, existsType, foldAterms, eqTyp, headOf, type Term, type Typ, type Var } from "./term";
 import { rs, type Thm } from "./thm";
-import { eqThmProp, type GoalTactic } from "./tactical";
+import { eqThmProp, noTac, type GoalTactic } from "./tactical";
 import type { Limits } from "./tactic";
 
 export interface Rrule {
@@ -282,3 +282,18 @@ export const rulesFromEntries = (thms: readonly Thm[]): Net<Rrule> =>
 export const emptyCongs: Table<string, Thm> = emptyTable((left: string, right: string) =>
   left === right ? 0 : left < right ? -1 : 1,
 );
+
+// empty_ss: rewrites with meta-equalities only, and solves no subgoal.
+export const emptySimpset: Simpset = {
+  rules: emptyNet,
+  prems: [],
+  depth: 0,
+  congs: emptyCongs,
+  weakCongs: [],
+  simprocs: emptyNet,
+  mkRews: { mk: (thm) => (isEquals(stripImpConcl(thm.prop)) ? [thm] : []), mkEqTrue: () => undefined },
+  subgoalTac: () => () => noTac,
+  loopTacs: [],
+  unsafeSolvers: [],
+  safeSolvers: [],
+};

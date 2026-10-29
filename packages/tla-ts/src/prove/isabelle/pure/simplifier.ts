@@ -2,7 +2,8 @@
 // simplification tactics. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet
 // Muenchen, and contributors, see LICENSE.
 
-import { type SimpContext, type Solver } from "./raw-simplifier";
+import { genAll, isNormHhf, normHhfEq } from "./drule";
+import { addSimps, emptySimpset, type SimpContext, type Solver } from "./raw-simplifier";
 import { fconvRule, genericRewriteGoalTac, rewriteCterm, type Prover, type RewriteMode } from "./rewriter";
 import { emptySeq } from "./seq";
 import {
@@ -17,6 +18,7 @@ import {
   type GoalTactic,
   type Tactic,
 } from "./tactical";
+import type { Limits } from "./tactic";
 import { nprems, permutePrems, type Thm } from "./thm";
 
 const withSolvers = (context: SimpContext, solvers: readonly Solver[]): SimpContext => ({
@@ -86,3 +88,18 @@ export const simplify = (context: SimpContext, thm: Thm) =>
 
 export const fullSimplify = (context: SimpContext, thm: Thm) =>
   simpThm({ simprem: true, useprem: false, mutsimp: false }, context, thm);
+
+// Raw_Simplifier.norm_hhf: moves the quantifiers of a theorem left of its implications, then makes
+// the outermost ones schematic. Drule.sort_constraint_eq, the other rule of hhf_ss, never applies:
+// tlapm's terms carry no sort constraints.
+export const normHhf = (limits: Limits, thm: Thm): Thm => {
+  if (isNormHhf(false, thm.prop)) return genAll(thm);
+  const empty = { limits, simpset: emptySimpset, bounds: 0 };
+  const context = { ...empty, simpset: addSimps(empty, [normHhfEq]) };
+  return genAll(
+    fconvRule(
+      (term) => rewriteCterm({ simprem: true, useprem: false, mutsimp: false }, () => undefined, context, term),
+      thm,
+    ),
+  );
+};
