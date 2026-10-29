@@ -35,7 +35,7 @@ export const emptyNet: Net<never> = { kind: "Leaf", items: [] };
 
 const isEmptyNet = <Item>(net: Net<Item>) => net.kind === "Leaf" && net.items.length === 0;
 
-const makeNode = <Item>(): Net<Item> => ({
+const makeNode = <Item>(): Extract<Net<Item>, { kind: "Net" }> => ({
   kind: "Net",
   comb: emptyNet,
   var: emptyNet,
@@ -68,36 +68,37 @@ export const keyOfTerm = (term: Term): NetKey[] => {
   return keys;
 };
 
-// Net.insert: raises nothing on a duplicate here; insert_safe semantics with eq.
+// Net.insert: raises nothing on a duplicate here; insert_safe semantics with eq. It walks down
+// the keys and rebuilds the path bottom-up, so a long key list can't exhaust the stack.
 export const insertNet = <Item>(
   isEqual: (left: Item, right: Item) => boolean,
   keys: readonly NetKey[],
   item: Item,
   net: Net<Item>,
 ): Net<Item> | undefined => {
-  const ins = (position: number, node: Net<Item>): Net<Item> | undefined => {
-    if (position === keys.length) {
-      if (node.kind === "Net") return ins(position, emptyNet);
-      return node.items.some((other) => isEqual(other, item))
-        ? undefined
-        : { kind: "Leaf", items: [item, ...node.items] };
-    }
-    const expanded =
-      node.kind === "Leaf" ? (node.items.length === 0 ? makeNode<Item>() : undefined) : node;
-    if (expanded === undefined || expanded.kind !== "Net") return ins(position, makeNode());
-    const key = keys[position];
-    if (key.kind === "Comb") {
-      const comb = ins(position + 1, expanded.comb);
-      return comb && { ...expanded, comb };
-    }
-    if (key.kind === "Var") {
-      const child = ins(position + 1, expanded.var);
-      return child && { ...expanded, var: child };
-    }
-    const child = ins(position + 1, lookupTable(expanded.atoms, key.name) ?? emptyNet);
-    return child && { ...expanded, atoms: updateTable(expanded.atoms, key.name, child) };
-  };
-  return ins(0, net);
+  const path: Extract<Net<Item>, { kind: "Net" }>[] = [];
+  const leaf = keys.reduce((node, key) => {
+    const expanded = node.kind === "Net" ? node : makeNode<Item>();
+    path.push(expanded);
+    return key.kind === "Comb"
+      ? expanded.comb
+      : key.kind === "Var"
+        ? expanded.var
+        : (lookupTable(expanded.atoms, key.name) ?? emptyNet);
+  }, net);
+  const items = leaf.kind === "Leaf" ? leaf.items : [];
+  if (items.some((other) => isEqual(other, item))) return undefined;
+  return path.reduceRight<Net<Item>>(
+    (child, expanded, position) => {
+      const key = keys[position];
+      return key.kind === "Comb"
+        ? { ...expanded, comb: child }
+        : key.kind === "Var"
+          ? { ...expanded, var: child }
+          : { ...expanded, atoms: updateTable(expanded.atoms, key.name, child) };
+    },
+    { kind: "Leaf", items: [item, ...items] },
+  );
 };
 
 export const insertTermNet = <Item>(term: Term, item: Item, net: Net<Item>) =>
