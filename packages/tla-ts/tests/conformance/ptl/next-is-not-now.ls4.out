@@ -1,0 +1,8 @@
+Loaded spec -- sigsize: 2, #initial: 2, #goal: 0, #universal: 0, #step: 1
+Eliminated 1 variables -- new sigsize: 1.
+Simplified from 3 to 1 clauses.
+SAT: model found
+low_block_idx=1, low_layer_idx=0, high_block_idx=2, high_layer_idx=0
+GGG
+ **
+Solver called 3 times (learned 0 clauses). 0 clauses leaped.

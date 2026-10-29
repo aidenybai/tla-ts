@@ -220,9 +220,13 @@ type DefnCore =
   | { kind: "Instance"; name: string; instance: InstanceDefinition }
   | { kind: "Bpragma"; name: string; body: Expr; methods: PragmaSetting[][] };
 
-export type WhereDefined = "Builtin" | "Proof" | "User";
-
 export type Visibility = "Visible" | "Hidden";
+
+// When a fact holds: at every point of a behavior, or only at the current one.
+export type Time = "Now" | "Always";
+
+// A step or a DEFINE in a proof keeps the time of the scope it is made in.
+export type WhereDefined = "Builtin" | "User" | { kind: "Proof"; time: Time };
 
 export type Hyp = HypCore & { location?: Locus };
 
@@ -242,8 +246,11 @@ type HypCore =
       whereDefined: WhereDefined;
       visibility: Visibility;
       isLocal: boolean;
+      // Module.Elab judges whether each module definition is constant. One that anonymization meets
+      // in a proof, such as a step or a DEFINE, has no judgment, so tlapm never counts it constant.
+      isConstnessUnset?: boolean;
     }
-  | { kind: "Fact"; expression: Expr; visibility: Visibility };
+  | { kind: "Fact"; expression: Expr; visibility: Visibility; time: Time };
 
 export interface Sequent {
   context: Hyp[];
