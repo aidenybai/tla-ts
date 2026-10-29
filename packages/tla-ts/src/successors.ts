@@ -916,18 +916,19 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
     );
   }
   const environment = context.environment;
-  const found = { value: false };
+  const run: Run = { environment, isInit: false, current: state, isStopped: false };
+  // TLC stops computing ENABLED at the first successor, so it skips the rest of the action.
   getRunner(expression, environment, false)(
-    { environment, isInit: false, current: state, isStopped: false },
+    run,
     context.scope,
     getEmptyState(environment),
     undefined,
     false,
     () => {
-      found.value = true;
+      run.isStopped = true;
     },
   );
-  return found.value;
+  return run.isStopped;
 };
 
 export const forEachInitialState = (
