@@ -26,14 +26,14 @@ import { getAtPrefix, getLocusText } from "./obligation-expression";
 import { formatSummary, getObligations, WHOLE_MODULE, type ModuleObligations } from "./obligations";
 import { check } from "./parallel";
 import { prettyPrint } from "./pretty-print";
-import { prove } from "./prove";
+import { isProveBackend, prove, PROVE_BACKENDS, type ProofStatus } from "./prove/prove";
 import {
   formatProbability,
   getActualProbability,
   getOptimisticProbability,
   getOutDegreeSummary,
 } from "./tlc-summary";
-import { getTlapmPaths } from "./tlapm-path";
+import { getTlapmPaths } from "./prove/tlapm/tlapm";
 import { formatValue, type Value } from "./values";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
@@ -66,9 +66,9 @@ const PROVE_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...
 ]);
 
 const BACKEND_COMMAND = defineCommand(
-  "tla-ts prove --backend <tla-ts|tlapm> {options} <Module.tla|glob>...",
+  `tla-ts prove --backend <${PROVE_BACKENDS.join("|")}> {options} <Module.tla|glob>...`,
   [
-    { flag: "--backend <tla-ts|tlapm>", isRequired: true },
+    { flag: `--backend <${PROVE_BACKENDS.join("|")}>`, isRequired: true },
     { flag: "-I <directory>", isRepeatable: true },
   ],
 );
@@ -367,11 +367,7 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
 const proveWithBackend = (args: string[]) => {
   const parsed = BACKEND_COMMAND.parse(args);
   const backend = parsed.get("--backend")?.[0];
-  if (
-    parsed.unknown[0] !== undefined ||
-    parsed.incomplete ||
-    (backend !== "tla-ts" && backend !== "tlapm")
-  ) {
+  if (parsed.unknown[0] !== undefined || parsed.incomplete || !isProveBackend(backend)) {
     console.error(`Usage: ${BACKEND_COMMAND.usage}`);
     return 1;
   }
@@ -399,14 +395,15 @@ const proveWithBackend = (args: string[]) => {
       backend,
       onObligation: (obligation) =>
         console.log(
-          `${path}:${obligation.location}: ${obligation.status}${obligation.reason ? ` (${obligation.reason})` : ""}`,
+          `${path}:${obligation.location}: ${obligation.status}${obligation.status === "proved" ? ` by ${obligation.prover}` : ""}${obligation.status === "failed" || obligation.status === "unsupported" ? ` (${obligation.reason})` : ""}`,
         ),
     });
-    const summary = result.summary;
+    const counts = Map.groupBy(result.obligations, (obligation) => obligation.status);
+    const getCount = (status: ProofStatus) => counts.get(status)?.length ?? 0;
     console.log(
-      `${summary.obligationCount} obligations: ${summary.provedCount} proved, ${summary.trivialCount} trivial, ${summary.failedCount} failed, ${summary.unsupportedCount} unsupported`,
+      `${result.obligations.length} obligations: ${getCount("proved")} proved, ${getCount("trivial")} trivial, ${getCount("failed")} failed, ${getCount("unsupported")} unsupported`,
     );
-    return summary.failedCount + summary.unsupportedCount === 0 ? EXIT_STATUS.success : 1;
+    return getCount("failed") + getCount("unsupported") === 0 ? EXIT_STATUS.success : 1;
   });
 };
 

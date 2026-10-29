@@ -2,9 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { prove, type ProofObligation, TlaUnsupportedError } from "../../src";
-import { encodeObligation } from "../../src/obligation-smt";
 import { getObligations } from "../../src/obligations";
-import { TLAPS_MODULE } from "../../src/tlaps-module";
+import { encodeForBackend } from "../../src/prove/prove";
+import { TLAPS_MODULE } from "../../src/prove/tlaps-module";
 
 // HourClock and Simple come from tlaplus/Examples. Each .smt file is the input tlapm sent to its
 // SMT solver for that obligation.
@@ -41,7 +41,7 @@ const encodeFixture = (name: string, id: number) => {
     .flatMap((result) => result.obligations)
     .find((innerObligation) => innerObligation.id === id);
   if (!obligation) throw new Error(`no obligation ${id}`);
-  return encodeObligation(obligation.sequent, obligation.kind).encoding;
+  return encodeForBackend(obligation, "smt", { session: { caseErrors: 0 } });
 };
 
 afterEach(() => {
@@ -59,12 +59,7 @@ describe("prove follows tlapm's default method", () => {
       [5, expect.any(String)],
       [6, expect.any(String)],
     ]);
-    expect(result.obligations[0].reason).toBe("the step is proved by ls4");
-    expect(result.summary).toMatchObject({
-      obligationCount: 6,
-      trivialCount: 3,
-      unsupportedCount: 1,
-    });
+    expect(result.obligations[0]).toMatchObject({ reason: "the step is proved by ls4" });
   });
 
   it("reports each obligation as it finishes", async () => {
@@ -75,7 +70,7 @@ describe("prove follows tlapm's default method", () => {
       onObligation: (obligation) => reported.push(obligation),
     });
     expect(reported).toEqual(result.obligations);
-    expect(result.summary.obligationCount).toBe(16);
+    expect(result.obligations).toHaveLength(16);
   });
 
   it("stops when its signal aborts", async () => {
@@ -99,23 +94,14 @@ describe("prove follows tlapm's default method", () => {
 
 describe("SMT-LIB encoding matches tlapm", () => {
   it("encodes an action with an IF and a primed variable", () => {
-    const encoding = encodeFixture("HourClock_proof", 6);
-    expect(encoding.kind === "smt" && getCommands(encoding.script)).toBe(
+    expect(getCommands(encodeFixture("HourClock_proof", 6))).toBe(
       getCommands(readFileSync(join(DIRECTORY, "HourClock_proof-6.smt"), "utf8")),
     );
   });
 
   it("flattens functions and shares the ones with the same body", () => {
-    const encoding = encodeFixture("Simple_proof", 7);
-    expect(encoding.kind === "smt" && getCommands(encoding.script)).toBe(
+    expect(getCommands(encodeFixture("Simple_proof", 7))).toBe(
       getCommands(readFileSync(join(DIRECTORY, "Simple_proof-7.smt"), "utf8")),
     );
-  });
-
-  it("leaves a step that names another prover to that prover", () => {
-    expect(encodeFixture("HourClock_proof", 1)).toEqual({
-      kind: "unsupported",
-      reason: "the step is proved by ls4",
-    });
   });
 });
