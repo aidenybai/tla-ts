@@ -236,7 +236,9 @@ const occurs = (ref: VarRef, level: number, term: BlastTerm): boolean => {
         ref === term.ref || (term.ref.value !== undefined && occurs(ref, level, term.ref.value))
       );
     case "Skolem":
-      return term.args.some((arg) => occurs(ref, level, mkBlastVar(arg)));
+      return term.args.some(
+        (arg) => ref === arg || (arg.value !== undefined && occurs(ref, level, arg.value)),
+      );
     case "Bound":
       return level <= term.index;
     case "Abs":

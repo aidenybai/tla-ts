@@ -266,17 +266,12 @@ const instantiateRule = (
   for (let slot = 0; slot < template.skolems; slot += 1)
     skolems.push({ kind: "Skolem", name: gensym(state, "S"), args: vars });
   if (template.major === undefined) return undefined;
-  const refs = Array.from({ length: template.count }, (): VarRef => ({ value: undefined }));
-  if (template.concl !== undefined) refs[template.concl].value = mkBlastConst(FALSE_NAME);
-  return new InstantiatedRule(
-    state,
-    rule,
-    isIntro,
-    template.major,
-    template.prems,
-    refs.map(mkBlastVar),
-    skolems,
-  );
+  const fresh: BlastTerm[] = [];
+  for (let index = 0; index < template.count; index += 1)
+    fresh.push(
+      mkBlastVar({ value: index === template.concl ? mkBlastConst(FALSE_NAME) : undefined }),
+    );
+  return new InstantiatedRule(state, rule, isIntro, template.major, template.prems, fresh, skolems);
 };
 
 // Too flexible assertions or goals, such as those of (!!P. ~P) ==> 0 == 1.
@@ -292,19 +287,21 @@ export const netMkRules = (
   vars: readonly VarRef[],
   netpairs: readonly NetPair<TaggedRule>[],
 ): TableauRule[] => {
-  const trueprop = mkConst(state.context.data.trueprop, dummyT);
   const goal = destConstApp(formula, GOAL_NAME);
-  if (goal !== undefined) {
-    const pattern = mkApp(trueprop, toTerm(2, goal));
-    return orderRules(netpairs.flatMap((netpair) => unifyTermNet(netpair.intro, pattern))).flatMap(
-      (rule) => instantiateRule(state, vars, rule, true) ?? [],
-    );
+  if (goal === undefined && isVarForm(state, formula)) return [];
+  const trueprop = mkConst(state.context.data.trueprop, dummyT);
+  const pattern =
+    goal === undefined ? mkApp(trueprop, toTerm(3, formula)) : mkApp(trueprop, toTerm(2, goal));
+  const matched: TaggedRule[] = [];
+  for (const netpair of netpairs)
+    for (const rule of unifyTermNet(goal === undefined ? netpair.elim : netpair.intro, pattern))
+      matched.push(rule);
+  const rules: TableauRule[] = [];
+  for (const rule of orderRules(matched)) {
+    const instantiated = instantiateRule(state, vars, rule, goal !== undefined);
+    if (instantiated !== undefined) rules.push(instantiated);
   }
-  if (isVarForm(state, formula)) return [];
-  const pattern = mkApp(trueprop, toTerm(3, formula));
-  return orderRules(netpairs.flatMap((netpair) => unifyTermNet(netpair.elim, pattern))).flatMap(
-    (rule) => instantiateRule(state, vars, rule, false) ?? [],
-  );
+  return rules;
 };
 
 // Converts *Goal* to a negated assumption in first position.

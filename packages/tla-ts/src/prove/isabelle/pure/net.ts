@@ -209,8 +209,12 @@ const matching = <Item>(isUnif: boolean, term: Term, net: Net<Item>, nets: Nets<
   return rands(isUnif, term, net, { head: net.var, tail: nets });
 };
 
-const extractLeaves = <Item>(nets: Nets<Item>) =>
-  toArray(nets).flatMap((net) => (net.kind === "Leaf" ? net.items : []));
+const extractLeaves = <Item>(nets: Nets<Item>) => {
+  const items: Item[] = [];
+  for (let current = nets; current !== undefined; current = current.tail)
+    if (current.head.kind === "Leaf") for (const item of current.head.items) items.push(item);
+  return items;
+};
 
 export const matchTermNet = <Item>(net: Net<Item>, term: Term) =>
   extractLeaves(matching(false, term, net, undefined));
