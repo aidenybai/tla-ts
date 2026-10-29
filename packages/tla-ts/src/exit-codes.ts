@@ -17,12 +17,6 @@ export const EXIT_STATUS = {
 } as const;
 
 const exitCodes = new WeakMap<Error, number>();
-const moduleExitCodes = new WeakMap<Error, number>();
-const phase = { isNextState: false };
-
-export const setNextStatePhase = (isNextState: boolean) => {
-  phase.isNextState = isNextState;
-};
 
 // The innermost site that knows TLC's exit status for an error sets it first and wins.
 export const setExitCode = <Thrown>(error: Thrown, code: number) => {
@@ -30,13 +24,7 @@ export const setExitCode = <Thrown>(error: Thrown, code: number) => {
   return error;
 };
 
-// TLC exits with the code of an exception from a standard module's Java code only when the exception
-// escapes the computation of next states. In every other phase, the phase decides the code.
-export const setModuleExitCode = (error: Error, code: number) => {
-  if (phase.isNextState) moduleExitCodes.set(error, code);
-};
-
-export const getExitCode = (error: Error) => exitCodes.get(error) ?? moduleExitCodes.get(error);
+export const getExitCode = (error: Error) => exitCodes.get(error);
 
 // TLC exits with 255 when it fails to process or evaluate a liveness property, in any phase.
 const withErrorExitCode = <Result>(run: () => Result) => {

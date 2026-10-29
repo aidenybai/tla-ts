@@ -16,7 +16,7 @@ import {
   TlaModuleError,
   UNEXPECTED_EXCEPTION,
 } from "./errors";
-import { EXIT_STATUS, setExitCode, setNextStatePhase, withLivenessExitCode } from "./exit-codes";
+import { EXIT_STATUS, setExitCode, withLivenessExitCode } from "./exit-codes";
 import {
   describeRange,
   evaluate,
@@ -831,7 +831,10 @@ export const createSearch = (
             )
           );
         } catch (error) {
-          throw withHeadline(error, `Evaluating action property ${property.name} failed.`);
+          throw withHeadline(
+            withNextStateExitCode(error),
+            `Evaluating action property ${property.name} failed.`,
+          );
         }
       }),
     satisfiesActionConstraints: (state, next) =>
@@ -867,6 +870,11 @@ export const createSearch = (
   };
 };
 
+// TLC exits with the code of a standard module's failure only when the failure escapes the
+// computation of next states. In every other phase, the phase decides the code.
+const withNextStateExitCode = (error: unknown) =>
+  error instanceof TlaModuleError ? setExitCode(error, error.exitCode) : error;
+
 const withHeadline = (error: unknown, headline: string) =>
   error instanceof TlaEvaluationError
     ? setExitCode(
@@ -876,7 +884,6 @@ const withHeadline = (error: unknown, headline: string) =>
     : error;
 
 export const checkSequentially = (options: CheckOptions): CheckResult => {
-  setNextStatePhase(false);
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   const onPrint = options.onPrint ?? console.log;
   // TLC prints again while it rebuilds a trace, between the states it prints. Printing those lines
@@ -1425,7 +1432,6 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     periodic.time += performance.now() - now;
     return lasso;
   };
-  setNextStatePhase(true);
   for (let index = 0; index < states.length && !runtime.isStopped; index++) {
     current.index = index;
     current.candidate = undefined;
@@ -1434,7 +1440,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     try {
       outcome.result = expandState(index);
     } catch (error) {
-      outcome.result = toFailure(error, getStateTrace(index));
+      outcome.result = toFailure(withNextStateExitCode(error), getStateTrace(index));
     }
     if (outcome.result) return outcome.result;
     outDegrees[getOutDegreeBucket()]++;
