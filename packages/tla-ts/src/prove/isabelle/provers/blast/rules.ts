@@ -27,7 +27,8 @@ import {
   GOAL_NAME,
   blastSubstBound,
   destConstApp,
-  fromTerm,
+  fromRuleTemplate,
+  makeRuleTemplate,
   mkBlastConst,
   mkGoal,
   stripBlastImpConcl,
@@ -124,13 +125,22 @@ const emtac = (state: BlastState, isUpdated: boolean, rule: Thm): GoalTactic =>
 const rmtac = (state: BlastState, isUpdated: boolean, rule: Thm): GoalTactic =>
   isUpdated ? resolveTac(state.context.limits, [rule]) : matchTac(state.context.limits, [rule]);
 
+// fromTerm of the rule's proposition.
+const ruleTerm = (state: BlastState, rule: Thm) => {
+  const known = state.context.templates.get(rule);
+  if (known !== undefined) return fromRuleTemplate(known);
+  const made = makeRuleTemplate(state.context.consts, rule.prop);
+  state.context.templates.set(rule, made);
+  return fromRuleTemplate(made);
+};
+
 // A tableau rule from an elimination rule, or undefined for an ill-formed one.
 const fromRule = (
   state: BlastState,
   vars: readonly VarRef[],
   rule: Thm,
 ): TableauRule | undefined => {
-  const converted = convertRule(state, vars, fromTerm(state.context.consts, rule.prop));
+  const converted = convertRule(state, vars, ruleTerm(state, rule));
   if (converted === undefined) return undefined;
   return {
     ...converted,
@@ -148,7 +158,7 @@ const fromRule = (
 // for introduction rules.
 const fromIntrRule = (state: BlastState, vars: readonly VarRef[], rule: Thm): TableauRule => {
   const trueprop = state.context.data.trueprop;
-  const term = fromTerm(state.context.consts, rule.prop);
+  const term = ruleTerm(state, rule);
   const prems = stripBlastImpPrems(trueprop, term);
   const concl = stripBlastImpConcl(trueprop, term);
   const converted = prems.map((prem) => {

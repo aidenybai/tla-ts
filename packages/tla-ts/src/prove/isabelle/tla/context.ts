@@ -40,6 +40,7 @@ export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext =
     limits: context.limits,
     claset: context.claset,
     consts: logic.consts,
+    templates: new WeakMap(),
     data: {
       trueprop: "PredicateLogic.Trueprop",
       equalityName: "PredicateLogic.eq",

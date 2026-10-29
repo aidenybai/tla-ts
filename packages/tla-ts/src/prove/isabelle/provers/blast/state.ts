@@ -9,7 +9,15 @@ import type { GoalTactic } from "../../pure/tactical";
 import type { Limits } from "../../pure/interrupt";
 import type { Thm } from "../../pure/thm";
 import type { Claset } from "../classical";
-import { blastAconv, varOccur, wkNorm, type BlastTerm, type ConstType, type VarRef } from "./term";
+import {
+  blastAconv,
+  varOccur,
+  wkNorm,
+  type BlastTerm,
+  type ConstType,
+  type RuleTemplate,
+  type VarRef,
+} from "./term";
 
 // BLAST_DATA, with the two rules of other structures that blast uses.
 export interface BlastData {
@@ -33,6 +41,8 @@ export interface BlastContext {
   readonly data: BlastData;
   // The constants' declared types, for Sign.const_typargs.
   readonly consts: ReadonlyMap<string, ConstType>;
+  // The rules converted to prototerms so far.
+  readonly templates: WeakMap<Thm, RuleTemplate>;
 }
 
 // A formula pending on a branch, with its may-duplicate flag.
