@@ -5,6 +5,7 @@
 // Reads a lemma's fixes, assumes and shows: each proposition is parsed with the variables fixed
 // before it, and all of them are type checked together.
 
+import { typargsOf } from "../pure/consts";
 import type { Term } from "../pure/term";
 import type { TlaLogic } from "../tla/logic";
 import { parseProp, parseType } from "./inner-syntax";
@@ -26,7 +27,11 @@ export const readStatement = (logic: TlaLogic, theory: TheoryText): Statement =>
     consts: new Map([
       ...logic.consts,
       ...theoryConsts.map(
-        (constant) => [constant.name, { type: constant.type, abbreviation: undefined }] as const,
+        (constant) =>
+          [
+            constant.name,
+            { type: constant.type, typargs: typargsOf(constant.type), abbreviation: undefined },
+          ] as const,
       ),
     ]),
     constNames: new Map([

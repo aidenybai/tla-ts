@@ -14,6 +14,7 @@ import {
   mkType,
   mkVar,
 } from "../pure/term";
+import { typargsOf, type TypargPosition } from "../pure/consts";
 import type { Term, Typ } from "../pure/term";
 import { LOGIC_DATA } from "./logic-data";
 
@@ -59,6 +60,7 @@ interface LogicJson {
 
 export interface ConstInfo {
   readonly type: Typ;
+  readonly typargs: readonly TypargPosition[];
   // The right-hand side of an abbreviation, which parsing unfolds.
   readonly abbreviation: Term | undefined;
 }
@@ -178,6 +180,7 @@ export const loadLogic = (): TlaLogic => {
         entry[0],
         {
           type: getType(entry[1]),
+          typargs: typargsOf(getType(entry[1])),
           abbreviation: entry.length === 3 ? getTerm(entry[2]) : undefined,
         },
       ]),
