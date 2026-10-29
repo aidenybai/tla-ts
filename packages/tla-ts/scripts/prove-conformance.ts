@@ -4,12 +4,22 @@
 // obligation with the prover tlapm used. A proof of what tlapm's backend refuted is unsound. A
 // difference where tlapm is wrong counts as a deviation instead. Worker processes take one module
 // at a time, largest first, --jobs of them at once.
+//
+// tlapm's time limits are wall-clock time, which a loaded machine stretches. So an obligation
+// tla-ts misses, or proves with a later prover than tlapm's, goes to tlapm's prover again until it
+// has used the limit in both wall-clock and CPU time. Each result counts twice: by wall-clock time,
+// as prove saw it here, and by CPU time, where a proof within the limit on that second run agrees.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { prove, type ProofObligation, TlaError } from "../src";
+import { getObligations, type PrintedObligation } from "../src/obligations";
+import { DECIDERS } from "../src/prove/deciders";
+import { findMethods } from "../src/prove/prep/pragma";
+import { encodeForBackend } from "../src/prove/prove";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY } from "./corpora";
+import { runWithCpuLimit } from "./cpu-limit";
 import { runModuleWorkers } from "./module-workers";
 import {
   getModuleLoader,
@@ -35,6 +45,13 @@ const VERDICTS = [
 
 type Verdict = (typeof VERDICTS)[number];
 
+// tlapm's prover proving the obligation within its limit in CPU time.
+interface CpuProof {
+  prover: string;
+  wallMilliseconds: number;
+  cpuMilliseconds: number;
+}
+
 interface Result {
   module: string;
   id: number;
@@ -42,6 +59,7 @@ interface Result {
   expected: string;
   actual?: string;
   reason?: string;
+  cpuProof?: CpuProof;
 }
 
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".prove-results.json");
@@ -84,13 +102,48 @@ const getVerdict = (expected: ObligationRecord, actual: ProofObligation | undefi
   return "agree";
 };
 
+// Decides the obligation again with the prover tlapm proved it with, when tla-ts tried that prover
+// and didn't prove it, and returns the proof if it comes within the limit in CPU time. The SMT
+// encoder's CASE numbering only names a symbol, so the input starts it from zero.
+const getCpuProof = (
+  obligation: PrintedObligation,
+  expected: ObligationRecord,
+  actual: ProofObligation,
+): CpuProof | undefined => {
+  if (expected.status !== "proved") return undefined;
+  const provers = findMethods(obligation).provers;
+  const position = provers.findIndex((method) => method.prover === expected.prover);
+  const method = provers[position];
+  if (!method || !(method.prover in DECIDERS)) return undefined;
+  if (
+    actual.status === "proved" &&
+    provers.findIndex((innerMethod) => innerMethod.prover === actual.prover) < position
+  )
+    return undefined;
+  try {
+    const text = encodeForBackend(obligation, method.prover, { caseErrors: 0 });
+    const run = runWithCpuLimit(method.timeLimitMs, (options) =>
+      DECIDERS[method.prover](text, options),
+    );
+    return run.result === "unsat" && run.cpuMilliseconds <= method.timeLimitMs
+      ? {
+          prover: method.prover,
+          wallMilliseconds: run.wallMilliseconds,
+          cpuMilliseconds: run.cpuMilliseconds,
+        }
+      : undefined;
+  } catch (error) {
+    if (error instanceof TlaError) return undefined;
+    throw error;
+  }
+};
+
 const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
   const path = join(CORPORA_DIRECTORY, record.id);
+  const source = readFileSync(path, "utf8");
+  const loadModule = getModuleLoader(path);
   // A module tla-ts can't load leaves each of its obligations absent, with the error as reason.
-  const proved = await prove({
-    source: readFileSync(path, "utf8"),
-    loadModule: getModuleLoader(path),
-  }).then(
+  const proved = await prove({ source, loadModule }).then(
     (result) => result.obligations,
     (error: unknown) => {
       if (!(error instanceof TlaError)) throw error;
@@ -100,7 +153,7 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
   const byId = new Map(
     proved instanceof TlaError ? [] : proved.map((obligation) => [obligation.id, obligation]),
   );
-  return record.obligations.map((expected) => {
+  const results = record.obligations.map((expected): Result => {
     const actual = byId.get(expected.id);
     const verdict = getVerdict(expected, actual);
     const deviation = verdict === "agree" ? undefined : getDeviation(record.id, expected.id);
@@ -119,6 +172,26 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
       ...(actual ? { actual: getActual(actual) } : {}),
       ...(reason === undefined ? {} : { reason }),
     };
+  });
+  const isRechecked = (result: Result) =>
+    result.verdict === "missed" || result.verdict === "prover";
+  if (!results.some(isRechecked)) return results;
+  const printed = new Map(
+    getObligations([{ file: path, source }], (name) => {
+      const loaded = loadModule(name);
+      return loaded === undefined ? undefined : { file: `${name}.tla`, source: loaded };
+    })
+      .flatMap((result) => result.obligations)
+      .map((obligation) => [obligation.id, obligation]),
+  );
+  return results.map((result, index) => {
+    const obligation = printed.get(result.id);
+    const actual = byId.get(result.id);
+    const cpuProof =
+      isRechecked(result) && obligation && actual
+        ? getCpuProof(obligation, record.obligations[index], actual)
+        : undefined;
+    return cpuProof ? { ...result, cpuProof } : result;
   });
 };
 
@@ -143,16 +216,23 @@ const results = records.flatMap(
     })),
 );
 writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
+console.log("by wall-clock time:");
 printResults(
   results,
   VERDICTS,
   ["deviation", "unsound", "extra", "trivial", "absent", "prover"],
   (result) =>
-    `${result.verdict} ${result.module} #${result.id}: tlapm ${result.expected}, tla-ts ${result.actual ?? "none"}${result.reason ? ` (${result.reason})` : ""}`,
+    `${result.verdict} ${result.module} #${result.id}: tlapm ${result.expected}, tla-ts ${result.actual ?? "none"}${result.reason ? ` (${result.reason})` : ""}${result.cpuProof ? ` (${result.cpuProof.prover} proves it in ${result.cpuProof.cpuMilliseconds} ms of CPU time)` : ""}`,
 );
-// The differences, by kind and the backend each points at.
+const byCpu = results.map((result) => (result.cpuProof ? "agree" : result.verdict));
+console.log(
+  `by CPU time: ${VERDICTS.map((verdict) => `${byCpu.filter((innerVerdict) => innerVerdict === verdict).length} ${verdict}`).join(", ")}`,
+);
+// The differences by CPU time, by kind and the backend each points at.
 const differences = Map.groupBy(
-  results.filter((result) => result.verdict !== "agree" && result.verdict !== "deviation"),
+  results.filter(
+    (result) => result.verdict !== "agree" && result.verdict !== "deviation" && !result.cpuProof,
+  ),
   (result) => `${result.verdict} ${getOwner(result)}`,
 );
 [...differences]
