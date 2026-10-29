@@ -45,7 +45,7 @@ import {
   mapSeq,
   type Seq,
 } from "./seq";
-import { normType, type TyEnv } from "./type";
+import { normType, substType, type TyEnv } from "./type";
 import {
   abstractOver,
   aconv,
@@ -407,7 +407,7 @@ export const instantiate = (insts: readonly Instantiation[], thm: Thm): Thm => {
 
 // Thm.instantiate for type variables.
 export const instantiateTypes = (tyenv: TyEnv, thm: Thm): Thm => {
-  const substT = (type: Typ) => normType(tyenv, type);
+  const substT = (type: Typ) => substType(tyenv, type);
   const subst = (term: Term): Term => {
     switch (term.kind) {
       case "Const":
@@ -427,6 +427,12 @@ export const instantiateTypes = (tyenv: TyEnv, thm: Thm): Thm => {
   const prop = subst(thm.prop);
   const tpairs = thm.tpairs.map((pair): Tpair => [subst(pair[0]), subst(pair[1])]);
   return makeThm(maxidxTpairs(tpairs, maxidxOfTerm(prop)), thm.hyps, tpairs, prop);
+};
+
+// Thm.renamed_prop: the same theorem with an alpha-equivalent proposition.
+export const renamedProp = (prop: Term, thm: Thm): Thm => {
+  if (!aconv(prop, thm.prop)) throw new TlaIsabelleError("TERM", "renamed_prop: props disagree");
+  return makeThm(thm.maxidx, thm.hyps, thm.tpairs, prop);
 };
 
 export const trivial = (prop: Term): Thm => {
