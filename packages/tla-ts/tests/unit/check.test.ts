@@ -552,6 +552,18 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
   });
 
+  it("stops computing ENABLED at the first successor like TLC", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == ENABLED (x\' = 1 \\/ (PrintT("second") /\\ Assert(FALSE, "boom")))\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(printed).toEqual([]);
+  });
+
   it("stops branching on initial conjuncts once every variable is assigned", async () => {
     const result = await checkFixture("initial-states", "InitialStates");
     expect(result.status).toBe("success");
