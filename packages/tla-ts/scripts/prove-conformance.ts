@@ -47,7 +47,12 @@ const getVerdict = (expected: ObligationRecord, actual: ProofObligation | undefi
   if ((expected.status === "trivial") !== (actual.status === "trivial")) return "trivial";
   if (isProved(actual.status) && !isProved(expected.status)) return "unsound";
   if (isProved(expected.status) && !isProved(actual.status)) return "missed";
-  if (actual.status === "proved" && expected.prover !== actual.prover) return "prover";
+  if (
+    actual.status === "proved" &&
+    expected.status === "proved" &&
+    expected.prover !== actual.prover
+  )
+    return "prover";
   return "agree";
 };
 
