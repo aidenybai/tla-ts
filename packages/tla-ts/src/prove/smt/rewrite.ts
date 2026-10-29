@@ -620,7 +620,7 @@ export const createEncoder = (session: EncodingSession) => {
     if (isInteger) {
       const integer = expression.arms.reduceRight(
         (rest, arm, index) =>
-          `(ite ${encodeBool(arm.condition, env, neither(mode))} ${bodies[index].integer} ${rest})`,
+          `(ite ${encodeBool(arm.condition, env, mode)} ${bodies[index].integer} ${rest})`,
         other.integer ?? "",
       );
       return { isBool: false, text: `(${CAST_INT} ${integer})`, integer };
@@ -628,7 +628,7 @@ export const createEncoder = (session: EncodingSession) => {
     const convert = (term: Term) => (isBool ? term.text : toIdv(term));
     const text = expression.arms.reduceRight(
       (rest, arm, index) =>
-        `(ite ${encodeBool(arm.condition, env, neither(mode))} ${convert(bodies[index])} ${rest})`,
+        `(ite ${encodeBool(arm.condition, env, mode)} ${convert(bodies[index])} ${rest})`,
       convert(other),
     );
     return { isBool, text };
@@ -722,7 +722,7 @@ export const createEncoder = (session: EncodingSession) => {
       case "Parens":
         return encode(expression.expression, env, mode);
       case "If": {
-        const condition = encodeBool(expression.condition, env, neither(mode));
+        const condition = encodeBool(expression.condition, env, mode);
         const consequent = encode(expression.consequent, env, mode);
         const alternative = encode(expression.alternative, env, mode);
         if (consequent.integer !== undefined && alternative.integer !== undefined) {
