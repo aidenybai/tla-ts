@@ -160,6 +160,14 @@ describe("the CLI reports results like TLC", () => {
     expect(result.stdout.split("\n").slice(1)).toEqual([...(lines ?? []), ""]);
   });
 
+  it("rejects a spec whose file name differs from its module name like TLC", () => {
+    const result = runCli("cli-module-name", "Renamed");
+    expect(result.status).toBe(150);
+    expect(result.stderr).toBe(
+      "TlaSyntaxError: File name 'Renamed' does not match the name 'Other' of the top level module it contains.\n",
+    );
+  });
+
   it("rejects -lncheck without a strategy like TLC", () => {
     const result = runCli("cli-output", "Lasso", ["-lncheck"]);
     expect(result.status).toBe(1);
