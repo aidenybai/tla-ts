@@ -67,13 +67,15 @@ const removeComments = (text: string) =>
 // Digests an SMT-LIB or Zenon input.
 export const getInputDigest = (text: string) => getDigest(collapseWhitespace(removeComments(text)));
 
-// Isabelle theories carry the module's path in comments and a hashed theory name.
-export const getIsabelleDigest = (text: string) =>
-  getDigest(
-    collapseWhitespace(
-      text.replace(/\(\*[\s\S]*?\*\)/g, "").replace(/\btlapm_[0-9a-f]+\b/g, "tlapm"),
-    ),
+// An Isabelle theory with its comments removed and its theory name, which tlapm takes from a
+// temporary file, made the same.
+export const normalizeTheory = (text: string) =>
+  collapseWhitespace(
+    text.replace(/\(\*[\s\S]*?\*\)/g, "").replace(/\btlapm_[0-9a-f]+\b/g, "tlapm"),
   );
+
+// Isabelle theories carry the module's path in comments and a hashed theory name.
+export const getIsabelleDigest = (text: string) => getDigest(normalizeTheory(text));
 
 // tlapm names each atom of a PTL formula with a hash, so atoms are renumbered by first appearance.
 export const getLs4Digest = (text: string) => {
