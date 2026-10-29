@@ -9,6 +9,7 @@ import {
   AstManager,
   KIND_APP,
   KIND_QUANTIFIER,
+  KIND_VAR,
   OP_ABS,
   OP_ADD,
   OP_AND,
@@ -118,12 +119,24 @@ export class Rewriter {
     return result;
   }
 
-  // th_rewriter_cfg::reduce_quantifier: merges a directly nested quantifier of the same kind when
-  // neither has patterns, eliminates unused variables, and applies der to pattern-free quantifiers.
+  // th_rewriter_cfg::reduce_quantifier: a bound Boolean variable among the conjuncts of a universal
+  // body or the disjuncts of an existential one decides the quantifier. Otherwise it merges a
+  // directly nested quantifier of the same kind when neither has patterns, eliminates unused
+  // variables, and applies der to pattern-free quantifiers.
   private reduceQuantifier(expr: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
     const body = this.rewrite(data.body);
+    const isNegated = manager.isNot(body);
+    const junction = isNegated ? manager.args[body][0] : body;
+    if (
+      manager.getOp(junction) === (data.isForall !== isNegated ? OP_AND : OP_OR) &&
+      manager.args[junction].some((arg) => {
+        const atom = manager.isNot(arg) ? manager.args[arg][0] : arg;
+        return manager.kinds[atom] === KIND_VAR && manager.values[atom] < data.sorts.length;
+      })
+    )
+      return data.isForall ? manager.falseExpr : manager.trueExpr;
     const nested =
       manager.kinds[body] === KIND_QUANTIFIER ? manager.getQuantifier(body) : undefined;
     const merged =

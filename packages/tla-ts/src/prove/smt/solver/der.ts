@@ -1,16 +1,8 @@
 // Ported from Z3 (src/ast/rewriter/der.cpp), MIT license, see z3-license.txt. Destructive equality
 // resolution: a quantified variable that a literal of the body defines is replaced by its
 // definition.
-import {
-  KIND_QUANTIFIER,
-  KIND_VAR,
-  OP_AND,
-  OP_EQ,
-  OP_NOT,
-  OP_OR,
-  SORT_BOOL,
-  type AstManager,
-} from "./ast";
+import { KIND_QUANTIFIER, KIND_VAR, OP_EQ, SORT_BOOL, type AstManager } from "./ast";
+import { flattenAnd, flattenOr } from "./ast-util";
 import { collectUsedVars, elimUnusedVars, replaceFreeVars, shiftVars } from "./var-subst";
 
 // Substitutes the variables with de Bruijn index i < map.length that have a definition in map,
@@ -20,28 +12,6 @@ export const substitutePartial = (manager: AstManager, expr: number, map: (numbe
     const definition = index < map.length ? map[index] : undefined;
     return definition === undefined ? variable : shiftVars(manager, definition, 0, shift, 0);
   });
-
-const flattenOr = (manager: AstManager, expr: number, result: number[]) => {
-  const op = manager.getOp(expr);
-  const inner = op === OP_NOT ? manager.args[expr][0] : -1;
-  if (op === OP_OR) for (const arg of manager.args[expr]) flattenOr(manager, arg, result);
-  else if (inner !== -1 && manager.getOp(inner) === OP_NOT)
-    flattenOr(manager, manager.args[inner][0], result);
-  else if (inner !== -1 && manager.getOp(inner) === OP_AND)
-    for (const arg of manager.args[inner]) flattenOr(manager, manager.mkNot(arg), result);
-  else result.push(expr);
-};
-
-const flattenAnd = (manager: AstManager, expr: number, result: number[]) => {
-  const op = manager.getOp(expr);
-  const inner = op === OP_NOT ? manager.args[expr][0] : -1;
-  if (op === OP_AND) for (const arg of manager.args[expr]) flattenAnd(manager, arg, result);
-  else if (inner !== -1 && manager.getOp(inner) === OP_NOT)
-    flattenAnd(manager, manager.args[inner][0], result);
-  else if (inner !== -1 && manager.getOp(inner) === OP_OR)
-    for (const arg of manager.args[inner]) flattenAnd(manager, manager.mkNot(arg), result);
-  else result.push(expr);
-};
 
 interface VarDefinition {
   index: number;
@@ -149,9 +119,9 @@ const reduceDer = (manager: AstManager, expr: number) => {
     !isOccurring(manager, single.index, single.definition)
   )
     return data.isForall ? manager.falseExpr : manager.trueExpr;
-  const literals: number[] = [];
-  if (data.isForall) flattenOr(manager, data.body, literals);
-  else flattenAnd(manager, data.body, literals);
+  const literals = data.isForall
+    ? flattenOr(manager, [data.body])
+    : flattenAnd(manager, [data.body]);
   const definitions: (number | undefined)[] = [];
   const positions = literals.map((literal) => {
     const found = getVarDefinition(manager, literal, count, data.isForall);
