@@ -102,6 +102,22 @@ export class TlaUnsupportedError extends TlaError {
   }
 }
 
+// The SMT solver met input outside the SMT-LIB subset that tlapm emits, or a numeral too large for
+// its exact arithmetic. The solver answers unknown.
+export class SmtUnsupportedError extends TlaError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = "SmtUnsupportedError";
+  }
+}
+
+export class SmtParseError extends TlaError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = "SmtParseError";
+  }
+}
+
 export const getErrorExitCode = (error: TlaError) =>
   getExitCode(error) ??
   (error instanceof TlaSyntaxError
