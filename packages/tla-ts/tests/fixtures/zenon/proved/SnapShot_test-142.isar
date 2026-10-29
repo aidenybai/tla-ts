@@ -1,0 +1,70 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Hb:"(a_VARIABLEunde_A2unde_a=Fcn(Nat, (\<lambda>a_CONSTANTunde_punde_a. {})))" (is "_=?z_hq")
+ using v'52 by blast
+ have z_Hn:"(a_CONSTANTunde_Cardinalityunde_a({})=0)" (is "?z_hu=_")
+ using v'82 by blast
+ assume z_Ho:"(a_CONSTANTunde_Cardinalityunde_a(UNION(setOfAll(Nat, (\<lambda>a_CONSTANTunde_iunde_a. (a_VARIABLEunde_A2unde_a[a_CONSTANTunde_iunde_a])))))~=0)" (is "?z_hw~=_")
+ have z_Hbc: "(?z_hw~=?z_hu)"
+ by (rule ssubst [where P="(\<lambda>zenon_Vf. (?z_hw~=zenon_Vf))", OF z_Hn z_Ho])
+ show FALSE
+ proof (rule zenon_noteq [of "?z_hu"])
+  have z_Hbg: "(UNION(setOfAll(Nat, (\<lambda>a_CONSTANTunde_iunde_a. (a_VARIABLEunde_A2unde_a[a_CONSTANTunde_iunde_a]))))={})" (is "?z_hx=_")
+  proof (rule zenon_nnpp [of "(?z_hx={})"])
+   assume z_Hbh:"(?z_hx~={})"
+   have z_Hbi: "(~(\\A zenon_Vm:((zenon_Vm \\in ?z_hx)<=>(zenon_Vm \\in {}))))" (is "~(\\A x : ?z_hbo(x))")
+   by (rule zenon_notsetequal_0 [of "?z_hx" "{}", OF z_Hbh])
+   have z_Hbp: "(\\E zenon_Vm:(~((zenon_Vm \\in ?z_hx)<=>(zenon_Vm \\in {}))))" (is "\\E x : ?z_hbr(x)")
+   by (rule zenon_notallex_0 [of "?z_hbo", OF z_Hbi])
+   have z_Hbs: "?z_hbr((CHOOSE zenon_Vm:(~((zenon_Vm \\in ?z_hx)<=>(zenon_Vm \\in {})))))" (is "~(?z_hbu<=>?z_hbv)")
+   by (rule zenon_ex_choose_0 [of "?z_hbr", OF z_Hbp])
+   show FALSE
+   proof (rule zenon_notequiv [OF z_Hbs])
+    assume z_Hbw:"(~?z_hbu)"
+    assume z_Hbv:"?z_hbv"
+    show FALSE
+    by (rule zenon_in_emptyset [of "(CHOOSE zenon_Vm:(~((zenon_Vm \\in ?z_hx)<=>(zenon_Vm \\in {}))))", OF z_Hbv])
+   next
+    assume z_Hbu:"?z_hbu"
+    assume z_Hbx:"(~?z_hbv)"
+    have z_Hby: "(\\E zenon_Vpa:((zenon_Vpa \\in setOfAll(Nat, (\<lambda>a_CONSTANTunde_iunde_a. (a_VARIABLEunde_A2unde_a[a_CONSTANTunde_iunde_a]))))&((CHOOSE zenon_Vm:(~((zenon_Vm \\in ?z_hx)<=>(zenon_Vm \\in {})))) \\in zenon_Vpa)))" (is "\\E x : ?z_hcd(x)")
+    by (rule zenon_in_UNION_0 [of "(CHOOSE zenon_Vm:(~((zenon_Vm \\in ?z_hx)<=>(zenon_Vm \\in {}))))" "setOfAll(Nat, (\<lambda>a_CONSTANTunde_iunde_a. (a_VARIABLEunde_A2unde_a[a_CONSTANTunde_iunde_a])))", OF z_Hbu])
+    have z_Hce: "?z_hcd((CHOOSE zenon_Vpa:((zenon_Vpa \\in setOfAll(Nat, (\<lambda>a_CONSTANTunde_iunde_a. (a_VARIABLEunde_A2unde_a[a_CONSTANTunde_iunde_a]))))&((CHOOSE zenon_Vm:(~((zenon_Vm \\in ?z_hx)<=>(zenon_Vm \\in {})))) \\in zenon_Vpa))))" (is "?z_hcg&?z_hch")
+    by (rule zenon_ex_choose_0 [of "?z_hcd", OF z_Hby])
+    have z_Hcg: "?z_hcg"
+    by (rule zenon_and_0 [OF z_Hce])
+    have z_Hch: "?z_hch"
+    by (rule zenon_and_1 [OF z_Hce])
+    have z_Hci: "(\\E zenon_Vwa:((zenon_Vwa \\in Nat)&((CHOOSE zenon_Vpa:((zenon_Vpa \\in setOfAll(Nat, (\<lambda>a_CONSTANTunde_iunde_a. (a_VARIABLEunde_A2unde_a[a_CONSTANTunde_iunde_a]))))&((CHOOSE zenon_Vm:(~((zenon_Vm \\in ?z_hx)<=>(zenon_Vm \\in {})))) \\in zenon_Vpa)))=(a_VARIABLEunde_A2unde_a[zenon_Vwa]))))" (is "\\E x : ?z_hco(x)")
+    by (rule zenon_in_setofall_0 [of "(CHOOSE zenon_Vpa:((zenon_Vpa \\in setOfAll(Nat, (\<lambda>a_CONSTANTunde_iunde_a. (a_VARIABLEunde_A2unde_a[a_CONSTANTunde_iunde_a]))))&((CHOOSE zenon_Vm:(~((zenon_Vm \\in ?z_hx)<=>(zenon_Vm \\in {})))) \\in zenon_Vpa)))" "Nat" "(\<lambda>a_CONSTANTunde_iunde_a. (a_VARIABLEunde_A2unde_a[a_CONSTANTunde_iunde_a]))", OF z_Hcg])
+    have z_Hcp: "?z_hco((CHOOSE zenon_Vwa:((zenon_Vwa \\in Nat)&((CHOOSE zenon_Vpa:((zenon_Vpa \\in setOfAll(Nat, (\<lambda>a_CONSTANTunde_iunde_a. (a_VARIABLEunde_A2unde_a[a_CONSTANTunde_iunde_a]))))&((CHOOSE zenon_Vm:(~((zenon_Vm \\in ?z_hx)<=>(zenon_Vm \\in {})))) \\in zenon_Vpa)))=(a_VARIABLEunde_A2unde_a[zenon_Vwa])))))" (is "?z_hcr&?z_hcs")
+    by (rule zenon_ex_choose_0 [of "?z_hco", OF z_Hci])
+    have z_Hcr: "?z_hcr"
+    by (rule zenon_and_0 [OF z_Hcp])
+    have z_Hcs: "?z_hcs" (is "?z_hcf=?z_hct")
+    by (rule zenon_and_1 [OF z_Hcp])
+    have z_Hcu: "(?z_hcf=(?z_hq[(CHOOSE zenon_Vwa:((zenon_Vwa \\in Nat)&(?z_hcf=(a_VARIABLEunde_A2unde_a[zenon_Vwa]))))]))" (is "_=?z_hcv")
+    by (rule subst [where P="(\<lambda>zenon_Vfc. (?z_hcf=(zenon_Vfc[(CHOOSE zenon_Vwa:((zenon_Vwa \\in Nat)&(?z_hcf=(a_VARIABLEunde_A2unde_a[zenon_Vwa]))))])))", OF z_Hb z_Hcs])
+    show FALSE
+    proof (rule zenon_fapplyfcn [of "(\<lambda>zenon_Vfc. (?z_hcf=zenon_Vfc))" "Nat" "(\<lambda>a_CONSTANTunde_punde_a. {})" "(CHOOSE zenon_Vwa:((zenon_Vwa \\in Nat)&(?z_hcf=(a_VARIABLEunde_A2unde_a[zenon_Vwa]))))", OF z_Hcu])
+     assume z_Hdc:"(~?z_hcr)"
+     show FALSE
+     by (rule notE [OF z_Hdc z_Hcr])
+    next
+     assume z_Hdd:"(?z_hcf={})"
+     have z_Hde: "(\\A zenon_Vkc:(~(zenon_Vkc \\in ?z_hcf)))" (is "\\A x : ?z_hdi(x)")
+     by (rule zenon_setequalempty_0 [of "?z_hcf", OF z_Hdd])
+     have z_Hdj: "?z_hdi((CHOOSE zenon_Vm:(~((zenon_Vm \\in ?z_hx)<=>(zenon_Vm \\in {})))))"
+     by (rule zenon_all_0 [of "?z_hdi" "(CHOOSE zenon_Vm:(~((zenon_Vm \\in ?z_hx)<=>(zenon_Vm \\in {}))))", OF z_Hde])
+     show FALSE
+     by (rule notE [OF z_Hdj z_Hch])
+    qed
+   qed
+  qed
+  have z_Hdk: "(?z_hu~=?z_hu)"
+  by (rule subst [where P="(\<lambda>zenon_Vk. (a_CONSTANTunde_Cardinalityunde_a(zenon_Vk)~=?z_hu))", OF z_Hbg], fact z_Hbc)
+  thus "(?z_hu~=?z_hu)" .
+ qed
+qed
+(* END-PROOF *)

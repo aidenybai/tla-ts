@@ -275,7 +275,9 @@ export const createExpressions = () => {
   const symbolIds = new Map<string, number>();
   let nextId = FALSE.id + 1;
   let createdCount = 0;
-  let nameCounter = "";
+  // Zenon's Ext_focal takes the first five fresh names when the program starts, for its built-in
+  // definitions, so the first name Zenon gives out is zenon_Vf.
+  let nameCounter = "e";
 
   const create = <Shape extends Pick<Expr, "kind" | "symbol" | "args">>(
     shape: Shape,

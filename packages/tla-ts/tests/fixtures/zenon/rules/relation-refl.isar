@@ -1,0 +1,18 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Ha:"(\\A x:R(x, x))" (is "\\A x : ?z_hf(x)")
+ using refl by blast
+ have z_Hb:"(f(a)=g(b))" (is "?z_hg=?z_hi")
+ using e by blast
+ assume z_Hc:"(~R(?z_hg, ?z_hi))" (is "~?z_hk")
+ have z_Hl: "?z_hf(?z_hg)" (is "?z_hl")
+ by (rule zenon_all_0 [of "?z_hf" "?z_hg", OF z_Ha])
+ show FALSE
+ proof (rule notE [OF z_Hc])
+  have z_Hk: "?z_hk"
+  by (rule subst [where P="(\<lambda>zenon_Vh. R(?z_hg, zenon_Vh))", OF z_Hb], fact z_Hl)
+  thus "?z_hk" .
+ qed
+qed
+(* END-PROOF *)

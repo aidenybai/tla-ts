@@ -15,7 +15,7 @@ import {
 } from "./expr";
 
 export type Definition =
-  | { kind: "real"; symbol: string; params: Expr[]; body: Expr }
+  | { kind: "real"; name: string; symbol: string; params: Expr[]; body: Expr }
   | { kind: "pseudo"; origin: Expr; goalness: number; symbol: string; params: Expr[]; body: Expr };
 
 export type Phrase =
@@ -230,7 +230,7 @@ export const parseZenon = (exprs: Expressions, text: string): Phrase[] => {
     } else if (token.kind === "keyword" && token.text === "$goal") {
       phrases.push({ kind: "hyp", name: GOAL_NAME, formula: exprs.enot(parseExpr()), goalness: 0 });
     } else if (token.kind === "keyword" && token.text === "$def") {
-      expect("string");
+      const name = expect("string").text;
       expect("open");
       const symbol = expect("ident").text;
       const params: Expr[] = [];
@@ -239,7 +239,7 @@ export const parseZenon = (exprs: Expressions, text: string): Phrase[] => {
       const body = parseExpr();
       phrases.push({
         kind: "def",
-        definition: { kind: "real", symbol, params, body },
+        definition: { kind: "real", name, symbol, params, body },
       });
     } else throw new TlaZenonError(`Zenon: line ${token.line}: unsupported phrase ${token.text}`);
   }

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { TlaZenonError } from "../../src/errors";
@@ -20,6 +20,15 @@ const fixtures = Object.entries(statistics).map((entry) => ({
   text: readFileSync(join(FIXTURES, entry[0]), "utf8"),
 }));
 
+// tlapm runs Zenon with -oisar and writes the Isar proof it prints into the module's .thy file. An
+// .isar file holds what tlapm's Zenon printed for the fixture beside it. The three proved fixtures
+// without one print bound variables named after whichever alpha-equivalent formula OCaml's garbage
+// collector left in Zenon's weak hash-consing table, which no other program can reproduce.
+const isarFixtures = fixtures.flatMap((fixture) => {
+  const path = join(FIXTURES, fixture.path.replace(/\.znn$/, ".isar"));
+  return existsSync(path) ? [{ ...fixture, isar: readFileSync(path, "utf8") }] : [];
+});
+
 // tlapm gives Zenon 10 s. The fixtures take a fraction of that, so a slow machine doesn't change
 // their verdicts.
 const TIME_LIMIT_MS = 60_000;
@@ -30,10 +39,17 @@ describe("Zenon agrees with tlapm's Zenon", () => {
     expect({ nodesSearched: run.nodesSearched, proofNodes: run.proofNodes }).toEqual(
       fixture.expected,
     );
-    expect(decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS })).toBe(
+    expect(decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS }).verdict).toBe(
       fixture.path.startsWith("unknown/") ? "unknown" : "unsat",
     );
     if (fixture.path.startsWith("unknown/")) expect(run.failure).toBe("exhausted");
+  });
+
+  it.each(isarFixtures)("prints the proof of $path that tlapm writes", (fixture) => {
+    expect(decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS })).toEqual({
+      verdict: "unsat",
+      proof: fixture.isar,
+    });
   });
 
   // The search takes seconds, so the test may run as long as the search's own time limit.
@@ -80,7 +96,7 @@ const FALSE_GOALS = {
 
 describe("Zenon finds no proof of a false goal", () => {
   it.each(Object.entries(FALSE_GOALS))("%s", (_, text) => {
-    expect(decideZenon(text, { timeLimitMs: 1000 })).toBe("unknown");
+    expect(decideZenon(text, { timeLimitMs: 1000 }).verdict).toBe("unknown");
   });
 
   it("rejects the proof that Zenon's not_subseteq_cap rule gives", () => {
@@ -89,8 +105,8 @@ describe("Zenon finds no proof of a false goal", () => {
     const text = '$hyp "h" (TLA.subseteq a c)\n$goal (TLA.subseteq a (TLA.cap b c))';
     const run = runZenon(text, { timeLimitMs: TIME_LIMIT_MS });
     expect(run.proof).toBeDefined();
-    expect(run.isChecked).toBe(false);
-    expect(decideZenon(text, { timeLimitMs: TIME_LIMIT_MS })).toBe("unknown");
+    expect(run.isar).toBeUndefined();
+    expect(decideZenon(text, { timeLimitMs: TIME_LIMIT_MS }).verdict).toBe("unknown");
   });
 });
 

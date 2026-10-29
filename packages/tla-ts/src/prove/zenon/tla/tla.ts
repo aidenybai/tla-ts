@@ -58,9 +58,21 @@ export const PREDEFINED_SYMBOLS = [
   ...OTHER_SYMBOLS,
 ];
 
-const definition = (exprs: Expressions, symbol: string, params: string[], body: Expr): Phrase => ({
+const definition = (
+  exprs: Expressions,
+  name: string,
+  symbol: string,
+  params: string[],
+  body: Expr,
+): Phrase => ({
   kind: "def",
-  definition: { kind: "real", symbol, params: params.map((name) => exprs.evar(name)), body },
+  definition: {
+    kind: "real",
+    name,
+    symbol,
+    params: params.map((param) => exprs.evar(param)),
+    body,
+  },
 });
 
 // Zenon's built_in_defs. Expressions belong to one run of the prover, so each run builds them.
@@ -71,6 +83,7 @@ export const getBuiltInDefinitions = (exprs: Expressions): Phrase[] => {
   return [
     definition(
       exprs,
+      "subset_def",
       "TLA.subseteq",
       ["A", "B"],
       exprs.eapp("TLA.bAll", [
@@ -78,11 +91,30 @@ export const getBuiltInDefinitions = (exprs: Expressions): Phrase[] => {
         exprs.elam(bound, "", exprs.eapp("TLA.in", [bound, exprs.evar("B")])),
       ]),
     ),
-    definition(exprs, "TLA.bAll", ["S", "P"], exprs.eall(bound, "", exprs.eimply(isInSet, holds))),
-    definition(exprs, "TLA.bEx", ["S", "P"], exprs.eex(bound, "", exprs.eand(isInSet, holds))),
-    definition(exprs, "TLA.bChoice", ["S", "P"], exprs.etau(bound, "", exprs.eand(isInSet, holds))),
     definition(
       exprs,
+      "bAll_def",
+      "TLA.bAll",
+      ["S", "P"],
+      exprs.eall(bound, "", exprs.eimply(isInSet, holds)),
+    ),
+    definition(
+      exprs,
+      "bEx_def",
+      "TLA.bEx",
+      ["S", "P"],
+      exprs.eex(bound, "", exprs.eand(isInSet, holds)),
+    ),
+    definition(
+      exprs,
+      "bChoose_def",
+      "TLA.bChoice",
+      ["S", "P"],
+      exprs.etau(bound, "", exprs.eand(isInSet, holds)),
+    ),
+    definition(
+      exprs,
+      "prod_def",
       "TLA.prod",
       ["A", "B"],
       exprs.eapp("TLA.Product", [exprs.eapp("TLA.tuple", [exprs.evar("A"), exprs.evar("B")])]),

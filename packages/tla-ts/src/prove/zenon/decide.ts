@@ -5,14 +5,18 @@
 //
 // tlapm passes -max-time 1d, so Zenon's own clock never stops it. The time limit is tlapm's
 // timeout instead: Schedule.run kills Zenon once the wall clock passes its launch time plus the
-// timeout, whether Zenon is still reading the file or searching.
+// timeout, whether Zenon is still reading the file, searching or printing the proof.
+//
+// tlapm also passes -oisar, so Zenon prints the proof as Isar text. tlapm writes that output,
+// after a comment with Zenon's input, into the module's .thy file for Isabelle to check.
 
 import { TlaZenonError } from "../../errors";
-import type { DecideOptions, Verdict } from "../verdict";
+import type { DecideOptions } from "../verdict";
 import { checkProof } from "./check/check";
 import { createRelations } from "./eqrel";
 import { createExpressions } from "./expr";
 import { createIndex } from "./index-table";
+import { printIsar } from "./isar";
 import { parseZenon } from "./parse";
 import { separate } from "./phrase";
 import type { Proof } from "./proof";
@@ -23,7 +27,8 @@ export interface ZenonRun {
   proof: Proof | undefined;
   // Why the search gave up. "zenon error" stands for the exceptions that stop Zenon mid-search.
   failure: SearchFailure | "zenon error" | undefined;
-  isChecked: boolean;
+  // Zenon's -oisar output, once the checker accepts the proof.
+  isar: string | undefined;
   nodesSearched: number;
   maxBranchFormulas: number;
   proofNodes: number;
@@ -35,7 +40,8 @@ export interface ZenonRun {
 export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
   const deadline = Date.now() + options.timeLimitMs;
   const exprs = createExpressions();
-  const phrases = [...getBuiltInDefinitions(exprs), ...parseZenon(exprs, text)];
+  const parsed = parseZenon(exprs, text);
+  const phrases = [...getBuiltInDefinitions(exprs), ...parsed];
   const separated = separate(PREDEFINED_SYMBOLS, phrases);
   const relations = createRelations(exprs);
   for (const hypothesis of separated.hypotheses) relations.analyse(hypothesis.formula);
@@ -43,7 +49,7 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
     (hypothesis) => !relations.isSubsumed(hypothesis.formula),
   );
   const index = createIndex(exprs);
-  const statistics = { inferences: 0, proofNodes: 0 };
+  const statistics = { inferences: 0, proofNodes: 0, reusedProofs: new Set<Proof>() };
   const outcome = (() => {
     try {
       return search(
@@ -59,15 +65,23 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
     }
   })();
   const proof = typeof outcome === "string" ? undefined : outcome;
+  const isChecked =
+    proof !== undefined &&
+    checkProof(proof, {
+      hypotheses: phrases.flatMap((phrase) => (phrase.kind === "hyp" ? [phrase.formula] : [])),
+      definitions: separated.definitions,
+    });
   return {
     proof,
     failure: typeof outcome === "string" ? outcome : undefined,
-    isChecked:
-      proof !== undefined &&
-      checkProof(proof, {
-        hypotheses: phrases.flatMap((phrase) => (phrase.kind === "hyp" ? [phrase.formula] : [])),
-        definitions: separated.definitions,
-      }),
+    isar: isChecked
+      ? printIsar(proof, {
+          exprs,
+          phrases: parsed,
+          sharedProofs: statistics.reusedProofs,
+          relations,
+        })
+      : undefined,
     nodesSearched: statistics.inferences,
     maxBranchFormulas: index.getTopFormulaCount(),
     proofNodes: statistics.proofNodes,
@@ -75,7 +89,14 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
   };
 };
 
-// Zenon's verdict on a .znn file: "unsat" when it refutes the hypotheses with a proof that the
-// checker accepts, within the time limit.
-export const decideZenon = (text: string, options: DecideOptions): Exclude<Verdict, "sat"> =>
-  runZenon(text, options).isChecked ? "unsat" : "unknown";
+export type ZenonDecision = { verdict: "unsat"; proof: string } | { verdict: "unknown" };
+
+// Zenon's verdict on a .znn file: "unsat" with the Isar proof that tlapm writes, when Zenon refutes
+// the hypotheses with a proof that the checker accepts and prints it within the time limit.
+export const decideZenon = (text: string, options: DecideOptions): ZenonDecision => {
+  const deadline = Date.now() + options.timeLimitMs;
+  const isar = runZenon(text, options).isar;
+  return isar !== undefined && Date.now() <= deadline
+    ? { verdict: "unsat", proof: isar }
+    : { verdict: "unknown" };
+};

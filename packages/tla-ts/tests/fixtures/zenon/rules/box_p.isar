@@ -1,0 +1,12 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Ha:"isa'box(p)" (is "?z_ha")
+ using h by blast
+ assume z_Hb:"(~p)"
+ have z_Hc: "p"
+ by (rule zenon_box_p_0 [of , OF z_Ha])
+ show FALSE
+ by (rule notE [OF z_Hb z_Hc])
+qed
+(* END-PROOF *)

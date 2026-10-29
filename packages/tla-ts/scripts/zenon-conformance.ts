@@ -108,10 +108,10 @@ const results = runs.map((run) => {
   const start = performance.now();
   const zenon = runZenon(readFileSync(path, "utf8"), { timeLimitMs: TIME_LIMIT_MS });
   const elapsed = performance.now() - start;
-  if (isFound !== zenon.isChecked)
-    console.log(`prover  ${isFound ? "miss" : "surplus"}      ${name}`);
+  const isProved = zenon.isar !== undefined;
+  if (isFound !== isProved) console.log(`prover  ${isFound ? "miss" : "surplus"}      ${name}`);
   const reference = runReference(path);
-  if (reference !== undefined && reference.isProved !== zenon.isChecked)
+  if (reference !== undefined && reference.isProved !== isProved)
     console.log(`binary  ${reference.isProved ? "miss" : "surplus"}      ${name}`);
   // The node counts match only where both searches stop by themselves: tla-ts bounds its memory
   // by nodes rather than by Zenon's heap.
@@ -125,7 +125,7 @@ const results = runs.map((run) => {
     encoderOutcome,
     prover: {
       isFound,
-      isProved: zenon.isChecked,
+      isProved,
       elapsed,
       reference,
       isCounted,

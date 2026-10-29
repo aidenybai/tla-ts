@@ -1,0 +1,517 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_He:"(((a_VARIABLEunde_maxBalunde_a[a_CONSTANTunde_selfunde_a]) <= a_CONSTANTunde_bunde_a)&(a_STATEunde_DidNotVoteInunde_a(a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)&(bAll((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a. bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=cond(bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))))))))&(except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, cond(bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))>>}))~=a_VARIABLEunde_votesunde_a))))" (is "?z_hh&?z_hm")
+ using v'325 by blast
+ have z_Hf:"((cond(bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))) \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, cond(bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))))" (is "?z_hbz&?z_hca")
+ using v'326 by blast
+ have zenon_L1_: "((CHOOSE x:(~((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))))))))), a_CONSTANTunde_bunde_a, x)=>(x=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x))))))))=cond(bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))) ==> bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))) ==> ((CHOOSE x:(~((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))))))))), a_CONSTANTunde_bunde_a, x)=>(x=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x))))))))~=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))) ==> FALSE" (is "?z_hcb ==> ?z_hbd ==> ?z_hcw ==> FALSE")
+ proof -
+  assume z_Hcb:"?z_hcb" (is "?z_hcc=?z_hbc")
+  assume z_Hbd:"?z_hbd"
+  assume z_Hcw:"?z_hcw" (is "_~=?z_hcs")
+  show FALSE
+  proof (rule zenon_ifthenelse [of "(\<lambda>zenon_Vxm. (?z_hcc=zenon_Vxm))" "?z_hbd" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))", OF z_Hcb])
+   assume z_Hbd:"?z_hbd"
+   assume z_Hda:"(?z_hcc=bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))" (is "_=?z_hbk")
+   have z_Hdb_z_Hda: "(?z_hcc=?z_hcs) == (?z_hcc=?z_hbk)" (is "?z_hdb == ?z_hda")
+   by (unfold bChoose_def)
+   have z_Hdb: "?z_hdb"
+   by (unfold z_Hdb_z_Hda, fact z_Hda)
+   show FALSE
+   by (rule notE [OF z_Hcw z_Hdb])
+  next
+   assume z_Hdc:"(~?z_hbd)"
+   assume z_Hdd:"(?z_hcc=bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))" (is "_=?z_hbo")
+   show FALSE
+   by (rule notE [OF z_Hdc z_Hbd])
+  qed
+ qed
+ have zenon_L2_: "bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))) ==> (\\A x:((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=cond(bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))))))))) ==> a_STATEunde_DidNotVoteInunde_a(a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a) ==> ?z_hh ==> (~(\\E x:((x \\in a_CONSTANTunde_Valueunde_a)&(?z_hh&(a_STATEunde_DidNotVoteInunde_a(a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)&(bAll((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a. bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=x))))))&(a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)&((except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, cond(bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))>>}))=except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, x>>})))&(except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)=except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)))))))))) ==> ?z_hca ==> FALSE" (is "?z_hbd ==> ?z_hde ==> ?z_hn ==> _ ==> ?z_hdj ==> _ ==> FALSE")
+ proof -
+  assume z_Hbd:"?z_hbd"
+  assume z_Hde:"?z_hde" (is "\\A x : ?z_hef(x)")
+  assume z_Hn:"?z_hn"
+  assume z_Hh:"?z_hh"
+  assume z_Hdj:"?z_hdj" (is "~(\\E x : ?z_heg(x))")
+  assume z_Hca:"?z_hca"
+  have z_Heh_z_Hbd: "(\\E x:((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))&bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))) == ?z_hbd" (is "?z_heh == _")
+  by (unfold bEx_def)
+  have z_Heh: "?z_heh" (is "\\E x : ?z_hem(x)")
+  by (unfold z_Heh_z_Hbd, fact z_Hbd)
+  have z_Hen: "?z_hem((CHOOSE x:((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))&bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))))" (is "?z_hep&?z_heq")
+  by (rule zenon_ex_choose_0 [of "?z_hem", OF z_Heh])
+  have z_Heq: "?z_heq"
+  by (rule zenon_and_1 [OF z_Hen])
+  have z_Her_z_Heq: "(\\E x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a((CHOOSE x:((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))&bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x))) == ?z_heq" (is "?z_her == _")
+  by (unfold bEx_def)
+  have z_Her: "?z_her" (is "\\E x : ?z_heu(x)")
+  by (unfold z_Her_z_Heq, fact z_Heq)
+  have z_Hev: "?z_heu((CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a((CHOOSE x:((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))&bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x))))" (is "?z_hex&?z_hey")
+  by (rule zenon_ex_choose_0 [of "?z_heu", OF z_Her])
+  have z_Hex: "?z_hex"
+  by (rule zenon_and_0 [OF z_Hev])
+  have z_Hey: "?z_hey"
+  by (rule zenon_and_1 [OF z_Hev])
+  show FALSE
+  proof (rule zenon_em [of "(\\E x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))"])
+   assume z_Hez:"(\\E x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))" (is "\\E x : ?z_hfa(x)")
+   have z_Hfb: "?z_hfa((CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x))))" (is "?z_hfc&?z_hfd")
+   by (rule zenon_ex_choose_0 [of "?z_hfa", OF z_Hez])
+   have z_Hfc: "?z_hfc"
+   by (rule zenon_and_0 [OF z_Hfb])
+   show FALSE
+   proof (rule zenon_ifthenelse [of "(\<lambda>zenon_Vaa. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, zenon_Vaa))" "?z_hbd" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))", OF z_Hca])
+    assume z_Hbd:"?z_hbd"
+    assume z_Hfh:"a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))" (is "?z_hfh")
+    have z_Hfi_z_Hfh: "a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, (CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))) == ?z_hfh" (is "?z_hfi == _")
+    by (unfold bChoose_def)
+    have z_Hfi: "?z_hfi"
+    by (unfold z_Hfi_z_Hfh, fact z_Hfh)
+    have z_Hfj: "~?z_heg((CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x))))" (is "~(_&?z_hfk)")
+    by (rule zenon_notex_0 [of "?z_heg" "(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))", OF z_Hdj])
+    show FALSE
+    proof (rule zenon_notand [OF z_Hfj])
+     assume z_Hfl:"(~?z_hfc)"
+     show FALSE
+     by (rule notE [OF z_Hfl z_Hfc])
+    next
+     assume z_Hfm:"(~?z_hfk)" (is "~(_&?z_hfn)")
+     show FALSE
+     proof (rule zenon_notand [OF z_Hfm])
+      assume z_Hfo:"(~?z_hh)"
+      show FALSE
+      by (rule notE [OF z_Hfo z_Hh])
+     next
+      assume z_Hfp:"(~?z_hfn)" (is "~(_&?z_hfq)")
+      show FALSE
+      proof (rule zenon_notand [OF z_Hfp])
+       assume z_Hfr:"(~?z_hn)"
+       show FALSE
+       by (rule notE [OF z_Hfr z_Hn])
+      next
+       assume z_Hfs:"(~?z_hfq)" (is "~(?z_hft&?z_hfu)")
+       show FALSE
+       proof (rule zenon_notand [OF z_Hfs])
+        assume z_Hfv:"(~?z_hft)"
+        have z_Hfw_z_Hfv: "(~(\\A x:((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))))))))) == (~?z_hft)" (is "?z_hfw == ?z_hfv")
+        by (unfold bAll_def)
+        have z_Hfw: "?z_hfw" (is "~(\\A x : ?z_hfy(x))")
+        by (unfold z_Hfw_z_Hfv, fact z_Hfv)
+        have z_Hfz: "(\\E x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x))))))))))" (is "\\E x : ?z_hga(x)")
+        by (rule zenon_notallex_0 [of "?z_hfy", OF z_Hfw])
+        have z_Hgb: "?z_hga((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))))))))))" (is "~(?z_hgc=>?z_hgd)")
+        by (rule zenon_ex_choose_0 [of "?z_hga", OF z_Hfz])
+        have z_Hgc: "?z_hgc"
+        by (rule zenon_notimply_0 [OF z_Hgb])
+        have z_Hge: "(~?z_hgd)"
+        by (rule zenon_notimply_1 [OF z_Hgb])
+        have z_Hgf_z_Hge: "(~(\\A x:((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))))))))), a_CONSTANTunde_bunde_a, x)=>(x=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))))))) == (~?z_hgd)" (is "?z_hgf == ?z_hge")
+        by (unfold bAll_def)
+        have z_Hgf: "?z_hgf" (is "~(\\A x : ?z_hgh(x))")
+        by (unfold z_Hgf_z_Hge, fact z_Hge)
+        have z_Hgi: "(\\E x:(~((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))))))))), a_CONSTANTunde_bunde_a, x)=>(x=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x))))))))" (is "\\E x : ?z_hgj(x)")
+        by (rule zenon_notallex_0 [of "?z_hgh", OF z_Hgf])
+        have z_Hgk: "?z_hgj((CHOOSE x:(~((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))))))))), a_CONSTANTunde_bunde_a, x)=>(x=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))))))))" (is "~(?z_hgl=>?z_hgm)")
+        by (rule zenon_ex_choose_0 [of "?z_hgj", OF z_Hgi])
+        have z_Hgl: "?z_hgl"
+        by (rule zenon_notimply_0 [OF z_Hgk])
+        have z_Hgn: "(~?z_hgm)" (is "~(?z_hgo=>?z_hdb)")
+        by (rule zenon_notimply_1 [OF z_Hgk])
+        have z_Hgo: "?z_hgo"
+        by (rule zenon_notimply_0 [OF z_Hgn])
+        have z_Hcw: "((CHOOSE x:(~((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))))))))), a_CONSTANTunde_bunde_a, x)=>(x=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x))))))))~=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x))))" (is "?z_hcc~=?z_hcs")
+        by (rule zenon_notimply_1 [OF z_Hgn])
+        have z_Hgp: "?z_hef((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=?z_hcs))))))))" (is "_=>?z_hgq")
+        by (rule zenon_all_0 [of "?z_hef" "(CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=?z_hcs)))))))", OF z_Hde])
+        show FALSE
+        proof (rule zenon_imply [OF z_Hgp])
+         assume z_Hgr:"(~?z_hgc)"
+         show FALSE
+         by (rule notE [OF z_Hgr z_Hgc])
+        next
+         assume z_Hgq:"?z_hgq"
+         have z_Hgs_z_Hgq: "(\\A x:((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=?z_hcs))))))), a_CONSTANTunde_bunde_a, x)=>(x=cond(?z_hbd, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))))))) == ?z_hgq" (is "?z_hgs == _")
+         by (unfold bAll_def)
+         have z_Hgs: "?z_hgs" (is "\\A x : ?z_hgw(x)")
+         by (unfold z_Hgs_z_Hgq, fact z_Hgq)
+         have z_Hgx: "?z_hgw(?z_hcc)" (is "_=>?z_hgy")
+         by (rule zenon_all_0 [of "?z_hgw" "?z_hcc", OF z_Hgs])
+         show FALSE
+         proof (rule zenon_imply [OF z_Hgx])
+          assume z_Hgz:"(~?z_hgl)"
+          show FALSE
+          by (rule notE [OF z_Hgz z_Hgl])
+         next
+          assume z_Hgy:"?z_hgy" (is "_=>?z_hcb")
+          show FALSE
+          proof (rule zenon_imply [OF z_Hgy])
+           assume z_Hha:"(~?z_hgo)"
+           show FALSE
+           by (rule notE [OF z_Hha z_Hgo])
+          next
+           assume z_Hcb:"?z_hcb" (is "_=?z_hbc")
+           show FALSE
+           by (rule zenon_L1_ [OF z_Hcb z_Hbd z_Hcw])
+          qed
+         qed
+        qed
+       next
+        assume z_Hhb:"(~?z_hfu)" (is "~(_&?z_hhc)")
+        show FALSE
+        proof (rule zenon_notand [OF z_Hhb])
+         assume z_Hhd:"(~?z_hfi)"
+         show FALSE
+         by (rule notE [OF z_Hhd z_Hfi])
+        next
+         assume z_Hhe:"(~?z_hhc)" (is "~(?z_hhf&?z_hed)")
+         show FALSE
+         proof (rule zenon_notand [OF z_Hhe])
+          assume z_Hhg:"(except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, cond(?z_hbd, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))>>}))~=except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, (CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))>>})))" (is "?z_hbt~=?z_hhh")
+          show FALSE
+          proof (rule zenon_ifthenelse [of "(\<lambda>zenon_Vmn. (except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, zenon_Vmn>>}))~=?z_hhh))" "?z_hbd" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))", OF z_Hhg])
+           assume z_Hbd:"?z_hbd"
+           assume z_Hhs:"(except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))>>}))~=?z_hhh)" (is "?z_hht~=_")
+           have z_Hhx_z_Hhs: "(?z_hhh~=?z_hhh) == (?z_hht~=?z_hhh)" (is "?z_hhx == ?z_hhs")
+           by (unfold bChoose_def)
+           have z_Hhx: "?z_hhx"
+           by (unfold z_Hhx_z_Hhs, fact z_Hhs)
+           show FALSE
+           by (rule zenon_noteq [OF z_Hhx])
+          next
+           assume z_Hdc:"(~?z_hbd)"
+           assume z_Hhy:"(except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))>>}))~=?z_hhh)" (is "?z_hhz~=_")
+           show FALSE
+           by (rule notE [OF z_Hdc z_Hbd])
+          qed
+         next
+          assume z_Hid:"(except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)~=except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a))" (is "?z_hee~=_")
+          show FALSE
+          by (rule zenon_noteq [OF z_Hid])
+         qed
+        qed
+       qed
+      qed
+     qed
+    qed
+   next
+    assume z_Hdc:"(~?z_hbd)"
+    assume z_Hie:"a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))" (is "?z_hie")
+    show FALSE
+    by (rule notE [OF z_Hdc z_Hbd])
+   qed
+  next
+   assume z_Hif:"(~(\\E x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x))))" (is "~(\\E x : ?z_hfa(x))")
+   have z_Hig: "~?z_hfa((CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a((CHOOSE x:((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))&bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x))))" (is "~(_&?z_hih)")
+   by (rule zenon_notex_0 [of "?z_hfa" "(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_VotedForunde_a((CHOOSE x:((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))&bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, x)))", OF z_Hif])
+   show FALSE
+   proof (rule zenon_notand [OF z_Hig])
+    assume z_Hii:"(~?z_hex)"
+    show FALSE
+    by (rule notE [OF z_Hii z_Hex])
+   next
+    assume z_Hij:"(~?z_hih)"
+    have z_Hik_z_Hij: "(~?z_hey) == (~?z_hih)" (is "?z_hik == ?z_hij")
+    by (unfold bChoose_def)
+    have z_Hik: "?z_hik"
+    by (unfold z_Hik_z_Hij, fact z_Hij)
+    show FALSE
+    by (rule notE [OF z_Hik z_Hey])
+   qed
+  qed
+ qed
+ have zenon_L3_: "((CHOOSE x:(~((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))))))))), a_CONSTANTunde_bunde_a, x)=>(x=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x))))))))=cond(bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))) ==> ((CHOOSE x:(~((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))))))))), a_CONSTANTunde_bunde_a, x)=>(x=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x))))))))~=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))) ==> (~bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))))) ==> FALSE" (is "?z_hil ==> ?z_hjb ==> ?z_hdc ==> FALSE")
+ proof -
+  assume z_Hil:"?z_hil" (is "?z_him=?z_hbc")
+  assume z_Hjb:"?z_hjb" (is "_~=?z_hiy")
+  assume z_Hdc:"?z_hdc" (is "~?z_hbd")
+  show FALSE
+  proof (rule zenon_ifthenelse [of "(\<lambda>zenon_Vfh. (?z_him=zenon_Vfh))" "?z_hbd" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))", OF z_Hil])
+   assume z_Hbd:"?z_hbd"
+   assume z_Hjf:"(?z_him=bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))" (is "_=?z_hbk")
+   show FALSE
+   by (rule notE [OF z_Hdc z_Hbd])
+  next
+   assume z_Hdc:"?z_hdc"
+   assume z_Hjg:"(?z_him=bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))" (is "_=?z_hbo")
+   have z_Hjh_z_Hjg: "(?z_him=?z_hiy) == (?z_him=?z_hbo)" (is "?z_hjh == ?z_hjg")
+   by (unfold bChoose_def)
+   have z_Hjh: "?z_hjh"
+   by (unfold z_Hjh_z_Hjg, fact z_Hjg)
+   show FALSE
+   by (rule notE [OF z_Hjb z_Hjh])
+  qed
+ qed
+ have zenon_L4_: "?z_hca ==> ?z_hbz ==> (~bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))))) ==> (\\A x:((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=cond(bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))))))))) ==> a_STATEunde_DidNotVoteInunde_a(a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a) ==> ?z_hh ==> (~(\\E x:((x \\in a_CONSTANTunde_Valueunde_a)&(?z_hh&(a_STATEunde_DidNotVoteInunde_a(a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)&(bAll((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a. bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=x))))))&(a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)&((except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, cond(bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))>>}))=except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, x>>})))&(except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)=except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)))))))))) ==> FALSE" (is "_ ==> _ ==> ?z_hdc ==> ?z_hde ==> ?z_hn ==> _ ==> ?z_hdj ==> FALSE")
+ proof -
+  assume z_Hca:"?z_hca"
+  assume z_Hbz:"?z_hbz"
+  assume z_Hdc:"?z_hdc" (is "~?z_hbd")
+  assume z_Hde:"?z_hde" (is "\\A x : ?z_hef(x)")
+  assume z_Hn:"?z_hn"
+  assume z_Hh:"?z_hh"
+  assume z_Hdj:"?z_hdj" (is "~(\\E x : ?z_heg(x))")
+  show FALSE
+  proof (rule zenon_em [of "(\\E x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))"])
+   assume z_Hji:"(\\E x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))" (is "\\E x : ?z_hjj(x)")
+   have z_Hjk: "?z_hjj((CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x))))" (is "?z_hjl&?z_hjm")
+   by (rule zenon_ex_choose_0 [of "?z_hjj", OF z_Hji])
+   have z_Hjl: "?z_hjl"
+   by (rule zenon_and_0 [OF z_Hjk])
+   have z_Hjm: "?z_hjm"
+   by (rule zenon_and_1 [OF z_Hjk])
+   have z_Hjn: "~?z_heg((CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x))))" (is "~(_&?z_hjo)")
+   by (rule zenon_notex_0 [of "?z_heg" "(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))", OF z_Hdj])
+   show FALSE
+   proof (rule zenon_notand [OF z_Hjn])
+    assume z_Hjp:"(~?z_hjl)"
+    show FALSE
+    by (rule notE [OF z_Hjp z_Hjl])
+   next
+    assume z_Hjq:"(~?z_hjo)" (is "~(_&?z_hjr)")
+    show FALSE
+    proof (rule zenon_notand [OF z_Hjq])
+     assume z_Hfo:"(~?z_hh)"
+     show FALSE
+     by (rule notE [OF z_Hfo z_Hh])
+    next
+     assume z_Hjs:"(~?z_hjr)" (is "~(_&?z_hjt)")
+     show FALSE
+     proof (rule zenon_notand [OF z_Hjs])
+      assume z_Hfr:"(~?z_hn)"
+      show FALSE
+      by (rule notE [OF z_Hfr z_Hn])
+     next
+      assume z_Hju:"(~?z_hjt)" (is "~(?z_hjv&?z_hjw)")
+      show FALSE
+      proof (rule zenon_notand [OF z_Hju])
+       assume z_Hjx:"(~?z_hjv)"
+       have z_Hjy_z_Hjx: "(~(\\A x:((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))))))))) == (~?z_hjv)" (is "?z_hjy == ?z_hjx")
+       by (unfold bAll_def)
+       have z_Hjy: "?z_hjy" (is "~(\\A x : ?z_hka(x))")
+       by (unfold z_Hjy_z_Hjx, fact z_Hjx)
+       have z_Hkb: "(\\E x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x))))))))))" (is "\\E x : ?z_hkc(x)")
+       by (rule zenon_notallex_0 [of "?z_hka", OF z_Hjy])
+       have z_Hkd: "?z_hkc((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))))))))))" (is "~(?z_hke=>?z_hkf)")
+       by (rule zenon_ex_choose_0 [of "?z_hkc", OF z_Hkb])
+       have z_Hke: "?z_hke"
+       by (rule zenon_notimply_0 [OF z_Hkd])
+       have z_Hkg: "(~?z_hkf)"
+       by (rule zenon_notimply_1 [OF z_Hkd])
+       have z_Hkh_z_Hkg: "(~(\\A x:((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))))))))), a_CONSTANTunde_bunde_a, x)=>(x=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))))))) == (~?z_hkf)" (is "?z_hkh == ?z_hkg")
+       by (unfold bAll_def)
+       have z_Hkh: "?z_hkh" (is "~(\\A x : ?z_hkj(x))")
+       by (unfold z_Hkh_z_Hkg, fact z_Hkg)
+       have z_Hkk: "(\\E x:(~((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))))))))), a_CONSTANTunde_bunde_a, x)=>(x=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x))))))))" (is "\\E x : ?z_hkl(x)")
+       by (rule zenon_notallex_0 [of "?z_hkj", OF z_Hkh])
+       have z_Hkm: "?z_hkl((CHOOSE x:(~((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))))))))), a_CONSTANTunde_bunde_a, x)=>(x=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))))))))" (is "~(?z_hkn=>?z_hko)")
+       by (rule zenon_ex_choose_0 [of "?z_hkl", OF z_Hkk])
+       have z_Hkn: "?z_hkn"
+       by (rule zenon_notimply_0 [OF z_Hkm])
+       have z_Hkp: "(~?z_hko)" (is "~(?z_hkq=>?z_hjh)")
+       by (rule zenon_notimply_1 [OF z_Hkm])
+       have z_Hkq: "?z_hkq"
+       by (rule zenon_notimply_0 [OF z_Hkp])
+       have z_Hjb: "((CHOOSE x:(~((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))))))))), a_CONSTANTunde_bunde_a, x)=>(x=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x))))))))~=(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x))))" (is "?z_him~=?z_hiy")
+       by (rule zenon_notimply_1 [OF z_Hkp])
+       have z_Hkr: "?z_hef((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=?z_hiy))))))))" (is "_=>?z_hks")
+       by (rule zenon_all_0 [of "?z_hef" "(CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=?z_hiy)))))))", OF z_Hde])
+       show FALSE
+       proof (rule zenon_imply [OF z_Hkr])
+        assume z_Hkt:"(~?z_hke)"
+        show FALSE
+        by (rule notE [OF z_Hkt z_Hke])
+       next
+        assume z_Hks:"?z_hks"
+        have z_Hku_z_Hks: "(\\A x:((x \\in a_CONSTANTunde_Valueunde_a)=>(a_STATEunde_VotedForunde_a((CHOOSE x:(~((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=?z_hiy))))))), a_CONSTANTunde_bunde_a, x)=>(x=cond(?z_hbd, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))))))) == ?z_hks" (is "?z_hku == _")
+        by (unfold bAll_def)
+        have z_Hku: "?z_hku" (is "\\A x : ?z_hkx(x)")
+        by (unfold z_Hku_z_Hks, fact z_Hks)
+        have z_Hky: "?z_hkx(?z_him)" (is "_=>?z_hkz")
+        by (rule zenon_all_0 [of "?z_hkx" "?z_him", OF z_Hku])
+        show FALSE
+        proof (rule zenon_imply [OF z_Hky])
+         assume z_Hla:"(~?z_hkn)"
+         show FALSE
+         by (rule notE [OF z_Hla z_Hkn])
+        next
+         assume z_Hkz:"?z_hkz" (is "_=>?z_hil")
+         show FALSE
+         proof (rule zenon_imply [OF z_Hkz])
+          assume z_Hlb:"(~?z_hkq)"
+          show FALSE
+          by (rule notE [OF z_Hlb z_Hkq])
+         next
+          assume z_Hil:"?z_hil" (is "_=?z_hbc")
+          show FALSE
+          by (rule zenon_L3_ [OF z_Hil z_Hjb z_Hdc])
+         qed
+        qed
+       qed
+      next
+       assume z_Hlc:"(~?z_hjw)" (is "~(_&?z_hld)")
+       show FALSE
+       proof (rule zenon_notand [OF z_Hlc])
+        assume z_Hle:"(~?z_hjm)"
+        show FALSE
+        by (rule notE [OF z_Hle z_Hjm])
+       next
+        assume z_Hlf:"(~?z_hld)" (is "~(?z_hlg&?z_hed)")
+        show FALSE
+        proof (rule zenon_notand [OF z_Hlf])
+         assume z_Hlh:"(except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, cond(?z_hbd, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))>>}))~=except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, (CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))>>})))" (is "?z_hbt~=?z_hli")
+         show FALSE
+         proof (rule zenon_ifthenelse [of "(\<lambda>zenon_Vbi. (except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, zenon_Vbi>>}))~=?z_hli))" "?z_hbd" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))", OF z_Hlh])
+          assume z_Hbd:"?z_hbd"
+          assume z_Hlt:"(except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))>>}))~=?z_hli)" (is "?z_hht~=_")
+          show FALSE
+          by (rule notE [OF z_Hdc z_Hbd])
+         next
+          assume z_Hdc:"?z_hdc"
+          assume z_Hlu:"(except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))>>}))~=?z_hli)" (is "?z_hhz~=_")
+          have z_Hlv_z_Hlu: "(?z_hli~=?z_hli) == (?z_hhz~=?z_hli)" (is "?z_hlv == ?z_hlu")
+          by (unfold bChoose_def)
+          have z_Hlv: "?z_hlv"
+          by (unfold z_Hlv_z_Hlu, fact z_Hlu)
+          show FALSE
+          by (rule zenon_noteq [OF z_Hlv])
+         qed
+        next
+         assume z_Hid:"(except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)~=except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a))" (is "?z_hee~=_")
+         show FALSE
+         by (rule zenon_noteq [OF z_Hid])
+        qed
+       qed
+      qed
+     qed
+    qed
+   qed
+  next
+   assume z_Hlw:"(~(\\E x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x))))" (is "~(\\E x : ?z_hjj(x))")
+   show FALSE
+   proof (rule zenon_ifthenelse [of "(\<lambda>zenon_Vba. (zenon_Vba \\in a_CONSTANTunde_Valueunde_a))" "?z_hbd" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))", OF z_Hbz])
+    assume z_Hbd:"?z_hbd"
+    assume z_Hma:"(bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))) \\in a_CONSTANTunde_Valueunde_a)" (is "?z_hma")
+    show FALSE
+    by (rule notE [OF z_Hdc z_Hbd])
+   next
+    assume z_Hdc:"?z_hdc"
+    assume z_Hmb:"(bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))) \\in a_CONSTANTunde_Valueunde_a)" (is "?z_hmb")
+    have z_Hjl_z_Hmb: "((CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x))) \\in a_CONSTANTunde_Valueunde_a) == ?z_hmb" (is "?z_hjl == _")
+    by (unfold bChoose_def)
+    have z_Hjl: "?z_hjl"
+    by (unfold z_Hjl_z_Hmb, fact z_Hmb)
+    show FALSE
+    proof (rule zenon_ifthenelse [of "(\<lambda>zenon_Vaa. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, zenon_Vaa))" "?z_hbd" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))", OF z_Hca])
+     assume z_Hbd:"?z_hbd"
+     assume z_Hfh:"a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))" (is "?z_hfh")
+     show FALSE
+     by (rule notE [OF z_Hdc z_Hbd])
+    next
+     assume z_Hdc:"?z_hdc"
+     assume z_Hie:"a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))" (is "?z_hie")
+     have z_Hjm_z_Hie: "a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, (CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))) == ?z_hie" (is "?z_hjm == _")
+     by (unfold bChoose_def)
+     have z_Hjm: "?z_hjm"
+     by (unfold z_Hjm_z_Hie, fact z_Hie)
+     have z_Hmc: "~?z_hjj((CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x))))"
+     by (rule zenon_notex_0 [of "?z_hjj" "(CHOOSE x:((x \\in a_CONSTANTunde_Valueunde_a)&a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)))", OF z_Hlw])
+     show FALSE
+     proof (rule zenon_notand [OF z_Hmc])
+      assume z_Hjp:"(~?z_hjl)"
+      show FALSE
+      by (rule notE [OF z_Hjp z_Hjl])
+     next
+      assume z_Hle:"(~?z_hjm)"
+      show FALSE
+      by (rule notE [OF z_Hle z_Hjm])
+     qed
+    qed
+   qed
+  qed
+ qed
+ assume z_Hg:"(~(bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. (?z_hh&(a_STATEunde_DidNotVoteInunde_a(a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)&(bAll((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a. bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=a_CONSTANTunde_vunde_a))))))&(a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)&((except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, cond(bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))>>}))=except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a>>})))&(except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)=except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)))))))))&(<<except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, cond(bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))))>>})), except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)>>~=<<a_VARIABLEunde_votesunde_a, a_VARIABLEunde_maxBalunde_a>>)))" (is "~(?z_hme&?z_hmw)")
+ have z_Hh: "?z_hh"
+ by (rule zenon_and_0 [OF z_He])
+ have z_Hm: "?z_hm" (is "?z_hn&?z_ho")
+ by (rule zenon_and_1 [OF z_He])
+ have z_Hn: "?z_hn"
+ by (rule zenon_and_0 [OF z_Hm])
+ have z_Ho: "?z_ho" (is "?z_hp&?z_hbs")
+ by (rule zenon_and_1 [OF z_Hm])
+ have z_Hp: "?z_hp"
+ by (rule zenon_and_0 [OF z_Ho])
+ have z_Hbs: "?z_hbs" (is "?z_hbt~=_")
+ by (rule zenon_and_1 [OF z_Ho])
+ have z_Hde_z_Hp: "(\\A x:((x \\in (a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}))=>bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(x, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=cond(bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))), bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))))))))) == ?z_hp" (is "?z_hde == _")
+ by (unfold bAll_def)
+ have z_Hde: "?z_hde" (is "\\A x : ?z_hef(x)")
+ by (unfold z_Hde_z_Hp, fact z_Hp)
+ have z_Hbz: "?z_hbz"
+ by (rule zenon_and_0 [OF z_Hf])
+ have z_Hca: "?z_hca"
+ by (rule zenon_and_1 [OF z_Hf])
+ show FALSE
+ proof (rule zenon_notand [OF z_Hg])
+  assume z_Hmz:"(~?z_hme)"
+  have z_Hdj_z_Hmz: "(~(\\E x:((x \\in a_CONSTANTunde_Valueunde_a)&(?z_hh&(?z_hn&(bAll((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a. bAll(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a)=>(a_CONSTANTunde_wunde_a=x))))))&(a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, x)&((?z_hbt=except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, x>>})))&(except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)=except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)))))))))) == (~?z_hme)" (is "?z_hdj == ?z_hmz")
+  by (unfold bEx_def)
+  have z_Hdj: "?z_hdj" (is "~(\\E x : ?z_heg(x))")
+  by (unfold z_Hdj_z_Hmz, fact z_Hmz)
+  show FALSE
+  proof (rule zenon_ifthenelse [of "(\<lambda>zenon_Vba. (zenon_Vba \\in a_CONSTANTunde_Valueunde_a))" "bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))))" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))", OF z_Hbz])
+   assume z_Hbd:"bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))))" (is "?z_hbd")
+   assume z_Hma:"(bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))) \\in a_CONSTANTunde_Valueunde_a)" (is "?z_hma")
+   show FALSE
+   by (rule zenon_L2_ [OF z_Hbd z_Hde z_Hn z_Hh z_Hdj z_Hca])
+  next
+   assume z_Hdc:"(~bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))))" (is "~?z_hbd")
+   assume z_Hmb:"(bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a))) \\in a_CONSTANTunde_Valueunde_a)" (is "?z_hmb")
+   show FALSE
+   by (rule zenon_L4_ [OF z_Hca z_Hbz z_Hdc z_Hde z_Hn z_Hh z_Hdj])
+  qed
+ next
+  assume z_Hna:"(~?z_hmw)" (is "~~?z_hnb")
+  show FALSE
+  proof (rule zenon_ifthenelse [of "(\<lambda>zenon_Vda. (~(<<except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, zenon_Vda>>})), except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)>>~=<<a_VARIABLEunde_votesunde_a, a_VARIABLEunde_maxBalunde_a>>)))" "bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))))" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))", OF z_Hna])
+   assume z_Hbd:"bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))))" (is "?z_hbd")
+   assume z_Hnl:"(~(<<except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))>>})), except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)>>~=<<a_VARIABLEunde_votesunde_a, a_VARIABLEunde_maxBalunde_a>>))" (is "~~?z_hno")
+   have z_Hno: "?z_hno" (is "?z_hnn=?z_hmy")
+   by (rule zenon_notnot_0 [OF z_Hnl])
+   have z_Hnp: "(except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))>>}))=a_VARIABLEunde_votesunde_a)" (is "?z_hht=_")
+   using z_Hno by auto
+   show FALSE
+   proof (rule zenon_ifthenelse [of "(\<lambda>zenon_Vu. (except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, zenon_Vu>>}))~=a_VARIABLEunde_votesunde_a))" "?z_hbd" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))", OF z_Hbs])
+    assume z_Hbd:"?z_hbd"
+    assume z_Hnx:"(?z_hht~=a_VARIABLEunde_votesunde_a)"
+    show FALSE
+    by (rule notE [OF z_Hnx z_Hnp])
+   next
+    assume z_Hdc:"(~?z_hbd)"
+    assume z_Hny:"(except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))>>}))~=a_VARIABLEunde_votesunde_a)" (is "?z_hhz~=_")
+    show FALSE
+    by (rule notE [OF z_Hdc z_Hbd])
+   qed
+  next
+   assume z_Hdc:"(~bEx((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))))" (is "~?z_hbd")
+   assume z_Hnz:"(~(<<except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))>>})), except(a_VARIABLEunde_maxBalunde_a, a_CONSTANTunde_selfunde_a, a_CONSTANTunde_bunde_a)>>~=<<a_VARIABLEunde_votesunde_a, a_VARIABLEunde_maxBalunde_a>>))" (is "~~?z_hoc")
+   have z_Hoc: "?z_hoc" (is "?z_hob=?z_hmy")
+   by (rule zenon_notnot_0 [OF z_Hnz])
+   have z_Hod: "(except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))>>}))=a_VARIABLEunde_votesunde_a)" (is "?z_hhz=_")
+   using z_Hoc by auto
+   show FALSE
+   proof (rule zenon_ifthenelse [of "(\<lambda>zenon_Vu. (except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, zenon_Vu>>}))~=a_VARIABLEunde_votesunde_a))" "?z_hbd" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))" "bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a. a_STATEunde_SafeAtunde_a(a_CONSTANTunde_bunde_a, a_CONSTANTunde_vunde_a)))", OF z_Hbs])
+    assume z_Hbd:"?z_hbd"
+    assume z_Hnx:"(except(a_VARIABLEunde_votesunde_a, a_CONSTANTunde_selfunde_a, ((a_VARIABLEunde_votesunde_a[a_CONSTANTunde_selfunde_a]) \\cup {<<a_CONSTANTunde_bunde_a, bChoice(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(bChoice((a_CONSTANTunde_Acceptorunde_a \\ {a_CONSTANTunde_selfunde_a}), (\<lambda>a_CONSTANTunde_punde_a_1. bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_wunde_a_1. a_STATEunde_VotedForunde_a(a_CONSTANTunde_punde_a_1, a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1))))), a_CONSTANTunde_bunde_a, a_CONSTANTunde_wunde_a_1)))>>}))~=a_VARIABLEunde_votesunde_a)" (is "?z_hht~=_")
+    show FALSE
+    by (rule notE [OF z_Hdc z_Hbd])
+   next
+    assume z_Hdc:"(~?z_hbd)"
+    assume z_Hny:"(?z_hhz~=a_VARIABLEunde_votesunde_a)"
+    show FALSE
+    by (rule notE [OF z_Hny z_Hod])
+   qed
+  qed
+ qed
+qed
+(* END-PROOF *)

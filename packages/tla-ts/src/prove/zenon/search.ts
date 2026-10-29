@@ -137,6 +137,9 @@ interface Frame {
 export interface SearchStatistics {
   inferences: number;
   proofNodes: number;
+  // The proofs that closed another branch from the lemma cache. Zenon counts the uses in mlrefc and
+  // prints each of these proofs once, as a lemma.
+  reusedProofs: Set<Proof>;
 }
 
 export type SearchFailure = "exhausted" | "time limit" | "memory limit" | "aborted";
@@ -262,6 +265,7 @@ export const search = (
     const head = getQueueHead(queue);
     const lemma = head === undefined || isGoodLemma(head.rule) ? index.searchLemma() : undefined;
     if (lemma !== undefined) {
+      statistics.reusedProofs.add(lemma);
       const closed = unwind(lemma);
       if (closed !== undefined) return closed;
       const frame = stack[stack.length - 1];

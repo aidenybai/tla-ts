@@ -1,0 +1,24 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Ha:"(\\A x:(\\A y:(R(x, y)=>R(y, x))))" (is "\\A x : ?z_hj(x)")
+ using sym by blast
+ have z_Hb:"R(f(a), b)" (is "?z_hb")
+ using h by blast
+ assume z_Hc:"(~R(b, f(a)))" (is "~?z_hn")
+ have z_Ho: "?z_hj(f(a))" (is "\\A x : ?z_hp(x)")
+ by (rule zenon_all_0 [of "?z_hj" "f(a)", OF z_Ha])
+ have z_Hq: "?z_hp(b)"
+ by (rule zenon_all_0 [of "?z_hp" "b", OF z_Ho])
+ show FALSE
+ proof (rule zenon_imply [OF z_Hq])
+  assume z_Hr:"(~?z_hb)"
+  show FALSE
+  by (rule notE [OF z_Hr z_Hb])
+ next
+  assume z_Hn:"?z_hn"
+  show FALSE
+  by (rule notE [OF z_Hc z_Hn])
+ qed
+qed
+(* END-PROOF *)

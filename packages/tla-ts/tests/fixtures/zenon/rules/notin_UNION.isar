@@ -1,0 +1,24 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Hb:"(a \\in b)" (is "?z_hb")
+ using h2 by blast
+ have z_Ha:"(b \\in s)" (is "?z_ha")
+ using h1 by blast
+ assume z_Hc:"(~(a \\in UNION(s)))" (is "~?z_hg")
+ have z_Hi: "(~(\\E zenon_Vh:((zenon_Vh \\in s)&(a \\in zenon_Vh))))" (is "~(\\E x : ?z_ho(x))")
+ by (rule zenon_notin_UNION_0 [of "a" "s", OF z_Hc])
+ have z_Hp: "~?z_ho(b)"
+ by (rule zenon_notex_0 [of "?z_ho" "b", OF z_Hi])
+ show FALSE
+ proof (rule zenon_notand [OF z_Hp])
+  assume z_Hq:"(~?z_ha)"
+  show FALSE
+  by (rule notE [OF z_Hq z_Ha])
+ next
+  assume z_Hr:"(~?z_hb)"
+  show FALSE
+  by (rule notE [OF z_Hr z_Hb])
+ qed
+qed
+(* END-PROOF *)
