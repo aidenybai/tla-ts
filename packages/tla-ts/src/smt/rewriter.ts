@@ -1,5 +1,5 @@
 // Ported from Z3 (src/ast/rewriter/th_rewriter.cpp, bool_rewriter.cpp, arith_rewriter.cpp,
-// var_subst.cpp), MIT license, see z3-license.txt. Only the rewrites that tlapm's encoding
+// der.cpp), MIT license, see z3-license.txt. Only the rewrites that tlapm's encoding
 // exercises are ported.
 import { ArithRewriter, ArithRewriterOptions } from "./arith-rewriter";
 import {
@@ -22,7 +22,6 @@ import {
   OP_MOD,
   OP_MUL,
   OP_NOT,
-  OP_NUM,
   OP_OR,
   OP_SUB,
   OP_UMINUS,
@@ -30,139 +29,15 @@ import {
   SORT_BOOL,
   SORT_INT,
 } from "./ast";
-
-// Substitutes the variables of an expression, as Z3's var_subst does with std_order. The variable
-// with de Bruijn index i (relative to the expression) becomes bindings[bindings.length - 1 - i].
-// The bindings must be ground.
-export const substitute = (manager: AstManager, expr: number, bindings: number[]) => {
-  const cache = new Map<number, number>();
-  const count = bindings.length;
-  const visit = (current: number, shift: number): number => {
-    if (manager.freeVarBounds[current] <= shift) return current;
-    const key = current * 64 + shift;
-    const cached = cache.get(key);
-    if (cached !== undefined) return cached;
-    const kind = manager.kinds[current];
-    let result: number;
-    if (kind === KIND_VAR) {
-      const index = manager.values[current];
-      result =
-        index - shift < count
-          ? bindings[count - 1 - (index - shift)]
-          : manager.mkVar(index - count, manager.sorts[current]);
-    } else if (kind === KIND_APP) {
-      const args = manager.args[current];
-      result = manager.mkApp(
-        manager.decls[current],
-        args.map((arg) => visit(arg, shift)),
-        manager.sorts[current],
-      );
-    } else {
-      const data = manager.getQuantifier(current);
-      const innerShift = shift + data.sorts.length;
-      result = manager.mkQuantifier({
-        ...data,
-        body: visit(data.body, innerShift),
-        patterns: data.patterns.map((pattern) =>
-          pattern.map((innerTerm) => visit(innerTerm, innerShift)),
-        ),
-      });
-    }
-    cache.set(key, result);
-    return result;
-  };
-  return visit(expr, 0);
-};
-
-// Adds amount to every free de Bruijn index, for a let binding used under more binders.
-export const shiftVars = (manager: AstManager, expr: number, amount: number) => {
-  if (amount === 0) return expr;
-  const visit = (current: number, shift: number): number => {
-    if (manager.freeVarBounds[current] <= shift) return current;
-    const kind = manager.kinds[current];
-    if (kind === KIND_VAR)
-      return manager.mkVar(manager.values[current] + amount, manager.sorts[current]);
-    if (kind === KIND_APP)
-      return manager.mkApp(
-        manager.decls[current],
-        manager.args[current].map((innerArg) => visit(innerArg, shift)),
-        manager.sorts[current],
-      );
-    const data = manager.getQuantifier(current);
-    const innerShift = shift + data.sorts.length;
-    return manager.mkQuantifier({
-      ...data,
-      body: visit(data.body, innerShift),
-      patterns: data.patterns.map((pattern) =>
-        pattern.map((innerTerm) => visit(innerTerm, innerShift)),
-      ),
-    });
-  };
-  return visit(expr, 0);
-};
-
-// Collects which variables of a quantifier body occur, indexed by de Bruijn index.
-export const collectUsedVars = (manager: AstManager, expr: number, count: number) => {
-  const used = Array.from({ length: count }, () => false);
-  const visited = new Set<number>();
-  const visit = (current: number, shift: number) => {
-    if (manager.freeVarBounds[current] <= shift) return;
-    const key = current * 64 + shift;
-    if (visited.has(key)) return;
-    visited.add(key);
-    const kind = manager.kinds[current];
-    if (kind === KIND_VAR) {
-      const index = manager.values[current] - shift;
-      if (index < count) used[index] = true;
-    } else if (kind === KIND_APP) {
-      for (const arg of manager.args[current]) visit(arg, shift);
-    } else
-      visit(
-        manager.getQuantifier(current).body,
-        shift + manager.getQuantifier(current).sorts.length,
-      );
-  };
-  visit(expr, 0);
-  return used;
-};
+import { collectUsedVars, replaceFreeVars, shiftVars, substitute } from "./var-subst";
 
 // Substitutes the variables with de Bruijn index i < map.length that have a definition in map,
 // which may contain variables of the same scope, and keeps every other variable.
-const substitutePartial = (manager: AstManager, expr: number, map: (number | undefined)[]) => {
-  const cache = new Map<number, number>();
-  const visit = (current: number, shift: number): number => {
-    if (manager.freeVarBounds[current] <= shift) return current;
-    const key = current * 64 + shift;
-    const cached = cache.get(key);
-    if (cached !== undefined) return cached;
-    const kind = manager.kinds[current];
-    let result: number;
-    if (kind === KIND_VAR) {
-      const index = manager.values[current] - shift;
-      const definition = index < map.length ? map[index] : undefined;
-      result = definition === undefined ? current : shiftVars(manager, definition, shift);
-    } else if (kind === KIND_APP)
-      result = manager.mkApp(
-        manager.decls[current],
-        manager.args[current].map((innerArg) => visit(innerArg, shift)),
-        manager.sorts[current],
-      );
-    else {
-      const data = manager.getQuantifier(current);
-      const innerShift = shift + data.sorts.length;
-      result = manager.mkQuantifier({
-        ...data,
-        body: visit(data.body, innerShift),
-        patterns: data.patterns.map((pattern) =>
-          pattern.map((innerTerm) => visit(innerTerm, innerShift)),
-        ),
-      });
-    }
-    cache.set(key, result);
-    return result;
-  };
-  return visit(expr, 0);
-};
+const substitutePartial = (manager: AstManager, expr: number, map: (number | undefined)[]) =>
+  replaceFreeVars(manager, expr, (variable, index, shift) => {
+    const definition = index < map.length ? map[index] : undefined;
+    return definition === undefined ? variable : shiftVars(manager, definition, 0, shift, 0);
+  });
 
 // unused_vars_eliminator: drops the variables that neither the body nor a pattern uses.
 const elimUnusedVars = (manager: AstManager, expr: number) => {
@@ -189,7 +64,7 @@ const elimUnusedVars = (manager: AstManager, expr: number) => {
       keptSorts.push(data.sorts[declIndex]);
     } else bindings[declIndex] = manager.mkVar(0, data.sorts[declIndex]);
   }
-  const remap = (term: number) => substituteNonGround(manager, term, bindings, numKept);
+  const remap = (term: number) => substitute(manager, term, bindings, numKept);
   if (numKept === 0) return remap(data.body);
   return manager.mkQuantifier({
     ...data,
@@ -619,31 +494,24 @@ export class Rewriter {
     return manager.mkApp(OP_ITE, [condition, thenExpr, elseExpr], manager.sorts[thenExpr]);
   }
 
-  getNumeral(expr: number) {
-    return this.manager.getOp(expr) === OP_NUM ? this.manager.values[expr] : undefined;
-  }
-
-  private mkNumeral(value: number) {
-    return this.manager.mkNumeral(value);
-  }
-
   mkAdd(args: number[]) {
     return this.arith.mkAdd(args) ?? this.arith.mkAddApp(args);
   }
 
   private mkDivMod(decl: number, args: number[]) {
     const manager = this.manager;
-    const dividend = this.getNumeral(args[0]);
-    const divisor = this.getNumeral(args[1]);
+    const dividend = this.manager.getNumeral(args[0]);
+    const divisor = this.manager.getNumeral(args[1]);
     if (dividend !== undefined && divisor !== undefined && divisor !== 0) {
       // SMT-LIB integer division: the remainder is non-negative.
       const quotient =
         divisor > 0 ? Math.floor(dividend / divisor) : -Math.floor(dividend / -divisor);
-      return this.mkNumeral(
+      return this.manager.mkNumeral(
         manager.funcDecls[decl].op === OP_IDIV ? quotient : dividend - divisor * quotient,
       );
     }
-    if (divisor === 1) return manager.funcDecls[decl].op === OP_IDIV ? args[0] : this.mkNumeral(0);
+    if (divisor === 1)
+      return manager.funcDecls[decl].op === OP_IDIV ? args[0] : this.manager.mkNumeral(0);
     const isIdiv = manager.funcDecls[decl].op === OP_IDIV;
     return (
       (isIdiv ? this.arith.mkIdiv(args[0], args[1]) : undefined) ??
@@ -651,49 +519,3 @@ export class Rewriter {
     );
   }
 }
-
-// Like substitute, but the bindings may contain variables, which keep their indices. It is used to
-// renumber the variables of a quantifier body that keeps numKept of its variables.
-export const substituteNonGround = (
-  manager: AstManager,
-  expr: number,
-  bindings: number[],
-  numKept = 0,
-) => {
-  const count = bindings.length;
-  const cache = new Map<number, number>();
-  const visit = (current: number, shift: number): number => {
-    if (manager.freeVarBounds[current] <= shift) return current;
-    const key = current * 64 + shift;
-    const cached = cache.get(key);
-    if (cached !== undefined) return cached;
-    const kind = manager.kinds[current];
-    let result: number;
-    if (kind === KIND_VAR) {
-      const index = manager.values[current];
-      result =
-        index - shift < count
-          ? shiftVars(manager, bindings[count - 1 - (index - shift)], shift)
-          : manager.mkVar(index - count + numKept, manager.sorts[current]);
-    } else if (kind === KIND_APP)
-      result = manager.mkApp(
-        manager.decls[current],
-        manager.args[current].map((innerArg) => visit(innerArg, shift)),
-        manager.sorts[current],
-      );
-    else {
-      const data = manager.getQuantifier(current);
-      const innerShift = shift + data.sorts.length;
-      result = manager.mkQuantifier({
-        ...data,
-        body: visit(data.body, innerShift),
-        patterns: data.patterns.map((pattern) =>
-          pattern.map((innerTerm) => visit(innerTerm, innerShift)),
-        ),
-      });
-    }
-    cache.set(key, result);
-    return result;
-  };
-  return visit(expr, 0);
-};

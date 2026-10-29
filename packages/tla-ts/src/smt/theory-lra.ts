@@ -23,7 +23,8 @@ import {
   SORT_INT,
 } from "./ast";
 import { FC_CONTINUE, FC_DONE, FC_GIVEUP, L_UNDEF, type Context, type Theory } from "./context";
-import { Enode, TheoryJustification, mkJustificationEqJustification } from "./enode";
+import { Enode, TheoryJustification } from "./enode";
+import type { ProtoModel } from "./proto-model";
 import { Rational, getGcd } from "./rational";
 import { BoundReason, Simplex } from "./simplex";
 
@@ -76,6 +77,22 @@ export class TheoryLra implements Theory {
     const node = this.varEnodes[thVar];
     if (node === undefined) throw new Error(`theory variable ${thVar} has no enode`);
     return node;
+  }
+
+  // init_model: the model knows the value of every theory variable, so fresh integers avoid them.
+  initModel(model: ProtoModel) {
+    this.varEnodes.forEach((node, variable) => {
+      if (node !== undefined) model.registerValue(this.getValue(variable));
+    });
+  }
+
+  // mk_value: the value of the class of a root, rounded down for an integer.
+  mkValue(node: Enode) {
+    return node.thVar < 0 ? undefined : this.getValue(node.thVar);
+  }
+
+  private getValue(variable: number) {
+    return this.manager.mkNumeral(Number(this.simplex.values[variable].floor().num));
   }
 
   // Linearization and variables.
@@ -413,11 +430,10 @@ export class TheoryLra implements Theory {
       simplex.lowerReasons[other],
       simplex.upperReasons[other],
     ]);
-    this.context.pushEq(
-      node,
-      otherNode,
-      mkJustificationEqJustification(new TheoryJustification(literals, [])),
-    );
+    this.context.pushEq(node, otherNode, {
+      kind: "justification",
+      justification: new TheoryJustification(literals, []),
+    });
   }
 
   // arith_eq_adapter.

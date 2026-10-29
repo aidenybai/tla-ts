@@ -12,6 +12,8 @@ export const SORT_INT = 1;
 export const FAMILY_BASIC = 0;
 export const FAMILY_ARITH = 1;
 export const FAMILY_USER = 2;
+// Model values: the elements that a model gives to an uninterpreted sort.
+export const FAMILY_MODEL_VALUE = 3;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -36,6 +38,7 @@ export const OP_IDIV = 19;
 export const OP_MOD = 20;
 export const OP_ABS = 21;
 export const OP_UNINTERPRETED = 22;
+export const OP_MODEL_VALUE = 23;
 
 export interface FuncDecl {
   name: string;
@@ -175,6 +178,9 @@ export class AstManager {
 
   // The op of a builtin declaration doubles as its index in funcDecls.
   mkApp(decl: number, args: number[], sort: number) {
+    // Numerals and model values carry their value, so only mkNumeral and mkModelValue create them.
+    if (decl === OP_NUM || this.funcDecls[decl].family === FAMILY_MODEL_VALUE)
+      throw new Error(`${this.funcDecls[decl].name} needs a value`);
     let hash = decl;
     for (let index = 0; index < args.length; index++)
       hash = (Math.imul(hash, 0x9e3779b1) + args[index]) | 0;
@@ -198,7 +204,27 @@ export class AstManager {
   mkNumeral(value: number) {
     if (!Number.isSafeInteger(value))
       throw new SmtUnsupportedError(`the numeral ${value} is too large`);
-    return this.intern(`n${value}`, KIND_APP, OP_NUM, [], SORT_INT, value);
+    return this.intern(`n${value}`, KIND_APP, OP_NUM, [], SORT_INT, value === 0 ? 0 : value);
+  }
+
+  // mk_model_value: the element with this index in the universe of an uninterpreted sort.
+  mkModelValue(index: number, sort: number) {
+    const key = `m${sort}:${index}`;
+    const existing = this.table.get(key);
+    if (existing !== undefined) return existing;
+    this.funcDecls.push({
+      name: `${this.sortNames[sort]}!val!${index}`,
+      family: FAMILY_MODEL_VALUE,
+      op: OP_MODEL_VALUE,
+      domain: [],
+      range: sort,
+      isSkolem: false,
+    });
+    return this.intern(key, KIND_APP, this.funcDecls.length - 1, [], sort, index);
+  }
+
+  mkFreshConst(prefix: string, sort: number) {
+    return this.mkApp(this.mkFreshFuncDecl(prefix, [], sort, false), [], sort);
   }
 
   mkVar(index: number, sort: number) {
@@ -281,10 +307,27 @@ export class AstManager {
     return this.getOp(expr) === OP_NUM;
   }
 
+  getNumeral(expr: number) {
+    return this.isNumeral(expr) ? this.values[expr] : undefined;
+  }
+
   // Unique values are interpreted constants that are distinct from each other, as in Z3.
   isUniqueValue(expr: number) {
     const op = this.getOp(expr);
-    return op === OP_NUM || op === OP_TRUE || op === OP_FALSE;
+    return op === OP_NUM || op === OP_TRUE || op === OP_FALSE || op === OP_MODEL_VALUE;
+  }
+
+  isModelValue(expr: number) {
+    return this.getOp(expr) === OP_MODEL_VALUE;
+  }
+
+  isUninterpretedSort(sort: number) {
+    return sort > SORT_INT;
+  }
+
+  // An uninterpreted constant, such as a declared constant or a Skolem constant.
+  isUninterpretedConst(expr: number) {
+    return this.isUninterpreted(expr) && this.args[expr].length === 0;
   }
 
   isUninterpreted(expr: number) {
@@ -294,6 +337,37 @@ export class AstManager {
   // An equality between two Boolean expressions, which Z3 calls iff.
   isIff(expr: number) {
     return this.getOp(expr) === OP_EQ && this.sorts[this.args[expr][0]] === SORT_BOOL;
+  }
+
+  // arith_util::is_times_minus_one: the t of (* -1 t).
+  getTimesMinusOneArg(expr: number) {
+    if (this.getOp(expr) !== OP_MUL || this.args[expr].length !== 2) return undefined;
+    const coefficient = this.args[expr][0];
+    return this.isNumeral(coefficient) && this.values[coefficient] === -1
+      ? this.args[expr][1]
+      : undefined;
+  }
+
+  // occurs: decl is applied somewhere in expr.
+  isOccurring(decl: number, expr: number) {
+    return this.someSubterm(expr, (current) => this.decls[current] === decl);
+  }
+
+  containsModelValue(expr: number) {
+    return this.someSubterm(expr, (current) => this.isModelValue(current));
+  }
+
+  private someSubterm(expr: number, predicate: (expr: number) => boolean) {
+    const visited = new Set<number>();
+    const visit = (current: number): boolean => {
+      if (visited.has(current)) return false;
+      visited.add(current);
+      const kind = this.kinds[current];
+      if (kind === KIND_VAR) return false;
+      if (kind === KIND_QUANTIFIER) return visit(this.getQuantifier(current).body);
+      return predicate(current) || this.args[current].some((arg) => visit(arg));
+    };
+    return visit(expr);
   }
 
   mkNot(expr: number) {

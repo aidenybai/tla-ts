@@ -21,11 +21,12 @@ import {
   OP_OR,
   OP_SUB,
   OP_UMINUS,
+  OP_UNINTERPRETED,
   OP_XOR,
   SORT_BOOL,
   SORT_INT,
 } from "./ast";
-import { shiftVars } from "./rewriter";
+import { shiftVars } from "./var-subst";
 
 type SExpr = string | SExpr[];
 
@@ -137,7 +138,7 @@ export const parseSmtlib = (text: string): SmtProblem => {
 
   const parseSort = (sexpr: SExpr) => {
     const sort = sorts.get(expectSymbol(sexpr));
-    if (sort === undefined) throw new SmtUnsupportedError(`unknown sort ${String(sexpr)}`);
+    if (sort === undefined) throw new SmtParseError(`unknown sort ${String(sexpr)}`);
     return sort;
   };
 
@@ -149,11 +150,61 @@ export const parseSmtlib = (text: string): SmtProblem => {
     return undefined;
   };
 
+  // Checks the sorts and the arity of an application, so the solver only sees well-sorted terms,
+  // and that quantifiers occur only under Boolean connectives.
+  const mkApp = (decl: number, args: number[], sort: number) => {
+    const op = manager.funcDecls[decl].op;
+    const name = manager.funcDecls[decl].name;
+    const argSorts = args.map((arg) => manager.sorts[arg]);
+    const isAll = (expected: number) => argSorts.every((argSort) => argSort === expected);
+    const isArity = (min: number, max: number) => args.length >= min && args.length <= max;
+    const isWellSorted =
+      op === OP_UNINTERPRETED
+        ? argSorts.length === manager.funcDecls[decl].domain.length &&
+          argSorts.every((argSort, index) => argSort === manager.funcDecls[decl].domain[index])
+        : op === OP_AND || op === OP_OR
+          ? isAll(SORT_BOOL)
+          : op === OP_NOT
+            ? isArity(1, 1) && isAll(SORT_BOOL)
+            : op === OP_IMPLIES || op === OP_XOR
+              ? isArity(2, 2) && isAll(SORT_BOOL)
+              : op === OP_ITE
+                ? isArity(3, 3) && argSorts[0] === SORT_BOOL && argSorts[1] === argSorts[2]
+                : op === OP_EQ || op === OP_DISTINCT
+                  ? isArity(2, Infinity) && isAll(argSorts[0])
+                  : op === OP_UMINUS || op === OP_ABS
+                    ? isArity(1, 1) && isAll(SORT_INT)
+                    : op === OP_IDIV ||
+                        op === OP_MOD ||
+                        op === OP_LE ||
+                        op === OP_GE ||
+                        op === OP_LT ||
+                        op === OP_GT
+                      ? isArity(2, 2) && isAll(SORT_INT)
+                      : isArity(1, Infinity) && isAll(SORT_INT);
+    if (!isWellSorted) throw new SmtParseError(`ill-sorted application of ${name}`);
+    const isConnective =
+      op === OP_AND ||
+      op === OP_OR ||
+      op === OP_NOT ||
+      op === OP_IMPLIES ||
+      op === OP_XOR ||
+      ((op === OP_ITE || op === OP_EQ) && argSorts[1] === SORT_BOOL);
+    if (!isConnective && args.some((arg) => manager.hasQuantifierFlags[arg]))
+      throw new SmtUnsupportedError(`a quantifier inside an application of ${name}`);
+    return manager.mkApp(decl, args, sort);
+  };
+
   const mkChain = (op: number, args: number[]) => {
     const pairs: number[] = [];
     for (let index = 0; index + 1 < args.length; index++)
-      pairs.push(manager.mkApp(op, [args[index], args[index + 1]], SORT_BOOL));
-    return pairs.length === 1 ? pairs[0] : manager.mkApp(OP_AND, pairs, SORT_BOOL);
+      pairs.push(mkApp(op, [args[index], args[index + 1]], SORT_BOOL));
+    return pairs.length === 1 ? pairs[0] : mkApp(OP_AND, pairs, SORT_BOOL);
+  };
+
+  const expectBool = (expr: number) => {
+    if (manager.sorts[expr] !== SORT_BOOL) throw new SmtParseError("expected a formula");
+    return expr;
   };
 
   const parseQuantifier = (list: SExpr[], isForall: boolean) => {
@@ -182,7 +233,7 @@ export const parseSmtlib = (text: string): SmtProblem => {
       }
       bodySExpr = annotated[1];
     }
-    const body = parseTerm(bodySExpr);
+    const body = expectBool(parseTerm(bodySExpr));
     scopes.pop();
     depth -= varSorts.length;
     return manager.mkQuantifier({ isForall, sorts: varSorts, body, patterns, weight, qid });
@@ -210,10 +261,8 @@ export const parseSmtlib = (text: string): SmtProblem => {
     const chainable = CHAINABLE_OPS.get(name);
     if (chainable !== undefined) return mkChain(chainable, args);
     if (name === "-")
-      return args.length === 1
-        ? manager.mkApp(OP_UMINUS, args, SORT_INT)
-        : manager.mkApp(OP_SUB, args, SORT_INT);
-    if (name === "+") return manager.mkApp(OP_ADD, args, SORT_INT);
+      return args.length === 1 ? mkApp(OP_UMINUS, args, SORT_INT) : mkApp(OP_SUB, args, SORT_INT);
+    if (name === "+") return mkApp(OP_ADD, args, SORT_INT);
     const op = BUILTIN_OPS.get(name);
     if (op !== undefined) {
       const sort =
@@ -222,11 +271,11 @@ export const parseSmtlib = (text: string): SmtProblem => {
           : op === OP_MUL || op === OP_IDIV || op === OP_MOD || op === OP_ABS
             ? SORT_INT
             : SORT_BOOL;
-      return manager.mkApp(op, args, sort);
+      return mkApp(op, args, sort);
     }
     const decl = funcs.get(name);
-    if (decl === undefined) throw new SmtUnsupportedError(`unknown function ${name}`);
-    return manager.mkApp(decl, args, manager.funcDecls[decl].range);
+    if (decl === undefined) throw new SmtParseError(`unknown function ${name}`);
+    return mkApp(decl, args, manager.funcDecls[decl].range);
   };
 
   const parseTerm = (sexpr: SExpr): number => {
@@ -238,7 +287,7 @@ export const parseSmtlib = (text: string): SmtProblem => {
       if (binding !== undefined)
         return binding.isBoundVar
           ? manager.mkVar(depth - 1 - binding.depth, binding.sort)
-          : shiftVars(manager, binding.expr, depth - binding.depth);
+          : shiftVars(manager, binding.expr, 0, depth - binding.depth, 0);
       return parseApp(sexpr, []);
     }
     const head = sexpr[0];
@@ -260,7 +309,7 @@ export const parseSmtlib = (text: string): SmtProblem => {
       const domain = name === "declare-fun" ? expectList(list[2]).map(parseSort) : [];
       const range = parseSort(name === "declare-fun" ? list[3] : list[2]);
       funcs.set(expectSymbol(list[1]), manager.mkFuncDecl(expectSymbol(list[1]), domain, range));
-    } else if (name === "assert") assertions.push(parseTerm(list[1]));
+    } else if (name === "assert") assertions.push(expectBool(parseTerm(list[1])));
     else if (name === "check-sat") {
       hasCheckSat = true;
       break;

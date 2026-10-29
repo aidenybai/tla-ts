@@ -1,11 +1,6 @@
 // Ported from Z3 (src/smt/smt_enode.h, src/smt/smt_eq_justification.h, src/smt/smt_justification.h),
 // MIT license, see z3-license.txt. E-graph nodes and the justifications for their equalities.
 
-export const EQ_AXIOM = 0;
-export const EQ_CONGRUENCE = 1;
-export const EQ_EQUATION = 2;
-export const EQ_JUSTIFICATION = 3;
-
 export interface Antecedents {
   markLiteral(literal: number): void;
   markEq(first: Enode, second: Enode): void;
@@ -19,40 +14,13 @@ export abstract class Justification {
 }
 
 // eq_justification: why two nodes on a transitivity branch are equal.
-export interface EqJustification {
-  kind: number;
-  literal: number;
-  isCommutative: boolean;
-  justification: Justification | null;
-}
+export type EqJustification =
+  | { kind: "axiom" }
+  | { kind: "congruence"; isCommutative: boolean }
+  | { kind: "equation"; literal: number }
+  | { kind: "justification"; justification: Justification };
 
-export const AXIOM_EQ_JUSTIFICATION: EqJustification = {
-  kind: EQ_AXIOM,
-  literal: -1,
-  isCommutative: false,
-  justification: null,
-};
-
-export const mkLiteralEqJustification = (literal: number): EqJustification => ({
-  kind: EQ_EQUATION,
-  literal,
-  isCommutative: false,
-  justification: null,
-});
-
-export const mkCongruenceEqJustification = (isCommutative: boolean): EqJustification => ({
-  kind: EQ_CONGRUENCE,
-  literal: -1,
-  isCommutative,
-  justification: null,
-});
-
-export const mkJustificationEqJustification = (justification: Justification): EqJustification => ({
-  kind: EQ_JUSTIFICATION,
-  literal: -1,
-  isCommutative: false,
-  justification,
-});
+export const AXIOM_EQ_JUSTIFICATION: EqJustification = { kind: "axiom" };
 
 export class Enode {
   root: Enode = this;

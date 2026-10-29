@@ -2,14 +2,7 @@
 // First-UIP conflict resolution with lemma minimization. Equalities in a conflict are explained
 // by walking the transitivity branches of the E-graph down to literals.
 import type { Clause, Context } from "./context";
-import {
-  EQ_CONGRUENCE,
-  EQ_EQUATION,
-  EQ_JUSTIFICATION,
-  Enode,
-  EqJustification,
-  Justification,
-} from "./enode";
+import { Enode, EqJustification, Justification } from "./enode";
 
 export class ConflictResolution {
   private antecedents: number[] = [];
@@ -68,10 +61,10 @@ export class ConflictResolution {
   }
 
   private eqJustificationToLiterals(lhs: Enode, rhs: Enode, justification: EqJustification) {
-    if (justification.kind === EQ_EQUATION) this.antecedents.push(justification.literal);
-    else if (justification.kind === EQ_JUSTIFICATION && justification.justification !== null)
+    if (justification.kind === "equation") this.antecedents.push(justification.literal);
+    else if (justification.kind === "justification")
       this.markJustification(justification.justification);
-    else if (justification.kind === EQ_CONGRUENCE) {
+    else if (justification.kind === "congruence") {
       if (justification.isCommutative) {
         this.markEq(lhs.args[0], rhs.args[1]);
         this.markEq(lhs.args[1], rhs.args[0]);

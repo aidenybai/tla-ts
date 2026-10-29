@@ -1,33 +1,52 @@
-// Ported from Z3 (src/smt/smt_quantifier.cpp, src/smt/fingerprints.cpp), MIT license, see
-// z3-license.txt. Z3's default quantifier plugin without model-based instantiation: patterns go to
-// an eager matcher, except that a quantifier with only multi-patterns keeps one of them eager and
-// sends the rest to a lazy matcher that runs in the final check.
-import { FC_CONTINUE, FC_DONE, type Context, type QuantifierManager } from "./context";
+// Ported from Z3 (src/smt/smt_quantifier.cpp), MIT license, see
+// z3-license.txt. Z3's default quantifier plugin: patterns go to an eager matcher, except that a
+// quantifier with only multi-patterns keeps one of them eager and sends the rest to a lazy matcher
+// that runs in the final check. With MBQI, the model finder and the model checker turn candidate
+// models into instances.
+import {
+  CHECK_MODEL_RESTART,
+  CHECK_MODEL_SAT,
+  CHECK_MODEL_UNKNOWN,
+  FC_CONTINUE,
+  FC_DONE,
+  type Context,
+  type QuantifierManager,
+} from "./context";
 import { Mam } from "./e-matching";
 import type { Enode } from "./enode";
+import { FingerprintSet } from "./fingerprints";
+import { ModelChecker } from "./model-checker";
+import { ModelFinder } from "./model-finder";
+import type { ProtoModel } from "./proto-model";
 import { QiQueue } from "./qi-queue";
 
 const QI_MAX_EAGER_MULTIPATTERNS = 0;
 const QI_MAX_LAZY_MULTIPATTERN_MATCHING = 2;
 
 export class DefaultQuantifierManager implements QuantifierManager {
-  private quantifiers: number[] = [];
+  readonly quantifiers: number[] = [];
   private generations = new Map<number, number>();
   private qiQueue: QiQueue;
   private mam: Mam;
   private lazyMam: Mam;
-  private fingerprints = new Set<string>();
-  private fingerprintTrail: string[] = [];
-  private fingerprintScopes: number[] = [];
+  private fingerprints = new FingerprintSet();
   private isActive = false;
   private lazyMatchingIndex = 0;
+  private modelFinder: ModelFinder | null = null;
+  private modelChecker: ModelChecker | null = null;
 
-  constructor(private context: Context) {
+  constructor(
+    private context: Context,
+    isMbqi: boolean,
+  ) {
     this.qiQueue = new QiQueue(context);
     const onMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) =>
       this.addInstance(quantifier, bindings, maxGeneration);
     this.mam = new Mam(context, onMatch);
     this.lazyMam = new Mam(context, onMatch);
+    if (!isMbqi) return;
+    this.modelFinder = new ModelFinder(context.manager, context);
+    this.modelChecker = new ModelChecker(context, this.modelFinder, this, context.deadline);
   }
 
   getNumInstances() {
@@ -37,6 +56,7 @@ export class DefaultQuantifierManager implements QuantifierManager {
   add(quantifier: number, generation: number) {
     this.quantifiers.push(quantifier);
     this.generations.set(quantifier, generation);
+    this.modelFinder?.registerQuantifier(quantifier);
   }
 
   del(quantifier: number) {
@@ -78,19 +98,17 @@ export class DefaultQuantifierManager implements QuantifierManager {
   }
 
   push() {
+    this.modelFinder?.pushScope();
     this.qiQueue.push();
-    this.fingerprintScopes.push(this.fingerprintTrail.length);
+    this.fingerprints.push();
   }
 
   pop(numScopes: number) {
     this.mam.popScope();
     this.lazyMam.popScope();
+    this.modelFinder?.popScope(numScopes);
     this.qiQueue.pop(numScopes);
-    const limit = this.fingerprintScopes[this.fingerprintScopes.length - numScopes];
-    for (let index = this.fingerprintTrail.length - 1; index >= limit; index--)
-      this.fingerprints.delete(this.fingerprintTrail[index]);
-    this.fingerprintTrail.length = limit;
-    this.fingerprintScopes.length -= numScopes;
+    this.fingerprints.pop(numScopes);
   }
 
   canPropagate() {
@@ -102,14 +120,10 @@ export class DefaultQuantifierManager implements QuantifierManager {
     this.qiQueue.instantiate();
   }
 
-  private addInstance(quantifier: number, bindings: Enode[], maxGeneration: number) {
+  addInstance(quantifier: number, bindings: Enode[], maxGeneration: number) {
     const generation = Math.max(maxGeneration, this.getGeneration(quantifier));
     const roots = bindings.map((binding) => binding.root);
-    let key = `${quantifier}`;
-    for (const root of roots) key += `:${root.owner}`;
-    if (this.fingerprints.has(key)) return;
-    this.fingerprints.add(key);
-    this.fingerprintTrail.push(key);
+    if (!this.fingerprints.insert(quantifier, roots)) return;
     this.qiQueue.insert(quantifier, roots, generation);
   }
 
@@ -130,8 +144,28 @@ export class DefaultQuantifierManager implements QuantifierManager {
 
   initSearchEh() {
     this.lazyMatchingIndex = 0;
+    this.modelChecker?.initSearchEh();
     this.qiQueue.initSearchEh();
   }
 
-  restartEh() {}
+  restartEh() {
+    this.modelFinder?.restartEh();
+    this.modelChecker?.restartEh();
+  }
+
+  isModelBased() {
+    return this.modelChecker !== null;
+  }
+
+  adjustModel(model: ProtoModel) {
+    this.modelFinder?.fixModel(model);
+  }
+
+  checkModel(model: ProtoModel, root2value: Map<Enode, number>) {
+    const checker = this.modelChecker;
+    if (this.quantifiers.length === 0) return CHECK_MODEL_SAT;
+    if (checker === null) return CHECK_MODEL_UNKNOWN;
+    if (checker.check(model, root2value)) return CHECK_MODEL_SAT;
+    return checker.hasNewInstances() ? CHECK_MODEL_RESTART : CHECK_MODEL_UNKNOWN;
+  }
 }

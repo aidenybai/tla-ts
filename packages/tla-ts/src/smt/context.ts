@@ -10,7 +10,6 @@ import {
   KIND_QUANTIFIER,
   KIND_VAR,
   OP_AND,
-  OP_DISTINCT,
   OP_EQ,
   OP_IMPLIES,
   OP_ITE,
@@ -19,13 +18,11 @@ import {
   OP_XOR,
   SORT_BOOL,
 } from "./ast";
-import { SmtUnsupportedError } from "../errors";
 import { CaseSplitQueue } from "./case-split-queue";
 import { CgTable } from "./cg-table";
 import { ConflictResolution } from "./conflict-resolution";
 import {
   AXIOM_EQ_JUSTIFICATION,
-  EQ_JUSTIFICATION,
   Enode,
   EqConflictJustification,
   EqJustification,
@@ -34,9 +31,9 @@ import {
   Justification,
   MpIffJustification,
   UnitResolutionJustification,
-  mkCongruenceEqJustification,
-  mkLiteralEqJustification,
 } from "./enode";
+import { mkModel } from "./model-generator";
+import type { ProtoModel } from "./proto-model";
 import { RelevancyPropagator } from "./relevancy";
 import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { Rewriter } from "./rewriter";
@@ -101,7 +98,18 @@ export interface Theory {
   restartEh(): void;
   initSearchEh(): void;
   getEnode(thVar: number): Enode;
+  initModel(model: ProtoModel): void;
+  mkValue(node: Enode): number | undefined;
 }
+
+export const CHECK_MODEL_SAT = 0;
+export const CHECK_MODEL_UNKNOWN = 1;
+export const CHECK_MODEL_RESTART = 2;
+
+// The reasons a search may stop without an answer that MBQI cares about.
+export const FAILURE_OK = 0;
+export const FAILURE_THEORY = 1;
+export const FAILURE_QUANTIFIERS = 2;
 
 export interface QuantifierManager {
   add(quantifier: number, generation: number): void;
@@ -118,6 +126,9 @@ export interface QuantifierManager {
   restartEh(): void;
   hasQuantifiers(): boolean;
   getGeneration(quantifier: number): number;
+  isModelBased(): boolean;
+  adjustModel(model: ProtoModel): void;
+  checkModel(model: ProtoModel, root2value: Map<Enode, number>): number;
 }
 
 interface NewEq {
@@ -195,10 +206,11 @@ export class Context {
   private finalCheckIndex = 0;
   private r1ParentGenerations = new Map<Enode, number>();
   private isCanceled = false;
+  lastSearchFailure = FAILURE_OK;
 
   constructor(
     readonly manager: AstManager,
-    private deadline: number,
+    readonly deadline: number,
   ) {
     this.rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: KERNEL_ARITH_OPTIONS });
     this.conflictResolution = new ConflictResolution(this);
@@ -417,8 +429,7 @@ export class Context {
     if (!isSuppressingArgs)
       for (const arg of manager.args[expr]) {
         const argNode = this.exprToEnode[arg];
-        if (argNode === undefined)
-          throw new SmtUnsupportedError("an argument was not internalized");
+        if (argNode === undefined) throw new Error("an argument was not internalized");
         args.push(argNode);
       }
     const isEq = !isSuppressingArgs && manager.getOp(expr) === OP_EQ;
@@ -447,7 +458,10 @@ export class Context {
         if (result.node !== node) {
           node.cg = result.node;
           if (!isEq) this.mergeCgcGenerations(node, generation, result.node);
-          this.pushEq(node, result.node, mkCongruenceEqJustification(result.isCommutative));
+          this.pushEq(node, result.node, {
+            kind: "congruence",
+            isCommutative: result.isCommutative,
+          });
         }
       }
       if (!isEq) {
@@ -486,9 +500,9 @@ export class Context {
     node.isMergeTf = true;
     const value = this.assignment[boolVar * 2];
     if (value === L_TRUE && node.root !== this.trueEnode.root)
-      this.pushEq(node, this.trueEnode, mkLiteralEqJustification(boolVar * 2));
+      this.pushEq(node, this.trueEnode, { kind: "equation", literal: boolVar * 2 });
     else if (value === L_FALSE && node.root !== this.falseEnode.root)
-      this.pushEq(node, this.falseEnode, mkLiteralEqJustification(boolVar * 2 + 1));
+      this.pushEq(node, this.falseEnode, { kind: "equation", literal: boolVar * 2 + 1 });
   }
 
   private setEnodeFlag(boolVar: number, isNewVar: boolean) {
@@ -576,8 +590,6 @@ export class Context {
 
   private internalizeRec(expr: number, isGateContext: boolean) {
     const manager = this.manager;
-    if (manager.kinds[expr] === KIND_VAR)
-      throw new SmtUnsupportedError("formulas should not contain unbound variables");
     if (manager.sorts[expr] === SORT_BOOL) this.internalizeFormula(expr, isGateContext);
     else this.internalizeTerm(expr);
   }
@@ -606,8 +618,6 @@ export class Context {
     const op = manager.getOp(expr);
     if (op === OP_EQ && !manager.isBool(manager.args[expr][0]))
       this.internalizeEq(expr, isGateContext);
-    else if (op === OP_DISTINCT)
-      throw new SmtUnsupportedError("distinct should have been simplified");
     else if (manager.kinds[expr] === KIND_APP && this.internalizeTheoryAtom(expr, isGateContext))
       return;
     else if (manager.kinds[expr] === KIND_QUANTIFIER) this.internalizeQuantifier(expr);
@@ -646,8 +656,6 @@ export class Context {
   }
 
   private internalizeQuantifier(expr: number) {
-    const data = this.manager.getQuantifier(expr);
-    if (!data.isForall) throw new SmtUnsupportedError("internalization of exists is not supported");
     const boolVar = this.mkBoolVar(expr);
     const generation = this.cachedGeneration.get(expr) ?? this.generation;
     this.isQuantifierFlags[boolVar] = true;
@@ -1092,7 +1100,7 @@ export class Context {
           const lhs = this.exprToEnode[args[0]];
           const rhs = this.exprToEnode[args[1]];
           if (lhs !== undefined && rhs !== undefined) {
-            if (value === L_TRUE) this.addEq(lhs, rhs, mkLiteralEqJustification(literal));
+            if (value === L_TRUE) this.addEq(lhs, rhs, { kind: "equation", literal: literal });
             else if (!this.addDiseq(lhs, rhs) && !this.isInconsistent())
               this.setConflict(new EqPropagationJustification(lhs, rhs), boolVar * 2 + 1);
           }
@@ -1112,11 +1120,10 @@ export class Context {
     if (node === undefined) return;
     const isNegative = value === L_FALSE;
     if (node.isMergeTf)
-      this.addEq(
-        node,
-        isNegative ? this.falseEnode : this.trueEnode,
-        mkLiteralEqJustification(boolVar * 2 + (isNegative ? 1 : 0)),
-      );
+      this.addEq(node, isNegative ? this.falseEnode : this.trueEnode, {
+        kind: "equation",
+        literal: boolVar * 2 + (isNegative ? 1 : 0),
+      });
     const root = node.root;
     if (root === this.trueEnode || root === this.falseEnode) return;
     if (
@@ -1270,7 +1277,7 @@ export class Context {
     const r2 = n2.root;
     const r1 = n1.root;
     if (r1.thVar < 0 && r2.thVar < 0) return;
-    const isFromTheory = justification.kind === EQ_JUSTIFICATION;
+    const isFromTheory = justification.kind === "justification";
     const v2 = this.getClosestVar(n2);
     const v1 = this.getClosestVar(n1);
     if (v2 >= 0 && v1 >= 0) {
@@ -1405,7 +1412,10 @@ export class Context {
       parent.cg = result.node;
       this.mergeCgcGenerations(parent, parentGeneration, result.node);
       if (result.node.root !== parent.root)
-        this.pushEq(parent, result.node, mkCongruenceEqJustification(result.isCommutative));
+        this.pushEq(parent, result.node, {
+          kind: "congruence",
+          isCommutative: result.isCommutative,
+        });
     }
     this.r1ParentGenerations.clear();
   }
@@ -1730,16 +1740,19 @@ export class Context {
     if (status !== FC_DONE) return status;
     const oldIndex = this.finalCheckIndex;
     let result = FC_DONE;
+    let failure = FAILURE_OK;
     do {
-      const check =
-        this.finalCheckIndex === 0
-          ? (this.theory?.finalCheckEh() ?? FC_DONE)
-          : (qmanager?.finalCheckEh(true) ?? FC_DONE);
+      const isTheory = this.finalCheckIndex === 0;
+      const check = isTheory
+        ? (this.theory?.finalCheckEh() ?? FC_DONE)
+        : (qmanager?.finalCheckEh(true) ?? FC_DONE);
+      if (isTheory && check === FC_GIVEUP) failure = FAILURE_THEORY;
       this.finalCheckIndex = (this.finalCheckIndex + 1) % 2;
       if (check === FC_CONTINUE) return FC_CONTINUE;
       if (check === FC_GIVEUP) result = FC_GIVEUP;
     } while (this.finalCheckIndex !== oldIndex);
     if (this.canPropagate()) return FC_CONTINUE;
+    if (result === FC_GIVEUP && failure !== FAILURE_OK) this.lastSearchFailure = failure;
     return result;
   }
 
@@ -1766,7 +1779,83 @@ export class Context {
     }
   }
 
-  // Returns L_TRUE only when every quantifier is absent and the theories are complete.
+  // mk_proto_model: the model of the current assignment, which the quantifier manager adjusts.
+  mkProtoModel() {
+    const generated = mkModel(this);
+    this.qmanager?.adjustModel(generated.model);
+    generated.model.completePartialFuncs(false);
+    generated.model.cleanup();
+    return generated;
+  }
+
+  // validate_model: every relevant ground literal of the assignment holds in the model.
+  validateModel(model: ProtoModel) {
+    for (const literal of this.assignedLiterals) {
+      const atom = this.boolVar2Expr[literal >> 1];
+      if (!this.isRelevant(atom) || !this.manager.isGround(atom)) continue;
+      const value = model.eval(literal & 1 ? this.manager.mkNot(atom) : atom, false);
+      if (value === this.manager.falseExpr) return false;
+    }
+    return true;
+  }
+
+  // restart: decides whether the search goes on after a bounded search. A candidate model of a
+  // problem with quantifiers goes to model-based quantifier instantiation, which may add instances
+  // and force a restart.
+  private restart(status: number, currentLevel: number): number | undefined {
+    const qmanager = this.qmanager;
+    let isForcedRestart = false;
+    if (this.lastSearchFailure !== FAILURE_OK) {
+      if (
+        this.lastSearchFailure !== FAILURE_THEORY ||
+        status === L_FALSE ||
+        this.isInconsistent() ||
+        qmanager === null ||
+        !qmanager.hasQuantifiers() ||
+        !qmanager.isModelBased()
+      )
+        return status;
+      const generated = this.mkProtoModel();
+      if (qmanager.checkModel(generated.model, generated.root2value) !== CHECK_MODEL_RESTART)
+        return status;
+      this.lastSearchFailure = FAILURE_OK;
+      status = L_UNDEF;
+      isForcedRestart = true;
+    }
+    if (status === L_FALSE) return L_FALSE;
+    if (status === L_TRUE && !qmanager?.hasQuantifiers()) return L_TRUE;
+    if (status === L_TRUE && qmanager !== null) {
+      const generated = this.mkProtoModel();
+      const result = qmanager.isModelBased()
+        ? qmanager.checkModel(generated.model, generated.root2value)
+        : CHECK_MODEL_UNKNOWN;
+      if (result === CHECK_MODEL_SAT) return L_TRUE;
+      if (result === CHECK_MODEL_UNKNOWN) {
+        this.lastSearchFailure = FAILURE_QUANTIFIERS;
+        return L_UNDEF;
+      }
+    }
+    // inc_limits with RS_IN_OUT_GEOMETRIC.
+    if (this.numConflictsSinceRestart >= this.restartThreshold) {
+      this.restartThreshold = Math.trunc(this.restartThreshold * RESTART_FACTOR);
+      if (this.restartThreshold > this.restartOuterThreshold) {
+        this.restartThreshold = RESTART_INITIAL;
+        this.restartOuterThreshold = Math.trunc(this.restartOuterThreshold * RESTART_FACTOR);
+      }
+    }
+    this.numConflictsSinceRestart = 0;
+    if (isForcedRestart || status === L_TRUE || this.agility < RESTART_AGILITY_THRESHOLD) {
+      if (this.scopeLevel > currentLevel) this.popScope(this.scopeLevel - currentLevel);
+      if (!this.isInconsistent()) this.theory?.restartEh();
+      if (!this.isInconsistent()) qmanager?.restartEh();
+      if (this.isInconsistent()) {
+        this.resolveConflict();
+        return L_FALSE;
+      }
+    }
+    return undefined;
+  }
+
   search() {
     if (this.isInconsistent()) return L_FALSE;
     this.theory?.initSearchEh();
@@ -1776,33 +1865,14 @@ export class Context {
     this.restartOuterThreshold = RESTART_INITIAL;
     this.agility = 0;
     this.finalCheckIndex = 0;
+    this.lastSearchFailure = FAILURE_OK;
     this.isSearching = true;
     const currentLevel = this.scopeLevel;
     for (;;) {
       const status = this.boundedSearch();
-      if (status === L_FALSE) return L_FALSE;
-      if (this.checkCanceled()) return L_UNDEF;
-      if (status === L_TRUE) return this.qmanager?.hasQuantifiers() ? L_UNDEF : L_TRUE;
-      if (status === L_UNDEF && this.numConflictsSinceRestart <= this.restartThreshold)
-        return L_UNDEF;
-      // inc_limits with RS_IN_OUT_GEOMETRIC.
-      if (this.numConflictsSinceRestart >= this.restartThreshold) {
-        this.restartThreshold = Math.trunc(this.restartThreshold * RESTART_FACTOR);
-        if (this.restartThreshold > this.restartOuterThreshold) {
-          this.restartThreshold = RESTART_INITIAL;
-          this.restartOuterThreshold = Math.trunc(this.restartOuterThreshold * RESTART_FACTOR);
-        }
-      }
-      this.numConflictsSinceRestart = 0;
-      if (this.agility < RESTART_AGILITY_THRESHOLD) {
-        if (this.scopeLevel > currentLevel) this.popScope(this.scopeLevel - currentLevel);
-        this.theory?.restartEh();
-        this.qmanager?.restartEh();
-        if (this.isInconsistent()) {
-          this.resolveConflict();
-          return L_FALSE;
-        }
-      }
+      if (status !== L_FALSE && this.checkCanceled()) return L_UNDEF;
+      const result = this.restart(status, currentLevel);
+      if (result !== undefined) return result;
     }
   }
 

@@ -20,6 +20,7 @@ import {
   SORT_BOOL,
   SORT_INT,
 } from "./ast";
+import { getGcd } from "./rational";
 
 export interface ArithRewriterOptions {
   // poly_rewriter's som: distributes products over sums.
@@ -71,17 +72,6 @@ const KIND_LE = 0;
 const KIND_GE = 1;
 const KIND_EQ = 2;
 
-const getGcd = (first: number, second: number): number => {
-  let left = Math.abs(first);
-  let right = Math.abs(second);
-  while (right !== 0) {
-    const remainder = left % right;
-    left = right;
-    right = remainder;
-  }
-  return left;
-};
-
 const getInverse = (kind: number) =>
   kind === KIND_LE ? KIND_GE : kind === KIND_GE ? KIND_LE : KIND_EQ;
 
@@ -92,16 +82,8 @@ export class ArithRewriter {
     private reduce: Reduce,
   ) {}
 
-  private isNumeral(expr: number) {
-    return this.manager.getOp(expr) === OP_NUM;
-  }
-
-  private getValue(expr: number) {
-    return this.manager.values[expr];
-  }
-
   private isZero(expr: number) {
-    return this.isNumeral(expr) && this.getValue(expr) === 0;
+    return this.manager.isNumeral(expr) && this.manager.values[expr] === 0;
   }
 
   private isAdd(expr: number) {
@@ -116,10 +98,6 @@ export class ArithRewriter {
     return this.manager.kinds[expr] === KIND_APP && ARITH_OPS.has(this.manager.getOp(expr));
   }
 
-  private mkNumeral(value: number) {
-    return this.manager.mkNumeral(value === 0 ? 0 : value);
-  }
-
   private getMonomials(expr: number) {
     return this.isAdd(expr) ? this.manager.args[expr] : [expr];
   }
@@ -127,13 +105,15 @@ export class ArithRewriter {
   // get_power_product: the monomial without its coefficient.
   private getPowerProduct(expr: number) {
     const args = this.manager.args[expr];
-    return this.isMul(expr) && args.length === 2 && this.isNumeral(args[0]) ? args[1] : expr;
+    return this.isMul(expr) && args.length === 2 && this.manager.isNumeral(args[0])
+      ? args[1]
+      : expr;
   }
 
   private getCoefficient(expr: number) {
     const args = this.manager.args[expr];
-    return this.isMul(expr) && args.length === 2 && this.isNumeral(args[0])
-      ? this.getValue(args[0])
+    return this.isMul(expr) && args.length === 2 && this.manager.isNumeral(args[0])
+      ? this.manager.values[args[0]]
       : 1;
   }
 
@@ -143,9 +123,9 @@ export class ArithRewriter {
     if (manager.kinds[expr] !== KIND_APP || !ARITH_OPS.has(manager.getOp(expr))) return expr;
     if (this.isMul(expr)) {
       const args = manager.args[expr];
-      return this.isNumeral(args[0]) ? args[1] : expr;
+      return this.manager.isNumeral(args[0]) ? args[1] : expr;
     }
-    return this.isNumeral(expr) ? -1 : expr;
+    return this.manager.isNumeral(expr) ? -1 : expr;
   }
 
   private sortMonomials(monomials: number[], start: number) {
@@ -156,22 +136,22 @@ export class ArithRewriter {
   }
 
   mkAddApp(args: number[]) {
-    if (args.length === 0) return this.mkNumeral(0);
+    if (args.length === 0) return this.manager.mkNumeral(0);
     if (args.length === 1) return args[0];
     return this.manager.mkApp(OP_ADD, args, SORT_INT);
   }
 
   mkMulApp(args: number[]): number {
-    if (args.length === 0) return this.mkNumeral(1);
+    if (args.length === 0) return this.manager.mkNumeral(1);
     if (args.length === 1) return args[0];
-    if (args.length > 2 && this.isNumeral(args[0]))
-      return this.mkMulAppWith(this.getValue(args[0]), this.mkMulApp(args.slice(1)));
+    if (args.length > 2 && this.manager.isNumeral(args[0]))
+      return this.mkMulAppWith(this.manager.values[args[0]], this.mkMulApp(args.slice(1)));
     return this.manager.mkApp(OP_MUL, args, SORT_INT);
   }
 
   private mkMulAppWith(coefficient: number, arg: number) {
     if (coefficient === 1 || this.isZero(arg)) return arg;
-    return this.mkMulApp([this.mkNumeral(coefficient), arg]);
+    return this.mkMulApp([this.manager.mkNumeral(coefficient), arg]);
   }
 
   // The rewrites return undefined when they do not apply, like BR_FAILED.
@@ -195,9 +175,9 @@ export class ArithRewriter {
     const visited = new Set<number>();
     const multiple = new Set<number>();
     args.forEach((arg, index) => {
-      if (this.isNumeral(arg)) {
+      if (this.manager.isNumeral(arg)) {
         numCoeffs++;
-        constant += this.getValue(arg);
+        constant += this.manager.values[arg];
         isOrdered = !isSortSums || index === 0;
       } else if (isSortSums && isOrdered) {
         if (previous !== -1 && this.getOrdinal(arg) < this.getOrdinal(previous)) isOrdered = false;
@@ -210,15 +190,15 @@ export class ArithRewriter {
     if (multiple.size > 0) {
       const coeffs = new Map<number, number>();
       for (const arg of args) {
-        if (this.isNumeral(arg)) continue;
+        if (this.manager.isNumeral(arg)) continue;
         const product = this.getPowerProduct(arg);
         if (multiple.has(product))
           coeffs.set(product, (coeffs.get(product) ?? 0) + this.getCoefficient(arg));
       }
-      const newArgs: number[] = constant === 0 ? [] : [this.mkNumeral(constant)];
+      const newArgs: number[] = constant === 0 ? [] : [this.manager.mkNumeral(constant)];
       const copied = new Set<number>();
       for (const arg of args) {
-        if (this.isNumeral(arg)) continue;
+        if (this.manager.isNumeral(arg)) continue;
         const product = this.getPowerProduct(arg);
         if (!multiple.has(product)) newArgs.push(arg);
         else if (!copied.has(product)) {
@@ -233,11 +213,11 @@ export class ArithRewriter {
     }
     if (isOrdered) {
       if (numCoeffs === 0) return undefined;
-      if (numCoeffs === 1 && this.isNumeral(args[0]) && this.getValue(args[0]) !== 0)
+      if (numCoeffs === 1 && this.manager.isNumeral(args[0]) && this.manager.values[args[0]] !== 0)
         return undefined;
     }
-    const newArgs: number[] = constant === 0 ? [] : [this.mkNumeral(constant)];
-    for (const arg of args) if (!this.isNumeral(arg)) newArgs.push(arg);
+    const newArgs: number[] = constant === 0 ? [] : [this.manager.mkNumeral(constant)];
+    for (const arg of args) if (!this.manager.isNumeral(arg)) newArgs.push(arg);
     return this.mkAddApp(isOrdered ? newArgs : this.sortMonomials(newArgs, constant === 0 ? 0 : 1));
   }
 
@@ -245,8 +225,8 @@ export class ArithRewriter {
     if (args.length < 2) return undefined;
     const isFlatMonomial =
       args.length === 2 &&
-      this.isNumeral(args[0]) &&
-      !(this.isMul(args[1]) && this.isNumeral(this.manager.args[args[1]][0]));
+      this.manager.isNumeral(args[0]) &&
+      !(this.isMul(args[1]) && this.manager.isNumeral(this.manager.args[args[1]][0]));
     if (isFlatMonomial || !args.some((arg) => this.isMul(arg))) return this.mkNflatMul(args);
     const flat: number[] = [];
     const collect = (arg: number) => {
@@ -261,9 +241,9 @@ export class ArithRewriter {
     const manager = this.manager;
     if (
       args.length === 2 &&
-      this.isNumeral(args[0]) &&
-      this.getValue(args[0]) !== 1 &&
-      this.getValue(args[0]) !== 0 &&
+      this.manager.isNumeral(args[0]) &&
+      this.manager.values[args[0]] !== 1 &&
+      this.manager.values[args[0]] !== 0 &&
       !this.isArithTerm(args[1])
     )
       return undefined;
@@ -272,22 +252,22 @@ export class ArithRewriter {
     let numAdd = 0;
     let factor = -1;
     for (const arg of args) {
-      if (this.isNumeral(arg)) {
+      if (this.manager.isNumeral(arg)) {
         numCoeffs++;
-        coefficient *= this.getValue(arg);
+        coefficient *= this.manager.values[arg];
       } else {
         factor = arg;
         if (this.isAdd(arg)) numAdd++;
       }
     }
-    if (numCoeffs === args.length || coefficient === 0) return this.mkNumeral(coefficient);
+    if (numCoeffs === args.length || coefficient === 0) return this.manager.mkNumeral(coefficient);
     if (numCoeffs === args.length - 1) {
       if (coefficient === 1) return factor;
       if (this.isMul(factor)) {
         const factorArgs = manager.args[factor];
-        if (factorArgs.length !== 2 || !this.isNumeral(factorArgs[0])) return undefined;
+        if (factorArgs.length !== 2 || !this.manager.isNumeral(factorArgs[0])) return undefined;
         return this.reduce(
-          this.mkMulAppWith(coefficient * this.getValue(factorArgs[0]), factorArgs[1]),
+          this.mkMulAppWith(coefficient * this.manager.values[factorArgs[0]], factorArgs[1]),
           1,
         );
       }
@@ -302,13 +282,16 @@ export class ArithRewriter {
         2,
       );
     }
-    if (numCoeffs > 1 || (numCoeffs === 1 && !this.isNumeral(args[0])))
+    if (numCoeffs > 1 || (numCoeffs === 1 && !this.manager.isNumeral(args[0])))
       return this.reduce(
-        this.mkMulAppWith(coefficient, this.mkMulApp(args.filter((arg) => !this.isNumeral(arg)))),
+        this.mkMulAppWith(
+          coefficient,
+          this.mkMulApp(args.filter((arg) => !this.manager.isNumeral(arg))),
+        ),
         2,
       );
     if (!this.options.isSom || numAdd === 0) {
-      const factors = args.filter((arg) => !this.isNumeral(arg));
+      const factors = args.filter((arg) => !this.manager.isNumeral(arg));
       const isOrdered = factors.every(
         (arg, index) => index === 0 || this.getOrdinal(arg) >= this.getOrdinal(factors[index - 1]),
       );
@@ -335,7 +318,7 @@ export class ArithRewriter {
 
   mkSub(args: number[]) {
     if (args.length === 1) return args[0];
-    const minusOne = this.mkNumeral(-1);
+    const minusOne = this.manager.mkNumeral(-1);
     const newArgs = [args[0]];
     for (const arg of args.slice(1))
       if (!this.isZero(arg)) newArgs.push(this.mkMulApp([minusOne, arg]));
@@ -343,7 +326,7 @@ export class ArithRewriter {
   }
 
   mkUminus(arg: number) {
-    if (this.isNumeral(arg)) return this.mkNumeral(-this.getValue(arg));
+    if (this.manager.isNumeral(arg)) return this.manager.mkNumeral(-this.manager.values[arg]);
     return this.reduce(this.mkMulAppWith(-1, arg), 1);
   }
 
@@ -369,7 +352,7 @@ export class ArithRewriter {
   }
 
   mkIdiv(left: number, right: number) {
-    if (this.isNumeral(right) && this.getValue(right) === -1)
+    if (this.manager.isNumeral(right) && this.manager.values[right] === -1)
       return this.reduce(this.mkMulAppWith(-1, left), 1);
     return undefined;
   }
@@ -380,7 +363,7 @@ export class ArithRewriter {
       manager.mkApp(
         OP_ITE,
         [
-          this.mkAtom(arg, this.mkNumeral(0), KIND_GE),
+          this.mkAtom(arg, this.manager.mkNumeral(0), KIND_GE),
           arg,
           manager.mkApp(OP_UMINUS, [arg], SORT_INT),
         ],
@@ -405,30 +388,31 @@ export class ArithRewriter {
     let constant = 0;
     let numCoeffs = 0;
     for (const arg of lhsMonomials) {
-      if (this.isNumeral(arg)) {
-        constant += this.getValue(arg);
+      if (this.manager.isNumeral(arg)) {
+        constant += this.manager.values[arg];
         numCoeffs++;
       } else visited.add(this.getPowerProduct(arg));
     }
-    if (isMoving && numCoeffs === 0 && this.isNumeral(rhs)) return undefined;
+    if (isMoving && numCoeffs === 0 && this.manager.isNumeral(rhs)) return undefined;
     for (const arg of rhsMonomials) {
-      if (this.isNumeral(arg)) {
-        constant -= this.getValue(arg);
+      if (this.manager.isNumeral(arg)) {
+        constant -= this.manager.values[arg];
         numCoeffs++;
       } else if (visited.has(this.getPowerProduct(arg))) multiple.add(this.getPowerProduct(arg));
     }
     if (multiple.size === 0 && numCoeffs <= 1) {
-      if (isMoving ? this.isNumeral(rhs) : numCoeffs === 0 || this.isNumeral(rhs)) return undefined;
+      if (isMoving ? this.manager.isNumeral(rhs) : numCoeffs === 0 || this.manager.isNumeral(rhs))
+        return undefined;
     }
     const coeffs = new Map<number, number>();
     for (const arg of lhsMonomials) {
-      if (this.isNumeral(arg)) continue;
+      if (this.manager.isNumeral(arg)) continue;
       const product = this.getPowerProduct(arg);
       if (multiple.has(product))
         coeffs.set(product, (coeffs.get(product) ?? 0) + this.getCoefficient(arg));
     }
     for (const arg of rhsMonomials) {
-      if (this.isNumeral(arg)) continue;
+      if (this.manager.isNumeral(arg)) continue;
       const product = this.getPowerProduct(arg);
       if (multiple.has(product))
         coeffs.set(product, (coeffs.get(product) ?? 0) - this.getCoefficient(arg));
@@ -436,7 +420,7 @@ export class ArithRewriter {
     const newLhs: number[] = [];
     const copied = new Set<number>();
     for (const arg of lhsMonomials) {
-      if (this.isNumeral(arg)) continue;
+      if (this.manager.isNumeral(arg)) continue;
       const product = this.getPowerProduct(arg);
       if (!multiple.has(product)) newLhs.push(arg);
       else if (!copied.has(product)) {
@@ -447,7 +431,7 @@ export class ArithRewriter {
     }
     const newRhs: number[] = [];
     for (const arg of rhsMonomials) {
-      if (this.isNumeral(arg)) continue;
+      if (this.manager.isNumeral(arg)) continue;
       const product = this.getPowerProduct(arg);
       if (multiple.has(product)) continue;
       if (!isMoving) newRhs.push(arg);
@@ -455,7 +439,7 @@ export class ArithRewriter {
         const coefficient = this.getCoefficient(arg);
         if (coefficient === -1) newLhs.push(product);
         else if (coefficient !== 0)
-          newLhs.push(this.mkMulApp([this.mkNumeral(-coefficient), product]));
+          newLhs.push(this.mkMulApp([this.manager.mkNumeral(-coefficient), product]));
       }
     }
     const sortedLhs = isMoving && this.options.isSortSums ? this.sortMonomials(newLhs, 0) : newLhs;
@@ -464,8 +448,8 @@ export class ArithRewriter {
     const isLhsConstant = !isConstantAtRhs && (sortedLhs.length === 0 || value !== 0);
     const isRhsConstant = isConstantAtRhs && (newRhs.length === 0 || value !== 0);
     return {
-      lhs: this.mkAddApp(isLhsConstant ? [this.mkNumeral(value), ...sortedLhs] : sortedLhs),
-      rhs: this.mkAddApp(isRhsConstant ? [this.mkNumeral(value), ...newRhs] : newRhs),
+      lhs: this.mkAddApp(isLhsConstant ? [this.manager.mkNumeral(value), ...sortedLhs] : sortedLhs),
+      rhs: this.mkAddApp(isRhsConstant ? [this.manager.mkNumeral(value), ...newRhs] : newRhs),
     };
   }
 
@@ -482,8 +466,8 @@ export class ArithRewriter {
     let isNegative = false;
     const counts = new Map<number, number>();
     for (const arg of args) {
-      if (this.isNumeral(arg)) {
-        if (this.getValue(arg) < 0) isNegative = !isNegative;
+      if (this.manager.isNumeral(arg)) {
+        if (this.manager.values[arg] < 0) isNegative = !isNegative;
       } else counts.set(arg, (counts.get(arg) ?? 0) + 1);
     }
     if (isNegative) return false;
@@ -495,7 +479,7 @@ export class ArithRewriter {
       let offset = 0;
       let numBase = 0;
       for (const arg of this.manager.args[sum]) {
-        if (this.isNumeral(arg)) offset += this.getValue(arg);
+        if (this.manager.isNumeral(arg)) offset += this.manager.values[arg];
         else if (arg === base) numBase++;
         else return false;
       }
@@ -506,24 +490,25 @@ export class ArithRewriter {
 
   private negateMonomial(expr: number) {
     const manager = this.manager;
-    if (this.isNumeral(expr)) return this.mkNumeral(-this.getValue(expr));
+    if (this.manager.isNumeral(expr)) return this.manager.mkNumeral(-this.manager.values[expr]);
     if (this.isMul(expr)) {
       const args = manager.args[expr];
-      if (!this.isNumeral(args[0])) return this.mkMulApp([this.mkNumeral(-1), expr]);
-      const value = this.getValue(args[0]);
+      if (!this.manager.isNumeral(args[0]))
+        return this.mkMulApp([this.manager.mkNumeral(-1), expr]);
+      const value = this.manager.values[args[0]];
       const rest = args.slice(1);
-      const factors = value === -1 ? rest : [this.mkNumeral(-value), ...rest];
+      const factors = value === -1 ? rest : [this.manager.mkNumeral(-value), ...rest];
       return factors.length === 1 ? factors[0] : manager.mkApp(OP_MUL, factors, SORT_INT);
     }
-    return manager.mkApp(OP_MUL, [this.mkNumeral(-1), expr], SORT_INT);
+    return manager.mkApp(OP_MUL, [this.manager.mkNumeral(-1), expr], SORT_INT);
   }
 
   private getNegatedPolynomial(expr: number) {
     const manager = this.manager;
     const isNegativeMonomial = (term: number) =>
       this.isMul(term) &&
-      this.isNumeral(manager.args[term][0]) &&
-      this.getValue(manager.args[term][0]) < 0;
+      this.manager.isNumeral(manager.args[term][0]) &&
+      this.manager.values[manager.args[term][0]] < 0;
     if (isNegativeMonomial(expr)) return this.negateMonomial(expr);
     if (!this.isAdd(expr) || !isNegativeMonomial(manager.args[expr][0])) return undefined;
     return manager.mkApp(
@@ -536,14 +521,14 @@ export class ArithRewriter {
   // is_separated.
   private getSeparated(left: number, right: number, kind: number) {
     const manager = this.manager;
-    if (kind === KIND_EQ || !this.isNumeral(right)) return undefined;
-    const rightValue = this.getValue(right);
+    if (kind === KIND_EQ || !this.manager.isNumeral(right)) return undefined;
+    const rightValue = this.manager.values[right];
     if (kind === KIND_GE && rightValue === 0 && this.isMul(left) && this.isNonNegative(left))
       return manager.trueExpr;
     let bound = 0;
     let hasBound = true;
     for (const arg of this.getMonomials(left)) {
-      if (this.isNumeral(arg)) bound += this.getValue(arg);
+      if (this.manager.isNumeral(arg)) bound += this.manager.values[arg];
       else if (kind === KIND_LE && this.isNonNegative(arg)) continue;
       else if (kind === KIND_GE) {
         const negated = this.getNegatedPolynomial(arg);
@@ -555,13 +540,15 @@ export class ArithRewriter {
     if (kind === KIND_GE && bound > rightValue) return undefined;
     if (kind === KIND_LE && bound > rightValue) return manager.falseExpr;
     if (kind === KIND_GE && bound < rightValue) return manager.falseExpr;
-    const zero = this.mkNumeral(0);
+    const zero = this.manager.mkNumeral(0);
     if (bound === 0 && this.isMul(left)) {
       const factors: number[] = [];
       this.flattenMul(left, factors);
       return this.reduce(
         manager.mkOr(
-          factors.filter((arg) => !this.isNumeral(arg)).map((arg) => manager.mkEq(arg, zero)),
+          factors
+            .filter((arg) => !this.manager.isNumeral(arg))
+            .map((arg) => manager.mkEq(arg, zero)),
         ),
         2,
       );
@@ -570,7 +557,7 @@ export class ArithRewriter {
     return this.reduce(
       manager.mkAnd(
         manager.args[left]
-          .filter((arg) => !this.isNumeral(arg))
+          .filter((arg) => !this.manager.isNumeral(arg))
           .map((arg) => this.mkAtom(arg, zero, kind)),
       ),
       2,
@@ -583,7 +570,7 @@ export class ArithRewriter {
     if (
       !this.isAdd(inputLeft) &&
       manager.getOp(inputLeft) !== OP_MOD &&
-      this.isNumeral(inputRight)
+      this.manager.isNumeral(inputRight)
     ) {
       const product = this.getPowerProduct(inputLeft);
       const coefficient = this.getCoefficient(inputLeft);
@@ -592,12 +579,13 @@ export class ArithRewriter {
       const kind = isNegative ? getInverse(inputKind) : inputKind;
       if (coefficient === 0 || (!isNegative && scale === 1)) return undefined;
       const quotient =
-        (isNegative ? -this.getValue(inputRight) : this.getValue(inputRight)) / scale;
-      if (Number.isInteger(quotient)) return this.mkAtom(product, this.mkNumeral(quotient), kind);
+        (isNegative ? -this.manager.values[inputRight] : this.manager.values[inputRight]) / scale;
+      if (Number.isInteger(quotient))
+        return this.mkAtom(product, this.manager.mkNumeral(quotient), kind);
       if (kind === KIND_EQ) return manager.falseExpr;
       return this.mkAtom(
         product,
-        this.mkNumeral(kind === KIND_LE ? Math.floor(quotient) : Math.ceil(quotient)),
+        this.manager.mkNumeral(kind === KIND_LE ? Math.floor(quotient) : Math.ceil(quotient)),
         kind,
       );
     }
@@ -605,11 +593,11 @@ export class ArithRewriter {
     const left = isSwapped ? inputRight : inputLeft;
     const right = isSwapped ? inputLeft : inputRight;
     const kind = isSwapped ? getInverse(inputKind) : inputKind;
-    if (!this.isNumeral(right) || manager.getOp(left) !== OP_MOD) return undefined;
+    if (!this.manager.isNumeral(right) || manager.getOp(left) !== OP_MOD) return undefined;
     const divisor = manager.args[left][1];
-    if (!this.isNumeral(divisor) || this.getValue(divisor) === 0) return undefined;
-    const value = this.getValue(right);
-    const modulus = Math.abs(this.getValue(divisor));
+    if (!this.manager.isNumeral(divisor) || this.manager.values[divisor] === 0) return undefined;
+    const value = this.manager.values[right];
+    const modulus = Math.abs(this.manager.values[divisor]);
     if (value < 0) return kind === KIND_GE ? manager.trueExpr : manager.falseExpr;
     if (value === 0 && kind === KIND_GE) return manager.trueExpr;
     if (value > 0 && value >= modulus)
@@ -622,22 +610,24 @@ export class ArithRewriter {
   private dividePolynomial(expr: number, divisor: number, rounding: "floor" | "ceil" | "none") {
     const newArgs: number[] = [];
     for (const arg of this.getMonomials(expr)) {
-      if (this.isNumeral(arg)) {
-        const quotient = this.getValue(arg) / divisor;
+      if (this.manager.isNumeral(arg)) {
+        const quotient = this.manager.values[arg] / divisor;
         if (!Number.isInteger(quotient) && rounding === "none") return undefined;
         const rounded = Number.isInteger(quotient)
           ? quotient
           : rounding === "floor"
             ? Math.floor(quotient)
             : Math.ceil(quotient);
-        if (rounded !== 0) newArgs.push(this.mkNumeral(rounded));
+        if (rounded !== 0) newArgs.push(this.manager.mkNumeral(rounded));
         continue;
       }
       const coefficient = this.getCoefficient(arg) / divisor;
       const product = this.getPowerProduct(arg);
       if (coefficient === 1) newArgs.push(product);
       else if (coefficient !== 0)
-        newArgs.push(this.manager.mkApp(OP_MUL, [this.mkNumeral(coefficient), product], SORT_INT));
+        newArgs.push(
+          this.manager.mkApp(OP_MUL, [this.manager.mkNumeral(coefficient), product], SORT_INT),
+        );
     }
     return this.mkAddApp(newArgs);
   }
@@ -646,13 +636,13 @@ export class ArithRewriter {
   // non-zero constants.
   private getCoeffsGcd(expr: number, state: { gcd: number; isFirst: boolean; numConsts: number }) {
     for (const arg of this.getMonomials(expr)) {
-      if (this.isNumeral(arg)) {
-        if (this.getValue(arg) !== 0) state.numConsts++;
+      if (this.manager.isNumeral(arg)) {
+        if (this.manager.values[arg] !== 0) state.numConsts++;
         continue;
       }
       state.gcd = state.isFirst
         ? this.getCoefficient(arg)
-        : getGcd(this.getCoefficient(arg), state.gcd);
+        : Number(getGcd(BigInt(this.getCoefficient(arg)), BigInt(state.gcd)));
       state.isFirst = false;
       if (state.gcd === 1) return;
     }
@@ -669,9 +659,9 @@ export class ArithRewriter {
     let isChanged = cancelled !== undefined;
     let left = cancelled === undefined ? originalLeft : cancelled.lhs;
     let right = cancelled === undefined ? originalRight : cancelled.rhs;
-    if (this.isNumeral(left) && this.isNumeral(right)) {
-      const leftValue = this.getValue(left);
-      const rightValue = this.getValue(right);
+    if (this.manager.isNumeral(left) && this.manager.isNumeral(right)) {
+      const leftValue = this.manager.values[left];
+      const rightValue = this.manager.values[right];
       const holds =
         kind === KIND_LE
           ? leftValue <= rightValue
@@ -708,29 +698,29 @@ export class ArithRewriter {
         isChanged = true;
       }
     }
-    if (manager.getOp(left) === OP_ITE && this.isNumeral(right)) {
+    if (manager.getOp(left) === OP_ITE && this.manager.isNumeral(right)) {
       const iteArgs = manager.args[left];
       const condition = iteArgs[0];
-      const rightValue = this.getValue(right);
+      const rightValue = this.manager.values[right];
       const holds = (value: number) =>
         kind === KIND_LE
           ? value <= rightValue
           : kind === KIND_GE
             ? value >= rightValue
             : value === rightValue;
-      if (this.isNumeral(iteArgs[1])) {
+      if (this.manager.isNumeral(iteArgs[1])) {
         const rest = this.mkAtom(iteArgs[2], right, kind);
         return this.reduce(
-          holds(this.getValue(iteArgs[1]))
+          holds(this.manager.values[iteArgs[1]])
             ? manager.mkOr([condition, rest])
             : manager.mkAnd([manager.mkNot(condition), rest]),
           2,
         );
       }
-      if (this.isNumeral(iteArgs[2])) {
+      if (this.manager.isNumeral(iteArgs[2])) {
         const rest = this.mkAtom(iteArgs[1], right, kind);
         return this.reduce(
-          holds(this.getValue(iteArgs[2]))
+          holds(this.manager.values[iteArgs[2]])
             ? manager.mkOr([manager.mkNot(condition), rest])
             : manager.mkAnd([condition, rest]),
           2,
@@ -738,11 +728,15 @@ export class ArithRewriter {
       }
     }
     const negated =
-      this.options.isArithIneqLhs && this.isNumeral(right)
+      this.options.isArithIneqLhs && this.manager.isNumeral(right)
         ? this.getNegatedPolynomial(left)
         : undefined;
     if (negated !== undefined)
-      return this.mkAtom(negated, this.mkNumeral(-this.getValue(right)), getInverse(kind));
+      return this.mkAtom(
+        negated,
+        this.manager.mkNumeral(-this.manager.values[right]),
+        getInverse(kind),
+      );
     if (isChanged && left === originalLeft && right === originalRight) return undefined;
     if (isChanged) return this.mkAtom(left, right, kind);
     return undefined;

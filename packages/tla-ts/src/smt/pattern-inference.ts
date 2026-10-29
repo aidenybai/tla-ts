@@ -15,7 +15,7 @@ import {
   OP_MUL,
   OP_TRUE,
 } from "./ast";
-import { shiftVars } from "./rewriter";
+import { shiftVars } from "./var-subst";
 
 interface CandidateInfo {
   freeVars: Set<number>;
@@ -98,7 +98,7 @@ class PatternInference {
             boundVars.size === 0 &&
             (decl.family !== FAMILY_ARITH || isArithCandidate)
           )
-            this.addCandidate(shiftVars(manager, expr, -delta), freeVars, size);
+            this.addCandidate(shiftVars(manager, expr, 0, -delta, 0), freeVars, size);
         }
       } else if (kind === KIND_QUANTIFIER) {
         const data = manager.getQuantifier(expr);

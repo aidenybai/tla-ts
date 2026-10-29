@@ -2,7 +2,6 @@
 // Negation normal form in Z3's default NNF_SKOLEM mode: only subformulas that contain quantifiers
 // are normalized, and existential quantifiers in positive positions become Skolem functions of the
 // enclosing universal variables.
-import { SmtUnsupportedError } from "../errors";
 import {
   AstManager,
   KIND_QUANTIFIER,
@@ -15,7 +14,7 @@ import {
   OP_OR,
   OP_XOR,
 } from "./ast";
-import { collectUsedVars, substituteNonGround } from "./rewriter";
+import { collectUsedVars, substitute } from "./var-subst";
 
 export const toNnf = (manager: AstManager, expr: number) => {
   const cache = new Map<string, number>();
@@ -53,7 +52,7 @@ export const toNnf = (manager: AstManager, expr: number) => {
     const bindings = data.sorts.map((sort) =>
       manager.mkApp(manager.mkFreshFuncDecl("sk", argSorts, sort, true), argVars, sort),
     );
-    return substituteNonGround(manager, data.body, bindings);
+    return substitute(manager, data.body, bindings);
   };
 
   const visit = (current: number, isPositive: boolean): number => {
@@ -105,7 +104,6 @@ export const toNnf = (manager: AstManager, expr: number) => {
         }
         case OP_EQ:
         case OP_XOR: {
-          if (!manager.isBool(args[0])) throw new SmtUnsupportedError("a quantifier inside a term");
           const left = visit(args[0], true);
           const notLeft = visit(args[0], false);
           const right = visit(args[1], true);
@@ -116,8 +114,9 @@ export const toNnf = (manager: AstManager, expr: number) => {
               : manager.mkAnd([manager.mkOr([left, right]), manager.mkOr([notLeft, notRight])]);
           break;
         }
+        // The parser only lets quantifiers occur under Boolean connectives.
         default:
-          throw new SmtUnsupportedError("a quantifier inside a term");
+          result = isPositive ? current : manager.mkNot(current);
       }
     }
     cache.set(key, result);

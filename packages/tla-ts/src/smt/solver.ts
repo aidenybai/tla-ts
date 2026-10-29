@@ -20,7 +20,7 @@ const check = (text: string, deadline: number): SmtVerdict => {
   const formulas = preprocess(problem.manager, problem.assertions);
   const context = new Context(problem.manager, deadline);
   context.theory = new TheoryLra(context);
-  context.qmanager = new DefaultQuantifierManager(context);
+  context.qmanager = new DefaultQuantifierManager(context, true);
   for (const formula of formulas) {
     if (context.isInconsistent()) break;
     context.internalizeAssertion(formula, 0);
