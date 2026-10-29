@@ -8,6 +8,7 @@ import { processObligation } from "./prep/action";
 import { expandDefs } from "./prep/defs";
 import { normalizeSequent } from "./prep/elab";
 import { expandEnabledCdot } from "./prep/enabled";
+import { getFingerprint } from "./prep/fingerprint";
 import { flatten } from "./prep/flatten";
 import { findMethods, type Method } from "./prep/pragma";
 import { isTrivial } from "./prep/trivial";
@@ -67,9 +68,17 @@ export interface ProveOptions {
   onObligation?: (obligation: ProofObligation) => void;
 }
 
-// What tlapm keeps across the obligations of one run.
+// What one prover concluded about an obligation, as Fpfile keeps it.
+interface PriorResult {
+  isProved: boolean;
+  timeLimitMs: number;
+}
+
+// What tlapm keeps across the obligations of one run: the SMT encoder's counters, and what each
+// prover concluded for each fingerprint.
 interface ProveRun {
   session: EncodingSession;
+  results: Map<string, Map<string, PriorResult>>;
 }
 
 interface Backend {
@@ -143,7 +152,9 @@ export const encodeForBackend = (
 };
 
 // Prep.ship: the provers the step cites, or tlapm's default ones when it cites none, each tried in
-// turn until one proves the obligation. A trivial obligation needs no prover.
+// turn until one proves the obligation. Prep.already_processed reuses what a prover concluded for
+// an earlier obligation with the same fingerprint: a proof, or a failure within at least as much
+// time. Unless the first prover's proof is reused, a trivial obligation needs no prover.
 const proveWithBackends = (
   obligation: PrintedObligation,
   run: ProveRun,
@@ -152,17 +163,28 @@ const proveWithBackends = (
   if (obligation.kind.kind === "Error")
     return getUnproved(obligation, "failed", obligation.kind.message);
   const methods = findMethods(obligation);
+  const fingerprint = getFingerprint(obligation.sequent);
+  const results = run.results.get(fingerprint) ?? new Map<string, PriorResult>();
+  run.results.set(fingerprint, results);
   const getProved = (prover: string): ProofObligation => ({
     ...getBase(obligation),
     status: "proved",
     prover,
   });
+  if (results.get(methods.provers[0].prover)?.isProved) return getProved(methods.provers[0].prover);
   const sequent = normalizeExpand(obligation.sequent, methods.frontends);
   if (obligation.kind.kind === "Support" && isTrivial(sequent))
     return { ...getBase(obligation), status: "trivial" };
   const reasons: string[] = [];
   const state = { isDecided: false };
   for (const method of methods.provers) {
+    const prior = results.get(method.prover);
+    if (prior?.isProved) return getProved(method.prover);
+    if (prior && prior.timeLimitMs >= method.timeLimitMs) {
+      state.isDecided = true;
+      reasons.push(`${method.prover} failed on an obligation with the same fingerprint`);
+      continue;
+    }
     // Prep.prove_with: the Trivial method proves anything.
     if (method.prover === "trivial") return getProved(method.prover);
     const backend = BACKENDS[method.prover];
@@ -173,11 +195,16 @@ const proveWithBackends = (
     try {
       const text = backend.encode(obligation.id, sequent, method, run.session);
       const verdict = backend.decide(text, { timeLimitMs: method.timeLimitMs, signal });
+      results.set(method.prover, {
+        isProved: verdict === "unsat",
+        timeLimitMs: method.timeLimitMs,
+      });
       if (verdict === "unsat") return getProved(method.prover);
       state.isDecided = true;
       reasons.push(`${method.prover} answered ${verdict}`);
     } catch (error) {
       if (error instanceof TlaProverError) {
+        results.set(method.prover, { isProved: false, timeLimitMs: method.timeLimitMs });
         state.isDecided = true;
         reasons.push(`${method.prover} failed: ${error.message}`);
         continue;
@@ -248,7 +275,7 @@ export const prove = async (options: ProveOptions): Promise<ProveResult> => {
     };
   }
   const proved: ProofObligation[] = [];
-  const run = { session: { caseErrors: 0 } };
+  const run = { session: { caseErrors: 0 }, results: new Map() };
   for (const obligation of obligations) {
     options.signal?.throwIfAborted();
     const result = getResult(obligation, () => proveWithBackends(obligation, run, options.signal));
