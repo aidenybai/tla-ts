@@ -412,12 +412,26 @@ export class Rewriter {
     return this.mkNot(this.mkOr(result.map((innerArg) => this.mkNot(innerArg))));
   }
 
+  // try_ite_eq: (ite c t e) = t is c when e is a value distinct from t, and likewise for e.
+  private tryIteEq(ite: number, other: number) {
+    const manager = this.manager;
+    if (manager.getOp(ite) !== OP_ITE) return undefined;
+    const args = manager.args[ite];
+    const isDistinct = (expr: number) =>
+      expr !== other && manager.isUniqueValue(expr) && manager.isUniqueValue(other);
+    if (args[1] === other && isDistinct(args[2])) return args[0];
+    if (args[2] === other && isDistinct(args[1])) return this.mkNot(args[0]);
+    return undefined;
+  }
+
   // bool_rewriter::mk_eq_core, after arith_rewriter::mk_eq_core folds numerals.
   mkEq(inputLeft: number, inputRight: number): number {
     const manager = this.manager;
     if (inputLeft === inputRight) return manager.trueExpr;
     if (manager.isUniqueValue(inputLeft) && manager.isUniqueValue(inputRight))
       return manager.falseExpr;
+    const iteEq = this.tryIteEq(inputLeft, inputRight) ?? this.tryIteEq(inputRight, inputLeft);
+    if (iteEq !== undefined) return iteEq;
     if (manager.sorts[inputLeft] !== SORT_BOOL) return manager.mkEq(inputLeft, inputRight);
     const isUnfolded = manager.isNot(inputLeft) && manager.isNot(inputRight);
     const left = isUnfolded ? manager.args[inputLeft][0] : inputLeft;
