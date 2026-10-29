@@ -50,6 +50,7 @@ const getProps = (from: Step) => ({
   location: from.location,
   step: from.step,
   isSuppressed: from.isSuppressed,
+  method: from.method,
 });
 
 const isAnonymous = (step: StepNumber | undefined) => step?.kind === "Named" && step.isAnonymous;
@@ -185,7 +186,7 @@ const getFactTime = (context: Hyp[], fact: Expr, time: Time): Time => {
     : "Always";
 };
 
-const setDefinition = (visibility: Visibility, context: Hyp[], def: UseDef): Hyp[] => {
+export const setDefinition = (visibility: Visibility, context: Hyp[], def: UseDef): Hyp[] => {
   if (def.kind !== "Dx") throw new TlaProofError(`Unknown definition ${def.name}`);
   const index = context.length - def.index;
   const hyp = context[index];
@@ -202,7 +203,7 @@ const isDomainMatch = (fact: Expr, domain: Expr) =>
   fact.args[0].index === 0 &&
   isEqualExpr(domain, fact.args[1]);
 
-const setExpression = (
+export const setExpression = (
   onWarning: (warning: ObligationWarning) => void,
   visibility: Visibility,
   fact: Expr,
@@ -275,6 +276,7 @@ const getWitnessProof = (step: Step, aux: Expr[]): Proof => {
         usable: { facts: [shiftExpr(3, active)], defs: [] },
         isOnly: false,
         location: item.location,
+        method: step.method,
       },
       location: item.location,
     };
@@ -283,11 +285,13 @@ const getWitnessProof = (step: Step, aux: Expr[]): Proof => {
     at({ kind: "Ix", index: 2 * aux.length + 2 }, step),
     ...aux.map((_item, index) => at({ kind: "Ix", index: 2 * (aux.length - index) }, step)),
   ];
+  // tlapm removes the method from the QED.
   const qedProof: Proof = {
     kind: "By",
     usable: { facts, defs: [] },
     isOnly: true,
     ...getProps(step),
+    method: undefined,
   };
   return {
     kind: "Steps",
@@ -299,9 +303,9 @@ const getWitnessProof = (step: Step, aux: Expr[]): Proof => {
 
 const obligate = (
   sequent: Sequent,
-  from: { location?: Locus },
+  from: { location?: Locus; method?: string },
   kind: ObligationKind,
-): Obligation => ({ sequent, location: from.location, kind });
+): Obligation => ({ sequent, location: from.location, kind, method: from.method });
 
 export interface ProofSummary {
   total: number;
@@ -418,6 +422,7 @@ export const createGenerator = (
                   visibility: "Visible",
                   time: getFactTime(sequent.context, fact, time),
                   location: fact.location,
+                  useLocation: step.useLocation,
                 },
               ],
               active: shiftExpr(1, sequent.active),
@@ -499,7 +504,7 @@ export const createGenerator = (
     const [sequent, generated] = generateStep(
       { context, active: { ...AT_NOWHERE, location } },
       mode === "Use"
-        ? { kind: "Use", usable, isOnly: false, location, step }
+        ? { kind: "Use", usable, isOnly: false, location, step, useLocation: location }
         : { kind: "Hide", usable, location, step },
       "Always",
     );
@@ -689,6 +694,7 @@ export const createGenerator = (
           isOnly: false,
           location: fact.location,
           isSuppressed: proof.isSuppressed,
+          useLocation: proof.location,
         }));
         const forget: Step[] = proof.isOnly
           ? [{ kind: "Forget", count: usable.facts.length, location: proof.location }]
@@ -703,6 +709,7 @@ export const createGenerator = (
           location: proof.location,
           step: getAnonymous(level),
           isSuppressed: proof.isSuppressed,
+          method: proof.method,
         };
         return {
           kind: "Steps",
@@ -771,6 +778,7 @@ export const createGenerator = (
           location: step.location,
           step: step.step,
           isSuppressed: step.isSuppressed,
+          method: step.method,
         };
         const simplified = simplify(context, goal, byProof, time);
         if (simplified.kind !== "Steps")

@@ -43,6 +43,7 @@ export interface PrintedObligation {
   text: string;
   kind: ObligationKind;
   sequent: Sequent;
+  method?: string;
 }
 
 export interface ModuleObligations {
@@ -317,6 +318,7 @@ export const getObligations = (
           text,
           kind: obligation.kind,
           sequent: obligation.sequent,
+          method: obligation.method,
         },
       ];
     });
