@@ -1,0 +1,1 @@
+not (((always (p -> (next q))) & (always (q -> (next p))) & p -> (always (sometime q))))
