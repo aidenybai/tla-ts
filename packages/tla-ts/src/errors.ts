@@ -87,6 +87,14 @@ export class TlaProverError extends TlaError {
   }
 }
 
+// Zenon gives up on a .znn file the way the OCaml Zenon raises an exception and prints no proof.
+export class TlaZenonError extends TlaError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = "TlaZenonError";
+  }
+}
+
 export class TlaUnsupportedError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);

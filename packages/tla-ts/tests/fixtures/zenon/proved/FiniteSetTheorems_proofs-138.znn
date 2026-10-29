@@ -1,0 +1,15 @@
+;; obligation #138
+$hyp "a_CONSTANTunde_nunde_a_in" (TLA.in a_CONSTANTunde_nunde_a arith.N)
+$hyp "v'166" (a_CONSTANTunde_ExistsBijectionunde_a (arith.intrange (TLA.fapply TLA.Succ 0)
+a_CONSTANTunde_nunde_a)
+a_CONSTANTunde_Sunde_a)
+$hyp "v'178" (TLA.bAll (TLA.SUBSET a_CONSTANTunde_Sunde_a) ((a_CONSTANTunde_Tunde_a) (= (TLA.fapply a_CONSTANTunde_CS1unde_a a_CONSTANTunde_Tunde_a)
+(TLA.fapply a_CONSTANTunde_CS2unde_a a_CONSTANTunde_Tunde_a))))
+$hyp "v'179" (= a_CONSTANTunde_CS1unde_a
+(TLA.Fcn (TLA.SUBSET a_CONSTANTunde_Sunde_a) ((a_CONSTANTunde_Tunde_a) (a_CONSTANTunde_fnunde_a a_CONSTANTunde_CS1unde_a
+a_CONSTANTunde_Tunde_a))))
+$hyp "v'180" (= a_CONSTANTunde_CS2unde_a
+(TLA.Fcn (TLA.SUBSET a_CONSTANTunde_Sunde_a) ((a_CONSTANTunde_Tunde_a) (a_CONSTANTunde_fnunde_a a_CONSTANTunde_CS2unde_a
+a_CONSTANTunde_Tunde_a))))
+$goal (= a_CONSTANTunde_CS1unde_a
+a_CONSTANTunde_CS2unde_a)

@@ -1,0 +1,87 @@
+;; obligation #770
+$hyp "a_CONSTANTunde_Qunde_a_in" (TLA.in a_CONSTANTunde_Qunde_a a_CONSTANTunde_Quorumunde_a)
+$hyp "a_CONSTANTunde_bunde_a_in" (TLA.in a_CONSTANTunde_bunde_a a_CONSTANTunde_Ballotunde_a)
+$hyp "a_CONSTANTunde_selfunde_a_in" (TLA.in a_CONSTANTunde_selfunde_a a_CONSTANTunde_Qunde_a)
+$hyp "v'318" (/\ (/\ a_STATEunde_VInvunde_a
+(TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (= (TLA.fapply a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_aunde_a)
+a_CONSTANTunde_bunde_a))))
+(-. (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_vunde_a) (a_STATEunde_VotedForunde_a a_CONSTANTunde_selfunde_a
+a_CONSTANTunde_bunde_a
+a_CONSTANTunde_vunde_a)))))
+$hyp "v'325" (/\ (arith.le (TLA.fapply a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_selfunde_a)
+a_CONSTANTunde_bunde_a)
+(a_STATEunde_DidNotVoteInunde_a a_CONSTANTunde_selfunde_a
+a_CONSTANTunde_bunde_a) (TLA.bAll (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a) (TLA.bAll a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (=> (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a
+a_CONSTANTunde_bunde_a a_CONSTANTunde_wunde_a) (= a_CONSTANTunde_wunde_a
+(TLA.cond (TLA.bEx (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a_1) (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a_1) (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a_1
+a_CONSTANTunde_bunde_a
+a_CONSTANTunde_wunde_a_1))))) (TLA.bChoice a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a_1) (a_STATEunde_VotedForunde_a (TLA.bChoice (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a_1) (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a_2) (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a_1
+a_CONSTANTunde_bunde_a a_CONSTANTunde_wunde_a_2))))) a_CONSTANTunde_bunde_a
+a_CONSTANTunde_wunde_a_1))) (TLA.bChoice a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_vunde_a) (a_STATEunde_SafeAtunde_a a_CONSTANTunde_bunde_a
+a_CONSTANTunde_vunde_a))))))))))
+(-. (= (TLA.except a_VARIABLEunde_votesunde_a a_CONSTANTunde_selfunde_a (TLA.cup (TLA.fapply a_VARIABLEunde_votesunde_a a_CONSTANTunde_selfunde_a)
+(TLA.set (TLA.tuple a_CONSTANTunde_bunde_a
+(TLA.cond (TLA.bEx (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a) (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a
+a_CONSTANTunde_bunde_a
+a_CONSTANTunde_wunde_a))))) (TLA.bChoice a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (a_STATEunde_VotedForunde_a (TLA.bChoice (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a) (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a_1) (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a
+a_CONSTANTunde_bunde_a a_CONSTANTunde_wunde_a_1))))) a_CONSTANTunde_bunde_a
+a_CONSTANTunde_wunde_a))) (TLA.bChoice a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_vunde_a) (a_STATEunde_SafeAtunde_a a_CONSTANTunde_bunde_a
+a_CONSTANTunde_vunde_a))))))))
+a_VARIABLEunde_votesunde_a)))
+$hyp "v'326" (/\ (TLA.in (TLA.cond (TLA.bEx (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a) (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a
+a_CONSTANTunde_bunde_a
+a_CONSTANTunde_wunde_a))))) (TLA.bChoice a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (a_STATEunde_VotedForunde_a (TLA.bChoice (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a) (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a_1) (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a
+a_CONSTANTunde_bunde_a a_CONSTANTunde_wunde_a_1))))) a_CONSTANTunde_bunde_a
+a_CONSTANTunde_wunde_a))) (TLA.bChoice a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_vunde_a) (a_STATEunde_SafeAtunde_a a_CONSTANTunde_bunde_a
+a_CONSTANTunde_vunde_a)))) a_CONSTANTunde_Valueunde_a)
+(a_STATEunde_SafeAtunde_a a_CONSTANTunde_bunde_a
+(TLA.cond (TLA.bEx (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a) (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a
+a_CONSTANTunde_bunde_a
+a_CONSTANTunde_wunde_a))))) (TLA.bChoice a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (a_STATEunde_VotedForunde_a (TLA.bChoice (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a) (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a_1) (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a
+a_CONSTANTunde_bunde_a a_CONSTANTunde_wunde_a_1))))) a_CONSTANTunde_bunde_a
+a_CONSTANTunde_wunde_a))) (TLA.bChoice a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_vunde_a) (a_STATEunde_SafeAtunde_a a_CONSTANTunde_bunde_a
+a_CONSTANTunde_vunde_a))))))
+$goal (/\ (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_vunde_a) (/\ (arith.le (TLA.fapply a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_selfunde_a)
+a_CONSTANTunde_bunde_a)
+(a_STATEunde_DidNotVoteInunde_a a_CONSTANTunde_selfunde_a
+a_CONSTANTunde_bunde_a) (TLA.bAll (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a) (TLA.bAll a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (=> (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a
+a_CONSTANTunde_bunde_a a_CONSTANTunde_wunde_a) (= a_CONSTANTunde_wunde_a
+a_CONSTANTunde_vunde_a)))))) (a_STATEunde_SafeAtunde_a a_CONSTANTunde_bunde_a
+a_CONSTANTunde_vunde_a)
+(= (TLA.except a_VARIABLEunde_votesunde_a a_CONSTANTunde_selfunde_a (TLA.cup (TLA.fapply a_VARIABLEunde_votesunde_a a_CONSTANTunde_selfunde_a)
+(TLA.set (TLA.tuple a_CONSTANTunde_bunde_a
+(TLA.cond (TLA.bEx (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a) (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a
+a_CONSTANTunde_bunde_a
+a_CONSTANTunde_wunde_a))))) (TLA.bChoice a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (a_STATEunde_VotedForunde_a (TLA.bChoice (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a) (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a_1) (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a
+a_CONSTANTunde_bunde_a a_CONSTANTunde_wunde_a_1))))) a_CONSTANTunde_bunde_a
+a_CONSTANTunde_wunde_a))) (TLA.bChoice a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_vunde_a_1) (a_STATEunde_SafeAtunde_a a_CONSTANTunde_bunde_a
+a_CONSTANTunde_vunde_a_1))))))))
+(TLA.except a_VARIABLEunde_votesunde_a a_CONSTANTunde_selfunde_a (TLA.cup (TLA.fapply a_VARIABLEunde_votesunde_a a_CONSTANTunde_selfunde_a)
+(TLA.set (TLA.tuple a_CONSTANTunde_bunde_a a_CONSTANTunde_vunde_a)))))
+(= (TLA.except a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_selfunde_a a_CONSTANTunde_bunde_a)
+(TLA.except a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_selfunde_a a_CONSTANTunde_bunde_a)))))
+(-. (= (TLA.tuple (TLA.except a_VARIABLEunde_votesunde_a a_CONSTANTunde_selfunde_a (TLA.cup (TLA.fapply a_VARIABLEunde_votesunde_a a_CONSTANTunde_selfunde_a)
+(TLA.set (TLA.tuple a_CONSTANTunde_bunde_a
+(TLA.cond (TLA.bEx (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a) (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a
+a_CONSTANTunde_bunde_a
+a_CONSTANTunde_wunde_a))))) (TLA.bChoice a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (a_STATEunde_VotedForunde_a (TLA.bChoice (TLA.setminus a_CONSTANTunde_Acceptorunde_a
+(TLA.set a_CONSTANTunde_selfunde_a)) ((a_CONSTANTunde_punde_a) (TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a_1) (a_STATEunde_VotedForunde_a a_CONSTANTunde_punde_a
+a_CONSTANTunde_bunde_a a_CONSTANTunde_wunde_a_1))))) a_CONSTANTunde_bunde_a
+a_CONSTANTunde_wunde_a))) (TLA.bChoice a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_vunde_a) (a_STATEunde_SafeAtunde_a a_CONSTANTunde_bunde_a
+a_CONSTANTunde_vunde_a))))))))
+(TLA.except a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_selfunde_a a_CONSTANTunde_bunde_a))
+(TLA.tuple a_VARIABLEunde_votesunde_a
+a_VARIABLEunde_maxBalunde_a))))

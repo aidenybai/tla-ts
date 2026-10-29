@@ -1,0 +1,10 @@
+;; obligation #105
+$hyp "v'31" a_STATEunde_Invunde_a
+$hyp "v'32" a_ACTIONunde_Nextunde_a
+$hyp "v'44" (=> (= (a_CONSTANTunde_Cardinalityunde_a a_VARIABLEunde_Sunde_a)
+(TLA.fapply TLA.Succ 0))
+(TLA.bEx a_VARIABLEunde_Sunde_a ((a_CONSTANTunde_xunde_a) (= a_VARIABLEunde_Sunde_a
+(TLA.set a_CONSTANTunde_xunde_a)))))
+$goal (=> (= (a_CONSTANTunde_Cardinalityunde_a a_VARIABLEunde_Sunde_a)
+(TLA.fapply TLA.Succ 0)) (= a_VARIABLEunde_Sunde_a
+(TLA.set (TLA.bChoice a_VARIABLEunde_Sunde_a ((a_CONSTANTunde_tunde_a) T.)))))
