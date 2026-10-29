@@ -65,7 +65,11 @@ export const toNnf = (manager: AstManager, expr: number) => {
     if (manager.kinds[current] === KIND_QUANTIFIER) {
       const data = manager.getQuantifier(current);
       if (data.isForall === isPositive) {
-        result = manager.mkQuantifier({ ...data, isForall: true, body: visit(data.body, isPositive) });
+        result = manager.mkQuantifier({
+          ...data,
+          isForall: true,
+          body: visit(data.body, isPositive),
+        });
       } else result = visit(skolemize(current), !data.isForall);
     } else {
       const args = manager.args[current];
@@ -93,7 +97,10 @@ export const toNnf = (manager: AstManager, expr: number) => {
           const notCondition = visit(args[0], false);
           const thenExpr = visit(args[1], isPositive);
           const elseExpr = visit(args[2], isPositive);
-          result = manager.mkAnd([manager.mkOr([notCondition, thenExpr]), manager.mkOr([condition, elseExpr])]);
+          result = manager.mkAnd([
+            manager.mkOr([notCondition, thenExpr]),
+            manager.mkOr([condition, elseExpr]),
+          ]);
           break;
         }
         case OP_EQ:

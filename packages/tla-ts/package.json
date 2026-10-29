@@ -64,6 +64,7 @@
     "conformance": "tsx scripts/conformance.ts",
     "conformance:fetch": "tsx scripts/fetch-corpora.ts",
     "conformance:sany": "tsx scripts/proof-conformance.ts",
+    "conformance:smt": "tsx scripts/smt-conformance.ts",
     "conformance:record": "tsx scripts/record-tlc.ts",
     "conformance:record-sany": "tsx scripts/record-sany.ts",
     "conformance:record-proofs": "tsx scripts/record-proofs.ts",

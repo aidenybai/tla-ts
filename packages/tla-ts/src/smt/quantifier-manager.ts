@@ -60,7 +60,8 @@ export class DefaultQuantifierManager implements QuantifierManager {
     let multiPatternIndex = 0;
     for (const pattern of patterns) {
       const isUnary = pattern.length === 1;
-      if (!isUnary && multiPatternIndex >= numEagerMultiPatterns) this.lazyMam.addPattern(quantifier, pattern);
+      if (!isUnary && multiPatternIndex >= numEagerMultiPatterns)
+        this.lazyMam.addPattern(quantifier, pattern);
       else this.mam.addPattern(quantifier, pattern);
       if (!isUnary) multiPatternIndex++;
     }

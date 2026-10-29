@@ -95,6 +95,7 @@ export class AstManager {
   funcDecls: FuncDecl[] = [];
   sortNames: string[] = ["Bool", "Int"];
   private table = new Map<string, number>();
+  private appTable = new Map<number, number[]>();
   private freshCounter = 0;
   readonly trueExpr: number;
   readonly falseExpr: number;
@@ -119,7 +120,14 @@ export class AstManager {
   }
 
   mkFuncDecl(name: string, domain: number[], range: number, isSkolem = false) {
-    this.funcDecls.push({ name, family: FAMILY_USER, op: OP_UNINTERPRETED, domain, range, isSkolem });
+    this.funcDecls.push({
+      name,
+      family: FAMILY_USER,
+      op: OP_UNINTERPRETED,
+      domain,
+      range,
+      isSkolem,
+    });
     return this.funcDecls.length - 1;
   }
 
@@ -128,9 +136,22 @@ export class AstManager {
     return this.mkFuncDecl(`${prefix}!${this.freshCounter}`, domain, range, isSkolem);
   }
 
-  private intern(key: string, kind: number, decl: number, args: number[], sort: number, value: number) {
+  private intern(
+    key: string,
+    kind: number,
+    decl: number,
+    args: number[],
+    sort: number,
+    value: number,
+  ) {
     const existing = this.table.get(key);
     if (existing !== undefined) return existing;
+    const id = this.create(kind, decl, args, sort, value);
+    this.table.set(key, id);
+    return id;
+  }
+
+  private create(kind: number, decl: number, args: number[], sort: number, value: number) {
     const id = this.kinds.length;
     this.kinds.push(kind);
     this.decls.push(decl);
@@ -149,13 +170,29 @@ export class AstManager {
     this.freeVarBounds.push(freeVarBound);
     this.hasQuantifierFlags.push(hasQuantifier);
     this.depths.push(depth);
-    this.table.set(key, id);
     return id;
   }
 
   // The op of a builtin declaration doubles as its index in funcDecls.
   mkApp(decl: number, args: number[], sort: number) {
-    return this.intern(`a${decl}:${args.join(",")}`, KIND_APP, decl, args, sort, 0);
+    let hash = decl;
+    for (let index = 0; index < args.length; index++)
+      hash = (Math.imul(hash, 0x9e3779b1) + args[index]) | 0;
+    const bucket = this.appTable.get(hash);
+    if (bucket !== undefined)
+      for (const candidate of bucket) {
+        if (this.decls[candidate] !== decl || this.kinds[candidate] !== KIND_APP) continue;
+        const candidateArgs = this.args[candidate];
+        if (candidateArgs.length !== args.length) continue;
+        let isSame = true;
+        for (let index = 0; index < args.length && isSame; index++)
+          isSame = candidateArgs[index] === args[index];
+        if (isSame) return candidate;
+      }
+    const id = this.create(KIND_APP, decl, args, sort, 0);
+    if (bucket === undefined) this.appTable.set(hash, [id]);
+    else bucket.push(id);
+    return id;
   }
 
   mkNumeral(value: number) {
@@ -229,6 +266,15 @@ export class AstManager {
 
   isNot(expr: number) {
     return this.getOp(expr) === OP_NOT;
+  }
+
+  isComplement(first: number, second: number) {
+    return (
+      (this.isNot(first) && this.args[first][0] === second) ||
+      (this.isNot(second) && this.args[second][0] === first) ||
+      (first === this.trueExpr && second === this.falseExpr) ||
+      (first === this.falseExpr && second === this.trueExpr)
+    );
   }
 
   isNumeral(expr: number) {

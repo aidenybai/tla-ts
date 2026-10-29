@@ -143,7 +143,9 @@ class PatternInference {
           manager.values[left] !== manager.values[right]
         )
           return false;
-        manager.args[left].forEach((innerArg, index) => todo.push([innerArg, manager.args[right][index]]));
+        manager.args[left].forEach((innerArg, index) =>
+          todo.push([innerArg, manager.args[right][index]]),
+        );
       } else if (kind === KIND_VAR && manager.values[left] < this.numBindings) {
         const index = manager.values[left];
         if (bindings[index] === -1) bindings[index] = right;
@@ -188,7 +190,8 @@ class PatternInference {
       if (manager.kinds[current] !== KIND_APP) continue;
       if (current !== expr) {
         const currentInfo = this.candidateInfos.get(current);
-        if (currentInfo !== undefined && isSameSet(currentInfo.freeVars, info.freeVars)) return true;
+        if (currentInfo !== undefined && isSameSet(currentInfo.freeVars, info.freeVars))
+          return true;
       }
       for (const arg of manager.args[current])
         if (!visited.has(arg)) {
@@ -202,7 +205,8 @@ class PatternInference {
   private mkPattern(candidate: number): number[] {
     const manager = this.manager;
     const hasVarArg = (expr: number) =>
-      manager.kinds[expr] === KIND_APP && manager.args[expr].some((innerArg) => manager.isVar(innerArg));
+      manager.kinds[expr] === KIND_APP &&
+      manager.args[expr].some((innerArg) => manager.isVar(innerArg));
     if (hasVarArg(candidate)) return [candidate];
     const args: number[] = [];
     for (const arg of manager.args[candidate]) {
@@ -269,7 +273,8 @@ class PatternInference {
     const remaining: number[] = [];
     for (const candidate of smallest) {
       const info = this.candidateInfos.get(candidate);
-      if (info !== undefined && info.freeVars.size === numBindings) result.push(this.mkPattern(candidate));
+      if (info !== undefined && info.freeVars.size === numBindings)
+        result.push(this.mkPattern(candidate));
       else remaining.push(candidate);
     }
     const numExtraMultiPatterns = result.length === 0 ? 1 : 0;
@@ -311,7 +316,8 @@ export const inferPatterns = (
   inference.isArithForbidden = false;
   inference.isBlockingLoopPatterns = false;
   const arithPatterns = inference.mkPatterns(numBindings, body);
-  if (arithPatterns.length > 0) return { patterns: arithPatterns, weight: Math.max(weight, PI_ARITH_WEIGHT) };
+  if (arithPatterns.length > 0)
+    return { patterns: arithPatterns, weight: Math.max(weight, PI_ARITH_WEIGHT) };
   inference.isNestedArithOnly = false;
   const nonNestedPatterns = inference.mkPatterns(numBindings, body);
   return {

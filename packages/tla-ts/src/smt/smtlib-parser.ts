@@ -39,6 +39,8 @@ interface Binding {
 export interface SmtProblem {
   manager: AstManager;
   assertions: number[];
+  // Z3 prints no answer for a script without check-sat.
+  hasCheckSat: boolean;
 }
 
 const BUILTIN_OPS = new Map<string, number>([
@@ -89,7 +91,7 @@ const tokenize = (text: string) => {
       position = end + 1;
     } else {
       let end = position;
-      while (end < text.length && !" \n\t\r();|\"".includes(text[end])) end++;
+      while (end < text.length && !' \n\t\r();|"'.includes(text[end])) end++;
       tokens.push(text.slice(position, end));
       position = end;
     }
@@ -103,7 +105,8 @@ const readSExprs = (tokens: string[]) => {
     if (token === "(") stack.push([]);
     else if (token === ")") {
       const list = stack.pop();
-      if (list === undefined || stack.length === 0) throw new SmtParseError("unbalanced parentheses");
+      if (list === undefined || stack.length === 0)
+        throw new SmtParseError("unbalanced parentheses");
       stack[stack.length - 1].push(list);
     } else stack[stack.length - 1].push(token);
   }
@@ -190,7 +193,12 @@ export const parseSmtlib = (text: string): SmtProblem => {
     for (const binding of expectList(list[1])) {
       const pair = expectList(binding);
       const expr = parseTerm(pair[1]);
-      scope.set(expectSymbol(pair[0]), { depth, sort: manager.sorts[expr], expr, isBoundVar: false });
+      scope.set(expectSymbol(pair[0]), {
+        depth,
+        sort: manager.sorts[expr],
+        expr,
+        isBoundVar: false,
+      });
     }
     scopes.push(scope);
     const body = parseTerm(list[2]);
@@ -240,6 +248,7 @@ export const parseSmtlib = (text: string): SmtProblem => {
     return parseApp(expectSymbol(head), sexpr.slice(1).map(parseTerm));
   };
 
+  let hasCheckSat = false;
   for (const command of readSExprs(tokenize(text))) {
     const list = expectList(command);
     const name = expectSymbol(list[0]);
@@ -252,9 +261,11 @@ export const parseSmtlib = (text: string): SmtProblem => {
       const range = parseSort(name === "declare-fun" ? list[3] : list[2]);
       funcs.set(expectSymbol(list[1]), manager.mkFuncDecl(expectSymbol(list[1]), domain, range));
     } else if (name === "assert") assertions.push(parseTerm(list[1]));
-    else if (name === "check-sat") break;
-    else if (name === "push" || name === "pop" || name === "define-fun" || name === "define-sort")
+    else if (name === "check-sat") {
+      hasCheckSat = true;
+      break;
+    } else if (name === "push" || name === "pop" || name === "define-fun" || name === "define-sort")
       throw new SmtUnsupportedError(`the command ${name} is not supported`);
   }
-  return { manager, assertions };
+  return { manager, assertions, hasCheckSat };
 };

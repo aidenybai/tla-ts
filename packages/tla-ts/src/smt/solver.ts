@@ -16,6 +16,7 @@ export interface SolveSmtOptions {
 
 const check = (text: string, deadline: number): SmtVerdict => {
   const problem = parseSmtlib(text);
+  if (!problem.hasCheckSat) return "unknown";
   const formulas = preprocess(problem.manager, problem.assertions);
   const context = new Context(problem.manager, deadline);
   context.theory = new TheoryLra(context);

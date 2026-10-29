@@ -1,7 +1,7 @@
-// Ported from Z3 (src/smt/qi_queue.cpp, src/smt/smt_quick_checker.cpp), MIT license, see
+// Ported from Z3 (src/smt/qi_queue.cpp, src/smt/smt_checker.cpp), MIT license, see
 // z3-license.txt. Instances found by E-matching wait here. Z3's default cost is
 // (+ weight generation): cheap instances are created at once, expensive ones only in the final
-// check, and the quick checker skips instances that the current assignment already satisfies.
+// check, and the checker skips instances that the current assignment already satisfies.
 import { KIND_APP, KIND_VAR, OP_AND, OP_EQ, OP_FALSE, OP_ITE, OP_NOT, OP_OR, OP_TRUE } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
@@ -18,11 +18,11 @@ interface Entry {
   isInstantiated: boolean;
 }
 
-// quick_checker: evaluates a quantifier body under bindings with the E-graph and the assignment.
-class QuickChecker {
+// smt::checker: evaluates a quantifier body under bindings with the E-graph and the assignment.
+class Checker {
   private bindings: Enode[] = [];
   private checkCache = new Map<number, boolean>();
-  private canonizeCache = new Map<number, number>();
+  private enodeCache = new Map<number, Enode | null>();
 
   constructor(private context: Context) {}
 
@@ -37,113 +37,115 @@ class QuickChecker {
   private run(body: number, bindings: Enode[], isTrue: boolean) {
     this.bindings = bindings;
     this.checkCache.clear();
-    this.canonizeCache.clear();
-    return this.check(body, isTrue);
+    this.enodeCache.clear();
+    return this.check(body, 0, isTrue);
   }
 
-  private check(expr: number, isTrue: boolean): boolean {
+  private check(expr: number, depth: number, isTrue: boolean): boolean {
     const key = expr * 2 + (isTrue ? 1 : 0);
     const cached = this.checkCache.get(key);
     if (cached !== undefined) return cached;
-    const result = this.checkCore(expr, isTrue);
+    const result = this.checkCore(expr, depth, isTrue);
     this.checkCache.set(key, result);
     return result;
   }
 
   private isAssigned(expr: number, isTrue: boolean) {
     const context = this.context;
-    if (!context.isBInternalized(expr) || !context.isRelevant(expr)) return undefined;
-    const value = context.getBoolVarAssignment(context.getBoolVar(expr));
-    return value !== 0 && isTrue === (value > 0);
+    const value = context.isBInternalized(expr)
+      ? context.getBoolVarAssignment(context.getBoolVar(expr))
+      : 0;
+    return value !== 0 && isTrue === value > 0;
   }
 
-  private checkCore(expr: number, isTrue: boolean): boolean {
+  private checkCore(expr: number, depth: number, isTrue: boolean): boolean {
+    if (depth > 600) return false;
     const context = this.context;
     const manager = context.manager;
-    const assigned = this.isAssigned(expr, isTrue);
-    if (assigned !== undefined) return assigned;
+    if (context.isBInternalized(expr) && context.isRelevant(expr))
+      return this.isAssigned(expr, isTrue);
     if (manager.kinds[expr] !== KIND_APP) return false;
     const args = manager.args[expr];
+    const next = depth + 1;
     switch (manager.getOp(expr)) {
       case OP_TRUE:
         return isTrue;
       case OP_FALSE:
         return !isTrue;
       case OP_NOT:
-        return this.check(args[0], !isTrue);
+        return this.check(args[0], next, !isTrue);
       case OP_OR:
         return isTrue
-          ? args.some((innerArg) => this.check(innerArg, true))
-          : args.every((innerArg) => this.check(innerArg, false));
+          ? args.some((innerArg) => this.check(innerArg, next, true))
+          : args.every((innerArg) => this.check(innerArg, next, false));
       case OP_AND:
         return isTrue
-          ? args.every((innerArg) => this.check(innerArg, true))
-          : args.some((innerArg) => this.check(innerArg, false));
-      case OP_ITE:
-        if (this.check(args[0], true)) return this.check(args[1], isTrue);
-        if (this.check(args[0], false)) return this.check(args[2], isTrue);
-        return this.check(args[1], isTrue) && this.check(args[2], isTrue);
+          ? args.every((innerArg) => this.check(innerArg, next, true))
+          : args.some((innerArg) => this.check(innerArg, next, false));
       case OP_EQ: {
-        if (manager.isBool(args[0])) {
-          const isLeftTrue = this.check(args[0], true);
-          const isLeftFalse = this.check(args[0], false);
-          const isRightTrue = this.check(args[1], true);
-          const isRightFalse = this.check(args[1], false);
-          return isTrue
-            ? (isLeftTrue && isRightTrue) || (isLeftFalse && isRightFalse)
-            : (isLeftTrue && isRightFalse) || (isLeftFalse && isRightTrue);
+        if (!manager.isBool(args[0])) {
+          const lhs = this.getEnodeEqTo(args[0]);
+          const rhs = this.getEnodeEqTo(args[1]);
+          if (
+            lhs === null ||
+            rhs === null ||
+            !context.isRelevant(lhs.owner) ||
+            !context.isRelevant(rhs.owner)
+          )
+            return false;
+          return isTrue ? lhs.root === rhs.root : context.isDiseq(lhs, rhs);
         }
-        const lhs = this.canonize(args[0]);
-        const rhs = this.canonize(args[1]);
-        if (isTrue) return lhs === rhs;
-        const lhsNode = context.getEnode(lhs);
-        const rhsNode = context.getEnode(rhs);
+        return (
+          (this.check(args[0], next, true) && this.check(args[1], next, isTrue)) ||
+          (this.check(args[0], next, false) && this.check(args[1], next, !isTrue))
+        );
+      }
+      case OP_ITE: {
+        const condition = args[0];
+        const atom = manager.isNot(condition) ? manager.args[condition][0] : condition;
         if (
-          lhsNode !== undefined &&
-          rhsNode !== undefined &&
-          context.isRelevant(lhs) &&
-          context.isRelevant(rhs) &&
-          lhsNode.root !== rhsNode.root
+          condition !== manager.falseExpr &&
+          (!context.isBInternalized(atom) || !context.isRelevant(condition))
         )
-          return true;
-        return lhs !== rhs && manager.isUniqueValue(lhs) && manager.isUniqueValue(rhs);
+          return this.check(args[1], next, isTrue) && this.check(args[2], next, isTrue);
+        const value = context.getAssignment(context.getLiteral(condition));
+        if (value === 0) return false;
+        return this.check(value > 0 ? args[1] : args[2], next, isTrue);
       }
       default:
         break;
     }
-    const canonized = this.canonize(expr);
-    if (context.isBInternalized(canonized) && context.isRelevant(canonized)) {
-      const value = context.getBoolVarAssignment(context.getBoolVar(canonized));
-      if (value !== 0) return isTrue === value > 0;
-    }
-    if (isTrue && canonized === manager.trueExpr) return true;
-    return !isTrue && canonized === manager.falseExpr;
+    const node = this.getEnodeEqTo(expr);
+    if (node === null || !manager.isBool(node.owner) || !context.isRelevant(node.owner))
+      return false;
+    return this.isAssigned(node.owner, isTrue);
   }
 
-  private canonize(expr: number): number {
+  // get_enode_eq_to: the relevant term of the E-graph that the expression equals by congruence.
+  private getEnodeEqTo(expr: number): Enode | null {
     const context = this.context;
     const manager = context.manager;
     if (manager.kinds[expr] === KIND_VAR) {
       const index = manager.values[expr];
-      if (index >= this.bindings.length) return expr;
-      return this.bindings[this.bindings.length - index - 1].root.owner;
+      return index < this.bindings.length ? this.bindings[this.bindings.length - index - 1] : null;
     }
     const existing = context.getEnode(expr);
-    if (existing !== undefined) return existing.root.owner;
-    if (manager.kinds[expr] !== KIND_APP || manager.args[expr].length === 0) return expr;
-    const cached = this.canonizeCache.get(expr);
+    if (existing !== undefined && context.isRelevant(expr)) return existing;
+    if (manager.kinds[expr] !== KIND_APP || manager.args[expr].length === 0) return null;
+    const cached = this.enodeCache.get(expr);
     if (cached !== undefined) return cached;
-    const newArgs = manager.args[expr].map((innerArg) => this.canonize(innerArg));
-    const argNodes = newArgs.map((innerArg) => context.getEnode(innerArg));
-    if (argNodes.every((node) => node !== undefined)) {
-      const found = context.findCongruent(manager.decls[expr], argNodes);
-      if (found !== undefined) {
-        this.canonizeCache.set(expr, found.root.owner);
-        return found.root.owner;
+    const argNodes: Enode[] = [];
+    for (const arg of manager.args[expr]) {
+      const node = this.getEnodeEqTo(arg);
+      if (node === null) {
+        this.enodeCache.set(expr, null);
+        return null;
       }
+      argNodes.push(node);
     }
-    const result = context.rewriter.mkAppCore(manager.decls[expr], newArgs, manager.sorts[expr]);
-    this.canonizeCache.set(expr, result);
+    const found = context.findCongruent(manager.decls[expr], argNodes);
+    const result = found !== undefined && context.isRelevant(found.owner) ? found : null;
+    this.enodeCache.set(expr, result);
     return result;
   }
 }
@@ -153,11 +155,11 @@ export class QiQueue {
   private delayedEntries: Entry[] = [];
   private instantiatedTrail: number[] = [];
   private scopes: number[] = [];
-  private checker: QuickChecker;
+  private checker: Checker;
   numInstances = 0;
 
   constructor(private context: Context) {
-    this.checker = new QuickChecker(context);
+    this.checker = new Checker(context);
   }
 
   hasWork() {
@@ -181,7 +183,12 @@ export class QiQueue {
     let sinceLastCheck = 0;
     for (const entry of entries) {
       if (entry.cost <= EAGER_COST_THRESHOLD) this.instantiateEntry(entry);
-      else if (this.checker.isUnsat(this.context.manager.getQuantifier(entry.quantifier).body, entry.bindings))
+      else if (
+        this.checker.isUnsat(
+          this.context.manager.getQuantifier(entry.quantifier).body,
+          entry.bindings,
+        )
+      )
         this.instantiateEntry(entry);
       else this.delayedEntries.push(entry);
       if (sinceLastCheck++ > 100) {
@@ -229,6 +236,7 @@ export class QiQueue {
       result = false;
       this.instantiatedTrail.push(index);
       this.instantiateEntry(entry);
+      if (this.context.checkCanceled()) break;
     }
     return result;
   }
