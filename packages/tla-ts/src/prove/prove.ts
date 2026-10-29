@@ -9,6 +9,7 @@ import { expandDefs } from "./prep/defs";
 import { normalizeSequent } from "./prep/elab";
 import { expandEnabledCdot } from "./prep/enabled";
 import { getFingerprint } from "./prep/fingerprint";
+import { encodeIsabelle } from "./isabelle/encode";
 import { flatten } from "./prep/flatten";
 import { findMethods, type Method } from "./prep/pragma";
 import { isTrivial } from "./prep/trivial";
@@ -86,7 +87,8 @@ interface Backend {
   // frontend and Prep.flatten that Prep.ship applies first. It throws a TlaUnsupportedError for
   // what tla-ts can't encode.
   encode: (id: number, sequent: Sequent, method: Method, session: EncodingSession) => string;
-  decide: (text: string, options: DecideOptions) => Verdict;
+  // tla-ts has no Isabelle of its own, so that backend only encodes.
+  decide?: (text: string, options: DecideOptions) => Verdict;
 }
 
 // Action.process_obligation, the frontend for the first-order backends, then Prep.flatten.
@@ -107,6 +109,11 @@ const BACKENDS: Record<string, Backend> = {
   zenon: {
     encode: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)),
     decide: decideZenon,
+  },
+  // tlapm names the theory after its temporary file, and tla-ts after the obligation.
+  isabelle: {
+    encode: (id, sequent, method) =>
+      encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto", `tlapm_${id}`),
   },
   // Pltl.process_obligation is LS4's frontend.
   ls4: { encode: (_id, sequent) => encodePtl(sequent), decide: decidePtl },
@@ -188,7 +195,7 @@ const proveWithBackends = (
     // Prep.prove_with: the Trivial method proves anything.
     if (method.prover === "trivial") return getProved(method.prover);
     const backend = BACKENDS[method.prover];
-    if (!backend) {
+    if (!backend?.decide) {
       reasons.push(`tla-ts has no ${method.prover} backend`);
       continue;
     }
