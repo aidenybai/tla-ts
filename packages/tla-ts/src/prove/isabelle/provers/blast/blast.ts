@@ -37,6 +37,7 @@ import {
   stripBlastImpConcl,
   stripBlastImpPrems,
   type BlastTerm,
+  type VarEntry,
   type VarRef,
 } from "./term";
 
@@ -76,7 +77,7 @@ interface SubgoalVar {
 // Translates a subgoal, Skolemizing all its parameters.
 const fromSubgoal = (state: BlastState, term: Term): BlastTerm => {
   const vars: SubgoalVar[] = [];
-  const tvars = new Map<string, BlastTerm>();
+  const tvars: VarEntry[] = [];
   const from = (level: number, current: Term): BlastTerm => {
     const [head, args] = stripComb(current);
     const apply = (blastHead: BlastTerm) =>
