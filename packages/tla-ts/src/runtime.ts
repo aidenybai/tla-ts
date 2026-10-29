@@ -24,6 +24,7 @@ export interface CheckerRuntime {
   properties: Map<string, string>;
   possibleCounts: Map<string, number>;
   isStopped: boolean;
+  isStarted: boolean;
   checkDeadlock: boolean;
   startedAt: number;
 }
@@ -75,6 +76,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     properties: new Map(),
     possibleCounts: new Map(),
     isStopped: false,
+    isStarted: false,
     checkDeadlock,
     startedAt: Date.now(),
   };
