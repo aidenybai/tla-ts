@@ -104,16 +104,23 @@ export const getLs4Verdict = (output: string): BackendVerdict => {
   return answer === undefined ? "unknown" : answer.startsWith("UNSAT") ? "unsat" : "sat";
 };
 
-// The records of the modules whose ids contain the --filter argument, or of every module.
+// The records of the modules whose ids contain the --filter argument, or of every module, less
+// those whose ids contain the --skip argument.
 export const readProofRecords = (): ModuleProofRecord[] => {
   if (!existsSync(PROOFS_PATH)) {
     console.error("Run conformance:record-proofs first");
     process.exit(1);
   }
-  const index = process.argv.indexOf("--filter");
-  const filter = index === -1 ? undefined : process.argv[index + 1];
+  const getOption = (name: string) =>
+    process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined;
+  const filter = getOption("--filter");
+  const skip = getOption("--skip");
   const records: ModuleProofRecord[] = JSON.parse(readFileSync(PROOFS_PATH, "utf8"));
-  return records.filter((record) => filter === undefined || record.id.includes(filter));
+  return records.filter(
+    (record) =>
+      (filter === undefined || record.id.includes(filter)) &&
+      (skip === undefined || !record.id.includes(skip)),
+  );
 };
 
 const libraryModules = getLibraryModules();
