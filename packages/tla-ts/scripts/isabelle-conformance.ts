@@ -1,6 +1,9 @@
+import { once } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { decideIsabelle } from "../src/prove/isabelle/decide";
+import { scheduler } from "node:timers/promises";
+import { Worker } from "node:worker_threads";
+import type { Verdict } from "../src/prove/verdict";
 import {
   getIsabelleDigest,
   type ModuleProofRecord,
@@ -12,10 +15,25 @@ import {
 // Isabelle's. An unsound answer proves what Isabelle couldn't.
 //
 // tlapm's limit is 30 s of wall-clock time, which a loaded machine stretches. So each theory runs
-// until it has used 30 s of both wall-clock and CPU time, and its result counts twice: within the
-// limit by wall-clock time, as tlapm would see it here, and within the limit by CPU time, an
-// estimate of a run on an idle core.
+// in a worker until it has used 30 s of the worker's CPU time, which a run never exceeds in
+// wall-clock time, and its result counts twice: within the limit by wall-clock time, as tlapm
+// would see it here, and within the limit by CPU time, an estimate of a run on an idle core.
+// --jobs runs that many workers at once, which stretches only the wall-clock times.
 type Outcome = "match" | "unsound" | "missed" | "missing" | "stale";
+
+interface Decision {
+  verdict: Exclude<Verdict, "sat">;
+  wallMilliseconds: number;
+  cpuMilliseconds: number;
+  // The worker was still deciding when the time limit passed.
+  isInterrupted: boolean;
+}
+
+interface Job {
+  name: string;
+  text: string;
+  expected: "unsat" | "unknown";
+}
 
 interface Result {
   name: string;
@@ -26,72 +44,118 @@ interface Result {
 }
 
 const TIME_LIMIT_MS = 30_000;
+const POLL_MS = 100;
 
-const filter = process.argv.includes("--filter")
-  ? process.argv[process.argv.indexOf("--filter") + 1]
-  : undefined;
-const modules: ModuleProofRecord[] = JSON.parse(readFileSync(PROOFS_PATH, "utf8"));
-const results = modules
-  .filter((module) => filter === undefined || module.id.includes(filter))
-  .flatMap((module) =>
-    module.obligations.flatMap((obligation): Result[] => {
-      if (!("isabelle" in obligation) || obligation.isabelle === undefined) return [];
-      const record = obligation.isabelle;
-      const name = `${module.id}/${obligation.id}`;
-      const path = join(PROOF_INPUTS_DIRECTORY, module.id, `${obligation.id}.thy`);
-      const skipped = (outcome: Outcome) => [
-        { name, wall: outcome, cpu: outcome, wallMilliseconds: 0, cpuMilliseconds: 0 },
-      ];
-      if (!existsSync(path)) return skipped("missing");
-      const text = readFileSync(path, "utf8");
-      if (getIsabelleDigest(text) !== record.input) return skipped("stale");
-      const started = performance.now();
-      const startedCpu = process.cpuUsage();
-      const getCpuMilliseconds = () => {
-        const cpu = process.cpuUsage(startedCpu);
-        return Math.round((cpu.user + cpu.system) / 1000);
-      };
-      // HACK: decideIsabelle runs synchronously, so no timer can abort it once the CPU time runs
-      // out. Its interrupt checks read signal.aborted, which this getter answers instead. It reads
-      // the CPU time on every 4096th check only, because each read is a system call.
-      const signal = new AbortController().signal;
-      let checks = 0;
-      Object.defineProperty(signal, "aborted", {
-        get: () =>
-          performance.now() - started > TIME_LIMIT_MS &&
-          checks++ % 4096 === 0 &&
-          getCpuMilliseconds() > TIME_LIMIT_MS,
-      });
-      const verdict = decideIsabelle(text, { timeLimitMs: 100 * TIME_LIMIT_MS, signal });
-      const wallMilliseconds = Math.round(performance.now() - started);
-      const cpuMilliseconds = getCpuMilliseconds();
-      const classify = (milliseconds: number): Outcome => {
-        if (verdict === "unsat" && record.verdict !== "unsat") return "unsound";
-        const within = verdict === "unsat" && milliseconds <= TIME_LIMIT_MS ? "unsat" : "unknown";
-        return within === record.verdict ? "match" : "missed";
-      };
-      const result = {
-        name,
-        wall: classify(wallMilliseconds),
-        cpu: classify(cpuMilliseconds),
-        wallMilliseconds,
+const getOption = (name: string) =>
+  process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined;
+const filter = getOption("--filter");
+const jobCount = Number(getOption("--jobs") ?? 1);
+
+// Node gives the main thread V8's default stack of 984 KB, and keeps 192 KB of a worker's stack in
+// reserve, so this gives decideIsabelle the stack it has on the main thread.
+const spawnWorker = async () => {
+  const worker = new Worker(new URL("./isabelle-conformance-worker.ts", import.meta.url), {
+    resourceLimits: { stackSizeMb: 1.15 },
+  });
+  await once(worker, "online");
+  return worker;
+};
+
+// Polls the worker's CPU time while it decides, and gives up on it once the time limit passes.
+const decide = async (worker: Worker, text: string): Promise<Decision> => {
+  const started = performance.now();
+  const startedCpu = await worker.cpuUsage();
+  const finished = new Promise<Decision>((resolve, reject) => {
+    worker.once("error", reject).once("message", (decision: Omit<Decision, "isInterrupted">) => {
+      worker.off("error", reject);
+      resolve({ ...decision, isInterrupted: false });
+    });
+  });
+  worker.postMessage(text);
+  for (;;) {
+    const decision = await Promise.race([finished, scheduler.wait(POLL_MS)]);
+    if (decision !== undefined) return decision;
+    const cpu = await worker.cpuUsage(startedCpu);
+    const cpuMilliseconds = Math.round((cpu.user + cpu.system) / 1000);
+    if (cpuMilliseconds > TIME_LIMIT_MS)
+      return {
+        verdict: "unknown",
+        wallMilliseconds: Math.round(performance.now() - started),
         cpuMilliseconds,
+        isInterrupted: true,
       };
-      if (result.wall !== "match" || result.cpu !== "match")
-        console.log(
-          `wall ${result.wall.padEnd(8)} cpu ${result.cpu.padEnd(8)} ${name} (Isabelle: ${record.verdict}, ${wallMilliseconds} ms wall, ${cpuMilliseconds} ms cpu)`,
-        );
-      return [result];
-    }),
+  }
+};
+
+const classify = (job: Job, decision: Decision): Result => {
+  const getOutcome = (milliseconds: number): Outcome => {
+    if (decision.verdict === "unsat" && job.expected !== "unsat") return "unsound";
+    const verdict =
+      decision.verdict === "unsat" && milliseconds <= TIME_LIMIT_MS ? "unsat" : "unknown";
+    return verdict === job.expected ? "match" : "missed";
+  };
+  return {
+    name: job.name,
+    wall: getOutcome(decision.wallMilliseconds),
+    cpu: getOutcome(decision.cpuMilliseconds),
+    wallMilliseconds: decision.wallMilliseconds,
+    cpuMilliseconds: decision.cpuMilliseconds,
+  };
+};
+
+const report = (result: Result, expected: string) => {
+  if (result.wall === "match" && result.cpu === "match") return;
+  console.log(
+    `wall ${result.wall.padEnd(8)} cpu ${result.cpu.padEnd(8)} ${result.name} (Isabelle: ${expected}, ${result.wallMilliseconds} ms wall, ${result.cpuMilliseconds} ms cpu)`,
   );
-const report = (view: "wall" | "cpu") => {
+};
+
+const results: Result[] = [];
+const jobs: Job[] = [];
+const modules: ModuleProofRecord[] = JSON.parse(readFileSync(PROOFS_PATH, "utf8"));
+for (const module of modules) {
+  if (filter !== undefined && !module.id.includes(filter)) continue;
+  for (const obligation of module.obligations) {
+    if (!("isabelle" in obligation) || obligation.isabelle === undefined) continue;
+    const name = `${module.id}/${obligation.id}`;
+    const path = join(PROOF_INPUTS_DIRECTORY, module.id, `${obligation.id}.thy`);
+    const skipped = (outcome: Outcome) =>
+      results.push({ name, wall: outcome, cpu: outcome, wallMilliseconds: 0, cpuMilliseconds: 0 });
+    if (!existsSync(path)) {
+      skipped("missing");
+      continue;
+    }
+    const text = readFileSync(path, "utf8");
+    if (getIsabelleDigest(text) !== obligation.isabelle.input) skipped("stale");
+    else jobs.push({ name, text, expected: obligation.isabelle.verdict });
+  }
+}
+
+// Each runner takes the next job until none is left, replacing its worker after a time-out.
+const run = async () => {
+  let worker = await spawnWorker();
+  for (let job = jobs.shift(); job !== undefined; job = jobs.shift()) {
+    const decision = await decide(worker, job.text);
+    if (decision.isInterrupted) {
+      await worker.terminate();
+      worker = await spawnWorker();
+    }
+    const result = classify(job, decision);
+    report(result, job.expected);
+    results.push(result);
+  }
+  await worker.terminate();
+};
+await Promise.all(Array.from({ length: jobCount }, run));
+
+const summarize = (view: "wall" | "cpu") => {
   const counts = new Map<Outcome, number>();
   results.forEach((result) => counts.set(result[view], (counts.get(result[view]) ?? 0) + 1));
   console.log(`\nby ${view === "wall" ? "wall-clock" : "CPU"} time:`);
   counts.forEach((count, outcome) => console.log(`  ${outcome}: ${count}`));
   return counts.get("unsound") ?? 0;
 };
-const unsound = report("wall") + report("cpu");
+const unsound = summarize("wall") + summarize("cpu");
 const slowest = results.toSorted((left, right) => right.cpuMilliseconds - left.cpuMilliseconds)[0];
 if (slowest !== undefined)
   console.log(
