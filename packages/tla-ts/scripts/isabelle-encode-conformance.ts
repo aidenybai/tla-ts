@@ -83,11 +83,18 @@ const results = readProofRecords()
       const encoded = getEncoding(() =>
         encodeForBackend(obligation, "isabelle", { caseErrors: 0 }),
       );
+      const inputPath = join(PROOF_INPUTS_DIRECTORY, record.id, `${expected.id}.thy`);
+      // tlapm writes a theory as it prints it, so one whose printing fails stops before its end.
+      if (
+        encoded.kind === "failed" &&
+        existsSync(inputPath) &&
+        !/\nend\s*$/.test(readFileSync(inputPath, "utf8"))
+      )
+        return [{ ...base, verdict: "match" }];
       if (encoded.kind !== "theory")
         return [{ ...base, verdict: encoded.kind, reason: encoded.reason }];
       if (getIsabelleDigest(encoded.text) === expected.isabelle.input)
         return [{ ...base, verdict: "match" }];
-      const inputPath = join(PROOF_INPUTS_DIRECTORY, record.id, `${expected.id}.thy`);
       if (!existsSync(inputPath)) return [{ ...base, verdict: "mismatch" }];
       return [
         {
