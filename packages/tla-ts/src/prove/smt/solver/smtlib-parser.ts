@@ -1,6 +1,6 @@
 // Ported from Z3 (src/parsers/smt2/smt2parser.cpp), MIT license, see z3-license.txt.
 // Parses the SMT-LIB subset that tlapm emits into Z3-style expressions.
-import { SmtParseError, SmtUnsupportedError } from "../errors";
+import { SmtParseError, SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
   OP_ABS,

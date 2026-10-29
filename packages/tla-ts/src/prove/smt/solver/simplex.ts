@@ -3,11 +3,12 @@
 // implements: a tableau of basic variables over non-basic ones, values that always satisfy the
 // rows, and Bland's rule to repair bound violations. Bounds are undone on backtracking, the
 // tableau and the values are kept.
+import type { Literal } from "./literal";
 import { Rational } from "./rational";
 
 // Why a bound holds: true literals and equal pairs of terms.
 export interface BoundReason {
-  literals: number[];
+  literals: Literal[];
 }
 
 export interface SimplexConflict {

@@ -10,7 +10,6 @@ import {
   FC_CONTINUE,
   FC_DONE,
   type Context,
-  type QuantifierManager,
 } from "./context";
 import { Mam } from "./e-matching";
 import type { Enode } from "./enode";
@@ -23,7 +22,14 @@ import { QiQueue } from "./qi-queue";
 const QI_MAX_EAGER_MULTIPATTERNS = 0;
 const QI_MAX_LAZY_MULTIPATTERN_MATCHING = 2;
 
-export class DefaultQuantifierManager implements QuantifierManager {
+// Model-based quantifier instantiation: the finder completes candidate models, the checker refutes
+// them with instances.
+interface Mbqi {
+  finder: ModelFinder;
+  checker: ModelChecker;
+}
+
+export class DefaultQuantifierManager {
   readonly quantifiers: number[] = [];
   private generations = new Map<number, number>();
   private qiQueue: QiQueue;
@@ -32,8 +38,7 @@ export class DefaultQuantifierManager implements QuantifierManager {
   private fingerprints = new FingerprintSet();
   private isActive = false;
   private lazyMatchingIndex = 0;
-  private modelFinder: ModelFinder | null = null;
-  private modelChecker: ModelChecker | null = null;
+  private mbqi: Mbqi | null = null;
 
   constructor(
     private context: Context,
@@ -45,8 +50,8 @@ export class DefaultQuantifierManager implements QuantifierManager {
     this.mam = new Mam(context, onMatch);
     this.lazyMam = new Mam(context, onMatch);
     if (!isMbqi) return;
-    this.modelFinder = new ModelFinder(context.manager, context);
-    this.modelChecker = new ModelChecker(context, this.modelFinder, this, context.deadline);
+    const finder = new ModelFinder(context.manager, context);
+    this.mbqi = { finder, checker: new ModelChecker(context, finder, this) };
   }
 
   getNumInstances() {
@@ -56,7 +61,7 @@ export class DefaultQuantifierManager implements QuantifierManager {
   add(quantifier: number, generation: number) {
     this.quantifiers.push(quantifier);
     this.generations.set(quantifier, generation);
-    this.modelFinder?.registerQuantifier(quantifier);
+    this.mbqi?.finder.registerQuantifier(quantifier);
   }
 
   del(quantifier: number) {
@@ -98,7 +103,7 @@ export class DefaultQuantifierManager implements QuantifierManager {
   }
 
   push() {
-    this.modelFinder?.pushScope();
+    this.mbqi?.finder.pushScope();
     this.qiQueue.push();
     this.fingerprints.push();
   }
@@ -106,7 +111,7 @@ export class DefaultQuantifierManager implements QuantifierManager {
   pop(numScopes: number) {
     this.mam.popScope();
     this.lazyMam.popScope();
-    this.modelFinder?.popScope(numScopes);
+    this.mbqi?.finder.popScope(numScopes);
     this.qiQueue.pop(numScopes);
     this.fingerprints.pop(numScopes);
   }
@@ -144,27 +149,27 @@ export class DefaultQuantifierManager implements QuantifierManager {
 
   initSearchEh() {
     this.lazyMatchingIndex = 0;
-    this.modelChecker?.initSearchEh();
+    this.mbqi?.checker.initSearchEh();
     this.qiQueue.initSearchEh();
   }
 
   restartEh() {
-    this.modelFinder?.restartEh();
-    this.modelChecker?.restartEh();
+    this.mbqi?.finder.restartEh();
+    this.mbqi?.checker.restartEh();
   }
 
   isModelBased() {
-    return this.modelChecker !== null;
+    return this.mbqi !== null;
   }
 
   adjustModel(model: ProtoModel) {
-    this.modelFinder?.fixModel(model);
+    this.mbqi?.finder.fixModel(model);
   }
 
   checkModel(model: ProtoModel, root2value: Map<Enode, number>) {
-    const checker = this.modelChecker;
+    const checker = this.mbqi?.checker;
     if (this.quantifiers.length === 0) return CHECK_MODEL_SAT;
-    if (checker === null) return CHECK_MODEL_UNKNOWN;
+    if (checker === undefined) return CHECK_MODEL_UNKNOWN;
     if (checker.check(model, root2value)) return CHECK_MODEL_SAT;
     return checker.hasNewInstances() ? CHECK_MODEL_RESTART : CHECK_MODEL_UNKNOWN;
   }

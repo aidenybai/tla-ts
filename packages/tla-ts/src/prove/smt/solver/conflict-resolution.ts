@@ -1,27 +1,29 @@
 // Ported from Z3 (src/smt/smt_conflict_resolution.cpp), MIT license, see z3-license.txt.
 // First-UIP conflict resolution with lemma minimization. Equalities in a conflict are explained
 // by walking the transitivity branches of the E-graph down to literals.
-import type { Clause, Context } from "./context";
+import type { BJustification } from "./clause";
+import type { Context } from "./context";
 import { Enode, EqJustification, Justification } from "./enode";
+import { BoolVar, getVar, Literal, negate } from "./literal";
 
 export class ConflictResolution {
-  private antecedents: number[] = [];
+  private antecedents: Literal[] = [];
   private todoJustifications: Justification[] = [];
   private todoJustificationsHead = 0;
   private todoEqs: Enode[] = [];
   private processedEqs = new Set<string>();
-  lemma: number[] = [];
+  lemma: Literal[] = [];
   lemmaAtoms: number[] = [];
   private conflictLevel = 0;
   newScopeLevel = 0;
   lemmaIscopeLevel = 0;
-  private unmark: number[] = [];
+  private unmark: BoolVar[] = [];
   private levelSet = new Set<number>();
-  private minimizationStack: number[] = [];
+  private minimizationStack: BoolVar[] = [];
 
   constructor(private context: Context) {}
 
-  markLiteral(literal: number) {
+  markLiteral(literal: Literal) {
     this.antecedents.push(literal);
   }
 
@@ -47,15 +49,15 @@ export class ConflictResolution {
   }
 
   private findCommonAncestor(first: Enode, second: Enode) {
-    for (let node: Enode | null = first; node !== null; node = node.transTarget)
+    for (let node: Enode | undefined = first; node !== undefined; node = node.trans?.target)
       node.isMarked2 = true;
     let result = second;
     while (!result.isMarked2) {
-      const target = result.transTarget;
-      if (target === null) break;
+      const target = result.trans?.target;
+      if (target === undefined) break;
       result = target;
     }
-    for (let node: Enode | null = first; node !== null; node = node.transTarget)
+    for (let node: Enode | undefined = first; node !== undefined; node = node.trans?.target)
       node.isMarked2 = false;
     return result;
   }
@@ -77,10 +79,10 @@ export class ConflictResolution {
   private eqBranchToLiterals(start: Enode, ancestor: Enode) {
     let node = start;
     while (node !== ancestor) {
-      const target = node.transTarget;
-      if (target === null) break;
-      this.eqJustificationToLiterals(node, target, node.transJustification);
-      node = target;
+      const trans = node.trans;
+      if (trans === null) break;
+      this.eqJustificationToLiterals(node, trans.target, trans.justification);
+      node = trans.target;
     }
   }
 
@@ -147,7 +149,7 @@ export class ConflictResolution {
     return result;
   }
 
-  private getMaxLevel(consequent: number, justification: Clause | Justification | "axiom" | null) {
+  private getMaxLevel(consequent: Literal, justification: BJustification) {
     const context = this.context;
     let result = consequent !== context.falseLiteral ? context.getAssignLevel(consequent) : 0;
     if (justification instanceof Justification)
@@ -169,16 +171,16 @@ export class ConflictResolution {
     return result;
   }
 
-  private processAntecedent(antecedent: number, marks: { count: number }) {
+  private processAntecedent(antecedent: Literal, marks: { count: number }) {
     const context = this.context;
-    const boolVar = antecedent >> 1;
+    const boolVar = getVar(antecedent);
     const level = context.levels[boolVar];
     if (context.marks[boolVar] || level <= context.baseLevel) return;
     context.marks[boolVar] = true;
     context.incBvarActivity(boolVar);
     if (level === this.conflictLevel) marks.count++;
     else {
-      this.lemma.push(antecedent ^ 1);
+      this.lemma.push(negate(antecedent));
       this.lemmaAtoms.push(context.boolVar2Expr[boolVar]);
     }
   }
@@ -189,21 +191,22 @@ export class ConflictResolution {
   }
 
   // Returns false when the conflict is at the search level, so the problem is unsat.
-  resolve(conflict: Clause | Justification | "axiom" | null, notLiteral: number) {
+  resolve(conflict: BJustification, notLiteral: Literal | null) {
     const context = this.context;
     this.lemma = [];
     this.lemmaAtoms = [];
     let justification = conflict;
-    let consequent = notLiteral !== -1 ? notLiteral ^ 1 : context.falseLiteral;
+    let consequent = notLiteral !== null ? negate(notLiteral) : context.falseLiteral;
     this.conflictLevel = this.getMaxLevel(consequent, justification);
     if (this.conflictLevel <= context.searchLevel) return false;
     const assigned = context.assignedLiterals;
     let index = assigned.length - 1;
     while (index > 0 && context.getAssignLevel(assigned[index]) > this.conflictLevel) index--;
-    this.lemma.push(-1);
+    // The first slot holds the negated first unique implication point, found below.
+    this.lemma.push(context.falseLiteral);
     this.lemmaAtoms.push(-1);
     const marks = { count: 0 };
-    if (notLiteral !== -1) this.processAntecedent(notLiteral, marks);
+    if (notLiteral !== null) this.processAntecedent(notLiteral, marks);
     do {
       if (justification instanceof Justification) this.processJustification(justification, marks);
       else if (justification !== null && justification !== "axiom") {
@@ -214,24 +217,24 @@ export class ConflictResolution {
         if (consequent !== context.falseLiteral) {
           if (literals[0] === consequent) start = 1;
           else {
-            this.processAntecedent(literals[0] ^ 1, marks);
+            this.processAntecedent(negate(literals[0]), marks);
             start = 2;
           }
         }
         for (let literalIndex = start; literalIndex < literals.length; literalIndex++)
-          this.processAntecedent(literals[literalIndex] ^ 1, marks);
+          this.processAntecedent(negate(literals[literalIndex]), marks);
         if (clause.justification !== null) this.processJustification(clause.justification, marks);
       }
-      while (!context.marks[assigned[index] >> 1]) index--;
+      while (!context.marks[getVar(assigned[index])]) index--;
       consequent = assigned[index];
-      const consequentVar = consequent >> 1;
+      const consequentVar = getVar(consequent);
       justification = context.justifications[consequentVar];
       index--;
       marks.count--;
       context.marks[consequentVar] = false;
     } while (marks.count > 0);
-    this.lemma[0] = consequent ^ 1;
-    this.lemmaAtoms[0] = context.boolVar2Expr[consequent >> 1];
+    this.lemma[0] = negate(consequent);
+    this.lemmaAtoms[0] = context.boolVar2Expr[getVar(consequent)];
     this.finalizeResolve();
     return true;
   }
@@ -241,18 +244,18 @@ export class ConflictResolution {
     this.unmarkJustifications(0);
     this.minimizeLemma();
     this.newScopeLevel = context.searchLevel;
-    this.lemmaIscopeLevel = context.internLevels[this.lemma[0] >> 1];
+    this.lemmaIscopeLevel = context.internLevels[getVar(this.lemma[0])];
     for (let index = 1; index < this.lemma.length; index++) {
-      const boolVar = this.lemma[index] >> 1;
+      const boolVar = getVar(this.lemma[index]);
       context.marks[boolVar] = false;
       this.newScopeLevel = Math.max(this.newScopeLevel, context.levels[boolVar]);
       this.lemmaIscopeLevel = Math.max(this.lemmaIscopeLevel, context.internLevels[boolVar]);
     }
   }
 
-  private processAntecedentForMinimization(antecedent: number) {
+  private processAntecedentForMinimization(antecedent: Literal) {
     const context = this.context;
-    const boolVar = antecedent >> 1;
+    const boolVar = getVar(antecedent);
     const level = context.levels[boolVar];
     if (context.marks[boolVar] || level <= context.baseLevel) return true;
     if (!this.levelSet.has(level)) return false;
@@ -275,9 +278,9 @@ export class ConflictResolution {
     this.unmarkJustifications(oldHead);
   }
 
-  private isImpliedByMarked(literal: number) {
+  private isImpliedByMarked(literal: Literal) {
     const context = this.context;
-    this.minimizationStack = [literal >> 1];
+    this.minimizationStack = [getVar(literal)];
     const oldSize = this.unmark.length;
     const oldHead = this.todoJustificationsHead;
     while (this.minimizationStack.length > 0) {
@@ -290,10 +293,10 @@ export class ConflictResolution {
         isImplied = context.levels[boolVar] <= context.baseLevel;
       else {
         const literals = justification.literals;
-        const position = literals[1] >> 1 === boolVar ? 1 : 0;
+        const position = getVar(literals[1]) === boolVar ? 1 : 0;
         for (let index = 0; index < literals.length && isImplied; index++)
           if (index !== position)
-            isImplied = this.processAntecedentForMinimization(literals[index] ^ 1);
+            isImplied = this.processAntecedentForMinimization(negate(literals[index]));
         if (isImplied && justification.justification !== null)
           isImplied = this.processJustificationForMinimization(justification.justification);
       }
@@ -308,11 +311,11 @@ export class ConflictResolution {
   private minimizeLemma() {
     const context = this.context;
     this.unmark = [];
-    this.levelSet = new Set(this.lemma.map((literal) => context.levels[literal >> 1]));
+    this.levelSet = new Set(this.lemma.map((literal) => context.levels[getVar(literal)]));
     let kept = 1;
     for (let index = 1; index < this.lemma.length; index++) {
       const literal = this.lemma[index];
-      if (this.isImpliedByMarked(literal)) this.unmark.push(literal >> 1);
+      if (this.isImpliedByMarked(literal)) this.unmark.push(getVar(literal));
       else {
         this.lemma[kept] = literal;
         this.lemmaAtoms[kept] = this.lemmaAtoms[index];

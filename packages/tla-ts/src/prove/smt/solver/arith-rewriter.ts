@@ -351,9 +351,19 @@ export class ArithRewriter {
     return this.mkLeGeEq(left, right, KIND_EQ);
   }
 
-  mkIdiv(left: number, right: number) {
-    if (this.manager.isNumeral(right) && this.manager.values[right] === -1)
-      return this.reduce(this.mkMulAppWith(-1, left), 1);
+  // mk_idiv_core and mk_mod_core: SMT-LIB integer division, whose remainder is non-negative.
+  mkDivMod(op: number, left: number, right: number) {
+    const manager = this.manager;
+    const dividend = manager.getNumeral(left);
+    const divisor = manager.getNumeral(right);
+    const isIdiv = op === OP_IDIV;
+    if (dividend !== undefined && divisor !== undefined && divisor !== 0) {
+      const quotient =
+        divisor > 0 ? Math.floor(dividend / divisor) : -Math.floor(dividend / -divisor);
+      return manager.mkNumeral(isIdiv ? quotient : dividend - divisor * quotient);
+    }
+    if (divisor === 1) return isIdiv ? left : manager.mkNumeral(0);
+    if (isIdiv && divisor === -1) return this.reduce(this.mkMulAppWith(-1, left), 1);
     return undefined;
   }
 

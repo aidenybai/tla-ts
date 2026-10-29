@@ -1,10 +1,10 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
-import { solveSmt } from "../src/smt/solver";
+import { decideSmt } from "../src/prove/smt/solver/solver";
 import { CONFORMANCE_DIRECTORY } from "./corpora";
 import { getSmtVerdict, PROOF_INPUTS_DIRECTORY, type BackendVerdict } from "./proof-records";
 
-// "unsound" is a proof of an obligation Z3 refutes, "extra" a proof of one Z3 gave up on.
+// "unsound" is an answer Z3 contradicts, "extra" a proof of an obligation Z3 gave up on.
 type Outcome = "proved" | "missed" | "extra" | "unsound" | "unproved";
 
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".smt-results.json");
@@ -22,6 +22,7 @@ const listInputs = (directory: string): string[] =>
 
 const getOutcome = (z3: BackendVerdict, ours: BackendVerdict): Outcome => {
   if (ours === "unsat") return z3 === "unsat" ? "proved" : z3 === "sat" ? "unsound" : "extra";
+  if (ours === "sat" && z3 === "unsat") return "unsound";
   return z3 === "unsat" ? "missed" : "unproved";
 };
 
@@ -38,7 +39,7 @@ if (inputs.length === 0)
 const results = inputs.map((path) => {
   const z3 = getSmtVerdict(readFileSync(`${path}.out`, "utf8"));
   const start = performance.now();
-  const ours = solveSmt(readFileSync(path, "utf8"), { timeLimitMs: TIME_LIMIT_MS });
+  const ours = decideSmt(readFileSync(path, "utf8"), { timeLimitMs: TIME_LIMIT_MS });
   const timeMs = Math.round(performance.now() - start);
   const outcome = getOutcome(z3, ours);
   const id = relative(PROOF_INPUTS_DIRECTORY, path);
@@ -57,7 +58,7 @@ console.log("");
 console.log(`proved by both: ${counts.get("proved") ?? 0}`);
 console.log(`missed (Z3 unsat, ours not): ${counts.get("missed") ?? 0}`);
 console.log(`extra (ours unsat, Z3 unknown): ${counts.get("extra") ?? 0}`);
-console.log(`unsound (ours unsat, Z3 sat): ${counts.get("unsound") ?? 0}`);
+console.log(`unsound (ours contradicts Z3): ${counts.get("unsound") ?? 0}`);
 console.log(`unproved by both: ${counts.get("unproved") ?? 0}`);
 console.log(
   `time: median ${getPercentile(0.5)} ms, p90 ${getPercentile(0.9)} ms, p99 ${getPercentile(0.99)} ms, max ${getPercentile(1)} ms`,

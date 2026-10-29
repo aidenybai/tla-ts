@@ -1,6 +1,6 @@
 // Ported from Z3 (src/ast/ast.h, src/ast/ast.cpp), MIT license, see z3-license.txt.
 // A hash-consed DAG of applications, de Bruijn variables and quantifiers, as in Z3's ast_manager.
-import { SmtUnsupportedError } from "../errors";
+import { SmtUnsupportedError } from "../../../errors";
 
 export const KIND_APP = 0;
 export const KIND_VAR = 1;
@@ -246,7 +246,7 @@ export class AstManager {
 
   getQuantifier(expr: number) {
     const data = this.quantifiers.get(expr);
-    if (data === undefined) throw new SmtUnsupportedError("expected a quantifier");
+    if (data === undefined) throw new Error("the expression is not a quantifier");
     return data;
   }
 

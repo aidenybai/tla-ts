@@ -22,7 +22,9 @@ import {
   SORT_BOOL,
   SORT_INT,
 } from "./ast";
-import { FC_CONTINUE, FC_DONE, FC_GIVEUP, L_UNDEF, type Context, type Theory } from "./context";
+import { FC_CONTINUE, FC_DONE, FC_GIVEUP, type Context } from "./context";
+import { L_UNDEF } from "./lbool";
+import { BoolVar, getVar, Literal, mkLiteral, negate } from "./literal";
 import { Enode, TheoryJustification } from "./enode";
 import type { ProtoModel } from "./proto-model";
 import { Rational, getGcd } from "./rational";
@@ -35,7 +37,7 @@ interface Atom {
 }
 
 interface AtomOccurrence {
-  boolVar: number;
+  boolVar: BoolVar;
   atom: Atom;
 }
 
@@ -44,7 +46,7 @@ interface Linearized {
   constant: Rational;
 }
 
-export class TheoryLra implements Theory {
+export class TheoryLra {
   private simplex: Simplex;
   private exprToVar = new Map<number, number>();
   private termToVar = new Map<string, number>();
@@ -300,12 +302,12 @@ export class TheoryLra implements Theory {
     this.linearize(expr, Rational.one, { coeffs: new Map(), constant: Rational.zero });
   }
 
-  private getAtomLiteral(boolVar: number, isTrue: boolean) {
-    return boolVar * 2 + (isTrue ? 0 : 1);
+  private getAtomLiteral(boolVar: BoolVar, isTrue: boolean) {
+    return mkLiteral(boolVar, !isTrue);
   }
 
   // mk_bound_axioms: implications between the new atom and its closest neighbors on one variable.
-  private addBoundAxioms(boolVar: number, atom: Atom) {
+  private addBoundAxioms(boolVar: BoolVar, atom: Atom) {
     let occurrences = this.atomsOfVar.get(atom.variable);
     if (occurrences === undefined) {
       occurrences = [];
@@ -324,7 +326,7 @@ export class TheoryLra implements Theory {
         const upperLiteral = atom.isUpper ? literal : otherLiteral;
         const lowerLiteral = atom.isUpper ? otherLiteral : literal;
         if (lower.bound.compare(upper.bound) > 0)
-          this.context.mkThAxiom([upperLiteral ^ 1, lowerLiteral ^ 1]);
+          this.context.mkThAxiom([negate(upperLiteral), negate(lowerLiteral)]);
         else if (lower.bound.compare(upper.bound.add(Rational.one)) <= 0)
           this.context.mkThAxiom([upperLiteral, lowerLiteral]);
         continue;
@@ -345,14 +347,14 @@ export class TheoryLra implements Theory {
     const weaker = atom.isUpper ? closestAbove : closestBelow;
     const stronger = atom.isUpper ? closestBelow : closestAbove;
     if (weaker !== undefined)
-      this.context.mkThAxiom([literal ^ 1, this.getAtomLiteral(weaker.boolVar, true)]);
+      this.context.mkThAxiom([negate(literal), this.getAtomLiteral(weaker.boolVar, true)]);
     if (stronger !== undefined)
       this.context.mkThAxiom([this.getAtomLiteral(stronger.boolVar, false), literal]);
     list.push({ boolVar, atom });
     this.context.pushTrail(() => list.pop());
   }
 
-  assignEh(boolVar: number, isTrue: boolean) {
+  assignEh(boolVar: BoolVar, isTrue: boolean) {
     const atom = this.atomOfBoolVar[boolVar];
     if (atom === undefined) return;
     const reason: BoundReason = { literals: [this.getAtomLiteral(boolVar, isTrue)] };
@@ -391,14 +393,14 @@ export class TheoryLra implements Theory {
   }
 
   private collectLiterals(reasons: (BoundReason | null)[]) {
-    const literals: number[] = [];
+    const literals: Literal[] = [];
     for (const reason of reasons)
       if (reason !== null) for (const literal of reason.literals) literals.push(literal);
     return literals;
   }
 
   private setConflict(reasons: (BoundReason | null)[]) {
-    this.context.setConflict(new TheoryJustification(this.collectLiterals(reasons), []), -1);
+    this.context.setConflict(new TheoryJustification(this.collectLiterals(reasons), []), null);
   }
 
   // fixed_var_eh: two terms fixed to one value are equal.
@@ -479,13 +481,13 @@ export class TheoryLra implements Theory {
     const eqLiteral = context.getLiteral(eq);
     const leLiteral = context.getLiteral(le);
     const geLiteral = context.getLiteral(ge);
-    if (context.isTrueFirst(eqLiteral >> 1)) {
-      context.setTrueFirstFlag(leLiteral >> 1);
-      context.setTrueFirstFlag(geLiteral >> 1);
+    if (context.isTrueFirst(getVar(eqLiteral))) {
+      context.setTrueFirstFlag(getVar(leLiteral));
+      context.setTrueFirstFlag(getVar(geLiteral));
     }
-    context.mkThAxiom([eqLiteral ^ 1, leLiteral]);
-    context.mkThAxiom([eqLiteral ^ 1, geLiteral]);
-    context.mkThAxiom([eqLiteral, leLiteral ^ 1, geLiteral ^ 1]);
+    context.mkThAxiom([negate(eqLiteral), leLiteral]);
+    context.mkThAxiom([negate(eqLiteral), geLiteral]);
+    context.mkThAxiom([eqLiteral, negate(leLiteral), negate(geLiteral)]);
     const handler = () => {
       if (!context.isRelevant(first.owner) || !context.isRelevant(second.owner)) return;
       context.markAsRelevant(eq);
@@ -527,7 +529,7 @@ export class TheoryLra implements Theory {
     else this.mkVariableDivModAxioms(args[0], args[1]);
   }
 
-  private mkLiteral(atom: number) {
+  private internalizeLiteral(atom: number) {
     this.context.internalize(atom, true);
     return this.context.getLiteral(atom);
   }
@@ -547,22 +549,25 @@ export class TheoryLra implements Theory {
     const zero = manager.mkNumeral(0);
     const minusOne = manager.mkNumeral(-1);
     const product = manager.mkApp(OP_MUL, [divisor, quotient], SORT_INT);
-    const isZero = this.mkLiteral(manager.mkEq(divisor, zero));
+    const isZero = this.internalizeLiteral(manager.mkEq(divisor, zero));
     const sum = manager.mkApp(OP_ADD, [product, remainder], SORT_INT);
-    context.mkThAxiom([isZero, this.mkLiteral(manager.mkEq(sum, dividend))]);
-    context.mkThAxiom([isZero, this.mkLiteral(manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL))]);
+    context.mkThAxiom([isZero, this.internalizeLiteral(manager.mkEq(sum, dividend))]);
+    context.mkThAxiom([
+      isZero,
+      this.internalizeLiteral(manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL)),
+    ]);
     const lowerBound = manager.mkApp(
       OP_ADD,
       [remainder, manager.mkApp(OP_MUL, [minusOne, divisor], SORT_INT)],
       SORT_INT,
     );
     context.mkThAxiom([
-      this.mkLiteral(manager.mkApp(OP_LE, [divisor, zero], SORT_BOOL)),
-      this.mkLiteral(manager.mkApp(OP_LE, [lowerBound, minusOne], SORT_BOOL)),
+      this.internalizeLiteral(manager.mkApp(OP_LE, [divisor, zero], SORT_BOOL)),
+      this.internalizeLiteral(manager.mkApp(OP_LE, [lowerBound, minusOne], SORT_BOOL)),
     ]);
     context.mkThAxiom([
-      this.mkLiteral(manager.mkApp(OP_GE, [divisor, zero], SORT_BOOL)),
-      this.mkLiteral(
+      this.internalizeLiteral(manager.mkApp(OP_GE, [divisor, zero], SORT_BOOL)),
+      this.internalizeLiteral(
         manager.mkApp(
           OP_LE,
           [manager.mkApp(OP_ADD, [remainder, divisor], SORT_INT), minusOne],
@@ -573,7 +578,9 @@ export class TheoryLra implements Theory {
     const difference = manager.mkApp(OP_SUB, [dividend, product], SORT_INT);
     context.mkThAxiom([
       isZero,
-      this.mkLiteral(rewriter.rewrite(manager.mkApp(OP_GE, [difference, zero], SORT_BOOL))),
+      this.internalizeLiteral(
+        rewriter.rewrite(manager.mkApp(OP_GE, [difference, zero], SORT_BOOL)),
+      ),
     ]);
   }
 

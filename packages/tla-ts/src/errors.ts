@@ -95,6 +95,7 @@ export class SmtUnsupportedError extends TlaError {
   }
 }
 
+// The SMT-LIB input is malformed: a syntax error, an undeclared symbol, or an ill-sorted application.
 export class SmtParseError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);

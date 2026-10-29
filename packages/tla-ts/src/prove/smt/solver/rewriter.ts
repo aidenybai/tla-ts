@@ -380,7 +380,7 @@ export class Rewriter {
         return this.arith.mkMul(args) ?? manager.mkApp(decl, args, sort);
       case OP_IDIV:
       case OP_MOD:
-        return this.mkDivMod(decl, args);
+        return this.arith.mkDivMod(op, args[0], args[1]) ?? manager.mkApp(decl, args, sort);
       case OP_ABS:
         return this.arith.mkAbs(args[0]);
       default:
@@ -496,26 +496,5 @@ export class Rewriter {
 
   mkAdd(args: number[]) {
     return this.arith.mkAdd(args) ?? this.arith.mkAddApp(args);
-  }
-
-  private mkDivMod(decl: number, args: number[]) {
-    const manager = this.manager;
-    const dividend = this.manager.getNumeral(args[0]);
-    const divisor = this.manager.getNumeral(args[1]);
-    if (dividend !== undefined && divisor !== undefined && divisor !== 0) {
-      // SMT-LIB integer division: the remainder is non-negative.
-      const quotient =
-        divisor > 0 ? Math.floor(dividend / divisor) : -Math.floor(dividend / -divisor);
-      return this.manager.mkNumeral(
-        manager.funcDecls[decl].op === OP_IDIV ? quotient : dividend - divisor * quotient,
-      );
-    }
-    if (divisor === 1)
-      return manager.funcDecls[decl].op === OP_IDIV ? args[0] : this.manager.mkNumeral(0);
-    const isIdiv = manager.funcDecls[decl].op === OP_IDIV;
-    return (
-      (isIdiv ? this.arith.mkIdiv(args[0], args[1]) : undefined) ??
-      manager.mkApp(decl, args, SORT_INT)
-    );
   }
 }

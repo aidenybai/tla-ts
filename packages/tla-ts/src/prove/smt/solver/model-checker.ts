@@ -4,13 +4,13 @@
 // is a counterexample that becomes an instance of the quantifier.
 import { KIND_APP, type AstManager } from "./ast";
 import { preprocess } from "./asserted-formulas";
-import { Context, L_FALSE, L_TRUE } from "./context";
+import { Context, type SearchLimits } from "./context";
 import type { Enode } from "./enode";
+import { L_FALSE, L_TRUE } from "./lbool";
 import type { ModelFinder } from "./model-finder";
 import type { ProtoModel } from "./proto-model";
-import { DefaultQuantifierManager } from "./quantifier-manager";
+import type { DefaultQuantifierManager } from "./quantifier-manager";
 import { substitute } from "./var-subst";
-import { TheoryLra } from "./theory-lra";
 
 // qi_params' mbqi_max_cexs and mbqi_max_iterations.
 const MBQI_MAX_CEXS = 1;
@@ -22,40 +22,22 @@ interface Instance {
   generation: number;
 }
 
-export interface MbqiQuantifierManager {
-  readonly quantifiers: readonly number[];
-  getGeneration(quantifier: number): number;
-  addInstance(quantifier: number, bindings: Enode[], maxGeneration: number): void;
-}
-
 // The auxiliary context: Z3 keeps one and pushes a scope per check, which this rebuilds from the
-// assertions of the current check.
-class AuxContext {
-  private assertions: number[] = [];
-  model: ProtoModel | null = null;
-
-  constructor(
-    private manager: AstManager,
-    private deadline: number,
-  ) {}
-
-  assertExpr(expr: number) {
-    this.assertions.push(expr);
+// assertions of the current check. It answers with a model, or with whether the assertions are
+// unsatisfiable or undecided.
+const checkAux = (manager: AstManager, assertions: number[], limits: SearchLimits) => {
+  const context = new Context(manager, limits, false);
+  for (const formula of preprocess(manager, assertions)) {
+    if (context.isInconsistent()) break;
+    context.internalizeAssertion(formula, 0);
   }
-
-  check() {
-    const context = new Context(this.manager, this.deadline);
-    context.theory = new TheoryLra(context);
-    context.qmanager = new DefaultQuantifierManager(context, false);
-    for (const formula of preprocess(this.manager, this.assertions)) {
-      if (context.isInconsistent()) break;
-      context.internalizeAssertion(formula, 0);
-    }
-    const result = context.search();
-    this.model = result === L_TRUE ? context.mkProtoModel().model : null;
-    return result;
-  }
-}
+  const result = context.search();
+  return result === L_TRUE
+    ? context.mkProtoModel().model
+    : result === L_FALSE
+      ? "unsat"
+      : "unknown";
+};
 
 export class ModelChecker {
   private maxCexs = MBQI_MAX_CEXS;
@@ -68,8 +50,7 @@ export class ModelChecker {
   constructor(
     private context: Context,
     private modelFinder: ModelFinder,
-    private qmanager: MbqiQuantifierManager,
-    private deadline: number,
+    private qmanager: DefaultQuantifierManager,
   ) {}
 
   private get manager() {
@@ -120,7 +101,7 @@ export class ModelChecker {
 
   // assert_neg_q_m: asserts the negated body under the model, with fresh constants for the
   // variables.
-  private assertNegQM(aux: AuxContext, quantifier: number, model: ProtoModel) {
+  private assertNegQM(assertions: number[], quantifier: number, model: ProtoModel) {
     const manager = this.manager;
     const data = manager.getQuantifier(quantifier);
     const body = model.eval(data.body, true);
@@ -131,21 +112,16 @@ export class ModelChecker {
       const sk = manager.mkFreshConst("x", sort);
       sks[numDecls - index - 1] = sk;
       if (model.isFinite(sort))
-        aux.assertExpr(
+        assertions.push(
           manager.mkOr(model.getKnownUniverse(sort).map((value) => manager.mkEq(sk, value))),
         );
     }
-    aux.assertExpr(manager.mkNot(substitute(manager, body, sks)));
+    assertions.push(manager.mkNot(substitute(manager, body, sks)));
     return sks;
   }
 
-  private addInstance(
-    quantifier: number,
-    cex: ProtoModel | null,
-    sks: number[],
-    isUsingInv: boolean,
-  ) {
-    if (cex === null || sks.length === 0) return false;
+  private addInstance(quantifier: number, cex: ProtoModel, sks: number[], isUsingInv: boolean) {
+    if (sks.length === 0) return false;
     const manager = this.manager;
     const numDecls = manager.getQuantifier(quantifier).sorts.length;
     const bindings: number[] = [];
@@ -173,22 +149,23 @@ export class ModelChecker {
   // check(q): whether the model satisfies the quantifier. A counterexample becomes an instance.
   private checkQuantifier(quantifier: number, model: ProtoModel) {
     const manager = this.manager;
-    const aux = new AuxContext(manager, this.deadline);
+    const limits = this.context.limits;
+    const assertions: number[] = [];
     const flatQ = this.modelFinder.getFlatQuantifier(quantifier);
-    const sks = this.assertNegQM(aux, flatQ, model);
-    const result = aux.check();
-    if (result !== L_TRUE) return result === L_FALSE;
-    const completeCex = aux.model;
+    const sks = this.assertNegQM(assertions, flatQ, model);
+    const completeCex = checkAux(manager, assertions, limits);
+    if (completeCex === "unsat") return true;
+    if (completeCex === "unknown") return false;
     // Try to find instances from the instantiation sets first.
-    this.modelFinder.restrictSksToInstSet(quantifier, sks, (expr) => aux.assertExpr(expr));
+    this.modelFinder.restrictSksToInstSet(quantifier, sks, (expr) => assertions.push(expr));
     let numNewInstances = 0;
-    while (aux.check() === L_TRUE) {
-      const cex = aux.model;
-      if (cex === null || !this.addInstance(quantifier, cex, sks, true)) break;
+    for (;;) {
+      const cex = checkAux(manager, assertions, limits);
+      if (typeof cex === "string" || !this.addInstance(quantifier, cex, sks, true)) break;
       numNewInstances++;
       if (numNewInstances >= this.maxCexs) break;
       // add_blocking_clause.
-      aux.assertExpr(
+      assertions.push(
         manager.mkOr(
           sks.map((sk) =>
             manager.mkNot(manager.mkEq(sk, cex.getSomeConstInterp(manager.decls[sk]))),

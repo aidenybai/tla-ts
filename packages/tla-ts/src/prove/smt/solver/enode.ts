@@ -1,8 +1,9 @@
 // Ported from Z3 (src/smt/smt_enode.h, src/smt/smt_eq_justification.h, src/smt/smt_justification.h),
 // MIT license, see z3-license.txt. E-graph nodes and the justifications for their equalities.
+import type { Literal } from "./literal";
 
 export interface Antecedents {
-  markLiteral(literal: number): void;
+  markLiteral(literal: Literal): void;
   markEq(first: Enode, second: Enode): void;
   markJustification(justification: Justification): void;
   markJustifiedEq(first: Enode, second: Enode, justification: EqJustification): void;
@@ -17,10 +18,17 @@ export abstract class Justification {
 export type EqJustification =
   | { kind: "axiom" }
   | { kind: "congruence"; isCommutative: boolean }
-  | { kind: "equation"; literal: number }
+  | { kind: "equation"; literal: Literal }
   | { kind: "justification"; justification: Justification };
 
 export const AXIOM_EQ_JUSTIFICATION: EqJustification = { kind: "axiom" };
+
+// trans: the next node on the transitivity branch toward the root of the proof tree, and why the two
+// are equal.
+export interface Trans {
+  target: Enode;
+  justification: EqJustification;
+}
 
 export class Enode {
   root: Enode = this;
@@ -28,9 +36,7 @@ export class Enode {
   cg: Enode = this;
   classSize = 1;
   parents: Enode[] = [];
-  transTarget: Enode | null = null;
-  transJustification: EqJustification = AXIOM_EQ_JUSTIFICATION;
-  boolVar = -1;
+  trans: Trans | null = null;
   thVar = -1;
   lbls = 0;
   plbls = 0;
@@ -111,7 +117,7 @@ export class MpIffJustification extends Justification {
   constructor(
     private first: Enode,
     private second: Enode,
-    private getLiteral: (node: Enode) => number,
+    private getLiteral: (node: Enode) => Literal,
   ) {
     super();
   }
@@ -126,7 +132,7 @@ export class MpIffJustification extends Justification {
 export class UnitResolutionJustification extends Justification {
   constructor(
     private justification: Justification | null,
-    private literals: number[],
+    private literals: Literal[],
   ) {
     super();
   }
@@ -140,7 +146,7 @@ export class UnitResolutionJustification extends Justification {
 // ext_theory_propagation_justification: theory reasoning from literals and equalities.
 export class TheoryJustification extends Justification {
   constructor(
-    private literals: number[],
+    private literals: Literal[],
     private eqs: Enode[],
   ) {
     super();

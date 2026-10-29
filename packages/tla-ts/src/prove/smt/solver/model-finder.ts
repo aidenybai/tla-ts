@@ -26,7 +26,8 @@ import {
   type AstManager,
 } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
-import { L_TRUE, type Context } from "./context";
+import type { Context } from "./context";
+import { L_TRUE } from "./lbool";
 import { collectMacroCandidates, solveMacros } from "./model-macro-solver";
 import { FuncInterp, RandomGen, type ProtoModel } from "./proto-model";
 import { pullQuant } from "./pull-quant";
@@ -189,11 +190,10 @@ export class AufSolver {
   private rootNodes: Node[] = [];
   private newConstraints: number[] = [];
   private random = new RandomGen(0);
-  readonly rewriter: Rewriter;
-
-  constructor(private manager: AstManager) {
-    this.rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: TACTIC_ARITH_OPTIONS });
-  }
+  constructor(
+    private manager: AstManager,
+    readonly rewriter: Rewriter,
+  ) {}
 
   reset() {
     this.nodes = [];
@@ -742,22 +742,18 @@ export class QuantifierInfo {
 type Polarity = "pos" | "neg";
 
 // quantifier_analyzer.
+// One analyzer runs per quantifier and records what it learns in the quantifier's info.
 class QuantifierAnalyzer {
-  private info: QuantifierInfo | null = null;
   private posCache = new Set<number>();
   private negCache = new Set<number>();
   private ftodo: [number, Polarity][] = [];
   private ttodo: number[] = [];
-  private rewriter: Rewriter;
 
-  constructor(private manager: AstManager) {
-    this.rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: TACTIC_ARITH_OPTIONS });
-  }
-
-  private getInfo() {
-    if (this.info === null) throw new Error("the analyzer has no quantifier");
-    return this.info;
-  }
+  constructor(
+    private manager: AstManager,
+    private rewriter: Rewriter,
+    private info: QuantifierInfo,
+  ) {}
 
   private isGround(expr: number) {
     return this.manager.isGround(expr);
@@ -891,7 +887,7 @@ class QuantifierAnalyzer {
 
   private processUApp(expr: number) {
     const manager = this.manager;
-    const info = this.getInfo();
+    const info = this.info;
     const decl = manager.decls[expr];
     manager.args[expr].forEach((arg, index) => {
       if (this.isVar(arg)) {
@@ -916,7 +912,7 @@ class QuantifierAnalyzer {
   private processApp(expr: number) {
     const manager = this.manager;
     const decl = manager.decls[expr];
-    if (manager.funcDecls[decl].family !== FAMILY_BASIC) this.getInfo().ngDecls.add(decl);
+    if (manager.funcDecls[decl].family !== FAMILY_BASIC) this.info.ngDecls.add(decl);
     if (manager.funcDecls[decl].family === FAMILY_USER) this.processUApp(expr);
     else for (const arg of manager.args[expr]) this.visitTerm(arg);
   }
@@ -930,13 +926,13 @@ class QuantifierAnalyzer {
         continue;
       }
       if (manager.kinds[current] === KIND_APP) this.processApp(current);
-      else if (this.isVar(current)) this.getInfo().isAuf = false;
+      else if (this.isVar(current)) this.info.isAuf = false;
     }
   }
 
   private processLiteral(atom: number, isNegated: boolean) {
     const manager = this.manager;
-    const info = this.getInfo();
+    const info = this.info;
     if (this.isVar(atom)) {
       info.insertQInfo({
         kind: "x_neq_t",
@@ -1049,14 +1045,9 @@ class QuantifierAnalyzer {
     return manager.args[atom].length === 0;
   }
 
-  analyze(info: QuantifierInfo) {
+  analyze() {
     const manager = this.manager;
-    this.info = info;
-    const body = manager.getQuantifier(info.flatQ).body;
-    this.posCache.clear();
-    this.negCache.clear();
-    this.ttodo = [];
-    this.ftodo = [];
+    const body = manager.getQuantifier(this.info.flatQ).body;
     const literals = manager.getOp(body) === OP_OR ? manager.args[body] : [body];
     if (literals.every((literal) => this.isLiteral(literal))) {
       for (const literal of literals) {
@@ -1069,7 +1060,6 @@ class QuantifierAnalyzer {
       this.processFormulasOnStack();
       this.processTermsOnStack();
     }
-    this.info = null;
   }
 }
 
@@ -1077,7 +1067,7 @@ export class ModelFinder {
   private q2info = new Map<number, QuantifierInfo>();
   private quantifiers: number[] = [];
   private scopes: number[] = [];
-  private analyzer: QuantifierAnalyzer;
+  private rewriter: Rewriter;
   readonly aufSolver: AufSolver;
   private newConstraints: number[] = [];
 
@@ -1085,24 +1075,20 @@ export class ModelFinder {
     private manager: AstManager,
     private context: Context,
   ) {
-    this.analyzer = new QuantifierAnalyzer(manager);
-    this.aufSolver = new AufSolver(manager);
+    this.rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: TACTIC_ARITH_OPTIONS });
+    this.aufSolver = new AufSolver(manager, this.rewriter);
   }
 
   getQuantifierInfo(quantifier: number) {
-    const existing = this.q2info.get(quantifier);
-    if (existing !== undefined) return existing;
-    this.registerQuantifier(quantifier);
-    const created = this.q2info.get(quantifier);
-    if (created === undefined) throw new Error("the quantifier was not registered");
-    return created;
+    return this.q2info.get(quantifier) ?? this.registerQuantifier(quantifier);
   }
 
   registerQuantifier(quantifier: number) {
     const info = new QuantifierInfo(this.manager, this.context, quantifier);
     this.q2info.set(quantifier, info);
     this.quantifiers.push(quantifier);
-    this.analyzer.analyze(info);
+    new QuantifierAnalyzer(this.manager, this.rewriter, info).analyze();
+    return info;
   }
 
   pushScope() {
