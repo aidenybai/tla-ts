@@ -9,6 +9,7 @@ import {
   getLocusPrefix,
   type Locus,
   type ObligationWarning,
+  type Sequent,
 } from "./obligation-expression";
 import { createGenerator, type LineRange } from "./obligation-generate";
 import {
@@ -25,7 +26,7 @@ import {
   type Pipeline,
 } from "./obligation-module";
 import { formatObligation } from "./obligation-printer";
-import type { Counter } from "./obligation-proof";
+import type { Counter, ObligationKind } from "./obligation-proof";
 import { createSource } from "./obligation-source";
 import { tokenize } from "./lexer";
 import { parseTlapmModule } from "./parser";
@@ -40,6 +41,8 @@ export interface PrintedObligation {
   id: number;
   location: string;
   text: string;
+  kind: ObligationKind;
+  sequent: Sequent;
 }
 
 export interface ModuleObligations {
@@ -307,7 +310,15 @@ export const getObligations = (
         obligation.kind.kind === "Error"
           ? obligation.kind.message
           : `${formatObligation(obligation.sequent)}\n`;
-      return [{ id: index + 1, location: formatLocus(location), text }];
+      return [
+        {
+          id: index + 1,
+          location: formatLocus(location),
+          text,
+          kind: obligation.kind,
+          sequent: obligation.sequent,
+        },
+      ];
     });
     return [
       { name: module.name, location: module.location, obligations, summary: generated.summary },

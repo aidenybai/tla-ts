@@ -68,6 +68,8 @@
     "conformance:record-sany": "tsx scripts/record-sany.ts",
     "conformance:record-proofs": "tsx scripts/record-proofs.ts",
     "conformance:record-tlapm": "tsx scripts/record-tlapm.ts",
+    "conformance:smt-encode": "tsx scripts/smt-encode-conformance.ts",
+    "conformance:prove": "tsx scripts/prove-conformance.ts",
     "conformance:tlapm": "tsx scripts/tlapm-conformance.ts",
     "publint": "publint",
     "test": "vp test",
