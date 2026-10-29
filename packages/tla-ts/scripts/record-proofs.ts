@@ -164,41 +164,46 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
       .map((file) => {
         const backendOutput = readOutput(file.path);
         return {
-          obligationId: Number(file.text.match(OBLIGATION_HEADER)?.[1] ?? Number.NaN),
-          text: file.text,
+          ...file,
           backendOutput,
           record: { input: getDigest(file.text), verdict: getVerdict(backendOutput) },
         };
       });
+  const saveRun = (
+    name: string,
+    extension: string,
+    run: { text: string; backendOutput: string },
+  ) => {
+    writeFileSync(join(inputsDirectory, `${name}${extension}`), run.text);
+    writeFileSync(join(inputsDirectory, `${name}${extension}.out`), run.backendOutput);
+  };
+  // SMT, Zenon and Isabelle inputs name their obligation in a header, and LS4 inputs don't.
+  const getObligationRuns = <Verdict extends BackendVerdict>(
+    extension: string,
+    getDigest: (text: string) => string,
+    getVerdict: (output: string) => Verdict,
+  ) =>
+    getBackendRecords(extension, getDigest, getVerdict).map((run) => {
+      const header = run.text.match(OBLIGATION_HEADER);
+      if (!header) throw new Error(`${run.path} doesn't name its obligation`);
+      saveRun(header[1], extension, run);
+      const obligation = obligations.get(Number(header[1]));
+      return { obligation: obligation && "prover" in obligation ? obligation : undefined, ...run };
+    });
 
-  const smtRuns = getBackendRecords(".smt", getInputDigest, getSmtVerdict);
-  const zenonRuns = getBackendRecords(".znn", getInputDigest, getZenonVerdict);
-  const isabelleRuns = getBackendRecords(".thy", getIsabelleDigest, getIsabelleVerdict);
+  getObligationRuns(".smt", getInputDigest, getSmtVerdict).forEach((run) => {
+    if (run.obligation) run.obligation.smt = run.record;
+  });
+  getObligationRuns(".znn", getInputDigest, getZenonVerdict).forEach((run) => {
+    if (run.obligation) run.obligation.zenon = run.record;
+  });
+  getObligationRuns(".thy", getIsabelleDigest, getIsabelleVerdict).forEach((run) => {
+    if (run.obligation) run.obligation.isabelle = run.record;
+  });
   const ls4Runs = getBackendRecords(".ls4", getLs4Digest, getLs4Verdict).sort((left, right) =>
     left.record.input < right.record.input ? -1 : 1,
   );
-  smtRuns.forEach((run) => {
-    const obligation = obligations.get(run.obligationId);
-    if (obligation && "prover" in obligation) obligation.smt = run.record;
-    writeFileSync(join(inputsDirectory, `${run.obligationId}.smt`), run.text);
-    writeFileSync(join(inputsDirectory, `${run.obligationId}.smt.out`), run.backendOutput);
-  });
-  zenonRuns.forEach((run) => {
-    const obligation = obligations.get(run.obligationId);
-    if (obligation && "prover" in obligation) obligation.zenon = run.record;
-    writeFileSync(join(inputsDirectory, `${run.obligationId}.znn`), run.text);
-    writeFileSync(join(inputsDirectory, `${run.obligationId}.znn.out`), run.backendOutput);
-  });
-  isabelleRuns.forEach((run) => {
-    const obligation = obligations.get(run.obligationId);
-    if (obligation && "prover" in obligation) obligation.isabelle = run.record;
-    writeFileSync(join(inputsDirectory, `${run.obligationId}.thy`), run.text);
-    writeFileSync(join(inputsDirectory, `${run.obligationId}.thy.out`), run.backendOutput);
-  });
-  ls4Runs.forEach((run, index) => {
-    writeFileSync(join(inputsDirectory, `${index}.ls4`), run.text);
-    writeFileSync(join(inputsDirectory, `${index}.ls4.out`), run.backendOutput);
-  });
+  ls4Runs.forEach((run, index) => saveRun(String(index), ".ls4", run));
   rmSync(cacheDirectory, { recursive: true, force: true });
 
   const error = output
