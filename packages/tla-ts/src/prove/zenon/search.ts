@@ -7,6 +7,7 @@
 
 import { TlaZenonError } from "../../errors";
 import { difference, isApp, isDisjoint, isMeta, union, type Expr } from "./expr";
+import { getLimitFailure, type Limits } from "./limits";
 import { EMPTY_QUEUE, getQueueHead, removeNode, type Node, type Queue } from "./node";
 import { stableSort } from "./ocaml";
 import type { Definition } from "./parse";
@@ -144,23 +145,6 @@ export interface SearchStatistics {
 
 export type SearchFailure = "exhausted" | "time limit" | "memory limit" | "aborted";
 
-// When the search gives up: past the deadline, a time from Date.now(), or once the signal aborts.
-// The search checks them before each formula it adds and each node it takes, so it stops within a
-// step of the deadline, where tlapm kills Zenon at once.
-export interface SearchLimits {
-  deadline: number;
-  signal: AbortSignal | undefined;
-}
-
-// Why the limits stop Zenon now, if they do. The printer checks them too, as tlapm's clock runs
-// while Zenon prints the proof.
-export const getLimitFailure = (limits: SearchLimits) =>
-  Date.now() > limits.deadline
-    ? "time limit"
-    : limits.signal?.aborted === true
-      ? "aborted"
-      : undefined;
-
 // Zenon gives up once its heap passes 1 GB. The port bounds the nodes that the queues of the
 // current branch hold instead. On the corpus files where Zenon runs out of memory, its heap passes
 // 1 GB with 1.9 to 5.5 million of them, and no proof that Zenon finds needs more than 1.3 million.
@@ -171,7 +155,7 @@ export const search = (
   context: SearchContext,
   definitions: Definition[],
   hypotheses: Hypothesis[],
-  limits: SearchLimits,
+  limits: Limits,
   statistics: SearchStatistics,
 ): Proof | SearchFailure => {
   const index = context.index;

@@ -4,6 +4,7 @@
 // from the prover. The check walks the proof bottom up and computes the formulas each subproof
 // needs. A proof is valid when every rule is one of the lemmas and the root needs only hypotheses.
 
+import { getLimitFailure, type Limits } from "../limits";
 import type { PlainRuleName, Proof, RuleArgs } from "../proof";
 import { getDefinitionSpec } from "./definitions";
 import { EQUALITY_RULES, getRelationRuleSpec } from "./equality";
@@ -57,7 +58,8 @@ const getRuleSpec = (proof: Proof<Term>, checker: Checker): RuleSpec => {
 };
 
 // True when the proof refutes the hypotheses.
-export const checkProof = (root: Proof<Term>, context: CheckContext) => {
+// Whether the proof is valid, or false once the limits pass.
+export const checkProof = (root: Proof<Term>, context: CheckContext, limits: Limits) => {
   const keys = createKeys();
   const hasRelation = createRelationProperties(context);
   const checker: Checker = {
@@ -80,6 +82,7 @@ export const checkProof = (root: Proof<Term>, context: CheckContext) => {
     // Subproofs before their parents, without recursion: proofs can be deep.
     const stack: [Proof<Term>, boolean][] = [[root, false]];
     while (stack.length > 0) {
+      if (getLimitFailure(limits) !== undefined) return false;
       const top = stack.pop();
       if (top === undefined) break;
       const proof = top[0];

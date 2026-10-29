@@ -9,10 +9,10 @@ import { TlaZenonError } from "../../errors";
 import { FALSE, GOAL_NAME, TRUE, type BinderExpr, type Expr, type Expressions } from "./expr";
 import type { Relations } from "./eqrel";
 import { printCaseLemma, printRecordLemma } from "./isar-case";
+import { getLimitFailure, type Limits } from "./limits";
 import { optimise, type Lemma, type LlProof } from "./llproof";
 import { isMetaName, translateProof, type MlProof } from "./mltoll";
 import type { Phrase } from "./parse";
-import { getLimitFailure, type SearchLimits } from "./search";
 import { postprocessTla } from "./tla/llproof";
 
 const INFIXES: Record<string, string> = {
@@ -110,7 +110,7 @@ export interface IsarContext {
   phrases: Phrase[];
   sharedProofs: ReadonlySet<MlProof>;
   relations: Relations;
-  limits: SearchLimits;
+  limits: Limits;
 }
 
 // The Isar text that Zenon prints with -oisar for a proof that the search found, or undefined when

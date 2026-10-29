@@ -228,6 +228,7 @@ describe("Zenon's input", () => {
 });
 
 describe("the proof checker", () => {
+  const UNLIMITED = { deadline: Infinity, signal: undefined };
   const exprs = createExpressions();
   const first = exprs.evar("p");
   const second = exprs.evar("q");
@@ -247,26 +248,38 @@ describe("the proof checker", () => {
 
   it("accepts a closure on a formula and its negation", () => {
     const hypotheses = [first, exprs.enot(first)];
-    expect(checkProof(getClosure(first), { hypotheses, definitions: [] })).toBe(true);
+    expect(checkProof(getClosure(first), { hypotheses, definitions: [] }, UNLIMITED)).toBe(true);
+  });
+
+  // tlapm kills Zenon at its deadline, so a proof that the checker hasn't accepted by then doesn't
+  // count.
+  it("stops at the deadline or once the signal aborts", () => {
+    const context = { hypotheses: [first, exprs.enot(first)], definitions: [] };
+    const passed = { deadline: Date.now() - 1, signal: undefined };
+    const aborted = { deadline: Infinity, signal: AbortSignal.abort() };
+    expect(checkProof(getClosure(first), context, passed)).toBe(false);
+    expect(checkProof(getClosure(first), context, aborted)).toBe(false);
   });
 
   it("rejects a closure without the negation", () => {
-    expect(checkProof(getClosure(first), { hypotheses: [first], definitions: [] })).toBe(false);
+    expect(checkProof(getClosure(first), { hypotheses: [first], definitions: [] }, UNLIMITED)).toBe(
+      false,
+    );
   });
 
   it("accepts a conjunction split into its conjuncts", () => {
     const hypotheses = [conjunction, exprs.enot(first)];
-    expect(checkProof(getSplit("and"), { hypotheses, definitions: [] })).toBe(true);
+    expect(checkProof(getSplit("and"), { hypotheses, definitions: [] }, UNLIMITED)).toBe(true);
   });
 
   it("rejects a rule whose premise isn't a hypothesis", () => {
     const hypotheses = [exprs.eand(second, first), exprs.enot(first)];
-    expect(checkProof(getSplit("and"), { hypotheses, definitions: [] })).toBe(false);
+    expect(checkProof(getSplit("and"), { hypotheses, definitions: [] }, UNLIMITED)).toBe(false);
   });
 
   it("rejects a disjunction rule on a conjunction", () => {
     const hypotheses = [conjunction, exprs.enot(first)];
-    expect(checkProof(getSplit("or"), { hypotheses, definitions: [] })).toBe(false);
+    expect(checkProof(getSplit("or"), { hypotheses, definitions: [] }, UNLIMITED)).toBe(false);
   });
 
   describe("on a relation other than =", () => {
@@ -295,12 +308,12 @@ describe("the proof checker", () => {
 
     it("accepts a symmetric closure when a hypothesis makes the relation symmetric", () => {
       const hypotheses = [getSymmetry("R"), ...relates];
-      expect(checkProof(swapped, { hypotheses, definitions: [] })).toBe(true);
+      expect(checkProof(swapped, { hypotheses, definitions: [] }, UNLIMITED)).toBe(true);
     });
 
     it("rejects a symmetric closure without that hypothesis", () => {
       const hypotheses = [getSymmetry("S"), ...relates];
-      expect(checkProof(swapped, { hypotheses, definitions: [] })).toBe(false);
+      expect(checkProof(swapped, { hypotheses, definitions: [] }, UNLIMITED)).toBe(false);
     });
   });
 });

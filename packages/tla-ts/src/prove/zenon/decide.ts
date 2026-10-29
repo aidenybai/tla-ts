@@ -16,17 +16,18 @@ import { checkProof } from "./check/check";
 import { createRelations } from "./eqrel";
 import { createExpressions } from "./expr";
 import { createIndex } from "./index-table";
+import { getLimitFailure } from "./limits";
 import { printIsar } from "./isar";
 import { parseZenon } from "./parse";
 import { separate } from "./phrase";
 import type { Proof } from "./proof";
-import { getLimitFailure, search, type SearchFailure } from "./search";
+import { search, type SearchFailure } from "./search";
 import { getBuiltInDefinitions, PREDEFINED_SYMBOLS } from "./tla/tla";
 
 export interface ZenonRun {
   proof: Proof | undefined;
-  // Why Zenon gave up: in the search, or at the limits while it printed the proof. "zenon error"
-  // stands for the exceptions that stop Zenon mid-search.
+  // Why Zenon gave up: in the search, or at the limits while it checked or printed the proof.
+  // "zenon error" stands for the exceptions that stop Zenon mid-search.
   failure: SearchFailure | "zenon error" | undefined;
   // Zenon's -oisar output, once the checker accepts the proof and the printer ends within the
   // limits.
@@ -69,10 +70,14 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
   const proof = typeof outcome === "string" ? undefined : outcome;
   const isChecked =
     proof !== undefined &&
-    checkProof(proof, {
-      hypotheses: phrases.flatMap((phrase) => (phrase.kind === "hyp" ? [phrase.formula] : [])),
-      definitions: separated.definitions,
-    });
+    checkProof(
+      proof,
+      {
+        hypotheses: phrases.flatMap((phrase) => (phrase.kind === "hyp" ? [phrase.formula] : [])),
+        definitions: separated.definitions,
+      },
+      limits,
+    );
   const isar = isChecked
     ? printIsar(proof, {
         exprs,
@@ -87,7 +92,7 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
     failure:
       typeof outcome === "string"
         ? outcome
-        : isChecked && isar === undefined
+        : isar === undefined
           ? getLimitFailure(limits)
           : undefined,
     isar,
