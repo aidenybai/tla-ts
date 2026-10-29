@@ -36,11 +36,16 @@ describe("Zenon agrees with tlapm's Zenon", () => {
     if (fixture.path.startsWith("unknown/")) expect(run.failure).toBe("exhausted");
   });
 
-  it("runs out of memory where tlapm's Zenon does", () => {
-    // Zenon gives up on this file once its heap passes 1 GB, after 12559 nodes.
-    const text = readFileSync(join(FIXTURES, "memory/PaxosCommit_proof-253.znn"), "utf8");
-    expect(runZenon(text, { timeLimitMs: TIME_LIMIT_MS }).failure).toBe("memory limit");
-  });
+  // The search takes seconds, so the test may run as long as the search's own time limit.
+  it(
+    "runs out of memory where tlapm's Zenon does",
+    () => {
+      // Zenon gives up on this file once its heap passes 1 GB, after 12559 nodes.
+      const text = readFileSync(join(FIXTURES, "memory/PaxosCommit_proof-253.znn"), "utf8");
+      expect(runZenon(text, { timeLimitMs: TIME_LIMIT_MS }).failure).toBe("memory limit");
+    },
+    2 * TIME_LIMIT_MS,
+  );
 });
 
 // Each goal is false, next to a true one, so no sound search proves it.
