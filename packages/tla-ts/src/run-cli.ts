@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { basename, delimiter, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
 import type { CheckResult, CheckStatus, TraceStep } from "./check";
 import { defineCommand, type ParsedArgs } from "./cli-options";
@@ -26,12 +26,14 @@ import { getAtPrefix, getLocusText } from "./obligation-expression";
 import { formatSummary, getObligations, WHOLE_MODULE, type ModuleObligations } from "./obligations";
 import { check } from "./parallel";
 import { prettyPrint } from "./pretty-print";
+import { prove } from "./prove";
 import {
   formatProbability,
   getActualProbability,
   getOptimisticProbability,
   getOutDegreeSummary,
 } from "./tlc-summary";
+import { getTlapmPaths } from "./tlapm-path";
 import { formatValue, type Value } from "./values";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
@@ -63,9 +65,18 @@ const PROVE_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...
   { flag: "-I <directory>", isRepeatable: true },
 ]);
 
+const BACKEND_COMMAND = defineCommand(
+  "tla-ts prove --backend <tla-ts|tlapm> {options} <Module.tla|glob>...",
+  [
+    { flag: "--backend <tla-ts|tlapm>", isRequired: true },
+    { flag: "-I <directory>", isRepeatable: true },
+  ],
+);
+
 const USAGE = [
   `Usage: ${CHECK_COMMAND.usage}`,
   `       ${PROVE_COMMAND.usage}`,
+  `       ${BACKEND_COMMAND.usage}`,
   "       tla-ts prove [<tlapm option>]... <Module.tla|glob>...",
 ].join("\n");
 
@@ -273,12 +284,6 @@ const runEach = async (paths: string[], runPath: (path: string) => number | Prom
 
 // tlapm installs its standard library, with modules such as TLAPS, at lib/tlapm/stdlib beside
 // bin/tlapm.
-const getTlapmPaths = () =>
-  (process.env.PATH ?? "")
-    .split(delimiter)
-    .map((directory) => join(directory, "tlapm"))
-    .filter((path) => existsSync(path));
-
 const getTlapmLibrary = () =>
   getTlapmPaths()
     .map((path) => join(dirname(dirname(realpathSync(path))), "lib/tlapm/stdlib"))
@@ -358,7 +363,55 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
   }
 };
 
-const prove = (args: string[]) => {
+// tla-ts prove --backend: proves each module with prove, printing each obligation as it ends.
+const proveWithBackend = (args: string[]) => {
+  const parsed = BACKEND_COMMAND.parse(args);
+  const backend = parsed.get("--backend")?.[0];
+  if (
+    parsed.unknown[0] !== undefined ||
+    parsed.incomplete ||
+    (backend !== "tla-ts" && backend !== "tlapm")
+  ) {
+    console.error(`Usage: ${BACKEND_COMMAND.usage}`);
+    return 1;
+  }
+  const modulePaths = expandGlobs(parsed.positionals).map((path) =>
+    path.endsWith(".tla") ? path : `${path}.tla`,
+  );
+  if (modulePaths.length === 0) {
+    console.error(`Usage: ${BACKEND_COMMAND.usage}`);
+    return 1;
+  }
+  const tlapmLibrary = getTlapmLibrary();
+  const includes = parsed.options.flatMap((option) => (option.name === "-I" ? option.values : []));
+  return runEach(modulePaths, async (path) => {
+    const directories = [
+      dirname(path),
+      ".",
+      ...(tlapmLibrary ? [tlapmLibrary] : []),
+      ...includes.toReversed(),
+    ];
+    const result = await prove({
+      source: readFileSync(path, "utf8"),
+      loadModule: (name) =>
+        directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean)
+          ?.source,
+      backend,
+      onObligation: (obligation) =>
+        console.log(
+          `${path}:${obligation.location}: ${obligation.status}${obligation.reason ? ` (${obligation.reason})` : ""}`,
+        ),
+    });
+    const summary = result.summary;
+    console.log(
+      `${summary.obligationCount} obligations: ${summary.provedCount} proved, ${summary.trivialCount} trivial, ${summary.failedCount} failed, ${summary.unsupportedCount} unsupported`,
+    );
+    return summary.failedCount + summary.unsupportedCount === 0 ? EXIT_STATUS.success : 1;
+  });
+};
+
+const runProve = (args: string[]) => {
+  if (args.includes("--backend")) return proveWithBackend(args);
   if (!args.includes("-N") && !args.includes("--summary")) return proveWithTlapm(args);
   const parsed = PROVE_COMMAND.parse(args);
   const unsupported = parsed.unknown[0];
@@ -449,7 +502,7 @@ const prove = (args: string[]) => {
 };
 
 const run = async (args: string[]) => {
-  if (args[0] === "prove") return reportErrors(() => prove(args.slice(1)));
+  if (args[0] === "prove") return reportErrors(() => runProve(args.slice(1)));
   const parsed = CHECK_COMMAND.parse(args);
   const inputs = getInputPaths(parsed.positionals);
   const isConfigured = parsed.has("-config");

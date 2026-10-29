@@ -17,6 +17,14 @@ export {
 } from "./errors";
 export { check } from "./parallel";
 export { parseModule } from "./parser";
+export { prove } from "./prove";
+export type {
+  ProofObligation,
+  ProofStatus,
+  ProveOptions,
+  ProveResult,
+  ProveSummary,
+} from "./prove";
 export type { Module } from "./ast";
 export { formatValue } from "./values";
 export type { Value } from "./values";
