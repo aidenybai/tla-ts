@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { encodeZenon } from "../src/prove/zenon/encode";
 import type { PrintedObligation } from "../src/obligations";
-import { decideZenon } from "../src/prove/zenon/decide";
+import { runZenon } from "../src/prove/zenon/decide";
 import { CORPORA_DIRECTORY, getLibraryModules, getModuleObligations } from "./corpora";
 import {
   getInputDigest,
@@ -23,7 +23,8 @@ const filter = getOption("--filter");
 // --shard 2/4 checks every fourth obligation, starting with the second, to split a run across
 // processes.
 const shard = (getOption("--shard") ?? "1/1").split("/").map(Number);
-// With ZENON set to tlapm's Zenon binary, it runs on the same files for the timing comparison.
+// With ZENON set to tlapm's Zenon binary, it runs on the same files, to compare verdicts, node
+// counts and times.
 const zenonPath = process.env.ZENON;
 
 const libraryModules = getLibraryModules();
@@ -78,15 +79,22 @@ const getEncoderOutcome = (moduleId: string, id: number, input: string) => {
   }
 };
 
-const timeReference = (path: string) => {
+// tlapm runs Zenon with -max-time 1d and kills it once its timeout passes.
+const runReference = (path: string) => {
   if (zenonPath === undefined) return undefined;
   const start = performance.now();
   const result = spawnSync(
     zenonPath,
-    ["-p0", "-x", "tla", "-oisar", "-max-time", `${TIME_LIMIT_MS / 1000}s`, path],
-    { encoding: "utf8", maxBuffer: 1 << 30 },
+    ["-p0", "-x", "tla", "-oisar", "-max-time", "1d", "-stats", path],
+    { encoding: "utf8", maxBuffer: 1 << 30, timeout: TIME_LIMIT_MS, killSignal: "SIGKILL" },
   );
-  return getZenonVerdict(result.stdout) === "unsat" ? performance.now() - start : undefined;
+  const nodesSearched = /^nodes searched: (\d+)$/m.exec(result.stderr)?.[1];
+  return {
+    isProved: result.signal === null && getZenonVerdict(result.stdout) === "unsat",
+    // Zenon prints its statistics only when it stops by itself.
+    nodesSearched: nodesSearched === undefined ? undefined : Number(nodesSearched),
+    elapsed: performance.now() - start,
+  };
 };
 
 const results = runs.map((run) => {
@@ -98,17 +106,30 @@ const results = runs.map((run) => {
   if (!existsSync(path)) return { encoderOutcome };
   const isFound = run.record.verdict === "unsat";
   const start = performance.now();
-  const isProved =
-    decideZenon(readFileSync(path, "utf8"), { timeLimitMs: TIME_LIMIT_MS }) === "unsat";
+  const zenon = runZenon(readFileSync(path, "utf8"), { timeLimitMs: TIME_LIMIT_MS });
   const elapsed = performance.now() - start;
-  if (isFound !== isProved) console.log(`prover  ${isFound ? "miss" : "surplus"}      ${name}`);
+  if (isFound !== zenon.isChecked)
+    console.log(`prover  ${isFound ? "miss" : "surplus"}      ${name}`);
+  const reference = runReference(path);
+  if (reference !== undefined && reference.isProved !== zenon.isChecked)
+    console.log(`binary  ${reference.isProved ? "miss" : "surplus"}      ${name}`);
+  // The node counts match only where both searches stop by themselves: tla-ts bounds its memory
+  // by nodes rather than by Zenon's heap.
+  const isCounted =
+    reference?.nodesSearched !== undefined &&
+    zenon.failure !== "time limit" &&
+    zenon.failure !== "memory limit";
+  if (isCounted && reference.nodesSearched !== zenon.nodesSearched)
+    console.log(`nodes   ${zenon.nodesSearched} vs ${reference.nodesSearched}  ${name}`);
   return {
     encoderOutcome,
     prover: {
       isFound,
-      isProved,
+      isProved: zenon.isChecked,
       elapsed,
-      referenceElapsed: isFound ? timeReference(path) : undefined,
+      reference,
+      isCounted,
+      isSameCount: isCounted && reference.nodesSearched === zenon.nodesSearched,
     },
   };
 });
@@ -124,7 +145,7 @@ const provedTimes = proverResults
   .filter((result) => result.isFound && result.isProved)
   .map((result) => result.elapsed);
 const referenceTimes = proverResults.flatMap((result) =>
-  result.referenceElapsed === undefined ? [] : [result.referenceElapsed],
+  result.reference?.isProved === true ? [result.reference.elapsed] : [],
 );
 const formatTimes = (times: number[]) =>
   `median ${formatSeconds(getMedian(times))}, worst ${formatSeconds(Math.max(0, ...times))}`;
@@ -143,5 +164,12 @@ console.log(
   `prover surplus: ${proverResults.filter((result) => !result.isFound && result.isProved).length}`,
 );
 console.log(`tla-ts time on found proofs: ${formatTimes(provedTimes)}`);
-if (zenonPath !== undefined)
-  console.log(`Zenon time on found proofs: ${formatTimes(referenceTimes)}`);
+if (zenonPath !== undefined) {
+  console.log(
+    `binary disagreements: ${proverResults.filter((result) => result.reference?.isProved !== result.isProved).length}`,
+  );
+  console.log(
+    `node counts compared: ${proverResults.filter((result) => result.isCounted).length}, equal ${proverResults.filter((result) => result.isSameCount).length}`,
+  );
+  console.log(`Zenon time on its proofs: ${formatTimes(referenceTimes)}`);
+}
