@@ -83,22 +83,10 @@ export interface Env {
   rest: Env | undefined;
 }
 
-const SET_HEADS = new Set([
-  UNION,
-  SUBSET,
-  CUP,
-  CAP,
-  SET_MINUS,
-  BOOL_SET,
-  STR_SET,
-  INT_SET,
-  NAT_SET,
-  INT_RANGE,
-  FUN_SET,
-  SEQ,
-]);
+const SET_HEADS = new Set([UNION, SUBSET, CUP, CAP, SET_MINUS, INT_RANGE, FUN_SET, SEQ]);
 
-// Standardize.is_set: the constructors whose values are sets.
+// Standardize.is_set: the applications of constructors whose values are sets. Standardize leaves
+// BOOLEAN, STRING, Int, and Nat as bare symbols, which is_set doesn't match.
 const isSetTerm = (text: string) => {
   const head = /^\(?([^\s()]+)/.exec(text)?.[1] ?? "";
   return (
@@ -442,8 +430,16 @@ export const createEncoder = (session: EncodingSession) => {
     // are compared as values.
     const leftText = toIdv(leftTerm);
     const rightText = toIdv(rightTerm);
+    // Prep never removes the Unprimable that WITNESS wraps around its witness, and is_set doesn't
+    // see through it.
+    const isSet = (expression: Expr, text: string) =>
+      !(
+        expression.kind === "Apply" &&
+        expression.operator.kind === "Internal" &&
+        expression.operator.builtin === "Unprimable"
+      ) && isSetTerm(text);
     const isTriggered =
-      (isSetTerm(leftText) || isSetTerm(rightText)) &&
+      (isSet(left, leftText) || isSet(right, rightText)) &&
       mode.polarity !== (isNegated ? "Positive" : "Negative");
     const equality = isTriggered
       ? `(${TRIG_EQ} ${leftText} ${rightText})`
@@ -497,7 +493,7 @@ export const createEncoder = (session: EncodingSession) => {
         if (mode.isPrimed) throw new TlaUnsupportedError("a doubly primed expression");
         return encode(args[0], env, { ...mode, isPrimed: true });
       case "Unprimable":
-        return encode(args[0], env, mode);
+        return encode(args[0], env, neither(mode));
       default: {
         const symbol = BUILTIN_SYMBOLS[builtin];
         if (symbol === undefined) throw new TlaUnsupportedError(`the operator ${builtin}`);
