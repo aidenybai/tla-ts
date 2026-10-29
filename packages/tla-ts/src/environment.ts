@@ -212,6 +212,8 @@ export const createEnvironment = (
   const root = parseModule(options.source);
   const definitions = new Map<string, Definition>();
   const parameterized = new Map<string, boolean>();
+  // The definition each instance copy came from, and the instance parameters the copy adds.
+  const copySources = new Map<string, { source: string; prefix: number }>();
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
   );
@@ -379,10 +381,11 @@ export const createEnvironment = (
       variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
       isParameterized: (key) => parameterized.get(key) === true,
-      addDefinition: (name, create) => {
+      addDefinition: (source, name, create) => {
         const key = createName(`${name}@${module.name}`);
         definitions.set(key, create(key));
         parameterized.set(key, !isParameterFree);
+        copySources.set(key, { source, prefix: instance.params.length });
         return key;
       },
       createName,
@@ -544,7 +547,7 @@ export const createEnvironment = (
       variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
       isParameterized: (key) => parameterized.get(key) === true,
-      addDefinition: (name, create) => {
+      addDefinition: (_source, name, create) => {
         const key = `${name}${KEY_SEPARATOR}${instance.module}${suffix}.${copies.length}`;
         const definition = create(key);
         copies.push(
@@ -872,6 +875,38 @@ export const createEnvironment = (
         );
       }
     });
+  // TLC sets a module-scoped entry on the body of the module's definition, which every instance of
+  // the module shares.
+  const scopedKeys = new Set(
+    [...config.constants, ...config.substitutions]
+      .filter((item) => item.module !== undefined)
+      .flatMap(getScopedKeys),
+  );
+  const getOverride = (
+    key: string,
+    prefix: number,
+  ): { key: string; prefix: number } | undefined => {
+    if (scopedKeys.has(key)) return { key, prefix };
+    const copy = copySources.get(key);
+    return copy && getOverride(copy.source, prefix + copy.prefix);
+  };
+  copySources.forEach((copy, key) => {
+    const override = getOverride(copy.source, copy.prefix);
+    const definition = definitions.get(key);
+    if (!override || !definition) return;
+    const params = definition.kind === "Operator" ? definition.params : [];
+    const alias = createLocalAlias(
+      key,
+      override.key,
+      params,
+      params.slice(override.prefix),
+      definition.location,
+    );
+    definitions.set(key, alias);
+    linkedRoot.visible.forEach((symbol, name) => {
+      if (symbol.key === key && name !== key) definitions.set(name, alias);
+    });
+  });
   declaredConstants.forEach((name) => {
     if (!constants.has(name) && !substitutions.has(name) && !operatorKeys.has(name)) {
       throw new TlaConfigError(`The constant ${name} is not assigned a value by the configuration`);

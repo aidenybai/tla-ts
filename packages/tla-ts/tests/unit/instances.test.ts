@@ -43,6 +43,22 @@ describe("INSTANCE matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
   });
 
+  it("overrides a definition scoped to a module in every instance of the module", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT Acc\nVARIABLE x\nMCBallot == 0..2\nV == INSTANCE Inner\nP(A) == INSTANCE Inner WITH Acc <- A\nInit == x = 0\nNext == UNCHANGED x\nInv == V!Safe /\\ P({3})!Safe /\\ V!Ballot = 0..2 /\\ x = 0\n====",
+      config:
+        "INIT Init\nNEXT Next\nCONSTANT Acc = {1, 2}\nBallot <-[Inner] MCBallot\nINVARIANT Inv",
+      loadModule: () =>
+        "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT Acc\nBallot == Nat\nSafe == \\A a \\in Acc, b \\in Ballot : b >= 0\n====",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
+  });
+
   it("substitutes operator parameters with LAMBDA expressions without capturing bound names", async () => {
     const result = await checkInstances("Operators.cfg", "Operators");
     expect(result.status).toBe("success");
