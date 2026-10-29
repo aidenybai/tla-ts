@@ -1,9 +1,9 @@
 // Proves each module with tla-ts's own backends and compares every obligation's status with the one
 // tlapm reached, as conformance:record-proofs recorded it. tla-ts should prove what tlapm proves,
 // find trivial what tlapm finds trivial, never prove what tlapm fails to prove, and prove each
-// obligation with the prover tlapm used. A difference where tlapm is wrong counts as a deviation
-// instead. Worker processes take one module at a time, largest first,
-// --jobs of them at once.
+// obligation with the prover tlapm used. A proof of what tlapm's backend refuted is unsound. A
+// difference where tlapm is wrong counts as a deviation instead. Worker processes take one module
+// at a time, largest first, --jobs of them at once.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
@@ -20,7 +20,20 @@ import {
 } from "./proof-records";
 import { getDeviation } from "./tlapm-deviations";
 
-type Verdict = "agree" | "deviation" | "prover" | "missed" | "unsound" | "trivial" | "absent";
+// "extra" is a proof of what tlapm failed to prove, and "unsound" one of what tlapm's backend
+// refuted.
+const VERDICTS = [
+  "agree",
+  "deviation",
+  "prover",
+  "missed",
+  "extra",
+  "unsound",
+  "trivial",
+  "absent",
+] as const;
+
+type Verdict = (typeof VERDICTS)[number];
 
 interface Result {
   module: string;
@@ -42,10 +55,25 @@ const getExpected = (record: ObligationRecord) =>
 const getActual = (obligation: ProofObligation) =>
   obligation.status === "proved" ? `proved by ${obligation.prover}` : obligation.status;
 
+// What tlapm's backend answered on the input the prover selects.
+const getBackendVerdict = (record: ObligationRecord, prover: string) => {
+  if (!("prover" in record)) return undefined;
+  return prover === "smt" || prover === "z3"
+    ? record.smt?.verdict
+    : prover === "zenon"
+      ? record.zenon?.verdict
+      : prover === "isabelle"
+        ? record.isabelle?.verdict
+        : undefined;
+};
+
 const getVerdict = (expected: ObligationRecord, actual: ProofObligation | undefined): Verdict => {
   if (!actual) return "absent";
   if ((expected.status === "trivial") !== (actual.status === "trivial")) return "trivial";
-  if (isProved(actual.status) && !isProved(expected.status)) return "unsound";
+  if (isProved(actual.status) && !isProved(expected.status))
+    return actual.status === "proved" && getBackendVerdict(expected, actual.prover) === "sat"
+      ? "unsound"
+      : "extra";
   if (isProved(expected.status) && !isProved(actual.status)) return "missed";
   if (
     actual.status === "proved" &&
@@ -94,6 +122,12 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
   });
 };
 
+// The backend a difference points at: the prover tlapm proved the obligation with, or the one
+// tla-ts proved it with when tlapm didn't.
+const getOwner = (result: Result) =>
+  (/^proved by (\w+)/.exec(result.expected) ?? /^proved by (\w+)/.exec(result.actual ?? ""))?.[1] ??
+  "none";
+
 const records = readProofRecords();
 const byModule = await runModuleWorkers(records, proveModule, availableParallelism());
 // A worker that exits mid-module leaves that module's obligations absent.
@@ -111,15 +145,15 @@ const results = records.flatMap(
 writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
 printResults(
   results,
-  ["agree", "deviation", "prover", "missed", "unsound", "trivial", "absent"],
-  ["deviation", "unsound", "trivial", "absent", "prover"],
+  VERDICTS,
+  ["deviation", "unsound", "extra", "trivial", "absent", "prover"],
   (result) =>
     `${result.verdict} ${result.module} #${result.id}: tlapm ${result.expected}, tla-ts ${result.actual ?? "none"}${result.reason ? ` (${result.reason})` : ""}`,
 );
-// What tlapm reached and tla-ts didn't, by tlapm's status and what tla-ts reached.
+// The differences, by kind and the backend each points at.
 const differences = Map.groupBy(
   results.filter((result) => result.verdict !== "agree" && result.verdict !== "deviation"),
-  (result) => `${result.verdict}: tlapm ${result.expected}, tla-ts ${result.actual}`,
+  (result) => `${result.verdict} ${getOwner(result)}`,
 );
 [...differences]
   .toSorted((left, right) => right[1].length - left[1].length)
