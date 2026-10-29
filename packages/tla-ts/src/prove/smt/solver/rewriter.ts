@@ -344,8 +344,9 @@ export class Rewriter {
       case OP_MUL:
         return this.arith.mkMul(args) ?? manager.mkApp(decl, args, sort);
       case OP_IDIV:
+        return this.arith.mkIdiv(args[0], args[1]) ?? manager.mkApp(decl, args, sort);
       case OP_MOD:
-        return this.arith.mkDivMod(op, args[0], args[1]) ?? manager.mkApp(decl, args, sort);
+        return this.arith.mkMod(args[0], args[1]) ?? manager.mkApp(decl, args, sort);
       case OP_ABS:
         return this.arith.mkAbs(args[0]);
       default:

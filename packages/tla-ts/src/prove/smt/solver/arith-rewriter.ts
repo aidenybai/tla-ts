@@ -68,6 +68,22 @@ const ARITH_OPS = new Set([
   OP_GT,
 ]);
 
+// BR_REWRITE_FULL: the result is rewritten again at every depth.
+const FULL_DEPTH = Number.MAX_SAFE_INTEGER;
+
+// SMT-LIB's div and mod, whose remainder is never negative.
+const getEuclideanDiv = (dividend: number, divisor: number) =>
+  divisor > 0 ? Math.floor(dividend / divisor) : -Math.floor(dividend / -divisor);
+
+const getEuclideanMod = (dividend: number, divisor: number) =>
+  dividend - divisor * getEuclideanDiv(dividend, divisor);
+
+// symmod: the remainder closest to zero, for a positive modulus.
+const getSymmetricMod = (value: number, modulus: number) => {
+  const remainder = getEuclideanMod(value, modulus);
+  return 2 * remainder > modulus ? remainder - modulus : remainder;
+};
+
 const KIND_LE = 0;
 const KIND_GE = 1;
 const KIND_EQ = 2;
@@ -352,18 +368,257 @@ export class ArithRewriter {
   }
 
   // mk_idiv_core and mk_mod_core: SMT-LIB integer division, whose remainder is non-negative.
-  mkDivMod(op: number, left: number, right: number) {
+  private mkIdivApp(left: number, right: number) {
+    return this.manager.mkApp(OP_IDIV, [left, right], SORT_INT);
+  }
+
+  private mkModApp(left: number, right: number) {
+    return this.manager.mkApp(OP_MOD, [left, right], SORT_INT);
+  }
+
+  // arith_util's mk_mul, which makes no product of one factor.
+  private mkFlatMulApp(args: number[]) {
+    return args.length === 1 ? args[0] : this.manager.mkApp(OP_MUL, args, SORT_INT);
+  }
+
+  private mkIntIte(condition: number, thenExpr: number, elseExpr: number) {
+    return this.manager.mkApp(OP_ITE, [condition, thenExpr, elseExpr], SORT_INT);
+  }
+
+  // flat_mul: the factors of nested products, in Z3's order.
+  private getFlatMul(expr: number) {
+    const args = [expr];
+    for (let index = 0; index < args.length; index++) {
+      if (!this.isMul(args[index])) continue;
+      const nested = this.manager.args[args[index]];
+      args.push(...nested);
+      args[index] = args[args.length - 1];
+      args.pop();
+      index--;
+    }
+    return args;
+  }
+
+  private removeFactor(factor: number, args: number[]) {
+    const index = args.indexOf(factor);
+    args[index] = args[args.length - 1];
+    args.pop();
+  }
+
+  // remove_divisor: div ab ac is div b c when a is positive, and div -b -c when it is negative.
+  private removeDivisor(factor: number, dividend: number, divisor: number) {
+    const manager = this.manager;
+    const dividendArgs = this.getFlatMul(dividend);
+    const divisorArgs = this.getFlatMul(divisor);
+    this.removeFactor(factor, dividendArgs);
+    this.removeFactor(factor, divisorArgs);
+    const zero = manager.mkNumeral(0);
+    const newDividend =
+      dividendArgs.length === 0 ? manager.mkNumeral(1) : this.mkFlatMulApp(dividendArgs);
+    const newDivisor =
+      divisorArgs.length === 0 ? manager.mkNumeral(1) : this.mkFlatMulApp(divisorArgs);
+    return this.mkIntIte(
+      manager.mkEq(zero, factor),
+      this.mkIdivApp(zero, zero),
+      this.mkIntIte(
+        manager.mkApp(OP_GE, [factor, zero], SORT_BOOL),
+        this.mkIdivApp(newDividend, newDivisor),
+        this.mkIdivApp(
+          manager.mkApp(OP_UMINUS, [newDividend], SORT_INT),
+          manager.mkApp(OP_UMINUS, [newDivisor], SORT_INT),
+        ),
+      ),
+    );
+  }
+
+  // get_divides: div ab ac is div b c, and common numeral factors cancel.
+  private getDivides(dividend: number, divisor: number) {
+    const manager = this.manager;
+    const dividendArgs = this.getFlatMul(dividend);
+    const divisorArgs = this.getFlatMul(divisor);
+    let dividendValue = 1;
+    let divisorValue = 1;
+    let dividendNumeral: number | undefined;
+    let divisorNumeral: number | undefined;
+    const marked = new Set(dividendArgs);
+    for (const arg of dividendArgs) {
+      const value = manager.getNumeral(arg);
+      if (value === undefined) continue;
+      dividendValue = value;
+      dividendNumeral = arg;
+    }
+    for (const arg of divisorArgs) {
+      const value = manager.getNumeral(arg);
+      // A common factor of -1 stays, or the rewriting of (div (* -1 x) (* -1 y)) diverges. Z3's
+      // check stores the -1 as the dividend's value.
+      if (marked.has(arg) && value !== -1) return this.removeDivisor(arg, dividend, divisor);
+      if (marked.has(arg)) dividendValue = -1;
+      if (value === undefined) continue;
+      divisorValue = value;
+      divisorNumeral = arg;
+    }
+    const gcd = Number(getGcd(BigInt(dividendValue), BigInt(divisorValue)));
+    if (gcd === 1) return undefined;
+    const reduced = (args: number[], numeral: number | undefined, value: number) => {
+      const index = args.indexOf(numeral ?? -1);
+      if (index !== -1) args[index] = manager.mkNumeral(value / gcd);
+      return this.mkFlatMulApp(args);
+    };
+    return this.mkIdivApp(
+      reduced(dividendArgs, dividendNumeral, dividendValue),
+      reduced(divisorArgs, divisorNumeral, divisorValue),
+    );
+  }
+
+  // mk_idiv_core.
+  mkIdiv(left: number, right: number) {
     const manager = this.manager;
     const dividend = manager.getNumeral(left);
     const divisor = manager.getNumeral(right);
-    const isIdiv = op === OP_IDIV;
-    if (dividend !== undefined && divisor !== undefined && divisor !== 0) {
-      const quotient =
-        divisor > 0 ? Math.floor(dividend / divisor) : -Math.floor(dividend / -divisor);
-      return manager.mkNumeral(isIdiv ? quotient : dividend - divisor * quotient);
+    if (dividend !== undefined && divisor !== undefined && divisor !== 0)
+      return manager.mkNumeral(getEuclideanDiv(dividend, divisor));
+    if (divisor === 1) return left;
+    if (divisor === -1) return this.reduce(this.mkFlatMulApp([manager.mkNumeral(-1), left]), 1);
+    if (divisor === 0) return undefined;
+    const zero = manager.mkNumeral(0);
+    if (left === right)
+      return this.reduce(
+        this.mkIntIte(manager.mkEq(left, zero), this.mkIdivApp(zero, zero), manager.mkNumeral(1)),
+        3,
+      );
+    if (divisor !== undefined && divisor > 0 && this.isAdd(left)) {
+      let isChanged = false;
+      let added = 0;
+      const args = manager.args[left].map((arg) => {
+        const value = manager.getNumeral(arg);
+        if (value === undefined || value <= 0 || getEuclideanMod(value, divisor) === value)
+          return arg;
+        isChanged = true;
+        added += getEuclideanDiv(value, divisor);
+        return manager.mkNumeral(getEuclideanMod(value, divisor));
+      });
+      if (isChanged)
+        return this.reduce(
+          this.mkAddApp([
+            manager.mkNumeral(added),
+            this.mkIdivApp(manager.mkApp(OP_ADD, args, SORT_INT), right),
+          ]),
+          3,
+        );
     }
-    if (divisor === 1) return isIdiv ? left : manager.mkNumeral(0);
-    if (isIdiv && divisor === -1) return this.reduce(this.mkMulAppWith(-1, left), 1);
+    const divided = this.getDivides(left, right);
+    if (divided === undefined) return undefined;
+    return this.reduce(
+      this.mkIntIte(manager.mkEq(zero, right), this.mkIdivApp(left, zero), divided),
+      FULL_DEPTH,
+    );
+  }
+
+  // mk_mod_core.
+  mkMod(left: number, right: number) {
+    const manager = this.manager;
+    const dividend = manager.getNumeral(left);
+    const divisor = manager.getNumeral(right);
+    if (dividend !== undefined && divisor !== undefined && divisor !== 0)
+      return manager.mkNumeral(getEuclideanMod(dividend, divisor));
+    if (divisor === 1 || divisor === -1) return manager.mkNumeral(0);
+    const zero = manager.mkNumeral(0);
+    if (left === right && divisor === undefined)
+      return this.mkIntIte(manager.mkEq(right, zero), this.mkModApp(zero, zero), zero);
+    // mod is idempotent on a nonzero modulus.
+    if (manager.getOp(left) === OP_MOD && manager.args[left][1] === right) {
+      if (divisor !== undefined && divisor !== 0) return left;
+      if (divisor === undefined)
+        return this.reduce(
+          this.mkIntIte(
+            manager.mkEq(right, zero),
+            this.mkModApp(this.mkModApp(manager.args[left][0], zero), zero),
+            left,
+          ),
+          2,
+        );
+    }
+    // Propagates mod inside a sum or product only if there is something to reduce.
+    if (divisor !== undefined && divisor > 0 && (this.isAdd(left) || this.isMul(left))) {
+      let isChanged = false;
+      const args = manager.args[left].map((arg) => {
+        const value = manager.getNumeral(arg);
+        if (value !== undefined && getEuclideanMod(value, divisor) !== value) {
+          isChanged = true;
+          return manager.mkNumeral(getEuclideanMod(value, divisor));
+        }
+        if (manager.getOp(arg) === OP_MOD && manager.args[arg][1] === right) {
+          isChanged = true;
+          return manager.args[arg][0];
+        }
+        const factors = manager.args[arg];
+        const coefficient =
+          this.isMul(arg) && factors.length === 2 ? manager.getNumeral(factors[0]) : undefined;
+        if (coefficient !== undefined && getSymmetricMod(coefficient, divisor) !== coefficient) {
+          isChanged = true;
+          return manager.mkApp(
+            OP_MUL,
+            [manager.mkNumeral(getSymmetricMod(coefficient, divisor)), factors[1]],
+            SORT_INT,
+          );
+        }
+        return arg;
+      });
+      if (isChanged)
+        return this.reduce(
+          this.mkModApp(manager.mkApp(manager.decls[left], args, SORT_INT), right),
+          3,
+        );
+    }
+    // For a symbolic modulus, the summands that are multiples of it go: mod (a + k*y) y = mod a y.
+    if (divisor === undefined && this.isAdd(left)) {
+      const args = manager.args[left].filter(
+        (arg) =>
+          arg !== right &&
+          !(
+            this.isMul(arg) &&
+            manager.args[arg].length === 2 &&
+            ((manager.isNumeral(manager.args[arg][0]) && manager.args[arg][1] === right) ||
+              (manager.isNumeral(manager.args[arg][1]) && manager.args[arg][0] === right))
+          ),
+      );
+      if (args.length < manager.args[left].length)
+        return this.reduce(this.mkModApp(args.length === 0 ? zero : this.mkAddApp(args), right), 3);
+    }
+    const leftArgs = manager.args[left];
+    const factor =
+      this.isMul(left) && leftArgs.length === 2 ? manager.getNumeral(leftArgs[0]) : undefined;
+    if (
+      divisor !== undefined &&
+      divisor > 0 &&
+      factor !== undefined &&
+      factor > 0 &&
+      divisor % factor === 0
+    )
+      return this.reduce(
+        manager.mkApp(
+          OP_MUL,
+          [
+            manager.mkNumeral(factor),
+            this.mkModApp(leftArgs[1], manager.mkNumeral(divisor / factor)),
+          ],
+          SORT_INT,
+        ),
+        1,
+      );
+    // mod x -y = mod x y.
+    const rightArgs = manager.args[right];
+    if (this.isMul(right) && rightArgs.length === 2 && manager.getNumeral(rightArgs[0]) === -1)
+      return this.reduce(this.mkModApp(left, rightArgs[1]), 1);
+    if (manager.getOp(right) === OP_ITE)
+      return this.reduce(
+        this.mkIntIte(
+          rightArgs[0],
+          this.mkModApp(left, rightArgs[1]),
+          this.mkModApp(left, rightArgs[2]),
+        ),
+        3,
+      );
     return undefined;
   }
 
