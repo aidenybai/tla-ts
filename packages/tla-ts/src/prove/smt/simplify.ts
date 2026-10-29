@@ -1,6 +1,7 @@
 // The rewrites of encode/n_rewrite.ml that run on the sequent before Type.Synthesize.
 
 import { applyBuiltin, at, mapChildren, type Expr } from "../../obligation-expression";
+import { compareStrings } from "../ocaml";
 
 type RecordExpr = Extract<Expr, { kind: "Record" }>;
 
@@ -44,3 +45,13 @@ export const simplifyRecordEqualities = (expression: Expr): Expr => {
     ? at(decompose(inner.args[0], inner.args[1], inner), inner)
     : inner;
 };
+
+// sort_recfields: a record's or a record set's fields in order. Like tlapm, it doesn't visit the
+// field values, so a record inside a record keeps the order it's written in.
+export const sortRecordFields = (expression: Expr): Expr =>
+  expression.kind === "Record" || expression.kind === "Rect"
+    ? {
+        ...expression,
+        fields: expression.fields.toSorted((left, right) => compareStrings(left.name, right.name)),
+      }
+    : mapChildren(expression, sortRecordFields);

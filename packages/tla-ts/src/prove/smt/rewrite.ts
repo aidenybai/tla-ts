@@ -9,7 +9,6 @@ import {
   type Expr,
   type Sequent,
 } from "../../obligation-expression";
-import { compareStrings } from "../ocaml";
 import { expandLet } from "../prep/elab";
 import { createContext, type Identifier } from "./context";
 import { createFlattener, getDepth, getVariable, type Entry } from "./flatten";
@@ -122,10 +121,6 @@ const isSetTerm = (text: string) => {
     )
   );
 };
-
-
-const sortFields = <Field extends { name: string }>(fields: Field[]) =>
-  fields.toSorted((left, right) => compareStrings(left.name, right.name));
 
 export const createEncoder = (session: EncodingSession) => {
   const flattener = createFlattener();
@@ -815,10 +810,9 @@ export const createEncoder = (session: EncodingSession) => {
             encodeIdv(expression.range, env, mode),
           ]),
         );
-      // Rewrite.sort_recfields: a record's fields in order.
       case "Record":
       case "Rect": {
-        const fields = sortFields(expression.fields);
+        const fields = expression.fields;
         const names = fields.map((field) => field.name);
         recordFields.set(`Record_${names.join("_")}`, names);
         recordFields.set(`RecordSet_${names.join("_")}`, names);
