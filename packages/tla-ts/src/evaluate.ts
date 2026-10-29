@@ -771,11 +771,7 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
   const global = findGlobalName(name, context.environment);
   if (global?.kind === "Variable") {
     const value = context.state?.[global.index];
-    if (value === undefined) {
-      throw new TlaEvaluationError(
-        `The variable ${name} is not assigned at ${describeLocation(expression)}`,
-      );
-    }
+    if (value === undefined) throw createUnassignedError(name, expression);
     return value;
   }
   if (global?.kind === "Value") return global.value;
@@ -1055,11 +1051,7 @@ const compileIdentifier = (
     const index = global.index;
     return (context) => {
       const value = context.state?.[index];
-      if (value === undefined) {
-        throw new TlaEvaluationError(
-          `The variable ${name} is not assigned at ${describeLocation(expression)}`,
-        );
-      }
+      if (value === undefined) throw createUnassignedError(name, expression);
       return value;
     };
   }
@@ -1571,11 +1563,24 @@ const compileSetComprehension = (
   };
 };
 
-const compileRecord = (recordFields: RecordField[], environment: Environment): Evaluator => {
-  const fields = [...recordFields].sort((left, right) => compareValues(left.name, right.name));
-  const hasDuplicates = fields.some(
-    (field, index) => index > 0 && fields[index - 1].name === field.name,
+// TLC orders a record's fields by name.
+export const getSortedFields = (fields: RecordField[]) =>
+  [...fields].sort((left, right) => compareValues(left.name, right.name));
+
+export const hasDuplicateFields = (sortedFields: RecordField[]) =>
+  sortedFields.some((field, index) => index > 0 && sortedFields[index - 1].name === field.name);
+
+export const createUnassignedError = (name: string, expression: Expression) =>
+  new TlaEvaluationError(`The variable ${name} is not assigned at ${describeLocation(expression)}`);
+
+export const createPrimeOutsideActionError = (expression: Expression) =>
+  new TlaEvaluationError(
+    `A primed expression appears outside an action at ${describeLocation(expression)}`,
   );
+
+const compileRecord = (recordFields: RecordField[], environment: Environment): Evaluator => {
+  const fields = getSortedFields(recordFields);
+  const hasDuplicates = hasDuplicateFields(fields);
   const values = fields.map((field) => getEvaluator(field.value, environment));
   if (hasDuplicates) {
     return (context) =>
@@ -1653,11 +1658,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "Prime": {
       const inner = child(expression.expression);
       return (context) => {
-        if (!context.next) {
-          throw new TlaEvaluationError(
-            `A primed expression appears outside an action at ${describeLocation(expression)}`,
-          );
-        }
+        if (!context.next) throw createPrimeOutsideActionError(expression);
         return inner({
           environment: context.environment,
           scope: context.scope,
@@ -1737,9 +1738,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "Record":
       return compileRecord(expression.fields, environment);
     case "RecordSet": {
-      const fields = [...expression.fields].sort((left, right) =>
-        compareValues(left.name, right.name),
-      );
+      const fields = getSortedFields(expression.fields);
       const names = fields.map((field) => field.name);
       const sets = fields.map((field) => child(field.value));
       return (context) => ({ kind: "RecordSet", names, sets: sets.map((set) => set(context)) });
