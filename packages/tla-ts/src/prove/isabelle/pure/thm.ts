@@ -89,7 +89,6 @@ const makeThm = (
   prop: Term,
 ): Thm => ({ maxidx, hyps, tpairs, prop }) as Thm;
 
-
 const unionHyps = (left: readonly Term[], right: readonly Term[]) =>
   right.length === 0
     ? left
@@ -119,7 +118,8 @@ export const conclOf = (thm: Thm) => stripImpConcl(thm.prop);
 
 export const majorPremOf = (thm: Thm) => {
   const premise = premsOf(thm)[0];
-  if (premise === undefined) throw new TlaIsabelleError("THM", "major_prem_of: rule with no premises");
+  if (premise === undefined)
+    throw new TlaIsabelleError("THM", "major_prem_of: rule with no premises");
   return stripAssumsConcl(premise);
 };
 
@@ -173,7 +173,10 @@ export const forallIntr = (variable: Term, thm: Thm): Thm => {
   if (variable.kind !== "Free" && variable.kind !== "Var")
     throw new TlaIsabelleError("THM", "forall_intr: not a variable");
   if (occursIn(variable, variable.kind === "Free" ? thm.hyps : [], thm.tpairs))
-    throw new TlaIsabelleError("THM", `forall_intr: variable "${variable.name}" free in assumptions`);
+    throw new TlaIsabelleError(
+      "THM",
+      `forall_intr: variable "${variable.name}" free in assumptions`,
+    );
   return makeThm(
     Math.max(maxidxOfTerm(variable), thm.maxidx),
     thm.hyps,
@@ -226,7 +229,8 @@ export const symmetric = (thm: Thm): Thm => {
 export const transitive = (first: Thm, second: Thm): Thm => {
   const left = destEq(first);
   const right = destEq(second);
-  if (left === undefined || right === undefined) throw new TlaIsabelleError("THM", "transitive: premises");
+  if (left === undefined || right === undefined)
+    throw new TlaIsabelleError("THM", "transitive: premises");
   if (!aconv(left[2], right[1])) throw new TlaIsabelleError("THM", "transitive: middle term");
   return makeThm(
     Math.max(first.maxidx, second.maxidx),
@@ -239,7 +243,10 @@ export const transitive = (first: Thm, second: Thm): Thm => {
 export const betaConversion = (full: boolean, term: Term): Thm => {
   if (!full && (term.kind !== "App" || term.fun.kind !== "Abs"))
     throw new TlaIsabelleError("THM", "beta_conversion: not a redex");
-  const reduced = full || term.kind !== "App" || term.fun.kind !== "Abs" ? betaNorm(term) : substBound(term.arg, term.fun.body);
+  const reduced =
+    full || term.kind !== "App" || term.fun.kind !== "Abs"
+      ? betaNorm(term)
+      : substBound(term.arg, term.fun.body);
   return makeThm(maxidxOfTerm(term), [], [], mkEquals(term, reduced));
 };
 
@@ -248,11 +255,15 @@ export const etaConversion = (term: Term) =>
 
 export const abstractRule = (name: string, variable: Term, thm: Thm): Thm => {
   const parts = destEq(thm);
-  if (parts === undefined) throw new TlaIsabelleError("THM", "abstract_rule: premise not an equality");
+  if (parts === undefined)
+    throw new TlaIsabelleError("THM", "abstract_rule: premise not an equality");
   if (variable.kind !== "Free" && variable.kind !== "Var")
     throw new TlaIsabelleError("THM", "abstract_rule: not a variable");
   if (occursIn(variable, variable.kind === "Free" ? thm.hyps : [], thm.tpairs))
-    throw new TlaIsabelleError("THM", `abstract_rule: variable "${variable.name}" free in assumptions`);
+    throw new TlaIsabelleError(
+      "THM",
+      `abstract_rule: variable "${variable.name}" free in assumptions`,
+    );
   return makeThm(
     thm.maxidx,
     thm.hyps,
@@ -267,11 +278,13 @@ export const abstractRule = (name: string, variable: Term, thm: Thm): Thm => {
 export const combination = (first: Thm, second: Thm): Thm => {
   const left = destEq(first);
   const right = destEq(second);
-  if (left === undefined || right === undefined) throw new TlaIsabelleError("THM", "combination: premises");
+  if (left === undefined || right === undefined)
+    throw new TlaIsabelleError("THM", "combination: premises");
   const funType = fastypeOf(left[1]);
   if (funType.kind !== "Type" || funType.name !== "fun")
     throw new TlaIsabelleError("THM", "combination: not function type");
-  if (!eqTyp(funType.args[0], fastypeOf(right[1]))) throw new TlaIsabelleError("THM", "combination: types");
+  if (!eqTyp(funType.args[0], fastypeOf(right[1])))
+    throw new TlaIsabelleError("THM", "combination: types");
   return makeThm(
     Math.max(first.maxidx, second.maxidx),
     unionHyps(first.hyps, second.hyps),
@@ -291,7 +304,8 @@ const destImp = (prop: Term): [Term, Term] | undefined =>
 export const equalIntr = (first: Thm, second: Thm): Thm => {
   const left = destImp(first.prop);
   const right = destImp(second.prop);
-  if (left === undefined || right === undefined) throw new TlaIsabelleError("THM", "equal_intr: premises");
+  if (left === undefined || right === undefined)
+    throw new TlaIsabelleError("THM", "equal_intr: premises");
   if (!aconv(left[0], right[1]) || !aconv(left[1], right[0]))
     throw new TlaIsabelleError("THM", "equal_intr: not equal");
   return makeThm(
@@ -394,7 +408,8 @@ const instantiateTerm = (insts: readonly Instantiation[], term: Term): Term => {
 export const instantiate = (insts: readonly Instantiation[], thm: Thm): Thm => {
   if (insts.length === 0) return thm;
   for (const inst of insts)
-    if (!eqTyp(inst.variable.type, fastypeOf(inst.term))) throw new TlaIsabelleError("THM", "instantiate: type conflict");
+    if (!eqTyp(inst.variable.type, fastypeOf(inst.term)))
+      throw new TlaIsabelleError("THM", "instantiate: type conflict");
   const prop = instantiateTerm(insts, thm.prop);
   const tpairs = thm.tpairs.map((pair): Tpair => [
     instantiateTerm(insts, pair[0]),
@@ -434,7 +449,8 @@ export const renamedProp = (prop: Term, thm: Thm): Thm => {
 };
 
 export const trivial = (prop: Term): Thm => {
-  if (!eqTyp(fastypeOf(prop), propT)) throw new TlaIsabelleError("THM", "trivial: the term must have type prop");
+  if (!eqTyp(fastypeOf(prop), propT))
+    throw new TlaIsabelleError("THM", "trivial: the term must have type prop");
   return makeThm(maxidxOfTerm(prop), [], [], mkImplies(prop, prop));
 };
 
@@ -447,7 +463,8 @@ interface State {
 
 export const destState = (state: Thm, index: number): State => {
   const premises = stripImpPrems(state.prop);
-  if (index < 1 || index > premises.length) throw new TlaIsabelleError("THM", `dest_state ${index}`);
+  if (index < 1 || index > premises.length)
+    throw new TlaIsabelleError("THM", `dest_state ${index}`);
   return {
     tpairs: state.tpairs,
     before: premises.slice(0, index - 1),
@@ -565,7 +582,8 @@ export const permutePrems = (fixed: number, count: number, rule: Thm): Thm => {
   const moved = premises.slice(fixed);
   const shift = count < 0 ? moved.length + count : count;
   if (shift === 0 || shift === moved.length) return rule;
-  if (shift < 0 || shift > moved.length) throw new TlaIsabelleError("THM", `permute_prems: k ${count}`);
+  if (shift < 0 || shift > moved.length)
+    throw new TlaIsabelleError("THM", `permute_prems: k ${count}`);
   return makeThm(
     rule.maxidx,
     rule.hyps,

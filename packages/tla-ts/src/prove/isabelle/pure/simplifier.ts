@@ -3,15 +3,20 @@
 // Muenchen, and contributors, see LICENSE.
 
 import { genAll, isNormHhf, normHhfEq } from "./drule";
+import { preferGoal } from "./goal";
 import { addSimps, emptySimpset, type SimpContext, type Solver } from "./raw-simplifier";
-import { fconvRule, genericRewriteGoalTac, rewriteCterm, type Prover, type RewriteMode } from "./rewriter";
-import { emptySeq } from "./seq";
+import {
+  fconvRule,
+  genericRewriteGoalTac,
+  rewriteCterm,
+  type Prover,
+  type RewriteMode,
+} from "./rewriter";
 import {
   depthSolve,
   firstGoal,
   noTac,
   orElse,
-  primitive,
   thenAllNew,
   thenTac,
   tryTac,
@@ -19,7 +24,7 @@ import {
   type Tactic,
 } from "./tactical";
 import type { Limits } from "./tactic";
-import { nprems, permutePrems, type Thm } from "./thm";
+import type { Thm } from "./thm";
 
 const withSolvers = (context: SimpContext, solvers: readonly Solver[]): SimpContext => ({
   ...context,
@@ -35,19 +40,6 @@ const solveAllTac = (solvers: readonly Solver[], context: SimpContext): Tactic =
 
 const loopTac = (context: SimpContext): GoalTactic =>
   firstGoal([...context.simpset.loopTacs].reverse().map((loop) => loop.tactic(context)));
-
-const preferGoal =
-  (tactic: Tactic, index: number): Tactic =>
-  (state) => {
-    if (index < 1 || index > nprems(state)) return emptySeq;
-    return thenTac(
-      thenTac(
-        primitive((current) => permutePrems(0, index - 1, current)),
-        tactic,
-      ),
-      primitive((current) => permutePrems(0, 1 - index, current)),
-    )(state);
-  };
 
 const singleProver =
   (solvers: readonly Solver[]): Prover =>
@@ -67,15 +59,23 @@ export const genericSimpTac =
         genericRewriteGoalTac(mode, singleProver(context.simpset.unsafeSolvers), context, goal),
         orElse(solveTac(goal), tryTac(thenAllNew(loop, simpLoopTac)(goal))),
       );
-    return preferGoal(simpLoopTac(1), index);
+    return preferGoal(simpLoopTac(1))(index);
   };
 
 export const simpTac = genericSimpTac(false, { simprem: false, useprem: false, mutsimp: false });
 export const asmSimpTac = genericSimpTac(false, { simprem: false, useprem: true, mutsimp: false });
 export const fullSimpTac = genericSimpTac(false, { simprem: true, useprem: false, mutsimp: false });
 export const asmLrSimpTac = genericSimpTac(false, { simprem: true, useprem: true, mutsimp: false });
-export const asmFullSimpTac = genericSimpTac(false, { simprem: true, useprem: true, mutsimp: true });
-export const safeAsmFullSimpTac = genericSimpTac(true, { simprem: true, useprem: true, mutsimp: true });
+export const asmFullSimpTac = genericSimpTac(false, {
+  simprem: true,
+  useprem: true,
+  mutsimp: true,
+});
+export const safeAsmFullSimpTac = genericSimpTac(true, {
+  simprem: true,
+  useprem: true,
+  mutsimp: true,
+});
 
 // Simplifier.simp_thm: simplifies a theorem's proposition.
 export const simpThm = (mode: RewriteMode, context: SimpContext, thm: Thm): Thm => {
@@ -98,7 +98,13 @@ export const normHhf = (limits: Limits, thm: Thm): Thm => {
   const context = { ...empty, simpset: addSimps(empty, [normHhfEq]) };
   return genAll(
     fconvRule(
-      (term) => rewriteCterm({ simprem: true, useprem: false, mutsimp: false }, () => undefined, context, term),
+      (term) =>
+        rewriteCterm(
+          { simprem: true, useprem: false, mutsimp: false },
+          () => undefined,
+          context,
+          term,
+        ),
       thm,
     ),
   );

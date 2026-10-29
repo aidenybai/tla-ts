@@ -6,7 +6,11 @@ import { sizeOfTerm, type Term, type Typ } from "./term";
 
 const intOrd = (left: number, right: number) => (left < right ? -1 : left > right ? 1 : 0);
 
-const dictOrd = <Item>(ord: (left: Item, right: Item) => number, left: readonly Item[], right: readonly Item[]) => {
+const dictOrd = <Item>(
+  ord: (left: Item, right: Item) => number,
+  left: readonly Item[],
+  right: readonly Item[],
+) => {
   for (let index = 0; ; index += 1) {
     if (index === left.length) return index === right.length ? 0 : -1;
     if (index === right.length) return 1;
@@ -15,7 +19,8 @@ const dictOrd = <Item>(ord: (left: Item, right: Item) => number, left: readonly 
   }
 };
 
-const sortOrd = (left: readonly string[], right: readonly string[]) => dictOrd(fastStringOrd, left, right);
+const sortOrd = (left: readonly string[], right: readonly string[]) =>
+  dictOrd(fastStringOrd, left, right);
 
 const typConsNr = (type: Typ) => (type.kind === "TVar" ? 0 : type.kind === "TFree" ? 1 : 2);
 

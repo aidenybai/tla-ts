@@ -15,7 +15,12 @@ export type Ast =
   | { readonly kind: "name"; readonly name: string }
   | { readonly kind: "const"; readonly name: string }
   | { readonly kind: "app"; readonly fun: Ast; readonly arg: Ast }
-  | { readonly kind: "abs"; readonly name: string; readonly type: Typ | undefined; readonly body: Ast }
+  | {
+      readonly kind: "abs";
+      readonly name: string;
+      readonly type: Typ | undefined;
+      readonly body: Ast;
+    }
   | { readonly kind: "constrain"; readonly term: Ast; readonly type: Typ };
 
 type Token =
@@ -79,16 +84,24 @@ const tokenize = (text: string): Token[] => {
     }
     if (isLetter(char)) {
       let end = position + 1;
-      while (end < text.length && (isIdChar(text[end]) || (text[end] === "." && isLetter(text[end + 1] ?? ""))))
+      while (
+        end < text.length &&
+        (isIdChar(text[end]) || (text[end] === "." && isLetter(text[end + 1] ?? "")))
+      )
         end += 1;
       const word = text.slice(position, end);
-      tokens.push(KEYWORDS.has(word) ? { kind: "delimiter", text: word } : { kind: "id", text: word });
+      tokens.push(
+        KEYWORDS.has(word) ? { kind: "delimiter", text: word } : { kind: "id", text: word },
+      );
       position = end;
       continue;
     }
     const delimiter = DELIMITERS.find((candidate) => text.startsWith(candidate, position));
     if (delimiter === undefined)
-      throw new TlaIsabelleError("ERROR", `Inner lexical error at: ${text.slice(position, position + 20)}`);
+      throw new TlaIsabelleError(
+        "ERROR",
+        `Inner lexical error at: ${text.slice(position, position + 20)}`,
+      );
     tokens.push({ kind: "delimiter", text: delimiter });
     position += delimiter.length;
   }
@@ -97,21 +110,31 @@ const tokenize = (text: string): Token[] => {
 };
 
 const constant = (name: string): Ast => ({ kind: "const", name });
-const apply = (fun: Ast, ...args: Ast[]) => args.reduce<Ast>((result, arg) => ({ kind: "app", fun: result, arg }), fun);
+const apply = (fun: Ast, ...args: Ast[]) =>
+  args.reduce<Ast>((result, arg) => ({ kind: "app", fun: result, arg }), fun);
 
 // Strings.thy: a string is the tuple of its characters, each a pair of nibbles.
 const nibble = (value: number): Ast =>
-  value === 0 ? constant("Integers.zero") : apply(constant("Functions.fapply"), constant("Integers.succ"), nibble(value - 1));
+  value === 0
+    ? constant("Integers.zero")
+    : apply(constant("Functions.fapply"), constant("Integers.succ"), nibble(value - 1));
 
 const stringTerm = (text: string) =>
   [...text].reduce((tuple, char) => {
     const code = char.charCodeAt(0);
     if (code >= 128) throw new TlaIsabelleError("ERROR", `Non-ASCII symbol: ${char}`);
-    return apply(constant("Tuples.Append"), tuple, apply(constant("Strings.char"), nibble(code >> 4), nibble(code & 15)));
+    return apply(
+      constant("Tuples.Append"),
+      tuple,
+      apply(constant("Strings.char"), nibble(code >> 4), nibble(code & 15)),
+    );
   }, constant("Tuples.emptySeq"));
 
 const tuple = (elements: readonly Ast[]) =>
-  elements.reduce((result, element) => apply(constant("Tuples.Append"), result, element), constant("Tuples.emptySeq"));
+  elements.reduce(
+    (result, element) => apply(constant("Tuples.Append"), result, element),
+    constant("Tuples.emptySeq"),
+  );
 
 interface Infix {
   readonly constant: string;
@@ -120,8 +143,18 @@ interface Infix {
   readonly priority: number;
 }
 
-const infixl = (name: string, priority: number): Infix => ({ constant: name, left: priority, right: priority + 1, priority });
-const infixr = (name: string, priority: number): Infix => ({ constant: name, left: priority + 1, right: priority, priority });
+const infixl = (name: string, priority: number): Infix => ({
+  constant: name,
+  left: priority,
+  right: priority + 1,
+  priority,
+});
+const infixr = (name: string, priority: number): Infix => ({
+  constant: name,
+  left: priority + 1,
+  right: priority,
+  priority,
+});
 
 const INFIXES = new Map<string, Infix>([
   ["\\<Rightarrow>", infixr("PredicateLogic.imp", 25)],
@@ -144,7 +177,10 @@ const INFIXES = new Map<string, Infix>([
   ["\\<times>", infixr("Tuples.prod", 100)],
 ]);
 
-const PREFIXES = new Map<string, { readonly constant: string; readonly argument: number; readonly priority: number }>([
+const PREFIXES = new Map<
+  string,
+  { readonly constant: string; readonly argument: number; readonly priority: number }
+>([
   ["~", { constant: "PredicateLogic.not", argument: 40, priority: 40 }],
   ["\\<not>", { constant: "PredicateLogic.not", argument: 40, priority: 40 }],
   ["SUBSET", { constant: "SetTheory.SUBSET", argument: 100, priority: 90 }],
@@ -212,7 +248,10 @@ class Parser {
     if (this.isDelimiter("=>") || this.isDelimiter("\\<Rightarrow>")) {
       this.position += 1;
       const range = this.type();
-      return (domains ?? [atom ?? TLA_TYPE]).reduceRight((result, domain) => funT(domain, result), range);
+      return (domains ?? [atom ?? TLA_TYPE]).reduceRight(
+        (result, domain) => funT(domain, result),
+        range,
+      );
     }
     if (atom === undefined) throw this.syntaxError();
     return atom;
@@ -273,7 +312,8 @@ class Parser {
   // An object-logic term of at least the given priority.
   logic(minimum: number): Ast {
     const parsed = this.expression(minimum);
-    if (parsed.isProp) throw new TlaIsabelleError("ERROR", "Inner syntax error: proposition in term position");
+    if (parsed.isProp)
+      throw new TlaIsabelleError("ERROR", "Inner syntax error: proposition in term position");
     return parsed.ast;
   }
 
@@ -292,15 +332,25 @@ class Parser {
       if (token.text === "\\<Longrightarrow>") {
         if (minimum > 1 || (left.isProp && left.priority < 2)) return left;
         this.position += 1;
-        const premise = left.isProp ? left.ast : apply(constant("PredicateLogic.Trueprop"), left.ast);
-        left = { ast: apply(constant("Pure.imp"), premise, this.prop(1)), priority: 1, isProp: true };
+        const premise = left.isProp
+          ? left.ast
+          : apply(constant("PredicateLogic.Trueprop"), left.ast);
+        left = {
+          ast: apply(constant("Pure.imp"), premise, this.prop(1)),
+          priority: 1,
+          isProp: true,
+        };
         continue;
       }
       if (left.isProp) return left;
       if (token.text === "::") {
         if (minimum > 3 || left.priority < 4) return left;
         this.position += 1;
-        left = { ast: { kind: "constrain", term: left.ast, type: this.type() }, priority: 3, isProp: false };
+        left = {
+          ast: { kind: "constrain", term: left.ast, type: this.type() },
+          priority: 3,
+          isProp: false,
+        };
         continue;
       }
       if (token.text === "(") {
@@ -316,11 +366,16 @@ class Parser {
         this.position += 1;
         const index = this.logic(0);
         this.expect("]");
-        left = { ast: apply(constant("Functions.fapply"), left.ast, index), priority: 90, isProp: false };
+        left = {
+          ast: apply(constant("Functions.fapply"), left.ast, index),
+          priority: 90,
+          isProp: false,
+        };
         continue;
       }
       const infix = INFIXES.get(token.text);
-      if (infix === undefined || infix.priority < minimum || left.priority < infix.left) return left;
+      if (infix === undefined || infix.priority < minimum || left.priority < infix.left)
+        return left;
       this.position += 1;
       left = {
         ast: apply(constant(infix.constant), left.ast, this.logic(infix.right)),
@@ -353,10 +408,17 @@ class Parser {
           return term(constant("SetTheory.emptyset"), 100);
         }
         return term(
-          this.commaList("}").reduceRight((set, element) => apply(constant("SetTheory.addElt"), element, set), constant("SetTheory.emptyset")),
+          this.commaList("}").reduceRight(
+            (set, element) => apply(constant("SetTheory.addElt"), element, set),
+            constant("SetTheory.emptyset"),
+          ),
         );
       case "<<":
-        return term(this.isDelimiter(">>") ? (this.next(), constant("Tuples.emptySeq")) : tuple(this.commaList(">>")));
+        return term(
+          this.isDelimiter(">>")
+            ? (this.next(), constant("Tuples.emptySeq"))
+            : tuple(this.commaList(">>")),
+        );
       case "\\<langle>":
         return term(tuple(this.commaList("\\<rangle>")));
       case "[":
@@ -371,7 +433,15 @@ class Parser {
         this.expect(".");
         const body = this.logic(3);
         return term(
-          binders.reduceRight<Ast>((result, binder) => ({ kind: "abs", name: binder.name, type: binder.type, body: result }), body),
+          binders.reduceRight<Ast>(
+            (result, binder) => ({
+              kind: "abs",
+              name: binder.name,
+              type: binder.type,
+              body: result,
+            }),
+            body,
+          ),
           3,
         );
       }
@@ -382,7 +452,13 @@ class Parser {
         const body = this.prop(0);
         return {
           ast: binders.reduceRight<Ast>(
-            (result, binder) => apply(constant("Pure.all"), { kind: "abs", name: binder.name, type: binder.type, body: result }),
+            (result, binder) =>
+              apply(constant("Pure.all"), {
+                kind: "abs",
+                name: binder.name,
+                type: binder.type,
+                body: result,
+              }),
             body,
           ),
           priority: 0,
@@ -409,7 +485,10 @@ class Parser {
       this.position += 1;
       const body = this.logic(10);
       const quantifier = constant(isForall ? "PredicateLogic.All" : "PredicateLogic.Ex");
-      return names.reduceRight((result, name) => apply(quantifier, { kind: "abs", name, type: undefined, body: result }), body);
+      return names.reduceRight(
+        (result, name) => apply(quantifier, { kind: "abs", name, type: undefined, body: result }),
+        body,
+      );
     }
     this.expect("\\<in>");
     const domain = this.logic(0);
@@ -417,7 +496,8 @@ class Parser {
     const body = this.logic(0);
     const quantifier = constant(isForall ? "SetTheory.bAll" : "SetTheory.bEx");
     return names.reduceRight(
-      (result, name) => apply(quantifier, domain, { kind: "abs", name, type: undefined, body: result }),
+      (result, name) =>
+        apply(quantifier, domain, { kind: "abs", name, type: undefined, body: result }),
       body,
     );
   }
@@ -443,7 +523,11 @@ class Parser {
       this.position += 1;
       const range = this.logic(0);
       this.expect("]");
-      return { ast: apply(constant("Functions.FuncSet"), first, range), priority: 900, isProp: false };
+      return {
+        ast: apply(constant("Functions.FuncSet"), first, range),
+        priority: 900,
+        isProp: false,
+      };
     }
     if (this.isDelimiter("EXCEPT")) {
       this.position += 1;
@@ -471,14 +555,22 @@ class Parser {
       ranges.push(this.logic(0));
     }
     this.expect("]");
-    return { ast: apply(constant("Tuples.EnumFuncSet"), tuple(domains), tuple(ranges)), priority: MAX_PRIORITY, isProp: false };
+    return {
+      ast: apply(constant("Tuples.EnumFuncSet"), tuple(domains), tuple(ranges)),
+      priority: MAX_PRIORITY,
+      isProp: false,
+    };
   }
 }
 
 const parseWith = <Result>(text: string, parse: (parser: Parser) => Result): Result => {
   const parser = new Parser(tokenize(text));
   const result = parse(parser);
-  if (!parser.atEnd()) throw new TlaIsabelleError("ERROR", `Inner syntax error: trailing input in ${text.slice(0, 40)}`);
+  if (!parser.atEnd())
+    throw new TlaIsabelleError(
+      "ERROR",
+      `Inner syntax error: trailing input in ${text.slice(0, 40)}`,
+    );
   return result;
 };
 

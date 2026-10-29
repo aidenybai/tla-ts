@@ -25,17 +25,28 @@ export const readStatement = (logic: TlaLogic, theory: TheoryText): Statement =>
   const scope = {
     consts: new Map([
       ...logic.consts,
-      ...theoryConsts.map((constant) => [constant.name, { type: constant.type, abbreviation: undefined }] as const),
+      ...theoryConsts.map(
+        (constant) => [constant.name, { type: constant.type, abbreviation: undefined }] as const,
+      ),
     ]),
-    constNames: new Map([...logic.constNames, ...theoryConsts.map((constant) => [constant.base, constant.name] as const)]),
+    constNames: new Map([
+      ...logic.constNames,
+      ...theoryConsts.map((constant) => [constant.base, constant.name] as const),
+    ]),
   };
   const props = theory.elements.reduce<{ fixed: ReadonlySet<string>; props: PropToCheck[] }>(
     (state, element) =>
       element.kind === "fixes"
         ? { fixed: new Set([...state.fixed, ...element.names]), props: state.props }
-        : { fixed: state.fixed, props: [...state.props, { ast: parseProp(element.prop), fixed: state.fixed }] },
+        : {
+            fixed: state.fixed,
+            props: [...state.props, { ast: parseProp(element.prop), fixed: state.fixed }],
+          },
     { fixed: new Set(), props: [] },
   );
-  const checked = checkProps(scope, [...props.props, { ast: parseProp(theory.shows), fixed: props.fixed }]);
+  const checked = checkProps(scope, [
+    ...props.props,
+    { ast: parseProp(theory.shows), fixed: props.fixed },
+  ]);
   return { assumptions: checked.slice(0, -1), conclusion: checked[checked.length - 1] };
 };

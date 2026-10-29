@@ -82,7 +82,10 @@ export const eqThm = (left: Thm, right: Thm) =>
     left.hyps.length === right.hyps.length &&
     left.hyps.every((hyp) => right.hyps.some((other) => aconv(hyp, other))) &&
     left.tpairs.length === right.tpairs.length &&
-    left.tpairs.every((pair, index) => aconv(pair[0], right.tpairs[index][0]) && aconv(pair[1], right.tpairs[index][1])));
+    left.tpairs.every(
+      (pair, index) =>
+        aconv(pair[0], right.tpairs[index][0]) && aconv(pair[1], right.tpairs[index][1]),
+    ));
 
 export const eqThmProp = (left: Thm, right: Thm) => aconv(left.prop, right.prop);
 
@@ -98,7 +101,11 @@ export const every = (tactics: readonly Tactic[]): Tactic => {
     if (remaining.length === 0) return makeSeq(() => [state, makeSeq(() => evyBack(trail).pull())]);
     const cell = remaining[0](state).pull();
     if (cell === undefined) return evyBack(trail);
-    return evy([{ state: cell[0], rest: cell[1], tactics: remaining.slice(1) }, ...trail], remaining.slice(1), cell[0]);
+    return evy(
+      [{ state: cell[0], rest: cell[1], tactics: remaining.slice(1) }, ...trail],
+      remaining.slice(1),
+      cell[0],
+    );
   };
   const evyBack = (trail: readonly Trail[]): Seq<Thm> => {
     let current = trail;
@@ -106,8 +113,14 @@ export const every = (tactics: readonly Tactic[]): Tactic => {
       const top = current[0];
       const cell = top.rest.pull();
       if (cell === undefined) current = current.slice(1);
-      else if (eqThm(top.state, cell[0])) current = [{ ...top, rest: cell[1] }, ...current.slice(1)];
-      else return evy([{ state: cell[0], rest: cell[1], tactics: top.tactics }, ...current.slice(1)], top.tactics, cell[0]);
+      else if (eqThm(top.state, cell[0]))
+        current = [{ ...top, rest: cell[1] }, ...current.slice(1)];
+      else
+        return evy(
+          [{ state: cell[0], rest: cell[1], tactics: top.tactics }, ...current.slice(1)],
+          top.tactics,
+          cell[0],
+        );
     }
     return emptySeq;
   };
@@ -119,7 +132,8 @@ export const everyGoal =
   (index) =>
     every(tactics.map((tactic) => tactic(index)));
 
-export const first = (tactics: readonly Tactic[]): Tactic => tactics.reduceRight((rest, tactic) => orElse(tactic, rest), noTac);
+export const first = (tactics: readonly Tactic[]): Tactic =>
+  tactics.reduceRight((rest, tactic) => orElse(tactic, rest), noTac);
 
 export const firstGoal =
   (tactics: readonly GoalTactic[]): GoalTactic =>
@@ -192,14 +206,16 @@ export const changedProp =
 export const allGoals =
   (tactic: GoalTactic): Tactic =>
   (state) => {
-    const doall = (index: number): Tactic => (index === 0 ? allTac : thenTac(tactic(index), doall(index - 1)));
+    const doall = (index: number): Tactic =>
+      index === 0 ? allTac : thenTac(tactic(index), doall(index - 1));
     return doall(nprems(state))(state);
   };
 
 export const someGoal =
   (tactic: GoalTactic): Tactic =>
   (state) => {
-    const find = (index: number): Tactic => (index === 0 ? noTac : orElse(tactic(index), find(index - 1)));
+    const find = (index: number): Tactic =>
+      index === 0 ? noTac : orElse(tactic(index), find(index - 1));
     return find(nprems(state))(state);
   };
 
@@ -207,17 +223,21 @@ export const firstGoalTac =
   (tactic: GoalTactic): Tactic =>
   (state) => {
     const count = nprems(state);
-    const find = (index: number): Tactic => (index > count ? noTac : orElse(tactic(index), find(index + 1)));
+    const find = (index: number): Tactic =>
+      index > count ? noTac : orElse(tactic(index), find(index + 1));
     return find(1)(state);
   };
 
-export const repeatSome = (tactic: GoalTactic) => repeat1(someGoal((index) => repeat1(tactic(index))));
-export const repeatFirst = (tactic: GoalTactic) => repeat1(firstGoalTac((index) => repeat1(tactic(index))));
+export const repeatSome = (tactic: GoalTactic) =>
+  repeat1(someGoal((index) => repeat1(tactic(index))));
+export const repeatFirst = (tactic: GoalTactic) =>
+  repeat1(firstGoalTac((index) => repeat1(tactic(index))));
 export const repeatDetermFirst = (tactic: GoalTactic) =>
   repeatDeterm1(firstGoalTac((index) => repeatDeterm1(tactic(index))));
 export const tryAll = (tactic: GoalTactic) => allGoals((index) => tryTac(tactic(index)));
 
-const isThmError = (error: unknown) => error instanceof TlaIsabelleError && error.exception === "THM";
+const isThmError = (error: unknown) =>
+  error instanceof TlaIsabelleError && error.exception === "THM";
 
 // SUBGOAL: a tactic built from goal index of the state, failing if there is no such goal.
 export const subgoal =
@@ -249,13 +269,17 @@ export const solvedGoal =
 
 // Seq.INTERVAL: applies tactic to goals last down to first.
 const interval = (tactic: GoalTactic, firstIndex: number, lastIndex: number): Tactic =>
-  lastIndex < firstIndex ? allTac : thenTac(tactic(lastIndex), interval(tactic, firstIndex, lastIndex - 1));
+  lastIndex < firstIndex
+    ? allTac
+    : thenTac(tactic(lastIndex), interval(tactic, firstIndex, lastIndex - 1));
 
 export const thenAllNew =
   (first: GoalTactic, second: GoalTactic): GoalTactic =>
   (index) =>
   (state) =>
-    thenTac(first(index), (result) => interval(second, index, index + nprems(result) - nprems(state))(result))(state);
+    thenTac(first(index), (result) =>
+      interval(second, index, index + nprems(result) - nprems(state))(result),
+    )(state);
 
 export const repeatAllNew = (tactic: GoalTactic): GoalTactic =>
   thenAllNew(tactic, (index) => tryTac(repeatAllNew(tactic)(index)));
@@ -271,7 +295,8 @@ export const primSeq =
     }
   };
 
-export const primitive = (apply: (state: Thm) => Thm): Tactic => primSeq((state) => singleSeq(apply(state)));
+export const primitive = (apply: (state: Thm) => Thm): Tactic =>
+  primSeq((state) => singleSeq(apply(state)));
 
 export const condTac =
   (test: (state: Thm) => boolean, onTrue: Tactic, onFalse: Tactic): Tactic =>
@@ -311,4 +336,3 @@ export const depthSolve1 =
 
 // Search.DEPTH_SOLVE: depth-first search until no goals remain.
 export const depthSolve = (tactic: Tactic) => depthFirst(hasFewerPrems(1), tactic);
-

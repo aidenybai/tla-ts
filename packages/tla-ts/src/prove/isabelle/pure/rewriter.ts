@@ -81,7 +81,8 @@ import { eqThm } from "./tactical";
 
 export type Prover = (context: SimpContext, thm: Thm) => Thm | undefined;
 
-const isThmError = (error: unknown) => error instanceof TlaIsabelleError && error.exception === "THM";
+const isThmError = (error: unknown) =>
+  error instanceof TlaIsabelleError && error.exception === "THM";
 
 const lhsOf = (thm: Thm) => destEquals(thm.prop)[0];
 const rhsOf = (thm: Thm) => destEquals(thm.prop)[1];
@@ -143,15 +144,25 @@ const isWeakCong = (context: SimpContext, lhs: Term) => {
   );
 };
 
-const uncondSkel = (context: SimpContext, lhs: Term, rhs: Term) => (isWeakCong(context, lhs) ? SKEL0 : rhs);
+const uncondSkel = (context: SimpContext, lhs: Term, rhs: Term) =>
+  isWeakCong(context, lhs) ? SKEL0 : rhs;
 
 const varsOf = (term: Term) =>
-  foldAterms((atom, result: Var[]) => (atom.kind === "Var" ? [...result, atom] : result), term, [] as Var[]);
+  foldAterms(
+    (atom, result: Var[]) => (atom.kind === "Var" ? [...result, atom] : result),
+    term,
+    [] as Var[],
+  );
 
 const condSkel = (context: SimpContext, lhs: Term, rhs: Term) => {
   const lhsVars = varsOf(lhs);
   return varsOf(rhs).every((variable) =>
-    lhsVars.some((other) => other.name === variable.name && other.index === variable.index && eqTyp(other.type, variable.type)),
+    lhsVars.some(
+      (other) =>
+        other.name === variable.name &&
+        other.index === variable.index &&
+        eqTyp(other.type, variable.type),
+    ),
   )
     ? uncondSkel(context, lhs, rhs)
     : SKEL0;
@@ -167,7 +178,11 @@ const sortRrules = (rrules: readonly Rrule[]) => {
   const conditional: Rrule[] = [];
   for (const rrule of rrules) {
     const prop = rrule.thm.prop;
-    const isSimple = prop.kind === "App" && prop.fun.kind === "App" && prop.fun.fun.kind === "Const" && prop.fun.fun.name === "Pure.eq";
+    const isSimple =
+      prop.kind === "App" &&
+      prop.fun.kind === "App" &&
+      prop.fun.fun.kind === "Const" &&
+      prop.fun.fun.name === "Pure.eq";
     if (isSimple) simple.unshift(rrule);
     else conditional.unshift(rrule);
   }
@@ -175,7 +190,12 @@ const sortRrules = (rrules: readonly Rrule[]) => {
 };
 
 // rewritec: one rewrite step at the root of a term.
-const rewritec = (prover: Prover, maxt: number, context: SimpContext, term: Term): Rewritten | undefined => {
+const rewritec = (
+  prover: Prover,
+  maxt: number,
+  context: SimpContext,
+  term: Term,
+): Rewritten | undefined => {
   checkInterrupt(context.limits);
   const etaThm = etaConversion(term);
   const etaTerm = rhsOf(etaThm);
@@ -235,7 +255,12 @@ const rewritec = (prover: Prover, maxt: number, context: SimpContext, term: Term
 const incrementTerm = (increment: number, term: Term) => incrIndexes([], increment, term);
 
 // congc: applies a congruence rule to a term.
-const congc = (prover: (thm: Thm) => Thm | undefined, maxt: number, cong: Thm, term: Term): Thm | undefined => {
+const congc = (
+  prover: (thm: Thm) => Thm | undefined,
+  maxt: number,
+  cong: Thm,
+  term: Term,
+): Thm | undefined => {
   const rthm = incrIndexesThm(maxt + 1, cong);
   const rlhs = destEquals(stripImpConcl(rthm.prop))[0];
   const env = matchPattern(rlhs, term, { tyenv: emptyTyEnv, tenv: emptyTEnv });
@@ -264,7 +289,8 @@ const instantiateABC = (rule: Thm, termA: Term, termB: Term, termC: Term) =>
     rule,
   );
 
-const impCongRule = (first: Thm, second: Thm) => combination(combination(reflexive(implies), first), second);
+const impCongRule = (first: Thm, second: Thm) =>
+  combination(combination(reflexive(implies), first), second);
 
 export interface RewriteMode {
   readonly simprem: boolean;
@@ -291,7 +317,8 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
     if (step === undefined) return undefined;
     return transitive1(step.thm, botc(step.skel, context, rhsOf(step.thm)));
   };
-  const tryBotc = (context: SimpContext, term: Term) => botc(SKEL0, context, term) ?? reflexive(term);
+  const tryBotc = (context: SimpContext, term: Term) =>
+    botc(SKEL0, context, term) ?? reflexive(term);
   const subc = (skel: Term, context: SimpContext, term: Term): Thm | undefined => {
     if (term.kind === "Abs") {
       const variable = mkFree(boundName(context.bounds), term.type);
@@ -301,7 +328,8 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
     }
     if (term.kind !== "App") return undefined;
     const head = term.fun;
-    if (head.kind === "App" && head.fun.kind === "Const" && head.fun.name === "Pure.imp") return impc(term, context);
+    if (head.kind === "App" && head.fun.kind === "Const" && head.fun.name === "Pure.imp")
+      return impc(term, context);
     if (head.kind === "Abs") {
       const beta = betaConversion(false, term);
       const rest = subc(SKEL0, context, rhsOf(beta));
@@ -372,7 +400,7 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
   ): Thm | undefined => {
     if (prems.length === 0) return eq;
     const [prem, ...rest] = prems;
-    const inner = addRrules([...rules.slice(1)].reverse(), context);
+    const inner = addRrules(rules.slice(1).reverse(), context);
     const nextConcl = mkImplies(prem, eq === undefined ? concl : rhsOf(eq));
     const dprem = eq === undefined ? undefined : disch(false, prem, eq);
     const step = rewritec(prover, maxidx, inner, nextConcl);
@@ -381,7 +409,7 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
     if (joined === undefined) throw new TlaIsabelleError("ERROR", "rebuild");
     return transitive1(
       rest.reduce((current, item) => disch(false, item, current), joined),
-      mutImpc0([...rest].reverse(), rhsOf(step.thm), [...rules.slice(1)].reverse(), context),
+      mutImpc0([...rest].reverse(), rhsOf(step.thm), rules.slice(1).reverse(), context),
     );
   };
   const mutImpc0 = (
@@ -423,12 +451,23 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
   ): Thm | undefined => {
     if (prems.length === 0) {
       const folded = eqns.reduce<Thm | undefined>(
-        (eq2, eq1, index) => transitive1(eq1, eq2 === undefined ? undefined : disch(false, donePrems[index], eq2)),
+        (eq2, eq1, index) =>
+          transitive1(eq1, eq2 === undefined ? undefined : disch(false, donePrems[index], eq2)),
         undefined,
       );
       const rest =
         changed > 0
-          ? mutImpc([...donePrems].reverse(), concl, [...doneRules].reverse(), [], [], [], context, -1, changed)
+          ? mutImpc(
+              [...donePrems].reverse(),
+              concl,
+              [...doneRules].reverse(),
+              [],
+              [],
+              [],
+              context,
+              -1,
+              changed,
+            )
           : rebuild(
               donePrems,
               concl,
@@ -441,7 +480,9 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
     const [prem, ...otherPrems] = prems;
     const [rule, ...otherRules] = rules;
     const simplified =
-      count === 0 ? undefined : botc(SKEL0, addRrules([...[...doneRules].reverse(), ...otherRules], context), prem);
+      count === 0
+        ? undefined
+        : botc(SKEL0, addRrules([...[...doneRules].reverse(), ...otherRules], context), prem);
     if (simplified === undefined)
       return mutImpc(
         otherPrems,
@@ -458,7 +499,11 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
     const index =
       1 +
       simplified.hyps.reduce(
-        (result, hyp) => Math.max(result, otherPrems.findIndex((other) => aconv(other, hyp))),
+        (result, hyp) =>
+          Math.max(
+            result,
+            otherPrems.findIndex((other) => aconv(other, hyp)),
+          ),
         -1,
       );
     const [newRule, next] = rulesOfPrem(newPrem, context);
@@ -484,11 +529,16 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
     const [prem, conc] = destImplies(term);
     const first = mode.simprem ? botc(SKEL0, context, prem) : undefined;
     const simplifiedPrem = first === undefined ? prem : rhsOf(first);
-    const inner = mode.useprem ? addRrules([rulesOfPrem(simplifiedPrem, context)[0]], context) : context;
+    const inner = mode.useprem
+      ? addRrules([rulesOfPrem(simplifiedPrem, context)[0]], context)
+      : context;
     const second = botc(SKEL0, inner, conc);
-    if (second === undefined) return first === undefined ? undefined : impCongRule(first, reflexive(conc));
+    if (second === undefined)
+      return first === undefined ? undefined : impCongRule(first, reflexive(conc));
     const discharged = disch(false, simplifiedPrem, second);
-    return first === undefined ? discharged : transitive(impCongRule(first, reflexive(conc)), discharged);
+    return first === undefined
+      ? discharged
+      : transitive(impCongRule(first, reflexive(conc)), discharged);
   };
   return tryBotc;
 };
@@ -497,13 +547,25 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
 const flexflexUnique = (thm: Thm): Thm => {
   if (thm.tpairs.length === 0) return thm;
   const results = listOfSeq(flexflexRule(thm));
-  const distinct = results.filter((result, index) => results.findIndex((other) => eqThm(other, result)) === index);
+  const distinct = results.filter(
+    (result, index) => results.findIndex((other) => eqThm(other, result)) === index,
+  );
   if (distinct.length === 1) return distinct[0];
-  throw new TlaIsabelleError("THM", distinct.length === 0 ? "flexflex_unique: impossible constraints" : "flexflex_unique: multiple unifiers");
+  throw new TlaIsabelleError(
+    "THM",
+    distinct.length === 0
+      ? "flexflex_unique: impossible constraints"
+      : "flexflex_unique: multiple unifiers",
+  );
 };
 
 // rewrite_cterm: proves term == term' by rewriting.
-export const rewriteCterm = (mode: RewriteMode, prover: Prover, context: SimpContext, term: Term): Thm => {
+export const rewriteCterm = (
+  mode: RewriteMode,
+  prover: Prover,
+  context: SimpContext,
+  term: Term,
+): Thm => {
   const inner = { ...context, simpset: { ...context.simpset, depth: context.simpset.depth + 1 } };
   const wrapped: Prover = (current, thm) => {
     const result = prover(current, thm);

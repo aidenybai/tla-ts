@@ -68,7 +68,12 @@ const resolve = (inference: Inference, type: Typ): Typ => {
 
 const normalize = (inference: Inference, type: Typ): Typ => {
   const resolved = resolve(inference, type);
-  return resolved.kind === "Type" ? mkType(resolved.name, resolved.args.map((arg) => normalize(inference, arg))) : resolved;
+  return resolved.kind === "Type"
+    ? mkType(
+        resolved.name,
+        resolved.args.map((arg) => normalize(inference, arg)),
+      )
+    : resolved;
 };
 
 const occurs = (inference: Inference, index: number, type: Typ): boolean => {
@@ -81,7 +86,12 @@ const unify = (inference: Inference, left: Typ, right: Typ) => {
   const resolvedLeft = resolve(inference, left);
   const resolvedRight = resolve(inference, right);
   if (resolvedLeft.kind === "TVar" && isParam(resolvedLeft)) {
-    if (resolvedRight.kind === "TVar" && isParam(resolvedRight) && resolvedRight.index === resolvedLeft.index) return;
+    if (
+      resolvedRight.kind === "TVar" &&
+      isParam(resolvedRight) &&
+      resolvedRight.index === resolvedLeft.index
+    )
+      return;
     if (occurs(inference, resolvedLeft.index, resolvedRight))
       throw new TlaIsabelleError("ERROR", "Type unification failed: occurs check");
     inference.substitution.set(resolvedLeft.index, resolvedRight);
@@ -91,11 +101,20 @@ const unify = (inference: Inference, left: Typ, right: Typ) => {
     unify(inference, resolvedRight, resolvedLeft);
     return;
   }
-  if (resolvedLeft.kind === "Type" && resolvedRight.kind === "Type" && resolvedLeft.name === resolvedRight.name) {
+  if (
+    resolvedLeft.kind === "Type" &&
+    resolvedRight.kind === "Type" &&
+    resolvedLeft.name === resolvedRight.name
+  ) {
     resolvedLeft.args.forEach((arg, index) => unify(inference, arg, resolvedRight.args[index]));
     return;
   }
-  if (resolvedLeft.kind === "TFree" && resolvedRight.kind === "TFree" && resolvedLeft.name === resolvedRight.name) return;
+  if (
+    resolvedLeft.kind === "TFree" &&
+    resolvedRight.kind === "TFree" &&
+    resolvedLeft.name === resolvedRight.name
+  )
+    return;
   throw new TlaIsabelleError("ERROR", "Type unification failed");
 };
 
@@ -155,7 +174,13 @@ const elaborate = (
     }
     case "abs": {
       const type = ast.type ?? freshParam(inference);
-      const [body, bodyType] = elaborate(scope, inference, fixed, [{ name: ast.name, type }, ...bound], ast.body);
+      const [body, bodyType] = elaborate(
+        scope,
+        inference,
+        fixed,
+        [{ name: ast.name, type }, ...bound],
+        ast.body,
+      );
       return [mkAbs(ast.name, type, body), funT(type, bodyType)];
     }
     case "constrain": {
@@ -168,24 +193,36 @@ const elaborate = (
 
 const matchScheme = (pattern: Typ, object: Typ, instantiation: Map<string, Typ>) => {
   if (pattern.kind === "Type") {
-    if (object.kind === "Type") pattern.args.forEach((arg, index) => matchScheme(arg, object.args[index], instantiation));
+    if (object.kind === "Type")
+      pattern.args.forEach((arg, index) => matchScheme(arg, object.args[index], instantiation));
     return;
   }
-  instantiation.set(pattern.kind === "TFree" ? pattern.name : `${pattern.name}.${pattern.index}`, object);
+  instantiation.set(
+    pattern.kind === "TFree" ? pattern.name : `${pattern.name}.${pattern.index}`,
+    object,
+  );
 };
 
 const instantiateMatched = (type: Typ, instantiation: ReadonlyMap<string, Typ>): Typ =>
   type.kind === "Type"
-    ? mkType(type.name, type.args.map((arg) => instantiateMatched(arg, instantiation)))
+    ? mkType(
+        type.name,
+        type.args.map((arg) => instantiateMatched(arg, instantiation)),
+      )
     : (instantiation.get(type.kind === "TFree" ? type.name : `${type.name}.${type.index}`) ?? type);
 
 // Consts.certify with normalize: unfolds abbreviations and applies them to their arguments.
 const expandAbbreviations = (scope: NameScope, term: Term): Term => {
   const [head, args] = stripComb(term);
   const expandedArgs = args.map((arg) => expandAbbreviations(scope, arg));
-  if (head.kind === "Abs") return betapplys(mkAbs(head.name, head.type, expandAbbreviations(scope, head.body)), expandedArgs);
+  if (head.kind === "Abs")
+    return betapplys(
+      mkAbs(head.name, head.type, expandAbbreviations(scope, head.body)),
+      expandedArgs,
+    );
   const info = head.kind === "Const" ? scope.consts.get(head.name) : undefined;
-  if (head.kind !== "Const" || info?.abbreviation === undefined) return betapplys(head, expandedArgs);
+  if (head.kind !== "Const" || info?.abbreviation === undefined)
+    return betapplys(head, expandedArgs);
   const instantiation = new Map<string, Typ>();
   matchScheme(info.type, head.type, instantiation);
   return betapplys(
@@ -215,7 +252,9 @@ export const checkProps = (scope: NameScope, props: readonly PropToCheck[]): Ter
         (type, state: number[]) =>
           foldAtyps(
             (atom, current: number[]) =>
-              atom.kind === "TVar" && isParam(atom) && !current.includes(atom.index) ? [...current, atom.index] : current,
+              atom.kind === "TVar" && isParam(atom) && !current.includes(atom.index)
+                ? [...current, atom.index]
+                : current,
             type,
             state,
           ),

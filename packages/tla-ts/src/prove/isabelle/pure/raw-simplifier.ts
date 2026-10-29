@@ -13,7 +13,17 @@ import { isFirstOrder, isPattern, matches } from "./pattern";
 import { emptyTable, type Table } from "./table";
 import { emptyTEnv } from "./envir";
 import { emptyTyEnv } from "./type";
-import { aconv, existsSubterm, existsType, foldAterms, eqTyp, headOf, type Term, type Typ, type Var } from "./term";
+import {
+  aconv,
+  existsSubterm,
+  existsType,
+  foldAterms,
+  eqTyp,
+  headOf,
+  type Term,
+  type Typ,
+  type Var,
+} from "./term";
 import { rs, type Thm } from "./thm";
 import { eqThmProp, noTac, type GoalTactic } from "./tactical";
 import type { Limits } from "./tactic";
@@ -57,7 +67,10 @@ export interface Simpset {
   readonly simprocs: Net<Procedure>;
   readonly mkRews: MkRews;
   readonly subgoalTac: (context: SimpContext) => GoalTactic;
-  readonly loopTacs: readonly { readonly name: string; readonly tactic: (context: SimpContext) => GoalTactic }[];
+  readonly loopTacs: readonly {
+    readonly name: string;
+    readonly tactic: (context: SimpContext) => GoalTactic;
+  }[];
   readonly unsafeSolvers: readonly Solver[];
   readonly safeSolvers: readonly Solver[];
 }
@@ -82,10 +95,19 @@ export const congName = (term: Term): CongName | undefined =>
       : undefined;
 
 const varsOf = (term: Term) =>
-  foldAterms((atom, result: Var[]) => (atom.kind === "Var" ? [...result, atom] : result), term, [] as Var[]);
+  foldAterms(
+    (atom, result: Var[]) => (atom.kind === "Var" ? [...result, atom] : result),
+    term,
+    [] as Var[],
+  );
 
 const hasVar = (vars: readonly Var[], variable: Var) =>
-  vars.some((other) => other.name === variable.name && other.index === variable.index && eqTyp(other.type, variable.type));
+  vars.some(
+    (other) =>
+      other.name === variable.name &&
+      other.index === variable.index &&
+      eqTyp(other.type, variable.type),
+  );
 
 const addTVarKeys = (type: Typ, keys: Set<string>) => {
   if (type.kind === "TVar") keys.add(`${type.index}:${type.name}`);
@@ -101,7 +123,11 @@ const hasNewTVar = (type: Typ, keys: ReadonlySet<string>): boolean => {
 
 // rewrite_rule_extra_vars: whether the right-hand sides have variables outside the left-hand side
 // and the premises.
-export const rewriteRuleExtraVars = (prems: readonly Term[], elhs: Term, erhss: readonly Term[]) => {
+export const rewriteRuleExtraVars = (
+  prems: readonly Term[],
+  elhs: Term,
+  erhss: readonly Term[],
+) => {
   const terms = [elhs, ...prems];
   const vars = terms.flatMap(varsOf);
   const tvars = new Set<string>();
@@ -121,7 +147,10 @@ const mkRrule2 = (thm: Thm, lhs: Term, elhs: Term, perm: boolean): Rrule => ({
   thm,
   lhs,
   elhs,
-  extra: rewriteRuleExtraVars([], elhs, [...thm.tpairs.flatMap((pair) => [pair[0], pair[1]]), thm.prop]),
+  extra: rewriteRuleExtraVars([], elhs, [
+    ...thm.tpairs.flatMap((pair) => [pair[0], pair[1]]),
+    thm.prop,
+  ]),
   fo: isFirstOrder(elhs) || !isPattern(elhs),
   perm,
 });
@@ -129,7 +158,8 @@ const mkRrule2 = (thm: Thm, lhs: Term, elhs: Term, perm: boolean): Rrule => ({
 const vperm = (left: Term, right: Term): boolean => {
   if (left.kind === "Var" && right.kind === "Var") return true;
   if (left.kind === "Abs" && right.kind === "Abs") return vperm(left.body, right.body);
-  if (left.kind === "App" && right.kind === "App") return vperm(left.fun, right.fun) && vperm(left.arg, right.arg);
+  if (left.kind === "App" && right.kind === "App")
+    return vperm(left.fun, right.fun) && vperm(left.arg, right.arg);
   return aconvExact(left, right);
 };
 
@@ -140,13 +170,25 @@ const aconvExact = (left: Term, right: Term): boolean => {
     case "Free":
       return right.kind === left.kind && left.name === right.name && eqTyp(left.type, right.type);
     case "Var":
-      return right.kind === "Var" && left.name === right.name && left.index === right.index && eqTyp(left.type, right.type);
+      return (
+        right.kind === "Var" &&
+        left.name === right.name &&
+        left.index === right.index &&
+        eqTyp(left.type, right.type)
+      );
     case "Bound":
       return right.kind === "Bound" && left.index === right.index;
     case "Abs":
-      return right.kind === "Abs" && left.name === right.name && eqTyp(left.type, right.type) && aconvExact(left.body, right.body);
+      return (
+        right.kind === "Abs" &&
+        left.name === right.name &&
+        eqTyp(left.type, right.type) &&
+        aconvExact(left.body, right.body)
+      );
     case "App":
-      return right.kind === "App" && aconvExact(left.fun, right.fun) && aconvExact(left.arg, right.arg);
+      return (
+        right.kind === "App" && aconvExact(left.fun, right.fun) && aconvExact(left.arg, right.arg)
+      );
   }
 };
 
@@ -154,7 +196,10 @@ const isVarPerm = (left: Term, right: Term) => {
   if (!vperm(left, right)) return false;
   const leftVars = varsOf(left);
   const rightVars = varsOf(right);
-  return leftVars.every((variable) => hasVar(rightVars, variable)) && rightVars.every((variable) => hasVar(leftVars, variable));
+  return (
+    leftVars.every((variable) => hasVar(rightVars, variable)) &&
+    rightVars.every((variable) => hasVar(leftVars, variable))
+  );
 };
 
 interface Decomposed {
@@ -190,7 +235,14 @@ const mkEqTrue = (context: SimpContext, thm: Thm): RawRrule[] => {
   return [{ thm: eqTrue, lhs: decomposed.lhs, elhs: decomposed.elhs, perm: false }];
 };
 
-const rruleEqTrue = (context: SimpContext, thm: Thm, lhs: Term, elhs: Term, rhs: Term, original: Thm): RawRrule[] => {
+const rruleEqTrue = (
+  context: SimpContext,
+  thm: Thm,
+  lhs: Term,
+  elhs: Term,
+  rhs: Term,
+  original: Thm,
+): RawRrule[] => {
   const rrule = { thm, lhs, elhs, perm: false };
   return rewriteRuleExtraVars([], lhs, [rhs]) ? [...mkEqTrue(context, original), rrule] : [rrule];
 };
@@ -198,7 +250,10 @@ const rruleEqTrue = (context: SimpContext, thm: Thm, lhs: Term, elhs: Term, rhs:
 const mkRrule = (context: SimpContext, thm: Thm): RawRrule[] => {
   const decomposed = decompSimp(thm);
   if (decomposed.perm) return [{ thm, lhs: decomposed.lhs, elhs: decomposed.elhs, perm: true }];
-  if (rewriteRuleExtraVars(decomposed.prems, decomposed.lhs, [decomposed.rhs]) || decomposed.elhs.kind === "Var")
+  if (
+    rewriteRuleExtraVars(decomposed.prems, decomposed.lhs, [decomposed.rhs]) ||
+    decomposed.elhs.kind === "Var"
+  )
     return mkEqTrue(context, thm);
   return rruleEqTrue(context, thm, decomposed.lhs, decomposed.elhs, decomposed.rhs, thm);
 };
@@ -216,7 +271,8 @@ const orientRrule = (context: SimpContext, thm: Thm): RawRrule[] => {
   if (decomposed.perm) return [{ thm, lhs: decomposed.lhs, elhs: decomposed.elhs, perm: true }];
   if (!defaultReorient(decomposed.prems, decomposed.lhs, decomposed.rhs))
     return rruleEqTrue(context, thm, decomposed.lhs, decomposed.elhs, decomposed.rhs, thm);
-  if (defaultReorient(decomposed.prems, decomposed.rhs, decomposed.lhs)) return mkEqTrue(context, thm);
+  if (defaultReorient(decomposed.prems, decomposed.rhs, decomposed.lhs))
+    return mkEqTrue(context, thm);
   const symmetric = (() => {
     try {
       return rs(thm, symmetricThm);
@@ -291,7 +347,10 @@ export const emptySimpset: Simpset = {
   congs: emptyCongs,
   weakCongs: [],
   simprocs: emptyNet,
-  mkRews: { mk: (thm) => (isEquals(stripImpConcl(thm.prop)) ? [thm] : []), mkEqTrue: () => undefined },
+  mkRews: {
+    mk: (thm) => (isEquals(stripImpConcl(thm.prop)) ? [thm] : []),
+    mkEqTrue: () => undefined,
+  },
   subgoalTac: () => () => noTac,
   loopTacs: [],
   unsafeSolvers: [],

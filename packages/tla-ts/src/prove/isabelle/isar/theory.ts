@@ -43,7 +43,8 @@ const readString = (text: string, start: number): [string, number] => {
       position += 1;
     }
   }
-  if (position >= text.length) throw new TlaIsabelleError("ERROR", "Outer lexical error: unterminated string");
+  if (position >= text.length)
+    throw new TlaIsabelleError("ERROR", "Outer lexical error: unterminated string");
   return [result, position + 1];
 };
 
@@ -57,7 +58,8 @@ const skipComment = (text: string, start: number) => {
     } else if (text.startsWith("*)", position)) {
       depth -= 1;
       position += 2;
-    } else if (position >= text.length) throw new TlaIsabelleError("ERROR", "Outer lexical error: unterminated comment");
+    } else if (position >= text.length)
+      throw new TlaIsabelleError("ERROR", "Outer lexical error: unterminated comment");
     else position += 1;
   } while (depth > 0);
   return position;
@@ -86,7 +88,19 @@ const tokenize = (text: string): OuterToken[] => {
   return tokens;
 };
 
-const KEYWORDS = new Set(["fixes", "assumes", "shows", "lemma", "proof", "show", "using", "by", "qed", "end", "consts"]);
+const KEYWORDS = new Set([
+  "fixes",
+  "assumes",
+  "shows",
+  "lemma",
+  "proof",
+  "show",
+  "using",
+  "by",
+  "qed",
+  "end",
+  "consts",
+]);
 
 export const parseTheory = (text: string): TheoryText => {
   const tokens = tokenize(text);
@@ -94,7 +108,10 @@ export const parseTheory = (text: string): TheoryText => {
   const peek = () => tokens[position];
   const isWord = (word: string) => peek()?.kind === "word" && peek().text === word;
   const syntaxError = () =>
-    new TlaIsabelleError("ERROR", `Outer syntax error at: ${peek() === undefined ? "end of input" : peek().text}`);
+    new TlaIsabelleError(
+      "ERROR",
+      `Outer syntax error at: ${peek() === undefined ? "end of input" : peek().text}`,
+    );
   const expectWord = (word: string) => {
     if (!isWord(word)) throw syntaxError();
     position += 1;

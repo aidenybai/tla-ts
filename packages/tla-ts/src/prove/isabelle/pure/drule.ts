@@ -3,7 +3,14 @@
 // contributors, see LICENSE.
 
 import { cleanName, emptyNameContext, variantList, variantName, type NameContext } from "./name";
-import { emptyTable, fastIndexnameOrd, tableEntries, updateTable, lookupTable, type IndexKey } from "./table";
+import {
+  emptyTable,
+  fastIndexnameOrd,
+  tableEntries,
+  updateTable,
+  lookupTable,
+  type IndexKey,
+} from "./table";
 import { TlaIsabelleError } from "../../../errors";
 import { allConst, isProtected, mkEquals, mkImplies, protect } from "./logic";
 import { listOfSeq } from "./seq";
@@ -42,7 +49,10 @@ const propVar = (name: string) => mkVar(name, 0, propT);
 
 // The basic rules of Pure.thy, with the variable names Isabelle gives them.
 export const cutRl = axiomThm(
-  mkImplies(mkImplies(propVar("psi"), propVar("theta")), mkImplies(propVar("psi"), propVar("theta"))),
+  mkImplies(
+    mkImplies(propVar("psi"), propVar("theta")),
+    mkImplies(propVar("psi"), propVar("theta")),
+  ),
 );
 export const revcutRl = axiomThm(
   mkImplies(propVar("V"), mkImplies(mkImplies(propVar("V"), propVar("W")), propVar("W"))),
@@ -50,6 +60,10 @@ export const revcutRl = axiomThm(
 export const thinRl = axiomThm(mkImplies(propVar("V"), mkImplies(propVar("W"), propVar("W"))));
 export const asmRl = axiomThm(mkImplies(propVar("psi"), propVar("psi")));
 export const protectI = axiomThm(mkImplies(propVar("A"), protect(propVar("A"))));
+export const protectD = axiomThm(mkImplies(protect(propVar("A")), propVar("A")));
+export const reflexiveThm = axiomThm(
+  mkEquals(mkVar("x", 0, mkTVar("'a", 0)), mkVar("x", 0, mkTVar("'a", 0))),
+);
 
 const typeA = mkTVar("'a", 0);
 
@@ -66,7 +80,10 @@ export const swapPremsEq = axiomThm(
   ),
 );
 export const symmetricThm = axiomThm(
-  mkImplies(mkEquals(mkVar("x", 0, typeA), mkVar("y", 0, typeA)), mkEquals(mkVar("y", 0, typeA), mkVar("x", 0, typeA))),
+  mkImplies(
+    mkEquals(mkVar("x", 0, typeA), mkVar("y", 0, typeA)),
+    mkEquals(mkVar("y", 0, typeA), mkVar("x", 0, typeA)),
+  ),
 );
 export const trivForallEquality = axiomThm(
   mkEquals(mkApp(allConst(typeA), mkAbs("x", typeA, propVar("V"))), propVar("V")),
@@ -75,10 +92,20 @@ export const trivForallEquality = axiomThm(
 // Drule.norm_hhf_eq: (PROP ?phi ==> (!!x. PROP ?psi x)) == (!!x. PROP ?phi ==> PROP ?psi x).
 export const normHhfEq = axiomThm(
   mkEquals(
-    mkImplies(propVar("phi"), mkApp(allConst(typeA), mkAbs("x", typeA, mkApp(mkVar("psi", 0, funT(typeA, propT)), mkBound(0))))),
+    mkImplies(
+      propVar("phi"),
+      mkApp(
+        allConst(typeA),
+        mkAbs("x", typeA, mkApp(mkVar("psi", 0, funT(typeA, propT)), mkBound(0))),
+      ),
+    ),
     mkApp(
       allConst(typeA),
-      mkAbs("x", typeA, mkImplies(propVar("phi"), mkApp(mkVar("psi", 0, funT(typeA, propT)), mkBound(0)))),
+      mkAbs(
+        "x",
+        typeA,
+        mkImplies(propVar("phi"), mkApp(mkVar("psi", 0, funT(typeA, propT)), mkBound(0))),
+      ),
     ),
   ),
 );
@@ -115,7 +142,10 @@ export const outerParams = (term: Term) => {
 // Variable.gen_all: the outermost parameters become schematic variables.
 export const genAll = (thm: Thm) => {
   const index = Math.max(thm.maxidx, -1) + 1;
-  return outerParams(thm.prop).reduce((result, param) => forallElim(mkVar(param.name, index, param.type), result), thm);
+  return outerParams(thm.prop).reduce(
+    (result, param) => forallElim(mkVar(param.name, index, param.type), result),
+    thm,
+  );
 };
 
 // Thm.forall_intr_vars: quantifies the schematic variables in order of appearance.
@@ -124,7 +154,8 @@ export const forallIntrVars = (thm: Thm) => {
     (result, term) =>
       foldAterms(
         (atom, current: Var[]) =>
-          atom.kind === "Var" && !current.some((other) => other.name === atom.name && other.index === atom.index)
+          atom.kind === "Var" &&
+          !current.some((other) => other.name === atom.name && other.index === atom.index)
             ? [...current, atom]
             : current,
         term,
@@ -135,7 +166,8 @@ export const forallIntrVars = (thm: Thm) => {
   return vars.reduceRight((result, variable) => forallIntr(variable, result), thm);
 };
 
-const variantBound = (name: string, used: NameContext) => variantName(name.startsWith(":") ? "u" : name, used);
+const variantBound = (name: string, used: NameContext) =>
+  variantName(name.startsWith(":") ? "u" : name, used);
 
 const fullProps = (thm: Thm) => [...thm.tpairs.flatMap((pair) => [pair[0], pair[1]]), thm.prop];
 
@@ -147,7 +179,8 @@ export const zeroVarIndexes = (thm: Thm): Thm => {
       foldTypes(
         (type, inner) =>
           foldAtyps(
-            (atom, current: typeof table) => (atom.kind === "TVar" ? updateTable(current, atom, atom) : current),
+            (atom, current: typeof table) =>
+              atom.kind === "TVar" ? updateTable(current, atom, atom) : current,
             type,
             inner,
           ),
@@ -193,11 +226,33 @@ export const makeElim = (rule: Thm) => zeroVarIndexes(rs(rule, revcutRl));
 // Drule.compose: resolves tha into premise index of thb without lifting, with a unique result.
 export const compose = (tha: Thm, index: number, thb: Thm): Thm => {
   const results = listOfSeq(
-    bicompose({ flatten: true, match: false, incremented: true }, { isElim: false, rule: tha, subgoals: 0 }, index, thb),
+    bicompose(
+      { flatten: true, match: false, incremented: true },
+      { isElim: false, rule: tha, subgoals: 0 },
+      index,
+      thb,
+    ),
   ).filter((result, position, all) => all.findIndex((other) => eqThm(other, result)) === position);
-  if (results.length !== 1) throw new TlaIsabelleError("THM", `compose: unique result expected ${index}`);
+  if (results.length !== 1)
+    throw new TlaIsabelleError("THM", `compose: unique result expected ${index}`);
   return results[0];
 };
 
 // COMP_INCR
-export const compIncr = (tha: Thm, thb: Thm) => compose(tha, 1, incrIndexesThm(tha.maxidx + 1, thb));
+export const compIncr = (tha: Thm, thb: Thm) =>
+  compose(tha, 1, incrIndexesThm(tha.maxidx + 1, thb));
+
+// Drule.comp_no_flatten: composes th, keeping its first count premises, into premise index of
+// rule.
+export const compNoFlatten = (thm: Thm, count: number, index: number, rule: Thm): Thm => {
+  const results = listOfSeq(
+    bicompose(
+      { flatten: false, match: false, incremented: true },
+      { isElim: false, rule: thm, subgoals: count },
+      index,
+      incrIndexesThm(thm.maxidx + 1, rule),
+    ),
+  ).filter((result, position, all) => all.findIndex((other) => eqThm(other, result)) === position);
+  if (results.length !== 1) throw new TlaIsabelleError("THM", `comp_no_flatten ${index}`);
+  return results[0];
+};

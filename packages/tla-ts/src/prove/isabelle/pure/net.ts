@@ -14,7 +14,10 @@ import {
 } from "./table";
 import { headOf, type Term } from "./term";
 
-export type NetKey = { readonly kind: "Comb" } | { readonly kind: "Var" } | { readonly kind: "Atom"; readonly name: string };
+export type NetKey =
+  | { readonly kind: "Comb" }
+  | { readonly kind: "Var" }
+  | { readonly kind: "Atom"; readonly name: string };
 
 const combKey: NetKey = { kind: "Comb" };
 const varKey: NetKey = { kind: "Var" };
@@ -32,7 +35,12 @@ export const emptyNet: Net<never> = { kind: "Leaf", items: [] };
 
 const isEmptyNet = <Item>(net: Net<Item>) => net.kind === "Leaf" && net.items.length === 0;
 
-const makeNode = <Item>(): Net<Item> => ({ kind: "Net", comb: emptyNet, var: emptyNet, atoms: emptyTable(fastStringOrd) });
+const makeNode = <Item>(): Net<Item> => ({
+  kind: "Net",
+  comb: emptyNet,
+  var: emptyNet,
+  atoms: emptyTable(fastStringOrd),
+});
 
 // Net.key_of_term: preorder keys, with any term headed by a variable or an abstraction as a Var.
 export const keyOfTerm = (term: Term): NetKey[] => {
@@ -50,7 +58,8 @@ export const keyOfTerm = (term: Term): NetKey[] => {
         add(inner.arg);
         return;
       }
-      if (inner.kind === "Const" || inner.kind === "Free") keys.push({ kind: "Atom", name: inner.name });
+      if (inner.kind === "Const" || inner.kind === "Free")
+        keys.push({ kind: "Atom", name: inner.name });
       else if (inner.kind === "Bound") keys.push({ kind: "Atom", name: boundName(inner.index) });
     };
     rands(current);
@@ -69,9 +78,12 @@ export const insertNet = <Item>(
   const ins = (position: number, node: Net<Item>): Net<Item> | undefined => {
     if (position === keys.length) {
       if (node.kind === "Net") return ins(position, emptyNet);
-      return node.items.some((other) => isEqual(other, item)) ? undefined : { kind: "Leaf", items: [item, ...node.items] };
+      return node.items.some((other) => isEqual(other, item))
+        ? undefined
+        : { kind: "Leaf", items: [item, ...node.items] };
     }
-    const expanded = node.kind === "Leaf" ? (node.items.length === 0 ? makeNode<Item>() : undefined) : node;
+    const expanded =
+      node.kind === "Leaf" ? (node.items.length === 0 ? makeNode<Item>() : undefined) : node;
     if (expanded === undefined || expanded.kind !== "Net") return ins(position, makeNode());
     const key = keys[position];
     if (key.kind === "Comb") {
@@ -131,7 +143,9 @@ export const deleteNet = <Item>(
     if (child === undefined) return undefined;
     return newNet({
       ...node,
-      atoms: isEmptyNet(child) ? deleteTable(node.atoms, key.name) : updateTable(node.atoms, key.name, child),
+      atoms: isEmptyNet(child)
+        ? deleteTable(node.atoms, key.name)
+        : updateTable(node.atoms, key.name, child),
     });
   };
   return del(0, net);
@@ -146,7 +160,10 @@ export const deleteTermSafe = <Item>(
 
 const netSkip = <Item>(net: Net<Item>, nets: Net<Item>[]): Net<Item>[] => {
   if (net.kind === "Leaf") return nets;
-  const base = tableEntries(net.atoms).reduce<Net<Item>[]>((result, entry) => [entry[1], ...result], [net.var, ...nets]);
+  const base = tableEntries(net.atoms).reduce<Net<Item>[]>(
+    (result, entry) => [entry[1], ...result],
+    [net.var, ...nets],
+  );
   return netSkip(net.comb, []).reduceRight((result, child) => netSkip(child, result), base);
 };
 
@@ -155,7 +172,12 @@ const look1 = <Item>(atoms: Table<string, Net<Item>>, name: string, nets: Net<It
   return net === undefined ? nets : [net, ...nets];
 };
 
-const matching = <Item>(isUnif: boolean, term: Term, net: Net<Item>, nets: Net<Item>[]): Net<Item>[] => {
+const matching = <Item>(
+  isUnif: boolean,
+  term: Term,
+  net: Net<Item>,
+  nets: Net<Item>[],
+): Net<Item>[] => {
   const rands = (current: Term, node: Net<Item>, result: Net<Item>[]): Net<Item>[] => {
     if (node.kind === "Leaf") return result;
     if (current.kind === "App")
@@ -163,21 +185,26 @@ const matching = <Item>(isUnif: boolean, term: Term, net: Net<Item>, nets: Net<I
         (accumulated, child) => matching(isUnif, current.arg, child, accumulated),
         result,
       );
-    if (current.kind === "Const" || current.kind === "Free") return look1(node.atoms, current.name, result);
+    if (current.kind === "Const" || current.kind === "Free")
+      return look1(node.atoms, current.name, result);
     if (current.kind === "Bound") return look1(node.atoms, boundName(current.index), result);
     return result;
   };
   if (net.kind === "Leaf") return nets;
   const head = headOf(term);
-  if (head.kind === "Var" || head.kind === "Abs") return isUnif ? netSkip(net, nets) : [net.var, ...nets];
+  if (head.kind === "Var" || head.kind === "Abs")
+    return isUnif ? netSkip(net, nets) : [net.var, ...nets];
   return rands(term, net, [net.var, ...nets]);
 };
 
-const extractLeaves = <Item>(nets: readonly Net<Item>[]) => nets.flatMap((net) => (net.kind === "Leaf" ? net.items : []));
+const extractLeaves = <Item>(nets: readonly Net<Item>[]) =>
+  nets.flatMap((net) => (net.kind === "Leaf" ? net.items : []));
 
-export const matchTermNet = <Item>(net: Net<Item>, term: Term) => extractLeaves(matching(false, term, net, []));
+export const matchTermNet = <Item>(net: Net<Item>, term: Term) =>
+  extractLeaves(matching(false, term, net, []));
 
-export const unifyTermNet = <Item>(net: Net<Item>, term: Term) => extractLeaves(matching(true, term, net, []));
+export const unifyTermNet = <Item>(net: Net<Item>, term: Term) =>
+  extractLeaves(matching(true, term, net, []));
 
 // Net.content: every item, by the order of Net.dest.
 export const netContent = <Item>(net: Net<Item>): Item[] => {
@@ -190,12 +217,17 @@ export const netContent = <Item>(net: Net<Item>): Item[] => {
 };
 
 // Net.subtract: the items of second that are not in first.
-export const subtractNet = <Item>(isEqual: (left: Item, right: Item) => boolean, first: Net<Item>, second: Net<Item>) => {
+export const subtractNet = <Item>(
+  isEqual: (left: Item, right: Item) => boolean,
+  first: Net<Item>,
+  second: Net<Item>,
+) => {
   const subtr = (left: Net<Item>, right: Net<Item>, result: Item[]): Item[] => {
     if (right.kind === "Leaf") {
       if (left.kind === "Net") return [...right.items, ...result];
       return right.items.reduceRight(
-        (accumulated, item) => (left.items.some((other) => isEqual(other, item)) ? accumulated : [item, ...accumulated]),
+        (accumulated, item) =>
+          left.items.some((other) => isEqual(other, item)) ? accumulated : [item, ...accumulated],
         result,
       );
     }
@@ -203,7 +235,8 @@ export const subtractNet = <Item>(isEqual: (left: Item, right: Item) => boolean,
     const afterComb = subtr(left.comb, right.comb, result);
     const afterVar = subtr(left.var, right.var, afterComb);
     return tableEntries(right.atoms).reduce(
-      (accumulated, entry) => subtr(lookupTable(left.atoms, entry[0]) ?? makeNode(), entry[1], accumulated),
+      (accumulated, entry) =>
+        subtr(lookupTable(left.atoms, entry[0]) ?? makeNode(), entry[1], accumulated),
       afterVar,
     );
   };

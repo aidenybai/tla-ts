@@ -2,7 +2,18 @@
 // theorems its theories prove, and the order of the simpset and the classical rule nets.
 
 import { axiomThm, type Thm } from "../pure/thm";
-import { mkAbs, mkApp, mkBound, mkConst, mkFree, mkTFree, mkTVar, mkType, mkVar } from "../pure/term";
+import type { ClassicalRule } from "../provers/classical";
+import {
+  mkAbs,
+  mkApp,
+  mkBound,
+  mkConst,
+  mkFree,
+  mkTFree,
+  mkTVar,
+  mkType,
+  mkVar,
+} from "../pure/term";
 import type { Term, Typ } from "../pure/term";
 import { LOGIC_DATA } from "./logic-data";
 
@@ -52,16 +63,6 @@ export interface ConstInfo {
   readonly abbreviation: Term | undefined;
 }
 
-// A classical rule as classical.ML stores it: the theorem, the form the nets use, and the
-// elimination forms of a destruction or swapped rule.
-export interface RawClassicalRule {
-  readonly rule: Thm;
-  readonly netRule: Thm;
-  readonly netRules: readonly Thm[];
-  readonly elimRule: Thm;
-  readonly elimRules: readonly Thm[];
-}
-
 export interface LogicNetItem {
   readonly tag: number;
   readonly isElim: boolean;
@@ -85,19 +86,22 @@ export interface TlaLogic {
   readonly factNames: ReadonlyMap<string, string>;
   // The simpset's rewrite rules, in the order of Net.entries.
   readonly simps: readonly Thm[];
-  readonly congs: readonly { readonly isConst: boolean; readonly name: string; readonly rule: Thm }[];
+  readonly congs: readonly {
+    readonly isConst: boolean;
+    readonly name: string;
+    readonly rule: Thm;
+  }[];
   readonly weakCongs: readonly { readonly isConst: boolean; readonly name: string }[];
   readonly simprocs: readonly { readonly name: string; readonly lhss: readonly Term[] }[];
   readonly claset: {
-    readonly safeIs: readonly RawClassicalRule[];
-    readonly safeEs: readonly RawClassicalRule[];
-    readonly unsafeIs: readonly RawClassicalRule[];
-    readonly unsafeEs: readonly RawClassicalRule[];
+    readonly safeIs: readonly ClassicalRule[];
+    readonly safeEs: readonly ClassicalRule[];
+    readonly unsafeIs: readonly ClassicalRule[];
+    readonly unsafeEs: readonly ClassicalRule[];
     readonly safe0: LogicNetPair<LogicNetItem>;
     readonly safep: LogicNetPair<LogicNetItem>;
     readonly unsafe: LogicNetPair<LogicNetItem>;
     readonly dup: LogicNetPair<LogicNetItem>;
-    readonly extra: LogicNetPair<LogicExtraNetItem>;
   };
   readonly contextRules: {
     readonly bang: LogicNetPair<LogicExtraNetItem>;
@@ -142,12 +146,12 @@ export const loadLogic = (): TlaLogic => {
     return term;
   };
   const thms = data.thms.map((id) => axiomThm(getTerm(id)));
-  const toRule = (raw: RawRule): RawClassicalRule => ({
+  const toRule = (raw: RawRule): ClassicalRule => ({
     rule: thms[raw[0]],
-    netRule: thms[raw[1]],
-    netRules: raw[2].map((id) => thms[id]),
-    elimRule: thms[raw[3]],
-    elimRules: raw[4].map((id) => thms[id]),
+    internal: thms[raw[1]],
+    swapped: raw[2].map((id) => thms[id]),
+    dup: thms[raw[3]],
+    dupSwapped: raw[4].map((id) => thms[id]),
   });
   const toItems = (pair: [NetItem[], NetItem[]]): LogicNetPair<LogicNetItem> => {
     const [intro, elim] = pair.map((side) =>
@@ -155,9 +159,16 @@ export const loadLogic = (): TlaLogic => {
     );
     return { intro, elim };
   };
-  const toExtraItems = (pair: [ExtraNetItem[], ExtraNetItem[]]): LogicNetPair<LogicExtraNetItem> => {
+  const toExtraItems = (
+    pair: [ExtraNetItem[], ExtraNetItem[]],
+  ): LogicNetPair<LogicExtraNetItem> => {
     const [intro, elim] = pair.map((side) =>
-      side.map((item) => ({ weight: item[0], tag: item[1], isElim: item[2] === 1, rule: thms[item[3]] })),
+      side.map((item) => ({
+        weight: item[0],
+        tag: item[1],
+        isElim: item[2] === 1,
+        rule: thms[item[3]],
+      })),
     );
     return { intro, elim };
   };
@@ -165,7 +176,10 @@ export const loadLogic = (): TlaLogic => {
     consts: new Map(
       data.consts.map((entry) => [
         entry[0],
-        { type: getType(entry[1]), abbreviation: entry.length === 3 ? getTerm(entry[2]) : undefined },
+        {
+          type: getType(entry[1]),
+          abbreviation: entry.length === 3 ? getTerm(entry[2]) : undefined,
+        },
       ]),
     ),
     constNames: new Map(data.names),
@@ -184,8 +198,10 @@ export const loadLogic = (): TlaLogic => {
       safep: toItems(data.claset.safep),
       unsafe: toItems(data.claset.unsafe),
       dup: toItems(data.claset.dup),
-      extra: toExtraItems(data.claset.extra),
     },
-    contextRules: { bang: toExtraItems(data.contextRules.bang), plain: toExtraItems(data.contextRules.plain) },
+    contextRules: {
+      bang: toExtraItems(data.contextRules.bang),
+      plain: toExtraItems(data.contextRules.plain),
+    },
   };
 };

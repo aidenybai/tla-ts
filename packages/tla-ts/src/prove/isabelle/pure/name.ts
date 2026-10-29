@@ -104,4 +104,7 @@ export const inventNames = (context: NameContext, name: string, count: number) =
 };
 
 // Name.is_bound and Name.bound: the names of loose bound variables in nets and printing.
+// Name.is_bound: the names the simplifier gives the free variables standing for bound ones.
+export const isBoundName = (name: string) => name.startsWith(":");
+
 export const boundName = (index: number) => `:${String(index).padStart(3, "0")}`;

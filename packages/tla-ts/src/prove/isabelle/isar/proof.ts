@@ -35,4 +35,7 @@ export const terminalProof = (method: Tactic, finish: Tactic, state: Thm): Seq<T
     mapsSeq((result) => finish(result), method(state)),
   );
 
-export const finishTac = (assmTac: Tactic): Tactic => (state) => mapsSeq(flexflexTac, assmTac(state));
+export const finishTac =
+  (assmTac: Tactic): Tactic =>
+  (state) =>
+    mapsSeq(flexflexTac, assmTac(state));
