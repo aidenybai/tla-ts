@@ -58,7 +58,7 @@ const runTlapm = (path: string, cacheDirectory: string) =>
         "0",
         "--threads",
         "1",
-        "--cleanfp",
+        "--nofp",
         "--debug",
         "tempfiles",
         "--cache-dir",
