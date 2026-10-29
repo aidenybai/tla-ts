@@ -39,8 +39,9 @@ export const OP_MUL = 18;
 export const OP_IDIV = 19;
 export const OP_MOD = 20;
 export const OP_ABS = 21;
-export const OP_UNINTERPRETED = 22;
-export const OP_MODEL_VALUE = 23;
+export const OP_PATTERN = 22;
+export const OP_UNINTERPRETED = 23;
+export const OP_MODEL_VALUE = 24;
 
 export interface FuncDecl {
   name: string;
@@ -55,7 +56,8 @@ export interface QuantifierData {
   isForall: boolean;
   sorts: number[];
   body: number;
-  patterns: number[][];
+  // Applications of the pattern declaration to the terms of each multi-pattern.
+  patterns: number[];
   weight: number;
   qid: string;
 }
@@ -83,10 +85,12 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
   ["div", FAMILY_ARITH, OP_IDIV, SORT_INT],
   ["mod", FAMILY_ARITH, OP_MOD, SORT_INT],
   ["abs", FAMILY_ARITH, OP_ABS, SORT_INT],
+  ["pattern", FAMILY_BASIC, OP_PATTERN, SORT_BOOL],
 ];
 
 // Z3's family ids and decl kinds, which its AST hashes include.
 const Z3_BASIC_FAMILY = 0;
+const Z3_PATTERN_FAMILY = 2;
 const Z3_MODEL_VALUE_FAMILY = 3;
 const Z3_USER_SORT_FAMILY = 4;
 const Z3_ARITH_FAMILY = 5;
@@ -115,7 +119,12 @@ const Z3_BUILTINS = new Map<number, [string, number, number]>([
   [OP_IDIV, ["div", 11, 2]],
   [OP_MOD, ["mod", 16, 2]],
   [OP_ABS, ["abs", 21, 1]],
+  [OP_PATTERN, ["pattern", 0, -1]],
 ]);
+
+// The ids of Z3's own expressions when it starts: the undef proof, true and false, then pi, euler, a
+// bit-vector numeral, fifteen real variables and a sum of two of them, which no problem shares.
+const FIRST_FREE_ID = 22;
 
 // symbol::hash, for string symbols.
 const getSymbolHash = (name: string) => stringHash(name, 17);
@@ -150,6 +159,17 @@ export class AstManager {
   private table = new Map<string, number>();
   private appTable = new Map<number, number[]>();
   private freshCounter = 0;
+  // Z3's id of each expression, which orders Z3's sorts. Like Z3, the manager counts references and
+  // gives the id of a deleted expression to the next expression it creates, so its ids follow
+  // Z3's. A deleted expression stays in the tables with the id -1 until it is created again.
+  ids: number[] = [];
+  private refCounts: number[] = [];
+  private freeIds: number[] = [];
+  private nextId = 1;
+  private numLive = 0;
+  // The expressions created since the innermost withTemporaries began, which it holds like the
+  // expr_ref temporaries of a Z3 function.
+  private temporaries: number[] | null = null;
   readonly trueExpr: number;
   readonly falseExpr: number;
 
@@ -165,6 +185,101 @@ export class AstManager {
       });
     this.trueExpr = this.mkApp(OP_TRUE, [], SORT_BOOL);
     this.falseExpr = this.mkApp(OP_FALSE, [], SORT_BOOL);
+    this.incRef(this.trueExpr);
+    this.incRef(this.falseExpr);
+    this.nextId = FIRST_FREE_ID;
+  }
+
+  getRefCount(expr: number) {
+    return this.refCounts[expr];
+  }
+
+  // get_num_asts: the live expressions, declarations and sorts.
+  getNumAsts() {
+    return this.numLive + this.funcDecls.length + this.sortNames.length;
+  }
+
+  incRef(expr: number) {
+    this.refCounts[expr]++;
+  }
+
+  // Runs body, holding each expression it creates until it returns, then releases them, the last
+  // created first. The caller gets a reference to each expression that getKept picks from the
+  // result, by default the result itself, and releases it.
+  withTemporaries<T>(
+    body: () => T,
+    getKept: (result: T) => number[] = (result) => [result as number],
+  ) {
+    const outer = this.temporaries;
+    const temporaries: number[] = [];
+    this.temporaries = temporaries;
+    const result = body();
+    this.temporaries = outer;
+    for (const kept of getKept(result)) this.incRef(kept);
+    for (let index = temporaries.length - 1; index >= 0; index--) this.decRef(temporaries[index]);
+    return result;
+  }
+
+  // Runs body without temporaries, for code whose references are counted explicitly.
+  withoutTemporaries<T>(body: () => T) {
+    const outer = this.temporaries;
+    this.temporaries = null;
+    const result = body();
+    this.temporaries = outer;
+    return result;
+  }
+
+  // Hands a reference the caller owns to the innermost withTemporaries, or releases it now.
+  releaseLater(expr: number) {
+    if (this.temporaries === null) this.decRef(expr);
+    else this.temporaries.push(expr);
+  }
+
+  // dec_ref and delete_node: an expression without references is deleted, and so are its children
+  // that lose their last reference, in the order of Z3's worklist.
+  decRef(expr: number) {
+    if (this.ids[expr] === -1) return;
+    this.refCounts[expr]--;
+    if (this.refCounts[expr] > 0) return;
+    const worklist = [expr];
+    while (worklist.length > 0) {
+      const node = worklist.pop() as number;
+      this.deleteNode(node);
+      for (const child of this.getChildren(node)) {
+        this.refCounts[child]--;
+        if (this.refCounts[child] === 0) worklist.push(child);
+      }
+    }
+  }
+
+  private deleteNode(expr: number) {
+    this.numLive--;
+    this.freeIds.push(this.ids[expr]);
+    this.ids[expr] = -1;
+  }
+
+  // register_node_core: a new expression takes an id and a reference to each child.
+  private registerNode(expr: number) {
+    this.ids[expr] = this.freeIds.length > 0 ? (this.freeIds.pop() as number) : this.nextId++;
+    this.numLive++;
+    this.refCounts[expr] = 0;
+    for (const child of this.getChildren(expr)) this.incRef(this.revive(child));
+    if (this.temporaries === null) return;
+    this.incRef(expr);
+    this.temporaries.push(expr);
+  }
+
+  // The children whose references an expression holds: the arguments of an application, and the
+  // body and then the patterns of a quantifier.
+  private getChildren(expr: number) {
+    const data = this.quantifiers.get(expr);
+    return data === undefined ? this.args[expr] : [data.body, ...data.patterns];
+  }
+
+  // A lookup that finds a deleted expression creates it again.
+  private revive(expr: number) {
+    if (this.ids[expr] === -1) this.registerNode(expr);
+    return expr;
   }
 
   mkSort(name: string) {
@@ -193,7 +308,11 @@ export class AstManager {
     const argSort = op === OP_ITE ? this.sorts[args[1]] : this.sorts[args[0]];
     const arity = builtin[2] === -1 ? args.length : builtin[2];
     const domain = Array.from({ length: arity }, (_, index) =>
-      op === OP_ITE && index === 0 ? SORT_BOOL : argSort,
+      op === OP_PATTERN
+        ? this.sorts[args[index]]
+        : op === OP_ITE && index === 0
+          ? SORT_BOOL
+          : argSort,
     );
     return { name: builtin[0], kind: builtin[1], domain };
   }
@@ -203,7 +322,8 @@ export class AstManager {
     const key = `${op}:${signature.domain.join(",")}:${range}`;
     const existing = this.builtinHashes.get(key);
     if (existing !== undefined) return existing;
-    const family = op < OP_NUM ? Z3_BASIC_FAMILY : Z3_ARITH_FAMILY;
+    const family =
+      op === OP_PATTERN ? Z3_PATTERN_FAMILY : op < OP_NUM ? Z3_BASIC_FAMILY : Z3_ARITH_FAMILY;
     const hash = this.getFuncDeclHash(
       signature.name,
       signature.domain,
@@ -247,9 +367,10 @@ export class AstManager {
     getHash: () => number,
   ) {
     const existing = this.table.get(key);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) return this.revive(existing);
     const id = this.create(kind, decl, args, sort, value, getHash());
     this.table.set(key, id);
+    this.registerNode(id);
     return id;
   }
 
@@ -300,7 +421,7 @@ export class AstManager {
         let isSame = true;
         for (let index = 0; index < args.length && isSame; index++)
           isSame = candidateArgs[index] === args[index];
-        if (isSame) return candidate;
+        if (isSame) return this.revive(candidate);
       }
     const declHash =
       this.funcDecls[decl].family === FAMILY_USER
@@ -319,6 +440,7 @@ export class AstManager {
     );
     if (bucket === undefined) this.appTable.set(hash, [id]);
     else bucket.push(id);
+    this.registerNode(id);
     return id;
   }
 
@@ -341,7 +463,7 @@ export class AstManager {
   mkModelValue(index: number, sort: number) {
     const key = `m${sort}:${index}`;
     const existing = this.table.get(key);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) return this.revive(existing);
     this.funcDecls.push({
       name: `${this.sortNames[sort]}!val!${index}`,
       family: FAMILY_MODEL_VALUE,
@@ -372,12 +494,17 @@ export class AstManager {
   }
 
   mkQuantifier(data: QuantifierData) {
-    const key = `q${data.isForall ? 1 : 0}:${data.sorts.join(",")}:${data.body}:${data.patterns
-      .map((pattern) => pattern.join(","))
-      .join(";")}:${data.weight}`;
+    const key = `q${data.isForall ? 1 : 0}:${data.sorts.join(",")}:${data.body}:${data.patterns.join(
+      ",",
+    )}:${data.weight}`;
     const existing = this.table.get(key);
-    if (existing !== undefined) return existing;
-    const id = this.intern(key, KIND_QUANTIFIER, -1, [data.body], SORT_BOOL, 0, () =>
+    if (existing !== undefined) return this.revive(existing);
+    const id = this.create(
+      KIND_QUANTIFIER,
+      -1,
+      [data.body],
+      SORT_BOOL,
+      0,
       mkMix(
         astArrayHash(
           data.sorts.map((sort) => this.sortHashes[sort]),
@@ -387,10 +514,17 @@ export class AstManager {
         this.hashes[data.body],
       ),
     );
+    this.table.set(key, id);
     const bodyBound = this.freeVarBounds[data.body];
     this.freeVarBounds[id] = Math.max(0, bodyBound - data.sorts.length);
     this.quantifiers.set(id, data);
+    this.registerNode(id);
     return id;
+  }
+
+  // mk_pattern: a multi-pattern of a quantifier.
+  mkPattern(terms: number[]) {
+    return this.mkApp(OP_PATTERN, terms, SORT_BOOL);
   }
 
   getQuantifier(expr: number) {

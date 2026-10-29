@@ -52,7 +52,7 @@ export const toNnf = (manager: AstManager, expr: number, names: Map<number, numb
               isForall: true,
               sorts: varSorts.toReversed(),
               body: conjunct,
-              patterns: [[name]],
+              patterns: [manager.mkPattern([name])],
               weight: 1,
               qid: "",
             }),

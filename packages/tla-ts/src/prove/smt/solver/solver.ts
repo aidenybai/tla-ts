@@ -4,6 +4,7 @@
 import { SmtCanceledError, SmtUnsupportedError } from "../../../errors";
 import type { Verdict } from "../../verdict";
 import { AssertedFormulas } from "./asserted-formulas";
+import { AstManager } from "./ast";
 import { Context } from "./context";
 import { L_FALSE, L_TRUE } from "./lbool";
 import { applyUfniaTactic } from "./quant-tactics";
@@ -22,16 +23,19 @@ interface SmtCheck {
 
 // The verdict, and the number of quantifier instances the search made.
 export const checkSmt = (text: string, options: DecideSmtOptions): SmtCheck => {
-  const problem = parseSmtlib(
-    text,
+  const manager = new AstManager(
     new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
   );
+  // combined_solver gives each assertion to the incremental smt kernel as well, which rewrites it
+  // when it is asserted and keeps it, though check-sat then runs the tactic on the assertions.
+  const incremental = new AssertedFormulas(manager);
+  const problem = parseSmtlib(text, manager, (assertion) => incremental.assertExpr(assertion));
   if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
-  const asserted = new AssertedFormulas(problem.manager);
-  for (const assertion of applyUfniaTactic(problem.manager, problem.assertions))
+  const asserted = new AssertedFormulas(manager);
+  for (const assertion of applyUfniaTactic(manager, problem.assertions))
     asserted.assertExpr(assertion);
   const formulas = asserted.reduce();
-  const context = new Context(problem.manager, { isMbqi: true, relevancyLevel: 2 });
+  const context = new Context(manager, { isMbqi: true, relevancyLevel: 2 });
   for (const formula of formulas) {
     if (context.isInconsistent()) break;
     context.internalizeAssertion(formula, 0);

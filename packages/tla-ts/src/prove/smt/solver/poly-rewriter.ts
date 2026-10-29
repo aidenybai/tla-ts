@@ -372,9 +372,10 @@ export class PolyRewriter {
     const value = isConstantAtRhs ? -constant : constant;
     const isLhsConstant = !isConstantAtRhs && (sortedLhs.length === 0 || value !== 0);
     const isRhsConstant = isConstantAtRhs && (newRhs.length === 0 || value !== 0);
-    return {
-      lhs: this.mkAddApp(isLhsConstant ? [this.manager.mkNumeral(value), ...sortedLhs] : sortedLhs),
-      rhs: this.mkAddApp(isRhsConstant ? [this.manager.mkNumeral(value), ...newRhs] : newRhs),
-    };
+    // The constants are created first, the right one before the left one.
+    const rhsConstant = isRhsConstant ? [this.manager.mkNumeral(value)] : [];
+    const lhsConstant = isLhsConstant ? [this.manager.mkNumeral(value)] : [];
+    const lhsResult = this.mkAddApp([...lhsConstant, ...sortedLhs]);
+    return { lhs: lhsResult, rhs: this.mkAddApp([...rhsConstant, ...newRhs]) };
   }
 }

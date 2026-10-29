@@ -202,15 +202,15 @@ class PatternInference {
     return false;
   }
 
-  private mkPattern(candidate: number): number[] {
+  private mkPattern(candidate: number) {
     const manager = this.manager;
     const hasVarArg = (expr: number) =>
       manager.kinds[expr] === KIND_APP &&
       manager.args[expr].some((innerArg) => manager.isVar(innerArg));
-    if (hasVarArg(candidate)) return [candidate];
+    if (hasVarArg(candidate)) return manager.mkPattern([candidate]);
     const args: number[] = [];
     for (const arg of manager.args[candidate]) {
-      if (manager.kinds[arg] !== KIND_APP) return [candidate];
+      if (manager.kinds[arg] !== KIND_APP) return manager.mkPattern([candidate]);
       args.push(arg);
     }
     for (let index = 0; index < args.length; index++) {
@@ -221,21 +221,21 @@ class PatternInference {
       args.pop();
       if (manager.isGround(arg)) continue;
       for (const innerArg of manager.args[arg]) {
-        if (manager.kinds[innerArg] !== KIND_APP) return [candidate];
+        if (manager.kinds[innerArg] !== KIND_APP) return manager.mkPattern([candidate]);
         args.push(innerArg);
       }
     }
-    return args;
+    return manager.mkPattern(args);
   }
 
-  private candidatesToMultiPatterns(maxPatterns: number, candidates: number[], result: number[][]) {
+  private candidatesToMultiPatterns(maxPatterns: number, candidates: number[], result: number[]) {
     const prePatterns: (PrePattern | null)[] = [{ exprs: [], freeVars: new Set(), index: 0 }];
     let numSplits = 0;
     for (let index = 0; index < prePatterns.length; index++) {
       const current = prePatterns[index];
       if (current === null) continue;
       if (current.freeVars.size === this.numBindings) {
-        result.push(current.exprs);
+        result.push(this.manager.mkPattern(current.exprs));
         if (result.length >= maxPatterns) return;
       } else if (current.index < candidates.length) {
         const candidate = candidates[current.index];
@@ -266,7 +266,7 @@ class PatternInference {
     this.candidates = [];
     this.candidateInfos = new Map();
     this.collect(body);
-    const result: number[][] = [];
+    const result: number[] = [];
     if (this.candidates.length === 0) return result;
     const nonLooping = this.filterLoopingPatterns();
     const smallest = nonLooping.filter((candidate) => !this.containsSubpattern(candidate));
@@ -299,7 +299,7 @@ class PatternInference {
 }
 
 export interface InferredPatterns {
-  patterns: number[][];
+  patterns: number[];
   weight: number;
 }
 

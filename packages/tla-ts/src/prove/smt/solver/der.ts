@@ -155,7 +155,9 @@ const reduceDer = (manager: AstManager, expr: number) => {
     ...data,
     body: substitutePartial(manager, combined, substitution),
     patterns: data.patterns.map((pattern) =>
-      pattern.map((term) => substitutePartial(manager, term, substitution)),
+      manager.mkPattern(
+        manager.args[pattern].map((term) => substitutePartial(manager, term, substitution)),
+      ),
     ),
   });
 };

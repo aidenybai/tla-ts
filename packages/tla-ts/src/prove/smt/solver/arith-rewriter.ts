@@ -549,14 +549,32 @@ export class ArithRewriter extends PolyRewriter {
     }
   }
 
-  // mk_le_ge_eq_core.
-  private mkLeGeEq(originalLeft: number, originalRight: number, kind: number): number | undefined {
+  // mk_le_ge_eq_core. Z3 holds the rewritten sides, new_arg1 and new_arg2, until it returns.
+  private mkLeGeEq(originalLeft: number, originalRight: number, kind: number) {
     const manager = this.manager;
-    const cancelled = this.cancelMonomials(
-      originalLeft,
-      originalRight,
-      this.options.isArithIneqLhs,
+    const sides: number[] = [];
+    const result = this.mkLeGeEqCore(originalLeft, originalRight, kind, sides);
+    for (let index = sides.length - 1; index >= 0; index--) manager.decRef(sides[index]);
+    return result;
+  }
+
+  private mkLeGeEqCore(
+    originalLeft: number,
+    originalRight: number,
+    kind: number,
+    sides: number[],
+  ): number | undefined {
+    const manager = this.manager;
+    const setSide = (index: number, expr: number) => {
+      manager.incRef(expr);
+      if (index < sides.length) manager.decRef(sides[index]);
+      sides[index] = expr;
+    };
+    const cancelled = manager.withTemporaries(
+      () => this.cancelMonomials(originalLeft, originalRight, this.options.isArithIneqLhs),
+      (result) => (result === undefined ? [] : [result.lhs, result.rhs]),
     );
+    if (cancelled !== undefined) sides.push(cancelled.lhs, cancelled.rhs);
     let isChanged = cancelled !== undefined;
     let left = cancelled === undefined ? originalLeft : cancelled.lhs;
     let right = cancelled === undefined ? originalRight : cancelled.rhs;
@@ -588,12 +606,14 @@ export class ArithRewriter extends PolyRewriter {
           kind === KIND_LE ? "ceil" : kind === KIND_GE ? "floor" : "none",
         );
         if (newLeft === undefined) return manager.falseExpr;
+        setSide(0, newLeft);
         const newRight = this.dividePolynomial(
           right,
           divisor,
           kind === KIND_LE ? "floor" : kind === KIND_GE ? "ceil" : "none",
         );
         if (newRight === undefined) return manager.falseExpr;
+        setSide(1, newRight);
         left = newLeft;
         right = newRight;
         isChanged = true;
@@ -632,12 +652,12 @@ export class ArithRewriter extends PolyRewriter {
       this.options.isArithIneqLhs && this.manager.isNumeral(right)
         ? this.getNegatedPolynomial(left)
         : undefined;
-    if (negated !== undefined)
-      return this.mkAtom(
-        negated,
-        this.manager.mkNumeral(-this.manager.values[right]),
-        getInverse(kind),
-      );
+    if (negated !== undefined) {
+      setSide(0, negated);
+      const negatedRight = this.manager.mkNumeral(-this.manager.values[right]);
+      setSide(1, negatedRight);
+      return this.mkAtom(negated, negatedRight, getInverse(kind));
+    }
     if (isChanged && left === originalLeft && right === originalRight) return undefined;
     if (isChanged) return this.mkAtom(left, right, kind);
     return undefined;

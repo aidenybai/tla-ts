@@ -26,7 +26,6 @@ import {
   SORT_BOOL,
   SORT_INT,
 } from "./ast";
-import type { ResourceLimit } from "./rlimit";
 import { shiftVars } from "./var-subst";
 
 type SExpr = string | SExpr[];
@@ -39,7 +38,6 @@ interface Binding {
 }
 
 export interface SmtProblem {
-  manager: AstManager;
   assertions: number[];
   // Z3 prints no answer for a script without check-sat.
   hasCheckSat: boolean;
@@ -126,8 +124,13 @@ const expectSymbol = (sexpr: SExpr | undefined): string => {
   return sexpr;
 };
 
-export const parseSmtlib = (text: string, limit: ResourceLimit): SmtProblem => {
-  const manager = new AstManager(limit);
+// Parses a script, and hands each assertion to assertExpr as Z3's cmd_context does, before it parses
+// the next command. Expressions are created in the order of Z3's parser, and live as long as there.
+export const parseSmtlib = (
+  text: string,
+  manager: AstManager,
+  assertExpr: (assertion: number) => void,
+): SmtProblem => {
   const sorts = new Map<string, number>([
     ["Bool", SORT_BOOL],
     ["Int", SORT_INT],
@@ -210,25 +213,39 @@ export const parseSmtlib = (text: string, limit: ResourceLimit): SmtProblem => {
     });
     scopes.push(scope);
     depth += varSorts.length;
-    let bodySExpr = list[2];
-    const patterns: number[][] = [];
+    // parse_sorted_vars: the variables are created first, the first declared with the largest index,
+    // and the parser's stack holds them until the quantifier is created.
+    const boundVars = varSorts.map((sort, index) =>
+      manager.mkVar(varSorts.length - 1 - index, sort),
+    );
+    for (const boundVar of boundVars) manager.incRef(boundVar);
+    const bodySExpr = list[2];
+    const isAnnotated = Array.isArray(bodySExpr) && bodySExpr[0] === "!";
+    const body = expectBool(parseTerm(isAnnotated ? bodySExpr[1] : bodySExpr));
+    const patterns: number[] = [];
     let weight = 1;
     let qid = "";
-    if (Array.isArray(bodySExpr) && bodySExpr[0] === "!") {
-      const annotated = bodySExpr;
-      for (let index = 2; index < annotated.length; index += 2) {
-        const keyword = annotated[index];
-        const value = annotated[index + 1];
-        if (keyword === ":pattern") patterns.push(expectList(value).map(parseTerm));
+    if (isAnnotated)
+      for (let index = 2; index < bodySExpr.length; index += 2) {
+        const keyword = bodySExpr[index];
+        const value = bodySExpr[index + 1];
+        if (keyword === ":pattern")
+          patterns.push(manager.mkPattern(expectList(value).map(parseTerm)));
         else if (keyword === ":weight") weight = Number(value);
         else if (keyword === ":qid") qid = expectSymbol(value);
       }
-      bodySExpr = annotated[1];
-    }
-    const body = expectBool(parseTerm(bodySExpr));
     scopes.pop();
     depth -= varSorts.length;
-    return manager.mkQuantifier({ isForall, sorts: varSorts, body, patterns, weight, qid });
+    const quantifier = manager.mkQuantifier({
+      isForall,
+      sorts: varSorts,
+      body,
+      patterns,
+      weight,
+      qid,
+    });
+    for (const boundVar of boundVars) manager.decRef(boundVar);
+    return quantifier;
   };
 
   const parseLet = (list: SExpr[]) => {
@@ -285,7 +302,12 @@ export const parseSmtlib = (text: string, limit: ResourceLimit): SmtProblem => {
     const head = sexpr[0];
     if (head === "forall" || head === "exists") return parseQuantifier(sexpr, head === "forall");
     if (head === "let") return parseLet(sexpr);
-    if (head === "!") return parseTerm(sexpr[1]);
+    if (head === "!") {
+      const named = parseTerm(sexpr[1]);
+      // name_expr: cmd_context keeps a named expression as a macro.
+      if (sexpr.includes(":named")) manager.incRef(named);
+      return named;
+    }
     return parseApp(expectSymbol(head), sexpr.slice(1).map(parseTerm));
   };
 
@@ -300,13 +322,25 @@ export const parseSmtlib = (text: string, limit: ResourceLimit): SmtProblem => {
     } else if (name === "declare-fun" || name === "declare-const") {
       const domain = name === "declare-fun" ? expectList(list[2]).map(parseSort) : [];
       const range = parseSort(name === "declare-fun" ? list[3] : list[2]);
+      // builtin_signature_collides and is_transcendental_shadow_decl each apply the builtin of that
+      // name to fresh variables, which they then release.
+      for (let round = 0; round < 2; round++) {
+        const vars = domain.map((sort, index) => manager.mkVar(index, sort));
+        for (const domainVar of vars) manager.incRef(domainVar);
+        for (const domainVar of vars) manager.decRef(domainVar);
+      }
       funcs.set(expectSymbol(list[1]), manager.mkFuncDecl(expectSymbol(list[1]), domain, range));
-    } else if (name === "assert") assertions.push(expectBool(parseTerm(list[1])));
-    else if (name === "check-sat") {
+    } else if (name === "assert") {
+      // cmd_context::assert_expr keeps the assertion, and passes it to the solver.
+      const assertion = expectBool(parseTerm(list[1]));
+      manager.incRef(assertion);
+      assertions.push(assertion);
+      assertExpr(assertion);
+    } else if (name === "check-sat") {
       hasCheckSat = true;
       break;
     } else if (name === "push" || name === "pop" || name === "define-fun" || name === "define-sort")
       throw new SmtUnsupportedError(`the command ${name} is not supported`);
   }
-  return { manager, assertions, hasCheckSat };
+  return { assertions, hasCheckSat };
 };

@@ -31,7 +31,7 @@ export const replaceFreeVars = (
         ...data,
         body: visit(data.body, innerShift),
         patterns: data.patterns.map((pattern) =>
-          pattern.map((innerTerm) => visit(innerTerm, innerShift)),
+          manager.mkPattern(manager.args[pattern].map((innerTerm) => visit(innerTerm, innerShift))),
         ),
       });
     }
@@ -99,7 +99,7 @@ export const elimUnusedVars = (manager: AstManager, expr: number) => {
   const count = data.sorts.length;
   const used = collectUsedVars(manager, data.body, count);
   for (const pattern of data.patterns)
-    for (const term of pattern)
+    for (const term of manager.args[pattern])
       collectUsedVars(manager, term, count).forEach((isUsed, index) => {
         if (isUsed) used[index] = true;
       });
@@ -122,6 +122,6 @@ export const elimUnusedVars = (manager: AstManager, expr: number) => {
     ...data,
     sorts: keptSorts,
     body: remap(data.body),
-    patterns: data.patterns.map((pattern) => pattern.map(remap)),
+    patterns: data.patterns.map((pattern) => manager.mkPattern(manager.args[pattern].map(remap))),
   });
 };

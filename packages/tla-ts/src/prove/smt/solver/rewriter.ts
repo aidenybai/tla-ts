@@ -1,6 +1,7 @@
 // Ported from Z3 (src/ast/rewriter/th_rewriter.cpp, bool_rewriter.cpp, arith_rewriter.cpp), MIT
 // license, see z3-license.txt. Only the rewrites that tlapm's encoding exercises are ported.
 import { SmtCanceledError } from "../../../errors";
+import { ActCache } from "./act-cache";
 import { ArithRewriter } from "./arith-rewriter";
 import type { ArithRewriterOptions } from "./poly-rewriter";
 import { isAstLess } from "./ast-lt";
@@ -66,8 +67,35 @@ class FlatLiterals {
   }
 }
 
+// rewriter_tpl's frame states.
+const PROCESS_CHILDREN = 0;
+const REWRITE_BUILTIN = 1;
+
+// A rewrite still to finish: its expression, state, next child, the depth left to rewrite, where
+// its children's results start on the result stack, whether to cache its result, and whether a
+// child changed.
+interface Frame {
+  curr: number;
+  state: number;
+  childIndex: number;
+  maxDepth: number;
+  spos: number;
+  isCaching: boolean;
+  hasNewChild: boolean;
+}
+
+// rewriter_tpl with th_rewriter_cfg. The loop is ported step for step, with Z3's references: the
+// result stack, the caches and m_r hold their expressions, so that expressions are created and
+// deleted in Z3's order.
 export class Rewriter {
-  private cache = new Map<number, number>();
+  private frames: Frame[] = [];
+  private resultStack: number[] = [];
+  // m_cache_stack: one cache per quantifier scope, the outermost first, reset on entry.
+  private caches: ActCache[];
+  private scopeRoots: number[] = [];
+  private root = -1;
+  // m_r: the last result, which Z3 holds until it assigns the next one.
+  private lastResult = -1;
   private arith: ArithRewriter;
   private numSteps = 0;
   private substitution = new Map<number, number>();
@@ -77,9 +105,14 @@ export class Rewriter {
     private options: RewriterOptions,
     private isNestedDer = false,
   ) {
+    this.caches = [new ActCache(manager, manager.getNumAsts())];
     this.arith = new ArithRewriter(manager, options.arith, (expr, depth) =>
       this.reduceTo(expr, depth),
     );
+  }
+
+  private get cache() {
+    return this.caches[this.scopeRoots.length];
   }
 
   // Rewrites the top depth levels of a term that a rewrite returned, like BR_REWRITE1 and
@@ -96,52 +129,265 @@ export class Rewriter {
   }
 
   // th_rewriter::set_substitution: rewrites replace each key of the substitution with its value, and
-  // the cache is reset. The caller may extend the substitution between rewrites without a reset.
+  // the rewriter is reset. The caller may extend the substitution between rewrites without a reset.
   setSubstitution(substitution: Map<number, number>) {
     this.substitution = substitution;
-    this.cache.clear();
+    this.reset();
   }
 
-  rewrite(expr: number): number {
-    const replacement = this.substitution.get(expr);
-    if (replacement !== undefined) return replacement;
-    const cached = this.cache.get(expr);
-    if (cached !== undefined) return cached;
+  // rewriter_core::reset: releases the cached results.
+  reset() {
+    this.caches[0].reset();
+  }
+
+  // ~rewriter_core: releases every cache, the outermost first.
+  cleanup() {
+    for (const cache of this.caches) cache.reset();
+  }
+
+  private setLastResult(expr: number) {
+    if (expr !== -1) this.manager.incRef(expr);
+    if (this.lastResult !== -1) this.manager.decRef(this.lastResult);
+    this.lastResult = expr;
+  }
+
+  private pushResult(expr: number) {
+    this.manager.incRef(expr);
+    this.resultStack.push(expr);
+  }
+
+  private popResult() {
+    const expr = this.resultStack.pop() as number;
+    this.manager.decRef(expr);
+  }
+
+  private shrinkResults(size: number) {
+    const removed = this.resultStack.splice(size);
+    for (const expr of removed) this.manager.decRef(expr);
+  }
+
+  private setNewChildFlag(oldExpr: number, newExpr: number) {
+    if (oldExpr !== newExpr && this.frames.length > 0)
+      this.frames[this.frames.length - 1].hasNewChild = true;
+  }
+
+  // must_cache: the result of a shared application with arguments or quantifier.
+  private isCaching(expr: number) {
     const manager = this.manager;
+    return (
+      manager.getRefCount(expr) > 1 &&
+      expr !== this.root &&
+      (manager.kinds[expr] === KIND_QUANTIFIER ||
+        (manager.kinds[expr] === KIND_APP && manager.args[expr].length > 0))
+    );
+  }
+
+  private cacheResult(expr: number, result: number, isCaching: boolean) {
+    if (isCaching) this.cache.insert(expr, 0, result);
+  }
+
+  private pushFrame(expr: number, isCaching: boolean, maxDepth: number) {
+    this.frames.push({
+      curr: expr,
+      state: PROCESS_CHILDREN,
+      childIndex: 0,
+      maxDepth,
+      spos: this.resultStack.length,
+      isCaching,
+      hasNewChild: false,
+    });
+  }
+
+  // rewriter_tpl::operator() and main_loop: the result comes with a reference, which the caller
+  // releases. Throws SmtCanceledError when the resource limit cancels the rewrite; the check runs
+  // every 256 steps rather than on each step.
+  rewrite(expr: number): number {
+    const manager = this.manager;
+    return manager.withoutTemporaries(() => {
+      this.root = expr;
+      if (!this.visit(expr, Infinity))
+        while (this.frames.length > 0) {
+          if ((++this.numSteps & 255) === 0 && !manager.limit.inc()) throw new SmtCanceledError();
+          const frame = this.frames[this.frames.length - 1];
+          const curr = frame.curr;
+          if (frame.childIndex === 0 && frame.state === PROCESS_CHILDREN && frame.isCaching) {
+            const cached = this.cache.find(curr, 0);
+            if (cached !== undefined) {
+              this.pushResult(cached);
+              this.frames.pop();
+              this.setNewChildFlag(curr, cached);
+              continue;
+            }
+          }
+          if (manager.kinds[curr] === KIND_APP) this.processApp(curr, frame);
+          else this.processQuantifier(curr, frame);
+        }
+      const result = this.resultStack.pop() as number;
+      return result;
+    });
+  }
+
+  // visit: whether expr is rewritten and its result is on the result stack. Otherwise it pushes a
+  // frame for expr.
+  private visit(expr: number, maxDepth: number) {
+    const manager = this.manager;
+    const replacement = this.substitution.get(expr);
+    if (replacement !== undefined) {
+      this.pushResult(replacement);
+      this.setNewChildFlag(expr, replacement);
+      return true;
+    }
+    if (maxDepth === 0) {
+      this.pushResult(expr);
+      return true;
+    }
+    const isCaching = this.isCaching(expr);
+    if (isCaching) {
+      const cached = this.cache.find(expr, 0);
+      if (cached !== undefined) {
+        this.pushResult(cached);
+        this.setNewChildFlag(expr, cached);
+        return true;
+      }
+    }
     const kind = manager.kinds[expr];
-    let result = expr;
-    if (kind === KIND_APP && manager.args[expr].length > 0) {
-      const args = manager.args[expr];
-      result = this.mkAppCore(
-        manager.decls[expr],
-        args.map((arg) => this.rewrite(arg)),
-        manager.sorts[expr],
-      );
-    } else if (kind === KIND_QUANTIFIER) result = this.reduceQuantifier(expr);
-    this.cache.set(expr, result);
-    return result;
+    if (kind === KIND_VAR || (kind === KIND_APP && manager.args[expr].length === 0)) {
+      this.pushResult(expr);
+      return true;
+    }
+    this.pushFrame(expr, isCaching, maxDepth === Infinity ? maxDepth : maxDepth - 1);
+    return false;
+  }
+
+  // flat_assoc: th_rewriter flattens and, or and + into an enclosing application of the same
+  // operator.
+  private isFlatAssoc(decl: number) {
+    const op = this.manager.funcDecls[decl].op;
+    return op === OP_AND || op === OP_OR || op === OP_ADD;
+  }
+
+  private processApp(expr: number, frame: Frame) {
+    const manager = this.manager;
+    if (frame.state === REWRITE_BUILTIN) {
+      const result = this.resultStack[this.resultStack.length - 1];
+      this.setLastResult(result);
+      this.popResult();
+      this.popResult();
+      this.pushResult(result);
+      this.cacheResult(expr, result, frame.isCaching);
+      this.frames.pop();
+      this.setNewChildFlag(expr, -1);
+      return;
+    }
+    const args = manager.args[expr];
+    while (frame.childIndex < args.length) {
+      if (this.isConstantFolded(expr, frame)) return;
+      const arg = args[frame.childIndex];
+      frame.childIndex++;
+      if (!this.visit(arg, frame.maxDepth)) return;
+    }
+    const decl = manager.decls[expr];
+    if (this.isFlatAssoc(decl) && manager.getRefCount(expr) <= 1 && this.frames.length > 1) {
+      const previous = this.frames[this.frames.length - 2];
+      if (
+        manager.kinds[previous.curr] === KIND_APP &&
+        manager.decls[previous.curr] === decl &&
+        previous.state === PROCESS_CHILDREN
+      ) {
+        this.frames.pop();
+        this.setNewChildFlag(expr, -1);
+        return;
+      }
+    }
+    const newArgs = this.resultStack.slice(frame.spos);
+    const result = manager.withTemporaries(() =>
+      this.mkAppCore(decl, newArgs, manager.sorts[expr]),
+    );
+    this.setLastResult(result);
+    manager.decRef(result);
+    this.shrinkResults(frame.spos);
+    this.pushResult(result);
+    this.cacheResult(expr, result, frame.isCaching);
+    this.frames.pop();
+    this.setNewChildFlag(expr, -1);
+    this.setLastResult(-1);
+  }
+
+  // constant_fold: an ite whose condition rewrote to true or false becomes the chosen branch.
+  private isConstantFolded(expr: number, frame: Frame) {
+    const manager = this.manager;
+    if (frame.childIndex !== 1 || manager.getOp(expr) !== OP_ITE) return false;
+    const condition = this.resultStack[frame.spos];
+    const arg = manager.isTrue(condition)
+      ? manager.args[expr][1]
+      : manager.isFalse(condition)
+        ? manager.args[expr][2]
+        : -1;
+    if (arg === -1) return false;
+    this.shrinkResults(frame.spos);
+    this.pushResult(arg);
+    frame.state = REWRITE_BUILTIN;
+    if (this.visit(arg, frame.maxDepth)) {
+      const result = this.resultStack[this.resultStack.length - 1];
+      this.setLastResult(result);
+      this.popResult();
+      this.popResult();
+      this.pushResult(result);
+      this.cacheResult(expr, result, frame.isCaching);
+      this.frames.pop();
+      this.setNewChildFlag(expr, -1);
+    }
+    this.setLastResult(-1);
+    return true;
+  }
+
+  private processQuantifier(expr: number, frame: Frame) {
+    const manager = this.manager;
+    const data = manager.getQuantifier(expr);
+    if (frame.childIndex === 0) this.beginScope(data.body);
+    const children = this.options.isRewritingPatterns ? [data.body, ...data.patterns] : [data.body];
+    while (frame.childIndex < children.length) {
+      const child = children[frame.childIndex];
+      frame.childIndex++;
+      if (!this.visit(child, frame.maxDepth)) return;
+    }
+    const body = this.resultStack[frame.spos];
+    const patterns = this.options.isRewritingPatterns
+      ? this.resultStack.slice(frame.spos + 1)
+      : data.patterns;
+    const result = manager.withTemporaries(() => this.reduceQuantifier(expr, body, patterns));
+    this.setLastResult(result);
+    manager.decRef(result);
+    this.shrinkResults(frame.spos);
+    this.pushResult(result);
+    this.endScope();
+    this.cacheResult(expr, result, frame.isCaching);
+    this.setLastResult(-1);
+    this.frames.pop();
+    this.setNewChildFlag(expr, result);
+  }
+
+  // begin_scope: the body of a quantifier gets a fresh cache, and becomes the root.
+  private beginScope(body: number) {
+    this.scopeRoots.push(this.root);
+    this.root = body;
+    if (this.scopeRoots.length === this.caches.length)
+      this.caches.push(new ActCache(this.manager, this.manager.getNumAsts()));
+    this.cache.reset();
+  }
+
+  private endScope() {
+    this.cache.reset();
+    this.root = this.scopeRoots.pop() as number;
   }
 
   // th_rewriter_cfg::reduce_quantifier: a bound Boolean variable among the conjuncts of a universal
   // body or the disjuncts of an existential one decides the quantifier. Otherwise it merges a
   // directly nested quantifier of the same kind when neither has patterns, eliminates unused
   // variables, and applies der to pattern-free quantifiers.
-  private reduceQuantifier(expr: number) {
+  private reduceQuantifier(expr: number, body: number, newPatterns: number[]) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
-    const body = this.rewrite(data.body);
-    const rewrittenPatterns = this.options.isRewritingPatterns
-      ? data.patterns.map((pattern) => pattern.map((arg) => this.rewrite(arg)))
-      : data.patterns;
-    // remove_duplicates.
-    const patterns = rewrittenPatterns.filter(
-      (pattern, index) =>
-        rewrittenPatterns.findIndex(
-          (other) =>
-            other.length === pattern.length &&
-            other.every((arg, argIndex) => arg === pattern[argIndex]),
-        ) === index,
-    );
     const isNegated = manager.isNot(body);
     const junction = isNegated ? manager.args[body][0] : body;
     if (
@@ -154,6 +400,8 @@ export class Rewriter {
       return data.isForall ? manager.falseExpr : manager.trueExpr;
     const nested =
       manager.kinds[body] === KIND_QUANTIFIER ? manager.getQuantifier(body) : undefined;
+    // remove_duplicates.
+    const patterns = newPatterns.filter((pattern, index) => newPatterns.indexOf(pattern) === index);
     const merged =
       nested !== undefined &&
       nested.isForall === data.isForall &&
@@ -163,6 +411,7 @@ export class Rewriter {
             ...data,
             sorts: [...data.sorts, ...nested.sorts],
             body: nested.body,
+            patterns: [],
             weight: Math.min(data.weight, nested.weight),
           })
         : manager.mkQuantifier({ ...data, body, patterns: this.substitutePatterns(patterns) });
@@ -174,12 +423,16 @@ export class Rewriter {
       return reduced;
     const eliminated = applyDer(manager, reduced);
     if (eliminated === reduced || this.isNestedDer) return eliminated;
-    return new Rewriter(manager, this.options, true).rewrite(eliminated);
+    const nestedRewriter = new Rewriter(manager, this.options, true);
+    const rewritten = nestedRewriter.rewrite(eliminated);
+    nestedRewriter.cleanup();
+    manager.releaseLater(rewritten);
+    return rewritten;
   }
 
   // th_rewriter_cfg::apply_subst: the substitution replaces terms in the patterns without rewriting
   // them, like expr_safe_replace.
-  private substitutePatterns(patterns: number[][]) {
+  private substitutePatterns(patterns: number[]) {
     const manager = this.manager;
     if (this.substitution.size === 0) return patterns;
     const cache = new Map<number, number>();
@@ -197,7 +450,7 @@ export class Rewriter {
       cache.set(expr, result);
       return result;
     };
-    return patterns.map((pattern) => pattern.map(replace));
+    return patterns.map((pattern) => manager.mkPattern(manager.args[pattern].map(replace)));
   }
 
   // Throws SmtCanceledError when the resource limit cancels the rewrite, like rewriter_tpl's

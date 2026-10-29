@@ -97,20 +97,9 @@ const compareAsts = (manager: AstManager, first: number, second: number): number
       const bySort = compareSorts(manager, firstData.sorts[index], secondData.sorts[index]);
       if (bySort !== 0) return bySort;
     }
-    // A pattern is an application of the pattern declaration to its terms.
     for (let index = 0; index < firstData.patterns.length; index++) {
-      const firstTerms = firstData.patterns[index];
-      const secondTerms = secondData.patterns[index];
-      const getDepth = (terms: number[]) =>
-        1 + Math.max(...terms.map((term) => manager.depths[term]));
-      const byPattern =
-        compareValues(firstTerms.length, secondTerms.length) ||
-        compareValues(getDepth(firstTerms), getDepth(secondTerms));
+      const byPattern = compareAsts(manager, firstData.patterns[index], secondData.patterns[index]);
       if (byPattern !== 0) return byPattern;
-      for (let termIndex = 0; termIndex < firstTerms.length; termIndex++) {
-        const byTerm = compareAsts(manager, firstTerms[termIndex], secondTerms[termIndex]);
-        if (byTerm !== 0) return byTerm;
-      }
     }
     return compareAsts(manager, firstData.body, secondData.body);
   }
