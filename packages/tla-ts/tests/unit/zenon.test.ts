@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { TlaZenonError } from "../../src/errors";
@@ -21,13 +21,91 @@ const fixtures = Object.entries(statistics).map((entry) => ({
 }));
 
 // tlapm runs Zenon with -oisar and writes the Isar proof it prints into the module's .thy file. An
-// .isar file holds what tlapm's Zenon printed for the fixture beside it. The three proved fixtures
-// without one print bound variables named after whichever alpha-equivalent formula OCaml's garbage
-// collector left in Zenon's weak hash-consing table, which no other program can reproduce.
-const isarFixtures = fixtures.flatMap((fixture) => {
-  const path = join(FIXTURES, fixture.path.replace(/\.znn$/, ".isar"));
-  return existsSync(path) ? [{ ...fixture, isar: readFileSync(path, "utf8") }] : [];
-});
+// .isar file holds what tlapm's Zenon printed for the proved fixture beside it.
+const isarFixtures = fixtures
+  .filter((fixture) => !fixture.path.startsWith("unknown/"))
+  .map((fixture) => ({
+    ...fixture,
+    isar: readFileSync(join(FIXTURES, fixture.path.replace(/\.znn$/, ".isar")), "utf8"),
+  }));
+
+// Zenon shares alpha-equivalent formulas through a weak hash table, so a formula takes the names of
+// an older equal formula until OCaml's garbage collector frees that one. On these fixtures the
+// binary's names depend on when it collected garbage, so only the names differ.
+const COLLECTOR_NAMED = new Set([
+  "proved/AtomicBakeryWithoutSMT-116.znn",
+  "proved/AtomicBakeryWithoutSMT-414.znn",
+  "proved/FiniteSetTheorems_proofs-138.znn",
+]);
+
+const TOKEN = /z_[Hh][a-z]+(?=_z_[Hh]|[^\w']|$)|_(?=z_[Hh])|[A-Za-z_][\w']*|\s+|./gs;
+const LABEL = /^z_([Hh])([a-z]+)$/;
+const NAME = /^[A-Za-z_][\w']*$/;
+const BINDERS = ["\\<lambda>", "\\\\A ", "\\\\E ", "CHOOSE ", "!!"];
+
+interface Scope {
+  left: string;
+  right: string;
+  depth: number;
+}
+
+// Whether two Isar proofs agree up to alpha-equivalence and a renaming of names. A bound variable
+// pairs with the one at the same binder in the other proof, until the parenthesis around the binder
+// or the quote that ends its pattern. Fresh zenon_V variables outside any binder, and the z_H and
+// ?z_h labels that number formulas, pair through one bijection each, in order of first appearance.
+// Every other token matches byte for byte.
+const isEqualUpToRenaming = (left: string, right: string) => {
+  const leftTokens = left.match(TOKEN) ?? [];
+  const rightTokens = right.match(TOKEN) ?? [];
+  if (leftTokens.length !== rightTokens.length) return false;
+  const bijections = new Map<string, [Map<string, string>, Map<string, string>]>();
+  const isPaired = (kind: string, from: string, to: string) => {
+    const maps = bijections.get(kind) ?? [new Map<string, string>(), new Map<string, string>()];
+    bijections.set(kind, maps);
+    if (!maps[0].has(from) && !maps[1].has(to)) {
+      maps[0].set(from, to);
+      maps[1].set(to, from);
+    }
+    return maps[0].get(from) === to && maps[1].get(to) === from;
+  };
+  const isBinder = (tokens: string[], position: number) =>
+    BINDERS.some((binder) =>
+      tokens
+        .slice(Math.max(0, position - 4), position)
+        .join("")
+        .endsWith(binder),
+    );
+  const scopes: Scope[] = [];
+  let depth = 0;
+  return leftTokens.every((leftToken, position) => {
+    const rightToken = rightTokens[position];
+    const leftLabel = LABEL.exec(leftToken);
+    const rightLabel = LABEL.exec(rightToken);
+    const isMatch = (() => {
+      if (leftLabel !== null && rightLabel !== null)
+        return leftLabel[1] === rightLabel[1] && isPaired("label", leftLabel[2], rightLabel[2]);
+      if (!NAME.test(leftToken) || !NAME.test(rightToken)) return leftToken === rightToken;
+      if (isBinder(leftTokens, position) && isBinder(rightTokens, position)) {
+        scopes.push({ left: leftToken, right: rightToken, depth });
+        return true;
+      }
+      const leftScope = scopes.findLast((scope) => scope.left === leftToken);
+      const rightScope = scopes.findLast((scope) => scope.right === rightToken);
+      if (leftScope !== undefined || rightScope !== undefined) return leftScope === rightScope;
+      return leftToken.startsWith("zenon_V") && rightToken.startsWith("zenon_V")
+        ? isPaired("fresh", leftToken, rightToken)
+        : leftToken === rightToken;
+    })();
+    depth += leftToken === "(" ? 1 : leftToken === ")" ? -1 : 0;
+    while (
+      scopes.length > 0 &&
+      (scopes[scopes.length - 1].depth > depth ||
+        (leftToken === '"' && scopes[scopes.length - 1].depth === depth))
+    )
+      scopes.pop();
+    return isMatch;
+  });
+};
 
 // tlapm gives Zenon 10 s. The fixtures take a fraction of that, so a slow machine doesn't change
 // their verdicts.
@@ -45,11 +123,30 @@ describe("Zenon agrees with tlapm's Zenon", () => {
     if (fixture.path.startsWith("unknown/")) expect(run.failure).toBe("exhausted");
   });
 
-  it.each(isarFixtures)("prints the proof of $path that tlapm writes", (fixture) => {
-    expect(decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS })).toEqual({
-      verdict: "unsat",
-      proof: fixture.isar,
-    });
+  it.each(isarFixtures.filter((fixture) => !COLLECTOR_NAMED.has(fixture.path)))(
+    "prints the proof of $path that tlapm writes",
+    (fixture) => {
+      expect(decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS })).toEqual({
+        verdict: "unsat",
+        proof: fixture.isar,
+      });
+    },
+  );
+
+  it.each(isarFixtures.filter((fixture) => COLLECTOR_NAMED.has(fixture.path)))(
+    "prints the proof of $path that tlapm writes, up to the names of variables",
+    (fixture) => {
+      const decision = decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS });
+      const proof = decision.verdict === "unsat" ? decision.proof : "";
+      expect(proof).not.toBe(fixture.isar);
+      expect(isEqualUpToRenaming(proof, fixture.isar)).toBe(true);
+    },
+  );
+
+  it("tells proofs apart beyond the names of variables", () => {
+    const isar = isarFixtures[0].isar;
+    expect(isEqualUpToRenaming(isar, isar.replace("z_Ha", "z_Hb"))).toBe(false);
+    expect(isEqualUpToRenaming(isar, isar.replace("FALSE", "TRUE"))).toBe(false);
   });
 
   // The search takes seconds, so the test may run as long as the search's own time limit.
