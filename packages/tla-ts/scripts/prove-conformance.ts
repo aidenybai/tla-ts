@@ -4,7 +4,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { prove, type ProofObligation } from "../src";
+import { prove, type ProofObligation, TlaError } from "../src";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getLibraryModules } from "./corpora";
 import { PROOFS_PATH, type ModuleProofRecord, type ObligationRecord } from "./proof-records";
 
@@ -59,23 +59,33 @@ for (const record of records.filter(
   (innerRecord) => filter === undefined || innerRecord.id.includes(filter),
 )) {
   const path = join(CORPORA_DIRECTORY, record.id);
+  // A module tla-ts can't load leaves each of its obligations absent, with the error as reason.
   const proved = await prove({
     source: readFileSync(path, "utf8"),
     loadModule: (name) =>
       readModule(join(dirname(path), `${name}.tla`)) ??
       readModule(libraryModules.get(name)) ??
       readModule(join(TLAPM_LIBRARY, `${name}.tla`)),
-  });
-  const byId = new Map(proved.obligations.map((obligation) => [obligation.id, obligation]));
+  }).then(
+    (result) => result.obligations,
+    (error: unknown) => {
+      if (!(error instanceof TlaError)) throw error;
+      return error;
+    },
+  );
+  const byId = new Map(
+    proved instanceof TlaError ? [] : proved.map((obligation) => [obligation.id, obligation]),
+  );
   record.obligations.forEach((expected) => {
     const actual = byId.get(expected.id);
+    const reason = proved instanceof TlaError ? proved.message : actual?.reason;
     results.push({
       module: record.id,
       id: expected.id,
       verdict: getVerdict(expected, actual),
       expected: getExpected(expected),
       ...(actual ? { actual: actual.status } : {}),
-      ...(actual?.reason === undefined ? {} : { reason: actual.reason }),
+      ...(reason === undefined ? {} : { reason }),
     });
   });
 }
