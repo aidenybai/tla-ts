@@ -80,6 +80,7 @@ export const APPEND = tla("Append");
 export const HEAD = tla("Head");
 export const TAIL = tla("Tail");
 export const SUB_SEQ = tla("SubSeq");
+export const TUPLE_0 = tla("Tuple_0");
 
 export const BUILTIN_SYMBOLS: Partial<Record<Builtin, string>> = {
   Cup: CUP,
@@ -91,6 +92,7 @@ export const BUILTIN_SYMBOLS: Partial<Record<Builtin, string>> = {
   Plus: tla("IntPlus"),
   Minus: tla("IntMinus"),
   Times: tla("IntTimes"),
+  Exp: tla("IntExp"),
   Quotient: tla("IntQuotient"),
   Remainder: tla("IntRemainder"),
   Uminus: tla("IntUminus"),

@@ -13,12 +13,46 @@ export interface Flattened {
   getLines: (axioms: Set<string>) => string[];
 }
 
-export type Entry = string | Flattened;
+// A fact that tlapm encodes, so its symbols bring their axioms, but leaves out of the text.
+export interface OmittedFact {
+  omitted: string;
+}
+
+export type Entry = string | Flattened | OmittedFact;
 
 // A bound variable's placeholder: its name and its depth, which the printer names in scope.
 export const getVariable = (name: string, depth: number) => `${name}#${depth}`;
 
 export const getDepth = (variable: string) => Number(variable.slice(variable.lastIndexOf("#") + 1));
+
+// The head that marks the Unprimable WITNESS wraps around its witness, which Prep never removes:
+// (?unprimable term). Flatten.compare_expr tells it apart, and the printed text drops it.
+export const UNPRIMABLE = "?unprimable";
+
+const getClosing = (text: string, from: number) => {
+  const state = { depth: 0 };
+  for (const index of Array.from(
+    { length: text.length - from },
+    (_value, offset) => from + offset,
+  )) {
+    if (text[index] === "(") state.depth++;
+    if (text[index] === ")") state.depth--;
+    if (state.depth === 0) return index;
+  }
+  return text.length;
+};
+
+// The text with each Unprimable mark dropped.
+export const removeUnprimable = (text: string): string => {
+  const start = text.indexOf(`(${UNPRIMABLE} `);
+  if (start === -1) return text;
+  const end = getClosing(text, start);
+  return (
+    text.slice(0, start) +
+    removeUnprimable(text.slice(start + UNPRIMABLE.length + 2, end)) +
+    removeUnprimable(text.slice(end + 1))
+  );
+};
 
 // Flatten.compare_expr: an application matches an earlier one with the same higher-order
 // arguments, whatever the variables bound outside them. It can't compare quantifiers or
@@ -29,6 +63,13 @@ const getFlatKey = (text: string, depth: number) =>
     : text.replace(/[^\s()]+#(\d+)/g, (_match, found: string) =>
         Number(found) < depth ? "#" : `#${Number(found) - depth}`,
       );
+
+// Where an application occurs: its depth of bound variables, and whether it's in a fact that
+// Smtlib leaves out, which Flatten doesn't enter.
+interface Site {
+  depth: number;
+  isOmitted?: boolean;
+}
 
 // The state of Flatten.main over one obligation: its blueprint count, which init_bp_count resets
 // for each obligation, and the symbols it introduced.
@@ -42,12 +83,19 @@ export const createFlattener = () => {
   const flatten = (
     kind: string,
     visit: string,
-    depth: number | undefined,
+    site: Site,
     getAxioms: (symbol: string, axioms: Set<string>) => Axiom[],
     arity: number,
     name = `TLA__${kind}`,
   ) => {
-    const key = depth === undefined ? undefined : getFlatKey(`${name} ${visit}`, depth);
+    // Flatten.find_hoapp skips a second-order ASSUME, so the application stays and only
+    // N_axiomatize.collect, which runs before Flatten, visits it.
+    if (site.isOmitted) {
+      const symbol = formatName(`${name}_omitted_${flattened.size}`);
+      flattened.set(symbol, { symbol, kind, visit: removeUnprimable(visit), getLines: () => [] });
+      return symbol;
+    }
+    const key = getFlatKey(`${name} ${visit}`, site.depth);
     // Flatten.new_bp_id counts every application, even one that reuses an earlier symbol.
     counter.blueprints++;
     const known = key === undefined ? undefined : flatKeys.get(key);
@@ -57,11 +105,12 @@ export const createFlattener = () => {
     const flat: Flattened = {
       symbol,
       kind,
-      visit,
+      visit: removeUnprimable(visit),
       getLines: (axioms) => [
         declare(symbol, arity),
         ...getAxioms(symbol, axioms).map(
-          (entry) => `(assert (! ${entry.formula} :named |${entry.label} ${raw}|))`,
+          (entry) =>
+            `(assert (! ${removeUnprimable(entry.formula ?? "")} :named |${entry.label} ${raw}|))`,
         ),
       ],
     };
