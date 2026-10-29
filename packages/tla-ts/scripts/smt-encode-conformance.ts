@@ -161,14 +161,14 @@ const results = readProofRecords()
         .map((obligation) => [obligation.id, obligation]),
     );
     // tlapm counts some names across the obligations it encodes, in order.
-    const run = { session: { caseErrors: 0 } };
+    const session = { caseErrors: 0 };
     return record.obligations.flatMap((expected): Result[] => {
       if (expected.status === "trivial" || !("smt" in expected) || !expected.smt) return [];
       const base = { module: record.id, id: expected.id };
       const obligation = obligations.get(expected.id);
       if (!obligation || obligation.kind.kind === "Error")
         return [{ ...base, verdict: "mismatch", reason: "tla-ts has no such obligation" }];
-      const encoded = getEncoding(() => encodeForBackend(obligation, "smt", run));
+      const encoded = getEncoding(() => encodeForBackend(obligation, "smt", session));
       if (encoded.kind === "unsupported")
         return [{ ...base, verdict: "unsupported", reason: encoded.reason }];
       if (getInputDigest(encoded.text) === expected.smt.input)

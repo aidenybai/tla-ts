@@ -3,9 +3,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { TlaProverError } from "../../src/errors";
 import { getObligations } from "../../src/obligations";
-import { encodeZenon } from "../../src/prove/zenon/encode";
+import { encodeForBackend } from "../../src/prove/prove";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/zenon-encoder");
+
+const SESSION = { caseErrors: 0 };
 
 // tlapm's .znn files differ from tla-ts's only in comments and line breaks.
 const normalize = (text: string) => text.replace(/^;.*$/gm, "").replace(/\s+/g, " ").trim();
@@ -19,12 +21,12 @@ describe("Zenon obligations match tlapm", () => {
   it.each(
     obligations.filter((obligation) => existsSync(join(FIXTURES, `Encoder-${obligation.id}.znn`))),
   )("encodes obligation $id", (obligation) => {
-    expect(normalize(encodeZenon(obligation))).toBe(
+    expect(normalize(encodeForBackend(obligation, "zenon", SESSION))).toBe(
       normalize(readFileSync(join(FIXTURES, `Encoder-${obligation.id}.znn`), "utf8")),
     );
   });
 
   it("rejects a function with several bounds, which tlapm leaves Zenon an empty file for", () => {
-    expect(() => encodeZenon(obligations[23])).toThrow(TlaProverError);
+    expect(() => encodeForBackend(obligations[23], "zenon", SESSION)).toThrow(TlaProverError);
   });
 });

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
-import { TlaSyntaxError, TlaUnsupportedError } from "../../src/errors";
+import { TlaProverError, TlaSyntaxError } from "../../src/errors";
 import { getObligations } from "../../src/obligations";
 import { decidePtl } from "../../src/prove/ptl/decide";
-import { encodePtl } from "../../src/prove/ptl/encode";
+import { encodeForBackend } from "../../src/prove/prove";
 
 const OPTIONS = { timeLimitMs: 10_000 };
 
@@ -25,7 +25,7 @@ const getInput = (theorem: string[]) => {
   const obligations = getObligations([{ file: "M.tla", source }], () => undefined)[0].obligations;
   const cited = obligations.find((obligation) => obligation.text.includes("PTL \nPROVE"));
   if (!cited) throw new Error("expected an obligation that cites PTL");
-  return encodePtl(cited.sequent);
+  return encodeForBackend(cited, "ls4", { caseErrors: 0 });
 };
 
 // tlapm proves exactly the obligations expected to be unsat.
@@ -153,13 +153,13 @@ describe("PTL backend matches tlapm with LS4", () => {
     expect(verdict).toBe("sat");
   });
 
-  it("refuses a step that also cites a pragma that rewrites ENABLED", () => {
+  it("fails a step whose ENABLED needs a hidden definition, as tlapm's soundness check does", () => {
     expect(() =>
       getInput([
         "THEOREM ASSUME []ENABLED <<Next>>_vars PROVE Spec => []<><<Next>>_vars",
         "  BY ExpandENABLED, PTL DEF Spec",
       ]),
-    ).toThrow(TlaUnsupportedError);
+    ).toThrow(TlaProverError);
   });
 });
 

@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { TlaUnsupportedError } from "../src/errors";
 import { getObligations } from "../src/obligations";
 import { decidePtl } from "../src/prove/ptl/decide";
-import { encodePtl } from "../src/prove/ptl/encode";
+import { encodeForBackend } from "../src/prove/prove";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getLibraryModules } from "./corpora";
 import {
   getLs4Digest,
@@ -80,7 +80,10 @@ records
       .filter((obligation) => ids.has(obligation.id))
       .map((obligation) => {
         try {
-          return { id: obligation.id, text: encodePtl(obligation.sequent) };
+          return {
+            id: obligation.id,
+            text: encodeForBackend(obligation, "ls4", { caseErrors: 0 }),
+          };
         } catch (error) {
           if (error instanceof TlaUnsupportedError) return { id: obligation.id, text: undefined };
           throw error;

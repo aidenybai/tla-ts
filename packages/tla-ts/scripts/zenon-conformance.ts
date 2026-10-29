@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { encodeZenon } from "../src/prove/zenon/encode";
+import { encodeForBackend } from "../src/prove/prove";
 import type { PrintedObligation } from "../src/obligations";
 import { runZenon } from "../src/prove/zenon/decide";
 import { CORPORA_DIRECTORY, getLibraryModules, getModuleObligations } from "./corpora";
@@ -72,7 +72,9 @@ const getEncoderOutcome = (moduleId: string, id: number, input: string) => {
   const obligation = obligations.get(id);
   if (obligation === undefined) return "missing";
   try {
-    return getInputDigest(encodeZenon(obligation)) === input ? "match" : "mismatch";
+    return getInputDigest(encodeForBackend(obligation, "zenon", { caseErrors: 0 })) === input
+      ? "match"
+      : "mismatch";
   } catch (error) {
     if (error instanceof Error) return error.name;
     throw error;

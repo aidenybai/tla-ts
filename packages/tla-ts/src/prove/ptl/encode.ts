@@ -1,5 +1,5 @@
-// tlapm's PTL backend up to the text it sends LS4 (Backend.Prep, Pltl.process_obligation, and Ls4's
-// printer): definitions expand, temporal operators reduce to [], <> and prime, assumptions that hold
+// tlapm's PTL backend up to the text it sends LS4 (Pltl.process_obligation, Prep.flatten, and
+// Ls4's printer): temporal operators reduce to [], <> and prime, assumptions that hold
 // always get a [], and every other subformula becomes an atom named by a hash of its printed form.
 // The text is the negated obligation.
 
@@ -27,7 +27,6 @@ import { getLevelInfo } from "../../obligation-levels";
 import { printExpression } from "../../obligation-printer";
 import { expandAction, expandFairness, expandLeadsto, getTime } from "../../obligation-temporal";
 import { getMd5 } from "../prep/md5";
-import { normalizeExpand, removeTrue } from "./prep";
 
 const KIND_NAMES: Record<Level, string> = {
   Constant: "CONSTANT",
@@ -179,8 +178,30 @@ const UNARY: Partial<Record<Builtin, string>> = {
   Prime: "next",
 };
 
+// Prep.flatten, which tlapm applies after Pltl.process_obligation has made every equality an atom:
+// TRUE drops out of the conjunctions of each visible fact, and a fact left with nothing disappears.
+const removeTrue = (expression: Expr): Expr | undefined => {
+  if (expression.kind === "Internal" && expression.builtin === "TRUE") return undefined;
+  if (expression.kind === "List" && expression.bullet !== "Or") {
+    const items = expression.items.flatMap((item) => removeTrue(item) ?? []);
+    if (items.length <= 1) return items[0];
+    return { ...expression, bullet: "And", items };
+  }
+  if (
+    expression.kind !== "Apply" ||
+    expression.operator.kind !== "Internal" ||
+    expression.operator.builtin !== "Conj" ||
+    expression.args.length !== 2
+  )
+    return expression;
+  const left = removeTrue(expression.args[0]);
+  const right = removeTrue(expression.args[1]);
+  return left && right ? { ...expression, args: [left, right] } : (left ?? right);
+};
+
 const TRUE_TEXT = "(cc | ~ cc)";
 
+// The text tlapm sends LS4 for an obligation after Prep.normalize_expand.
 export const encodePtl = (sequent: Sequent): string => {
   // Ls4's printer. A sequent becomes an implication from its visible facts, joined by &, and
   // Prep.flatten applies to the facts of the outermost one.
@@ -229,7 +250,7 @@ export const encodePtl = (sequent: Sequent): string => {
     // Pltl.coalesce_fol: an atom is named by the first five hex digits of the MD5 of its print.
     return `h${getMd5(renderDoc(printExpression(hyps, expression))).slice(0, 5)}`;
   };
-  const renamed = renameDeclarations(undefined, normalizeExpand(sequent));
+  const renamed = renameDeclarations(undefined, { kind: "Sequent", sequent });
   const prepared = prepareHyps(undefined, expandAction(expandLeadsto(expandFairness(renamed))));
   return `not (${print([], prepared, true)})`;
 };

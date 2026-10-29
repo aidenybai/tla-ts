@@ -41,7 +41,7 @@ const encodeFixture = (name: string, id: number) => {
     .flatMap((result) => result.obligations)
     .find((innerObligation) => innerObligation.id === id);
   if (!obligation) throw new Error(`no obligation ${id}`);
-  return encodeForBackend(obligation, "smt", { session: { caseErrors: 0 } });
+  return encodeForBackend(obligation, "smt", { caseErrors: 0 });
 };
 
 afterEach(() => {
@@ -49,34 +49,38 @@ afterEach(() => {
 });
 
 describe("prove follows tlapm's default method", () => {
-  it("finds the obligations tlapm finds trivial and leaves PTL steps unsupported", async () => {
+  it("proves what tlapm proves, with the prover tlapm used", async () => {
     const result = await proveFixture("HourClock_proof");
-    expect(result.obligations.map((obligation) => [obligation.id, obligation.status])).toEqual([
-      [1, "unsupported"],
+    expect(
+      result.obligations.map((obligation) => [
+        obligation.id,
+        obligation.status === "proved" ? obligation.prover : obligation.status,
+      ]),
+    ).toEqual([
+      [1, "ls4"],
       [2, "trivial"],
       [3, "trivial"],
       [4, "trivial"],
-      [5, expect.any(String)],
-      [6, expect.any(String)],
+      [5, "smt"],
+      [6, "smt"],
     ]);
-    expect(result.obligations[0]).toMatchObject({ reason: "the step is proved by ls4" });
   });
 
   it("reports each obligation as it finishes", async () => {
     const reported: ProofObligation[] = [];
     const result = await prove({
-      source: loadModule("Simple_proof") ?? "",
+      source: loadModule("HourClock_proof") ?? "",
       loadModule,
       onObligation: (obligation) => reported.push(obligation),
     });
     expect(reported).toEqual(result.obligations);
-    expect(result.obligations).toHaveLength(16);
+    expect(result.obligations).toHaveLength(6);
   });
 
   it("stops when its signal aborts", async () => {
     const controller = new AbortController();
     const proving = prove({
-      source: loadModule("Simple_proof") ?? "",
+      source: loadModule("HourClock_proof") ?? "",
       loadModule,
       signal: controller.signal,
       onObligation: () => controller.abort(),

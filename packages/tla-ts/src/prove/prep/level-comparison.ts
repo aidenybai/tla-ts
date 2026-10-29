@@ -2,7 +2,7 @@
 // whose goal is a visible fact, or the goal of a visible ASSUME/PROVE fact, with identifiers
 // renamed to identifiers of no higher level, each renamed one declared by the fact.
 
-import { TlapmBugError, TlaProverError } from "./errors";
+import { TlapmBugError, TlaProverError } from "../../errors";
 import {
   adjoin,
   adjoinAll,
@@ -18,8 +18,8 @@ import {
   type Param,
   type Scope,
   type Sequent,
-} from "./obligation-expression";
-import { getLevelInfo } from "./obligation-levels";
+} from "../../obligation-expression";
+import { getLevelInfo } from "../../obligation-levels";
 
 interface Declaration {
   name: string;
@@ -35,7 +35,11 @@ const RANKS: Partial<Record<Declaration["kind"], number>> = {
 };
 
 // The lists match item by item, and tlapm compares the items before it finds a missing one.
-const isPairwise = <Item>(left: Item[], right: Item[], isSameItem: (left: Item, right: Item) => boolean) =>
+const isPairwise = <Item>(
+  left: Item[],
+  right: Item[],
+  isSameItem: (left: Item, right: Item) => boolean,
+) =>
   left.every((item, index) => index < right.length && isSameItem(item, right[index])) &&
   left.length === right.length;
 
@@ -49,7 +53,8 @@ const getDeclaration = (scope: Scope | undefined, index: number): Declaration =>
   const hypScope = getScopeAt(scope, index - 1);
   if (!hypScope) throw new TlapmBugError();
   const hyp = hypScope.hyp;
-  if (hyp.kind === "Fresh") return { name: hyp.name, kind: hyp.level, level: RANKS[hyp.level] ?? -1 };
+  if (hyp.kind === "Fresh")
+    return { name: hyp.name, kind: hyp.level, level: RANKS[hyp.level] ?? -1 };
   if (hyp.kind === "Flex") return { name: hyp.name, kind: "Variable", level: 1 };
   if (hyp.kind === "Defn" && hyp.definition.kind === "Operator") {
     const level = getLevelInfo(hypScope.rest, hyp.definition.body).level;
@@ -81,7 +86,10 @@ const bindDefinitions = (scope: Scope | undefined, definitions: Defn[]) =>
   );
 
 const bindFlexible = (scope: Scope | undefined, names: string[]) =>
-  names.reduce<Scope | undefined>((current, name) => adjoin(current, { kind: "Flex", name }), scope);
+  names.reduce<Scope | undefined>(
+    (current, name) => adjoin(current, { kind: "Flex", name }),
+    scope,
+  );
 
 // level_comparison#compare: the expressions match up to a renaming that maps each name one way,
 // and the fact's context declares each name it changes.
@@ -214,7 +222,12 @@ const compare = (
     if (left.length === 0 || right.length === 0) return left.length === right.length;
     return (
       isSameHyp(leftScope, rightScope, left[0], right[0]) &&
-      isSameContext(adjoin(leftScope, left[0]), adjoin(rightScope, right[0]), left.slice(1), right.slice(1))
+      isSameContext(
+        adjoin(leftScope, left[0]),
+        adjoin(rightScope, right[0]),
+        left.slice(1),
+        right.slice(1),
+      )
     );
   };
 
@@ -261,9 +274,7 @@ const compare = (
       isPairwise(leftInner, rightInner, recurse);
     switch (left.kind) {
       case "Ix":
-        return (
-          right.kind === "Ix" && isSameIndex(leftScope, rightScope, left.index, right.index)
-        );
+        return right.kind === "Ix" && isSameIndex(leftScope, rightScope, left.index, right.index);
       case "Opaque":
         return right.kind === "Opaque" && left.name === right.name;
       case "Internal":
@@ -448,7 +459,8 @@ const compare = (
                   return rightPoint.kind === "Dot" && leftPoint.field === rightPoint.field;
                 }
                 return (
-                  rightPoint.kind === "Apply" && recurse(leftPoint.expression, rightPoint.expression)
+                  rightPoint.kind === "Apply" &&
+                  recurse(leftPoint.expression, rightPoint.expression)
                 );
               }) && recurse(leftSpec.value, rightSpec.value),
           )
