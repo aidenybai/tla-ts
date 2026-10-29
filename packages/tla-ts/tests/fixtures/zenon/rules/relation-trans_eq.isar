@@ -1,0 +1,46 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Ha:"(\\A x:R(x, x))" (is "\\A x : ?z_hi(x)")
+ using refl by blast
+ have z_He:"(g(b)=g(d))" (is "?z_hj=?z_hl")
+ using h2 by blast
+ have z_Hc:"(f(a)=?z_hj)" (is "?z_hn=_")
+ using e by blast
+ have z_Hd:"(f(c)=?z_hn)" (is "?z_hp=_")
+ using h1 by blast
+ assume z_Hf:"(~R(?z_hp, ?z_hl))" (is "~?z_hr")
+ show FALSE
+ proof (rule zenon_em [of "R(?z_hp, ?z_hn)"])
+  assume z_Hs:"R(?z_hp, ?z_hn)" (is "?z_hs")
+  show FALSE
+  proof (rule zenon_em [of "R(?z_hp, ?z_hj)"])
+   assume z_Ht:"R(?z_hp, ?z_hj)" (is "?z_ht")
+   show FALSE
+   proof (rule notE [OF z_Hf])
+    have z_Hr: "?z_hr"
+    by (rule subst [where P="(\<lambda>zenon_Vo. R(?z_hp, zenon_Vo))", OF z_He], fact z_Ht)
+    thus "?z_hr" .
+   qed
+  next
+   assume z_Hx:"(~R(?z_hp, ?z_hj))" (is "~?z_ht")
+   show FALSE
+   proof (rule notE [OF z_Hx])
+    have z_Ht: "?z_ht"
+    by (rule subst [where P="(\<lambda>zenon_Vo. R(?z_hp, zenon_Vo))", OF z_Hc], fact z_Hs)
+    thus "?z_ht" .
+   qed
+  qed
+ next
+  assume z_Hy:"(~R(?z_hp, ?z_hn))" (is "~?z_hs")
+  have z_Hz: "?z_hi(?z_hp)" (is "?z_hz")
+  by (rule zenon_all_0 [of "?z_hi" "?z_hp", OF z_Ha])
+  show FALSE
+  proof (rule notE [OF z_Hy])
+   have z_Hs: "?z_hs"
+   by (rule subst [where P="(\<lambda>zenon_Vo. R(?z_hp, zenon_Vo))", OF z_Hd], fact z_Hz)
+   thus "?z_hs" .
+  qed
+ qed
+qed
+(* END-PROOF *)

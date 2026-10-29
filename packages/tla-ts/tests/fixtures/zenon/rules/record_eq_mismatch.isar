@@ -1,0 +1,10 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Ha:"((''a'' :> (x))=(''b'' :> (y)))" (is "?z_hc=?z_hf")
+ using h by blast
+ assume z_Hb:"(~p)"
+ show FALSE
+ using z_Ha by auto
+qed
+(* END-PROOF *)

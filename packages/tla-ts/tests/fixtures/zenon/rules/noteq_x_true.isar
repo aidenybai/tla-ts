@@ -1,0 +1,12 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Ha:"p"
+ using h by blast
+ assume z_Hb:"(p~=TRUE)" (is "_~=?z_hc")
+ have z_Hd: "(~p)"
+ by (rule zenon_noteq_x_true_0 [of "p", OF z_Hb])
+ show FALSE
+ by (rule notE [OF z_Hd z_Ha])
+qed
+(* END-PROOF *)

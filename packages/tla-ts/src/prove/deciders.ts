@@ -21,7 +21,7 @@ const decideZ3 = (text: string, options: DecideOptions) => {
 export const DECIDERS: Record<string, (text: string, options: DecideOptions) => Verdict> = {
   smt: decideZ3,
   z3: decideZ3,
-  zenon: decideZenon,
+  zenon: (text, options) => decideZenon(text, options).verdict,
   isabelle: decideIsabelle,
   ls4: decidePtl,
 };

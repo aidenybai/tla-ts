@@ -1,0 +1,136 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ assume z_Ha:"((\\E a_CONSTANTunde_xhash_enabledhash_prime1unde_a:(((a_VARIABLEunde_xunde_a=0)&(a_CONSTANTunde_xhash_enabledhash_prime1unde_a=1))&(\\E a_CONSTANTunde_xhash_enabledhash_prime2unde_a:(((a_CONSTANTunde_xhash_enabledhash_prime1unde_a=1)&(a_CONSTANTunde_xhash_enabledhash_prime2unde_a=2))&((a_CONSTANTunde_xhash_enabledhash_prime2unde_a=2)&(a_VARIABLEunde_xunde_hash_primea=3))))))~=((\\E a_CONSTANTunde_xhash_enabledhash_prime1unde_a:(((a_VARIABLEunde_xunde_a=0)&(a_CONSTANTunde_xhash_enabledhash_prime1unde_a=1))&(a_CONSTANTunde_xhash_enabledhash_prime1unde_a=1)))&(a_VARIABLEunde_xunde_hash_primea=3)))" (is "?z_hb~=?z_hu")
+ show FALSE
+ proof (rule zenon_boolcase_ex [of "(\<lambda>zenon_Vf. (zenon_Vf~=?z_hu))" "(\<lambda>a_CONSTANTunde_xhash_enabledhash_prime1unde_a. (((a_VARIABLEunde_xunde_a=0)&(a_CONSTANTunde_xhash_enabledhash_prime1unde_a=1))&(\\E a_CONSTANTunde_xhash_enabledhash_prime2unde_a:(((a_CONSTANTunde_xhash_enabledhash_prime1unde_a=1)&(a_CONSTANTunde_xhash_enabledhash_prime2unde_a=2))&((a_CONSTANTunde_xhash_enabledhash_prime2unde_a=2)&(a_VARIABLEunde_xunde_hash_primea=3))))))", OF z_Ha])
+  assume z_Hbb:"(?z_hb=TRUE)" (is "_=?z_hbc")
+  assume z_Hbd:"(?z_hbc~=?z_hu)"
+  have z_Hb: "?z_hb" (is "\\E x : ?z_hba(x)")
+  by (rule zenon_eq_x_true_0 [of "?z_hb", OF z_Hbb])
+  have z_Hbe: "?z_hba((CHOOSE a_CONSTANTunde_xhash_enabledhash_prime1unde_a:(((a_VARIABLEunde_xunde_a=0)&(a_CONSTANTunde_xhash_enabledhash_prime1unde_a=1))&(\\E a_CONSTANTunde_xhash_enabledhash_prime2unde_a:(((a_CONSTANTunde_xhash_enabledhash_prime1unde_a=1)&(a_CONSTANTunde_xhash_enabledhash_prime2unde_a=2))&((a_CONSTANTunde_xhash_enabledhash_prime2unde_a=2)&(a_VARIABLEunde_xunde_hash_primea=3)))))))" (is "?z_hbg&?z_hbh")
+  by (rule zenon_ex_choose_0 [of "?z_hba", OF z_Hb])
+  have z_Hbg: "?z_hbg" (is "?z_he&?z_hbi")
+  by (rule zenon_and_0 [OF z_Hbe])
+  have z_Hbh: "?z_hbh" (is "\\E x : ?z_hbj(x)")
+  by (rule zenon_and_1 [OF z_Hbe])
+  have z_He: "?z_he"
+  by (rule zenon_and_0 [OF z_Hbg])
+  have z_Hbk: "?z_hbj((CHOOSE a_CONSTANTunde_xhash_enabledhash_prime2unde_a:((?z_hbi&(a_CONSTANTunde_xhash_enabledhash_prime2unde_a=2))&((a_CONSTANTunde_xhash_enabledhash_prime2unde_a=2)&(a_VARIABLEunde_xunde_hash_primea=3)))))" (is "?z_hbo&?z_hbp")
+  by (rule zenon_ex_choose_0 [of "?z_hbj", OF z_Hbh])
+  have z_Hbo: "?z_hbo" (is "_&?z_hbq")
+  by (rule zenon_and_0 [OF z_Hbk])
+  have z_Hbp: "?z_hbp" (is "_&?z_hr")
+  by (rule zenon_and_1 [OF z_Hbk])
+  have z_Hr: "?z_hr" (is "_=?z_ht")
+  by (rule zenon_and_1 [OF z_Hbp])
+  have z_Hbi: "?z_hbi" (is "?z_hbf=?z_hj")
+  by (rule zenon_and_0 [OF z_Hbo])
+  have z_Hbr: "(~?z_hu)" (is "~(?z_hv&_)")
+  by (rule zenon_noteq_true_x_0 [of "?z_hu", OF z_Hbd])
+  show FALSE
+  proof (rule zenon_notand [OF z_Hbr])
+   assume z_Hbs:"(~?z_hv)" (is "~(\\E x : ?z_hbt(x))")
+   have z_Hbu: "~?z_hbt(?z_hbf)"
+   by (rule zenon_notex_0 [of "?z_hbt" "?z_hbf", OF z_Hbs])
+   show FALSE
+   proof (rule zenon_notand [OF z_Hbu])
+    assume z_Hbv:"(~?z_hbg)"
+    show FALSE
+    proof (rule zenon_notand [OF z_Hbv])
+     assume z_Hbw:"(a_VARIABLEunde_xunde_a~=0)"
+     show FALSE
+     by (rule notE [OF z_Hbw z_He])
+    next
+     assume z_Hbx:"(?z_hbf~=?z_hj)"
+     show FALSE
+     by (rule notE [OF z_Hbx z_Hbi])
+    qed
+   next
+    assume z_Hbx:"(?z_hbf~=?z_hj)"
+    show FALSE
+    by (rule notE [OF z_Hbx z_Hbi])
+   qed
+  next
+   assume z_Hby:"(a_VARIABLEunde_xunde_hash_primea~=?z_ht)"
+   show FALSE
+   by (rule notE [OF z_Hby z_Hr])
+  qed
+ next
+  assume z_Hbz:"(?z_hb=FALSE)" (is "_=?z_hca")
+  assume z_Hcb:"(?z_hca~=?z_hu)"
+  have z_Hcc: "(~?z_hb)" (is "~(\\E x : ?z_hba(x))")
+  by (rule zenon_eq_x_false_0 [of "?z_hb", OF z_Hbz])
+  show FALSE
+  proof (rule zenon_boolcase_and [of "(\<lambda>zenon_Vg. (?z_hca~=zenon_Vg))" "(\\E a_CONSTANTunde_xhash_enabledhash_prime1unde_a:(((a_VARIABLEunde_xunde_a=0)&(a_CONSTANTunde_xhash_enabledhash_prime1unde_a=1))&(a_CONSTANTunde_xhash_enabledhash_prime1unde_a=1)))" "(a_VARIABLEunde_xunde_hash_primea=3)", OF z_Hcb])
+   assume z_Hcg:"(?z_hu=TRUE)" (is "_=?z_hbc")
+   assume z_Hch:"(?z_hca~=?z_hbc)"
+   have z_Hu: "?z_hu" (is "?z_hv&?z_hr")
+   by (rule zenon_eq_x_true_0 [of "?z_hu", OF z_Hcg])
+   have z_Hv: "?z_hv" (is "\\E x : ?z_hbt(x)")
+   by (rule zenon_and_0 [OF z_Hu])
+   have z_Hr: "?z_hr" (is "_=?z_ht")
+   by (rule zenon_and_1 [OF z_Hu])
+   have z_Hci: "?z_hbt((CHOOSE a_CONSTANTunde_xhash_enabledhash_prime1unde_a:(((a_VARIABLEunde_xunde_a=0)&(a_CONSTANTunde_xhash_enabledhash_prime1unde_a=1))&(a_CONSTANTunde_xhash_enabledhash_prime1unde_a=1))))" (is "?z_hck&?z_hcl")
+   by (rule zenon_ex_choose_0 [of "?z_hbt", OF z_Hv])
+   have z_Hck: "?z_hck" (is "?z_he&_")
+   by (rule zenon_and_0 [OF z_Hci])
+   have z_He: "?z_he"
+   by (rule zenon_and_0 [OF z_Hck])
+   have z_Hcl: "?z_hcl" (is "?z_hcj=?z_hj")
+   by (rule zenon_and_1 [OF z_Hck])
+   have z_Hcm: "~?z_hba(?z_hcj)" (is "~(_&?z_hcn)")
+   by (rule zenon_notex_0 [of "?z_hba" "?z_hcj", OF z_Hcc])
+   show FALSE
+   proof (rule zenon_notand [OF z_Hcm])
+    assume z_Hco:"(~?z_hck)"
+    show FALSE
+    proof (rule zenon_notand [OF z_Hco])
+     assume z_Hbw:"(a_VARIABLEunde_xunde_a~=0)"
+     show FALSE
+     by (rule notE [OF z_Hbw z_He])
+    next
+     assume z_Hcp:"(?z_hcj~=?z_hj)"
+     show FALSE
+     by (rule notE [OF z_Hcp z_Hcl])
+    qed
+   next
+    assume z_Hcq:"(~?z_hcn)" (is "~(\\E x : ?z_hcr(x))")
+    have z_Hcs: "~?z_hcr(2)" (is "~(?z_hct&?z_hcu)")
+    by (rule zenon_notex_0 [of "?z_hcr" "2", OF z_Hcq])
+    show FALSE
+    proof (rule zenon_notand [OF z_Hcs])
+     assume z_Hcv:"(~?z_hct)" (is "~(_&?z_hcw)")
+     show FALSE
+     proof (rule zenon_notand [OF z_Hcv])
+      assume z_Hcp:"(?z_hcj~=?z_hj)"
+      show FALSE
+      by (rule notE [OF z_Hcp z_Hcl])
+     next
+      assume z_Hcx:"(2~=2)" (is "?z_hp~=_")
+      show FALSE
+      by (rule zenon_noteq [OF z_Hcx])
+     qed
+    next
+     assume z_Hcy:"(~?z_hcu)" (is "~(?z_hcw&_)")
+     show FALSE
+     proof (rule zenon_notand [OF z_Hcy])
+      assume z_Hcx:"(2~=2)" (is "?z_hp~=_")
+      show FALSE
+      by (rule zenon_noteq [OF z_Hcx])
+     next
+      assume z_Hby:"(a_VARIABLEunde_xunde_hash_primea~=?z_ht)"
+      show FALSE
+      by (rule notE [OF z_Hby z_Hr])
+     qed
+    qed
+   qed
+  next
+   assume z_Hcz:"(?z_hu=?z_hca)"
+   assume z_Hda:"(?z_hca~=?z_hca)"
+   show FALSE
+   by (rule zenon_eqsym [OF z_Hcz z_Hcb])
+  qed
+ qed
+qed
+(* END-PROOF *)

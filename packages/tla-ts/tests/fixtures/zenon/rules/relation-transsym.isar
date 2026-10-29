@@ -1,0 +1,62 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Ha:"(\\A x:R(x, x))" (is "\\A x : ?z_hh(x)")
+ using refl by blast
+ have z_Hd:"R(b, c)" (is "?z_hd")
+ using h2 by blast
+ have z_Hc:"R(a, b)" (is "?z_hc")
+ using h1 by blast
+ have z_Hb:"(\\A x:(\\A y:(\\A z:((R(x, y)&R(x, z))=>R(y, z)))))" (is "\\A x : ?z_hu(x)")
+ using ts by blast
+ assume z_He:"(~R(a, c))" (is "~?z_hv")
+ have z_Hw: "?z_hu(b)" (is "\\A x : ?z_hx(x)")
+ by (rule zenon_all_0 [of "?z_hu" "b", OF z_Hb])
+ have z_Hy: "?z_hu(a)" (is "\\A x : ?z_hz(x)")
+ by (rule zenon_all_0 [of "?z_hu" "a", OF z_Hb])
+ have z_Hba: "?z_hz(b)" (is "\\A x : ?z_hbb(x)")
+ by (rule zenon_all_0 [of "?z_hz" "b", OF z_Hy])
+ have z_Hbc: "?z_hbb(a)" (is "?z_hbd=>?z_hbe")
+ by (rule zenon_all_0 [of "?z_hbb" "a", OF z_Hba])
+ show FALSE
+ proof (rule zenon_imply [OF z_Hbc])
+  assume z_Hbf:"(~?z_hbd)" (is "~(_&?z_hbg)")
+  show FALSE
+  proof (rule zenon_notand [OF z_Hbf])
+   assume z_Hbh:"(~?z_hc)"
+   show FALSE
+   by (rule notE [OF z_Hbh z_Hc])
+  next
+   assume z_Hbi:"(~?z_hbg)"
+   have z_Hbg: "?z_hh(a)"
+   by (rule zenon_all_0 [of "?z_hh" "a", OF z_Ha])
+   show FALSE
+   by (rule notE [OF z_Hbi z_Hbg])
+  qed
+ next
+  assume z_Hbe:"?z_hbe"
+  have z_Hbj: "?z_hx(a)" (is "\\A x : ?z_hbk(x)")
+  by (rule zenon_all_0 [of "?z_hx" "a", OF z_Hw])
+  have z_Hbl: "?z_hbk(c)" (is "?z_hbm=>_")
+  by (rule zenon_all_0 [of "?z_hbk" "c", OF z_Hbj])
+  show FALSE
+  proof (rule zenon_imply [OF z_Hbl])
+   assume z_Hbn:"(~?z_hbm)"
+   show FALSE
+   proof (rule zenon_notand [OF z_Hbn])
+    assume z_Hbo:"(~?z_hbe)"
+    show FALSE
+    by (rule notE [OF z_Hbo z_Hbe])
+   next
+    assume z_Hbp:"(~?z_hd)"
+    show FALSE
+    by (rule notE [OF z_Hbp z_Hd])
+   qed
+  next
+   assume z_Hv:"?z_hv"
+   show FALSE
+   by (rule notE [OF z_He z_Hv])
+  qed
+ qed
+qed
+(* END-PROOF *)

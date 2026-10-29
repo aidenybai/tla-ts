@@ -1,0 +1,22 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Hb:"P(b)" (is "?z_hb")
+ using b by blast
+ have z_Ha:"P(a)" (is "?z_ha")
+ using a by blast
+ assume z_Hc:"(~P((CASE c1 -> a [] OTHER -> b)))" (is "~?z_hf")
+ show FALSE
+ proof (rule zenon_caseother1 [of "(\<lambda>zenon_Vf. (~P(zenon_Vf)))", OF z_Hc])
+  assume z_Hh:"c1"
+  assume z_Hm:"(~?z_ha)"
+  show FALSE
+  by (rule notE [OF z_Hm z_Ha])
+ next
+  assume z_Hn:"((~c1)&TRUE)" (is "?z_ho&?z_hp")
+  assume z_Hq:"(~?z_hb)"
+  show FALSE
+  by (rule notE [OF z_Hq z_Hb])
+ qed
+qed
+(* END-PROOF *)

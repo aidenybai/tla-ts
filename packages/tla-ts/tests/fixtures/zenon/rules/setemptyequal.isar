@@ -1,0 +1,16 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Ha:"({}={a})" (is "_=?z_hd")
+ using h by blast
+ assume z_Hb:"(~FALSE)" (is "~?z_hf")
+ have z_Hg: "(\\A zenon_Vg:(~(zenon_Vg \\in ?z_hd)))" (is "\\A x : ?z_hk(x)")
+ by (rule zenon_setemptyequal_0 [of "?z_hd", OF z_Ha])
+ have z_Hl: "?z_hk(a)" (is "~?z_hm")
+ by (rule zenon_all_0 [of "?z_hk" "a", OF z_Hg])
+ have z_Hn: "(a~=a)"
+ by (rule zenon_notin_addElt_0 [of "a" "a" "{}", OF z_Hl])
+ show FALSE
+ by (rule zenon_noteq [OF z_Hn])
+qed
+(* END-PROOF *)

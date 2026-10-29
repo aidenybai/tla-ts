@@ -7,6 +7,7 @@
 
 import { TlaZenonError } from "../../errors";
 import { difference, isApp, isDisjoint, isMeta, union, type Expr } from "./expr";
+import { getLimitFailure, type Limits } from "./limits";
 import { EMPTY_QUEUE, getQueueHead, removeNode, type Node, type Queue } from "./node";
 import { stableSort } from "./ocaml";
 import type { Definition } from "./parse";
@@ -137,17 +138,12 @@ interface Frame {
 export interface SearchStatistics {
   inferences: number;
   proofNodes: number;
+  // The proofs that closed another branch from the lemma cache. Zenon counts the uses in mlrefc and
+  // prints each of these proofs once, as a lemma.
+  reusedProofs: Set<Proof>;
 }
 
 export type SearchFailure = "exhausted" | "time limit" | "memory limit" | "aborted";
-
-// When the search gives up: past the deadline, a time from Date.now(), or once the signal aborts.
-// The search checks them before each formula it adds and each node it takes, so it stops within a
-// step of the deadline, where tlapm kills Zenon at once.
-export interface SearchLimits {
-  deadline: number;
-  signal: AbortSignal | undefined;
-}
 
 // Zenon gives up once its heap passes 1 GB. The port bounds the nodes that the queues of the
 // current branch hold instead. On the corpus files where Zenon runs out of memory, its heap passes
@@ -159,7 +155,7 @@ export const search = (
   context: SearchContext,
   definitions: Definition[],
   hypotheses: Hypothesis[],
-  limits: SearchLimits,
+  limits: Limits,
   statistics: SearchStatistics,
 ): Proof | SearchFailure => {
   const index = context.index;
@@ -248,8 +244,8 @@ export const search = (
   };
 
   for (;;) {
-    if (Date.now() > limits.deadline) return "time limit";
-    if (limits.signal?.aborted === true) return "aborted";
+    const limitFailure = getLimitFailure(limits);
+    if (limitFailure !== undefined) return limitFailure;
     if (queue.insertedCount > MAX_QUEUED_NODES) return "memory limit";
     if (formIndex < forms.length) {
       const entry = forms[formIndex++];
@@ -262,6 +258,7 @@ export const search = (
     const head = getQueueHead(queue);
     const lemma = head === undefined || isGoodLemma(head.rule) ? index.searchLemma() : undefined;
     if (lemma !== undefined) {
+      statistics.reusedProofs.add(lemma);
       const closed = unwind(lemma);
       if (closed !== undefined) return closed;
       const frame = stack[stack.length - 1];

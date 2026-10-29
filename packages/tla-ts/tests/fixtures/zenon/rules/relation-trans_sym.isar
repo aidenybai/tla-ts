@@ -1,0 +1,136 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Hb:"(\\A x:(\\A y:(\\A z:((R(x, y)&R(y, z))=>R(x, z)))))" (is "\\A x : ?z_hp(x)")
+ using trans by blast
+ have z_Ha:"(\\A x:(\\A y:(R(x, y)=>R(y, x))))" (is "\\A x : ?z_ht(x)")
+ using sym by blast
+ have z_Hc:"R(b, a)" (is "?z_hc")
+ using h1 by blast
+ have z_Hd:"R(c, b)" (is "?z_hd")
+ using h2 by blast
+ assume z_He:"(~R(a, c))" (is "~?z_hx")
+ show FALSE
+ proof (rule zenon_em [of "(\\A x:(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))"])
+  assume z_Hy:"(\\A x:(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))" (is "\\A x : ?z_hbd(x)")
+  have z_Hbe: "?z_ht(c)" (is "\\A x : ?z_hbf(x)")
+  by (rule zenon_all_0 [of "?z_ht" "c", OF z_Ha])
+  have z_Hbg: "?z_hbf(a)" (is "?z_hbh=>_")
+  by (rule zenon_all_0 [of "?z_hbf" "a", OF z_Hbe])
+  show FALSE
+  proof (rule zenon_imply [OF z_Hbg])
+   assume z_Hbi:"(~?z_hbh)"
+   show FALSE
+   proof (rule zenon_em [of "((c~=b)&(~?z_hd))"])
+    assume z_Hbj:"((c~=b)&(~?z_hd))" (is "?z_hbk&?z_hbl")
+    have z_Hbl: "?z_hbl"
+    by (rule zenon_and_1 [OF z_Hbj])
+    show FALSE
+    by (rule notE [OF z_Hbl z_Hd])
+   next
+    assume z_Hbm:"(~((c~=b)&(~?z_hd)))" (is "~(?z_hbk&?z_hbl)")
+    show FALSE
+    proof (rule notE [OF z_Hbi])
+     have z_Hbn: "(b=c)"
+     proof (rule zenon_nnpp [of "(b=c)"])
+      assume z_Hbo:"(b~=c)"
+      show FALSE
+      proof (rule zenon_notand [OF z_Hbm])
+       assume z_Hbp:"(~?z_hbk)" (is "~~?z_hbq")
+       have z_Hbq: "?z_hbq"
+       by (rule zenon_notnot_0 [OF z_Hbp])
+       show FALSE
+       proof (rule zenon_em [of "(c=c)"])
+        assume z_Hbr:"(c=c)"
+        show FALSE
+        proof (rule notE [OF z_Hbo])
+         have z_Hbn: "(b=c)"
+         by (rule subst [where P="(\<lambda>zenon_Vk. (zenon_Vk=c))", OF z_Hbq], fact z_Hbr)
+         thus "(b=c)" .
+        qed
+       next
+        assume z_Hbv:"(c~=c)"
+        show FALSE
+        by (rule zenon_noteq [OF z_Hbv])
+       qed
+      next
+       assume z_Hbw:"(~?z_hbl)"
+       have z_Hd: "?z_hd"
+       by (rule zenon_notnot_0 [OF z_Hbw])
+       have z_Hbx: "?z_hbd(c)" (is "\\A x : ?z_hby(x)")
+       by (rule zenon_all_0 [of "?z_hbd" "c", OF z_Hy])
+       have z_Hbz: "?z_hby(b)" (is "\\A x : ?z_hca(x)")
+       by (rule zenon_all_0 [of "?z_hby" "b", OF z_Hbx])
+       have z_Hcb: "?z_hca(a)" (is "_=>?z_hcc")
+       by (rule zenon_all_0 [of "?z_hca" "a", OF z_Hbz])
+       show FALSE
+       proof (rule zenon_imply [OF z_Hcb])
+        assume z_Hbl:"?z_hbl"
+        show FALSE
+        by (rule notE [OF z_Hbl z_Hd])
+       next
+        assume z_Hcc:"?z_hcc"
+        show FALSE
+        proof (rule zenon_imply [OF z_Hcc])
+         assume z_Hcd:"(~?z_hc)"
+         show FALSE
+         by (rule notE [OF z_Hcd z_Hc])
+        next
+         assume z_Hbh:"?z_hbh"
+         show FALSE
+         by (rule notE [OF z_Hbi z_Hbh])
+        qed
+       qed
+      qed
+     qed
+     have z_Hbh: "?z_hbh"
+     by (rule subst [where P="(\<lambda>zenon_Vh. R(zenon_Vh, a))", OF z_Hbn], fact z_Hc)
+     thus "?z_hbh" .
+    qed
+   qed
+  next
+   assume z_Hx:"?z_hx"
+   show FALSE
+   by (rule notE [OF z_He z_Hx])
+  qed
+ next
+  assume z_Hch:"(~(\\A x:(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z)))))))" (is "~(\\A x : ?z_hbd(x))")
+  have z_Hci: "~?z_hbd((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))))" (is "~(\\A x : ?z_hcl(x))")
+  by (rule zenon_notall_choose_0 [of "?z_hbd", OF z_Hch])
+  have z_Hcm: "~?z_hcl((CHOOSE y:(~(\\A z:(R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), y)=>(R(y, z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z)))))))" (is "~(\\A x : ?z_hcu(x))")
+  by (rule zenon_notall_choose_0 [of "?z_hcl", OF z_Hci])
+  have z_Hcv: "~?z_hcu((CHOOSE z:(~(R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), (CHOOSE y:(~(\\A z:(R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), y)=>(R(y, z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z)))))))=>(R((CHOOSE y:(~(\\A z:(R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), y)=>(R(y, z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z)))))), z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z))))))" (is "~(?z_hcz=>?z_hdc)")
+  by (rule zenon_notall_choose_0 [of "?z_hcu", OF z_Hcm])
+  have z_Hcz: "?z_hcz"
+  by (rule zenon_notimply_0 [OF z_Hcv])
+  have z_Hde: "R((CHOOSE y:(~(\\A z:(R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), y)=>(R(y, z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z)))))), (CHOOSE z:(~(?z_hcz=>(R((CHOOSE y:(~(\\A z:(R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), y)=>(R(y, z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z)))))), z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z))))))" (is "?z_hde")
+  by (rule zenon_notimply_0 [OF z_Hdd])
+  have z_Hdf: "(~R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), (CHOOSE z:(~(?z_hcz=>(R((CHOOSE y:(~(\\A z:(R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), y)=>(R(y, z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z)))))), z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z)))))))" (is "~?z_hdg")
+  by (rule zenon_notimply_1 [OF z_Hdd])
+  have z_Hdh: "?z_hp((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))))" (is "\\A x : ?z_hdi(x)")
+  by (rule zenon_all_0 [of "?z_hp" "(CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z)))))))", OF z_Hb])
+  have z_Hdj: "?z_hdi((CHOOSE y:(~(\\A z:(R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), y)=>(R(y, z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z)))))))" (is "\\A x : ?z_hdk(x)")
+  by (rule zenon_all_0 [of "?z_hdi" "(CHOOSE y:(~(\\A z:(R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), y)=>(R(y, z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z))))))", OF z_Hdh])
+  have z_Hdl: "?z_hdk((CHOOSE z:(~(?z_hcz=>(R((CHOOSE y:(~(\\A z:(R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), y)=>(R(y, z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z)))))), z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z))))))" (is "?z_hdm=>_")
+  by (rule zenon_all_0 [of "?z_hdk" "(CHOOSE z:(~(?z_hcz=>(R((CHOOSE y:(~(\\A z:(R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), y)=>(R(y, z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z)))))), z)=>R((CHOOSE x:(~(\\A y:(\\A z:(R(x, y)=>(R(y, z)=>R(x, z))))))), z)))))", OF z_Hdj])
+  show FALSE
+  proof (rule zenon_imply [OF z_Hdl])
+   assume z_Hdn:"(~?z_hdm)"
+   show FALSE
+   proof (rule zenon_notand [OF z_Hdn])
+    assume z_Hdo:"(~?z_hcz)"
+    show FALSE
+    by (rule notE [OF z_Hdo z_Hcz])
+   next
+    assume z_Hdp:"(~?z_hde)"
+    show FALSE
+    by (rule notE [OF z_Hdp z_Hde])
+   qed
+  next
+   assume z_Hdg:"?z_hdg"
+   show FALSE
+   by (rule notE [OF z_Hdf z_Hdg])
+  qed
+ qed
+qed
+(* END-PROOF *)

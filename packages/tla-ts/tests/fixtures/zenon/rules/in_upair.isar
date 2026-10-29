@@ -1,0 +1,22 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Ha:"(a \\in upair(b, c))" (is "?z_ha")
+ using h by blast
+ assume z_Hb:"(~((a=b)|(a=c)))" (is "~(?z_hh|?z_hi)")
+ have z_Hj: "(a~=b)"
+ by (rule zenon_notor_0 [OF z_Hb])
+ have z_Hk: "(a~=c)"
+ by (rule zenon_notor_1 [OF z_Hb])
+ show FALSE
+ proof (rule zenon_in_upair [of "a" "b" "c", OF z_Ha])
+  assume z_Hh:"?z_hh"
+  show FALSE
+  by (rule notE [OF z_Hj z_Hh])
+ next
+  assume z_Hi:"?z_hi"
+  show FALSE
+  by (rule notE [OF z_Hk z_Hi])
+ qed
+qed
+(* END-PROOF *)

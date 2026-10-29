@@ -20,6 +20,93 @@ const fixtures = Object.entries(statistics).map((entry) => ({
   text: readFileSync(join(FIXTURES, entry[0]), "utf8"),
 }));
 
+// tlapm runs Zenon with -oisar and writes the Isar proof it prints into the module's .thy file. An
+// .isar file holds what tlapm's Zenon printed for the proved fixture beside it.
+const isarFixtures = fixtures
+  .filter((fixture) => !fixture.path.startsWith("unknown/"))
+  .map((fixture) => ({
+    ...fixture,
+    isar: readFileSync(join(FIXTURES, fixture.path.replace(/\.znn$/, ".isar")), "utf8"),
+  }));
+
+// Zenon shares alpha-equivalent formulas through a weak hash table, so a formula takes the names of
+// an older equal formula until OCaml's garbage collector frees that one. On these fixtures the
+// binary's names depend on when it collected garbage, so only the names differ.
+const COLLECTOR_NAMED = new Set([
+  "proved/AtomicBakeryWithoutSMT-116.znn",
+  "proved/AtomicBakeryWithoutSMT-414.znn",
+  "proved/FiniteSetTheorems_proofs-138.znn",
+]);
+
+const TOKEN = /z_[Hh][a-z]+(?=_z_[Hh]|[^\w']|$)|_(?=z_[Hh])|[A-Za-z_][\w']*|\s+|./gs;
+const LABEL = /^z_([Hh])([a-z]+)$/;
+const NAME = /^[A-Za-z_][\w']*$/;
+const BINDERS = ["\\<lambda>", "\\\\A ", "\\\\E ", "CHOOSE ", "!!"];
+
+interface Scope {
+  left: string;
+  right: string;
+  depth: number;
+}
+
+// Whether two Isar proofs agree up to alpha-equivalence and a renaming of names. A bound variable
+// pairs with the one at the same binder in the other proof, until the parenthesis around the binder
+// or the quote that ends its pattern. Fresh zenon_V variables outside any binder, and the z_H and
+// ?z_h labels that number formulas, pair through one bijection each, in order of first appearance.
+// Every other token matches byte for byte.
+const isEqualUpToRenaming = (left: string, right: string) => {
+  const leftTokens = left.match(TOKEN) ?? [];
+  const rightTokens = right.match(TOKEN) ?? [];
+  if (leftTokens.length !== rightTokens.length) return false;
+  const bijections = new Map<string, [Map<string, string>, Map<string, string>]>();
+  const isPaired = (kind: string, from: string, to: string) => {
+    const maps = bijections.get(kind) ?? [new Map<string, string>(), new Map<string, string>()];
+    bijections.set(kind, maps);
+    if (!maps[0].has(from) && !maps[1].has(to)) {
+      maps[0].set(from, to);
+      maps[1].set(to, from);
+    }
+    return maps[0].get(from) === to && maps[1].get(to) === from;
+  };
+  const isBinder = (tokens: string[], position: number) =>
+    BINDERS.some((binder) =>
+      tokens
+        .slice(Math.max(0, position - 4), position)
+        .join("")
+        .endsWith(binder),
+    );
+  const scopes: Scope[] = [];
+  let depth = 0;
+  return leftTokens.every((leftToken, position) => {
+    const rightToken = rightTokens[position];
+    const leftLabel = LABEL.exec(leftToken);
+    const rightLabel = LABEL.exec(rightToken);
+    const isMatch = (() => {
+      if (leftLabel !== null && rightLabel !== null)
+        return leftLabel[1] === rightLabel[1] && isPaired("label", leftLabel[2], rightLabel[2]);
+      if (!NAME.test(leftToken) || !NAME.test(rightToken)) return leftToken === rightToken;
+      if (isBinder(leftTokens, position) && isBinder(rightTokens, position)) {
+        scopes.push({ left: leftToken, right: rightToken, depth });
+        return true;
+      }
+      const leftScope = scopes.findLast((scope) => scope.left === leftToken);
+      const rightScope = scopes.findLast((scope) => scope.right === rightToken);
+      if (leftScope !== undefined || rightScope !== undefined) return leftScope === rightScope;
+      return leftToken.startsWith("zenon_V") && rightToken.startsWith("zenon_V")
+        ? isPaired("fresh", leftToken, rightToken)
+        : leftToken === rightToken;
+    })();
+    depth += leftToken === "(" ? 1 : leftToken === ")" ? -1 : 0;
+    while (
+      scopes.length > 0 &&
+      (scopes[scopes.length - 1].depth > depth ||
+        (leftToken === '"' && scopes[scopes.length - 1].depth === depth))
+    )
+      scopes.pop();
+    return isMatch;
+  });
+};
+
 // tlapm gives Zenon 10 s. The fixtures take a fraction of that, so a slow machine doesn't change
 // their verdicts.
 const TIME_LIMIT_MS = 60_000;
@@ -30,10 +117,36 @@ describe("Zenon agrees with tlapm's Zenon", () => {
     expect({ nodesSearched: run.nodesSearched, proofNodes: run.proofNodes }).toEqual(
       fixture.expected,
     );
-    expect(decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS })).toBe(
+    expect(decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS }).verdict).toBe(
       fixture.path.startsWith("unknown/") ? "unknown" : "unsat",
     );
     if (fixture.path.startsWith("unknown/")) expect(run.failure).toBe("exhausted");
+  });
+
+  it.each(isarFixtures.filter((fixture) => !COLLECTOR_NAMED.has(fixture.path)))(
+    "prints the proof of $path that tlapm writes",
+    (fixture) => {
+      expect(decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS })).toEqual({
+        verdict: "unsat",
+        proof: fixture.isar,
+      });
+    },
+  );
+
+  it.each(isarFixtures.filter((fixture) => COLLECTOR_NAMED.has(fixture.path)))(
+    "prints the proof of $path that tlapm writes, up to the names of variables",
+    (fixture) => {
+      const decision = decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS });
+      const proof = decision.verdict === "unsat" ? decision.proof : "";
+      expect(proof).not.toBe(fixture.isar);
+      expect(isEqualUpToRenaming(proof, fixture.isar)).toBe(true);
+    },
+  );
+
+  it("tells proofs apart beyond the names of variables", () => {
+    const isar = isarFixtures[0].isar;
+    expect(isEqualUpToRenaming(isar, isar.replace("z_Ha", "z_Hb"))).toBe(false);
+    expect(isEqualUpToRenaming(isar, isar.replace("FALSE", "TRUE"))).toBe(false);
   });
 
   // The search takes seconds, so the test may run as long as the search's own time limit.
@@ -80,7 +193,7 @@ const FALSE_GOALS = {
 
 describe("Zenon finds no proof of a false goal", () => {
   it.each(Object.entries(FALSE_GOALS))("%s", (_, text) => {
-    expect(decideZenon(text, { timeLimitMs: 1000 })).toBe("unknown");
+    expect(decideZenon(text, { timeLimitMs: 1000 }).verdict).toBe("unknown");
   });
 
   it("rejects the proof that Zenon's not_subseteq_cap rule gives", () => {
@@ -89,8 +202,8 @@ describe("Zenon finds no proof of a false goal", () => {
     const text = '$hyp "h" (TLA.subseteq a c)\n$goal (TLA.subseteq a (TLA.cap b c))';
     const run = runZenon(text, { timeLimitMs: TIME_LIMIT_MS });
     expect(run.proof).toBeDefined();
-    expect(run.isChecked).toBe(false);
-    expect(decideZenon(text, { timeLimitMs: TIME_LIMIT_MS })).toBe("unknown");
+    expect(run.isar).toBeUndefined();
+    expect(decideZenon(text, { timeLimitMs: TIME_LIMIT_MS }).verdict).toBe("unknown");
   });
 });
 
@@ -115,6 +228,7 @@ describe("Zenon's input", () => {
 });
 
 describe("the proof checker", () => {
+  const UNLIMITED = { deadline: Infinity, signal: undefined };
   const exprs = createExpressions();
   const first = exprs.evar("p");
   const second = exprs.evar("q");
@@ -134,26 +248,38 @@ describe("the proof checker", () => {
 
   it("accepts a closure on a formula and its negation", () => {
     const hypotheses = [first, exprs.enot(first)];
-    expect(checkProof(getClosure(first), { hypotheses, definitions: [] })).toBe(true);
+    expect(checkProof(getClosure(first), { hypotheses, definitions: [] }, UNLIMITED)).toBe(true);
+  });
+
+  // tlapm kills Zenon at its deadline, so a proof that the checker hasn't accepted by then doesn't
+  // count.
+  it("stops at the deadline or once the signal aborts", () => {
+    const context = { hypotheses: [first, exprs.enot(first)], definitions: [] };
+    const passed = { deadline: Date.now() - 1, signal: undefined };
+    const aborted = { deadline: Infinity, signal: AbortSignal.abort() };
+    expect(checkProof(getClosure(first), context, passed)).toBe(false);
+    expect(checkProof(getClosure(first), context, aborted)).toBe(false);
   });
 
   it("rejects a closure without the negation", () => {
-    expect(checkProof(getClosure(first), { hypotheses: [first], definitions: [] })).toBe(false);
+    expect(checkProof(getClosure(first), { hypotheses: [first], definitions: [] }, UNLIMITED)).toBe(
+      false,
+    );
   });
 
   it("accepts a conjunction split into its conjuncts", () => {
     const hypotheses = [conjunction, exprs.enot(first)];
-    expect(checkProof(getSplit("and"), { hypotheses, definitions: [] })).toBe(true);
+    expect(checkProof(getSplit("and"), { hypotheses, definitions: [] }, UNLIMITED)).toBe(true);
   });
 
   it("rejects a rule whose premise isn't a hypothesis", () => {
     const hypotheses = [exprs.eand(second, first), exprs.enot(first)];
-    expect(checkProof(getSplit("and"), { hypotheses, definitions: [] })).toBe(false);
+    expect(checkProof(getSplit("and"), { hypotheses, definitions: [] }, UNLIMITED)).toBe(false);
   });
 
   it("rejects a disjunction rule on a conjunction", () => {
     const hypotheses = [conjunction, exprs.enot(first)];
-    expect(checkProof(getSplit("or"), { hypotheses, definitions: [] })).toBe(false);
+    expect(checkProof(getSplit("or"), { hypotheses, definitions: [] }, UNLIMITED)).toBe(false);
   });
 
   describe("on a relation other than =", () => {
@@ -182,12 +308,12 @@ describe("the proof checker", () => {
 
     it("accepts a symmetric closure when a hypothesis makes the relation symmetric", () => {
       const hypotheses = [getSymmetry("R"), ...relates];
-      expect(checkProof(swapped, { hypotheses, definitions: [] })).toBe(true);
+      expect(checkProof(swapped, { hypotheses, definitions: [] }, UNLIMITED)).toBe(true);
     });
 
     it("rejects a symmetric closure without that hypothesis", () => {
       const hypotheses = [getSymmetry("S"), ...relates];
-      expect(checkProof(swapped, { hypotheses, definitions: [] })).toBe(false);
+      expect(checkProof(swapped, { hypotheses, definitions: [] }, UNLIMITED)).toBe(false);
     });
   });
 });
