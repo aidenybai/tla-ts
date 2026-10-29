@@ -219,7 +219,7 @@ interface Instantiation {
   variables: Set<string>;
   getDefinition: (key: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
-  addDefinition: (name: string, create: (key: string) => Definition) => string;
+  addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
   createName: (name: string) => string;
 }
 
@@ -640,7 +640,7 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
   const instantiation = rewrite.instantiation;
   const definition = instantiation.getDefinition(key);
   if (!definition) return key;
-  return instantiation.addDefinition(definition.name, (copyKey) => {
+  return instantiation.addDefinition(key, definition.name, (copyKey) => {
     rewrite.copies.set(key, copyKey);
     const rename = createRenamer(rewrite);
     const mapped = renameParams(
@@ -679,7 +679,7 @@ export const createInstantiation = (instantiation: Instantiation) => {
       if (copy !== undefined) return copy;
       const definition = instantiation.getDefinition(key);
       if (!definition) return key;
-      return instantiation.addDefinition(definition.name, () =>
+      return instantiation.addDefinition(key, definition.name, () =>
         withInstanceParams(definition, instantiation.params, definition.location),
       );
     },
