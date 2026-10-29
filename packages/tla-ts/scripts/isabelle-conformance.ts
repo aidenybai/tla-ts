@@ -12,8 +12,9 @@ import {
 // Isabelle's. An unsound answer proves what Isabelle couldn't.
 //
 // tlapm's limit is 30 s of wall-clock time, which a loaded machine stretches. So each theory runs
-// with ten times that, and its result counts twice: within the limit by wall-clock time, as tlapm
-// would see it here, and within the limit by CPU time, an estimate of a run on an idle core.
+// until it has used 30 s of both wall-clock and CPU time, and its result counts twice: within the
+// limit by wall-clock time, as tlapm would see it here, and within the limit by CPU time, an
+// estimate of a run on an idle core.
 type Outcome = "match" | "unsound" | "missed" | "missing" | "stale";
 
 interface Result {
@@ -46,10 +47,24 @@ const results = modules
       if (getIsabelleDigest(text) !== record.input) return skipped("stale");
       const started = performance.now();
       const startedCpu = process.cpuUsage();
-      const verdict = decideIsabelle(text, { timeLimitMs: 10 * TIME_LIMIT_MS });
-      const cpu = process.cpuUsage(startedCpu);
+      const getCpuMilliseconds = () => {
+        const cpu = process.cpuUsage(startedCpu);
+        return Math.round((cpu.user + cpu.system) / 1000);
+      };
+      // HACK: decideIsabelle runs synchronously, so no timer can abort it once the CPU time runs
+      // out. Its interrupt checks read signal.aborted, which this getter answers instead. It reads
+      // the CPU time on every 4096th check only, because each read is a system call.
+      const signal = new AbortController().signal;
+      let checks = 0;
+      Object.defineProperty(signal, "aborted", {
+        get: () =>
+          performance.now() - started > TIME_LIMIT_MS &&
+          checks++ % 4096 === 0 &&
+          getCpuMilliseconds() > TIME_LIMIT_MS,
+      });
+      const verdict = decideIsabelle(text, { timeLimitMs: 100 * TIME_LIMIT_MS, signal });
       const wallMilliseconds = Math.round(performance.now() - started);
-      const cpuMilliseconds = Math.round((cpu.user + cpu.system) / 1000);
+      const cpuMilliseconds = getCpuMilliseconds();
       const classify = (milliseconds: number): Outcome => {
         if (verdict === "unsat" && record.verdict !== "unsat") return "unsound";
         const within = verdict === "unsat" && milliseconds <= TIME_LIMIT_MS ? "unsat" : "unknown";
