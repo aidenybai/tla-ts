@@ -24,7 +24,7 @@ import {
 } from "./ast";
 import { FC_CONTINUE, FC_DONE, FC_GIVEUP, type Context } from "./context";
 import { L_UNDEF } from "./lbool";
-import { BoolVar, getVar, Literal, mkLiteral, negate } from "./literal";
+import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate } from "./literal";
 import { Enode, TheoryJustification } from "./enode";
 import type { ProtoModel } from "./proto-model";
 import { Rational, getGcd } from "./rational";
@@ -522,97 +522,138 @@ export class TheoryLra {
     const op = manager.getOp(expr);
     if (op !== OP_IDIV && op !== OP_MOD) return;
     const args = manager.args[expr];
-    if (manager.isNumeral(args[1]) && manager.values[args[1]] === 0) return;
     const key = `${args[0]}:${args[1]}`;
     if (this.processedDivMods.has(key)) return;
     this.processedDivMods.add(key);
     this.context.pushTrail(() => this.processedDivMods.delete(key));
-    if (manager.isNumeral(args[1])) this.mkDivModAxioms(args[0], args[1]);
-    else this.mkVariableDivModAxioms(args[0], args[1]);
+    this.mkIdivModAxioms(args[0], args[1]);
   }
 
-  private internalizeLiteral(atom: number) {
-    this.context.internalize(atom, true);
-    return this.context.getLiteral(atom);
-  }
-
-  // mk_idiv_mod_axioms for a divisor q that is not a numeral:
-  //   q = 0 or p = q * (div p q) + (mod p q)
-  //   q = 0 or (mod p q) >= 0
-  //   q <= 0 or (mod p q) - q <= -1
-  //   q >= 0 or (mod p q) + q <= -1
-  //   q = 0 or p - q * (div p q) >= 0
-  private mkVariableDivModAxioms(dividend: number, divisor: number) {
-    const manager = this.manager;
+  // mk_literal.
+  private mkLiteral(atom: number) {
     const context = this.context;
-    const rewriter = context.rewriter;
-    const quotient = manager.mkApp(OP_IDIV, [dividend, divisor], SORT_INT);
-    const remainder = manager.mkApp(OP_MOD, [dividend, divisor], SORT_INT);
-    const zero = manager.mkNumeral(0);
-    const minusOne = manager.mkNumeral(-1);
-    const product = manager.mkApp(OP_MUL, [divisor, quotient], SORT_INT);
-    const isZero = this.internalizeLiteral(manager.mkEq(divisor, zero));
-    const sum = manager.mkApp(OP_ADD, [product, remainder], SORT_INT);
-    context.mkThAxiom([isZero, this.internalizeLiteral(manager.mkEq(sum, dividend))]);
-    context.mkThAxiom([
-      isZero,
-      this.internalizeLiteral(manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL)),
-    ]);
-    const lowerBound = manager.mkApp(
-      OP_ADD,
-      [remainder, manager.mkApp(OP_MUL, [minusOne, divisor], SORT_INT)],
-      SORT_INT,
+    if (!context.isEInternalized(atom)) context.internalize(atom, false);
+    return context.getLiteral(atom);
+  }
+
+  // ensure_enode: the relevant enode of a term.
+  private ensureEnode(expr: number) {
+    const context = this.context;
+    if (!context.isEInternalized(expr)) context.internalize(expr, false);
+    context.markAsRelevant(expr);
+    const node = context.getEnode(expr);
+    if (node === undefined) throw new Error("the term was not internalized");
+    return node;
+  }
+
+  // mk_axiom: a theory axiom whose literals are relevant. Of two literals, the second becomes
+  // relevant only once the first is false.
+  private mkAxiom(literals: Literal[]) {
+    const context = this.context;
+    context.mkThAxiom(literals);
+    if (!context.relevancy.isEnabled) return;
+    if (literals.length !== 2) {
+      for (const literal of literals) context.markLiteralAsRelevant(literal);
+      return;
+    }
+    context.markLiteralAsRelevant(literals[0]);
+    const consequent = context.boolVar2Expr[getVar(literals[1])];
+    context.relevancy.addWatch(
+      context.boolVar2Expr[getVar(literals[0])],
+      isNegated(literals[0]),
+      () => context.markAsRelevant(consequent),
     );
-    context.mkThAxiom([
-      this.internalizeLiteral(manager.mkApp(OP_LE, [divisor, zero], SORT_BOOL)),
-      this.internalizeLiteral(manager.mkApp(OP_LE, [lowerBound, minusOne], SORT_BOOL)),
-    ]);
-    context.mkThAxiom([
-      this.internalizeLiteral(manager.mkApp(OP_GE, [divisor, zero], SORT_BOOL)),
-      this.internalizeLiteral(
-        manager.mkApp(
-          OP_LE,
-          [manager.mkApp(OP_ADD, [remainder, divisor], SORT_INT), minusOne],
-          SORT_BOOL,
-        ),
-      ),
-    ]);
-    const difference = manager.mkApp(OP_SUB, [dividend, product], SORT_INT);
-    context.mkThAxiom([
-      isZero,
-      this.internalizeLiteral(
-        rewriter.rewrite(manager.mkApp(OP_GE, [difference, zero], SORT_BOOL)),
-      ),
-    ]);
   }
 
-  // mk_idiv_mod_axioms for a numeral divisor k: k * (div p k) + (mod p k) = p, 0 <= mod < |k|.
-  private mkDivModAxioms(dividend: number, divisor: number) {
+  // mk_idiv_mod_axioms: q * (div p q) + (mod p q) = p and 0 <= (mod p q) < |q| when q is not 0.
+  private mkIdivModAxioms(dividend: number, divisor: number) {
     const manager = this.manager;
     const context = this.context;
-    const divisorValue = manager.values[divisor];
+    if (manager.getNumeral(divisor) === 0) return;
     const quotient = manager.mkApp(OP_IDIV, [dividend, divisor], SORT_INT);
     const remainder = manager.mkApp(OP_MOD, [dividend, divisor], SORT_INT);
     const zero = manager.mkNumeral(0);
+    if (manager.getNumeral(dividend) === 0) {
+      // q != 0 implies div 0 q = 0 and mod 0 q = 0.
+      const isDivisorNonnegative = this.mkLiteral(manager.mkApp(OP_GE, [divisor, zero], SORT_BOOL));
+      const isDivisorNonpositive = this.mkLiteral(manager.mkApp(OP_LE, [divisor, zero], SORT_BOOL));
+      const consequents = [
+        manager.mkApp(OP_GE, [quotient, zero], SORT_BOOL),
+        manager.mkApp(OP_LE, [quotient, zero], SORT_BOOL),
+        manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL),
+        manager.mkApp(OP_LE, [remainder, zero], SORT_BOOL),
+      ].map((atom) => this.mkLiteral(atom));
+      for (const antecedent of [isDivisorNonnegative, isDivisorNonpositive])
+        for (const consequent of consequents) this.mkAxiom([antecedent, consequent]);
+      return;
+    }
     const combination = manager.mkApp(
       OP_ADD,
-      [
-        manager.mkApp(OP_MUL, [divisor, quotient], SORT_INT),
-        remainder,
-        manager.mkApp(OP_MUL, [manager.mkNumeral(-1), dividend], SORT_INT),
-      ],
+      [manager.mkApp(OP_MUL, [divisor, quotient], SORT_INT), remainder],
       SORT_INT,
     );
-    const atoms = [
-      manager.mkApp(OP_LE, [combination, zero], SORT_BOOL),
-      manager.mkApp(OP_GE, [combination, zero], SORT_BOOL),
-      manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL),
-      manager.mkApp(OP_LE, [remainder, manager.mkNumeral(Math.abs(divisorValue) - 1)], SORT_BOOL),
-    ];
-    for (const atom of atoms) {
-      context.internalize(atom, true);
-      context.mkThAxiom([context.getLiteral(atom)]);
+    const eqAtom = context.mkEqAtom(combination, dividend);
+    context.internalize(eqAtom, false);
+    const eq = context.getLiteral(eqAtom);
+    const divisorValue = manager.getNumeral(divisor);
+    if (divisorValue !== undefined) {
+      this.mkAxiom([eq]);
+      this.mkEqAxioms(this.ensureEnode(combination), this.ensureEnode(dividend));
+      this.mkAxiom([this.mkLiteral(manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL))]);
+      const upper = manager.mkNumeral(Math.abs(divisorValue) - 1);
+      this.mkAxiom([this.mkLiteral(manager.mkApp(OP_LE, [remainder, upper], SORT_BOOL))]);
+      return;
     }
+    // q = 0 or (mod p q) >= 0, q >= 0 or (mod p q) + q <= -1, and q <= 0 or (mod p q) - q <= -1.
+    const minusOne = manager.mkNumeral(-1);
+    const isZero = this.mkLiteral(manager.mkEq(divisor, zero));
+    const isRemainderNonnegative = this.mkLiteral(
+      manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL),
+    );
+    this.mkAxiom([isZero, eq]);
+    this.mkAxiom([isZero, isRemainderNonnegative]);
+    const isDivisorNonpositive = this.mkLiteral(manager.mkApp(OP_LE, [divisor, zero], SORT_BOOL));
+    const isBelowDivisor = this.mkLiteral(
+      manager.mkApp(
+        OP_LE,
+        [
+          manager.mkApp(
+            OP_ADD,
+            [remainder, manager.mkApp(OP_MUL, [minusOne, divisor], SORT_INT)],
+            SORT_INT,
+          ),
+          minusOne,
+        ],
+        SORT_BOOL,
+      ),
+    );
+    this.mkAxiom([isDivisorNonpositive, isBelowDivisor]);
+    const isDivisorNonnegative = this.mkLiteral(manager.mkApp(OP_GE, [divisor, zero], SORT_BOOL));
+    const isBelowNegatedDivisor = this.mkLiteral(
+      manager.mkApp(
+        OP_LE,
+        [manager.mkApp(OP_ADD, [remainder, divisor], SORT_INT), minusOne],
+        SORT_BOOL,
+      ),
+    );
+    this.mkAxiom([isDivisorNonnegative, isBelowNegatedDivisor]);
+    this.mkEqAxioms(this.ensureEnode(combination), this.ensureEnode(dividend));
+    // q = 0 or q * (div p q) <= p.
+    const isProductBelow = context.rewriter.rewrite(
+      manager.mkApp(
+        OP_GE,
+        [
+          manager.mkApp(
+            OP_SUB,
+            [dividend, manager.mkApp(OP_MUL, [divisor, quotient], SORT_INT)],
+            SORT_INT,
+          ),
+          zero,
+        ],
+        SORT_BOOL,
+      ),
+    );
+    this.mkAxiom([isZero, this.mkLiteral(isProductBelow)]);
   }
 
   canPropagate() {
