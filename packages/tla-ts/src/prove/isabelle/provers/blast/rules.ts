@@ -95,7 +95,7 @@ const convertRule = (state: BlastState, vars: readonly VarRef[], term: BlastTerm
 
 // Like dup_elim, but puts the duplicated major premise first.
 const revDupElim = (rule: Thm) => {
-  const result = seqHead(assumption(2, rsn(rule, 2, revcutRl)));
+  const result = seqHead(assumption(undefined, 2, rsn(rule, 2, revcutRl)));
   if (result === undefined) throw new TlaIsabelleError("ERROR", "rev_dup_elim: Seq.hd");
   return result;
 };

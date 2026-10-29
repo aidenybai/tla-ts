@@ -26,7 +26,7 @@ import {
 } from "./term";
 import { rs, type Thm } from "./thm";
 import { eqThmProp, noTac, type GoalTactic } from "./tactical";
-import type { Limits } from "./tactic";
+import type { Limits } from "./interrupt";
 
 export interface Rrule {
   readonly thm: Thm;

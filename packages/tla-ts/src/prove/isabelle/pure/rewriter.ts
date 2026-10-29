@@ -72,7 +72,8 @@ import {
   type Instantiation,
   type Thm,
 } from "./thm";
-import { checkInterrupt, resolveTac } from "./tactic";
+import { checkInterrupt, type Limits } from "./interrupt";
+import { resolveTac } from "./tactic";
 import { listOfSeq, seqHead, singleSeq, emptySeq, type Seq } from "./seq";
 import { allGoals, eqThm } from "./tactical";
 
@@ -298,17 +299,24 @@ interface PremRules {
 
 // bottomc: bottom-up rewriting with the simpset of the context.
 const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
+  // Isabelle's botc recurses after each rewrite at the top and chains the steps on the way back.
+  // This loops and chains them afterwards, so a simpset that rewrites forever runs into the time
+  // limit rather than out of stack.
   const botc = (skel: Term, context: SimpContext, term: Term): Thm | undefined => {
-    if (skel.kind === "Var") return undefined;
-    const sub = subc(skel, context, term);
-    if (sub !== undefined) {
-      const step = rewritec(prover, maxidx, context, rhsOf(sub));
-      if (step === undefined) return sub;
-      return transitive1(transitive(sub, step.thm), botc(step.skel, context, rhsOf(step.thm)));
+    const steps: Thm[] = [];
+    const chain = (last: Thm | undefined) =>
+      steps.reduceRight<Thm | undefined>((result, thm) => transitive1(thm, result), last);
+    let currentSkel = skel;
+    let current = term;
+    for (;;) {
+      if (currentSkel.kind === "Var") return chain(undefined);
+      const sub = subc(currentSkel, context, current);
+      const step = rewritec(prover, maxidx, context, sub === undefined ? current : rhsOf(sub));
+      if (step === undefined) return chain(sub);
+      steps.push(sub === undefined ? step.thm : transitive(sub, step.thm));
+      currentSkel = step.skel;
+      current = rhsOf(step.thm);
     }
-    const step = rewritec(prover, maxidx, context, term);
-    if (step === undefined) return undefined;
-    return transitive1(step.thm, botc(step.skel, context, rhsOf(step.thm)));
   };
   const tryBotc = (context: SimpContext, term: Term) =>
     botc(SKEL0, context, term) ?? reflexive(term);
@@ -537,9 +545,9 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
 };
 
 // Drule.flexflex_unique
-const flexflexUnique = (thm: Thm): Thm => {
+const flexflexUnique = (limits: Limits, thm: Thm): Thm => {
   if (thm.tpairs.length === 0) return thm;
-  const results = listOfSeq(flexflexRule(thm));
+  const results = listOfSeq(flexflexRule(limits, thm));
   const distinct = results.filter(
     (result, index) => results.findIndex((other) => eqThm(other, result)) === index,
   );
@@ -562,7 +570,7 @@ export const rewriteCterm = (
   const inner = { ...context, simpset: { ...context.simpset, depth: context.simpset.depth + 1 } };
   const wrapped: Prover = (current, thm) => {
     const result = prover(current, thm);
-    return result === undefined ? undefined : flexflexUnique(result);
+    return result === undefined ? undefined : flexflexUnique(context.limits, result);
   };
   return bottomc(mode, wrapped, maxidxOfTerm(term))(inner, term);
 };

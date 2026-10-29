@@ -5,11 +5,27 @@
 
 export type Cell<Item> = readonly [Item, Seq<Item>] | undefined;
 
+type Step<Item> = Cell<Item> | Seq<Item>;
+
 export interface Seq<Item> {
   readonly pull: () => Cell<Item>;
+  readonly step?: () => Step<Item>;
 }
 
 export const makeSeq = <Item>(pull: () => Cell<Item>): Seq<Item> => ({ pull });
+
+// A sequence whose step may hand over to another sequence where Isabelle would pull it in tail
+// position. Pulling follows the hand-overs in a loop, so a long run of empty alternatives, which
+// Poly/ML's growing stack absorbs, doesn't exhaust this one.
+export const deferSeq = <Item>(step: () => Step<Item>): Seq<Item> => ({
+  step,
+  pull: () => {
+    let result = step();
+    while (result !== undefined && "pull" in result)
+      result = result.step === undefined ? result.pull() : result.step();
+    return result;
+  },
+});
 
 export const emptySeq: Seq<never> = makeSeq(() => undefined);
 
@@ -50,9 +66,9 @@ export const listOfSeq = <Item>(seq: Seq<Item>): Item[] => {
 
 export const appendSeq = <Item>(first: Seq<Item>, second: Seq<Item>): Seq<Item> => {
   const copy = (current: Seq<Item>): Seq<Item> =>
-    makeSeq(() => {
+    deferSeq(() => {
       const cell = current.pull();
-      return cell === undefined ? second.pull() : [cell[0], copy(cell[1])];
+      return cell === undefined ? second : [cell[0], copy(cell[1])];
     });
   return copy(first);
 };
@@ -63,17 +79,17 @@ export const mappSeq = <Item, Result>(
   second: Seq<Result>,
 ): Seq<Result> => {
   const copy = (current: Seq<Item>): Seq<Result> =>
-    makeSeq(() => {
+    deferSeq(() => {
       const cell = current.pull();
-      return cell === undefined ? second.pull() : [map(cell[0]), copy(cell[1])];
+      return cell === undefined ? second : [map(cell[0]), copy(cell[1])];
     });
   return copy(first);
 };
 
 export const interleaveSeq = <Item>(first: Seq<Item>, second: Seq<Item>): Seq<Item> =>
-  makeSeq(() => {
+  deferSeq(() => {
     const cell = first.pull();
-    return cell === undefined ? second.pull() : [cell[0], interleaveSeq(second, cell[1])];
+    return cell === undefined ? second : [cell[0], interleaveSeq(second, cell[1])];
   });
 
 export const filterSeq = <Item>(predicate: (item: Item) => boolean, seq: Seq<Item>): Seq<Item> => {
@@ -86,11 +102,7 @@ export const filterSeq = <Item>(predicate: (item: Item) => boolean, seq: Seq<Ite
   return copy(seq);
 };
 
-export const flatSeq = <Item>(seqs: Seq<Seq<Item>>): Seq<Item> =>
-  makeSeq(() => {
-    const cell = seqs.pull();
-    return cell === undefined ? undefined : appendSeq(cell[0], flatSeq(cell[1])).pull();
-  });
+export const flatSeq = <Item>(seqs: Seq<Seq<Item>>): Seq<Item> => mapsSeq((seq) => seq, seqs);
 
 export const mapSeq = <Item, Result>(map: (item: Item) => Result, seq: Seq<Item>): Seq<Result> =>
   makeSeq(() => {
@@ -102,9 +114,9 @@ export const mapsSeq = <Item, Result>(
   map: (item: Item) => Seq<Result>,
   seq: Seq<Item>,
 ): Seq<Result> =>
-  makeSeq(() => {
+  deferSeq(() => {
     const cell = seq.pull();
-    return cell === undefined ? undefined : appendSeq(map(cell[0]), mapsSeq(map, cell[1])).pull();
+    return cell === undefined ? undefined : appendSeq(map(cell[0]), mapsSeq(map, cell[1]));
   });
 
 export const mapFilterSeq = <Item, Result>(
@@ -123,9 +135,9 @@ export const itRightSeq = <Item, Result>(
   tail: Seq<Result>,
 ): Seq<Result> => {
   const its = (current: Seq<Item>): Seq<Result> =>
-    makeSeq(() => {
+    deferSeq(() => {
       const cell = current.pull();
-      return cell === undefined ? tail.pull() : combine(cell[0], its(cell[1])).pull();
+      return cell === undefined ? tail : combine(cell[0], its(cell[1]));
     });
   return its(seq);
 };

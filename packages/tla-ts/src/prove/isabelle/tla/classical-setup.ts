@@ -5,11 +5,11 @@
 import { TlaIsabelleError } from "../../../errors";
 import { emptyNet } from "../pure/net";
 import { thenGoal, type GoalTactic } from "../pure/tactical";
+import type { Limits } from "../pure/interrupt";
 import {
   assumeTac,
   dresolveTac,
   insertTaggedBrl,
-  type Limits,
   type NetPair,
   type TaggedRule,
 } from "../pure/tactic";

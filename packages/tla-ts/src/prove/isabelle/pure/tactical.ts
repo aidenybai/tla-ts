@@ -7,6 +7,7 @@ import {
   appendSeq,
   emptySeq,
   filterSeq,
+  deferSeq,
   makeSeq,
   mapsSeq,
   ofCell,
@@ -40,7 +41,7 @@ export const appendTac =
   (state) =>
     appendSeq(
       first(state),
-      makeSeq(() => second(state).pull()),
+      deferSeq(() => second(state)),
     );
 
 export const thenElse =

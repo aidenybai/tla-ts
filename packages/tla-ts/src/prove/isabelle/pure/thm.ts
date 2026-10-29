@@ -37,6 +37,7 @@ import {
   emptySeq,
   flatSeq,
   itRightSeq,
+  deferSeq,
   makeSeq,
   mappSeq,
   chopSeq,
@@ -66,6 +67,7 @@ import {
   type Typ,
   type Var,
 } from "./term";
+import type { Limits } from "./interrupt";
 import { smashUnifiers, unifiers, type Tpair } from "./unify";
 import { normTermSkip, renameBvars, stripApply, stripAssums2, unifyVarTypes } from "./bicompose";
 
@@ -326,7 +328,7 @@ export const equalElim = (first: Thm, second: Thm): Thm => {
   );
 };
 
-export const flexflexRule = (thm: Thm): Seq<Thm> =>
+export const flexflexRule = (limits: Limits | undefined, thm: Thm): Seq<Thm> =>
   mapSeq(
     (envir: Envir) => {
       if (isEmptyEnvir(envir)) return thm;
@@ -336,7 +338,7 @@ export const flexflexRule = (thm: Thm): Seq<Thm> =>
       const prop = normTerm(envir, thm.prop);
       return makeThm(maxidxTpairs(tpairs, maxidxOfTerm(prop)), thm.hyps, tpairs, prop);
     },
-    smashUnifiers(thm.tpairs, emptyEnvir(thm.maxidx)),
+    smashUnifiers(limits, thm.tpairs, emptyEnvir(thm.maxidx)),
   );
 
 // Thm.generalize: turns the named free variables into schematic ones with the given index.
@@ -501,7 +503,7 @@ export const incrIndexesThm = (increment: number, thm: Thm): Thm => {
 };
 
 // Thm.assumption: solves goal index by any of its assumptions, with unification.
-export const assumption = (index: number, state: Thm): Seq<Thm> => {
+export const assumption = (limits: Limits | undefined, index: number, state: Thm): Seq<Thm> => {
   const parts = destState(state, index);
   const newThm = (unifier: { envir: Envir; tpairs: readonly Tpair[] }): Thm => {
     const envir = unifier.envir;
@@ -526,7 +528,7 @@ export const assumption = (index: number, state: Thm): Seq<Thm> => {
           return mappSeq(
             newThm,
             couldUnify(hyp, problems.conclusion)
-              ? unifiers(emptyEnvir(state.maxidx), [
+              ? unifiers(limits, emptyEnvir(state.maxidx), [
                   [problems.abstract(hyp), conclusion],
                   ...parts.tpairs,
                 ])
@@ -612,6 +614,7 @@ export interface ComposeRule {
 class Compose {}
 
 const bicomposeAux = (
+  limits: Limits | undefined,
   flags: ComposeFlags,
   state: Thm,
   parts: State,
@@ -706,13 +709,13 @@ const bicomposeAux = (
         const asm = problems.hyps[index];
         if (!couldUnify(asm, problems.conclusion)) continue;
         const closed = problems.abstract(asm);
-        const cell = unifiers(envir, [[closed, concl], ...dpairs]).pull();
+        const cell = unifiers(limits, envir, [[closed, concl], ...dpairs]).pull();
         if (cell === undefined) continue;
         const prepared = newAs(rest, index + 1, [bbi, [concl, closed]], cell[0].tpairs);
         return itRightSeq(
           (unifier, tail: Seq<Thm>) => addth(prepared, unifier, tail),
           makeSeq(() => cell),
-          makeSeq(() => tryasms(index + 1).pull()),
+          deferSeq(() => tryasms(index + 1)),
         );
       }
       return emptySeq;
@@ -720,7 +723,7 @@ const bicomposeAux = (
     return tryasms(0);
   };
   const res = (envir: Envir): Seq<Thm> => {
-    const cell = unifiers(envir, dpairs).pull();
+    const cell = unifiers(limits, envir, dpairs).pull();
     if (cell === undefined) return emptySeq;
     const prepared = newAs([...reversedAs].reverse(), 0, [bbi], cell[0].tpairs);
     return itRightSeq(
@@ -735,8 +738,13 @@ const bicomposeAux = (
   return compose.isElim ? eres(envir, [...reversedAs].reverse()) : res(envir);
 };
 
-export const bicompose = (flags: ComposeFlags, compose: ComposeRule, index: number, state: Thm) =>
-  bicomposeAux(flags, state, destState(state, index), false, compose);
+export const bicompose = (
+  limits: Limits | undefined,
+  flags: ComposeFlags,
+  compose: ComposeRule,
+  index: number,
+  state: Thm,
+) => bicomposeAux(limits, flags, state, destState(state, index), false, compose);
 
 export const couldBires = (hyps: readonly Term[], goal: Term, isElim: boolean, rule: Thm) => {
   if (!couldUnify(conclOf(rule), goal)) return false;
@@ -753,6 +761,7 @@ export interface BiresRule {
 // Thm.biresolution: resolves goal index with each rule, the elimination rules also solving their
 // first premise by an assumption.
 export const biresolution = (
+  limits: Limits | undefined,
   match: boolean,
   rules: readonly BiresRule[],
   index: number,
@@ -766,7 +775,7 @@ export const biresolution = (
       const brule = rules[current];
       if (!couldBires(hyps, goal, brule.isElim, brule.rule)) continue;
       return makeSeq(() => [
-        bicomposeAux({ flatten: true, match, incremented: true }, state, parts, true, {
+        bicomposeAux(limits, { flatten: true, match, incremented: true }, state, parts, true, {
           isElim: brule.isElim,
           rule: liftRule(parts.goal, state.maxidx, brule.rule),
           subgoals: nprems(brule.rule),
@@ -781,7 +790,10 @@ export const biresolution = (
 
 // Thm.RSN: resolution that must produce exactly one resolvent.
 export const rsn = (rule: Thm, index: number, state: Thm): Thm => {
-  const [results] = chopSeq(2, biresolution(false, [{ isElim: false, rule }], index, state));
+  const [results] = chopSeq(
+    2,
+    biresolution(undefined, false, [{ isElim: false, rule }], index, state),
+  );
   if (results.length === 0) throw new TlaIsabelleError("THM", `RSN: no unifiers ${index}`);
   if (results.length > 1) throw new TlaIsabelleError("THM", `RSN: multiple unifiers ${index}`);
   return results[0];

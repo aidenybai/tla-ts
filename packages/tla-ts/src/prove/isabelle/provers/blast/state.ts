@@ -6,7 +6,7 @@
 
 import { bumpInit, bumpString } from "../../pure/name";
 import type { GoalTactic } from "../../pure/tactical";
-import type { Limits } from "../../pure/tactic";
+import type { Limits } from "../../pure/interrupt";
 import type { Thm } from "../../pure/thm";
 import type { Claset } from "../classical";
 import { blastAconv, varOccur, wkNorm, type BlastTerm, type ConstType, type VarRef } from "./term";

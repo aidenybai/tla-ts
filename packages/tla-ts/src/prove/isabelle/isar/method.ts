@@ -12,14 +12,8 @@ import { genericRewriteGoalTac } from "../pure/rewriter";
 import { filterSeq, mapsSeq, singleSeq, type Seq } from "../pure/seq";
 import { atomizePremsTac } from "../pure/object-logic";
 import { normHhf } from "../pure/simplifier";
-import {
-  assumeTac,
-  eresolveTac,
-  flexflexTac,
-  matchTac,
-  resolveTac,
-  type Limits,
-} from "../pure/tactic";
+import type { Limits } from "../pure/interrupt";
+import { assumeTac, eresolveTac, flexflexTac, matchTac, resolveTac } from "../pure/tactic";
 import {
   allGoals,
   appendGoal,
@@ -360,7 +354,8 @@ export const terminalProof = (
 ): Seq<Thm> => {
   const initial = evaluate(context, text.initial);
   const terminal = text.terminal === undefined ? undefined : evaluate(context, text.terminal);
-  const finish: Tactic = (result) => mapsSeq(flexflexTac, allAssmTac(context.limits)(1)(result));
+  const finish: Tactic = (result) =>
+    mapsSeq(flexflexTac(context.limits), allAssmTac(context.limits)(1)(result));
   return filterSeq(
     (result) => nprems(result) === 0,
     mapsSeq(

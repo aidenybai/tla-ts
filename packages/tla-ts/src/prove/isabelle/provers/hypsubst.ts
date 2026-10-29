@@ -25,14 +25,8 @@ import {
   type GoalTactic,
   type Tactic,
 } from "../pure/tactical";
-import {
-  composeTac,
-  ematchTac,
-  eresolveTac,
-  resolveTac,
-  rotateTac,
-  type Limits,
-} from "../pure/tactic";
+import type { Limits } from "../pure/interrupt";
+import { composeTac, ematchTac, eresolveTac, resolveTac, rotateTac } from "../pure/tactic";
 import {
   abstractOver,
   binderTypes,
@@ -330,7 +324,12 @@ const instSubstTac = (context: HypsubstContext, isLeft: boolean, rule: Thm): Goa
       ],
       instantiateTypes(tyenv, lifted),
     );
-    return composeTac(true, compIncr(instantiated, asmRl), premsOf(rule).length)(index)(state);
+    return composeTac(
+      context.limits,
+      true,
+      compIncr(instantiated, asmRl),
+      premsOf(rule).length,
+    )(index)(state);
   });
 
 const varsGenHypSubstTac = (context: HypsubstContext, isBound: boolean): GoalTactic =>
@@ -355,7 +354,7 @@ const varsGenHypSubstTac = (context: HypsubstContext, isBound: boolean): GoalTac
   });
 
 const revDupElim = (thm: Thm) => {
-  const result = listOfSeq(assumption(2, rsn(thm, 2, revcutRl)))[0];
+  const result = listOfSeq(assumption(undefined, 2, rsn(thm, 2, revcutRl)))[0];
   if (result === undefined) throw new TlaIsabelleError("THM", "rev_dup_elim");
   return result;
 };

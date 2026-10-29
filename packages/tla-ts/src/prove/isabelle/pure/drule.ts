@@ -231,6 +231,7 @@ export const makeElim = (rule: Thm) => zeroVarIndexes(rs(rule, revcutRl));
 export const compose = (tha: Thm, index: number, thb: Thm): Thm => {
   const results = listOfSeq(
     bicompose(
+      undefined,
       { flatten: true, match: false, incremented: true },
       { isElim: false, rule: tha, subgoals: 0 },
       index,
@@ -251,6 +252,7 @@ export const compIncr = (tha: Thm, thb: Thm) =>
 export const compNoFlatten = (thm: Thm, count: number, index: number, rule: Thm): Thm => {
   const results = listOfSeq(
     bicompose(
+      undefined,
       { flatten: false, match: false, incremented: true },
       { isElim: false, rule: thm, subgoals: count },
       index,

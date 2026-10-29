@@ -33,6 +33,7 @@ import {
   type GoalTactic,
   type Tactic,
 } from "../pure/tactical";
+import type { Limits } from "../pure/interrupt";
 import {
   assumeTac,
   biresolutionFromNetsTac,
@@ -44,7 +45,6 @@ import {
   insertTaggedBrl,
   orderTagged,
   subgoalsOfBrl,
-  type Limits,
   type NetPair,
   type TaggedRule,
 } from "../pure/tactic";
@@ -137,7 +137,9 @@ const classicalRule = (data: ClassicalData, rule: Thm, limits: Limits): Thm => {
 
 // swapify: the rules that eliminate ~A from the rules that introduce A.
 const swapify = (data: ClassicalData, rules: readonly Thm[]) =>
-  rules.flatMap((rule) => listOfSeq(biresolution(false, [{ isElim: false, rule }], 2, data.swap)));
+  rules.flatMap((rule) =>
+    listOfSeq(biresolution(undefined, false, [{ isElim: false, rule }], 2, data.swap)),
+  );
 
 const dupIntr = (data: ClassicalData, rule: Thm) => zeroVarIndexes(rs(rule, data.classical));
 
@@ -153,7 +155,7 @@ const ruleByTactic = (tactic: Tactic, rule: Thm): Thm =>
   );
 
 const dupElim = (limits: Limits, rule: Thm) => {
-  const duplicated = seqHead(assumption(2, rsn(rule, 2, revcutRl)));
+  const duplicated = seqHead(assumption(undefined, 2, rsn(rule, 2, revcutRl)));
   if (duplicated === undefined) throw new TlaIsabelleError("THM", "dup_elim");
   return ruleByTactic(
     allGoals((index) => orElse(eresolveTac(limits, [revcutRl])(index), allTac)),

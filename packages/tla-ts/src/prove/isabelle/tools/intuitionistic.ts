@@ -10,12 +10,12 @@ import { remdupsRl } from "../pure/drule";
 import { selectGoal } from "../pure/goal";
 import { deepen } from "../pure/search";
 import { stripAssumsConcl, stripAssumsHyp } from "../pure/logic";
+import type { Limits } from "../pure/interrupt";
 import {
   assumeTac,
   biresolutionFromNetsTac,
   eqAssumeTac,
   ematchTac,
-  type Limits,
   type NetPair,
 } from "../pure/tactic";
 import {
