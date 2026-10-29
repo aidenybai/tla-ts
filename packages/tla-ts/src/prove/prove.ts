@@ -372,18 +372,21 @@ export const prove = async (options: ProveOptions): Promise<ProveResult> => {
       pool?.decide ??
       (async (prover, text, decideOptions) => DECIDERS[prover](text, decideOptions)),
   };
-  // Obligations prove a few per worker ahead of the earliest one not yet reported, which reports
-  // first.
+  // A few obligations per worker prove at once, and each reports once every earlier one has.
   const limit = pool ? count * 4 : 1;
   const pending: Promise<ProofObligation>[] = [];
+  const isSettled: boolean[] = [];
+  const running = new Set<Promise<void>>();
   const proved: ProofObligation[] = [];
-  const reportNext = async () => {
-    options.signal?.throwIfAborted();
-    const result = await pending[proved.length];
-    proved.push(result);
-    options.onObligation?.(result);
-    // HACK: backends on this thread run synchronously, so yield to let an abort land.
-    await new Promise((resolve) => setTimeout(resolve));
+  const reportSettled = async () => {
+    while (isSettled[proved.length]) {
+      options.signal?.throwIfAborted();
+      const result = await pending[proved.length];
+      proved.push(result);
+      options.onObligation?.(result);
+      // HACK: backends on this thread run synchronously, so yield to let an abort land.
+      await new Promise((resolve) => setTimeout(resolve));
+    }
   };
   try {
     for (const [index, obligation] of obligations.entries()) {
@@ -393,14 +396,19 @@ export const prove = async (options: ProveOptions): Promise<ProveResult> => {
       const result = getResult(obligation, () =>
         proveWithBackends(obligation, index, run, options.signal),
       );
-      void result.then(
-        () => done.resolve(),
-        () => done.resolve(),
-      );
       pending.push(result);
-      if (pending.length - proved.length >= limit) await reportNext();
+      running.add(done.promise);
+      const settle = () => {
+        isSettled[index] = true;
+        running.delete(done.promise);
+        done.resolve();
+      };
+      void result.then(settle, settle);
+      if (running.size >= limit) await Promise.race(running);
+      await reportSettled();
     }
-    while (proved.length < pending.length) await reportNext();
+    await Promise.all(running);
+    await reportSettled();
   } finally {
     options.signal?.removeEventListener("abort", onAbort);
     pool?.terminate(new TlaProverError("prove stopped"));
