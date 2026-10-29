@@ -70,6 +70,7 @@ const BACKEND_COMMAND = defineCommand(
   [
     { flag: `--backend <${PROVE_BACKENDS.join("|")}>`, isRequired: true },
     { flag: "-I <directory>", isRepeatable: true },
+    { flag: "-workers <count|auto>" },
   ],
 );
 
@@ -393,6 +394,7 @@ const proveWithBackend = (args: string[]) => {
         directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean)
           ?.source,
       backend,
+      workers: getWorkerCount(parsed.get("-workers")),
       onObligation: (obligation) =>
         console.log(
           `${path}:${obligation.location}: ${obligation.status}${obligation.status === "proved" ? ` by ${obligation.prover}` : ""}${obligation.status === "failed" || obligation.status === "unsupported" ? ` (${obligation.reason})` : ""}`,

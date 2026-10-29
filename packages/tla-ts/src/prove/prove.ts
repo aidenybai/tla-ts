@@ -1,10 +1,11 @@
 // Proves a module's obligations with tla-ts's own backends, in tlapm's order, or with tlapm.
 
 import { TlaProverError, TlaUnsupportedError } from "../errors";
-import type { Sequent } from "../obligation-expression";
+import { getChildren, mapHyp, type Expr, type Hyp, type Sequent } from "../obligation-expression";
 import { getObligations, type PrintedObligation } from "../obligations";
-import { solveSmt } from "../smt/solver";
-import { decideIsabelle } from "./isabelle/decide";
+import { isWorkerSupported } from "../worker";
+import { DECIDERS } from "./deciders";
+import { createDecidePool } from "./decide-pool";
 import { encodeIsabelle } from "./isabelle/encode";
 import { processObligation } from "./prep/action";
 import { expandDefs } from "./prep/defs";
@@ -14,11 +15,9 @@ import { getFingerprint } from "./prep/fingerprint";
 import { flatten } from "./prep/flatten";
 import { findMethods, type Method } from "./prep/pragma";
 import { isTrivial } from "./prep/trivial";
-import { decidePtl } from "./ptl/decide";
 import { encodePtl } from "./ptl/encode";
 import { encodeSmt } from "./smt/encode";
 import type { EncodingSession } from "./smt/rewrite";
-import { decideZenon } from "./zenon/decide";
 import { encodeZenon } from "./zenon/encode";
 import type { TlapmResult } from "./tlapm/tlapm";
 import { TLAPS_MODULE } from "./tlaps-module";
@@ -68,6 +67,7 @@ export interface ProveOptions {
   backend?: ProveBackend;
   signal?: AbortSignal;
   onObligation?: (obligation: ProofObligation) => void;
+  workers?: number;
 }
 
 // What one prover concluded about an obligation, as Fpfile keeps it. Fpfile keeps one Isabelle
@@ -78,11 +78,27 @@ interface PriorResult {
   tactic: string | undefined;
 }
 
-// What tlapm keeps across the obligations of one run: the SMT encoder's counters, and what each
-// prover concluded for each fingerprint.
+// An obligation being proved. The SMT encoder numbers the CASE errors it standardizes across the
+// run, so an obligation it encodes one in waits for every earlier obligation and keeps a session
+// from the count they leave.
+interface ObligationTask {
+  done: Promise<void>;
+  session: { initial: number; current: EncodingSession } | undefined;
+}
+
+// What tlapm keeps across the obligations of one run: the SMT encoder's counter, and what each
+// prover concluded for each fingerprint. An obligation waits for the last earlier one with its
+// fingerprint, so obligations prove concurrently as they would in turn.
 interface ProveRun {
-  session: EncodingSession;
+  tasks: ObligationTask[];
   results: Map<string, Map<string, PriorResult>>;
+  lastByFingerprint: Map<string, Promise<void>>;
+  decide: (
+    prover: string,
+    text: string,
+    options: DecideOptions,
+    priority: number,
+  ) => Promise<Verdict>;
 }
 
 interface Backend {
@@ -90,7 +106,6 @@ interface Backend {
   // frontend and Prep.flatten that Prep.ship applies first. It throws a TlaUnsupportedError for
   // what tla-ts can't encode.
   encode: (id: number, sequent: Sequent, method: Method, session: EncodingSession) => string;
-  decide: (text: string, options: DecideOptions) => Verdict;
 }
 
 // Action.process_obligation, the frontend for every backend but LS4, Isabelle included, then
@@ -102,25 +117,45 @@ const SMT: Backend = {
   encode: (_id, sequent, method, session) =>
     (method.rlimit === undefined ? "" : `(set-option :rlimit ${method.rlimit})\n`) +
     encodeSmt(shipFirstOrder(sequent), session),
-  decide: solveSmt,
 };
 
 // tla-ts's backends, by the prover of the method that selects each.
 const BACKENDS: Record<string, Backend> = {
   smt: SMT,
   z3: SMT,
-  zenon: {
-    encode: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)),
-    decide: decideZenon,
-  },
+  zenon: { encode: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)) },
   // tlapm names the theory after its temporary file, and tla-ts after the obligation.
   isabelle: {
     encode: (id, sequent, method) =>
       encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto", `tlapm_${id}`),
-    decide: decideIsabelle,
   },
   // Pltl.process_obligation is LS4's frontend.
-  ls4: { encode: (_id, sequent) => encodePtl(sequent), decide: decidePtl },
+  ls4: { encode: (_id, sequent) => encodePtl(sequent) },
+};
+
+// Whether an expression has a CASE with no OTHER. The frontends and Prep.flatten add none, so the
+// SMT encoder standardizes one only in an obligation that has one after Prep.normalize_expand.
+const hasIncompleteCase = (expression: Expr): boolean =>
+  (expression.kind === "Case" && expression.other === undefined) ||
+  getChildren(expression).some(hasIncompleteCase);
+
+const incompleteCaseHyps = new WeakMap<Hyp, boolean>();
+
+const isIncompleteCaseHyp = (hyp: Hyp) => {
+  const known = incompleteCaseHyps.get(hyp);
+  if (known !== undefined) return known;
+  const expressions: Expr[] = [];
+  mapHyp(
+    hyp,
+    (inner) => {
+      expressions.push(inner);
+      return inner;
+    },
+    "all",
+  );
+  const isIncomplete = expressions.some(hasIncompleteCase);
+  incompleteCaseHyps.set(hyp, isIncomplete);
+  return isIncomplete;
 };
 
 const getModuleName = (source: string) => /-{4,}\s*MODULE\s+(\w+)/.exec(source)?.[1] ?? "Main";
@@ -162,19 +197,40 @@ export const encodeForBackend = (
   );
 };
 
+// The SMT encoder's session for an obligation, from the count of CASE errors every earlier
+// obligation leaves.
+const getSession = async (run: ProveRun, index: number) => {
+  const task = run.tasks[index];
+  if (task.session) return task.session.current;
+  const earlier = run.tasks.slice(0, index);
+  await Promise.all(earlier.map((innerTask) => innerTask.done));
+  const initial = earlier.reduce(
+    (total, innerTask) =>
+      total +
+      (innerTask.session ? innerTask.session.current.caseErrors - innerTask.session.initial : 0),
+    0,
+  );
+  task.session = { initial, current: { caseErrors: initial } };
+  return task.session.current;
+};
+
 // Prep.ship: the provers the step cites, or tlapm's default ones when it cites none, each tried in
 // turn until one proves the obligation. Prep.already_processed reuses what a prover concluded for
 // an earlier obligation with the same fingerprint: a proof, or a failure within at least as much
 // time. Unless the first prover's proof is reused, a trivial obligation needs no prover.
-const proveWithBackends = (
+const proveWithBackends = async (
   obligation: PrintedObligation,
+  index: number,
   run: ProveRun,
   signal: AbortSignal | undefined,
-): ProofObligation => {
+): Promise<ProofObligation> => {
   if (obligation.kind.kind === "Error")
     return getUnproved(obligation, "failed", obligation.kind.message);
   const methods = findMethods(obligation);
   const fingerprint = getFingerprint(obligation.sequent);
+  const earlier = run.lastByFingerprint.get(fingerprint);
+  run.lastByFingerprint.set(fingerprint, run.tasks[index].done);
+  await earlier;
   const results = run.results.get(fingerprint) ?? new Map<string, PriorResult>();
   run.results.set(fingerprint, results);
   const getProved = (prover: string): ProofObligation => ({
@@ -214,8 +270,17 @@ const proveWithBackends = (
       continue;
     }
     try {
-      const text = backend.encode(obligation.id, sequent, method, run.session);
-      const verdict = backend.decide(text, { timeLimitMs: method.timeLimitMs, signal });
+      const isCaseNumbered =
+        backend === SMT &&
+        (sequent.context.some(isIncompleteCaseHyp) || hasIncompleteCase(sequent.active));
+      const session = isCaseNumbered ? await getSession(run, index) : { caseErrors: 0 };
+      const text = backend.encode(obligation.id, sequent, method, session);
+      const verdict = await run.decide(
+        method.prover,
+        text,
+        { timeLimitMs: method.timeLimitMs, signal },
+        index,
+      );
       setPrior(method, verdict === "unsat");
       if (verdict === "unsat") return getProved(method.prover);
       state.isDecided = true;
@@ -236,9 +301,12 @@ const proveWithBackends = (
 
 // The one place an error becomes a result: what tla-ts can't handle is unsupported, and what tlapm
 // refuses, as a frontend's soundness check, fails.
-const getResult = (obligation: PrintedObligation, getProved: () => ProofObligation) => {
+const getResult = async (
+  obligation: PrintedObligation,
+  getProved: () => Promise<ProofObligation>,
+) => {
   try {
-    return getProved();
+    return await getProved();
   } catch (error) {
     if (error instanceof TlaUnsupportedError)
       return getUnproved(obligation, "unsupported", error.message);
@@ -292,15 +360,50 @@ export const prove = async (options: ProveOptions): Promise<ProveResult> => {
       ...counts,
     };
   }
+  const count = options.workers ?? 1;
+  const pool = count > 1 && isWorkerSupported() ? await createDecidePool(count) : undefined;
+  const onAbort = () => pool?.terminate(options.signal?.reason);
+  options.signal?.addEventListener("abort", onAbort);
+  const run: ProveRun = {
+    tasks: [],
+    results: new Map(),
+    lastByFingerprint: new Map(),
+    decide:
+      pool?.decide ??
+      (async (prover, text, decideOptions) => DECIDERS[prover](text, decideOptions)),
+  };
+  // Obligations prove a few per worker ahead of the earliest one not yet reported, which reports
+  // first.
+  const limit = pool ? count * 4 : 1;
+  const pending: Promise<ProofObligation>[] = [];
   const proved: ProofObligation[] = [];
-  const run = { session: { caseErrors: 0 }, results: new Map() };
-  for (const obligation of obligations) {
+  const reportNext = async () => {
     options.signal?.throwIfAborted();
-    const result = getResult(obligation, () => proveWithBackends(obligation, run, options.signal));
+    const result = await pending[proved.length];
     proved.push(result);
     options.onObligation?.(result);
-    // HACK: the backends run synchronously, so yield to the event loop to let an abort land.
+    // HACK: backends on this thread run synchronously, so yield to let an abort land.
     await new Promise((resolve) => setTimeout(resolve));
+  };
+  try {
+    for (const [index, obligation] of obligations.entries()) {
+      options.signal?.throwIfAborted();
+      const done = Promise.withResolvers<void>();
+      run.tasks.push({ done: done.promise, session: undefined });
+      const result = getResult(obligation, () =>
+        proveWithBackends(obligation, index, run, options.signal),
+      );
+      void result.then(
+        () => done.resolve(),
+        () => done.resolve(),
+      );
+      pending.push(result);
+      if (pending.length - proved.length >= limit) await reportNext();
+    }
+    while (proved.length < pending.length) await reportNext();
+  } finally {
+    options.signal?.removeEventListener("abort", onAbort);
+    pool?.terminate(new TlaProverError("prove stopped"));
   }
   return { obligations: proved, ...counts };
 };
