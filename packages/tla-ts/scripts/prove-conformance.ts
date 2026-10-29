@@ -1,6 +1,7 @@
 // Proves each module with tla-ts's own backends and compares every obligation's status with the one
 // tlapm reached, as conformance:record-proofs recorded it. tla-ts should prove what tlapm proves,
-// find trivial what tlapm finds trivial, and never prove what tlapm fails to prove.
+// find trivial what tlapm finds trivial, never prove what tlapm fails to prove, and prove each
+// obligation with the prover tlapm used.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,7 +14,7 @@ import {
   type ObligationRecord,
 } from "./proof-records";
 
-type Verdict = "agree" | "missed" | "unsound" | "trivial" | "absent";
+type Verdict = "agree" | "prover" | "missed" | "unsound" | "trivial" | "absent";
 
 interface Result {
   module: string;
@@ -40,6 +41,7 @@ const getVerdict = (expected: ObligationRecord, actual: ProofObligation | undefi
   if ((expected.status === "trivial") !== (actual.status === "trivial")) return "trivial";
   if (isProved(actual.status) && !isProved(expected.status)) return "unsound";
   if (isProved(expected.status) && !isProved(actual.status)) return "missed";
+  if (actual.status === "proved" && expected.prover !== actual.prover) return "prover";
   return "agree";
 };
 
@@ -82,8 +84,8 @@ for (const record of readProofRecords()) {
 writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
 printResults(
   results,
-  ["agree", "missed", "unsound", "trivial", "absent"],
-  ["unsound", "trivial", "absent"],
+  ["agree", "prover", "missed", "unsound", "trivial", "absent"],
+  ["unsound", "trivial", "absent", "prover"],
   (result) =>
     `${result.verdict} ${result.module} #${result.id}: tlapm ${result.expected}, tla-ts ${result.actual ?? "none"}${result.reason ? ` (${result.reason})` : ""}`,
 );
