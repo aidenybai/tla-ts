@@ -56,7 +56,11 @@ class QeLite {
   private numVars = 0;
 
   constructor(private manager: AstManager) {
-    this.rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: TACTIC_ARITH_OPTIONS });
+    this.rewriter = new Rewriter(manager, {
+      isEliminatingAnd: false,
+      arith: TACTIC_ARITH_OPTIONS,
+      isRewritingPatterns: false,
+    });
   }
 
   private isVariable(expr: number) {

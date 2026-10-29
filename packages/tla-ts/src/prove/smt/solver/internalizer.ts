@@ -120,7 +120,11 @@ export abstract class Internalizer {
     isRelevancyEnabled: boolean,
     isDelayingNewCaseSplits: boolean,
   ) {
-    this.rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: KERNEL_ARITH_OPTIONS });
+    this.rewriter = new Rewriter(manager, {
+      isEliminatingAnd: false,
+      arith: KERNEL_ARITH_OPTIONS,
+      isRewritingPatterns: true,
+    });
     this.relevancy = new RelevancyPropagator(
       {
         manager,

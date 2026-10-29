@@ -3,7 +3,7 @@
 import { AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR } from "./ast";
 import { toNnf } from "./nnf";
 import { inferPatterns } from "./pattern-inference";
-import { KERNEL_ARITH_OPTIONS, TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
+import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { Rewriter } from "./rewriter";
 
 // asserted_formulas::push_assertion: splits conjunctions and negated disjunctions.
@@ -178,9 +178,14 @@ export class AssertedFormulas {
   constructor(private manager: AstManager) {
     this.simplifier = new Rewriter(manager, {
       isEliminatingAnd: false,
-      arith: TACTIC_ARITH_OPTIONS,
+      arith: KERNEL_ARITH_OPTIONS,
+      isRewritingPatterns: true,
     });
-    this.reducer = new Rewriter(manager, { isEliminatingAnd: true, arith: KERNEL_ARITH_OPTIONS });
+    this.reducer = new Rewriter(manager, {
+      isEliminatingAnd: true,
+      arith: KERNEL_ARITH_OPTIONS,
+      isRewritingPatterns: true,
+    });
   }
 
   assertExpr(expr: number) {

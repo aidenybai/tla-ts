@@ -38,6 +38,9 @@ export interface RewriterOptions {
   // Replaces (and a b) with (not (or (not a) (not b))), as Z3's asserted_formulas does after NNF.
   isEliminatingAnd: boolean;
   arith: ArithRewriterOptions;
+  // rewrite_patterns: the patterns of a quantifier are rewritten like its body. The kernel's rewriters
+  // set it, and the tactics' leave it off.
+  isRewritingPatterns: boolean;
 }
 
 // The distinct literals of a flat conjunction or disjunction. It finds a complementary pair through
@@ -127,6 +130,18 @@ export class Rewriter {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
     const body = this.rewrite(data.body);
+    const rewrittenPatterns = this.options.isRewritingPatterns
+      ? data.patterns.map((pattern) => pattern.map((arg) => this.rewrite(arg)))
+      : data.patterns;
+    // remove_duplicates.
+    const patterns = rewrittenPatterns.filter(
+      (pattern, index) =>
+        rewrittenPatterns.findIndex(
+          (other) =>
+            other.length === pattern.length &&
+            other.every((arg, argIndex) => arg === pattern[argIndex]),
+        ) === index,
+    );
     const isNegated = manager.isNot(body);
     const junction = isNegated ? manager.args[body][0] : body;
     if (
@@ -150,7 +165,7 @@ export class Rewriter {
             body: nested.body,
             weight: Math.min(data.weight, nested.weight),
           })
-        : manager.mkQuantifier({ ...data, body, patterns: this.substitutePatterns(data.patterns) });
+        : manager.mkQuantifier({ ...data, body, patterns: this.substitutePatterns(patterns) });
     const reduced = elimUnusedVars(manager, merged);
     if (
       manager.kinds[reduced] !== KIND_QUANTIFIER ||

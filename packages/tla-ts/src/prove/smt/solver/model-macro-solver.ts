@@ -137,7 +137,11 @@ export const collectMacroCandidates = (manager: AstManager, quantifier: number) 
   const body = data.isForall ? data.body : manager.mkNot(data.body);
   const candidates: CondMacro[] = [];
   if (manager.hasQuantifierFlags[body]) return candidates;
-  const rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: TACTIC_ARITH_OPTIONS });
+  const rewriter = new Rewriter(manager, {
+    isEliminatingAnd: false,
+    arith: TACTIC_ARITH_OPTIONS,
+    isRewritingPatterns: false,
+  });
   const mkNot = (expr: number) => rewriter.mkAppCore(OP_NOT, [expr], SORT_BOOL);
   const mkAnd = (args: number[]) =>
     args.length === 0

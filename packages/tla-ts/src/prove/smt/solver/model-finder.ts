@@ -25,7 +25,11 @@ export class ModelFinder {
     private manager: AstManager,
     private context: Context,
   ) {
-    this.rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: TACTIC_ARITH_OPTIONS });
+    this.rewriter = new Rewriter(manager, {
+      isEliminatingAnd: false,
+      arith: TACTIC_ARITH_OPTIONS,
+      isRewritingPatterns: false,
+    });
     this.aufSolver = new AufSolver(manager, this.rewriter);
   }
 

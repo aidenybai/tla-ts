@@ -13,7 +13,11 @@ import { Rewriter } from "./rewriter";
 // The simplify tactic.
 const simplify = (manager: AstManager, goal: Goal) => {
   if (goal.isInconsistent) return;
-  const rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: TACTIC_ARITH_OPTIONS });
+  const rewriter = new Rewriter(manager, {
+    isEliminatingAnd: false,
+    arith: TACTIC_ARITH_OPTIONS,
+    isRewritingPatterns: false,
+  });
   const size = goal.forms.length;
   for (let index = 0; index < size && !goal.isInconsistent; index++)
     goal.update(index, rewriter.rewrite(goal.forms[index]));

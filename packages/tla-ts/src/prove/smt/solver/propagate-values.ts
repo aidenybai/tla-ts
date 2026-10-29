@@ -30,7 +30,11 @@ const getSharedOccs = (manager: AstManager, forms: number[]) => {
 
 export const propagateValues = (manager: AstManager, goal: Goal) => {
   if (goal.isInconsistent) return;
-  const rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: TACTIC_ARITH_OPTIONS });
+  const rewriter = new Rewriter(manager, {
+    isEliminatingAnd: false,
+    arith: TACTIC_ARITH_OPTIONS,
+    isRewritingPatterns: false,
+  });
   const substitution = new Map<number, number>();
   rewriter.setSubstitution(substitution);
   let occs = getSharedOccs(manager, goal.forms);

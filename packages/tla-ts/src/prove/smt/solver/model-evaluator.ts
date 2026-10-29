@@ -16,7 +16,11 @@ export class ModelEvaluator {
     private manager: AstManager,
     private model: ProtoModel,
   ) {
-    this.rewriter = new Rewriter(manager, { isEliminatingAnd: false, arith: TACTIC_ARITH_OPTIONS });
+    this.rewriter = new Rewriter(manager, {
+      isEliminatingAnd: false,
+      arith: TACTIC_ARITH_OPTIONS,
+      isRewritingPatterns: false,
+    });
   }
 
   evaluate(expr: number, isModelCompletion: boolean) {
