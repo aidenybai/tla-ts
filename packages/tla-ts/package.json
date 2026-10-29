@@ -65,6 +65,7 @@
     "conformance:fetch": "tsx scripts/fetch-corpora.ts",
     "conformance:fingerprint": "tsx scripts/fingerprint-conformance.ts",
     "conformance:isabelle": "tsx scripts/isabelle-conformance.ts",
+    "conformance:isabelle-encode": "tsx scripts/isabelle-encode-conformance.ts",
     "conformance:sany": "tsx scripts/proof-conformance.ts",
     "conformance:ptl": "tsx scripts/ptl-conformance.ts",
     "conformance:smt": "tsx scripts/smt-conformance.ts",
