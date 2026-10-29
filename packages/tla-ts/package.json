@@ -61,6 +61,7 @@
     "prepublishOnly": "nr build",
     "bench": "pnpm build && tsx scripts/benchmark.ts",
     "bench:corpus": "pnpm build && tsx scripts/benchmark-corpus.ts",
+    "bench:prove": "pnpm build && tsx scripts/prove-benchmark.ts",
     "conformance": "tsx scripts/conformance.ts",
     "conformance:fetch": "tsx scripts/fetch-corpora.ts",
     "conformance:fingerprint": "tsx scripts/fingerprint-conformance.ts",
