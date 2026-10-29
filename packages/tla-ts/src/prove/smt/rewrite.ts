@@ -1,5 +1,6 @@
 // encode/n_rewrite.ml, type/t_synth.ml, and encode/n_standardize.ml: a TLA+ expression as an
-// SMT-LIB term over the sort Idv.
+// SMT-LIB term over the sort Idv. Set extensionality is in extensionality.ts, and the axioms each
+// flattened symbol brings are in instances.ts.
 
 import { TlaUnsupportedError } from "../../errors";
 import {
@@ -20,45 +21,34 @@ import {
   type Entry,
 } from "./flatten";
 import {
-  APPEND,
   BOOL_SET,
   BUILTIN_SYMBOLS,
   call,
-  CAP,
   CAST_BOOL,
   CAST_INT,
   conjoin,
-  CUP,
   disjoin,
   FUN_APP,
-  FUN_DOM,
   FUN_EXCEPT,
-  FUN_ISAFCN,
   FUN_SET,
-  forall,
-  getNames,
   INT_LTEQ,
-  INT_RANGE,
   INT_SET,
-  IS_SET_OF,
-  LEN,
   MEM,
   NAT_SET,
-  PROJ_INT,
-  replaceToken,
-  SEQ,
-  SET_MINUS,
   STR_SET,
-  SUBSET,
   SUBSET_EQ,
   tla,
-  TRIG_EQ,
   TT_IDV,
-  TUPLE_0,
-  UNION,
 } from "./format";
 import { getIntegers } from "./axioms";
-import { axiom, getAxiomKey } from "./table";
+import { getEquality, resolveTriggers, type Polarity } from "./extensionality";
+import {
+  getChooseAxioms,
+  getFunctionAxioms,
+  getSelectSeqAxioms,
+  getSetOfAxioms,
+  getSetStAxioms,
+} from "./instances";
 
 export interface Term {
   isBool: boolean;
@@ -71,34 +61,6 @@ export interface Term {
 export interface EncodingSession {
   caseErrors: number;
 }
-
-type Polarity = "Positive" | "Negative" | "Neither";
-
-// The head of a set equality whose polarity keeps it from triggering set extensionality unless a
-// cast encloses it: (?trigger triggered kept).
-const UNRESOLVED_TRIGGER = "?trigger";
-
-// Picks the triggered or the kept form of each unresolved set equality in text.
-const resolveTriggers = (text: string, isTriggered: boolean): string => {
-  const start = text.indexOf(`(${UNRESOLVED_TRIGGER} `);
-  if (start === -1) return text;
-  const getEnd = (from: number) => {
-    const end = { depth: 0, index: from };
-    for (; end.index < text.length; end.index++) {
-      if (text[end.index] === "(") end.depth++;
-      if (text[end.index] === ")") end.depth--;
-      if (end.depth === 0) return end.index + 1;
-    }
-    return text.length;
-  };
-  const triggeredStart = start + UNRESOLVED_TRIGGER.length + 2;
-  const triggeredEnd = getEnd(triggeredStart);
-  const keptEnd = getEnd(triggeredEnd + 1);
-  const chosen = isTriggered
-    ? text.slice(triggeredStart, triggeredEnd)
-    : text.slice(triggeredEnd + 1, keptEnd);
-  return text.slice(0, start) + chosen + resolveTriggers(text.slice(keptEnd + 1), isTriggered);
-};
 
 export interface Mode {
   // Whether the text encodes a fact that tlapm leaves out, which may declare operators.
@@ -119,20 +81,6 @@ export interface Env {
   binding: Binding;
   rest: Env | undefined;
 }
-
-const SET_HEADS = new Set([UNION, SUBSET, CUP, CAP, SET_MINUS, INT_RANGE, FUN_SET, SEQ]);
-
-// Standardize.is_set: the applications of constructors whose values are sets. Standardize leaves
-// BOOLEAN, STRING, Int, and Nat as bare symbols, which is_set doesn't match.
-const isSetTerm = (text: string) => {
-  const head = /^\(?([^\s()]+)/.exec(text)?.[1] ?? "";
-  return (
-    SET_HEADS.has(head) ||
-    /^smt__TLA____(SetEnum__\d+|SetSt__flatnd__\d+|SetOf__\d+__flatnd__\d+|Product__\d+|RecordSet__)/.test(
-      head,
-    )
-  );
-};
 
 export const createEncoder = (session: EncodingSession) => {
   const flattener = createFlattener();
@@ -262,20 +210,7 @@ export const createEncoder = (session: EncodingSession) => {
       "SetSt",
       body,
       mode,
-      (name) => {
-        const set = call(name, ["a", ...free]);
-        const predicate = replaceToken(body, bound.variables[0], "x");
-        return [
-          axiom(
-            "SetStDef",
-            [],
-            forall([...free, "a", "x"], `(= (${MEM} x ${set}) (and (${MEM} x a) ${predicate}))`, [
-              [`(${MEM} x ${set})`],
-              [`(${MEM} x a)`, set],
-            ]),
-          ),
-        ];
-      },
+      (name) => getSetStAxioms(name, free, body, bound.variables[0]),
       free.length + 1,
     );
     return idv(call(symbol, [domain, ...free]));
@@ -299,48 +234,7 @@ export const createEncoder = (session: EncodingSession) => {
       `SetOf_${count}`,
       element,
       mode,
-      (name) => {
-        const sets = getNames("a", count);
-        const variables = getNames("y", count);
-        const value = bound.variables.reduce(
-          (text, variable, index) => replaceToken(text, variable, variables[index]),
-          element,
-        );
-        const set = call(name, [...sets, ...free]);
-        const guards = variables.map((variable, index) => `(${MEM} ${variable} ${sets[index]})`);
-        // N_axioms.assert_issetof names its one set a.
-        const single = count === 1 ? ["a"] : sets;
-        return [
-          axiom(
-            "SetOfIntro",
-            [count],
-            forall(
-              [...free, ...sets, ...variables],
-              `(=> ${conjoin(guards)} (${MEM} ${value} ${set}))`,
-              [
-                [value, set],
-                [set, ...guards],
-              ],
-            ),
-          ),
-          axiom(
-            "SetOfElim",
-            [count],
-            forall(
-              [...free, ...sets, "x"],
-              `(=> (${MEM} x ${set}) (exists (${binders(variables)}) ${conjoin([...guards, `(= x ${value})`])}))`,
-              [[`(${MEM} x ${set})`]],
-            ),
-          ),
-          axiom(
-            "AssertIsSetOf",
-            [count],
-            forall([...free, ...single], `(${IS_SET_OF} ${call(name, [...single, ...free])})`, [
-              [call(name, [...single, ...free])],
-            ]),
-          ),
-        ];
-      },
+      (name) => getSetOfAxioms(name, free, element, bound.variables),
       count + free.length,
     );
     return idv(call(symbol, [...domains, ...free]));
@@ -374,40 +268,7 @@ export const createEncoder = (session: EncodingSession) => {
       "FunFcn",
       body,
       mode,
-      (name, axioms) => {
-        const value = call(name, ["a", ...free]);
-        const result = replaceToken(body, variable, "x");
-        const typing = axioms.has(getAxiomKey(axiom("FunTyping", [], undefined)))
-          ? [
-              axiom(
-                "FunTyping",
-                [],
-                forall(
-                  [...free, "a", "b"],
-                  `(=> (forall ((x Idv)) (=> (${MEM} x a) (${MEM} ${result} b))) (${MEM} ${value} (${FUN_SET} a b)))`,
-                  [[value, `(${FUN_SET} a b)`]],
-                ),
-              ),
-            ]
-          : [];
-        return [
-          axiom(
-            "FunConstrIsafcn",
-            [],
-            forall([...free, "a"], `(${FUN_ISAFCN} ${value})`, [[value]]),
-          ),
-          axiom("FunDomDef", [], forall([...free, "a"], `(= (${FUN_DOM} ${value}) a)`, [[value]])),
-          axiom(
-            "FunAppDef",
-            [],
-            forall([...free, "a", "x"], `(=> (${MEM} x a) (= (${FUN_APP} ${value} x) ${result}))`, [
-              [`(${FUN_APP} ${value} x)`],
-              [`(${MEM} x a)`, value],
-            ]),
-          ),
-          ...typing,
-        ];
-      },
+      (name, axioms) => getFunctionAxioms(name, free, body, variable, axioms),
       free.length + 1,
     );
     return idv(call(symbol, [domain, ...free]));
@@ -430,16 +291,7 @@ export const createEncoder = (session: EncodingSession) => {
       "Choose",
       body,
       mode,
-      (name) => [
-        axiom(
-          "ChooseDef",
-          [],
-          forall(
-            [...free, "x"],
-            `(=> ${replaceToken(body, variable, "x")} ${replaceToken(body, variable, call(name, free))})`,
-          ),
-        ),
-      ],
+      (name) => getChooseAxioms(name, free, body, variable),
       free.length,
     );
     return idv(call(symbol, free));
@@ -454,20 +306,11 @@ export const createEncoder = (session: EncodingSession) => {
     mode: Mode,
     isNegated: boolean,
   ) => {
-    const leftTerm = encode(left, env, neither(mode));
-    const rightTerm = encode(right, env, neither(mode));
     // Type.Synthesize compares values of the same sort only above type level 1, so two formulas
     // are compared as values.
-    const leftText = toIdv(leftTerm);
-    const rightText = toIdv(rightTerm);
-    const triggered = `(${TRIG_EQ} ${leftText} ${rightText})`;
-    const kept = isNegated ? `(distinct ${leftText} ${rightText})` : `(= ${leftText} ${rightText})`;
-    if (!isSetTerm(leftText) && !isSetTerm(rightText)) return kept;
-    const text = isNegated ? `(not ${triggered})` : triggered;
-    // A cast around the equality may still trigger it, so both forms wait for resolveTriggers.
-    return mode.polarity === (isNegated ? "Positive" : "Negative")
-      ? `(${UNRESOLVED_TRIGGER} ${text} ${kept})`
-      : text;
+    const leftText = encodeIdv(left, env, mode);
+    const rightText = encodeIdv(right, env, mode);
+    return getEquality(leftText, rightText, mode.polarity, isNegated);
   };
 
   // Type.Synthesize: SelectSeq's test becomes the predicate LAMBDA x1 : Test(x1), its body the
@@ -484,7 +327,7 @@ export const createEncoder = (session: EncodingSession) => {
       bound.env,
       bound.mode,
     );
-    return { body, apply: (term: string) => replaceToken(body, bound.variables[0], term) };
+    return { body, variable: bound.variables[0] };
   };
 
   const encodeBuiltin = (
@@ -537,49 +380,7 @@ export const createEncoder = (session: EncodingSession) => {
           "SelectSeq",
           test.body,
           mode,
-          (name) => {
-            const select = (sequence: string) => call(name, [sequence, ...free]);
-            const appended = select(`(${APPEND} s x)`);
-            return [
-              axiom(
-                "SeqSelectseqTyping",
-                [],
-                forall(
-                  [...free, "a", "s"],
-                  `(=> (${MEM} s (${SEQ} a)) (${MEM} ${select("s")} (${SEQ} a)))`,
-                  [[`(${MEM} s (${SEQ} a))`, select("s")]],
-                ),
-              ),
-              axiom(
-                "SeqSelectseqLen",
-                [],
-                forall(
-                  [...free, "s"],
-                  `(=> (${MEM} (${LEN} s) ${NAT_SET}) (<= (${PROJ_INT} (${LEN} ${select("s")})) (${PROJ_INT} (${LEN} s))))`,
-                  [[select("s")]],
-                ),
-              ),
-              axiom("SeqSelectseqNil", [], forall(free, `(= ${select(TUPLE_0)} ${TUPLE_0})`)),
-              axiom(
-                "SeqSelectseqApp",
-                [],
-                forall(
-                  [...free, "s", "x"],
-                  `(=> (${MEM} x (${FUN_DOM} ${select("s")})) ${test.apply(`(${FUN_APP} ${select("s")} x)`)})`,
-                  [[`(${FUN_APP} ${select("s")} x)`]],
-                ),
-              ),
-              axiom(
-                "SeqSelectseqAppend",
-                [],
-                forall(
-                  [...free, "s", "x"],
-                  `(and (=> ${test.apply("x")} (= ${appended} (${APPEND} ${select("s")} x))) (=> (not ${test.apply("x")}) (= ${appended} ${select("s")})))`,
-                  [[appended]],
-                ),
-              ),
-            ];
-          },
+          (name) => getSelectSeqAxioms(name, free, test.body, test.variable),
           free.length + 1,
         );
         return idv(call(symbol, [encodeIdv(args[0], env, mode), ...free]));
