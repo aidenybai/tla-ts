@@ -133,14 +133,16 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
   ) =>
     files
       .filter((path) => path.endsWith(extension))
-      .map((path) => {
-        const text = readFileSync(path, "utf8");
-        const backendOutput = readOutput(path);
+      .map((path) => ({ path, text: readFileSync(path, "utf8") }))
+      // tlapm sometimes leaves an empty input behind, which belongs to no obligation.
+      .filter((file) => file.text !== "")
+      .map((file) => {
+        const backendOutput = readOutput(file.path);
         return {
-          obligationId: Number(text.match(OBLIGATION_HEADER)?.[1] ?? Number.NaN),
-          text,
+          obligationId: Number(file.text.match(OBLIGATION_HEADER)?.[1] ?? Number.NaN),
+          text: file.text,
           backendOutput,
-          record: { input: getInputDigest(text), verdict: getVerdict(backendOutput) },
+          record: { input: getInputDigest(file.text), verdict: getVerdict(backendOutput) },
         };
       });
 
