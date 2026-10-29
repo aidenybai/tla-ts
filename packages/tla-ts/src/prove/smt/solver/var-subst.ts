@@ -1,6 +1,71 @@
 // Ported from Z3 (src/ast/rewriter/var_subst.cpp), MIT license, see z3-license.txt. Substitution and
 // shifting of de Bruijn variables.
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, type AstManager } from "./ast";
+import { ExprSafeReplace } from "./expr-safe-replace";
+import { BetaReducer } from "./rewriter-tpl";
+
+// var_subst: substitutes args for the free variables, args[n - 1 - i] for (:var i) in standard
+// order and args[i] otherwise, where -1 keeps the variable. Each result comes with a reference,
+// which the caller releases.
+export class VarSubst {
+  private reducer: BetaReducer;
+
+  constructor(
+    private manager: AstManager,
+    private isStdOrder: boolean,
+  ) {
+    this.reducer = new BetaReducer(manager);
+  }
+
+  apply(expr: number, args: number[]) {
+    const manager = this.manager;
+    const count = args.length;
+    if (manager.isGroundApp(expr) || count === 0) {
+      manager.incRef(expr);
+      return expr;
+    }
+    if (manager.hasQuantifierFlags[expr]) {
+      const replace = new ExprSafeReplace(manager);
+      args.forEach((arg, index) => {
+        if (arg !== -1)
+          replace.insert(
+            manager.mkVar(this.isStdOrder ? count - index - 1 : index, manager.sorts[arg]),
+            arg,
+          );
+      });
+      const result = replace.apply(expr);
+      replace.release();
+      return result;
+    }
+    if (
+      manager.kinds[expr] === KIND_APP &&
+      manager.args[expr].every((arg) => manager.isGroundApp(arg) || manager.kinds[arg] === KIND_VAR)
+    ) {
+      const result = manager.mkApp(
+        manager.decls[expr],
+        manager.args[expr].map((arg) => {
+          if (manager.isGroundApp(arg)) return arg;
+          const index = manager.values[arg];
+          const replaced =
+            index < count ? (this.isStdOrder ? args[count - index - 1] : args[index]) : -1;
+          return replaced === -1 ? arg : replaced;
+        }),
+        manager.sorts[expr],
+      );
+      manager.incRef(result);
+      return result;
+    }
+    this.reducer.reset();
+    if (this.isStdOrder) this.reducer.setInvBindings(args);
+    else this.reducer.setBindings(args);
+    return this.reducer.rewrite(expr);
+  }
+
+  // ~var_subst.
+  release() {
+    this.reducer.release();
+  }
+}
 
 // Rebuilds expr with each free variable replaced. replace gets the variable, its de Bruijn index
 // relative to expr, and the number of binders above it.

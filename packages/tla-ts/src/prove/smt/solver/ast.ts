@@ -386,7 +386,8 @@ export class AstManager {
     this.hashes.push(hash);
     this.kinds.push(kind);
     this.decls.push(decl);
-    this.args.push(args);
+    // Like Z3, a node keeps its own copy of the arguments, so callers may reuse their arrays.
+    this.args.push([...args]);
     this.sorts.push(sort);
     this.values.push(value);
     let freeVarBound = kind === KIND_VAR ? value + 1 : 0;
@@ -517,7 +518,7 @@ export class AstManager {
     this.table.set(key, id);
     const bodyBound = this.freeVarBounds[data.body];
     this.freeVarBounds[id] = Math.max(0, bodyBound - data.sorts.length);
-    this.quantifiers.set(id, data);
+    this.quantifiers.set(id, { ...data, sorts: [...data.sorts], patterns: [...data.patterns] });
     this.registerNode(id);
     return id;
   }
@@ -547,6 +548,15 @@ export class AstManager {
 
   isGround(expr: number) {
     return this.freeVarBounds[expr] === 0;
+  }
+
+  // Z3's is_ground: an application without variables or quantifiers.
+  isGroundApp(expr: number) {
+    return (
+      this.kinds[expr] === KIND_APP &&
+      this.freeVarBounds[expr] === 0 &&
+      !this.hasQuantifierFlags[expr]
+    );
   }
 
   getOp(expr: number) {

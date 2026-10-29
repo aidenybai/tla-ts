@@ -7,7 +7,7 @@ import type { AstManager } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { Goal } from "./goal";
 import { propagateValues } from "./propagate-values";
-import { qeLite } from "./qe-lite";
+import { applyQeLite } from "./qe-lite";
 import { Rewriter } from "./rewriter";
 
 // The simplify tactic.
@@ -18,10 +18,17 @@ const simplify = (manager: AstManager, goal: Goal) => {
     arith: TACTIC_ARITH_OPTIONS,
     isRewritingPatterns: false,
   });
-  const size = goal.forms.length;
-  for (let index = 0; index < size && !goal.isInconsistent; index++)
-    goal.update(index, rewriter.rewrite(goal.forms[index]));
+  const size = goal.forms.size;
+  let rewritten = -1;
+  for (let index = 0; index < size && !goal.isInconsistent; index++) {
+    const result = rewriter.rewrite(goal.forms.items[index]);
+    if (rewritten !== -1) manager.decRef(rewritten);
+    rewritten = result;
+    goal.update(index, rewritten);
+  }
+  if (rewritten !== -1) manager.decRef(rewritten);
   goal.elimRedundancies();
+  rewriter.release();
 };
 
 // mk_ufnia_tactic, up to the SMT kernel: mk_quant_preprocessor without solve-eqs, then qe-lite.
@@ -32,11 +39,6 @@ export const applyUfniaTactic = (manager: AstManager, assertions: number[]) => {
   propagateValues(manager, goal);
   simplify(manager, goal);
   simplify(manager, goal);
-  if (goal.isInconsistent) return goal.forms;
-  const reduced = qeLite(manager, goal.forms);
-  for (const [index, formula] of reduced.entries())
-    if (formula !== goal.forms[index]) goal.update(index, formula);
-  goal.elimTrue();
-  goal.elimRedundancies();
-  return goal.forms;
+  if (!goal.isInconsistent) applyQeLite(manager, goal);
+  return goal.forms.items;
 };
