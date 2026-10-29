@@ -1736,13 +1736,16 @@ const createEncoder = (session: EncodingSession) => {
   const encodeBool = (expression: Expr, env: Env | undefined, mode: Mode) =>
     toBool(encode(expression, env, mode));
 
-  // The domains of bounds, each in the scope outside them, with a Ditto repeating the last.
+  // The domains of bounds, each in the scope outside them. A Ditto copies the last domain, and
+  // tlapm's Rewrite encodes each copy, so each one flattens again.
   const encodeDomains = (bounds: Bound[], env: Env | undefined, mode: Mode) =>
-    bounds.reduce<(string | undefined)[]>((domains, bound) => {
-      if (bound.domain.kind === "Ditto") return [...domains, domains.at(-1)];
-      if (bound.domain.kind === "NoDomain") return [...domains, undefined];
-      return [...domains, encodeIdv(bound.domain.expression, env, mode)];
-    }, []);
+    bounds
+      .reduce<(Expr | undefined)[]>((domains, bound) => {
+        if (bound.domain.kind === "Ditto") return [...domains, domains.at(-1)];
+        if (bound.domain.kind === "NoDomain") return [...domains, undefined];
+        return [...domains, bound.domain.expression];
+      }, [])
+      .map((domain) => (domain === undefined ? undefined : encodeIdv(domain, env, mode)));
 
   const getDomains = (bounds: Bound[], env: Env | undefined, mode: Mode, construct: string) =>
     encodeDomains(bounds, env, mode).map((domain) => {
@@ -1750,9 +1753,15 @@ const createEncoder = (session: EncodingSession) => {
       return domain;
     });
 
-  const bindVariables = (names: string[], env: Env | undefined, mode: Mode) => {
+  // Coalesce names a bound variable by its kind. Visit gives a LAMBDA's parameters kind Unknown.
+  const bindVariables = (
+    names: string[],
+    env: Env | undefined,
+    mode: Mode,
+    kind: "CONSTANT" | "Unknown" = "CONSTANT",
+  ) => {
     const variables = names.map((name, index) =>
-      getVariable(`CONSTANT_${name}_`, mode.depth + index),
+      getVariable(`${kind}_${name}_`, mode.depth + index),
     );
     const inner = variables.reduce<Env | undefined>(
       (current, symbol) => push(current, { kind: "constant", symbol }),
@@ -2098,6 +2107,7 @@ const createEncoder = (session: EncodingSession) => {
             arg.params.map((param) => param.name),
             env,
             neither(mode),
+            "Unknown",
           );
           return { isFirstOrder: false, text: encode(arg.body, bound.env, bound.mode).text };
         });
