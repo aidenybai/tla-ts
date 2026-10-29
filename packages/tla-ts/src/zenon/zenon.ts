@@ -12,7 +12,7 @@ import { createIndex } from "./index-table";
 import type { Proof } from "./node";
 import { parseZenon } from "./parse";
 import { separate } from "./phrase";
-import { search } from "./prove";
+import { search, type SearchFailure } from "./prove";
 
 export interface ZenonOptions {
   timeLimitMs: number;
@@ -20,6 +20,7 @@ export interface ZenonOptions {
 
 export interface ZenonRun {
   proof: Proof | undefined;
+  failure: SearchFailure | undefined;
   isChecked: boolean;
   nodesSearched: number;
   maxBranchFormulas: number;
@@ -41,15 +42,17 @@ export const runZenon = (text: string, options: ZenonOptions): ZenonRun => {
   );
   const index = createIndex();
   const statistics = { inferences: 0, proofNodes: 0 };
-  const proof = search(
+  const outcome = search(
     { index, relations },
     separated.definitions,
     hypotheses,
     deadline,
     statistics,
   );
+  const proof = typeof outcome === "string" ? undefined : outcome;
   return {
     proof,
+    failure: typeof outcome === "string" ? outcome : undefined,
     isChecked:
       proof !== undefined &&
       checkProof(proof, {

@@ -938,15 +938,21 @@ export interface SearchStatistics {
   proofNodes: number;
 }
 
-// The proof of the hypotheses' inconsistency, or undefined when the search space is exhausted or
-// the deadline passes.
+export type SearchFailure = "exhausted" | "time limit" | "memory limit";
+
+// Zenon gives up once its heap passes 1 GB. The port bounds the nodes that the queues of the
+// current branch hold instead. On the corpus files where Zenon runs out of memory, its heap passes
+// 1 GB with 1.9 to 5.5 million of them, and no proof that Zenon finds needs more than 1.3 million.
+const MAX_QUEUED_NODES = 1_900_000;
+
+// The proof of the hypotheses' inconsistency, or why the search gave up.
 export const search = (
   context: SearchContext,
   definitions: Definition[],
   hypotheses: Hypothesis[],
   deadline: number,
   statistics: SearchStatistics,
-): Proof | undefined => {
+): Proof | SearchFailure => {
   const index = context.index;
   definitions.forEach(index.addDefinition);
   const initial: [Expr, number][] = [];
@@ -1033,7 +1039,8 @@ export const search = (
   };
 
   for (;;) {
-    if (Date.now() > deadline) return undefined;
+    if (Date.now() > deadline) return "time limit";
+    if (queue.insertedCount > MAX_QUEUED_NODES) return "memory limit";
     if (formIndex < forms.length) {
       const entry = forms[formIndex++];
       const formula = entry[0];
@@ -1057,7 +1064,7 @@ export const search = (
     for (;;) {
       statistics.inferences++;
       const removed = removeNode(queue);
-      if (removed === undefined) return undefined;
+      if (removed === undefined) return "exhausted";
       queue = removed[1];
       const reduced = removed[0].branches.map((branch) => reduceBranch(context, branch));
       if (reduced.some((branch) => branch.length === 0)) continue;

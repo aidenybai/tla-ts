@@ -123,6 +123,9 @@ export interface Queue {
   instSize: List<[number, Heap]>;
   instFront: List<Node>;
   instBack: List<Node>;
+  // The nodes inserted since the root. Removed nodes still count, because the queues of the
+  // branches above keep them.
+  insertedCount: number;
 }
 
 const SMALL_INSTANCES = 16;
@@ -143,6 +146,7 @@ export const EMPTY_QUEUE: Queue = {
   instSize: undefined,
   instFront: undefined,
   instBack: undefined,
+  insertedCount: 0,
 };
 
 const insertByGoalness = (list: List<[number, Heap]>, node: Node): List<[number, Heap]> => {
@@ -181,7 +185,8 @@ const canInstantiate = (meta: Expr, expression: Expr): boolean => {
   }
 };
 
-export const insertNode = (queue: Queue, node: Node): Queue => {
+export const insertNode = (previous: Queue, node: Node): Queue => {
+  const queue = { ...previous, insertedCount: previous.insertedCount + 1 };
   const priority = node.priority;
   if (priority === "prop")
     return node.branches.length < 2
