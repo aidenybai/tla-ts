@@ -1,16 +1,17 @@
-import type {
-  Bound,
-  BoundPattern,
-  Definition,
-  Expression,
-  Instance,
-  Module,
-  OperatorParam,
-  SourceLocation,
-  Theorem,
+import {
+  getChildren,
+  isLocallyResolved,
+  type Bound,
+  type BoundPattern,
+  type Definition,
+  type Expression,
+  type Instance,
+  type Module,
+  type OperatorParam,
+  type SourceLocation,
+  type Theorem,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { getChildren, isLocallyResolved } from "./evaluate";
 import { getArity, getBoundNames, getPatternNames, isBefore } from "./resolve";
 
 export const substitutedExpressions = new WeakSet<Expression>();

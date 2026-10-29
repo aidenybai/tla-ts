@@ -10,16 +10,8 @@ import {
 } from "./builtins";
 import { TlaEvaluationError, TlaModuleError, TlaUnsupportedError } from "./errors";
 import { getTlcFingerprint } from "./tlc-random";
-import {
-  evaluate,
-  expectBoolean,
-  getChildren,
-  getDefinition,
-  isLocallyResolved,
-  type Builtin,
-  type Environment,
-} from "./evaluate";
-import type { Definition, Expression } from "./ast";
+import { evaluate, expectBoolean, getDefinition, type Builtin, type Environment } from "./evaluate";
+import { getChildren, isLocallyResolved, type Definition, type Expression } from "./ast";
 import type { TraceStep } from "./check";
 import {
   getNamedRegisters,

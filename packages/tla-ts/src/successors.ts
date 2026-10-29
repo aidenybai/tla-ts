@@ -1,4 +1,10 @@
-import type { Bound, Definition, Expression } from "./ast";
+import {
+  getChildren,
+  isLocallyResolved,
+  type Bound,
+  type Definition,
+  type Expression,
+} from "./ast";
 import { getReadVariables } from "./dependencies";
 import { TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
@@ -14,14 +20,12 @@ import {
   expectBoolean,
   forEachBinding,
   getBoundsDomain,
-  getChildren,
   getDefinition,
   getEnumeratedElements,
   getReevaluatedDefinitions,
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,
-  isLocallyResolved,
   type Context,
   type Environment,
   type Scope,

@@ -1,13 +1,13 @@
-import type {
-  AssumeProve,
-  Definition,
-  Expression,
-  Module,
-  OperatorParam,
-  SourceLocation,
+import {
+  getChildren,
+  type AssumeProve,
+  type Definition,
+  type Expression,
+  type Module,
+  type OperatorParam,
+  type SourceLocation,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { getChildren } from "./evaluate";
 import { mapChildren } from "./instances";
 import { getBoundNames, getPatternNames } from "./resolve";
 import { STANDARD_LEVELS } from "./standard-levels";

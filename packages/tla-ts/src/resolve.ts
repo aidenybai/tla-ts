@@ -1,20 +1,21 @@
-import type {
-  AssumeProve,
-  Bound,
-  BoundPattern,
-  Definition,
-  Expression,
-  Instance,
-  Module,
-  NewSymbol,
-  OperatorParam,
-  Proof,
-  ProofStep,
-  SourceLocation,
-  Theorem,
+import {
+  getChildren,
+  isLocallyResolved,
+  type AssumeProve,
+  type Bound,
+  type BoundPattern,
+  type Definition,
+  type Expression,
+  type Instance,
+  type Module,
+  type NewSymbol,
+  type OperatorParam,
+  type Proof,
+  type ProofStep,
+  type SourceLocation,
+  type Theorem,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { getChildren, isLocallyResolved } from "./evaluate";
 
 export interface ModuleSymbol {
   key: string;

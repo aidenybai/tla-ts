@@ -1,11 +1,10 @@
-import type { Expression } from "./ast";
+import { getChildren, isLocallyResolved, type Expression } from "./ast";
 import { TlaEvaluationError } from "./errors";
 import {
   describeLocation,
   bindValue,
   expectBoolean,
   findGlobalName,
-  getChildren,
   getEnumeratedElements,
   getConditionError,
   getConjunctError,
@@ -14,7 +13,6 @@ import {
   getEvaluator,
   getFieldError,
   isClosedConstant,
-  isLocallyResolved,
   isTlcInteger,
   isValueArgument,
   isWorthCaching,

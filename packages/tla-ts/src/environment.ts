@@ -1,12 +1,13 @@
-import type {
-  Assumption,
-  Declaration,
-  Definition,
-  Expression,
-  Instance,
-  Module,
-  OperatorParam,
-  SourceLocation,
+import {
+  getChildren,
+  type Assumption,
+  type Declaration,
+  type Definition,
+  type Expression,
+  type Instance,
+  type Module,
+  type OperatorParam,
+  type SourceLocation,
 } from "./ast";
 import { BUNDLED_MODULES } from "./bundled-modules";
 import type { ConfigValue, ModelConfig } from "./config";
@@ -16,7 +17,6 @@ import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   createBigNumberError,
   createRealNumberError,
-  getChildren,
   isConstantLevel,
   isTlcInteger,
   type Builtin,
