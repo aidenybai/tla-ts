@@ -3,15 +3,17 @@
 // bound variables and fresh symbols counts as "names", when the recorded input is available.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { encodeObligation } from "../src/obligation-smt";
+import { join } from "node:path";
+import { TlaUnsupportedError } from "../src";
 import { getObligations } from "../src/obligations";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getLibraryModules } from "./corpora";
+import { encodeForBackend } from "../src/prove/prove";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY } from "./corpora";
 import {
-  getSmtDigest,
+  getInputDigest,
+  getModuleLoader,
+  printResults,
   PROOF_INPUTS_DIRECTORY,
-  PROOFS_PATH,
-  type ModuleProofRecord,
+  readProofRecords,
 } from "./proof-records";
 
 type Verdict = "match" | "names" | "mismatch" | "unsupported";
@@ -19,11 +21,6 @@ type Verdict = "match" | "names" | "mismatch" | "unsupported";
 type Sexp = string | Sexp[];
 
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".smt-encode-results.json");
-
-const libraryModules = getLibraryModules();
-
-// tlapm searches the module's directory, then the -I library, then its own standard library.
-const TLAPM_LIBRARY = join(CORPORA_DIRECTORY, "tlapm/library");
 
 const KEYWORDS = new Set([
   "forall",
@@ -119,11 +116,6 @@ const canonicalize = (commands: Sexp[]) => {
   return [...declarations, ...assertions];
 };
 
-const readModule = (path: string | undefined) =>
-  path !== undefined && existsSync(path)
-    ? { file: path, source: readFileSync(path, "utf8") }
-    : undefined;
-
 interface Result {
   module: string;
   id: number;
@@ -132,6 +124,16 @@ interface Result {
   expected?: string;
   actual?: string;
 }
+
+// The encoding, or why tla-ts can't encode the obligation.
+const getEncoding = (encode: () => string) => {
+  try {
+    return { kind: "smt", text: encode() } as const;
+  } catch (error) {
+    if (!(error instanceof TlaUnsupportedError)) throw error;
+    return { kind: "unsupported", reason: error.message } as const;
+  }
+};
 
 // The first command that differs once names are canonical.
 const findDifference = (expected: string, actual: string) => {
@@ -143,49 +145,37 @@ const findDifference = (expected: string, actual: string) => {
   return { expected: left[position] ?? "", actual: right[position] ?? "" };
 };
 
-const filter = process.argv.includes("--filter")
-  ? process.argv[process.argv.indexOf("--filter") + 1]
-  : undefined;
-const isVerbose = process.argv.includes("--verbose");
-if (!existsSync(PROOFS_PATH)) {
-  console.error("Run conformance:record-proofs first");
-  process.exit(1);
-}
-const records: ModuleProofRecord[] = JSON.parse(readFileSync(PROOFS_PATH, "utf8"));
-const results = records
-  .filter((record) => filter === undefined || record.id.includes(filter))
-  .filter((record) => record.obligations.some((obligation) => obligation.smt))
+const results = readProofRecords()
+  .filter((record) =>
+    record.obligations.some((obligation) => obligation.status !== "trivial" && "smt" in obligation),
+  )
   .flatMap((record): Result[] => {
     const path = join(CORPORA_DIRECTORY, record.id);
+    const loadModule = getModuleLoader(path);
     const obligations = new Map(
-      getObligations(
-        [{ file: path, source: readFileSync(path, "utf8") }],
-        (name) =>
-          readModule(join(dirname(path), `${name}.tla`)) ??
-          readModule(libraryModules.get(name)) ??
-          readModule(join(TLAPM_LIBRARY, `${name}.tla`)),
-      )
+      getObligations([{ file: path, source: readFileSync(path, "utf8") }], (name) => {
+        const source = loadModule(name);
+        return source === undefined ? undefined : { file: name, source };
+      })
         .flatMap((result) => result.obligations)
         .map((obligation) => [obligation.id, obligation]),
     );
     // tlapm counts some names across the obligations it encodes, in order.
-    const session = { caseErrors: 0 };
+    const run = { session: { caseErrors: 0 } };
     return record.obligations.flatMap((expected): Result[] => {
-      if (!expected.smt) return [];
+      if (expected.status === "trivial" || !("smt" in expected) || !expected.smt) return [];
       const base = { module: record.id, id: expected.id };
       const obligation = obligations.get(expected.id);
       if (!obligation || obligation.kind.kind === "Error")
         return [{ ...base, verdict: "mismatch", reason: "tla-ts has no such obligation" }];
-      const encoding = encodeObligation(obligation.sequent, obligation.kind, session).encoding;
-      if (encoding.kind === "trivial")
-        return [{ ...base, verdict: "mismatch", reason: "tla-ts finds it trivial" }];
-      if (encoding.kind === "unsupported")
-        return [{ ...base, verdict: "unsupported", reason: encoding.reason }];
-      if (getSmtDigest(encoding.script) === expected.smt.input)
+      const encoded = getEncoding(() => encodeForBackend(obligation, "smt", run));
+      if (encoded.kind === "unsupported")
+        return [{ ...base, verdict: "unsupported", reason: encoded.reason }];
+      if (getInputDigest(encoded.text) === expected.smt.input)
         return [{ ...base, verdict: "match" }];
       const inputPath = join(PROOF_INPUTS_DIRECTORY, record.id, `${expected.id}.smt`);
       if (!existsSync(inputPath)) return [{ ...base, verdict: "mismatch" }];
-      const difference = findDifference(readFileSync(inputPath, "utf8"), encoding.script);
+      const difference = findDifference(readFileSync(inputPath, "utf8"), encoded.text);
       return [
         difference
           ? { ...base, verdict: "mismatch", ...difference }
@@ -195,19 +185,14 @@ const results = records
   });
 
 writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
-const counts = Map.groupBy(results, (result) => result.verdict);
-console.log(
-  (["match", "names", "mismatch", "unsupported"] as const)
-    .map((verdict) => `${counts.get(verdict)?.length ?? 0} ${verdict}`)
-    .join(", "),
+printResults(
+  results,
+  ["match", "names", "mismatch", "unsupported"],
+  ["mismatch", "unsupported"],
+  (result) =>
+    [
+      `${result.verdict} ${result.module} #${result.id}${result.reason ? `: ${result.reason}` : ""}`,
+      ...(result.expected === undefined ? [] : [`  tlapm:  ${result.expected.slice(0, 300)}`]),
+      ...(result.actual === undefined ? [] : [`  tla-ts: ${result.actual.slice(0, 300)}`]),
+    ].join("\n"),
 );
-const shown = results.filter(
-  (result) => result.verdict === "mismatch" || result.verdict === "unsupported",
-);
-(isVerbose ? shown : shown.slice(0, 20)).forEach((result) => {
-  console.log(
-    `${result.verdict} ${result.module} #${result.id}${result.reason ? `: ${result.reason}` : ""}`,
-  );
-  if (result.expected !== undefined) console.log(`  tlapm:  ${result.expected.slice(0, 300)}`);
-  if (result.actual !== undefined) console.log(`  tla-ts: ${result.actual.slice(0, 300)}`);
-});

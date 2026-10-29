@@ -181,8 +181,8 @@ The `"tla-ts"` backend tries each obligation in tlapm's default order. It checks
 
 The result has these fields:
 
-- `obligations`: each obligation's `id`, `location`, `text`, and `status`. The status is `"proved"`, `"trivial"`, `"failed"`, or `"unsupported"`. An obligation that wasn't proved has a `reason`.
-- `summary`: the number of obligations with each status, and the numbers of missing and omitted proofs, as `tlapm --summary` counts them.
+- `obligations`: each obligation's `id`, `location`, `text`, and `status`. The status is `"proved"`, `"trivial"`, `"failed"`, or `"unsupported"`. A proved obligation names its `prover`, and a failed or unsupported one has a `reason`.
+- `missingProofCount` and `omittedProofCount`: the numbers of missing and omitted proofs, as `tlapm --summary` counts them.
 
 ### `parseModule`
 
