@@ -113,6 +113,11 @@ const printTrace = (trace: TraceStep[], heading = "Error: The behavior up to thi
   });
 };
 
+const getTemporalHeadline = (names: string[]) =>
+  names.length === 1
+    ? `Error: Temporal property ${names[0]} was violated.\n`
+    : `Error: Temporal properties ${names.slice(0, -1).join(", ")}${names.length > 2 ? "," : ""} and ${names[names.length - 1]} were violated.\n`;
+
 const printResult = (result: CheckResult) => {
   if (result.failure) {
     console.log(`Error: ${result.failure.message}`);
@@ -140,10 +145,10 @@ const printResult = (result: CheckResult) => {
       "invariant-violation": isInitial
         ? `Error: Invariant ${name} is violated by the initial state:`
         : `Error: Invariant ${name} is violated.`,
-      "property-violation": `Error: Property ${name} is violated.`,
+      "property-violation": getTemporalHeadline(violation.properties ?? [name]),
       "liveness-violation":
         loopStart !== undefined
-          ? `Error: Temporal property ${name} was violated.\n`
+          ? getTemporalHeadline(violation.properties ?? [name])
           : isInitial
             ? `Error: Property ${name} is violated by the initial state:`
             : `Error: Action property ${name} is violated.`,
@@ -152,6 +157,8 @@ const printResult = (result: CheckResult) => {
     if (violation.counts) console.log(violation.counts);
     console.log(headline);
     if (isInitial) printState(violation.trace[0].state);
+    else if (result.status === "property-violation")
+      printTrace(violation.trace, "Error: The following behavior constitutes a counter-example:\n");
     else if (loopStart === undefined) printTrace(violation.trace);
     else {
       printTrace(violation.trace, "Error: The following behavior constitutes a counter-example:\n");

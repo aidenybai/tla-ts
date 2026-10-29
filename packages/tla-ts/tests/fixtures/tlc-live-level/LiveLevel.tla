@@ -8,4 +8,5 @@ ReachesThree == <>(TLCGet("level") = 3)
 ReachesFour == <>(TLCGet("level") = 4)
 StepsUp == []<><<TLCGet("level")' = TLCGet("level") + 1>>_x
 LevelsAtMostTwo == [](TLCGet("level") <= 2)
+LevelsFromOne == TLCGet("level") >= 1
 ====

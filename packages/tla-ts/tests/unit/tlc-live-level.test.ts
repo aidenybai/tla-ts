@@ -11,7 +11,7 @@ const checkProperty = (name: string) =>
     config: readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"),
   });
 
-it.each(["ReachesThree", "StepsUp", "LevelsAtMostTwo"])(
+it.each(["ReachesThree", "StepsUp", "LevelsAtMostTwo", "LevelsFromOne"])(
   'evaluates TLCGet("level") in %s like TLC',
   async (name) => {
     const result = await checkProperty(name);

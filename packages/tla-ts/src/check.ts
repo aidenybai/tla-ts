@@ -26,13 +26,11 @@ import {
 } from "./evaluate";
 import {
   createLivenessChecker,
-  expandTemporal,
-  getLevel,
   type Lasso,
+  type LivenessChecker,
   type LiveSuccessor,
-  type ScopedExpression,
-  type TemporalProperty,
-} from "./liveness";
+} from "./live-check";
+import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
 import { ACTION_LEVEL, createLevelAnalyzer, TEMPORAL_LEVEL } from "./levels";
 import { prettyPrint } from "./pretty-print";
 import {
@@ -101,6 +99,8 @@ export interface TraceStep {
 
 export interface Violation {
   name: string;
+  // Every temporal property that a liveness counterexample violates, in the configuration's order.
+  properties?: string[];
   trace: TraceStep[];
   loopStart: number | undefined;
   loopLabel?: string;
@@ -967,8 +967,36 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   const getFingerprintState = search.getFingerprintState;
   const nextActions = { value: undefined as SpecAction[] | undefined };
   const isReducing = config.view !== undefined || config.symmetry !== undefined;
+  const tlcFingerprints: number[] = [];
   const liveness = withLivenessExitCode(() =>
-    createLivenessChecker(search.properties.liveness, spec.temporals, environment),
+    createLivenessChecker(search.properties.liveness, spec.temporals, environment, {
+      getFingerprint: (index) =>
+        (tlcFingerprints[index] ??= Number(
+          BigInt.asIntN(32, runtime.getFingerprint(states[index])),
+        )),
+      getSuccessors: (state) => {
+        const successors: LiveSuccessor[] = [];
+        if (spec.next === undefined) return successors;
+        forEachSuccessor(
+          spec.next,
+          state,
+          environment,
+          (successor) => {
+            canonicalizeState(successor.state);
+            const isInModel =
+              search.satisfiesConstraints(successor.state, state) &&
+              search.satisfiesActionConstraints(state, successor.state);
+            if (!isInModel) return false;
+            const fingerprintState = getFingerprintState(successor.state);
+            const index = findStateIndex(getStateHash(fingerprintState), fingerprintState);
+            successors.push({ index, state: successor.state });
+            return false;
+          },
+          spec.scope,
+        );
+        return successors;
+      },
+    }),
   );
   const isCanonicalizedFirst = search.isSymmetric || liveness !== undefined;
 
@@ -1109,7 +1137,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       outDegrees: failureOutDegrees,
     };
   };
-  const getPathTrace = (path: number[], loopStart?: number) => {
+  const getPathSteps = (path: number[], loopStart?: number) => {
     const steps = getPathStates(path, NEXT_RECOVERY_FAILURE);
     const last = steps[steps.length - 1].state;
     const isClosed =
@@ -1118,7 +1146,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
       loopStart === path.length - 1 ||
       findSuccessorWithFingerprint(last, path[loopStart]) !== undefined;
     if (!isClosed) throw new TlaEvaluationError(NEXT_RECOVERY_FAILURE);
-    return toTrace(steps, path, loopStart);
+    return steps;
   };
   const getStateHash = (state: Value[]) => {
     let hash = 0x811c9dc5;
@@ -1184,7 +1212,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   };
   runtime.getCurrentState = () => (current.index === -1 ? undefined : states[current.index]);
   runtime.setLivenessSource = (index) => {
-    current.livenessSource = index;
+    current.livenessSource = index ?? -1;
   };
   runtime.getLevel = (state) => {
     const source = current.livenessSource;
@@ -1340,32 +1368,43 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     }
     try {
       const accepted = liveness?.addState(index, state, liveSuccessors);
-      current.livenessSource = -1;
-      if (!accepted) return undefined;
+      if (!liveness || !accepted) return undefined;
+      const steps = getPathSteps(accepted);
+      const properties = liveness.getViolatedProperties(
+        steps.map((step) => step.state),
+        steps.length - 1,
+      );
       return reportViolation("property-violation", {
-        name: accepted.name,
-        trace: getPathTrace(accepted.path),
+        name: properties[0],
+        properties,
+        trace: toTrace(steps, accepted),
       });
     } catch (error) {
       return toFailure(error, getStateTrace(index), undefined, getPartialOutDegrees());
     }
   };
-  const reportLasso = (lasso: Lasso) => {
+  // TLC names the properties and the step back into the cycle from the states it prints.
+  const reportLasso = (checker: LivenessChecker, lasso: Lasso) => {
     const path = [...lasso.prefix, ...lasso.cycle];
-    const trace = getPathTrace(path, lasso.prefix.length);
-    const back = path[lasso.prefix.length];
+    const loopStart = lasso.prefix.length;
+    const steps = getPathSteps(path, loopStart);
+    const trace = toTrace(steps, path, loopStart);
+    const properties = checker.getViolatedProperties(
+      steps.map((step) => step.state),
+      loopStart,
+    );
+    const back = path[loopStart];
     const last = path[path.length - 1];
+    const lastState = steps[steps.length - 1].state;
     const loopLabel =
-      back === last ? undefined : withoutOutput(() => getLabel(last, states[last], states[back]));
+      back === last ? undefined : withoutOutput(() => getLabel(last, lastState, states[back]));
     return reportViolation(
       "liveness-violation",
-      { name: lasso.name, trace, loopStart: lasso.prefix.length, loopLabel },
+      { name: properties[0], properties, trace, loopStart, loopLabel },
       () =>
         back === last
           ? trace[trace.length - 1].action
-          : getTraceSuccessors(states[last]).find((successor) =>
-              isSameState(successor.state, states[back]),
-            )?.action,
+          : findSuccessorWithFingerprint(lastState, back)?.action,
     );
   };
   const isPeriodic = liveness !== undefined && options.livenessCheck !== "final";
@@ -1378,7 +1417,6 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     if (!isGrown || periodic.time > (now - startedAt) * LIVENESS_RATIO) return undefined;
     periodic.size = expanded;
     const lasso = liveness?.findViolation();
-    current.livenessSource = -1;
     periodic.time += performance.now() - now;
     return lasso;
   };
@@ -1398,15 +1436,14 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
     expansion.newStates = 0;
     if (isPeriodic && performance.now() >= periodic.at) {
       const lasso = findPeriodicViolation(index + 1);
-      if (lasso) return reportLasso(lasso);
+      if (liveness && lasso) return reportLasso(liveness, lasso);
     }
   }
 
   current.index = -1;
   current.candidate = undefined;
   const lasso = liveness?.findViolation();
-  current.livenessSource = -1;
-  if (lasso) return reportLasso(lasso);
+  if (liveness && lasso) return reportLasso(liveness, lasso);
 
   const postconditionViolation = search.findPostconditionViolation();
   if (postconditionViolation) {

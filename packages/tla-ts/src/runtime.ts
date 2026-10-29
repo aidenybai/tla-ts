@@ -6,7 +6,7 @@ export interface CheckerRuntime {
   getBehavior: (state: Value[]) => Value[][];
   getSpecification: () => Value;
   counterExample: Value | undefined;
-  setLivenessSource: (index: number) => void;
+  setLivenessSource: (index: number | undefined) => void;
   getCurrentState: () => Value[] | undefined;
   getFingerprint: (state: Value[]) => bigint;
   getRandom: () => JavaRandom;
