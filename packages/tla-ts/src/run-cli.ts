@@ -19,12 +19,14 @@ import {
   TlaError,
   TlaEvaluationError,
   TlaProofError,
+  TlaSyntaxError,
 } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
 import type { LineRange } from "./obligation-generate";
 import { getAtPrefix, getLocusText } from "./obligation-expression";
 import { formatSummary, getObligations, WHOLE_MODULE, type ModuleObligations } from "./obligations";
 import { check } from "./parallel";
+import { parseModule } from "./parser";
 import { prettyPrint } from "./pretty-print";
 import {
   formatProbability,
@@ -198,6 +200,14 @@ const checkSpec = async (specPath: string, args: ParsedArgs) => {
     console.error(`Cannot find the specification file ${specPath}`);
     return EXIT_STATUS.configParseError;
   }
+  const source = readFileSync(specPath, "utf8");
+  const fileName = basename(specPath, ".tla");
+  const moduleName = parseModule(source).name;
+  if (moduleName !== fileName) {
+    throw new TlaSyntaxError(
+      `File name '${fileName}' does not match the name '${moduleName}' of the top level module it contains.`,
+    );
+  }
   const configPath =
     args.get("-config")?.[0] ??
     (args.has("-config") ? undefined : specPath.replace(/\.tla$/, ".cfg"));
@@ -227,7 +237,7 @@ const checkSpec = async (specPath: string, args: ParsedArgs) => {
     workers: getWorkerCount(args.get("-workers")),
     livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
     seed: BigInt(seed),
-    source: readFileSync(specPath, "utf8"),
+    source,
     config,
     onPause: () => readSync(0, Buffer.alloc(1)),
     loadModule: (name) => {
