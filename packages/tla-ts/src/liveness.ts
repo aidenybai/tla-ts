@@ -351,7 +351,14 @@ export const toLiveExpression = (
 
   const convert = (expression: Expression, scope: Scope | undefined): LiveExpression => {
     const level = getLevel(expression, scope, environment);
-    if (level <= ACTION_LEVEL) return toAtom(expression, scope, level);
+    if (level <= ACTION_LEVEL) {
+      // TLC converts each conjunct or disjunct before it takes the formula whole, so it evaluates
+      // those of constant level.
+      if (expression.kind === "And" || expression.kind === "Or") {
+        expression.operands.forEach((operand) => convert(operand, scope));
+      }
+      return toAtom(expression, scope, level);
+    }
     switch (expression.kind) {
       case "Label":
         return convert(expression.body, scope);
