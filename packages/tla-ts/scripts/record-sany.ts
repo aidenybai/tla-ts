@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
   CONFORMANCE_DIRECTORY,
   CORPORA_DIRECTORY,
   findModules,
-  getLibraryModules,
+  LIBRARY_PATH,
+  linkLibraryModules,
   type CorpusModule,
 } from "./corpora";
 import { digestSany, type ModuleDigest } from "./proof-digest";
@@ -19,9 +20,6 @@ export interface SanyResult {
 }
 
 export const SANY_PATH = join(CONFORMANCE_DIRECTORY, "sany.json");
-
-// One directory of library modules, so SANY finds them after its standard modules.
-const LIBRARY_PATH = join(CONFORMANCE_DIRECTORY, ".library");
 
 const CONCURRENCY = 3;
 
@@ -77,9 +75,7 @@ const runSany = async (module: CorpusModule): Promise<SanyResult> => {
     : { id: module.id, status: "error", error: getError(checked.output) };
 };
 
-rmSync(LIBRARY_PATH, { recursive: true, force: true });
-mkdirSync(LIBRARY_PATH);
-getLibraryModules().forEach((path, name) => symlinkSync(path, join(LIBRARY_PATH, `${name}.tla`)));
+linkLibraryModules();
 const modules = findModules();
 const results: SanyResult[] = [];
 const queue = [...modules];
