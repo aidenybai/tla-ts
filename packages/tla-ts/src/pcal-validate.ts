@@ -10,6 +10,7 @@ import {
 import { parsePcalAlgorithm, type PcalSession } from "./pcal-parse";
 import { createPcalCharReader } from "./pcal-tokenize";
 import { translatePcalAlgorithm } from "./pcal-translate";
+import type { TlcVersion } from "./tlc-version";
 
 // Validator.ValidationResult.
 export type PcalValidationResult =
@@ -343,6 +344,7 @@ const throwIndexOutOfBounds = (index: number, size: number): never => {
 export const validatePcalModule = (
   session: PcalSession,
   specificationText: string[],
+  version?: TlcVersion,
 ): Set<PcalValidationResult> => {
   if (!specificationText.some((line) => line.indexOf("algorithm") > 0)) {
     return new Set(["NO_PLUSCAL_EXISTS"]);
@@ -419,13 +421,14 @@ export const validatePcalModule = (
     return results;
   }
   const pcalChecksum = match.groups?.pcal;
-  // The Java checksums the string "fair" for a --fair algorithm, and a failed parse leaves an AST
-  // whose text, Object.toString's class name and hash code, matches no checksum.
-  const algorithmText = begin.isFair
-    ? "fair"
-    : parsed.ast === undefined
-      ? undefined
-      : formatPcalNode(parsed.ast, session.params.inputVersionNumber);
+  // The Java checksums the string "fair" for a --fair algorithm, unlike TLC 1.7.4's, and a failed
+  // parse leaves an AST whose text, Object.toString's class name and hash code, matches no checksum.
+  const algorithmText =
+    begin.isFair && version !== "1.7.4"
+      ? "fair"
+      : parsed.ast === undefined
+        ? undefined
+        : formatPcalNode(parsed.ast, session.params.inputVersionNumber, version);
   if (
     pcalChecksum !== undefined &&
     (algorithmText === undefined || pcalChecksum !== getChecksum(algorithmText))

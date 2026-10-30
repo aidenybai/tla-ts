@@ -896,6 +896,7 @@ const checkSpec = async (
       ),
       version,
       onPrint: (text) => process.stdout.write(text),
+      onPrintError: (text) => process.stderr.write(text),
     },
   );
   if (sany.isFailed) {

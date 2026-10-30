@@ -39,6 +39,8 @@ export interface SanyReportOptions {
   version?: TlcVersion;
   // Prints what SANY prints as it goes, before the report holds all of it.
   onPrint?: (text: string) => void;
+  // Prints what TLC 1.7.4's SANY prints to its error stream as it goes.
+  onPrintError?: (text: string) => void;
 }
 
 // ErrorDetails.toString.
@@ -138,6 +140,13 @@ export const getSanyReport = (
   const parsePhase = { isReported: false, isAborted: false };
   const session = createPcalSession(createPcalParams(), log);
   const loadedModules = new Map<string, { text: string; module: Module }>();
+  // TLC 1.7.4's SpecObj.validateParseUnit prints what it finds, which follows the file SANY parses
+  // next, as SANY validates a module once it parses the module or one that extends it.
+  const validations: { text: string; isError: boolean }[] = [];
+  const printValidations = () =>
+    validations
+      .splice(0)
+      .forEach(({ text, isError }) => (isError ? options.onPrintError?.(`${text}\n`) : log(text)));
   // SpecObj.validateParseUnit: Errors.addMessage drops a message it already has.
   const validate = (moduleName: string) => {
     const loaded = loadedModules.get(moduleName);
@@ -147,9 +156,29 @@ export const getSanyReport = (
     const results = validatePcalModule(
       session,
       fileLines.slice(range.start.line - 1, range.end.line),
+      options.version,
     );
     const isTlaChanged = results.has("TLA_DIVERGENCE_EXISTS");
     const isPcalChanged = results.has("PCAL_DIVERGENCE_EXISTS");
+    if (isTlc174) {
+      const warning =
+        isTlaChanged && isPcalChanged
+          ? `The PlusCal algorithm and its TLA+ translation in module ${moduleName} filename since the last translation.`
+          : isTlaChanged
+            ? `The TLA+ translation in module ${moduleName} has changed since its last translation.`
+            : isPcalChanged
+              ? `The PlusCal algorithm in module ${moduleName} has changed since its last translation.`
+              : undefined;
+      if (warning !== undefined)
+        validations.push({ text: `!! WARNING: ${warning}`, isError: false });
+      else if (results.has("ERROR_ENCOUNTERED")) {
+        validations.push({
+          text: `A unexpected problem was encountered attempting to validate the specification for ${moduleName}`,
+          isError: true,
+        });
+      }
+      return;
+    }
     const text =
       isTlaChanged && isPcalChanged
         ? `Both the PlusCal algorithm and its TLA+ translation in module ${moduleName} have changed since the last translation.`
@@ -184,6 +213,7 @@ export const getSanyReport = (
   // SANY.frontEndParse: once SANY has loaded the specification, it prints the warnings of its
   // parsing phase, and when there are errors, every message, and stops.
   const reportParseMessages = () => {
+    printValidations();
     if (parsePhase.isReported) return;
     parsePhase.isReported = true;
     const warnings = parseMessages.filter((message) => message.isWarning);
@@ -221,7 +251,6 @@ export const getSanyReport = (
         throw new TlaSanyFatalError(`Cannot find source file for module ${name}`, undefined);
       }
       loadValidatedModule(rootName, source);
-      validate(rootName);
       return generateSanySpecification(source, loadSource, {
         rootFileName: rootName,
         version: options.version,
@@ -229,6 +258,8 @@ export const getSanyReport = (
           if (describeFile) {
             log(`Parsing file ${describeFile(moduleName, origins.get(moduleName) ?? "file")}`);
           }
+          if (moduleName === rootName) validate(rootName);
+          printValidations();
         },
         onAnalyze: (moduleName) => {
           reportParseMessages();

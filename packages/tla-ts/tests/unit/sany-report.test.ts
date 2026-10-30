@@ -372,6 +372,15 @@ describe("getSanyReport on PlusCal", () => {
     expect(getReport({ Counter: COUNTER })).toEqual({ text: "Labels added.\n", isFailed: false });
   });
 
+  it("validates the root module once it parses it", () => {
+    const report = getReport({ Counter: COUNTER }, { describeFile: (name) => `${name}.tla` });
+    expect(report.text.split("\n").slice(0, 3)).toEqual([
+      "Parsing file Counter.tla",
+      "Labels added.",
+      "Parsing file Naturals.tla",
+    ]);
+  });
+
   it("warns that the algorithm changed since its translation", () => {
     const report = getReport({ Counter: COUNTER.replace("x := x + 1", "x := x + 2") });
     expect(report).toEqual({
@@ -517,6 +526,48 @@ end algorithm; *)
   });
 });
 
+// A --fair algorithm with a disjunction, with the checksum of TLC 1.7.4's SANY, which leaves out
+// the columns of its junctions and that it is fair.
+const FAIR = `---- MODULE Fair ----
+EXTENDS Naturals
+(* --fair algorithm Fair
+variables x = 0;
+begin
+  Step: while x < 3 \\/ x = 4 do
+    x := x + 1;
+  end while;
+end algorithm; *)
+\\* BEGIN TRANSLATION (chksum(pcal) = "2c64e8f2" /\\ chksum(tla) = "e3ed5ed0")
+VARIABLES pc, x
+
+vars == << pc, x >>
+
+Init == (* Global variables *)
+        /\\ x = 0
+        /\\ pc = "Step"
+
+Step == /\\ pc = "Step"
+        /\\ IF x < 3 \\/ x = 4
+              THEN /\\ x' = x + 1
+                   /\\ pc' = "Step"
+              ELSE /\\ pc' = "Done"
+                   /\\ x' = x
+
+(* Allow infinite stuttering to prevent deadlock on termination. *)
+Terminating == pc = "Done" /\\ UNCHANGED vars
+
+Next == Step
+           \\/ Terminating
+
+Spec == /\\ Init /\\ [][Next]_vars
+        /\\ WF_vars(Next)
+
+Termination == <>(pc = "Done")
+
+\\* END TRANSLATION
+====
+`;
+
 // The expected reports are what the SANY of TLC 1.7.4's tla2tools.jar prints.
 describe("getSanyReport for TLC 1.7.4", () => {
   const options: SanyReportOptions = { version: "1.7.4" };
@@ -589,6 +640,41 @@ X == "✓"
         "",
         "",
       ]),
+    );
+  });
+
+  it("warns after the file it parses that the algorithm changed", () => {
+    const report = getReport(
+      { Counter: COUNTER.replace("x := x + 1", "x := x + 2") },
+      { ...options, describeFile: (name) => `${name}.tla` },
+    );
+    expect(report).toEqual({
+      text: toText([
+        "Parsing file Counter.tla",
+        "Labels added.",
+        "!! WARNING: The PlusCal algorithm in module Counter has changed since its last translation.",
+        "Parsing file Naturals.tla",
+        "Semantic processing of module Naturals",
+        "Semantic processing of module Counter",
+      ]),
+      isFailed: false,
+    });
+  });
+
+  it("warns in its own words that both the algorithm and its translation changed", () => {
+    const report = getReport({ Counter: COUNTER.replaceAll("x < 3", "x < 4") }, options);
+    expect(report.text).toBe(
+      toText([
+        "Labels added.",
+        "!! WARNING: The PlusCal algorithm and its TLA+ translation in module Counter filename since the last translation.",
+      ]),
+    );
+  });
+
+  it("checksums a fair algorithm by its text, without the columns of its junctions", () => {
+    expect(getReport({ Fair: FAIR }, options)).toEqual({ text: "", isFailed: false });
+    expect(getReport({ Fair: FAIR }).text).toContain(
+      "The PlusCal algorithm in module Fair has changed since its last translation.",
     );
   });
 
