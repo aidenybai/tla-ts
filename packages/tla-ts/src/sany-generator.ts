@@ -295,6 +295,8 @@ export const generateSanySpecification = (
   // TLC 1.7.4's SANY numbers its first node 0, and the master builds create one before.
   const counter = { value: options.version === "1.7.4" ? -1 : 0 };
   const getId = () => ++counter.value;
+  // The UID of the nullOAN of the Generator of the module being generated.
+  const nullApplication = { id: 0 };
 
   // SymbolTable.addSymbol: a symbol joins the innermost context unless its name is taken, which is
   // an error unless the symbols agree in kind and arity, and then a warning unless they are the
@@ -612,8 +614,9 @@ export const generateSanySpecification = (
       operands: (ExprOrOpArgNode | undefined)[],
       location: SanyLocation,
       binding: Partial<Pick<OpApplNode, "unbounded" | "bounded" | "tupleOrs" | "ranges">> = {},
+      id = getId(),
     ): OpApplNode => ({
-      ...createLevelFields(getId()),
+      ...createLevelFields(id),
       kind: "OpAppl",
       operator,
       operands,
@@ -626,7 +629,7 @@ export const generateSanySpecification = (
 
     // Generator.nullOAN, which SANY returns where it reported an error and carries on.
     const createNullNode = (location: SanyLocation): OpApplNode => ({
-      ...createOpAppl(getBuiltin("$Nop"), [], location),
+      ...createOpAppl(getBuiltin("$Nop"), [], location, {}, nullApplication.id),
       isNull: true,
     });
 
@@ -2691,7 +2694,7 @@ export const generateSanySpecification = (
   order.forEach((name) => {
     options.onAnalyze?.(name);
     // Each module's Generator creates its nullODN, nullOAN, nullOpArg and nullLabelNode.
-    Array.from({ length: 4 }, getId);
+    nullApplication.id = Array.from({ length: 4 }, getId)[1];
     const entry = getSource(name, undefined);
     const context = createContext();
     // A module's context starts as a copy of SANY's global context of builtins, whose list of
