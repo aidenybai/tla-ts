@@ -124,8 +124,18 @@ export class TheoryLra {
     return this.context.manager;
   }
 
+  // get_enode, get_expr and get_num_vars: the theory reaches enodes only through these and
+  // isEqual.
   getEnode(thVar: number) {
     return this.varEnodes[thVar];
+  }
+
+  private getExpr(thVar: number) {
+    return this.varEnodes[thVar].owner;
+  }
+
+  private getNumVars() {
+    return this.varEnodes.length;
   }
 
   // init: the constants 1 and 0, integer and then real, each in a scope of its own. The context
@@ -153,7 +163,7 @@ export class TheoryLra {
   }
 
   private isIntVar(thVar: number) {
-    return this.isIntExpr(this.varEnodes[thVar].owner);
+    return this.isIntExpr(this.getExpr(thVar));
   }
 
   // Variables.
@@ -716,7 +726,7 @@ export class TheoryLra {
     if (solver.hasTerm(column)) {
       const thVar = solver.getExternal(column);
       if (thVar !== NULL_THEORY_VAR) {
-        const expr = this.varEnodes[thVar].owner;
+        const expr = this.getExpr(thVar);
         if (
           this.manager.isNumeral(expr) &&
           Rational.fromNumber(this.manager.values[expr]).equals(value)
@@ -733,7 +743,7 @@ export class TheoryLra {
   }
 
   private isEqual(first: number, second: number) {
-    return this.varEnodes[first].root === this.varEnodes[second].root;
+    return this.getEnode(first).root === this.getEnode(second).root;
   }
 
   // report_equality_of_fixed_vars: two columns fixed to the same value are equal.
@@ -759,8 +769,7 @@ export class TheoryLra {
   // numeral with that value.
   private fixedVarEh(thVar: number, column: number, dep: Dependency, value: Rational) {
     if (this.propagateOffsetEq(column, dep, value)) return;
-    const node = this.varEnodes[thVar];
-    const isInt = this.isIntExpr(node.owner);
+    const isInt = this.isIntVar(thVar);
     let other = this.value2var.get(value.toString());
     if (other === undefined) {
       if (value.isZero()) other = this.solver.getExternal(isInt ? this.zeroVar : this.realZeroVar);
@@ -768,8 +777,7 @@ export class TheoryLra {
         other = this.solver.getExternal(isInt ? this.oneVar : this.realOneVar);
       else return;
     }
-    const otherNode = this.varEnodes[other];
-    if (this.isIntExpr(otherNode.owner) !== isInt || node.root === otherNode.root) return;
+    if (this.isIntVar(other) !== isInt || this.isEqual(thVar, other)) return;
     this.resetEvidence();
     this.setEvidenceOfDep(dep);
     this.assignEq(thVar, other);
@@ -782,9 +790,7 @@ export class TheoryLra {
     if (coeffs.length !== 2) return false;
     const [first, second] = coeffs;
     if (!first[1].add(second[1]).isZero() || first[0] === second[0]) return false;
-    const x = this.varEnodes[first[0]];
-    const y = this.varEnodes[second[0]];
-    if (x === undefined || y === undefined || x.root === y.root) return false;
+    if (this.isEqual(first[0], second[0])) return false;
     if (this.isIntVar(first[0]) !== this.isIntVar(second[0])) return false;
     this.resetEvidence();
     this.setEvidenceOfDep(dep);
@@ -813,9 +819,7 @@ export class TheoryLra {
   }
 
   private assignEq(first: number, second: number) {
-    const x = this.varEnodes[first];
-    const y = this.varEnodes[second];
-    this.context.pushEq(x, y, {
+    this.context.pushEq(this.getEnode(first), this.getEnode(second), {
       kind: "justification",
       justification: new TheoryJustification(this.coreLiterals, []),
     });
@@ -827,15 +831,15 @@ export class TheoryLra {
     const v1 = this.solver.getExternal(first);
     const v2 = this.solver.getExternal(second);
     if (v1 === NULL_THEORY_VAR || v2 === NULL_THEORY_VAR) return false;
-    const x = this.varEnodes[v1];
-    const y = this.varEnodes[v2];
-    if (x.root === y.root || this.isIntVar(v1) !== this.isIntVar(v2)) return false;
+    if (this.isEqual(v1, v2) || this.isIntVar(v1) !== this.isIntVar(v2)) return false;
     const manager = this.manager;
+    const e1 = this.getExpr(v1);
+    const e2 = this.getExpr(v2);
     if (
       !isFixed &&
-      !manager.isNumeral(x.owner) &&
-      !manager.isNumeral(y.owner) &&
-      (manager.getOp(x.owner) === OP_ITE || manager.getOp(y.owner) === OP_ITE)
+      !manager.isNumeral(e1) &&
+      !manager.isNumeral(e2) &&
+      (manager.getOp(e1) === OP_ITE || manager.getOp(e2) === OP_ITE)
     )
       return false;
     this.resetEvidence();
@@ -1020,7 +1024,7 @@ export class TheoryLra {
     const summands = coeffs
       .filter((entry) => !entry[1].isZero())
       .map((entry) => {
-        const expr = this.varEnodes[entry[0]].owner;
+        const expr = this.getExpr(entry[0]);
         return entry[1].equals(Rational.one)
           ? expr
           : manager.mkApp(OP_MUL, [manager.mkNumeral(Number(entry[1].num)), expr], SORT_INT);
@@ -1042,7 +1046,7 @@ export class TheoryLra {
 
   private initVariableValues() {
     this.isModelInitialized = false;
-    if (this.context.checkCanceled() || this.varEnodes.length === 0) return;
+    if (this.context.checkCanceled() || this.getNumVars() === 0) return;
     const saved = this.isModelInitialized;
     this.context.pushTrail(() => {
       this.isModelInitialized = saved;
@@ -1060,9 +1064,8 @@ export class TheoryLra {
     const byValue = new Map<string, number>();
     const tmpVarSet = new Set<number>();
     const columns: number[] = [];
-    for (let thVar = 0; thVar < this.varEnodes.length; thVar++) {
-      const node = this.varEnodes[thVar];
-      if (!this.isRelevantAndShared(node)) continue;
+    for (let thVar = 0; thVar < this.getNumVars(); thVar++) {
+      if (!this.isRelevantAndShared(this.getEnode(thVar))) continue;
       const column = this.registerVar(thVar);
       const key = `${this.isIntVar(thVar)}:${solver.getValue(column)}`;
       const other = byValue.get(key);
@@ -1070,7 +1073,7 @@ export class TheoryLra {
         byValue.set(key, thVar);
         continue;
       }
-      if (node.root === this.varEnodes[other].root) continue;
+      if (this.isEqual(thVar, other)) continue;
       if (!solver.isFixed(column)) columns.push(column);
       else if (!tmpVarSet.has(other)) {
         const otherColumn = solver.externalToLocalColumn(other);
@@ -1089,15 +1092,14 @@ export class TheoryLra {
     this.randomUpdate();
     const context = this.context;
     const solver = this.solver;
-    const numVars = this.varEnodes.length;
+    const numVars = this.getNumVars();
     const oldSize = this.assumeEqCandidates.length;
     let numCandidates = 0;
     const start = context.getRandomValue();
     const byValue = new Map<string, number>();
     for (let index = 0; index < numVars; index++) {
       const thVar = (index + start) % numVars;
-      const node = this.varEnodes[thVar];
-      if (!this.isRelevantAndShared(node)) continue;
+      if (!this.isRelevantAndShared(this.getEnode(thVar))) continue;
       const column = this.registerVar(thVar);
       const key = `${this.isIntVar(thVar)}:${solver.getValue(column)}`;
       const other = byValue.get(key);
@@ -1105,7 +1107,7 @@ export class TheoryLra {
         byValue.set(key, thVar);
         continue;
       }
-      if (node.root === this.varEnodes[other].root) continue;
+      if (this.isEqual(thVar, other)) continue;
       this.assumeEqCandidates.push([thVar, other]);
       numCandidates++;
     }
@@ -1125,13 +1127,16 @@ export class TheoryLra {
     const solver = this.solver;
     while (this.assumeEqHead < this.assumeEqCandidates.length) {
       const candidate = this.assumeEqCandidates[this.assumeEqHead];
-      const first = this.varEnodes[candidate[0]];
-      const second = this.varEnodes[candidate[1]];
       this.assumeEqHead++;
       const isEq = solver
         .getValue(this.registerVar(candidate[0]))
         .equals(solver.getValue(this.registerVar(candidate[1])));
-      if (isEq && first.root !== second.root && this.context.assumeEq(first, second)) return true;
+      if (
+        isEq &&
+        !this.isEqual(candidate[0], candidate[1]) &&
+        this.context.assumeEq(this.getEnode(candidate[0]), this.getEnode(candidate[1]))
+      )
+        return true;
     }
     return false;
   }
@@ -1142,7 +1147,7 @@ export class TheoryLra {
   initModel(model: ProtoModel) {
     this.initVariableValues();
     if (!this.isModelInitialized) return;
-    for (let thVar = 0; thVar < this.varEnodes.length; thVar++)
+    for (let thVar = 0; thVar < this.getNumVars(); thVar++)
       if (this.solver.externalToLocalColumn(thVar) !== NULL_LPVAR)
         model.registerValue(this.getValueExpr(thVar));
   }
@@ -1168,7 +1173,7 @@ export class TheoryLra {
       boundsLimit: this.boundsTrail.length,
       assertedQhead: this.assertedQhead,
       assertedAtomsLimit: this.assertedAtoms.length,
-      numVars: this.varEnodes.length,
+      numVars: this.getNumVars(),
     });
     this.solver.push();
   }
