@@ -2,7 +2,8 @@
 // tlapm reached, as conformance:record-proofs recorded it. tla-ts should prove what tlapm proves,
 // find trivial what tlapm finds trivial, never prove what tlapm fails to prove, and prove each
 // obligation with the prover tlapm used. A proof of what tlapm's backend refuted is unsound. A
-// difference where tlapm is wrong counts as a deviation instead. Worker processes take one module
+// difference where tlapm is wrong counts as a deviation instead, and one where tlapm's backend
+// proved the obligation after tlapm's time limit counts as late. Worker processes take one module
 // at a time, largest first, --jobs of them at once.
 //
 // tlapm's time limits are wall-clock time, which a loaded machine stretches. So an obligation
@@ -31,10 +32,12 @@ import {
 import { getDeviation } from "./tlapm-deviations";
 
 // "extra" is a proof of what tlapm failed to prove, and "unsound" one of what tlapm's backend
-// refuted.
+// refuted. "late" is a proof by a backend whose input tlapm's backend proved too, after tlapm had
+// stopped waiting for it at its time limit.
 const VERDICTS = [
   "agree",
   "deviation",
+  "late",
   "prover",
   "missed",
   "extra",
@@ -44,6 +47,10 @@ const VERDICTS = [
 ] as const;
 
 type Verdict = (typeof VERDICTS)[number];
+
+// Whether a verdict is a difference in tla-ts.
+const isDifference = (verdict: Verdict) =>
+  verdict !== "agree" && verdict !== "deviation" && verdict !== "late";
 
 // tlapm's prover proving the obligation within its limit in CPU time.
 interface CpuProof {
@@ -90,6 +97,12 @@ const getBackendVerdict = (record: ObligationRecord, prover: string) => {
 const getVerdict = (expected: ObligationRecord, actual: ProofObligation | undefined): Verdict => {
   if (!actual) return "absent";
   if ((expected.status === "trivial") !== (actual.status === "trivial")) return "trivial";
+  if (
+    actual.status === "proved" &&
+    !(expected.status === "proved" && expected.prover === actual.prover) &&
+    getBackendVerdict(expected, actual.prover) === "unsat"
+  )
+    return "late";
   if (isProved(actual.status) && !isProved(expected.status))
     return actual.status === "proved" && getBackendVerdict(expected, actual.prover) === "sat"
       ? "unsound"
@@ -181,9 +194,7 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
       ...(reason === undefined ? {} : { reason }),
     };
   });
-  const isDifferent = (result: Result) =>
-    result.verdict !== "agree" && result.verdict !== "deviation";
-  if (!results.some(isDifferent)) return results;
+  if (!results.some((result) => isDifference(result.verdict))) return results;
   const printed = new Map(
     getObligations([{ file: path, source }], (name) => {
       const loaded = loadModule(name);
@@ -194,7 +205,7 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
   );
   return results.map((result, index) => {
     const obligation = printed.get(result.id);
-    if (!isDifferent(result) || !obligation) return result;
+    if (!isDifference(result.verdict) || !obligation) return result;
     const expected = record.obligations[index];
     const actual = byId.get(result.id);
     const provers = findMethods(obligation).provers;
@@ -235,7 +246,7 @@ console.log("by wall-clock time:");
 printResults(
   results,
   VERDICTS,
-  ["deviation", "unsound", "extra", "trivial", "absent", "prover"],
+  ["deviation", "late", "unsound", "extra", "trivial", "absent", "prover"],
   (result) =>
     `${result.verdict} ${result.module} #${result.id}: tlapm ${result.expected}, tla-ts ${result.actual ?? "none"}${result.reason ? ` (${result.reason})` : ""}${result.cpuProof ? ` (${result.cpuProof.prover} proves it in ${result.cpuProof.cpuMilliseconds} ms of CPU time)` : ""}`,
 );
@@ -245,9 +256,7 @@ console.log(
 );
 // The differences by CPU time, by kind and the backend each points at.
 const differences = Map.groupBy(
-  results.filter(
-    (result) => result.verdict !== "agree" && result.verdict !== "deviation" && !result.cpuProof,
-  ),
+  results.filter((result) => isDifference(result.verdict) && !result.cpuProof),
   (result) => `${result.verdict} ${result.backend ?? "prep"}`,
 );
 [...differences]
