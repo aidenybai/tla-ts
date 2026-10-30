@@ -1,4 +1,5 @@
 import type { Expression } from "./ast";
+import type { TlcVersion } from "./tlc-version";
 import {
   CONSTANT_DECL_KIND,
   getContextSymbol,
@@ -37,6 +38,7 @@ export interface SelectorItem {
 }
 
 export interface SelectorGenerator {
+  version: TlcVersion | undefined;
   resolveSymbol: (name: string) => SymbolNode | undefined;
   resolveSynonym: (name: string) => string;
   generateExpression: (expression: Expression) => ExprNode;
@@ -233,6 +235,14 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
               collectedArgs.push(...getArgs(current));
               walk.index++;
             }
+          }
+          // TLC 1.7.4's SANY names only the last item of a selector it can't resolve, as
+          // selectorItemToString does, which fails on an argument selector that isn't a number.
+          if (symbol === undefined && generator.version === "1.7.4") {
+            const last = items.length - 1;
+            const item = items[last];
+            const name = typeof item.op === "number" ? `argument selector ${item.name}` : item.name;
+            return generator.addError(getItemLocation(last), `Unknown operator: \`${name}'.`);
           }
           if (symbol === undefined) {
             return generator.addError(

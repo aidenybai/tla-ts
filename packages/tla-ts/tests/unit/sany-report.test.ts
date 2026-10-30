@@ -614,6 +614,23 @@ Unknown == Missing
     );
   });
 
+  it("names only the last item of a selector it can't resolve", () => {
+    const getError = (expression: string) =>
+      getReport({ U: `---- MODULE U ----\nOp == ${expression}\n====\n` }, options)
+        .text.split("\n")
+        .slice(4, 7)
+        .join("\n");
+    expect(getError("M!Init")).toBe(
+      "line 2, col 9 to line 2, col 12 of module U\n\nUnknown operator: `Init'.",
+    );
+    expect(getError("M!Init!1")).toBe(
+      "line 2, col 14 to line 2, col 14 of module U\n\nUnknown operator: `argument selector 1'.",
+    );
+    expect(getError("M!Init!(1)")).toBe(
+      "line 2, col 14 to line 2, col 16 of module U\n\nUnknown operator: `!(...)'.",
+    );
+  });
+
   it("reads a character past U+00FF in a string by its low byte", () => {
     const report = getReport({ Shapes: '---- MODULE Shapes ----\nX == "ǩ ●"\n====\n' }, options);
     expect(report).toEqual({ text: "", isFailed: false });

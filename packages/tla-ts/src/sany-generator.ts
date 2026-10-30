@@ -702,6 +702,7 @@ export const generateSanySpecification = (
     };
 
     const selectorToNode = createSelectorResolver({
+      version: options.version,
       resolveSymbol: (name) => resolveSymbol(symbolTable, name),
       resolveSynonym,
       generateExpression: (expression) => generateExpression(expression),
