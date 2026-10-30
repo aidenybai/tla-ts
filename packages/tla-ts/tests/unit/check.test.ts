@@ -13,6 +13,7 @@ import {
   TlaSyntaxError,
 } from "../../src";
 import { TlaSanyFatalError, UNEXPECTED_EXCEPTION } from "../../src/errors";
+import type { TlcVersion } from "../../src/tlc-version";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -1950,6 +1951,21 @@ describe("check matches TLC 1.7.4", () => {
     expect(invariant.violationOutDegrees?.slice(0, 3)).toEqual([0, 1, 0]);
     const deadlock = await check174("Init == x = 0\nNext == x < 2 /\\ x' = x + 1");
     expect(deadlock.violationOutDegrees?.slice(0, 3)).toEqual([1, 2, 0]);
+  });
+
+  it("leaves out the outdegree of the state whose invariant it failed to evaluate", async () => {
+    const source =
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == \\E n \\in {1, 2} : x' = x + n\nInv == x # 3 \\/ CHOOSE n \\in {} : TRUE\n====";
+    const getOutDegrees = async (version: TlcVersion) => {
+      const result = await check({
+        source,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        version,
+      });
+      return result.outDegrees?.slice(0, 3);
+    };
+    expect(await getOutDegrees("1.7.4")).toEqual([0, 0, 1]);
+    expect(await getOutDegrees("master")).toEqual([0, 1, 1]);
   });
 
   it("doesn't explain a set it can't enumerate", async () => {

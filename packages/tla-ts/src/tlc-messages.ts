@@ -49,6 +49,7 @@ export const MESSAGE_CODE = {
   stateGraphOutdegree: 2268,
   computingInitProgress: 2269,
   livenessSymmetry: 2279,
+  livenessConstraints: 2284,
   symmetrySetTooSmall: 2300,
   javaOverrideMismatch: 2400,
   postconditionFalse: 2404,
@@ -106,6 +107,11 @@ export const createMessagePrinter = (
     },
   };
 };
+
+// TLC 1.7.4's message for a missing initial predicate, which blames a parameterized INSTANCE as
+// well.
+export const MISSING_INIT_174 =
+  "The configuration file did not specify the initial state predicate.\nCan also be caused by trying to run TLC on a specification from\na module imported with a parameterized INSTANCE statement.";
 
 // The messages that TLC builds from a message code, from tlc2.output.MP, by their code and
 // template, with whether TLC throws them as an EvalException rather than a TLCRuntimeException.
@@ -189,6 +195,7 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   ],
   [2230, "The %1% of %2% is equal to %3%", false],
   [2231, "The configuration file did not specify the initial state predicate.", false],
+  [2231, MISSING_INIT_174, false],
   [2232, "The configuration file did not specify the next state predicate.", false],
   [2233, "The %1% %2% cannot be a constant.", false],
   [2234, "The operator %1% cannot take any argument.", false],

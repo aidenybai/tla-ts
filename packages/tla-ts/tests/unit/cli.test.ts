@@ -643,6 +643,15 @@ describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path
     );
   });
 
+  it("warns about the constraints of a liveness check and reports a depth of at least 1", () => {
+    const bounded = check174("Bounded");
+    expect(bounded.status).toBe(0);
+    expect(getToolSequence(bounded.stdout).slice(4, 7)).toEqual(["2185", "2284", "2212"]);
+    const empty = check174("Empty");
+    expect(empty.status).toBe(0);
+    expect(empty.stdout).toContain("The depth of the complete state graph search is 1.");
+  });
+
   it("names the file it looked for a module in that it can't find", () => {
     const result = check174("Lost");
     expect(result.status).toBe(150);

@@ -361,6 +361,14 @@ const printCheckProgress = (
           "Declaring symmetry during liveness checking is dangerous. It might cause TLC to miss violations of the stated liveness properties. Please check liveness without symmetry defined.",
         );
       }
+      // Only TLC 1.7.4 warns about constraints.
+      if (progress.isConstrained && printer.version === "1.7.4") {
+        print(
+          MESSAGE_CODE.livenessConstraints,
+          MESSAGE_LEVEL.warning,
+          "Declaring state or action constraints during liveness checking is dangerous: Please read section 14.3.5 on page 247 of Specifying Systems (https://lamport.azurewebsites.net/tla/book.html) and optionally the discussion at https://discuss.tlapl.us/msg00994.html for more details.",
+        );
+      }
       print(
         MESSAGE_CODE.temporalBranches,
         MESSAGE_LEVEL.none,
@@ -612,7 +620,7 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     `${result.generatedStates} states generated, ${result.distinctStates} distinct states found, ${result.queuedStates} states left on queue.`,
   );
   // ModelChecker#printSummary prints the depth, which TLC 1.7.4 prints only after a search it
-  // reports as successful, and then the outdegree of a successful search.
+  // reports as successful, and as at least 1, and then the outdegree of a successful search.
   const outDegrees =
     printer.version === "1.7.4"
       ? (result.outDegrees ?? result.violationOutDegrees)
@@ -621,7 +629,7 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     print(
       MESSAGE_CODE.searchDepth,
       MESSAGE_LEVEL.none,
-      `The depth of the complete state graph search is ${result.depth}.`,
+      `The depth of the complete state graph search is ${printer.version === "1.7.4" ? Math.max(result.depth, 1) : result.depth}.`,
     );
   }
   const outDegree = outDegrees && getOutDegreeSummary(outDegrees);

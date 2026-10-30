@@ -73,6 +73,7 @@ import {
   getCodedMessage,
   isEvalException,
   MESSAGE_CODE,
+  MISSING_INIT_174,
 } from "./tlc-messages";
 import { replayInitialStates, replaySuccessors } from "./tlc-replay";
 import { createTlcFingerprinter, getTlcFingerprint } from "./tlc-random";
@@ -131,7 +132,7 @@ export type CheckProgress =
   | { kind: "parsed" }
   | { kind: "constant-level-invariant"; name: string }
   | { kind: "state-level-property"; name: string }
-  | { kind: "liveness-prepared"; branches: number; isSymmetric: boolean }
+  | { kind: "liveness-prepared"; branches: number; isSymmetric: boolean; isConstrained: boolean }
   | { kind: "initial-states-started" }
   | { kind: "initial-states-progress"; count: number }
   | { kind: "initial-states-computed"; initialStates: InitialStates }
@@ -936,9 +937,10 @@ export const createSearch = (
       properties.initialPredicates.length > 0 ||
       environment.variables.length > 0)
   ) {
-    // TLC 1.7.4 blames a parameterized INSTANCE as well.
     throw new TlaConfigError(
-      `The configuration file did not specify the initial state predicate.${environment.runtime.version === "1.7.4" ? "\nCan also be caused by trying to run TLC on a specification from\na module imported with a parameterized INSTANCE statement." : ""}`,
+      environment.runtime.version === "1.7.4"
+        ? MISSING_INIT_174
+        : "The configuration file did not specify the initial state predicate.",
     );
   }
   if (spec.next === undefined && isCheckingBehaviors) {
@@ -1372,9 +1374,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
   const expansion = { newStates: 0 };
   const getOutDegreeBucket = () => Math.min(expansion.newStates, OUT_DEGREE_BUCKETS - 1);
-  // TLC counts the state it was expanding when an evaluation failed.
+  // TLC counts the state it was expanding when an evaluation failed, except TLC 1.7.4, whose
+  // worker stops before it counts the state.
   const getPartialOutDegrees = () =>
     outDegrees.map((count, degree) => (degree === getOutDegreeBucket() ? count + 1 : count));
+  const getFailureOutDegrees = () =>
+    options.version === "1.7.4" ? [...outDegrees] : getPartialOutDegrees();
   // A violation in a successor ends the expansion of a state before TLC counts it.
   const withOutDegrees = (result: CheckResult, degrees = [...outDegrees]): CheckResult => ({
     ...result,
@@ -2006,7 +2011,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         return toFailure(
           error,
           appendTraceOutput(getTrace(index, successor), replay.lines),
-          replay.result ?? { outDegrees: getPartialOutDegrees() },
+          replay.result ?? { outDegrees: getFailureOutDegrees() },
         );
       }
     }
@@ -2034,6 +2039,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       kind: "liveness-prepared",
       branches: liveness.branches,
       isSymmetric: search.isSymmetric,
+      isConstrained: config.constraints.length > 0 || config.actionConstraints.length > 0,
     });
   }
   // TLC checks the assumptions once it has built the liveness checker in ModelChecker's
@@ -2204,7 +2210,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         liveness?.addState(index, state, liveSuccessors, tracing),
       );
       return toFailure(error, getStateTrace(index), {
-        outDegrees: getPartialOutDegrees(),
+        outDegrees: getFailureOutDegrees(),
         callStack: replay?.callStack.length ? replay.callStack : undefined,
         isNextState: true,
         isCallStackFirst: true,
