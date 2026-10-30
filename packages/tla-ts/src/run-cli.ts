@@ -51,9 +51,10 @@ import {
   getOptimisticProbability,
   getOutDegreeSummary,
 } from "./tlc-summary";
-import { SANY_STANDARD_MODULES } from "./sany-modules";
-import { getSanyReport, type SanyModuleOrigin } from "./sany-report";
-import { exportSanyXml, XML_EXPORT_EXIT_CODE } from "./sany-xml";
+import type { SanySpecification } from "./sany-generator";
+import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "./sany-modules";
+import { getSanyModuleName, getSanyReport, type SanyModuleOrigin } from "./sany-report";
+import { exportSanyXml, XML_EXPORT_EXIT_CODE, type XmlExportOptions } from "./sany-xml";
 import { getTlcVersion, type TlcVersion } from "./tlc-version";
 import {
   createMessagePrinter,
@@ -1153,6 +1154,23 @@ const printXmlExportUsageError = (message: string) => {
   return XML_EXPORT_EXIT_CODE.argsParsingFailure;
 };
 
+// XMLExporter.run writes the XML of a specification, and why it can't when it can't.
+const writeXml = (specification: SanySpecification, options: XmlExportOptions) => {
+  try {
+    process.stdout.write(exportSanyXml(specification, options));
+    return EXIT_STATUS.success;
+  } catch (error) {
+    if (!(error instanceof TlaUnsupportedError)) throw error;
+    const exitCode = getErrorExitCode(error);
+    console.error(
+      exitCode === XML_EXPORT_EXIT_CODE.uncaughtException
+        ? `Exception in thread "main" ${error.message}`
+        : `ERROR: ${error.message}`,
+    );
+    return exitCode;
+  }
+};
+
 const exportXml = (args: string[]) => {
   if (args.length === 0) return printXmlExportUsageError("at least one .tla file must be given");
   // XMLExporter.moduleToXML reads the flags before the last argument, which names the module,
@@ -1204,25 +1222,105 @@ const exportXml = (args: string[]) => {
     console.error("ERROR: Failed to parse module.");
     return XML_EXPORT_EXIT_CODE.specParsingFailure;
   }
-  try {
-    process.stdout.write(
-      exportSanyXml(sany.specification, {
-        isRestricted: flags.has("-r"),
-        isUncommented: flags.has("-u"),
-        isTerse: flags.has("-t"),
-      }),
+  return writeXml(sany.specification, {
+    version: "master",
+    isRestricted: flags.has("-r"),
+    isUncommented: flags.has("-u"),
+    isTerse: flags.has("-t"),
+  });
+};
+
+// TLC 1.7.4's XMLExporter.main throws an exception for an argument it can't take or a
+// specification without a root module.
+const printXmlExporterException = (exception: string, line: number) => {
+  console.error(
+    `Exception in thread "main" ${exception}\n\tat tla2sany.xml.XMLExporter.main(XMLExporter.java:${line})`,
+  );
+  return XML_EXPORT_EXIT_CODE.uncaughtException;
+};
+
+// TLC 1.7.4's XMLExporter.main, which takes only -o, as it can't validate the XML without
+// fetching its schema, and -I, and exports a specification that SANY finds errors in.
+const exportXml174 = (args: string[], jar: string) => {
+  if (args.length === 0) {
+    return printXmlExporterException(
+      "java.lang.IllegalArgumentException: at least one .tla file must be given",
+      59,
     );
-    return EXIT_STATUS.success;
-  } catch (error) {
-    if (!(error instanceof TlaUnsupportedError)) throw error;
-    const exitCode = getErrorExitCode(error);
-    console.error(
-      exitCode === XML_EXPORT_EXIT_CODE.uncaughtException
-        ? `Exception in thread "main" ${error.message}`
-        : `ERROR: ${error.message}`,
-    );
-    return exitCode;
   }
+  const includes: string[] = [];
+  let lastFlag = -1;
+  for (let index = 0; index < args.length - 1; index++) {
+    if (args[index] === "-o") {
+      lastFlag = index;
+    } else if (args[index] === "-I") {
+      index++;
+      if (index > args.length - 2) {
+        return printXmlExporterException(
+          "java.lang.IllegalArgumentException: the -I flag must be followed by a directory and at least one .tla file",
+          71,
+        );
+      }
+      includes.push(args[index]);
+      lastFlag = index;
+    }
+  }
+  if (lastFlag !== args.length - 2) {
+    return printXmlExporterException(
+      "java.lang.IllegalArgumentException: Only one TLA file to check allowed!",
+      83,
+    );
+  }
+  const name = args[args.length - 1];
+  const fileName = `${name.replace(/\.tla$/i, "")}.tla`;
+  // SimpleFilenameToStream looks for a module in the working directory, then in the -I
+  // directories, or the root directory when there are none, then among the standard modules.
+  const libraries = (includes.length === 0 ? ["/"] : includes).map((library) =>
+    library.endsWith("/") ? library : `${library}/`,
+  );
+  const directories = [".", ...libraries];
+  const standardModules = `jar:file:${pathToFileURL(resolve(jar)).pathname}!/tla2sany/StandardModules/`;
+  // FileUtil.createNamedInputStream names the last file it looked for a module in.
+  const printMissingFile = (moduleFileName: string) => {
+    const lastPath = `${libraries[libraries.length - 1]}${moduleFileName}`;
+    console.error(
+      `File does not exist: ${isAbsolute(lastPath) ? lastPath : `${process.cwd()}/${lastPath}`} while looking in these directories: ${[...libraries, standardModules].join(", ")}`,
+    );
+  };
+  const path = directories.map((directory) => resolve(directory, fileName)).find(existsSync);
+  if (path === undefined && !SANY_174_STANDARD_MODULES.has(basename(fileName, ".tla"))) {
+    printMissingFile(fileName);
+    return EXIT_STATUS.success;
+  }
+  const loadModule = createModuleLoader(directories);
+  const sany = getSanyReport(
+    path ?? fileName,
+    (moduleName) => {
+      const text = loadModule(moduleName);
+      if (text === undefined && !SANY_174_STANDARD_MODULES.has(moduleName)) {
+        printMissingFile(`${moduleName}.tla`);
+      }
+      return text;
+    },
+    {
+      fileName: name,
+      isXmlExport: true,
+      version: "1.7.4",
+    },
+  );
+  process.stderr.write(sany.text);
+  if (sany.specification === undefined) {
+    return printXmlExporterException(
+      `tla2sany.xml.XMLExportingException: spec ${(path && getSanyModuleName(readFileSync(path, "utf8"), "1.7.4")) ?? "null"} is malformed - does not have a root module`,
+      110,
+    );
+  }
+  return writeXml(sany.specification, {
+    version: "1.7.4",
+    isRestricted: false,
+    isUncommented: false,
+    isTerse: true,
+  });
 };
 
 // Tools that run TLC with Java, such as the statechart skill of pstack, can run tla-ts in place of
@@ -1279,7 +1377,12 @@ const getJavaLaunch = (args: string[]): JavaLaunch | undefined => {
 const runJavaClass = (launch: JavaLaunch) => {
   if (launch.mainClass === "tlc2.TLC") return checkSpecs(launch.args, launch.java);
   if (launch.mainClass === "tla2sany.xml.XMLExporter") {
-    return reportErrors(() => exportXml(launch.args));
+    const jar = getJar(launch.java);
+    return reportErrors(() =>
+      jar !== undefined && getTlcVersion(jar) === "1.7.4"
+        ? exportXml174(launch.args, jar)
+        : exportXml(launch.args),
+    );
   }
   console.error(
     `Error: tla-ts runs the Java classes ${JAVA_MAIN_CLASSES.join(" and ")}, not ${launch.mainClass}.`,

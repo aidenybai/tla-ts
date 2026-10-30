@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
@@ -486,6 +487,89 @@ describe("the CLI exports XML like SANY's XMLExporter", () => {
       "",
       "Cannot find source file for module Missing",
     ]);
+  });
+});
+
+// tla2tools-1.7.4.jar holds only the manifest of TLC 1.7.4's jar, which is all tla-ts reads of it.
+const JAR_174 = join(FIXTURES, "xml-export", "tla2tools-1.7.4.jar");
+
+const exportXml174 = (args: string[]) =>
+  runCliWith("xml-export", ["-cp", JAR_174, "tla2sany.xml.XMLExporter", ...args]);
+
+const getXmlExporterException = (exception: string, line: number) =>
+  `Exception in thread "main" ${exception}\n\tat tla2sany.xml.XMLExporter.main(XMLExporter.java:${line})\n`;
+
+// The expected output is what XMLExporter prints with TLC 1.7.4's tla2tools.jar.
+describe("the CLI exports XML like TLC 1.7.4's XMLExporter when its jar is on the class path", () => {
+  const standardModules = `jar:file:${pathToFileURL(JAR_174).pathname}!/tla2sany/StandardModules/`;
+
+  it("writes the XML on one line, after the modules SANY analyzes", () => {
+    const result = exportXml174(["-o", "Counted.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(
+      readFileSync(join(FIXTURES, "xml-export", "Counted.1.7.4.xml"), "utf8"),
+    );
+    expect(result.stderr).toBe(
+      "Semantic processing of module Naturals\nSemantic processing of module Counted\n",
+    );
+  });
+
+  it("writes the XML of a specification SANY finds errors in", () => {
+    const result = exportXml174(["-o", "Twice.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("<RootModule>Twice</RootModule>");
+    expect(result.stderr).toMatch(/^Semantic processing of module Twice\nSemantic errors:\n/);
+  });
+
+  it.each([
+    [[], "at least one .tla file must be given", 59],
+    [["-t", "Counted.tla"], "Only one TLA file to check allowed!", 83],
+  ])("throws on the arguments %j", (args, message, line) => {
+    const result = exportXml174(args);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe(
+      getXmlExporterException(`java.lang.IllegalArgumentException: ${message}`, line),
+    );
+  });
+
+  it("names the last file it looked for of a module it cannot find", () => {
+    const directory = join(FIXTURES, "xml-export");
+    expect(exportXml174(["Missing.tla"])).toMatchObject({
+      status: 0,
+      stdout: "",
+      stderr: `File does not exist: /Missing.tla while looking in these directories: /, ${standardModules}\n`,
+    });
+    expect(exportXml174(["-I", "nested", "Missing.tla"]).stderr).toBe(
+      `File does not exist: ${directory}/nested/Missing.tla while looking in these directories: nested/, ${standardModules}\n`,
+    );
+  });
+
+  it("throws for a specification SANY aborts on, which it names once it parses the root module", () => {
+    const renamed = exportXml174(["-o", "Renamed.tla"]);
+    expect(renamed.status).toBe(1);
+    expect(renamed.stderr).toBe(
+      [
+        "",
+        "Fatal errors while parsing TLA+ spec in file Renamed.tla",
+        "",
+        "tla2sany.semantic.AbortException",
+        "*** Abort messages: 1",
+        "",
+        "Unknown location",
+        "",
+        "File name 'Renamed' does not match the name 'Other' of the top level module it contains.",
+        "",
+        "",
+        getXmlExporterException(
+          "tla2sany.xml.XMLExportingException: spec Other is malformed - does not have a root module",
+          110,
+        ),
+      ].join("\n"),
+    );
+    // Numbered has a string that TLC 1.7.4's lexer cannot read.
+    expect(exportXml174(["-o", "Numbered.tla"]).stderr).toContain(
+      "spec null is malformed - does not have a root module",
+    );
   });
 });
 

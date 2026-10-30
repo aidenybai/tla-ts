@@ -1,5 +1,6 @@
 import { TlaUnsupportedError } from "./errors";
 import { setExitCode } from "./exit-codes";
+import type { TlcVersion } from "./tlc-version";
 import type { SanySpecification } from "./sany-generator";
 import {
   CONSTANT_DECL_KIND,
@@ -196,6 +197,8 @@ const unboxBackslashStarComment = (text: string) => {
 };
 
 export interface XmlExportOptions {
+  // The TLC whose XMLExporter to reproduce.
+  version: TlcVersion;
   // -r: only the root module, and only the declarations and definitions a module makes itself.
   isRestricted: boolean;
   // -u: the pre-comments without the boxes and \* that format them.
@@ -209,8 +212,10 @@ export interface XmlExportOptions {
 const exportSpecification = (
   modules: ModuleNode[],
   root: ModuleNode,
-  { isRestricted, isUncommented }: XmlExportOptions,
+  { version, isRestricted, isUncommented }: XmlExportOptions,
 ) => {
+  // TLC 1.7.4's XMLExporter writes fewer elements, which keeps their nodes out of the context.
+  const isTlc174 = version === "1.7.4";
   // SymbolContext: SANY marks a node's UID as exported before it exports the node's definition,
   // which can export other definitions, and adds the definition to its entries after them.
   const keys = new Set<number>();
@@ -293,7 +298,7 @@ const exportSpecification = (
           return withLevel(
             createElement("ModuleInstanceKind", [
               createText("uniquename", node.name),
-              ...(node.isLocal ? [createElement("local")] : []),
+              ...(node.isLocal && !isTlc174 ? [createElement("local")] : []),
             ]),
             node,
             node.location,
@@ -315,6 +320,19 @@ const exportSpecification = (
         const module = node.module;
         if (body === undefined || module === undefined) {
           throw new Error(`The definition of ${node.name} has no body`);
+        }
+        if (isTlc174) {
+          return withLevel(
+            createElement("UserDefinedOpKind", [
+              createText("uniquename", node.name),
+              createText("arity", node.arity),
+              createElement("body", [exportExpression(body, isOtherBug)]),
+              ...(node.params ? [getParamsElement(params, node.isLeibnizArg, params)] : []),
+              ...(node.inRecursive ? [createElement("recursive")] : []),
+            ]),
+            node,
+            node.location,
+          );
         }
         return withLevel(
           createElement("UserDefinedOpKind", [
@@ -384,13 +402,17 @@ const exportSpecification = (
     const isExported = (node: OpDeclNode | OpDefNode) => !isRestricted || node.module === module;
     return [
       createText("uniquename", module.name),
-      createElement(
-        "extends",
-        module.extendees
-          .map((extendee) => extendee.name)
-          .toSorted()
-          .map((name) => createText("uniquename", name)),
-      ),
+      ...(isTlc174
+        ? []
+        : [
+            createElement(
+              "extends",
+              module.extendees
+                .map((extendee) => extendee.name)
+                .toSorted()
+                .map((name) => createText("uniquename", name)),
+            ),
+          ]),
       ...getDeclarations(module, CONSTANT_DECL_KIND)
         .filter(isExported)
         .map((declaration) => getReference(declaration)),
@@ -406,7 +428,7 @@ const exportSpecification = (
           : getReference(topLevel),
       ),
       ...module.definitions
-        .filter((definition): definition is ModuleNode => definition.kind === "Module")
+        .filter((definition): definition is ModuleNode => !isTlc174 && definition.kind === "Module")
         .map((inner) => getReference(inner)),
     ];
   };
@@ -426,7 +448,9 @@ const exportSpecification = (
     const operator = getReference(node.operator, isOtherBug);
     const operands = node.operands.map((operand, index) =>
       operand === undefined && index === 0 && isOtherBug
-        ? createElement("StringNode", [createText("StringValue", "$Other")])
+        ? isTlc174
+          ? createText("StringNode", "$Other")
+          : createElement("StringNode", [createText("StringValue", "$Other")])
         : exportExpression(operand as ExprOrOpArgNode, isOtherBug),
     );
     const tupleOrs = node.tupleOrs;
@@ -483,8 +507,12 @@ const exportSpecification = (
           createElement("DecimalNode", [
             createText("mantissa", node.mantissa),
             createText("exponent", node.exponent),
-            createText("integralPart", node.integralPart),
-            createText("fractionalPart", node.fractionalPart),
+            ...(isTlc174
+              ? []
+              : [
+                  createText("integralPart", node.integralPart),
+                  createText("fractionalPart", node.fractionalPart),
+                ]),
           ]),
           node,
           node.location,
@@ -567,7 +595,7 @@ const exportSpecification = (
             createText("module", node.module.name),
             createElement("substs", substs),
             createElement("params", params),
-            ...(node.isLocal ? [createElement("local")] : []),
+            ...(node.isLocal && !isTlc174 ? [createElement("local")] : []),
           ],
         };
       }
@@ -633,7 +661,7 @@ const exportSpecification = (
       case "NonLeafProof":
         return withLevel(
           createElement("steps", [
-            createText("proofLevel", node.proofLevel),
+            ...(isTlc174 ? [] : [createText("proofLevel", node.proofLevel)]),
             ...node.steps.map((step) =>
               step.kind === "Theorem"
                 ? getReference(step, isOtherBug)
@@ -680,7 +708,12 @@ type ExportedNode = LevelNode | InstanceNode | UseOrHideNode | ProofPartNode;
 // among them, with the level of every expression.
 export const exportSanyXml = (
   specification: SanySpecification,
-  options: XmlExportOptions = { isRestricted: false, isUncommented: false, isTerse: false },
+  options: XmlExportOptions = {
+    version: "master",
+    isRestricted: false,
+    isUncommented: false,
+    isTerse: false,
+  },
 ) => {
   const document = exportSpecification(specification.modules, specification.root, options);
   const unrepresentable = findUnrepresentable(document);
