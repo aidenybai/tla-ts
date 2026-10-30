@@ -197,7 +197,10 @@ const rawBlast =
     const cont: Continuation = (tactics, choices) => {
       const cell = (() => {
         try {
-          return everyTac([...tactics].reverse().map((tactic) => tactic(1)))(goalState).pull();
+          const replay: Tactic[] = [];
+          for (let current = tactics; current !== undefined; current = current.tail)
+            replay.push(current.head(1));
+          return everyTac(replay.reverse())(goalState).pull();
         } catch (error) {
           if (isTermError(error)) return backtrack(choices);
           throw error;

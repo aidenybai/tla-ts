@@ -10,7 +10,7 @@ import {
   unify,
   type BlastState,
   type Branch,
-  type Choice,
+  type Choices,
   type Formula,
   type Level,
 } from "./state";
@@ -256,17 +256,17 @@ export const prune = (
   state: BlastState,
   nbrs: number,
   nxtVars: readonly BlastTerm[],
-  choices: readonly Choice[],
-): readonly Choice[] => {
+  choices: Choices,
+): Choices => {
   if (nbrs === 1) return choices;
   let last = choices;
   let ntrl = state.trail.length;
-  for (let position = 0; position < choices.length; position += 1) {
-    const choice = choices[position];
+  for (let current = choices; current !== undefined; current = current.tail) {
+    const choice = current.head;
     if (choice.nbrs < nbrs) return last;
     if (choice.nbrs > nbrs) continue;
     if (clashVar(state, nxtVars, ntrl - choice.ntrl, ntrl)) return last;
-    last = choices.slice(position + 1);
+    last = current.tail;
     ntrl = choice.ntrl;
   }
   return last;
