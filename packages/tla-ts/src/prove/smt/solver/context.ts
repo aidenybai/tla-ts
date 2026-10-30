@@ -14,7 +14,7 @@ import {
   EqRootPropagationJustification,
   MpIffJustification,
 } from "./enode";
-import { Internalizer } from "./internalizer";
+import { Internalizer, UNDO_ADD_EQ, UNDO_LBLS, UNDO_TH_VAR } from "./internalizer";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate } from "./literal";
 import { mkModel } from "./model-generator";
@@ -412,10 +412,9 @@ export class Context extends Internalizer {
     const root = node.root;
     const rootVar = root.thVar;
     node.thVar = thVar;
-    this.trail.push(() => {
-      node.thVar = -1;
-      if (node.root !== node && node.root.thVar === thVar) node.root.thVar = -1;
-    });
+    this.trailInts.push(thVar);
+    this.trailNodes.push(node);
+    this.trailKinds.push(UNDO_TH_VAR);
     if (rootVar < 0) {
       if (root !== node) root.thVar = thVar;
       this.pushNewThDiseqs(root, thVar);
@@ -468,9 +467,9 @@ export class Context extends Internalizer {
       current = current.next;
     } while (current !== r1);
     this.reinsertParentsIntoCgTable(r1, r2);
-    const finalN1 = n1;
-    const finalR1 = r1;
-    this.trail.push(() => this.undoAddEq(finalR1, finalN1, r2NumParents));
+    this.trailInts.push(r2NumParents);
+    this.trailNodes.push(r1, n1);
+    this.trailKinds.push(UNDO_ADD_EQ);
     if (n2.isBool) this.propagateBoolEnodeAssignment(r1, r2, n1, n2);
     const savedNext = r1.next;
     r1.next = r2.next;
@@ -486,12 +485,9 @@ export class Context extends Internalizer {
       (r2Plbls | r1.plbls) !== r2Plbls ||
       (r2PlblsHigh | r1.plblsHigh) !== r2PlblsHigh
     ) {
-      this.trail.push(() => {
-        r2.lbls = r2Lbls;
-        r2.lblsHigh = r2LblsHigh;
-        r2.plbls = r2Plbls;
-        r2.plblsHigh = r2PlblsHigh;
-      });
+      this.trailInts.push(r2Lbls, r2LblsHigh, r2Plbls, r2PlblsHigh);
+      this.trailNodes.push(r2);
+      this.trailKinds.push(UNDO_LBLS);
       r2.lbls |= r1.lbls;
       r2.lblsHigh |= r1.lblsHigh;
       r2.plbls |= r1.plbls;
@@ -545,6 +541,33 @@ export class Context extends Internalizer {
         this.pushEq(parent, congruent, getCongruenceJustification(parent, congruent));
     }
     this.r1ParentGenerations.clear();
+  }
+
+  protected override undoTrailEntry(kind: number) {
+    switch (kind) {
+      case UNDO_ADD_EQ: {
+        const n1 = this.popTrailNode();
+        this.undoAddEq(this.popTrailNode(), n1, this.popTrailInt());
+        return;
+      }
+      case UNDO_LBLS: {
+        const node = this.popTrailNode();
+        node.plblsHigh = this.popTrailInt();
+        node.plbls = this.popTrailInt();
+        node.lblsHigh = this.popTrailInt();
+        node.lbls = this.popTrailInt();
+        return;
+      }
+      case UNDO_TH_VAR: {
+        const node = this.popTrailNode();
+        const thVar = this.popTrailInt();
+        node.thVar = -1;
+        if (node.root !== node && node.root.thVar === thVar) node.root.thVar = -1;
+        return;
+      }
+      default:
+        super.undoTrailEntry(kind);
+    }
   }
 
   private undoAddEq(r1: Enode, n1: Enode, r2NumParents: number) {
@@ -670,7 +693,7 @@ export class Context extends Internalizer {
     this.scopeLevel++;
     this.scopeAssignedLimits.push(this.assignedLiterals.length);
     this.scopeAuxClauseLimits.push(this.auxClauses.length);
-    this.scopeTrailLimits.push(this.trail.length);
+    this.scopeTrailLimits.push(this.trailKinds.length);
     this.relevancy.push();
     this.qmanager.push();
     this.theory.pushScopeEh();
@@ -738,9 +761,7 @@ export class Context extends Internalizer {
     this.deleteClauses(this.auxClauses, this.scopeAuxClauseLimits[newLevel]);
     this.relevancy.pop(numScopes);
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
-    const trailLimit = this.scopeTrailLimits[newLevel];
-    for (let index = this.trail.length - 1; index >= trailLimit; index--) this.trail[index]();
-    this.trail.length = trailLimit;
+    this.popTrail(this.scopeTrailLimits[newLevel]);
     this.theory.popScopeEh();
     this.eqPropagationQueue = [];
     this.thEqQueue = [];

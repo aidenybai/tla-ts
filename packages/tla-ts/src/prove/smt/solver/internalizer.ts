@@ -62,6 +62,21 @@ const WHITE = 0;
 const GREY = 1;
 const BLACK = 2;
 
+// The kinds of undo trail entries. Z3 allocates its trail objects in a region. Here an entry is its
+// kind on trailKinds, with its operands on trailNodes and trailInts, so recording one allocates
+// nothing. pushTrail's closures are one more kind.
+const UNDO_CLOSURE = 0;
+const UNDO_MK_BOOL_VAR = 1;
+const UNDO_MK_ENODE = 2;
+const UNDO_VAR_THEORY = 3;
+const UNDO_TRUE_FIRST = 4;
+const UNDO_CGC_GENERATIONS = 5;
+const UNDO_MERGE_TF = 6;
+const UNDO_ENODE_FLAG = 7;
+export const UNDO_ADD_EQ = 8;
+export const UNDO_LBLS = 9;
+export const UNDO_TH_VAR = 10;
+
 interface NewEq {
   lhs: Enode;
   rhs: Enode;
@@ -108,7 +123,10 @@ export abstract class Internalizer {
   scopeLevel = 0;
   baseLevel = 0;
   searchLevel = 0;
-  protected trail: (() => void)[] = [];
+  protected trailKinds: number[] = [];
+  protected trailNodes: Enode[] = [];
+  protected trailInts: number[] = [];
+  private trailClosures: (() => void)[] = [];
   protected auxClauses: Clause[] = [];
   protected lemmas: Clause[] = [];
   protected clausesToReinit: Clause[][] = [];
@@ -185,7 +203,61 @@ export abstract class Internalizer {
   }
 
   pushTrail(undo: () => void) {
-    this.trail.push(undo);
+    this.trailClosures.push(undo);
+    this.trailKinds.push(UNDO_CLOSURE);
+  }
+
+  protected popTrail(limit: number) {
+    const kinds = this.trailKinds;
+    for (let index = kinds.length - 1; index >= limit; index--) this.undoTrailEntry(kinds[index]);
+    kinds.length = limit;
+  }
+
+  protected popTrailNode() {
+    const nodes = this.trailNodes;
+    const node = nodes[nodes.length - 1];
+    nodes.length--;
+    return node;
+  }
+
+  protected popTrailInt() {
+    const ints = this.trailInts;
+    const value = ints[ints.length - 1];
+    ints.length--;
+    return value;
+  }
+
+  protected undoTrailEntry(kind: number) {
+    switch (kind) {
+      case UNDO_CLOSURE:
+        this.trailClosures.pop()?.();
+        return;
+      case UNDO_MK_BOOL_VAR:
+        this.undoMkBoolVar();
+        return;
+      case UNDO_MK_ENODE:
+        this.undoMkEnode();
+        return;
+      case UNDO_VAR_THEORY:
+        this.isTheoryFlags[this.popTrailInt()] = false;
+        return;
+      case UNDO_TRUE_FIRST:
+        this.isTrueFirstFlags[this.popTrailInt()] = false;
+        return;
+      case UNDO_CGC_GENERATIONS: {
+        const second = this.popTrailNode();
+        const first = this.popTrailNode();
+        second.generation = this.popTrailInt();
+        first.generation = this.popTrailInt();
+        return;
+      }
+      case UNDO_MERGE_TF:
+        this.popTrailNode().isMergeTf = false;
+        return;
+      case UNDO_ENODE_FLAG:
+        this.isEnodeFlags[this.popTrailInt()] = false;
+        return;
+    }
   }
 
   // Assignment queries.
@@ -313,11 +385,11 @@ export abstract class Internalizer {
     this.watches.push(undefined, undefined);
     this.binaryWatches.push(undefined, undefined);
     this.caseSplitQueue.mkVar(boolVar);
-    this.trail.push(this.undoMkBoolVar);
+    this.trailKinds.push(UNDO_MK_BOOL_VAR);
     return boolVar;
   }
 
-  private undoMkBoolVar = () => {
+  private undoMkBoolVar() {
     const boolVar = toBoolVar(this.boolVar2Expr.length - 1);
     const expr = this.boolVar2Expr[boolVar];
     this.caseSplitQueue.delVar(boolVar);
@@ -340,7 +412,7 @@ export abstract class Internalizer {
     this.watches.length -= 2;
     this.binaryWatches.length -= 2;
     this.binJustifications.length = Math.min(this.binJustifications.length, this.watches.length);
-  };
+  }
 
   protected isAtom(boolVar: BoolVar) {
     return (
@@ -352,17 +424,16 @@ export abstract class Internalizer {
   }
 
   setVarTheory(boolVar: BoolVar) {
-    if (this.scopeLevel > this.internLevels[boolVar])
-      this.trail.push(() => {
-        this.isTheoryFlags[boolVar] = false;
-      });
+    if (this.scopeLevel > this.internLevels[boolVar]) {
+      this.trailInts.push(boolVar);
+      this.trailKinds.push(UNDO_VAR_THEORY);
+    }
     this.isTheoryFlags[boolVar] = true;
   }
 
   setTrueFirstFlag(boolVar: BoolVar) {
-    this.trail.push(() => {
-      this.isTrueFirstFlags[boolVar] = false;
-    });
+    this.trailInts.push(boolVar);
+    this.trailKinds.push(UNDO_TRUE_FIRST);
     this.isTrueFirstFlags[boolVar] = true;
   }
 
@@ -395,7 +466,7 @@ export abstract class Internalizer {
     for (const arg of args) arg.root.parents.push(node);
     if (manager.isUniqueValue(expr)) node.isInterpreted = true;
     this.exprToEnode[expr] = node;
-    this.trail.push(this.undoMkEnode);
+    this.trailKinds.push(UNDO_MK_ENODE);
     this.enodes.push(node);
     if (args.length > 0) {
       if (node.isTrueEq()) {
@@ -421,30 +492,28 @@ export abstract class Internalizer {
     return node;
   }
 
-  private undoMkEnode = () => {
+  private undoMkEnode() {
     const node = this.enodes.pop();
     if (node === undefined) return;
     this.exprToEnode[node.owner] = undefined;
     if (node.isCgr() && node.usesCgTable()) this.cgTable.erase(node);
     if (node.args.length > 0 && !node.isEq) this.decl2enodes.get(node.decl)?.pop();
     for (const arg of node.args) arg.root.parents.pop();
-  };
+  }
 
   protected mergeCgcGenerations(first: Enode, firstGeneration: number, second: Enode) {
-    const secondGeneration = second.generation;
-    this.trail.push(() => {
-      first.generation = firstGeneration;
-      second.generation = secondGeneration;
-    });
+    this.trailInts.push(firstGeneration, second.generation);
+    this.trailNodes.push(first, second);
+    this.trailKinds.push(UNDO_CGC_GENERATIONS);
     if (firstGeneration < second.generation) second.generation = firstGeneration;
   }
 
   private setMergeTf(node: Enode, boolVar: BoolVar, isNewVar: boolean) {
     if (node.isMergeTf) return;
-    if (!isNewVar)
-      this.trail.push(() => {
-        node.isMergeTf = false;
-      });
+    if (!isNewVar) {
+      this.trailNodes.push(node);
+      this.trailKinds.push(UNDO_MERGE_TF);
+    }
     node.isMergeTf = true;
     const value = this.assignment[mkLiteral(boolVar)];
     if (value === L_TRUE && node.root !== this.trueEnode.root)
@@ -455,10 +524,10 @@ export abstract class Internalizer {
 
   private setEnodeFlag(boolVar: BoolVar, isNewVar: boolean) {
     if (this.isEnodeFlags[boolVar]) return;
-    if (!isNewVar)
-      this.trail.push(() => {
-        this.isEnodeFlags[boolVar] = false;
-      });
+    if (!isNewVar) {
+      this.trailInts.push(boolVar);
+      this.trailKinds.push(UNDO_ENODE_FLAG);
+    }
     this.isEnodeFlags[boolVar] = true;
   }
 
