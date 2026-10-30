@@ -2023,6 +2023,14 @@ describe("check matches TLC 1.7.4", () => {
     );
   });
 
+  it("reports an error in adding a successor without the trace, as TLC 1.7.4's worker does", async () => {
+    const result = await check174("Init == x = 0\nNext == x' = {x + 1} \\cup x");
+    expect(result.failure?.message).toBe(
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: util.Assert$TLCRuntimeException: Attempted to enumerate S \\cup T when S:\n{1}\nand T:\n0\nare not both enumerable",
+    );
+    expect(result.failure?.trace).toEqual([]);
+  });
+
   it("doesn't explain a set it can't enumerate", async () => {
     const result = await check174("Init == x = 0\nNext == \\E n \\in Nat : x' = n");
     expect(result.failure?.message).toContain(

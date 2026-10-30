@@ -1264,8 +1264,18 @@ const withHeadline = (error: unknown, code: number, headline: string) => {
 
 const UNEXPECTED_HEADLINE = UNEXPECTED_EXCEPTION.slice(0, UNEXPECTED_EXCEPTION.indexOf("\n"));
 
+// TLC 1.7.4's Worker wraps an error in adding a successor in a RuntimeException, whose message
+// names the class of the error.
+const WRAPPED_EVAL_EXCEPTION = `${UNEXPECTED_EXCEPTION}tlc2.tool.EvalException: `;
+const WRAPPED_RUNTIME_EXCEPTION = `${UNEXPECTED_EXCEPTION}util.Assert$TLCRuntimeException: `;
+
+const getWrappedException = (error: TlaEvaluationError) =>
+  isEvalException(error) ? WRAPPED_EVAL_EXCEPTION : WRAPPED_RUNTIME_EXCEPTION;
+
 // The starts of TLC's messages for the exceptions it didn't expect.
 const UNEXPECTED_EXCEPTIONS = [
+  WRAPPED_EVAL_EXCEPTION,
+  WRAPPED_RUNTIME_EXCEPTION,
   UNEXPECTED_EXCEPTION,
   getUnexpectedException("tlc2.tool.EvalException"),
 ];
@@ -2174,6 +2184,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
       } catch (error) {
         const replay = getOutput(() => replayNext(state));
+        // TLC 1.7.4 reports the wrapped error without the trace.
+        if (environment.runtime.version === "1.7.4" && error instanceof TlaEvaluationError) {
+          outcome.result = toFailure(
+            new TlaEvaluationError(`${getWrappedException(error)}${error.message}`),
+            appendTraceOutput({ trace: [] }, replay.lines),
+            { isNextState: true, ...replay.result },
+          );
+          return true;
+        }
         // A successor TLC can't fingerprint fails again as TLC prints it in the trace.
         const isTraceFailed = getFingerprintState(successor.state).some(
           (value) => getFingerprintError(value) !== undefined,
