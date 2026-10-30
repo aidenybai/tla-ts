@@ -80,6 +80,7 @@ import { createCanonicalizer } from "./canonical";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createActionRecord, createCounterExample } from "./tlc-ext";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
+import type { TlcVersion } from "./tlc-version";
 import {
   combineHash,
   createModelValue,
@@ -115,6 +116,8 @@ export interface CheckOptions {
   isTool?: boolean;
   // False for TLC's -nowarning, which changes how TLC computes the successors of some actions.
   isWarningEnabled?: boolean;
+  // The TLC whose output tla-ts reproduces, which changes how TLC labels an action.
+  version?: TlcVersion;
   // Reports the points of the search at which TLC prints a message.
   onProgress?: (progress: CheckProgress) => void;
 }
@@ -255,6 +258,9 @@ export interface CheckResult {
   // A temporal property TLC finds violated as it adds a deadlocked state to the behavior graph,
   // which it reports after the deadlock.
   additionalViolation?: Violation;
+  // How many states that TLC counts as expanded found each number of new states, when its workers
+  // stop on a violation without an error code, which TLC 1.7.4 reports as a successful search.
+  violationOutDegrees?: number[];
 }
 
 interface Behavior {
@@ -930,7 +936,10 @@ export const createSearch = (
       properties.initialPredicates.length > 0 ||
       environment.variables.length > 0)
   ) {
-    throw new TlaConfigError("The configuration file did not specify the initial state predicate.");
+    // TLC 1.7.4 blames a parameterized INSTANCE as well.
+    throw new TlaConfigError(
+      `The configuration file did not specify the initial state predicate.${environment.runtime.version === "1.7.4" ? "\nCan also be caused by trying to run TLC on a specification from\na module imported with a parameterized INSTANCE statement." : ""}`,
+    );
   }
   if (spec.next === undefined && isCheckingBehaviors) {
     throw new TlaConfigError("The configuration file did not specify the next state predicate.");
@@ -1330,6 +1339,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     seed: options.seed,
     isTool: options.isTool,
     isWarningEnabled: options.isWarningEnabled,
+    version: options.version,
   });
   reportStartup(specification, config, options.onProgress);
   const environment = specification.environment;
@@ -1365,6 +1375,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // TLC counts the state it was expanding when an evaluation failed.
   const getPartialOutDegrees = () =>
     outDegrees.map((count, degree) => (degree === getOutDegreeBucket() ? count + 1 : count));
+  // A violation in a successor ends the expansion of a state before TLC counts it.
+  const withOutDegrees = (result: CheckResult, degrees = [...outDegrees]): CheckResult => ({
+    ...result,
+    violationOutDegrees: degrees,
+  });
   const createSuccess = (): CheckResult => ({
     ...createResult("success"),
     outDegrees: [...outDegrees],
@@ -1635,7 +1650,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         const action = found[position].result;
         const traceStep: TraceStep = {
           action: step.action,
-          label: action && getActionLabel(action),
+          label: action && getActionLabel(action, options.version),
           state:
             alias === undefined
               ? toRecord(step.state)
@@ -1763,7 +1778,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const undefinedValue = createModelValue("null");
     const partial = error.state.map((value) => value ?? undefinedValue);
     const failure = toFailure(error, getStateTrace(index));
-    return {
+    return withOutDegrees({
       ...failure,
       failure: failure.failure && {
         ...failure.failure,
@@ -1775,12 +1790,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           ...failure.failure.trace,
           {
             action: error.action,
-            label: action && getActionLabel(action),
+            label: action && getActionLabel(action, options.version),
             state: toRecord(partial),
           },
         ],
       },
-    };
+    });
   };
   const getPathSteps = (path: number[], loopStart?: number) => {
     const steps = getPathStates(path, NEXT_RECOVERY_FAILURE);
@@ -1976,10 +1991,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       try {
         const violated = search.findViolatedInvariant(successor.state, state);
         if (violated) {
-          return reportViolation("invariant-violation", {
-            name: violated.name,
-            ...getTrace(index, successor),
-          });
+          return withOutDegrees(
+            reportViolation("invariant-violation", {
+              name: violated.name,
+              ...getTrace(index, successor),
+            }),
+          );
         }
       } catch (error) {
         // TLC replays the expansion and skips the invariants of a state it has seen, the failed one
@@ -1995,10 +2012,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     const violatedProperty = search.findViolatedActionProperty(state, successor.state);
     if (violatedProperty) {
-      return reportViolation("liveness-violation", {
-        name: violatedProperty.name,
-        ...getTrace(index, successor),
-      });
+      return withOutDegrees(
+        reportViolation("liveness-violation", {
+          name: violatedProperty.name,
+          ...getTrace(index, successor),
+        }),
+      );
     }
     if (!isNew) return undefined;
     if (!isCanonicalizedFirst) canonicalizeState(successor.state);
@@ -2159,7 +2178,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       });
     };
     if (successorCount === 0 && config.checkDeadlock) {
-      const deadlock = reportViolation("deadlock", { name: "deadlock", ...getStateTrace(index) });
+      // TLC counts a deadlocked state as expanded.
+      const deadlock = withOutDegrees(
+        reportViolation("deadlock", { name: "deadlock", ...getStateTrace(index) }),
+        getPartialOutDegrees(),
+      );
       // TLC's worker still adds the deadlocked state to the behavior graph after it reports the
       // deadlock, and reports a temporal property that this violates.
       const additional = (() => {
@@ -2232,7 +2255,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         trace,
         traceOutput: loop.lines,
         loopStart,
-        loopLabel: loop.result && getActionLabel(loop.result),
+        loopLabel: loop.result && getActionLabel(loop.result, options.version),
         warning: isStutteringWarned ? getStutteringWarning() : undefined,
       },
       () =>

@@ -61,6 +61,7 @@ import {
   markNormalized,
   membershipTrace,
 } from "./values";
+import type { TlcVersion } from "./tlc-version";
 
 export type State = (Value | undefined)[];
 
@@ -389,10 +390,11 @@ const getBoundExplanation = (set: Value, text: string) => {
 
 // TLC enumerates every set except the ones it implements in Java, so any other set fails as its own
 // class does.
-export const getEnumeratedElements = (set: Value, expression: Expression) => {
+export const getEnumeratedElements = (set: Value, expression: Expression, version: TlcVersion) => {
   if (!isSetValue(set) || isOverriddenSet(set)) {
     const text = formatValue(set);
-    const explanation = getBoundExplanation(set, text);
+    // TLC 1.7.4 doesn't explain why it can't enumerate a set.
+    const explanation = version === "1.7.4" ? undefined : getBoundExplanation(set, text);
     throw new TlaEvaluationError(
       explanation === undefined
         ? `TLC encountered a non-enumerable quantifier bound\n${text}.\n${describeRange(expression)}`
@@ -406,9 +408,9 @@ export const getEnumeratedElements = (set: Value, expression: Expression) => {
 
 // The elements a quantifier visits. Like TLC, it keeps an interval as an interval, so that it can
 // stop at the first witness in a large interval such as 1..2000000000 without listing it.
-export const getQuantifierElements = (set: Value, expression: Expression) => {
+export const getQuantifierElements = (set: Value, expression: Expression, version: TlcVersion) => {
   if (typeof set !== "object" || set.kind !== "Interval")
-    return getEnumeratedElements(set, expression);
+    return getEnumeratedElements(set, expression, version);
   getCardinality(set);
   return set;
 };
@@ -430,7 +432,11 @@ export const forEachBinding = (
   visit: (scope: Scope | undefined) => boolean,
 ): boolean => {
   const sets = bounds.map((bound) =>
-    getQuantifierElements(evaluate(bound.set, context), bound.set),
+    getQuantifierElements(
+      evaluate(bound.set, context),
+      bound.set,
+      context.environment.runtime.version,
+    ),
   );
   const visitBound = (index: number, scope: Scope | undefined): boolean => {
     if (index < 0) return visit(scope);
@@ -1529,7 +1535,9 @@ const compileApply = (
   if (expression.operator === "\\cdot" && args.length === 2) {
     return () => {
       throw new TlaEvaluationError(
-        "The current version of TLC does not support action composition.  An incomplete implementation can be enabled via the tlc2.tool.impl.Tool.cdot=true java property.",
+        environment.runtime.version === "1.7.4"
+          ? "The current version of TLC does not support action composition."
+          : "The current version of TLC does not support action composition.  An incomplete implementation can be enabled via the tlc2.tool.impl.Tool.cdot=true java property.",
       );
     };
   }
@@ -1559,7 +1567,7 @@ const compileQuantifier = (
     const set = getEvaluator(bound.set, environment);
     return (context) => {
       const isFound = someElement(
-        getQuantifierElements(set(context), bound.set),
+        getQuantifierElements(set(context), bound.set, environment.runtime.version),
         (element) =>
           expectBoolean(
             body(withScope(context, bindValue(context.scope, name, element))),
@@ -1575,7 +1583,7 @@ const compileQuantifier = (
     const sets = bounds.map((item) => getEvaluator(item.set, environment));
     return (context) => {
       const lists = sets.map((set, index) =>
-        getQuantifierElements(set(context), bounds[index].set),
+        getQuantifierElements(set(context), bounds[index].set, environment.runtime.version),
       );
       const visit = (index: number, scope: Scope | undefined): boolean => {
         if (index < 0) {

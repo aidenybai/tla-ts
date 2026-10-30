@@ -752,6 +752,7 @@ const compileAction = (
           const elements = getEnumeratedElements(
             evaluate(bound.set, getContext(run, scope, partial)),
             bound.set,
+            environment.runtime.version,
           );
           for (let index = 0; index < elements.length && !run.isStopped; index++) {
             body(
@@ -771,7 +772,11 @@ const compileAction = (
         return (run, scope, partial, action, isFixed, onComplete) => {
           const context = getContext(run, scope, partial);
           const sets = expression.bounds.map((innerBound) =>
-            getEnumeratedElements(evaluate(innerBound.set, context), innerBound.set),
+            getEnumeratedElements(
+              evaluate(innerBound.set, context),
+              innerBound.set,
+              environment.runtime.version,
+            ),
           );
           if (sets.some((elements) => elements.length === 0)) return;
           const visit = (index: number, boundScope: Scope | undefined): void => {

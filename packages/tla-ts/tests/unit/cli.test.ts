@@ -573,6 +573,59 @@ describe("the CLI exports XML like TLC 1.7.4's XMLExporter when its jar is on th
   });
 });
 
+describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path", () => {
+  const check174 = (name: string) =>
+    runCliWith("tlc-174", [
+      "-cp",
+      JAR_174,
+      "tlc2.TLC",
+      "-tool",
+      "-workers",
+      "1",
+      "-fp",
+      "0",
+      "-lncheck",
+      "final",
+      `${name}.tla`,
+    ]);
+
+  it("reports the depth and outdegree after an invariant violation, labels actions without their parameters, and doesn't warn about a constant invariant", () => {
+    const result = check174("Climb");
+    expect(result.status).toBe(12);
+    expect(getToolSequence(result.stdout)).toEqual([
+      "2262",
+      "2187",
+      "2220",
+      "2219",
+      "2185",
+      "2189",
+      "2190",
+      "2110",
+      "2121",
+      "2217",
+      "2217",
+      "2217",
+      "2200",
+      "2199",
+      "2194",
+      "2268",
+      "2186",
+    ]);
+    expect(result.stdout).toContain(
+      "2: <Step line 5, col 12 to line 5, col 21 of module Climb>\nx = 1\n",
+    );
+  });
+
+  it("reports a temporal violation without naming the properties or the depth", () => {
+    const result = check174("Cycle");
+    expect(result.status).toBe(13);
+    expect(result.stdout).toContain(
+      "@!@!@STARTMSG 2116:1 @!@!@\nTemporal properties were violated.\n\n@!@!@ENDMSG 2116 @!@!@",
+    );
+    expect(getToolSequence(result.stdout).slice(-4)).toEqual(["2267", "2200", "2199", "2186"]);
+  });
+});
+
 describe("the CLI takes several specs and globs", () => {
   it("checks each spec a glob matches and exits with the first failure", () => {
     const result = runCliWith("cli-output", ["*.tla"]);

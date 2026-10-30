@@ -1910,3 +1910,45 @@ describe("initial predicate and next-state relation match TLC", () => {
     );
   });
 });
+
+describe("check matches TLC 1.7.4", () => {
+  const check174 = (definitions: string, config = "INIT Init\nNEXT Next") =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\n====`,
+      config,
+      version: "1.7.4",
+    });
+
+  it("keeps the outdegree of the states it expanded before a violation, a deadlocked state among them", async () => {
+    const invariant = await check174(
+      "Init == x = 0\nNext == x' = x + 1\nInv == x < 2",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(invariant.violationOutDegrees?.slice(0, 3)).toEqual([0, 1, 0]);
+    const deadlock = await check174("Init == x = 0\nNext == x < 2 /\\ x' = x + 1");
+    expect(deadlock.violationOutDegrees?.slice(0, 3)).toEqual([1, 2, 0]);
+  });
+
+  it("doesn't explain a set it can't enumerate", async () => {
+    const result = await check174("Init == x = 0\nNext == \\E n \\in Nat : x' = n");
+    expect(result.failure?.message).toContain(
+      ": TLC encountered a non-enumerable quantifier bound\nNat.\nline 5, col 18 to line 5, col 20 of module M",
+    );
+    expect(result.failure?.message).not.toContain("infinitely many elements");
+  });
+
+  it("refuses action composition without the Java property that enables it", async () => {
+    const result = await check174("Init == x = 0\nNext == (x' = x) \\cdot (x' = x)");
+    expect(result.failure?.message).toMatch(
+      /: The current version of TLC does not support action composition\.$/,
+    );
+  });
+
+  it("blames a parameterized INSTANCE for a missing initial predicate as well", async () => {
+    await expect(check174("Next == x' = x", "NEXT Next")).rejects.toThrow(
+      new TlaConfigError(
+        "The configuration file did not specify the initial state predicate.\nCan also be caused by trying to run TLC on a specification from\na module imported with a parameterized INSTANCE statement.",
+      ),
+    );
+  });
+});

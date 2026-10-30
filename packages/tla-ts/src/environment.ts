@@ -63,6 +63,7 @@ import {
   type Value,
   markNormalized,
 } from "./values";
+import type { TlcVersion } from "./tlc-version";
 
 interface EnvironmentOptions {
   source: string;
@@ -77,6 +78,7 @@ interface EnvironmentOptions {
   // methods then compute the arithmetic of Naturals.
   isTool?: boolean;
   isWarningEnabled?: boolean;
+  version?: TlcVersion;
 }
 
 interface Specification {
@@ -243,6 +245,7 @@ export const createEnvironment = (
   const runtime = createRuntime(config.checkDeadlock, options.seed);
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
   runtime.isTool = options.isTool ?? false;
+  runtime.version = options.version ?? "master";
   const linkedModules = new Map<string, LinkedModule>();
   const nestedModules = new Map<string, LinkedModule>();
   const linkedList: LinkedModule[] = [];

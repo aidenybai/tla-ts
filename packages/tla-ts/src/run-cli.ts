@@ -237,10 +237,13 @@ const COUNTER_EXAMPLE = {
   text: "The following behavior constitutes a counter-example:\n",
 };
 
-const getTemporalHeadline = (names: string[]) =>
-  names.length === 1
-    ? `Temporal property ${names[0]} was violated.\n`
-    : `Temporal properties ${names.slice(0, -1).join(", ")}${names.length > 2 ? "," : ""} and ${names[names.length - 1]} were violated.\n`;
+// TLC 1.7.4 doesn't name the properties.
+const getTemporalHeadline = (names: string[], version: TlcVersion) =>
+  version === "1.7.4"
+    ? "Temporal properties were violated.\n"
+    : names.length === 1
+      ? `Temporal property ${names[0]} was violated.\n`
+      : `Temporal properties ${names.slice(0, -1).join(", ")}${names.length > 2 ? "," : ""} and ${names[names.length - 1]} were violated.\n`;
 
 // TLC's FingerprintException#getTrace: the range of each source, innermost first, skipping a
 // source the same as the one inside it.
@@ -332,7 +335,9 @@ const printCheckProgress = (
         `Starting... (${formatTlcDate(new Date())})`,
       );
       return;
+    // TLC 1.7.4 warns about neither a constant-level invariant nor a state-level property.
     case "constant-level-invariant":
+      if (printer.version === "1.7.4") return;
       print(
         MESSAGE_CODE.constantLevelInvariant,
         MESSAGE_LEVEL.warning,
@@ -340,6 +345,7 @@ const printCheckProgress = (
       );
       return;
     case "state-level-property":
+      if (printer.version === "1.7.4") return;
       print(
         MESSAGE_CODE.stateLevelProperty,
         MESSAGE_LEVEL.warning,
@@ -430,7 +436,7 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
     (status === "invariant-violation" || status === "liveness-violation");
   const temporal = {
     code: MESSAGE_CODE.temporalPropertyViolated,
-    text: getTemporalHeadline(violation.properties ?? [name]),
+    text: getTemporalHeadline(violation.properties ?? [name], printer.version),
   };
   const headline = {
     success: undefined,
@@ -500,7 +506,8 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
       );
     else console.log(`Back to state ${loopStart + 1}${label ? `: <${label}>\n` : ""}`);
   }
-  if (violation.warning)
+  // TLC 1.7.4 doesn't explain a stuttering counterexample.
+  if (violation.warning && printer.version !== "1.7.4")
     print(violation.warning.code, MESSAGE_LEVEL.warning, violation.warning.text);
   // TLC checks the postconditions after it prints a counterexample.
   const postcondition =
@@ -603,12 +610,20 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     MESSAGE_LEVEL.none,
     `${result.generatedStates} states generated, ${result.distinctStates} distinct states found, ${result.queuedStates} states left on queue.`,
   );
-  print(
-    MESSAGE_CODE.searchDepth,
-    MESSAGE_LEVEL.none,
-    `The depth of the complete state graph search is ${result.depth}.`,
-  );
-  const outDegree = result.outDegrees && getOutDegreeSummary(result.outDegrees);
+  // ModelChecker#printSummary prints the depth, which TLC 1.7.4 prints only after a search it
+  // reports as successful, and then the outdegree of a successful search.
+  const outDegrees =
+    printer.version === "1.7.4"
+      ? (result.outDegrees ?? result.violationOutDegrees)
+      : result.outDegrees;
+  if (printer.version !== "1.7.4" || outDegrees) {
+    print(
+      MESSAGE_CODE.searchDepth,
+      MESSAGE_LEVEL.none,
+      `The depth of the complete state graph search is ${result.depth}.`,
+    );
+  }
+  const outDegree = outDegrees && getOutDegreeSummary(outDegrees);
   if (outDegree) print(MESSAGE_CODE.stateGraphOutdegree, MESSAGE_LEVEL.none, outDegree);
 };
 
@@ -729,7 +744,7 @@ const checkSpec = async (
     return 1;
   }
   const workers = getWorkerCount(args.get("-workers"));
-  const version = getTlcVersion(getJar(java));
+  const version = printer.version;
   printWelcome(printer);
   printStartupBanner(printer, seed, workers);
   const configPath =
@@ -801,6 +816,7 @@ const checkSpec = async (
       dump: dumpValues && getDump(dumpValues),
       isTool: printer.isTool,
       isWarningEnabled: !args.has("-nowarning"),
+      version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
       source,
       config,
@@ -1144,7 +1160,12 @@ const checkSpecs = async (args: string[], java: JavaProperties) => {
         console.log(`Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`);
       return checkSpec(path, parsed, java, printer);
     },
-    () => createMessagePrinter(parsed.has("-tool"), !parsed.has("-nowarning")),
+    () =>
+      createMessagePrinter(
+        parsed.has("-tool"),
+        !parsed.has("-nowarning"),
+        getTlcVersion(getJar(java)),
+      ),
   );
 };
 

@@ -1,4 +1,5 @@
 import { TlaModuleError, type TlaEvaluationError } from "./errors";
+import type { TlcVersion } from "./tlc-version";
 
 // TLC's codes for the messages it prints, from tlc2.output.EC.
 export const MESSAGE_CODE = {
@@ -72,6 +73,7 @@ const LEVEL_PREFIXES: Record<MessageLevel, string> = {
 
 export interface MessagePrinter {
   isTool: boolean;
+  version: TlcVersion;
   print: (code: number, level: MessageLevel, text: string) => void;
 }
 
@@ -79,10 +81,15 @@ export interface MessagePrinter {
 // can read the output. Lines outside the markers, such as the output of Print, stay as they are.
 // MP.printWarning prints a warning once, which -nowarning drops, and without -tool, TLC follows the
 // first warning with how to drop them.
-export const createMessagePrinter = (isTool: boolean, isWarningEnabled = true): MessagePrinter => {
+export const createMessagePrinter = (
+  isTool: boolean,
+  isWarningEnabled = true,
+  version: TlcVersion = "master",
+): MessagePrinter => {
   const warnings = new Set<string>();
   return {
     isTool,
+    version,
     print: (code, level, text) => {
       const isWarning = level === MESSAGE_LEVEL.warning;
       if (isWarning && !isWarningEnabled) return;

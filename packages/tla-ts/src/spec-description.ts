@@ -25,6 +25,7 @@ import {
 import { TEMPORAL_LEVEL } from "./levels";
 import { getLevel } from "./liveness";
 import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
+import type { TlcVersion } from "./tlc-version";
 
 export interface SpecAction {
   name: string;
@@ -492,8 +493,9 @@ const formatParameters = (action: SpecAction) =>
     ? ""
     : `(${action.parameters.map((parameter) => formatValue(parameter[1])).join(",")})`;
 
-export const getActionLabel = (action: SpecAction) =>
-  `${action.name === UNNAMED_ACTION ? "Action" : action.name}${formatParameters(action)} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
+// TLC's Action.getLocation, which TLC 1.7.4 names the action in without its parameters.
+export const getActionLabel = (action: SpecAction, version?: TlcVersion) =>
+  `${action.name === UNNAMED_ACTION ? "Action" : action.name}${version === "1.7.4" ? "" : formatParameters(action)} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
 
 // TLC's Action.getInvocationSignature, which names the action and the values of its parameters.
 export const getActionSignature = (action: SpecAction) =>
