@@ -1,4 +1,4 @@
-import { TlaUnsupportedError } from "./errors";
+import { TlaJavaException, TlaUnsupportedError } from "./errors";
 import { setExitCode } from "./exit-codes";
 import type { TlcVersion } from "./tlc-version";
 import type { SanySpecification } from "./sany-generator";
@@ -7,6 +7,8 @@ import {
   VARIABLE_DECL_KIND,
   getDeclarations,
   getOpDefs,
+  formatSanyLocation,
+  isAbsent,
   type AssumeNode,
   type ExprOrOpArgNode,
   type FactNode,
@@ -40,13 +42,8 @@ interface XmlElement {
 }
 
 // The exception that SANY's XMLExporter throws for a node of a kind it can't export.
-const getUnsupportedKindError = (kind: number) =>
-  setExitCode(
-    new TlaUnsupportedError(
-      `java.lang.IllegalArgumentException: unsupported kind: ${kind} in xml export`,
-    ),
-    XML_EXPORT_EXIT_CODE.uncaughtException,
-  );
+const getUnsupportedKind = (kind: number) =>
+  `java.lang.IllegalArgumentException: unsupported kind: ${kind} in xml export`;
 
 const createElement = (tag: string, children: XmlElement[] = []): XmlElement => ({
   tag,
@@ -148,6 +145,184 @@ const getReferenceTag = (node: ContextNode) => {
   }
 };
 
+// A frame of the Java stack of TLC 1.7.4's XMLExporter, in package tla2sany, with the node that
+// the frame reports when an exception unwinds it.
+interface JavaFrame {
+  at: string;
+  failedFor?: string;
+}
+
+// A call by which TLC 1.7.4's XMLExporter exports a node.
+interface JavaCall {
+  at: string;
+}
+
+// A call by which TLC 1.7.4's XMLExporter exports an expression that may be the null SANY generates
+// for an operator it can't resolve, and how the JVM names that null.
+interface JavaExpressionCall extends JavaCall {
+  nullType: string;
+  nullValue: string;
+}
+
+const JAVA_CALLS = {
+  main: { at: "xml.XMLExporter.main(XMLExporter.java:145)" },
+  constant: { at: "semantic.ModuleNode.getSymbolElement(ModuleNode.java:1228)" },
+  variable: { at: "semantic.ModuleNode.getSymbolElement(ModuleNode.java:1236)" },
+  definition: { at: "semantic.ModuleNode.getSymbolElement(ModuleNode.java:1244)" },
+  topLevel: { at: "semantic.ModuleNode.getSymbolElement(ModuleNode.java:1268)" },
+  body: {
+    at: "semantic.OpDefNode.getSymbolElement(OpDefNode.java:1392)",
+    nullType: "ExprNode",
+    nullValue: '"this.body"',
+  },
+  param: { at: "semantic.OpDefNode.getSymbolElement(OpDefNode.java:1397)" },
+  builtInParam: { at: "semantic.OpDefNode.getSymbolElement(OpDefNode.java:1413)" },
+  theoremDefinitionBody: {
+    at: "semantic.ThmOrAssumpDefNode.getSymbolElement(ThmOrAssumpDefNode.java:663)",
+    nullType: "LevelNode",
+    nullValue: '"this.body"',
+  },
+  theoremDefinition: { at: "semantic.TheoremNode.getLevelElement(TheoremNode.java:439)" },
+  theorem: {
+    at: "semantic.TheoremNode.getLevelElement(TheoremNode.java:444)",
+    nullType: "LevelNode",
+    nullValue: 'the return value of "tla2sany.semantic.TheoremNode.getTheorem()"',
+  },
+  proof: { at: "semantic.TheoremNode.getLevelElement(TheoremNode.java:447)" },
+  assumeDefinition: { at: "semantic.AssumeNode.getLevelElement(AssumeNode.java:249)" },
+  assume: {
+    at: "semantic.AssumeNode.getLevelElement(AssumeNode.java:254)",
+    nullType: "ExprNode",
+    nullValue: 'the return value of "tla2sany.semantic.AssumeNode.getAssume()"',
+  },
+  operator: { at: "semantic.OpApplNode.getLevelElement(OpApplNode.java:1315)" },
+  operand: {
+    at: "semantic.OpApplNode.getLevelElement(OpApplNode.java:1326)",
+    nullType: "ExprOrOpArgNode",
+    nullValue: '"this.operands[i]"',
+  },
+  unbound: { at: "semantic.OpApplNode.getLevelElement(OpApplNode.java:1337)" },
+  bound: { at: "semantic.OpApplNode.getLevelElement(OpApplNode.java:1347)" },
+  range: {
+    at: "semantic.OpApplNode.getLevelElement(OpApplNode.java:1349)",
+    nullType: "ExprNode",
+    nullValue: '"this.ranges[i]"',
+  },
+  letBody: {
+    at: "semantic.LetInNode.getLevelElement(LetInNode.java:301)",
+    nullType: "ExprNode",
+    nullValue: '"this.body"',
+  },
+  letDefinition: { at: "semantic.LetInNode.getLevelElement(LetInNode.java:303)" },
+  labelBody: {
+    at: "semantic.LabelNode.getLevelElement(LabelNode.java:341)",
+    nullType: "LevelNode",
+    nullValue: '"this.body"',
+  },
+  labelParam: { at: "semantic.LabelNode.getLevelElement(LabelNode.java:343)" },
+  argument: { at: "semantic.OpArgNode.getLevelElement(OpArgNode.java:150)" },
+  exceptObject: { at: "semantic.AtNode.getLevelElement(AtNode.java:180)" },
+  exceptComponents: { at: "semantic.AtNode.getLevelElement(AtNode.java:181)" },
+  substOperator: { at: "semantic.Subst.export(Subst.java:258)" },
+  substExpression: {
+    at: "semantic.Subst.export(Subst.java:259)",
+    nullType: "ExprOrOpArgNode",
+    nullValue: '"this.expr"',
+  },
+  instanceSubst: { at: "semantic.InstanceNode.getLevelElement(InstanceNode.java:447)" },
+  instanceParam: { at: "semantic.InstanceNode.getLevelElement(InstanceNode.java:452)" },
+  useFact: {
+    at: "semantic.UseOrHideNode.getLevelElement(UseOrHideNode.java:175)",
+    nullType: "LevelNode",
+    nullValue: '"this.facts[i]"',
+  },
+  useDefinition: { at: "semantic.UseOrHideNode.getLevelElement(UseOrHideNode.java:176)" },
+  newDeclaration: { at: "semantic.NewSymbNode.getLevelElement(NewSymbNode.java:202)" },
+  newSet: { at: "semantic.NewSymbNode.getLevelElement(NewSymbNode.java:204)" },
+  assumption: {
+    at: "semantic.AssumeProveNode.getLevelElement(AssumeProveNode.java:404)",
+    nullType: "SemanticNode",
+    nullValue: '"assumes[i]"',
+  },
+  goal: {
+    at: "semantic.AssumeProveNode.getLevelElement(AssumeProveNode.java:406)",
+    nullType: "ExprNode",
+    nullValue: 'the return value of "tla2sany.semantic.AssumeProveNode.getProve()"',
+  },
+  byFact: {
+    at: "semantic.LeafProofNode.getLevelElement(LeafProofNode.java:154)",
+    nullType: "LevelNode",
+    nullValue: '"this.facts[i]"',
+  },
+  byDefinition: { at: "semantic.LeafProofNode.getLevelElement(LeafProofNode.java:155)" },
+  step: {
+    at: "semantic.NonLeafProofNode.getLevelElement(NonLeafProofNode.java:228)",
+    nullType: "LevelNode",
+    nullValue: '"this.steps[i]"',
+  },
+  defStep: { at: "semantic.DefStepNode.getLevelElement(DefStepNode.java:99)" },
+} satisfies Record<string, JavaCall | JavaExpressionCall>;
+
+// The calls by which TLC 1.7.4's XMLExporter exports the parts of a SubstInNode or APSubstInNode.
+const SUBST_IN_CALLS = {
+  SubstIn: {
+    subst: { at: "semantic.SubstInNode.getLevelElement(SubstInNode.java:530)" },
+    body: {
+      at: "semantic.SubstInNode.getLevelElement(SubstInNode.java:533)",
+      nullType: "ExprNode",
+      nullValue: '"this.body"',
+    },
+    from: { at: "semantic.SubstInNode.getLevelElement(SubstInNode.java:536)" },
+    to: { at: "semantic.SubstInNode.getLevelElement(SubstInNode.java:540)" },
+  },
+  APSubstIn: {
+    subst: { at: "semantic.APSubstInNode.getLevelElement(APSubstInNode.java:460)" },
+    body: {
+      at: "semantic.APSubstInNode.getLevelElement(APSubstInNode.java:463)",
+      nullType: "LevelNode",
+      nullValue: '"this.body"',
+    },
+    from: { at: "semantic.APSubstInNode.getLevelElement(APSubstInNode.java:466)" },
+    to: { at: "semantic.APSubstInNode.getLevelElement(APSubstInNode.java:470)" },
+  },
+};
+
+const SEMANTIC_EXPORT = "semantic.SemanticNode.export(SemanticNode.java:379)";
+const LEVEL_EXPORT = "semantic.LevelNode.getSemanticElement(LevelNode.java:333)";
+const UNSUPPORTED_KIND_FRAME = { at: "semantic.OpDefNode.getSymbolElement(OpDefNode.java:1424)" };
+// Where SANY's builtin operators, such as nullODN, are.
+const IN_BUILTINS = formatSanyLocation("--TLA+ BUILTINS--");
+
+// The frames of the export of a node by reference in TLC 1.7.4's XMLExporter, down to the export
+// of its definition, which reports the node.
+const getDefinitionFrames = (kind: ContextNode["kind"], location: string): JavaFrame[] => {
+  const [exportAt, putLine, definitionAt] =
+    kind === "Theorem"
+      ? [
+          "TheoremNode.export(TheoremNode.java:456)",
+          70,
+          "TheoremNode.exportDefinition(TheoremNode.java:404)",
+        ]
+      : kind === "Assume"
+        ? [
+            "AssumeNode.export(AssumeNode.java:263)",
+            80,
+            "AssumeNode.exportDefinition(AssumeNode.java:207)",
+          ]
+        : [
+            kind === "ThmOrAssumpDef"
+              ? "ThmOrAssumpDefNode.export(ThmOrAssumpDefNode.java:671)"
+              : "SymbolNode.export(SymbolNode.java:177)",
+            60,
+            "SymbolNode.exportDefinition(SymbolNode.java:138)",
+          ];
+  return [
+    { at: `semantic.${exportAt}` },
+    { at: `xml.SymbolContext.put(SymbolContext.java:${putLine})` },
+    { at: `semantic.${definitionAt}`, failedFor: location },
+  ];
+};
+
 // java.util.HashMap, which holds SymbolContext's entries, and lists them by the bucket of their
 // Integer key, and the entries of a bucket in the order they were added.
 const getHashMapCapacity = (size: number, capacity = 16): number =>
@@ -229,11 +404,50 @@ const exportSpecification = (
   // which can export other definitions, and adds the definition to its entries after them.
   const keys = new Set<number>();
   const entries = new Map<number, XmlElement>();
+  // The Java stack of TLC 1.7.4's XMLExporter as it exports the current node, outermost first.
+  const javaStack: JavaFrame[] = [];
 
-  const getReference = (node: ContextNode, isOtherBug = false): XmlElement => {
+  const withFrames = <Result>(frames: JavaFrame[], run: () => Result) => {
+    if (!isTlc174) return run();
+    javaStack.push(...frames);
+    const result = run();
+    javaStack.length -= frames.length;
+    return result;
+  };
+
+  // TLC 1.7.4's XMLExporter reports the exception at each node it unwinds before the JVM reports
+  // it uncaught.
+  const getJavaException = (exception: string, frames: JavaFrame[]) => {
+    const trace = [...javaStack, ...frames].reverse();
+    const stackTrace = [exception, ...trace.map((frame) => `\tat tla2sany.${frame.at}`)].join("\n");
+    const unwound = trace
+      .filter((frame) => frame.failedFor !== undefined)
+      .map(
+        (frame) => `failed for node.toString(): ${frame.failedFor}\n with error \n${stackTrace}\n`,
+      )
+      .join("");
+    return setExitCode(
+      new TlaJavaException(stackTrace, unwound),
+      XML_EXPORT_EXIT_CODE.uncaughtException,
+    );
+  };
+
+  const getReference = (node: ContextNode, call?: JavaCall, isOtherBug = false): XmlElement => {
     if (!keys.has(node.id)) {
       keys.add(node.id);
-      entries.set(node.id, exportDefinition(node, isOtherBug));
+      const definition = () => exportDefinition(node, isOtherBug);
+      entries.set(
+        node.id,
+        isTlc174
+          ? withFrames(
+              [
+                ...(call ? [call] : []),
+                ...getDefinitionFrames(node.kind, formatSanyLocation(node.location)),
+              ],
+              definition,
+            )
+          : definition(),
+      );
     }
     return createElement(getReferenceTag(node), [createText("UID", node.id)]);
   };
@@ -252,12 +466,13 @@ const exportSpecification = (
     params: { id: number }[],
     isLeibnizArg: boolean[] | undefined,
     nodes: SymbolNode[],
+    call: JavaCall,
   ) =>
     createElement(
       "params",
       params.map((_, index) =>
         createElement("leibnizparam", [
-          getReference(nodes[index]),
+          getReference(nodes[index], call),
           ...(isLeibnizArg?.[index] ? [createElement("leibniz")] : []),
         ]),
       ),
@@ -295,7 +510,14 @@ const exportSpecification = (
         );
       case "OpDef": {
         // SANY's XMLExporter fails on the definition of a proof step that a DEF clause names.
-        if (node.defKind === "NumberedProofStep") throw getUnsupportedKindError(37);
+        if (node.defKind === "NumberedProofStep") {
+          throw isTlc174
+            ? getJavaException(getUnsupportedKind(37), [UNSUPPORTED_KIND_FRAME])
+            : setExitCode(
+                new TlaUnsupportedError(getUnsupportedKind(37)),
+                XML_EXPORT_EXIT_CODE.uncaughtException,
+              );
+        }
         if (node.defKind === "ModuleInstance") {
           return withLevel(
             createElement("ModuleInstanceKind", [
@@ -312,7 +534,9 @@ const exportSpecification = (
             createElement("BuiltInKind", [
               createText("uniquename", node.name),
               createText("arity", node.arity),
-              ...(node.params ? [getParamsElement(params, node.isLeibnizArg, params)] : []),
+              ...(node.params
+                ? [getParamsElement(params, node.isLeibnizArg, params, JAVA_CALLS.builtInParam)]
+                : []),
             ]),
             node,
             node.location,
@@ -328,8 +552,10 @@ const exportSpecification = (
             createElement("UserDefinedOpKind", [
               createText("uniquename", node.name),
               createText("arity", node.arity),
-              createElement("body", [exportExpression(body, isOtherBug)]),
-              ...(node.params ? [getParamsElement(params, node.isLeibnizArg, params)] : []),
+              createElement("body", [exportExpression(body, JAVA_CALLS.body, isOtherBug)]),
+              ...(node.params
+                ? [getParamsElement(params, node.isLeibnizArg, params, JAVA_CALLS.param)]
+                : []),
               ...(node.inRecursive ? [createElement("recursive")] : []),
             ]),
             node,
@@ -342,8 +568,8 @@ const exportSpecification = (
             createText("arity", node.arity),
             createElement("originalOperator", [getReference(node.source ?? node)]),
             createElement("originallyDefinedInModule", [getReference(module)]),
-            createElement("body", [exportExpression(body, isOtherBug)]),
-            getParamsElement(params, node.isLeibnizArg, params),
+            createElement("body", [exportExpression(body, JAVA_CALLS.body, isOtherBug)]),
+            getParamsElement(params, node.isLeibnizArg, params, JAVA_CALLS.param),
             ...getPreCommentsElement(node.preComments),
             ...(node.inRecursive ? [createElement("recursive")] : []),
             ...(node.recursiveSection >= 0
@@ -359,7 +585,7 @@ const exportSpecification = (
         return withLevel(
           createElement(node.isTheorem ? "TheoremDefNode" : "AssumeDef", [
             createText("uniquename", node.name),
-            exportExpression(node.body, isOtherBug),
+            exportExpression(node.body, JAVA_CALLS.theoremDefinitionBody, isOtherBug),
           ]),
           node,
           node.location,
@@ -373,10 +599,14 @@ const exportSpecification = (
         return withLevel(
           createElement("TheoremNode", [
             ...(node.definition
-              ? [createElement("definition", [getReference(node.definition)])]
+              ? [
+                  createElement("definition", [
+                    getReference(node.definition, JAVA_CALLS.theoremDefinition),
+                  ]),
+                ]
               : []),
-            createElement("body", [exportExpression(node.body, false)]),
-            ...(node.proof ? [exportExpression(node.proof, false)] : []),
+            createElement("body", [exportExpression(node.body, JAVA_CALLS.theorem, false)]),
+            ...(node.proof ? [exportExpression(node.proof, JAVA_CALLS.proof, false)] : []),
             ...(node.isSuffices ? [createElement("suffices")] : []),
           ]),
           node,
@@ -389,9 +619,13 @@ const exportSpecification = (
             getLocationElement(node.location),
             createText("level", node.body.level),
             ...(node.definition
-              ? [createElement("definition", [getReference(node.definition)])]
+              ? [
+                  createElement("definition", [
+                    getReference(node.definition, JAVA_CALLS.assumeDefinition),
+                  ]),
+                ]
               : []),
-            createElement("body", [exportExpression(node.body, false)]),
+            createElement("body", [exportExpression(node.body, JAVA_CALLS.assume, false)]),
           ],
         };
     }
@@ -417,17 +651,17 @@ const exportSpecification = (
           ]),
       ...getDeclarations(module, CONSTANT_DECL_KIND)
         .filter(isExported)
-        .map((declaration) => getReference(declaration)),
+        .map((declaration) => getReference(declaration, JAVA_CALLS.constant)),
       ...getDeclarations(module, VARIABLE_DECL_KIND)
         .filter(isExported)
-        .map((declaration) => getReference(declaration)),
+        .map((declaration) => getReference(declaration, JAVA_CALLS.variable)),
       ...getOpDefs(module)
         .filter(isExported)
-        .map((definition) => getReference(definition)),
+        .map((definition) => getReference(definition, JAVA_CALLS.definition)),
       ...module.topLevel.map((topLevel) =>
         topLevel.kind === "Instance" || topLevel.kind === "UseOrHide"
-          ? exportExpression(topLevel, false)
-          : getReference(topLevel),
+          ? exportExpression(topLevel, JAVA_CALLS.topLevel, false)
+          : getReference(topLevel, JAVA_CALLS.topLevel),
       ),
       ...module.definitions
         .filter((definition): definition is ModuleNode => !isTlc174 && definition.kind === "Module")
@@ -435,13 +669,25 @@ const exportSpecification = (
     ];
   };
 
-  const exportSubst = (subst: Subst, isOtherBug: boolean) =>
-    createElement("Subst", [getReference(subst.op), exportExpression(subst.expr, isOtherBug)]);
+  // A Subst is no SemanticNode, so it reports no exception that unwinds it.
+  const exportSubst = (subst: Subst, call: JavaCall, isOtherBug: boolean) =>
+    withFrames([call], () =>
+      createElement("Subst", [
+        getReference(subst.op, JAVA_CALLS.substOperator),
+        exportExpression(subst.expr, JAVA_CALLS.substExpression, isOtherBug),
+      ]),
+    );
 
   const exportApplication = (node: OpApplNode, isInheritedOtherBug: boolean) => {
-    // TLC 1.7.4's XMLExporter exports a specification with semantic errors, and fails on the node
-    // that SANY puts where it found one.
-    if (node.isNull && isTlc174) throw getUnsupportedKindError(0);
+    // TLC 1.7.4's XMLExporter exports a specification with semantic errors, and fails on the
+    // operator of the node that SANY puts where it found one.
+    if (node.isNull && isTlc174) {
+      throw getJavaException(getUnsupportedKind(0), [
+        JAVA_CALLS.operator,
+        ...getDefinitionFrames("OpDef", IN_BUILTINS),
+        UNSUPPORTED_KIND_FRAME,
+      ]);
+    }
     const last = node.operands[node.operands.length - 1];
     const isOtherBug =
       isInheritedOtherBug ||
@@ -450,13 +696,13 @@ const exportSpecification = (
         last?.kind === "OpAppl" &&
         last.operator.name === "$Pair" &&
         last.operands[0] === undefined);
-    const operator = getReference(node.operator, isOtherBug);
+    const operator = getReference(node.operator, JAVA_CALLS.operator, isOtherBug);
     const operands = node.operands.map((operand, index) =>
       operand === undefined && index === 0 && isOtherBug
         ? isTlc174
           ? createText("StringNode", "$Other")
           : createElement("StringNode", [createText("StringValue", "$Other")])
-        : exportExpression(operand as ExprOrOpArgNode, isOtherBug),
+        : exportExpression(operand as ExprOrOpArgNode, JAVA_CALLS.operand, isOtherBug),
     );
     const tupleOrs = node.tupleOrs;
     const boundSymbols =
@@ -466,15 +712,15 @@ const exportSpecification = (
             createElement("boundSymbols", [
               ...(node.unbounded ?? []).map((symbol, index) =>
                 createElement("unbound", [
-                  getReference(symbol, isOtherBug),
+                  getReference(symbol, JAVA_CALLS.unbound, isOtherBug),
                   ...(tupleOrs?.[index] ? [createElement("tuple")] : []),
                 ]),
               ),
               ...(node.bounded ?? []).map((symbols, index) =>
                 createElement("bound", [
-                  ...symbols.map((symbol) => getReference(symbol, isOtherBug)),
+                  ...symbols.map((symbol) => getReference(symbol, JAVA_CALLS.bound, isOtherBug)),
                   ...(tupleOrs?.[index] ? [createElement("tuple")] : []),
-                  exportExpression(node.ranges[index], isOtherBug),
+                  exportExpression(node.ranges[index], JAVA_CALLS.range, isOtherBug),
                 ]),
               ),
             ]),
@@ -486,12 +732,31 @@ const exportSpecification = (
     ]);
   };
 
-  const exportFact = (fact: FactNode, isOtherBug: boolean) =>
+  const exportFact = (fact: FactNode, call: JavaExpressionCall, isOtherBug: boolean) =>
     fact.kind === "Module" || fact.kind === "OpDef"
-      ? getReference(fact, isOtherBug)
-      : exportExpression(fact, isOtherBug);
+      ? getReference(fact, call, isOtherBug)
+      : exportExpression(fact, call, isOtherBug);
 
-  const exportExpression = (node: ExportedNode, isOtherBug: boolean): XmlElement => {
+  // SemanticNode.export reports an exception that unwinds the export of a node.
+  const exportExpression = (
+    node: ExportedNode,
+    call: JavaCall | JavaExpressionCall,
+    isOtherBug: boolean,
+  ): XmlElement => {
+    if (!isTlc174) return exportLevelNode(node, isOtherBug);
+    if (node.kind === "OpAppl" && node.isAbsent && "nullType" in call) {
+      throw getJavaException(
+        `java.lang.NullPointerException: Cannot invoke "tla2sany.semantic.${call.nullType}.export(org.w3c.dom.Document, tla2sany.xml.SymbolContext)" because ${call.nullValue} is null`,
+        [call],
+      );
+    }
+    const failedFor =
+      node.kind === "OpAppl" && node.isNull ? IN_BUILTINS : formatSanyLocation(node.location);
+    const frames = [call, { at: SEMANTIC_EXPORT, failedFor }, { at: LEVEL_EXPORT }];
+    return withFrames(frames, () => exportLevelNode(node, isOtherBug));
+  };
+
+  const exportLevelNode = (node: ExportedNode, isOtherBug: boolean): XmlElement => {
     switch (node.kind) {
       case "OpAppl":
         return withLevel(exportApplication(node, isOtherBug), node, node.location);
@@ -523,13 +788,15 @@ const exportSpecification = (
           node.location,
         );
       case "LetIn": {
-        const body = exportExpression(node.body, isOtherBug);
+        const body = exportExpression(node.body, JAVA_CALLS.letBody, isOtherBug);
         return withLevel(
           createElement("LetInNode", [
             createElement("body", [body]),
             createElement(
               "opDefs",
-              node.opDefs.map((definition) => getReference(definition, isOtherBug)),
+              node.opDefs.map((definition) =>
+                getReference(definition, JAVA_CALLS.letDefinition, isOtherBug),
+              ),
             ),
           ]),
           node,
@@ -541,10 +808,10 @@ const exportSpecification = (
           createElement("LabelNode", [
             createText("uniquename", node.name),
             createText("arity", node.params.length),
-            createElement("body", [exportExpression(node.body, isOtherBug)]),
+            createElement("body", [exportExpression(node.body, JAVA_CALLS.labelBody, isOtherBug)]),
             createElement(
               "params",
-              node.params.map((param) => getReference(param, isOtherBug)),
+              node.params.map((param) => getReference(param, JAVA_CALLS.labelParam, isOtherBug)),
             ),
           ]),
           node,
@@ -553,7 +820,7 @@ const exportSpecification = (
       case "OpArg":
         return withLevel(
           createElement("OpArgNode", [
-            createElement("argument", [getReference(node.op, isOtherBug)]),
+            createElement("argument", [getReference(node.op, JAVA_CALLS.argument, isOtherBug)]),
           ]),
           node,
           node.location,
@@ -566,8 +833,8 @@ const exportSpecification = (
         }
         return withLevel(
           createElement("AtNode", [
-            exportExpression(object, isOtherBug),
-            exportExpression(components, isOtherBug),
+            exportExpression(object, JAVA_CALLS.exceptObject, isOtherBug),
+            exportExpression(components, JAVA_CALLS.exceptComponents, isOtherBug),
           ]),
           node,
           node.location,
@@ -575,22 +842,29 @@ const exportSpecification = (
       }
       case "SubstIn":
       case "APSubstIn": {
-        const substs = node.substs.map((subst) => exportSubst(subst, isOtherBug));
-        const body = exportExpression(node.body, isOtherBug);
+        const calls = SUBST_IN_CALLS[node.kind];
+        const substs = node.substs.map((subst) => exportSubst(subst, calls.subst, isOtherBug));
+        const body = exportExpression(node.body, calls.body, isOtherBug);
         return withLevel(
           createElement(node.kind === "SubstIn" ? "SubstInNode" : "APSubstInNode", [
             createElement("substs", substs),
             createElement("body", [body]),
-            createElement("instFrom", [getReference(node.instantiatingModule, isOtherBug)]),
-            createElement("instTo", [getReference(node.instantiatedModule, isOtherBug)]),
+            createElement("instFrom", [
+              getReference(node.instantiatingModule, calls.from, isOtherBug),
+            ]),
+            createElement("instTo", [getReference(node.instantiatedModule, calls.to, isOtherBug)]),
           ]),
           node,
           node.location,
         );
       }
       case "Instance": {
-        const substs = node.substs.map((subst) => exportSubst(subst, isOtherBug));
-        const params = node.params.map((param) => getReference(param, isOtherBug));
+        const substs = node.substs.map((subst) =>
+          exportSubst(subst, JAVA_CALLS.instanceSubst, isOtherBug),
+        );
+        const params = node.params.map((param) =>
+          getReference(param, JAVA_CALLS.instanceParam, isOtherBug),
+        );
         return {
           ...createElement("InstanceNode"),
           children: [
@@ -609,11 +883,13 @@ const exportSpecification = (
           createElement("UseOrHideNode", [
             createElement(
               "facts",
-              node.facts.map((fact) => exportFact(fact, isOtherBug)),
+              node.facts.map((fact) => exportFact(fact, JAVA_CALLS.useFact, isOtherBug)),
             ),
             createElement(
               "defs",
-              node.defs.map((definition) => getReference(definition, isOtherBug)),
+              node.defs.map((definition) =>
+                getReference(definition, JAVA_CALLS.useDefinition, isOtherBug),
+              ),
             ),
             ...(node.isOnly ? [createElement("only")] : []),
             ...(node.isHide ? [createElement("hide")] : []),
@@ -624,8 +900,11 @@ const exportSpecification = (
       case "NewSymb":
         return withLevel(
           createElement("NewSymbNode", [
-            getReference(node.declaration, isOtherBug),
-            ...(node.set ? [exportExpression(node.set, isOtherBug)] : []),
+            getReference(node.declaration, JAVA_CALLS.newDeclaration, isOtherBug),
+            // TLC 1.7.4's NewSymbNode leaves out a set that is null.
+            ...(node.set && !(isTlc174 && isAbsent(node.set))
+              ? [exportExpression(node.set, JAVA_CALLS.newSet, isOtherBug)]
+              : []),
           ]),
           node,
           node.location,
@@ -635,9 +914,11 @@ const exportSpecification = (
           createElement("AssumeProveNode", [
             createElement(
               "assumes",
-              node.assumptions.map((assumption) => exportExpression(assumption, isOtherBug)),
+              node.assumptions.map((assumption) =>
+                exportExpression(assumption, JAVA_CALLS.assumption, isOtherBug),
+              ),
             ),
-            createElement("prove", [exportExpression(node.goal, isOtherBug)]),
+            createElement("prove", [exportExpression(node.goal, JAVA_CALLS.goal, isOtherBug)]),
             ...(node.isSuffices ? [createElement("suffices")] : []),
             ...(node.isBoxed ? [createElement("boxed")] : []),
           ]),
@@ -653,11 +934,13 @@ const exportSpecification = (
             : createElement("by", [
                 createElement(
                   "facts",
-                  node.facts.map((fact) => exportFact(fact, isOtherBug)),
+                  node.facts.map((fact) => exportFact(fact, JAVA_CALLS.byFact, isOtherBug)),
                 ),
                 createElement(
                   "defs",
-                  node.defs.map((definition) => getReference(definition, isOtherBug)),
+                  node.defs.map((definition) =>
+                    getReference(definition, JAVA_CALLS.byDefinition, isOtherBug),
+                  ),
                 ),
                 ...(node.isOnly ? [createElement("only")] : []),
               ]);
@@ -669,8 +952,8 @@ const exportSpecification = (
             ...(isTlc174 ? [] : [createText("proofLevel", node.proofLevel)]),
             ...node.steps.map((step) =>
               step.kind === "Theorem"
-                ? getReference(step, isOtherBug)
-                : exportExpression(step, isOtherBug),
+                ? getReference(step, JAVA_CALLS.step, isOtherBug)
+                : exportExpression(step, JAVA_CALLS.step, isOtherBug),
             ),
           ]),
           node,
@@ -680,7 +963,7 @@ const exportSpecification = (
         return withLevel(
           createElement(
             "DefStepNode",
-            node.defs.map((definition) => getReference(definition, isOtherBug)),
+            node.defs.map((definition) => getReference(definition, JAVA_CALLS.defStep, isOtherBug)),
           ),
           node,
           node.location,
@@ -688,7 +971,9 @@ const exportSpecification = (
     }
   };
 
-  const moduleReferences = (isRestricted ? [root] : modules).map((module) => getReference(module));
+  const moduleReferences = (isRestricted ? [root] : modules).map((module) =>
+    getReference(module, JAVA_CALLS.main),
+  );
   const capacity = getHashMapCapacity(entries.size);
   const context = createElement(
     "context",

@@ -206,24 +206,87 @@ THEOREM TRUE
     expect(isRejected(proof("<1>2"))).toBe(true);
   });
 
+  const export174 = (source: string) => () =>
+    exportSanyXml(generateSanySpecification(source, loadModule, { version: "1.7.4" }), {
+      version: "1.7.4",
+      isRestricted: false,
+      isUncommented: false,
+      isTerse: false,
+    });
+  const at = (frames: string[]) => frames.map((frame) => `\tat tla2sany.${frame}`);
+  const DEFINITION_FRAMES = [
+    "semantic.OpDefNode.getSymbolElement(OpDefNode.java:1392)",
+    "semantic.SymbolNode.exportDefinition(SymbolNode.java:138)",
+    "xml.SymbolContext.put(SymbolContext.java:60)",
+    "semantic.SymbolNode.export(SymbolNode.java:177)",
+    "semantic.ModuleNode.getSymbolElement(ModuleNode.java:1244)",
+    "semantic.SymbolNode.exportDefinition(SymbolNode.java:138)",
+    "xml.SymbolContext.put(SymbolContext.java:60)",
+    "semantic.SymbolNode.export(SymbolNode.java:177)",
+    "xml.XMLExporter.main(XMLExporter.java:145)",
+  ];
+  const OPERAND_FRAMES = [
+    "semantic.OpApplNode.getLevelElement(OpApplNode.java:1326)",
+    "semantic.LevelNode.getSemanticElement(LevelNode.java:333)",
+    "semantic.SemanticNode.export(SemanticNode.java:379)",
+  ];
+  const getUnwound = (stackTrace: string, nodes: string[]) =>
+    nodes
+      .map((node) => `failed for node.toString(): ${node}\n with error \n${stackTrace}\n`)
+      .join("");
+
   it("fails as TLC 1.7.4's XMLExporter does on the node SANY puts in place of an error", () => {
-    const specification = generateSanySpecification(
-      "---- MODULE Broken ----\nVARIABLE x\nNext == x' = y\n====",
-      loadModule,
-      { version: "1.7.4" },
-    );
-    expect(() =>
-      exportSanyXml(specification, {
-        version: "1.7.4",
-        isRestricted: false,
-        isUncommented: false,
-        isTerse: false,
+    const stackTrace = [
+      "java.lang.IllegalArgumentException: unsupported kind: 0 in xml export",
+      ...at([
+        "semantic.OpDefNode.getSymbolElement(OpDefNode.java:1424)",
+        "semantic.SymbolNode.exportDefinition(SymbolNode.java:138)",
+        "xml.SymbolContext.put(SymbolContext.java:60)",
+        "semantic.SymbolNode.export(SymbolNode.java:177)",
+        "semantic.OpApplNode.getLevelElement(OpApplNode.java:1315)",
+        "semantic.LevelNode.getSemanticElement(LevelNode.java:333)",
+        "semantic.SemanticNode.export(SemanticNode.java:379)",
+        ...OPERAND_FRAMES,
+        ...DEFINITION_FRAMES,
+      ]),
+    ].join("\n");
+    expect(export174("---- MODULE Broken ----\nVARIABLE x\nNext == x' = y\n====")).toThrow(
+      expect.objectContaining({
+        message: stackTrace,
+        unwound: getUnwound(stackTrace, [
+          "In module --TLA+ BUILTINS--",
+          "In module --TLA+ BUILTINS--",
+          "line 3, col 9 to line 3, col 14 of module Broken",
+          "line 3, col 1 to line 3, col 14 of module Broken",
+          "line 1, col 1 to line 4, col 4 of module Broken",
+        ]),
       }),
-    ).toThrow(
-      new TlaUnsupportedError(
-        "java.lang.IllegalArgumentException: unsupported kind: 0 in xml export",
-      ),
     );
+  });
+
+  it("fails as TLC 1.7.4's XMLExporter does on the null SANY leaves for an operator it can't resolve", () => {
+    const stackTrace = [
+      'java.lang.NullPointerException: Cannot invoke "tla2sany.semantic.ExprOrOpArgNode.export(org.w3c.dom.Document, tla2sany.xml.SymbolContext)" because "this.operands[i]" is null',
+      ...at([...OPERAND_FRAMES, ...OPERAND_FRAMES, ...DEFINITION_FRAMES]),
+    ].join("\n");
+    expect(export174("---- MODULE Nested ----\nOp == <<{1 + 2}>>\n====")).toThrow(
+      expect.objectContaining({
+        message: stackTrace,
+        unwound: getUnwound(stackTrace, [
+          "line 2, col 9 to line 2, col 15 of module Nested",
+          "line 2, col 7 to line 2, col 17 of module Nested",
+          "line 2, col 1 to line 2, col 17 of module Nested",
+          "line 1, col 1 to line 3, col 4 of module Nested",
+        ]),
+      }),
+    );
+  });
+
+  it("leaves out a NEW set that SANY left null, as TLC 1.7.4's NewSymbNode does", () => {
+    const xml = export174(
+      "---- MODULE NewSet ----\nTHEOREM ASSUME NEW i \\in 1 + 2 PROVE TRUE\n====",
+    )();
+    expect(xml).toMatch(/<OpDeclNodeRef>\s*<UID>156<\/UID>\s*<\/OpDeclNodeRef>\s*<\/NewSymbNode>/);
   });
 
   it("marks a []ASSUME/[]PROVE as boxed", () => {

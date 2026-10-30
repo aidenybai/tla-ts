@@ -142,6 +142,18 @@ export class TlaUnsupportedError extends TlaError {
   }
 }
 
+// An exception that TLC's Java code throws and nothing catches, with the stack trace it prints, after
+// what the frames that the exception unwinds print about it.
+export class TlaJavaException extends TlaUnsupportedError {
+  unwound: string;
+
+  constructor(message: string, unwound: string) {
+    super(message);
+    this.name = "TlaJavaException";
+    this.unwound = unwound;
+  }
+}
+
 export const getErrorExitCode = (error: TlaError) =>
   getExitCode(error) ??
   (error instanceof TlaSyntaxError

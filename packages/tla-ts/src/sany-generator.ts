@@ -36,6 +36,7 @@ import {
   getSymbolArity,
   getDeclarations,
   getHashtableValues,
+  isAbsent,
   type AssumeNode,
   type AssumeProveNode,
   type Context,
@@ -286,8 +287,6 @@ export const generateSanySpecification = (
   options: SanyGenerationOptions = {},
 ): SanySpecification => {
   const messages: SanyMessage[] = [];
-  // The nodes that stand for the null SANY generates for an operator it cannot resolve.
-  const absentNodes = new WeakSet<LevelNode>();
   const addError = (location: SanyLocation | string | undefined, text: string) =>
     addSanyMessage(messages, { location, text, isWarning: false });
   const addWarning = (location: SanyLocation | undefined, text: string) =>
@@ -1258,9 +1257,7 @@ export const generateSanySpecification = (
               location,
               `Couldn't resolve ${unresolved.fixity} operator symbol \`${unresolved.name}'.`,
             );
-            const node = createNullNode(location);
-            absentNodes.add(node);
-            return node;
+            return { ...createNullNode(location), isAbsent: true };
           }
           const node = generateSelectorExpression(expression);
           if (expression.operator.includes("!") || isIdentifier(expression.operator)) {
@@ -1803,7 +1800,7 @@ export const generateSanySpecification = (
       location: SanyLocation,
       instantiatingModule = currentModule,
     ): SubstInNode => {
-      if (absentNodes.has(body)) {
+      if (isAbsent(body)) {
         addError(
           location,
           kind === "SubstIn"

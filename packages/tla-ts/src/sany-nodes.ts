@@ -164,7 +164,12 @@ export interface OpApplNode extends LevelFields {
   location: SanyLocation;
   // Generator.nullOAN, whose operator, nullODN, has no kind that the XMLExporter can export.
   isNull?: boolean;
+  // The null that SANY generates for an operator it cannot resolve.
+  isAbsent?: boolean;
 }
+
+export const isAbsent = (node: LevelNode | undefined) =>
+  node?.kind === "OpAppl" && node.isAbsent === true;
 
 export interface NumeralNode extends LevelFields {
   kind: "Numeral";

@@ -35,6 +35,7 @@ import {
   TlaProofError,
   TlaSyntaxError,
   getUnexpectedException,
+  TlaJavaException,
   UNEXPECTED_EXCEPTION,
   TlaSanyFatalError,
   TlaUnsupportedError,
@@ -1218,9 +1219,10 @@ const writeXml = (specification: SanySpecification, options: XmlExportOptions) =
   } catch (error) {
     if (!(error instanceof TlaUnsupportedError)) throw error;
     const exitCode = getErrorExitCode(error);
+    const unwound = error instanceof TlaJavaException ? error.unwound : "";
     console.error(
       exitCode === XML_EXPORT_EXIT_CODE.uncaughtException
-        ? `Exception in thread "main" ${error.message}`
+        ? `${unwound}Exception in thread "main" ${error.message}`
         : `ERROR: ${error.message}`,
     );
     return exitCode;
