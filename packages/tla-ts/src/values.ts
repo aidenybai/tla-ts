@@ -1459,9 +1459,13 @@ export const isEmptySet = (value: Value): boolean => {
   }
 };
 
-const getProductCardinality = (sets: Value[], describe: () => string) =>
+const getProductCardinality = (
+  sets: Value[],
+  version: TlcVersion | undefined,
+  describe: () => string,
+) =>
   sets.reduce<number>((product, set) => {
-    const size = product * getCardinality(set);
+    const size = product * getCardinality(set, version);
     if (size > MAXIMUM_INTEGER) throw new TlaEvaluationError(describe());
     return size;
   }, 1);
@@ -1469,7 +1473,9 @@ const getProductCardinality = (sets: Value[], describe: () => string) =>
 const describeOverflow = (value: Value) =>
   `Overflow when computing the number of elements in:\n${formatValue(value)}`;
 
-export const getCardinality = (value: Value): number => {
+// TLC 1.7.4 sizes every component of a set of functions, records, or tuples without first
+// checking whether one is empty, so an infinite component fails even beside an empty one.
+export const getCardinality = (value: Value, version?: TlcVersion): number => {
   if (typeof value !== "object") return toFiniteSet(value).elements.length;
   switch (value.kind) {
     case "Interval": {
@@ -1487,16 +1493,19 @@ export const getCardinality = (value: Value): number => {
         `Attempted to compute the number of elements in the overridden value ${formatValue(value)}.`,
       );
     case "Subset": {
-      const size = getCardinality(value.base);
+      const size = getCardinality(value.base, version);
       if (size >= 31) throw new TlaEvaluationError(describeOverflow(value));
       return 2 ** size;
     }
     case "FunctionSet": {
-      if (isEmptySet(value.domain)) return 1;
-      if (isEmptySet(value.range)) return 0;
-      const rangeSize = getCardinality(value.range);
-      if (rangeSize === 1) return 1;
-      const domainSize = getCardinality(value.domain);
+      if (version !== "1.7.4") {
+        if (isEmptySet(value.domain)) return 1;
+        if (isEmptySet(value.range)) return 0;
+        if (getCardinality(value.range, version) === 1) return 1;
+      }
+      const domainSize = getCardinality(value.domain, version);
+      const rangeSize = getCardinality(value.range, version);
+      if (rangeSize <= 1) return domainSize === 0 ? 1 : rangeSize;
       const size = { value: 1 };
       for (let index = 0; index < domainSize; index++) {
         size.value *= rangeSize;
@@ -1505,12 +1514,13 @@ export const getCardinality = (value: Value): number => {
       return size.value;
     }
     case "RecordSet":
-      if (isEmptySet(value)) return 0;
-      return getProductCardinality(value.sets, () => describeOverflow(value));
+      if (version !== "1.7.4" && isEmptySet(value)) return 0;
+      return getProductCardinality(value.sets, version, () => describeOverflow(value));
     case "ProductSet":
-      if (isEmptySet(value)) return 0;
+      if (version !== "1.7.4" && isEmptySet(value)) return 0;
       return getProductCardinality(
         value.factors,
+        version,
         () => `Overflow when computing the number of elements in ${formatValue(value)}`,
       );
     default:

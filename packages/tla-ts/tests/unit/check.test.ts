@@ -2045,6 +2045,22 @@ describe("check matches TLC 1.7.4", () => {
     expect(await getRevision("1.7.4")).toBe("TLCGet(revision) was undefined.");
   });
 
+  it("sizes every component of a set of functions as TLC 1.7.4 does", async () => {
+    const getCardinality = async (version: TlcVersion) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = Cardinality([Nat -> {}])\nNext == UNCHANGED x\n====",
+        config: "INIT Init\nNEXT Next",
+        version,
+      });
+      return result.failure?.message ?? result.status;
+    };
+    expect(await getCardinality("master")).toBe("success");
+    expect(await getCardinality("1.7.4")).toMatch(
+      /but it produced the following error:\nAttempted to compute the number of elements in the overridden value Nat\.$/,
+    );
+  });
+
   it("doesn't explain a set it can't enumerate", async () => {
     const result = await check174("Init == x = 0\nNext == \\E n \\in Nat : x' = n");
     expect(result.failure?.message).toContain(
