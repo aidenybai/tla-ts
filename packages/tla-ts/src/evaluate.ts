@@ -85,6 +85,8 @@ export interface Builtin {
   evaluateUnary: ((value: Value) => Value) | undefined;
   evaluateBinary: ((left: Value, right: Value) => Value) | undefined;
   isStateLevel?: boolean;
+  // Whether TLC takes an application for a constant one although its value depends on the state.
+  isLevelConstant?: boolean;
   isLazy?: boolean;
 }
 

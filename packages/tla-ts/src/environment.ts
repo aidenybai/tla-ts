@@ -1041,7 +1041,8 @@ export const createEnvironment = (
       );
     }
   });
-  runtime.isStarted = true;
+  // TLC 1.7.4 processes the whole spec before it creates its model checker, which TLCGet reads.
+  if (runtime.version !== "1.7.4") runtime.isStarted = true;
   // TLC computes the constant definitions of each module in the order SANY finishes the modules,
   // except those of a module that an INSTANCE gives parameters to.
   const instantiated = new Set(

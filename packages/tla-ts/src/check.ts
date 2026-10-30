@@ -1272,6 +1272,17 @@ const WRAPPED_RUNTIME_EXCEPTION = `${UNEXPECTED_EXCEPTION}util.Assert$TLCRuntime
 const getWrappedException = (error: TlaEvaluationError) =>
   isEvalException(error) ? WRAPPED_EVAL_EXCEPTION : WRAPPED_RUNTIME_EXCEPTION;
 
+const withUnexpectedEvalException = <Result>(compute: () => Result) => {
+  try {
+    return compute();
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError) || !isEvalException(error)) throw error;
+    throw new TlaEvaluationError(
+      `${getUnexpectedException("tlc2.tool.EvalException")}${error.message}`,
+    );
+  }
+};
+
 // The starts of TLC's messages for the exceptions it didn't expect.
 const UNEXPECTED_EXCEPTIONS = [
   WRAPPED_EVAL_EXCEPTION,
@@ -1425,6 +1436,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const findViolatedAssumption = () =>
     findAssumptionViolation(specification.assumptions, environment);
   if (!search) {
+    runtime.isStarted = true;
     const assumptionViolation = findViolatedAssumption();
     if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
     // TLC computes the initial states of a spec without variables, of which there are none.
@@ -1563,41 +1575,46 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     });
   const isReducing = config.view !== undefined || config.symmetry !== undefined;
   const tlcFingerprints: number[] = [];
+  // TLC reports an EvalException in building the liveness checker as an exception it didn't expect.
   const liveness = withLivenessExitCode(() =>
-    createLivenessChecker(search.properties.liveness, spec.temporals, environment, {
-      getFingerprint: (index) =>
-        (tlcFingerprints[index] ??= Number(
-          BigInt.asIntN(32, runtime.getFingerprint(states[index])),
-        )),
-      getSuccessors: (source, state) => {
-        const successors: LiveSuccessor[] = [];
-        if (spec.next === undefined) return successors;
-        // The constraints read the level of the state whose successors they check, as when TLC
-        // explored it.
-        const livenessSource = current.livenessSource;
-        current.livenessSource = source;
-        forEachSuccessor(
-          spec.next,
-          state,
-          environment,
-          (successor) => {
-            canonicalizeState(successor.state);
-            const isInModel =
-              search.satisfiesConstraints(successor.state, state) &&
-              search.satisfiesActionConstraints(state, successor.state);
-            if (!isInModel) return false;
-            const fingerprintState = getFingerprintState(successor.state);
-            const index = findStateIndex(getStateHash(fingerprintState), fingerprintState);
-            successors.push({ index, state: successor.state });
-            return false;
-          },
-          spec.scope,
-        );
-        current.livenessSource = livenessSource;
-        return successors;
-      },
-    }),
+    withUnexpectedEvalException(() =>
+      createLivenessChecker(search.properties.liveness, spec.temporals, environment, {
+        getFingerprint: (index) =>
+          (tlcFingerprints[index] ??= Number(
+            BigInt.asIntN(32, runtime.getFingerprint(states[index])),
+          )),
+        getSuccessors: (source, state) => {
+          const successors: LiveSuccessor[] = [];
+          if (spec.next === undefined) return successors;
+          // The constraints read the level of the state whose successors they check, as when TLC
+          // explored it.
+          const livenessSource = current.livenessSource;
+          current.livenessSource = source;
+          forEachSuccessor(
+            spec.next,
+            state,
+            environment,
+            (successor) => {
+              canonicalizeState(successor.state);
+              const isInModel =
+                search.satisfiesConstraints(successor.state, state) &&
+                search.satisfiesActionConstraints(state, successor.state);
+              if (!isInModel) return false;
+              const fingerprintState = getFingerprintState(successor.state);
+              const index = findStateIndex(getStateHash(fingerprintState), fingerprintState);
+              successors.push({ index, state: successor.state });
+              return false;
+            },
+            spec.scope,
+          );
+          current.livenessSource = livenessSource;
+          return successors;
+        },
+      }),
+    ),
   );
+  // TLC 1.7.4 creates its model checker, which TLCGet reads, once it has built the liveness checker.
+  runtime.isStarted = true;
   const isCanonicalizedFirst = search.isSymmetric || liveness !== undefined;
 
   const states: Value[][] = [];

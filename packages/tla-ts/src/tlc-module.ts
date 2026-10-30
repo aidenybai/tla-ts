@@ -220,9 +220,13 @@ export const createTlcOperators = (
   // its argument.
   runtime.version === "1.7.4"
     ? overrideWithJava(
-        defineStateOperator("TLCGet", 1, (args, context) =>
-          getTlcValue(runtime, getValue(args, 0, "TLCGet"), context),
-        ),
+        {
+          ...defineStateOperator("TLCGet", 1, (args, context) =>
+            getTlcValue(runtime, getValue(args, 0, "TLCGet"), context),
+          ),
+          // Unlike TLCGetSet.TLCGetEval, TLC.TLCGet declares no minimum level.
+          isLevelConstant: true,
+        },
         "public static tlc2.value.impl.Value tlc2.module.TLC.TLCGet(tlc2.value.impl.Value)",
       )
     : overrideWithJava(

@@ -12,7 +12,7 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
-import { TlaSanyFatalError, UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { getUnexpectedException, TlaSanyFatalError, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc-version";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
@@ -2123,5 +2123,21 @@ describe("check matches TLC 1.7.4", () => {
     };
     expect(await getDistinctStates("master")).toBe(2);
     expect(await getDistinctStates("1.7.4")).toBe(3);
+  });
+
+  it("evaluates TLCGet in a temporal property before it starts the model checker", async () => {
+    const checkVersion = (version: TlcVersion) =>
+      check({
+        source:
+          '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == <>[](x = 1 /\\ TLCGet("diameter") > 0)\n====',
+        config: "SPECIFICATION Spec\nPROPERTY P",
+        version,
+      }).then((result) => result.status);
+    expect(await checkVersion("master")).toBe("liveness-violation");
+    await expect(checkVersion("1.7.4")).rejects.toThrow(
+      new TlaEvaluationError(
+        `${getUnexpectedException("tlc2.tool.EvalException")}TLCGet(diameter) was undefined.`,
+      ),
+    );
   });
 });

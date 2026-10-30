@@ -633,6 +633,24 @@ describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path
     );
   });
 
+  it("reports an error in building the liveness checker as an unexpected EvalException", () => {
+    const result = check174("Undiameter");
+    expect(result.status).toBe(255);
+    expect(result.stdout).toContain(
+      [
+        "@!@!@STARTMSG 1000:1 @!@!@",
+        "TLC threw an unexpected exception.",
+        "This was probably caused by an error in the spec or model.",
+        "See the User Output or TLC Console for clues to what happened.",
+        "The exception was a tlc2.tool.EvalException",
+        ": @!@!@STARTMSG 2145:0 @!@!@",
+        "TLCGet(diameter) was undefined.",
+        "@!@!@ENDMSG 2145 @!@!@",
+        "@!@!@ENDMSG 1000 @!@!@",
+      ].join("\n"),
+    );
+  });
+
   it("reports an error in the config as an unexpected exception", () => {
     const result = check174("Aliased");
     expect(result.status).toBe(255);

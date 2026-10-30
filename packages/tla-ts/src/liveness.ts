@@ -90,7 +90,7 @@ export const getLevel = (
     const definition = getDefinition(name, environment);
     if (definition) return getDefinitionLevel(definition, environment);
     const builtin = environment.builtins.get(environment.substitutions.get(name) ?? name);
-    return builtin ? (builtin.isStateLevel ? 1 : 0) : undefined;
+    return builtin ? (builtin.isStateLevel && !builtin.isLevelConstant ? 1 : 0) : undefined;
   };
   const getNameLevel = (name: string, node: Expression) => {
     if (shadowed.has(name)) return 0;

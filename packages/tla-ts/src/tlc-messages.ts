@@ -287,7 +287,8 @@ export const isEvalException = (error: TlaEvaluationError) =>
 
 // The messages that end with the message of the error they report, after this text.
 const INNER_MESSAGE_PREFIXES = new Map([
-  [1000, "The exception was a java.lang.RuntimeException\n: "],
+  // "The exception was a <class>\n: "
+  [1000, "\n: "],
   [2105, "failed.\n"],
   [2154, "but it produced the following error:\n"],
   [2281, " - specifically: "],
