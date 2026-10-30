@@ -2120,6 +2120,7 @@ export const generateSanySpecification = (
         arity: symbol.arity,
         declKind: kind.declKind,
         location: getSpanLocation(file, getOperatorSpan(nameIndex, symbol.arity)),
+        module: currentModule,
       };
       addSymbol(symbolTable, declaration);
       return {
@@ -2578,6 +2579,7 @@ export const generateSanySpecification = (
         arity: declaration.arity,
         declKind,
         location: getSpanLocation(file, span),
+        module: currentModule,
       };
       if (declKind === CONSTANT_DECL_KIND) {
         node.levelParams.add(node);

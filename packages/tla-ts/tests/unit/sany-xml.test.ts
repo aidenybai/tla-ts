@@ -152,7 +152,7 @@ describe("SANY XML export", () => {
     ]);
     expect(xml).toContain("<pre-comments><![CDATA[\\* The first state.]]></pre-comments>");
     expect(xml.match(/<ModuleNodeRef>/g)?.length).toBeGreaterThanOrEqual(3);
-    expect(lines.at(-1)).toBe("</modules>");
+    expect(lines.slice(-2)).toEqual(["</modules>", ""]);
   });
 
   it("resolves subexpression references as SANY's selectorToNode does", () => {

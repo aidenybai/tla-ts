@@ -105,17 +105,62 @@ const PROVE_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...
   { flag: "-I <directory>", isRepeatable: true },
 ]);
 
-const XML_EXPORT_COMMAND = defineCommand(
-  "tla-ts [<JVM option>]... tla2sany.xml.XMLExporter {options} <Module.tla>",
-  [{ flag: "-I <directory>", isRepeatable: true }, { flag: "-o" }],
-);
+const XML_EXPORT_FLAGS = new Set(["-o", "-t", "-r", "-u"]);
+
+// The usage that XMLExporter.printUsage prints with UsageGenerator.
+const XML_EXPORT_USAGE = (() => {
+  const bold = (text: string) => `\x1b[1m${text}\x1b[0m`;
+  const options = [
+    ["-I", "Include; use given directory path to resolve module dependencies."],
+    ["-help", "Print this usage information."],
+    ["-o", "Offline mode; skip XML schema validation step."],
+    [
+      "-r",
+      "Restrict mode; include only declarations and definitions of the specified module, excluding extended or instantiated modules.",
+    ],
+    ["-t", "Terse; format XML output without tabs or newlines."],
+    [
+      "-u",
+      "Uncomment; process boxed comments and single-line comments (\\*) in pre-comments to extract their content.",
+    ],
+  ];
+  const tips = [
+    "Only one root TLA+ file can be parsed per run.",
+    "Multiple directory search paths can be given by providing multiple -I arguments.",
+    "XML schema validation does not require network access.",
+  ];
+  return [
+    "",
+    bold("NAME"),
+    "",
+    "\ttla2sany.xml.XMLExporter - Emit SANY's parse tree as XML - Version 2.2 created 08 July 2020",
+    "",
+    "",
+    bold("SYNOPSIS"),
+    "",
+    `\t${bold("tla2sany.xml.XMLExporter")} [${bold("-Iortu")}] [${bold("-help")}] FILE`,
+    "",
+    bold("DESCRIPTION"),
+    "",
+    "\tGiven a TLA+ file, parse that file with SANY then translate the module's semantic parse tree to XML, including all the modules depended on. The XML is printed to stdout and its output format is given by an XML Schema file (.xsd) found at https://proofs.tlapl.us/doc/web/sany.xsd.",
+    "",
+    bold("OPTIONS"),
+    "",
+    ...options.map(([flag, description]) => `\t${bold(flag)}\n\t\t${description}`),
+    "",
+    bold("TIPS"),
+    "",
+    ...tips.flatMap((tip) => [`\t${tip}`, ""]),
+    "",
+  ].join("\n");
+})();
 
 const USAGE = [
   `Usage: ${CHECK_COMMAND.usage}`,
   `       ${PROVE_COMMAND.usage}`,
   "       tla-ts prove [<tlapm option>]... <Module.tla|glob>...",
   "       tla-ts [<JVM option>]... tlc2.TLC <TLC option>... <Spec>",
-  `       ${XML_EXPORT_COMMAND.usage}`,
+  "       tla-ts [<JVM option>]... tla2sany.xml.XMLExporter [-I <directory>]... [-o] [-t] [-r] [-u] <Module.tla>",
 ].join("\n");
 
 const GLOB_CHARACTERS = /[*?[{]/;
@@ -1090,20 +1135,43 @@ const checkSpecs = async (args: string[], java: JavaProperties) => {
   );
 };
 
+// XMLExporter.run prints why it cannot parse its arguments, and its usage.
+const printXmlExportUsageError = (message: string) => {
+  process.stderr.write(`ERROR: ${message}\n${XML_EXPORT_USAGE}`);
+  return XML_EXPORT_EXIT_CODE.argsParsingFailure;
+};
+
 const exportXml = (args: string[]) => {
-  const parsed = XML_EXPORT_COMMAND.parse(args);
-  const unsupported = parsed.unknown[0];
-  if (unsupported !== undefined) {
-    console.error(`Error: tla-ts does not support the XMLExporter option ${unsupported}.`);
-    return 1;
+  if (args.length === 0) return printXmlExportUsageError("at least one .tla file must be given");
+  // XMLExporter.moduleToXML reads the flags before the last argument, which names the module,
+  // and skips an argument it does not know, which then counts as another module.
+  const flags = new Set<string>();
+  const includes: string[] = [];
+  let lastFlag = -1;
+  for (let index = 0; index < args.length - 1; index++) {
+    if (XML_EXPORT_FLAGS.has(args[index])) {
+      flags.add(args[index]);
+      lastFlag = index;
+    } else if (args[index] === "-I") {
+      index++;
+      if (index > args.length - 2) {
+        return printXmlExportUsageError(
+          "the -I flag must be followed by a directory and at least one .tla file",
+        );
+      }
+      includes.push(args[index]);
+      lastFlag = index;
+    }
   }
-  if (parsed.incomplete || parsed.positionals.length !== 1) {
-    console.error(USAGE);
-    return 1;
+  if (lastFlag !== args.length - 2) {
+    return printXmlExportUsageError("Only one TLA file to check allowed!");
   }
-  const name = parsed.positionals[0];
+  const name = args[args.length - 1];
+  if (name === "-help") {
+    process.stdout.write(XML_EXPORT_USAGE);
+    return EXIT_STATUS.success;
+  }
   const fileName = name.endsWith(".tla") ? name : `${name}.tla`;
-  const includes = parsed.options.flatMap((option) => (option.name === "-I" ? option.values : []));
   // SANY looks for each module in the working directory, then in the -I directories, which
   // XMLExporter passes in place of TLA-Library, then among its standard modules.
   const directories = [".", ...includes];
@@ -1125,7 +1193,13 @@ const exportXml = (args: string[]) => {
     return XML_EXPORT_EXIT_CODE.specParsingFailure;
   }
   try {
-    console.log(exportSanyXml(sany.specification));
+    process.stdout.write(
+      exportSanyXml(sany.specification, {
+        isRestricted: flags.has("-r"),
+        isUncommented: flags.has("-u"),
+        isTerse: flags.has("-t"),
+      }),
+    );
     return EXIT_STATUS.success;
   } catch (error) {
     if (!(error instanceof TlaUnsupportedError)) throw error;

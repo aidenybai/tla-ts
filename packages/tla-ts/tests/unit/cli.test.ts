@@ -445,6 +445,28 @@ describe("the CLI exports XML like SANY's XMLExporter", () => {
     expect(result.stdout).toBe(readFileSync(join(FIXTURES, "xml-export", "Numbered.xml"), "utf8"));
   });
 
+  // Commented.xml is what XMLExporter writes for Commented.tla with -t, -r and -u: on one line,
+  // without what Commented has from Counted, and with the pre-comments out of their boxes.
+  it("writes the XML of the root module alone, unboxed and on one line, as XMLExporter does", () => {
+    const result = exportXml(["-t", "-r", "-u", "Commented.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(readFileSync(join(FIXTURES, "xml-export", "Commented.xml"), "utf8"));
+  });
+
+  it("prints its usage for -help, and with an error for an argument it does not know", () => {
+    const help = exportXml(["-help"]);
+    expect(help.status).toBe(0);
+    expect(help.stdout.split("\n").slice(0, 4)).toEqual([
+      "",
+      "\x1b[1mNAME\x1b[0m",
+      "",
+      "\ttla2sany.xml.XMLExporter - Emit SANY's parse tree as XML - Version 2.2 created 08 July 2020",
+    ]);
+    const unknown = exportXml(["-x", "Commented.tla"]);
+    expect(unknown.status).toBe(1);
+    expect(unknown.stderr).toBe(`ERROR: Only one TLA file to check allowed!\n${help.stdout}`);
+  });
+
   it("finds the root module and the modules it extends in the -I directories", () => {
     const result = exportXml(["-I", "nested", "Root"]);
     expect(result.status).toBe(0);

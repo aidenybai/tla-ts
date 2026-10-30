@@ -11,6 +11,8 @@ import {
   type FactNode,
   type LevelNode,
   type ModuleNode,
+  type OpDeclNode,
+  type OpDefNode,
   type OpApplNode,
   type SanyLocation,
   type Subst,
@@ -24,6 +26,7 @@ import {
 // XMLExporterExitCode, and the status Java exits with on an exception that nothing catches.
 export const XML_EXPORT_EXIT_CODE = {
   uncaughtException: 1,
+  argsParsingFailure: 1,
   specParsingFailure: 2,
   unrepresentableCharacter: 7,
 } as const;
@@ -77,21 +80,22 @@ const findUnrepresentable = (
   return undefined;
 };
 
-// The pretty printing of Java's identity Transformer with an indent amount of 2.
-const printElement = (element: XmlElement, depth: number): string[] => {
-  const indent = "  ".repeat(depth);
-  if (element.cdata !== undefined) {
+// The lines of Java's identity Transformer, which pretty prints with an indent amount of 2.
+const printElement = (element: XmlElement, depth: number, indentAmount: number): string[] => {
+  const indent = " ".repeat(depth * indentAmount);
+  // An element whose text or character data is empty has no content, like an element without
+  // children.
+  if (element.cdata) {
     const data = element.cdata.replaceAll("]]>", "]]]]><![CDATA[>");
     return [`${indent}<${element.tag}><![CDATA[${data}]]></${element.tag}>`];
   }
-  // An element whose text is empty has no content, like an element without children.
   if (element.text) {
     return [`${indent}<${element.tag}>${escapeXml(element.text)}</${element.tag}>`];
   }
   if (element.children.length === 0) return [`${indent}<${element.tag}/>`];
   return [
     `${indent}<${element.tag}>`,
-    ...element.children.flatMap((child) => printElement(child, depth + 1)),
+    ...element.children.flatMap((child) => printElement(child, depth + 1, indentAmount)),
     `${indent}</${element.tag}>`,
   ];
 };
@@ -141,9 +145,72 @@ const getHashMapCapacity = (size: number, capacity = 16): number =>
 
 const getHashMapBucket = (key: number, capacity: number) => (key ^ (key >>> 16)) & (capacity - 1);
 
+// Java's String.split, which drops the empty strings at the end.
+const splitLines = (text: string) => {
+  const lines = text.split(/\r?\n/);
+  while (lines.at(-1) === "") lines.pop();
+  return lines;
+};
+
+// Java's String.trim, which removes the control characters and spaces at either end.
+const trimJava = (text: string) => text.replace(/^[\0-\x20]+|[\0-\x20]+$/g, "");
+
+// The characters of Java's Character.isWhitespace, which include four control characters.
+const TRAILING_WHITESPACE =
+  // eslint-disable-next-line no-control-regex
+  /[\t-\r\x1C-\x20\u1680\u2000-\u2006\u2008-\u200A\u2028\u2029\u205F\u3000]+$/;
+
+// SyntaxTreeNode.unboxComment: the lines of a comment boxed in (** and **), without the box.
+const unboxComment = (text: string) => {
+  const start = text.indexOf("(**");
+  const end = text.lastIndexOf("**)");
+  if (start < 0 || end <= start) return text;
+  const lines = splitLines(text);
+  const beginLine = lines.findIndex((line) => line.includes("(**"));
+  const endLine = lines.findLastIndex((line) => line.includes("**)"));
+  if (beginLine < 0 || beginLine >= endLine) return text;
+  return lines
+    .slice(beginLine + 1, endLine)
+    .map((line) => {
+      const begin = line.indexOf("(*");
+      const finish = line.indexOf("*)");
+      if (begin < 0 || finish <= begin) return line;
+      return line.slice(begin + 3, Math.max(begin + 3, finish)).replace(TRAILING_WHITESPACE, "");
+    })
+    .join("\n");
+};
+
+// SyntaxTreeNode.unboxBackslashStarComment: the lines of a comment, without the \* that starts
+// them, when at least half of them start with one.
+const unboxBackslashStarComment = (text: string) => {
+  const lines = splitLines(text);
+  const isCommentLine = (line: string) => trimJava(line).startsWith("\\*");
+  if (lines.filter(isCommentLine).length < Math.floor(lines.length / 2)) return text;
+  return lines
+    .map((line) => {
+      if (!isCommentLine(line)) return line;
+      const start = line.indexOf("\\*") + 2;
+      return line.slice(line[start] === " " ? start + 1 : start);
+    })
+    .join("\n");
+};
+
+export interface XmlExportOptions {
+  // -r: only the root module, and only the declarations and definitions a module makes itself.
+  isRestricted: boolean;
+  // -u: the pre-comments without the boxes and \* that format them.
+  isUncommented: boolean;
+  // -t: the XML on one line.
+  isTerse: boolean;
+}
+
 // The XML of SANY's XMLExporter: every module of the specification, and a context with an entry
 // for each symbol, theorem and assumption that the modules refer to.
-const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
+const exportSpecification = (
+  modules: ModuleNode[],
+  root: ModuleNode,
+  { isRestricted, isUncommented }: XmlExportOptions,
+) => {
   // SymbolContext: SANY marks a node's UID as exported before it exports the node's definition,
   // which can export other definitions, and adds the definition to its entries after them.
   const keys = new Set<number>();
@@ -187,7 +254,8 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
       .map((comment) => comment.trimEnd())
       .filter((comment) => comment.length > 0)
       .join("\n");
-    return comments.length > 0 ? [{ tag: "pre-comments", cdata: text, children: [] }] : [];
+    const cdata = isUncommented ? unboxBackslashStarComment(unboxComment(text)) : text;
+    return comments.length > 0 ? [{ tag: "pre-comments", cdata, children: [] }] : [];
   };
 
   const exportDefinition = (node: ContextNode, isOtherBug: boolean): XmlElement => {
@@ -312,6 +380,8 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
   // The children of a ModuleNode element after its name, built in the order SANY builds them so
   // that the context entries they add appear in the same order.
   const exportModuleChildren = (module: ModuleNode): XmlElement[] => {
+    // XMLExporter's filter for -r: a declaration or definition that the module makes itself.
+    const isExported = (node: OpDeclNode | OpDefNode) => !isRestricted || node.module === module;
     return [
       createText("uniquename", module.name),
       createElement(
@@ -321,13 +391,15 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
           .toSorted()
           .map((name) => createText("uniquename", name)),
       ),
-      ...getDeclarations(module, CONSTANT_DECL_KIND).map((declaration) =>
-        getReference(declaration),
-      ),
-      ...getDeclarations(module, VARIABLE_DECL_KIND).map((declaration) =>
-        getReference(declaration),
-      ),
-      ...getOpDefs(module).map((definition) => getReference(definition)),
+      ...getDeclarations(module, CONSTANT_DECL_KIND)
+        .filter(isExported)
+        .map((declaration) => getReference(declaration)),
+      ...getDeclarations(module, VARIABLE_DECL_KIND)
+        .filter(isExported)
+        .map((declaration) => getReference(declaration)),
+      ...getOpDefs(module)
+        .filter(isExported)
+        .map((definition) => getReference(definition)),
       ...module.topLevel.map((topLevel) =>
         topLevel.kind === "Instance" || topLevel.kind === "UseOrHide"
           ? exportExpression(topLevel, false)
@@ -583,7 +655,7 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
     }
   };
 
-  const moduleReferences = modules.map((module) => getReference(module));
+  const moduleReferences = (isRestricted ? [root] : modules).map((module) => getReference(module));
   const capacity = getHashMapCapacity(entries.size);
   const context = createElement(
     "context",
@@ -603,11 +675,14 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
 
 type ExportedNode = LevelNode | InstanceNode | UseOrHideNode | ProofPartNode;
 
-// The specification SANY accepts, level-checked, in the XML format of SANY's
-// tla2sany.xml.XMLExporter, as its -o option prints it: every module the root module depends on,
-// the standard modules among them, with the level of every expression.
-export const exportSanyXml = (specification: SanySpecification) => {
-  const document = exportSpecification(specification.modules, specification.root);
+// The specification SANY accepts, level-checked, as SANY's tla2sany.xml.XMLExporter prints it
+// with -o and the given options: every module the root module depends on, the standard modules
+// among them, with the level of every expression.
+export const exportSanyXml = (
+  specification: SanySpecification,
+  options: XmlExportOptions = { isRestricted: false, isUncommented: false, isTerse: false },
+) => {
+  const document = exportSpecification(specification.modules, specification.root, options);
   const unrepresentable = findUnrepresentable(document);
   if (unrepresentable) {
     const codePoint = unrepresentable.character.codePointAt(0) ?? 0;
@@ -618,8 +693,8 @@ export const exportSanyXml = (specification: SanySpecification) => {
       XML_EXPORT_EXIT_CODE.unrepresentableCharacter,
     );
   }
-  return [
-    '<?xml version="1.0" encoding="UTF-8" standalone="no"?>',
-    ...printElement(document, 0),
-  ].join("\n");
+  const declaration = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>';
+  return options.isTerse
+    ? [declaration, ...printElement(document, 0, 0)].join("")
+    : `${[declaration, ...printElement(document, 0, 2)].join("\n")}\n`;
 };

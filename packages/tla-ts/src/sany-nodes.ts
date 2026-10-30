@@ -79,6 +79,7 @@ export interface OpDeclNode extends LevelFields {
   arity: number;
   declKind: number;
   location: SanyLocation;
+  module: ModuleNode;
 }
 
 export interface OpDefNode extends LevelFields {
