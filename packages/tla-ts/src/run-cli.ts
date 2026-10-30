@@ -10,6 +10,7 @@ import {
 import { spawnSync } from "node:child_process";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
+import { pathToFileURL } from "node:url";
 import type { Expression } from "./ast";
 import { describeRange } from "./evaluate";
 import type {
@@ -260,7 +261,14 @@ const printProgress = (
 };
 
 // The messages TLC prints for a program to read as the search goes.
-const printToolProgress = (printer: MessagePrinter, progress: CheckProgress, timing: Timing) => {
+const getClassPath = (directory: string, module: string) => join(directory, `${module}.class`);
+
+const printToolProgress = (
+  printer: MessagePrinter,
+  progress: CheckProgress,
+  timing: Timing,
+  directory: string,
+) => {
   const print = printer.print;
   switch (progress.kind) {
     case "parsed":
@@ -300,6 +308,16 @@ const printToolProgress = (printer: MessagePrinter, progress: CheckProgress, tim
         `Implied-temporal checking--satisfiability problem has ${progress.branches} branches.`,
       );
       return;
+    case "java-override": {
+      // Class#getResource, which names the class file TLC loads the override from.
+      const location = pathToFileURL(resolve(getClassPath(directory, progress.module))).href;
+      print(
+        progress.isMatched ? MESSAGE_CODE.javaOverrideLoaded : MESSAGE_CODE.javaOverrideMismatch,
+        progress.isMatched ? MESSAGE_LEVEL.none : MESSAGE_LEVEL.warning,
+        `${progress.isMatched ? "Loading" : "Failed to match"} ${progress.operator} operator override from ${location.replace("file:///", "file:/")} with signature: <Java Method: ${progress.signature}>.`,
+      );
+      return;
+    }
     case "initial-states-started":
       print(MESSAGE_CODE.computingInit, MESSAGE_LEVEL.none, "Computing initial states...");
       return;
@@ -652,18 +670,17 @@ const checkSpec = async (
       livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
       seed: BigInt(seed),
       dump: dumpValues && getDump(dumpValues),
-      // TLC loads its trace exploration spec unless it runs with -tool.
-      isTraceSpecLoaded: !args.has("-tool"),
+      isTool: printer.isTool,
       isWarningEnabled: !args.has("-nowarning"),
       onProgress: printer.isTool
-        ? (progress) => printToolProgress(printer, progress, timing)
+        ? (progress) => printToolProgress(printer, progress, timing, directory)
         : undefined,
       source,
       config,
       onPause: () => readSync(0, Buffer.alloc(1)),
       loadModule,
       loadClass: (name) => {
-        const classPath = join(directory, `${name}.class`);
+        const classPath = getClassPath(directory, name);
         return existsSync(classPath) ? readFileSync(classPath) : undefined;
       },
       readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
@@ -685,7 +702,7 @@ const checkSpec = async (
   const sany = getSanyReport(specPath, loadModule);
   process.stdout.write(sany.text);
   if (sany.isFailed) {
-    printToolProgress(printer, { kind: "parsed" }, timing);
+    printToolProgress(printer, { kind: "parsed" }, timing, directory);
     printParsingFailed();
     printFinished();
     return EXIT_STATUS.specParseError;
@@ -695,7 +712,7 @@ const checkSpec = async (
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     if (error instanceof TlaSyntaxError) console.log(formatSanyErrors(error, fileName));
-    if (!timing.isParsed) printToolProgress(printer, { kind: "parsed" }, timing);
+    if (!timing.isParsed) printToolProgress(printer, { kind: "parsed" }, timing, directory);
     return printFailure(error);
   }
 };

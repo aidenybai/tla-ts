@@ -285,14 +285,8 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
     (name === undefined ? undefined : nestedModules.get(name)) ?? getFile(name);
 };
 
-// The variables or constants of the root module in the reverse of its context enumeration, as
-// ModuleNode.getVariableDecls and getConstantDecls return them. TLC compares variables in this
-// order, and checks that the configuration assigns each constant in it.
-export const getTlcDeclarationOrder = (
-  source: string,
-  loadModule: ModuleLoader,
-  kind: "variable" | "constant",
-): string[] => {
+// SANY's Context of each module, which the root module has under undefined.
+const createContexts = (source: string, loadModule: ModuleLoader) => {
   const getParsed = createModuleSet(source, loadModule);
   const getUnits = (unit: ParsedModule) => {
     const tokens = unit.tokens;
@@ -393,6 +387,8 @@ export const getTlcDeclarationOrder = (
   };
 
   const contexts = new Map<string, SymbolTable>();
+  // Where the entries a module adds itself start, after those of the modules it extends.
+  const ownStarts = new Map<SymbolTable, number>();
   const getContext = (name: string | undefined): SymbolTable => {
     const cached = contexts.get(name ?? "");
     if (cached) return cached;
@@ -407,14 +403,48 @@ export const getTlcDeclarationOrder = (
         if (!entry.isLocal) table.put(entry);
       }),
     );
+    ownStarts.set(table, table.inserted.length);
     getUnits(unit).forEach((item) => item.apply(table));
     return table;
   };
-  return getContext(undefined)
+  return {
+    getContext,
+    getOwnEntries: (name: string | undefined) => {
+      const table = getContext(name);
+      return table.inserted.slice(ownStarts.get(table));
+    },
+  };
+};
+
+// The variables or constants of the root module in the reverse of its context enumeration, as
+// ModuleNode.getVariableDecls and getConstantDecls return them. TLC compares variables in this
+// order, and checks that the configuration assigns each constant in it.
+export const getTlcDeclarationOrder = (
+  source: string,
+  loadModule: ModuleLoader,
+  kind: "variable" | "constant",
+): string[] =>
+  createContexts(source, loadModule)
+    .getContext(undefined)
     .enumerate()
     .filter((entry) => entry.kind === kind)
     .map((entry) => entry.name)
     .reverse();
+
+// The names of the definitions each module adds to its context, in the order of
+// ModuleNode.getOpDefs, in which TLC computes the constant definitions as it starts. An INSTANCE
+// adds the definitions of the module it instantiates in the order that module's Hashtable
+// enumerates them.
+export const createTlcDefinitionOrder = (source: string, loadModule: ModuleLoader) => {
+  const contexts = createContexts(source, loadModule);
+  // The root module's context reads every file of the spec, and so finds the modules nested in
+  // the files it extends or instantiates.
+  contexts.getContext(undefined);
+  return (name: string | undefined) =>
+    contexts
+      .getOwnEntries(name)
+      .filter((entry) => entry.kind === "definition")
+      .map((entry) => entry.name);
 };
 
 export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader) =>

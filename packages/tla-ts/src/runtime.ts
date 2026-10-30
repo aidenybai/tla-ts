@@ -18,6 +18,9 @@ export interface CheckerRuntime {
   // TLC's -nowarning turns the warnings off, and with them the shortcut that evaluates the rest
   // of an action once it assigns every variable, since that shortcut skips a warning.
   isWarningEnabled: boolean;
+  // TLC's -tool, under which the message of an error that TLC raises with a code holds the
+  // code's markers, which AssertError compares with.
+  isTool: boolean;
   seed: bigint;
   isSeen: (state: Value[]) => boolean;
   generatedStates: number;
@@ -73,6 +76,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     pause: () => {},
     warn: () => {},
     isWarningEnabled: true,
+    isTool: false,
     seed,
     generatedStates: 0,
     distinctStates: 0,

@@ -19,7 +19,7 @@ import {
 } from "./builtins";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
-import { BAGS_OPERATORS } from "./bags";
+import { createBagsOperators } from "./bags";
 import { createJsonOperators, type FileSystem } from "./json";
 import { createRandomizationOperators } from "./randomization";
 import { createPossibleOperators, createTlcExtOperators } from "./tlc-ext";
@@ -242,12 +242,15 @@ const NATURALS_OPERATORS = [
   defineComparison("<", (left, right) => left < right),
   defineComparison(">", (left, right) => left > right),
   defineComparison("<=", (left, right) => left <= right),
-  defineComparison(">=", (left, right) => left >= right),
+  // tlc2.module.Naturals#GEQ names itself > in its errors. Only a spec that extends Integers gets
+  // the GEQ of tlc2.module.Integers, not one that loads Integers for its trace exploration spec.
+  defineComparison(">=", (left, right) => left >= right, ">"),
 ];
 
 const INTEGERS_OPERATORS = [
   defineConstant("Int", { kind: "InfiniteSet", name: "Int" }),
   ...INTEGERS_ARITHMETIC,
+  defineComparison(">=", (left, right) => left >= right),
   defineOperator("-.", 1, (args) => {
     const value = getJavaInteger(getValue(args, 0, "-"), NEG_SIGNATURE);
     if (isOutOfRange(-value)) throw createOverflowError(`-${value}`);
@@ -403,6 +406,7 @@ export const getStandardModule = (
   print: (text: string) => void,
   runtime: CheckerRuntime,
   files: FileSystem,
+  builtins: ReadonlyMap<string, Builtin>,
 ): StandardModule | undefined => {
   switch (name) {
     case "Naturals":
@@ -422,7 +426,7 @@ export const getStandardModule = (
     case "Json":
       return { extends: [], operators: createJsonOperators(files) };
     case "Bags":
-      return { extends: [], operators: BAGS_OPERATORS };
+      return { extends: [], operators: createBagsOperators(builtins) };
     case "TLCExt":
       return { extends: [], operators: createTlcExtOperators(print, runtime) };
     default:

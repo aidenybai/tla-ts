@@ -29,7 +29,7 @@ import {
   renameLocals,
   withLetInstances,
 } from "./instances";
-import { overrideDefinitions } from "./java-overrides";
+import { overrideDefinitions, type JavaOverride } from "./java-overrides";
 import { extractModule, parseModule } from "./parser";
 import {
   checkRedefinitions,
@@ -53,7 +53,7 @@ import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./su
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import { checkInstances, type InstanceCheck } from "./substitution-levels";
 import { isEvalException } from "./tlc-messages";
-import { getTlcDeclarationOrder } from "./tlc-order";
+import { createTlcDefinitionOrder, getTlcDeclarationOrder } from "./tlc-order";
 import {
   checkInteger,
   createModelValue,
@@ -73,9 +73,9 @@ interface EnvironmentOptions {
   seed?: bigint;
   // Links the modules without a model, as SANY does, so a declared constant needs no value.
   isUnconfigured?: boolean;
-  // Whether TLC loads its trace exploration spec, as it does unless it runs with -tool. The spec
-  // loads Integers, whose Java methods then compute the arithmetic of Naturals.
-  isTraceSpecLoaded?: boolean;
+  // TLC's -tool. Without it TLC loads its trace exploration spec, which loads Integers, whose Java
+  // methods then compute the arithmetic of Naturals.
+  isTool?: boolean;
   isWarningEnabled?: boolean;
 }
 
@@ -88,6 +88,8 @@ interface Specification {
   startupDefinitions: Definition[];
   rootConstants: Declaration[];
   rootSymbols: Symbols;
+  // The methods of the modules' classes, in the order TLC loads the classes.
+  javaOverrides: JavaOverride[];
 }
 
 export interface InstanceAction {
@@ -240,6 +242,7 @@ export const createEnvironment = (
   const standardExports = new Map<string, Symbols>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
+  runtime.isTool = options.isTool ?? false;
   const linkedModules = new Map<string, LinkedModule>();
   const nestedModules = new Map<string, LinkedModule>();
   const linkedList: LinkedModule[] = [];
@@ -262,8 +265,11 @@ export const createEnvironment = (
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
     if (cached) return cached;
-    const standardModule = getStandardModule(name, options.print, runtime, options.files);
+    const standardModule = getStandardModule(name, options.print, runtime, options.files, builtins);
     if (!standardModule) return undefined;
+    // TLC loads the modules a standard module instantiates too, and the Java methods of each
+    // replace the operators of every module, as those of Integers replace those of Naturals.
+    STANDARD_DEPENDENCIES.get(name)?.forEach(addStandardModule);
     const exported: Symbols = new Map();
     standardModule.extends.forEach((extended) =>
       addStandardModule(extended)?.forEach((symbol, symbolName) =>
@@ -612,8 +618,15 @@ export const createEnvironment = (
       return definition ? [{ ...definition, name }] : [];
     });
 
+  const javaOverrides = new Map<string, JavaOverride[]>();
   const linkModule = (unlinked: Module, scope: ModuleScope): LinkedModule => {
-    const parsed = overrideDefinitions(unlinked, options.loadClass?.(unlinked.name));
+    const overridden = overrideDefinitions(
+      unlinked,
+      options.loadClass?.(unlinked.name),
+      unlinked === root,
+    );
+    javaOverrides.set(unlinked.name, overridden.overrides);
+    const parsed = overridden.module;
     const visible: Symbols = new Map([
       ...CORE_OPERATORS.map((operator): [string, ModuleSymbol] => [
         operator.name,
@@ -950,7 +963,7 @@ export const createEnvironment = (
     );
   }
 
-  if (options.isTraceSpecLoaded !== false) {
+  if (!options.isTool) {
     builtins.forEach((builtin, name) => {
       const replacement = getTraceSpecArithmetic(builtin);
       if (replacement) builtins.set(name, replacement);
@@ -1031,6 +1044,7 @@ export const createEnvironment = (
   const instantiated = new Set(
     linkedList.flatMap((linked) => linked.module.instances.map((instance) => instance.module)),
   );
+  const getDefinitionOrder = createTlcDefinitionOrder(options.source, options.loadModule);
   return {
     environment,
     assumptions,
@@ -1040,8 +1054,16 @@ export const createEnvironment = (
       .filter(
         (linked) => !instantiated.has(linked.module.name) || getDeclarations(linked).length === 0,
       )
-      .flatMap((linked) => linked.module.definitions),
+      .flatMap((linked) =>
+        getDefinitionOrder(linked === linkedRoot ? undefined : linked.module.name).flatMap(
+          (name) => {
+            const definition = definitions.get(linked.visible.get(name)?.key ?? name);
+            return definition ? [definition] : [];
+          },
+        ),
+      ),
     rootConstants: linkedRoot.constants,
     rootSymbols: linkedRoot.visible,
+    javaOverrides: linkedList.flatMap((linked) => javaOverrides.get(linked.module.name) ?? []),
   };
 };

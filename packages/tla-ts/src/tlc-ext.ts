@@ -10,6 +10,7 @@ import {
 } from "./builtins";
 import { TlaEvaluationError, TlaModuleError, TlaUnsupportedError } from "./errors";
 import { getTlcFingerprint } from "./tlc-random";
+import { formatNestedMessage } from "./tlc-messages";
 import { evaluate, expectBoolean, getDefinition, type Builtin, type Environment } from "./evaluate";
 import { getChildren, isLocallyResolved, type Definition, type Expression } from "./ast";
 import {
@@ -194,7 +195,9 @@ export const createTlcExtOperators = (
       try {
         getThunk(args, 1, "AssertError")();
       } catch (error) {
-        if (error instanceof TlaEvaluationError) return error.message === expected;
+        if (error instanceof TlaEvaluationError) {
+          return formatNestedMessage(error.message, runtime.isTool) === expected;
+        }
         throw error;
       }
       return false;

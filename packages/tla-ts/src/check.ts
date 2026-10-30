@@ -17,6 +17,7 @@ import {
   TlaModuleError,
   UNEXPECTED_EXCEPTION,
 } from "./errors";
+import type { JavaOverride } from "./java-overrides";
 import { EXIT_STATUS, setExitCode, withLivenessExitCode } from "./exit-codes";
 import {
   describeRange,
@@ -109,8 +110,8 @@ export interface CheckOptions {
   livenessCheck?: "default" | "final";
   // TLC's -dump: writes the reachable states, or with `dot` the state graph, through writeFile.
   dump?: StateDump;
-  // Whether TLC loads its trace exploration spec, as it does unless it runs with -tool.
-  isTraceSpecLoaded?: boolean;
+  // TLC's -tool, which changes the messages of TLC's errors and which modules TLC loads.
+  isTool?: boolean;
   // False for TLC's -nowarning, which changes how TLC computes the successors of some actions.
   isWarningEnabled?: boolean;
   // Reports the points of the search at which TLC prints a message.
@@ -141,7 +142,9 @@ export type CheckProgress =
     }
   | { kind: "liveness-finished" }
   // A warning TLC prints as it evaluates the spec, with its message code.
-  | { kind: "warning"; code: number; text: string };
+  | { kind: "warning"; code: number; text: string }
+  // A method of the class named after a module, which TLC reports as it loads the class.
+  | ({ kind: "java-override" } & JavaOverride);
 
 export interface SearchStatistics extends Pick<
   CheckResult,
@@ -402,7 +405,11 @@ export const reportInitialStatesProgress = (
 // invariant that is a true constant formula, which it doesn't check. TLC prints each distinct
 // warning once.
 export const reportStartup = (
-  specification: { environment: Environment; startupDefinitions: Definition[] },
+  specification: {
+    environment: Environment;
+    startupDefinitions: Definition[];
+    javaOverrides: JavaOverride[];
+  },
   config: ModelConfig,
   onProgress: CheckOptions["onProgress"],
 ) => {
@@ -414,6 +421,10 @@ export const reportStartup = (
     onProgress?.({ kind: "warning", code, text });
   };
   onProgress?.({ kind: "parsed" });
+  // TLC loads the classes of the modules before it computes the constant definitions.
+  specification.javaOverrides.forEach((override) =>
+    onProgress?.({ kind: "java-override", ...override }),
+  );
   evaluateStartupDefinitions(specification.startupDefinitions, environment);
   config.invariants.forEach((name) => {
     if (!getConfigPredicate("invariant", name, environment)) {
@@ -1316,7 +1327,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     print,
     files: { readFile: options.readFile, writeFile: options.writeFile },
     seed: options.seed,
-    isTraceSpecLoaded: options.isTraceSpecLoaded,
+    isTool: options.isTool,
     isWarningEnabled: options.isWarningEnabled,
   });
   reportStartup(specification, config, options.onProgress);

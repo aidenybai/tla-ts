@@ -58,7 +58,7 @@ const run = (start: StartMessage, parent: Port) => {
     loadClass: (name) => classes.get(name),
     print: () => {},
     files: { readFile: undefined, writeFile: undefined },
-    isTraceSpecLoaded: start.isTraceSpecLoaded,
+    isTool: start.isTool,
     isWarningEnabled: start.isWarningEnabled,
   });
   const environment = specification.environment;

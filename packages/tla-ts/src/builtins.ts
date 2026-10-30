@@ -325,9 +325,17 @@ const getIntegerArgument = (value: Value, position: string, name: string) => {
   return value;
 };
 
-export const defineComparison = (name: string, compare: (left: number, right: number) => boolean) =>
+// The error of an argument that isn't an integer names the operator as TLC's method does.
+export const defineComparison = (
+  name: string,
+  compare: (left: number, right: number) => boolean,
+  errorName = name,
+) =>
   defineBinary(name, (left, right) =>
-    compare(getIntegerArgument(left, "first", name), getIntegerArgument(right, "second", name)),
+    compare(
+      getIntegerArgument(left, "first", errorName),
+      getIntegerArgument(right, "second", errorName),
+    ),
   );
 
 export const defineLazyOperator = (

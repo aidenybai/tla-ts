@@ -48,7 +48,7 @@ export interface StartMessage {
   index: number;
   ports: (Port | undefined)[];
   seed: EncodedStates;
-  isTraceSpecLoaded: boolean | undefined;
+  isTool: boolean | undefined;
   isWarningEnabled: boolean | undefined;
   fingerprints: SharedFingerprints;
   requests: Int32Array;
@@ -171,7 +171,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       print(text);
     },
     files: { readFile: options.readFile, writeFile: options.writeFile },
-    isTraceSpecLoaded: options.isTraceSpecLoaded,
+    isTool: options.isTool,
     isWarningEnabled: options.isWarningEnabled,
   });
   reportStartup(specification, config, report);
@@ -302,7 +302,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       index,
       ports,
       seed,
-      isTraceSpecLoaded: options.isTraceSpecLoaded,
+      isTool: options.isTool,
       isWarningEnabled: options.isWarningEnabled,
       fingerprints: shared.fingerprints,
       requests,

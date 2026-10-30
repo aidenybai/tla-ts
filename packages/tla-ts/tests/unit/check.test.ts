@@ -238,6 +238,52 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("computes the definitions an INSTANCE adds in the order of SANY's symbol table", async () => {
+    const warnings: string[] = [];
+    await check({
+      source: "---- MODULE R ----\nINSTANCE Cases WITH C <- 1\n====",
+      config: "",
+      loadModule: (name) =>
+        name === "Cases"
+          ? [
+              "---- MODULE Cases ----",
+              "CONSTANT C",
+              'F == [x \\in {"a"} |-> C]',
+              'FcnExceptMissing == [F EXCEPT !["c"] = 9]',
+              "TupleExceptMissing == [<<C>> EXCEPT ![3] = 9]",
+              "RecordExceptMissing == [[a |-> C] EXCEPT !.c = 9]",
+              "====",
+            ].join("\n")
+          : undefined,
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress.text.split("\n")[1]);
+      },
+    });
+    expect(warnings).toEqual([
+      "line 4, col 22 to line 4, col 22 of module Cases",
+      "line 6, col 25 to line 6, col 33 of module Cases",
+      "line 5, col 24 to line 5, col 28 of module Cases",
+    ]);
+  });
+
+  it.each([
+    ["Naturals", "{} >= 0", ">", "{}"],
+    ["Integers", "{} >= 0", ">=", "{}"],
+    ["Naturals, TLCExt", "{} >= 0", ">=", "{}"],
+    ["Bags", 'SubBag(<<"a">>) = {}', ">", '"a"'],
+  ])(
+    "names >= in an error as the Java method TLC loads with %s does",
+    async (modules, assumption, name, value) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS ${modules}\nASSUME ${assumption}\n====`,
+        config: "",
+      });
+      expect(result.violation?.message).toBe(
+        `The first argument of ${name} should be an integer, but instead it is:\n${value}`,
+      );
+    },
+  );
+
   it("reports a depth of 1 when the constraint excludes every initial state", async () => {
     const results = await Promise.all(
       [1, 2].map((workers) =>
