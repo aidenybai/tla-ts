@@ -2031,6 +2031,20 @@ describe("check matches TLC 1.7.4", () => {
     expect(result.failure?.trace).toEqual([]);
   });
 
+  it("reads only the keys TLC 1.7.4's TLCGet has", async () => {
+    const getRevision = async (version: TlcVersion) => {
+      const result = await check({
+        source:
+          '---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = TLCGet("revision").tag\nNext == UNCHANGED x\n====',
+        config: "INIT Init\nNEXT Next",
+        version,
+      });
+      return result.failure?.message ?? result.status;
+    };
+    expect(await getRevision("master")).toBe("success");
+    expect(await getRevision("1.7.4")).toBe("TLCGet(revision) was undefined.");
+  });
+
   it("doesn't explain a set it can't enumerate", async () => {
     const result = await check174("Init == x = 0\nNext == \\E n \\in Nat : x' = n");
     expect(result.failure?.message).toContain(
