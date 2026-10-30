@@ -66,9 +66,14 @@ export class TheoryLra {
   private unsupportedTerms: number[] = [];
 
   constructor(private context: Context) {
+    const manager = context.manager;
     this.simplex = new Simplex((undo) => context.pushTrail(undo));
     this.oneVar = this.simplex.mkVar();
-    this.varExprs.push(context.manager.mkNumeral(1));
+    // init: the constants 1 and 0, integer and then real, which the theory holds.
+    this.varExprs.push(manager.mkNumeral(1));
+    manager.mkRealNumeral(1);
+    manager.mkNumeral(0);
+    manager.mkRealNumeral(0);
     this.simplex.setLower(this.oneVar, Rational.one, null, false);
     this.simplex.setUpper(this.oneVar, Rational.one, null, false);
   }

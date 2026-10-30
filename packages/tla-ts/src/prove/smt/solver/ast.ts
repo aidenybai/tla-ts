@@ -464,6 +464,19 @@ export class AstManager {
     return id;
   }
 
+  // A real numeral, which Z3's theory_lra creates for its constants 0 and 1. tla-ts has no real sort,
+  // so it stands in for the numeral, with its own id, and no expression uses it.
+  mkRealNumeral(value: number) {
+    return this.intern(`r${value}`, KIND_APP, OP_NUM, [], SORT_INT, value, () =>
+      this.getFuncDeclHash(
+        "Real",
+        [],
+        SORT_INT,
+        getInfoHash(Z3_ARITH_FAMILY, 0, [(Math.abs(value) + 3) >>> 0, 0]),
+      ),
+    );
+  }
+
   mkNumeral(value: number) {
     if (!Number.isSafeInteger(value))
       throw new SmtUnsupportedError(`the numeral ${value} is too large`);

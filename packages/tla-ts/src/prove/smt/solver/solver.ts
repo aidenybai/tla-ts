@@ -34,8 +34,9 @@ export const checkSmt = (text: string, options: DecideSmtOptions): SmtCheck => {
   const asserted = new AssertedFormulas(manager);
   for (const assertion of applyUfniaTactic(manager, problem.assertions))
     asserted.assertExpr(assertion);
-  const formulas = asserted.reduce();
+  // setup_context comes before the formulas are reduced.
   const context = new Context(manager, { isMbqi: true, relevancyLevel: 2 });
+  const formulas = asserted.reduce();
   for (const formula of formulas) {
     if (context.isInconsistent()) break;
     context.internalizeAssertion(formula, 0);
