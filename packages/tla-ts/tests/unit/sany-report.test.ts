@@ -614,7 +614,12 @@ Unknown == Missing
     );
   });
 
-  it("aborts on a character past U+00FF in a string, which its lexer cannot read", () => {
+  it("reads a character past U+00FF in a string by its low byte", () => {
+    const report = getReport({ Shapes: '---- MODULE Shapes ----\nX == "ǩ ●"\n====\n' }, options);
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
+  it("aborts on a character past U+00FF whose low byte is below 0x80, which its lexer cannot read", () => {
     const report = getReport(
       {
         Checked: `---- MODULE Checked ----
