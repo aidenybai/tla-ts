@@ -7,6 +7,7 @@ import { PatternInference } from "./pattern-inference";
 import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
+import { RewriterTpl } from "./rewriter-tpl";
 
 // asserted_formulas::push_assertion: splits conjunctions and negated disjunctions.
 const pushAssertion = (manager: AstManager, expr: number, result: RefVector) => {
@@ -24,29 +25,34 @@ const pushAssertion = (manager: AstManager, expr: number, result: RefVector) => 
   result.push(expr);
 };
 
-const inferAllPatterns = (
-  manager: AstManager,
-  inference: PatternInference,
-  expr: number,
-): number => {
-  if (!manager.hasQuantifierFlags[expr]) return expr;
-  if (manager.kinds[expr] === KIND_APP)
-    return manager.mkApp(
-      manager.decls[expr],
-      manager.args[expr].map((innerArg) => inferAllPatterns(manager, inference, innerArg)),
-      manager.sorts[expr],
-    );
-  const data = manager.getQuantifier(expr);
-  const body = inferAllPatterns(manager, inference, data.body);
-  if (data.patterns.length > 0 || !data.isForall) return manager.mkQuantifier({ ...data, body });
-  const inferred = inference.infer(data.sorts.length, body, data.weight);
-  return manager.mkQuantifier({
-    ...data,
-    body,
-    patterns: inferred.patterns,
-    weight: inferred.weight,
-  });
-};
+// pattern_inference_rw: infers the patterns of each universal quantifier without patterns. Its
+// cache lives as long as the assertions, like Z3's.
+class PatternInferenceRw extends RewriterTpl {
+  constructor(
+    manager: AstManager,
+    private inference: PatternInference,
+  ) {
+    super(manager);
+  }
+
+  protected reduceQuantifier(expr: number, body: number) {
+    const manager = this.manager;
+    const data = manager.getQuantifier(expr);
+    if (!data.isForall || data.patterns.length > 0) return -1;
+    return manager.withTemporaries(() => {
+      const inferred = this.inference.infer(data.sorts.length, body, data.weight);
+      const quantifier = manager.mkQuantifier({ ...data, body, patterns: inferred.patterns });
+      return inferred.weight === data.weight
+        ? quantifier
+        : manager.mkQuantifier({
+            ...data,
+            body,
+            patterns: inferred.patterns,
+            weight: inferred.weight,
+          });
+    });
+  }
+}
 
 // Z3's Knuth-Bendix style order for propagate_values: values are smallest, then deeper terms are
 // greater.
@@ -135,7 +141,8 @@ export class AssertedFormulas {
   private isEliminatingAnd = false;
   private isReducePending = true;
   private names: DefinedNames;
-  private patternInference: PatternInference;
+  private patternInference: PatternInferenceRw;
+  private hasQuantifiers = false;
 
   constructor(private manager: AstManager) {
     this.formulas = new RefVector(manager);
@@ -146,7 +153,7 @@ export class AssertedFormulas {
       isRewritingPatterns: true,
     });
     this.names = new DefinedNames(manager);
-    this.patternInference = new PatternInference(manager);
+    this.patternInference = new PatternInferenceRw(manager, new PatternInference(manager));
   }
 
   assertExpr(expr: number) {
@@ -154,6 +161,7 @@ export class AssertedFormulas {
     if (manager.isTrue(expr)) return;
     this.setEliminateAnd(false);
     const rewritten = this.rewriter.rewrite(expr);
+    if (manager.hasQuantifierFlags[expr]) this.hasQuantifiers = true;
     pushAssertion(manager, rewritten, this.formulas);
     manager.decRef(rewritten);
     this.isReducePending = true;
@@ -172,11 +180,9 @@ export class AssertedFormulas {
     this.nnfCnf();
     this.setEliminateAnd(true);
     this.reduceAsserted();
-    const manager = this.manager;
     if (
-      this.simplifyFormulas((formula) =>
-        manager.withTemporaries(() => inferAllPatterns(manager, this.patternInference, formula)),
-      )
+      this.hasQuantifiers &&
+      this.simplifyFormulas((formula) => this.patternInference.rewrite(formula))
     )
       this.isReducePending = true;
     this.reduceAsserted();
