@@ -3,6 +3,9 @@
 import { SmtParseError, SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
+  FAMILY_BASIC,
+  KIND_QUANTIFIER,
+  KIND_VAR,
   OP_ABS,
   OP_ADD,
   OP_AND,
@@ -20,6 +23,8 @@ import {
   OP_NOT,
   OP_OR,
   OP_SUB,
+  OP_TRUE,
+  OP_FALSE,
   OP_UMINUS,
   OP_UNINTERPRETED,
   OP_XOR,
@@ -202,6 +207,42 @@ export const parseSmtlib = (
     return expr;
   };
 
+  // push_pattern_frame with ignore_bad_patterns: (t1 ... tn) is a multi-pattern, (f a ...) a pattern
+  // of one term, and a pattern that starts with a constant is dropped unparsed.
+  const parsePattern = (sexpr: SExpr) => {
+    if (!Array.isArray(sexpr) || sexpr.length === 0) return undefined;
+    const head = sexpr[0];
+    if (Array.isArray(head)) return manager.mkPattern(sexpr.map(parseTerm));
+    const decl = head === "true" || head === "false" ? -1 : funcs.get(head);
+    if (decl === -1 || (decl !== undefined && manager.funcDecls[decl].domain.length === 0))
+      return undefined;
+    return manager.mkPattern([parseTerm(sexpr)]);
+  };
+
+  // pattern_validator: a pattern has no Boolean operator other than equality, no quantifier, and
+  // every variable of its quantifier.
+  const isValidPattern = (pattern: number, numDecls: number) => {
+    const found = new Set<number>();
+    const isValid = (expr: number): boolean => {
+      const kind = manager.kinds[expr];
+      if (kind === KIND_QUANTIFIER) return false;
+      if (kind === KIND_VAR) {
+        if (manager.values[expr] < numDecls) found.add(manager.values[expr]);
+        return true;
+      }
+      const funcDecl = manager.funcDecls[manager.decls[expr]];
+      if (
+        funcDecl.family === FAMILY_BASIC &&
+        funcDecl.op !== OP_EQ &&
+        funcDecl.op !== OP_TRUE &&
+        funcDecl.op !== OP_FALSE
+      )
+        return false;
+      return manager.args[expr].every(isValid);
+    };
+    return manager.args[pattern].every(isValid) && found.size === numDecls;
+  };
+
   const parseQuantifier = (list: SExpr[], isForall: boolean) => {
     const declarations = expectList(list[1]);
     const scope = new Map<string, Binding>();
@@ -229,13 +270,28 @@ export const parseSmtlib = (
       for (let index = 2; index < bodySExpr.length; index += 2) {
         const keyword = bodySExpr[index];
         const value = bodySExpr[index + 1];
-        if (keyword === ":pattern")
-          patterns.push(manager.mkPattern(expectList(value).map(parseTerm)));
-        else if (keyword === ":weight") weight = Number(value);
+        if (keyword === ":pattern") {
+          const pattern = parsePattern(value);
+          if (pattern !== undefined) {
+            manager.incRef(pattern);
+            patterns.push(pattern);
+          }
+        } else if (keyword === ":weight") weight = Number(value);
         else if (keyword === ":qid") qid = expectSymbol(value);
       }
     scopes.pop();
     depth -= varSorts.length;
+    // pop_quant_frame: the invalid patterns leave the parser's stack before the quantifier is made,
+    // and the valid ones after.
+    let numKept = 0;
+    for (const pattern of patterns) {
+      if (!isValidPattern(pattern, varSorts.length)) continue;
+      manager.incRef(pattern);
+      manager.decRef(patterns[numKept]);
+      patterns[numKept] = pattern;
+      numKept++;
+    }
+    for (const removed of patterns.splice(numKept)) manager.decRef(removed);
     const quantifier = manager.mkQuantifier({
       isForall,
       sorts: varSorts,
@@ -245,6 +301,7 @@ export const parseSmtlib = (
       weight,
       qid,
     });
+    for (const pattern of patterns) manager.decRef(pattern);
     for (const boundVar of boundVars) manager.decRef(boundVar);
     return quantifier;
   };
