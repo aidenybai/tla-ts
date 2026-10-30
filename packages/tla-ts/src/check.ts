@@ -1799,7 +1799,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       actions.length === 1
         ? "the next-state action"
         : `action ${error.action} of the next-state relation`;
-    const message = `Successor state is not completely specified by ${subject}. The following variable${missing.length > 1 ? "s are" : " is"} not defined: ${missing.join(", ")}.\n`;
+    // TLC 1.7.4 says a variable is not assigned rather than not defined.
+    const verb = environment.runtime.version === "1.7.4" ? "assigned" : "defined";
+    const message = `Successor state is not completely specified by ${subject}. The following variable${missing.length > 1 ? "s are" : " is"} not ${verb}: ${missing.join(", ")}.\n`;
     const undefinedValue = createModelValue("null");
     const partial = error.state.map((value) => value ?? undefinedValue);
     const failure = toFailure(error, getStateTrace(index));

@@ -2016,6 +2016,13 @@ describe("check matches TLC 1.7.4", () => {
     expect(result.failure?.exitCode).toBe(0);
   });
 
+  it("says which variables a successor leaves unassigned as TLC 1.7.4 does", async () => {
+    const result = await check174("Init == x = 0\nNext == UNCHANGED <<>>");
+    expect(result.failure?.message).toBe(
+      "Successor state is not completely specified by the next-state action. The following variable is not assigned: x.\n",
+    );
+  });
+
   it("doesn't explain a set it can't enumerate", async () => {
     const result = await check174("Init == x = 0\nNext == \\E n \\in Nat : x' = n");
     expect(result.failure?.message).toContain(
