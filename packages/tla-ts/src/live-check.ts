@@ -53,6 +53,14 @@ export interface LiveGraph {
   getSuccessors: (state: Value[]) => LiveSuccessor[];
 }
 
+// Numbers in a typed array that doubles as it fills, so a graph of millions of nodes takes a few
+// bytes for each.
+interface Pool<Data extends Int32Array | Uint8Array> {
+  data: Data;
+  length: number;
+  create: (length: number) => Data;
+}
+
 // TLC's behavior graph for one solution: a node per state, or per state and tableau node.
 interface Check {
   solution: Solution;
@@ -60,13 +68,20 @@ interface Check {
   actionIds: Int32Array;
   nodeStates: number[];
   nodeTableaux: number[];
-  successors: number[][];
-  actions: Uint8Array[];
-  stateResults: Uint8Array[];
-  isWritten: boolean[];
+  // Where a node's edges start in edgeTargets, or UNWRITTEN until TLC writes the node with its
+  // successors, and how many it has.
+  edgeStarts: number[];
+  edgeCounts: number[];
+  edgeTargets: Pool<Int32Array>;
+  // The results of the action checks on each edge, and of the state checks on each state, which
+  // are the same for every node of the state.
+  edgeActions: Pool<Uint8Array>;
+  stateResults: Pool<Uint8Array>;
   initial: number[];
-  nodeIds: Map<number, number>;
-  nodesByState: Map<number, number[]>;
+  // The nodes of each state in the order the check records them, a list through nextSiblings.
+  firstNodes: Pool<Int32Array>;
+  lastNodes: Pool<Int32Array>;
+  nextSiblings: number[];
   isDone: boolean[];
   errorNode: number | undefined;
 }
@@ -123,15 +138,64 @@ const isSameState = (left: Value[], right: Value[]) =>
 const removeRepeats = (path: number[]) =>
   path.filter((node, position) => position === 0 || path[position - 1] !== node);
 
+const createPool = <Data extends Int32Array | Uint8Array>(
+  create: (length: number) => Data,
+): Pool<Data> => ({ data: create(1024), length: 0, create });
+
+const writeToPool = <Data extends Int32Array | Uint8Array>(
+  pool: Pool<Data>,
+  offset: number,
+  values: ArrayLike<number>,
+) => {
+  const end = offset + values.length;
+  if (end > pool.data.length) {
+    const data = pool.create(Math.max(2 * pool.data.length, end));
+    data.set(pool.data);
+    pool.data = data;
+  }
+  pool.data.set(values, offset);
+  pool.length = Math.max(pool.length, end);
+};
+
+const NO_NODE = -1;
+
+const createNodes = (length: number) => new Int32Array(length).fill(NO_NODE);
+
+const UNWRITTEN = -1;
+
+const isWritten = (check: Check, node: number) =>
+  (check.edgeStarts[node] ?? UNWRITTEN) !== UNWRITTEN;
+
+const getSuccessors = (check: Check, node: number) => {
+  const start = check.edgeStarts[node];
+  return check.edgeTargets.data.subarray(start, start + check.edgeCounts[node]);
+};
+
+const getStateResult = (check: Check, node: number, position: number) =>
+  check.stateResults.data[check.nodeStates[node] * check.solution.stateChecks.length + position] ===
+  1;
+
 // A node owns one entry in each of its check's per-node arrays.
 const pushNode = (check: Check, state: number, tableauNode: number) => {
   check.nodeStates.push(state);
   check.nodeTableaux.push(tableauNode);
-  check.successors.push([]);
-  check.actions.push(new Uint8Array(0));
-  check.stateResults.push(new Uint8Array(0));
-  check.isWritten.push(false);
+  check.edgeStarts.push(UNWRITTEN);
+  check.edgeCounts.push(0);
+  check.nextSiblings.push(NO_NODE);
   return check.nodeStates.length - 1;
+};
+
+// The nodes of the state, in the order the check recorded them.
+const getStateNodes = (check: Check, state: number) => {
+  const nodes: number[] = [];
+  for (
+    let node = check.firstNodes.data[state] ?? NO_NODE;
+    node !== NO_NODE;
+    node = check.nextSiblings[node]
+  ) {
+    nodes.push(node);
+  }
+  return nodes;
 };
 
 const SUCCESSOR_CAPACITY = 16;
@@ -176,13 +240,15 @@ export const createLivenessChecker = (
     }),
     nodeStates: [],
     nodeTableaux: [],
-    successors: [],
-    actions: [],
-    stateResults: [],
-    isWritten: [],
+    edgeStarts: [],
+    edgeCounts: [],
+    edgeTargets: createPool((length) => new Int32Array(length)),
+    edgeActions: createPool((length) => new Uint8Array(length)),
+    stateResults: createPool((length) => new Uint8Array(length)),
     initial: [],
-    nodeIds: new Map(),
-    nodesByState: new Map(),
+    firstNodes: createPool(createNodes),
+    lastNodes: createPool(createNodes),
+    nextSiblings: [],
     isDone: [],
     errorNode: undefined,
   }));
@@ -277,28 +343,32 @@ export const createLivenessChecker = (
 
   const getNodeId = (check: Check, state: number, tableauNode: number) =>
     check.solution.tableau
-      ? check.nodeIds.get(state * check.solution.tableau.nodes.length + tableauNode)
+      ? getStateNodes(check, state).find((node) => check.nodeTableaux[node] === tableauNode)
       : state;
   const recordNode = (check: Check, state: number, tableauNode: number) => {
     const node = pushNode(check, state, tableauNode);
-    check.nodeIds.set(state * (check.solution.tableau?.nodes.length ?? 1) + tableauNode, node);
-    const siblings = check.nodesByState.get(state);
-    if (siblings) siblings.push(node);
-    else check.nodesByState.set(state, [node]);
+    const last = check.lastNodes.data[state] ?? NO_NODE;
+    if (last === NO_NODE) writeToPool(check.firstNodes, state, [node]);
+    else check.nextSiblings[last] = node;
+    writeToPool(check.lastNodes, state, [node]);
     return node;
   };
   const writeNode = (
     check: Check,
     node: number,
+    targets: number[],
     actions: Uint8Array[],
     stateResults: Uint8Array,
   ) => {
+    const start = check.edgeTargets.length;
     const actionCount = check.solution.actionChecks.length;
-    const packed = new Uint8Array(actions.length * actionCount);
-    actions.forEach((results, position) => packed.set(results, position * actionCount));
-    check.actions[node] = packed;
-    check.stateResults[node] = stateResults;
-    check.isWritten[node] = true;
+    writeToPool(check.edgeTargets, start, targets);
+    actions.forEach((results, position) =>
+      writeToPool(check.edgeActions, (start + position) * actionCount, results),
+    );
+    writeToPool(check.stateResults, check.nodeStates[node] * stateResults.length, stateResults);
+    check.edgeStarts[node] = start;
+    check.edgeCounts[node] = targets.length;
   };
 
   // TLC collects a state's successors and the state itself in a SetOfStates, a hash set it
@@ -351,7 +421,7 @@ export const createLivenessChecker = (
     const stateResults = checkState(check, index, state);
     const tableauNode = tableau.nodes[check.nodeTableaux[node]];
     const actions: Uint8Array[] = [];
-    const successors = check.successors[node];
+    const successors: number[] = [];
     const selfActions =
       tableauNode.successors.length > 0
         ? checkAction(check, index, state, state)
@@ -384,7 +454,7 @@ export const createLivenessChecker = (
         }
       }
     }
-    if (successors.length > 0) writeNode(check, node, actions, stateResults);
+    if (successors.length > 0) writeNode(check, node, successors, actions, stateResults);
   };
 
   const addTableauState = (
@@ -400,8 +470,8 @@ export const createLivenessChecker = (
     );
     check.isDone[index] = true;
     // TLC expands the nodes recorded before the loop, not the ones the loop records.
-    for (const node of (check.nodesByState.get(index) ?? []).slice()) {
-      const successors = check.successors[node];
+    for (const node of getStateNodes(check, index)) {
+      const successors: number[] = [];
       const actions: Uint8Array[] = [];
       set.forEach((successor, position) => {
         const isDone = check.isDone[successor.index] === true;
@@ -417,7 +487,7 @@ export const createLivenessChecker = (
           }
         }
       });
-      writeNode(check, node, actions, stateResults);
+      writeNode(check, node, successors, actions, stateResults);
     }
     if (check.errorNode === undefined) return undefined;
     return removeRepeats(
@@ -435,14 +505,14 @@ export const createLivenessChecker = (
     index: number,
   ) => {
     while (check.nodeStates.length <= index) pushNode(check, check.nodeStates.length, -1);
-    const successors = check.successors[index];
+    const successors: number[] = [];
     const actions: Uint8Array[] = [];
     set.forEach((successor, position) => {
-      if (check.isWritten[successor.index] && successors.includes(successor.index)) return;
+      if (isWritten(check, successor.index) && successors.includes(successor.index)) return;
       successors.push(successor.index);
       actions.push(actionResults[position]);
     });
-    writeNode(check, index, actions, stateResults);
+    writeNode(check, index, successors, actions, stateResults);
     return undefined;
   };
 
@@ -452,20 +522,20 @@ export const createLivenessChecker = (
     const parents = new Map<number, number>();
     const queue: number[] = [];
     for (const node of check.initial) {
-      if (!check.isWritten[node]) continue;
+      if (!isWritten(check, node)) continue;
       queue.push(node);
       parents.set(node, -1);
     }
     for (let position = 0; position < queue.length; position++) {
       const current = queue[position];
-      for (const next of check.successors[current]) {
+      for (const next of getSuccessors(check, current)) {
         if (next === current && check.solution.tableau) continue;
         if (next === target) {
           const path = [target];
           for (let node = current; node !== -1; node = parents.get(node) ?? -1) path.push(node);
           return path;
         }
-        if (!check.isWritten[next] || parents.has(next)) continue;
+        if (!isWritten(check, next) || parents.has(next)) continue;
         parents.set(next, current);
         queue.push(next);
       }
@@ -478,15 +548,15 @@ export const createLivenessChecker = (
     const solution = check.solution;
     const actionCount = solution.actionChecks.length;
     const getAction = (node: number, edge: number, position: number) =>
-      check.actions[node][edge * actionCount + position] === 1;
+      check.edgeActions.data[(check.edgeStarts[node] + edge) * actionCount + position] === 1;
     const isAllowed = (node: number, edge: number) =>
       model.eventuallyAlways.every((position) => getAction(node, edge, position));
     const links = new Float64Array(check.nodeStates.length).fill(UNVISITED);
-    const queue = check.initial.filter((node) => check.isWritten[node]);
+    const queue = check.initial.filter((node) => isWritten(check, node));
     const components: number[] = [];
 
     const isStuttering = (node: number) => {
-      const edge = check.successors[node].indexOf(node);
+      const edge = getSuccessors(check, node).indexOf(node);
       return edge !== -1 && isAllowed(node, edge);
     };
     const isFulfilled = (node: number, promise: Solution["promises"][number]) =>
@@ -510,11 +580,11 @@ export const createLivenessChecker = (
         if (member === root) break;
       }
       const isStateSatisfied = model.infinitelyOftenStates.every((position) =>
-        [...members].some((node) => check.stateResults[node][position] === 1),
+        [...members].some((node) => getStateResult(check, node, position)),
       );
       const isActionSatisfied = model.infinitelyOftenActions.every((position) =>
         [...members].some((node) =>
-          check.successors[node].some(
+          getSuccessors(check, node).some(
             (next, edge) =>
               members.has(next) && isAllowed(node, edge) && getAction(node, edge, position),
           ),
@@ -555,7 +625,7 @@ export const createLivenessChecker = (
         const countAtStart = remaining.count;
         while (true) {
           model.infinitelyOftenStates.forEach((position, slot) => {
-            if (!stateDone[slot] && check.stateResults[current.node][position] === 1) {
+            if (!stateDone[slot] && getStateResult(check, current.node, position)) {
               stateDone[slot] = true;
               remaining.count--;
             }
@@ -569,8 +639,7 @@ export const createLivenessChecker = (
           if (remaining.count <= 0) break;
           const step = { last: -1, unvisited: -1 };
           const countBeforeActions = remaining.count;
-          const successors = check.successors[current.node];
-          const taken = successors.some((next, edge) => {
+          const taken = getSuccessors(check, current.node).some((next, edge) => {
             if (membersByState.has(check.nodeStates[next])) {
               if (!isMember(next) || !isAllowed(current.node, edge)) return false;
               step.last = next;
@@ -604,7 +673,8 @@ export const createLivenessChecker = (
             }
             current.node = previous;
             step.unvisited =
-              check.successors[previous].find((next) => isMember(next) && !seen.has(next)) ?? -1;
+              getSuccessors(check, previous).find((next) => isMember(next) && !seen.has(next)) ??
+              -1;
           }
           take(step.unvisited);
           seen.add(step.unvisited);
@@ -638,7 +708,7 @@ export const createLivenessChecker = (
       const queue: [number, number][] = [];
       for (let state = start, parent = -1, position = 0; ; position++) {
         for (const node of membersByState.get(state) ?? []) {
-          for (const [edge, next] of check.successors[node].entries()) {
+          for (const [edge, next] of getSuccessors(check, node).entries()) {
             if (next === node || !isAllowedEdge(node, edge)) continue;
             if (next === root) {
               const path: number[] = [];
@@ -691,8 +761,8 @@ export const createLivenessChecker = (
         stack.push(lowLink, node, SCC_MARKER);
         components.push(node);
         const nextLowLink = { value: counter.link++ };
-        check.successors[node].forEach((next, edge) => {
-          if (!check.isWritten[next]) return;
+        getSuccessors(check, node).forEach((next, edge) => {
+          if (!isWritten(check, next)) return;
           if (!isAllowed(node, edge)) {
             if (links[next] === UNVISITED) queue.push(next);
             return;
