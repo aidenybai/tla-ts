@@ -89,14 +89,25 @@ const assign = (partial: State, index: number, value: Value) => {
   return copy;
 };
 
-const holds = (expression: Expression, context: Context, value = evaluate(expression, context)) => {
+// TLC's Tool.getInitStates and Tool.getNextStates report a value where they expect a formula.
+const expectFormula = (expression: Expression, value: Value, isInit: boolean) => {
   if (typeof value === "boolean") return value;
-  try {
-    return expectBoolean(value, `the action at ${describeLocation(expression)}`);
-  } catch (error) {
-    // TLC fails with an unexpected exception when the next-state relation isn't a boolean.
-    throw context.next === undefined ? error : setExitCode(error, EXIT_STATUS.error);
+  throw new TlaEvaluationError(
+    `In computing ${isInit ? "initial" : "next"} states, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${describeRange(expression)}`,
+  );
+};
+
+const holds = (expression: Expression, context: Context, value = evaluate(expression, context)) => {
+  // TLC rejects a number in the next-state relation when it splits the relation into actions.
+  if (context.next !== undefined && expression.kind === "Number") {
+    throw setExitCode(
+      new TlaEvaluationError(
+        `The next state relation is not a boolean expression.\n${expression.text ?? expression.value}`,
+      ),
+      EXIT_STATUS.error,
+    );
   }
+  return expectFormula(expression, value, context.next === undefined);
 };
 
 const isAssignmentOperator = (operator: string) =>
@@ -391,10 +402,7 @@ const compileConjunction = (
 };
 
 const holdsInInit = (expression: Expression, context: Context) =>
-  expectBoolean(
-    evaluate(expression, context),
-    `the initial predicate at ${describeLocation(expression)}`,
-  );
+  expectFormula(expression, evaluate(expression, context), true);
 
 const compileGuard =
   (expression: Expression): Runner =>
