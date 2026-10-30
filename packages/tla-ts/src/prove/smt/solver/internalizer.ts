@@ -264,12 +264,14 @@ export abstract class Internalizer {
     return this.relevancy.isRelevant(expr);
   }
 
+  // context::mark_as_relevant, which propagates the relevancy at once.
   markAsRelevant(expr: number) {
     this.relevancy.markAsRelevant(expr);
+    this.relevancy.propagate();
   }
 
   markLiteralAsRelevant(literal: Literal) {
-    this.relevancy.markAsRelevant(this.boolVar2Expr[getVar(literal)]);
+    this.markAsRelevant(this.boolVar2Expr[getVar(literal)]);
   }
 
   isInconsistent() {
