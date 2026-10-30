@@ -91,6 +91,18 @@ describe("decideSmt", () => {
     for (const problem of problems) expect(decideSmt(problem, { timeLimitMs: 5000 })).toBe("unsat");
   });
 
+  // Z3: unsat. The 2 of (* 2 a) is nested in a sum before the equality needs it as a term.
+  it("relates a numeral to the arithmetic once a product has used it", () => {
+    const problem = [
+      "(declare-fun a () Int)",
+      "(declare-fun b () Int)",
+      "(assert (= (+ a b) 7))",
+      "(assert (= (+ (* 2 a) (* (- 3) b)) 2))",
+      "(check-sat)",
+    ].join("\n");
+    expect(decideSmt(problem, { timeLimitMs: 5000 })).toBe("unsat");
+  });
+
   it("rejects an ill-sorted application", () => {
     expect(() =>
       decideSmt("(declare-fun p (Int) Bool)\n(assert (p true))\n(check-sat)\n", {
