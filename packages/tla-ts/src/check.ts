@@ -13,6 +13,7 @@ import {
   getErrorExitCode,
   TlaConfigError,
   TlaEvaluationError,
+  TlaIncompleteStateError,
   TlaModuleError,
   UNEXPECTED_EXCEPTION,
 } from "./errors";
@@ -899,6 +900,18 @@ export const createSearch = (
 const withNextStateExitCode = (error: unknown) =>
   error instanceof TlaModuleError ? setExitCode(error, error.exitCode) : error;
 
+// TLC reports a failure of the next-state relation as an unexpected exception, unless a standard
+// module raised it as an EvalException.
+const toNextStateError = (error: unknown) =>
+  error instanceof TlaEvaluationError &&
+  !(error instanceof TlaModuleError) &&
+  !(error instanceof TlaIncompleteStateError)
+    ? setExitCode(
+        new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`, error),
+        getErrorExitCode(error),
+      )
+    : withNextStateExitCode(error);
+
 const withHeadline = (error: unknown, headline: string) =>
   error instanceof TlaEvaluationError
     ? setExitCode(
@@ -1554,7 +1567,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     try {
       outcome.result = expandState(index);
     } catch (error) {
-      outcome.result = toFailure(withNextStateExitCode(error), getStateTrace(index));
+      outcome.result = toFailure(toNextStateError(error), getStateTrace(index));
     }
     if (outcome.result) return outcome.result;
     outDegrees[getOutDegreeBucket()]++;

@@ -11,6 +11,7 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
+import { UNEXPECTED_EXCEPTION } from "../../src/errors";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -206,7 +207,7 @@ describe("check matches TLC", () => {
     });
     expect([result.status, result.failure?.message]).toEqual([
       "error",
-      'Attempted to check equality of integer 2 with non-integer:\n"a"',
+      `${UNEXPECTED_EXCEPTION}Attempted to check equality of integer 2 with non-integer:\n"a"`,
     ]);
   });
 
@@ -831,6 +832,35 @@ describe("evaluation errors match TLC", () => {
       "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, TLC encountered a CASE with no conditions true.\nline 4, col 9 to line 5, col 20 of module M",
     );
     expect(result.failure?.exitCode).toBe(75);
+  });
+
+  it("reports a CASE with no true guard in the initial predicate like TLC", async () => {
+    const result = await check({
+      source: "---- MODULE M ----\nVARIABLE x\nInit == CASE FALSE -> x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+      "In computing initial states, TLC encountered a CASE with no conditions true.\nline 3, col 9 to line 3, col 27 of module M",
+      75,
+    ]);
+  });
+
+  it("reports a failure of the next-state relation as an unexpected exception like TLC", async () => {
+    const results = await Promise.all(
+      ["x' = CHOOSE n \\in {} : TRUE", "x' = 1 \\div 0"].map((next) =>
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ),
+    );
+    expect(results.map((result) => [result.failure?.message, result.failure?.exitCode])).toEqual([
+      [
+        `${UNEXPECTED_EXCEPTION}Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 5, col 14 to line 5, col 35 of module M`,
+        75,
+      ],
+      ["The second argument of \\div is 0.", 255],
+    ]);
   });
 
   it("reports the behavior up to a state whose invariant fails to evaluate", async () => {

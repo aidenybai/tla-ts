@@ -55,6 +55,15 @@ export class TlaModuleError extends TlaEvaluationError {
   }
 }
 
+// TLC reports a successor state that the next-state relation leaves incomplete as an error of its
+// own, not as an exception. It keeps the name TlaEvaluationError, and index.ts doesn't export it.
+export class TlaIncompleteStateError extends TlaEvaluationError {
+  constructor(message: string) {
+    super(message);
+    this.name = "TlaEvaluationError";
+  }
+}
+
 export interface TlapmReport {
   failure?: string;
   exception?: string;

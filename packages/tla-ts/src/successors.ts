@@ -7,7 +7,7 @@ import {
   type QuantifierExpression,
 } from "./ast";
 import { getReadVariables } from "./dependencies";
-import { TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
+import { TlaEvaluationError, TlaIncompleteStateError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
@@ -866,7 +866,7 @@ const compileAction = (
         const body = arm?.body ?? other;
         if (!body)
           throw new TlaEvaluationError(
-            `${UNEXPECTED_EXCEPTION}In computing next states, TLC encountered a CASE with no conditions true.\n${describeRange(expression)}`,
+            `In computing ${run.isInit ? "initial" : "next"} states, TLC encountered a CASE with no conditions true.\n${describeRange(expression)}`,
           );
         body(run, scope, partial, action, isFixed, onComplete);
       };
@@ -1057,7 +1057,7 @@ export const forEachSuccessor = (
     (partial, action) => {
       if (run.isStopped) return;
       if (!isComplete(partial)) {
-        throw new TlaEvaluationError(
+        throw new TlaIncompleteStateError(
           `Successor state is not completely specified by action ${action ?? "Next"}. The following variables are not assigned: ${getMissingVariables(partial, environment).join(", ")}`,
         );
       }
