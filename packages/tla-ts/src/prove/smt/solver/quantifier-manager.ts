@@ -95,6 +95,11 @@ export class DefaultQuantifierManager {
     }
   }
 
+  // is_shared: a ground term of a pattern, once a quantifier was asserted.
+  isShared(node: Enode) {
+    return this.isActive && (this.mam.isShared(node) || this.lazyMam.isShared(node));
+  }
+
   addEqEh(first: Enode, second: Enode) {
     if (this.quantifiers.length > 0) this.mam.addEqEh(first, second);
   }

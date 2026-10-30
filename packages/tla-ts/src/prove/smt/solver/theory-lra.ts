@@ -1424,6 +1424,7 @@ export class TheoryLra {
     const root = node.root;
     if (this.manager.getOp(root.owner) === OP_ITE) return true;
     if (root.thVar < 0) return false;
+    if (this.context.qmanager.isShared(root)) return true;
     for (const parent of root.parents) {
       const family = this.manager.getFamily(parent.owner);
       if (family !== FAMILY_ARITH && family !== FAMILY_BASIC) return true;

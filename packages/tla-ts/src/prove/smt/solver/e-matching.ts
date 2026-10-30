@@ -90,6 +90,8 @@ const isEqualPath = (first: Path, second: Path): boolean => {
 
 export class Mam {
   private trees = new Map<number, CodeTree>();
+  // m_shared_enodes: the ground terms of the patterns.
+  private sharedEnodes = new Set<Enode>();
   private toMatch: CodeTree[] = [];
   private newPatterns: Trigger[] = [];
   private pc = new Map<number, PathTree>();
@@ -460,12 +462,7 @@ export class Mam {
     patterns.forEach((pattern, index) =>
       this.updateFilters(pattern, null, index, varPaths, triggers),
     );
-    for (const pattern of patterns) {
-      if (manager.isGround(pattern)) {
-        const node = this.getGroundEnode(pattern);
-        if (node !== null) this.context.markAsRelevant(node.owner);
-      }
-    }
+    this.collectGroundExprs(patterns);
     this.newPatterns.push(triggers[0]);
     patterns.forEach((pattern, firstIndex) => {
       if (manager.isGround(pattern)) return;
@@ -478,6 +475,41 @@ export class Mam {
       this.trees.set(label, { triggers: [triggers[firstIndex]], candidates: [] });
       this.context.pushTrail(() => this.trees.delete(label));
     });
+  }
+
+  // collect_ground_exprs: the ground terms of the patterns, which theory combination treats as
+  // shared. A ground pattern also becomes relevant.
+  private collectGroundExprs(patterns: number[]) {
+    const manager = this.manager;
+    const todo: number[] = [];
+    for (const pattern of patterns) {
+      if (!manager.isGround(pattern)) {
+        todo.push(pattern);
+        continue;
+      }
+      const node = this.getGroundEnode(pattern);
+      if (node === null) continue;
+      this.context.markAsRelevant(node.owner);
+      this.addSharedEnode(node);
+    }
+    while (todo.length > 0) {
+      const expr = todo.pop() ?? -1;
+      if (manager.isGround(expr)) {
+        const node = this.getGroundEnode(expr);
+        if (node !== null) this.addSharedEnode(node);
+      } else
+        for (const arg of manager.args[expr]) if (manager.kinds[arg] === KIND_APP) todo.push(arg);
+    }
+  }
+
+  private addSharedEnode(node: Enode) {
+    if (this.sharedEnodes.has(node)) return;
+    this.sharedEnodes.add(node);
+    this.context.pushTrail(() => this.sharedEnodes.delete(node));
+  }
+
+  isShared(node: Enode) {
+    return this.sharedEnodes.has(node);
   }
 
   private addCandidateTo(tree: CodeTree, node: Enode) {
