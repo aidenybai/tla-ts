@@ -25,21 +25,24 @@ export const runModuleWorkers = async <Result>(
     .toSorted((left, right) => right.size - left.size)
     .map((entry) => entry.index);
   const byModule = new Map<number, Result>();
+  // A worker that exits mid-module, as when a backend overflows the stack, gives way to a new one.
   await Promise.all(
     Array.from({ length: Math.min(jobs, queue.length) }, async () => {
-      const worker = fork(process.argv[1], [...process.argv.slice(2), "--worker"]);
-      const next = () => {
-        const index = queue.shift();
-        if (index === undefined) return worker.disconnect();
-        worker.send(index);
-        worker.once("message", (message: { result: Result }) => {
-          byModule.set(index, message.result);
-          console.error(`${byModule.size}/${records.length} ${records[index].id}`);
-          next();
-        });
-      };
-      next();
-      await new Promise((resolve) => worker.on("exit", resolve));
+      while (queue.length > 0) {
+        const worker = fork(process.argv[1], [...process.argv.slice(2), "--worker"]);
+        const next = () => {
+          const index = queue.shift();
+          if (index === undefined) return worker.disconnect();
+          worker.send(index);
+          worker.once("message", (message: { result: Result }) => {
+            byModule.set(index, message.result);
+            console.error(`${byModule.size}/${records.length} ${records[index].id}`);
+            next();
+          });
+        };
+        next();
+        await new Promise((resolve) => worker.on("exit", resolve));
+      }
     }),
   );
   return byModule;
