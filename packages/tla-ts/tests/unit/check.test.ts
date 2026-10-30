@@ -768,6 +768,49 @@ ASSUME TLCFP(a) = -887695703
       new TlaConfigError("The operator Five, which equals 5,\ncannot be used as a property"),
     );
   });
+
+  it.each([
+    "Prop == LET E == {x} IN [](\\A e \\in E : e < 1)",
+    "Holds(S) == [](\\A e \\in S : e < 1)\nProp == Holds({x})",
+  ])("checks a []P property whose LET or argument reads a variable: %s", async (property) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\n${property}\n====`,
+      config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "invariant-violation",
+      2,
+      2,
+    ]);
+  });
+
+  it.each([
+    [
+      "Bad(r) == r \\div 0 = 1\nNext == \\E m \\in {}, r \\in {1} : Bad(r) /\\ x' = m",
+      "deadlock",
+      1,
+      1,
+    ],
+    [
+      "Ok(r) == r # x\nNext == \\E m \\in 1..2, r \\in 0..2 : Ok(r) /\\ x < 3 /\\ x' = (m + r) % 4",
+      "success",
+      13,
+      4,
+    ],
+  ])(
+    "checks the guards of a multi-bound \\E that read only the outer bound: %s",
+    async (next, status, generatedStates, distinctStates) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\n${next}\n====`,
+        config: `INIT Init\nNEXT Next${status === "success" ? "\nCHECK_DEADLOCK FALSE" : ""}`,
+      });
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        status,
+        generatedStates,
+        distinctStates,
+      ]);
+    },
+  );
 });
 
 describe("formatValue matches TLC", () => {

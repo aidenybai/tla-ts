@@ -34,5 +34,87 @@
     "repository": "https://github.com/tlaplus/CommunityModules.git",
     "commit": "1805e9d5e1cef05d74806309fb87788e69b48f26",
     "paths": ["modules"]
+  },
+  {
+    "name": "pingcap",
+    "repository": "https://github.com/pingcap/tla-plus.git",
+    "commit": "8ae629ddf9f5ad8efc763bff93e3e43ce0a3585d",
+    "paths": [
+      "CollapseRollbacks",
+      "ConcurrentPercolator",
+      "DistributedTransaction",
+      "OptimizedCommitTS",
+      "Percolator",
+      "ResolvedTS"
+    ]
+  },
+  {
+    "name": "raft",
+    "repository": "https://github.com/Vanlightly/raft-tlaplus.git",
+    "commit": "69ad9d6092f1ff32536726e4dd945e306bc1b73d",
+    "paths": ["specifications"]
+  },
+  {
+    "name": "kafka",
+    "repository": "https://github.com/Vanlightly/kafka-tlaplus.git",
+    "commit": "823615e8a0962d0160c11d9affb2576c56b7c054",
+    "paths": ["kraft", "kafka_data_replication", "groupprotocol", "transactions"]
+  },
+  {
+    "name": "vsr",
+    "repository": "https://github.com/Vanlightly/vsr-tlaplus.git",
+    "commit": "7566e8af7bb4f5e323bb5601340c7d8192a1fab8",
+    "paths": ["vsr-revisited"]
+  },
+  {
+    "name": "s3-wal",
+    "repository": "https://github.com/Vanlightly/s3-wal-collection.git",
+    "commit": "a925d3f7410edd3b30fb90db5710a3712ff3ee98",
+    "paths": [
+      "chroma",
+      "cursor",
+      "jay-jamieson-objwal",
+      "opendata",
+      "oswald",
+      "s2c",
+      "slatedb",
+      "walgit"
+    ]
+  },
+  {
+    "name": "mongodb",
+    "repository": "https://github.com/mongodb/mongo.git",
+    "commit": "a404d3e6d26cb1312e96c557bcfe44ef9c768fb4",
+    "paths": ["src/mongo/tla_plus"]
+  },
+  {
+    "name": "mongodb-txns",
+    "repository": "https://github.com/muratdem/MDBTLA.git",
+    "commit": "39ba8ba327c57366e82f7aee970f2c1e366e94b7",
+    "paths": ["MultiShardTxn", "SingleShardTxn", "SingleLog"]
+  },
+  {
+    "name": "cockroach",
+    "repository": "https://github.com/cockroachdb/cockroach.git",
+    "commit": "d30c905fff79ef825adc96bcc647f1872a90f2ff",
+    "paths": ["docs/tla-plus"]
+  },
+  {
+    "name": "ccf",
+    "repository": "https://github.com/microsoft/CCF.git",
+    "commit": "59d47cd21004e646981c67d7ec613316840c2f22",
+    "paths": ["tla/consensus", "tla/consistency"]
+  },
+  {
+    "name": "etcd-raft",
+    "repository": "https://github.com/etcd-io/raft.git",
+    "commit": "c51f010c851edd0dada5af41bafbf68e54617767",
+    "paths": ["tla"]
+  },
+  {
+    "name": "summerset",
+    "repository": "https://github.com/josehu07/summerset.git",
+    "commit": "ccb59a55c299cb3b813ea15708c3dfade33bf4fa",
+    "paths": ["tla+"]
   }
 ]

@@ -732,7 +732,9 @@ const getPredicate = (expression: Expression, environment: Environment) => {
 const getStateChecks = (named: NamedExpression[], environment: Environment): StateCheck[] =>
   named.flatMap((item) =>
     getConjuncts(item.expression, environment).map((expression) => {
-      const variables = getReadVariables(expression, environment);
+      // A LET or an argument in the scope can read variables the expression doesn't name.
+      const variables =
+        item.scope === undefined ? getReadVariables(expression, environment) : undefined;
       return {
         name: item.name,
         expression,

@@ -1,13 +1,118 @@
 [
   {
-    "id": "examples/specifications/Bakery-Boulangerie/MCBakery.cfg",
+    "id": "ccf/tla/consensus/MCabs.cfg",
+    "status": "success",
+    "generatedStates": 5819,
+    "distinctStates": 349,
+    "depth": 4,
+    "tlcMilliseconds": 114511
+  },
+  {
+    "id": "ccf/tla/consensus/MCccfraft.cfg",
     "status": "error",
-    "tlcMilliseconds": 273
+    "tlcMilliseconds": 1750
+  },
+  {
+    "id": "ccf/tla/consensus/SIMccfraft.cfg",
+    "status": "error",
+    "tlcMilliseconds": 3594
+  },
+  {
+    "id": "ccf/tla/consensus/Traceccfraft.cfg",
+    "status": "assumption-violation",
+    "traceLength": 0,
+    "tlcMilliseconds": 1606
+  },
+  {
+    "id": "ccf/tla/consistency/Consistency.cfg",
+    "status": "error",
+    "tlcMilliseconds": 301049
+  },
+  {
+    "id": "ccf/tla/consistency/MCMultiNode.cfg",
+    "status": "success",
+    "generatedStates": 3896264,
+    "distinctStates": 1546226,
+    "depth": 15,
+    "tlcMilliseconds": 131890
+  },
+  {
+    "id": "ccf/tla/consistency/MCMultiNodeReads.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300081
+  },
+  {
+    "id": "ccf/tla/consistency/MCMultiNodeReadsAlt.cfg",
+    "status": "success",
+    "generatedStates": 353036,
+    "distinctStates": 166428,
+    "depth": 12,
+    "tlcMilliseconds": 57166
+  },
+  {
+    "id": "ccf/tla/consistency/MCSingleNode.cfg",
+    "status": "success",
+    "generatedStates": 88557,
+    "distinctStates": 63449,
+    "depth": 15,
+    "tlcMilliseconds": 12122
+  },
+  {
+    "id": "ccf/tla/consistency/MCSingleNodeReads.cfg",
+    "status": "success",
+    "generatedStates": 281317,
+    "distinctStates": 210806,
+    "depth": 15,
+    "tlcMilliseconds": 42183
+  },
+  {
+    "id": "ccf/tla/consistency/MultiNodeReads.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300158
+  },
+  {
+    "id": "ccf/tla/consistency/TraceMultiNodeReads.cfg",
+    "status": "error",
+    "tlcMilliseconds": 1049
+  },
+  {
+    "id": "cockroach/docs/tla-plus/ParallelCommits/ParallelCommits.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300071
+  },
+  {
+    "id": "cockroach/docs/tla-plus/StoreLiveness/StoreLiveness.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300157
+  },
+  {
+    "id": "etcd-raft/tla/MCetcdraft.cfg",
+    "status": "error",
+    "tlcMilliseconds": 1414
+  },
+  {
+    "id": "etcd-raft/tla/Traceetcdraft.cfg",
+    "status": "assumption-violation",
+    "traceLength": 0,
+    "tlcMilliseconds": 1713
+  },
+  {
+    "id": "etcd-raft/tla/etcdraft.cfg",
+    "status": "error",
+    "tlcMilliseconds": 1607
+  },
+  {
+    "id": "examples/specifications/Bakery-Boulangerie/MCBakery.cfg",
+    "status": "success",
+    "generatedStates": 3403584,
+    "distinctStates": 655200,
+    "depth": 1,
+    "tlcMilliseconds": 31178
   },
   {
     "id": "examples/specifications/Bakery-Boulangerie/MCBoulanger.cfg",
     "status": "error",
-    "tlcMilliseconds": 274
+    "tlcMilliseconds": 304974
   },
   {
     "id": "examples/specifications/Chameneos/Chameneos.cfg",
@@ -15,7 +120,7 @@
     "generatedStates": 104697,
     "distinctStates": 34534,
     "depth": 13,
-    "tlcMilliseconds": 860
+    "tlcMilliseconds": 2689
   },
   {
     "id": "examples/specifications/CheckpointCoordination/MCCheckpointCoordination.cfg",
@@ -31,26 +136,28 @@
     "generatedStates": 15,
     "distinctStates": 6,
     "depth": 2,
-    "tlcMilliseconds": 320
+    "tlcMilliseconds": 1051
   },
   {
     "id": "examples/specifications/DieHard/DieHard.cfg",
     "status": "invariant-violation",
     "violation": "NotSolved",
     "traceLength": 7,
-    "tlcMilliseconds": 383
+    "tlcMilliseconds": 1219
   },
   {
     "id": "examples/specifications/DieHard/MCDieHarder.cfg",
     "status": "invariant-violation",
     "violation": "NotSolved",
     "traceLength": 7,
-    "tlcMilliseconds": 347
+    "tlcMilliseconds": 1279
   },
   {
     "id": "examples/specifications/DieHard/MCDieHardest.cfg",
-    "status": "error",
-    "tlcMilliseconds": 243
+    "status": "invariant-violation",
+    "violation": "NotSolved",
+    "traceLength": 12,
+    "tlcMilliseconds": 3200
   },
   {
     "id": "examples/specifications/DiningPhilosophers/DiningPhilosophers.cfg",
@@ -58,7 +165,7 @@
     "generatedStates": 174,
     "distinctStates": 58,
     "depth": 6,
-    "tlcMilliseconds": 513
+    "tlcMilliseconds": 986
   },
   {
     "id": "examples/specifications/DiningPhilosophers/DiningPhilosophersPCal.cfg",
@@ -66,12 +173,15 @@
     "generatedStates": 336,
     "distinctStates": 67,
     "depth": 29,
-    "tlcMilliseconds": 755
+    "tlcMilliseconds": 1399
   },
   {
     "id": "examples/specifications/DiningPhilosophers/DiningPhilosophers_anim.cfg",
-    "status": "error",
-    "tlcMilliseconds": 515
+    "status": "success",
+    "generatedStates": 174,
+    "distinctStates": 58,
+    "depth": 6,
+    "tlcMilliseconds": 1339
   },
   {
     "id": "examples/specifications/Disruptor/MCDisruptor_MPMC.cfg",
@@ -79,7 +189,7 @@
     "generatedStates": 422781,
     "distinctStates": 112929,
     "depth": 81,
-    "tlcMilliseconds": 4449
+    "tlcMilliseconds": 11641
   },
   {
     "id": "examples/specifications/Disruptor/MCDisruptor_SPMC.cfg",
@@ -87,22 +197,25 @@
     "generatedStates": 28049,
     "distinctStates": 8496,
     "depth": 82,
-    "tlcMilliseconds": 1438
+    "tlcMilliseconds": 3960
   },
   {
     "id": "examples/specifications/FiniteMonotonic/MCCRDT.cfg",
-    "status": "error",
-    "tlcMilliseconds": 217
+    "status": "assumption-violation",
+    "traceLength": 0,
+    "tlcMilliseconds": 1257
   },
   {
     "id": "examples/specifications/FiniteMonotonic/MCDistributedReplicatedLog.cfg",
-    "status": "error",
-    "tlcMilliseconds": 221
+    "status": "liveness-violation",
+    "traceLength": 6,
+    "tlcMilliseconds": 1607
   },
   {
     "id": "examples/specifications/FiniteMonotonic/MCReplicatedLog.cfg",
-    "status": "error",
-    "tlcMilliseconds": 223
+    "status": "assumption-violation",
+    "traceLength": 0,
+    "tlcMilliseconds": 1341
   },
   {
     "id": "examples/specifications/FlashProtocol/MCFlashWithMutex.cfg",
@@ -110,7 +223,7 @@
     "generatedStates": 7552,
     "distinctStates": 2024,
     "depth": 21,
-    "tlcMilliseconds": 917
+    "tlcMilliseconds": 3088
   },
   {
     "id": "examples/specifications/FlashProtocol/MCFlashWithMutexLive.cfg",
@@ -118,7 +231,7 @@
     "generatedStates": 30196,
     "distinctStates": 8096,
     "depth": 21,
-    "tlcMilliseconds": 11500
+    "tlcMilliseconds": 79651
   },
   {
     "id": "examples/specifications/GameOfLife/GameOfLife.cfg",
@@ -126,7 +239,7 @@
     "generatedStates": 131072,
     "distinctStates": 65536,
     "depth": 1,
-    "tlcMilliseconds": 9834
+    "tlcMilliseconds": 63560
   },
   {
     "id": "examples/specifications/GermanProtocol/MCGermanCMPWithMutex.cfg",
@@ -134,7 +247,7 @@
     "generatedStates": 3281,
     "distinctStates": 1107,
     "depth": 19,
-    "tlcMilliseconds": 581
+    "tlcMilliseconds": 1758
   },
   {
     "id": "examples/specifications/GermanProtocol/MCGermanControl.cfg",
@@ -142,7 +255,7 @@
     "generatedStates": 1946,
     "distinctStates": 735,
     "depth": 19,
-    "tlcMilliseconds": 612
+    "tlcMilliseconds": 2778
   },
   {
     "id": "examples/specifications/GermanProtocol/MCGermanData.cfg",
@@ -150,32 +263,44 @@
     "generatedStates": 2493,
     "distinctStates": 852,
     "depth": 19,
-    "tlcMilliseconds": 649
+    "tlcMilliseconds": 2801
   },
   {
     "id": "examples/specifications/Huang/Huang.cfg",
     "status": "error",
-    "tlcMilliseconds": 275
+    "tlcMilliseconds": 305873
   },
   {
     "id": "examples/specifications/KeyValueStore/MCKVsnap.cfg",
-    "status": "error",
-    "tlcMilliseconds": 328
+    "status": "success",
+    "generatedStates": 63082,
+    "distinctStates": 32293,
+    "depth": 13,
+    "tlcMilliseconds": 26633
   },
   {
     "id": "examples/specifications/LearnProofs/MCFindHighest.cfg",
-    "status": "error",
-    "tlcMilliseconds": 312
+    "status": "success",
+    "generatedStates": 1523,
+    "distinctStates": 742,
+    "depth": 5,
+    "tlcMilliseconds": 1219
   },
   {
     "id": "examples/specifications/LoopInvariance/MCBinarySearch.cfg",
-    "status": "error",
-    "tlcMilliseconds": 379
+    "status": "success",
+    "generatedStates": 34383,
+    "distinctStates": 27953,
+    "depth": 6,
+    "tlcMilliseconds": 5780
   },
   {
     "id": "examples/specifications/LoopInvariance/MCQuicksort.cfg",
-    "status": "error",
-    "tlcMilliseconds": 427
+    "status": "success",
+    "generatedStates": 11223,
+    "distinctStates": 4548,
+    "depth": 9,
+    "tlcMilliseconds": 15261
   },
   {
     "id": "examples/specifications/Majority/MCMajority.cfg",
@@ -183,7 +308,7 @@
     "generatedStates": 3459,
     "distinctStates": 2733,
     "depth": 6,
-    "tlcMilliseconds": 654
+    "tlcMilliseconds": 1441
   },
   {
     "id": "examples/specifications/MisraReachability/MCParReach.cfg",
@@ -191,39 +316,54 @@
     "generatedStates": 747,
     "distinctStates": 393,
     "depth": 18,
-    "tlcMilliseconds": 12239
+    "tlcMilliseconds": 25674
   },
   {
     "id": "examples/specifications/MissionariesAndCannibals/MissionariesAndCannibals.cfg",
     "status": "invariant-violation",
     "violation": "Solution",
     "traceLength": 12,
-    "tlcMilliseconds": 499
+    "tlcMilliseconds": 997
   },
   {
     "id": "examples/specifications/Paxos/MCConsensus.cfg",
-    "status": "error",
-    "tlcMilliseconds": 236
+    "status": "success",
+    "generatedStates": 7,
+    "distinctStates": 4,
+    "depth": 1,
+    "tlcMilliseconds": 991
   },
   {
     "id": "examples/specifications/Paxos/MCPaxos.cfg",
-    "status": "error",
-    "tlcMilliseconds": 369
+    "status": "success",
+    "generatedStates": 82,
+    "distinctStates": 25,
+    "depth": 9,
+    "tlcMilliseconds": 1515
   },
   {
     "id": "examples/specifications/Paxos/MCVoting.cfg",
-    "status": "error",
-    "tlcMilliseconds": 276
+    "status": "success",
+    "generatedStates": 451,
+    "distinctStates": 77,
+    "depth": 11,
+    "tlcMilliseconds": 1692
   },
   {
     "id": "examples/specifications/PaxosHowToWinATuringAward/MCConsensus.cfg",
-    "status": "error",
-    "tlcMilliseconds": 238
+    "status": "success",
+    "generatedStates": 4,
+    "distinctStates": 4,
+    "depth": 2,
+    "tlcMilliseconds": 1128
   },
   {
     "id": "examples/specifications/PaxosHowToWinATuringAward/MCVoting.cfg",
-    "status": "error",
-    "tlcMilliseconds": 353
+    "status": "success",
+    "generatedStates": 41017,
+    "distinctStates": 6752,
+    "depth": 16,
+    "tlcMilliseconds": 5845
   },
   {
     "id": "examples/specifications/Prisoners/Prisoners.cfg",
@@ -231,7 +371,7 @@
     "generatedStates": 860,
     "distinctStates": 214,
     "depth": 14,
-    "tlcMilliseconds": 510
+    "tlcMilliseconds": 970
   },
   {
     "id": "examples/specifications/Prisoners_Single_Switch/Prisoner.cfg",
@@ -239,7 +379,7 @@
     "generatedStates": 49,
     "distinctStates": 16,
     "depth": 5,
-    "tlcMilliseconds": 405
+    "tlcMilliseconds": 1000
   },
   {
     "id": "examples/specifications/ReadersWriters/MC.cfg",
@@ -247,7 +387,7 @@
     "generatedStates": 59674,
     "distinctStates": 21527,
     "depth": 13,
-    "tlcMilliseconds": 2106
+    "tlcMilliseconds": 5976
   },
   {
     "id": "examples/specifications/SimplifiedFastPaxos/FastPaxos.cfg",
@@ -255,7 +395,7 @@
     "generatedStates": 320053,
     "distinctStates": 25617,
     "depth": 22,
-    "tlcMilliseconds": 68940
+    "tlcMilliseconds": 59536
   },
   {
     "id": "examples/specifications/SimplifiedFastPaxos/Paxos.cfg",
@@ -263,7 +403,7 @@
     "generatedStates": 13290,
     "distinctStates": 1207,
     "depth": 22,
-    "tlcMilliseconds": 1929
+    "tlcMilliseconds": 2401
   },
   {
     "id": "examples/specifications/SingleLaneBridge/MC.cfg",
@@ -271,19 +411,21 @@
     "generatedStates": 20181,
     "distinctStates": 3605,
     "depth": 29,
-    "tlcMilliseconds": 5258
+    "tlcMilliseconds": 5472
   },
   {
     "id": "examples/specifications/SlidingPuzzles/SlidingPuzzles.cfg",
     "status": "invariant-violation",
     "violation": "KlotskiGoal",
     "traceLength": 117,
-    "tlcMilliseconds": 1925
+    "tlcMilliseconds": 2383
   },
   {
     "id": "examples/specifications/SlidingPuzzles/SlidingPuzzles_anim.cfg",
-    "status": "error",
-    "tlcMilliseconds": 272
+    "status": "invariant-violation",
+    "violation": "KlotskiGoal",
+    "traceLength": 117,
+    "tlcMilliseconds": 2531
   },
   {
     "id": "examples/specifications/SpanningTree/SpanTree.cfg",
@@ -291,7 +433,7 @@
     "generatedStates": 10278,
     "distinctStates": 1236,
     "depth": 5,
-    "tlcMilliseconds": 939
+    "tlcMilliseconds": 1043
   },
   {
     "id": "examples/specifications/SpanningTree/SpanTreeRandom.cfg",
@@ -299,7 +441,7 @@
     "generatedStates": 1044320,
     "distinctStates": 65396,
     "depth": 6,
-    "tlcMilliseconds": 21902
+    "tlcMilliseconds": 21733
   },
   {
     "id": "examples/specifications/StaleViewShrink/StaleShrink.cfg",
@@ -307,7 +449,7 @@
     "generatedStates": 48663,
     "distinctStates": 16848,
     "depth": 52,
-    "tlcMilliseconds": 1106
+    "tlcMilliseconds": 1232
   },
   {
     "id": "examples/specifications/Stones/Stones.cfg",
@@ -315,22 +457,28 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 630
+    "tlcMilliseconds": 730
   },
   {
     "id": "examples/specifications/TLC/TestGraphs.cfg",
     "status": "error",
-    "tlcMilliseconds": 328
+    "tlcMilliseconds": 595
   },
   {
     "id": "examples/specifications/TeachingConcurrency/Simple.cfg",
-    "status": "error",
-    "tlcMilliseconds": 325
+    "status": "success",
+    "generatedStates": 1842,
+    "distinctStates": 723,
+    "depth": 11,
+    "tlcMilliseconds": 682
   },
   {
     "id": "examples/specifications/TeachingConcurrency/SimpleRegular.cfg",
-    "status": "error",
-    "tlcMilliseconds": 341
+    "status": "success",
+    "generatedStates": 1454776,
+    "distinctStates": 277726,
+    "depth": 25,
+    "tlcMilliseconds": 6434
   },
   {
     "id": "examples/specifications/TransitiveClosure/TransitiveClosure.cfg",
@@ -338,27 +486,36 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 1056
+    "tlcMilliseconds": 1355
   },
   {
     "id": "examples/specifications/TwoPhase/MCTwoPhase.cfg",
-    "status": "error",
-    "tlcMilliseconds": 256
+    "status": "success",
+    "generatedStates": 5,
+    "distinctStates": 4,
+    "depth": 4,
+    "tlcMilliseconds": 656
   },
   {
     "id": "examples/specifications/YoYo/MCYoYoNoPruning.cfg",
-    "status": "error",
-    "tlcMilliseconds": 404
+    "status": "success",
+    "generatedStates": 110,
+    "distinctStates": 60,
+    "depth": 19,
+    "tlcMilliseconds": 1289
   },
   {
     "id": "examples/specifications/YoYo/MCYoYoPruning.cfg",
-    "status": "error",
-    "tlcMilliseconds": 338
+    "status": "success",
+    "generatedStates": 157,
+    "distinctStates": 102,
+    "depth": 31,
+    "tlcMilliseconds": 1183
   },
   {
     "id": "examples/specifications/YoYo/YoYoAllGraphs.cfg",
     "status": "error",
-    "tlcMilliseconds": 344
+    "tlcMilliseconds": 884
   },
   {
     "id": "examples/specifications/acp/ACP_NB_TLC.cfg",
@@ -366,14 +523,14 @@
     "generatedStates": 23988,
     "distinctStates": 4284,
     "depth": 19,
-    "tlcMilliseconds": 1646
+    "tlcMilliseconds": 1985
   },
   {
     "id": "examples/specifications/acp/ACP_NB_WRONG_TLC.cfg",
     "status": "invariant-violation",
     "violation": "AC1",
     "traceLength": 13,
-    "tlcMilliseconds": 1029
+    "tlcMilliseconds": 1831
   },
   {
     "id": "examples/specifications/acp/ACP_SB_TLC.cfg",
@@ -381,7 +538,7 @@
     "generatedStates": 218352,
     "distinctStates": 54944,
     "depth": 21,
-    "tlcMilliseconds": 1467
+    "tlcMilliseconds": 5723
   },
   {
     "id": "examples/specifications/allocator/AllocatorImplementation.cfg",
@@ -389,7 +546,7 @@
     "generatedStates": 64414,
     "distinctStates": 17701,
     "depth": 16,
-    "tlcMilliseconds": 8737
+    "tlcMilliseconds": 11124
   },
   {
     "id": "examples/specifications/allocator/AllocatorRefinement.cfg",
@@ -397,7 +554,7 @@
     "generatedStates": 5854,
     "distinctStates": 1690,
     "depth": 7,
-    "tlcMilliseconds": 1542
+    "tlcMilliseconds": 1662
   },
   {
     "id": "examples/specifications/allocator/SchedulingAllocator.cfg",
@@ -405,7 +562,7 @@
     "generatedStates": 5854,
     "distinctStates": 1690,
     "depth": 7,
-    "tlcMilliseconds": 2778
+    "tlcMilliseconds": 3068
   },
   {
     "id": "examples/specifications/allocator/SimpleAllocator.cfg",
@@ -413,7 +570,7 @@
     "generatedStates": 1633,
     "distinctStates": 400,
     "depth": 6,
-    "tlcMilliseconds": 1348
+    "tlcMilliseconds": 1235
   },
   {
     "id": "examples/specifications/barriers/Barrier.cfg",
@@ -425,13 +582,19 @@
   },
   {
     "id": "examples/specifications/barriers/Barriers.cfg",
-    "status": "error",
-    "tlcMilliseconds": 507
+    "status": "success",
+    "generatedStates": 104515,
+    "distinctStates": 29279,
+    "depth": 93,
+    "tlcMilliseconds": 3571
   },
   {
     "id": "examples/specifications/bcastByz/bcastByz.cfg",
-    "status": "error",
-    "tlcMilliseconds": 406
+    "status": "success",
+    "generatedStates": 227344,
+    "distinctStates": 14424,
+    "depth": 7,
+    "tlcMilliseconds": 14402
   },
   {
     "id": "examples/specifications/braf/BufferedRandomAccessFile.cfg",
@@ -439,12 +602,15 @@
     "generatedStates": 128581,
     "distinctStates": 3316,
     "depth": 10,
-    "tlcMilliseconds": 45238
+    "tlcMilliseconds": 55349
   },
   {
     "id": "examples/specifications/btree/MCbtree.cfg",
-    "status": "error",
-    "tlcMilliseconds": 333
+    "status": "success",
+    "generatedStates": 2820091,
+    "distinctStates": 374727,
+    "depth": 38,
+    "tlcMilliseconds": 40194
   },
   {
     "id": "examples/specifications/btree/kvstore.cfg",
@@ -452,7 +618,7 @@
     "generatedStates": 28585,
     "distinctStates": 2641,
     "depth": 9,
-    "tlcMilliseconds": 518
+    "tlcMilliseconds": 711
   },
   {
     "id": "examples/specifications/byihive/VoucherCancel.cfg",
@@ -460,7 +626,7 @@
     "generatedStates": 26848,
     "distinctStates": 4199,
     "depth": 11,
-    "tlcMilliseconds": 796
+    "tlcMilliseconds": 936
   },
   {
     "id": "examples/specifications/byihive/VoucherIssue.cfg",
@@ -468,7 +634,7 @@
     "generatedStates": 26848,
     "distinctStates": 4199,
     "depth": 11,
-    "tlcMilliseconds": 1112
+    "tlcMilliseconds": 1126
   },
   {
     "id": "examples/specifications/byihive/VoucherLifeCycle.cfg",
@@ -476,7 +642,7 @@
     "generatedStates": 193,
     "distinctStates": 64,
     "depth": 7,
-    "tlcMilliseconds": 469
+    "tlcMilliseconds": 486
   },
   {
     "id": "examples/specifications/byihive/VoucherRedeem.cfg",
@@ -484,7 +650,7 @@
     "generatedStates": 26848,
     "distinctStates": 4199,
     "depth": 11,
-    "tlcMilliseconds": 773
+    "tlcMilliseconds": 961
   },
   {
     "id": "examples/specifications/byihive/VoucherTransfer.cfg",
@@ -492,17 +658,23 @@
     "generatedStates": 26848,
     "distinctStates": 4197,
     "depth": 11,
-    "tlcMilliseconds": 729
+    "tlcMilliseconds": 908
   },
   {
     "id": "examples/specifications/byzpaxos/Consensus.cfg",
-    "status": "error",
-    "tlcMilliseconds": 261
+    "status": "success",
+    "generatedStates": 4,
+    "distinctStates": 4,
+    "depth": 2,
+    "tlcMilliseconds": 750
   },
   {
     "id": "examples/specifications/byzpaxos/VoteProof.cfg",
-    "status": "error",
-    "tlcMilliseconds": 434
+    "status": "success",
+    "generatedStates": 318877,
+    "distinctStates": 6962,
+    "depth": 14,
+    "tlcMilliseconds": 17279
   },
   {
     "id": "examples/specifications/cf1s-folklore/cf1s_folklore.cfg",
@@ -510,7 +682,7 @@
     "generatedStates": 22438432,
     "distinctStates": 2057174,
     "depth": 25,
-    "tlcMilliseconds": 226818
+    "tlcMilliseconds": 270841
   },
   {
     "id": "examples/specifications/chang_roberts/MCChangRoberts.cfg",
@@ -518,7 +690,7 @@
     "generatedStates": 227,
     "distinctStates": 137,
     "depth": 10,
-    "tlcMilliseconds": 639
+    "tlcMilliseconds": 999
   },
   {
     "id": "examples/specifications/dag-consensus/BlockDagTest.cfg",
@@ -526,7 +698,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 498
+    "tlcMilliseconds": 782
   },
   {
     "id": "examples/specifications/dag-consensus/TLCSailfish1.cfg",
@@ -534,7 +706,7 @@
     "generatedStates": 314144,
     "distinctStates": 109604,
     "depth": 16,
-    "tlcMilliseconds": 45633
+    "tlcMilliseconds": 77223
   },
   {
     "id": "examples/specifications/echo/MCEcho.cfg",
@@ -542,7 +714,7 @@
     "generatedStates": 116,
     "distinctStates": 75,
     "depth": 16,
-    "tlcMilliseconds": 543
+    "tlcMilliseconds": 1064
   },
   {
     "id": "examples/specifications/ewd426/TokenRing.cfg",
@@ -550,12 +722,12 @@
     "generatedStates": 248832,
     "distinctStates": 46656,
     "depth": 1,
-    "tlcMilliseconds": 1911
+    "tlcMilliseconds": 3582
   },
   {
     "id": "examples/specifications/ewd687a/MCEWD687a.cfg",
     "status": "error",
-    "tlcMilliseconds": 327
+    "tlcMilliseconds": 1197
   },
   {
     "id": "examples/specifications/ewd840/EWD840.cfg",
@@ -563,7 +735,7 @@
     "generatedStates": 2001,
     "distinctStates": 302,
     "depth": 9,
-    "tlcMilliseconds": 707
+    "tlcMilliseconds": 1076
   },
   {
     "id": "examples/specifications/ewd840/EWD840_json.cfg",
@@ -571,7 +743,7 @@
     "generatedStates": 15986,
     "distinctStates": 1566,
     "depth": 12,
-    "tlcMilliseconds": 609
+    "tlcMilliseconds": 1202
   },
   {
     "id": "examples/specifications/ewd840/SyncTerminationDetection.cfg",
@@ -579,7 +751,7 @@
     "generatedStates": 3722,
     "distinctStates": 129,
     "depth": 1,
-    "tlcMilliseconds": 491
+    "tlcMilliseconds": 991
   },
   {
     "id": "examples/specifications/ewd998/AsyncTerminationDetection.cfg",
@@ -587,22 +759,29 @@
     "generatedStates": 53271,
     "distinctStates": 4097,
     "depth": 14,
-    "tlcMilliseconds": 885
+    "tlcMilliseconds": 1510
   },
   {
     "id": "examples/specifications/ewd998/EWD998ChanID.cfg",
-    "status": "error",
-    "tlcMilliseconds": 293
+    "status": "success",
+    "generatedStates": 15,
+    "distinctStates": 14,
+    "depth": 14,
+    "tlcMilliseconds": 1797
   },
   {
     "id": "examples/specifications/ewd998/EWD998ChanTrace.cfg",
-    "status": "error",
-    "tlcMilliseconds": 379
+    "status": "assumption-violation",
+    "traceLength": 0,
+    "tlcMilliseconds": 1089
   },
   {
     "id": "examples/specifications/ewd998/EWD998PCal.cfg",
-    "status": "error",
-    "tlcMilliseconds": 299
+    "status": "success",
+    "generatedStates": 2808396,
+    "distinctStates": 321370,
+    "depth": 47,
+    "tlcMilliseconds": 62229
   },
   {
     "id": "examples/specifications/glowingRaccoon/clean.cfg",
@@ -610,7 +789,7 @@
     "generatedStates": 99,
     "distinctStates": 63,
     "depth": 10,
-    "tlcMilliseconds": 324
+    "tlcMilliseconds": 786
   },
   {
     "id": "examples/specifications/glowingRaccoon/product.cfg",
@@ -618,7 +797,7 @@
     "generatedStates": 376,
     "distinctStates": 305,
     "depth": 23,
-    "tlcMilliseconds": 648
+    "tlcMilliseconds": 1228
   },
   {
     "id": "examples/specifications/glowingRaccoon/stages.cfg",
@@ -626,7 +805,7 @@
     "generatedStates": 93,
     "distinctStates": 83,
     "depth": 23,
-    "tlcMilliseconds": 430
+    "tlcMilliseconds": 861
   },
   {
     "id": "examples/specifications/lamport_mutex/MCLamportMutex.cfg",
@@ -634,22 +813,31 @@
     "generatedStates": 2729079,
     "distinctStates": 724274,
     "depth": 61,
-    "tlcMilliseconds": 15675
+    "tlcMilliseconds": 33135
   },
   {
     "id": "examples/specifications/locks_auxiliary_vars/Lock.cfg",
-    "status": "error",
-    "tlcMilliseconds": 287
+    "status": "success",
+    "generatedStates": 21,
+    "distinctStates": 12,
+    "depth": 5,
+    "tlcMilliseconds": 802
   },
   {
     "id": "examples/specifications/locks_auxiliary_vars/LockHS.cfg",
-    "status": "error",
-    "tlcMilliseconds": 367
+    "status": "success",
+    "generatedStates": 41,
+    "distinctStates": 28,
+    "depth": 10,
+    "tlcMilliseconds": 1432
   },
   {
     "id": "examples/specifications/locks_auxiliary_vars/Peterson.cfg",
-    "status": "error",
-    "tlcMilliseconds": 286
+    "status": "success",
+    "generatedStates": 77,
+    "distinctStates": 42,
+    "depth": 11,
+    "tlcMilliseconds": 1070
   },
   {
     "id": "examples/specifications/nbacc_ray97/nbacc_ray97.cfg",
@@ -657,7 +845,7 @@
     "generatedStates": 49592,
     "distinctStates": 3016,
     "depth": 7,
-    "tlcMilliseconds": 735
+    "tlcMilliseconds": 1534
   },
   {
     "id": "examples/specifications/nbacg_guer01/nbacg_guer01.cfg",
@@ -665,29 +853,37 @@
     "generatedStates": 159538,
     "distinctStates": 24922,
     "depth": 16,
-    "tlcMilliseconds": 3170
+    "tlcMilliseconds": 5885
   },
   {
     "id": "examples/specifications/spanning/MC_spanning.cfg",
     "status": "invariant-violation",
     "violation": "TypeOK",
     "traceLength": 3,
-    "tlcMilliseconds": 405
+    "tlcMilliseconds": 791
   },
   {
     "id": "examples/specifications/sums_even/MC_sums_even.cfg",
-    "status": "error",
-    "tlcMilliseconds": 231
+    "status": "success",
+    "generatedStates": 0,
+    "distinctStates": 0,
+    "depth": 0,
+    "tlcMilliseconds": 1302
   },
   {
     "id": "examples/specifications/tcp/MCtcp.cfg",
-    "status": "error",
-    "tlcMilliseconds": 352
+    "status": "success",
+    "generatedStates": 6322,
+    "distinctStates": 1182,
+    "depth": 14,
+    "tlcMilliseconds": 2504
   },
   {
     "id": "examples/specifications/tower_of_hanoi/Hanoi_anim.cfg",
-    "status": "error",
-    "tlcMilliseconds": 300
+    "status": "invariant-violation",
+    "violation": "NotSolved",
+    "traceLength": 8,
+    "tlcMilliseconds": 1185
   },
   {
     "id": "examples/specifications/transaction_commit/2PCwithBTM.cfg",
@@ -695,7 +891,7 @@
     "generatedStates": 5841,
     "distinctStates": 1245,
     "depth": 15,
-    "tlcMilliseconds": 724
+    "tlcMilliseconds": 1249
   },
   {
     "id": "examples/specifications/transaction_commit/PaxosCommit.cfg",
@@ -711,7 +907,7 @@
     "generatedStates": 94,
     "distinctStates": 34,
     "depth": 7,
-    "tlcMilliseconds": 366
+    "tlcMilliseconds": 616
   },
   {
     "id": "examples/specifications/transaction_commit/TwoPhase.cfg",
@@ -719,81 +915,447 @@
     "generatedStates": 1146,
     "distinctStates": 288,
     "depth": 11,
-    "tlcMilliseconds": 378
+    "tlcMilliseconds": 841
+  },
+  {
+    "id": "kafka/groupprotocol/consumer_group_protocol_kip_848_v2.cfg",
+    "status": "deadlock",
+    "traceLength": 11,
+    "tlcMilliseconds": 3679
+  },
+  {
+    "id": "kafka/kafka_data_replication/kraft/kip-966/kafka_replication_kip_966.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300048
+  },
+  {
+    "id": "kafka/kafka_data_replication/kraft/v3.5/kafka_replication_v3_5.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300054
+  },
+  {
+    "id": "kafka/kraft/kip_853/kraft_kip_853.cfg",
+    "status": "error",
+    "tlcMilliseconds": 548
+  },
+  {
+    "id": "kafka/kraft/kip_996/kraft_kip_996.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300030
+  },
+  {
+    "id": "kafka/transactions/diary/01_InitPidRequest/tlaplus/kafka_transactions.cfg",
+    "status": "deadlock",
+    "traceLength": 5,
+    "tlcMilliseconds": 736
+  },
+  {
+    "id": "kafka/transactions/diary/02_AddPartitionsToTxn/tlaplus/kafka_transactions.cfg",
+    "status": "deadlock",
+    "traceLength": 18,
+    "tlcMilliseconds": 2338
+  },
+  {
+    "id": "mongodb-txns/MultiShardTxn/ClientCentricTests.cfg",
+    "status": "success",
+    "generatedStates": 1602,
+    "distinctStates": 801,
+    "depth": 1,
+    "tlcMilliseconds": 1665
+  },
+  {
+    "id": "mongodb-txns/MultiShardTxn/MCMultiShardTxn.cfg",
+    "status": "deadlock",
+    "traceLength": 9,
+    "tlcMilliseconds": 1323
+  },
+  {
+    "id": "mongodb-txns/MultiShardTxn/MultiShardTxn.cfg",
+    "status": "error",
+    "tlcMilliseconds": 255
+  },
+  {
+    "id": "mongodb-txns/MultiShardTxn/Storage.cfg",
+    "status": "deadlock",
+    "traceLength": 8,
+    "tlcMilliseconds": 1750
+  },
+  {
+    "id": "mongodb-txns/SingleLog/MCMDBProps.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300092
+  },
+  {
+    "id": "mongodb-txns/SingleLog/MDBLinearizability.cfg",
+    "status": "success",
+    "generatedStates": 21748,
+    "distinctStates": 2247,
+    "depth": 9,
+    "tlcMilliseconds": 11771
+  },
+  {
+    "id": "mongodb-txns/SingleShardTxn/ShardTxn.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300056
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Concurrency/OrderedTicketSemaphore/MCOrderedTicketSemaphore.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300022
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Replication/MongoReplReconfig/MCMongoReplReconfig.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300019
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Replication/PipelinedOplog/MCPipelinedOplog.cfg",
+    "status": "success",
+    "generatedStates": 5652,
+    "distinctStates": 2321,
+    "depth": 42,
+    "tlcMilliseconds": 1362
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Replication/RaftMongo/MCRaftMongo.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300023
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Replication/RaftMongoReplTimestamp/MCRaftMongoReplTimestamp.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300022
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Sharding/MoveRange/MCMoveRange.cfg",
+    "status": "success",
+    "generatedStates": 527042,
+    "distinctStates": 220597,
+    "depth": 26,
+    "tlcMilliseconds": 21780
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Sharding/RangeDeletionsSecondaryNodes/MCRangeDeletionsSecondaryNodes.cfg",
+    "status": "success",
+    "generatedStates": 72,
+    "distinctStates": 39,
+    "depth": 8,
+    "tlcMilliseconds": 360
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Sharding/TxnsCollectionIncarnation/MCTxnsCollectionIncarnation.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300047
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Sharding/TxnsMoveRange/MCTxnsMoveRange.cfg",
+    "status": "success",
+    "generatedStates": 1238092,
+    "distinctStates": 423490,
+    "depth": 14,
+    "tlcMilliseconds": 18100
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Streams/ExactInitialSync/MCExactInitialSync.cfg",
+    "status": "success",
+    "generatedStates": 39107880,
+    "distinctStates": 9610407,
+    "depth": 20,
+    "tlcMilliseconds": 119098
+  },
+  {
+    "id": "pingcap/CollapseRollbacks/Test1.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300057
+  },
+  {
+    "id": "pingcap/CollapseRollbacks/Test2.cfg",
+    "status": "deadlock",
+    "traceLength": 14,
+    "tlcMilliseconds": 2006
+  },
+  {
+    "id": "pingcap/ConcurrentPercolator/Test1.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300040
+  },
+  {
+    "id": "pingcap/ConcurrentPercolator/Test2.cfg",
+    "status": "deadlock",
+    "traceLength": 14,
+    "tlcMilliseconds": 2125
+  },
+  {
+    "id": "pingcap/DistributedTransaction/Test1.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300089
+  },
+  {
+    "id": "pingcap/DistributedTransaction/Test2.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300054
+  },
+  {
+    "id": "pingcap/DistributedTransaction/Test3.cfg",
+    "status": "success",
+    "generatedStates": 15969,
+    "distinctStates": 1722,
+    "depth": 22,
+    "tlcMilliseconds": 1404
+  },
+  {
+    "id": "pingcap/DistributedTransaction/Test4.cfg",
+    "status": "error",
+    "tlcMilliseconds": 355
+  },
+  {
+    "id": "pingcap/DistributedTransaction/Test5.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300063
+  },
+  {
+    "id": "pingcap/OptimizedCommitTS/Test1.cfg",
+    "status": "success",
+    "generatedStates": 12009349,
+    "distinctStates": 2806275,
+    "depth": 31,
+    "tlcMilliseconds": 287508
+  },
+  {
+    "id": "pingcap/OptimizedCommitTS/Test2.cfg",
+    "status": "success",
+    "generatedStates": 13321,
+    "distinctStates": 4546,
+    "depth": 17,
+    "tlcMilliseconds": 1516
+  },
+  {
+    "id": "pingcap/Percolator/Test1.cfg",
+    "status": "deadlock",
+    "traceLength": 26,
+    "tlcMilliseconds": 69364
+  },
+  {
+    "id": "pingcap/Percolator/Test2.cfg",
+    "status": "deadlock",
+    "traceLength": 14,
+    "tlcMilliseconds": 1248
+  },
+  {
+    "id": "pingcap/ResolvedTS/MC.cfg",
+    "status": "success",
+    "generatedStates": 2182249,
+    "distinctStates": 481533,
+    "depth": 23,
+    "tlcMilliseconds": 58506
+  },
+  {
+    "id": "raft/specifications/flexible-raft/FlexibleRaft.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300045
+  },
+  {
+    "id": "raft/specifications/pull-raft/KRaft.cfg",
+    "status": "deadlock",
+    "traceLength": 18,
+    "tlcMilliseconds": 25014
+  },
+  {
+    "id": "raft/specifications/pull-raft/KRaftWithReconfig.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300058
+  },
+  {
+    "id": "raft/specifications/pull-raft/PullRaft.cfg",
+    "status": "deadlock",
+    "traceLength": 19,
+    "tlcMilliseconds": 8347
+  },
+  {
+    "id": "raft/specifications/pull-raft/PullRaftVariant2.cfg",
+    "status": "deadlock",
+    "traceLength": 20,
+    "tlcMilliseconds": 11695
+  },
+  {
+    "id": "raft/specifications/raft-and-fsync/RaftFsync.cfg",
+    "status": "deadlock",
+    "traceLength": 19,
+    "tlcMilliseconds": 14613
+  },
+  {
+    "id": "raft/specifications/standard-raft/Raft.cfg",
+    "status": "deadlock",
+    "traceLength": 18,
+    "tlcMilliseconds": 9468
+  },
+  {
+    "id": "raft/specifications/standard-raft/RaftWithReconfigAddRemove.cfg",
+    "status": "error",
+    "tlcMilliseconds": 476
+  },
+  {
+    "id": "raft/specifications/standard-raft/RaftWithReconfigJointConsensus.cfg",
+    "status": "deadlock",
+    "traceLength": 11,
+    "tlcMilliseconds": 19019
+  },
+  {
+    "id": "s3-wal/chroma/Wal3.cfg",
+    "status": "error",
+    "tlcMilliseconds": 332
+  },
+  {
+    "id": "s3-wal/cursor/Continuity.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300023
+  },
+  {
+    "id": "s3-wal/jay-jamieson-objwal/ObjWAL.cfg",
+    "status": "success",
+    "generatedStates": 190893,
+    "distinctStates": 75793,
+    "depth": 44,
+    "tlcMilliseconds": 3908
+  },
+  {
+    "id": "s3-wal/opendata/Buffer.cfg",
+    "status": "error",
+    "tlcMilliseconds": 307
+  },
+  {
+    "id": "s3-wal/opendata/BufferAsWAL.cfg",
+    "status": "success",
+    "generatedStates": 5250541,
+    "distinctStates": 1389537,
+    "depth": 49,
+    "tlcMilliseconds": 102281
+  },
+  {
+    "id": "s3-wal/oswald/Oswald.cfg",
+    "status": "success",
+    "generatedStates": 15930846,
+    "distinctStates": 3606090,
+    "depth": 56,
+    "tlcMilliseconds": 264280
+  },
+  {
+    "id": "s3-wal/s2c/S2C.cfg",
+    "status": "success",
+    "generatedStates": 2058641,
+    "distinctStates": 684441,
+    "depth": 82,
+    "tlcMilliseconds": 34136
+  },
+  {
+    "id": "s3-wal/s2c/S2CFencing.cfg",
+    "status": "success",
+    "generatedStates": 12722216,
+    "distinctStates": 3274048,
+    "depth": 99,
+    "tlcMilliseconds": 165242
+  },
+  {
+    "id": "s3-wal/slatedb/SlateDBWAL.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300029
+  },
+  {
+    "id": "s3-wal/slatedb/SlateDBWAL_CAS.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300032
+  },
+  {
+    "id": "s3-wal/walgit/Walgit.cfg",
+    "status": "invariant-violation",
+    "violation": "ValidManifest",
+    "traceLength": 1,
+    "tlcMilliseconds": 294
   },
   {
     "id": "spectacle/specs/AbstractRaft.cfg",
     "status": "error",
-    "tlcMilliseconds": 134342
+    "tlcMilliseconds": 309541
   },
   {
     "id": "spectacle/specs/AsyncGameOfLife_anim.cfg",
-    "status": "error",
-    "tlcMilliseconds": 643
+    "status": "success",
+    "generatedStates": 5120,
+    "distinctStates": 512,
+    "depth": 1,
+    "tlcMilliseconds": 1703
   },
   {
     "id": "spectacle/specs/AwsDNSRace.cfg",
     "status": "invariant-violation",
     "violation": "NeverDeleteActive",
     "traceLength": 12,
-    "tlcMilliseconds": 1388
+    "tlcMilliseconds": 778
   },
   {
     "id": "spectacle/specs/AwsDNSRace_anim.cfg",
-    "status": "error",
-    "tlcMilliseconds": 802
+    "status": "invariant-violation",
+    "violation": "NeverDeleteActive",
+    "traceLength": 12,
+    "tlcMilliseconds": 1124
   },
   {
     "id": "spectacle/specs/Bakery.cfg",
     "status": "error",
-    "tlcMilliseconds": 944
+    "tlcMilliseconds": 922
   },
   {
     "id": "spectacle/specs/BatteryRelay_anim.cfg",
     "status": "error",
-    "tlcMilliseconds": 606
+    "tlcMilliseconds": 310424
   },
   {
     "id": "spectacle/specs/BlockingQueue_anim.cfg",
-    "status": "error",
-    "tlcMilliseconds": 460
+    "status": "success",
+    "generatedStates": 187,
+    "distinctStates": 54,
+    "depth": 7,
+    "tlcMilliseconds": 1305
   },
   {
     "id": "spectacle/specs/CabbageGoatWolf.cfg",
     "status": "invariant-violation",
     "violation": "NotSolved",
     "traceLength": 15,
-    "tlcMilliseconds": 1107
+    "tlcMilliseconds": 940
   },
   {
     "id": "spectacle/specs/CabbageGoatWolf_anim.cfg",
-    "status": "error",
-    "tlcMilliseconds": 757
+    "status": "invariant-violation",
+    "violation": "NotSolved",
+    "traceLength": 15,
+    "tlcMilliseconds": 1295
   },
   {
     "id": "spectacle/specs/EWD998_anim.cfg",
-    "status": "error",
-    "tlcMilliseconds": 532
+    "status": "deadlock",
+    "traceLength": 4,
+    "tlcMilliseconds": 1770
   },
   {
     "id": "spectacle/specs/MongoRaftReconfig.cfg",
     "status": "error",
-    "tlcMilliseconds": 972
+    "tlcMilliseconds": 779
   },
   {
     "id": "spectacle/specs/MongoRaftReconfig_anim.cfg",
     "status": "error",
-    "tlcMilliseconds": 697
+    "tlcMilliseconds": 304794
   },
   {
     "id": "spectacle/specs/RaftWithReconfigBroken.cfg",
     "status": "error",
-    "tlcMilliseconds": 840
+    "tlcMilliseconds": 881
   },
   {
     "id": "spectacle/specs/RaftWithReconfigJointConsensus.cfg",
     "status": "error",
-    "tlcMilliseconds": 263927
+    "tlcMilliseconds": 303848
   },
   {
     "id": "spectacle/specs/RaftWithReconfigSingleServer.cfg",
@@ -801,7 +1363,7 @@
     "generatedStates": 3564513,
     "distinctStates": 298493,
     "depth": 26,
-    "tlcMilliseconds": 104986
+    "tlcMilliseconds": 278876
   },
   {
     "id": "spectacle/specs/Simple.cfg",
@@ -809,32 +1371,32 @@
     "generatedStates": 86,
     "distinctStates": 51,
     "depth": 7,
-    "tlcMilliseconds": 285
+    "tlcMilliseconds": 1087
   },
   {
     "id": "spectacle/specs/TwoPhase.cfg",
     "status": "error",
-    "tlcMilliseconds": 268
+    "tlcMilliseconds": 633
   },
   {
     "id": "spectacle/specs/TwoPhase_anim.cfg",
     "status": "error",
-    "tlcMilliseconds": 231
+    "tlcMilliseconds": 795
   },
   {
     "id": "spectacle/specs/bfs_anim.cfg",
     "status": "error",
-    "tlcMilliseconds": 353
+    "tlcMilliseconds": 2869
   },
   {
     "id": "spectacle/specs/counter.cfg",
     "status": "error",
-    "tlcMilliseconds": 152204
+    "tlcMilliseconds": 310051
   },
   {
     "id": "spectacle/specs/gfd.cfg",
     "status": "error",
-    "tlcMilliseconds": 346
+    "tlcMilliseconds": 1337
   },
   {
     "id": "spectacle/specs/lockserver.cfg",
@@ -842,7 +1404,7 @@
     "generatedStates": 25,
     "distinctStates": 9,
     "depth": 3,
-    "tlcMilliseconds": 373
+    "tlcMilliseconds": 1281
   },
   {
     "id": "spectacle/specs/queue.cfg",
@@ -850,19 +1412,19 @@
     "generatedStates": 13,
     "distinctStates": 7,
     "depth": 3,
-    "tlcMilliseconds": 501
+    "tlcMilliseconds": 1748
   },
   {
     "id": "spectacle/specs/quicksort.cfg",
     "status": "deadlock",
     "traceLength": 1,
-    "tlcMilliseconds": 460
+    "tlcMilliseconds": 2012
   },
   {
     "id": "spectacle/specs/simple1.cfg",
     "status": "deadlock",
     "traceLength": 1,
-    "tlcMilliseconds": 410
+    "tlcMilliseconds": 2406
   },
   {
     "id": "spectacle/specs/simple_inc.cfg",
@@ -870,19 +1432,19 @@
     "generatedStates": 8,
     "distinctStates": 6,
     "depth": 5,
-    "tlcMilliseconds": 366
+    "tlcMilliseconds": 3919
   },
   {
     "id": "spectacle/specs/with_state_graphs/AbstractRaft_BecomeLeader.cfg",
     "status": "deadlock",
     "traceLength": 4,
-    "tlcMilliseconds": 495
+    "tlcMilliseconds": 4038
   },
   {
     "id": "spectacle/specs/with_state_graphs/AsyncTerminationDetection.cfg",
     "status": "deadlock",
     "traceLength": 1,
-    "tlcMilliseconds": 364
+    "tlcMilliseconds": 3968
   },
   {
     "id": "spectacle/specs/with_state_graphs/AsyncTerminationDetection_init.cfg",
@@ -890,13 +1452,13 @@
     "generatedStates": 34,
     "distinctStates": 17,
     "depth": 1,
-    "tlcMilliseconds": 357
+    "tlcMilliseconds": 2600
   },
   {
     "id": "spectacle/specs/with_state_graphs/Consistency.cfg",
     "status": "deadlock",
     "traceLength": 2,
-    "tlcMilliseconds": 470
+    "tlcMilliseconds": 3205
   },
   {
     "id": "spectacle/specs/with_state_graphs/DieHard.cfg",
@@ -904,7 +1466,7 @@
     "generatedStates": 97,
     "distinctStates": 16,
     "depth": 8,
-    "tlcMilliseconds": 376
+    "tlcMilliseconds": 3263
   },
   {
     "id": "spectacle/specs/with_state_graphs/DieHarder.cfg",
@@ -912,19 +1474,19 @@
     "generatedStates": 97,
     "distinctStates": 16,
     "depth": 8,
-    "tlcMilliseconds": 443
+    "tlcMilliseconds": 3661
   },
   {
     "id": "spectacle/specs/with_state_graphs/EWD998_bounded1.cfg",
     "status": "deadlock",
     "traceLength": 3,
-    "tlcMilliseconds": 410
+    "tlcMilliseconds": 3396
   },
   {
     "id": "spectacle/specs/with_state_graphs/EWD998_depth_bounded1.cfg",
     "status": "deadlock",
     "traceLength": 3,
-    "tlcMilliseconds": 487
+    "tlcMilliseconds": 4340
   },
   {
     "id": "spectacle/specs/with_state_graphs/EWD998_regression1.cfg",
@@ -932,19 +1494,19 @@
     "generatedStates": 8,
     "distinctStates": 4,
     "depth": 1,
-    "tlcMilliseconds": 367
+    "tlcMilliseconds": 3145
   },
   {
     "id": "spectacle/specs/with_state_graphs/Elevator.cfg",
     "status": "deadlock",
     "traceLength": 7,
-    "tlcMilliseconds": 476
+    "tlcMilliseconds": 4101
   },
   {
     "id": "spectacle/specs/with_state_graphs/LogExample_bounded.cfg",
     "status": "deadlock",
     "traceLength": 3,
-    "tlcMilliseconds": 368
+    "tlcMilliseconds": 3272
   },
   {
     "id": "spectacle/specs/with_state_graphs/Microwave.cfg",
@@ -952,18 +1514,18 @@
     "generatedStates": 548,
     "distinctStates": 122,
     "depth": 32,
-    "tlcMilliseconds": 425
+    "tlcMilliseconds": 3516
   },
   {
     "id": "spectacle/specs/with_state_graphs/NQueens_N3.cfg",
     "status": "deadlock",
     "traceLength": 7,
-    "tlcMilliseconds": 464
+    "tlcMilliseconds": 3312
   },
   {
     "id": "spectacle/specs/with_state_graphs/NaiadClock.cfg",
     "status": "error",
-    "tlcMilliseconds": 54820
+    "tlcMilliseconds": 301121
   },
   {
     "id": "spectacle/specs/with_state_graphs/Paxos_1a.cfg",
@@ -971,7 +1533,7 @@
     "generatedStates": 65,
     "distinctStates": 16,
     "depth": 5,
-    "tlcMilliseconds": 1044
+    "tlcMilliseconds": 835
   },
   {
     "id": "spectacle/specs/with_state_graphs/Paxos_1b_case1.cfg",
@@ -979,7 +1541,7 @@
     "generatedStates": 9,
     "distinctStates": 4,
     "depth": 3,
-    "tlcMilliseconds": 1114
+    "tlcMilliseconds": 746
   },
   {
     "id": "spectacle/specs/with_state_graphs/Prisoners.cfg",
@@ -987,19 +1549,19 @@
     "generatedStates": 214,
     "distinctStates": 70,
     "depth": 10,
-    "tlcMilliseconds": 1051
+    "tlcMilliseconds": 1026
   },
   {
     "id": "spectacle/specs/with_state_graphs/RaftMongo.cfg",
     "status": "deadlock",
     "traceLength": 5,
-    "tlcMilliseconds": 1447
+    "tlcMilliseconds": 886
   },
   {
     "id": "spectacle/specs/with_state_graphs/RaftWithReconfigBroken_Bounded.cfg",
     "status": "deadlock",
     "traceLength": 4,
-    "tlcMilliseconds": 1740
+    "tlcMilliseconds": 924
   },
   {
     "id": "spectacle/specs/with_state_graphs/S1.cfg",
@@ -1007,12 +1569,15 @@
     "generatedStates": 5,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 725
+    "tlcMilliseconds": 611
   },
   {
     "id": "spectacle/specs/with_state_graphs/ShardTxn.cfg",
-    "status": "error",
-    "tlcMilliseconds": 862
+    "status": "success",
+    "generatedStates": 28,
+    "distinctStates": 19,
+    "depth": 7,
+    "tlcMilliseconds": 1134
   },
   {
     "id": "spectacle/specs/with_state_graphs/TestLinQueue.cfg",
@@ -1020,19 +1585,19 @@
     "generatedStates": 3,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 12705
+    "tlcMilliseconds": 11164
   },
   {
     "id": "spectacle/specs/with_state_graphs/TwoPhase.cfg",
     "status": "deadlock",
     "traceLength": 4,
-    "tlcMilliseconds": 1579
+    "tlcMilliseconds": 1120
   },
   {
     "id": "spectacle/specs/with_state_graphs/TwoPhase_RMPrepare.cfg",
     "status": "deadlock",
     "traceLength": 2,
-    "tlcMilliseconds": 1750
+    "tlcMilliseconds": 1044
   },
   {
     "id": "spectacle/specs/with_state_graphs/TxnsCollectionIncarnation.cfg",
@@ -1040,7 +1605,7 @@
     "generatedStates": 38,
     "distinctStates": 30,
     "depth": 6,
-    "tlcMilliseconds": 1235
+    "tlcMilliseconds": 1256
   },
   {
     "id": "spectacle/specs/with_state_graphs/TxnsMoveRange.cfg",
@@ -1048,13 +1613,13 @@
     "generatedStates": 204,
     "distinctStates": 148,
     "depth": 5,
-    "tlcMilliseconds": 1617
+    "tlcMilliseconds": 1100
   },
   {
     "id": "spectacle/specs/with_state_graphs/cea_simple.cfg",
     "status": "deadlock",
     "traceLength": 1,
-    "tlcMilliseconds": 683
+    "tlcMilliseconds": 939
   },
   {
     "id": "spectacle/specs/with_state_graphs/conj_parsing.cfg",
@@ -1062,7 +1627,7 @@
     "generatedStates": 11,
     "distinctStates": 5,
     "depth": 3,
-    "tlcMilliseconds": 489
+    "tlcMilliseconds": 1013
   },
   {
     "id": "spectacle/specs/with_state_graphs/def_before_var_decl.cfg",
@@ -1070,7 +1635,7 @@
     "generatedStates": 54,
     "distinctStates": 27,
     "depth": 1,
-    "tlcMilliseconds": 465
+    "tlcMilliseconds": 914
   },
   {
     "id": "spectacle/specs/with_state_graphs/empty_domain_and_seq.cfg",
@@ -1078,7 +1643,7 @@
     "generatedStates": 10,
     "distinctStates": 5,
     "depth": 1,
-    "tlcMilliseconds": 704
+    "tlcMilliseconds": 975
   },
   {
     "id": "spectacle/specs/with_state_graphs/lockserver_constant_comment.cfg",
@@ -1086,7 +1651,7 @@
     "generatedStates": 25,
     "distinctStates": 9,
     "depth": 3,
-    "tlcMilliseconds": 472
+    "tlcMilliseconds": 1229
   },
   {
     "id": "spectacle/specs/with_state_graphs/lockserver_nodefs.cfg",
@@ -1094,13 +1659,13 @@
     "generatedStates": 25,
     "distinctStates": 9,
     "depth": 3,
-    "tlcMilliseconds": 535
+    "tlcMilliseconds": 1057
   },
   {
     "id": "spectacle/specs/with_state_graphs/lockserver_nodefs1.cfg",
     "status": "deadlock",
     "traceLength": 2,
-    "tlcMilliseconds": 521
+    "tlcMilliseconds": 1024
   },
   {
     "id": "spectacle/specs/with_state_graphs/lockserver_nodefs_unchanged.cfg",
@@ -1108,7 +1673,7 @@
     "generatedStates": 34,
     "distinctStates": 9,
     "depth": 3,
-    "tlcMilliseconds": 479
+    "tlcMilliseconds": 912
   },
   {
     "id": "spectacle/specs/with_state_graphs/mldr_init_only.cfg",
@@ -1116,7 +1681,7 @@
     "generatedStates": 6,
     "distinctStates": 3,
     "depth": 1,
-    "tlcMilliseconds": 574
+    "tlcMilliseconds": 952
   },
   {
     "id": "spectacle/specs/with_state_graphs/operator_param_clash_before_const_def.cfg",
@@ -1124,7 +1689,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 391
+    "tlcMilliseconds": 977
   },
   {
     "id": "spectacle/specs/with_state_graphs/operator_param_clash_before_var_def.cfg",
@@ -1132,7 +1697,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 429
+    "tlcMilliseconds": 914
   },
   {
     "id": "spectacle/specs/with_state_graphs/operator_param_clash_before_var_def_inter.cfg",
@@ -1140,7 +1705,7 @@
     "generatedStates": 5,
     "distinctStates": 4,
     "depth": 4,
-    "tlcMilliseconds": 412
+    "tlcMilliseconds": 1020
   },
   {
     "id": "spectacle/specs/with_state_graphs/pre_module_comments.cfg",
@@ -1148,7 +1713,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 355
+    "tlcMilliseconds": 1468
   },
   {
     "id": "spectacle/specs/with_state_graphs/primed_tuple.cfg",
@@ -1156,7 +1721,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 468
+    "tlcMilliseconds": 1257
   },
   {
     "id": "spectacle/specs/with_state_graphs/qspinlock.cfg",
@@ -1164,7 +1729,7 @@
     "generatedStates": 18991,
     "distinctStates": 9722,
     "depth": 144,
-    "tlcMilliseconds": 1446
+    "tlcMilliseconds": 3133
   },
   {
     "id": "spectacle/specs/with_state_graphs/record_literal_eval.cfg",
@@ -1172,12 +1737,12 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 725
+    "tlcMilliseconds": 1010
   },
   {
     "id": "spectacle/specs/with_state_graphs/semantic_error1.cfg",
     "status": "error",
-    "tlcMilliseconds": 507
+    "tlcMilliseconds": 718
   },
   {
     "id": "spectacle/specs/with_state_graphs/seq_append.cfg",
@@ -1185,7 +1750,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 601
+    "tlcMilliseconds": 918
   },
   {
     "id": "spectacle/specs/with_state_graphs/set_dot_notation.cfg",
@@ -1193,18 +1758,21 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 508
+    "tlcMilliseconds": 982
   },
   {
     "id": "spectacle/specs/with_state_graphs/show521677.cfg",
-    "status": "error",
-    "tlcMilliseconds": 442
+    "status": "success",
+    "generatedStates": 168,
+    "distinctStates": 36,
+    "depth": 9,
+    "tlcMilliseconds": 1388
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple1.cfg",
     "status": "deadlock",
     "traceLength": 1,
-    "tlcMilliseconds": 831
+    "tlcMilliseconds": 995
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple1_multiline_block_comment.cfg",
@@ -1212,7 +1780,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 867
+    "tlcMilliseconds": 863
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple2.cfg",
@@ -1220,7 +1788,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 637
+    "tlcMilliseconds": 669
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple3.cfg",
@@ -1228,13 +1796,13 @@
     "generatedStates": 9,
     "distinctStates": 5,
     "depth": 2,
-    "tlcMilliseconds": 852
+    "tlcMilliseconds": 826
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple5.cfg",
     "status": "deadlock",
     "traceLength": 1,
-    "tlcMilliseconds": 821
+    "tlcMilliseconds": 850
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple6.cfg",
@@ -1242,7 +1810,7 @@
     "generatedStates": 8,
     "distinctStates": 4,
     "depth": 1,
-    "tlcMilliseconds": 1055
+    "tlcMilliseconds": 840
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple7.cfg",
@@ -1250,7 +1818,7 @@
     "generatedStates": 13,
     "distinctStates": 4,
     "depth": 2,
-    "tlcMilliseconds": 803
+    "tlcMilliseconds": 931
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple8.cfg",
@@ -1258,7 +1826,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 872
+    "tlcMilliseconds": 1037
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_arith.cfg",
@@ -1266,7 +1834,7 @@
     "generatedStates": 32,
     "distinctStates": 15,
     "depth": 1,
-    "tlcMilliseconds": 919
+    "tlcMilliseconds": 1311
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_boolean.cfg",
@@ -1274,7 +1842,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 826
+    "tlcMilliseconds": 1300
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_choose.cfg",
@@ -1282,7 +1850,7 @@
     "generatedStates": 6,
     "distinctStates": 3,
     "depth": 1,
-    "tlcMilliseconds": 921
+    "tlcMilliseconds": 1109
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_conjunction_constant.cfg",
@@ -1290,7 +1858,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 583
+    "tlcMilliseconds": 582
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_constant_operator.cfg",
@@ -1298,7 +1866,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 745
+    "tlcMilliseconds": 714
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_constant_operator_infix.cfg",
@@ -1306,7 +1874,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 544
+    "tlcMilliseconds": 743
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_defined_var_assignment.cfg",
@@ -1314,7 +1882,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 497
+    "tlcMilliseconds": 1005
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_defined_var_assignment_transitive.cfg",
@@ -1322,7 +1890,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 408
+    "tlcMilliseconds": 808
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_definition.cfg",
@@ -1330,7 +1898,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 464
+    "tlcMilliseconds": 942
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_definition2.cfg",
@@ -1338,7 +1906,7 @@
     "generatedStates": 61,
     "distinctStates": 30,
     "depth": 16,
-    "tlcMilliseconds": 438
+    "tlcMilliseconds": 986
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_disjunction_constant.cfg",
@@ -1346,7 +1914,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 501
+    "tlcMilliseconds": 821
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_disjunction_init.cfg",
@@ -1354,7 +1922,7 @@
     "generatedStates": 38,
     "distinctStates": 14,
     "depth": 1,
-    "tlcMilliseconds": 645
+    "tlcMilliseconds": 1113
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_domain.cfg",
@@ -1362,7 +1930,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 619
+    "tlcMilliseconds": 1108
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_enabled.cfg",
@@ -1370,7 +1938,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 659
+    "tlcMilliseconds": 988
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends.cfg",
@@ -1378,7 +1946,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 571
+    "tlcMilliseconds": 1191
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance.cfg",
@@ -1386,7 +1954,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 470
+    "tlcMilliseconds": 824
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_def.cfg",
@@ -1394,7 +1962,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 528
+    "tlcMilliseconds": 963
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_def_parameterized.cfg",
@@ -1402,7 +1970,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 447
+    "tlcMilliseconds": 957
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_def_parameterized_var_subst_no_clash.cfg",
@@ -1410,7 +1978,7 @@
     "generatedStates": 11,
     "distinctStates": 5,
     "depth": 1,
-    "tlcMilliseconds": 370
+    "tlcMilliseconds": 953
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_def_parameterized_var_subst_with_clash.cfg",
@@ -1418,7 +1986,7 @@
     "generatedStates": 11,
     "distinctStates": 5,
     "depth": 1,
-    "tlcMilliseconds": 409
+    "tlcMilliseconds": 870
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_def_transitive.cfg",
@@ -1426,7 +1994,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 405
+    "tlcMilliseconds": 1150
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_def_transitive_import.cfg",
@@ -1434,7 +2002,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 433
+    "tlcMilliseconds": 817
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_def_user_infix_op.cfg",
@@ -1442,7 +2010,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 379
+    "tlcMilliseconds": 1006
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_def_with_subst.cfg",
@@ -1450,7 +2018,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 345
+    "tlcMilliseconds": 1003
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_def_with_var_subst.cfg",
@@ -1458,7 +2026,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 377
+    "tlcMilliseconds": 969
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_def_with_var_subst_and_primed_action.cfg",
@@ -1466,7 +2034,7 @@
     "generatedStates": 10,
     "distinctStates": 8,
     "depth": 4,
-    "tlcMilliseconds": 365
+    "tlcMilliseconds": 905
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_def_with_var_subst_default_name.cfg",
@@ -1474,7 +2042,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 393
+    "tlcMilliseconds": 947
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_def_with_var_subst_one_implicit.cfg",
@@ -1482,7 +2050,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 475
+    "tlcMilliseconds": 998
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_def_with_var_subst_same_name.cfg",
@@ -1490,7 +2058,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 487
+    "tlcMilliseconds": 847
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_duplicate_def_names.cfg",
@@ -1498,7 +2066,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 563
+    "tlcMilliseconds": 916
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_transitive.cfg",
@@ -1506,7 +2074,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 585
+    "tlcMilliseconds": 669
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_with_const_subst.cfg",
@@ -1514,7 +2082,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 417
+    "tlcMilliseconds": 929
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_with_var_and_const_subst.cfg",
@@ -1522,7 +2090,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 420
+    "tlcMilliseconds": 1102
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_with_var_and_const_subst_transitive.cfg",
@@ -1530,7 +2098,7 @@
     "generatedStates": 6,
     "distinctStates": 3,
     "depth": 1,
-    "tlcMilliseconds": 422
+    "tlcMilliseconds": 1210
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_with_var_subst.cfg",
@@ -1538,7 +2106,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 395
+    "tlcMilliseconds": 885
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_instance_with_var_subst_identity.cfg",
@@ -1546,7 +2114,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 404
+    "tlcMilliseconds": 854
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_local_def.cfg",
@@ -1554,7 +2122,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 442
+    "tlcMilliseconds": 1100
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_with_var.cfg",
@@ -1562,7 +2130,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 488
+    "tlcMilliseconds": 1031
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_extends_with_var_and_const.cfg",
@@ -1570,7 +2138,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 498
+    "tlcMilliseconds": 652
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_fcn_def.cfg",
@@ -1578,7 +2146,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 574
+    "tlcMilliseconds": 1146
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_fcn_literal.cfg",
@@ -1586,7 +2154,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 633
+    "tlcMilliseconds": 1235
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_fcn_polymorphism.cfg",
@@ -1594,7 +2162,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 495
+    "tlcMilliseconds": 1115
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_folds.cfg",
@@ -1602,7 +2170,7 @@
     "generatedStates": 6,
     "distinctStates": 3,
     "depth": 1,
-    "tlcMilliseconds": 555
+    "tlcMilliseconds": 1415
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_if_then.cfg",
@@ -1610,7 +2178,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 450
+    "tlcMilliseconds": 3755
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_implies.cfg",
@@ -1618,7 +2186,7 @@
     "generatedStates": 9,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 434
+    "tlcMilliseconds": 6167
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_infix_def.cfg",
@@ -1626,7 +2194,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 382
+    "tlcMilliseconds": 7137
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_inline_comment.cfg",
@@ -1634,7 +2202,7 @@
     "generatedStates": 8,
     "distinctStates": 4,
     "depth": 1,
-    "tlcMilliseconds": 384
+    "tlcMilliseconds": 13623
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_inline_comment_conj.cfg",
@@ -1642,7 +2210,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 394
+    "tlcMilliseconds": 6841
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_inline_comment_constant.cfg",
@@ -1650,7 +2218,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 394
+    "tlcMilliseconds": 3062
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_lambda.cfg",
@@ -1658,7 +2226,7 @@
     "generatedStates": 20,
     "distinctStates": 10,
     "depth": 1,
-    "tlcMilliseconds": 425
+    "tlcMilliseconds": 4565
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_lambda_letin.cfg",
@@ -1666,7 +2234,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 429
+    "tlcMilliseconds": 5098
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_lazy.cfg",
@@ -1674,7 +2242,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 472
+    "tlcMilliseconds": 2111
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_letin.cfg",
@@ -1682,7 +2250,7 @@
     "generatedStates": 13,
     "distinctStates": 6,
     "depth": 1,
-    "tlcMilliseconds": 356
+    "tlcMilliseconds": 1916
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_letin_fn_def.cfg",
@@ -1690,7 +2258,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 374
+    "tlcMilliseconds": 2400
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_mod3_counter.cfg",
@@ -1698,7 +2266,7 @@
     "generatedStates": 4,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 507
+    "tlcMilliseconds": 1140
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_multiline.cfg",
@@ -1706,7 +2274,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 368
+    "tlcMilliseconds": 822
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_negation.cfg",
@@ -1714,7 +2282,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 328
+    "tlcMilliseconds": 1005
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_nested_lambda.cfg",
@@ -1722,7 +2290,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 370
+    "tlcMilliseconds": 805
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_operator.cfg",
@@ -1730,7 +2298,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 404
+    "tlcMilliseconds": 562
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_primed.cfg",
@@ -1738,7 +2306,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 431
+    "tlcMilliseconds": 827
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_primed_defs.cfg",
@@ -1746,7 +2314,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 414
+    "tlcMilliseconds": 779
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_quant.cfg",
@@ -1754,7 +2322,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 324
+    "tlcMilliseconds": 704
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_quant2.cfg",
@@ -1762,7 +2330,7 @@
     "generatedStates": 62,
     "distinctStates": 19,
     "depth": 1,
-    "tlcMilliseconds": 436
+    "tlcMilliseconds": 831
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_quant_multi.cfg",
@@ -1770,7 +2338,7 @@
     "generatedStates": 2311,
     "distinctStates": 30,
     "depth": 2,
-    "tlcMilliseconds": 407
+    "tlcMilliseconds": 841
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_quant_tuple.cfg",
@@ -1778,7 +2346,7 @@
     "generatedStates": 37,
     "distinctStates": 6,
     "depth": 2,
-    "tlcMilliseconds": 383
+    "tlcMilliseconds": 799
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_record.cfg",
@@ -1786,7 +2354,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 400
+    "tlcMilliseconds": 896
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_recursive.cfg",
@@ -1794,7 +2362,7 @@
     "generatedStates": 6,
     "distinctStates": 3,
     "depth": 1,
-    "tlcMilliseconds": 407
+    "tlcMilliseconds": 932
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_seq.cfg",
@@ -1802,12 +2370,15 @@
     "generatedStates": 12,
     "distinctStates": 6,
     "depth": 1,
-    "tlcMilliseconds": 504
+    "tlcMilliseconds": 810
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_seq_ext.cfg",
-    "status": "error",
-    "tlcMilliseconds": 279
+    "status": "success",
+    "generatedStates": 4,
+    "distinctStates": 2,
+    "depth": 1,
+    "tlcMilliseconds": 1113
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_seq_update.cfg",
@@ -1815,7 +2386,7 @@
     "generatedStates": 6,
     "distinctStates": 5,
     "depth": 5,
-    "tlcMilliseconds": 360
+    "tlcMilliseconds": 856
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_seq_update2.cfg",
@@ -1823,7 +2394,7 @@
     "generatedStates": 6,
     "distinctStates": 5,
     "depth": 5,
-    "tlcMilliseconds": 397
+    "tlcMilliseconds": 894
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_seq_update3.cfg",
@@ -1831,7 +2402,7 @@
     "generatedStates": 6,
     "distinctStates": 5,
     "depth": 5,
-    "tlcMilliseconds": 447
+    "tlcMilliseconds": 1080
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_set_of_fns.cfg",
@@ -1839,7 +2410,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 389
+    "tlcMilliseconds": 1028
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_setfiltermap.cfg",
@@ -1847,7 +2418,7 @@
     "generatedStates": 15,
     "distinctStates": 7,
     "depth": 1,
-    "tlcMilliseconds": 510
+    "tlcMilliseconds": 954
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_sets.cfg",
@@ -1855,7 +2426,7 @@
     "generatedStates": 16,
     "distinctStates": 8,
     "depth": 1,
-    "tlcMilliseconds": 563
+    "tlcMilliseconds": 1082
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_strings.cfg",
@@ -1863,7 +2434,7 @@
     "generatedStates": 10,
     "distinctStates": 5,
     "depth": 1,
-    "tlcMilliseconds": 560
+    "tlcMilliseconds": 994
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_subset.cfg",
@@ -1871,7 +2442,7 @@
     "generatedStates": 6,
     "distinctStates": 3,
     "depth": 1,
-    "tlcMilliseconds": 613
+    "tlcMilliseconds": 1291
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_tlc_fn.cfg",
@@ -1879,7 +2450,7 @@
     "generatedStates": 37,
     "distinctStates": 17,
     "depth": 1,
-    "tlcMilliseconds": 540
+    "tlcMilliseconds": 867
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_tlc_fn_compose.cfg",
@@ -1887,7 +2458,7 @@
     "generatedStates": 9,
     "distinctStates": 4,
     "depth": 1,
-    "tlcMilliseconds": 544
+    "tlcMilliseconds": 912
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_tlc_ops.cfg",
@@ -1895,7 +2466,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 528
+    "tlcMilliseconds": 1057
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_unchanged.cfg",
@@ -1903,7 +2474,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 447
+    "tlcMilliseconds": 777
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_unchanged_nested_def.cfg",
@@ -1911,7 +2482,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 404
+    "tlcMilliseconds": 874
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_unchanged_nested_tuple.cfg",
@@ -1919,7 +2490,7 @@
     "generatedStates": 5,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 449
+    "tlcMilliseconds": 1119
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_unchanged_nested_tuple_def.cfg",
@@ -1927,7 +2498,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 558
+    "tlcMilliseconds": 1054
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_unchanged_no_tuple.cfg",
@@ -1935,7 +2506,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 583
+    "tlcMilliseconds": 1418
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_unchanged_with_quant.cfg",
@@ -1943,7 +2514,7 @@
     "generatedStates": 13,
     "distinctStates": 4,
     "depth": 3,
-    "tlcMilliseconds": 457
+    "tlcMilliseconds": 1080
   },
   {
     "id": "spectacle/specs/with_state_graphs/simple_var_tuple.cfg",
@@ -1951,7 +2522,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 449
+    "tlcMilliseconds": 1244
   },
   {
     "id": "spectacle/specs/with_state_graphs/tla_case_with_state_assignment.cfg",
@@ -1959,7 +2530,7 @@
     "generatedStates": 4,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 402
+    "tlcMilliseconds": 1096
   },
   {
     "id": "spectacle/specs/with_state_graphs/tla_expr_eval.cfg",
@@ -1967,12 +2538,118 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 465
+    "tlcMilliseconds": 1403
+  },
+  {
+    "id": "summerset/tla+/bodega/Bodega_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300052
+  },
+  {
+    "id": "summerset/tla+/bodega_refine_lease/BodegaRefine_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300084
+  },
+  {
+    "id": "summerset/tla+/bodega_refine_lease/Bodega_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300071
+  },
+  {
+    "id": "summerset/tla+/bodega_refine_lease/RosterLeases_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300086
+  },
+  {
+    "id": "summerset/tla+/crossword/Crossword_MC.cfg",
+    "status": "success",
+    "generatedStates": 1581200,
+    "distinctStates": 485988,
+    "depth": 25,
+    "tlcMilliseconds": 120149
+  },
+  {
+    "id": "summerset/tla+/multipaxos_canonical/ConsensusMulti.cfg",
+    "status": "success",
+    "generatedStates": 31,
+    "distinctStates": 18,
+    "depth": 5,
+    "tlcMilliseconds": 695
+  },
+  {
+    "id": "summerset/tla+/multipaxos_canonical/MultiPaxos_MC.cfg",
+    "status": "success",
+    "generatedStates": 1676240,
+    "distinctStates": 174755,
+    "depth": 27,
+    "tlcMilliseconds": 218373
+  },
+  {
+    "id": "summerset/tla+/multipaxos_leader_lease/MultiPaxos_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300085
+  },
+  {
+    "id": "summerset/tla+/multipaxos_practical/ConsensusMulti.cfg",
+    "status": "success",
+    "generatedStates": 31,
+    "distinctStates": 18,
+    "depth": 5,
+    "tlcMilliseconds": 795
+  },
+  {
+    "id": "summerset/tla+/multipaxos_practical/MultiPaxos_MC.cfg",
+    "status": "success",
+    "generatedStates": 7084273,
+    "distinctStates": 832785,
+    "depth": 29,
+    "tlcMilliseconds": 266350
+  },
+  {
+    "id": "summerset/tla+/multipaxos_refine_lease/LeaseProtocol_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300143
+  },
+  {
+    "id": "summerset/tla+/multipaxos_refine_lease/MultiPaxosRefine_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300063
+  },
+  {
+    "id": "summerset/tla+/multipaxos_refine_lease/MultiPaxos_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300062
+  },
+  {
+    "id": "summerset/tla+/multipaxos_smr_addon/MultiPaxos_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300055
+  },
+  {
+    "id": "summerset/tla+/multipaxos_smr_style/MultiPaxos_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300136
+  },
+  {
+    "id": "summerset/tla+/paxos/ConsensusSingle.cfg",
+    "status": "success",
+    "generatedStates": 3,
+    "distinctStates": 3,
+    "depth": 2,
+    "tlcMilliseconds": 701
+  },
+  {
+    "id": "summerset/tla+/paxos/Paxos_MC.cfg",
+    "status": "success",
+    "generatedStates": 84303,
+    "distinctStates": 17153,
+    "depth": 25,
+    "tlcMilliseconds": 15669
   },
   {
     "id": "tla-rs/test_cases/official/Paxos.cfg",
     "status": "error",
-    "tlcMilliseconds": 339
+    "tlcMilliseconds": 877
   },
   {
     "id": "tla-rs/test_cases/official/TwoPhase.cfg",
@@ -1980,37 +2657,37 @@
     "generatedStates": 1146,
     "distinctStates": 288,
     "depth": 11,
-    "tlcMilliseconds": 510
+    "tlcMilliseconds": 1510
   },
   {
     "id": "tla-rs/test_cases/official/Voting.cfg",
     "status": "error",
-    "tlcMilliseconds": 342
+    "tlcMilliseconds": 701
   },
   {
     "id": "tla-rs/test_cases/should_error/definition_parse_error.cfg",
     "status": "error",
-    "tlcMilliseconds": 244
+    "tlcMilliseconds": 577
   },
   {
     "id": "tla-rs/test_cases/should_error/extends_definition_parse_error/extends_definition_parse_error.cfg",
     "status": "error",
-    "tlcMilliseconds": 234
+    "tlcMilliseconds": 653
   },
   {
     "id": "tla-rs/test_cases/should_error/liveness_error.cfg",
     "status": "error",
-    "tlcMilliseconds": 457
+    "tlcMilliseconds": 1051
   },
   {
     "id": "tla-rs/test_cases/should_pass/FRList.cfg",
     "status": "error",
-    "tlcMilliseconds": 361
+    "tlcMilliseconds": 783
   },
   {
     "id": "tla-rs/test_cases/should_pass/FRListLin.cfg",
     "status": "error",
-    "tlcMilliseconds": 322
+    "tlcMilliseconds": 761
   },
   {
     "id": "tla-rs/test_cases/should_pass/bullet_implication.cfg",
@@ -2018,7 +2695,7 @@
     "generatedStates": 3,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 366
+    "tlcMilliseconds": 767
   },
   {
     "id": "tla-rs/test_cases/should_pass/extends_cfg_names/extends_cfg_names.cfg",
@@ -2026,7 +2703,7 @@
     "generatedStates": 5,
     "distinctStates": 4,
     "depth": 4,
-    "tlcMilliseconds": 411
+    "tlcMilliseconds": 814
   },
   {
     "id": "tla-rs/test_cases/should_pass/extends_variables/extends_variables.cfg",
@@ -2034,7 +2711,7 @@
     "generatedStates": 21,
     "distinctStates": 10,
     "depth": 6,
-    "tlcMilliseconds": 531
+    "tlcMilliseconds": 965
   },
   {
     "id": "tla-rs/test_cases/should_pass/function_instance/function_instance.cfg",
@@ -2042,7 +2719,7 @@
     "generatedStates": 3,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 348
+    "tlcMilliseconds": 842
   },
   {
     "id": "tla-rs/test_cases/should_pass/function_syntax/function_syntax.cfg",
@@ -2050,7 +2727,7 @@
     "generatedStates": 3,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 500
+    "tlcMilliseconds": 1062
   },
   {
     "id": "tla-rs/test_cases/should_pass/instance_in_extended_module/instance_in_extended_module.cfg",
@@ -2058,12 +2735,12 @@
     "generatedStates": 3,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 395
+    "tlcMilliseconds": 1171
   },
   {
     "id": "tla-rs/test_cases/should_pass/instance_module_missing/instance_module_missing.cfg",
     "status": "error",
-    "tlcMilliseconds": 186
+    "tlcMilliseconds": 1276
   },
   {
     "id": "tla-rs/test_cases/should_pass/instance_scoping/instance_scoping.cfg",
@@ -2071,7 +2748,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 414
+    "tlcMilliseconds": 1413
   },
   {
     "id": "tla-rs/test_cases/should_pass/instance_with_substitution/instance_with_substitution.cfg",
@@ -2079,7 +2756,7 @@
     "generatedStates": 4,
     "distinctStates": 4,
     "depth": 4,
-    "tlcMilliseconds": 332
+    "tlcMilliseconds": 730
   },
   {
     "id": "tla-rs/test_cases/should_pass/log_matching.cfg",
@@ -2087,12 +2764,12 @@
     "generatedStates": 13,
     "distinctStates": 9,
     "depth": 5,
-    "tlcMilliseconds": 364
+    "tlcMilliseconds": 988
   },
   {
     "id": "tla-rs/test_cases/should_pass/model_value_conformance.cfg",
     "status": "error",
-    "tlcMilliseconds": 270
+    "tlcMilliseconds": 877
   },
   {
     "id": "tla-rs/test_cases/should_pass/model_value_state_space.cfg",
@@ -2100,7 +2777,7 @@
     "generatedStates": 65,
     "distinctStates": 16,
     "depth": 5,
-    "tlcMilliseconds": 351
+    "tlcMilliseconds": 1217
   },
   {
     "id": "tla-rs/test_cases/should_pass/model_values_distinct.cfg",
@@ -2108,7 +2785,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 348
+    "tlcMilliseconds": 1018
   },
   {
     "id": "tla-rs/test_cases/should_pass/named_instance_extends/named_instance_extends.cfg",
@@ -2116,7 +2793,7 @@
     "generatedStates": 3,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 368
+    "tlcMilliseconds": 1008
   },
   {
     "id": "tla-rs/test_cases/should_pass/named_instance_in_extended_module/named_instance_in_extended_module.cfg",
@@ -2124,7 +2801,7 @@
     "generatedStates": 3,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 360
+    "tlcMilliseconds": 962
   },
   {
     "id": "tla-rs/test_cases/should_pass/negation_in.cfg",
@@ -2132,7 +2809,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 304
+    "tlcMilliseconds": 944
   },
   {
     "id": "tla-rs/test_cases/should_pass/nested_unchanged.cfg",
@@ -2140,7 +2817,7 @@
     "generatedStates": 6,
     "distinctStates": 4,
     "depth": 4,
-    "tlcMilliseconds": 401
+    "tlcMilliseconds": 947
   },
   {
     "id": "tla-rs/test_cases/should_pass/operator_arguments/call_capture.cfg",
@@ -2148,7 +2825,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 325
+    "tlcMilliseconds": 811
   },
   {
     "id": "tla-rs/test_cases/should_pass/operator_arguments/extended_next.cfg",
@@ -2156,7 +2833,7 @@
     "generatedStates": 3,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 320
+    "tlcMilliseconds": 859
   },
   {
     "id": "tla-rs/test_cases/should_pass/operator_arguments/instance_argument.cfg",
@@ -2164,7 +2841,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 333
+    "tlcMilliseconds": 1096
   },
   {
     "id": "tla-rs/test_cases/should_pass/operator_arguments/let_next.cfg",
@@ -2172,7 +2849,7 @@
     "generatedStates": 3,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 376
+    "tlcMilliseconds": 856
   },
   {
     "id": "tla-rs/test_cases/should_pass/operator_arguments/operator_arguments.cfg",
@@ -2180,7 +2857,7 @@
     "generatedStates": 6,
     "distinctStates": 4,
     "depth": 4,
-    "tlcMilliseconds": 399
+    "tlcMilliseconds": 950
   },
   {
     "id": "tla-rs/test_cases/should_pass/operator_substitution/operator_substitution.cfg",
@@ -2188,7 +2865,7 @@
     "generatedStates": 7,
     "distinctStates": 5,
     "depth": 3,
-    "tlcMilliseconds": 357
+    "tlcMilliseconds": 995
   },
   {
     "id": "tla-rs/test_cases/should_pass/operator_substitution_fairness/operator_substitution_fairness.cfg",
@@ -2196,7 +2873,7 @@
     "generatedStates": 4,
     "distinctStates": 4,
     "depth": 4,
-    "tlcMilliseconds": 296
+    "tlcMilliseconds": 1028
   },
   {
     "id": "tla-rs/test_cases/should_pass/operator_substitution_scope/operator_substitution_scope.cfg",
@@ -2204,12 +2881,12 @@
     "generatedStates": 3,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 404
+    "tlcMilliseconds": 979
   },
   {
     "id": "tla-rs/test_cases/should_pass/parameterized_instance.cfg",
     "status": "error",
-    "tlcMilliseconds": 286
+    "tlcMilliseconds": 642
   },
   {
     "id": "tla-rs/test_cases/should_pass/prime_defined_op.cfg",
@@ -2217,7 +2894,7 @@
     "generatedStates": 1,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 405
+    "tlcMilliseconds": 938
   },
   {
     "id": "tla-rs/test_cases/should_pass/prime_parameters/prime_parameters.cfg",
@@ -2225,7 +2902,7 @@
     "generatedStates": 5,
     "distinctStates": 4,
     "depth": 3,
-    "tlcMilliseconds": 349
+    "tlcMilliseconds": 969
   },
   {
     "id": "tla-rs/test_cases/should_pass/specification_directive.cfg",
@@ -2233,7 +2910,7 @@
     "generatedStates": 5,
     "distinctStates": 4,
     "depth": 4,
-    "tlcMilliseconds": 299
+    "tlcMilliseconds": 843
   },
   {
     "id": "tla-rs/test_cases/should_pass/specification_directive_multi_var.cfg",
@@ -2241,7 +2918,7 @@
     "generatedStates": 12,
     "distinctStates": 4,
     "depth": 1,
-    "tlcMilliseconds": 350
+    "tlcMilliseconds": 664
   },
   {
     "id": "tla-rs/test_cases/should_pass/string_sequence_operators.cfg",
@@ -2249,7 +2926,7 @@
     "generatedStates": 3,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 463
+    "tlcMilliseconds": 921
   },
   {
     "id": "tla-rs/test_cases/should_pass/strings.cfg",
@@ -2257,17 +2934,17 @@
     "generatedStates": 3,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 354
+    "tlcMilliseconds": 704
   },
   {
     "id": "tla-rs/test_cases/should_pass/symbolic_nat.cfg",
     "status": "error",
-    "tlcMilliseconds": 157
+    "tlcMilliseconds": 644
   },
   {
     "id": "tla-rs/test_cases/should_pass/symmetry_cfg.cfg",
     "status": "error",
-    "tlcMilliseconds": 193
+    "tlcMilliseconds": 683
   },
   {
     "id": "tla-rs/test_cases/should_pass/unused_unsupported_definitions.cfg",
@@ -2275,7 +2952,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 332
+    "tlcMilliseconds": 945
   },
   {
     "id": "tla-rs/test_cases/should_pass/view_fairness_ticks.cfg",
@@ -2283,7 +2960,7 @@
     "generatedStates": 5,
     "distinctStates": 4,
     "depth": 4,
-    "tlcMilliseconds": 414
+    "tlcMilliseconds": 1059
   },
   {
     "id": "tla-rs/test_cases/should_pass/view_projection.cfg",
@@ -2291,7 +2968,7 @@
     "generatedStates": 4,
     "distinctStates": 4,
     "depth": 4,
-    "tlcMilliseconds": 375
+    "tlcMilliseconds": 969
   },
   {
     "id": "tla-rs/test_cases/should_pass/view_symmetry.cfg",
@@ -2299,34 +2976,42 @@
     "generatedStates": 7,
     "distinctStates": 4,
     "depth": 4,
-    "tlcMilliseconds": 453
+    "tlcMilliseconds": 2245
   },
   {
     "id": "tla-rs/test_cases/should_violate/model_value_shadowing.cfg",
     "status": "error",
-    "tlcMilliseconds": 246
+    "tlcMilliseconds": 874
   },
   {
     "id": "tla-rs/test_cases/should_violate/view_fairness.cfg",
     "status": "liveness-violation",
     "traceLength": 5,
-    "tlcMilliseconds": 294
+    "tlcMilliseconds": 1057
+  },
+  {
+    "id": "tlapm/examples/Dekker/Dekker.cfg",
+    "status": "success",
+    "generatedStates": 245,
+    "distinctStates": 122,
+    "depth": 22,
+    "tlcMilliseconds": 1583
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/AS/AS.cfg",
     "status": "error",
-    "tlcMilliseconds": 352
+    "tlcMilliseconds": 699
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/AssertExpressionStack.cfg",
     "status": "error",
-    "tlcMilliseconds": 327
+    "tlcMilliseconds": 692
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/AssignmentInit.cfg",
     "status": "deadlock",
     "traceLength": 1,
-    "tlcMilliseconds": 415
+    "tlcMilliseconds": 780
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/AssignmentInitExpensive.cfg",
@@ -2334,7 +3019,7 @@
     "generatedStates": 10002,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 470
+    "tlcMilliseconds": 694
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/AssignmentInitNeg.cfg",
@@ -2342,7 +3027,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 318
+    "tlcMilliseconds": 635
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/AssignmentNext.cfg",
@@ -2350,7 +3035,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 297
+    "tlcMilliseconds": 715
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/AssignmentNext2.cfg",
@@ -2358,7 +3043,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 325
+    "tlcMilliseconds": 766
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/AssignmentNext3.cfg",
@@ -2366,7 +3051,7 @@
     "generatedStates": 26,
     "distinctStates": 5,
     "depth": 2,
-    "tlcMilliseconds": 353
+    "tlcMilliseconds": 699
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/BagsTest.cfg",
@@ -2374,71 +3059,71 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 489
+    "tlcMilliseconds": 927
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Bug156/TE.cfg",
     "status": "error",
-    "tlcMilliseconds": 2140
+    "tlcMilliseconds": 3701
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Bug279/InitStateBug.cfg",
     "status": "deadlock",
     "traceLength": 3,
-    "tlcMilliseconds": 1332
+    "tlcMilliseconds": 2230
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Calculator.cfg",
     "status": "error",
-    "tlcMilliseconds": 168
+    "tlcMilliseconds": 161311
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/CodePlexBug08/AgentRingMC.cfg",
     "status": "liveness-violation",
     "traceLength": 13,
-    "tlcMilliseconds": 515
+    "tlcMilliseconds": 1161
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/CodePlexBug08/EWD840MC1.cfg",
     "status": "deadlock",
     "traceLength": 5,
-    "tlcMilliseconds": 2474
+    "tlcMilliseconds": 3487
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/CodePlexBug08/EWD840MC2.cfg",
     "status": "deadlock",
     "traceLength": 5,
-    "tlcMilliseconds": 4181
+    "tlcMilliseconds": 5770
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/CodePlexBug08/EWD840MC3.cfg",
     "status": "deadlock",
     "traceLength": 5,
-    "tlcMilliseconds": 650
+    "tlcMilliseconds": 1429
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/CodePlexBug08/EWD840MC4.cfg",
     "status": "deadlock",
     "traceLength": 5,
-    "tlcMilliseconds": 857
+    "tlcMilliseconds": 1752
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/CodePlexBug08/InlineMC.cfg",
     "status": "deadlock",
     "traceLength": 7,
-    "tlcMilliseconds": 1090
+    "tlcMilliseconds": 2304
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/CodePlexBug08/MC.cfg",
     "status": "deadlock",
     "traceLength": 4,
-    "tlcMilliseconds": 323
+    "tlcMilliseconds": 808
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/CodePlexBug08/MCa.cfg",
     "status": "deadlock",
     "traceLength": 4,
-    "tlcMilliseconds": 445
+    "tlcMilliseconds": 818
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/CodePlexBug21.cfg",
@@ -2446,7 +3131,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 320
+    "tlcMilliseconds": 623
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/ConstantContextTLCCache.cfg",
@@ -2454,40 +3139,40 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 338
+    "tlcMilliseconds": 795
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/ConstantOperatorConfiguration.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 3,
-    "tlcMilliseconds": 293
+    "tlcMilliseconds": 663
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Continue.cfg",
     "status": "invariant-violation",
     "violation": "Inv1",
     "traceLength": 2,
-    "tlcMilliseconds": 336
+    "tlcMilliseconds": 820
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/CyclicRedefineInstance.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 2,
-    "tlcMilliseconds": 326
+    "tlcMilliseconds": 635
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/CyclicRedefineVars.cfg",
     "status": "error",
-    "tlcMilliseconds": 292
+    "tlcMilliseconds": 565
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/DepthFirstErrorTrace.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 8,
-    "tlcMilliseconds": 313
+    "tlcMilliseconds": 667
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/DepthFirstTerminate.cfg",
@@ -2495,14 +3180,14 @@
     "generatedStates": 399,
     "distinctStates": 349,
     "depth": 42,
-    "tlcMilliseconds": 431
+    "tlcMilliseconds": 692
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/DieHard.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 7,
-    "tlcMilliseconds": 348
+    "tlcMilliseconds": 701
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/DieHardTLA.cfg",
@@ -2510,80 +3195,80 @@
     "generatedStates": 97,
     "distinctStates": 16,
     "depth": 8,
-    "tlcMilliseconds": 400
+    "tlcMilliseconds": 668
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/DiffTrace.cfg",
     "status": "invariant-violation",
     "violation": "InvD",
     "traceLength": 5,
-    "tlcMilliseconds": 320
+    "tlcMilliseconds": 545
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/DistributedTrace.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 11,
-    "tlcMilliseconds": 355
+    "tlcMilliseconds": 661
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorEvalException.cfg",
     "status": "error",
-    "tlcMilliseconds": 327
+    "tlcMilliseconds": 659
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorInvariant.cfg",
     "status": "invariant-violation",
     "violation": "NotNine",
     "traceLength": 1,
-    "tlcMilliseconds": 358
+    "tlcMilliseconds": 622
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorInvariantContinue.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 1,
-    "tlcMilliseconds": 309
+    "tlcMilliseconds": 669
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorMinimalErrorStack.cfg",
     "status": "error",
-    "tlcMilliseconds": 324
+    "tlcMilliseconds": 653
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorProperty.cfg",
     "status": "liveness-violation",
     "traceLength": 1,
-    "tlcMilliseconds": 292
+    "tlcMilliseconds": 568
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/EWD840/MC.cfg",
     "status": "error",
-    "tlcMilliseconds": 365110
+    "tlcMilliseconds": 305511
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/EWD840/MC02.cfg",
     "status": "deadlock",
     "traceLength": 3,
-    "tlcMilliseconds": 579
+    "tlcMilliseconds": 853
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/EWD840/MC03Sim.cfg",
     "status": "deadlock",
     "traceLength": 6,
-    "tlcMilliseconds": 587
+    "tlcMilliseconds": 1051
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/EWD840/MC06.cfg",
     "status": "deadlock",
     "traceLength": 8,
-    "tlcMilliseconds": 5630
+    "tlcMilliseconds": 8295
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/EWD998/EWD998.cfg",
     "status": "deadlock",
     "traceLength": 4,
-    "tlcMilliseconds": 753
+    "tlcMilliseconds": 1243
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/EWD998/EWD998Chan.cfg",
@@ -2591,7 +3276,7 @@
     "generatedStates": 1686,
     "distinctStates": 502,
     "depth": 3,
-    "tlcMilliseconds": 841
+    "tlcMilliseconds": 1258
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Echo/MCEcho.cfg",
@@ -2599,7 +3284,7 @@
     "generatedStates": 116,
     "distinctStates": 75,
     "depth": 16,
-    "tlcMilliseconds": 658
+    "tlcMilliseconds": 954
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Empty.cfg",
@@ -2607,12 +3292,12 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 369
+    "tlcMilliseconds": 538
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/EmptyOrderOfSolutions.cfg",
     "status": "error",
-    "tlcMilliseconds": 431
+    "tlcMilliseconds": 598
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/EmptySetEqAssume.cfg",
@@ -2620,7 +3305,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 897
+    "tlcMilliseconds": 1403
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/EmptySetEqStates.cfg",
@@ -2628,12 +3313,12 @@
     "generatedStates": 38,
     "distinctStates": 4,
     "depth": 1,
-    "tlcMilliseconds": 506
+    "tlcMilliseconds": 924
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/EmptySubsetEq.cfg",
     "status": "error",
-    "tlcMilliseconds": 542
+    "tlcMilliseconds": 685
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/EvalOrder/InitEvalOrderBasic.cfg",
@@ -2641,27 +3326,27 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 588
+    "tlcMilliseconds": 595
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/EvaluatingValueTest.cfg",
     "status": "error",
-    "tlcMilliseconds": 541
+    "tlcMilliseconds": 607
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/FingerprintExceptionHang.cfg",
     "status": "error",
-    "tlcMilliseconds": 467
+    "tlcMilliseconds": 733
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/FingerprintExceptionInit.cfg",
     "status": "error",
-    "tlcMilliseconds": 433
+    "tlcMilliseconds": 638
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/FingerprintExceptionNext.cfg",
     "status": "error",
-    "tlcMilliseconds": 411
+    "tlcMilliseconds": 703
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1037.cfg",
@@ -2669,7 +3354,7 @@
     "generatedStates": 6,
     "distinctStates": 5,
     "depth": 5,
-    "tlcMilliseconds": 448
+    "tlcMilliseconds": 764
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1145.cfg",
@@ -2677,21 +3362,21 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 431
+    "tlcMilliseconds": 754
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1145b.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 1,
-    "tlcMilliseconds": 383
+    "tlcMilliseconds": 603
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1147.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 3,
-    "tlcMilliseconds": 579
+    "tlcMilliseconds": 821
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1161.cfg",
@@ -2699,7 +3384,7 @@
     "generatedStates": 10,
     "distinctStates": 9,
     "depth": 9,
-    "tlcMilliseconds": 473
+    "tlcMilliseconds": 1033
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1389.cfg",
@@ -2707,62 +3392,62 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 436
+    "tlcMilliseconds": 687
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1389Counting.cfg",
     "status": "property-violation",
     "traceLength": 10,
-    "tlcMilliseconds": 561
+    "tlcMilliseconds": 777
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1389Loops.cfg",
     "status": "error",
-    "tlcMilliseconds": 375
+    "tlcMilliseconds": 827
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1389StateGuard.cfg",
     "status": "error",
-    "tlcMilliseconds": 3182
+    "tlcMilliseconds": 4840
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1389Violated.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 371
+    "tlcMilliseconds": 966
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1389ViolatedB.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 392
+    "tlcMilliseconds": 939
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1389ViolatedC.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 600
+    "tlcMilliseconds": 1141
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github1455.cfg",
     "status": "error",
-    "tlcMilliseconds": 197
+    "tlcMilliseconds": 401
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github179a.cfg",
     "status": "assumption-violation",
     "traceLength": 0,
-    "tlcMilliseconds": 467
+    "tlcMilliseconds": 920
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github179b.cfg",
     "status": "error",
-    "tlcMilliseconds": 446
+    "tlcMilliseconds": 957
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github179c.cfg",
     "status": "error",
-    "tlcMilliseconds": 329
+    "tlcMilliseconds": 959
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github361.cfg",
@@ -2770,7 +3455,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 504
+    "tlcMilliseconds": 1094
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github391.cfg",
@@ -2778,7 +3463,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 354
+    "tlcMilliseconds": 807
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github407.cfg",
@@ -2786,27 +3471,27 @@
     "generatedStates": 9,
     "distinctStates": 4,
     "depth": 3,
-    "tlcMilliseconds": 389
+    "tlcMilliseconds": 770
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github432.cfg",
     "status": "error",
-    "tlcMilliseconds": 341
+    "tlcMilliseconds": 446
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github461.cfg",
     "status": "error",
-    "tlcMilliseconds": 477
+    "tlcMilliseconds": 846
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github525.cfg",
     "status": "error",
-    "tlcMilliseconds": 261
+    "tlcMilliseconds": 635
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github607.cfg",
     "status": "error",
-    "tlcMilliseconds": 390
+    "tlcMilliseconds": 690
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github648.cfg",
@@ -2814,17 +3499,17 @@
     "generatedStates": 1332,
     "distinctStates": 36,
     "depth": 1,
-    "tlcMilliseconds": 526
+    "tlcMilliseconds": 1002
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github696.cfg",
     "status": "error",
-    "tlcMilliseconds": 457
+    "tlcMilliseconds": 895
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github696b.cfg",
     "status": "error",
-    "tlcMilliseconds": 486
+    "tlcMilliseconds": 1146
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github702.cfg",
@@ -2832,25 +3517,25 @@
     "generatedStates": 36,
     "distinctStates": 30,
     "depth": 8,
-    "tlcMilliseconds": 410
+    "tlcMilliseconds": 907
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github710b.cfg",
     "status": "property-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 454
+    "tlcMilliseconds": 906
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github710d.cfg",
     "status": "deadlock",
     "traceLength": 4,
-    "tlcMilliseconds": 505
+    "tlcMilliseconds": 824
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github710e.cfg",
     "status": "deadlock",
     "traceLength": 3,
-    "tlcMilliseconds": 409
+    "tlcMilliseconds": 804
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github715.cfg",
@@ -2858,7 +3543,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 372
+    "tlcMilliseconds": 701
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github725.cfg",
@@ -2866,7 +3551,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 436
+    "tlcMilliseconds": 1306
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github725b.cfg",
@@ -2874,7 +3559,7 @@
     "generatedStates": 5,
     "distinctStates": 4,
     "depth": 4,
-    "tlcMilliseconds": 427
+    "tlcMilliseconds": 1079
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github725c.cfg",
@@ -2882,7 +3567,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 420
+    "tlcMilliseconds": 966
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github725d.cfg",
@@ -2890,7 +3575,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 468
+    "tlcMilliseconds": 1034
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github725e.cfg",
@@ -2898,7 +3583,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 433
+    "tlcMilliseconds": 719
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github725f.cfg",
@@ -2906,13 +3591,13 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 365
+    "tlcMilliseconds": 854
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github725g.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 365
+    "tlcMilliseconds": 821
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github726.cfg",
@@ -2920,26 +3605,26 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 412
+    "tlcMilliseconds": 970
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github742.cfg",
     "status": "error",
-    "tlcMilliseconds": 287
+    "tlcMilliseconds": 630
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github743.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 4,
-    "tlcMilliseconds": 347
+    "tlcMilliseconds": 874
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github746.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 1,
-    "tlcMilliseconds": 450
+    "tlcMilliseconds": 966
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Github790.cfg",
@@ -2947,27 +3632,27 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 319
+    "tlcMilliseconds": 657
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/IncompleteNext.cfg",
     "status": "error",
-    "tlcMilliseconds": 421
+    "tlcMilliseconds": 1059
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/IncompleteNextMultipleActions.cfg",
     "status": "error",
-    "tlcMilliseconds": 397
+    "tlcMilliseconds": 1048
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/InitialLivenessEvaluationError.cfg",
     "status": "error",
-    "tlcMilliseconds": 383
+    "tlcMilliseconds": 636
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/KSubsetAssume.cfg",
     "status": "error",
-    "tlcMilliseconds": 290
+    "tlcMilliseconds": 302215
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/LivenessConstraintWarning.cfg",
@@ -2975,13 +3660,13 @@
     "generatedStates": 6,
     "distinctStates": 5,
     "depth": 5,
-    "tlcMilliseconds": 389
+    "tlcMilliseconds": 557
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Loop/SystemLoop.cfg",
     "status": "liveness-violation",
     "traceLength": 4,
-    "tlcMilliseconds": 297
+    "tlcMilliseconds": 541
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/MinimalSetOfInitStates.cfg",
@@ -2989,15 +3674,13 @@
     "generatedStates": 14,
     "distinctStates": 6,
     "depth": 1,
-    "tlcMilliseconds": 385
+    "tlcMilliseconds": 454
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/MinimalSetOfNextStates.cfg",
-    "status": "success",
-    "generatedStates": 57,
-    "distinctStates": 7,
-    "depth": 2,
-    "tlcMilliseconds": 518
+    "status": "assumption-violation",
+    "traceLength": 0,
+    "tlcMilliseconds": 554
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/MinimumDiameter.cfg",
@@ -3005,14 +3688,14 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 377
+    "tlcMilliseconds": 418
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/ModuleOverwrites/ModuleOverwrites.cfg",
     "status": "invariant-violation",
     "violation": "InvAsModuleOverwrite",
     "traceLength": 1,
-    "tlcMilliseconds": 471
+    "tlcMilliseconds": 528
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/ModuleSemanticsAssume.cfg",
@@ -3020,7 +3703,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 569
+    "tlcMilliseconds": 556
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/NormalizationAssume.cfg",
@@ -3028,12 +3711,12 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 520
+    "tlcMilliseconds": 557
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/PlusCalOptions.cfg",
     "status": "error",
-    "tlcMilliseconds": 268
+    "tlcMilliseconds": 304
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/PossibleCountsTest.cfg",
@@ -3041,7 +3724,7 @@
     "generatedStates": 4,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 519
+    "tlcMilliseconds": 529
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/PossibleTest.cfg",
@@ -3049,39 +3732,39 @@
     "generatedStates": 4,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 534
+    "tlcMilliseconds": 608
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/PostConditionsTest.cfg",
     "status": "deadlock",
     "traceLength": 4,
-    "tlcMilliseconds": 523
+    "tlcMilliseconds": 546
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/PrintTraceRace/MC.cfg",
     "status": "error",
-    "tlcMilliseconds": 483
+    "tlcMilliseconds": 493
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/RandomElement.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 11,
-    "tlcMilliseconds": 518
+    "tlcMilliseconds": 528
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/RandomElementXandY.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 3,
-    "tlcMilliseconds": 427
+    "tlcMilliseconds": 472
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/RandomSubset.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 2,
-    "tlcMilliseconds": 1011
+    "tlcMilliseconds": 1249
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/RandomSubsetEmpty.cfg",
@@ -3089,21 +3772,21 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 395
+    "tlcMilliseconds": 539
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/RandomSubsetNext.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 11,
-    "tlcMilliseconds": 888
+    "tlcMilliseconds": 1034
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/RandomSubsetNextTuples.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 7,
-    "tlcMilliseconds": 675
+    "tlcMilliseconds": 777
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/RandomSubsetSetOfFcns.cfg",
@@ -3111,7 +3794,7 @@
     "generatedStates": 2000,
     "distinctStates": 1000,
     "depth": 1,
-    "tlcMilliseconds": 453
+    "tlcMilliseconds": 528
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/SetPredValue.cfg",
@@ -3119,7 +3802,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 394
+    "tlcMilliseconds": 573
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/StandardModules.cfg",
@@ -3127,12 +3810,13 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 363
+    "tlcMilliseconds": 542
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/StringDeserialize.cfg",
-    "status": "error",
-    "tlcMilliseconds": 188
+    "status": "assumption-violation",
+    "traceLength": 0,
+    "tlcMilliseconds": 715
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/SubsetEq.cfg",
@@ -3140,7 +3824,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 344
+    "tlcMilliseconds": 543
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/SubseteqNextState.cfg",
@@ -3148,18 +3832,18 @@
     "generatedStates": 68,
     "distinctStates": 8,
     "depth": 2,
-    "tlcMilliseconds": 402
+    "tlcMilliseconds": 578
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/TESpecTest/TESpecDeadlockTest.cfg",
     "status": "deadlock",
     "traceLength": 5,
-    "tlcMilliseconds": 286
+    "tlcMilliseconds": 435
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/TESpecTest/TESpecDependencyTest.cfg",
     "status": "error",
-    "tlcMilliseconds": 199
+    "tlcMilliseconds": 328
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/TESpecTest/TESpecNoErrorTest.cfg",
@@ -3167,82 +3851,82 @@
     "generatedStates": 5,
     "distinctStates": 4,
     "depth": 4,
-    "tlcMilliseconds": 287
+    "tlcMilliseconds": 558
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/TESpecTest/TESpecPlusCalTest.cfg",
     "status": "error",
-    "tlcMilliseconds": 455
+    "tlcMilliseconds": 625
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/TESpecTest/TESpecRuntimeErrorTest.cfg",
     "status": "error",
-    "tlcMilliseconds": 274
+    "tlcMilliseconds": 524
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/TLCGetLevel.cfg",
     "status": "deadlock",
     "traceLength": 4,
-    "tlcMilliseconds": 390
+    "tlcMilliseconds": 660
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/TLCGetNamedUndefined.cfg",
     "status": "error",
-    "tlcMilliseconds": 220
+    "tlcMilliseconds": 480
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/TLCGetNonDeterminism.cfg",
     "status": "deadlock",
     "traceLength": 4,
-    "tlcMilliseconds": 405
+    "tlcMilliseconds": 573
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/TLCSet.cfg",
     "status": "assumption-violation",
     "traceLength": 0,
-    "tlcMilliseconds": 321
+    "tlcMilliseconds": 567
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/TLCSetInit.cfg",
     "status": "deadlock",
     "traceLength": 10,
-    "tlcMilliseconds": 381
+    "tlcMilliseconds": 646
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/TSnapShot/MC.cfg",
     "status": "error",
-    "tlcMilliseconds": 408
+    "tlcMilliseconds": 706
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Test2.cfg",
     "status": "assumption-violation",
     "traceLength": 0,
-    "tlcMilliseconds": 511
+    "tlcMilliseconds": 549
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Test2a.cfg",
     "status": "liveness-violation",
     "traceLength": 5,
-    "tlcMilliseconds": 333
+    "tlcMilliseconds": 496
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Test3.cfg",
     "status": "liveness-violation",
     "traceLength": 4,
-    "tlcMilliseconds": 311
+    "tlcMilliseconds": 602
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/Test4.cfg",
     "status": "assumption-violation",
     "traceLength": 0,
-    "tlcMilliseconds": 282
+    "tlcMilliseconds": 513
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/TraceWithLargeSetOfInitialStatesTest.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 2,
-    "tlcMilliseconds": 268
+    "tlcMilliseconds": 472
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/UnicodeFunctionFingerprint.cfg",
@@ -3250,7 +3934,7 @@
     "generatedStates": 3,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 361
+    "tlcMilliseconds": 491
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/UnicodeRecordFingerprint.cfg",
@@ -3258,13 +3942,13 @@
     "generatedStates": 3,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 375
+    "tlcMilliseconds": 586
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/UnicodeStringDiskStateQueue.cfg",
     "status": "deadlock",
     "traceLength": 11,
-    "tlcMilliseconds": 533
+    "tlcMilliseconds": 584
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/UnicodeStringFingerprint.cfg",
@@ -3272,7 +3956,7 @@
     "generatedStates": 3,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 477
+    "tlcMilliseconds": 596
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/UserModuleOverride.cfg",
@@ -3280,18 +3964,18 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 690
+    "tlcMilliseconds": 1147
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/UserModuleOverrideAnnotation.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 637
+    "tlcMilliseconds": 834
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/UserModuleOverrideBase.cfg",
     "status": "error",
-    "tlcMilliseconds": 338
+    "tlcMilliseconds": 375
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/ValueSemanticsAssume.cfg",
@@ -3299,50 +3983,50 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 977
+    "tlcMilliseconds": 1261
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/ViewMap.cfg",
     "status": "invariant-violation",
     "violation": "Inv",
     "traceLength": 8,
-    "tlcMilliseconds": 859
+    "tlcMilliseconds": 973
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/VoteProof/MC.cfg",
     "status": "deadlock",
     "traceLength": 6,
-    "tlcMilliseconds": 34100
+    "tlcMilliseconds": 73389
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextA.cfg",
     "status": "error",
-    "tlcMilliseconds": 323
+    "tlcMilliseconds": 989
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextB.cfg",
     "status": "error",
-    "tlcMilliseconds": 342
+    "tlcMilliseconds": 828
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextC.cfg",
     "status": "error",
-    "tlcMilliseconds": 321
+    "tlcMilliseconds": 1043
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextD.cfg",
     "status": "error",
-    "tlcMilliseconds": 329
+    "tlcMilliseconds": 975
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/cdot/ChainedCdots.cfg",
     "status": "error",
-    "tlcMilliseconds": 467
+    "tlcMilliseconds": 1207
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/checkpoint/InfiniteStateSpace.cfg",
     "status": "error",
-    "tlcMilliseconds": 223966
+    "tlcMilliseconds": 310652
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/A.cfg",
@@ -3350,7 +4034,7 @@
     "generatedStates": 7,
     "distinctStates": 3,
     "depth": 2,
-    "tlcMilliseconds": 470
+    "tlcMilliseconds": 759
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/B.cfg",
@@ -3358,7 +4042,7 @@
     "generatedStates": 5,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 306
+    "tlcMilliseconds": 514
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/C.cfg",
@@ -3366,7 +4050,7 @@
     "generatedStates": 253,
     "distinctStates": 20,
     "depth": 17,
-    "tlcMilliseconds": 471
+    "tlcMilliseconds": 771
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/CoverageStatistics.cfg",
@@ -3374,7 +4058,7 @@
     "generatedStates": 98,
     "distinctStates": 19,
     "depth": 17,
-    "tlcMilliseconds": 424
+    "tlcMilliseconds": 729
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/D.cfg",
@@ -3382,7 +4066,7 @@
     "generatedStates": 7,
     "distinctStates": 3,
     "depth": 2,
-    "tlcMilliseconds": 437
+    "tlcMilliseconds": 763
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/E.cfg",
@@ -3390,7 +4074,7 @@
     "generatedStates": 73,
     "distinctStates": 9,
     "depth": 2,
-    "tlcMilliseconds": 315
+    "tlcMilliseconds": 555
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/F.cfg",
@@ -3398,7 +4082,7 @@
     "generatedStates": 4,
     "distinctStates": 2,
     "depth": 1,
-    "tlcMilliseconds": 317
+    "tlcMilliseconds": 603
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/G.cfg",
@@ -3406,13 +4090,13 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 375
+    "tlcMilliseconds": 899
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/Github314.cfg",
     "status": "deadlock",
     "traceLength": 3,
-    "tlcMilliseconds": 322
+    "tlcMilliseconds": 946
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/Github377.cfg",
@@ -3420,7 +4104,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 335
+    "tlcMilliseconds": 804
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/Github649.cfg",
@@ -3428,7 +4112,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 368
+    "tlcMilliseconds": 1806
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/H.cfg",
@@ -3436,7 +4120,7 @@
     "generatedStates": 26,
     "distinctStates": 6,
     "depth": 3,
-    "tlcMilliseconds": 419
+    "tlcMilliseconds": 629
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/I.cfg",
@@ -3444,7 +4128,7 @@
     "generatedStates": 20,
     "distinctStates": 5,
     "depth": 1,
-    "tlcMilliseconds": 331
+    "tlcMilliseconds": 1153
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/Implied.cfg",
@@ -3452,7 +4136,7 @@
     "generatedStates": 3,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 360
+    "tlcMilliseconds": 442
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/J.cfg",
@@ -3460,7 +4144,7 @@
     "generatedStates": 11,
     "distinctStates": 6,
     "depth": 2,
-    "tlcMilliseconds": 334
+    "tlcMilliseconds": 677
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/K.cfg",
@@ -3468,7 +4152,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 319
+    "tlcMilliseconds": 1296
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/L.cfg",
@@ -3476,7 +4160,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 314
+    "tlcMilliseconds": 555
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/M.cfg",
@@ -3484,7 +4168,7 @@
     "generatedStates": 37056,
     "distinctStates": 192,
     "depth": 1,
-    "tlcMilliseconds": 405
+    "tlcMilliseconds": 719
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/coverage/O.cfg",
@@ -3492,13 +4176,13 @@
     "generatedStates": 4,
     "distinctStates": 4,
     "depth": 4,
-    "tlcMilliseconds": 395
+    "tlcMilliseconds": 899
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/BlockingQueue/BlockingQueuePoisonApple.cfg",
     "status": "deadlock",
     "traceLength": 9,
-    "tlcMilliseconds": 741
+    "tlcMilliseconds": 2116
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/CoffeeCan/CoffeeCan100Beans.cfg",
@@ -3506,33 +4190,40 @@
     "generatedStates": 20002,
     "distinctStates": 5150,
     "depth": 1,
-    "tlcMilliseconds": 1079
+    "tlcMilliseconds": 1989
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/FiniteMonotonic/MCDistributedReplicatedLog.cfg",
-    "status": "error",
-    "tlcMilliseconds": 226
+    "status": "liveness-violation",
+    "traceLength": 6,
+    "tlcMilliseconds": 1426
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/Huang/Huang.cfg",
-    "status": "error",
-    "tlcMilliseconds": 366
+    "status": "success",
+    "generatedStates": 2433,
+    "distinctStates": 308,
+    "depth": 9,
+    "tlcMilliseconds": 2386
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/Prisoners/Prisoners.cfg",
     "status": "liveness-violation",
     "traceLength": 15,
-    "tlcMilliseconds": 907
+    "tlcMilliseconds": 1343
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SDP_Verification/SDP_Attack_New_Solution_Spec/MC.cfg",
-    "status": "error",
-    "tlcMilliseconds": 494
+    "status": "liveness-violation",
+    "traceLength": 15,
+    "tlcMilliseconds": 6565
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SDP_Verification/SDP_Attack_Spec/MC.cfg",
-    "status": "error",
-    "tlcMilliseconds": 488
+    "status": "invariant-violation",
+    "violation": "DataAccessSafeLaw",
+    "traceLength": 11,
+    "tlcMilliseconds": 2304
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SingleLaneBridge/MC.cfg",
@@ -3540,114 +4231,118 @@
     "generatedStates": 20181,
     "distinctStates": 3605,
     "depth": 29,
-    "tlcMilliseconds": 6345
+    "tlcMilliseconds": 11050
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpanningTree/SpanTree.cfg",
     "status": "liveness-violation",
     "traceLength": 6,
-    "tlcMilliseconds": 1865
+    "tlcMilliseconds": 2725
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpanningTree/SpanTreeRandom.cfg",
     "status": "liveness-violation",
     "traceLength": 7,
-    "tlcMilliseconds": 43335
+    "tlcMilliseconds": 79647
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpecifyingSystems/CachingMemory/MCWriteThroughCache.cfg",
     "status": "liveness-violation",
     "traceLength": 7,
-    "tlcMilliseconds": 1375
+    "tlcMilliseconds": 2862
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpecifyingSystems/Liveness/LiveHourClock.cfg",
     "status": "liveness-violation",
     "traceLength": 12,
-    "tlcMilliseconds": 496
+    "tlcMilliseconds": 1033
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpecifyingSystems/Liveness/MCLiveInternalMemory.cfg",
     "status": "liveness-violation",
     "traceLength": 4,
-    "tlcMilliseconds": 1688
+    "tlcMilliseconds": 2982
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpecifyingSystems/Liveness/MCLiveWriteThroughCache.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 2421
+    "tlcMilliseconds": 5504
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpecifyingSystems/TLC/ABCorrectness.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 427
+    "tlcMilliseconds": 959
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpecifyingSystems/TLC/MCAlternatingBit.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 883
+    "tlcMilliseconds": 1441
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/YoYo/MCYoYoNoPruning.cfg",
-    "status": "error",
-    "tlcMilliseconds": 533
+    "status": "liveness-violation",
+    "traceLength": 23,
+    "tlcMilliseconds": 2609
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/aba-asyn-byz/aba_asyn_byz.cfg",
     "status": "liveness-violation",
     "traceLength": 7,
-    "tlcMilliseconds": 3380
+    "tlcMilliseconds": 6718
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/acp/ACP_NB_TLC.cfg",
     "status": "liveness-violation",
     "traceLength": 9,
-    "tlcMilliseconds": 2240
+    "tlcMilliseconds": 4250
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/acp/ACP_NB_WRONG_TLC.cfg",
     "status": "invariant-violation",
     "violation": "AC1",
     "traceLength": 13,
-    "tlcMilliseconds": 3768
+    "tlcMilliseconds": 6860
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/acp/ACP_SB_TLC.cfg",
     "status": "liveness-violation",
     "traceLength": 8,
-    "tlcMilliseconds": 7233
+    "tlcMilliseconds": 15828
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/allocator/SchedulingAllocator.cfg",
     "status": "liveness-violation",
     "traceLength": 4,
-    "tlcMilliseconds": 2092
+    "tlcMilliseconds": 5074
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/allocator/SimpleAllocator.cfg",
     "status": "liveness-violation",
     "traceLength": 10,
-    "tlcMilliseconds": 1184
+    "tlcMilliseconds": 3168
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/bcastByz/bcastByz.cfg",
-    "status": "error",
-    "tlcMilliseconds": 216
+    "status": "success",
+    "generatedStates": 90,
+    "distinctStates": 45,
+    "depth": 1,
+    "tlcMilliseconds": 1582
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/bcastFolklore/bcastFolklore.cfg",
     "status": "liveness-violation",
     "traceLength": 3,
-    "tlcMilliseconds": 1461
+    "tlcMilliseconds": 3728
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/braf/BufferedRandomAccessFile.cfg",
     "status": "liveness-violation",
     "traceLength": 4,
-    "tlcMilliseconds": 3244
+    "tlcMilliseconds": 8089
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/cf1s-folklore/cf1s_folklore.cfg",
@@ -3655,59 +4350,61 @@
     "generatedStates": 130136,
     "distinctStates": 10016,
     "depth": 5,
-    "tlcMilliseconds": 2454
+    "tlcMilliseconds": 5351
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/detector_chan96/EnvironmentController.cfg",
     "status": "success",
-    "generatedStates": 4317,
+    "generatedStates": 5539,
     "distinctStates": 1042,
     "depth": 19,
-    "tlcMilliseconds": 1245
+    "tlcMilliseconds": 2370
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd687a/MCEWD687a.cfg",
     "status": "error",
-    "tlcMilliseconds": 427
+    "tlcMilliseconds": 1539
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd840/EWD840.cfg",
     "status": "liveness-violation",
     "traceLength": 5,
-    "tlcMilliseconds": 866
+    "tlcMilliseconds": 1364
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd840/SyncTerminationDetection.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 612
+    "tlcMilliseconds": 1087
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd998/AsyncTerminationDetection.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 1505
+    "tlcMilliseconds": 2726
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd998/EWD998.cfg",
-    "status": "error",
-    "tlcMilliseconds": 499
+    "status": "liveness-violation",
+    "traceLength": 4,
+    "tlcMilliseconds": 2527
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd998/EWD998Chan.cfg",
     "status": "error",
-    "tlcMilliseconds": 492
+    "tlcMilliseconds": 303041
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd998/EWD998ChanID.cfg",
-    "status": "error",
-    "tlcMilliseconds": 604
+    "status": "liveness-violation",
+    "traceLength": 15,
+    "tlcMilliseconds": 3347
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/locks_auxiliary_vars/Lock.cfg",
     "status": "liveness-violation",
     "traceLength": 5,
-    "tlcMilliseconds": 619
+    "tlcMilliseconds": 1065
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/locks_auxiliary_vars/LockHS.cfg",
@@ -3715,19 +4412,19 @@
     "generatedStates": 41,
     "distinctStates": 28,
     "depth": 10,
-    "tlcMilliseconds": 697
+    "tlcMilliseconds": 1132
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/locks_auxiliary_vars/Peterson.cfg",
     "status": "liveness-violation",
     "traceLength": 8,
-    "tlcMilliseconds": 708
+    "tlcMilliseconds": 1130
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/nbacg_guer01/nbacg_guer01.cfg",
     "status": "liveness-violation",
     "traceLength": 12,
-    "tlcMilliseconds": 6886
+    "tlcMilliseconds": 12201
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Bakery.cfg",
@@ -3735,7 +4432,7 @@
     "generatedStates": 1183,
     "distinctStates": 668,
     "depth": 41,
-    "tlcMilliseconds": 801
+    "tlcMilliseconds": 1221
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/CBakery.cfg",
@@ -3743,7 +4440,7 @@
     "generatedStates": 867,
     "distinctStates": 486,
     "depth": 31,
-    "tlcMilliseconds": 763
+    "tlcMilliseconds": 1273
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/CDiningPhilosophers.cfg",
@@ -3751,7 +4448,7 @@
     "generatedStates": 301,
     "distinctStates": 118,
     "depth": 14,
-    "tlcMilliseconds": 644
+    "tlcMilliseconds": 1095
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/DetlefSpec.cfg",
@@ -3759,12 +4456,12 @@
     "generatedStates": 31,
     "distinctStates": 15,
     "depth": 8,
-    "tlcMilliseconds": 484
+    "tlcMilliseconds": 989
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/DetlefTest.cfg",
     "status": "error",
-    "tlcMilliseconds": 264
+    "tlcMilliseconds": 446
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Detlefs.cfg",
@@ -3772,7 +4469,7 @@
     "generatedStates": 2127012,
     "distinctStates": 952912,
     "depth": 82,
-    "tlcMilliseconds": 42590
+    "tlcMilliseconds": 82261
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Dijkstra1.cfg",
@@ -3780,7 +4477,7 @@
     "generatedStates": 16775,
     "distinctStates": 5510,
     "depth": 10,
-    "tlcMilliseconds": 1332
+    "tlcMilliseconds": 2159
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/DiningPhilosophers.cfg",
@@ -3788,7 +4485,7 @@
     "generatedStates": 301,
     "distinctStates": 118,
     "depth": 14,
-    "tlcMilliseconds": 618
+    "tlcMilliseconds": 1138
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Euclid.cfg",
@@ -3796,7 +4493,7 @@
     "generatedStates": 6752,
     "distinctStates": 6352,
     "depth": 42,
-    "tlcMilliseconds": 1021
+    "tlcMilliseconds": 1265
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Euclid3.cfg",
@@ -3804,7 +4501,7 @@
     "generatedStates": 97,
     "distinctStates": 94,
     "depth": 50,
-    "tlcMilliseconds": 557
+    "tlcMilliseconds": 785
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/EvenOdd.cfg",
@@ -3812,7 +4509,7 @@
     "generatedStates": 14,
     "distinctStates": 13,
     "depth": 13,
-    "tlcMilliseconds": 621
+    "tlcMilliseconds": 870
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/FairSeq.cfg",
@@ -3820,7 +4517,7 @@
     "generatedStates": 13,
     "distinctStates": 12,
     "depth": 12,
-    "tlcMilliseconds": 567
+    "tlcMilliseconds": 904
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/FastMutex.cfg",
@@ -3828,7 +4525,7 @@
     "generatedStates": 2679,
     "distinctStates": 1415,
     "depth": 60,
-    "tlcMilliseconds": 870
+    "tlcMilliseconds": 1536
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/FastMutex2.cfg",
@@ -3836,7 +4533,7 @@
     "generatedStates": 2679,
     "distinctStates": 1415,
     "depth": 60,
-    "tlcMilliseconds": 949
+    "tlcMilliseconds": 1509
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/FastMutex3.cfg",
@@ -3844,7 +4541,7 @@
     "generatedStates": 2679,
     "distinctStates": 1415,
     "depth": 60,
-    "tlcMilliseconds": 929
+    "tlcMilliseconds": 1147
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/FastMutexWithGoto.cfg",
@@ -3852,7 +4549,7 @@
     "generatedStates": 2679,
     "distinctStates": 1415,
     "depth": 58,
-    "tlcMilliseconds": 830
+    "tlcMilliseconds": 1112
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/FastMutexWithGoto2.cfg",
@@ -3860,7 +4557,7 @@
     "generatedStates": 42277,
     "distinctStates": 15900,
     "depth": 47,
-    "tlcMilliseconds": 1805
+    "tlcMilliseconds": 3018
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Fischer.cfg",
@@ -3868,7 +4565,7 @@
     "generatedStates": 2487,
     "distinctStates": 1002,
     "depth": 24,
-    "tlcMilliseconds": 951
+    "tlcMilliseconds": 1836
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Github136.cfg",
@@ -3876,7 +4573,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 477
+    "tlcMilliseconds": 955
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Github776.cfg",
@@ -3884,7 +4581,7 @@
     "generatedStates": 8,
     "distinctStates": 7,
     "depth": 7,
-    "tlcMilliseconds": 636
+    "tlcMilliseconds": 935
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/MacroQuicksort.cfg",
@@ -3892,7 +4589,7 @@
     "generatedStates": 38084,
     "distinctStates": 31092,
     "depth": 23,
-    "tlcMilliseconds": 11929
+    "tlcMilliseconds": 19822
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/MacroRealQuicksort.cfg",
@@ -3900,7 +4597,7 @@
     "generatedStates": 64072,
     "distinctStates": 27336,
     "depth": 9,
-    "tlcMilliseconds": 19497
+    "tlcMilliseconds": 37393
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/MergeSort.cfg",
@@ -3908,13 +4605,13 @@
     "generatedStates": 86,
     "distinctStates": 80,
     "depth": 18,
-    "tlcMilliseconds": 525
+    "tlcMilliseconds": 1029
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/PcalPaxos.cfg",
     "status": "deadlock",
     "traceLength": 5,
-    "tlcMilliseconds": 737
+    "tlcMilliseconds": 970
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Peterson.cfg",
@@ -3922,7 +4619,7 @@
     "generatedStates": 85,
     "distinctStates": 42,
     "depth": 11,
-    "tlcMilliseconds": 578
+    "tlcMilliseconds": 939
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Quicksort.cfg",
@@ -3930,7 +4627,7 @@
     "generatedStates": 1017,
     "distinctStates": 933,
     "depth": 16,
-    "tlcMilliseconds": 803
+    "tlcMilliseconds": 1303
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/Quicksort2Procs.cfg",
@@ -3938,7 +4635,7 @@
     "generatedStates": 445,
     "distinctStates": 361,
     "depth": 15,
-    "tlcMilliseconds": 691
+    "tlcMilliseconds": 1200
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/QuicksortMacro.cfg",
@@ -3946,14 +4643,14 @@
     "generatedStates": 390,
     "distinctStates": 306,
     "depth": 13,
-    "tlcMilliseconds": 716
+    "tlcMilliseconds": 1146
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/RAB.cfg",
     "status": "invariant-violation",
     "violation": "Consistency",
     "traceLength": 7,
-    "tlcMilliseconds": 653
+    "tlcMilliseconds": 1123
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/RealQuicksort.cfg",
@@ -3961,7 +4658,7 @@
     "generatedStates": 706,
     "distinctStates": 495,
     "depth": 14,
-    "tlcMilliseconds": 852
+    "tlcMilliseconds": 1347
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/RealQuicksort2.cfg",
@@ -3969,14 +4666,14 @@
     "generatedStates": 853,
     "distinctStates": 612,
     "depth": 11,
-    "tlcMilliseconds": 797
+    "tlcMilliseconds": 1335
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/SBB.cfg",
     "status": "invariant-violation",
     "violation": "Immutability",
     "traceLength": 15,
-    "tlcMilliseconds": 737
+    "tlcMilliseconds": 1116
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/SemaphoreMutex.cfg",
@@ -3984,7 +4681,7 @@
     "generatedStates": 73,
     "distinctStates": 32,
     "depth": 6,
-    "tlcMilliseconds": 786
+    "tlcMilliseconds": 1210
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/StarkMutex.cfg",
@@ -3992,7 +4689,7 @@
     "generatedStates": 54809,
     "distinctStates": 23168,
     "depth": 92,
-    "tlcMilliseconds": 6019
+    "tlcMilliseconds": 7692
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/SyncCons.cfg",
@@ -4000,7 +4697,7 @@
     "generatedStates": 22580,
     "distinctStates": 8754,
     "depth": 48,
-    "tlcMilliseconds": 1057
+    "tlcMilliseconds": 1490
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/TreeBarrier.cfg",
@@ -4008,7 +4705,7 @@
     "generatedStates": 5414,
     "distinctStates": 2095,
     "depth": 106,
-    "tlcMilliseconds": 1322
+    "tlcMilliseconds": 2146
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/ULEuclid.cfg",
@@ -4016,7 +4713,7 @@
     "generatedStates": 6752,
     "distinctStates": 6352,
     "depth": 42,
-    "tlcMilliseconds": 823
+    "tlcMilliseconds": 1313
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/ULEvenOdd.cfg",
@@ -4024,7 +4721,7 @@
     "generatedStates": 14,
     "distinctStates": 13,
     "depth": 13,
-    "tlcMilliseconds": 457
+    "tlcMilliseconds": 663
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/pcal/ULQuicksortMacro.cfg",
@@ -4032,24 +4729,25 @@
     "generatedStates": 342,
     "distinctStates": 258,
     "depth": 11,
-    "tlcMilliseconds": 603
+    "tlcMilliseconds": 999
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/qlearning/Counter.cfg",
-    "status": "error",
-    "tlcMilliseconds": 236
+    "status": "assumption-violation",
+    "traceLength": 0,
+    "tlcMilliseconds": 642
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/simulation/Example1.cfg",
     "status": "liveness-violation",
     "traceLength": 10,
-    "tlcMilliseconds": 587
+    "tlcMilliseconds": 783
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/simulation/Example2.cfg",
     "status": "liveness-violation",
     "traceLength": 10,
-    "tlcMilliseconds": 529
+    "tlcMilliseconds": 896
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/simulation/NQSpec/MC.cfg",
@@ -4057,98 +4755,98 @@
     "generatedStates": 21,
     "distinctStates": 16,
     "depth": 8,
-    "tlcMilliseconds": 647
+    "tlcMilliseconds": 1253
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest1.cfg",
     "status": "error",
-    "tlcMilliseconds": 329
+    "tlcMilliseconds": 571
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest10.cfg",
     "status": "error",
-    "tlcMilliseconds": 531
+    "tlcMilliseconds": 882
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest11.cfg",
     "status": "error",
-    "tlcMilliseconds": 528
+    "tlcMilliseconds": 847
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest12.cfg",
     "status": "assumption-violation",
     "traceLength": 0,
-    "tlcMilliseconds": 519
+    "tlcMilliseconds": 909
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest13.cfg",
     "status": "assumption-violation",
     "traceLength": 0,
-    "tlcMilliseconds": 480
+    "tlcMilliseconds": 1018
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest14.cfg",
     "status": "assumption-violation",
     "traceLength": 0,
-    "tlcMilliseconds": 503
+    "tlcMilliseconds": 836
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest15.cfg",
     "status": "assumption-violation",
     "traceLength": 0,
-    "tlcMilliseconds": 428
+    "tlcMilliseconds": 850
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest16.cfg",
     "status": "error",
-    "tlcMilliseconds": 255
+    "tlcMilliseconds": 405
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest2.cfg",
     "status": "error",
-    "tlcMilliseconds": 362
+    "tlcMilliseconds": 594
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest3.cfg",
     "status": "deadlock",
     "traceLength": 2,
-    "tlcMilliseconds": 715
+    "tlcMilliseconds": 916
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest4.cfg",
     "status": "error",
-    "tlcMilliseconds": 737
+    "tlcMilliseconds": 1114
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest5.cfg",
     "status": "error",
-    "tlcMilliseconds": 313
+    "tlcMilliseconds": 622
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest6.cfg",
     "status": "error",
-    "tlcMilliseconds": 488
+    "tlcMilliseconds": 798
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest7.cfg",
     "status": "error",
-    "tlcMilliseconds": 343
+    "tlcMilliseconds": 563
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest8.cfg",
     "status": "deadlock",
     "traceLength": 1,
-    "tlcMilliseconds": 556
+    "tlcMilliseconds": 852
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest9.cfg",
     "status": "error",
-    "tlcMilliseconds": 555
+    "tlcMilliseconds": 864
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test.cfg",
     "status": "error",
-    "tlcMilliseconds": 297
+    "tlcMilliseconds": 484
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test1.cfg",
@@ -4156,7 +4854,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 597
+    "tlcMilliseconds": 1024
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test10.cfg",
@@ -4164,7 +4862,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 564
+    "tlcMilliseconds": 902
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test11.cfg",
@@ -4172,7 +4870,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 558
+    "tlcMilliseconds": 911
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test12.cfg",
@@ -4180,7 +4878,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 552
+    "tlcMilliseconds": 1045
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test13.cfg",
@@ -4188,7 +4886,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 491
+    "tlcMilliseconds": 924
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test14.cfg",
@@ -4196,7 +4894,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 507
+    "tlcMilliseconds": 933
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test15.cfg",
@@ -4204,7 +4902,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 510
+    "tlcMilliseconds": 1086
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test16.cfg",
@@ -4212,7 +4910,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 485
+    "tlcMilliseconds": 1179
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test17.cfg",
@@ -4220,7 +4918,7 @@
     "generatedStates": 7,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 529
+    "tlcMilliseconds": 852
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test18.cfg",
@@ -4228,7 +4926,7 @@
     "generatedStates": 14,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 514
+    "tlcMilliseconds": 880
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test19.cfg",
@@ -4236,7 +4934,7 @@
     "generatedStates": 800000,
     "distinctStates": 400000,
     "depth": 1,
-    "tlcMilliseconds": 957
+    "tlcMilliseconds": 1737
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test2.cfg",
@@ -4244,7 +4942,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 509
+    "tlcMilliseconds": 849
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test20.cfg",
@@ -4252,7 +4950,7 @@
     "generatedStates": 5,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 472
+    "tlcMilliseconds": 945
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test201.cfg",
@@ -4260,12 +4958,12 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 457
+    "tlcMilliseconds": 1091
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test201a.cfg",
     "status": "error",
-    "tlcMilliseconds": 273
+    "tlcMilliseconds": 796
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test202.cfg",
@@ -4273,7 +4971,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 497
+    "tlcMilliseconds": 1102
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test203.cfg",
@@ -4281,12 +4979,12 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 457
+    "tlcMilliseconds": 770
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test203a.cfg",
     "status": "error",
-    "tlcMilliseconds": 266
+    "tlcMilliseconds": 482
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test204.cfg",
@@ -4294,7 +4992,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 511
+    "tlcMilliseconds": 1062
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test205.cfg",
@@ -4302,7 +5000,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 559
+    "tlcMilliseconds": 811
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test206.cfg",
@@ -4310,12 +5008,12 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 573
+    "tlcMilliseconds": 849
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test206a.cfg",
     "status": "error",
-    "tlcMilliseconds": 325
+    "tlcMilliseconds": 436
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test207.cfg",
@@ -4323,7 +5021,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 510
+    "tlcMilliseconds": 719
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test208.cfg",
@@ -4331,7 +5029,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 475
+    "tlcMilliseconds": 625
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test209.cfg",
@@ -4339,7 +5037,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 471
+    "tlcMilliseconds": 783
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test21.cfg",
@@ -4347,32 +5045,32 @@
     "generatedStates": 8,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 492
+    "tlcMilliseconds": 1004
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test210.cfg",
     "status": "error",
-    "tlcMilliseconds": 287
+    "tlcMilliseconds": 549
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test212.cfg",
     "status": "error",
-    "tlcMilliseconds": 266
+    "tlcMilliseconds": 500
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test213.cfg",
     "status": "error",
-    "tlcMilliseconds": 301
+    "tlcMilliseconds": 466
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test214.cfg",
     "status": "error",
-    "tlcMilliseconds": 312
+    "tlcMilliseconds": 468
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test215.cfg",
     "status": "error",
-    "tlcMilliseconds": 269
+    "tlcMilliseconds": 627
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test216.cfg",
@@ -4380,12 +5078,12 @@
     "generatedStates": 28,
     "distinctStates": 7,
     "depth": 1,
-    "tlcMilliseconds": 509
+    "tlcMilliseconds": 959
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test217.cfg",
     "status": "error",
-    "tlcMilliseconds": 355
+    "tlcMilliseconds": 482
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test219.cfg",
@@ -4393,12 +5091,12 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 587
+    "tlcMilliseconds": 913
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test219a.cfg",
     "status": "error",
-    "tlcMilliseconds": 448
+    "tlcMilliseconds": 481
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test22.cfg",
@@ -4406,7 +5104,7 @@
     "generatedStates": 1344,
     "distinctStates": 64,
     "depth": 1,
-    "tlcMilliseconds": 463
+    "tlcMilliseconds": 591
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test220.cfg",
@@ -4414,7 +5112,7 @@
     "generatedStates": 2,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 504
+    "tlcMilliseconds": 695
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test23.cfg",
@@ -4422,12 +5120,12 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 579
+    "tlcMilliseconds": 876
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test23bis.cfg",
     "status": "error",
-    "tlcMilliseconds": 280
+    "tlcMilliseconds": 450
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test24.cfg",
@@ -4435,7 +5133,7 @@
     "generatedStates": 21,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 465
+    "tlcMilliseconds": 853
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test25.cfg",
@@ -4443,7 +5141,7 @@
     "generatedStates": 3,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 496
+    "tlcMilliseconds": 825
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test26.cfg",
@@ -4451,7 +5149,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 503
+    "tlcMilliseconds": 784
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test27.cfg",
@@ -4459,7 +5157,7 @@
     "generatedStates": 1109824,
     "distinctStates": 63504,
     "depth": 7,
-    "tlcMilliseconds": 2854
+    "tlcMilliseconds": 3261
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test28.cfg",
@@ -4467,7 +5165,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 686
+    "tlcMilliseconds": 809
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test29.cfg",
@@ -4475,7 +5173,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 520
+    "tlcMilliseconds": 662
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test3.cfg",
@@ -4483,12 +5181,12 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 486
+    "tlcMilliseconds": 663
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test30-true.cfg",
     "status": "error",
-    "tlcMilliseconds": 213
+    "tlcMilliseconds": 276
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test30.cfg",
@@ -4496,7 +5194,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 447
+    "tlcMilliseconds": 691
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test31.cfg",
@@ -4504,7 +5202,7 @@
     "generatedStates": 13,
     "distinctStates": 3,
     "depth": 2,
-    "tlcMilliseconds": 411
+    "tlcMilliseconds": 659
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test32.cfg",
@@ -4512,7 +5210,7 @@
     "generatedStates": 3,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 584
+    "tlcMilliseconds": 603
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test33.cfg",
@@ -4520,7 +5218,7 @@
     "generatedStates": 235298,
     "distinctStates": 117649,
     "depth": 1,
-    "tlcMilliseconds": 764
+    "tlcMilliseconds": 963
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test34.cfg",
@@ -4528,7 +5226,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 558
+    "tlcMilliseconds": 733
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test35.cfg",
@@ -4536,7 +5234,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 577
+    "tlcMilliseconds": 650
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test36.cfg",
@@ -4544,7 +5242,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 489
+    "tlcMilliseconds": 615
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test37.cfg",
@@ -4552,7 +5250,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 529
+    "tlcMilliseconds": 635
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test38.cfg",
@@ -4560,7 +5258,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 510
+    "tlcMilliseconds": 552
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test39.cfg",
@@ -4568,7 +5266,7 @@
     "generatedStates": 6,
     "distinctStates": 3,
     "depth": 2,
-    "tlcMilliseconds": 518
+    "tlcMilliseconds": 680
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test4.cfg",
@@ -4576,7 +5274,7 @@
     "generatedStates": 11,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 592
+    "tlcMilliseconds": 657
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test40.cfg",
@@ -4584,7 +5282,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 495
+    "tlcMilliseconds": 602
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test41.cfg",
@@ -4592,7 +5290,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 576
+    "tlcMilliseconds": 672
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test42.cfg",
@@ -4600,7 +5298,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 636
+    "tlcMilliseconds": 611
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test43.cfg",
@@ -4608,7 +5306,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 634
+    "tlcMilliseconds": 685
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test44.cfg",
@@ -4616,7 +5314,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 665
+    "tlcMilliseconds": 584
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test45.cfg",
@@ -4624,7 +5322,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 539
+    "tlcMilliseconds": 541
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test46.cfg",
@@ -4632,7 +5330,7 @@
     "generatedStates": 121,
     "distinctStates": 6,
     "depth": 3,
-    "tlcMilliseconds": 856
+    "tlcMilliseconds": 696
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test47.cfg",
@@ -4640,7 +5338,7 @@
     "generatedStates": 4,
     "distinctStates": 3,
     "depth": 3,
-    "tlcMilliseconds": 623
+    "tlcMilliseconds": 520
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test48.cfg",
@@ -4648,7 +5346,7 @@
     "generatedStates": 64,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 490
+    "tlcMilliseconds": 431
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test49.cfg",
@@ -4656,7 +5354,7 @@
     "generatedStates": 10,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 496
+    "tlcMilliseconds": 533
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test49a.cfg",
@@ -4664,17 +5362,17 @@
     "generatedStates": 10,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 533
+    "tlcMilliseconds": 412
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test49b.cfg",
     "status": "error",
-    "tlcMilliseconds": 363
+    "tlcMilliseconds": 254
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test49c.cfg",
     "status": "error",
-    "tlcMilliseconds": 252
+    "tlcMilliseconds": 294
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test5.cfg",
@@ -4682,7 +5380,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 586
+    "tlcMilliseconds": 426
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test50.cfg",
@@ -4690,7 +5388,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 645
+    "tlcMilliseconds": 468
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test51.cfg",
@@ -4698,7 +5396,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 758
+    "tlcMilliseconds": 656
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test52.cfg",
@@ -4706,7 +5404,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 650
+    "tlcMilliseconds": 513
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test53.cfg",
@@ -4714,7 +5412,7 @@
     "generatedStates": 10,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 499
+    "tlcMilliseconds": 511
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test54.cfg",
@@ -4722,7 +5420,7 @@
     "generatedStates": 10,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 560
+    "tlcMilliseconds": 432
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test55.cfg",
@@ -4730,7 +5428,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 447
+    "tlcMilliseconds": 351
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test56.cfg",
@@ -4738,14 +5436,14 @@
     "generatedStates": 9,
     "distinctStates": 6,
     "depth": 2,
-    "tlcMilliseconds": 442
+    "tlcMilliseconds": 400
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test57.cfg",
     "status": "invariant-violation",
     "violation": "Invariant1",
     "traceLength": 1,
-    "tlcMilliseconds": 504
+    "tlcMilliseconds": 425
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test58.cfg",
@@ -4753,7 +5451,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 525
+    "tlcMilliseconds": 388
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test59.cfg",
@@ -4761,7 +5459,7 @@
     "generatedStates": 6,
     "distinctStates": 5,
     "depth": 5,
-    "tlcMilliseconds": 487
+    "tlcMilliseconds": 446
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test6.cfg",
@@ -4769,7 +5467,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 466
+    "tlcMilliseconds": 484
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test60.cfg",
@@ -4777,7 +5475,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 527
+    "tlcMilliseconds": 386
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test61.cfg",
@@ -4785,7 +5483,7 @@
     "generatedStates": 6,
     "distinctStates": 5,
     "depth": 5,
-    "tlcMilliseconds": 395
+    "tlcMilliseconds": 436
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test62.cfg",
@@ -4793,7 +5491,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 480
+    "tlcMilliseconds": 486
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test63.cfg",
@@ -4801,7 +5499,7 @@
     "generatedStates": 696,
     "distinctStates": 216,
     "depth": 2,
-    "tlcMilliseconds": 468
+    "tlcMilliseconds": 541
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test63a.cfg",
@@ -4809,7 +5507,7 @@
     "generatedStates": 24,
     "distinctStates": 12,
     "depth": 1,
-    "tlcMilliseconds": 358
+    "tlcMilliseconds": 438
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test64.cfg",
@@ -4817,7 +5515,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 317
+    "tlcMilliseconds": 388
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test64a.cfg",
@@ -4825,7 +5523,7 @@
     "generatedStates": 3,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 309
+    "tlcMilliseconds": 373
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test65.cfg",
@@ -4833,7 +5531,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 305
+    "tlcMilliseconds": 365
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test65a.cfg",
@@ -4841,7 +5539,7 @@
     "generatedStates": 0,
     "distinctStates": 0,
     "depth": 0,
-    "tlcMilliseconds": 363
+    "tlcMilliseconds": 389
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test7.cfg",
@@ -4849,7 +5547,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 428
+    "tlcMilliseconds": 511
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test8.cfg",
@@ -4857,7 +5555,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 449
+    "tlcMilliseconds": 458
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test9.cfg",
@@ -4865,7 +5563,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 450
+    "tlcMilliseconds": 574
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test99.cfg",
@@ -4873,7 +5571,7 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 401
+    "tlcMilliseconds": 452
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/test999.cfg",
@@ -4881,125 +5579,125 @@
     "generatedStates": 2,
     "distinctStates": 1,
     "depth": 1,
-    "tlcMilliseconds": 431
+    "tlcMilliseconds": 472
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/testa.cfg",
     "status": "error",
-    "tlcMilliseconds": 204
+    "tlcMilliseconds": 238
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/suite/testfoo.cfg",
     "status": "error",
-    "tlcMilliseconds": 215
+    "tlcMilliseconds": 202
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/April20aMC.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 405
+    "tlcMilliseconds": 518
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/April20bMC.cfg",
     "status": "liveness-violation",
     "traceLength": 3,
-    "tlcMilliseconds": 401
+    "tlcMilliseconds": 514
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/April21MC.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 451
+    "tlcMilliseconds": 529
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/April22MC.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 423
+    "tlcMilliseconds": 479
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/April25MC.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 412
+    "tlcMilliseconds": 442
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/April29MC.cfg",
     "status": "liveness-violation",
     "traceLength": 3,
-    "tlcMilliseconds": 452
+    "tlcMilliseconds": 2762
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/April29dMC.cfg",
     "status": "liveness-violation",
     "traceLength": 3,
-    "tlcMilliseconds": 433
+    "tlcMilliseconds": 2532
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/ChooseTableauSymmetryMC.cfg",
     "status": "liveness-violation",
     "traceLength": 6,
-    "tlcMilliseconds": 426
+    "tlcMilliseconds": 351
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/ChooseTableauSymmetryMCa.cfg",
     "status": "liveness-violation",
     "traceLength": 5,
-    "tlcMilliseconds": 457
+    "tlcMilliseconds": 323
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/ErrorTraceConstructionMC.cfg",
     "status": "liveness-violation",
     "traceLength": 8,
-    "tlcMilliseconds": 413
+    "tlcMilliseconds": 313
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/LongMC.cfg",
     "status": "liveness-violation",
     "traceLength": 5,
-    "tlcMilliseconds": 386
+    "tlcMilliseconds": 324
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/LongMCa.cfg",
     "status": "liveness-violation",
     "traceLength": 5,
-    "tlcMilliseconds": 463
+    "tlcMilliseconds": 311
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/MC.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 441
+    "tlcMilliseconds": 372
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/MCa.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 461
+    "tlcMilliseconds": 480
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/May09MC.cfg",
     "status": "liveness-violation",
     "traceLength": 6,
-    "tlcMilliseconds": 443
+    "tlcMilliseconds": 461
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/May09dMC.cfg",
     "status": "liveness-violation",
     "traceLength": 6,
-    "tlcMilliseconds": 410
+    "tlcMilliseconds": 423
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/NQ/MC.cfg",
     "status": "liveness-violation",
     "traceLength": 6,
-    "tlcMilliseconds": 697
+    "tlcMilliseconds": 716
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/NQ/MCa.cfg",
     "status": "liveness-violation",
     "traceLength": 6,
-    "tlcMilliseconds": 1150
+    "tlcMilliseconds": 1077
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/NoSymmetryLivenessTableauMC.cfg",
@@ -5007,31 +5705,31 @@
     "generatedStates": 5492,
     "distinctStates": 1272,
     "depth": 10,
-    "tlcMilliseconds": 1327
+    "tlcMilliseconds": 885
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/OneBitMutex/OneBitMutexMC.cfg",
     "status": "liveness-violation",
     "traceLength": 13,
-    "tlcMilliseconds": 1349
+    "tlcMilliseconds": 694
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/OneBitMutex/OneBitMutexNoSymmetryMC.cfg",
     "status": "liveness-violation",
     "traceLength": 13,
-    "tlcMilliseconds": 3029
+    "tlcMilliseconds": 841
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/SymmetryLivenessTableauMC.cfg",
     "status": "liveness-violation",
     "traceLength": 7,
-    "tlcMilliseconds": 2378
+    "tlcMilliseconds": 797
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/TableauSymmetryMC.cfg",
     "status": "liveness-violation",
     "traceLength": 6,
-    "tlcMilliseconds": 1253
+    "tlcMilliseconds": 564
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/TwoPhaseCommit/MC.cfg",
@@ -5039,13 +5737,13 @@
     "generatedStates": 5141,
     "distinctStates": 601,
     "depth": 16,
-    "tlcMilliseconds": 3785
+    "tlcMilliseconds": 1508
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/UnsymmetricMCA.cfg",
     "status": "liveness-violation",
     "traceLength": 2,
-    "tlcMilliseconds": 1263
+    "tlcMilliseconds": 555
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/symmetry/UnsymmetricMCB.cfg",
@@ -5053,11 +5751,38 @@
     "generatedStates": 5,
     "distinctStates": 2,
     "depth": 2,
-    "tlcMilliseconds": 926
+    "tlcMilliseconds": 544
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/testinvalidinvariant.cfg",
     "status": "error",
-    "tlcMilliseconds": 442
+    "tlcMilliseconds": 350
+  },
+  {
+    "id": "vsr/vsr-revisited/paper/VSR.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300046
+  },
+  {
+    "id": "vsr/vsr-revisited/paper/analysis/01-view-changes/VR_ASSUME_NEWVIEWCHANGE.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300050
+  },
+  {
+    "id": "vsr/vsr-revisited/paper/analysis/01-view-changes/VR_INC_RESEND.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300033
+  },
+  {
+    "id": "vsr/vsr-revisited/paper/analysis/03-state-transfer/VR_STATE_TRANSFER.cfg",
+    "status": "deadlock",
+    "traceLength": 13,
+    "tlcMilliseconds": 101873
+  },
+  {
+    "id": "vsr/vsr-revisited/paper/analysis/04-application-state/VR_APP_STATE.cfg",
+    "status": "deadlock",
+    "traceLength": 13,
+    "tlcMilliseconds": 97978
   }
 ]

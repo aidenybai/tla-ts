@@ -4,6 +4,7 @@ import {
   type Bound,
   type Definition,
   type Expression,
+  type QuantifierExpression,
 } from "./ast";
 import { getReadVariables } from "./dependencies";
 import { TlaEvaluationError, TlaIncompleteSuccessorError, UNEXPECTED_EXCEPTION } from "./errors";
@@ -294,6 +295,27 @@ const toConjunct = (
   }
   if (isGuard(expression, environment, isInit)) return { kind: "Guard", expression };
   return { kind: "Branch", expression, runner: getRunner(expression, environment, isInit) };
+};
+
+// The leading guards of `\E x \in S, y \in T : P /\ Q` that read no inner bound hold for every inner
+// binding alike, so they can run once for each element of the outermost bound.
+const getHoistedGuards = (expression: QuantifierExpression, environment: Environment) => {
+  if (expression.bounds.length < 2 || expression.body.kind !== "And") return undefined;
+  const names = expression.bounds.flatMap((bound) =>
+    bound.pattern.kind === "Name" ? [bound.pattern.name] : [],
+  );
+  if (names.length !== expression.bounds.length) return undefined;
+  const innerNames = new Set(names.slice(0, -1));
+  const operands = expression.body.operands;
+  const index = operands.findIndex((operand) => {
+    if (getReadVariables(operand, environment) === undefined) return true;
+    if (hasBranches(operand, environment, new Set())) return true;
+    const readLocals = getReadLocals(operand, NO_NAMES);
+    return !readLocals || readLocals.some((name) => innerNames.has(name));
+  });
+  const count = index === -1 ? operands.length : index;
+  if (count === 0) return undefined;
+  return { names, guards: operands.slice(0, count), rest: operands.slice(count) };
 };
 
 const compileConjunction = (
@@ -740,6 +762,33 @@ const compileAction = (
               onComplete,
             );
           }
+        };
+      }
+      const hoisted = isInit ? undefined : getHoistedGuards(expression, environment);
+      if (hoisted) {
+        const rest = compileConjunction(hoisted.rest, environment, isInit);
+        return (run, scope, partial, action, isFixed, onComplete) => {
+          const context = getContext(run, scope, partial);
+          const sets = expression.bounds.map((innerBound) =>
+            getEnumeratedElements(evaluate(innerBound.set, context), innerBound.set),
+          );
+          if (sets.some((elements) => elements.length === 0)) return;
+          const visit = (index: number, boundScope: Scope | undefined): void => {
+            if (index < 0) {
+              rest(run, boundScope, partial, action, isFixed, onComplete);
+              return;
+            }
+            for (const element of sets[index]) {
+              if (run.isStopped) return;
+              const elementScope = bindValue(boundScope, hoisted.names[index], element);
+              if (index === sets.length - 1) {
+                const guardContext = getContext(run, elementScope, partial);
+                if (!hoisted.guards.every((guard) => holds(guard, guardContext))) continue;
+              }
+              visit(index - 1, elementScope);
+            }
+          };
+          visit(sets.length - 1, scope);
         };
       }
       return (run, scope, partial, action, isFixed, onComplete) => {
