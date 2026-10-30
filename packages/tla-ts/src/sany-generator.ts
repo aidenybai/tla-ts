@@ -88,6 +88,7 @@ import {
   getSpanLocation,
   getTokenIndex,
   getTokenLocation,
+  getTokenSource,
   getUnboxedSource,
   isBoxToken,
   isToken,
@@ -1177,7 +1178,7 @@ export const generateSanySpecification = (
       const firstSpan = getParenthesizedSpan(file, getExpressionSpan(file, expression.args[0]));
       const isPrefix = expression.args.length === 1 && firstSpan.start !== span.start;
       const index = isPrefix ? span.start : firstSpan.end + 1;
-      const text = file.tokens[index].text;
+      const text = getTokenSource(file, index);
       return {
         index,
         name: isPrefix && text === "-" ? "-." : text,

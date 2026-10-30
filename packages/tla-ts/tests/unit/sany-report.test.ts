@@ -90,6 +90,17 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it.each(["\\geq", "=<", "(+)", "\\circ"])(
+    "names the unresolved operator %s as it is spelled",
+    (operator) => {
+      const report = getReport({ Infix: `---- MODULE Infix ----\nOp == 1 ${operator} 2\n====\n` });
+      expect(report.text).toContain(
+        `Could not find declaration or definition of symbol '${operator}'.`,
+      );
+      expect(report.text).toContain(`Couldn't resolve infix operator symbol \`${operator}'.`);
+    },
+  );
+
   it("reports a multiply defined operator with a warning and an error", () => {
     const report = getReport({ Twice: "---- MODULE Twice ----\nOp == 1\nOp == 2\n====\n" });
     expect(report.isFailed).toBe(true);

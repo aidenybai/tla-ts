@@ -148,6 +148,13 @@ const getOffset = (file: SourceFile, line: number, column: number) => {
   return offset;
 };
 
+// The token as the source spells it, where the token's text is the name of the operator.
+export const getTokenSource = (file: SourceFile, index: number) => {
+  const token = file.tokens[index];
+  const start = getOffset(file, token.line, token.column);
+  return file.source.slice(start, getOffset(file, token.line, token.endColumn) + 1);
+};
+
 // SANY lexes []ASSUME and []PROVE as single tokens.
 export const isBoxToken = (file: SourceFile, index: number) => {
   const box = file.tokens[index];
