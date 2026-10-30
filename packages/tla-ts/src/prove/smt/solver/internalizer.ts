@@ -5,6 +5,7 @@ import {
   AstManager,
   FAMILY_ARITH,
   FAMILY_BASIC,
+  FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
   OP_AND,
@@ -54,6 +55,12 @@ import { RelevancyPropagator } from "./relevancy";
 import { Rewriter } from "./rewriter";
 import { sortByKey } from "./sort";
 import type { TheoryLra } from "./theory-lra";
+
+// DEEP_EXPR_THRESHOLD: the depth above which internalize_deep sorts an expression's subterms.
+const DEEP_EXPR_THRESHOLD = 1024;
+const WHITE = 0;
+const GREY = 1;
+const BLACK = 2;
 
 interface NewEq {
   lhs: Enode;
@@ -472,9 +479,73 @@ export abstract class Internalizer {
     return op === OP_EQ && this.manager.isBool(this.manager.args[expr][0]);
   }
 
+  // should_internalize_rec: a term, or a Boolean application of the basic family or an
+  // uninterpreted declaration.
+  private shouldInternalizeRec(expr: number) {
+    const manager = this.manager;
+    if (manager.kinds[expr] !== KIND_APP || manager.sorts[expr] !== SORT_BOOL) return true;
+    const family = manager.getFamily(expr);
+    return family === FAMILY_BASIC || family === FAMILY_USER;
+  }
+
+  // internalize_deep: internalizes the subterms of a deep expression bottom up, in the order of a
+  // topological sort, so the recursion of internalizeRec stays shallow.
+  private internalizeDeep(expr: number) {
+    if (
+      this.isEInternalized(expr) ||
+      this.manager.depths[expr] <= DEEP_EXPR_THRESHOLD ||
+      !this.shouldInternalizeRec(expr)
+    )
+      return;
+    const manager = this.manager;
+    // The color of each expression in a gate context and outside one: white while unvisited, grey
+    // while its children are visited, and black once it is sorted.
+    const colors = new Map<number, number>();
+    const getColor = (current: number, isGate: boolean) =>
+      colors.get(current * 2 + (isGate ? 1 : 0)) ?? WHITE;
+    const todo: [number, boolean][] = [[expr, true]];
+    const sorted: [number, boolean][] = [];
+    const visitChild = (child: number, isGate: boolean) => {
+      if (getColor(child, isGate) === WHITE) todo.push([child, isGate]);
+    };
+    // ts_visit_children, which Z3 calls again on grey expressions only in its assertions.
+    const visitChildren = (current: number) => {
+      if (manager.kinds[current] === KIND_QUANTIFIER || !this.shouldInternalizeRec(current)) return;
+      const node = this.exprToEnode[current];
+      if (node !== undefined) this.updateGeneration(node);
+      if (manager.sorts[current] === SORT_BOOL ? this.isBInternalized(current) : node !== undefined)
+        return;
+      const args = manager.args[current];
+      if (manager.getOp(current) === OP_ITE && manager.sorts[current] !== SORT_BOOL) {
+        visitChild(args[0], true);
+        visitChild(args[1], false);
+        visitChild(args[2], false);
+        return;
+      }
+      const isNewGate =
+        manager.sorts[current] === SORT_BOOL && (this.isGate(current) || manager.isNot(current));
+      for (let index = args.length - 1; index >= 0; index--) visitChild(args[index], isNewGate);
+    };
+    while (todo.length > 0) {
+      const top = todo[todo.length - 1];
+      const color = getColor(top[0], top[1]);
+      if (color === BLACK) todo.pop();
+      else if (color === WHITE) {
+        colors.set(top[0] * 2 + (top[1] ? 1 : 0), GREY);
+        visitChildren(top[0]);
+      } else {
+        colors.set(top[0] * 2 + (top[1] ? 1 : 0), BLACK);
+        if (top[0] !== expr && !manager.isNot(top[0]) && this.shouldInternalizeRec(top[0]))
+          sorted.push(top);
+      }
+    }
+    for (const entry of sorted) this.internalizeRec(entry[0], entry[1]);
+  }
+
   internalizeAssertion(expr: number, generation: number) {
     const savedGeneration = this.generation;
     this.generation = generation;
+    this.internalizeDeep(expr);
     const manager = this.manager;
     if (this.isGate(expr)) {
       const args = manager.args[expr];
@@ -528,6 +599,7 @@ export abstract class Internalizer {
   internalize(expr: number, isGateContext: boolean, generation = this.generation) {
     const savedGeneration = this.generation;
     this.generation = generation;
+    this.internalizeDeep(expr);
     this.internalizeRec(expr, isGateContext);
     this.generation = savedGeneration;
   }

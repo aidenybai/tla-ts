@@ -64,6 +64,10 @@ describe("decideSmt", () => {
     ).toBe("unknown");
   });
 
+  it("proves a problem whose terms are nested thousands deep", () => {
+    expect(decideSmt(getDeepProblem(2500), { timeLimitMs: 5000 })).toBe("unsat");
+  });
+
   it("answers instead of throwing when a recursion exhausts the stack", () => {
     expect(["unsat", "unknown"]).toContain(decideSmt(getDeepProblem(20000), { timeLimitMs: 5000 }));
   });
