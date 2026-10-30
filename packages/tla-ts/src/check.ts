@@ -821,6 +821,8 @@ interface Search {
   getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
+  // TLC drops a constraint that is a true constant formula.
+  isConstrained: boolean;
   findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
   // The checks of a state that TLC evaluates when it replays the computation of the initial states
   // or of the successors of a state, with an environment that records the call stack. They return
@@ -1036,6 +1038,7 @@ export const createSearch = (
     properties,
     spec,
     isSymmetric: symmetryGroup.length > 0,
+    isConstrained: constraints.length > 0 || actionConstraints.length > 0,
     getTlcOrder,
     getStoredFingerprints: (states, fingerprintStates) => {
       if (view !== undefined || isFingerprintedLikeTlc) {
@@ -1590,7 +1593,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     options.onProgress?.({
       kind: "liveness-initializing",
       isSymmetric: search.isSymmetric,
-      isConstrained: config.constraints.length > 0 || config.actionConstraints.length > 0,
+      isConstrained: search.isConstrained,
     });
   }
   // TLC reports an EvalException in building the liveness checker as an exception it didn't expect.

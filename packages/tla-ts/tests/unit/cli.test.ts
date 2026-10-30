@@ -684,6 +684,9 @@ describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path
     const bounded = check174("Bounded");
     expect(bounded.status).toBe(0);
     expect(getToolSequence(bounded.stdout).slice(4, 7)).toEqual(["2185", "2284", "2212"]);
+    const unbounded = check174("Unbounded");
+    expect(unbounded.status).toBe(0);
+    expect(getToolSequence(unbounded.stdout).slice(4, 6)).toEqual(["2185", "2212"]);
     const empty = check174("Empty");
     expect(empty.status).toBe(0);
     expect(empty.stdout).toContain("The depth of the complete state graph search is 1.");
