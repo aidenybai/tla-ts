@@ -146,7 +146,9 @@ export const getSanyReport = (
   const printValidations = () =>
     validations
       .splice(0)
-      .forEach(({ text, isError }) => (isError ? options.onPrintError?.(`${text}\n`) : log(text)));
+      .forEach((validation) =>
+        validation.isError ? options.onPrintError?.(`${validation.text}\n`) : log(validation.text),
+      );
   // SpecObj.validateParseUnit: Errors.addMessage drops a message it already has.
   const validate = (moduleName: string) => {
     const loaded = loadedModules.get(moduleName);
@@ -289,14 +291,14 @@ export const getSanyReport = (
         },
       });
     } catch (error) {
+      isFailed.value = true;
       // SANY.frontEndParse turns a Java exception of its validation of PlusCal into a fatal
       // error, printing the exception and its messages so far.
       if (error instanceof PcalRuntimeError) {
         log(`\nFatal errors while parsing TLA+ spec in file ${name}\n`);
         log(error.message);
         log(formatErrors(parseMessages));
-        isFailed.value = true;
-        return undefined;
+        return;
       }
       if (!(error instanceof TlaSanyFatalError)) throw error;
       const fatal = { location: error.location, text: error.message, isWarning: false };
@@ -311,20 +313,16 @@ export const getSanyReport = (
         log(
           'java.lang.NullPointerException: Cannot invoke "String.length()" because "str" is null',
         );
-        isFailed.value = true;
-        return undefined;
+        return;
       }
       // TLC 1.7.4's SANY aborts with an AbortException, and keeps the message as an abort.
       if (isTlc174) {
         log("tla2sany.semantic.AbortException");
         write(`*** Abort messages: 1\n\n${formatMessage(fatal)}\n\n\n`);
-        isFailed.value = true;
-        return undefined;
+        return;
       }
       log(formatMessage(fatal));
       log(formatErrors(parsePhase.isReported ? [fatal] : [...parseMessages, fatal]));
-      isFailed.value = true;
-      return undefined;
     }
   };
   const specification = generate();

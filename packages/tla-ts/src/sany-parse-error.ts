@@ -1,4 +1,4 @@
-import { createSanyLexer, getKind, type SanyToken } from "./sany-lexer";
+import { createSanyLexer, escapeLexeme, getKind, type SanyToken } from "./sany-lexer";
 import { SANY_OPERATOR_SYNONYMS } from "./tlc-modules";
 
 // The report SANY's parser, TLAplusParser, gives for a module it fails to parse. This interprets
@@ -171,18 +171,6 @@ const FIELD_NAME_KINDS = new Set([
   getKind("US"),
   ...getKindRange("op_112", "op_116"),
 ]);
-
-const ESCAPES: Record<string, string> = {
-  "\0": "",
-  "\b": "\\b",
-  "\t": "\\t",
-  "\n": "\\n",
-  "\f": "\\f",
-  "\r": "\\r",
-  '"': '\\"',
-  "'": "\\'",
-  "\\": "\\\\",
-};
 
 const createOperators = (
   fix: Operator["fix"],
@@ -366,10 +354,10 @@ const getToken = (state: ParserState, index: number) => {
   return token;
 };
 
-const isNextKind =
-  (...names: string[]) =>
-  (state: ParserState) =>
-    names.some((name) => getToken(state, 1).kind === getKind(name));
+const isNextKind = (...names: string[]) => {
+  const kinds = names.map(getKind);
+  return (state: ParserState) => kinds.includes(getToken(state, 1).kind);
+};
 
 // JunctionListContext.isAboveCurrent, for the next token by default, and isNewBullet.
 const isAboveCurrent = (state: ParserState, column = getToken(state, 1).beginColumn) => {
@@ -2027,7 +2015,8 @@ const getEncountered = (state: ParserState) => {
     state.farthestRescan,
   );
   const images: string[] = [];
-  let token = getNext(state, state.token);
+  const next = getNext(state, state.token);
+  let token = next;
   for (let index = 0; index < length; index++) {
     if (token.kind === EOF) {
       images.push("<EOF>");
@@ -2036,13 +2025,7 @@ const getEncountered = (state: ParserState) => {
     images.push(token.image);
     token = getNext(state, token);
   }
-  const next = getNext(state, state.token);
-  const image = state.token.image.replace(
-    /[\0\b\t\n\f\r"'\\]|[^\x20-\x7e]/g,
-    (character) =>
-      ESCAPES[character] ?? `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
-  return `Encountered "${images.join(" ")}" at line ${next.beginLine}, column ${next.beginColumn} and token "${image}" `;
+  return `Encountered "${images.join(" ")}" at line ${next.beginLine}, column ${next.beginColumn} and token "${escapeLexeme(state.token.image)}" `;
 };
 
 // Records TLAplusParser.msgStackToString's report, without its "***Parse Error***" heading.

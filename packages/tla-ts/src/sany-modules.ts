@@ -1,11 +1,7 @@
 import type { TlcVersion } from "./tlc-version";
+import { REAL_TIME, REALS, TOOLBOX } from "./bundled-modules";
 
-// The standard modules of SANY's tla2sany/StandardModules (tla2tools.jar 2026.10.28), verbatim,
-// since the XML that SANY exports locates every node of them and keeps their comments.
-export const SANY_STANDARD_MODULES = new Map([
-  [
-    "Bags",
-    `----------------------------- MODULE Bags --------------------------------
+const BAGS = `----------------------------- MODULE Bags --------------------------------
 (**************************************************************************)
 (* A bag, also called a multiset, is a set that can contain multiple      *)
 (* copies of the same element.  A bag can have infinitely many elements,  *)
@@ -158,8 +154,12 @@ CopiesIn(e, B) ==
  7 Dec 98 : Corrected error found by Stephan Merz.
  6 Dec 98 : Modified comments based on suggestions by Lyle Ramshaw.
  5 Dec 98 : Initial version.
-`,
-  ],
+`;
+
+// The standard modules of SANY's tla2sany/StandardModules (tla2tools.jar 2026.10.28), verbatim,
+// since the XML that SANY exports locates every node of them and keeps their comments.
+export const SANY_STANDARD_MODULES = new Map([
+  ["Bags", BAGS],
   [
     "FiniteSets",
     `---------------------------- MODULE FiniteSets -----------------------------
@@ -436,59 +436,8 @@ TestRandomSetOfSubsets(k, n, S) ==
 =============================================================================
 `,
   ],
-  [
-    "RealTime",
-    `----------------------------- MODULE RealTime -------------------------------
-(***************************************************************************)
-(* This standard module is described in Chapter 9 of the book "Specifying  *)
-(* Systems".  The type of specification described there cannot be handled  *)
-(* by the TLC model checker.                                               *)
-(***************************************************************************)
-EXTENDS Reals 
-VARIABLE now
-
-RTBound(A, v, D, E) == 
-  LET TNext(t)  ==  t' = IF <<A>>_v \\/ ~(ENABLED <<A>>_v)'
-                           THEN 0 
-                           ELSE t + (now'-now)
-
-      Timer(t) == (t=0)  /\\  [][TNext(t)]_<<t, v, now>>
-
-      MaxTime(t) == [](t \\leq E) 
-
-      MinTime(t) == [][A => t \\geq D]_v 
-  IN \\EE t : Timer(t) /\\ MaxTime(t) /\\ MinTime(t)
------------------------------------------------------------------------------
-RTnow(v) == LET NowNext == /\\ now' \\in {r \\in Real : r > now} 
-                           /\\ UNCHANGED v
-            IN  /\\ now \\in Real 
-                /\\ [][NowNext]_now
-                /\\ \\A r \\in Real : WF_now(NowNext /\\ (now'>r))
-=============================================================================
-`,
-  ],
-  [
-    "Reals",
-    `-------------------------------- MODULE Reals -------------------------------
-(***************************************************************************)
-(* This module provides dummy definitions of the operators that are        *)
-(* defined by the real Reals module.  It is expected that any tool that    *)
-(* handles specifications that use real numbers will provide its own       *)
-(* implementations of these operators.  TLC currently does not handle real *)
-(* numbers and produces an error if a specification requires TLC to        *)
-(* evaluate the operators defined here or to evaluate any operator defined *)
-(* in the Integers module that is applied to non-integer real numbers.     *)
-(*                                                                         *)
-(* See the book "Specifying Systems" for the real Reals module.            *)
-(***************************************************************************)
-EXTENDS Integers
-
-Real  == "Reals"
-a / b == CHOOSE m \\in Real : m * b = a
-Infinity == CHOOSE i : (i \\notin Real) /\\ (\\A r \\in Real : i > r)
-=============================================================================
-`,
-  ],
+  ["RealTime", `${REAL_TIME}\n`],
+  ["Reals", `${REALS}\n`],
   [
     "Sequences",
     `------------------------------ MODULE Sequences -----------------------------
@@ -905,37 +854,7 @@ TLCEvalDefinition(definitionName) ==
 ============================================================================
 `,
   ],
-  [
-    "Toolbox",
-    `----------------------------- MODULE Toolbox --------------------------------
-(***************************************************************************)
-(*                                                                         *)
-(***************************************************************************)
-LOCAL INSTANCE Naturals   \\* a + b
-LOCAL INSTANCE FiniteSets \\* Cardinality
-LOCAL INSTANCE TLC        \\* TLCGet
-
------------------------------------------------------------------------------
-
-(* Trace Exploration *)
-
-_TETrace ==
-    CHOOSE f \\in [ (Nat \\ {0}) -> STRING ] : TRUE
-
-LOCAL _TETraceLength == Cardinality(DOMAIN _TETrace)
-
-\\* When evaluated as part of a TLC ALIAS expression, \`_TEPosition\` should be
-\\* redefined as \`TLCGet("level"), or replace with \`TLCGet(level)\` right away.
-\\* The definition below accounts for several "peculiarities" of the
-\\* Toolbox's trace exploration.
-_TEPosition == 
-    IF TLCGet("level") >= _TETraceLength
-       THEN _TETraceLength
-       ELSE IF TLCGet("level") = 0 THEN 1 ELSE TLCGet("level")
-
-=============================================================================
-`,
-  ],
+  ["Toolbox", `${TOOLBOX}\n`],
   [
     "_DotTrace",
     `------------------------------- MODULE _DotTrace -------------------------------
@@ -1376,164 +1295,7 @@ export const SANY_174_STANDARD_MODULES = new Map([
   ...[...SANY_STANDARD_MODULES].filter(([name]) =>
     ["FiniteSets", "Integers", "Naturals", "RealTime", "Reals", "Sequences", "TLC"].includes(name),
   ),
-  [
-    "Bags",
-    `----------------------------- MODULE Bags --------------------------------
-(**************************************************************************)
-(* A bag, also called a multiset, is a set that can contain multiple      *)
-(* copies of the same element.  A bag can have infinitely many elements,  *)
-(* but only finitely many copies of any single element.                   *)
-(*                                                                        *)
-(* We represent a bag in the usual way as a function whose range is a     *)
-(* subset of the positive integers.  An element e belongs to bag B iff e  *)
-(* is in the domain of B, in which case bag B contains B[e] copies of e.  *)
-(**************************************************************************)
-(**************************************************************************)
-(* All these definitions other than SubBag are overridden by TLC in the   *)
-(* Java class tlc2.module.Bags. Each operator is overridden by the Java   *)
-(* method with the same name, except that the mapping for TLA+ infix      *)
-(* operators is defined in the static block at the beginning of the Java  *)
-(* class.                                                                 *)
-(**************************************************************************)
-EXTENDS TLC
-LOCAL INSTANCE Naturals
-
-IsABag(B) == 
-  (************************************************************************)
-  (* True iff B is a bag.                                                 *)
-  (************************************************************************)
-  B \\in [DOMAIN B -> {n \\in Nat : n > 0}]
-
-BagToSet(B) == DOMAIN B
-  (************************************************************************)
-  (* The set of elements at least one copy of which is in B.              *)
-  (************************************************************************)
-
-SetToBag(S) == [e \\in S |-> 1]
-  (************************************************************************)
-  (* The bag that contains one copy of every element of the set S.        *)
-  (************************************************************************)
-  
-BagIn(e,B) == e \\in BagToSet(B)
-  (************************************************************************)
-  (* The \\in operator for bags.                                           *)
-  (************************************************************************)
-
-EmptyBag == SetToBag({})
-
-B1 (+) B2  ==
-  (************************************************************************)
-  (* The union of bags B1 and B2.                                         *)
-  (************************************************************************)
-  [e \\in (DOMAIN B1) \\cup (DOMAIN B2) |->
-      (IF e \\in DOMAIN B1 THEN B1[e] ELSE 0) 
-    + (IF e \\in DOMAIN B2 THEN B2[e] ELSE 0) ]
-  
-B1 (-) B2  ==
-  (************************************************************************)
-  (* The bag B1 with the elements of B2 removed--that is, with one copy   *)
-  (* of an element removed from B1 for each copy of the same element in   *)
-  (* B2.  If B2 has at least as many copies of e as B1, then B1 (-) B2    *)
-  (* has no copies of e.                                                  *)
-  (************************************************************************)
-  LET B == [e \\in DOMAIN B1 |-> IF e \\in DOMAIN B2 THEN B1[e] - B2[e]
-                                                   ELSE B1[e]]
-  IN  [e \\in {d \\in DOMAIN B : B[d] > 0} |-> B[e]]
-
-LOCAL Sum(f) ==
-        (******************************************************************)
-        (* The sum of f[x] for all x in DOMAIN f.  The definition assumes *)
-        (* that f is a Nat-valued function and that f[x] equals 0 for all *)
-        (* but a finite number of elements x in DOMAIN f.                 *)
-        (******************************************************************)
-        LET DSum[S \\in SUBSET DOMAIN f] ==
-               LET elt == CHOOSE e \\in S : TRUE
-               IN  IF S = {} THEN 0
-                             ELSE f[elt] + DSum[S \\ {elt}]
-        IN  DSum[DOMAIN f]
-
-BagUnion(S) ==
-  (************************************************************************)
-  (* The bag union of all elements of the set S of bags.                  *)
-  (************************************************************************)
-  [e \\in UNION {BagToSet(B) : B \\in S} |->
-    Sum( [B \\in S |-> IF BagIn(e, B) THEN B[e] ELSE 0] ) ]
-
-B1 \\sqsubseteq B2  ==
-  (************************************************************************)
-  (* The subset operator for bags.  B1 \\sqsubseteq B2 iff, for all e, bag *)
-  (* B2 has at least as many copies of e as bag B1 does.                  *)
-  (************************************************************************)
-  /\\ (DOMAIN B1) \\subseteq (DOMAIN B2)
-  /\\ \\A e \\in DOMAIN B1 : B1[e] \\leq B2[e]
-
-SubBag(B) ==
-  (************************************************************************)
-  (* The set of all subbags of bag B.                                     *)
-  (*                                                                      *)
-  (* The following definition is not the one described in the TLA+ book,  *)
-  (* but rather one that TLC can evaluate.                                *)
-  (************************************************************************)
-
-  LET RemoveFromDom(x, f) == [y \\in (DOMAIN f) \\ {x} |-> f[y]]
-      Combine(x, BagSet) == 
-         BagSet \\cup
-          {[y \\in (DOMAIN f) \\cup {x} |-> IF y = x THEN i ELSE f[y]] :
-                f \\in BagSet, i \\in 1..B[x]}
-      Biggest == LET Range == {B[x] : x \\in DOMAIN B}
-                 IN  IF Range = {} THEN 0
-                                   ELSE CHOOSE r \\in Range :
-                                           \\A s \\in Range : r \\geq s
-      RSB[BB \\in UNION {[S -> 1..Biggest] : S \\in SUBSET DOMAIN B}] ==
-        IF BB = << >> THEN {<< >>}
-                      ELSE LET x == CHOOSE x \\in DOMAIN BB : TRUE
-                           IN  Combine(x, RSB[RemoveFromDom(x, BB)])
-  IN RSB[B]
-
-  (*******************  Here is the definition from the TLA+ book. ********
-  LET AllBagsOfSubset == 
-        (******************************************************************)
-        (* The set of all bags SB such that BagToSet(SB) \\subseteq        *)
-        (* BagToSet(B).                                                   *)
-        (******************************************************************)
-        UNION {[SB -> {n \\in Nat : n > 0}] : SB \\in SUBSET BagToSet(B)}  
-  IN  {SB \\in AllBagsOfSubset : \\A e \\in DOMAIN SB : SB[e] \\leq B[e]}
-  ***************************************************************************)
-
-BagOfAll(F(_), B) ==
-  (************************************************************************)
-  (* The bag analog of the set {F(x) : x \\in B} for a set B. It's the bag *)
-  (* that contains, for each element e of B, one copy of F(e) for every   *)
-  (* copy of e in B. This defines a bag iff, for any value v, the set of  *)
-  (* e in B such that F(e) = v is finite.                                 *)
-  (************************************************************************)
-  [e \\in {F(d) : d \\in BagToSet(B)} |-> 
-     Sum( [d \\in BagToSet(B) |-> IF F(d) = e THEN B[d] ELSE 0] ) ]
-
-BagCardinality(B) ==
-  (************************************************************************)
-  (* If B is a finite bag (one such that BagToSet(B) is a finite set),    *)
-  (* then this is its cardinality (the total number of copies of elements *)
-  (* in B).  Its value is unspecified if B is infinite.                   *)
-  (************************************************************************)
-  Sum(B)
-
-CopiesIn(e, B) ==
-  (************************************************************************)
-  (* If B is a bag, then CopiesIn(e, B) is the number of copies of e in   *)
-  (* B. If ~BagIn(e, B), then CopiesIn(e, B) = 0.                         *)
-  (************************************************************************)
-  IF BagIn(e, B) THEN B[e] ELSE 0
-=============================================================================
-
-(* Last modified on Fri 26 Jan 2007 at  8:45:03 PST by lamport *)
-
- 6 Apr 99 : Modified version for standard module set
- 7 Dec 98 : Corrected error found by Stephan Merz.
- 6 Dec 98 : Modified comments based on suggestions by Lyle Ramshaw.
- 5 Dec 98 : Initial version.
-`,
-  ],
+  ["Bags", BAGS.replace("\nLOCAL INSTANCE Naturals\n", "\nEXTENDS TLC\nLOCAL INSTANCE Naturals\n")],
   [
     "Randomization",
     `-------------------------- MODULE Randomization------------------------------

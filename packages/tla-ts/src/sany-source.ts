@@ -1,5 +1,6 @@
 import type { Expression, SourceRange } from "./ast";
 import { tokenize, type Token } from "./lexer";
+import { getTabStop } from "./sany-lexer";
 import type { SanyLocation } from "./sany-nodes";
 
 // The tokens of one file, to find the locations SANY gives to names, brackets and parentheses that
@@ -72,7 +73,7 @@ export const getTokenIndex = (file: SourceFile, position: { line: number; column
 };
 
 // The index of the last token at or before a position.
-export const getEndTokenIndex = (file: SourceFile, position: { line: number; column: number }) =>
+const getEndTokenIndex = (file: SourceFile, position: { line: number; column: number }) =>
   Math.max(countTokensBefore(file, position, true) - 1, 0);
 
 export const getMatchingIndex = (file: SourceFile, openIndex: number) => {
@@ -140,7 +141,7 @@ const getOffset = (file: SourceFile, line: number, column: number) => {
   let width = 0;
   let offset = lineStart;
   while (offset < file.source.length) {
-    width = file.source[offset] === "\t" ? width + 8 - (width % 8) : width + 1;
+    width = file.source[offset] === "\t" ? getTabStop(width) : width + 1;
     if (width >= column) return offset;
     offset++;
   }

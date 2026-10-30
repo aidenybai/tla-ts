@@ -160,14 +160,9 @@ interface JavaFrame {
   failedFor?: string;
 }
 
-// A call by which TLC 1.7.4's XMLExporter exports a node.
-interface JavaCall {
-  at: string;
-}
-
 // A call by which TLC 1.7.4's XMLExporter exports an expression that may be the null SANY generates
 // for an operator it can't resolve, and how the JVM names that null.
-interface JavaExpressionCall extends JavaCall {
+interface JavaExpressionCall extends JavaFrame {
   nullType: string;
   nullValue: string;
 }
@@ -269,7 +264,7 @@ const JAVA_CALLS = {
     nullValue: '"this.steps[i]"',
   },
   defStep: { at: "semantic.DefStepNode.getLevelElement(DefStepNode.java:99)" },
-} satisfies Record<string, JavaCall | JavaExpressionCall>;
+} satisfies Record<string, JavaFrame | JavaExpressionCall>;
 
 // The calls by which TLC 1.7.4's XMLExporter exports the parts of a SubstInNode or APSubstInNode.
 const SUBST_IN_CALLS = {
@@ -404,10 +399,10 @@ export interface XmlExportOptions {
 const exportSpecification = (
   modules: ModuleNode[],
   root: ModuleNode,
-  { version, isRestricted, isUncommented }: XmlExportOptions,
+  options: XmlExportOptions,
 ) => {
   // TLC 1.7.4's XMLExporter writes fewer elements, which keeps their nodes out of the context.
-  const isTlc174 = version === "1.7.4";
+  const isTlc174 = options.version === "1.7.4";
   // SymbolContext: SANY marks a node's UID as exported before it exports the node's definition,
   // which can export other definitions, and adds the definition to its entries after them.
   const keys = new Set<number>();
@@ -440,21 +435,18 @@ const exportSpecification = (
     );
   };
 
-  const getReference = (node: ContextNode, call?: JavaCall, isOtherBug = false): XmlElement => {
+  const getReference = (node: ContextNode, call?: JavaFrame, isOtherBug = false): XmlElement => {
     if (!keys.has(node.id)) {
       keys.add(node.id);
-      const definition = () => exportDefinition(node, isOtherBug);
       entries.set(
         node.id,
-        isTlc174
-          ? withFrames(
-              [
-                ...(call ? [call] : []),
-                ...getDefinitionFrames(node.kind, formatSanyLocation(node.location)),
-              ],
-              definition,
-            )
-          : definition(),
+        withFrames(
+          [
+            ...(call ? [call] : []),
+            ...getDefinitionFrames(node.kind, formatSanyLocation(node.location)),
+          ],
+          () => exportDefinition(node, isOtherBug),
+        ),
       );
     }
     return createElement(getReferenceTag(node), [createText("UID", node.id)]);
@@ -471,16 +463,15 @@ const exportSpecification = (
   };
 
   const getParamsElement = (
-    params: { id: number }[],
+    params: SymbolNode[],
     isLeibnizArg: boolean[] | undefined,
-    nodes: SymbolNode[],
-    call: JavaCall,
+    call: JavaFrame,
   ) =>
     createElement(
       "params",
-      params.map((_, index) =>
+      params.map((param, index) =>
         createElement("leibnizparam", [
-          getReference(nodes[index], call),
+          getReference(param, call),
           ...(isLeibnizArg?.[index] ? [createElement("leibniz")] : []),
         ]),
       ),
@@ -491,7 +482,7 @@ const exportSpecification = (
       .map((comment) => comment.trimEnd())
       .filter((comment) => comment.length > 0)
       .join("\n");
-    const cdata = isUncommented ? unboxBackslashStarComment(unboxComment(text)) : text;
+    const cdata = options.isUncommented ? unboxBackslashStarComment(unboxComment(text)) : text;
     return comments.length > 0 ? [{ tag: "pre-comments", cdata, children: [] }] : [];
   };
 
@@ -543,7 +534,7 @@ const exportSpecification = (
               createText("uniquename", node.name),
               createText("arity", node.arity),
               ...(node.params
-                ? [getParamsElement(params, node.isLeibnizArg, params, JAVA_CALLS.builtInParam)]
+                ? [getParamsElement(params, node.isLeibnizArg, JAVA_CALLS.builtInParam)]
                 : []),
             ]),
             node,
@@ -562,7 +553,7 @@ const exportSpecification = (
               createText("arity", node.arity),
               createElement("body", [exportExpression(body, JAVA_CALLS.body, isOtherBug)]),
               ...(node.params
-                ? [getParamsElement(params, node.isLeibnizArg, params, JAVA_CALLS.param)]
+                ? [getParamsElement(params, node.isLeibnizArg, JAVA_CALLS.param)]
                 : []),
               ...(node.inRecursive ? [createElement("recursive")] : []),
             ]),
@@ -577,7 +568,7 @@ const exportSpecification = (
             createElement("originalOperator", [getReference(node.source ?? node)]),
             createElement("originallyDefinedInModule", [getReference(module)]),
             createElement("body", [exportExpression(body, JAVA_CALLS.body, isOtherBug)]),
-            getParamsElement(params, node.isLeibnizArg, params, JAVA_CALLS.param),
+            getParamsElement(params, node.isLeibnizArg, JAVA_CALLS.param),
             ...getPreCommentsElement(node.preComments),
             ...(node.inRecursive ? [createElement("recursive")] : []),
             ...(node.recursiveSection >= 0
@@ -599,10 +590,10 @@ const exportSpecification = (
           node.location,
         );
       case "Module":
-        return {
-          tag: "ModuleNode",
-          children: [getLocationElement(node.location), ...exportModuleChildren(node)],
-        };
+        return createElement("ModuleNode", [
+          getLocationElement(node.location),
+          ...exportModuleChildren(node),
+        ]);
       case "Theorem":
         return withLevel(
           createElement("TheoremNode", [
@@ -621,21 +612,18 @@ const exportSpecification = (
           node.location,
         );
       case "Assume":
-        return {
-          ...createElement("AssumeNode"),
-          children: [
-            getLocationElement(node.location),
-            createText("level", node.body.level),
-            ...(node.definition
-              ? [
-                  createElement("definition", [
-                    getReference(node.definition, JAVA_CALLS.assumeDefinition),
-                  ]),
-                ]
-              : []),
-            createElement("body", [exportExpression(node.body, JAVA_CALLS.assume, false)]),
-          ],
-        };
+        return createElement("AssumeNode", [
+          getLocationElement(node.location),
+          createText("level", node.body.level),
+          ...(node.definition
+            ? [
+                createElement("definition", [
+                  getReference(node.definition, JAVA_CALLS.assumeDefinition),
+                ]),
+              ]
+            : []),
+          createElement("body", [exportExpression(node.body, JAVA_CALLS.assume, false)]),
+        ]);
     }
   };
 
@@ -643,7 +631,8 @@ const exportSpecification = (
   // that the context entries they add appear in the same order.
   const exportModuleChildren = (module: ModuleNode): XmlElement[] => {
     // XMLExporter's filter for -r: a declaration or definition that the module makes itself.
-    const isExported = (node: OpDeclNode | OpDefNode) => !isRestricted || node.module === module;
+    const isExported = (node: OpDeclNode | OpDefNode) =>
+      !options.isRestricted || node.module === module;
     return [
       createText("uniquename", module.name),
       ...(isTlc174
@@ -678,7 +667,7 @@ const exportSpecification = (
   };
 
   // A Subst is no SemanticNode, so it reports no exception that unwinds it.
-  const exportSubst = (subst: Subst, call: JavaCall, isOtherBug: boolean) =>
+  const exportSubst = (subst: Subst, call: JavaFrame, isOtherBug: boolean) =>
     withFrames([call], () =>
       createElement("Subst", [
         getReference(subst.op, JAVA_CALLS.substOperator),
@@ -748,7 +737,7 @@ const exportSpecification = (
   // SemanticNode.export reports an exception that unwinds the export of a node.
   const exportExpression = (
     node: ExportedNode,
-    call: JavaCall | JavaExpressionCall,
+    call: JavaFrame | JavaExpressionCall,
     isOtherBug: boolean,
   ): XmlElement => {
     if (!isTlc174) return exportLevelNode(node, isOtherBug);
@@ -873,18 +862,15 @@ const exportSpecification = (
         const params = node.params.map((param) =>
           getReference(param, JAVA_CALLS.instanceParam, isOtherBug),
         );
-        return {
-          ...createElement("InstanceNode"),
-          children: [
-            getLocationElement(node.location),
-            createText("level", 0),
-            ...(node.name === undefined ? [] : [createText("uniquename", node.name)]),
-            createText("module", node.module.name),
-            createElement("substs", substs),
-            createElement("params", params),
-            ...(node.isLocal && !isTlc174 ? [createElement("local")] : []),
-          ],
-        };
+        return createElement("InstanceNode", [
+          getLocationElement(node.location),
+          createText("level", 0),
+          ...(node.name === undefined ? [] : [createText("uniquename", node.name)]),
+          createText("module", node.module.name),
+          createElement("substs", substs),
+          createElement("params", params),
+          ...(node.isLocal && !isTlc174 ? [createElement("local")] : []),
+        ]);
       }
       case "UseOrHide":
         return withLevel(
@@ -979,7 +965,7 @@ const exportSpecification = (
     }
   };
 
-  const moduleReferences = (isRestricted ? [root] : modules).map((module) =>
+  const moduleReferences = (options.isRestricted ? [root] : modules).map((module) =>
     getReference(module, JAVA_CALLS.main),
   );
   const capacity = getHashMapCapacity(entries.size);

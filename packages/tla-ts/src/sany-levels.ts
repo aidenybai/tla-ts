@@ -103,6 +103,22 @@ const putArgLevelConstraints = (
   });
 };
 
+const shareLevels = (node: LevelFields, source: LevelFields) => {
+  node.levelParams = source.levelParams;
+  node.allParams = source.allParams;
+  node.levelConstraints = source.levelConstraints;
+  node.argLevelConstraints = source.argLevelConstraints;
+  node.argLevelParams = source.argLevelParams;
+};
+
+const mergeLevels = (node: LevelFields, part: LevelFields) => {
+  addAll(node.levelParams, part.levelParams);
+  addAll(node.allParams, part.allParams);
+  putLevelConstraints(node.levelConstraints, part.levelConstraints);
+  putArgLevelConstraints(node.argLevelConstraints, part.argLevelConstraints);
+  addArgLevelParams(node.argLevelParams, part.argLevelParams);
+};
+
 // ArgLevelParam.occur.
 const isOccurring = (argLevelParam: ArgLevelParam, symbols: SymbolNode[]) =>
   symbols.includes(argLevelParam.op) || symbols.includes(argLevelParam.param);
@@ -153,7 +169,7 @@ const getSubstitutedParams = (param: SymbolNode, substs: Subst[], isAll: boolean
 
 // Subst.getSubALPSet.
 const getSubstitutedArgLevelParams = (source: Map<string, ArgLevelParam>, substs: Subst[]) => {
-  const result: Map<string, ArgLevelParam> = new Map();
+  const result = new Map<string, ArgLevelParam>();
   source.forEach((argLevelParam, key) => {
     const expr = getSubstitute(argLevelParam.op, substs);
     if (expr === undefined) {
@@ -783,11 +799,7 @@ const checkSubnodes = (
     if (subnode.kind === "OpDef" && subnode.defKind === "ModuleInstance") return;
     node.levelCorrect = checkLevel(subnode, iteration, errors) && node.levelCorrect;
     node.level = Math.max(node.level, subnode.level);
-    addAll(node.levelParams, subnode.levelParams);
-    putLevelConstraints(node.levelConstraints, subnode.levelConstraints);
-    putArgLevelConstraints(node.argLevelConstraints, subnode.argLevelConstraints);
-    addArgLevelParams(node.argLevelParams, subnode.argLevelParams);
-    addAll(node.allParams, subnode.allParams);
+    mergeLevels(node, subnode);
     addAll(node.nonLeibnizParams, subnode.nonLeibnizParams);
   });
   return node.levelCorrect;
@@ -959,11 +971,7 @@ const checkInstance = (node: InstanceNode, iteration: number, errors: SanyMessag
   return node.levelCorrect;
 };
 
-export const checkLevel = (
-  node: SemanticNode,
-  iteration: number,
-  errors: SanyMessage[],
-): boolean => {
+const checkLevel = (node: SemanticNode, iteration: number, errors: SanyMessage[]): boolean => {
   if (!isLevelNode(node)) return checkModuleLevels(node, errors);
   switch (node.kind) {
     case "OpAppl":
@@ -992,11 +1000,7 @@ export const checkLevel = (
       node.levelCorrect = checkLevel(op, iteration, errors);
       if (op.kind === "Module") return node.levelCorrect;
       node.level = op.level;
-      node.levelParams = op.levelParams;
-      node.allParams = op.allParams;
-      node.levelConstraints = op.levelConstraints;
-      node.argLevelConstraints = op.argLevelConstraints;
-      node.argLevelParams = op.argLevelParams;
+      shareLevels(node, op);
       return node.levelCorrect;
     }
     case "LetIn": {
@@ -1044,11 +1048,7 @@ export const checkLevel = (
       node.params.forEach((param) => checkLevel(param, iteration, errors));
       const isCorrect = checkLevel(node.body, iteration, errors);
       node.level = node.body.level;
-      node.levelParams = node.body.levelParams;
-      node.allParams = node.body.allParams;
-      node.levelConstraints = node.body.levelConstraints;
-      node.argLevelConstraints = node.body.argLevelConstraints;
-      node.argLevelParams = node.body.argLevelParams;
+      shareLevels(node, node.body);
       return isCorrect;
     }
     case "At": {
@@ -1067,13 +1067,7 @@ export const checkLevel = (
         node.level = Math.max(node.level, argument.level);
         parts.push(argument);
       }
-      parts.forEach((part) => {
-        addAll(node.levelParams, part.levelParams);
-        addAll(node.allParams, part.allParams);
-        putLevelConstraints(node.levelConstraints, part.levelConstraints);
-        putArgLevelConstraints(node.argLevelConstraints, part.argLevelConstraints);
-        addArgLevelParams(node.argLevelParams, part.argLevelParams);
-      });
+      parts.forEach((part) => mergeLevels(node, part));
       return true;
     }
     case "SubstIn":
@@ -1126,11 +1120,7 @@ export const checkLevel = (
         !node.definition || checkLevel(node.definition, iteration, errors);
       // AssumeNode's getters return its expression's levels.
       node.level = node.body.level;
-      node.levelParams = node.body.levelParams;
-      node.allParams = node.body.allParams;
-      node.levelConstraints = node.body.levelConstraints;
-      node.argLevelConstraints = node.body.argLevelConstraints;
-      node.argLevelParams = node.body.argLevelParams;
+      shareLevels(node, node.body);
       if (node.level !== CONSTANT_LEVEL) {
         addError(
           errors,
@@ -1182,11 +1172,7 @@ export const checkLevel = (
         node.levelCorrect = false;
         addError(errors, node.location, "Level error:\nTemporal formula used as set.");
       }
-      node.levelParams = node.set.levelParams;
-      node.allParams = node.set.allParams;
-      node.levelConstraints = node.set.levelConstraints;
-      node.argLevelConstraints = node.set.argLevelConstraints;
-      node.argLevelParams = node.set.argLevelParams;
+      shareLevels(node, node.set);
       return node.levelCorrect;
     }
     case "AssumeProve": {
@@ -1201,13 +1187,7 @@ export const checkLevel = (
         (level, assumption) => Math.max(level, assumption.level),
         node.goal.level,
       );
-      [node.goal, ...node.assumptions].forEach((part) => {
-        addAll(node.levelParams, part.levelParams);
-        addAll(node.allParams, part.allParams);
-        putLevelConstraints(node.levelConstraints, part.levelConstraints);
-        putArgLevelConstraints(node.argLevelConstraints, part.argLevelConstraints);
-        addArgLevelParams(node.argLevelParams, part.argLevelParams);
-      });
+      [node.goal, ...node.assumptions].forEach((part) => mergeLevels(node, part));
       // LevelNode.addTemporalLevelConstraintToConstants.
       if (node.levelCorrect) {
         node.levelParams.forEach((param) => {

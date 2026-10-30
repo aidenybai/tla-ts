@@ -28,11 +28,15 @@ export const formatSanyLocation = (location: SanyMessage["location"]) => {
   if (location === undefined) return "Unknown location";
   if (typeof location === "string") return `In module ${location}`;
   // Location.toString names only the module of a location at line 0, column 0.
-  const { beginLine, beginColumn, endLine, endColumn } = location;
-  if (beginLine === 0 && beginColumn === 0 && endLine === 0 && endColumn === 0) {
+  if (
+    location.beginLine === 0 &&
+    location.beginColumn === 0 &&
+    location.endLine === 0 &&
+    location.endColumn === 0
+  ) {
     return `In module ${location.file}`;
   }
-  return `line ${beginLine}, col ${beginColumn} to line ${endLine}, col ${endColumn} of module ${location.file}`;
+  return `line ${location.beginLine}, col ${location.beginColumn} to line ${location.endLine}, col ${location.endColumn} of module ${location.file}`;
 };
 
 // SANY's ArgLevelParam: the level of argument index of operator op depends on param.
@@ -371,7 +375,7 @@ const getJavaHash = (text: string) => {
 };
 
 // A java.util.Hashtable with its default capacity of 11 and load factor of 0.75.
-export const createJavaHashtable = (): JavaHashtable => ({
+const createJavaHashtable = (): JavaHashtable => ({
   buckets: Array.from({ length: 11 }, () => []),
   count: 0,
   threshold: 8,
@@ -391,17 +395,12 @@ const rehash = (table: JavaHashtable) => {
   table.threshold = Math.floor(capacity * 0.75);
 };
 
-export const getHashtableValue = (table: JavaHashtable, key: string, hashKey = key) =>
+const getHashtableValue = (table: JavaHashtable, key: string, hashKey = key) =>
   table.buckets[getBucketIndex(getJavaHash(hashKey), table.buckets.length)].find(
     (entry) => entry.key === key,
   )?.value;
 
-export const putHashtableValue = (
-  table: JavaHashtable,
-  key: string,
-  value: SymbolNode,
-  hashKey = key,
-) => {
+const putHashtableValue = (table: JavaHashtable, key: string, value: SymbolNode, hashKey = key) => {
   const hash = getJavaHash(hashKey);
   const existing = table.buckets[getBucketIndex(hash, table.buckets.length)].find(
     (entry) => entry.key === key,
@@ -419,7 +418,7 @@ export const putHashtableValue = (
 export const getHashtableValues = (table: JavaHashtable) =>
   table.buckets.toReversed().flatMap((bucket) => bucket.map((entry) => entry.value));
 
-export const MODULE_KEY_PREFIX = "\u0000module ";
+const MODULE_KEY_PREFIX = "\u0000module ";
 
 export const createContext = (): Context => ({ table: createJavaHashtable(), symbols: [] });
 

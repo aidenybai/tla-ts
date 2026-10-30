@@ -224,12 +224,15 @@ const KINDS: [string, ...string[]][] = [
 ];
 
 const KIND_NAMES = KINDS.map((entry) => entry[0]);
+const KIND_INDEXES = new Map(
+  KIND_NAMES.map((name, kind): [string, number] => [name, kind]).reverse(),
+);
 
 // The kind named name. The anonymous infix operators share the name "infix", which no caller
 // looks up.
 export const getKind = (name: string) => {
-  const kind = KIND_NAMES.indexOf(name);
-  if (kind === -1) throw new TlaError(`Unknown SANY token kind ${name}`);
+  const kind = KIND_INDEXES.get(name);
+  if (kind === undefined) throw new TlaError(`Unknown SANY token kind ${name}`);
   return kind;
 };
 
@@ -237,6 +240,10 @@ const LITERALS = new Map(
   KINDS.flatMap((entry, kind) => entry.slice(1).map((image): [string, number] => [image, kind])),
 );
 const LONGEST_LITERAL = Math.max(...[...LITERALS.keys()].map((image) => image.length));
+const LITERAL_LENGTHS = Array.from(
+  { length: LONGEST_LITERAL },
+  (_, index) => LONGEST_LITERAL - index,
+);
 
 const BEGIN_MODULE = /----+ *MODULE/y;
 const IDENTIFIER_PATTERNS = [
@@ -251,6 +258,8 @@ const junctionPatterns = (junction: string) =>
   [/[0-9][A-Za-z0-9]*/, /[WS][a-zA-EG-Z0-9][A-Za-z0-9]*/, /[a-zA-RT-VX-Z][A-Za-z0-9]*/].map(
     (prefix) => new RegExp(`${prefix.source}${junction}`, "y"),
   );
+const BAND_PATTERNS = junctionPatterns(String.raw`\.\/\\`);
+const BOR_PATTERNS = junctionPatterns(String.raw`\.\\\/`);
 const STEP = String.raw`<(?:[0-9]+|\+|\*)>`;
 
 // The tokens of the SPEC lexical state that are not literals, with their kinds.
@@ -260,8 +269,8 @@ const SPEC_PATTERNS: [string, RegExp[]][] = [
   ["END_MODULE", [/====+/y]],
   ["NUMBER_LITERAL", [/[0-9]+|\\[oO][0-7]+|\\[bB][01]+|\\[hH][0-9a-fA-F]+/y]],
   ["STRING_LITERAL", [/"(?:[^"\n\r\\]|\\[ntrf\\"])*"/y]],
-  ["BAND", junctionPatterns(String.raw`\.\/\\`)],
-  ["BOR", junctionPatterns(String.raw`\.\\\/`)],
+  ["BAND", BAND_PATTERNS],
+  ["BOR", BOR_PATTERNS],
   ["IDENTIFIER", IDENTIFIER_PATTERNS],
   ["ProofStepLexeme", [/<[0-9]+>\w+/y]],
   ["ProofImplicitStepLexeme", [/<[+*]>[A-Za-z0-9]+/y]],
@@ -278,8 +287,8 @@ const DEFAULT_PATTERNS: [string, RegExp[]][] = [
 const PRAGMA_PATTERNS: [string, RegExp[]][] = [
   ["NUMBER", [/[0-9]+/y]],
   ["_BM2", [BEGIN_MODULE]],
-  ["BAND", junctionPatterns(String.raw`\.\/\\`)],
-  ["BOR", junctionPatterns(String.raw`\.\\\/`)],
+  ["BAND", BAND_PATTERNS],
+  ["BOR", BOR_PATTERNS],
   ["IDENTIFIER", IDENTIFIER_PATTERNS],
 ];
 
@@ -304,9 +313,9 @@ const matchPatterns = (patterns: [string, RegExp[]][], source: string, offset: n
     );
 
 const matchSpecToken = (source: string, offset: number) => {
-  const literalLength = [...Array(LONGEST_LITERAL).keys()]
-    .map((index) => LONGEST_LITERAL - index)
-    .find((length) => LITERALS.has(source.slice(offset, offset + length)));
+  const literalLength = LITERAL_LENGTHS.find((length) =>
+    LITERALS.has(source.slice(offset, offset + length)),
+  );
   const pattern = matchPatterns(SPEC_PATTERNS, source, offset);
   if (literalLength === undefined) return pattern;
   const literal = {
@@ -318,6 +327,8 @@ const matchSpecToken = (source: string, offset: number) => {
     ? literal
     : pattern;
 };
+
+export const getTabStop = (column: number) => column + 8 - (column % 8);
 
 // SimpleCharStream.UpdateLineColumn: the line and column of each character, with tabs stopping
 // at multiples of 8.
@@ -371,16 +382,16 @@ export const createSanyLexer = (source: string) => {
       state.offset += end + 1;
       return true;
     }
-    const depth = { value: 0 };
+    let depth = 0;
     let offset = state.offset;
     while (offset < source.length) {
       if (source.startsWith("(*", offset)) {
-        depth.value++;
+        depth++;
         offset += 2;
       } else if (source.startsWith("*)", offset)) {
-        depth.value--;
+        depth--;
         offset += 2;
-        if (depth.value === 0) {
+        if (depth === 0) {
           state.offset = offset;
           return true;
         }
@@ -434,7 +445,7 @@ const LEXEME_ESCAPES = new Map([
   ["\\", "\\\\"],
 ]);
 
-const escapeLexeme = (text: string) =>
+export const escapeLexeme = (text: string) =>
   text.replace(
     // eslint-disable-next-line no-control-regex
     /[\0-\x1f"'\\\x7f-\uffff]/g,
@@ -467,8 +478,7 @@ export const getSany174LexicalError = (source: string) => {
       .slice(1, index + 1)
       .split("")
       .reduce(
-        (previous, character) =>
-          character === "\t" ? previous + 8 - (previous % 8) : previous + 1,
+        (previous, character) => (character === "\t" ? getTabStop(previous) : previous + 1),
         token.beginColumn,
       );
     return formatLexicalError(

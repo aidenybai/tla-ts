@@ -5,6 +5,7 @@ import type {
   Assumption,
   Fact,
   Bound,
+  Declaration,
   Definition,
   Expression,
   FunctionDefinition,
@@ -15,6 +16,7 @@ import type {
   NewSymbol,
   Proof,
   ProofStep,
+  SourceLocation,
   Theorem,
   UseOrHide,
 } from "./ast";
@@ -27,6 +29,7 @@ import { getSanyParseError } from "./sany-parse-error";
 import {
   addSanyMessage,
   CONSTANT_DECL_KIND,
+  NEW_CONSTANT_KIND,
   VARIABLE_DECL_KIND,
   addToContext,
   createContext,
@@ -132,13 +135,16 @@ interface LabelGoal {
   clause: number;
 }
 
+const NEW_SYMBOL_KINDS = {
+  Constant: { declKind: NEW_CONSTANT_KIND, level: 0 },
+  Variable: { declKind: 25, level: 1 },
+  State: { declKind: 26, level: 1 },
+  Action: { declKind: 27, level: 2 },
+  Temporal: { declKind: 28, level: 3 },
+};
+
 // Whether SANY names an operator by an identifier rather than by a symbol.
 const isIdentifier = (name: string) => /^[A-Za-z0-9_]+$/.test(name);
-
-interface ExternalModule {
-  module: ModuleNode;
-  context: Context;
-}
 
 export interface SanySpecification {
   root: ModuleNode;
@@ -161,6 +167,19 @@ export interface SanyGenerationOptions {
 
 interface SymbolTable {
   contexts: Context[];
+}
+
+interface BoundSymbols {
+  bounded: FormalParamNode[][];
+  tupleOrs: boolean[];
+  ranges: ExprNode[];
+}
+
+interface OpApplBinding {
+  unbounded?: FormalParamNode[];
+  bounded?: FormalParamNode[][];
+  tupleOrs?: boolean[];
+  ranges?: ExprNode[];
 }
 
 const getTopContext = (table: SymbolTable) => table.contexts[table.contexts.length - 1];
@@ -208,8 +227,6 @@ const getLetInstances = (expression: Expression): Instance[] => [
   ...getChildren(expression).flatMap(getLetInstances),
 ];
 
-const getDefinitionInstances = (definition: Definition) => getLetInstances(definition.body);
-
 // The LET instances of a theorem or assumption's statement.
 const getStatementInstances = (statement: Expression | AssumeProve): Instance[] =>
   statement.kind === "AssumeProve"
@@ -253,7 +270,7 @@ const getDependencies = (module: Module) => {
     };
     current.units.forEach((unit) => {
       if (unit.kind === "Instance") addInstances([unit.instance]);
-      if (unit.kind === "Definition") addInstances(getDefinitionInstances(unit.definition));
+      if (unit.kind === "Definition") addInstances(getLetInstances(unit.definition.body));
       if (unit.kind === "Theorem" && isRoot) {
         addInstances(getStatementInstances(unit.theorem.statement));
       }
@@ -339,7 +356,8 @@ export const generateSanySpecification = (
   if (options.version !== "1.7.4") createBuiltins(getId);
   const builtins = createBuiltins(getId);
   getId();
-  const externalModules = new Map<string, ExternalModule>();
+  const builtinsByName = new Map(builtins.map((builtin) => [builtin.name, builtin]));
+  const externalModules = new Map<string, ModuleNode>();
   const sources = new Map<string, { file: SourceFile; module: Module }>();
 
   const parseSource = (name: string, text: string) => {
@@ -405,7 +423,7 @@ export const generateSanySpecification = (
       calculateDependencies(dependency, loadModule(dependency), name),
     );
     path.pop();
-    if (!order.includes(name)) order.push(name);
+    order.push(name);
   };
   // SpecObj.loadSpec: SANY resolves the first name it finds unresolved searching from the root,
   // each module's extended modules before the modules they import, and the instantiated modules
@@ -452,24 +470,6 @@ export const generateSanySpecification = (
   loadSpecification(rootName);
   calculateDependencies(rootName, rootSource);
 
-  // SymbolTable.addModule: an inner module's name must not be taken by another module, inner or
-  // external.
-  const addToContextModule = (table: SymbolTable, module: ModuleNode) => {
-    const binding =
-      table.contexts
-        .toReversed()
-        .map((context) => getContextModule(context, module.name))
-        .find((candidate) => candidate?.kind === "Module") ??
-      externalModules.get(module.name)?.module;
-    if (binding === undefined) addToContext(getTopContext(table), module);
-    else if (binding !== module) {
-      addError(
-        module.location,
-        `Multiply-defined module '${module.name}': this definition or declaration conflicts \nwith the one at ${formatSanyLocation(binding.location)}.`,
-      );
-    }
-  };
-
   const generateModule = (
     ast: Module,
     file: SourceFile,
@@ -508,9 +508,9 @@ export const generateSanySpecification = (
     const getLocation = (expression: Expression) =>
       getSpanLocation(file, getExpressionSpan(file, expression));
 
-    const getUnitSpan = (location: { line: number; column: number; range?: unknown }) =>
+    const getUnitSpan = (location: SourceLocation) =>
       location.range
-        ? getRangeSpan(file, location.range as never)
+        ? getRangeSpan(file, location.range)
         : { start: getTokenIndex(file, location), end: getTokenIndex(file, location) };
 
     const currentModule: ModuleNode = {
@@ -537,13 +537,13 @@ export const generateSanySpecification = (
         const module = getContextModule(symbolTable.contexts[index], name);
         if (module?.kind === "Module") return module;
       }
-      return externalModules.get(name)?.module;
+      return externalModules.get(name);
     };
 
-    const getModuleContext = (name: string) => {
+    const getModule = (name: string) => {
       const module = resolveModule(name);
       if (module === undefined) throw new TlaSyntaxError(`Could not find module ${name}`);
-      return module.context;
+      return module;
     };
 
     const withContext = <Result>(context: Context, generate: () => Result) => {
@@ -612,7 +612,7 @@ export const generateSanySpecification = (
       operator: SymbolNode,
       operands: (ExprOrOpArgNode | undefined)[],
       location: SanyLocation,
-      binding: Partial<Pick<OpApplNode, "unbounded" | "bounded" | "tupleOrs" | "ranges">> = {},
+      binding: OpApplBinding = {},
       id = getId(),
     ): OpApplNode => ({
       ...createLevelFields(id),
@@ -633,7 +633,7 @@ export const generateSanySpecification = (
     });
 
     const getBuiltin = (name: string) => {
-      const builtin = builtins.find((candidate) => candidate.name === name);
+      const builtin = builtinsByName.get(name);
       if (!builtin) throw new TlaUnsupportedError(`SANY has no builtin operator ${name}`);
       return builtin;
     };
@@ -642,7 +642,7 @@ export const generateSanySpecification = (
       name: string,
       operands: (ExprOrOpArgNode | undefined)[],
       location: SanyLocation,
-      binding: Partial<Pick<OpApplNode, "unbounded" | "bounded" | "tupleOrs" | "ranges">> = {},
+      binding: OpApplBinding = {},
     ) => createOpAppl(getBuiltin(name), operands, location, binding);
 
     const createString = (value: string, location: SanyLocation): ExprNode => ({
@@ -830,35 +830,14 @@ export const generateSanySpecification = (
         return groups;
       }, []);
 
-    interface BoundSymbols {
-      bounded: FormalParamNode[][];
-      tupleOrs: boolean[];
-      ranges: ExprNode[];
-    }
-
     // processQuantBoundArgs: SANY generates every bounding set before it declares the symbols,
     // each named at its token between the end of the previous group and its set.
-    const generateBounds = (bounds: Bound[], searchStart: number): BoundSymbols => {
-      const groups = getBoundGroups(bounds);
-      const ranges = groups.map((group) => generateExpression(group[0].set));
-      const cursor = { value: searchStart };
-      const bounded = groups.map((group) => {
-        const setSpan = getExpressionSpan(file, group[0].set);
-        const names = group.flatMap((bound) =>
-          bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names,
-        );
-        const indexes = findNameTokens(file, cursor.value, setSpan.start, names);
-        cursor.value = setSpan.end + 1;
-        return names.map((name, index) =>
-          createFormalParam(name, 0, getTokenLocation(file, indexes[index]), true),
-        );
-      });
-      return {
-        bounded,
-        tupleOrs: groups.map((group) => group[0].pattern.kind === "Tuple"),
-        ranges,
-      };
-    };
+    const generateBounds = (bounds: Bound[], searchStart: number) =>
+      generateBoundsWithRanges(
+        bounds,
+        searchStart,
+        getBoundGroups(bounds).map((group) => generateExpression(group[0].set)),
+      );
 
     const generateLambda = (expression: Expression & { kind: "Lambda" }): OpDefNode => {
       const span = getExpressionSpan(file, expression);
@@ -932,18 +911,15 @@ export const generateSanySpecification = (
       const span = getExpressionSpan(file, expression);
       const name = expression.kind === "And" ? "\\land" : "\\lor";
       const [first, ...rest] = expression.operands;
-      return rest.reduce<OpApplNode>(
-        (left, operand, index) => {
-          const operandSpan = getParenthesizedSpan(file, getExpressionSpan(file, operand));
-          const end = index === rest.length - 1 ? span.end : operandSpan.end;
-          return applyBuiltin(
-            name,
-            [left, generateExpression(operand)],
-            getSpanLocation(file, { start: span.start, end }),
-          );
-        },
-        generateExpression(first) as OpApplNode,
-      );
+      return rest.reduce<ExprNode>((left, operand, index) => {
+        const operandSpan = getParenthesizedSpan(file, getExpressionSpan(file, operand));
+        const end = index === rest.length - 1 ? span.end : operandSpan.end;
+        return applyBuiltin(
+          name,
+          [left, generateExpression(operand)],
+          getSpanLocation(file, { start: span.start, end }),
+        );
+      }, generateExpression(first));
     };
 
     const generateCase = (expression: Expression & { kind: "Case" }) => {
@@ -1039,12 +1015,9 @@ export const generateSanySpecification = (
         const nameIndex = findNameOrKeyword(cursor.value, field.name);
         const valueSpan = getParenthesizedSpan(file, getExpressionSpan(file, field.value));
         cursor.value = valueSpan.end + 1;
-        expression.fields
-          .slice(0, fieldIndex)
-          .filter((other) => other.name === field.name)
-          .forEach(() =>
-            addError(getTokenLocation(file, nameIndex), "Non-unique fields in constructor."),
-          );
+        if (expression.fields.slice(0, fieldIndex).some((other) => other.name === field.name)) {
+          addError(getTokenLocation(file, nameIndex), "Non-unique fields in constructor.");
+        }
         return applyBuiltin(
           "$Pair",
           [
@@ -1067,7 +1040,7 @@ export const generateSanySpecification = (
     // The declarations of a RECURSIVE statement, which the syntax tree of a LET leaves out:
     // names, each with (_, ...) for its arguments.
     const getRecursiveDeclarations = (start: number) => {
-      const declarations: RecursiveDeclaration[] = [];
+      const declarations: Declaration[] = [];
       let index = start;
       while (file.tokens[index]?.kind === "Identifier") {
         const end = isToken(file, index + 1, "(") ? getMatchingIndex(file, index + 1) : index;
@@ -1136,10 +1109,7 @@ export const generateSanySpecification = (
             processModuleDefinition(unit.instance, opDefs, instances);
           } else if (unit.definition.kind === "Function") {
             processFunction(unit.definition, opDefs);
-          } else {
-            const definition = processOperator(unit.definition, opDefs);
-            currentModule.definitions.push(definition);
-          }
+          } else processOperator(unit.definition, opDefs);
         });
         checkForUndefinedRecursiveOps();
         state.curLevel = Math.max(state.curLevel - 1, 0);
@@ -1232,7 +1202,7 @@ export const generateSanySpecification = (
           return {
             ...createLevelFields(getId()),
             kind: "Decimal",
-            mantissa: isLong ? mantissa.toString() : mantissa.toString(),
+            mantissa: mantissa.toString(),
             exponent: isLong ? String(-fractionalPart.length) : String(fractionalPart.length),
             integralPart,
             fractionalPart,
@@ -1521,10 +1491,7 @@ export const generateSanySpecification = (
     };
 
     // The span of a definition or instance, with the LOCAL before it.
-    const getDefinitionSpan = (definition: {
-      location: { line: number; column: number; range?: unknown };
-      isLocal?: boolean;
-    }) => {
+    const getDefinitionSpan = (definition: { location: SourceLocation; isLocal?: boolean }) => {
       const span = getUnitSpan(definition.location);
       return definition.isLocal &&
         !isToken(file, span.start, "LOCAL") &&
@@ -1536,7 +1503,7 @@ export const generateSanySpecification = (
     const processOperator = (
       definition: OperatorDefinition,
       definitions: (OpDefNode | ThmOrAssumpDefNode)[] | undefined,
-    ): OpDefNode => {
+    ) => {
       const span = getDefinitionSpan(definition);
       const location = getSpanLocation(file, span);
       const name = resolveSynonym(definition.name);
@@ -1580,8 +1547,9 @@ export const generateSanySpecification = (
         existing.isLeibnizArg = params.map(() => true);
         existing.labels = labels;
         endOpDefNode(existing, generated.body, location, preComments);
+        currentModule.definitions.push(existing);
         definitions?.push(existing);
-        return existing;
+        return;
       }
       const node = createOpDef({
         name,
@@ -1594,8 +1562,8 @@ export const generateSanySpecification = (
       });
       addSymbol(symbolTable, node);
       setRecursionFields(node);
+      currentModule.definitions.push(node);
       definitions?.push(node);
-      return node;
     };
 
     const endOpDefNode = (
@@ -1647,19 +1615,17 @@ export const generateSanySpecification = (
         addError(location, `Function name \`${definition.name}' already defined or declared.`);
       }
       const preComments = getPreComments(file, span.start);
-      const definitionNode =
-        isRecursive && existing.kind === "OpDef"
-          ? existing
-          : createOpDef({
-              name: definition.name,
-              params: [],
-              body: node,
-              isLocal: definition.isLocal,
-              location,
-              preComments,
-            });
-      if (isRecursive && existing.kind === "OpDef")
-        endOpDefNode(existing, node, location, preComments);
+      const definitionNode = isRecursive
+        ? existing
+        : createOpDef({
+            name: definition.name,
+            params: [],
+            body: node,
+            isLocal: definition.isLocal,
+            location,
+            preComments,
+          });
+      if (isRecursive) endOpDefNode(existing, node, location, preComments);
       else if (existing === undefined) {
         addSymbol(symbolTable, definitionNode);
         setRecursionFields(definitionNode);
@@ -1675,9 +1641,7 @@ export const generateSanySpecification = (
       if (node.operator.name === "$NonRecursiveFcnSpec") node.unbounded = undefined;
     };
 
-    const processRecursive = (
-      declarations: { name: string; arity: number; location: SourceLocationLike }[],
-    ) => {
+    const processRecursive = (declarations: Declaration[]) => {
       if (state.unresolvedSum === 0) state.recursiveSectionCount++;
       state.unresolvedCount[state.curLevel] += declarations.length;
       state.unresolvedSum += declarations.length;
@@ -1747,7 +1711,7 @@ export const generateSanySpecification = (
           );
         }
       };
-      const span = getInstanceSpan(instance);
+      const span = getDefinitionSpan(instance);
       const cursor = { value: span.start };
       instance.substitutions.forEach((substitution) => {
         const targetIndex = findToken(file, cursor.value, span.end, substitution.name);
@@ -1819,14 +1783,12 @@ export const generateSanySpecification = (
       };
     };
 
-    const getInstanceSpan = (instance: Instance) => getDefinitionSpan(instance);
-
     const processModuleDefinition = (
       instance: Instance,
       definitions: (OpDefNode | ThmOrAssumpDefNode)[] | undefined,
       instances: InstanceNode[] | undefined,
     ) => {
-      const span = getInstanceSpan(instance);
+      const span = getDefinitionSpan(instance);
       const location = getSpanLocation(file, span);
       const preComments = getPreComments(file, span.start);
       const name = instance.name ?? "";
@@ -1838,10 +1800,8 @@ export const generateSanySpecification = (
         { start: nameIndex, end: span.end },
         instance.params.length > 0,
       );
-      const instanceeModule = resolveModule(instance.module);
-      if (instanceeModule === undefined)
-        throw new TlaSyntaxError(`Could not find module ${instance.module}`);
-      const instanceeContext = getModuleContext(instance.module);
+      const instanceeModule = getModule(instance.module);
+      const instanceeContext = instanceeModule.context;
       const substs = processSubstitutions(instance, instanceeContext, location);
       if (instance.params.length > 0) symbolTable.contexts.pop();
       getHashtableValues(instanceeContext.table).forEach((symbol) => {
@@ -1876,8 +1836,7 @@ export const generateSanySpecification = (
               });
         addSymbol(symbolTable, node);
         if (symbol.defKind === "UserDefined") setRecursionFields(node);
-        if (definitions) definitions.push(node);
-        else currentModule.definitions.push(node);
+        (definitions ?? currentModule.definitions).push(node);
       });
       getHashtableValues(instanceeContext.table).forEach((symbol) => {
         if (symbol.kind !== "ThmOrAssumpDef" || symbol.isLocal) return;
@@ -1904,8 +1863,7 @@ export const generateSanySpecification = (
           minMaxLevel: [],
         };
         addSymbol(symbolTable, node);
-        if (definitions) definitions.push(node);
-        else currentModule.definitions.push(node);
+        (definitions ?? currentModule.definitions).push(node);
       });
       const instanceNode: InstanceNode = {
         ...createLevelFields(getId()),
@@ -1917,8 +1875,7 @@ export const generateSanySpecification = (
         substs,
         location,
       };
-      if (instances) instances.push(instanceNode);
-      else currentModule.topLevel.push(instanceNode);
+      (instances ?? currentModule.topLevel).push(instanceNode);
       const moduleDefinition = createOpDef({
         defKind: "ModuleInstance",
         name,
@@ -1939,15 +1896,14 @@ export const generateSanySpecification = (
       isTopLevel = true,
       stepLocation: SanyLocation | undefined = undefined,
     ) => {
-      const span = getInstanceSpan(instance);
+      const span = getDefinitionSpan(instance);
       const location = stepLocation ?? getSpanLocation(file, span);
       const preComments = getPreComments(file, span.start);
-      const instanceeModule = resolveModule(instance.module);
-      if (instanceeModule === undefined)
-        throw new TlaSyntaxError(`Could not find module ${instance.module}`);
-      const instanceeContext = getModuleContext(instance.module);
+      const instanceeModule = getModule(instance.module);
+      const instanceeContext = instanceeModule.context;
       const substs = processSubstitutions(instance, instanceeContext, location);
       const isLocal = instance.isLocal;
+      const isInstanceeParameterFree = isParameterFree(instanceeModule);
       getHashtableValues(instanceeContext.table).forEach((symbol) => {
         if (symbol.kind !== "OpDef" || symbol.defKind !== "UserDefined" || symbol.isLocal) return;
         const copyFrom = (module: ModuleNode | undefined, body: ExprNode | undefined) => {
@@ -1970,7 +1926,7 @@ export const generateSanySpecification = (
           return symbol;
         };
         const isOriginParameterFree = symbol.module === undefined || isParameterFree(symbol.module);
-        const node = !isParameterFree(instanceeModule)
+        const node = !isInstanceeParameterFree
           ? isOriginParameterFree
             ? isLocal
               ? copyFrom(symbol.module, symbol.body)
@@ -2006,7 +1962,7 @@ export const generateSanySpecification = (
           addSymbol(symbolTable, symbol);
           return symbol;
         };
-        const node = !isParameterFree(instanceeModule)
+        const node = !isInstanceeParameterFree
           ? isParameterFree(symbol.module)
             ? isLocal
               ? copyFrom(currentModule, symbol.body)
@@ -2034,8 +1990,14 @@ export const generateSanySpecification = (
       return instanceNode;
     };
 
-    const resolveFactModule = (name: string) =>
-      resolveModule(name) ?? (name === currentModule.name ? currentModule : undefined);
+    const getFactModule = (name: string) => {
+      const module =
+        resolveModule(name) ?? (name === currentModule.name ? currentModule : undefined);
+      if (module === undefined) {
+        throw new TlaSyntaxError(`Module \`${name}' used without being extended or instantiated.`);
+      }
+      return module;
+    };
 
     // A fact is a module, or an expression such as the name of a theorem; a DEF names a defined
     // operator, theorem or assumption, or a module.
@@ -2048,26 +2010,12 @@ export const generateSanySpecification = (
           if (node.kind === "ThmOrAssumpDef") throw new TlaSyntaxError("Expected a fact");
           return node;
         }
-        const module = resolveFactModule(fact.name);
-        if (module === undefined) {
-          throw new TlaSyntaxError(
-            `Module \`${fact.name}' used without being extended or instantiated.`,
-          );
-        }
-        return module;
+        return getFactModule(fact.name);
       });
 
     const generateDefs = (defs: Fact[]) =>
       defs.flatMap((fact): UseOrHideNode["defs"] => {
-        if (fact.kind === "ModuleFact") {
-          const module = resolveFactModule(fact.name);
-          if (module === undefined) {
-            throw new TlaSyntaxError(
-              `Module \`${fact.name}' used without being extended or instantiated.`,
-            );
-          }
-          return [module];
-        }
+        if (fact.kind === "ModuleFact") return [getFactModule(fact.name)];
         const symbol = generateSelector(
           fact.kind === "OperatorReference"
             ? { kind: "Identifier", name: fact.operator, location: fact.location }
@@ -2115,20 +2063,12 @@ export const generateSanySpecification = (
       };
     };
 
-    const newSymbolKinds = {
-      Constant: { declKind: 24, level: 0 },
-      Variable: { declKind: 25, level: 1 },
-      State: { declKind: 26, level: 1 },
-      Action: { declKind: 27, level: 2 },
-      Temporal: { declKind: 28, level: 3 },
-    };
-
     // generateNewSymb: the set is generated before the symbol is declared.
     const generateNewSymbol = (symbol: NewSymbol): NewSymbNode => {
       const span = getUnitSpan(symbol.location);
       const set = symbol.set && generateExpression(symbol.set);
       const nameIndex = findNameOrKeyword(span.start, symbol.name);
-      const kind = newSymbolKinds[symbol.level];
+      const kind = NEW_SYMBOL_KINDS[symbol.level];
       const declaration: OpDeclNode = {
         ...createLevelFields(getId()),
         levelChecked: 1,
@@ -2178,7 +2118,7 @@ export const generateSanySpecification = (
           "[]ASSUME used within the scope of an ordinary ASSUME's assumptions",
         );
       }
-      if (!isBoxed) assumeContexts.add(symbolTable.contexts[symbolTable.contexts.length - 1]);
+      if (!isBoxed) assumeContexts.add(getTopContext(symbolTable));
       const scope: AssumeProveScope = {
         isDeclaredBefore: [false],
         hasGoal: goal !== undefined,
@@ -2233,11 +2173,12 @@ export const generateSanySpecification = (
       body: LevelNode,
       location: SanyLocation,
       labels: Map<string, LabelNode>,
+      isTheorem = true,
     ): ThmOrAssumpDefNode => ({
       ...createLevelFields(id),
       kind: "ThmOrAssumpDef",
       name,
-      isTheorem: true,
+      isTheorem,
       body,
       params: [],
       isLocal: false,
@@ -2347,7 +2288,7 @@ export const generateSanySpecification = (
             if (definition.kind === "Instance")
               processModuleDefinition(definition, defined, instances);
             else if (definition.kind === "Function") processFunction(definition, defined);
-            else currentModule.definitions.push(processOperator(definition, defined));
+            else processOperator(definition, defined);
             const last = defined[definition.kind === "Instance" ? defined.length - 1 : 0];
             if (last?.kind !== "OpDef")
               throw new TlaSyntaxError("A DEFINE step defines no operator");
@@ -2400,13 +2341,13 @@ export const generateSanySpecification = (
         const assumeContext = createContext();
         const generateAssertion = (statement: Expression | AssumeProve): LevelNode => {
           if (statement.kind === "AssumeProve") {
-            symbolTable.contexts.push(assumeContext);
-            const node = generateAssumeProve(
-              statement,
-              1,
-              step.name === undefined ? undefined : { isSuffices },
+            const node = withContext(assumeContext, () =>
+              generateAssumeProve(
+                statement,
+                1,
+                step.name === undefined ? undefined : { isSuffices },
+              ),
             );
-            symbolTable.contexts.pop();
             node.isSuffices = isSuffices;
             return node;
           }
@@ -2421,18 +2362,14 @@ export const generateSanySpecification = (
             isInfixExpression(statement) &&
             statement.args[0].kind === "ExceptAt";
           // SANY generates an @ step's right side before the $Nop that stands for its @.
-          const atRight =
-            isAtStep && statement.kind === "Apply"
-              ? generateExpression(statement.args[1])
-              : undefined;
-          const expression =
-            atRight !== undefined && statement.kind === "Apply"
-              ? createOpAppl(
-                  resolveName(statement.operator, getLocation(statement)),
-                  [applyBuiltin("$Nop", [previousRight], getLocation(statement.args[0])), atRight],
-                  getLocation(statement),
-                )
-              : generateExpression(statement);
+          const atRight = isAtStep ? generateExpression(statement.args[1]) : undefined;
+          const expression = isAtStep
+            ? createOpAppl(
+                resolveName(statement.operator, getLocation(statement)),
+                [applyBuiltin("$Nop", [previousRight], getLocation(statement.args[0])), atRight],
+                getLocation(statement),
+              )
+            : generateExpression(statement);
           const right = expression.kind === "OpAppl" ? expression.operands[1] : undefined;
           infixStep.previousRight = isInfixExpression(statement) ? right : undefined;
           return expression;
@@ -2535,26 +2472,10 @@ export const generateSanySpecification = (
       const location = getSpanLocation(file, span);
       if (assumption.name !== undefined) labelSets.push(new Map());
       const body = generateExpression(assumption.expression);
-      const definition: ThmOrAssumpDefNode | undefined =
+      const definition =
         assumption.name === undefined
           ? undefined
-          : {
-              ...createLevelFields(getId()),
-              kind: "ThmOrAssumpDef",
-              name: assumption.name,
-              isTheorem: false,
-              body,
-              params: [],
-              isLocal: false,
-              location,
-              module: currentModule,
-              labels: popLabels(),
-              isLeibnizArg: [],
-              isLeibniz: false,
-              opLevelCond: [],
-              maxLevels: [],
-              minMaxLevel: [],
-            };
+          : createTheoremDefinition(getId(), assumption.name, body, location, popLabels(), false);
       if (definition) {
         addSymbol(symbolTable, definition);
         currentModule.definitions.push(definition);
@@ -2580,13 +2501,10 @@ export const generateSanySpecification = (
       return { start, end: isToken(file, start + 1, "_") ? start + 1 : start };
     };
 
-    const getDeclarationSpan = (declaration: { arity: number; location: SourceLocationLike }) =>
+    const getDeclarationSpan = (declaration: Declaration) =>
       getOperatorSpan(getUnitSpan(declaration.location).start, declaration.arity);
 
-    const createDeclaration = (
-      declaration: { name: string; arity: number; location: SourceLocationLike },
-      declKind: number,
-    ): OpDeclNode => {
+    const createDeclaration = (declaration: Declaration, declKind: number): OpDeclNode => {
       const span = getDeclarationSpan(declaration);
       const node: OpDeclNode = {
         ...createLevelFields(getId()),
@@ -2610,8 +2528,7 @@ export const generateSanySpecification = (
     // processExtendsList: the extended module's symbols join this module's context in the order
     // they joined the extended module's, apart from LOCAL ones and those already present.
     ast.extends.forEach((name) => {
-      const extendee = resolveModule(name);
-      if (extendee === undefined) throw new TlaSyntaxError(`Could not find module ${name}`);
+      const extendee = getModule(name);
       currentModule.extendees.push(extendee);
       const context = getTopContext(symbolTable);
       extendee.context.symbols.forEach((symbol) => {
@@ -2661,7 +2578,7 @@ export const generateSanySpecification = (
           break;
         case "Definition":
           if (unit.definition.kind === "Function") processFunction(unit.definition, undefined);
-          else currentModule.definitions.push(processOperator(unit.definition, undefined));
+          else processOperator(unit.definition, undefined);
           break;
         case "Instance":
           if (unit.instance.name === undefined) generateInstance(unit.instance);
@@ -2679,7 +2596,16 @@ export const generateSanySpecification = (
         case "Module": {
           const innerTable = { contexts: [...symbolTable.contexts, createContext()] };
           const inner = generateModule(unit.module, file, currentModule, innerTable);
-          addToContextModule(symbolTable, inner);
+          // SymbolTable.addModule: an inner module's name must not be taken by another module,
+          // inner or external.
+          const binding = resolveModule(inner.name);
+          if (binding === undefined) addToContext(getTopContext(symbolTable), inner);
+          else if (binding !== inner) {
+            addError(
+              inner.location,
+              `Multiply-defined module '${inner.name}': this definition or declaration conflicts \nwith the one at ${formatSanyLocation(binding.location)}.`,
+            );
+          }
           break;
         }
       }
@@ -2688,7 +2614,7 @@ export const generateSanySpecification = (
     return currentModule;
   };
 
-  order.forEach((name) => {
+  const modules = order.map((name) => {
     options.onAnalyze?.(name);
     // Each module's Generator creates its nullODN, nullOAN, nullOpArg and nullLabelNode.
     nullApplication.id = Array.from({ length: 4 }, getId)[1];
@@ -2700,28 +2626,15 @@ export const generateSanySpecification = (
     const module = generateModule(entry.module, entry.file, undefined, {
       contexts: [context],
     });
-    externalModules.set(name, { module, context });
+    externalModules.set(name, module);
     options.onModule?.(module, messages);
+    return module;
   });
-
-  const modules = order.map((name) => externalModules.get(name)!.module);
   return { root: modules[modules.length - 1], modules, messages };
 };
 
-interface SourceLocationLike {
-  line: number;
-  column: number;
-  range?: unknown;
-}
-
-interface RecursiveDeclaration {
-  name: string;
-  arity: number;
-  location: SourceLocationLike;
-}
-
 type LetUnit =
-  | { kind: "Recursive"; declarations: RecursiveDeclaration[] }
+  | { kind: "Recursive"; declarations: Declaration[] }
   | { kind: "Instance"; instance: Instance }
   | { kind: "Definition"; definition: Definition };
 

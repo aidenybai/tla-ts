@@ -1,6 +1,6 @@
 // TLC's Reals.tla, RealTime.tla, and Toolbox.tla, verbatim, so that errors inside them name the same
 // lines as TLC's errors.
-const REALS = `-------------------------------- MODULE Reals -------------------------------
+export const REALS = `-------------------------------- MODULE Reals -------------------------------
 (***************************************************************************)
 (* This module provides dummy definitions of the operators that are        *)
 (* defined by the real Reals module.  It is expected that any tool that    *)
@@ -19,7 +19,7 @@ a / b == CHOOSE m \\in Real : m * b = a
 Infinity == CHOOSE i : (i \\notin Real) /\\ (\\A r \\in Real : i > r)
 =============================================================================`;
 
-const REAL_TIME = `----------------------------- MODULE RealTime -------------------------------
+export const REAL_TIME = `----------------------------- MODULE RealTime -------------------------------
 (***************************************************************************)
 (* This standard module is described in Chapter 9 of the book "Specifying  *)
 (* Systems".  The type of specification described there cannot be handled  *)
@@ -47,7 +47,7 @@ RTnow(v) == LET NowNext == /\\ now' \\in {r \\in Real : r > now}
                 /\\ \\A r \\in Real : WF_now(NowNext /\\ (now'>r))
 =============================================================================`;
 
-const TOOLBOX = `----------------------------- MODULE Toolbox --------------------------------
+export const TOOLBOX = `----------------------------- MODULE Toolbox --------------------------------
 (***************************************************************************)
 (*                                                                         *)
 (***************************************************************************)

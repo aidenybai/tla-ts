@@ -26,7 +26,7 @@ import {
 
 // An operand selector !i is the number i, and the other selectors are named after SANY's NameSel,
 // NullSel, GGSel, LLSel, ColonSel and AtSel.
-export type SelectorOp = number | "Name" | "Null" | ">>" | "<<" | ":" | "@";
+type SelectorOp = number | "Name" | "Null" | ">>" | "<<" | ":" | "@";
 
 export interface SelectorItem {
   op: SelectorOp;
@@ -37,7 +37,7 @@ export interface SelectorItem {
   argsLocation?: SanyLocation;
 }
 
-export interface SelectorGenerator {
+interface SelectorGenerator {
   version: TlcVersion | undefined;
   resolveSymbol: (name: string) => SymbolNode | undefined;
   resolveSynonym: (name: string) => string;
@@ -141,6 +141,20 @@ type CurrentNode = LevelNode | SymbolNode | undefined;
 
 type Mode = "FindingOpName" | "FollowingLabels" | "FindingSubExpr";
 
+// The state of Generator.selectorToNode as it walks the items.
+interface SelectorWalk {
+  name: string | undefined;
+  nameLocation: SanyLocation | undefined;
+  node: CurrentNode;
+  index: number;
+  mode: Mode;
+  previousMode: Mode | undefined;
+  letInContext: Context | undefined;
+  definitionArityFound: number;
+  definitionArgs: ExprOrOpArgNode[];
+  isInSuffices: boolean;
+}
+
 const isDeclarationLike = (node: SymbolNode) =>
   node.kind === "OpDecl" ||
   node.kind === "FormalParam" ||
@@ -176,17 +190,16 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
     const params: FormalParamNode[] = [];
     const allArgs: ExprOrOpArgNode[] = [];
     const getItemLocation = (itemIndex: number) => items[itemIndex].location ?? location;
-    // The state of Generator.selectorToNode as it walks the items.
-    const walk = {
-      name: undefined as string | undefined,
-      nameLocation: undefined as SanyLocation | undefined,
-      node: undefined as CurrentNode | undefined,
+    const walk: SelectorWalk = {
+      name: undefined,
+      nameLocation: undefined,
+      node: undefined,
       index: 0,
-      mode: "FindingOpName" as Mode,
-      previousMode: undefined as Mode | undefined,
-      letInContext: undefined as Context | undefined,
+      mode: "FindingOpName",
+      previousMode: undefined,
+      letInContext: undefined,
       definitionArityFound: 0,
-      definitionArgs: [] as ExprOrOpArgNode[],
+      definitionArgs: [],
       isInSuffices: false,
     };
     const getArgs = (item: SelectorItem) => item.args ?? [];
@@ -617,7 +630,7 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
         params.length +
         (node.kind === "OpArg"
           ? getSymbolArity(node.op)
-          : walk.previousMode === "FindingOpName" && node.kind !== "Label" && isSymbol(node)
+          : walk.previousMode === "FindingOpName" && isSymbol(node)
             ? getSymbolArity(node)
             : 0);
       if (expectedArity !== found) {
