@@ -86,6 +86,7 @@ import {
   formatState,
   formatValue,
   getHeldValues,
+  getFingerprintError,
   getValueHash,
   isFunctionValue,
   isSameValue,
@@ -1459,21 +1460,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return { callStack: callStack.expressions, fingerprint: callStack.fingerprint };
     }
   };
-  const getHashError = (value: Value) => {
-    try {
-      getValueHash(value);
-      return undefined;
-    } catch (error) {
-      if (!(error instanceof TlaEvaluationError)) throw error;
-      return error;
-    }
-  };
   // The sources of the values a fingerprint fails inside, outermost first: each value fails as it
   // fingerprints a value it holds.
   const findFailedSources = (value: Value, sources: CallStack["sources"]): Expression[] => {
     if (typeof value !== "object") return [];
     const source = sources.get(value);
-    const failed = getHeldValues(value).find((held) => getHashError(held) !== undefined);
+    const failed = getHeldValues(value).find((held) => getFingerprintError(held) !== undefined);
     return [
       ...(source ? [source] : []),
       ...(failed === undefined ? [] : findFailedSources(failed, sources)),
@@ -1483,7 +1475,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // FingerprintException when it fails to.
   const fingerprintReplayed = (state: Value[], callStack: CallStack | undefined) => {
     for (const value of getFingerprintState(state)) {
-      const error = getHashError(value);
+      const error = getFingerprintError(value);
       if (!error) continue;
       const sources = callStack ? findFailedSources(value, callStack.sources) : [];
       // TLC fingerprints a state outside any evaluation, so its call stack is empty.
@@ -1807,6 +1799,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       hash = combineHash(hash, getValueHash(state[index]));
     return hash & 0x3fffffff;
   };
+  // TLC fingerprints a state once it finds the state in the model.
+  const fingerprintModelState = (state: Value[]) => {
+    for (const value of state) {
+      const error = getFingerprintError(value);
+      if (error) throw error;
+    }
+  };
   const isSameState = (stored: Value[], state: Value[]) => {
     for (let position = 0; position < state.length; position++) {
       if (!isSameValue(stored[position], state[position])) return false;
@@ -1900,7 +1899,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const fingerprintState = getFingerprintState(state);
     const hash = getStateHash(fingerprintState);
     const isInModel = search.satisfiesConstraints(state);
-    if (isInModel) search.trackStatePossible(state);
+    if (isInModel) {
+      search.trackStatePossible(state);
+      fingerprintModelState(fingerprintState);
+    }
     const isSeen = isInModel && findStateIndex(hash, fingerprintState) !== -1;
     if (isSeen) return undefined;
     if (isInModel) {
@@ -1946,7 +1948,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const isStateInModel = search.satisfiesConstraints(successor.state, state);
     if (isStateInModel) search.trackStatePossible(successor.state);
     const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
-    if (isInModel) search.trackActionPossible(state, successor.state);
+    if (isInModel) {
+      search.trackActionPossible(state, successor.state);
+      fingerprintModelState(fingerprintState);
+    }
     const existing = isInModel ? found : -1;
     if (source && isInModel) {
       stateWriter?.writeSuccessor(
@@ -2123,8 +2128,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       } catch (error) {
         const replay = getOutput(() => replayNext(state));
         // A successor TLC can't fingerprint fails again as TLC prints it in the trace.
-        const isTraceFailed =
-          replay.result?.fingerprint !== undefined && replay.result.callStack.length === 0;
+        const isTraceFailed = getFingerprintState(successor.state).some(
+          (value) => getFingerprintError(value) !== undefined,
+        );
         outcome.result = toFailure(
           error,
           appendTraceOutput(

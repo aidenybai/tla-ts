@@ -157,13 +157,13 @@ export interface FingerprintFailure {
 // The operators of Tool#evalAppl whose value TLC's CallStackTool gives a source.
 const SOURCED_OPERATORS = new Set(["SUBSET", "UNION", "DOMAIN", "\\cup", "\\cap", "\\"]);
 
+// CallStackTool copies the SetPredValue, FcnLambdaValue and OpLambdaValue that an evaluation
+// returns without their source, and a function TLC builds from a FcnLambdaValue has none.
 const SOURCED_KINDS = new Set<Expression["kind"]>([
-  "Lambda",
   "SetEnumeration",
   "SetFilter",
   "SetMap",
   "Tuple",
-  "FunctionConstruction",
   "FunctionSet",
   "Record",
   "RecordSet",
@@ -1178,7 +1178,7 @@ const traceEvaluator =
           : undefined;
       const value = rebind ? rebind(environment) : computed;
       callStack.values.set(expression, value);
-      if (typeof value === "object" && isSourced(expression)) {
+      if (typeof value === "object" && value.kind !== "FilteredSet" && isSourced(expression)) {
         callStack.sources.set(value, expression);
       }
       return value;
@@ -1735,6 +1735,11 @@ const compileSetComprehension = (
     const predicate = getEvaluator(expression.predicate, environment);
     const set = getEvaluator(expression.bound.set, environment);
     const pattern = expression.bound.pattern;
+    const range = expression.predicate.location.range;
+    const source = range && {
+      names: pattern.kind === "Name" ? pattern.name : pattern.names.join(", "),
+      predicate: formatRange(range),
+    };
     const createTest = (evaluator: Evaluator, context: Context) => (element: Value) =>
       expectBoolean(
         evaluator(withScope(context, bindPattern(context.scope, pattern, element))),
@@ -1749,6 +1754,7 @@ const compileSetComprehension = (
         kind: "FilteredSet",
         base,
         test: createTest(evaluator, context),
+        source,
       };
       filteredSetRebinders.set(filtered, (tracing) =>
         createFiltered(

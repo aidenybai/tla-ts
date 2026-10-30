@@ -76,10 +76,17 @@ export interface SetOperationValue {
   right: Value;
 }
 
+// TLC prints a set filter as its bound names and the location of its predicate.
+export interface FilteredSetSource {
+  names: string;
+  predicate: string;
+}
+
 export interface FilteredSetValue {
   kind: "FilteredSet";
   base: Value;
   test: (element: Value) => boolean;
+  source?: FilteredSetSource;
 }
 
 // UNION S when some element of S isn't a set enumeration. TLC enumerates it only when it has to.
@@ -1019,7 +1026,7 @@ export const unionSorted = (left: SetValue, right: SetValue): SetValue => {
   }
   if (added.length === 0) return left;
   const union = createSortedSet(merged);
-  if (left.hash !== 0) {
+  if (left.hash !== 0 && left.hash !== UNFINGERPRINTABLE_HASH && !added.some(isUnfingerprintable)) {
     let hash = left.hash;
     for (let index = 0; index < added.length; index++) {
       hash = (hash + getElementContribution(added[index])) | 0;
@@ -1893,7 +1900,7 @@ export const updateFunction = (
     getFunctionClass(finite),
   );
   updated.writtenKeys = finite.writtenKeys;
-  if (finite.hash !== 0) {
+  if (finite.hash !== 0 && finite.hash !== UNFINGERPRINTABLE_HASH && !isUnfingerprintable(next)) {
     const key = finite.domain[position];
     updated.hash =
       previous === next
@@ -1941,24 +1948,65 @@ const getElementContribution = (element: Value) =>
 const getEntryContribution = (key: Value, value: Value) =>
   finalizeHash((Math.imul(getValueHash(key), 0x27d4eb2d) + getValueHash(value)) | 0);
 
+// The hash of each value that TLC fails to fingerprint, such as Nat or a set that holds it. Calls
+// with such a value as an argument still share their result, and a state that holds one fails
+// when TLC fingerprints it.
+const UNFINGERPRINTABLE_HASH = 0x2f6b1c4d;
+
+const isUnfingerprintable = (value: Value) => getValueHash(value) === UNFINGERPRINTABLE_HASH;
+
 const computeValueHash = (value: ObjectValue) => {
   if (value.kind === "ModelValue") return finalizeHash(combineHash(hashString(value.name), 0x6d));
   if (isSetValue(value)) {
-    if (!isEnumerable(value)) return hashString(getValueKey(value));
+    if (!isEnumerable(value)) return UNFINGERPRINTABLE_HASH;
     const elements = toFiniteSet(value).elements;
     let hash = SET_HASH_SEED;
     for (let index = 0; index < elements.length; index++) {
+      if (isUnfingerprintable(elements[index])) return UNFINGERPRINTABLE_HASH;
       hash = (hash + getElementContribution(elements[index])) | 0;
     }
     return hash;
   }
+  if (value.kind === "LazyFunction" && !isEnumerable(value.domain)) return UNFINGERPRINTABLE_HASH;
   const functionValue = toFiniteFunction(value);
   let hash = FUNCTION_HASH_SEED;
   for (let index = 0; index < functionValue.domain.length; index++) {
-    hash =
-      (hash + getEntryContribution(functionValue.domain[index], functionValue.range[index])) | 0;
+    const key = functionValue.domain[index];
+    const item = functionValue.range[index];
+    if (isUnfingerprintable(key) || isUnfingerprintable(item)) return UNFINGERPRINTABLE_HASH;
+    hash = (hash + getEntryContribution(key, item)) | 0;
   }
   return hash;
+};
+
+// TLC's fingerPrint enumerates each set and function a value holds, and fails on Nat, Seq(S) and
+// the like, which it never enumerates.
+const fingerprintValue = (value: Value): void => {
+  if (typeof value !== "object" || value.kind === "ModelValue") return;
+  if (value.kind === "InfiniteSet" || value.kind === "SequenceSet") {
+    throw new TlaEvaluationError(
+      `TLC has found a state in which the value of a variable contains ${formatValue(value)}`,
+    );
+  }
+  if (isSetValue(value)) {
+    toFiniteSet(value).elements.forEach(fingerprintValue);
+    return;
+  }
+  const functionValue = toFiniteFunction(value);
+  functionValue.domain.forEach(fingerprintValue);
+  functionValue.range.forEach(fingerprintValue);
+};
+
+// The error TLC raises as it fingerprints a value: one that hashing the value raises, as for a set
+// too large to enumerate, or one of a value with the hash of the values TLC fails on.
+export const getFingerprintError = (value: Value) => {
+  try {
+    if (isUnfingerprintable(value)) fingerprintValue(value);
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    return error;
+  }
 };
 
 // The values a value holds, which TLC fingerprints as it fingerprints the value.
@@ -2163,7 +2211,9 @@ const formatLazySet = (value: LazySetValue, isStrict: boolean): string => {
     case "SetOperation":
       return `${format(value.left)} ${value.operator} ${format(value.right)}`;
     case "FilteredSet":
-      return `{x \\in ${format(value.base)} : ...}`;
+      return value.source
+        ? `{${value.source.names} \\in ${format(value.base)} : <expression ${value.source.predicate}> }`
+        : `{x \\in ${format(value.base)} : ...}`;
     case "Union":
       return formatUnion(value, isStrict);
   }

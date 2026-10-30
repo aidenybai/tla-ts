@@ -977,6 +977,60 @@ describe("evaluation errors match TLC", () => {
     expect([result.distinctStates, result.failure?.exitCode]).toEqual([3, 75]);
   });
 
+  // CallStackTool copies a SetPredValue without its source, so TLC reports where it evaluated the
+  // filter rather than where it built it.
+  it.each([
+    ["Nat", "TLC has found a state in which the value of a variable contains Nat", undefined],
+    ["{Nat}", "TLC has found a state in which the value of a variable contains Nat", 1],
+    ["SUBSET Nat", "Attempted to compute the number of elements in the overridden value Nat.", 1],
+    [
+      "{n \\in Nat : n > 1}",
+      "Attempted to enumerate { x \\in S : p(x) } when S:\nNat\nis not enumerable",
+      undefined,
+    ],
+  ])(
+    "fails to fingerprint an initial state x = %s like TLC",
+    async (expression, message, sources) => {
+      const result = await checkSteps(`Start == x = ${expression}`, "INIT Start\nNEXT Next");
+      expect(result.failure?.message).toBe(message);
+      expect(result.failure?.fingerprint?.sources.length).toBe(sources);
+      expect([result.generatedStates, result.distinctStates, result.failure?.exitCode]).toEqual([
+        1, 0, 75,
+      ]);
+    },
+  );
+
+  it("prints a set filter it can't enumerate as its bound and the location of its predicate", async () => {
+    const result = await checkSteps("Start == x = {n \\in Nat : n > 1}", "INIT Start\nNEXT Next");
+    expect(result.failure?.initialState?.x && formatValue(result.failure.initialState.x)).toBe(
+      "{n \\in Nat : <expression line 6, col 27 to line 6, col 31 of module M> }",
+    );
+  });
+
+  it("fingerprints only the states in the model like TLC", async () => {
+    const result = await checkSteps(
+      "Start == x = SUBSET Nat\nC == x \\in {}",
+      "INIT Start\nNEXT Next\nCONSTRAINT C",
+    );
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      1,
+      0,
+    ]);
+  });
+
+  it("fails again as it prints a successor it can't fingerprint", async () => {
+    const result = await checkSteps(
+      "Step == x' = IF x = 1 THEN {Nat} ELSE x + 1",
+      "INIT Init\nNEXT Step",
+    );
+    expect(result.failure?.message).toBe(
+      `${UNEXPECTED_EXCEPTION}TLC has found a state in which the value of a variable contains Nat`,
+    );
+    expect(result.failure?.isTraceFailed).toBe(true);
+    expect(getFailureSummary(result)).toEqual(["error", ["0", "1"], [3, 2, 0, 2], 75]);
+  });
+
   it("prints what the replay of a failed constraint prints after the trace", async () => {
     const result = await checkSteps(
       'C == PrintT(<<"c", x>>) /\\ (IF x = 2 THEN 1 \\in 2 ELSE TRUE)',
