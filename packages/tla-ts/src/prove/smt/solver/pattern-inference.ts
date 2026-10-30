@@ -15,6 +15,7 @@ import {
   OP_MUL,
   OP_TRUE,
 } from "./ast";
+import { RefVector } from "./ref-vector";
 import { shiftVars } from "./var-subst";
 
 interface CandidateInfo {
@@ -39,15 +40,24 @@ const isSameSet = (left: Set<number>, right: Set<number>) =>
 const isSubset = (left: Set<number>, right: Set<number>) =>
   [...left].every((element) => right.has(element));
 
-class PatternInference {
-  private candidates: number[] = [];
+// pattern_inference_cfg, which asserted_formulas keeps as long as it lives. Its vectors hold their
+// candidates as long as Z3's do: m_candidates until the end of mk_patterns, and m_tmp1 and m_tmp2
+// until the next mk_patterns that has candidates.
+export class PatternInference {
+  private candidates: RefVector;
+  private tmp1: RefVector;
+  private tmp2: RefVector;
   private candidateInfos = new Map<number, CandidateInfo>();
   private numBindings = 0;
-  isArithForbidden = true;
-  isNestedArithOnly = true;
-  isBlockingLoopPatterns = true;
+  private isArithForbidden = true;
+  private isNestedArithOnly = true;
+  private isBlockingLoopPatterns = true;
 
-  constructor(private manager: AstManager) {}
+  constructor(private manager: AstManager) {
+    this.candidates = new RefVector(manager);
+    this.tmp1 = new RefVector(manager);
+    this.tmp2 = new RefVector(manager);
+  }
 
   private isForbidden(expr: number) {
     const manager = this.manager;
@@ -97,8 +107,11 @@ class PatternInference {
             freeVars.size > 0 &&
             boundVars.size === 0 &&
             (decl.family !== FAMILY_ARITH || isArithCandidate)
-          )
-            this.addCandidate(shiftVars(manager, expr, 0, -delta, 0), freeVars, size);
+          ) {
+            const candidate = manager.withTemporaries(() => shiftVars(manager, expr, 0, -delta, 0));
+            this.addCandidate(candidate, freeVars, size);
+            manager.decRef(candidate);
+          }
         }
       } else if (kind === KIND_QUANTIFIER) {
         const data = manager.getQuantifier(expr);
@@ -157,12 +170,12 @@ class PatternInference {
 
   private filterLoopingPatterns() {
     const result: number[] = [];
-    for (const first of this.candidates) {
+    for (const first of this.candidates.items) {
       const firstInfo = this.candidateInfos.get(first);
       if (firstInfo === undefined) continue;
       const isLooping =
         this.isBlockingLoopPatterns &&
-        this.candidates.some((second) => {
+        this.candidates.items.some((second) => {
           if (second === first) return false;
           const secondInfo = this.candidateInfos.get(second);
           return (
@@ -261,40 +274,68 @@ class PatternInference {
     }
   }
 
-  mkPatterns(numBindings: number, body: number) {
+  private mkPatterns(numBindings: number, body: number) {
     this.numBindings = numBindings;
-    this.candidates = [];
-    this.candidateInfos = new Map();
     this.collect(body);
     const result: number[] = [];
-    if (this.candidates.length === 0) return result;
-    const nonLooping = this.filterLoopingPatterns();
-    const smallest = nonLooping.filter((candidate) => !this.containsSubpattern(candidate));
-    const remaining: number[] = [];
-    for (const candidate of smallest) {
-      const info = this.candidateInfos.get(candidate);
-      if (info !== undefined && info.freeVars.size === numBindings)
-        result.push(this.mkPattern(candidate));
-      else remaining.push(candidate);
+    if (this.candidates.size > 0) {
+      const tmp1 = this.tmp1;
+      const tmp2 = this.tmp2;
+      tmp1.reset();
+      for (const candidate of this.filterLoopingPatterns()) tmp1.push(candidate);
+      tmp2.reset();
+      for (const candidate of tmp1.items)
+        if (!this.containsSubpattern(candidate)) tmp2.push(candidate);
+      tmp1.reset();
+      for (const candidate of tmp2.items) {
+        const info = this.candidateInfos.get(candidate);
+        if (info !== undefined && info.freeVars.size === numBindings)
+          result.push(this.mkPattern(candidate));
+        else tmp1.push(candidate);
+      }
+      const numExtraMultiPatterns = result.length === 0 ? 1 : 0;
+      if (numExtraMultiPatterns > 0 && tmp1.size > 0) {
+        // std::stable_sort with m_pattern_weight_lt, which reorders m_tmp1 itself.
+        const weightOf = (candidate: number) => this.candidateInfos.get(candidate);
+        tmp1.items = tmp1.items
+          .map((candidate, index) => ({ candidate, index }))
+          .sort((left, right) => {
+            const leftInfo = weightOf(left.candidate);
+            const rightInfo = weightOf(right.candidate);
+            if (leftInfo === undefined || rightInfo === undefined) return left.index - right.index;
+            if (leftInfo.freeVars.size !== rightInfo.freeVars.size)
+              return rightInfo.freeVars.size - leftInfo.freeVars.size;
+            if (leftInfo.size !== rightInfo.size) return leftInfo.size - rightInfo.size;
+            return left.index - right.index;
+          })
+          .map((entry) => entry.candidate);
+        this.candidatesToMultiPatterns(numExtraMultiPatterns, tmp1.items, result);
+      }
     }
-    const numExtraMultiPatterns = result.length === 0 ? 1 : 0;
-    if (numExtraMultiPatterns > 0 && remaining.length > 0) {
-      const weightOf = (candidate: number) => this.candidateInfos.get(candidate);
-      const sorted = remaining
-        .map((candidate, index) => ({ candidate, index }))
-        .sort((left, right) => {
-          const leftInfo = weightOf(left.candidate);
-          const rightInfo = weightOf(right.candidate);
-          if (leftInfo === undefined || rightInfo === undefined) return left.index - right.index;
-          if (leftInfo.freeVars.size !== rightInfo.freeVars.size)
-            return rightInfo.freeVars.size - leftInfo.freeVars.size;
-          if (leftInfo.size !== rightInfo.size) return leftInfo.size - rightInfo.size;
-          return left.index - right.index;
-        })
-        .map((entry) => entry.candidate);
-      this.candidatesToMultiPatterns(numExtraMultiPatterns, sorted, result);
-    }
+    this.candidateInfos = new Map();
+    this.candidates.reset();
     return result;
+  }
+
+  // reduce_quantifier for a quantifier without patterns: arithmetic, then looping and non-nested
+  // arithmetic patterns, are allowed when no pattern is found without them.
+  infer(numBindings: number, body: number, weight: number): InferredPatterns {
+    this.isArithForbidden = true;
+    this.isNestedArithOnly = true;
+    this.isBlockingLoopPatterns = true;
+    const patterns = this.mkPatterns(numBindings, body);
+    if (patterns.length > 0) return { patterns, weight };
+    this.isArithForbidden = false;
+    this.isBlockingLoopPatterns = false;
+    const arithPatterns = this.mkPatterns(numBindings, body);
+    if (arithPatterns.length > 0)
+      return { patterns: arithPatterns, weight: Math.max(weight, PI_ARITH_WEIGHT) };
+    this.isNestedArithOnly = false;
+    const nonNestedPatterns = this.mkPatterns(numBindings, body);
+    return {
+      patterns: nonNestedPatterns,
+      weight: nonNestedPatterns.length > 0 ? Math.max(weight, PI_NON_NESTED_ARITH_WEIGHT) : weight,
+    };
   }
 }
 
@@ -302,26 +343,3 @@ export interface InferredPatterns {
   patterns: number[];
   weight: number;
 }
-
-// pattern_inference_cfg::reduce_quantifier for a quantifier without patterns.
-export const inferPatterns = (
-  manager: AstManager,
-  numBindings: number,
-  body: number,
-  weight: number,
-): InferredPatterns => {
-  const inference = new PatternInference(manager);
-  const patterns = inference.mkPatterns(numBindings, body);
-  if (patterns.length > 0) return { patterns, weight };
-  inference.isArithForbidden = false;
-  inference.isBlockingLoopPatterns = false;
-  const arithPatterns = inference.mkPatterns(numBindings, body);
-  if (arithPatterns.length > 0)
-    return { patterns: arithPatterns, weight: Math.max(weight, PI_ARITH_WEIGHT) };
-  inference.isNestedArithOnly = false;
-  const nonNestedPatterns = inference.mkPatterns(numBindings, body);
-  return {
-    patterns: nonNestedPatterns,
-    weight: nonNestedPatterns.length > 0 ? Math.max(weight, PI_NON_NESTED_ARITH_WEIGHT) : weight,
-  };
-};

@@ -3,7 +3,7 @@
 import { AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
 import { mkNot } from "./ast-util";
 import { DefinedNames, Nnf } from "./nnf";
-import { inferPatterns } from "./pattern-inference";
+import { PatternInference } from "./pattern-inference";
 import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
@@ -24,18 +24,22 @@ const pushAssertion = (manager: AstManager, expr: number, result: RefVector) => 
   result.push(expr);
 };
 
-const inferAllPatterns = (manager: AstManager, expr: number): number => {
+const inferAllPatterns = (
+  manager: AstManager,
+  inference: PatternInference,
+  expr: number,
+): number => {
   if (!manager.hasQuantifierFlags[expr]) return expr;
   if (manager.kinds[expr] === KIND_APP)
     return manager.mkApp(
       manager.decls[expr],
-      manager.args[expr].map((innerArg) => inferAllPatterns(manager, innerArg)),
+      manager.args[expr].map((innerArg) => inferAllPatterns(manager, inference, innerArg)),
       manager.sorts[expr],
     );
   const data = manager.getQuantifier(expr);
-  const body = inferAllPatterns(manager, data.body);
+  const body = inferAllPatterns(manager, inference, data.body);
   if (data.patterns.length > 0 || !data.isForall) return manager.mkQuantifier({ ...data, body });
-  const inferred = inferPatterns(manager, data.sorts.length, body, data.weight);
+  const inferred = inference.infer(data.sorts.length, body, data.weight);
   return manager.mkQuantifier({
     ...data,
     body,
@@ -131,6 +135,7 @@ export class AssertedFormulas {
   private isEliminatingAnd = false;
   private isReducePending = true;
   private names: DefinedNames;
+  private patternInference: PatternInference;
 
   constructor(private manager: AstManager) {
     this.formulas = new RefVector(manager);
@@ -141,6 +146,7 @@ export class AssertedFormulas {
       isRewritingPatterns: true,
     });
     this.names = new DefinedNames(manager);
+    this.patternInference = new PatternInference(manager);
   }
 
   assertExpr(expr: number) {
@@ -169,7 +175,7 @@ export class AssertedFormulas {
     const manager = this.manager;
     if (
       this.simplifyFormulas((formula) =>
-        manager.withTemporaries(() => inferAllPatterns(manager, formula)),
+        manager.withTemporaries(() => inferAllPatterns(manager, this.patternInference, formula)),
       )
     )
       this.isReducePending = true;
