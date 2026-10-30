@@ -1,5 +1,6 @@
-import { join } from "node:path";
-import { CONFORMANCE_DIRECTORY } from "./corpora";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getLibraryModules } from "./corpora";
 import { collapseWhitespace, getDigest } from "./tlapm-digest";
 
 export type BackendVerdict = "unsat" | "sat" | "unknown";
@@ -113,4 +114,46 @@ export const getIsabelleVerdict = (output: string): "unsat" | "unknown" =>
 export const getLs4Verdict = (output: string): BackendVerdict => {
   const answer = output.split("\n").find((line) => /^(UNSAT|SAT)\b/.test(line));
   return answer === undefined ? "unknown" : answer.startsWith("UNSAT") ? "unsat" : "sat";
+};
+
+// The records of the modules whose ids contain the --filter argument, or of every module.
+export const readProofRecords = (): ModuleProofRecord[] => {
+  if (!existsSync(PROOFS_PATH)) {
+    console.error("Run conformance:record-proofs first");
+    process.exit(1);
+  }
+  const index = process.argv.indexOf("--filter");
+  const filter = index === -1 ? undefined : process.argv[index + 1];
+  const records: ModuleProofRecord[] = JSON.parse(readFileSync(PROOFS_PATH, "utf8"));
+  return records.filter((record) => filter === undefined || record.id.includes(filter));
+};
+
+const libraryModules = getLibraryModules();
+
+const readSource = (path: string | undefined) =>
+  path !== undefined && existsSync(path) ? readFileSync(path, "utf8") : undefined;
+
+// Loads a module the corpus module at path uses, where tlapm finds it: in the module's directory,
+// then the -I library, then tlapm's own standard library.
+export const getModuleLoader = (path: string) => (name: string) =>
+  readSource(join(dirname(path), `${name}.tla`)) ??
+  readSource(libraryModules.get(name)) ??
+  readSource(join(CORPORA_DIRECTORY, "tlapm/library", `${name}.tla`));
+
+// Prints how many results have each verdict, then the ones worth a look, all of them with
+// --verbose and otherwise the first 20.
+export const printResults = <Result extends { verdict: string }>(
+  results: Result[],
+  verdicts: readonly Result["verdict"][],
+  shown: Result["verdict"][],
+  describe: (result: Result) => string,
+) => {
+  const counts = Map.groupBy(results, (result) => result.verdict);
+  console.log(
+    verdicts.map((verdict) => `${counts.get(verdict)?.length ?? 0} ${verdict}`).join(", "),
+  );
+  const listed = results.filter((result) => shown.includes(result.verdict));
+  (process.argv.includes("--verbose") ? listed : listed.slice(0, 20)).forEach((result) =>
+    console.log(describe(result)),
+  );
 };
