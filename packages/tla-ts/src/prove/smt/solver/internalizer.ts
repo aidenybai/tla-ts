@@ -52,6 +52,7 @@ import {
 import type { DefaultQuantifierManager } from "./quantifier-manager";
 import { RelevancyPropagator } from "./relevancy";
 import { Rewriter } from "./rewriter";
+import { sortByKey } from "./sort";
 import type { TheoryLra } from "./theory-lra";
 
 interface NewEq {
@@ -304,11 +305,11 @@ export abstract class Internalizer {
     this.watches.push([], []);
     this.binaryWatches.push([], []);
     this.caseSplitQueue.mkVar(boolVar);
-    this.trail.push(() => this.undoMkBoolVar());
+    this.trail.push(this.undoMkBoolVar);
     return boolVar;
   }
 
-  private undoMkBoolVar() {
+  private undoMkBoolVar = () => {
     const boolVar = toBoolVar(this.boolVar2Expr.length - 1);
     const expr = this.boolVar2Expr[boolVar];
     this.caseSplitQueue.delVar(boolVar);
@@ -331,7 +332,7 @@ export abstract class Internalizer {
     this.watches.length -= 2;
     this.binaryWatches.length -= 2;
     this.binJustifications.length = Math.min(this.binJustifications.length, this.watches.length);
-  }
+  };
 
   protected isAtom(boolVar: BoolVar) {
     return (
@@ -364,13 +365,13 @@ export abstract class Internalizer {
   mkEnode(expr: number, isSuppressingArgs: boolean, isMergeTf: boolean, isCgcEnabled: boolean) {
     const manager = this.manager;
     const generation = this.cachedGeneration.get(expr) ?? this.generation;
-    const args: Enode[] = [];
-    if (!isSuppressingArgs)
-      for (const arg of manager.args[expr]) {
-        const argNode = this.exprToEnode[arg];
-        if (argNode === undefined) throw new Error("an argument was not internalized");
-        args.push(argNode);
-      }
+    const args = isSuppressingArgs
+      ? []
+      : manager.args[expr].map((arg) => {
+          const argNode = this.exprToEnode[arg];
+          if (argNode === undefined) throw new Error("an argument was not internalized");
+          return argNode;
+        });
     const isEq = !isSuppressingArgs && manager.getOp(expr) === OP_EQ;
     const node = new Enode(
       expr,
@@ -386,7 +387,7 @@ export abstract class Internalizer {
     for (const arg of args) arg.root.parents.push(node);
     if (manager.isUniqueValue(expr)) node.isInterpreted = true;
     this.exprToEnode[expr] = node;
-    this.trail.push(() => this.undoMkEnode());
+    this.trail.push(this.undoMkEnode);
     this.enodes.push(node);
     if (args.length > 0) {
       if (node.isTrueEq()) {
@@ -415,14 +416,14 @@ export abstract class Internalizer {
     return node;
   }
 
-  private undoMkEnode() {
+  private undoMkEnode = () => {
     const node = this.enodes.pop();
     if (node === undefined) return;
     this.exprToEnode[node.owner] = undefined;
     if (node.isCgr() && node.usesCgTable()) this.cgTable.erase(node);
     if (node.args.length > 0 && !node.isEq) this.decl2enodes.get(node.decl)?.pop();
     for (const arg of node.args) arg.root.parents.pop();
-  }
+  };
 
   protected mergeCgcGenerations(first: Enode, firstGeneration: number, second: Enode) {
     const secondGeneration = second.generation;
@@ -771,7 +772,7 @@ export abstract class Internalizer {
   }
 
   private simplifyAuxClauseLiterals(literals: Literal[], removed: Literal[]) {
-    literals.sort((first, second) => first - second);
+    sortByKey(literals, (literal) => literal);
     let previous: Literal | null = null;
     let kept = 0;
     for (const literal of literals) {
@@ -854,7 +855,9 @@ export abstract class Internalizer {
   protected removeWatchLiteral(clause: Clause, index: number) {
     const list = this.watches[negate(clause.literals[index])];
     const position = list.indexOf(clause);
-    if (position !== -1) list.splice(position, 1);
+    if (position === -1) return;
+    list.copyWithin(position, position + 1);
+    list.length--;
   }
 
   protected getBinJustification(literal: Literal) {

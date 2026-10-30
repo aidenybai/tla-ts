@@ -32,6 +32,7 @@ import {
   SORT_INT,
 } from "./ast";
 import { type Rewrite, RewriterTpl } from "./rewriter-tpl";
+import { sortByKey } from "./sort";
 import { elimUnusedVars } from "./var-subst";
 
 export interface RewriterOptions {
@@ -293,7 +294,7 @@ export class Rewriter extends RewriterTpl {
       (arg, index) => index > 0 && isAstLess(manager, arg, result[index - 1]),
     );
     if (isNested || numCandidates !== flatArgs.length || isOutOfOrder)
-      result.sort((first, second) => manager.ids[first] - manager.ids[second]);
+      sortByKey(result, (arg) => manager.ids[arg]);
     return manager.mkOr(result);
   }
 
