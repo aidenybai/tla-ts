@@ -5,7 +5,7 @@
 import { KIND_APP, KIND_VAR, OP_AND, OP_EQ, OP_FALSE, OP_ITE, OP_NOT, OP_OR, OP_TRUE } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
-import { substitute } from "./var-subst";
+import { VarSubst } from "./var-subst";
 
 const EAGER_COST_THRESHOLD = 10;
 const LAZY_COST_THRESHOLD = 20;
@@ -156,10 +156,29 @@ export class QiQueue {
   private instantiatedTrail: number[] = [];
   private scopes: number[] = [];
   private checker: Checker;
+  // cached_var_subst: each instance by its quantifier and bindings, which the queue holds with them
+  // until the next search.
+  private subst: VarSubst;
+  private instances = new Map<string, number>();
+  private instanceRefs: number[] = [];
   numInstances = 0;
 
   constructor(private context: Context) {
     this.checker = new Checker(context);
+    this.subst = new VarSubst(context.manager, true);
+  }
+
+  private getInstance(quantifier: number, bindings: number[]) {
+    const manager = this.context.manager;
+    const key = `${quantifier}:${bindings.join(",")}`;
+    const cached = this.instances.get(key);
+    if (cached !== undefined) return cached;
+    const instance = this.subst.apply(manager.getQuantifier(quantifier).body, bindings);
+    this.instances.set(key, instance);
+    manager.incRef(quantifier);
+    for (const binding of bindings) manager.incRef(binding);
+    this.instanceRefs.push(quantifier, ...bindings, instance);
+    return instance;
   }
 
   hasWork() {
@@ -206,9 +225,8 @@ export class QiQueue {
     const data = manager.getQuantifier(entry.quantifier);
     if (this.checker.isSat(data.body, entry.bindings)) return;
     const instance = context.rewriter.rewrite(
-      substitute(
-        manager,
-        data.body,
+      this.getInstance(
+        entry.quantifier,
         entry.bindings.map((binding) => binding.owner),
       ),
     );
@@ -258,6 +276,10 @@ export class QiQueue {
   }
 
   initSearchEh() {
+    const manager = this.context.manager;
+    for (const expr of this.instanceRefs) manager.decRef(expr);
+    this.instanceRefs = [];
+    this.instances.clear();
     this.newEntries = [];
   }
 }
