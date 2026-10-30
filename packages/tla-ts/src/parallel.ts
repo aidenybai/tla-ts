@@ -20,7 +20,7 @@ import {
   type SharedFingerprints,
 } from "./fingerprints";
 import { getInitialStates } from "./successors";
-import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
+import { getTlcStringOrder, getTlcDeclarationOrder } from "./tlc-order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
 import { getRankedStringCount, setStringOrder, type Value } from "./values";
@@ -150,7 +150,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   });
   const environment = specification.environment;
   const search = createSearch(config, environment, () =>
-    getTlcVariableOrder(options.source, loadModule),
+    getTlcDeclarationOrder(options.source, loadModule, "variable"),
   );
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
   if (

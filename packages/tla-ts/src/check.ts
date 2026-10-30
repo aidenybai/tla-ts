@@ -60,7 +60,7 @@ import {
   type StateWriter,
 } from "./state-graph";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
-import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
+import { getTlcStringOrder, getTlcDeclarationOrder } from "./tlc-order";
 import { createTlcFingerprinter, getTlcFingerprint } from "./tlc-random";
 import { createCanonicalizer } from "./canonical";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
@@ -998,7 +998,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   });
 
   const search = createSearch(config, environment, () =>
-    getTlcVariableOrder(options.source, options.loadModule),
+    getTlcDeclarationOrder(options.source, options.loadModule, "variable"),
   );
   const assumptionViolation = findAssumptionViolation(specification.assumptions, environment);
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
