@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { prove, type ProofObligation, TlaError } from "../src";
 import { getObligations, type PrintedObligation } from "../src/obligations";
 import { DECIDERS } from "../src/prove/deciders";
-import { findMethods } from "../src/prove/prep/pragma";
+import { findMethods, type Method } from "../src/prove/prep/pragma";
 import { encodeForBackend } from "../src/prove/prove";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY } from "./corpora";
 import { runWithCpuLimit } from "./cpu-limit";
@@ -59,6 +59,8 @@ interface Result {
   expected: string;
   actual?: string;
   reason?: string;
+  // The backend a difference points at.
+  backend?: string;
   cpuProof?: CpuProof;
 }
 
@@ -102,24 +104,11 @@ const getVerdict = (expected: ObligationRecord, actual: ProofObligation | undefi
   return "agree";
 };
 
-// Decides the obligation again with the prover tlapm proved it with, when tla-ts tried that prover
-// and didn't prove it, and returns the proof if it comes within the limit in CPU time. The SMT
-// encoder's CASE numbering only names a symbol, so the input starts it from zero.
-const getCpuProof = (
-  obligation: PrintedObligation,
-  expected: ObligationRecord,
-  actual: ProofObligation,
-): CpuProof | undefined => {
-  if (expected.status !== "proved") return undefined;
-  const provers = findMethods(obligation).provers;
-  const position = provers.findIndex((method) => method.prover === expected.prover);
-  const method = provers[position];
-  if (!method || !(method.prover in DECIDERS)) return undefined;
-  if (
-    actual.status === "proved" &&
-    provers.findIndex((innerMethod) => innerMethod.prover === actual.prover) < position
-  )
-    return undefined;
+// Decides the obligation again with the method of the prover tlapm proved it with, and returns the
+// proof if it comes within the method's limit in CPU time. The SMT encoder's CASE numbering only
+// names a symbol, so the input starts it from zero.
+const getCpuProof = (obligation: PrintedObligation, method: Method): CpuProof | undefined => {
+  if (!(method.prover in DECIDERS)) return undefined;
   try {
     const text = encodeForBackend(obligation, method.prover, { caseErrors: 0 });
     const run = runWithCpuLimit(method.timeLimitMs, (options) =>
@@ -136,6 +125,25 @@ const getCpuProof = (
     if (error instanceof TlaError) return undefined;
     throw error;
   }
+};
+
+// Of the provers tlapm and tla-ts proved the obligation with, the first one the obligation's methods
+// try, as the other answered differently on it. A difference without one is in Prep.
+const getBackend = (
+  provers: Method[],
+  expected: ObligationRecord,
+  actual: ProofObligation | undefined,
+) => {
+  const getPosition = (prover: string) => {
+    const position = provers.findIndex((method) => method.prover === prover);
+    return position === -1 ? Infinity : position;
+  };
+  return (
+    [
+      ...(expected.status === "proved" ? [expected.prover] : []),
+      ...(actual?.status === "proved" ? [actual.prover] : []),
+    ].toSorted((left, right) => getPosition(left) - getPosition(right))[0] ?? "prep"
+  );
 };
 
 const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
@@ -173,9 +181,9 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
       ...(reason === undefined ? {} : { reason }),
     };
   });
-  const isRechecked = (result: Result) =>
-    result.verdict === "missed" || result.verdict === "prover";
-  if (!results.some(isRechecked)) return results;
+  const isDifferent = (result: Result) =>
+    result.verdict !== "agree" && result.verdict !== "deviation";
+  if (!results.some(isDifferent)) return results;
   const printed = new Map(
     getObligations([{ file: path, source }], (name) => {
       const loaded = loadModule(name);
@@ -186,20 +194,27 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
   );
   return results.map((result, index) => {
     const obligation = printed.get(result.id);
+    if (!isDifferent(result) || !obligation) return result;
+    const expected = record.obligations[index];
     const actual = byId.get(result.id);
+    const provers = findMethods(obligation).provers;
+    const backend = getBackend(provers, expected, actual);
+    // tla-ts not proving what tlapm's prover did may be a time-out.
+    const method = provers.find((innerMethod) => innerMethod.prover === backend);
     const cpuProof =
-      isRechecked(result) && obligation && actual
-        ? getCpuProof(obligation, record.obligations[index], actual)
+      (result.verdict === "missed" || result.verdict === "prover") &&
+      expected.status === "proved" &&
+      expected.prover === backend &&
+      method
+        ? getCpuProof(obligation, method)
         : undefined;
-    return cpuProof ? { ...result, cpuProof } : result;
+    return {
+      ...result,
+      backend,
+      ...(cpuProof ? { cpuProof } : {}),
+    };
   });
 };
-
-// The backend a difference points at: the prover tlapm proved the obligation with, or the one
-// tla-ts proved it with when tlapm didn't.
-const getOwner = (result: Result) =>
-  (/^proved by (\w+)/.exec(result.expected) ?? /^proved by (\w+)/.exec(result.actual ?? ""))?.[1] ??
-  "none";
 
 const records = readProofRecords();
 const byModule = await runModuleWorkers(records, proveModule, availableParallelism());
@@ -233,7 +248,7 @@ const differences = Map.groupBy(
   results.filter(
     (result) => result.verdict !== "agree" && result.verdict !== "deviation" && !result.cpuProof,
   ),
-  (result) => `${result.verdict} ${getOwner(result)}`,
+  (result) => `${result.verdict} ${result.backend ?? "prep"}`,
 );
 [...differences]
   .toSorted((left, right) => right[1].length - left[1].length)
