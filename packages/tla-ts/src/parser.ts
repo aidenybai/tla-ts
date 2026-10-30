@@ -1708,14 +1708,12 @@ const parse = (source: string, mode: ParseMode): Module => {
       const tokenIndex = cursor.index;
       unitStart.index = tokenIndex;
       const token = peek();
-      if (token.kind === "ModuleEnd" || token.kind === "End") {
-        if (token.kind === "ModuleEnd") {
-          location.range = {
-            module: name,
-            start: { line: location.line, column: location.column },
-            end: { line: token.line, column: token.endColumn },
-          };
-        }
+      if (token.kind === "ModuleEnd") {
+        location.range = {
+          module: name,
+          start: { line: location.line, column: location.column },
+          end: { line: token.line, column: token.endColumn },
+        };
         openModules.pop();
         recursiveScopes.pop();
         return module;

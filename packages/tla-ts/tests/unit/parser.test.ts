@@ -91,6 +91,13 @@ describe("parseModule reads operators like SANY", () => {
     },
   );
 
+  it.each([
+    ["the root module", "---- MODULE M ----\nA == 1\n"],
+    ["a nested module", `---- MODULE M ----\n---- MODULE Inner ----\nA == 1\n`],
+  ])("rejects %s without ====", (_, source) => {
+    expect(() => parseModule(source)).toThrow(TlaSyntaxError);
+  });
+
   it("rejects an operator of a parameterized instance without the instance's arguments", () => {
     expect(() =>
       parseModule(`---- MODULE M ----\n${INNER}\nTHEOREM M!Foo(TRUE) => M!Foo(TRUE)\n====`),
