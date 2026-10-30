@@ -787,11 +787,13 @@ export const createSearch = (
       if (view !== undefined || isFingerprintedLikeTlc) {
         return BigInt64Array.from(states, getTlcStateFingerprint);
       }
-      const indices = getTlcOrder();
-      const getFingerprint = createTlcFingerprinter();
-      return BigInt64Array.from(fingerprintStates, (state) =>
-        getFingerprint(indices.map((index) => state[index])),
+      const fingerprints = new BigInt64Array(fingerprintStates.length);
+      const fingerprint = createTlcFingerprinter(
+        getTlcOrder(),
+        new Int32Array(fingerprints.buffer),
       );
+      fingerprintStates.forEach(fingerprint);
+      return fingerprints;
     },
     getFingerprintState: (state) => {
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
