@@ -18,6 +18,7 @@ import {
   bindValue,
   compileArgumentScope,
   evaluate,
+  getEntryEvaluator,
   expectBoolean,
   forEachBinding,
   getBoundsDomain,
@@ -29,6 +30,7 @@ import {
   resolveGlobalOperator,
   type Context,
   type Environment,
+  type Evaluator,
   type Scope,
   type State,
 } from "./evaluate";
@@ -87,8 +89,7 @@ const assign = (partial: State, index: number, value: Value) => {
   return copy;
 };
 
-const holds = (expression: Expression, context: Context) => {
-  const value = evaluate(expression, context);
+const holds = (expression: Expression, context: Context, value = evaluate(expression, context)) => {
   if (typeof value === "boolean") return value;
   try {
     return expectBoolean(value, `the action at ${describeLocation(expression)}`);
@@ -320,6 +321,7 @@ const compileConjunction = (
   isInit: boolean,
 ): Runner => {
   const conjuncts = operands.map((operand) => toConjunct(operand, environment, isInit));
+  const evaluators: (Evaluator | undefined)[] = conjuncts.map(() => undefined);
   const runFrom = (
     start: number,
     run: Run,
@@ -342,12 +344,17 @@ const compileConjunction = (
       const conjunct = conjuncts[index];
       if (conjunct.kind === "Guard") {
         context ??= getContext(run, scope, current);
-        if (!holds(conjunct.expression, context)) return;
+        const evaluator = (evaluators[index] ??= getEntryEvaluator(
+          conjunct.expression,
+          environment,
+        ));
+        if (!holds(conjunct.expression, context, evaluator(context))) return;
         continue;
       }
       if (conjunct.kind === "Assign") {
         context ??= getContext(run, scope, current);
-        const value = evaluate(conjunct.value, context);
+        const evaluator = (evaluators[index] ??= getEntryEvaluator(conjunct.value, environment));
+        const value = evaluator(context);
         const assigned = current[conjunct.index];
         if (assigned === undefined) {
           current = assign(current, conjunct.index, value);
