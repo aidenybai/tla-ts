@@ -32,7 +32,10 @@ describe("the fingerprinter for stored states", () => {
     const states = values.flatMap((first) =>
       values.map((second, index) => [first, second, values[(index * 7) % values.length], first]),
     );
-    const getFingerprint = createTlcFingerprinter();
-    expect(states.map(getFingerprint)).toEqual(states.map(getTlcFingerprint));
+    const fingerprints = new BigInt64Array(states.length);
+    states.forEach(createTlcFingerprinter([0, 1, 2, 3], new Int32Array(fingerprints.buffer)));
+    expect([...fingerprints]).toEqual(
+      states.map((state) => BigInt.asIntN(64, getTlcFingerprint(state))),
+    );
   });
 });
