@@ -37,6 +37,7 @@ export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
     context.internalizeAssertion(formula, 0);
   }
   const result = context.search();
+  manager.limit.release();
   return {
     verdict: result === L_FALSE ? "unsat" : result === L_TRUE ? "sat" : "unknown",
     numInstances: context.qmanager.getNumInstances(),
