@@ -891,6 +891,18 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("reports action composition as unsupported like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = 1\nInv == ENABLED (Next \\cdot Next)\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+      "The current version of TLC does not support action composition.  An incomplete implementation can be enabled via the tlc2.tool.impl.Tool.cdot=true java property.",
+      75,
+    ]);
+  });
+
   it("reports a CASE with no true guard like TLC", async () => {
     const result = await check({
       source:

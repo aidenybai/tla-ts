@@ -1337,6 +1337,11 @@ const compileApply = (
     if (definition?.kind === "Function") {
       throw new TlaEvaluationError(`${expression.operator} is a function; apply it with brackets`);
     }
+    if (expression.operator === "\\cdot") {
+      throw new TlaEvaluationError(
+        "The current version of TLC does not support action composition.  An incomplete implementation can be enabled via the tlc2.tool.impl.Tool.cdot=true java property.",
+      );
+    }
     throw new TlaEvaluationError(
       `Unknown operator ${expression.operator} at ${describeLocation(expression)}`,
     );
