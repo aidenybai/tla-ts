@@ -1,0 +1,126 @@
+;; obligation #3
+$hyp "a_CONSTANTunde_vunde_a_in" (TLA.in a_CONSTANTunde_vunde_a a_CONSTANTunde_Valueunde_a)
+$hyp "v'134" (A. ((a_CONSTANTunde_bunde_a) (= (TLA.fapply (t. ((a_CONSTANTunde_SAunde_a) (= a_CONSTANTunde_SAunde_a
+(TLA.Fcn arith.N ((a_CONSTANTunde_bbunde_a) (\/ (= a_CONSTANTunde_bbunde_a 0)
+(TLA.bEx a_CONSTANTunde_Quorumunde_a ((a_CONSTANTunde_Qunde_a) (/\ (TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (arith.le a_CONSTANTunde_bbunde_a
+(TLA.fapply a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_aunde_a))))
+(TLA.bEx (arith.intrange (arith.minus (TLA.fapply TLA.Succ 0))
+(arith.add a_CONSTANTunde_bbunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_cunde_a) (/\ (=> (-. (= a_CONSTANTunde_cunde_a
+(arith.minus (TLA.fapply TLA.Succ 0))))
+(/\ (TLA.fapply a_CONSTANTunde_SAunde_a a_CONSTANTunde_cunde_a)
+(TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (TLA.bAll a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (=> (a_STATEunde_VotedForunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_cunde_a a_CONSTANTunde_wunde_a) (= a_CONSTANTunde_wunde_a
+a_CONSTANTunde_vunde_a))))))))
+(TLA.bAll (arith.intrange (arith.add a_CONSTANTunde_cunde_a
+(TLA.fapply TLA.Succ 0)) (arith.add a_CONSTANTunde_bbunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_dunde_a) (TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (a_STATEunde_DidNotVoteInunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_dunde_a))))))))))))))))) a_CONSTANTunde_bunde_a)
+(TLA.fapply (t. ((a_CONSTANTunde_SAunde_a) (= a_CONSTANTunde_SAunde_a
+(TLA.Fcn arith.N ((a_CONSTANTunde_bbunde_a) (\/ (= a_CONSTANTunde_bbunde_a 0)
+(TLA.bEx a_CONSTANTunde_Quorumunde_a ((a_CONSTANTunde_Qunde_a) (/\ (TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (arith.le a_CONSTANTunde_bbunde_a
+(TLA.fapply a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_aunde_a))))
+(TLA.bEx (arith.intrange (arith.minus (TLA.fapply TLA.Succ 0))
+(arith.add a_CONSTANTunde_bbunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_cunde_a) (/\ (=> (-. (= a_CONSTANTunde_cunde_a
+(arith.minus (TLA.fapply TLA.Succ 0))))
+(/\ (TLA.fapply a_CONSTANTunde_SAunde_a a_CONSTANTunde_cunde_a)
+(TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (TLA.bAll a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (=> (a_STATEunde_VotedForunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_cunde_a a_CONSTANTunde_wunde_a) (= a_CONSTANTunde_wunde_a
+a_CONSTANTunde_vunde_a))))))))
+(TLA.bAll (arith.intrange (arith.add a_CONSTANTunde_cunde_a
+(TLA.fapply TLA.Succ 0)) (arith.add a_CONSTANTunde_bbunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_dunde_a) (TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (a_STATEunde_DidNotVoteInunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_dunde_a))))))))))))))))) a_CONSTANTunde_bunde_a))))
+$hyp "v'135" (TLA.bAll arith.N ((a_CONSTANTunde_bunde_a) (= (TLA.fapply (t. ((a_CONSTANTunde_SAunde_a) (= a_CONSTANTunde_SAunde_a
+(TLA.Fcn arith.N ((a_CONSTANTunde_bbunde_a) (\/ (= a_CONSTANTunde_bbunde_a 0)
+(TLA.bEx a_CONSTANTunde_Quorumunde_a ((a_CONSTANTunde_Qunde_a) (/\ (TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (arith.le a_CONSTANTunde_bbunde_a
+(TLA.fapply a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_aunde_a))))
+(TLA.bEx (arith.intrange (arith.minus (TLA.fapply TLA.Succ 0))
+(arith.add a_CONSTANTunde_bbunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_cunde_a) (/\ (=> (-. (= a_CONSTANTunde_cunde_a
+(arith.minus (TLA.fapply TLA.Succ 0))))
+(/\ (TLA.fapply a_CONSTANTunde_SAunde_a a_CONSTANTunde_cunde_a)
+(TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (TLA.bAll a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (=> (a_STATEunde_VotedForunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_cunde_a a_CONSTANTunde_wunde_a) (= a_CONSTANTunde_wunde_a
+a_CONSTANTunde_vunde_a))))))))
+(TLA.bAll (arith.intrange (arith.add a_CONSTANTunde_cunde_a
+(TLA.fapply TLA.Succ 0)) (arith.add a_CONSTANTunde_bbunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_dunde_a) (TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (a_STATEunde_DidNotVoteInunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_dunde_a))))))))))))))))) a_CONSTANTunde_bunde_a)
+(\/ (= a_CONSTANTunde_bunde_a 0)
+(TLA.bEx a_CONSTANTunde_Quorumunde_a ((a_CONSTANTunde_Qunde_a) (/\ (TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (arith.le a_CONSTANTunde_bunde_a
+(TLA.fapply a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_aunde_a))))
+(TLA.bEx (arith.intrange (arith.minus (TLA.fapply TLA.Succ 0))
+(arith.add a_CONSTANTunde_bunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_cunde_a) (/\ (=> (-. (= a_CONSTANTunde_cunde_a
+(arith.minus (TLA.fapply TLA.Succ 0))))
+(/\ (TLA.fapply (t. ((a_CONSTANTunde_SAunde_a) (= a_CONSTANTunde_SAunde_a
+(TLA.Fcn arith.N ((a_CONSTANTunde_bbunde_a) (\/ (= a_CONSTANTunde_bbunde_a 0)
+(TLA.bEx a_CONSTANTunde_Quorumunde_a ((a_CONSTANTunde_Qunde_a_1) (/\ (TLA.bAll a_CONSTANTunde_Qunde_a_1 ((a_CONSTANTunde_aunde_a) (arith.le a_CONSTANTunde_bbunde_a
+(TLA.fapply a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_aunde_a))))
+(TLA.bEx (arith.intrange (arith.minus (TLA.fapply TLA.Succ 0))
+(arith.add a_CONSTANTunde_bbunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_cunde_a_1) (/\ (=> (-. (= a_CONSTANTunde_cunde_a_1
+(arith.minus (TLA.fapply TLA.Succ 0))))
+(/\ (TLA.fapply a_CONSTANTunde_SAunde_a a_CONSTANTunde_cunde_a_1)
+(TLA.bAll a_CONSTANTunde_Qunde_a_1 ((a_CONSTANTunde_aunde_a) (TLA.bAll a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (=> (a_STATEunde_VotedForunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_cunde_a_1 a_CONSTANTunde_wunde_a) (= a_CONSTANTunde_wunde_a
+a_CONSTANTunde_vunde_a))))))))
+(TLA.bAll (arith.intrange (arith.add a_CONSTANTunde_cunde_a_1
+(TLA.fapply TLA.Succ 0)) (arith.add a_CONSTANTunde_bbunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_dunde_a) (TLA.bAll a_CONSTANTunde_Qunde_a_1 ((a_CONSTANTunde_aunde_a) (a_STATEunde_DidNotVoteInunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_dunde_a))))))))))))))))) a_CONSTANTunde_cunde_a)
+(TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (TLA.bAll a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (=> (a_STATEunde_VotedForunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_cunde_a a_CONSTANTunde_wunde_a) (= a_CONSTANTunde_wunde_a
+a_CONSTANTunde_vunde_a))))))))
+(TLA.bAll (arith.intrange (arith.add a_CONSTANTunde_cunde_a
+(TLA.fapply TLA.Succ 0)) (arith.add a_CONSTANTunde_bunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_dunde_a) (TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (a_STATEunde_DidNotVoteInunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_dunde_a)))))))))))))))
+$goal (TLA.bAll arith.N ((a_CONSTANTunde_bunde_a) (<=> (TLA.fapply (t. ((a_CONSTANTunde_SAunde_a) (= a_CONSTANTunde_SAunde_a
+(TLA.Fcn arith.N ((a_CONSTANTunde_bbunde_a) (\/ (= a_CONSTANTunde_bbunde_a 0)
+(TLA.bEx a_CONSTANTunde_Quorumunde_a ((a_CONSTANTunde_Qunde_a) (/\ (TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (arith.le a_CONSTANTunde_bbunde_a
+(TLA.fapply a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_aunde_a))))
+(TLA.bEx (arith.intrange (arith.minus (TLA.fapply TLA.Succ 0))
+(arith.add a_CONSTANTunde_bbunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_cunde_a) (/\ (=> (-. (= a_CONSTANTunde_cunde_a
+(arith.minus (TLA.fapply TLA.Succ 0))))
+(/\ (TLA.fapply a_CONSTANTunde_SAunde_a a_CONSTANTunde_cunde_a)
+(TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (TLA.bAll a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (=> (a_STATEunde_VotedForunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_cunde_a a_CONSTANTunde_wunde_a) (= a_CONSTANTunde_wunde_a
+a_CONSTANTunde_vunde_a))))))))
+(TLA.bAll (arith.intrange (arith.add a_CONSTANTunde_cunde_a
+(TLA.fapply TLA.Succ 0)) (arith.add a_CONSTANTunde_bbunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_dunde_a) (TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (a_STATEunde_DidNotVoteInunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_dunde_a))))))))))))))))) a_CONSTANTunde_bunde_a)
+(\/ (= a_CONSTANTunde_bunde_a 0)
+(TLA.bEx a_CONSTANTunde_Quorumunde_a ((a_CONSTANTunde_Qunde_a) (/\ (TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (arith.le a_CONSTANTunde_bunde_a
+(TLA.fapply a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_aunde_a))))
+(TLA.bEx (arith.intrange (arith.minus (TLA.fapply TLA.Succ 0))
+(arith.add a_CONSTANTunde_bunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_cunde_a) (/\ (=> (-. (= a_CONSTANTunde_cunde_a
+(arith.minus (TLA.fapply TLA.Succ 0))))
+(/\ (TLA.fapply (t. ((a_CONSTANTunde_SAunde_a) (= a_CONSTANTunde_SAunde_a
+(TLA.Fcn arith.N ((a_CONSTANTunde_bbunde_a) (\/ (= a_CONSTANTunde_bbunde_a 0)
+(TLA.bEx a_CONSTANTunde_Quorumunde_a ((a_CONSTANTunde_Qunde_a_1) (/\ (TLA.bAll a_CONSTANTunde_Qunde_a_1 ((a_CONSTANTunde_aunde_a) (arith.le a_CONSTANTunde_bbunde_a
+(TLA.fapply a_VARIABLEunde_maxBalunde_a a_CONSTANTunde_aunde_a))))
+(TLA.bEx (arith.intrange (arith.minus (TLA.fapply TLA.Succ 0))
+(arith.add a_CONSTANTunde_bbunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_cunde_a_1) (/\ (=> (-. (= a_CONSTANTunde_cunde_a_1
+(arith.minus (TLA.fapply TLA.Succ 0))))
+(/\ (TLA.fapply a_CONSTANTunde_SAunde_a a_CONSTANTunde_cunde_a_1)
+(TLA.bAll a_CONSTANTunde_Qunde_a_1 ((a_CONSTANTunde_aunde_a) (TLA.bAll a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (=> (a_STATEunde_VotedForunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_cunde_a_1 a_CONSTANTunde_wunde_a) (= a_CONSTANTunde_wunde_a
+a_CONSTANTunde_vunde_a))))))))
+(TLA.bAll (arith.intrange (arith.add a_CONSTANTunde_cunde_a_1
+(TLA.fapply TLA.Succ 0)) (arith.add a_CONSTANTunde_bbunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_dunde_a) (TLA.bAll a_CONSTANTunde_Qunde_a_1 ((a_CONSTANTunde_aunde_a) (a_STATEunde_DidNotVoteInunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_dunde_a))))))))))))))))) a_CONSTANTunde_cunde_a)
+(TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (TLA.bAll a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_wunde_a) (=> (a_STATEunde_VotedForunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_cunde_a a_CONSTANTunde_wunde_a) (= a_CONSTANTunde_wunde_a
+a_CONSTANTunde_vunde_a))))))))
+(TLA.bAll (arith.intrange (arith.add a_CONSTANTunde_cunde_a
+(TLA.fapply TLA.Succ 0)) (arith.add a_CONSTANTunde_bunde_a
+(arith.minus (TLA.fapply TLA.Succ 0)))) ((a_CONSTANTunde_dunde_a) (TLA.bAll a_CONSTANTunde_Qunde_a ((a_CONSTANTunde_aunde_a) (a_STATEunde_DidNotVoteInunde_a a_CONSTANTunde_aunde_a
+a_CONSTANTunde_dunde_a)))))))))))))))

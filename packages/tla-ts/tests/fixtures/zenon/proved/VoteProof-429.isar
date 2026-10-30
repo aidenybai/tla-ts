@@ -1,0 +1,325 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Hh:"bAll(a_STATEunde_chosenunde_a, (\<lambda>a_CONSTANTunde_wunde_a. (a_CONSTANTunde_wunde_a \\in a_h813b6a)))" (is "?z_hh")
+ using v'299 by blast
+ have z_Hi:"bAll(a_STATEunde_chosenunde_a, (\<lambda>a_CONSTANTunde_wunde_a. ((a_CONSTANTunde_vunde_a \\in a_h813b6a)=>(a_CONSTANTunde_wunde_a=a_CONSTANTunde_vunde_a))))" (is "?z_hi")
+ using v'300 by blast
+ have z_Hj:"(\\A a_CONSTANTunde_wunde_a:((~(a_CONSTANTunde_wunde_a \\in a_STATEunde_chosenunde_a))=>((a_CONSTANTunde_wunde_a \\in a_h813b6a)=>(a_CONSTANTunde_wunde_a=a_CONSTANTunde_vunde_a))))" (is "\\A x : ?z_hz(x)")
+ using v'301 by blast
+ have z_Hg:"(a_CONSTANTunde_vunde_a \\in a_CONSTANTunde_Valueunde_a)" (is "?z_hg")
+ using a_CONSTANTunde_vunde_a_in by blast
+ have zenon_L1_: "((CHOOSE zenon_Vmn:(~((zenon_Vmn \\in a_STATEunde_chosenunde_a)<=>(zenon_Vmn \\in {})))) \\in {}) ==> FALSE" (is "?z_hbb ==> FALSE")
+ proof -
+  assume z_Hbb:"?z_hbb"
+  show FALSE
+  by (rule zenon_in_emptyset [of "(CHOOSE zenon_Vmn:(~((zenon_Vmn \\in a_STATEunde_chosenunde_a)<=>(zenon_Vmn \\in {}))))", OF z_Hbb])
+ qed
+ have zenon_L2_: "(\\A x:((x \\in a_STATEunde_chosenunde_a)=>(x \\in a_h813b6a))) ==> ((CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a)))) \\in a_STATEunde_chosenunde_a) ==> (~((CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a)))) \\in a_h813b6a)) ==> FALSE" (is "?z_ha ==> ?z_hbn ==> ?z_hbu ==> FALSE")
+ proof -
+  assume z_Ha:"?z_ha" (is "\\A x : ?z_hbw(x)")
+  assume z_Hbn:"?z_hbn"
+  assume z_Hbu:"?z_hbu" (is "~?z_hbv")
+  have z_Hbx: "?z_hbw((CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a)))))"
+  by (rule zenon_all_0 [of "?z_hbw" "(CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a))))", OF z_Ha])
+  show FALSE
+  proof (rule zenon_imply [OF z_Hbx])
+   assume z_Hby:"(~?z_hbn)"
+   show FALSE
+   by (rule notE [OF z_Hby z_Hbn])
+  next
+   assume z_Hbv:"?z_hbv"
+   show FALSE
+   by (rule notE [OF z_Hbu z_Hbv])
+  qed
+ qed
+ have zenon_L3_: "(~(a_CONSTANTunde_vunde_a \\in a_h813b6a)) ==> ((CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a)))) \\in a_h813b6a) ==> (~((CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a)))) \\in a_STATEunde_chosenunde_a)) ==> (\\A a_CONSTANTunde_wunde_a:((~(a_CONSTANTunde_wunde_a \\in a_STATEunde_chosenunde_a))=>((a_CONSTANTunde_wunde_a \\in a_h813b6a)=>(a_CONSTANTunde_wunde_a=a_CONSTANTunde_vunde_a)))) ==> FALSE" (is "?z_hbz ==> ?z_hbv ==> ?z_hby ==> ?z_hj ==> FALSE")
+ proof -
+  assume z_Hbz:"?z_hbz" (is "~?z_hs")
+  assume z_Hbv:"?z_hbv"
+  assume z_Hby:"?z_hby" (is "~?z_hbn")
+  assume z_Hj:"?z_hj"
+  show FALSE
+  proof (rule notE [OF z_Hbz])
+   have z_Hca: "((CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a))))=a_CONSTANTunde_vunde_a)" (is "?z_hbo=_")
+   proof (rule zenon_nnpp [of "(?z_hbo=a_CONSTANTunde_vunde_a)"])
+    assume z_Hcb:"(?z_hbo~=a_CONSTANTunde_vunde_a)"
+    have z_Hcc: "?z_hz(?z_hbo)" (is "_=>?z_hcd")
+    by (rule zenon_all_0 [of "?z_hz" "?z_hbo", OF z_Hj])
+    show FALSE
+    proof (rule zenon_imply [OF z_Hcc])
+     assume z_Hce:"(~?z_hby)"
+     show FALSE
+     by (rule notE [OF z_Hce z_Hby])
+    next
+     assume z_Hcd:"?z_hcd" (is "_=>?z_hca")
+     show FALSE
+     proof (rule zenon_imply [OF z_Hcd])
+      assume z_Hbu:"(~?z_hbv)"
+      show FALSE
+      by (rule notE [OF z_Hbu z_Hbv])
+     next
+      assume z_Hca:"?z_hca"
+      show FALSE
+      by (rule notE [OF z_Hcb z_Hca])
+     qed
+    qed
+   qed
+   have z_Hs: "?z_hs"
+   by (rule subst [where P="(\<lambda>zenon_Vfa. (zenon_Vfa \\in a_h813b6a))", OF z_Hca], fact z_Hbv)
+   thus "?z_hs" .
+  qed
+ qed
+ have zenon_L4_: "(\\A a_CONSTANTunde_wunde_a:((~(a_CONSTANTunde_wunde_a \\in a_STATEunde_chosenunde_a))=>((a_CONSTANTunde_wunde_a \\in a_h813b6a)=>(a_CONSTANTunde_wunde_a=a_CONSTANTunde_vunde_a)))) ==> (~((CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a)))) \\in a_STATEunde_chosenunde_a)) ==> ((CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a)))) \\in a_h813b6a) ==> (a_CONSTANTunde_vunde_a~=(CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a))))) ==> FALSE" (is "?z_hj ==> ?z_hby ==> ?z_hbv ==> ?z_hci ==> FALSE")
+ proof -
+  assume z_Hj:"?z_hj"
+  assume z_Hby:"?z_hby" (is "~?z_hbn")
+  assume z_Hbv:"?z_hbv"
+  assume z_Hci:"?z_hci" (is "_~=?z_hbo")
+  have z_Hcc: "?z_hz(?z_hbo)" (is "_=>?z_hcd")
+  by (rule zenon_all_0 [of "?z_hz" "?z_hbo", OF z_Hj])
+  show FALSE
+  proof (rule zenon_imply [OF z_Hcc])
+   assume z_Hce:"(~?z_hby)"
+   show FALSE
+   by (rule notE [OF z_Hce z_Hby])
+  next
+   assume z_Hcd:"?z_hcd" (is "_=>?z_hca")
+   show FALSE
+   proof (rule zenon_imply [OF z_Hcd])
+    assume z_Hbu:"(~?z_hbv)"
+    show FALSE
+    by (rule notE [OF z_Hbu z_Hbv])
+   next
+    assume z_Hca:"?z_hca"
+    show FALSE
+    by (rule zenon_eqsym [OF z_Hca z_Hci])
+   qed
+  qed
+ qed
+ have zenon_L5_: "(~(\\A zenon_Vha:((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a)))) ==> ((CHOOSE zenon_Vmn:(~((zenon_Vmn \\in a_STATEunde_chosenunde_a)<=>(zenon_Vmn \\in {})))) \\in a_STATEunde_chosenunde_a) ==> (\\A a_CONSTANTunde_wunde_a:((~(a_CONSTANTunde_wunde_a \\in a_STATEunde_chosenunde_a))=>((a_CONSTANTunde_wunde_a \\in a_h813b6a)=>(a_CONSTANTunde_wunde_a=a_CONSTANTunde_vunde_a)))) ==> ?z_hi ==> (\\A x:((x \\in a_STATEunde_chosenunde_a)=>(x \\in a_h813b6a))) ==> FALSE" (is "?z_hcj ==> ?z_hcl ==> ?z_hj ==> _ ==> ?z_ha ==> FALSE")
+ proof -
+  assume z_Hcj:"?z_hcj" (is "~(\\A x : ?z_hcm(x))")
+  assume z_Hcl:"?z_hcl"
+  assume z_Hj:"?z_hj"
+  assume z_Hi:"?z_hi"
+  assume z_Ha:"?z_ha" (is "\\A x : ?z_hbw(x)")
+  have z_Hcn: "(\\E zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a))))" (is "\\E x : ?z_hco(x)")
+  by (rule zenon_notallex_0 [of "?z_hcm", OF z_Hcj])
+  have z_Hcp: "?z_hco((CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a)))))" (is "~(?z_hbv<=>?z_hbn)")
+  by (rule zenon_ex_choose_0 [of "?z_hco", OF z_Hcn])
+  show FALSE
+  proof (rule zenon_notequiv [OF z_Hcp])
+   assume z_Hbu:"(~?z_hbv)"
+   assume z_Hbn:"?z_hbn"
+   show FALSE
+   by (rule zenon_L2_ [OF z_Ha z_Hbn z_Hbu])
+  next
+   assume z_Hbv:"?z_hbv"
+   assume z_Hby:"(~?z_hbn)"
+   have z_Hcq: "((a_CONSTANTunde_vunde_a \\in a_h813b6a)=>((CHOOSE zenon_Vmn:(~((zenon_Vmn \\in a_STATEunde_chosenunde_a)<=>(zenon_Vmn \\in {}))))=a_CONSTANTunde_vunde_a))" (is "?z_hs=>?z_hcr")
+   by (rule zenon_all_in_0 [of "a_STATEunde_chosenunde_a" "(\<lambda>a_CONSTANTunde_wunde_a. (?z_hs=>(a_CONSTANTunde_wunde_a=a_CONSTANTunde_vunde_a)))", OF z_Hi z_Hcl])
+   show FALSE
+   proof (rule zenon_imply [OF z_Hcq])
+    assume z_Hbz:"(~?z_hs)"
+    show FALSE
+    by (rule zenon_L3_ [OF z_Hbz z_Hbv z_Hby z_Hj])
+   next
+    assume z_Hcr:"?z_hcr" (is "?z_hbc=_")
+    show FALSE
+    proof (rule notE [OF z_Hby])
+     have z_Hcs: "(?z_hbc=(CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a)))))" (is "_=?z_hbo")
+     proof (rule zenon_nnpp [of "(?z_hbc=?z_hbo)"])
+      assume z_Hct:"(?z_hbc~=?z_hbo)"
+      show FALSE
+      proof (rule notE [OF z_Hct])
+       have z_Hcu: "(a_CONSTANTunde_vunde_a=?z_hbo)"
+       proof (rule zenon_nnpp [of "(a_CONSTANTunde_vunde_a=?z_hbo)"])
+        assume z_Hci:"(a_CONSTANTunde_vunde_a~=?z_hbo)"
+        show FALSE
+        by (rule zenon_L4_ [OF z_Hj z_Hby z_Hbv z_Hci])
+       qed
+       have z_Hcs: "(?z_hbc=?z_hbo)"
+       by (rule subst [where P="(\<lambda>zenon_Vmo. (?z_hbc=zenon_Vmo))", OF z_Hcu], fact z_Hcr)
+       thus "(?z_hbc=?z_hbo)" .
+      qed
+     qed
+     have z_Hbn: "?z_hbn"
+     by (rule subst [where P="(\<lambda>zenon_Vja. (zenon_Vja \\in a_STATEunde_chosenunde_a))", OF z_Hcs], fact z_Hcl)
+     thus "?z_hbn" .
+    qed
+   qed
+  qed
+ qed
+ have zenon_L6_: "(~((CHOOSE zenon_Vna:(~((zenon_Vna \\in a_h813b6a)<=>(zenon_Vna \\in {a_CONSTANTunde_vunde_a})))) \\in {a_CONSTANTunde_vunde_a})) ==> ((CHOOSE zenon_Vna:(~((zenon_Vna \\in a_h813b6a)<=>(zenon_Vna \\in {a_CONSTANTunde_vunde_a})))) \\in a_h813b6a) ==> (\\A a_CONSTANTunde_wunde_a:((~(a_CONSTANTunde_wunde_a \\in a_STATEunde_chosenunde_a))=>((a_CONSTANTunde_wunde_a \\in a_h813b6a)=>(a_CONSTANTunde_wunde_a=a_CONSTANTunde_vunde_a)))) ==> (~((CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a)))) \\in a_STATEunde_chosenunde_a)) ==> ((CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a)))) \\in a_h813b6a) ==> (\\A x:((x \\in a_STATEunde_chosenunde_a)=>((a_CONSTANTunde_vunde_a \\in a_h813b6a)=>(x=a_CONSTANTunde_vunde_a)))) ==> FALSE" (is "?z_hdb ==> ?z_hdk ==> ?z_hj ==> ?z_hby ==> ?z_hbv ==> ?z_hdl ==> FALSE")
+ proof -
+  assume z_Hdb:"?z_hdb" (is "~?z_hdc")
+  assume z_Hdk:"?z_hdk"
+  assume z_Hj:"?z_hj"
+  assume z_Hby:"?z_hby" (is "~?z_hbn")
+  assume z_Hbv:"?z_hbv"
+  assume z_Hdl:"?z_hdl" (is "\\A x : ?z_hdp(x)")
+  have z_Hdq: "((CHOOSE zenon_Vna:(~((zenon_Vna \\in a_h813b6a)<=>(zenon_Vna \\in {a_CONSTANTunde_vunde_a}))))~=a_CONSTANTunde_vunde_a)" (is "?z_hdd~=_")
+  by (rule zenon_notin_addElt_0 [of "?z_hdd" "a_CONSTANTunde_vunde_a" "{}", OF z_Hdb])
+  have z_Hds: "?z_hz(?z_hdd)" (is "?z_hdt=>?z_hdu")
+  by (rule zenon_all_0 [of "?z_hz" "?z_hdd", OF z_Hj])
+  show FALSE
+  proof (rule zenon_imply [OF z_Hds])
+   assume z_Hdv:"(~?z_hdt)" (is "~~?z_hdw")
+   have z_Hdw: "?z_hdw"
+   by (rule zenon_notnot_0 [OF z_Hdv])
+   have z_Hdx: "?z_hdp(?z_hdd)" (is "_=>?z_hdy")
+   by (rule zenon_all_0 [of "?z_hdp" "?z_hdd", OF z_Hdl])
+   show FALSE
+   proof (rule zenon_imply [OF z_Hdx])
+    assume z_Hdt:"?z_hdt"
+    show FALSE
+    by (rule notE [OF z_Hdt z_Hdw])
+   next
+    assume z_Hdy:"?z_hdy" (is "?z_hs=>?z_hdz")
+    show FALSE
+    proof (rule zenon_imply [OF z_Hdy])
+     assume z_Hbz:"(~?z_hs)"
+     show FALSE
+     by (rule zenon_L3_ [OF z_Hbz z_Hbv z_Hby z_Hj])
+    next
+     assume z_Hdz:"?z_hdz"
+     show FALSE
+     by (rule notE [OF z_Hdq z_Hdz])
+    qed
+   qed
+  next
+   assume z_Hdu:"?z_hdu" (is "_=>?z_hdz")
+   show FALSE
+   proof (rule zenon_imply [OF z_Hdu])
+    assume z_Hea:"(~?z_hdk)"
+    show FALSE
+    by (rule notE [OF z_Hea z_Hdk])
+   next
+    assume z_Hdz:"?z_hdz"
+    show FALSE
+    by (rule notE [OF z_Hdq z_Hdz])
+   qed
+  qed
+ qed
+ assume z_Hk:"(~(((a_STATEunde_chosenunde_a={})&bEx(a_CONSTANTunde_Valueunde_a, (\<lambda>a_CONSTANTunde_vunde_a_1. (a_h813b6a={a_CONSTANTunde_vunde_a_1}))))|(a_h813b6a=a_STATEunde_chosenunde_a)))" (is "~(?z_hec|?z_hej)")
+ have z_Ha_z_Hh: "(\\A x:((x \\in a_STATEunde_chosenunde_a)=>(x \\in a_h813b6a))) == ?z_hh" (is "?z_ha == _")
+ by (unfold bAll_def)
+ have z_Ha: "?z_ha" (is "\\A x : ?z_hbw(x)")
+ by (unfold z_Ha_z_Hh, fact z_Hh)
+ have z_Hdl_z_Hi: "(\\A x:((x \\in a_STATEunde_chosenunde_a)=>((a_CONSTANTunde_vunde_a \\in a_h813b6a)=>(x=a_CONSTANTunde_vunde_a)))) == ?z_hi" (is "?z_hdl == _")
+ by (unfold bAll_def)
+ have z_Hdl: "?z_hdl" (is "\\A x : ?z_hdp(x)")
+ by (unfold z_Hdl_z_Hi, fact z_Hi)
+ have z_Hek: "(~?z_hec)" (is "~(?z_hed&?z_hee)")
+ by (rule zenon_notor_0 [OF z_Hk])
+ show FALSE
+ proof (rule zenon_notand [OF z_Hek])
+  assume z_Hel:"(a_STATEunde_chosenunde_a~={})"
+  have z_Hem: "(~(\\A zenon_Vmn:((zenon_Vmn \\in a_STATEunde_chosenunde_a)<=>(zenon_Vmn \\in {}))))" (is "~(\\A x : ?z_heo(x))")
+  by (rule zenon_notsetequal_0 [of "a_STATEunde_chosenunde_a" "{}", OF z_Hel])
+  have z_Hep: "(\\E zenon_Vmn:(~((zenon_Vmn \\in a_STATEunde_chosenunde_a)<=>(zenon_Vmn \\in {}))))" (is "\\E x : ?z_heq(x)")
+  by (rule zenon_notallex_0 [of "?z_heo", OF z_Hem])
+  have z_Her: "?z_heq((CHOOSE zenon_Vmn:(~((zenon_Vmn \\in a_STATEunde_chosenunde_a)<=>(zenon_Vmn \\in {})))))" (is "~(?z_hcl<=>?z_hbb)")
+  by (rule zenon_ex_choose_0 [of "?z_heq", OF z_Hep])
+  show FALSE
+  proof (rule zenon_notequiv [OF z_Her])
+   assume z_Hes:"(~?z_hcl)"
+   assume z_Hbb:"?z_hbb"
+   show FALSE
+   by (rule zenon_L1_ [OF z_Hbb])
+  next
+   assume z_Hcl:"?z_hcl"
+   assume z_Het:"(~?z_hbb)"
+   have z_Hcj: "(~(\\A zenon_Vha:((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a))))" (is "~(\\A x : ?z_hcm(x))")
+   by (rule zenon_notsetequal_0 [of "a_h813b6a" "a_STATEunde_chosenunde_a", OF z_Heu])
+   show FALSE
+   by (rule zenon_L5_ [OF z_Hcj z_Hcl z_Hj z_Hi z_Ha])
+  qed
+ next
+  assume z_Hev:"(~?z_hee)"
+  have z_Hew: "(a_h813b6a~={a_CONSTANTunde_vunde_a})" (is "_~=?z_hdj")
+  by (rule zenon_notex_in_0 [of "a_CONSTANTunde_Valueunde_a" "(\<lambda>a_CONSTANTunde_vunde_a_1. (a_h813b6a={a_CONSTANTunde_vunde_a_1}))", OF z_Hev z_Hg])
+  have z_Hcj: "(~(\\A zenon_Vha:((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a))))" (is "~(\\A x : ?z_hcm(x))")
+  by (rule zenon_notsetequal_0 [of "a_h813b6a" "a_STATEunde_chosenunde_a", OF z_Heu])
+  have z_Hcn: "(\\E zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a))))" (is "\\E x : ?z_hco(x)")
+  by (rule zenon_notallex_0 [of "?z_hcm", OF z_Hcj])
+  have z_Hcp: "?z_hco((CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a)))))" (is "~(?z_hbv<=>?z_hbn)")
+  by (rule zenon_ex_choose_0 [of "?z_hco", OF z_Hcn])
+  show FALSE
+  proof (rule zenon_notequiv [OF z_Hcp])
+   assume z_Hbu:"(~?z_hbv)"
+   assume z_Hbn:"?z_hbn"
+   show FALSE
+   by (rule zenon_L2_ [OF z_Ha z_Hbn z_Hbu])
+  next
+   assume z_Hbv:"?z_hbv"
+   assume z_Hby:"(~?z_hbn)"
+   have z_Hex: "(~(\\A zenon_Vna:((zenon_Vna \\in a_h813b6a)<=>(zenon_Vna \\in ?z_hdj))))" (is "~(\\A x : ?z_hez(x))")
+   by (rule zenon_notsetequal_0 [of "a_h813b6a" "?z_hdj", OF z_Hew])
+   have z_Hfa: "(\\E zenon_Vna:(~((zenon_Vna \\in a_h813b6a)<=>(zenon_Vna \\in ?z_hdj))))" (is "\\E x : ?z_hfb(x)")
+   by (rule zenon_notallex_0 [of "?z_hez", OF z_Hex])
+   have z_Hfc: "?z_hfb((CHOOSE zenon_Vna:(~((zenon_Vna \\in a_h813b6a)<=>(zenon_Vna \\in ?z_hdj)))))" (is "~(?z_hdk<=>?z_hdc)")
+   by (rule zenon_ex_choose_0 [of "?z_hfb", OF z_Hfa])
+   show FALSE
+   proof (rule zenon_notequiv [OF z_Hfc])
+    assume z_Hea:"(~?z_hdk)"
+    assume z_Hdc:"?z_hdc"
+    show FALSE
+    proof (rule zenon_in_addElt [of "(CHOOSE zenon_Vna:(~((zenon_Vna \\in a_h813b6a)<=>(zenon_Vna \\in ?z_hdj))))" "a_CONSTANTunde_vunde_a" "{}", OF z_Hdc])
+     assume z_Hdz:"((CHOOSE zenon_Vna:(~((zenon_Vna \\in a_h813b6a)<=>(zenon_Vna \\in ?z_hdj))))=a_CONSTANTunde_vunde_a)" (is "?z_hdd=_")
+     show FALSE
+     proof (rule notE [OF z_Hea])
+      have z_Hfd: "((CHOOSE zenon_Vha:(~((zenon_Vha \\in a_h813b6a)<=>(zenon_Vha \\in a_STATEunde_chosenunde_a))))=?z_hdd)" (is "?z_hbo=_")
+      proof (rule zenon_nnpp [of "(?z_hbo=?z_hdd)"])
+       assume z_Hfe:"(?z_hbo~=?z_hdd)"
+       show FALSE
+       proof (rule zenon_em [of "(?z_hdd=?z_hdd)"])
+        assume z_Hff:"(?z_hdd=?z_hdd)"
+        show FALSE
+        proof (rule notE [OF z_Hfe])
+         have z_Hfg: "(?z_hdd=?z_hbo)"
+         proof (rule zenon_nnpp [of "(?z_hdd=?z_hbo)"])
+          assume z_Hfh:"(?z_hdd~=?z_hbo)"
+          show FALSE
+          proof (rule notE [OF z_Hfh])
+           have z_Hcu: "(a_CONSTANTunde_vunde_a=?z_hbo)"
+           proof (rule zenon_nnpp [of "(a_CONSTANTunde_vunde_a=?z_hbo)"])
+            assume z_Hci:"(a_CONSTANTunde_vunde_a~=?z_hbo)"
+            show FALSE
+            by (rule zenon_L4_ [OF z_Hj z_Hby z_Hbv z_Hci])
+           qed
+           have z_Hfg: "(?z_hdd=?z_hbo)"
+           by (rule subst [where P="(\<lambda>zenon_Vug. (?z_hdd=zenon_Vug))", OF z_Hcu], fact z_Hdz)
+           thus "(?z_hdd=?z_hbo)" .
+          qed
+         qed
+         have z_Hfd: "(?z_hbo=?z_hdd)"
+         by (rule subst [where P="(\<lambda>zenon_Vcq. (zenon_Vcq=?z_hdd))", OF z_Hfg], fact z_Hff)
+         thus "(?z_hbo=?z_hdd)" .
+        qed
+       next
+        assume z_Hfo:"(?z_hdd~=?z_hdd)"
+        show FALSE
+        by (rule zenon_noteq [OF z_Hfo])
+       qed
+      qed
+      have z_Hdk: "?z_hdk"
+      by (rule subst [where P="(\<lambda>zenon_Vfa. (zenon_Vfa \\in a_h813b6a))", OF z_Hfd], fact z_Hbv)
+      thus "?z_hdk" .
+     qed
+    next
+     assume z_Hfp:"((CHOOSE zenon_Vna:(~((zenon_Vna \\in a_h813b6a)<=>(zenon_Vna \\in ?z_hdj)))) \\in {})" (is "?z_hfp")
+     show FALSE
+     by (rule zenon_in_emptyset [of "(CHOOSE zenon_Vna:(~((zenon_Vna \\in a_h813b6a)<=>(zenon_Vna \\in ?z_hdj))))", OF z_Hfp])
+    qed
+   next
+    assume z_Hdk:"?z_hdk"
+    assume z_Hdb:"(~?z_hdc)"
+    show FALSE
+    by (rule zenon_L6_ [OF z_Hdb z_Hdk z_Hj z_Hby z_Hbv z_Hdl])
+   qed
+  qed
+ qed
+qed
+(* END-PROOF *)

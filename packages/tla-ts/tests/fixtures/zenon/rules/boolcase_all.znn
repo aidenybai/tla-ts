@@ -1,0 +1,3 @@
+$hyp "h" (P (A. ((x) (Q x))))
+$hyp "n" (-. (Q a))
+$goal (P F.)

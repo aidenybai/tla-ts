@@ -1,0 +1,10 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ assume z_Ha:"(~(b \\in upair(c, b)))" (is "~?z_hb")
+ have z_Hf: "(b~=b)"
+ by (rule zenon_notin_upair_1 [of "b" "c" "b", OF z_Ha])
+ show FALSE
+ by (rule zenon_noteq [OF z_Hf])
+qed
+(* END-PROOF *)

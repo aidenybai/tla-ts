@@ -1,0 +1,77 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Hf:"(a_VARIABLEunde_upEdgeunde_a=Fcn((a_CONSTANTunde_Procsunde_a \\ {a_CONSTANTunde_Leaderunde_a}), (\<lambda>a_CONSTANTunde_punde_a. a_CONSTANTunde_NotAnEdgeunde_a)))" (is "_=?z_hi")
+ using v'314 by blast
+ assume z_Hg:"(~(((setOfAll((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}), (\<lambda>a_CONSTANTunde_eunde_a. (a_CONSTANTunde_eunde_a[2]))) \\cup {a_CONSTANTunde_Leaderunde_a})={a_CONSTANTunde_Leaderunde_a})&((''edge'' :> (setOfAll(((''node'' :> ((setOfAll((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}), (\<lambda>a_CONSTANTunde_eunde_a. (a_CONSTANTunde_eunde_a[2]))) \\cup {a_CONSTANTunde_Leaderunde_a})) @@ ''edge'' :> ((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a})))[''edge'']), (\<lambda>a_CONSTANTunde_eunde_a. <<(a_CONSTANTunde_eunde_a[2]), (a_CONSTANTunde_eunde_a[1])>>))) @@ ''node'' :> (((''node'' :> ((setOfAll((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}), (\<lambda>a_CONSTANTunde_eunde_a. (a_CONSTANTunde_eunde_a[2]))) \\cup {a_CONSTANTunde_Leaderunde_a})) @@ ''edge'' :> ((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a})))[''node''])))=(''edge'' :> ({}) @@ ''node'' :> ((setOfAll((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}), (\<lambda>a_CONSTANTunde_eunde_a. (a_CONSTANTunde_eunde_a[2]))) \\cup {a_CONSTANTunde_Leaderunde_a}))))))" (is "~(?z_hq&?z_hbe)")
+ show FALSE
+ proof (rule zenon_notand [OF z_Hg])
+  assume z_Hbs:"((setOfAll((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}), (\<lambda>a_CONSTANTunde_eunde_a. (a_CONSTANTunde_eunde_a[2]))) \\cup {a_CONSTANTunde_Leaderunde_a})~={a_CONSTANTunde_Leaderunde_a})" (is "?z_hr~=?z_hl")
+  have z_Hbt: "(~(\\A zenon_Vrj:((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl))))" (is "~(\\A x : ?z_hbz(x))")
+  by (rule zenon_notsetequal_0 [of "?z_hr" "?z_hl", OF z_Hbs])
+  have z_Hca: "(\\E zenon_Vrj:(~((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl))))" (is "\\E x : ?z_hcc(x)")
+  by (rule zenon_notallex_0 [of "?z_hbz", OF z_Hbt])
+  have z_Hcd: "?z_hcc((CHOOSE zenon_Vrj:(~((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl)))))" (is "~(?z_hcf<=>?z_hcg)")
+  by (rule zenon_ex_choose_0 [of "?z_hcc", OF z_Hca])
+  show FALSE
+  proof (rule zenon_notequiv [OF z_Hcd])
+   assume z_Hch:"(~?z_hcf)"
+   assume z_Hcg:"?z_hcg"
+   have z_Hci: "(~?z_hcg)"
+   by (rule zenon_notin_cup_1 [of "(CHOOSE zenon_Vrj:(~((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl))))" "setOfAll((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}), (\<lambda>a_CONSTANTunde_eunde_a. (a_CONSTANTunde_eunde_a[2])))" "?z_hl", OF z_Hch])
+   show FALSE
+   by (rule notE [OF z_Hci z_Hcg])
+  next
+   assume z_Hcf:"?z_hcf"
+   assume z_Hci:"(~?z_hcg)"
+   show FALSE
+   proof (rule zenon_in_cup [of "(CHOOSE zenon_Vrj:(~((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl))))" "setOfAll((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}), (\<lambda>a_CONSTANTunde_eunde_a. (a_CONSTANTunde_eunde_a[2])))" "?z_hl", OF z_Hcf])
+    assume z_Hcj:"((CHOOSE zenon_Vrj:(~((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl)))) \\in setOfAll((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}), (\<lambda>a_CONSTANTunde_eunde_a. (a_CONSTANTunde_eunde_a[2]))))" (is "?z_hcj")
+    have z_Hck: "(\\E zenon_Vik:((zenon_Vik \\in (setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}))&((CHOOSE zenon_Vrj:(~((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl))))=(zenon_Vik[2]))))" (is "\\E x : ?z_hcq(x)")
+    by (rule zenon_in_setofall_0 [of "(CHOOSE zenon_Vrj:(~((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl))))" "(setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a})" "(\<lambda>a_CONSTANTunde_eunde_a. (a_CONSTANTunde_eunde_a[2]))", OF z_Hcj])
+    have z_Hcr: "?z_hcq((CHOOSE zenon_Vik:((zenon_Vik \\in (setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}))&((CHOOSE zenon_Vrj:(~((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl))))=(zenon_Vik[2])))))" (is "?z_hct&?z_hcu")
+    by (rule zenon_ex_choose_0 [of "?z_hcq", OF z_Hck])
+    have z_Hct: "?z_hct"
+    by (rule zenon_and_0 [OF z_Hcr])
+    have z_Hcv: "((CHOOSE zenon_Vik:((zenon_Vik \\in (setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}))&((CHOOSE zenon_Vrj:(~((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl))))=(zenon_Vik[2])))) \\in setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))))" (is "?z_hcv")
+    by (rule zenon_in_setminus_0 [of "(CHOOSE zenon_Vik:((zenon_Vik \\in (setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}))&((CHOOSE zenon_Vrj:(~((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl))))=(zenon_Vik[2]))))" "setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a])))" "{a_CONSTANTunde_NotAnEdgeunde_a}", OF z_Hct])
+    have z_Hcw: "(~((CHOOSE zenon_Vik:((zenon_Vik \\in (setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}))&((CHOOSE zenon_Vrj:(~((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl))))=(zenon_Vik[2])))) \\in {a_CONSTANTunde_NotAnEdgeunde_a}))" (is "~?z_hcx")
+    by (rule zenon_in_setminus_1 [of "(CHOOSE zenon_Vik:((zenon_Vik \\in (setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}))&((CHOOSE zenon_Vrj:(~((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl))))=(zenon_Vik[2]))))" "setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a])))" "{a_CONSTANTunde_NotAnEdgeunde_a}", OF z_Hct])
+    have z_Hcy: "((CHOOSE zenon_Vik:((zenon_Vik \\in (setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}))&((CHOOSE zenon_Vrj:(~((zenon_Vrj \\in ?z_hr)<=>(zenon_Vrj \\in ?z_hl))))=(zenon_Vik[2]))))~=a_CONSTANTunde_NotAnEdgeunde_a)" (is "?z_hcs~=_")
+    by (rule zenon_notin_addElt_0 [of "?z_hcs" "a_CONSTANTunde_NotAnEdgeunde_a" "{}", OF z_Hcw])
+    have z_Hda: "(\\E zenon_Vfm:((zenon_Vfm \\in DOMAIN(a_VARIABLEunde_upEdgeunde_a))&(?z_hcs=(a_VARIABLEunde_upEdgeunde_a[zenon_Vfm]))))" (is "\\E x : ?z_hdg(x)")
+    by (rule zenon_in_setofall_0 [of "?z_hcs" "DOMAIN(a_VARIABLEunde_upEdgeunde_a)" "(\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))", OF z_Hcv])
+    have z_Hdh: "?z_hdg((CHOOSE zenon_Vfm:((zenon_Vfm \\in DOMAIN(a_VARIABLEunde_upEdgeunde_a))&(?z_hcs=(a_VARIABLEunde_upEdgeunde_a[zenon_Vfm])))))" (is "?z_hdj&?z_hdk")
+    by (rule zenon_ex_choose_0 [of "?z_hdg", OF z_Hda])
+    have z_Hdj: "?z_hdj"
+    by (rule zenon_and_0 [OF z_Hdh])
+    have z_Hdk: "?z_hdk" (is "_=?z_hdl")
+    by (rule zenon_and_1 [OF z_Hdh])
+    have z_Hdm: "((CHOOSE zenon_Vfm:((zenon_Vfm \\in DOMAIN(a_VARIABLEunde_upEdgeunde_a))&(?z_hcs=(a_VARIABLEunde_upEdgeunde_a[zenon_Vfm])))) \\in DOMAIN(?z_hi))" (is "?z_hdm")
+    by (rule subst [where P="(\<lambda>zenon_Vyq. ((CHOOSE zenon_Vfm:((zenon_Vfm \\in DOMAIN(a_VARIABLEunde_upEdgeunde_a))&(?z_hcs=(a_VARIABLEunde_upEdgeunde_a[zenon_Vfm])))) \\in DOMAIN(zenon_Vyq)))", OF z_Hf z_Hdj])
+    have z_Hds: "((CHOOSE zenon_Vfm:((zenon_Vfm \\in DOMAIN(a_VARIABLEunde_upEdgeunde_a))&(?z_hcs=(a_VARIABLEunde_upEdgeunde_a[zenon_Vfm])))) \\in (a_CONSTANTunde_Procsunde_a \\ ?z_hl))" (is "?z_hds")
+    by (rule zenon_domain_fcn_0 [of "(\<lambda>zenon_Vxq. ((CHOOSE zenon_Vfm:((zenon_Vfm \\in DOMAIN(a_VARIABLEunde_upEdgeunde_a))&(?z_hcs=(a_VARIABLEunde_upEdgeunde_a[zenon_Vfm])))) \\in zenon_Vxq))" "(a_CONSTANTunde_Procsunde_a \\ ?z_hl)" "(\<lambda>a_CONSTANTunde_punde_a. a_CONSTANTunde_NotAnEdgeunde_a)", OF z_Hdm])
+    have z_Hdw: "(?z_hcs=(?z_hi[(CHOOSE zenon_Vfm:((zenon_Vfm \\in DOMAIN(a_VARIABLEunde_upEdgeunde_a))&(?z_hcs=(a_VARIABLEunde_upEdgeunde_a[zenon_Vfm]))))]))" (is "_=?z_hdx")
+    by (rule subst [where P="(\<lambda>zenon_Vvq. (?z_hcs=(zenon_Vvq[(CHOOSE zenon_Vfm:((zenon_Vfm \\in DOMAIN(a_VARIABLEunde_upEdgeunde_a))&(?z_hcs=(a_VARIABLEunde_upEdgeunde_a[zenon_Vfm]))))])))", OF z_Hf z_Hdk])
+    show FALSE
+    proof (rule zenon_fapplyfcn [of "(\<lambda>zenon_Vvq. (?z_hcs=zenon_Vvq))" "(a_CONSTANTunde_Procsunde_a \\ ?z_hl)" "(\<lambda>a_CONSTANTunde_punde_a. a_CONSTANTunde_NotAnEdgeunde_a)" "(CHOOSE zenon_Vfm:((zenon_Vfm \\in DOMAIN(a_VARIABLEunde_upEdgeunde_a))&(?z_hcs=(a_VARIABLEunde_upEdgeunde_a[zenon_Vfm]))))", OF z_Hdw])
+     assume z_Hee:"(~?z_hds)"
+     show FALSE
+     by (rule notE [OF z_Hee z_Hds])
+    next
+     assume z_Hef:"(?z_hcs=a_CONSTANTunde_NotAnEdgeunde_a)"
+     show FALSE
+     by (rule notE [OF z_Hcy z_Hef])
+    qed
+   next
+    assume z_Hcg:"?z_hcg"
+    show FALSE
+    by (rule notE [OF z_Hci z_Hcg])
+   qed
+  qed
+ next
+  assume z_Heg:"((''edge'' :> (setOfAll(((''node'' :> ((setOfAll((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}), (\<lambda>a_CONSTANTunde_eunde_a. (a_CONSTANTunde_eunde_a[2]))) \\cup {a_CONSTANTunde_Leaderunde_a})) @@ ''edge'' :> ((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a})))[''edge'']), (\<lambda>a_CONSTANTunde_eunde_a. <<(a_CONSTANTunde_eunde_a[2]), (a_CONSTANTunde_eunde_a[1])>>))) @@ ''node'' :> (((''node'' :> ((setOfAll((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}), (\<lambda>a_CONSTANTunde_eunde_a. (a_CONSTANTunde_eunde_a[2]))) \\cup {a_CONSTANTunde_Leaderunde_a})) @@ ''edge'' :> ((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a})))[''node''])))~=(''edge'' :> ({}) @@ ''node'' :> ((setOfAll((setOfAll(DOMAIN(a_VARIABLEunde_upEdgeunde_a), (\<lambda>a_CONSTANTunde_punde_a. (a_VARIABLEunde_upEdgeunde_a[a_CONSTANTunde_punde_a]))) \\ {a_CONSTANTunde_NotAnEdgeunde_a}), (\<lambda>a_CONSTANTunde_eunde_a. (a_CONSTANTunde_eunde_a[2]))) \\cup {a_CONSTANTunde_Leaderunde_a}))))" (is "?z_hbf~=?z_hbq")
+  sorry
+ qed
+qed
+(* END-PROOF *)

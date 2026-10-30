@@ -1,0 +1,5 @@
+;; obligation #5
+$hyp "a_CONSTANTunde_nunde_a_in" (TLA.in a_CONSTANTunde_nunde_a arith.N)
+$goal (= (TLA.cond (arith.lt a_CONSTANTunde_nunde_a
+a_CONSTANTunde_nunde_a) a_CONSTANTunde_nunde_a a_CONSTANTunde_nunde_a)
+a_CONSTANTunde_nunde_a)

@@ -1,0 +1,703 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Hc:"((a_VARIABLEunde_numunde_a \\in FuncSet(a_CONSTANTunde_Punde_a, Nat))&((a_VARIABLEunde_flagunde_a \\in FuncSet(a_CONSTANTunde_Punde_a, {TRUE, FALSE}))&((a_VARIABLEunde_unreadunde_a \\in FuncSet(a_CONSTANTunde_Punde_a, SUBSET(a_CONSTANTunde_Punde_a)))&(bAll(a_CONSTANTunde_Punde_a, (\<lambda>a_CONSTANTunde_iunde_a_1. (((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a_1]) \\in {''p2'', ''p5'', ''p6''})=>(~(a_CONSTANTunde_iunde_a_1 \\in (a_VARIABLEunde_unreadunde_a[a_CONSTANTunde_iunde_a_1]))))))&((a_VARIABLEunde_maxunde_a \\in FuncSet(a_CONSTANTunde_Punde_a, Nat))&((a_VARIABLEunde_nxtunde_a \\in FuncSet(a_CONSTANTunde_Punde_a, a_CONSTANTunde_Punde_a))&(bAll(a_CONSTANTunde_Punde_a, (\<lambda>a_CONSTANTunde_iunde_a_1. (((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a_1])=''p6'')=>((a_VARIABLEunde_nxtunde_a[a_CONSTANTunde_iunde_a_1])~=a_CONSTANTunde_iunde_a_1))))&(a_VARIABLEunde_pcunde_a \\in FuncSet(a_CONSTANTunde_Punde_a, {''p1'', ''p2'', ''p3'', ''p4'', ''p5'', ''p6'', ''p7'', ''p8''})))))))))" (is "?z_hv&?z_hba")
+ using v'46 by blast
+ have z_He:"((((a_VARIABLEunde_numunde_a[a_CONSTANTunde_iunde_a])=0)<=>((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a]) \\in {''p1'', ''p2'', ''p3''}))&(((a_VARIABLEunde_flagunde_a[a_CONSTANTunde_iunde_a])<=>((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a]) \\in {''p2'', ''p3'', ''p4''}))&((((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a]) \\in {''p5'', ''p6''})=>bAll(((a_CONSTANTunde_Punde_a \\ (a_VARIABLEunde_unreadunde_a[a_CONSTANTunde_iunde_a])) \\ {a_CONSTANTunde_iunde_a}), (\<lambda>a_CONSTANTunde_junde_a. a_STATEunde_Afterunde_a(a_CONSTANTunde_junde_a, a_CONSTANTunde_iunde_a))))&(((((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])=''p6'')&((((a_VARIABLEunde_pcunde_a[(a_VARIABLEunde_nxtunde_a[a_CONSTANTunde_iunde_a])])=''p2'')&(~(a_CONSTANTunde_iunde_a \\in (a_VARIABLEunde_unreadunde_a[(a_VARIABLEunde_nxtunde_a[a_CONSTANTunde_iunde_a])]))))|((a_VARIABLEunde_pcunde_a[(a_VARIABLEunde_nxtunde_a[a_CONSTANTunde_iunde_a])])=''p3'')))=>((a_VARIABLEunde_numunde_a[a_CONSTANTunde_iunde_a]) <= (a_VARIABLEunde_maxunde_a[(a_VARIABLEunde_nxtunde_a[a_CONSTANTunde_iunde_a])])))&(((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a]) \\in {''p7'', ''p8''})=>bAll((a_CONSTANTunde_Punde_a \\ {a_CONSTANTunde_iunde_a}), (\<lambda>a_CONSTANTunde_junde_a. a_STATEunde_Afterunde_a(a_CONSTANTunde_junde_a, a_CONSTANTunde_iunde_a))))))))" (is "?z_hcx&?z_hdf")
+ using v'48 by blast
+ have z_Hs:"(a_CONSTANTunde_iunde_a=(a_VARIABLEunde_nxtunde_a[a_CONSTANTunde_selfunde_a]))" (is "_=?z_heq")
+ using v'87 by blast
+ have z_Hj:"(a_VARIABLEunde_pcunde_hash_primea=except(a_VARIABLEunde_pcunde_a, a_CONSTANTunde_selfunde_a, ''p5''))" (is "_=?z_het")
+ using v'65 by blast
+ have z_Hp:"((((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {''p5'', ''p6''})&(a_CONSTANTunde_junde_a \\in ((a_CONSTANTunde_Punde_a \\ (a_VARIABLEunde_unreadunde_hash_primea[a_CONSTANTunde_iunde_a])) \\ {a_CONSTANTunde_iunde_a})))|(((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {''p7'', ''p8''})&(a_CONSTANTunde_junde_a \\in (a_CONSTANTunde_Punde_a \\ {a_CONSTANTunde_iunde_a}))))" (is "?z_heu|?z_hfc")
+ using v'73 by blast
+ have z_Hq:"(a_CONSTANTunde_iunde_a~=a_CONSTANTunde_selfunde_a)"
+ using v'80 by blast
+ have z_Ha:"(a_CONSTANTunde_iunde_a \\in a_CONSTANTunde_Punde_a)" (is "?z_ha")
+ using a_CONSTANTunde_iunde_a_in by blast
+ have z_Ht:"(?z_heq < a_CONSTANTunde_selfunde_a)" (is "?z_ht")
+ using v'93 by blast
+ have z_Hg:"(((a_VARIABLEunde_numunde_a[?z_heq])=0)|cond(?z_ht, ((a_VARIABLEunde_numunde_a[a_CONSTANTunde_selfunde_a]) < (a_VARIABLEunde_numunde_a[?z_heq])), ((a_VARIABLEunde_numunde_a[a_CONSTANTunde_selfunde_a]) <= (a_VARIABLEunde_numunde_a[?z_heq]))))" (is "?z_hff|?z_hfh")
+ using v'62 by blast
+ have zenon_L1_: "?z_hfh ==> ?z_ht ==> (~((a_VARIABLEunde_numunde_a[a_CONSTANTunde_selfunde_a]) < (a_VARIABLEunde_numunde_a[?z_heq]))) ==> FALSE" (is "_ ==> _ ==> ?z_hu ==> FALSE")
+ proof -
+  assume z_Hfh:"?z_hfh"
+  assume z_Ht:"?z_ht"
+  assume z_Hu:"?z_hu" (is "~?z_hfi")
+  show FALSE
+  proof (rule zenon_ifthenelse [of "(\<lambda>zenon_Vf. zenon_Vf)" "?z_ht" "?z_hfi" "((a_VARIABLEunde_numunde_a[a_CONSTANTunde_selfunde_a]) <= (a_VARIABLEunde_numunde_a[?z_heq]))", OF z_Hfh])
+   assume z_Ht:"?z_ht"
+   assume z_Hfi:"?z_hfi"
+   show FALSE
+   by (rule notE [OF z_Hu z_Hfi])
+  next
+   assume z_Hfn:"(~?z_ht)"
+   assume z_Hfk:"((a_VARIABLEunde_numunde_a[a_CONSTANTunde_selfunde_a]) <= (a_VARIABLEunde_numunde_a[?z_heq]))" (is "?z_hfk")
+   show FALSE
+   by (rule notE [OF z_Hfn z_Ht])
+  qed
+ qed
+ have zenon_L2_: "(a_CONSTANTunde_iunde_a=?z_heq) ==> ((a_VARIABLEunde_pcunde_a[?z_heq])~=(a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])) ==> FALSE" (is "?z_hs ==> ?z_hfo ==> FALSE")
+ proof -
+  assume z_Hs:"?z_hs"
+  assume z_Hfo:"?z_hfo" (is "?z_hfp~=?z_hdd")
+  have z_Hfq: "(?z_hfp~=?z_hfp)"
+  by (rule subst [where P="(\<lambda>zenon_Vipa. (?z_hfp~=(a_VARIABLEunde_pcunde_a[zenon_Vipa])))", OF z_Hs z_Hfo])
+  show FALSE
+  by (rule zenon_noteq [OF z_Hfq])
+ qed
+ have zenon_L3_: "(a_CONSTANTunde_iunde_a=?z_heq) ==> (a_VARIABLEunde_pcunde_a \\in FuncSet(a_CONSTANTunde_Punde_a, {''p1'', ''p2'', ''p3'', ''p4'', ''p5'', ''p6'', ''p7'', ''p8''})) ==> (a_CONSTANTunde_iunde_a~=a_CONSTANTunde_selfunde_a) ==> ((a_VARIABLEunde_pcunde_a[?z_heq])~=(?z_het[a_CONSTANTunde_iunde_a])) ==> ?z_ha ==> FALSE" (is "?z_hs ==> ?z_hcp ==> ?z_hq ==> ?z_hfv ==> _ ==> FALSE")
+ proof -
+  assume z_Hs:"?z_hs"
+  assume z_Hcp:"?z_hcp"
+  assume z_Hq:"?z_hq"
+  assume z_Hfv:"?z_hfv" (is "?z_hfp~=?z_hfw")
+  assume z_Ha:"?z_ha"
+  have z_Hfx: "(DOMAIN(a_VARIABLEunde_pcunde_a)=a_CONSTANTunde_Punde_a)" (is "?z_hfy=_")
+  by (rule zenon_in_funcset_1 [of "a_VARIABLEunde_pcunde_a" "a_CONSTANTunde_Punde_a" "{''p1'', ''p2'', ''p3'', ''p4'', ''p5'', ''p6'', ''p7'', ''p8''}", OF z_Hcp])
+  have z_Hfz: "(?z_heq \\in a_CONSTANTunde_Punde_a)" (is "?z_hfz")
+  by (rule subst [where P="(\<lambda>zenon_Vnwa. (zenon_Vnwa \\in a_CONSTANTunde_Punde_a))", OF z_Hs z_Ha])
+  have z_Hgd: "(?z_heq \\in ?z_hfy)" (is "?z_hgd")
+  by (rule ssubst [where P="(\<lambda>zenon_Vhf. (?z_heq \\in zenon_Vhf))", OF z_Hfx z_Hfz])
+  show FALSE
+  proof (rule zenon_fapplyexcept [of "(\<lambda>zenon_Vld. (?z_hfp~=zenon_Vld))" "a_VARIABLEunde_pcunde_a" "a_CONSTANTunde_selfunde_a" "''p5''" "a_CONSTANTunde_iunde_a", OF z_Hfv])
+   assume z_Hgk:"(a_CONSTANTunde_iunde_a \\in ?z_hfy)" (is "?z_hgk")
+   assume z_Hgl:"(a_CONSTANTunde_selfunde_a=a_CONSTANTunde_iunde_a)"
+   assume z_Hgm:"(?z_hfp~=''p5'')" (is "_~=?z_hbw")
+   show FALSE
+   by (rule zenon_eqsym [OF z_Hgl z_Hq])
+  next
+   assume z_Hgk:"(a_CONSTANTunde_iunde_a \\in ?z_hfy)" (is "?z_hgk")
+   assume z_Hgn:"(a_CONSTANTunde_selfunde_a~=a_CONSTANTunde_iunde_a)"
+   assume z_Hfo:"(?z_hfp~=(a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a]))" (is "_~=?z_hdd")
+   show FALSE
+   by (rule zenon_L2_ [OF z_Hs z_Hfo])
+  next
+   assume z_Hgo:"(~(a_CONSTANTunde_iunde_a \\in ?z_hfy))" (is "~?z_hgk")
+   have z_Hgp: "(~?z_hgd)"
+   by (rule subst [where P="(\<lambda>zenon_Vrwa. (~(zenon_Vrwa \\in ?z_hfy)))", OF z_Hs z_Hgo])
+   show FALSE
+   by (rule notE [OF z_Hgp z_Hgd])
+  qed
+ qed
+ have zenon_L4_: "(a_CONSTANTunde_iunde_a=?z_heq) ==> ((?z_het[a_CONSTANTunde_iunde_a])=''p5'') ==> ((a_VARIABLEunde_pcunde_a[?z_heq])=''p3'') ==> ?z_ha ==> (a_CONSTANTunde_iunde_a~=a_CONSTANTunde_selfunde_a) ==> (a_VARIABLEunde_pcunde_a \\in FuncSet(a_CONSTANTunde_Punde_a, {''p1'', ''p2'', ''p3'', ''p4'', ''p5'', ''p6'', ''p7'', ''p8''})) ==> FALSE" (is "?z_hs ==> ?z_hgu ==> ?z_hgv ==> _ ==> ?z_hq ==> ?z_hcp ==> FALSE")
+ proof -
+  assume z_Hs:"?z_hs"
+  assume z_Hgu:"?z_hgu" (is "?z_hfw=?z_hbw")
+  assume z_Hgv:"?z_hgv" (is "?z_hfp=?z_hct")
+  assume z_Ha:"?z_ha"
+  assume z_Hq:"?z_hq"
+  assume z_Hcp:"?z_hcp"
+  have z_Hgw: "(?z_hct~=?z_hbw)"
+  by auto
+  have z_Hfv: "(?z_hfp~=?z_hfw)"
+  by (rule zenon_stringdiffll [OF z_Hgw z_Hgv z_Hgu])
+   show FALSE
+   by (rule zenon_L3_ [OF z_Hs z_Hcp z_Hq z_Hfv z_Ha])
+ qed
+ have zenon_L5_: "(a_CONSTANTunde_iunde_a=?z_heq) ==> ((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])=''p2'') ==> ((a_VARIABLEunde_pcunde_a[?z_heq])=''p4'') ==> FALSE" (is "?z_hs ==> ?z_hgx ==> ?z_hgy ==> FALSE")
+ proof -
+  assume z_Hs:"?z_hs"
+  assume z_Hgx:"?z_hgx" (is "?z_hdd=?z_hbv")
+  assume z_Hgy:"?z_hgy" (is "?z_hfp=?z_hcu")
+  have z_Hgz: "(?z_hcu~=?z_hbv)"
+  by auto
+  have z_Hfo: "(?z_hfp~=?z_hdd)"
+  by (rule zenon_stringdiffll [OF z_Hgz z_Hgy z_Hgx])
+   show FALSE
+   by (rule zenon_L2_ [OF z_Hs z_Hfo])
+ qed
+ have zenon_L6_: "(a_CONSTANTunde_iunde_a=?z_heq) ==> ((?z_het[a_CONSTANTunde_iunde_a])=''p6'') ==> ((a_VARIABLEunde_pcunde_a[?z_heq])=''p3'') ==> ?z_ha ==> (a_CONSTANTunde_iunde_a~=a_CONSTANTunde_selfunde_a) ==> (a_VARIABLEunde_pcunde_a \\in FuncSet(a_CONSTANTunde_Punde_a, {''p1'', ''p2'', ''p3'', ''p4'', ''p5'', ''p6'', ''p7'', ''p8''})) ==> FALSE" (is "?z_hs ==> ?z_hha ==> ?z_hgv ==> _ ==> ?z_hq ==> ?z_hcp ==> FALSE")
+ proof -
+  assume z_Hs:"?z_hs"
+  assume z_Hha:"?z_hha" (is "?z_hfw=?z_hbx")
+  assume z_Hgv:"?z_hgv" (is "?z_hfp=?z_hct")
+  assume z_Ha:"?z_ha"
+  assume z_Hq:"?z_hq"
+  assume z_Hcp:"?z_hcp"
+  have z_Hhb: "(?z_hct~=?z_hbx)"
+  by auto
+  have z_Hfv: "(?z_hfp~=?z_hfw)"
+  by (rule zenon_stringdiffll [OF z_Hhb z_Hgv z_Hha])
+   show FALSE
+   by (rule zenon_L3_ [OF z_Hs z_Hcp z_Hq z_Hfv z_Ha])
+ qed
+ have zenon_L7_: "(a_CONSTANTunde_iunde_a=?z_heq) ==> ((?z_het[a_CONSTANTunde_iunde_a])=''p7'') ==> ((a_VARIABLEunde_pcunde_a[?z_heq])=''p3'') ==> ?z_ha ==> (a_CONSTANTunde_iunde_a~=a_CONSTANTunde_selfunde_a) ==> (a_VARIABLEunde_pcunde_a \\in FuncSet(a_CONSTANTunde_Punde_a, {''p1'', ''p2'', ''p3'', ''p4'', ''p5'', ''p6'', ''p7'', ''p8''})) ==> FALSE" (is "?z_hs ==> ?z_hhc ==> ?z_hgv ==> _ ==> ?z_hq ==> ?z_hcp ==> FALSE")
+ proof -
+  assume z_Hs:"?z_hs"
+  assume z_Hhc:"?z_hhc" (is "?z_hfw=?z_hcv")
+  assume z_Hgv:"?z_hgv" (is "?z_hfp=?z_hct")
+  assume z_Ha:"?z_ha"
+  assume z_Hq:"?z_hq"
+  assume z_Hcp:"?z_hcp"
+  have z_Hhd: "(?z_hct~=?z_hcv)"
+  by auto
+  have z_Hfv: "(?z_hfp~=?z_hfw)"
+  by (rule zenon_stringdiffll [OF z_Hhd z_Hgv z_Hhc])
+   show FALSE
+   by (rule zenon_L3_ [OF z_Hs z_Hcp z_Hq z_Hfv z_Ha])
+ qed
+ have zenon_L8_: "(a_CONSTANTunde_iunde_a=?z_heq) ==> ((?z_het[a_CONSTANTunde_iunde_a])=''p8'') ==> ((a_VARIABLEunde_pcunde_a[?z_heq])=''p3'') ==> ?z_ha ==> (a_CONSTANTunde_iunde_a~=a_CONSTANTunde_selfunde_a) ==> (a_VARIABLEunde_pcunde_a \\in FuncSet(a_CONSTANTunde_Punde_a, {''p1'', ''p2'', ''p3'', ''p4'', ''p5'', ''p6'', ''p7'', ''p8''})) ==> FALSE" (is "?z_hs ==> ?z_hhe ==> ?z_hgv ==> _ ==> ?z_hq ==> ?z_hcp ==> FALSE")
+ proof -
+  assume z_Hs:"?z_hs"
+  assume z_Hhe:"?z_hhe" (is "?z_hfw=?z_hcw")
+  assume z_Hgv:"?z_hgv" (is "?z_hfp=?z_hct")
+  assume z_Ha:"?z_ha"
+  assume z_Hq:"?z_hq"
+  assume z_Hcp:"?z_hcp"
+  have z_Hhf: "(?z_hct~=?z_hcw)"
+  by auto
+  have z_Hfv: "(?z_hfp~=?z_hfw)"
+  by (rule zenon_stringdiffll [OF z_Hhf z_Hgv z_Hhe])
+   show FALSE
+   by (rule zenon_L3_ [OF z_Hs z_Hcp z_Hq z_Hfv z_Ha])
+ qed
+ have zenon_L9_: "(a_VARIABLEunde_pcunde_hash_primea=?z_het) ==> (a_CONSTANTunde_iunde_a=?z_heq) ==> (?z_heu|?z_hfc) ==> ((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a]) \\in {''p2'', ''p3'', ''p4''}) ==> ?z_ha ==> (a_CONSTANTunde_iunde_a~=a_CONSTANTunde_selfunde_a) ==> (a_VARIABLEunde_pcunde_a \\in FuncSet(a_CONSTANTunde_Punde_a, {''p1'', ''p2'', ''p3'', ''p4'', ''p5'', ''p6'', ''p7'', ''p8''})) ==> ((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])=''p2'') ==> FALSE" (is "?z_hj ==> ?z_hs ==> ?z_hp ==> ?z_hdi ==> _ ==> ?z_hq ==> ?z_hcp ==> ?z_hgx ==> FALSE")
+ proof -
+  assume z_Hj:"?z_hj"
+  assume z_Hs:"?z_hs"
+  assume z_Hp:"?z_hp"
+  assume z_Hdi:"?z_hdi"
+  assume z_Ha:"?z_ha"
+  assume z_Hq:"?z_hq"
+  assume z_Hcp:"?z_hcp"
+  assume z_Hgx:"?z_hgx" (is "?z_hdd=?z_hbv")
+  show FALSE
+  proof (rule zenon_or [OF z_Hp])
+   assume z_Heu:"?z_heu" (is "?z_hev&?z_hex")
+   have z_Hev: "?z_hev"
+   by (rule zenon_and_0 [OF z_Heu])
+   show FALSE
+   proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])" "''p5''" "{''p6''}", OF z_Hev])
+    assume z_Hhh:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])=''p5'')" (is "?z_hew=?z_hbw")
+    have z_Hgu: "((?z_het[a_CONSTANTunde_iunde_a])=?z_hbw)" (is "?z_hfw=_")
+    by (rule subst [where P="(\<lambda>zenon_Vvra. ((zenon_Vvra[a_CONSTANTunde_iunde_a])=?z_hbw))", OF z_Hj z_Hhh])
+    have z_Hhm: "((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {?z_hbv, ''p3'', ''p4''})" (is "?z_hhm")
+    by (rule subst [where P="(\<lambda>zenon_Vhxa. ((a_VARIABLEunde_pcunde_a[zenon_Vhxa]) \\in {?z_hbv, ''p3'', ''p4''}))", OF z_Hs z_Hdi])
+    show FALSE
+    proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "?z_hbv" "{''p3'', ''p4''}", OF z_Hhm])
+     assume z_Hhs:"((a_VARIABLEunde_pcunde_a[?z_heq])=?z_hbv)" (is "?z_hfp=_")
+     have z_Hht: "(?z_hbv~=?z_hbw)"
+     by auto
+     have z_Hfv: "(?z_hfp~=?z_hfw)"
+     by (rule zenon_stringdiffll [OF z_Hht z_Hhs z_Hgu])
+      show FALSE
+      by (rule zenon_L3_ [OF z_Hs z_Hcp z_Hq z_Hfv z_Ha])
+    next
+     assume z_Hhu:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p3'', ''p4''})" (is "?z_hhu")
+     show FALSE
+     proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p3''" "{''p4''}", OF z_Hhu])
+      assume z_Hgv:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p3'')" (is "?z_hfp=?z_hct")
+      show FALSE
+      by (rule zenon_L4_ [OF z_Hs z_Hgu z_Hgv z_Ha z_Hq z_Hcp])
+     next
+      assume z_Hhw:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p4''})" (is "?z_hhw")
+      show FALSE
+      proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p4''" "{}", OF z_Hhw])
+       assume z_Hgy:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p4'')" (is "?z_hfp=?z_hcu")
+       show FALSE
+       by (rule zenon_L5_ [OF z_Hs z_Hgx z_Hgy])
+      next
+       assume z_Hhy:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {})" (is "?z_hhy")
+       show FALSE
+       by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_a[?z_heq])", OF z_Hhy])
+      qed
+     qed
+    qed
+   next
+    assume z_Hhz:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {''p6''})" (is "?z_hhz")
+    show FALSE
+    proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])" "''p6''" "{}", OF z_Hhz])
+     assume z_Hia:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])=''p6'')" (is "?z_hew=?z_hbx")
+     have z_Hha: "((?z_het[a_CONSTANTunde_iunde_a])=?z_hbx)" (is "?z_hfw=_")
+     by (rule subst [where P="(\<lambda>zenon_Vypa. ((zenon_Vypa[a_CONSTANTunde_iunde_a])=?z_hbx))", OF z_Hj z_Hia])
+     have z_Hhm: "((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {?z_hbv, ''p3'', ''p4''})" (is "?z_hhm")
+     by (rule subst [where P="(\<lambda>zenon_Vhxa. ((a_VARIABLEunde_pcunde_a[zenon_Vhxa]) \\in {?z_hbv, ''p3'', ''p4''}))", OF z_Hs z_Hdi])
+     show FALSE
+     proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "?z_hbv" "{''p3'', ''p4''}", OF z_Hhm])
+      assume z_Hhs:"((a_VARIABLEunde_pcunde_a[?z_heq])=?z_hbv)" (is "?z_hfp=_")
+      have z_Hif: "(?z_hbv~=?z_hbx)"
+      by auto
+      have z_Hfv: "(?z_hfp~=?z_hfw)"
+      by (rule zenon_stringdiffll [OF z_Hif z_Hhs z_Hha])
+       show FALSE
+       by (rule zenon_L3_ [OF z_Hs z_Hcp z_Hq z_Hfv z_Ha])
+     next
+      assume z_Hhu:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p3'', ''p4''})" (is "?z_hhu")
+      show FALSE
+      proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p3''" "{''p4''}", OF z_Hhu])
+       assume z_Hgv:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p3'')" (is "?z_hfp=?z_hct")
+       show FALSE
+       by (rule zenon_L6_ [OF z_Hs z_Hha z_Hgv z_Ha z_Hq z_Hcp])
+      next
+       assume z_Hhw:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p4''})" (is "?z_hhw")
+       show FALSE
+       proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p4''" "{}", OF z_Hhw])
+        assume z_Hgy:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p4'')" (is "?z_hfp=?z_hcu")
+        show FALSE
+        by (rule zenon_L5_ [OF z_Hs z_Hgx z_Hgy])
+       next
+        assume z_Hhy:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {})" (is "?z_hhy")
+        show FALSE
+        by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_a[?z_heq])", OF z_Hhy])
+       qed
+      qed
+     qed
+    next
+     assume z_Hig:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {})" (is "?z_hig")
+     show FALSE
+     by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])", OF z_Hig])
+    qed
+   qed
+  next
+   assume z_Hfc:"?z_hfc" (is "?z_hfd&?z_hfe")
+   have z_Hfd: "?z_hfd"
+   by (rule zenon_and_0 [OF z_Hfc])
+   show FALSE
+   proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])" "''p7''" "{''p8''}", OF z_Hfd])
+    assume z_Hii:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])=''p7'')" (is "?z_hew=?z_hcv")
+    have z_Hhc: "((?z_het[a_CONSTANTunde_iunde_a])=?z_hcv)" (is "?z_hfw=_")
+    by (rule subst [where P="(\<lambda>zenon_Vvna. ((zenon_Vvna[a_CONSTANTunde_iunde_a])=?z_hcv))", OF z_Hj z_Hii])
+    have z_Hhm: "((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {?z_hbv, ''p3'', ''p4''})" (is "?z_hhm")
+    by (rule subst [where P="(\<lambda>zenon_Vhxa. ((a_VARIABLEunde_pcunde_a[zenon_Vhxa]) \\in {?z_hbv, ''p3'', ''p4''}))", OF z_Hs z_Hdi])
+    show FALSE
+    proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "?z_hbv" "{''p3'', ''p4''}", OF z_Hhm])
+     assume z_Hhs:"((a_VARIABLEunde_pcunde_a[?z_heq])=?z_hbv)" (is "?z_hfp=_")
+     have z_Hin: "(?z_hbv~=?z_hcv)"
+     by auto
+     have z_Hfv: "(?z_hfp~=?z_hfw)"
+     by (rule zenon_stringdiffll [OF z_Hin z_Hhs z_Hhc])
+      show FALSE
+      by (rule zenon_L3_ [OF z_Hs z_Hcp z_Hq z_Hfv z_Ha])
+    next
+     assume z_Hhu:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p3'', ''p4''})" (is "?z_hhu")
+     show FALSE
+     proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p3''" "{''p4''}", OF z_Hhu])
+      assume z_Hgv:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p3'')" (is "?z_hfp=?z_hct")
+      show FALSE
+      by (rule zenon_L7_ [OF z_Hs z_Hhc z_Hgv z_Ha z_Hq z_Hcp])
+     next
+      assume z_Hhw:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p4''})" (is "?z_hhw")
+      show FALSE
+      proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p4''" "{}", OF z_Hhw])
+       assume z_Hgy:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p4'')" (is "?z_hfp=?z_hcu")
+       show FALSE
+       by (rule zenon_L5_ [OF z_Hs z_Hgx z_Hgy])
+      next
+       assume z_Hhy:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {})" (is "?z_hhy")
+       show FALSE
+       by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_a[?z_heq])", OF z_Hhy])
+      qed
+     qed
+    qed
+   next
+    assume z_Hio:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {''p8''})" (is "?z_hio")
+    show FALSE
+    proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])" "''p8''" "{}", OF z_Hio])
+     assume z_Hip:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])=''p8'')" (is "?z_hew=?z_hcw")
+     have z_Hhe: "((?z_het[a_CONSTANTunde_iunde_a])=?z_hcw)" (is "?z_hfw=_")
+     by (rule subst [where P="(\<lambda>zenon_Voua. ((zenon_Voua[a_CONSTANTunde_iunde_a])=?z_hcw))", OF z_Hj z_Hip])
+     have z_Hhm: "((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {?z_hbv, ''p3'', ''p4''})" (is "?z_hhm")
+     by (rule subst [where P="(\<lambda>zenon_Vhxa. ((a_VARIABLEunde_pcunde_a[zenon_Vhxa]) \\in {?z_hbv, ''p3'', ''p4''}))", OF z_Hs z_Hdi])
+     show FALSE
+     proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "?z_hbv" "{''p3'', ''p4''}", OF z_Hhm])
+      assume z_Hhs:"((a_VARIABLEunde_pcunde_a[?z_heq])=?z_hbv)" (is "?z_hfp=_")
+      have z_Hiu: "(?z_hbv~=?z_hcw)"
+      by auto
+      have z_Hfv: "(?z_hfp~=?z_hfw)"
+      by (rule zenon_stringdiffll [OF z_Hiu z_Hhs z_Hhe])
+       show FALSE
+       by (rule zenon_L3_ [OF z_Hs z_Hcp z_Hq z_Hfv z_Ha])
+     next
+      assume z_Hhu:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p3'', ''p4''})" (is "?z_hhu")
+      show FALSE
+      proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p3''" "{''p4''}", OF z_Hhu])
+       assume z_Hgv:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p3'')" (is "?z_hfp=?z_hct")
+       show FALSE
+       by (rule zenon_L8_ [OF z_Hs z_Hhe z_Hgv z_Ha z_Hq z_Hcp])
+      next
+       assume z_Hhw:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p4''})" (is "?z_hhw")
+       show FALSE
+       proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p4''" "{}", OF z_Hhw])
+        assume z_Hgy:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p4'')" (is "?z_hfp=?z_hcu")
+        show FALSE
+        by (rule zenon_L5_ [OF z_Hs z_Hgx z_Hgy])
+       next
+        assume z_Hhy:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {})" (is "?z_hhy")
+        show FALSE
+        by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_a[?z_heq])", OF z_Hhy])
+       qed
+      qed
+     qed
+    next
+     assume z_Hig:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {})" (is "?z_hig")
+     show FALSE
+     by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])", OF z_Hig])
+    qed
+   qed
+  qed
+ qed
+ have zenon_L10_: "(a_CONSTANTunde_iunde_a=?z_heq) ==> ((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])=''p3'') ==> ((a_VARIABLEunde_pcunde_a[?z_heq])=''p2'') ==> FALSE" (is "?z_hs ==> ?z_hiv ==> ?z_hhs ==> FALSE")
+ proof -
+  assume z_Hs:"?z_hs"
+  assume z_Hiv:"?z_hiv" (is "?z_hdd=?z_hct")
+  assume z_Hhs:"?z_hhs" (is "?z_hfp=?z_hbv")
+  have z_Hiw: "(?z_hbv~=?z_hct)"
+  by auto
+  have z_Hfo: "(?z_hfp~=?z_hdd)"
+  by (rule zenon_stringdiffll [OF z_Hiw z_Hhs z_Hiv])
+   show FALSE
+   by (rule zenon_L2_ [OF z_Hs z_Hfo])
+ qed
+ have zenon_L11_: "(a_CONSTANTunde_iunde_a=?z_heq) ==> ((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])=''p3'') ==> ((a_VARIABLEunde_pcunde_a[?z_heq])=''p4'') ==> FALSE" (is "?z_hs ==> ?z_hiv ==> ?z_hgy ==> FALSE")
+ proof -
+  assume z_Hs:"?z_hs"
+  assume z_Hiv:"?z_hiv" (is "?z_hdd=?z_hct")
+  assume z_Hgy:"?z_hgy" (is "?z_hfp=?z_hcu")
+  have z_Hix: "(?z_hcu~=?z_hct)"
+  by auto
+  have z_Hfo: "(?z_hfp~=?z_hdd)"
+  by (rule zenon_stringdiffll [OF z_Hix z_Hgy z_Hiv])
+   show FALSE
+   by (rule zenon_L2_ [OF z_Hs z_Hfo])
+ qed
+ have zenon_L12_: "(a_VARIABLEunde_pcunde_hash_primea=?z_het) ==> (a_CONSTANTunde_iunde_a=?z_heq) ==> (?z_heu|?z_hfc) ==> ((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a]) \\in {''p2'', ''p3'', ''p4''}) ==> ((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])=''p3'') ==> ?z_ha ==> (a_CONSTANTunde_iunde_a~=a_CONSTANTunde_selfunde_a) ==> (a_VARIABLEunde_pcunde_a \\in FuncSet(a_CONSTANTunde_Punde_a, {''p1'', ''p2'', ''p3'', ''p4'', ''p5'', ''p6'', ''p7'', ''p8''})) ==> FALSE" (is "?z_hj ==> ?z_hs ==> ?z_hp ==> ?z_hdi ==> ?z_hiv ==> _ ==> ?z_hq ==> ?z_hcp ==> FALSE")
+ proof -
+  assume z_Hj:"?z_hj"
+  assume z_Hs:"?z_hs"
+  assume z_Hp:"?z_hp"
+  assume z_Hdi:"?z_hdi"
+  assume z_Hiv:"?z_hiv" (is "?z_hdd=?z_hct")
+  assume z_Ha:"?z_ha"
+  assume z_Hq:"?z_hq"
+  assume z_Hcp:"?z_hcp"
+  show FALSE
+  proof (rule zenon_or [OF z_Hp])
+   assume z_Heu:"?z_heu" (is "?z_hev&?z_hex")
+   have z_Hev: "?z_hev"
+   by (rule zenon_and_0 [OF z_Heu])
+   show FALSE
+   proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])" "''p5''" "{''p6''}", OF z_Hev])
+    assume z_Hhh:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])=''p5'')" (is "?z_hew=?z_hbw")
+    have z_Hgu: "((?z_het[a_CONSTANTunde_iunde_a])=?z_hbw)" (is "?z_hfw=_")
+    by (rule subst [where P="(\<lambda>zenon_Vvra. ((zenon_Vvra[a_CONSTANTunde_iunde_a])=?z_hbw))", OF z_Hj z_Hhh])
+    have z_Hhm: "((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p2'', ?z_hct, ''p4''})" (is "?z_hhm")
+    by (rule subst [where P="(\<lambda>zenon_Vhxa. ((a_VARIABLEunde_pcunde_a[zenon_Vhxa]) \\in {''p2'', ?z_hct, ''p4''}))", OF z_Hs z_Hdi])
+    show FALSE
+    proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p2''" "{?z_hct, ''p4''}", OF z_Hhm])
+     assume z_Hhs:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p2'')" (is "?z_hfp=?z_hbv")
+     show FALSE
+     by (rule zenon_L10_ [OF z_Hs z_Hiv z_Hhs])
+    next
+     assume z_Hhu:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {?z_hct, ''p4''})" (is "?z_hhu")
+     show FALSE
+     proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "?z_hct" "{''p4''}", OF z_Hhu])
+      assume z_Hgv:"((a_VARIABLEunde_pcunde_a[?z_heq])=?z_hct)" (is "?z_hfp=_")
+      show FALSE
+      by (rule zenon_L4_ [OF z_Hs z_Hgu z_Hgv z_Ha z_Hq z_Hcp])
+     next
+      assume z_Hhw:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p4''})" (is "?z_hhw")
+      show FALSE
+      proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p4''" "{}", OF z_Hhw])
+       assume z_Hgy:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p4'')" (is "?z_hfp=?z_hcu")
+       show FALSE
+       by (rule zenon_L11_ [OF z_Hs z_Hiv z_Hgy])
+      next
+       assume z_Hhy:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {})" (is "?z_hhy")
+       show FALSE
+       by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_a[?z_heq])", OF z_Hhy])
+      qed
+     qed
+    qed
+   next
+    assume z_Hhz:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {''p6''})" (is "?z_hhz")
+    show FALSE
+    proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])" "''p6''" "{}", OF z_Hhz])
+     assume z_Hia:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])=''p6'')" (is "?z_hew=?z_hbx")
+     have z_Hha: "((?z_het[a_CONSTANTunde_iunde_a])=?z_hbx)" (is "?z_hfw=_")
+     by (rule subst [where P="(\<lambda>zenon_Vypa. ((zenon_Vypa[a_CONSTANTunde_iunde_a])=?z_hbx))", OF z_Hj z_Hia])
+     have z_Hhm: "((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p2'', ?z_hct, ''p4''})" (is "?z_hhm")
+     by (rule subst [where P="(\<lambda>zenon_Vhxa. ((a_VARIABLEunde_pcunde_a[zenon_Vhxa]) \\in {''p2'', ?z_hct, ''p4''}))", OF z_Hs z_Hdi])
+     show FALSE
+     proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p2''" "{?z_hct, ''p4''}", OF z_Hhm])
+      assume z_Hhs:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p2'')" (is "?z_hfp=?z_hbv")
+      show FALSE
+      by (rule zenon_L10_ [OF z_Hs z_Hiv z_Hhs])
+     next
+      assume z_Hhu:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {?z_hct, ''p4''})" (is "?z_hhu")
+      show FALSE
+      proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "?z_hct" "{''p4''}", OF z_Hhu])
+       assume z_Hgv:"((a_VARIABLEunde_pcunde_a[?z_heq])=?z_hct)" (is "?z_hfp=_")
+       show FALSE
+       by (rule zenon_L6_ [OF z_Hs z_Hha z_Hgv z_Ha z_Hq z_Hcp])
+      next
+       assume z_Hhw:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p4''})" (is "?z_hhw")
+       show FALSE
+       proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p4''" "{}", OF z_Hhw])
+        assume z_Hgy:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p4'')" (is "?z_hfp=?z_hcu")
+        show FALSE
+        by (rule zenon_L11_ [OF z_Hs z_Hiv z_Hgy])
+       next
+        assume z_Hhy:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {})" (is "?z_hhy")
+        show FALSE
+        by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_a[?z_heq])", OF z_Hhy])
+       qed
+      qed
+     qed
+    next
+     assume z_Hig:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {})" (is "?z_hig")
+     show FALSE
+     by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])", OF z_Hig])
+    qed
+   qed
+  next
+   assume z_Hfc:"?z_hfc" (is "?z_hfd&?z_hfe")
+   have z_Hfd: "?z_hfd"
+   by (rule zenon_and_0 [OF z_Hfc])
+   show FALSE
+   proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])" "''p7''" "{''p8''}", OF z_Hfd])
+    assume z_Hii:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])=''p7'')" (is "?z_hew=?z_hcv")
+    have z_Hhc: "((?z_het[a_CONSTANTunde_iunde_a])=?z_hcv)" (is "?z_hfw=_")
+    by (rule subst [where P="(\<lambda>zenon_Vvna. ((zenon_Vvna[a_CONSTANTunde_iunde_a])=?z_hcv))", OF z_Hj z_Hii])
+    have z_Hhm: "((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p2'', ?z_hct, ''p4''})" (is "?z_hhm")
+    by (rule subst [where P="(\<lambda>zenon_Vhxa. ((a_VARIABLEunde_pcunde_a[zenon_Vhxa]) \\in {''p2'', ?z_hct, ''p4''}))", OF z_Hs z_Hdi])
+    show FALSE
+    proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p2''" "{?z_hct, ''p4''}", OF z_Hhm])
+     assume z_Hhs:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p2'')" (is "?z_hfp=?z_hbv")
+     show FALSE
+     by (rule zenon_L10_ [OF z_Hs z_Hiv z_Hhs])
+    next
+     assume z_Hhu:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {?z_hct, ''p4''})" (is "?z_hhu")
+     show FALSE
+     proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "?z_hct" "{''p4''}", OF z_Hhu])
+      assume z_Hgv:"((a_VARIABLEunde_pcunde_a[?z_heq])=?z_hct)" (is "?z_hfp=_")
+      show FALSE
+      by (rule zenon_L7_ [OF z_Hs z_Hhc z_Hgv z_Ha z_Hq z_Hcp])
+     next
+      assume z_Hhw:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p4''})" (is "?z_hhw")
+      show FALSE
+      proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p4''" "{}", OF z_Hhw])
+       assume z_Hgy:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p4'')" (is "?z_hfp=?z_hcu")
+       show FALSE
+       by (rule zenon_L11_ [OF z_Hs z_Hiv z_Hgy])
+      next
+       assume z_Hhy:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {})" (is "?z_hhy")
+       show FALSE
+       by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_a[?z_heq])", OF z_Hhy])
+      qed
+     qed
+    qed
+   next
+    assume z_Hio:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {''p8''})" (is "?z_hio")
+    show FALSE
+    proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])" "''p8''" "{}", OF z_Hio])
+     assume z_Hip:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])=''p8'')" (is "?z_hew=?z_hcw")
+     have z_Hhe: "((?z_het[a_CONSTANTunde_iunde_a])=?z_hcw)" (is "?z_hfw=_")
+     by (rule subst [where P="(\<lambda>zenon_Voua. ((zenon_Voua[a_CONSTANTunde_iunde_a])=?z_hcw))", OF z_Hj z_Hip])
+     have z_Hhm: "((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p2'', ?z_hct, ''p4''})" (is "?z_hhm")
+     by (rule subst [where P="(\<lambda>zenon_Vhxa. ((a_VARIABLEunde_pcunde_a[zenon_Vhxa]) \\in {''p2'', ?z_hct, ''p4''}))", OF z_Hs z_Hdi])
+     show FALSE
+     proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p2''" "{?z_hct, ''p4''}", OF z_Hhm])
+      assume z_Hhs:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p2'')" (is "?z_hfp=?z_hbv")
+      show FALSE
+      by (rule zenon_L10_ [OF z_Hs z_Hiv z_Hhs])
+     next
+      assume z_Hhu:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {?z_hct, ''p4''})" (is "?z_hhu")
+      show FALSE
+      proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "?z_hct" "{''p4''}", OF z_Hhu])
+       assume z_Hgv:"((a_VARIABLEunde_pcunde_a[?z_heq])=?z_hct)" (is "?z_hfp=_")
+       show FALSE
+       by (rule zenon_L8_ [OF z_Hs z_Hhe z_Hgv z_Ha z_Hq z_Hcp])
+      next
+       assume z_Hhw:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {''p4''})" (is "?z_hhw")
+       show FALSE
+       proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[?z_heq])" "''p4''" "{}", OF z_Hhw])
+        assume z_Hgy:"((a_VARIABLEunde_pcunde_a[?z_heq])=''p4'')" (is "?z_hfp=?z_hcu")
+        show FALSE
+        by (rule zenon_L11_ [OF z_Hs z_Hiv z_Hgy])
+       next
+        assume z_Hhy:"((a_VARIABLEunde_pcunde_a[?z_heq]) \\in {})" (is "?z_hhy")
+        show FALSE
+        by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_a[?z_heq])", OF z_Hhy])
+       qed
+      qed
+     qed
+    next
+     assume z_Hig:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {})" (is "?z_hig")
+     show FALSE
+     by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])", OF z_Hig])
+    qed
+   qed
+  qed
+ qed
+ assume z_Hu:"(~((a_VARIABLEunde_numunde_a[a_CONSTANTunde_selfunde_a]) < (a_VARIABLEunde_numunde_a[?z_heq])))" (is "~?z_hfi")
+ have z_Hba: "?z_hba" (is "?z_hbb&?z_hbh")
+ by (rule zenon_and_1 [OF z_Hc])
+ have z_Hbh: "?z_hbh" (is "?z_hbi&?z_hbm")
+ by (rule zenon_and_1 [OF z_Hba])
+ have z_Hbm: "?z_hbm" (is "?z_hbn&?z_hcb")
+ by (rule zenon_and_1 [OF z_Hbh])
+ have z_Hcb: "?z_hcb" (is "?z_hcc&?z_hce")
+ by (rule zenon_and_1 [OF z_Hbm])
+ have z_Hce: "?z_hce" (is "?z_hcf&?z_hci")
+ by (rule zenon_and_1 [OF z_Hcb])
+ have z_Hci: "?z_hci" (is "?z_hcj&?z_hcp")
+ by (rule zenon_and_1 [OF z_Hce])
+ have z_Hcp: "?z_hcp"
+ by (rule zenon_and_1 [OF z_Hci])
+ have z_Hcx: "?z_hcx" (is "?z_hcy<=>?z_hdc")
+ by (rule zenon_and_0 [OF z_He])
+ have z_Hdf: "?z_hdf" (is "?z_hdg&?z_hdk")
+ by (rule zenon_and_1 [OF z_He])
+ have z_Hdg: "?z_hdg" (is "?z_hdh<=>?z_hdi")
+ by (rule zenon_and_0 [OF z_Hdf])
+ show FALSE
+ proof (rule zenon_equiv [OF z_Hcx])
+  assume z_Hiy:"((a_VARIABLEunde_numunde_a[a_CONSTANTunde_iunde_a])~=0)" (is "?z_hcz~=_")
+  assume z_Hiz:"(~?z_hdc)"
+  show FALSE
+  proof (rule zenon_or [OF z_Hg])
+   assume z_Hff:"?z_hff" (is "?z_hfg=_")
+   have z_Hja: "(?z_hfg~=0)"
+   by (rule subst [where P="(\<lambda>zenon_Vhwa. ((a_VARIABLEunde_numunde_a[zenon_Vhwa])~=0))", OF z_Hs z_Hiy])
+   show FALSE
+   by (rule notE [OF z_Hja z_Hff])
+  next
+   assume z_Hfh:"?z_hfh"
+   show FALSE
+   by (rule zenon_L1_ [OF z_Hfh z_Ht z_Hu])
+  qed
+ next
+  assume z_Hcy:"?z_hcy" (is "?z_hcz=_")
+  assume z_Hdc:"?z_hdc"
+  show FALSE
+  proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])" "''p1''" "{''p2'', ''p3''}", OF z_Hdc])
+   assume z_Hjg:"((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])=''p1'')" (is "?z_hdd=?z_hcs")
+   show FALSE
+   proof (rule zenon_or [OF z_Hp])
+    assume z_Heu:"?z_heu" (is "?z_hev&?z_hex")
+    have z_Hev: "?z_hev"
+    by (rule zenon_and_0 [OF z_Heu])
+    show FALSE
+    proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])" "''p5''" "{''p6''}", OF z_Hev])
+     assume z_Hhh:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])=''p5'')" (is "?z_hew=?z_hbw")
+     have z_Hgu: "((?z_het[a_CONSTANTunde_iunde_a])=?z_hbw)" (is "?z_hfw=_")
+     by (rule subst [where P="(\<lambda>zenon_Vvra. ((zenon_Vvra[a_CONSTANTunde_iunde_a])=?z_hbw))", OF z_Hj z_Hhh])
+     have z_Hjh: "((a_VARIABLEunde_pcunde_a[?z_heq])=?z_hcs)" (is "?z_hfp=_")
+     by (rule subst [where P="(\<lambda>zenon_Vlwa. ((a_VARIABLEunde_pcunde_a[zenon_Vlwa])=?z_hcs))", OF z_Hs z_Hjg])
+     have z_Hjm: "(?z_hcs~=?z_hbw)"
+     by auto
+     have z_Hfv: "(?z_hfp~=?z_hfw)"
+     by (rule zenon_stringdiffll [OF z_Hjm z_Hjh z_Hgu])
+      show FALSE
+      by (rule zenon_L3_ [OF z_Hs z_Hcp z_Hq z_Hfv z_Ha])
+    next
+     assume z_Hhz:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {''p6''})" (is "?z_hhz")
+     show FALSE
+     proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])" "''p6''" "{}", OF z_Hhz])
+      assume z_Hia:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])=''p6'')" (is "?z_hew=?z_hbx")
+      have z_Hha: "((?z_het[a_CONSTANTunde_iunde_a])=?z_hbx)" (is "?z_hfw=_")
+      by (rule subst [where P="(\<lambda>zenon_Vypa. ((zenon_Vypa[a_CONSTANTunde_iunde_a])=?z_hbx))", OF z_Hj z_Hia])
+      have z_Hjh: "((a_VARIABLEunde_pcunde_a[?z_heq])=?z_hcs)" (is "?z_hfp=_")
+      by (rule subst [where P="(\<lambda>zenon_Vlwa. ((a_VARIABLEunde_pcunde_a[zenon_Vlwa])=?z_hcs))", OF z_Hs z_Hjg])
+      have z_Hjn: "(?z_hcs~=?z_hbx)"
+      by auto
+      have z_Hfv: "(?z_hfp~=?z_hfw)"
+      by (rule zenon_stringdiffll [OF z_Hjn z_Hjh z_Hha])
+       show FALSE
+       by (rule zenon_L3_ [OF z_Hs z_Hcp z_Hq z_Hfv z_Ha])
+     next
+      assume z_Hig:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {})" (is "?z_hig")
+      show FALSE
+      by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])", OF z_Hig])
+     qed
+    qed
+   next
+    assume z_Hfc:"?z_hfc" (is "?z_hfd&?z_hfe")
+    have z_Hfd: "?z_hfd"
+    by (rule zenon_and_0 [OF z_Hfc])
+    show FALSE
+    proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])" "''p7''" "{''p8''}", OF z_Hfd])
+     assume z_Hii:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])=''p7'')" (is "?z_hew=?z_hcv")
+     have z_Hhc: "((?z_het[a_CONSTANTunde_iunde_a])=?z_hcv)" (is "?z_hfw=_")
+     by (rule subst [where P="(\<lambda>zenon_Vvna. ((zenon_Vvna[a_CONSTANTunde_iunde_a])=?z_hcv))", OF z_Hj z_Hii])
+     have z_Hjh: "((a_VARIABLEunde_pcunde_a[?z_heq])=?z_hcs)" (is "?z_hfp=_")
+     by (rule subst [where P="(\<lambda>zenon_Vlwa. ((a_VARIABLEunde_pcunde_a[zenon_Vlwa])=?z_hcs))", OF z_Hs z_Hjg])
+     have z_Hjo: "(?z_hcs~=?z_hcv)"
+     by auto
+     have z_Hfv: "(?z_hfp~=?z_hfw)"
+     by (rule zenon_stringdiffll [OF z_Hjo z_Hjh z_Hhc])
+      show FALSE
+      by (rule zenon_L3_ [OF z_Hs z_Hcp z_Hq z_Hfv z_Ha])
+    next
+     assume z_Hio:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {''p8''})" (is "?z_hio")
+     show FALSE
+     proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])" "''p8''" "{}", OF z_Hio])
+      assume z_Hip:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])=''p8'')" (is "?z_hew=?z_hcw")
+      have z_Hhe: "((?z_het[a_CONSTANTunde_iunde_a])=?z_hcw)" (is "?z_hfw=_")
+      by (rule subst [where P="(\<lambda>zenon_Voua. ((zenon_Voua[a_CONSTANTunde_iunde_a])=?z_hcw))", OF z_Hj z_Hip])
+      have z_Hjh: "((a_VARIABLEunde_pcunde_a[?z_heq])=?z_hcs)" (is "?z_hfp=_")
+      by (rule subst [where P="(\<lambda>zenon_Vlwa. ((a_VARIABLEunde_pcunde_a[zenon_Vlwa])=?z_hcs))", OF z_Hs z_Hjg])
+      have z_Hjp: "(?z_hcs~=?z_hcw)"
+      by auto
+      have z_Hfv: "(?z_hfp~=?z_hfw)"
+      by (rule zenon_stringdiffll [OF z_Hjp z_Hjh z_Hhe])
+       show FALSE
+       by (rule zenon_L3_ [OF z_Hs z_Hcp z_Hq z_Hfv z_Ha])
+     next
+      assume z_Hig:"((a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a]) \\in {})" (is "?z_hig")
+      show FALSE
+      by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_hash_primea[a_CONSTANTunde_iunde_a])", OF z_Hig])
+     qed
+    qed
+   qed
+  next
+   assume z_Hjq:"((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a]) \\in {''p2'', ''p3''})" (is "?z_hjq")
+   show FALSE
+   proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])" "''p2''" "{''p3''}", OF z_Hjq])
+    assume z_Hgx:"((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])=''p2'')" (is "?z_hdd=?z_hbv")
+    show FALSE
+    proof (rule zenon_equiv [OF z_Hdg])
+     assume z_Hjs:"(~?z_hdh)"
+     assume z_Hjt:"(~?z_hdi)"
+     have z_Hju: "(?z_hdd~=?z_hbv)"
+     by (rule zenon_notin_addElt_0 [of "?z_hdd" "?z_hbv" "{''p3'', ''p4''}", OF z_Hjt])
+     show FALSE
+     by (rule notE [OF z_Hju z_Hgx])
+    next
+     assume z_Hdh:"?z_hdh"
+     assume z_Hdi:"?z_hdi"
+     show FALSE
+     by (rule zenon_L9_ [OF z_Hj z_Hs z_Hp z_Hdi z_Ha z_Hq z_Hcp z_Hgx])
+    qed
+   next
+    assume z_Hjv:"((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a]) \\in {''p3''})" (is "?z_hjv")
+    show FALSE
+    proof (rule zenon_in_addElt [of "(a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])" "''p3''" "{}", OF z_Hjv])
+     assume z_Hiv:"((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])=''p3'')" (is "?z_hdd=?z_hct")
+     show FALSE
+     proof (rule zenon_equiv [OF z_Hdg])
+      assume z_Hjs:"(~?z_hdh)"
+      assume z_Hjt:"(~?z_hdi)"
+      have z_Hjw: "(~(?z_hdd \\in {?z_hct, ''p4''}))" (is "~?z_hjx")
+      by (rule zenon_notin_addElt_1 [of "?z_hdd" "''p2''" "{?z_hct, ''p4''}", OF z_Hjt])
+      have z_Hjy: "(?z_hdd~=?z_hct)"
+      by (rule zenon_notin_addElt_0 [of "?z_hdd" "?z_hct" "{''p4''}", OF z_Hjw])
+      show FALSE
+      by (rule notE [OF z_Hjy z_Hiv])
+     next
+      assume z_Hdh:"?z_hdh"
+      assume z_Hdi:"?z_hdi"
+      show FALSE
+      by (rule zenon_L12_ [OF z_Hj z_Hs z_Hp z_Hdi z_Hiv z_Ha z_Hq z_Hcp])
+     qed
+    next
+     assume z_Hjz:"((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a]) \\in {})" (is "?z_hjz")
+     show FALSE
+     by (rule zenon_in_emptyset [of "(a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a])", OF z_Hjz])
+    qed
+   qed
+  qed
+ qed
+qed
+(* END-PROOF *)

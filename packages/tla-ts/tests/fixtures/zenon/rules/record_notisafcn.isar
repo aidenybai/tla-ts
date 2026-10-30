@@ -1,0 +1,7 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ assume z_Ha:"(~isAFcn((''a'' :> (x))))" (is "~?z_hb")
+ show FALSE using z_Ha by auto
+qed
+(* END-PROOF *)

@@ -1,0 +1,12 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Ha:"((a \\cup b) \\subseteq c)" (is "?z_ha")
+ using h by blast
+ assume z_Hb:"(~(b \\subseteq c))" (is "~?z_hg")
+ have z_Hg: "?z_hg"
+ by (rule zenon_cup_subseteq_1 [of , OF z_Ha])
+ show FALSE
+ by (rule notE [OF z_Hb z_Hg])
+qed
+(* END-PROOF *)

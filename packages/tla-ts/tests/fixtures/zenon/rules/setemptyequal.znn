@@ -1,0 +1,2 @@
+$hyp "h" (= TLA.emptyset (TLA.set a))
+$goal F.

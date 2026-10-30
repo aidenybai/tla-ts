@@ -1,0 +1,8 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ assume z_Ha:"(~isAFcn((a :> b)))" (is "~?z_hb")
+ show FALSE
+ by (rule zenon_notisafcn_onearg [of "a" "b", OF z_Ha])
+qed
+(* END-PROOF *)

@@ -1,0 +1,2 @@
+$hyp "h" (= (TLA.tuple a b) (TLA.tuple c))
+$goal p

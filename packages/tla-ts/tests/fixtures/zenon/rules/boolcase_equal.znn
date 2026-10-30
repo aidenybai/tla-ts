@@ -1,0 +1,3 @@
+$hyp "h" (P (= a b))
+$hyp "n" (= a b)
+$goal (P T.)

@@ -1,0 +1,50 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ assume z_Hd:"(~(Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a}))) \\in FuncSet(SUBSET(a_CONSTANTunde_Aunde_a), setOfAll(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a}))))))" (is "~?z_he")
+ show FALSE
+ proof (rule zenon_notin_funcset [of "Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))" "SUBSET(a_CONSTANTunde_Aunde_a)" "setOfAll(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))", OF z_Hd])
+  assume z_Hp:"(~isAFcn(Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))))" (is "~?z_hq")
+  show FALSE
+  by (rule zenon_notisafcn_fcn [of "SUBSET(a_CONSTANTunde_Aunde_a)" "(\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a}))", OF z_Hp])
+ next
+  assume z_Hr:"(DOMAIN(Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a}))))~=SUBSET(a_CONSTANTunde_Aunde_a))" (is "?z_hs~=?z_hg")
+  have z_Ht: "(?z_hg~=?z_hg)"
+  by (rule zenon_domain_fcn_0 [of "(\<lambda>zenon_Vrb. (zenon_Vrb~=?z_hg))" "?z_hg" "(\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a}))", OF z_Hr])
+  show FALSE
+  by (rule zenon_noteq [OF z_Ht])
+ next
+  assume z_Hx:"(~(\\A zenon_Vh:((zenon_Vh \\in SUBSET(a_CONSTANTunde_Aunde_a))=>((Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))[zenon_Vh]) \\in setOfAll(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))))))" (is "~(\\A x : ?z_hbe(x))")
+  have z_Hbf: "(\\E zenon_Vh:(~((zenon_Vh \\in SUBSET(a_CONSTANTunde_Aunde_a))=>((Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))[zenon_Vh]) \\in setOfAll(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))))))" (is "\\E x : ?z_hbh(x)")
+  by (rule zenon_notallex_0 [of "?z_hbe", OF z_Hx])
+  have z_Hbi: "?z_hbh((CHOOSE zenon_Vh:(~((zenon_Vh \\in SUBSET(a_CONSTANTunde_Aunde_a))=>((Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))[zenon_Vh]) \\in setOfAll(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a}))))))))" (is "~(?z_hbk=>?z_hbl)")
+  by (rule zenon_ex_choose_0 [of "?z_hbh", OF z_Hbf])
+  have z_Hbk: "?z_hbk"
+  by (rule zenon_notimply_0 [OF z_Hbi])
+  have z_Hbm: "(~?z_hbl)"
+  by (rule zenon_notimply_1 [OF z_Hbi])
+  have z_Hbn: "(~(\\E zenon_Vda:((zenon_Vda \\in SUBSET(a_CONSTANTunde_Aunde_a))&((Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))[(CHOOSE zenon_Vh:(~((zenon_Vh \\in SUBSET(a_CONSTANTunde_Aunde_a))=>((Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))[zenon_Vh]) \\in setOfAll(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))))))])=(zenon_Vda \\cup {a_CONSTANTunde_xunde_a})))))" (is "~(\\E x : ?z_hbv(x))")
+  by (rule zenon_notin_setofall_0 [of "(Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))[(CHOOSE zenon_Vh:(~((zenon_Vh \\in SUBSET(a_CONSTANTunde_Aunde_a))=>((Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))[zenon_Vh]) \\in setOfAll(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))))))])" "SUBSET(a_CONSTANTunde_Aunde_a)" "(\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a}))", OF z_Hbm])
+  have z_Hbw: "~?z_hbv((CHOOSE zenon_Vh:(~((zenon_Vh \\in SUBSET(a_CONSTANTunde_Aunde_a))=>((Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))[zenon_Vh]) \\in setOfAll(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a}))))))))" (is "~(_&?z_hbx)")
+  by (rule zenon_notex_0 [of "?z_hbv" "(CHOOSE zenon_Vh:(~((zenon_Vh \\in SUBSET(a_CONSTANTunde_Aunde_a))=>((Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))[zenon_Vh]) \\in setOfAll(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))))))", OF z_Hbn])
+  show FALSE
+  proof (rule zenon_notand [OF z_Hbw])
+   assume z_Hby:"(~?z_hbk)"
+   show FALSE
+   by (rule notE [OF z_Hby z_Hbk])
+  next
+   assume z_Hbz:"((Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))[(CHOOSE zenon_Vh:(~((zenon_Vh \\in SUBSET(a_CONSTANTunde_Aunde_a))=>((Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))[zenon_Vh]) \\in setOfAll(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))))))])~=((CHOOSE zenon_Vh:(~((zenon_Vh \\in SUBSET(a_CONSTANTunde_Aunde_a))=>((Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))[zenon_Vh]) \\in setOfAll(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a}))))))) \\cup {a_CONSTANTunde_xunde_a}))" (is "?z_hbt~=?z_hca")
+   show FALSE
+   proof (rule zenon_fapplyfcn [of "(\<lambda>zenon_Vnb. (zenon_Vnb~=?z_hca))" "SUBSET(a_CONSTANTunde_Aunde_a)" "(\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a}))" "(CHOOSE zenon_Vh:(~((zenon_Vh \\in SUBSET(a_CONSTANTunde_Aunde_a))=>((Fcn(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))[zenon_Vh]) \\in setOfAll(SUBSET(a_CONSTANTunde_Aunde_a), (\<lambda>a_CONSTANTunde_Bunde_a. (a_CONSTANTunde_Bunde_a \\cup {a_CONSTANTunde_xunde_a})))))))", OF z_Hbz])
+    assume z_Hby:"(~?z_hbk)"
+    show FALSE
+    by (rule notE [OF z_Hby z_Hbk])
+   next
+    assume z_Hce:"(?z_hca~=?z_hca)"
+    show FALSE
+    by (rule zenon_noteq [OF z_Hce])
+   qed
+  qed
+ qed
+qed
+(* END-PROOF *)
