@@ -111,6 +111,8 @@ export interface CheckOptions {
   dump?: StateDump;
   // Whether TLC loads its trace exploration spec, as it does unless it runs with -tool.
   isTraceSpecLoaded?: boolean;
+  // False for TLC's -nowarning, which changes how TLC computes the successors of some actions.
+  isWarningEnabled?: boolean;
   // Reports the points of the search at which TLC prints a message.
   onProgress?: (progress: CheckProgress) => void;
 }
@@ -1315,6 +1317,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     files: { readFile: options.readFile, writeFile: options.writeFile },
     seed: options.seed,
     isTraceSpecLoaded: options.isTraceSpecLoaded,
+    isWarningEnabled: options.isWarningEnabled,
   });
   reportStartup(specification, config, options.onProgress);
   const environment = specification.environment;

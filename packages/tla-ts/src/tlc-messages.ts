@@ -71,14 +71,17 @@ export interface MessagePrinter {
 
 // With -tool, TLC wraps each message in markers that name its code and level, so that a program
 // can read the output. Lines outside the markers, such as the output of Print, stay as they are.
-export const createMessagePrinter = (isTool: boolean): MessagePrinter => ({
+// TLC's -nowarning drops each message that MP.printWarning would print.
+export const createMessagePrinter = (isTool: boolean, isWarningEnabled = true): MessagePrinter => ({
   isTool,
-  print: (code, level, text) =>
+  print: (code, level, text) => {
+    if (level === MESSAGE_LEVEL.warning && !isWarningEnabled) return;
     console.log(
       isTool
         ? `@!@!@STARTMSG ${code}:${level} @!@!@\n${text}\n@!@!@ENDMSG ${code} @!@!@`
         : `${LEVEL_PREFIXES[level]}${text}`,
-    ),
+    );
+  },
 });
 
 // The messages that TLC builds from a message code, from tlc2.output.MP, by their code and

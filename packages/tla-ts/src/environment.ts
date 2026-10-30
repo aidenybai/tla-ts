@@ -76,6 +76,7 @@ interface EnvironmentOptions {
   // Whether TLC loads its trace exploration spec, as it does unless it runs with -tool. The spec
   // loads Integers, whose Java methods then compute the arithmetic of Naturals.
   isTraceSpecLoaded?: boolean;
+  isWarningEnabled?: boolean;
 }
 
 interface Specification {
@@ -238,6 +239,7 @@ export const createEnvironment = (
   );
   const standardExports = new Map<string, Symbols>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
+  runtime.isWarningEnabled = options.isWarningEnabled ?? true;
   const linkedModules = new Map<string, LinkedModule>();
   const nestedModules = new Map<string, LinkedModule>();
   const linkedList: LinkedModule[] = [];

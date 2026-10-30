@@ -83,6 +83,7 @@ const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {options
   { flag: "-fp <num>" },
   { flag: "-lncheck <final|default>" },
   { flag: "-metadir <directory>" },
+  { flag: "-nowarning" },
   { flag: "-seed <num>" },
   { flag: "-tool" },
   { flag: "-workers <count|auto>" },
@@ -653,6 +654,7 @@ const checkSpec = async (
       dump: dumpValues && getDump(dumpValues),
       // TLC loads its trace exploration spec unless it runs with -tool.
       isTraceSpecLoaded: !args.has("-tool"),
+      isWarningEnabled: !args.has("-nowarning"),
       onProgress: printer.isTool
         ? (progress) => printToolProgress(printer, progress, timing)
         : undefined,
@@ -963,7 +965,7 @@ const checkSpecs = async (args: string[], libraries: string[]) => {
     console.error("Error: -config applies to one specification, but several were given.");
     return 1;
   }
-  const printer = createMessagePrinter(parsed.has("-tool"));
+  const printer = createMessagePrinter(parsed.has("-tool"), !parsed.has("-nowarning"));
   // TLC also looks for the spec itself in the library directories.
   const findSpec = (path: string) =>
     existsSync(path) || isAbsolute(path)

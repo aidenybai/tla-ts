@@ -221,13 +221,21 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates]).toEqual([13, 3]);
   });
 
-  it("evaluates the conjuncts left once an action assigns every variable", async () => {
-    const result = await check({
-      source:
-        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nWitness(i) == \\E j \\in 1..3 : j >= i\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ \\A i \\in {1, 2} : Witness(i)\n====",
-      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
-    });
-    expect([result.generatedStates, result.distinctStates]).toEqual([3, 3]);
+  it("evaluates the conjuncts left once an action assigns every variable, unless warnings are off", async () => {
+    const results = await Promise.all(
+      [true, false].map((isWarningEnabled) =>
+        check({
+          source:
+            "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nWitness(i) == \\E j \\in 1..3 : j >= i\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ \\A i \\in {1, 2} : Witness(i)\n====",
+          config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+          isWarningEnabled,
+        }),
+      ),
+    );
+    expect(results.map((result) => [result.generatedStates, result.distinctStates])).toEqual([
+      [3, 3],
+      [13, 3],
+    ]);
   });
 
   it("reports a depth of 1 when the constraint excludes every initial state", async () => {

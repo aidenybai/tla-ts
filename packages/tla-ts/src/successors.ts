@@ -334,11 +334,12 @@ const compileConjunction = (
   ): void => {
     let current = partial;
     let context: Context | undefined;
+    // Once every variable has a value, TLC's getInitStates and getNextStatesAllAssigned evaluate
+    // the conjuncts left instead of walking them, so a disjunction among them takes one step. Its
+    // enabled doesn't, and Tool#getNextStates0 takes this shortcut only with warnings on.
+    const isShortcut = !run.isEnabled && (run.isInit || run.environment.runtime.isWarningEnabled);
     for (let index = start; index < conjuncts.length; index++) {
-      // Once every variable has a value, TLC's getInitStates and getNextStatesAllAssigned evaluate
-      // the conjuncts left instead of walking them, so a disjunction among them takes one step.
-      // Its enabled doesn't.
-      if (index > 0 && !run.isEnabled && isComplete(current)) {
+      if (index > 0 && isShortcut && isComplete(current)) {
         context ??= getContext(run, scope, current);
         const isTrue = run.isInit ? holdsInInit : holds;
         for (let rest = index; rest < conjuncts.length; rest++) {
