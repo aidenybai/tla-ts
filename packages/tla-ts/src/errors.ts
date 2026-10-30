@@ -2,10 +2,13 @@ import { EXIT_STATUS, getExitCode } from "./exit-codes";
 import type { PcalNode } from "./pcal-ast";
 import type { Value } from "./values";
 
+// The start of TLC's message for an exception of a Java class it didn't expect.
+export const getUnexpectedException = (exceptionClass: string) =>
+  `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a ${exceptionClass}\n: `;
+
 // How TLC reports a RuntimeException it did not expect, such as one raised while computing next
 // states.
-export const UNEXPECTED_EXCEPTION =
-  "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
+export const UNEXPECTED_EXCEPTION = getUnexpectedException("java.lang.RuntimeException");
 
 export class TlaError extends Error {
   constructor(message: string, cause?: unknown) {

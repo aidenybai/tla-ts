@@ -34,6 +34,7 @@ import {
   TlaEvaluationError,
   TlaProofError,
   TlaSyntaxError,
+  getUnexpectedException,
   UNEXPECTED_EXCEPTION,
   TlaSanyFatalError,
   TlaUnsupportedError,
@@ -791,12 +792,22 @@ const checkSpec = async (
   // when it can't read it.
   const config = (() => {
     try {
-      return parseConfig(readFileSync(configPath, "utf8"));
+      return parseConfig(readFileSync(configPath, "utf8"), version);
     } catch (error) {
       if (!(error instanceof TlaConfigError)) throw error;
       return error;
     }
   })();
+  // TLC 1.7.4 reports a configuration file it can't parse as an exception it didn't expect.
+  if (config instanceof TlaConfigError && version === "1.7.4") {
+    printer.print(
+      MESSAGE_CODE.general,
+      MESSAGE_LEVEL.error,
+      `${getUnexpectedException("tlc2.tool.ConfigFileException")}${formatNestedMessage(config.message, printer.isTool)}`,
+    );
+    printFinished();
+    return EXIT_STATUS.error;
+  }
   if (config instanceof TlaConfigError) return printFailure(config);
   if (args.has("-deadlock")) config.checkDeadlock = false;
   const directory = dirname(specPath);

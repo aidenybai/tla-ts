@@ -625,6 +625,24 @@ describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path
     expect(getToolSequence(result.stdout).slice(-4)).toEqual(["2267", "2200", "2199", "2186"]);
   });
 
+  it("reports an error in the config as an unexpected exception", () => {
+    const result = check174("Aliased");
+    expect(result.status).toBe(255);
+    expect(result.stdout).toContain(
+      [
+        "@!@!@STARTMSG 1000:1 @!@!@",
+        "TLC threw an unexpected exception.",
+        "This was probably caused by an error in the spec or model.",
+        "See the User Output or TLC Console for clues to what happened.",
+        "The exception was a tlc2.tool.ConfigFileException",
+        ": @!@!@STARTMSG 5006:0 @!@!@",
+        "TLC found an error in the configuration file at line 3",
+        "It was expecting a keyword, but did not find it.",
+        "@!@!@ENDMSG 5006 @!@!@",
+      ].join("\n"),
+    );
+  });
+
   it("names the file it looked for a module in that it can't find", () => {
     const result = check174("Lost");
     expect(result.status).toBe(150);

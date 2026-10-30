@@ -1,6 +1,7 @@
 import { TlaConfigError } from "./errors";
 import { matchOperator } from "./lexer";
 import { formatLexicalError } from "./sany-lexer";
+import type { TlcVersion } from "./tlc-version";
 
 export type ConfigValue =
   | { kind: "Number"; value: number }
@@ -48,7 +49,7 @@ interface ConfigToken {
   line: number;
 }
 
-const KEYWORDS = new Set([
+const SHARED_KEYWORDS = [
   "CONSTANT",
   "CONSTANTS",
   "INIT",
@@ -65,6 +66,10 @@ const KEYWORDS = new Set([
   "SYMMETRY",
   "VIEW",
   "CHECK_DEADLOCK",
+];
+
+const KEYWORDS = new Set([
+  ...SHARED_KEYWORDS,
   "ALIAS",
   "POSTCONDITION",
   "POSTCONDITIONS",
@@ -72,6 +77,11 @@ const KEYWORDS = new Set([
   "_PERIODIC",
   "_RL_REWARD",
 ]);
+
+// TLC 1.7.4 reads a TYPE and a TYPE_CONSTRAINT, which it doesn't check, and none of the keywords
+// that came after it.
+const TYPE_KEYWORDS = ["TYPE", "TYPE_CONSTRAINT"];
+const KEYWORDS_174 = new Set([...SHARED_KEYWORDS, ...TYPE_KEYWORDS]);
 
 const SYMBOLS = ["<-", "<<", ">>", "=", "{", "}", ",", "[", "]", "(", ")", "!"];
 
@@ -196,7 +206,8 @@ const LIST_KEYWORDS = new Map<
 ]);
 
 // A port of TLC's ModelConfig.parse, which takes any token where it expects a name or a value.
-export const parseConfig = (source: string): ModelConfig => {
+export const parseConfig = (source: string, version: TlcVersion = "master"): ModelConfig => {
+  const keywords = version === "1.7.4" ? KEYWORDS_174 : KEYWORDS;
   const tokens = tokenizeConfig(source);
   const cursor = { index: 0 };
   const config: ModelConfig = {
@@ -219,6 +230,7 @@ export const parseConfig = (source: string): ModelConfig => {
     rlReward: undefined,
   };
   const deadlock = { isSet: false };
+  const types = new Set<string>();
   const advance = () => {
     const token = tokens[Math.min(cursor.index++, tokens.length - 1)];
     if (token.kind === "Error") {
@@ -269,7 +281,7 @@ export const parseConfig = (source: string): ModelConfig => {
   const parseConstants = (keywordLine: number) => {
     while (true) {
       const first = advance();
-      if (first.kind === "End" || KEYWORDS.has(first.text)) return first;
+      if (first.kind === "End" || keywords.has(first.text)) return first;
       const current = { token: advance(), name: first.text };
       while (current.token.text === "!") {
         current.name = `${current.name}!${advance().text}`;
@@ -327,7 +339,7 @@ export const parseConfig = (source: string): ModelConfig => {
   const parseNames = (names: string[]) => {
     while (true) {
       const token = advance();
-      if (token.kind === "End" || KEYWORDS.has(token.text)) return token;
+      if (token.kind === "End" || keywords.has(token.text)) return token;
       names.push(token.text);
     }
   };
@@ -336,8 +348,8 @@ export const parseConfig = (source: string): ModelConfig => {
   while (current.token.kind !== "End") {
     const keyword = current.token.text;
     const line = current.token.line;
-    const singleKey = SINGLE_KEYWORDS.get(keyword);
-    const listKey = LIST_KEYWORDS.get(keyword);
+    const singleKey = keywords.has(keyword) ? SINGLE_KEYWORDS.get(keyword) : undefined;
+    const listKey = keywords.has(keyword) ? LIST_KEYWORDS.get(keyword) : undefined;
     const advanceToArgument = () => {
       const argument = advance();
       if (argument.kind === "End") {
@@ -364,6 +376,12 @@ export const parseConfig = (source: string): ModelConfig => {
       if (deadlock.isSet) throw createSyntaxError(line, `The keyword ${keyword} appeared twice.`);
       deadlock.isSet = true;
       config.checkDeadlock = value.text === "TRUE";
+      current.token = advance();
+    } else if (keywords.has(keyword) && TYPE_KEYWORDS.includes(keyword)) {
+      advanceToArgument();
+      if (types.has(keyword))
+        throw createSyntaxError(line, `The keyword ${keyword} appeared twice.`);
+      types.add(keyword);
       current.token = advance();
     } else {
       throw createSyntaxError(line, "It was expecting a keyword, but did not find it.");

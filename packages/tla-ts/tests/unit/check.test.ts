@@ -1809,6 +1809,29 @@ describe("parseConfig matches TLC", () => {
   });
 });
 
+describe("parseConfig matches TLC 1.7.4", () => {
+  it("reads a keyword that TLC 1.7.4 doesn't have as a name", () => {
+    expect(parseConfig("INVARIANT Inv ALIAS", "1.7.4").invariants).toEqual(["Inv", "ALIAS"]);
+    expect(() => parseConfig("INIT Init\nALIAS Alias", "1.7.4")).toThrow(
+      new TlaConfigError(
+        "TLC found an error in the configuration file at line 2\nIt was expecting a keyword, but did not find it.",
+      ),
+    );
+  });
+
+  it("reads a TYPE and a TYPE_CONSTRAINT, which it ignores, once each", () => {
+    expect(parseConfig("INIT Init\nTYPE T\nTYPE_CONSTRAINT C", "1.7.4")).toEqual(
+      parseConfig("INIT Init", "1.7.4"),
+    );
+    expect(() => parseConfig("TYPE T\nTYPE U", "1.7.4")).toThrow(
+      new TlaConfigError(
+        "TLC found an error in the configuration file at line 2\nThe keyword TYPE appeared twice.",
+      ),
+    );
+    expect(() => parseConfig("TYPE T")).toThrow(TlaConfigError);
+  });
+});
+
 describe("initial predicate and next-state relation match TLC", () => {
   const checkSource = (body: string, config: string) =>
     check({ source: `---- MODULE M ----\n${body}\n====`, config });
