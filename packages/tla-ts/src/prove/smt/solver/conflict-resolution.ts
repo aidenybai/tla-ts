@@ -5,6 +5,7 @@ import { BinJustification, type BJustification } from "./clause";
 import type { Context } from "./context";
 import { Enode, EqJustification, Justification } from "./enode";
 import { BoolVar, getVar, Literal, negate } from "./literal";
+import { RefVector } from "./ref-vector";
 
 export class ConflictResolution {
   private antecedents: Literal[] = [];
@@ -13,7 +14,8 @@ export class ConflictResolution {
   private todoEqs: Enode[] = [];
   private processedEqs = new Set<string>();
   lemma: Literal[] = [];
-  lemmaAtoms: number[] = [];
+  // m_lemma_atoms: the atoms of the lemma, which it holds until the lemma is a clause.
+  readonly lemmaAtoms: RefVector;
   private conflictLevel = 0;
   newScopeLevel = 0;
   lemmaIscopeLevel = 0;
@@ -21,7 +23,9 @@ export class ConflictResolution {
   private levelSet = new Set<number>();
   private minimizationStack: BoolVar[] = [];
 
-  constructor(private context: Context) {}
+  constructor(private context: Context) {
+    this.lemmaAtoms = new RefVector(context.manager);
+  }
 
   markLiteral(literal: Literal) {
     this.antecedents.push(literal);
@@ -196,7 +200,7 @@ export class ConflictResolution {
   resolve(conflict: BJustification, notLiteral: Literal | null) {
     const context = this.context;
     this.lemma = [];
-    this.lemmaAtoms = [];
+    this.lemmaAtoms.reset();
     let justification = conflict;
     let consequent = notLiteral !== null ? negate(notLiteral) : context.falseLiteral;
     this.conflictLevel = this.getMaxLevel(consequent, justification);
@@ -238,7 +242,7 @@ export class ConflictResolution {
       context.marks[consequentVar] = false;
     } while (marks.count > 0);
     this.lemma[0] = negate(consequent);
-    this.lemmaAtoms[0] = context.boolVar2Expr[getVar(consequent)];
+    this.lemmaAtoms.set(0, context.boolVar2Expr[getVar(consequent)]);
     this.finalizeResolve();
     return true;
   }
@@ -324,12 +328,12 @@ export class ConflictResolution {
       if (this.isImpliedByMarked(literal)) this.unmark.push(getVar(literal));
       else {
         this.lemma[kept] = literal;
-        this.lemmaAtoms[kept] = this.lemmaAtoms[index];
+        if (kept !== index) this.lemmaAtoms.set(kept, this.lemmaAtoms.items[index]);
         kept++;
       }
     }
     this.resetUnmark(0, 0);
     this.lemma.length = kept;
-    this.lemmaAtoms.length = kept;
+    this.lemmaAtoms.shrink(kept);
   }
 }
