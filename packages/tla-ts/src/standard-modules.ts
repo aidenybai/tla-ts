@@ -234,8 +234,8 @@ const INTEGERS_ARITHMETIC = createArithmeticOperators("Integers");
 
 // The operators of Naturals that TLC overrides with the methods of tlc2.module.Integers when it
 // loads Integers for its trace exploration spec, by the operator each replaces.
-export const getTraceSpecArithmetic = (builtin: Builtin | undefined) => {
-  const index = builtin ? NATURALS_ARITHMETIC.indexOf(builtin) : -1;
+export const getTraceSpecArithmetic = (builtin: Builtin) => {
+  const index = NATURALS_ARITHMETIC.indexOf(builtin);
   return index === -1 ? undefined : INTEGERS_ARITHMETIC[index];
 };
 

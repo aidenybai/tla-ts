@@ -174,6 +174,9 @@ const tokenizeConfig = (source: string) => {
 const createSyntaxError = (line: number, problem: string) =>
   new TlaConfigError(`TLC found an error in the configuration file at line ${line}\n${problem}`);
 
+const createDuplicateKeywordError = (line: number, keyword: string) =>
+  createSyntaxError(line, `The keyword ${keyword} appeared twice.`);
+
 const SINGLE_KEYWORDS = new Map<
   string,
   "init" | "next" | "specification" | "view" | "symmetry" | "alias" | "periodic" | "rlReward"
@@ -360,7 +363,7 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
     if (singleKey !== undefined) {
       const name = advanceToArgument();
       if (config[singleKey] !== undefined) {
-        throw createSyntaxError(line, `The keyword ${keyword} appeared twice.`);
+        throw createDuplicateKeywordError(line, keyword);
       }
       config[singleKey] = name.text;
       current.token = advance();
@@ -373,14 +376,13 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
       if (value.text !== "TRUE" && value.text !== "FALSE") {
         throw createSyntaxError(value.line, "It was expecting TRUE or FALSE, but did not find it.");
       }
-      if (deadlock.isSet) throw createSyntaxError(line, `The keyword ${keyword} appeared twice.`);
+      if (deadlock.isSet) throw createDuplicateKeywordError(line, keyword);
       deadlock.isSet = true;
       config.checkDeadlock = value.text === "TRUE";
       current.token = advance();
     } else if (keywords.has(keyword) && TYPE_KEYWORDS.includes(keyword)) {
       advanceToArgument();
-      if (types.has(keyword))
-        throw createSyntaxError(line, `The keyword ${keyword} appeared twice.`);
+      if (types.has(keyword)) throw createDuplicateKeywordError(line, keyword);
       types.add(keyword);
       current.token = advance();
     } else {

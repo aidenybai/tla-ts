@@ -270,6 +270,11 @@ interface Behavior {
   traceOutput?: string[];
 }
 
+interface TraceOptions {
+  loopStart?: number;
+  known?: number;
+}
+
 interface FailureOptions {
   initialState?: Value[];
   isInitial?: boolean;
@@ -389,8 +394,9 @@ const getConstantValue = (name: string, definition: Definition, environment: Env
 
 // TLC also takes a constant that the configuration assigns a value, which must be TRUE.
 const getConfigPredicate = (kind: string, name: string, environment: Environment) => {
-  const isConstant = environment.constants.has(name);
-  const definition = isConstant ? undefined : getConfigOperator(kind, name, environment);
+  const definition = environment.constants.has(name)
+    ? undefined
+    : getConfigOperator(kind, name, environment);
   const value = definition
     ? getConstantValue(name, definition, environment)
     : environment.constants.get(name);
@@ -671,11 +677,13 @@ const getProperties = (config: ModelConfig, environment: Environment): Propertie
       ) {
         // TLC names the invariant by the definition the property asserts always holds, if any.
         const body = conjunct.expression;
-        const definition = body.kind === "Identifier" && getDefinition(body.name, environment);
-        const isDefined =
-          definition && definition.kind === "Operator" && definition.params.length === 0;
+        const definition =
+          body.kind === "Identifier" ? getDefinition(body.name, environment) : undefined;
         properties.invariants.push({
-          name: isDefined ? definition.name : name,
+          name:
+            definition?.kind === "Operator" && definition.params.length === 0
+              ? definition.name
+              : name,
           expression: body,
           scope: item.scope,
         });
@@ -1269,6 +1277,8 @@ const UNEXPECTED_HEADLINE = UNEXPECTED_EXCEPTION.slice(0, UNEXPECTED_EXCEPTION.i
 const WRAPPED_EVAL_EXCEPTION = `${UNEXPECTED_EXCEPTION}tlc2.tool.EvalException: `;
 const WRAPPED_RUNTIME_EXCEPTION = `${UNEXPECTED_EXCEPTION}util.Assert$TLCRuntimeException: `;
 
+const UNEXPECTED_EVAL_EXCEPTION = getUnexpectedException("tlc2.tool.EvalException");
+
 const getWrappedException = (error: TlaEvaluationError) =>
   isEvalException(error) ? WRAPPED_EVAL_EXCEPTION : WRAPPED_RUNTIME_EXCEPTION;
 
@@ -1277,9 +1287,7 @@ const withUnexpectedEvalException = <Result>(compute: () => Result) => {
     return compute();
   } catch (error) {
     if (!(error instanceof TlaEvaluationError) || !isEvalException(error)) throw error;
-    throw new TlaEvaluationError(
-      `${getUnexpectedException("tlc2.tool.EvalException")}${error.message}`,
-    );
+    throw new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`);
   }
 };
 
@@ -1288,7 +1296,7 @@ const UNEXPECTED_EXCEPTIONS = [
   WRAPPED_EVAL_EXCEPTION,
   WRAPPED_RUNTIME_EXCEPTION,
   UNEXPECTED_EXCEPTION,
-  getUnexpectedException("tlc2.tool.EvalException"),
+  UNEXPECTED_EVAL_EXCEPTION,
 ];
 
 // The text of an error's message, with the message of a coded error inside it marked in -tool
@@ -1377,6 +1385,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   reportStartup(specification, config, options.onProgress);
   const environment = specification.environment;
   const runtime = environment.runtime;
+  const is174 = runtime.version === "1.7.4";
   runtime.pause = options.onPause ?? (() => {});
   runtime.getSpecification = () =>
     getSpecificationValue(
@@ -1409,8 +1418,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // worker stops before it counts the state.
   const getPartialOutDegrees = () =>
     outDegrees.map((count, degree) => (degree === getOutDegreeBucket() ? count + 1 : count));
-  const getFailureOutDegrees = () =>
-    options.version === "1.7.4" ? [...outDegrees] : getPartialOutDegrees();
+  const getFailureOutDegrees = () => (is174 ? [...outDegrees] : getPartialOutDegrees());
   // A violation in a successor ends the expansion of a state before TLC counts it.
   const withOutDegrees = (result: CheckResult, degrees = [...outDegrees]): CheckResult => ({
     ...result,
@@ -1500,6 +1508,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
   const nextActions = { value: undefined as SpecAction[] | undefined };
+  const getSpecNextActions = () =>
+    (nextActions.value ??= getNextActions(config, environment, specification.instanceActions));
   // Where TLC's replay of a failed computation fails, or undefined when the replay completes.
   const getReplayFailure = (replay: (tracing: Environment) => void): ReplayFailure | undefined => {
     const tracing = createTracingEnvironment(environment);
@@ -1555,8 +1565,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const replayNext = (state: Value[]) =>
     getReplayFailure((tracing) => {
       const replayed = unstoredState.fingerprint ? [unstoredState.fingerprint] : [];
-      nextActions.value ??= getNextActions(config, environment, specification.instanceActions);
-      replaySuccessors(nextActions.value, state, tracing, (next) => {
+      replaySuccessors(getSpecNextActions(), state, tracing, (next) => {
         const addFingerprint = () => {
           fingerprintReplayed(next, tracing.callStack);
           const fingerprintState = getFingerprintState(next);
@@ -1658,11 +1667,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // TLC finds the action of a step as the first action that takes it, evaluated as when the search
   // expanded the previous state.
   const findStepAction = (index: number, previous: Value[], state: Value[]) => {
-    nextActions.value ??= getNextActions(config, environment, specification.instanceActions);
+    const actions = getSpecNextActions();
     const expanding = { ...current };
     Object.assign(current, { index, isExpanding: true, candidate: undefined });
     const fingerprintState = getFingerprintState(state);
-    const action = nextActions.value.find((item) =>
+    const action = actions.find((item) =>
       getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
         isSameState(getFingerprintState(successor.state), fingerprintState),
       ),
@@ -1677,9 +1686,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const toTrace = (
     steps: Successor[],
     path: number[],
-    { loopStart, known = 1 }: { loopStart?: number; known?: number } = {},
+    traceOptions: TraceOptions = {},
   ): Behavior => {
     const alias = config.alias;
+    const known = traceOptions.known ?? 1;
     // Rebuilding the trace from the initial predicate can reset what TLCSet stored.
     const initialOutput = steps.length > 1 ? getOutput(getSpecInitialStates).lines : [];
     // TLC finds the action that takes each step before it evaluates the alias.
@@ -1702,7 +1712,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           state:
             alias === undefined
               ? toRecord(step.state)
-              : getAliasState(alias, steps, position, loopStart),
+              : getAliasState(alias, steps, position, traceOptions.loopStart),
           output: position === 0 ? prefixOutput : position < rebuilt ? [] : outputs[position],
         };
         if (alias !== undefined || action) {
@@ -1710,10 +1720,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         }
         return traceStep;
       }),
-      traceOutput:
-        known > 0 && environment.runtime.version !== "1.7.4"
-          ? [initialOutput, ...outputs].flat()
-          : [],
+      traceOutput: known > 0 && !is174 ? [initialOutput, ...outputs].flat() : [],
     };
   };
   const getSpecInitialStates = () =>
@@ -1730,11 +1737,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const findSuccessorWithFingerprint = (state: Value[], index: number) =>
     getTraceSuccessors(state).find((successor) => hasFingerprint(successor.state, index));
   const getPathStates = (path: number[], nextFailure: string) => {
-    const { result: initial } = getOutput(() =>
+    const initial = getOutput(() =>
       isReducing || isImpure(environment)
         ? getSpecInitialStates().find((state) => hasFingerprint(state, path[0]))
         : states[path[0]],
-    );
+    ).result;
     if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);
     const steps: Successor[] = [{ state: initial, action: undefined }];
     for (let position = 1; position < path.length; position++) {
@@ -1773,62 +1780,60 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     parents[index] === -1
       ? {
           trace: [{ action: undefined, label: undefined, state: toRecord(states[index]) }],
-          traceOutput:
-            environment.runtime.version === "1.7.4" ? [] : getOutput(getSpecInitialStates).lines,
+          traceOutput: is174 ? [] : getOutput(getSpecInitialStates).lines,
         }
       : getTrace(index);
   // TLC names the initial state it was checking unless a standard module's Java code failed.
-  const getFailureExitCode = (error: TlaEvaluationError, options: FailureOptions) => {
+  const getFailureExitCode = (error: TlaEvaluationError, failureOptions: FailureOptions) => {
     // TLC 1.7.4 exits with the result of its replay of the initial states, which only fails again
     // when the error isn't in adding a state it has already seen to the behavior graph.
     if (
-      options.isInitial &&
-      !options.callStack &&
-      !options.fingerprint &&
-      environment.runtime.version === "1.7.4"
+      failureOptions.isInitial &&
+      !failureOptions.callStack &&
+      !failureOptions.fingerprint &&
+      is174
     ) {
       return EXIT_STATUS.success;
     }
-    if (!options.callStack) {
-      return options.isInitial ? getInitialExitCode(error) : getErrorExitCode(error);
+    if (!failureOptions.callStack) {
+      return failureOptions.isInitial ? getInitialExitCode(error) : getErrorExitCode(error);
     }
-    if (options.isCallStackFirst) return getErrorExitCode(error);
+    if (failureOptions.isCallStackFirst) return getErrorExitCode(error);
     // TLC exits with the code of a failed replay of the initial states regardless of the error.
-    return options.isInitial ? EXIT_STATUS.specEvaluationFailure : getReplayExitCode(error);
+    return failureOptions.isInitial ? EXIT_STATUS.specEvaluationFailure : getReplayExitCode(error);
   };
-  const toFailure = (error: unknown, behavior: Behavior, options: FailureOptions = {}) => {
+  const toFailure = (error: unknown, behavior: Behavior, failureOptions: FailureOptions = {}) => {
     if (!(error instanceof TlaEvaluationError)) throw error;
     const checked =
-      behavior.trace.length > 0 && !options.isTraceFailed
+      behavior.trace.length > 0 && !failureOptions.isTraceFailed
         ? checkTracePostconditions(behavior.trace, undefined)
         : undefined;
     const postcondition = checked?.unwitnessed ?? checked?.postcondition;
     const traceOutput = [...(behavior.traceOutput ?? []), ...(checked?.lines ?? [])];
     return {
       ...createResult("error", undefined, {
-        ...getFailureMessage(error, options.isNextState ?? false),
+        ...getFailureMessage(error, failureOptions.isNextState ?? false),
         ...behavior,
         ...(traceOutput.length > 0 && { traceOutput }),
         ...(postcondition && { postcondition }),
         initialState:
-          options.initialState && !(error instanceof TlaModuleError)
-            ? toRecord(options.initialState)
+          failureOptions.initialState && !(error instanceof TlaModuleError)
+            ? toRecord(failureOptions.initialState)
             : undefined,
-        exitCode: getFailureExitCode(error, options),
-        callStack: options.callStack,
-        ...(options.isCallStackFirst && { isCallStackFirst: true }),
-        ...(options.fingerprint && { fingerprint: options.fingerprint }),
-        ...(options.isTraceFailed && { isTraceFailed: true }),
+        exitCode: getFailureExitCode(error, failureOptions),
+        callStack: failureOptions.callStack,
+        ...(failureOptions.isCallStackFirst && { isCallStackFirst: true }),
+        ...(failureOptions.fingerprint && { fingerprint: failureOptions.fingerprint }),
+        ...(failureOptions.isTraceFailed && { isTraceFailed: true }),
       }),
-      outDegrees: options.outDegrees,
+      outDegrees: failureOptions.outDegrees,
     };
   };
   // TLC reports a successor state that an action leaves incomplete with the trace to it, which ends
   // with the partial state. It names the action when the next-state relation has several.
   const reportIncompleteSuccessor = (index: number, error: TlaIncompleteSuccessorError) => {
     runtime.generatedStates++;
-    nextActions.value ??= getNextActions(config, environment, specification.instanceActions);
-    const actions = nextActions.value;
+    const actions = getSpecNextActions();
     const action =
       actions.length === 1 ? actions[0] : actions.find((item) => item.name === error.action);
     const missing = error.variables;
@@ -1837,7 +1842,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         ? "the next-state action"
         : `action ${error.action} of the next-state relation`;
     // TLC 1.7.4 says a variable is not assigned rather than not defined.
-    const verb = environment.runtime.version === "1.7.4" ? "assigned" : "defined";
+    const verb = is174 ? "assigned" : "defined";
     const message = `Successor state is not completely specified by ${subject}. The following variable${missing.length > 1 ? "s are" : " is"} not ${verb}: ${missing.join(", ")}.\n`;
     const undefinedValue = createModelValue("null");
     const partial = error.state.map((value) => value ?? undefinedValue);
@@ -1951,7 +1956,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   runtime.getLevel = (state) => {
     const source = current.livenessSource;
     // TLC 1.7.4 reads the level of the state its worker explores, whichever state it evaluates.
-    if (options.version === "1.7.4") {
+    if (is174) {
       const explored = source !== -1 ? source : current.isExpanding ? current.index : -1;
       return explored === -1 ? 0 : depths[explored];
     }
@@ -2179,9 +2184,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         spec.scope,
       );
     }
-    nextActions.value ??= getNextActions(config, environment, specification.instanceActions);
     const progress = { isStopped: false };
-    return nextActions.value.reduce((count, action) => {
+    return getSpecNextActions().reduce((count, action) => {
       if (progress.isStopped) return count;
       return (
         count +
@@ -2217,7 +2221,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       } catch (error) {
         const replay = getOutput(() => replayNext(state));
         // TLC 1.7.4 reports the wrapped error without the trace.
-        if (environment.runtime.version === "1.7.4" && error instanceof TlaEvaluationError) {
+        if (is174 && error instanceof TlaEvaluationError) {
           outcome.result = toFailure(
             new TlaEvaluationError(`${getWrappedException(error)}${error.message}`),
             appendTraceOutput({ trace: [] }, replay.lines),
@@ -2243,7 +2247,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     current.isExpanding = false;
     if (outcome.result) return outcome.result;
     const addLiveState = () => {
-      if (liveness && source && options.version === "1.7.4") stateWriter?.writeStuttering(source);
+      if (liveness && source && is174) stateWriter?.writeStuttering(source);
       const accepted = liveness?.addState(index, state, liveSuccessors);
       if (!liveness || !accepted) return undefined;
       const steps = getPathSteps(accepted);
@@ -2280,12 +2284,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     } catch (error) {
       // TLC 1.7.4's worker reports an error in adding a state to the behavior graph as an exception
       // it didn't expect, without the trace or a call stack, and exits as for any general error.
-      if (environment.runtime.version === "1.7.4" && error instanceof TlaEvaluationError) {
-        const exceptionClass = isEvalException(error)
-          ? "tlc2.tool.EvalException"
-          : "java.lang.RuntimeException";
+      if (is174 && error instanceof TlaEvaluationError) {
         const unexpected = new TlaEvaluationError(
-          `${getUnexpectedException(exceptionClass)}${error.message}`,
+          `${isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION}${error.message}`,
         );
         return toFailure(
           setExitCode(unexpected, EXIT_STATUS.error),

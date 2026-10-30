@@ -1785,10 +1785,7 @@ const compileSetComprehension = (
     };
     return (context) => {
       const base = set(context);
-      const isReducible =
-        typeof base === "object" &&
-        (base.kind === "Set" || base.kind === "MixedSet" || base.kind === "Interval");
-      if (!isReducible) {
+      if (!isReducible(base)) {
         if (isSetValue(base)) return createFiltered(base, context, predicate);
         throw new TlaEvaluationError(
           `TLC encountered a non-enumerable quantifier bound ${formatValue(base)} at ${describeLocation(expression.bound.set)}`,

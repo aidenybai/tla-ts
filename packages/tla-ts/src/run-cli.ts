@@ -111,6 +111,8 @@ const PROVE_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...
 
 const XML_EXPORT_FLAGS = new Set(["-o", "-t", "-r", "-u"]);
 
+const XML_EXPORT_174_FLAGS = new Set(["-o"]);
+
 // The usage that XMLExporter.printUsage prints with UsageGenerator.
 const XML_EXPORT_USAGE = (() => {
   const bold = (text: string) => `\x1b[1m${text}\x1b[0m`;
@@ -623,15 +625,13 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
   );
   // ModelChecker#printSummary prints the depth, which TLC 1.7.4 prints only after a search it
   // reports as successful, and as at least 1, and then the outdegree of a successful search.
-  const outDegrees =
-    printer.version === "1.7.4"
-      ? (result.outDegrees ?? result.violationOutDegrees)
-      : result.outDegrees;
-  if (printer.version !== "1.7.4" || outDegrees) {
+  const is174 = printer.version === "1.7.4";
+  const outDegrees = is174 ? (result.outDegrees ?? result.violationOutDegrees) : result.outDegrees;
+  if (!is174 || outDegrees) {
     print(
       MESSAGE_CODE.searchDepth,
       MESSAGE_LEVEL.none,
-      `The depth of the complete state graph search is ${printer.version === "1.7.4" ? Math.max(result.depth, 1) : result.depth}.`,
+      `The depth of the complete state graph search is ${is174 ? Math.max(result.depth, 1) : result.depth}.`,
     );
   }
   const outDegree = outDegrees && getOutDegreeSummary(outDegrees);
@@ -1017,15 +1017,10 @@ const TLAPM_VERSION = "5f5037f";
 const quoteArgument = (arg: string) =>
   /^[+,\-./0-9:=@A-Z_a-z]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
 
-const printToolboxHeader = (args: string[]) => {
-  const now = new Date();
-  const pad = (value: number) => String(value).padStart(2, "0");
-  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  const time = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+const printToolboxHeader = (args: string[]) =>
   console.log(
-    `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${date} ${time} with command line:\n\\* ${["tla-ts", "prove", ...args].map(quoteArgument).join(" ")}\n`,
+    `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${formatTlcDate(new Date())} with command line:\n\\* ${["tla-ts", "prove", ...args].map(quoteArgument).join(" ")}\n`,
   );
-};
 
 const STRICT_EXIT_STATUS = { incomplete: 11, emptyTarget: 12 };
 
@@ -1189,6 +1184,7 @@ const checkSpecs = async (args: string[], java: JavaProperties) => {
       ? path
       : (java.libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
   const paths = [...new Set(specPaths.map(findSpec))];
+  const tlcVersion = getTlcVersion(getJar(java));
   return runEach(
     paths,
     (path, printer) => {
@@ -1197,12 +1193,7 @@ const checkSpecs = async (args: string[], java: JavaProperties) => {
         console.log(`Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`);
       return checkSpec(path, parsed, java, printer);
     },
-    () =>
-      createMessagePrinter(
-        parsed.has("-tool"),
-        !parsed.has("-nowarning"),
-        getTlcVersion(getJar(java)),
-      ),
+    () => createMessagePrinter(parsed.has("-tool"), !parsed.has("-nowarning"), tlcVersion),
   );
 };
 
@@ -1230,29 +1221,41 @@ const writeXml = (specification: SanySpecification, options: XmlExportOptions) =
   }
 };
 
+interface XmlExportArgs {
+  flags: Set<string>;
+  includes: string[];
+  error: "missing-include" | "several-files" | undefined;
+}
+
+// XMLExporter reads the flags before the last argument, which names the module, and skips an
+// argument it does not know, which then counts as another module.
+const parseXmlExportArgs = (args: string[], flagNames: Set<string>): XmlExportArgs => {
+  const parsed: XmlExportArgs = { flags: new Set(), includes: [], error: undefined };
+  const last = { flag: -1 };
+  for (let index = 0; index < args.length - 1; index++) {
+    if (flagNames.has(args[index])) {
+      parsed.flags.add(args[index]);
+      last.flag = index;
+      continue;
+    }
+    if (args[index] !== "-I") continue;
+    index++;
+    if (index > args.length - 2) return { ...parsed, error: "missing-include" };
+    parsed.includes.push(args[index]);
+    last.flag = index;
+  }
+  return last.flag === args.length - 2 ? parsed : { ...parsed, error: "several-files" };
+};
+
 const exportXml = (args: string[]) => {
   if (args.length === 0) return printXmlExportUsageError("at least one .tla file must be given");
-  // XMLExporter.moduleToXML reads the flags before the last argument, which names the module,
-  // and skips an argument it does not know, which then counts as another module.
-  const flags = new Set<string>();
-  const includes: string[] = [];
-  let lastFlag = -1;
-  for (let index = 0; index < args.length - 1; index++) {
-    if (XML_EXPORT_FLAGS.has(args[index])) {
-      flags.add(args[index]);
-      lastFlag = index;
-    } else if (args[index] === "-I") {
-      index++;
-      if (index > args.length - 2) {
-        return printXmlExportUsageError(
-          "the -I flag must be followed by a directory and at least one .tla file",
-        );
-      }
-      includes.push(args[index]);
-      lastFlag = index;
-    }
+  const parsed = parseXmlExportArgs(args, XML_EXPORT_FLAGS);
+  if (parsed.error === "missing-include") {
+    return printXmlExportUsageError(
+      "the -I flag must be followed by a directory and at least one .tla file",
+    );
   }
-  if (lastFlag !== args.length - 2) {
+  if (parsed.error === "several-files") {
     return printXmlExportUsageError("Only one TLA file to check allowed!");
   }
   const name = args[args.length - 1];
@@ -1263,13 +1266,10 @@ const exportXml = (args: string[]) => {
   const fileName = name.endsWith(".tla") ? name : `${name}.tla`;
   // SANY looks for each module in the working directory, then in the -I directories, which
   // XMLExporter passes in place of TLA-Library, then among its standard modules.
-  const directories = [".", ...includes];
+  const directories = [".", ...parsed.includes];
   const path = directories.map((directory) => resolve(directory, fileName)).find(existsSync);
   if (path === undefined && !SANY_STANDARD_MODULES.has(fileName.slice(0, -".tla".length))) {
-    const cwd = process.cwd();
-    console.error(
-      `File does not exist: ${cwd}/./${fileName} while looking in these directories: ${cwd}, ${includes.join(", ")}, classpath:/tla2sany/StandardModules, classpath:/`,
-    );
+    printMissingFile(process.cwd(), `./${fileName}`, parsed.includes);
   }
   // XMLExporter.parseSpec prints SANY's errors, and XMLExporter.run why it fails.
   const sany = getSanyReport(path ?? fileName, createModuleLoader(directories), {
@@ -1283,9 +1283,9 @@ const exportXml = (args: string[]) => {
   }
   return writeXml(sany.specification, {
     version: "master",
-    isRestricted: flags.has("-r"),
-    isUncommented: flags.has("-u"),
-    isTerse: flags.has("-t"),
+    isRestricted: parsed.flags.has("-r"),
+    isUncommented: parsed.flags.has("-u"),
+    isTerse: parsed.flags.has("-t"),
   });
 };
 
@@ -1343,24 +1343,14 @@ const exportXml174 = (args: string[], jar: string) => {
       59,
     );
   }
-  const includes: string[] = [];
-  let lastFlag = -1;
-  for (let index = 0; index < args.length - 1; index++) {
-    if (args[index] === "-o") {
-      lastFlag = index;
-    } else if (args[index] === "-I") {
-      index++;
-      if (index > args.length - 2) {
-        return printXmlExporterException(
-          "java.lang.IllegalArgumentException: the -I flag must be followed by a directory and at least one .tla file",
-          71,
-        );
-      }
-      includes.push(args[index]);
-      lastFlag = index;
-    }
+  const parsed = parseXmlExportArgs(args, XML_EXPORT_174_FLAGS);
+  if (parsed.error === "missing-include") {
+    return printXmlExporterException(
+      "java.lang.IllegalArgumentException: the -I flag must be followed by a directory and at least one .tla file",
+      71,
+    );
   }
-  if (lastFlag !== args.length - 2) {
+  if (parsed.error === "several-files") {
     return printXmlExporterException(
       "java.lang.IllegalArgumentException: Only one TLA file to check allowed!",
       83,
@@ -1370,7 +1360,7 @@ const exportXml174 = (args: string[], jar: string) => {
   const fileName = `${name.replace(/\.tla$/i, "")}.tla`;
   // SimpleFilenameToStream looks for a module in the working directory, then in the -I
   // directories, or the root directory when there are none, then among the standard modules.
-  const libraries = (includes.length === 0 ? ["/"] : includes).map(toLibraryPath);
+  const libraries = (parsed.includes.length === 0 ? ["/"] : parsed.includes).map(toLibraryPath);
   const directories = [".", ...libraries];
   const printMissingFile = (moduleFileName: string) =>
     printMissingFile174(`${libraries[libraries.length - 1]}${moduleFileName}`, libraries, jar);

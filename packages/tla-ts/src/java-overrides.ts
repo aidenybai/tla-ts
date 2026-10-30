@@ -88,6 +88,9 @@ const getTypeNames = (descriptor: string) =>
 
 const getClassName = (pool: PoolEntry[], index: number) => pool[pool[index].first].text;
 
+const getJavaClassName = (pool: PoolEntry[], index: number) =>
+  getClassName(pool, index).replaceAll("/", ".");
+
 // The public static methods of a class file and their bytecode, in the order of the class file.
 // Class#getDeclaredMethods orders them by where HotSpot allocated the symbols of their names.
 const readMethods = (bytes: Uint8Array) => {
@@ -120,7 +123,7 @@ const readMethods = (bytes: Uint8Array) => {
     }
   }
   reader.readUint16();
-  const className = getClassName(pool, reader.readUint16()).replaceAll("/", ".");
+  const className = getJavaClassName(pool, reader.readUint16());
   reader.readUint16();
   reader.readBytes(reader.readUint16() * 2);
   for (let fields = reader.readUint16(); fields > 0; fields--) {
@@ -149,7 +152,7 @@ const readMethods = (bytes: Uint8Array) => {
     const thrown = attributes.find((attribute) => attribute.name === "Exceptions")?.reader;
     const exceptions = thrown
       ? Array.from({ length: thrown.readUint16() }, () =>
-          getClassName(pool, thrown.readUint16()).replaceAll("/", "."),
+          getJavaClassName(pool, thrown.readUint16()),
         )
       : [];
     const modifiers = METHOD_MODIFIERS.filter(([flag]) => (access & flag) !== 0).map(

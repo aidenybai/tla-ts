@@ -68,6 +68,8 @@ const getContext = (replay: Replay, scope: Scope | undefined, partial: State): C
 
 const isComplete = (partial: State): partial is Value[] => !partial.includes(undefined);
 
+const getEmptyState = (environment: Environment) => environment.variables.map(() => undefined);
+
 const assign = (partial: State, index: number, value: Value) => {
   const copy = [...partial];
   copy[index] = value;
@@ -557,15 +559,14 @@ export const replayEnabled = (
     true,
   );
   const depth = replay.callStack.expressions.length;
-  const empty: State = environment.variables.map(() => undefined);
   try {
     // The ENABLED of a fairness condition WF_v(A) passes A to TLC's enabled with v to change, where
     // liveness.ts builds <<A>>_v at the location of A.
     if (expression.kind === "AngleAction" && expression.location === expression.action.location) {
       const changed = cons("Changed", expression.subscript, scope, undefined);
-      visit(replay, expression.action, changed, scope, empty);
+      visit(replay, expression.action, changed, scope, getEmptyState(environment));
     } else {
-      visit(replay, expression, undefined, scope, empty);
+      visit(replay, expression, undefined, scope, getEmptyState(environment));
     }
     return false;
   } catch (error) {
@@ -590,8 +591,7 @@ export const replayInitialStates = (
     (tail, init) => cons("Predicate", init.expression, init.scope, tail),
     undefined,
   );
-  const empty: State = environment.variables.map(() => undefined);
-  visit(replay, first.expression, rest, first.scope, empty);
+  visit(replay, first.expression, rest, first.scope, getEmptyState(environment));
 };
 
 // TLC's getNextStates for each action TLC splits the next-state relation into. TLC checks the
@@ -605,11 +605,10 @@ export const replaySuccessors = (
   // TLC fails to split a next-state relation that is not an operator application before it checks
   // the spec, so it replays nothing.
   if (actions.some((action) => LITERAL_KINDS.has(action.expression.kind))) return;
-  const empty: State = environment.variables.map(() => undefined);
   actions.forEach((action) => {
     const successors: Value[][] = [];
     const replay = createReplay(environment, false, state, (next) => successors.push(next));
-    visit(replay, action.expression, undefined, action.scope, empty);
+    visit(replay, action.expression, undefined, action.scope, getEmptyState(environment));
     successors.forEach(onState);
   });
 };

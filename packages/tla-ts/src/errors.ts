@@ -44,7 +44,6 @@ export class TlaSanyFatalError extends TlaSyntaxError {
 
   constructor(message: string, location: string | undefined, parseError?: string) {
     super(message);
-    this.name = "TlaSyntaxError";
     this.location = location;
     this.parseError = parseError;
   }
@@ -87,7 +86,6 @@ export class TlaIncompleteSuccessorError extends TlaEvaluationError {
     variables: string[],
   ) {
     super(message);
-    this.name = "TlaEvaluationError";
     this.state = state;
     this.action = action;
     this.variables = variables;
@@ -101,7 +99,6 @@ export class TlaUnassignedError extends TlaEvaluationError {
 
   constructor(message: string, variable: string) {
     super(message);
-    this.name = "TlaEvaluationError";
     this.variable = variable;
   }
 }
