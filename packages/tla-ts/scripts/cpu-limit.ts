@@ -1,5 +1,6 @@
 // Runs a synchronous backend until it has used its time limit in both wall-clock and CPU time. A
-// loaded machine stretches wall-clock time, so the CPU time estimates a run on an idle core.
+// loaded machine stretches wall-clock time, so the CPU time of the thread that runs it estimates a
+// run on an idle core.
 
 export interface CpuLimitedRun<Result> {
   result: Result;
@@ -12,9 +13,9 @@ export const runWithCpuLimit = <Result>(
   run: (options: { timeLimitMs: number; signal: AbortSignal }) => Result,
 ): CpuLimitedRun<Result> => {
   const started = performance.now();
-  const startedCpu = process.cpuUsage();
+  const startedCpu = process.threadCpuUsage();
   const getCpuMilliseconds = () => {
-    const cpu = process.cpuUsage(startedCpu);
+    const cpu = process.threadCpuUsage(startedCpu);
     return Math.round((cpu.user + cpu.system) / 1000);
   };
   // HACK: the backends run synchronously, so no timer can abort one once the CPU time runs out.
