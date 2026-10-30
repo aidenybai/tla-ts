@@ -2400,7 +2400,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     expansion.newStates = 0;
     // TLC's AbstractChecker#runTLC checks the liveness properties on the state graph so far, then
     // reports how far the search got.
-    if (performance.now() >= periodic.at) {
+    if ((isPeriodic || options.onProgress) && performance.now() >= periodic.at) {
       periodic.at = performance.now() + PROGRESS_INTERVAL;
       const lasso = isPeriodic ? findPeriodicViolation(index + 1) : undefined;
       if (liveness && lasso) return reportLasso(liveness, lasso);
