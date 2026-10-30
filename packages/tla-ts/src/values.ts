@@ -378,7 +378,7 @@ export const compareValues = (left: Value, right: Value): number => {
         `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
       );
     }
-    if (isLeftSet) return compareSets(toFiniteSet(left), toFiniteSet(right));
+    if (isLeftSet) return compareSets(toFiniteSet(left), toComparedSet(right));
     return compareFunctions(toFiniteFunction(left), toFiniteFunction(right));
   }
   if (typeof left === "number" && typeof right === "number") return left - right;
@@ -871,9 +871,11 @@ export const isEqualLikeTlc = (left: Value, right: Value) => {
   }
 };
 
+// TLC sorts a set by comparing each element with the ones before it, so the later element converts
+// a lazy set it compares and caches it.
 const isStrictlySorted = (elements: Value[]) => {
   for (let index = 1; index < elements.length; index++) {
-    if (compareValues(elements[index - 1], elements[index]) >= 0) return false;
+    if (compareValues(elements[index], elements[index - 1]) <= 0) return false;
   }
   return true;
 };
@@ -1328,6 +1330,7 @@ const enumerateSet = (value: Value): Value[] => {
 };
 
 const finiteSets = new WeakMap<ObjectValue, SetValue>();
+const comparedSets = new WeakMap<ObjectValue, SetValue>();
 
 export const toFiniteSet = (value: Value): SetValue => {
   if (typeof value === "object" && value.kind === "Set") return value;
@@ -1336,6 +1339,13 @@ export const toFiniteSet = (value: Value): SetValue => {
   }
   const cached = typeof value === "object" ? finiteSets.get(value) : undefined;
   if (cached) return cached;
+  const set =
+    (typeof value === "object" ? comparedSets.get(value) : undefined) ?? enumerateFiniteSet(value);
+  if (typeof value === "object") finiteSets.set(value, set);
+  return set;
+};
+
+const enumerateFiniteSet = (value: Value) => {
   const elements = enumerateSet(value);
   const isSorted =
     typeof value === "object" &&
@@ -1346,8 +1356,20 @@ export const toFiniteSet = (value: Value): SetValue => {
       value.kind === "ProductSet" ||
       value.kind === "FunctionSet" ||
       value.kind === "Subset");
-  const set = isSorted ? createSortedSet(elements) : createSet(elements);
-  if (typeof value === "object") finiteSets.set(value, set);
+  return isSorted ? createSortedSet(elements) : createSet(elements);
+};
+
+// TLC converts the set a comparison receives as its argument without caching it, so a lazy set
+// compared that way still streams the sets it combines.
+const toComparedSet = (value: Value) => {
+  const isStreamed =
+    typeof value === "object" &&
+    (value.kind === "Union" || value.kind === "SetOperation" || value.kind === "FilteredSet");
+  if (!isStreamed || finiteSets.has(value)) return toFiniteSet(value);
+  const compared = comparedSets.get(value);
+  if (compared) return compared;
+  const set = enumerateFiniteSet(value);
+  comparedSets.set(value, set);
   return set;
 };
 
