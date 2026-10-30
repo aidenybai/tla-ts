@@ -195,7 +195,12 @@ export class AstManager {
   private declHashes: number[] = [];
   private builtinHashes = new Map<string | number, number>();
   private table = new Map<string, number>();
-  private appTable = new Map<number, number[]>();
+  // The hash-consing table of applications: open addressing with linear probing over the handles,
+  // -1 for an empty slot, which takes a few bytes per application where a map of buckets takes
+  // dozens. Applications stay in it when they are deleted, so a lookup can create them again.
+  private appHandles = new Int32Array(1024).fill(-1);
+  private appHashes = new Int32Array(1024);
+  private numApps = 0;
   // The small id of the next sort or declaration. Z3 makes declarations of its own as it goes, which
   // the manager does not follow, so only the declarations of a problem's prelude match Z3's.
   private nextSmallId = FIRST_DECLARED_SMALL_ID;
@@ -473,17 +478,17 @@ export class AstManager {
     let hash = decl;
     for (let index = 0; index < args.length; index++)
       hash = (Math.imul(hash, 0x9e3779b1) + args[index]) | 0;
-    const bucket = this.appTable.get(hash);
-    if (bucket !== undefined)
-      for (const candidate of bucket) {
-        if (this.decls[candidate] !== decl || this.kinds[candidate] !== KIND_APP) continue;
-        const candidateArgs = this.args[candidate];
-        if (candidateArgs.length !== args.length) continue;
-        let isSame = true;
-        for (let index = 0; index < args.length && isSame; index++)
-          isSame = candidateArgs[index] === args[index];
-        if (isSame) return this.revive(candidate);
-      }
+    const mask = this.appHandles.length - 1;
+    for (let slot = hash & mask; this.appHandles[slot] !== -1; slot = (slot + 1) & mask) {
+      const candidate = this.appHandles[slot];
+      if (this.appHashes[slot] !== hash || this.decls[candidate] !== decl) continue;
+      const candidateArgs = this.args[candidate];
+      if (candidateArgs.length !== args.length) continue;
+      let isSame = true;
+      for (let index = 0; index < args.length && isSame; index++)
+        isSame = candidateArgs[index] === args[index];
+      if (isSame) return this.revive(candidate);
+    }
     const declHash =
       this.funcDecls[decl].family === FAMILY_USER
         ? this.declHashes[decl]
@@ -499,10 +504,27 @@ export class AstManager {
         declHash,
       ),
     );
-    if (bucket === undefined) this.appTable.set(hash, [id]);
-    else bucket.push(id);
+    this.insertApp(hash, id);
     this.registerNode(id);
     return id;
+  }
+
+  private insertApp(hash: number, id: number) {
+    if (2 * (this.numApps + 1) > this.appHandles.length) {
+      const handles = this.appHandles;
+      const hashes = this.appHashes;
+      this.appHandles = new Int32Array(2 * handles.length).fill(-1);
+      this.appHashes = new Int32Array(2 * handles.length);
+      this.numApps = 0;
+      for (let slot = 0; slot < handles.length; slot++)
+        if (handles[slot] !== -1) this.insertApp(hashes[slot], handles[slot]);
+    }
+    const mask = this.appHandles.length - 1;
+    let slot = hash & mask;
+    while (this.appHandles[slot] !== -1) slot = (slot + 1) & mask;
+    this.appHandles[slot] = id;
+    this.appHashes[slot] = hash;
+    this.numApps++;
   }
 
   // A real numeral, which Z3's theory_lra creates for its constants 0 and 1. tla-ts has no real sort,
