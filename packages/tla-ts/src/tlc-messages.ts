@@ -1,3 +1,5 @@
+import { TlaModuleError, type TlaEvaluationError } from "./errors";
+
 // TLC's codes for the messages it prints, from tlc2.output.EC.
 export const MESSAGE_CODE = {
   general: 1000,
@@ -5,7 +7,10 @@ export const MESSAGE_CODE = {
   nestedExpression: 2103,
   assumptionFalse: 2104,
   assumptionEvaluationError: 2105,
+  exceptAppliedToUnknownField: 2144,
+  fingerprintFailed: 2147,
   invariantViolatedInitial: 2107,
+  incompleteSuccessor: 2109,
   propertyViolatedInitial: 2108,
   invariantViolatedBehavior: 2110,
   invariantEvaluationFailed: 2111,
@@ -15,6 +20,7 @@ export const MESSAGE_CODE = {
   temporalPropertyViolated: 2116,
   behaviorUpToThisPoint: 2121,
   backToState: 2122,
+  constantLevelInvariant: 2149,
   starting: 2185,
   finished: 2186,
   computingInit: 2189,
@@ -31,9 +37,18 @@ export const MESSAGE_CODE = {
   sanyFinished: 2219,
   startingSany: 2220,
   stateLevelProperty: 2255,
+  noSpecificationButProperty: 2257,
+  noFairnessButProperty: 2259,
   counterExample: 2264,
   checkingTemporalEnd: 2267,
   stateGraphOutdegree: 2268,
+  computingInitProgress: 2269,
+  livenessSymmetry: 2279,
+  symmetrySetTooSmall: 2300,
+  postconditionFalse: 2404,
+  postconditionFailed: 2405,
+  possibleUnwitnessed: 2780,
+  parsingFailed: 3002,
 } as const;
 
 // TLC's message levels, from tlc2.output.MP.
@@ -70,6 +85,11 @@ export const createMessagePrinter = (isTool: boolean): MessagePrinter => ({
 // template, with whether TLC throws them as an EvalException rather than a TLCRuntimeException.
 // TLC's -tool output wraps such a message in its own markers even inside another message.
 const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean][] = [
+  [
+    1005,
+    "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.",
+    false,
+  ],
   [2117, "Failed to recover the next state from its fingerprint.", true],
   [2123, "Failed to recover the initial state from its fingerprint.", true],
   [2132, "The first argument of Assert evaluated to FALSE; the second argument was:\n%1%", true],
@@ -79,7 +99,13 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
     "Attempted to apply the operator overridden by the Java method\n%1%,\nbut it produced the following error:\n%2%",
     false,
   ],
+  [
+    2148,
+    "The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable %1% occurring in the state formula v.\n",
+    false,
+  ],
   [2155, "Attempted to compare %1% with the value\n%2%", true],
+  [2158, "Attempted to check if the value:\n%1%\nis an element of %2%.", true],
   [
     2157,
     "Attempted to apply TransitiveClosure to a set containing\nthe following value:\n%1%",
@@ -104,6 +130,13 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
     true,
   ],
   [2184, "Attempted to apply %1% to the empty sequence.", true],
+  [2115, "No next state actions defined to generate successor states from.", false],
+  [
+    2146,
+    "The invariant %1% is not a state predicate (one with no primes or temporal operators).%2%",
+    false,
+  ],
+  [2213, "TLC cannot handle the temporal formula %1%", false],
   [2215, "TLC expected a %1% value, but did not find one. %2%", false],
   [2222, "The constant parameter %1% is not assigned a value by the configuration file.", false],
   [
@@ -154,6 +187,30 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   [2281, "The configuration file substitutes constant %1% with non-constant %2%%3%", false],
   [2283, "The argument of %1% should be a %2%, but instead it is:\n%3%", true],
   [
+    5003,
+    "TLC found an error in the configuration file at line %1%\nThe keyword %2% was not followed by an identifier.",
+    false,
+  ],
+  [
+    5004,
+    "TLC found an error in the configuration file at line %1%\nThe keyword %2% appeared twice.",
+    false,
+  ],
+  [
+    5005,
+    "TLC found an error in the configuration file at line %1%\nExpected an identifier after %2%.",
+    false,
+  ],
+  [
+    5006,
+    "TLC found an error in the configuration file at line %1%\nIt was expecting %2%, but did not find it.",
+    false,
+  ],
+  [5007, "TLC found an error in the configuration file:\n%1%", false],
+  // The general message is a prefix of the others above.
+  [5002, "TLC found an error in the configuration file at line %1%\n", false],
+  [2253, "Temporal formula is a tautology (its negation is unsatisfiable).", false],
+  [
     2301,
     "TLC does not support temporal existential, nor universal, quantification over state variables.",
     false,
@@ -180,18 +237,47 @@ const getCodedMessagePatterns = () =>
     message: { code, isEvalException },
   })));
 
+// The overflows of SetOfFcnsValue and SetOfTuplesValue, which TLC raises with a plain message that
+// reads like the coded overflow of SetOfRcdsValue and SubsetValue.
+const UNCODED_MESSAGE_PATTERN =
+  /^Overflow when computing the number of elements in( |:\n\[(?![A-Za-z0-9_]+ : ))/;
+
 export const getCodedMessage = (text: string): CodedMessage | undefined =>
-  getCodedMessagePatterns().find((item) => item.pattern.test(text))?.message;
+  UNCODED_MESSAGE_PATTERN.test(text)
+    ? undefined
+    : getCodedMessagePatterns().find((item) => item.pattern.test(text))?.message;
+
+// Whether TLC raises an error as an EvalException, which only a standard module's Java code throws,
+// rather than as the TLCRuntimeException of every Assert.fail.
+export const isEvalException = (error: TlaEvaluationError) =>
+  error instanceof TlaModuleError || getCodedMessage(error.message)?.isEvalException === true;
+
+// The messages that end with the message of the error they report, after this text.
+const INNER_MESSAGE_PREFIXES = new Map([
+  [1000, "The exception was a java.lang.RuntimeException\n: "],
+  [2105, "failed.\n"],
+  [2154, "but it produced the following error:\n"],
+  [2281, " - specifically: "],
+]);
+
+// The text of a coded message with the message of the error it reports marked in -tool output, as
+// TLC's message holds that error's text as TLC printed it.
+export const formatInnerMessage = (code: number, text: string, isTool: boolean) => {
+  const prefix = isTool ? INNER_MESSAGE_PREFIXES.get(code) : undefined;
+  const index = prefix === undefined ? -1 : text.indexOf(prefix);
+  if (prefix === undefined || index === -1) return text;
+  const end = index + prefix.length;
+  return `${text.slice(0, end)}${formatNestedMessage(text.slice(end), isTool)}`;
+};
 
 // The text of an error's message as TLC prints it inside another message.
-export const formatNestedMessage = (text: string, isTool: boolean) => {
+export const formatNestedMessage = (text: string, isTool: boolean): string => {
   const code = isTool ? getCodedMessage(text)?.code : undefined;
   return code === undefined
     ? text
-    : `@!@!@STARTMSG ${code}:${MESSAGE_LEVEL.none} @!@!@\n${text}\n@!@!@ENDMSG ${code} @!@!@`;
+    : `@!@!@STARTMSG ${code}:${MESSAGE_LEVEL.none} @!@!@\n${formatInnerMessage(code, text, isTool)}\n@!@!@ENDMSG ${code} @!@!@`;
 };
 
-// TLC's SimpleDateFormat("yyyy-MM-dd HH:mm:ss") in the local time zone.
 // TLC's convertRuntimeToHumanReadable: a duration in its two largest units.
 export const formatTlcDuration = (milliseconds: number) => {
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -203,6 +289,7 @@ export const formatTlcDuration = (milliseconds: number) => {
   return minutes > 0 ? `${pad(minutes)}min ${pad(seconds)}s` : `${pad(seconds)}s`;
 };
 
+// TLC's SimpleDateFormat("yyyy-MM-dd HH:mm:ss") in the local time zone.
 export const formatTlcDate = (date: Date) => {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;

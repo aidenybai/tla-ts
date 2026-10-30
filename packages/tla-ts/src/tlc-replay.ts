@@ -14,6 +14,7 @@ import {
   type Environment,
   type Scope,
   type State,
+  toUnspecifiedSubscriptError,
 } from "./evaluate";
 import { getStreamedElements, isEnumerable, valuesEqual, type Value } from "./values";
 
@@ -40,6 +41,8 @@ interface Replay {
   environment: Environment;
   callStack: CallStack;
   isInit: boolean;
+  // Whether the replay computes ENABLED rather than the successors of the state.
+  isEnabled: boolean;
   // The state whose successors the replay computes.
   current: Value[] | undefined;
   onState: (state: Value[]) => void;
@@ -162,12 +165,18 @@ const isChanged = (replay: Replay, item: Item, partial: State) => {
     state: replay.current,
     next: undefined,
   });
-  const after = evaluate(item.expression, {
-    environment,
-    scope: item.scope,
-    state: partial,
-    next: undefined,
-  });
+  const after = (() => {
+    try {
+      return evaluate(item.expression, {
+        environment,
+        scope: item.scope,
+        state: partial,
+        next: undefined,
+      });
+    } catch (error) {
+      throw replay.isEnabled ? toUnspecifiedSubscriptError(error) : error;
+    }
+  })();
   return !valuesEqual(before, after);
 };
 
@@ -519,10 +528,51 @@ const createReplay = (
   isInit: boolean,
   current: Value[] | undefined,
   onState: (state: Value[]) => void,
+  isEnabled = false,
 ): Replay => {
   const callStack = environment.callStack;
   if (!callStack) throw new Error("The replay needs an environment that records its call stack");
-  return { environment, callStack, isInit, current, onState };
+  return { environment, callStack, isInit, isEnabled, current, onState };
+};
+
+const ENABLED_FOUND = new Error("The replay found a successor");
+
+// TLC's Tool#enabled, which walks the action as getNextStates does and stops at the first
+// successor.
+export const replayEnabled = (
+  expression: Expression,
+  scope: Scope | undefined,
+  state: Value[],
+  environment: Environment,
+) => {
+  const replay = createReplay(
+    environment,
+    false,
+    state,
+    () => {
+      throw ENABLED_FOUND;
+    },
+    true,
+  );
+  const depth = replay.callStack.expressions.length;
+  const empty: State = environment.variables.map(() => undefined);
+  try {
+    // The ENABLED of a fairness condition WF_v(A) passes A to TLC's enabled with v to change, where
+    // liveness.ts builds <<A>>_v at the location of A.
+    if (expression.kind === "AngleAction" && expression.location === expression.action.location) {
+      const changed = cons("Changed", expression.subscript, scope, undefined);
+      visit(replay, expression.action, changed, scope, empty);
+    } else {
+      visit(replay, expression, undefined, scope, empty);
+    }
+    return false;
+  } catch (error) {
+    if (error !== ENABLED_FOUND) throw error;
+    // The frames the walk left are those of the successor, not of a failure.
+    replay.callStack.expressions.length = depth;
+    replay.callStack.isFrozen = false;
+    return true;
+  }
 };
 
 // TLC's getInitStates, which conjoins the initial predicates of the specification.

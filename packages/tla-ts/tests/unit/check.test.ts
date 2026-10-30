@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import {
   check,
+  type CheckProgress,
   type CheckResult,
   formatValue,
   parseConfig,
@@ -11,7 +12,7 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
-import { UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { TlaSanyFatalError, UNEXPECTED_EXCEPTION } from "../../src/errors";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -214,10 +215,19 @@ describe("check matches TLC", () => {
   it("generates a successor for each witness of an existential under a universal action", async () => {
     const result = await check({
       source:
-        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nWitness(i) == \\E j \\in 1..3 : j >= i\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ \\A i \\in {1, 2} : Witness(i)\n====",
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nWitness(i) == \\E j \\in 1..3 : j >= i\nInit == x = 0\nNext == x < 2 /\\ (\\A i \\in {1, 2} : Witness(i)) /\\ x' = x + 1\n====",
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
     });
     expect([result.generatedStates, result.distinctStates]).toEqual([13, 3]);
+  });
+
+  it("evaluates the conjuncts left once an action assigns every variable", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nWitness(i) == \\E j \\in 1..3 : j >= i\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ \\A i \\in {1, 2} : Witness(i)\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    });
+    expect([result.generatedStates, result.distinctStates]).toEqual([3, 3]);
   });
 
   it("reports a depth of 1 when the constraint excludes every initial state", async () => {
@@ -612,9 +622,32 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("rejects a symmetry that names a constant", async () => {
-    await expect(checkModule("CONSTANT P", "CONSTANT P = {p1, p2}\nSYMMETRY P")).rejects.toThrow(
-      TlaConfigError,
+    // TLC reports it as a RuntimeException it did not expect, verified with TLC.
+    const result = checkModule("CONSTANT P", "CONSTANT P = {p1, p2}\nSYMMETRY P");
+    await expect(result).rejects.toThrow(TlaEvaluationError);
+    await expect(result).rejects.toThrow(
+      "The symmetry function P must specify a set of permutations.",
     );
+  });
+
+  it("warns about a permuted set with fewer than two elements", async () => {
+    const warnings: CheckProgress[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS S, T\nVARIABLE x\nInit == x = 0\nNext == x' = x\nSym == Permutations(S) \\cup Permutations(T)\n====",
+      config: "CONSTANTS S = {s1, s2}\nT = {t1}\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress);
+      },
+    });
+    expect(result.status).toBe("success");
+    expect(warnings).toEqual([
+      {
+        kind: "warning",
+        code: 2300,
+        text: "The set T has been defined to be a symmetry set but contains less than two elements.",
+      },
+    ]);
   });
 
   it("rejects substituting a constant with a state-level definition", async () => {
@@ -800,6 +833,60 @@ describe("evaluation errors match TLC", () => {
       "Evaluating invariant Inv failed.\nThe second argument of \\div is 0.",
     );
     expect(getFailureSummary(result)).toEqual(["error", ["0", "1", "2"], [3, 3, 0, 3], 76]);
+  });
+
+  it.each([
+    [
+      "0 \\in [{1} -> {2}]",
+      "Attempted to check if \n0\nwhich is not a TLC function value, is in the set of functions:\n{<<2>>}",
+    ],
+    [
+      "0 \\in SUBSET {1}",
+      "Attempted to check if the non-enumerable value\n0\nis element of\n{{}, {1}}",
+    ],
+    ["0 \\in Seq({1})", "Attempted to check if the value:\n0\nis an element of Seq({1})."],
+  ])("reports a value that can't be an element of %s like TLC", async (expression, message) => {
+    const result = await checkModule(`ASSUME ${expression}`);
+    expect(result.violation?.message).toBe(message);
+  });
+
+  // TLC's etest15: TLC normalizes the value of a constant definition as it starts, and searches the
+  // sorted domain of a function over it.
+  it("compares a value with the elements of a constant definition's set like TLC", async () => {
+    const result = await checkModule(
+      "S == {<<y>> : y \\in {1, 2, 3, 4}}\nASSUME [<<y>> \\in S |-> y + 1][2] = 3",
+    );
+    expect(result.violation?.message).toBe(
+      "Attempted to compare integer 2 with non-integer:\n<<3>>",
+    );
+  });
+
+  // TLC's FingerprintExceptionHang: the replay of the failed expansion adds the successors TLC
+  // hasn't seen and checks their invariants, which fail to fingerprint.
+  it("counts the states that the replay of a failed invariant adds", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nCONSTANTS Nodes\nVARIABLES nodeState\nLegalSets == {{}}\nTypeOK == nodeState \\in [Nodes -> [set: LegalSets]]\nInit == nodeState = [n \\in Nodes |-> [set |-> {}]]\nNext == \\E n \\in Nodes : nodeState' = [nodeState EXCEPT ![n].set = 1]\n====",
+      config:
+        "CONSTANT Nodes = {A, B}\nINIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nINVARIANT TypeOK",
+    });
+    expect(result.failure?.message).toBe(
+      "Evaluating invariant TypeOK failed.\nAttempted to compare integer 1 with non-integer:\n{}",
+    );
+    expect(result.failure?.fingerprint?.sources.map((source) => source.kind)).toEqual([
+      "FunctionSet",
+      "RecordSet",
+    ]);
+    expect([result.distinctStates, result.failure?.exitCode]).toEqual([3, 75]);
+  });
+
+  it("prints what the replay of a failed constraint prints after the trace", async () => {
+    const result = await checkSteps(
+      'C == PrintT(<<"c", x>>) /\\ (IF x = 2 THEN 1 \\in 2 ELSE TRUE)',
+      "INIT Init\nNEXT Next\nCONSTRAINT C",
+    );
+    expect(result.failure?.trace.map((step) => formatValue(step.state.x))).toEqual(["0", "1", "2"]);
+    expect(result.failure?.traceOutput).toEqual(['<<"c", 2>>']);
   });
 
   it("names an action property that fails to evaluate", async () => {
@@ -1242,10 +1329,16 @@ describe("name resolution matches SANY", () => {
 
   it("fails to parse a spec that imports a module it cannot find, such as Strings", async () => {
     await expect(checkSource("EXTENDS Strings")).rejects.toThrow(
-      new TlaSyntaxError("Cannot find source file for module Strings imported in module M."),
+      new TlaSanyFatalError(
+        "Cannot find source file for module Strings imported in module M.",
+        "M",
+      ),
     );
     await expect(checkSource("N == INSTANCE Nowhere")).rejects.toThrow(
-      new TlaSyntaxError("Cannot find source file for module Nowhere imported in module M."),
+      new TlaSanyFatalError(
+        "Cannot find source file for module Nowhere imported in module M.",
+        "M",
+      ),
     );
   });
 
@@ -1529,7 +1622,27 @@ describe("parseConfig matches TLC", () => {
   it("rejects keywords that appear twice", () => {
     ["CHECK_DEADLOCK", "_PERIODIC", "_RL_REWARD"].forEach((keyword) =>
       expect(() => parseConfig(`${keyword} FALSE\n${keyword} TRUE`)).toThrow(
-        new TlaConfigError(`The keyword ${keyword} appears twice`),
+        new TlaConfigError(
+          `TLC found an error in the configuration file at line 2\nThe keyword ${keyword} appeared twice.`,
+        ),
+      ),
+    );
+  });
+
+  it("reports TLC's errors for a file it can't read", () => {
+    expect(() => parseConfig("CONSTANT Humans = {%1%}")).toThrow(
+      new TlaConfigError(
+        "TLC found an error in the configuration file at line 1\nIt was expecting }, but did not find it.",
+      ),
+    );
+    expect(() => parseConfig("INIT Init\nNEXT Next\nSYMBOLIC_INTEGERS Int")).toThrow(
+      new TlaConfigError(
+        "TLC found an error in the configuration file at line 3\nIt was expecting a keyword, but did not find it.",
+      ),
+    );
+    expect(() => parseConfig('INIT Init\n"unterminated\nNEXT Next')).toThrow(
+      new TlaConfigError(
+        'TLC found an error in the configuration file:\nLexical error at line 2, column 14.  Encountered: "\\n" (10), after : "\\"unterminated"',
       ),
     );
   });

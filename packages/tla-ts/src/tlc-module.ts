@@ -5,6 +5,7 @@ import { prettyPrint } from "./pretty-print";
 import {
   defineConstant,
   defineHigherOrderOperator,
+  defineLazyOperator,
   defineOperator,
   defineStateOperator,
   getElements,
@@ -12,7 +13,9 @@ import {
   getFunction,
   getOperator,
   getSequence,
+  getThunk,
   getValue,
+  overrideWithJava,
 } from "./builtins";
 import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "./runtime";
 import { createActionRecord, setTlcValue } from "./tlc-ext";
@@ -193,20 +196,25 @@ export const createTlcOperators = (
       }, []),
     );
   }),
-  defineStateOperator("TLCGet", 1, (args, context) => {
-    const key = getValue(args, 0, "TLCGet");
-    if (typeof key === "number" && key >= 0) {
-      const value = runtime.registers.get(key);
-      if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
-      return value;
-    }
-    if (typeof key !== "string") {
-      throw new TlaModuleError(
-        `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
-      );
-    }
-    return getRuntimeValue(runtime, key, context?.state);
-  }),
+  // TLC evaluates TLCGet with its argument in TLCGetSet.TLCGetEval, so it reports any failure,
+  // the argument's too, as a failure of that method.
+  overrideWithJava(
+    defineLazyOperator("TLCGet", 1, (args, context) => {
+      const key = getThunk(args, 0, "TLCGet")();
+      if (typeof key === "number" && key >= 0) {
+        const value = runtime.registers.get(key);
+        if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
+        return value;
+      }
+      if (typeof key !== "string") {
+        throw new TlaModuleError(
+          `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
+        );
+      }
+      return getRuntimeValue(runtime, key, context?.state);
+    }),
+    "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+  ),
   defineStateOperator("TLCSet", 2, (args) => {
     const key = getValue(args, 0, "TLCSet");
     setTlcValue(runtime, print, key, getValue(args, 1, "TLCSet"));

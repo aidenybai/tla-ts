@@ -63,7 +63,8 @@ const toLocationValue = (location: SourceLocation) => {
   ]);
 };
 
-const toActionValue = (action: SpecAction) => {
+// TLC's RecordValue(Action): the action's name and location, with the values of its parameters.
+export const toActionValue = (action: SpecAction) => {
   const fields: [string, Value][] = [
     ["name", action.name],
     ["location", toLocationValue(action.location)],

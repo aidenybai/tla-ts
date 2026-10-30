@@ -4,6 +4,8 @@ import {
   checkSequentially,
   createSearch,
   findAssumptionViolation,
+  reportInitialStatesProgress,
+  reportStartup,
   reportStateLevelProperties,
   type CheckOptions,
   type CheckProgress,
@@ -108,9 +110,17 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   const print = options.onPrint ?? console.log;
   const printed = { count: 0 };
-  const reported = new Set<CheckProgress["kind"]>();
+  // What each point the search reports is about, such as the invariant TLC warns about.
+  const getKey = (progress: CheckProgress) =>
+    [
+      progress.kind,
+      "name" in progress ? progress.name : "",
+      "count" in progress ? progress.count : "",
+      "text" in progress ? progress.text : "",
+    ].join(" ");
+  const reported = new Set<string>();
   const report = (progress: CheckProgress) => {
-    reported.add(progress.kind);
+    reported.add(getKey(progress));
     options.onProgress?.(progress);
   };
   // The search on the calling thread prints and reports what this one did while it started, so it
@@ -122,7 +132,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       config,
       onPrint: (text) => (skipped.count-- > 0 ? undefined : print(text)),
       onProgress: (progress) => {
-        if (!reported.has(progress.kind)) options.onProgress?.(progress);
+        if (!reported.has(getKey(progress))) options.onProgress?.(progress);
       },
     });
   };
@@ -162,7 +172,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     files: { readFile: options.readFile, writeFile: options.writeFile },
     isTraceSpecLoaded: options.isTraceSpecLoaded,
   });
-  report({ kind: "parsed" });
+  reportStartup(specification, config, report);
   const environment = specification.environment;
   const search = createSearch(config, environment, () =>
     getTlcVariableOrder(options.source, loadModule),
@@ -213,6 +223,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const seedInitialStates = (init: Expression) => {
     const seeded: Value[][] = [];
     for (const state of getInitialStates(init, environment, search.spec.scope)) {
+      reportInitialStatesProgress(statistics.generatedStates, report);
       canonicalize(state);
       statistics.generatedStates++;
       writeStateFingerprint(search.getFingerprintState(state), fingerprint);

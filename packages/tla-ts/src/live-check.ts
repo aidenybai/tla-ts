@@ -1,4 +1,5 @@
 import { TlaEvaluationError } from "./errors";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { hasRepeatedEffects, type Environment } from "./evaluate";
 import {
   evaluateLive,
@@ -26,13 +27,23 @@ export interface LiveSuccessor {
 export interface Lasso {
   prefix: number[];
   cycle: number[];
+  // Whether the solution that the lasso violates constrains the cycle, as a liveness property does.
+  // TLC warns that a stuttering counterexample to one may come from a missing fairness constraint.
+  isCycleConstrained: boolean;
 }
 
 export interface LivenessChecker {
   // How many solutions of the negated properties TLC checks, which it calls branches.
   branches: number;
   addInitialState: (index: number, state: Value[]) => void;
-  addState: (index: number, state: Value[], successors: LiveSuccessor[]) => number[] | undefined;
+  // With a tracing environment, the checks record their call stack as TLC's replay of a failed
+  // check does.
+  addState: (
+    index: number,
+    state: Value[],
+    successors: LiveSuccessor[],
+    tracing?: Environment,
+  ) => number[] | undefined;
   findViolation: () => Lasso | undefined;
   getViolatedProperties: (path: Value[][], cycleStart: number) => string[];
 }
@@ -59,6 +70,32 @@ interface Check {
   isDone: boolean[];
   errorNode: number | undefined;
 }
+
+const containsAlways = (expression: LiveExpression): boolean => {
+  switch (expression.kind) {
+    case "Always":
+      return true;
+    case "Eventually":
+    case "Not":
+    case "Next":
+      return containsAlways(expression.body);
+    case "And":
+    case "Or":
+      return expression.operands.some(containsAlways);
+    default:
+      return false;
+  }
+};
+
+// TLC's OrderOfSolution#hasEmptyPEMAndBoxFreePromises, negated.
+const isCycleConstrained = (solution: Solution) =>
+  solution.promises.some((promise) => containsAlways(promise.body)) ||
+  solution.models.some(
+    (model) =>
+      model.eventuallyAlways.length > 0 ||
+      model.infinitelyOftenStates.length > 0 ||
+      model.infinitelyOftenActions.length > 0,
+  );
 
 const liveKeys = new WeakMap<LiveExpression, string>();
 
@@ -123,7 +160,10 @@ export const createLivenessChecker = (
     fairness.length === 0 ? violation : createJunction("And", [...fairness, violation]);
   const solutions = getSolutions(formula);
   if (solutions.length === 0) {
-    throw new TlaEvaluationError("Temporal formula is a tautology (its negation is unsatisfiable)");
+    throw setExitCode(
+      new TlaEvaluationError("Temporal formula is a tautology (its negation is unsatisfiable)."),
+      EXIT_STATUS.livenessEvaluationFailure,
+    );
   }
   const actionIds = new Map<string, number>();
   const checks = solutions.map((solution): Check => ({
@@ -151,6 +191,7 @@ export const createLivenessChecker = (
   // TLC evaluates every check on its own. Without side effects the order can't show, so the
   // checks of one state share their results.
   const isShared = !hasRepeatedEffects(environment);
+  const evaluation = { environment };
   const shared = {
     states: new Map<Value[], Map<LiveExpression, boolean>>(),
     actions: new Map<Value[], Map<Value[], Int8Array>>(),
@@ -172,7 +213,7 @@ export const createLivenessChecker = (
       predicate,
       state,
       undefined,
-      environment,
+      evaluation.environment,
       isShared ? getStateCache(state) : new Map(),
     );
   const checkState = (check: Check, source: number, state: Value[]) =>
@@ -186,7 +227,7 @@ export const createLivenessChecker = (
       const predicates = check.solution.actionChecks;
       if (!isShared) {
         return Uint8Array.from(predicates, (predicate) =>
-          evaluateLive(predicate, state, successor, environment, new Map()) ? 1 : 0,
+          evaluateLive(predicate, state, successor, evaluation.environment, new Map()) ? 1 : 0,
         );
       }
       const stateCache = getStateCache(state);
@@ -196,7 +237,13 @@ export const createLivenessChecker = (
       results.set(successor, known);
       return Uint8Array.from(check.actionIds, (id, position) => {
         if (known[id] === -1) {
-          known[id] = evaluateLive(predicates[position], state, successor, environment, stateCache)
+          known[id] = evaluateLive(
+            predicates[position],
+            state,
+            successor,
+            evaluation.environment,
+            stateCache,
+          )
             ? 1
             : 0;
         }
@@ -570,7 +617,11 @@ export const createLivenessChecker = (
       }
       const cycleState = prefix[prefix.length - 1];
       if (postfix[postfix.length - 1] === cycleState) postfix.pop();
-      return { prefix: prefix.slice(0, -1), cycle: [cycleState, ...postfix.reverse()] };
+      return {
+        prefix: prefix.slice(0, -1),
+        cycle: [cycleState, ...postfix.reverse()],
+        isCycleConstrained: isCycleConstrained(solution),
+      };
     };
 
     // TLC's LiveWorker#bfsPostFix, the states from the walk's end back to the root, last first.
@@ -672,22 +723,27 @@ export const createLivenessChecker = (
         }
       }
     },
-    addState: (index, state, successors) => {
+    addState: (index, state, successors, tracing) => {
+      evaluation.environment = tracing ?? environment;
       shared.states.clear();
       shared.actions.clear();
-      const set = getSuccessorSet(index, state, successors);
-      for (const check of checks) {
-        const actionResults = set.map((successor) =>
-          checkAction(check, index, state, successor.state),
-        );
-        const stateResults = checkState(check, index, state);
-        const tableau = check.solution.tableau;
-        const accepted = tableau
-          ? addTableauState(check, tableau, set, actionResults, stateResults, index)
-          : addPlainState(check, set, actionResults, stateResults, index);
-        if (accepted) return accepted;
+      try {
+        const set = getSuccessorSet(index, state, successors);
+        for (const check of checks) {
+          const actionResults = set.map((successor) =>
+            checkAction(check, index, state, successor.state),
+          );
+          const stateResults = checkState(check, index, state);
+          const tableau = check.solution.tableau;
+          const accepted = tableau
+            ? addTableauState(check, tableau, set, actionResults, stateResults, index)
+            : addPlainState(check, set, actionResults, stateResults, index);
+          if (accepted) return accepted;
+        }
+        return undefined;
+      } finally {
+        evaluation.environment = environment;
       }
-      return undefined;
     },
     findViolation: () => {
       for (const check of checks) {

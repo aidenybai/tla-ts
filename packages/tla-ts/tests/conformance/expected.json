@@ -2993,8 +2993,10 @@
   },
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/MinimalSetOfNextStates.cfg",
-    "status": "assumption-violation",
-    "traceLength": 0,
+    "status": "success",
+    "generatedStates": 57,
+    "distinctStates": 7,
+    "depth": 2,
     "tlcMilliseconds": 518
   },
   {
@@ -3658,7 +3660,7 @@
   {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/examples/detector_chan96/EnvironmentController.cfg",
     "status": "success",
-    "generatedStates": 5539,
+    "generatedStates": 4317,
     "distinctStates": 1042,
     "depth": 19,
     "tlcMilliseconds": 1245

@@ -12,7 +12,7 @@ import {
 import { BUNDLED_MODULES } from "./bundled-modules";
 import type { ConfigValue, ModelConfig } from "./config";
 import type { FileSystem } from "./json";
-import { TlaConfigError, TlaEvaluationError, TlaSyntaxError } from "./errors";
+import { TlaConfigError, TlaEvaluationError, TlaSyntaxError, TlaSanyFatalError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   createBigNumberError,
@@ -52,6 +52,8 @@ import {
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import { checkInstances, type InstanceCheck } from "./substitution-levels";
+import { isEvalException } from "./tlc-messages";
+import { getTlcDeclarationOrder } from "./tlc-order";
 import {
   checkInteger,
   createModelValue,
@@ -59,6 +61,7 @@ import {
   formatValue,
   valuesEqual,
   type Value,
+  markNormalized,
 } from "./values";
 
 interface EnvironmentOptions {
@@ -80,6 +83,8 @@ interface Specification {
   assumptions: Assumption[];
   variableLocations: SourceLocation[];
   instanceActions: Map<string, InstanceAction>;
+  // The definitions TLC computes when it starts, in the order it computes them.
+  startupDefinitions: Definition[];
   rootConstants: Declaration[];
   rootSymbols: Symbols;
 }
@@ -227,6 +232,7 @@ export const createEnvironment = (
   const parameterized = new Map<string, boolean>();
   // The definition each instance copy came from, and the instance parameters the copy adds.
   const copySources = new Map<string, { source: string; prefix: number }>();
+  const substitutedDefinitions = new Set<Definition>();
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
   );
@@ -301,13 +307,15 @@ export const createEnvironment = (
       BUNDLED_MODULES.get(name) ??
       extractModule(options.source, name);
     if (source === undefined)
-      throw new TlaSyntaxError(
+      throw new TlaSanyFatalError(
         `Cannot find source file for module ${name} imported in module ${importer}.`,
+        importer,
       );
     const module = parseModule(source);
     if (module.name !== name) {
-      throw new TlaSyntaxError(
+      throw new TlaSanyFatalError(
         `File name '${name}' does not match the name '${module.name}' of the top level module it contains.`,
+        undefined,
       );
     }
     return rejectModuleLiterals(module);
@@ -397,7 +405,9 @@ export const createEnvironment = (
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create) => {
         const key = createName(`${name}@${module.name}`);
-        definitions.set(key, create(key));
+        const definition = create(key);
+        definitions.set(key, definition);
+        if (declarations.length > 0) substitutedDefinitions.add(definition);
         if (instance.name !== undefined) {
           instanceNames.set(key, `${instance.name}!${instanceNames.get(source) ?? name}`);
         }
@@ -805,6 +815,7 @@ export const createEnvironment = (
     .filter((assignment) => assignment.args === undefined)
     .forEach((assignment) => {
       const value = toValue(assignment.value);
+      markNormalized(value);
       getScopedKeys(assignment).forEach((key) => {
         const arity = getKeyArity(key);
         if (arity === 0) constants.set(key, value);
@@ -924,12 +935,18 @@ export const createEnvironment = (
       if (symbol.key === key && name !== key) definitions.set(name, alias);
     });
   });
-  declaredConstants.forEach((name) => {
-    const isAssigned = constants.has(name) || substitutions.has(name) || operatorKeys.has(name);
-    if (!isAssigned && !options.isUnconfigured) {
-      throw new TlaConfigError(`The constant ${name} is not assigned a value by the configuration`);
-    }
-  });
+  const unassigned = declaredConstants.filter(
+    (name) => !constants.has(name) && !substitutions.has(name) && !operatorKeys.has(name),
+  );
+  if (unassigned.length > 0 && !options.isUnconfigured) {
+    const name =
+      getTlcDeclarationOrder(options.source, options.loadModule, "constant").find((constant) =>
+        unassigned.includes(constant),
+      ) ?? unassigned[0];
+    throw new TlaConfigError(
+      `The constant parameter ${name} is not assigned a value by the configuration file.`,
+    );
+  }
 
   if (options.isTraceSpecLoaded !== false) {
     builtins.forEach((builtin, name) => {
@@ -952,6 +969,7 @@ export const createEnvironment = (
     ),
     definitionValues: new Map(),
     constantLevels: new Map(),
+    substitutedDefinitions,
     evaluators: new WeakMap(),
   };
   checkInstances(instanceChecks, (name) => {
@@ -979,35 +997,48 @@ export const createEnvironment = (
     ]),
     getDefinition: (name) => getDefinition(name, environment),
   });
-  const isEvaluable = (body: Expression) => {
+  const getEvaluationError = (body: Expression) => {
     try {
       evaluate(body, { environment, scope: undefined, state: undefined, next: undefined });
-      return true;
+      return undefined;
     } catch (error) {
-      if (error instanceof TlaEvaluationError) return false;
+      if (error instanceof TlaEvaluationError) return error;
       throw error;
     }
   };
   substitutions.forEach((target, name) => {
     const definition = definitions.get(target);
-    if (
+    const error =
       declaredConstants.includes(name) &&
       definition?.kind === "Operator" &&
       definition.params.length === 0 &&
-      analyzer.analyzeDefinition(definition, new Map()).level > 0 &&
-      !isEvaluable(definition.body)
-    ) {
+      analyzer.analyzeDefinition(definition, new Map()).level > 0
+        ? getEvaluationError(definition.body)
+        : undefined;
+    if (error) {
+      // TLC's SpecProcessor adds the message of a TLCRuntimeException, not of an EvalException.
+      const addendum = isEvalException(error) ? "" : ` - specifically: ${error.message}`;
       throw new TlaConfigError(
-        `The configuration file substitutes constant ${name} with non-constant ${target}`,
+        `The configuration file substitutes constant ${name} with non-constant ${target}${addendum}`,
       );
     }
   });
   runtime.isStarted = true;
+  // TLC computes the constant definitions of each module in the order SANY finishes the modules,
+  // except those of a module that an INSTANCE gives parameters to.
+  const instantiated = new Set(
+    linkedList.flatMap((linked) => linked.module.instances.map((instance) => instance.module)),
+  );
   return {
     environment,
     assumptions,
     variableLocations: linkedRoot.variableLocations,
     instanceActions,
+    startupDefinitions: linkedList
+      .filter(
+        (linked) => !instantiated.has(linked.module.name) || getDeclarations(linked).length === 0,
+      )
+      .flatMap((linked) => linked.module.definitions),
     rootConstants: linkedRoot.constants,
     rootSymbols: linkedRoot.visible,
   };

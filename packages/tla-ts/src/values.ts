@@ -863,22 +863,47 @@ const equalsLikeTlc = (left: Value, right: Value): boolean => {
 const sortLikeTlc = (elements: Value[]) => {
   const sorted: Value[] = [];
   for (const element of elements) {
-    const bounds = { low: 0, high: sorted.length, comparison: 1 };
-    while (bounds.low < bounds.high) {
-      const middle = bounds.low + ((bounds.high - bounds.low) >> 1);
-      bounds.comparison = compareLikeTlc(element, sorted[middle]);
-      if (bounds.comparison === 0) break;
-      if (bounds.comparison < 0) bounds.high = middle;
-      else bounds.low = middle + 1;
-    }
-    if (bounds.comparison !== 0) sorted.splice(bounds.low, 0, element);
+    const found = searchLikeTlc(element, sorted);
+    if (!found.isFound) sorted.splice(found.index, 0, element);
   }
   return sorted;
+};
+
+// ValueVec.search on sorted elements: a binary search with compareTo, which ends where the element
+// is or would go.
+const searchLikeTlc = (element: Value, sorted: Value[]) => {
+  const bounds = { low: 0, high: sorted.length };
+  while (bounds.low < bounds.high) {
+    const middle = bounds.low + ((bounds.high - bounds.low) >> 1);
+    const comparison = compareLikeTlc(element, sorted[middle]);
+    if (comparison === 0) return { index: middle, isFound: true };
+    if (comparison < 0) bounds.high = middle;
+    else bounds.low = middle + 1;
+  }
+  return { index: bounds.low, isFound: false };
 };
 
 // TLC checks membership in a set enumeration it hasn't sorted element by element.
 const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
   elements.some((member) => equalsLikeTlc(member, element));
+
+// The sets TLC has normalized, whose membership ValueVec.search checks by binary search with
+// compareTo instead of element by element.
+const normalizedSets = new WeakSet<SetValue>();
+
+// IValue.deepNormalize, which TLC applies to the constants of the config and the constant
+// definitions it computes as it starts.
+export const markNormalized = (value: Value): void => {
+  if (typeof value !== "object") return;
+  if (value.kind === "Set") {
+    normalizedSets.add(value);
+    value.elements.forEach(markNormalized);
+  }
+  if (value.kind === "Function") {
+    value.domain.forEach(markNormalized);
+    value.range.forEach(markNormalized);
+  }
+};
 
 export const isEqualLikeTlc = (left: Value, right: Value) => {
   try {
@@ -1238,9 +1263,7 @@ const enumerateSet = (value: Value): Value[] => {
       if (isOverriddenSet(value.base)) getCardinality(value.base);
       const base = toFiniteSet(value.base).elements;
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
-        throw new TlaEvaluationError(
-          `SUBSET of a set with ${base.length} elements is too large to enumerate`,
-        );
+        throw new TlaEvaluationError(describeOverflow(value));
       }
       return getSortedSubsets(base);
     }
@@ -1574,9 +1597,6 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
     : undefined;
 };
 
-const describeMembership = (element: Value, set: Value) =>
-  `Attempted to check if the value ${formatValue(element)} is an element of ${formatValue(set)}`;
-
 const describeNonSetMembership = (element: Value, value: Value) => {
   const prefix = `Attempted to check if the value:\n${formatValue(element)}\nis an element of the`;
   if (!isFunctionValue(value)) return `${prefix} ${describeKind(value)} ${formatValue(value)}`;
@@ -1591,7 +1611,21 @@ const describeNonSetMembership = (element: Value, value: Value) => {
   return `${prefix} function ${formatValue(value)}`;
 };
 
+// The sets whose membership is being checked, outermost first, while TLC's CallStackTool replays a
+// computation. A failed check leaves the sets it was in, each of which TLC adds to the
+// FingerprintException when it has a source.
+export const membershipTrace: { sets: Value[] | undefined } = { sets: undefined };
+
 export const isElementOf = (element: Value, set: Value): boolean => {
+  const sets = membershipTrace.sets;
+  if (sets === undefined) return isElementOfSet(element, set);
+  sets.push(set);
+  const isElement = isElementOfSet(element, set);
+  sets.pop();
+  return isElement;
+};
+
+const isElementOfSet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":
@@ -1599,7 +1633,9 @@ export const isElementOf = (element: Value, set: Value): boolean => {
         return findIndex(set.elements, element) !== -1;
       } catch (error) {
         if (!(error instanceof TlaEvaluationError)) throw error;
-        return isElementOfLikeTlc(element, set.elements);
+        return normalizedSets.has(set)
+          ? searchLikeTlc(element, set.elements).isFound
+          : isElementOfLikeTlc(element, set.elements);
       }
     case "MixedSet":
       return isElementOfLikeTlc(element, set.elements);
@@ -1624,12 +1660,20 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       return set.name !== "Nat" || (typeof element === "number" && element >= 0);
     }
     case "Subset":
-      if (!isSetValue(element)) throw new TlaEvaluationError(describeMembership(element, set));
+      // SubsetValue.member fails on any value that is not Enumerable, model values included.
+      if (!isSetValue(element)) {
+        throw new TlaEvaluationError(
+          `Attempted to check if the non-enumerable value\n${prettyPrint(formatValue(element))}\nis element of\n${prettyPrint(formatValue(set))}`,
+        );
+      }
       return toFiniteSet(element).elements.every((item) => isElementOf(item, set.base));
     case "FunctionSet": {
       if (!isFunctionValue(element)) {
         if (isModelValue(element)) return false;
-        throw new TlaEvaluationError(describeMembership(element, set));
+        // SetOfFcnsValue.member prints the element without Values.ppr.
+        throw new TlaEvaluationError(
+          `Attempted to check if \n${formatValue(element)}\nwhich is not a TLC function value, is in the set of functions:\n${prettyPrint(formatValue(set))}`,
+        );
       }
       const functionValue = toFiniteFunction(element);
       const low = getIntervalLow(functionValue.domain);
@@ -1694,7 +1738,10 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       const elements = getSequenceElements(element);
       if (elements === undefined) {
         if (isModelValue(element)) return false;
-        throw new TlaEvaluationError(describeMembership(element, set));
+        // Sequences.member raises TLC_MODULE_CHECK_MEMBER_OF.
+        throw new TlaEvaluationError(
+          `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of ${prettyPrint(formatValue(set))}.`,
+        );
       }
       return elements.every((item) => isElementOf(item, set.base));
     }
@@ -1912,6 +1959,34 @@ const computeValueHash = (value: ObjectValue) => {
       (hash + getEntryContribution(functionValue.domain[index], functionValue.range[index])) | 0;
   }
   return hash;
+};
+
+// The values a value holds, which TLC fingerprints as it fingerprints the value.
+export const getHeldValues = (value: ObjectValue): Value[] => {
+  switch (value.kind) {
+    case "Set":
+    case "MixedSet":
+      return value.elements;
+    case "Function":
+      return [...value.domain, ...value.range];
+    case "Subset":
+    case "SequenceSet":
+    case "FilteredSet":
+    case "Union":
+      return [value.base];
+    case "FunctionSet":
+      return [value.domain, value.range];
+    case "RecordSet":
+      return value.sets;
+    case "ProductSet":
+      return value.factors;
+    case "SetOperation":
+      return [value.left, value.right];
+    case "LazyFunction":
+      return [value.domain];
+    default:
+      return [];
+  }
 };
 
 export const getValueHash = (value: Value): number => {

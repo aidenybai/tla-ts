@@ -2,6 +2,7 @@
 // state's variables in the order of SANY's symbol table. This reproduces both orders.
 import type { Module, SourceLocation } from "./ast";
 import type { ConfigValue, ModelConfig } from "./config";
+import { TlaSanyFatalError } from "./errors";
 import { tokenize, type Token } from "./lexer";
 import { extractModule, parseModule } from "./parser";
 import { isBefore } from "./resolve";
@@ -166,6 +167,9 @@ const getModuleReferences = (
         innerModules.set(name, inner.references);
         references.inner.push(inner.references);
         index = inner.end;
+      } else if (tokens[index - 1]?.text === ".") {
+        // A record field named EXTENDS or INSTANCE, as in r.EXTENDS or [r EXCEPT !.INSTANCE = 0].
+        continue;
       } else if (token.text === "EXTENDS") {
         const names = getDeclarations(tokens, index + 1);
         references.extends.push(...names);
@@ -221,6 +225,9 @@ const getParsedTexts = (tokens: Token[]) => {
   return texts;
 };
 
+// A module starts with ---- MODULE Name, so its third token is its name.
+const getModuleName = (tokens: Token[]) => tokens[2]?.text;
+
 const getRanges = (tokens: Token[]) => {
   const ranges = new Map<string, { start: number; end: number }>();
   const open: { name: string; start: number }[] = [];
@@ -255,7 +262,7 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
         : (TLC_MODULE_SOURCES.get(name) ?? loadModule?.(name) ?? extractModule(source, name));
     const tokens = text === undefined ? [] : tokenize(text);
     const ranges = getRanges(tokens);
-    const range = ranges.get(tokens[2]?.text ?? "") ?? { start: 0, end: 0 };
+    const range = ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
     const parsed = { module: undefined as Module | undefined };
     const file = {
       tokens,
@@ -278,9 +285,14 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
     (name === undefined ? undefined : nestedModules.get(name)) ?? getFile(name);
 };
 
-// The variables in the order TLC compares them: the reverse of the root module's context
-// enumeration, as ModuleNode.getVariableDecls returns them.
-export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader): string[] => {
+// The variables or constants of the root module in the reverse of its context enumeration, as
+// ModuleNode.getVariableDecls and getConstantDecls return them. TLC compares variables in this
+// order, and checks that the configuration assigns each constant in it.
+export const getTlcDeclarationOrder = (
+  source: string,
+  loadModule: ModuleLoader,
+  kind: "variable" | "constant",
+): string[] => {
   const getParsed = createModuleSet(source, loadModule);
   const getUnits = (unit: ParsedModule) => {
     const tokens = unit.tokens;
@@ -400,10 +412,13 @@ export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader): s
   };
   return getContext(undefined)
     .enumerate()
-    .filter((entry) => entry.kind === "variable")
+    .filter((entry) => entry.kind === kind)
     .map((entry) => entry.name)
     .reverse();
 };
+
+export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader) =>
+  getTlcDeclarationOrder(source, loadModule, "variable");
 
 // Every string TLC interns before model checking starts, in order: values in the config, TLC's
 // startup strings, each module's tokens in the order SpecObj.loadSpec parses the modules, string
@@ -488,6 +503,14 @@ export const getTlcStringOrder = (
     dependencies.set(module.unit, [...(dependencies.get(module.unit) ?? []), name]);
     if (parsedUnits.has(name)) continue;
     parsedUnits.add(name);
+    // SANY stops at the first module it can't find, in the order it reads them.
+    if (getParsed(name).tokens.length === 0) {
+      const importer = module.unit ?? getModuleName(getParsed(undefined).tokens);
+      throw new TlaSanyFatalError(
+        `Cannot find source file for module ${name} imported in module ${importer}.`,
+        importer,
+      );
+    }
     getParsedTexts(getUnitTokens(name)).forEach(intern);
   }
   SEMANTIC_PRELUDE.forEach(intern);

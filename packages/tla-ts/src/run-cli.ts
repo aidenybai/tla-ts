@@ -11,7 +11,16 @@ import { spawnSync } from "node:child_process";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
 import type { Expression } from "./ast";
-import type { CheckProgress, CheckResult, CheckStatus, InitialStates, TraceStep } from "./check";
+import { describeRange } from "./evaluate";
+import type {
+  CheckProgress,
+  CheckResult,
+  CheckStatus,
+  InitialStates,
+  SearchStatistics,
+  TraceStep,
+  Violation,
+} from "./check";
 import { defineCommand, type ParsedArgs } from "./cli-options";
 import { parseConfig } from "./config";
 import {
@@ -21,8 +30,10 @@ import {
   TlaEvaluationError,
   TlaProofError,
   TlaSyntaxError,
+  UNEXPECTED_EXCEPTION,
+  TlaSanyFatalError,
 } from "./errors";
-import { EXIT_STATUS } from "./exit-codes";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import type { LineRange } from "./obligation-generate";
 import { getAtPrefix, getLocusText } from "./obligation-expression";
 import { formatSummary, getObligations, WHOLE_MODULE, type ModuleObligations } from "./obligations";
@@ -35,11 +46,15 @@ import {
   getOptimisticProbability,
   getOutDegreeSummary,
 } from "./tlc-summary";
+import { getSanyReport } from "./sany-report";
 import { exportSanyXml } from "./sany-xml";
 import {
   createMessagePrinter,
   formatTlcDate,
+  formatInnerMessage,
+  formatNestedMessage,
   formatTlcDuration,
+  getCodedMessage,
   MESSAGE_CODE,
   MESSAGE_LEVEL,
   type MessagePrinter,
@@ -173,6 +188,15 @@ const getTemporalHeadline = (names: string[]) =>
     ? `Temporal property ${names[0]} was violated.\n`
     : `Temporal properties ${names.slice(0, -1).join(", ")}${names.length > 2 ? "," : ""} and ${names[names.length - 1]} were violated.\n`;
 
+// TLC's FingerprintException#getTrace: the range of each source, innermost first, skipping a
+// source the same as the one inside it.
+const formatFingerprintTrace = (sources: Expression[]) =>
+  sources
+    .filter((source, index) => source !== sources[index - 1])
+    .map((source, index) => `${index}) ${describeRange(source)}\n`)
+    .toReversed()
+    .join("");
+
 // TLC's CallStack.toString: the range of each expression, skipping an expression that it evaluates
 // again right inside itself.
 const formatCallStack = (expressions: Expression[]) => {
@@ -209,18 +233,20 @@ const printInitialStates = (printer: MessagePrinter, initialStates: InitialState
 
 interface Timing {
   start: number;
+  // Whether TLC has printed that SANY finished.
+  isParsed: boolean;
   // When TLC started to check the temporal properties on the complete state graph.
   liveness: number | undefined;
 }
 
-type Statistics = Pick<
-  CheckResult,
-  "generatedStates" | "distinctStates" | "queuedStates" | "depth"
->;
-
-// TLC reports how far the search got when it prints messages for a program to read. When the
-// search ends, it adds how many states it generated and found a minute.
-const printProgress = (printer: MessagePrinter, statistics: Statistics, startTime?: number) => {
+// TLC reports how far the search got when it prints messages for a program to read, at level 1 or
+// deeper even before it finds a state. As the search goes and when it ends, it adds how many
+// states it generated and found a minute.
+const printProgress = (
+  printer: MessagePrinter,
+  statistics: SearchStatistics,
+  startTime?: number,
+) => {
   const minutes = Math.max(Date.now() - (startTime ?? 0), 1) / 60_000;
   const format = (count: number) => count.toLocaleString("en-US");
   const getRate = (count: number, unit: string) =>
@@ -228,7 +254,7 @@ const printProgress = (printer: MessagePrinter, statistics: Statistics, startTim
   printer.print(
     MESSAGE_CODE.progress,
     MESSAGE_LEVEL.none,
-    `Progress(${statistics.depth}) at ${formatTlcDate(new Date())}: ${format(statistics.generatedStates)} states generated${getRate(statistics.generatedStates, "s")}, ${format(statistics.distinctStates)} distinct states found${getRate(statistics.distinctStates, "ds")}, ${format(statistics.queuedStates)} states left on queue.`,
+    `Progress(${Math.max(statistics.depth, 1)}) at ${formatTlcDate(new Date())}: ${format(statistics.generatedStates)} states generated${getRate(statistics.generatedStates, "s")}, ${format(statistics.distinctStates)} distinct states found${getRate(statistics.distinctStates, "ds")}, ${format(statistics.queuedStates)} states left on queue.`,
   );
 };
 
@@ -237,11 +263,19 @@ const printToolProgress = (printer: MessagePrinter, progress: CheckProgress, tim
   const print = printer.print;
   switch (progress.kind) {
     case "parsed":
+      timing.isParsed = true;
       print(MESSAGE_CODE.sanyFinished, MESSAGE_LEVEL.none, "SANY finished.");
       print(
         MESSAGE_CODE.starting,
         MESSAGE_LEVEL.none,
         `Starting... (${formatTlcDate(new Date())})`,
+      );
+      return;
+    case "constant-level-invariant":
+      print(
+        MESSAGE_CODE.constantLevelInvariant,
+        MESSAGE_LEVEL.warning,
+        `The invariant ${progress.name} is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.`,
       );
       return;
     case "state-level-property":
@@ -252,6 +286,13 @@ const printToolProgress = (printer: MessagePrinter, progress: CheckProgress, tim
       );
       return;
     case "liveness-prepared":
+      if (progress.isSymmetric) {
+        print(
+          MESSAGE_CODE.livenessSymmetry,
+          MESSAGE_LEVEL.warning,
+          "Declaring symmetry during liveness checking is dangerous. It might cause TLC to miss violations of the stated liveness properties. Please check liveness without symmetry defined.",
+        );
+      }
       print(
         MESSAGE_CODE.temporalBranches,
         MESSAGE_LEVEL.none,
@@ -261,21 +302,38 @@ const printToolProgress = (printer: MessagePrinter, progress: CheckProgress, tim
     case "initial-states-started":
       print(MESSAGE_CODE.computingInit, MESSAGE_LEVEL.none, "Computing initial states...");
       return;
+    case "initial-states-progress":
+      print(
+        MESSAGE_CODE.computingInitProgress,
+        MESSAGE_LEVEL.none,
+        `Computed ${progress.count} initial states...`,
+      );
+      return;
     case "initial-states-computed":
       printInitialStates(printer, progress.initialStates);
       return;
+    case "progress":
+      printProgress(printer, progress.statistics, timing.start);
+      return;
     case "liveness-started": {
       timing.liveness = Date.now();
-      printProgress(printer, progress.statistics);
+      // TLC reports how far the search got before it checks the complete state graph.
+      if (progress.isComplete) printProgress(printer, progress.statistics);
       const branches = progress.branches > 1 ? `${progress.branches} branches of ` : "";
       // TLC counts the states of the behavior graph of each branch, without its tableau nodes.
-      const states = progress.branches * progress.statistics.distinctStates;
+      const states = progress.branches * progress.states;
       print(
         MESSAGE_CODE.checkingTemporal,
         MESSAGE_LEVEL.none,
-        `Checking ${branches}temporal properties for the complete state space with ${states.toLocaleString("en-US")} total distinct states at (${formatTlcDate(new Date())})`,
+        `Checking ${branches}temporal properties for the ${progress.isComplete ? "complete" : "current"} state space with ${states} total distinct states at (${formatTlcDate(new Date())})`,
       );
+      return;
     }
+    case "liveness-finished":
+      printLivenessEnd(printer, timing);
+      return;
+    case "warning":
+      print(progress.code, MESSAGE_LEVEL.warning, progress.text);
   }
 };
 
@@ -286,6 +344,101 @@ const printLivenessEnd = (printer: MessagePrinter, timing: Timing) => {
     MESSAGE_LEVEL.none,
     `Finished checking temporal properties in ${formatTlcDuration(Date.now() - timing.liveness)} at ${formatTlcDate(new Date())}`,
   );
+  timing.liveness = undefined;
+};
+
+// Prints a violation, and returns whether TLC goes on to print the statistics of the search.
+const printViolation = (status: CheckStatus, violation: Violation, printer: MessagePrinter) => {
+  const print = printer.print;
+  const name = violation.name;
+  const loopStart = violation.loopStart;
+  // TLC prints a violation by an initial state without the behavior or the statistics.
+  const isInitial =
+    loopStart === undefined &&
+    violation.trace.length === 1 &&
+    (status === "invariant-violation" || status === "liveness-violation");
+  const temporal = {
+    code: MESSAGE_CODE.temporalPropertyViolated,
+    text: getTemporalHeadline(violation.properties ?? [name]),
+  };
+  const headline = {
+    success: undefined,
+    error: undefined,
+    "assumption-violation": violation.message
+      ? {
+          code: MESSAGE_CODE.assumptionEvaluationError,
+          text: formatInnerMessage(
+            MESSAGE_CODE.assumptionEvaluationError,
+            `Evaluating assumption ${name} failed.\n${violation.message}`,
+            printer.isTool,
+          ),
+        }
+      : { code: MESSAGE_CODE.assumptionFalse, text: `Assumption ${name} is false.` },
+    deadlock: { code: MESSAGE_CODE.deadlockReached, text: "Deadlock reached." },
+    "invariant-violation": isInitial
+      ? {
+          code: MESSAGE_CODE.invariantViolatedInitial,
+          text: `Invariant ${name} is violated by the initial state:`,
+        }
+      : { code: MESSAGE_CODE.invariantViolatedBehavior, text: `Invariant ${name} is violated.` },
+    "property-violation": temporal,
+    "liveness-violation":
+      loopStart !== undefined
+        ? temporal
+        : isInitial
+          ? {
+              code: MESSAGE_CODE.propertyViolatedInitial,
+              text: `Property ${name} is violated by the initial state:`,
+            }
+          : {
+              code: MESSAGE_CODE.actionPropertyViolatedBehavior,
+              text: `Action property ${name} is violated.`,
+            },
+    "postcondition-violation": {
+      code: violation.postcondition?.code ?? MESSAGE_CODE.general,
+      text: violation.message ?? `Postcondition ${name} is false.`,
+    },
+  }[status];
+  // A safety property's counterexample ends where it breaks, and a liveness one loops back.
+  const isProperty = status === "property-violation";
+  const isLasso = loopStart !== undefined && !isProperty;
+  // TLC rebuilds a liveness counterexample before it reports the violation.
+  if (isProperty || isLasso) printTraceOutput(violation.trace[0]?.output);
+  if (violation.counts) console.log(violation.counts);
+  if (headline) {
+    // TLC prints the initial state that violates a property in the same message.
+    const text = isInitial
+      ? `${headline.text}\n${formatState(violation.trace[0].state)}`
+      : headline.text;
+    print(headline.code, MESSAGE_LEVEL.error, text);
+  }
+  if (!isInitial) {
+    if (!isProperty && !isLasso) printTraceOutput(violation.trace[0]?.output);
+    printTrace(printer, violation.trace, isProperty || isLasso ? COUNTER_EXAMPLE : undefined);
+    printTraceOutput(violation.traceOutput);
+  }
+  if (isLasso) {
+    const label = violation.loopLabel;
+    if (loopStart === violation.trace.length - 1)
+      print(MESSAGE_CODE.statePrint3, MESSAGE_LEVEL.state, `${loopStart + 2}: Stuttering`);
+    else if (printer.isTool)
+      print(
+        MESSAGE_CODE.backToState,
+        MESSAGE_LEVEL.state,
+        `${loopStart + 1}: Back to state${label ? `: <${label}>\n` : ""}`,
+      );
+    else console.log(`Back to state ${loopStart + 1}${label ? `: <${label}>\n` : ""}`);
+  }
+  if (violation.warning)
+    print(violation.warning.code, MESSAGE_LEVEL.warning, violation.warning.text);
+  // TLC checks the postconditions after it prints a counterexample.
+  const postcondition =
+    violation.unwitnessed ??
+    (status === "postcondition-violation" ? undefined : violation.postcondition);
+  if (postcondition?.counts) console.log(postcondition.counts);
+  if (postcondition) print(postcondition.code, MESSAGE_LEVEL.error, postcondition.message);
+  // TLC checks assumptions before it starts the search, so it has no statistics to print.
+  return !isInitial && status !== "assumption-violation";
 };
 
 const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timing) => {
@@ -293,9 +446,44 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
   if (result.failure) {
     const failure = result.failure;
     const message = printer.isTool ? failure.toolMessage : failure.message;
+    const printCallStack = () => {
+      const fingerprint = failure.fingerprint;
+      if (fingerprint) {
+        // TLC prints the call stack when the replay has one, and otherwise the sources of the
+        // values it failed to fingerprint, innermost first.
+        const trace = failure.callStack?.length
+          ? formatCallStack(failure.callStack)
+          : formatFingerprintTrace(fingerprint.sources);
+        print(
+          MESSAGE_CODE.fingerprintFailed,
+          MESSAGE_LEVEL.error,
+          `TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n${trace}\nReason:\n${formatNestedMessage(fingerprint.reason, printer.isTool)}`,
+        );
+        return;
+      }
+      if (!failure.callStack) return;
+      print(
+        MESSAGE_CODE.nestedExpression,
+        MESSAGE_LEVEL.error,
+        `The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n${formatCallStack(failure.callStack)}`,
+      );
+    };
+    if (failure.isCallStackFirst) printCallStack();
+    // TLC prints the state as it reports the error, so a state it can't print fails outside the
+    // checker, which TLC reports as an exception it did not expect.
     const initialState =
       failure.initialState &&
-      `While working on the initial state:\n${formatState(failure.initialState)}`;
+      (() => {
+        try {
+          return `While working on the initial state:\n${formatState(failure.initialState)}`;
+        } catch (error) {
+          if (!(error instanceof TlaEvaluationError)) throw error;
+          throw setExitCode(
+            new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`),
+            EXIT_STATUS.error,
+          );
+        }
+      })();
     // TLC prints an error on an initial state and the state as one message.
     if (initialState) {
       print(MESSAGE_CODE.initialState, MESSAGE_LEVEL.error, `${message}\n${initialState}`);
@@ -304,96 +492,18 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     }
     printTraceOutput(failure.trace[0]?.output);
     printTrace(printer, failure.trace);
+    if (failure.isTraceFailed) print(failure.code, MESSAGE_LEVEL.error, message);
     printTraceOutput(failure.traceOutput);
-    if (result.failure.callStack) {
-      print(
-        MESSAGE_CODE.nestedExpression,
-        MESSAGE_LEVEL.error,
-        `The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n${formatCallStack(result.failure.callStack)}`,
-      );
-    }
+    const postcondition = failure.postcondition;
+    if (postcondition?.counts) console.log(postcondition.counts);
+    if (postcondition) print(postcondition.code, MESSAGE_LEVEL.error, postcondition.message);
+    if (!failure.isCallStackFirst) printCallStack();
   } else if (result.violation) {
-    const violation = result.violation;
-    const name = violation.name;
-    const loopStart = violation.loopStart;
-    // TLC prints a violation by an initial state without the behavior or the statistics.
-    const isInitial =
-      loopStart === undefined &&
-      violation.trace.length === 1 &&
-      (result.status === "invariant-violation" || result.status === "liveness-violation");
-    const temporal = {
-      code: MESSAGE_CODE.temporalPropertyViolated,
-      text: getTemporalHeadline(violation.properties ?? [name]),
-    };
-    const headline = {
-      success: undefined,
-      error: undefined,
-      "assumption-violation": violation.message
-        ? {
-            code: MESSAGE_CODE.assumptionEvaluationError,
-            text: `Evaluating assumption ${name} failed.\n${violation.message}`,
-          }
-        : { code: MESSAGE_CODE.assumptionFalse, text: `Assumption ${name} is false.` },
-      deadlock: { code: MESSAGE_CODE.deadlockReached, text: "Deadlock reached." },
-      "invariant-violation": isInitial
-        ? {
-            code: MESSAGE_CODE.invariantViolatedInitial,
-            text: `Invariant ${name} is violated by the initial state:`,
-          }
-        : { code: MESSAGE_CODE.invariantViolatedBehavior, text: `Invariant ${name} is violated.` },
-      "property-violation": temporal,
-      "liveness-violation":
-        loopStart !== undefined
-          ? temporal
-          : isInitial
-            ? {
-                code: MESSAGE_CODE.propertyViolatedInitial,
-                text: `Property ${name} is violated by the initial state:`,
-              }
-            : {
-                code: MESSAGE_CODE.actionPropertyViolatedBehavior,
-                text: `Action property ${name} is violated.`,
-              },
-      "postcondition-violation": {
-        code: MESSAGE_CODE.general,
-        text: violation.message ?? `Postcondition ${name} is false.`,
-      },
-    }[result.status];
-    // A safety property's counterexample ends where it breaks, and a liveness one loops back.
-    const isProperty = result.status === "property-violation";
-    const isLasso = loopStart !== undefined && !isProperty;
-    // TLC rebuilds a liveness counterexample before it reports the violation.
-    if (isProperty || isLasso) printTraceOutput(violation.trace[0]?.output);
-    if (violation.counts) console.log(violation.counts);
-    if (headline) {
-      // TLC prints the initial state that violates a property in the same message.
-      const text = isInitial
-        ? `${headline.text}\n${formatState(violation.trace[0].state)}`
-        : headline.text;
-      print(headline.code, MESSAGE_LEVEL.error, text);
-    }
-    if (!isInitial) {
-      if (!isProperty && !isLasso) printTraceOutput(violation.trace[0]?.output);
-      printTrace(printer, violation.trace, isProperty || isLasso ? COUNTER_EXAMPLE : undefined);
-      printTraceOutput(violation.traceOutput);
-    }
-    if (isLasso) {
-      const label = violation.loopLabel;
-      if (loopStart === violation.trace.length - 1)
-        print(MESSAGE_CODE.statePrint3, MESSAGE_LEVEL.state, `${loopStart + 2}: Stuttering`);
-      else if (printer.isTool)
-        print(
-          MESSAGE_CODE.backToState,
-          MESSAGE_LEVEL.state,
-          `${loopStart + 1}: Back to state${label ? `: <${label}>\n` : ""}`,
-        );
-      else console.log(`Back to state ${loopStart + 1}${label ? `: <${label}>\n` : ""}`);
-    }
-    const unwitnessed = violation.unwitnessed;
-    if (unwitnessed?.counts) console.log(unwitnessed.counts);
-    if (unwitnessed) print(MESSAGE_CODE.general, MESSAGE_LEVEL.error, unwitnessed.message);
-    // TLC checks assumptions before it starts the search, so it has no statistics to print.
-    if (isInitial || result.status === "assumption-violation") return;
+    if (!printViolation(result.status, result.violation, printer)) return;
+    // TLC adds a deadlocked state to the behavior graph after it reports the deadlock, which can
+    // violate a temporal property too.
+    const additional = result.additionalViolation;
+    if (additional) printViolation("property-violation", additional, printer);
   } else {
     printLivenessEnd(printer, timing);
     const optimistic = getOptimisticProbability(result.distinctStates, result.generatedStates);
@@ -450,12 +560,6 @@ const checkSpec = async (
   }
   const source = readFileSync(specPath, "utf8");
   const fileName = basename(specPath, ".tla");
-  const moduleName = parseModule(source).name;
-  if (moduleName !== fileName) {
-    throw new TlaSyntaxError(
-      `File name '${fileName}' does not match the name '${moduleName}' of the top level module it contains.`,
-    );
-  }
   const configPath =
     args.get("-config")?.[0] ??
     (args.has("-config") ? undefined : specPath.replace(/\.tla$/, ".cfg"));
@@ -463,7 +567,40 @@ const checkSpec = async (
     console.error(`Cannot find the configuration file ${configPath ?? ""}`);
     return EXIT_STATUS.configParseError;
   }
-  const config = parseConfig(readFileSync(configPath, "utf8"));
+  const timing: Timing = { start: Date.now(), liveness: undefined, isParsed: false };
+  const printFinished = () =>
+    printer.print(
+      MESSAGE_CODE.finished,
+      MESSAGE_LEVEL.none,
+      `Finished in ${Date.now() - timing.start}ms at (${formatTlcDate(new Date())})`,
+    );
+  const printParsingFailed = () =>
+    printer.print(
+      MESSAGE_CODE.parsingFailed,
+      MESSAGE_LEVEL.error,
+      "Parsing or semantic analysis failed.",
+    );
+  // TLC prints how long it ran even when it stops at an error.
+  const printFailure = (error: TlaError) => {
+    if (error instanceof TlaSyntaxError) {
+      printParsingFailed();
+    } else {
+      printError(error, printer);
+    }
+    printFinished();
+    return getErrorExitCode(error);
+  };
+  // TLC reads the configuration file before it parses the spec, and prints how long it ran even
+  // when it can't read it.
+  const config = (() => {
+    try {
+      return parseConfig(readFileSync(configPath, "utf8"));
+    } catch (error) {
+      if (!printer.isTool || !(error instanceof TlaConfigError)) throw error;
+      return error;
+    }
+  })();
+  if (config instanceof TlaConfigError) return printFailure(config);
   if (args.has("-deadlock")) config.checkDeadlock = false;
   const seed = args.has("-seed") ? args.get("-seed")?.[0] : "0";
   if (seed === undefined) {
@@ -500,49 +637,94 @@ const checkSpec = async (
     return 1;
   }
   const directory = dirname(specPath);
-  const timing: Timing = { start: Date.now(), liveness: undefined };
-  if (printer.isTool)
-    printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");
-  else console.log(`Checking ${basename(specPath)} with ${basename(configPath)}`);
-  const result = await check({
-    workers: getWorkerCount(args.get("-workers")),
-    livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
-    seed: BigInt(seed),
-    dump: dumpValues && getDump(dumpValues),
-    // TLC loads its trace exploration spec unless it runs with -tool.
-    isTraceSpecLoaded: !args.has("-tool"),
-    onProgress: printer.isTool
-      ? (progress) => printToolProgress(printer, progress, timing)
-      : undefined,
-    source,
-    config,
-    onPause: () => readSync(0, Buffer.alloc(1)),
-    loadModule: createModuleLoader([directory, ...libraries]),
-    loadClass: (name) => {
-      const classPath = join(directory, `${name}.class`);
-      return existsSync(classPath) ? readFileSync(classPath) : undefined;
-    },
-    readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
-    writeFile: (path, content) => {
-      mkdirSync(dirname(resolve(path)), { recursive: true });
-      writeFileSync(path, content);
-    },
-  });
-  printResult(result, printer, timing);
-  if (printer.isTool) {
-    printer.print(
-      MESSAGE_CODE.finished,
-      MESSAGE_LEVEL.none,
-      `Finished in ${Date.now() - timing.start}ms at (${formatTlcDate(new Date())})`,
-    );
+  const loadModule = createModuleLoader([directory, ...libraries]);
+  const run = async () => {
+    const moduleName = parseModule(source).name;
+    if (moduleName !== fileName) {
+      throw new TlaSanyFatalError(
+        `File name '${fileName}' does not match the name '${moduleName}' of the top level module it contains.`,
+        undefined,
+      );
+    }
+    const result = await check({
+      workers: getWorkerCount(args.get("-workers")),
+      livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
+      seed: BigInt(seed),
+      dump: dumpValues && getDump(dumpValues),
+      // TLC loads its trace exploration spec unless it runs with -tool.
+      isTraceSpecLoaded: !args.has("-tool"),
+      onProgress: printer.isTool
+        ? (progress) => printToolProgress(printer, progress, timing)
+        : undefined,
+      source,
+      config,
+      onPause: () => readSync(0, Buffer.alloc(1)),
+      loadModule,
+      loadClass: (name) => {
+        const classPath = join(directory, `${name}.class`);
+        return existsSync(classPath) ? readFileSync(classPath) : undefined;
+      },
+      readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
+      writeFile: (path, content) => {
+        mkdirSync(dirname(resolve(path)), { recursive: true });
+        writeFileSync(path, content);
+      },
+    });
+    printResult(result, printer, timing);
+    if (printer.isTool) printFinished();
+    return result.failure?.exitCode ?? EXIT_CODES[result.status];
+  };
+  if (!printer.isTool) {
+    console.log(`Checking ${basename(specPath)} with ${basename(configPath)}`);
+    return run();
   }
-  return result.failure?.exitCode ?? EXIT_CODES[result.status];
+  printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");
+  // TLC prints the warnings SANY reports, and the errors it rejects the spec for.
+  const sany = getSanyReport(specPath, loadModule);
+  process.stdout.write(sany.text);
+  if (sany.isFailed) {
+    printToolProgress(printer, { kind: "parsed" }, timing);
+    printParsingFailed();
+    printFinished();
+    return EXIT_STATUS.specParseError;
+  }
+  try {
+    return await run();
+  } catch (error) {
+    if (!(error instanceof TlaError)) throw error;
+    if (error instanceof TlaSyntaxError) console.log(formatSanyErrors(error, fileName));
+    if (!timing.isParsed) printToolProgress(printer, { kind: "parsed" }, timing);
+    return printFailure(error);
+  }
+};
+
+// What SANY prints about a spec it rejects: a module it can't find or parse is a fatal error, and
+// it reports the other errors as semantic errors.
+const formatSanyErrors = (error: TlaSyntaxError, specName: string) => {
+  const isFatal = error instanceof TlaSanyFatalError;
+  if (!isFatal && !error.failure)
+    return `Semantic errors:\n\n*** Errors: 1\n\n${error.message}\n\n`;
+  const report = !isFatal
+    ? `In module ${specName}\n\nCould not parse module ${specName} from file ${specName}.tla`
+    : error.location === undefined
+      ? `Unknown location\n\n${error.message}`
+      : `In module ${error.location}\n\n${error.message}`;
+  const parseError = error.failure ? `***Parse Error***\n${error.message}\n\n` : "";
+  return `${parseError}\nFatal errors while parsing TLA+ spec in file ${specName}\n\n${report}\n*** Errors: 1\n\n${report}\n\n\n`;
 };
 
 // TLC prints the errors it raises itself. tla-ts names the others, such as a module SANY rejects.
 const printError = (error: TlaError, printer: MessagePrinter) => {
   if (error instanceof TlaConfigError || error instanceof TlaEvaluationError) {
-    return printer.print(MESSAGE_CODE.general, MESSAGE_LEVEL.error, error.message);
+    // TLC prints an error it raises with a message code, such as a configuration error, with
+    // that code.
+    const coded = getCodedMessage(error.message);
+    const code = coded && !coded.isEvalException ? coded.code : MESSAGE_CODE.general;
+    return printer.print(
+      code,
+      MESSAGE_LEVEL.error,
+      formatInnerMessage(code, error.message, printer.isTool),
+    );
   }
   console.error(`${error.name}: ${error.message}`);
 };

@@ -12,6 +12,9 @@ export interface CheckerRuntime {
   getRandom: () => JavaRandom;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
   pause: () => void;
+  // Prints a warning TLC raises while it evaluates, with its message code. TLC prints each
+  // distinct warning once.
+  warn: (code: number, text: string) => void;
   seed: bigint;
   isSeen: (state: Value[]) => boolean;
   generatedStates: number;
@@ -65,6 +68,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
       }
     },
     pause: () => {},
+    warn: () => {},
     seed,
     generatedStates: 0,
     distinctStates: 0,

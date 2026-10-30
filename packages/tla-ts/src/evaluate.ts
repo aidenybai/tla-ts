@@ -13,9 +13,10 @@ import {
   type SourceRange,
 } from "./ast";
 import { getKindString } from "./builtins";
-import { TlaEvaluationError } from "./errors";
+import { TlaEvaluationError, TlaUnassignedError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
+import { MESSAGE_CODE } from "./tlc-messages";
 import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
 import { contextualApplications, mapChildren, substitutedExpressions } from "./instances";
@@ -52,9 +53,13 @@ import {
   toFiniteSet,
   updateFunction,
   valuesEqual,
+  type FilteredSetValue,
   type LazyFunctionSource,
   type LazyFunctionValue,
+  type ObjectValue,
   type Value,
+  markNormalized,
+  membershipTrace,
 } from "./values";
 
 export type State = (Value | undefined)[];
@@ -121,6 +126,9 @@ export interface Environment {
   variableIndex: Map<string, number>;
   definitionValues: Map<Definition, Value>;
   constantLevels: Map<Definition, boolean>;
+  // The definitions an INSTANCE copies from a module that declares constants or variables. SANY
+  // wraps the body of each in its substitutions.
+  substitutedDefinitions: Set<Definition>;
   evaluators: WeakMap<Expression, Evaluator>;
   // The expressions being evaluated, outermost first, when the environment replays an error to
   // find where it occurred, as TLC's CallStackTool does.
@@ -131,7 +139,50 @@ export interface CallStack {
   expressions: Expression[];
   // TLC stops popping the stack once an evaluation fails, so it keeps where the failure occurred.
   isFrozen: boolean;
+  // The expression that built each value of the replay that TLC's CallStackTool gives a source.
+  sources: WeakMap<ObjectValue, Expression>;
+  // The value each expression of the replay last evaluated to.
+  values: WeakMap<Expression, Value>;
+  // The failure of a value with a source, which TLC raises as a FingerprintException.
+  fingerprint?: FingerprintFailure;
 }
+
+export interface FingerprintFailure {
+  // The sources of the values whose methods failed, outermost first.
+  sources: Expression[];
+  // The message of the error the innermost one raised.
+  reason: string;
+}
+
+// The operators of Tool#evalAppl whose value TLC's CallStackTool gives a source.
+const SOURCED_OPERATORS = new Set(["SUBSET", "UNION", "DOMAIN", "\\cup", "\\cap", "\\"]);
+
+const SOURCED_KINDS = new Set<Expression["kind"]>([
+  "Lambda",
+  "SetEnumeration",
+  "SetFilter",
+  "SetMap",
+  "Tuple",
+  "FunctionConstruction",
+  "FunctionSet",
+  "Record",
+  "RecordSet",
+  "Product",
+]);
+
+const isSourced = (expression: Expression) =>
+  SOURCED_KINDS.has(expression.kind) ||
+  (expression.kind === "Apply" && SOURCED_OPERATORS.has(expression.operator));
+
+// The argument whose method Tool#evalAppl calls to compute an operator, as with S.member(e) for
+// e \in S.
+const getReceiver = (expression: Expression) => {
+  if (expression.kind !== "Apply" || expression.args.length !== 2) return undefined;
+  if (expression.operator === "\\subseteq") return expression.args[0];
+  return expression.operator === "\\in" || expression.operator === "\\notin"
+    ? expression.args[1]
+    : undefined;
+};
 
 export interface Context {
   environment: Environment;
@@ -551,6 +602,28 @@ const evaluateDefinitionValue = (definition: Definition, context: Context) => {
   context.environment.definitionValues.set(definition, value);
   return value;
 };
+
+// TLC computes each constant definition the configuration doesn't replace when it starts, and
+// leaves one it fails to compute to evaluate where the spec uses it.
+export const evaluateStartupDefinitions = (definitions: Definition[], environment: Environment) =>
+  definitions.forEach((definition) => {
+    if (definition.kind === "Operator" && definition.params.length > 0) return;
+    const name = definition.name;
+    if (environment.constants.has(name) || environment.substitutions.has(name)) return;
+    if (!isConstantLevel(definition, environment)) return;
+    try {
+      markNormalized(
+        evaluateDefinitionValue(definition, {
+          environment,
+          scope: undefined,
+          state: undefined,
+          next: undefined,
+        }),
+      );
+    } catch (error) {
+      if (!(error instanceof TlaEvaluationError)) throw error;
+    }
+  });
 
 const forceThunk = (thunk: Thunk, context: Context) => {
   const isSameState = thunk.state === context.state && thunk.next === context.next;
@@ -1078,17 +1151,59 @@ const isStateCached = (expression: Expression, environment: Environment) =>
   getReadVariables(expression, environment) !== undefined &&
   !hasFreeLocals(expression, NO_BOUND_NAMES);
 
+// How to rebuild a set filter TLC evaluates lazily so that its predicate runs in another
+// environment.
+const filteredSetRebinders = new WeakMap<FilteredSetValue, (environment: Environment) => Value>();
+
+// TLC's CallStackTool rebinds the lazy values its evaluations return, so their later evaluation
+// records its call stack too.
 const traceEvaluator =
-  (expression: Expression, evaluator: Evaluator, callStack: CallStack): Evaluator =>
+  (
+    expression: Expression,
+    evaluator: Evaluator,
+    environment: Environment,
+    callStack: CallStack,
+  ): Evaluator =>
   (context) => {
     callStack.expressions.push(expression);
+    const outerSets = membershipTrace.sets;
+    const sets = outerSets ?? [];
+    const depth = sets.length;
+    membershipTrace.sets = sets;
     try {
-      return evaluator(context);
+      const computed = evaluator(context);
+      const rebind =
+        typeof computed === "object" && computed.kind === "FilteredSet"
+          ? filteredSetRebinders.get(computed)
+          : undefined;
+      const value = rebind ? rebind(environment) : computed;
+      callStack.values.set(expression, value);
+      if (typeof value === "object" && isSourced(expression)) {
+        callStack.sources.set(value, expression);
+      }
+      return value;
     } catch (error) {
+      // A method of a value with a source raises a FingerprintException, which each value with a
+      // source whose method called it heads in turn. CallStack#freeze adds their sources to the
+      // stack, outermost first.
+      const receiver = getReceiver(expression);
+      const value = receiver && callStack.values.get(receiver);
+      const sources = [value, ...sets.slice(depth).filter((set) => set !== value)].flatMap(
+        (item) => {
+          const source = typeof item === "object" ? callStack.sources.get(item) : undefined;
+          return source ? [source] : [];
+        },
+      );
+      if (!callStack.isFrozen && sources.length > 0 && error instanceof TlaEvaluationError) {
+        callStack.expressions.push(...sources);
+        callStack.fingerprint = { sources, reason: error.message };
+      }
       callStack.isFrozen = true;
       throw error;
     } finally {
       if (!callStack.isFrozen) callStack.expressions.pop();
+      sets.length = depth;
+      membershipTrace.sets = outerSets;
     }
   };
 
@@ -1097,7 +1212,7 @@ const traceEvaluator =
 export const createTracingEnvironment = (environment: Environment): Environment => ({
   ...environment,
   evaluators: new WeakMap(),
-  callStack: { expressions: [], isFrozen: false },
+  callStack: { expressions: [], isFrozen: false, sources: new WeakMap(), values: new WeakMap() },
 });
 
 export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
@@ -1106,7 +1221,7 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
   const compiled = compile(expression, environment);
   const callStack = environment.callStack;
   const evaluator = callStack
-    ? traceEvaluator(expression, compiled, callStack)
+    ? traceEvaluator(expression, compiled, environment, callStack)
     : isWorthCaching(expression) && isClosedConstant(expression, environment)
       ? cacheFirstValue(compiled)
       : isStateCached(expression, environment)
@@ -1410,6 +1525,14 @@ const compileApply = (
     return (context) => subset(left(context), right(context));
   }
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
+  // TLC refuses action composition unless a Java property enables its incomplete implementation.
+  if (expression.operator === "\\cdot" && args.length === 2) {
+    return () => {
+      throw new TlaEvaluationError(
+        "The current version of TLC does not support action composition.  An incomplete implementation can be enabled via the tlc2.tool.impl.Tool.cdot=true java property.",
+      );
+    };
+  }
   return (context) => {
     const operator = resolveOperator(expression.operator, context);
     if (operator) return callOperator(operator, args, context);
@@ -1586,7 +1709,20 @@ const compileExcept = (
   };
   return (context) => {
     let current = evaluateFunction(context);
-    for (const item of updates) current = update(current, item.path, 0, context, item.value);
+    for (const item of updates) {
+      // TLC leaves the value as it is when an update's path is not in it, and warns.
+      const found = { value: false };
+      current = update(current, item.path, 0, context, (inner) => {
+        found.value = true;
+        return item.value(inner);
+      });
+      if (!found.value) {
+        context.environment.runtime.warn(
+          MESSAGE_CODE.exceptAppliedToUnknownField,
+          `The EXCEPT was applied to non-existing fields of the value at\n${describeRange(expression.function)}`,
+        );
+      }
+    }
     return current;
   };
 };
@@ -1599,23 +1735,42 @@ const compileSetComprehension = (
     const predicate = getEvaluator(expression.predicate, environment);
     const set = getEvaluator(expression.bound.set, environment);
     const pattern = expression.bound.pattern;
+    const createTest = (evaluator: Evaluator, context: Context) => (element: Value) =>
+      expectBoolean(
+        evaluator(withScope(context, bindPattern(context.scope, pattern, element))),
+        "a set filter predicate",
+      );
+    const createFiltered = (
+      base: Value,
+      context: Context,
+      evaluator: Evaluator,
+    ): FilteredSetValue => {
+      const filtered: FilteredSetValue = {
+        kind: "FilteredSet",
+        base,
+        test: createTest(evaluator, context),
+      };
+      filteredSetRebinders.set(filtered, (tracing) =>
+        createFiltered(
+          base,
+          { ...context, environment: tracing },
+          getEvaluator(expression.predicate, tracing),
+        ),
+      );
+      return filtered;
+    };
     return (context) => {
       const base = set(context);
-      const test = (element: Value) =>
-        expectBoolean(
-          predicate(withScope(context, bindPattern(context.scope, pattern, element))),
-          "a set filter predicate",
-        );
       const isReducible =
         typeof base === "object" &&
         (base.kind === "Set" || base.kind === "MixedSet" || base.kind === "Interval");
       if (!isReducible) {
-        if (isSetValue(base)) return { kind: "FilteredSet", base, test };
+        if (isSetValue(base)) return createFiltered(base, context, predicate);
         throw new TlaEvaluationError(
           `TLC encountered a non-enumerable quantifier bound ${formatValue(base)} at ${describeLocation(expression.bound.set)}`,
         );
       }
-      return createSortedSet(toFiniteSet(base).elements.filter(test));
+      return createSortedSet(toFiniteSet(base).elements.filter(createTest(predicate, context)));
     };
   }
   if (expression.kind === "SetMap") {
@@ -1662,8 +1817,21 @@ export const getSortedFields = (fields: RecordField[]) =>
 export const hasDuplicateFields = (sortedFields: RecordField[]) =>
   sortedFields.some((field, index) => index > 0 && sortedFields[index - 1].name === field.name);
 
+// TLC's Tool#evalAppl fails to look up a variable the state doesn't assign.
 export const createUnassignedError = (name: string, expression: Expression) =>
-  new TlaEvaluationError(`The variable ${name} is not assigned at ${describeLocation(expression)}`);
+  new TlaUnassignedError(
+    `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
+    name,
+  );
+
+// TLC's Tool#enabled reads the subscript of <<A>>_v in the successor as a state of its own, and
+// names the fairness condition when A leaves a variable of v unassigned.
+export const toUnspecifiedSubscriptError = (error: unknown) =>
+  error instanceof TlaUnassignedError
+    ? new TlaEvaluationError(
+        `The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable ${error.variable} occurring in the state formula v.\n`,
+      )
+    : error;
 
 export const createPrimeOutsideActionError = (expression: Expression) =>
   new TlaEvaluationError(
@@ -1849,7 +2017,20 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       };
     case "FunctionApplication": {
       keepLazy(expression.function);
-      const evaluateFunction = child(expression.function);
+      const evaluated = child(expression.function);
+      // Tool#evalAppl checks that it applies a function before it evaluates the argument.
+      const evaluateFunction = (context: Context) => {
+        const value = evaluated(context);
+        if (
+          typeof value === "object" &&
+          (value.kind === "Function" || value.kind === "LazyFunction")
+        ) {
+          return value;
+        }
+        throw new TlaEvaluationError(
+          `A non-function (${getKindString(value)}) was applied as a function.\n${describeRange(expression)}`,
+        );
+      };
       const args = expression.args.map(child);
       if (args.length === 1) {
         const argument = args[0];
