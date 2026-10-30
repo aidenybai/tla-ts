@@ -53,8 +53,12 @@ const XML_ENTITIES: Record<string, string> = {
   "\r": "&#13;",
 };
 
+// Java's serializer also writes a character outside the Basic Multilingual Plane, which a Java
+// string holds as two chars, as a character reference.
 const escapeXml = (text: string) =>
-  text.replace(/[&<>\r]/g, (character) => XML_ENTITIES[character]);
+  text.replace(/[&<>\r]|[\u{10000}-\u{10FFFF}]/gu, (character) =>
+    character.length === 2 ? `&#${character.codePointAt(0)};` : XML_ENTITIES[character],
+  );
 
 // A character outside XML 1.0's Char production.
 const UNREPRESENTABLE_CHARACTER = /[^\t\n\r\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u;
@@ -80,7 +84,8 @@ const printElement = (element: XmlElement, depth: number): string[] => {
     const data = element.cdata.replaceAll("]]>", "]]]]><![CDATA[>");
     return [`${indent}<${element.tag}><![CDATA[${data}]]></${element.tag}>`];
   }
-  if (element.text !== undefined) {
+  // An element whose text is empty has no content, like an element without children.
+  if (element.text) {
     return [`${indent}<${element.tag}>${escapeXml(element.text)}</${element.tag}>`];
   }
   if (element.children.length === 0) return [`${indent}<${element.tag}/>`];

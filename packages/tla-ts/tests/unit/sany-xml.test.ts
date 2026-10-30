@@ -220,6 +220,16 @@ THEOREM ${statement}
     ).toThrow(TlaSyntaxError);
   });
 
+  it("writes an empty string as an empty element and a character past the BMP as a reference", () => {
+    const xml = exportSanyXml(
+      generate(`---- MODULE Strings ----
+S == <<"", "\u{1F600}">>
+====`),
+    );
+    expect(xml).toContain("<StringValue/>");
+    expect(xml).toContain("<StringValue>&#128512;</StringValue>");
+  });
+
   it("fails as SANY does on a character that XML 1.0 cannot represent", () => {
     const source = `---- MODULE FormFeed ----
 S == "a\\fb"
