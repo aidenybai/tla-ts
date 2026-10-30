@@ -389,6 +389,11 @@ export class AstManager {
     return hash;
   }
 
+  // The hash of a user declaration, which Z3's tables of declarations hash.
+  getDeclHash(decl: number) {
+    return this.declHashes[decl];
+  }
+
   mkFuncDecl(name: SmtSymbol, domain: number[], range: number, isSkolem = false) {
     this.declHashes[this.funcDecls.length] = this.getFuncDeclHash(
       name,
