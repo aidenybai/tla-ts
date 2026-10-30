@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import type { TlcVersion } from "../../src/tlc-version";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/liveness");
 
@@ -64,5 +65,19 @@ describe("liveness matches TLC", () => {
       "NeverThree",
       [0, 1, 2, 3],
     ]);
+  });
+
+  it("finds a violation of a safety-like property early unless TLC is 1.7.4", async () => {
+    const directory = join(import.meta.dirname, "../fixtures/github710");
+    const getAdditionalViolation = async (version: TlcVersion) => {
+      const result = await check({
+        source: readFileSync(join(directory, "Github710d.tla"), "utf8"),
+        config: readFileSync(join(directory, "Github710d.cfg"), "utf8"),
+        version,
+      });
+      return result.additionalViolation?.name;
+    };
+    expect(await getAdditionalViolation("master")).toBe("NeverThree");
+    expect(await getAdditionalViolation("1.7.4")).toBeUndefined();
   });
 });

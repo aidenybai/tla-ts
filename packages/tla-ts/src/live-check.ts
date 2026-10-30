@@ -325,7 +325,10 @@ export const createLivenessChecker = (
     evaluateFrom(source, () =>
       tableau.nodes[node].statePredicates.every((predicate) => evaluateState(predicate, state)),
     );
+  // TLC 1.7.4 doesn't stop at a tableau node that accepts every behavior, so it finds a violation
+  // of a property like a safety property only in its liveness checks.
   const isAccepting = (tableau: Tableau, node: number) => {
+    if (environment.runtime.version === "1.7.4") return false;
     const tableauNode = tableau.nodes[node];
     return (
       tableauNode.particle.length === 0 &&
