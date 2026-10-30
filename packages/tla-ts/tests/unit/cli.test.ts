@@ -437,6 +437,14 @@ describe("the CLI exports XML like SANY's XMLExporter", () => {
     expect(result.stderr).toBe([...lines, ""].join("\n"));
   });
 
+  // Numbered.xml is what XMLExporter writes for Numbered.tla, which has a node of each kind SANY
+  // numbers out of the order of the spec's text.
+  it("writes the XML that XMLExporter writes, with SANY's UIDs in the order of its HashMap", () => {
+    const result = exportXml(["Numbered.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(readFileSync(join(FIXTURES, "xml-export", "Numbered.xml"), "utf8"));
+  });
+
   it("finds the root module and the modules it extends in the -I directories", () => {
     const result = exportXml(["-I", "nested", "Root"]);
     expect(result.status).toBe(0);

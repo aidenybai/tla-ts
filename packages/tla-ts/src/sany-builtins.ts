@@ -98,9 +98,11 @@ export const createLevelFields = (id: number): LevelFields => ({
   argLevelConstraints: new Map(),
 });
 
-// The builtin operators in the order SANY adds them to its global context.
+// The builtin operators in the order SANY adds them to its global context. OpDefNode's constructor
+// for a builtin numbers the operator, then its phony parameters.
 export const createBuiltins = (getId: () => number) =>
   BUILTIN_OPERATORS.map(([name, arity, level, maxLevels, weights]): OpDefNode => {
+    const id = getId();
     const params =
       arity < 0
         ? undefined
@@ -114,7 +116,7 @@ export const createBuiltins = (getId: () => number) =>
     const isLevelSet = maxLevels !== undefined && weights !== undefined;
     const isLeibnizArg = weights?.map((weight) => weight > 0);
     return {
-      ...createLevelFields(getId()),
+      ...createLevelFields(id),
       levelChecked: isLevelSet ? 99 : 0,
       level,
       kind: "OpDef",

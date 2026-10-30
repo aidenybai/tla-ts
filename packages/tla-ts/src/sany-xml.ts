@@ -134,14 +134,24 @@ const getReferenceTag = (node: ContextNode) => {
   }
 };
 
+// java.util.HashMap, which holds SymbolContext's entries, and lists them by the bucket of their
+// Integer key, and the entries of a bucket in the order they were added.
+const getHashMapCapacity = (size: number, capacity = 16): number =>
+  size > capacity * 0.75 ? getHashMapCapacity(size, capacity * 2) : capacity;
+
+const getHashMapBucket = (key: number, capacity: number) => (key ^ (key >>> 16)) & (capacity - 1);
+
 // The XML of SANY's XMLExporter: every module of the specification, and a context with an entry
 // for each symbol, theorem and assumption that the modules refer to.
 const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
+  // SymbolContext: SANY marks a node's UID as exported before it exports the node's definition,
+  // which can export other definitions, and adds the definition to its entries after them.
+  const keys = new Set<number>();
   const entries = new Map<number, XmlElement>();
 
   const getReference = (node: ContextNode, isOtherBug = false): XmlElement => {
-    if (!entries.has(node.id)) {
-      entries.set(node.id, createElement("pending"));
+    if (!keys.has(node.id)) {
+      keys.add(node.id);
       entries.set(node.id, exportDefinition(node, isOtherBug));
     }
     return createElement(getReferenceTag(node), [createText("UID", node.id)]);
@@ -574,10 +584,14 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
   };
 
   const moduleReferences = modules.map((module) => getReference(module));
+  const capacity = getHashMapCapacity(entries.size);
   const context = createElement(
     "context",
     [...entries.entries()]
-      .toSorted(([first], [second]) => first - second)
+      .toSorted(
+        ([first], [second]) =>
+          getHashMapBucket(first, capacity) - getHashMapBucket(second, capacity),
+      )
       .map(([id, element]) => createElement("entry", [createText("UID", id), element])),
   );
   return createElement("modules", [

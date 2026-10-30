@@ -324,7 +324,12 @@ export const generateSanySpecification = (
       );
     }
   };
+  // SANY numbers its semantic nodes as it creates them, which the UIDs of its XML export show:
+  // Context's static initializer creates the builtins, SANY.frontEndInitialize creates them again
+  // for the specification, and the Generator class creates its InAssumeDummyNode.
+  createBuiltins(getId);
   const builtins = createBuiltins(getId);
+  getId();
   const externalModules = new Map<string, ExternalModule>();
   const sources = new Map<string, { file: SourceFile; module: Module }>();
 
@@ -1662,6 +1667,8 @@ export const generateSanySpecification = (
       state.unresolvedSum += declarations.length;
       declarations.forEach((declaration) => {
         const span = getDeclarationSpan(declaration);
+        // The OpDeclNode buildParameter makes of the declaration to read its name and arity.
+        getId();
         const params = Array.from({ length: declaration.arity }, () =>
           createFormalParam("", 0, undefined, false),
         );
@@ -1694,6 +1701,9 @@ export const generateSanySpecification = (
       instanceeContext: Context,
       location: SanyLocation,
     ) => {
+      // The SubstInNode processSubst creates to hold the substitutions, which only their
+      // templates use.
+      getId();
       const declarations = getHashtableValues(instanceeContext.table).filter(
         (symbol): symbol is OpDeclNode => symbol.kind === "OpDecl",
       );
@@ -1854,15 +1864,17 @@ export const generateSanySpecification = (
       });
       getHashtableValues(instanceeContext.table).forEach((symbol) => {
         if (symbol.kind !== "ThmOrAssumpDef" || symbol.isLocal) return;
+        // SANY creates the APSubstInNode before the ThmOrAssumpDefNode that holds it.
+        const body =
+          substs.length > 0
+            ? createSubstIn("APSubstIn", substs, symbol.body, instanceeModule, location)
+            : symbol.body;
         const node: ThmOrAssumpDefNode = {
           ...createLevelFields(getId()),
           kind: "ThmOrAssumpDef",
           name: `${name}!${symbol.name}`,
           isTheorem: symbol.isTheorem,
-          body:
-            substs.length > 0
-              ? createSubstIn("APSubstIn", substs, symbol.body, instanceeModule, location)
-              : symbol.body,
+          body,
           params: [...args, ...symbol.params],
           isLocal: instance.isLocal,
           location,
@@ -2139,6 +2151,8 @@ export const generateSanySpecification = (
             : "ASSUME matched by []PROVE instead of PROVE",
         );
       }
+      // SANY creates the AssumeProveNode, numbering it, before it generates its clauses.
+      const id = getId();
       if (depth > 1) symbolTable.contexts.push(createContext());
       if (isBoxed && symbolTable.contexts.some((context) => assumeContexts.has(context))) {
         throw new TlaSyntaxError(
@@ -2177,7 +2191,7 @@ export const generateSanySpecification = (
       assumeProveState.depth = depth - 1;
       if (depth === 1) assumeProveState.goal = undefined;
       const node: AssumeProveNode = {
-        ...createLevelFields(getId()),
+        ...createLevelFields(id),
         kind: "AssumeProve",
         assumptions,
         goal: conclusion,
@@ -2192,13 +2206,16 @@ export const generateSanySpecification = (
       return node;
     };
 
+    // SANY creates the ThmOrAssumpDefNode of a named theorem or proof step, numbering it, before it
+    // generates what it asserts.
     const createTheoremDefinition = (
+      id: number,
       name: string,
       body: LevelNode,
       location: SanyLocation,
       labels: Map<string, LabelNode>,
     ): ThmOrAssumpDefNode => ({
-      ...createLevelFields(getId()),
+      ...createLevelFields(id),
       kind: "ThmOrAssumpDef",
       name,
       isTheorem: true,
@@ -2218,6 +2235,8 @@ export const generateSanySpecification = (
     const generateLeafProof = (proof: Exclude<Proof, { kind: "Steps" }>): LeafProofNode => {
       const facts = proof.kind === "By" ? generateFacts(proof.facts) : [];
       const defs = proof.kind === "By" ? generateDefs(proof.defs) : [];
+      // SANY reads a BY proof's facts and definitions from the UseOrHideNode it makes of them.
+      if (proof.kind === "By") getId();
       const location = getSpanLocation(file, getUnitSpan(proof.location));
       if (proof.kind === "By" && facts.length + defs.length === 0) addError(location, "Empty BY");
       return {
@@ -2336,6 +2355,7 @@ export const generateSanySpecification = (
         const bodySpan = { start: headSpan.start + 1, end: headSpan.end };
         const body = step.body;
         if (step.name !== undefined) labelSets.push(new Map());
+        const definitionId = step.name === undefined ? undefined : getId();
         if (body.kind !== "Assert") infixStep.previousRight = undefined;
         const otherStep = generateOtherStep(body, stepSpan, bodySpan);
         if (otherStep !== undefined) {
@@ -2381,14 +2401,16 @@ export const generateSanySpecification = (
             statement.kind === "Apply" &&
             isInfixExpression(statement) &&
             statement.args[0].kind === "ExceptAt";
-          const expression =
+          // SANY generates an @ step's right side before the $Nop that stands for its @.
+          const atRight =
             isAtStep && statement.kind === "Apply"
+              ? generateExpression(statement.args[1])
+              : undefined;
+          const expression =
+            atRight !== undefined && statement.kind === "Apply"
               ? createOpAppl(
                   resolveName(statement.operator, getLocation(statement)),
-                  [
-                    applyBuiltin("$Nop", [previousRight], getLocation(statement.args[0])),
-                    generateExpression(statement.args[1]),
-                  ],
+                  [applyBuiltin("$Nop", [previousRight], getLocation(statement.args[0])), atRight],
                   getLocation(statement),
                 )
               : generateExpression(statement);
@@ -2403,9 +2425,10 @@ export const generateSanySpecification = (
         if (generated === undefined) throw new TlaSyntaxError(`Unexpected proof step ${body.kind}`);
         const pickContext = generated.isPick ? symbolTable.contexts.pop() : undefined;
         const definition =
-          step.name === undefined
+          step.name === undefined || definitionId === undefined
             ? undefined
             : createTheoremDefinition(
+                definitionId,
                 step.name,
                 generated.node,
                 getTokenLocation(file, getTokenIndex(file, step.location)),
@@ -2453,6 +2476,7 @@ export const generateSanySpecification = (
       const statement = theorem.statement;
       const assumeContext = createContext();
       if (theorem.name !== undefined) labelSets.push(new Map());
+      const definitionId = theorem.name === undefined ? undefined : getId();
       if (statement.kind === "AssumeProve") symbolTable.contexts.push(assumeContext);
       const body =
         statement.kind === "AssumeProve"
@@ -2463,9 +2487,9 @@ export const generateSanySpecification = (
             )
           : generateExpression(statement);
       const definition =
-        theorem.name === undefined
+        theorem.name === undefined || definitionId === undefined
           ? undefined
-          : createTheoremDefinition(theorem.name, body, location, popLabels());
+          : createTheoremDefinition(definitionId, theorem.name, body, location, popLabels());
       if (definition) {
         if (statement.kind === "AssumeProve") symbolTable.contexts.pop();
         addSymbol(symbolTable, definition);
@@ -2646,6 +2670,8 @@ export const generateSanySpecification = (
 
   order.forEach((name) => {
     options.onAnalyze?.(name);
+    // Each module's Generator creates its nullODN, nullOAN, nullOpArg and nullLabelNode.
+    Array.from({ length: 4 }, getId);
     const entry = getSource(name, undefined);
     const context = createContext();
     // A module's context starts as a copy of SANY's global context of builtins, whose list of
