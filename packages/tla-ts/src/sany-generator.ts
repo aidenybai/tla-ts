@@ -225,17 +225,27 @@ const isInternalInstance = (module: Module, name: string) => {
   return false;
 };
 
-// The modules a file extends and instantiates, as SANY's ParseUnit collects them.
+// The modules a file extends and instantiates, as SANY's ParseUnit collects them, and the module of
+// the file that names each one. SANY looks at a module's own EXTENDS and INSTANCEs before those of
+// its inner modules.
 const getDependencies = (module: Module) => {
   const innerNames = new Set<string>();
   const extendees: string[] = [];
   const instancees: { name: string; isRoot: boolean }[] = [];
+  const importers = new Map<string, string>();
   const visit = (current: Module) => {
     innerNames.add(current.name);
-    extendees.push(...current.extends);
     const isRoot = current === module;
-    const addInstances = (instances: Instance[]) =>
+    const addImporters = (names: string[]) =>
+      names.forEach((name) => {
+        if (!importers.has(name)) importers.set(name, current.name);
+      });
+    extendees.push(...current.extends);
+    addImporters(current.extends);
+    const addInstances = (instances: Instance[]) => {
       instancees.push(...instances.map((instance) => ({ name: instance.module, isRoot })));
+      addImporters(instances.map((instance) => instance.module));
+    };
     current.units.forEach((unit) => {
       if (unit.kind === "Instance") addInstances([unit.instance]);
       if (unit.kind === "Definition") addInstances(getDefinitionInstances(unit.definition));
@@ -245,6 +255,8 @@ const getDependencies = (module: Module) => {
       if (unit.kind === "Assumption" && isRoot) {
         addInstances(getLetInstances(unit.assumption.expression));
       }
+    });
+    current.units.forEach((unit) => {
       if (unit.kind === "Module") visit(unit.module);
     });
   };
@@ -258,6 +270,7 @@ const getDependencies = (module: Module) => {
           : !innerNames.has(instancee.name),
       )
       .map((instancee) => instancee.name),
+    importers,
   };
 };
 
@@ -386,13 +399,16 @@ export const generateSanySpecification = (
     name: string,
     kind: "extendees" | "instancees",
     visited: Set<string>,
-  ): { name: string; importer: string } | undefined => {
+  ): { name: string; importer: string; namingModule: string } | undefined => {
     const entry = sources.get(name);
     if (!entry || visited.has(name)) return undefined;
     visited.add(name);
     const dependencies = getDependencies(entry.module);
     const unresolved = dependencies[kind].find((dependency) => !isResolved(name, dependency));
-    if (unresolved !== undefined) return { name: unresolved, importer: name };
+    if (unresolved !== undefined) {
+      const namingModule = dependencies.importers.get(unresolved) ?? name;
+      return { name: unresolved, importer: name, namingModule };
+    }
     for (const dependency of [...dependencies.extendees, ...dependencies.instancees]) {
       const found = isResolved(name, dependency)
         ? findUnresolved(dependency, kind, visited)
@@ -407,7 +423,9 @@ export const generateSanySpecification = (
       findUnresolved(rootName, "extendees", new Set()) ??
       findUnresolved(rootName, "instancees", new Set());
     for (let next = findNext(); next !== undefined; next = findNext()) {
-      if (!sources.has(next.name)) getSource(next.name, loadModule(next.name), next.importer);
+      if (!sources.has(next.name)) {
+        getSource(next.name, loadModule(next.name), next.namingModule);
+      }
       resolutions.add(`${next.importer} ${next.name}`);
     }
   };

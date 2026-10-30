@@ -336,6 +336,27 @@ const XML_EXPORT_FAILURES = [
     ],
   ],
   [
+    "Nesting.tla",
+    2,
+    [
+      "",
+      "Fatal errors while parsing TLA+ spec in file Nesting.tla",
+      "",
+      "In module Inner",
+      "",
+      "Cannot find source file for module Absent imported in module Inner.",
+      "*** Errors: 1",
+      "",
+      "In module Inner",
+      "",
+      "Cannot find source file for module Absent imported in module Inner.",
+      "",
+      "",
+      "",
+      "ERROR: Failed to parse module.",
+    ],
+  ],
+  [
     "Twice.tla",
     2,
     [
