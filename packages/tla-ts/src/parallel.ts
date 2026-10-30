@@ -108,7 +108,10 @@ const spawnWorker = async (onMessage: (message: WorkerMessage) => void): Promise
 };
 
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
-  const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
+  const config =
+    typeof options.config === "string"
+      ? parseConfig(options.config, options.version)
+      : options.config;
   const print = options.onPrint ?? console.log;
   const printed = { count: 0 };
   // What each point the search reports is about, such as the invariant TLC warns about.

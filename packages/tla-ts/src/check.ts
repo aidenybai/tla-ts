@@ -1313,7 +1313,10 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
 };
 
 const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefined): CheckResult => {
-  const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
+  const config =
+    typeof options.config === "string"
+      ? parseConfig(options.config, options.version)
+      : options.config;
   const onPrint = options.onPrint ?? console.log;
   // TLC prints again while it rebuilds a trace, between the states it prints, so rebuilding a trace
   // keeps what it prints for the trace.
