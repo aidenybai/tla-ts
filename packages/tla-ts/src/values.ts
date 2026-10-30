@@ -30,6 +30,7 @@ export interface FunctionValue {
   hash: number;
   fingerprint: number;
   writtenKeys: Value[] | undefined;
+  functionClass: FunctionClass | undefined;
 }
 
 export interface IntervalValue {
@@ -111,6 +112,7 @@ export interface LazyFunctionValue {
   domain: Value;
   apply: (argument: Value) => Value;
   source?: LazyFunctionSource;
+  functionClass?: FunctionClass;
 }
 
 export type Value =
@@ -426,6 +428,7 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   hash: 0,
   fingerprint: 0,
   writtenKeys: undefined,
+  functionClass: undefined,
 });
 
 // TLC words a failed function application by the Java class of the function: FcnLambdaValue for
@@ -433,18 +436,18 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
 // [a |-> e], and FcnRcdValue for any other function.
 export type FunctionClass = "lambda" | "tuple" | "record";
 
-const functionClasses = new WeakMap<ObjectValue, FunctionClass>();
-
 export const setFunctionClass = <FunctionLike extends FunctionValue | LazyFunctionValue>(
   functionValue: FunctionLike,
   functionClass: FunctionClass | undefined,
 ) => {
-  if (functionClass !== undefined) functionClasses.set(functionValue, functionClass);
+  if (functionClass !== undefined) functionValue.functionClass = functionClass;
   return functionValue;
 };
 
 export const getFunctionClass = (value: Value) =>
-  typeof value === "object" ? functionClasses.get(value) : undefined;
+  typeof value === "object" && (value.kind === "Function" || value.kind === "LazyFunction")
+    ? value.functionClass
+    : undefined;
 
 export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunctionValue>(
   functionValue: FunctionLike,
@@ -1030,12 +1033,15 @@ export const unionSorted = (left: SetValue, right: SetValue): SetValue => {
   }
   if (added.length === 0) return left;
   const union = createSortedSet(merged);
-  if (left.hash !== 0 && left.hash !== UNFINGERPRINTABLE_HASH && !added.some(isUnfingerprintable)) {
+  if (left.hash !== 0 && left.hash !== UNFINGERPRINTABLE_HASH) {
     let hash = left.hash;
-    for (let index = 0; index < added.length; index++) {
-      hash = (hash + getElementContribution(added[index])) | 0;
+    let index = 0;
+    for (; index < added.length; index++) {
+      const elementHash = getValueHash(added[index]);
+      if (elementHash === UNFINGERPRINTABLE_HASH) break;
+      hash = (hash + getElementContribution(elementHash)) | 0;
     }
-    union.hash = hash;
+    if (index === added.length) union.hash = hash;
   }
   if (left.fingerprint !== 0) {
     let fingerprint = left.fingerprint;
@@ -1930,12 +1936,18 @@ export const updateFunction = (
     getFunctionClass(finite),
   );
   updated.writtenKeys = finite.writtenKeys;
-  if (finite.hash !== 0 && finite.hash !== UNFINGERPRINTABLE_HASH && !isUnfingerprintable(next)) {
-    const key = finite.domain[position];
-    updated.hash =
-      previous === next
-        ? finite.hash
-        : (finite.hash - getEntryContribution(key, previous) + getEntryContribution(key, next)) | 0;
+  if (finite.hash !== 0 && finite.hash !== UNFINGERPRINTABLE_HASH) {
+    const nextHash = getValueHash(next);
+    if (nextHash !== UNFINGERPRINTABLE_HASH) {
+      const keyHash = getValueHash(finite.domain[position]);
+      updated.hash =
+        previous === next
+          ? finite.hash
+          : (finite.hash -
+              getEntryContribution(keyHash, getValueHash(previous)) +
+              getEntryContribution(keyHash, nextHash)) |
+            0;
+    }
   }
   if (finite.fingerprint !== 0) {
     const key = finite.domain[position];
@@ -1972,11 +1984,11 @@ const hashString = (value: string) => {
 const SET_HASH_SEED = 0x73a5c3e1;
 const FUNCTION_HASH_SEED = 0x66d1b4f7;
 
-const getElementContribution = (element: Value) =>
-  finalizeHash((getValueHash(element) + 0x9e3779b9) | 0);
+const getElementContribution = (elementHash: number) =>
+  finalizeHash((elementHash + 0x9e3779b9) | 0);
 
-const getEntryContribution = (key: Value, value: Value) =>
-  finalizeHash((Math.imul(getValueHash(key), 0x27d4eb2d) + getValueHash(value)) | 0);
+const getEntryContribution = (keyHash: number, valueHash: number) =>
+  finalizeHash((Math.imul(keyHash, 0x27d4eb2d) + valueHash) | 0);
 
 // The hash of each value that TLC fails to fingerprint, such as Nat or a set that holds it. Calls
 // with such a value as an argument still share their result, and a state that holds one fails
@@ -1992,8 +2004,9 @@ const computeValueHash = (value: ObjectValue) => {
     const elements = toFiniteSet(value).elements;
     let hash = SET_HASH_SEED;
     for (let index = 0; index < elements.length; index++) {
-      if (isUnfingerprintable(elements[index])) return UNFINGERPRINTABLE_HASH;
-      hash = (hash + getElementContribution(elements[index])) | 0;
+      const elementHash = getValueHash(elements[index]);
+      if (elementHash === UNFINGERPRINTABLE_HASH) return UNFINGERPRINTABLE_HASH;
+      hash = (hash + getElementContribution(elementHash)) | 0;
     }
     return hash;
   }
@@ -2001,10 +2014,12 @@ const computeValueHash = (value: ObjectValue) => {
   const functionValue = toFiniteFunction(value);
   let hash = FUNCTION_HASH_SEED;
   for (let index = 0; index < functionValue.domain.length; index++) {
-    const key = functionValue.domain[index];
-    const item = functionValue.range[index];
-    if (isUnfingerprintable(key) || isUnfingerprintable(item)) return UNFINGERPRINTABLE_HASH;
-    hash = (hash + getEntryContribution(key, item)) | 0;
+    const keyHash = getValueHash(functionValue.domain[index]);
+    const itemHash = getValueHash(functionValue.range[index]);
+    if (keyHash === UNFINGERPRINTABLE_HASH || itemHash === UNFINGERPRINTABLE_HASH) {
+      return UNFINGERPRINTABLE_HASH;
+    }
+    hash = (hash + getEntryContribution(keyHash, itemHash)) | 0;
   }
   return hash;
 };
@@ -2030,6 +2045,7 @@ const fingerprintValue = (value: Value): void => {
 // The error TLC raises as it fingerprints a value: one that hashing the value raises, as for a set
 // too large to enumerate, or one of a value with the hash of the values TLC fails on.
 export const getFingerprintError = (value: Value) => {
+  if (typeof value !== "object" || value.kind === "ModelValue") return undefined;
   try {
     if (isUnfingerprintable(value)) fingerprintValue(value);
     return undefined;
