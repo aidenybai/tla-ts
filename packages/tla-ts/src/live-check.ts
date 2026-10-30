@@ -50,9 +50,10 @@ interface Check {
   nodeStates: number[];
   nodeTableaux: number[];
   successors: number[][];
-  actions: Uint8Array[];
-  stateResults: Uint8Array[];
-  isWritten: boolean[];
+  // Each written node's state results, then its action results edge by edge, from the node's
+  // offset in one buffer, so a node costs no objects of its own. An unwritten node has offset -1.
+  offsets: number[];
+  results: { bytes: Uint8Array; length: number };
   initial: number[];
   nodeIds: Map<number, number>;
   nodesByState: Map<number, number[]>;
@@ -71,11 +72,14 @@ const pushNode = (check: Check, state: number, tableauNode: number) => {
   check.nodeStates.push(state);
   check.nodeTableaux.push(tableauNode);
   check.successors.push([]);
-  check.actions.push(new Uint8Array(0));
-  check.stateResults.push(new Uint8Array(0));
-  check.isWritten.push(false);
+  check.offsets.push(-1);
   return check.nodeStates.length - 1;
 };
+
+const isWritten = (check: Check, node: number) => check.offsets[node] !== -1;
+
+const getStateResult = (check: Check, node: number, position: number) =>
+  check.results.bytes[check.offsets[node] + position] === 1;
 
 const SUCCESSOR_CAPACITY = 16;
 
@@ -117,9 +121,8 @@ export const createLivenessChecker = (
     nodeStates: [],
     nodeTableaux: [],
     successors: [],
-    actions: [],
-    stateResults: [],
-    isWritten: [],
+    offsets: [],
+    results: { bytes: new Uint8Array(1024), length: 0 },
     initial: [],
     nodeIds: new Map(),
     nodesByState: new Map(),
@@ -227,11 +230,21 @@ export const createLivenessChecker = (
     stateResults: Uint8Array,
   ) => {
     const actionCount = check.solution.actionChecks.length;
-    const packed = new Uint8Array(actions.length * actionCount);
-    actions.forEach((results, position) => packed.set(results, position * actionCount));
-    check.actions[node] = packed;
-    check.stateResults[node] = stateResults;
-    check.isWritten[node] = true;
+    const results = check.results;
+    const offset = results.length;
+    results.length += stateResults.length + actions.length * actionCount;
+    if (results.length > results.bytes.length) {
+      const grown = new Uint8Array(Math.max(2 * results.bytes.length, results.length));
+      grown.set(results.bytes);
+      results.bytes = grown;
+    }
+    results.bytes.set(stateResults, offset);
+    actions.forEach((edge, position) =>
+      results.bytes.set(edge, offset + stateResults.length + position * actionCount),
+    );
+    check.offsets[node] = offset;
+    // A node gets no successors once written, so it keeps them without spare capacity.
+    check.successors[node] = check.successors[node].slice();
   };
 
   // TLC collects a state's successors and the state itself in a SetOfStates, a hash set it
@@ -371,7 +384,7 @@ export const createLivenessChecker = (
     const successors = check.successors[index];
     const actions: Uint8Array[] = [];
     set.forEach((successor, position) => {
-      if (check.isWritten[successor.index] && successors.includes(successor.index)) return;
+      if (isWritten(check, successor.index) && successors.includes(successor.index)) return;
       successors.push(successor.index);
       actions.push(actionResults[position]);
     });
@@ -385,7 +398,7 @@ export const createLivenessChecker = (
     const parents = new Map<number, number>();
     const queue: number[] = [];
     for (const node of check.initial) {
-      if (!check.isWritten[node]) continue;
+      if (!isWritten(check, node)) continue;
       queue.push(node);
       parents.set(node, -1);
     }
@@ -398,7 +411,7 @@ export const createLivenessChecker = (
           for (let node = current; node !== -1; node = parents.get(node) ?? -1) path.push(node);
           return path;
         }
-        if (!check.isWritten[next] || parents.has(next)) continue;
+        if (!isWritten(check, next) || parents.has(next)) continue;
         parents.set(next, current);
         queue.push(next);
       }
@@ -410,12 +423,13 @@ export const createLivenessChecker = (
   const findInModel = (check: Check, model: Solution["models"][number]): Lasso | undefined => {
     const solution = check.solution;
     const actionCount = solution.actionChecks.length;
+    const stateCount = solution.stateChecks.length;
     const getAction = (node: number, edge: number, position: number) =>
-      check.actions[node][edge * actionCount + position] === 1;
+      check.results.bytes[check.offsets[node] + stateCount + edge * actionCount + position] === 1;
     const isAllowed = (node: number, edge: number) =>
       model.eventuallyAlways.every((position) => getAction(node, edge, position));
     const links = new Float64Array(check.nodeStates.length).fill(UNVISITED);
-    const queue = check.initial.filter((node) => check.isWritten[node]);
+    const queue = check.initial.filter((node) => isWritten(check, node));
     const components: number[] = [];
 
     const isStuttering = (node: number) => {
@@ -443,7 +457,7 @@ export const createLivenessChecker = (
         if (member === root) break;
       }
       const isStateSatisfied = model.infinitelyOftenStates.every((position) =>
-        [...members].some((node) => check.stateResults[node][position] === 1),
+        [...members].some((node) => getStateResult(check, node, position)),
       );
       const isActionSatisfied = model.infinitelyOftenActions.every((position) =>
         [...members].some((node) =>
@@ -488,7 +502,7 @@ export const createLivenessChecker = (
         const countAtStart = remaining.count;
         while (true) {
           model.infinitelyOftenStates.forEach((position, slot) => {
-            if (!stateDone[slot] && check.stateResults[current.node][position] === 1) {
+            if (!stateDone[slot] && getStateResult(check, current.node, position)) {
               stateDone[slot] = true;
               remaining.count--;
             }
@@ -621,7 +635,7 @@ export const createLivenessChecker = (
         components.push(node);
         const nextLowLink = { value: counter.link++ };
         check.successors[node].forEach((next, edge) => {
-          if (!check.isWritten[next]) return;
+          if (!isWritten(check, next)) return;
           if (!isAllowed(node, edge)) {
             if (links[next] === UNVISITED) queue.push(next);
             return;
