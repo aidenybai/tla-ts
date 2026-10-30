@@ -766,9 +766,11 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         location,
       };
     }
-    if (definition.params.length === 0) return { kind: "Operator", name, body, location };
+    // A definition followed by (*{ ... }*), such as PTL in TLAPS, names a backend pragma.
+    const kind = withPragma(location) === location ? "Operator" : "Bpragma";
+    if (definition.params.length === 0) return { kind, name, body, location };
     return {
-      kind: "Operator",
+      kind,
       name,
       body: at(
         {
@@ -800,6 +802,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     };
   };
 
+  // Anonymization judges the time of each assumption once it resolves the names in it.
   const convertSequent = (statement: Expression | AssumeProve): Sequent => {
     if (statement.kind !== "AssumeProve")
       return { context: [], active: convertExpression(statement, false) };
@@ -812,11 +815,18 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
             kind: "Fact",
             expression: at({ kind: "Sequent", sequent: convertSequent(assumption) }, { location }),
             visibility: "Visible",
+            time: "Now",
             location,
           };
         }
         const expression = convertFactLabel(assumption);
-        return { kind: "Fact", expression, visibility: "Visible", location: expression.location };
+        return {
+          kind: "Fact",
+          expression,
+          visibility: "Visible",
+          time: "Now",
+          location: expression.location,
+        };
       }),
       active: convertExpression(statement.conclusion, false),
     };

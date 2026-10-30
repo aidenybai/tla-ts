@@ -1,0 +1,1 @@
+not (((sometime (always p)) -> (always (sometime p))))

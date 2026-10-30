@@ -1,0 +1,6 @@
+Loaded spec -- sigsize: 18, #initial: 3, #goal: 1, #universal: 12, #step: 12
+Eliminated 9 variables -- new sigsize: 9.
+Simplified from 28 to 19 clauses.
+UNSAT: repetition detected!
+Layer 1 equal to current layer 2!
+Solver called 163 times (learned 68 clauses). 5 clauses leaped.
