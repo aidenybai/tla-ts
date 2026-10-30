@@ -19,6 +19,18 @@ const read = (name: string) => readFileSync(join(DIRECTORY, name), "utf8");
 
 const decide = (name: string) => decideSmt(read(name), { timeLimitMs: 5000 });
 
+// (g x) is f applied depth times to x, and (g 0) is not: unsat after one instance.
+const getDeepProblem = (depth: number) => {
+  const nest = (term: string) => `${"(f ".repeat(depth)}${term}${")".repeat(depth)}`;
+  return [
+    "(declare-fun f (Int) Int)",
+    "(declare-fun g (Int) Int)",
+    `(assert (forall ((x Int)) (! (= (g x) ${nest("x")}) :pattern ((g x)))))`,
+    `(assert (not (= (g 0) ${nest("0")})))`,
+    "(check-sat)",
+  ].join("\n");
+};
+
 describe("decideSmt proves what Z3 proves", () => {
   for (const name of Object.keys(verdicts).filter(
     (innerName) => verdicts[innerName].z3 === "unsat",
@@ -50,6 +62,10 @@ describe("decideSmt", () => {
     expect(
       decideSmt(read("Barriers-63.smt"), { timeLimitMs: 5000, signal: controller.signal }),
     ).toBe("unknown");
+  });
+
+  it("answers instead of throwing when a recursion exhausts the stack", () => {
+    expect(["unsat", "unknown"]).toContain(decideSmt(getDeepProblem(20000), { timeLimitMs: 5000 }));
   });
 
   it("rejects an ill-sorted application", () => {

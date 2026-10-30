@@ -2,7 +2,7 @@
 // license, see z3-license.txt. Decides an SMT-LIB problem the way `z3 -smt2 AUTO_CONFIG=false
 // smt.MBQI=true` does for tlapm's UFNIA obligations.
 import { SmtCanceledError, SmtUnsupportedError } from "../../../errors";
-import type { DecideOptions, Verdict } from "../../verdict";
+import { isStackOverflow, type DecideOptions, type Verdict } from "../../verdict";
 import { AssertedFormulas } from "./asserted-formulas";
 import { AstManager } from "./ast";
 import { Context } from "./context";
@@ -45,12 +45,18 @@ export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
 };
 
 // Throws SmtParseError on malformed input. Input outside the subset the solver supports is unknown,
-// and so is a search that runs past the time limit or that the signal aborts.
+// and so is a search that runs past the time limit, that the signal aborts, or that exhausts the
+// heap or the stack.
 export const decideSmt = (text: string, options: DecideOptions): Verdict => {
   try {
     return checkSmt(text, options).verdict;
   } catch (error) {
-    if (error instanceof SmtUnsupportedError || error instanceof SmtCanceledError) return "unknown";
+    if (
+      error instanceof SmtUnsupportedError ||
+      error instanceof SmtCanceledError ||
+      isStackOverflow(error)
+    )
+      return "unknown";
     throw error;
   }
 };
