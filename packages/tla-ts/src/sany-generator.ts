@@ -625,8 +625,10 @@ export const generateSanySpecification = (
     });
 
     // Generator.nullOAN, which SANY returns where it reported an error and carries on.
-    const createNullNode = (location: SanyLocation) =>
-      createOpAppl(getBuiltin("$Nop"), [], location);
+    const createNullNode = (location: SanyLocation): OpApplNode => ({
+      ...createOpAppl(getBuiltin("$Nop"), [], location),
+      isNull: true,
+    });
 
     const getBuiltin = (name: string) => {
       const builtin = builtins.find((candidate) => candidate.name === name);

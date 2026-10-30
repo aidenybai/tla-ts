@@ -206,6 +206,26 @@ THEOREM TRUE
     expect(isRejected(proof("<1>2"))).toBe(true);
   });
 
+  it("fails as TLC 1.7.4's XMLExporter does on the node SANY puts in place of an error", () => {
+    const specification = generateSanySpecification(
+      "---- MODULE Broken ----\nVARIABLE x\nNext == x' = y\n====",
+      loadModule,
+      { version: "1.7.4" },
+    );
+    expect(() =>
+      exportSanyXml(specification, {
+        version: "1.7.4",
+        isRestricted: false,
+        isUncommented: false,
+        isTerse: false,
+      }),
+    ).toThrow(
+      new TlaUnsupportedError(
+        "java.lang.IllegalArgumentException: unsupported kind: 0 in xml export",
+      ),
+    );
+  });
+
   it("marks a []ASSUME/[]PROVE as boxed", () => {
     const theorem = (statement: string) => `---- MODULE Boxed ----
 VARIABLE x

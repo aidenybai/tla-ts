@@ -39,6 +39,15 @@ interface XmlElement {
   children: XmlElement[];
 }
 
+// The exception that SANY's XMLExporter throws for a node of a kind it can't export.
+const getUnsupportedKindError = (kind: number) =>
+  setExitCode(
+    new TlaUnsupportedError(
+      `java.lang.IllegalArgumentException: unsupported kind: ${kind} in xml export`,
+    ),
+    XML_EXPORT_EXIT_CODE.uncaughtException,
+  );
+
 const createElement = (tag: string, children: XmlElement[] = []): XmlElement => ({
   tag,
   children,
@@ -286,14 +295,7 @@ const exportSpecification = (
         );
       case "OpDef": {
         // SANY's XMLExporter fails on the definition of a proof step that a DEF clause names.
-        if (node.defKind === "NumberedProofStep") {
-          throw setExitCode(
-            new TlaUnsupportedError(
-              "java.lang.IllegalArgumentException: unsupported kind: 37 in xml export",
-            ),
-            XML_EXPORT_EXIT_CODE.uncaughtException,
-          );
-        }
+        if (node.defKind === "NumberedProofStep") throw getUnsupportedKindError(37);
         if (node.defKind === "ModuleInstance") {
           return withLevel(
             createElement("ModuleInstanceKind", [
@@ -437,6 +439,9 @@ const exportSpecification = (
     createElement("Subst", [getReference(subst.op), exportExpression(subst.expr, isOtherBug)]);
 
   const exportApplication = (node: OpApplNode, isInheritedOtherBug: boolean) => {
+    // TLC 1.7.4's XMLExporter exports a specification with semantic errors, and fails on the node
+    // that SANY puts where it found one.
+    if (node.isNull && isTlc174) throw getUnsupportedKindError(0);
     const last = node.operands[node.operands.length - 1];
     const isOtherBug =
       isInheritedOtherBug ||

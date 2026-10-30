@@ -162,6 +162,8 @@ export interface OpApplNode extends LevelFields {
   tupleOrs: boolean[] | undefined;
   ranges: ExprNode[];
   location: SanyLocation;
+  // Generator.nullOAN, whose operator, nullODN, has no kind that the XMLExporter can export.
+  isNull?: boolean;
 }
 
 export interface NumeralNode extends LevelFields {
