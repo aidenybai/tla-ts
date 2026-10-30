@@ -419,7 +419,7 @@ const compileMembership = (
       expression.operator === "\\subseteq" ? { kind: "Subset", base: evaluated } : evaluated;
     if (!isEnumerable(value)) {
       throw new TlaEvaluationError(
-        `In computing next states, the right side of \\in is not enumerable: ${formatValue(value)} at ${describeLocation(expression)}`,
+        `In computing ${run.isInit ? "initial" : "next"} states, the right side of \\IN is not enumerable.\n${describeRange(expression)}`,
       );
     }
     const elements = getStreamedElements(value);
