@@ -27,6 +27,8 @@ export const checkModel = async (specPath: string, configPath: string): Promise<
     );
   }
   const result = await check({
+    // TLC records the expected results with -nowarning.
+    isWarningEnabled: false,
     source,
     config: readFileSync(configPath, "utf8"),
     // TLC reads a module beside the spec before one on its library path.

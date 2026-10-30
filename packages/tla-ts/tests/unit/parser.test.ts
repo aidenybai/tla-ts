@@ -91,10 +91,25 @@ describe("parseModule reads operators like SANY", () => {
     },
   );
 
+  it.each([
+    ["the root module", "---- MODULE M ----\nA == 1\n"],
+    ["a nested module", `---- MODULE M ----\n---- MODULE Inner ----\nA == 1\n`],
+  ])("rejects %s without ====", (_, source) => {
+    expect(() => parseModule(source)).toThrow(TlaSyntaxError);
+  });
+
   it("rejects an operator of a parameterized instance without the instance's arguments", () => {
     expect(() =>
       parseModule(`---- MODULE M ----\n${INNER}\nTHEOREM M!Foo(TRUE) => M!Foo(TRUE)\n====`),
     ).toThrow("The operator M requires 1 arguments at line 7, column 9");
+  });
+
+  it("substitutes an operator of a parameterized instance without the instance's arguments", () => {
+    expect(() =>
+      parseModule(
+        `---- MODULE M ----\n${INNER}\n---- MODULE N ----\nCONSTANT Op(_)\n====\nN1 == INSTANCE N WITH Op <- M!Foo\n====`,
+      ),
+    ).not.toThrow();
   });
 
   it("cites an operator of a parameterized instance in a DEF clause without arguments", () => {

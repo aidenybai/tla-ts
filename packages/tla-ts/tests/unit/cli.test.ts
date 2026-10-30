@@ -395,3 +395,119 @@ describe("prove prints obligations as tlapm -N does", () => {
     );
   });
 });
+
+// The message codes and the lines that Print writes, in the order TLC 1.8.0 prints them with -tool.
+const getToolSequence = (output: string) =>
+  output
+    .split("\n")
+    .filter((line) => line.startsWith("@!@!@STARTMSG") || line.startsWith("<<"))
+    .map((line) => line.match(/^@!@!@STARTMSG (\d+):/)?.[1] ?? line);
+
+describe("the CLI prints messages for a program to read like TLC", () => {
+  const runTool = (name: string) =>
+    runCli("tool-output", name, ["-tool", "-workers", "1", "-fp", "0", "-lncheck", "final"]);
+
+  it("prints again what the spec prints as it rebuilds a safety trace", () => {
+    const result = runTool("Steps");
+    expect(result.status).toBe(12);
+    const step = (n: number) => `<<"step", ${n}>>`;
+    expect(getToolSequence(result.stdout)).toEqual([
+      "2220",
+      "2219",
+      "2185",
+      "2189",
+      "2190",
+      step(0),
+      step(1),
+      "2110",
+      "2121",
+      "2217",
+      step(0),
+      "2217",
+      step(1),
+      "2217",
+      step(0),
+      step(1),
+      "2200",
+      "2199",
+      "2194",
+      "2186",
+    ]);
+  });
+
+  it("reports the temporal properties it checks on the complete state graph", () => {
+    const result = runTool("Loop");
+    expect(result.status).toBe(13);
+    const [init, up, reset] = ["init", "up", "reset"].map(
+      (name) => (n: number) => `<<"${name}", ${n}>>`,
+    );
+    expect(getToolSequence(result.stdout)).toEqual([
+      "2220",
+      "2219",
+      "2185",
+      "2212",
+      "2189",
+      init(0),
+      "2190",
+      up(0),
+      up(0),
+      up(0),
+      up(0),
+      up(1),
+      up(1),
+      up(1),
+      up(1),
+      reset(2),
+      reset(2),
+      reset(2),
+      reset(2),
+      "2200",
+      "2192",
+      init(0),
+      up(0),
+      up(1),
+      "2116",
+      "2264",
+      "2217",
+      "2217",
+      "2217",
+      reset(2),
+      "2122",
+      "2267",
+      "2200",
+      "2199",
+      "2194",
+      "2186",
+    ]);
+    expect(result.stdout).toContain(
+      "Implied-temporal checking--satisfiability problem has 1 branches.",
+    );
+    expect(result.stdout).toContain(
+      "Checking temporal properties for the complete state space with 3 total distinct states",
+    );
+  });
+
+  it("warns about a state-level property and names an invariant that a property asserts", () => {
+    const result = runTool("Always");
+    expect(result.status).toBe(12);
+    expect(getToolSequence(result.stdout)).toEqual([
+      "2220",
+      "2219",
+      "2185",
+      "2255",
+      "2189",
+      "2190",
+      "2110",
+      "2121",
+      "2217",
+      "2217",
+      "2217",
+      "2200",
+      "2199",
+      "2194",
+      "2186",
+    ]);
+    expect(result.stdout).toContain("The formula Small is a state-level formula");
+    expect(result.stdout).toContain("Invariant Small is violated.");
+  });
+});

@@ -176,6 +176,7 @@ const resolveDefinition = (definition: Definition, scope: LocalName | undefined,
   if (definition.kind === "Function") {
     resolveExpression(definition.body, resolveBounds(definition.bounds, self, unit), unit);
     markRecursiveConstructions(definition.body, definition.name);
+    definition.isSelfReferential = isReferenced(definition.body, definition.name);
     return;
   }
   resolveExpression(definition.body, bindParams(self, definition.params), unit);

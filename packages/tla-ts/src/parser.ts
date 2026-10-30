@@ -291,21 +291,24 @@ const BUILTIN_CONSTANTS = new Set(["TRUE", "FALSE", "BOOLEAN", "STRING"]);
 
 const NO_OFFSIDE = -1;
 
-const getModuleHeader = (name: string) => new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
-
-// The text of a module that starts on its own line in a file, as TLC's monolith extractor reads
-// modules that follow the root module.
+// MonolithSpecExtractor.module: a module that no file defines can follow the root module in the
+// root module's file, from its ---- MODULE line to the next ==== line.
 export const extractModule = (source: string, name: string) => {
+  const header = new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
   const lines = source.split(/\r?\n/);
-  const start = lines.findIndex((line) => getModuleHeader(name).test(line));
+  const start = lines.findIndex((line) => header.test(line));
   if (start === -1) return undefined;
   const end = lines.findIndex((line, index) => index > start && line.startsWith("===="));
-  return lines.slice(start, end === -1 ? undefined : end + 1).join("\n");
+  return `${lines.slice(start, end === -1 ? undefined : end + 1).join("\n")}\n`;
 };
 
-// isTlapm parses as tlapm does for proof obligations, which accepts and rejects some modules that
-// SANY does not.
-const parse = (source: string, isTlapm: boolean): Module => {
+// The tlapm mode parses as tlapm does for proof obligations, which accepts and rejects some modules
+// that SANY does not. The sany mode leaves the checks that SANY makes after parsing to the SANY
+// generator.
+type ParseMode = "tlc" | "tlapm" | "sany";
+
+const parse = (source: string, mode: ParseMode): Module => {
+  const isTlapm = mode === "tlapm";
   const tokens = tokenize(source);
   const cursor = { index: 0, offsideColumns: [] as number[] };
   // A RECURSIVE declaration covers the definitions of its own LET or module.
@@ -313,8 +316,10 @@ const parse = (source: string, isTlapm: boolean): Module => {
   const factNames = new Set<string>();
   // The NEW, TAKE, and PICK names in scope, which a DEF clause cannot cite.
   const proofScopes: Set<string>[] = [];
-  // A fact may cite an operator of a parameterized instance without the instance's arguments.
+  // A fact or an operator argument may cite an operator of a parameterized instance without the
+  // instance's arguments, as with Op <- I!Op in a substitution.
   const factStart = { index: -1 };
+  const argumentStart = { index: -1 };
   const openModules: Module[] = [];
 
   const isRecursiveName = (name: string) => recursiveScopes[recursiveScopes.length - 1].has(name);
@@ -628,6 +633,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const body = parseExpression();
       return withRange({ kind: "Lambda", params, body, location: getLocation(token) }, start);
     }
+    argumentStart.index = cursor.index;
     return parseExpression();
   };
 
@@ -823,7 +829,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
   };
 
   const parsePrimary = (): Expression => {
-    const isFactStart = cursor.index === factStart.index;
+    const isArityExempt = cursor.index === factStart.index || cursor.index === argumentStart.index;
     const token = advance();
     const location = getLocation(token);
     if (isTlapm && token.kind === "Keyword" && token.text === "LAMBDA") {
@@ -862,7 +868,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const instance = openModules
         .flatMap((module) => module.instances)
         .find((candidate) => candidate.name === name);
-      if (instance && !isFactStart && !isTlapm && instance.params.length !== args.length) {
+      if (instance && mode === "tlc" && !isArityExempt && instance.params.length !== args.length) {
         throw createError(
           `The operator ${name} requires ${instance.params.length} arguments`,
           token,
@@ -1398,7 +1404,10 @@ const parse = (source: string, isTlapm: boolean): Module => {
   const parseDefs = () => {
     if (isTlapm) return parseSeparated(parseDefinable);
     const defs = parseSeparated(parseFact);
-    const invalid = defs.find((def) => def.kind === "Identifier" && isDeclaredSymbol(def.name));
+    const invalid =
+      mode === "tlc"
+        ? defs.find((def) => def.kind === "Identifier" && isDeclaredSymbol(def.name))
+        : undefined;
     if (invalid) {
       throw createError("DEF clause entry should describe a defined operator", invalid.location);
     }
@@ -1423,7 +1432,9 @@ const parse = (source: string, isTlapm: boolean): Module => {
       location: getLocation(keyword),
     };
     const invalid =
-      use.kind === "Hide" && !isTlapm ? use.facts.find((fact) => !isHideFact(fact)) : undefined;
+      use.kind === "Hide" && mode === "tlc"
+        ? use.facts.find((fact) => !isHideFact(fact))
+        : undefined;
     if (invalid) {
       throw createError(
         "The only expression allowed as a fact in a HIDE is the name of a theorem, assumption, or step",
@@ -1697,14 +1708,12 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const tokenIndex = cursor.index;
       unitStart.index = tokenIndex;
       const token = peek();
-      if (token.kind === "ModuleEnd" || token.kind === "End") {
-        if (token.kind === "ModuleEnd") {
-          location.range = {
-            module: name,
-            start: { line: location.line, column: location.column },
-            end: { line: token.line, column: token.endColumn },
-          };
-        }
+      if (token.kind === "ModuleEnd") {
+        location.range = {
+          module: name,
+          start: { line: location.line, column: location.column },
+          end: { line: token.line, column: token.endColumn },
+        };
         openModules.pop();
         recursiveScopes.pop();
         return module;
@@ -1811,6 +1820,8 @@ const parse = (source: string, isTlapm: boolean): Module => {
   return parseModuleBody();
 };
 
-export const parseModule = (source: string) => parse(source, false);
+export const parseModule = (source: string) => parse(source, "tlc");
 
-export const parseTlapmModule = (source: string) => parse(source, true);
+export const parseTlapmModule = (source: string) => parse(source, "tlapm");
+
+export const parseSanyModule = (source: string) => parse(source, "sany");

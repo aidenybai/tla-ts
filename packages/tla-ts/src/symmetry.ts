@@ -1,4 +1,8 @@
-import { TlaConfigError } from "./errors";
+import type { Expression } from "./ast";
+import type { Substitution } from "./config";
+import { TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
+import { MESSAGE_CODE } from "./tlc-messages";
 import { evaluate, type Environment } from "./evaluate";
 import {
   compareValues,
@@ -47,40 +51,85 @@ const composePermutations = (first: Images, second: Images) => {
   return composed;
 };
 
-const toImages = (value: Value, name: string) => {
-  if (!isFunctionValue(value)) {
-    throw new TlaConfigError(`The symmetry values of ${name} must be functions`);
-  }
+// Tool#getSymmetryPerms fails with a RuntimeException as TLC starts, which TLC reports as one it
+// did not expect.
+const createSymmetryError = (message: string) =>
+  setExitCode(new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${message}`), EXIT_STATUS.error);
+
+const toImages = (value: Value) => {
   const functionValue = toFiniteFunction(value);
   const permutation: Images = new Map();
   functionValue.domain.forEach((key, index) => {
     const image = functionValue.range[index];
     if (!isModelValue(key) || !isModelValue(image)) {
-      throw new TlaConfigError("Symmetry function must have model values as domain and range");
+      throw createSymmetryError("Symmetry function must have model values as domain and range.");
     }
     if (key.name !== image.name) permutation.set(key.name, image);
   });
   return permutation;
 };
 
-export const getSymmetryGroup = (name: string, environment: Environment): Permutation[] => {
+// SyntaxTreeNode.getHumanReadableImage, which joins the tokens of an expression without spaces.
+const getImage = (expression: Expression): string => {
+  if (expression.kind === "Identifier") return expression.name;
+  if (expression.kind !== "Apply") return "";
+  const args = expression.args.map(getImage);
+  return /^[A-Za-z_]/.test(expression.operator)
+    ? `${expression.operator}(${args.join(",")})`
+    : args.join(expression.operator);
+};
+
+const isPermutations = (
+  expression: Expression,
+): expression is Expression & { kind: "Apply"; args: [Expression] } =>
+  expression.kind === "Apply" &&
+  expression.operator === "Permutations" &&
+  expression.args.length === 1;
+
+export const getSymmetryGroup = (
+  name: string,
+  environment: Environment,
+  substitutions: Substitution[],
+): Permutation[] => {
   const definition = environment.definitions.get(name);
   if (definition?.kind !== "Operator" || definition.params.length > 0) {
-    throw new TlaConfigError(`The symmetry function ${name} must specify a set of permutations`);
+    throw createSymmetryError(`The symmetry function ${name} must specify a set of permutations.`);
   }
-  const value = evaluate(definition.body, {
-    environment,
-    scope: undefined,
-    state: undefined,
-    next: undefined,
-  });
+  const evaluateConstant = (expression: Expression) =>
+    evaluate(expression, { environment, scope: undefined, state: undefined, next: undefined });
+  const value = evaluateConstant(definition.body);
   if (!isSetValue(value) || !isEnumerable(value)) {
-    throw new TlaConfigError("The symmetry operator must specify a set of functions");
+    throw createSymmetryError("The symmetry operator must specify a set of functions.");
   }
-  const permutations = toFiniteSet(value).elements.map((element) => toImages(element, name));
-  const isDisabled =
-    definition.body.kind === "Apply" && definition.body.args.length >= permutations.length;
-  if (isDisabled) return [];
+  const elements = toFiniteSet(value).elements;
+  if (!elements.every(isFunctionValue)) {
+    throw createSymmetryError("The symmetry values must be function records.");
+  }
+  const permutations = elements.map(toImages);
+  // Tool#getSymmetryPerms warns about each permuted set with fewer than two elements, by the name
+  // the config substitutes for it. As many permuted sets as permutations means none has two.
+  const permutedSets = definition.body.kind === "Apply" ? definition.body.args : [];
+  const configNames = new Map(
+    substitutions
+      .filter((substitution) => substitution.module === undefined)
+      .map((substitution) => [substitution.target, substitution.name]),
+  );
+  const warnSmallSets = (offenders: Expression[]) => {
+    if (offenders.length === 0) return;
+    const names = offenders.map((offender) => {
+      const image = getImage(isPermutations(offender) ? offender.args[0] : offender);
+      return configNames.get(image) ?? image;
+    });
+    const isPlural = offenders.length > 1;
+    environment.runtime.warn(
+      MESSAGE_CODE.symmetrySetTooSmall,
+      `The set${isPlural ? "s" : ""} ${names.join(", and ")} ${isPlural ? "have" : "has"} been defined to be a symmetry set but contain${isPlural ? "" : "s"} less than two elements.`,
+    );
+  };
+  if (permutedSets.length >= elements.length) {
+    warnSmallSets(permutedSets);
+    return [];
+  }
   const group = new Map<string, Images>();
   permutations.forEach((permutation) => {
     if (permutation.size > 0) group.set(getPermutationKey(permutation), permutation);
@@ -99,6 +148,25 @@ export const getSymmetryGroup = (name: string, environment: Environment): Permut
     );
     frontier.start = end;
   }
+  const movedNames = new Set(
+    [...group.values()].flatMap((images) => [...images.values()].map((image) => image.name)),
+  );
+  // Only a permutation of a constant that TLC holds as an enumerated set is checked. TLC binds a
+  // constant the config substitutes with <- to the definition, which it skips.
+  const substitutedNames = new Set(substitutions.map((substitution) => substitution.name));
+  warnSmallSets(
+    permutedSets.filter((node) => {
+      if (!isPermutations(node)) return false;
+      const operand = node.args[0];
+      if (operand?.kind !== "Identifier" || substitutedNames.has(operand.name)) return false;
+      const set = evaluateConstant(operand);
+      return (
+        typeof set === "object" &&
+        set.kind === "Set" &&
+        !set.elements.some((element) => isModelValue(element) && movedNames.has(element.name))
+      );
+    }),
+  );
   const cacheLimit = Math.max(256, Math.floor(CACHE_LIMIT / group.size));
   return [...group.values()].map((images) => ({
     images,

@@ -1,4 +1,6 @@
 import { EXIT_STATUS, getExitCode } from "./exit-codes";
+import type { PcalNode } from "./pcal-ast";
+import type { Value } from "./values";
 
 // How TLC reports a RuntimeException it did not expect, such as one raised while computing next
 // states.
@@ -29,6 +31,22 @@ export class TlaSyntaxError extends TlaError {
   }
 }
 
+// A fatal error of SANY's parsing phase: a module SANY can't find or parse, a file whose name
+// doesn't match its module's, or a circular dependency. SANY reports it in the module that imports
+// or holds the failed one, or without a location, after its JavaCC parser's report of a module it
+// failed to parse. It keeps the name TlaSyntaxError, and index.ts doesn't export it.
+export class TlaSanyFatalError extends TlaSyntaxError {
+  location: string | undefined;
+  parseError: string | undefined;
+
+  constructor(message: string, location: string | undefined, parseError?: string) {
+    super(message);
+    this.name = "TlaSyntaxError";
+    this.location = location;
+    this.parseError = parseError;
+  }
+}
+
 export class TlaConfigError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
@@ -40,6 +58,39 @@ export class TlaEvaluationError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
     this.name = "TlaEvaluationError";
+  }
+}
+
+// A next-state action left variables of a successor state unassigned. TLC reports the partial
+// state, with null for each unassigned variable.
+export class TlaIncompleteSuccessorError extends TlaEvaluationError {
+  state: (Value | undefined)[];
+  action: string | undefined;
+  variables: string[];
+
+  constructor(
+    message: string,
+    state: (Value | undefined)[],
+    action: string | undefined,
+    variables: string[],
+  ) {
+    super(message);
+    this.name = "TlaEvaluationError";
+    this.state = state;
+    this.action = action;
+    this.variables = variables;
+  }
+}
+
+// An expression read a variable that its state doesn't assign. It keeps the name
+// TlaEvaluationError, and index.ts doesn't export it.
+export class TlaUnassignedError extends TlaEvaluationError {
+  variable: string;
+
+  constructor(message: string, variable: string) {
+    super(message);
+    this.name = "TlaEvaluationError";
+    this.variable = variable;
   }
 }
 
@@ -97,3 +148,35 @@ export const getErrorExitCode = (error: TlaError) =>
       : error instanceof TlaEvaluationError
         ? EXIT_STATUS.specEvaluationFailure
         : EXIT_STATUS.error);
+
+// pcal.UnrecoverableException and its subclasses: an error the PlusCal translator reports as
+// "Unrecoverable error". UnrecoverablePositionedException adds the statement the error is at.
+export class PcalError extends TlaError {
+  node: PcalNode | undefined;
+
+  constructor(message: string, node?: PcalNode) {
+    super(message);
+    this.name = "PcalError";
+    this.node = node;
+  }
+}
+
+// A RuntimeException the translator's Java code throws, such as an index out of bounds, which
+// ParseAlgorithm.getAlgorithm turns into a parsing error.
+export class PcalRuntimeError extends TlaError {
+  constructor(message: string) {
+    super(message);
+    this.name = "PcalRuntimeError";
+  }
+}
+
+// PcalDebug.ReportBug: the translator found itself in a state it considers a bug, and throws a
+// java.lang.Error that nothing in SANY catches.
+export class PcalBugError extends TlaError {
+  constructor(message: string) {
+    super(
+      `You have discovered a bug in pcal.trans.\nSend the following information and the\ninput file to the current maintainer(s).\n\n -- ${message}.`,
+    );
+    this.name = "PcalBugError";
+  }
+}

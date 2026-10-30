@@ -63,7 +63,8 @@ const toLocationValue = (location: SourceLocation) => {
   ]);
 };
 
-const toActionValue = (action: SpecAction) => {
+// TLC's RecordValue(Action): the action's name and location, with the values of its parameters.
+export const toActionValue = (action: SpecAction) => {
   const fields: [string, Value][] = [
     ["name", action.name],
     ["location", toLocationValue(action.location)],
@@ -250,8 +251,12 @@ const getActions = (
     return getInstanceActions(instanceAction, expression, scope, called, environment);
   if (!called) return [createSplitAction()];
   const args = getArguments(expression);
+  // TLC names an action after the operator it applies, as SANY names it in the spec.
+  const calledName = isLocallyResolved(expression)
+    ? called.name
+    : (environment.instanceNames.get(getOperatorName(expression) ?? "") ?? called.name);
   const callAction = (): SpecAction[] => [
-    { name: called.name, location: expression.location, parameters: [], expression, scope },
+    { name: calledName, location: expression.location, parameters: [], expression, scope },
   ];
   if (isConstantDefinition(called, environment)) return callAction();
   if (args.some((arg) => getLevel(arg, scope, environment) !== 0)) return callAction();
@@ -267,7 +272,13 @@ const getActions = (
       }),
       called.scope,
     );
-    return getActions(called.body, boundScope, called, environment, instanceActions);
+    return getActions(
+      called.body,
+      boundScope,
+      { ...called, name: calledName },
+      environment,
+      instanceActions,
+    );
   }, callAction);
 };
 
@@ -461,6 +472,13 @@ const describe = (
   });
   return description;
 };
+
+// TLC's initial predicates, which it conjoins to compute the initial states.
+export const getInitActions = (
+  config: ModelConfig,
+  environment: Environment,
+  instanceActions: Map<string, InstanceAction>,
+) => describe(config, environment, instanceActions).inits;
 
 // TLC's split of the next-state relation into the actions it names in a behavior.
 export const getNextActions = (

@@ -7,7 +7,7 @@ import {
   type QuantifierExpression,
 } from "./ast";
 import { getReadVariables } from "./dependencies";
-import { TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
+import { TlaEvaluationError, TlaIncompleteSuccessorError, UNEXPECTED_EXCEPTION } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
@@ -27,12 +27,14 @@ import {
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,
+  toUnspecifiedSubscriptError,
   type Context,
   type Environment,
   type Scope,
   type State,
 } from "./evaluate";
 import { mapChildren } from "./instances";
+import { replayEnabled } from "./tlc-replay";
 import {
   createTuple,
   formatValue,
@@ -51,6 +53,8 @@ export interface Successor {
 interface Run {
   environment: Environment;
   isInit: boolean;
+  // Whether the run computes ENABLED rather than the successors of the state.
+  isEnabled: boolean;
   current: Value[] | undefined;
   isStopped: boolean;
 }
@@ -330,11 +334,16 @@ const compileConjunction = (
   ): void => {
     let current = partial;
     let context: Context | undefined;
+    // Once every variable has a value, TLC's getInitStates and getNextStatesAllAssigned evaluate
+    // the conjuncts left instead of walking them, so a disjunction among them takes one step. Its
+    // enabled doesn't, and Tool#getNextStates0 takes this shortcut only with warnings on.
+    const isShortcut = !run.isEnabled && (run.isInit || run.environment.runtime.isWarningEnabled);
     for (let index = start; index < conjuncts.length; index++) {
-      if (index > 0 && run.isInit && isComplete(current)) {
+      if (index > 0 && isShortcut && isComplete(current)) {
         context ??= getContext(run, scope, current);
+        const isTrue = run.isInit ? holdsInInit : holds;
         for (let rest = index; rest < conjuncts.length; rest++) {
-          if (!holdsInInit(conjuncts[rest].expression, context)) return;
+          if (!isTrue(conjuncts[rest].expression, context)) return;
         }
         onComplete(current, action);
         return;
@@ -889,10 +898,16 @@ const compileAction = (
     case "AngleAction": {
       const body = child(expression.action);
       const unchanged = getUnchangedWrapper(expression.subscript);
+      const isUnchanged = (run: Run, scope: Scope | undefined, nextPartial: State) => {
+        try {
+          return holds(unchanged, getContext(run, scope, nextPartial));
+        } catch (error) {
+          throw run.isEnabled ? toUnspecifiedSubscriptError(error) : error;
+        }
+      };
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(run, scope, partial, action, isFixed, (nextPartial, nextAction) => {
-          if (!holds(unchanged, getContext(run, scope, nextPartial)))
-            onComplete(nextPartial, nextAction);
+          if (!isUnchanged(run, scope, nextPartial)) onComplete(nextPartial, nextAction);
         });
     }
     case "BoxAction":
@@ -969,7 +984,15 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
     );
   }
   const environment = context.environment;
-  const run: Run = { environment, isInit: false, current: state, isStopped: false };
+  // TLC computes ENABLED again with its call stack recorded as it computes successors.
+  if (environment.callStack) return replayEnabled(expression, context.scope, state, environment);
+  const run: Run = {
+    environment,
+    isInit: false,
+    isEnabled: true,
+    current: state,
+    isStopped: false,
+  };
   // TLC stops computing ENABLED at the first successor, so it skips the rest of the action.
   getRunner(expression, environment, false)(
     run,
@@ -990,7 +1013,13 @@ export const forEachInitialState = (
   onState: (state: Value[]) => boolean,
   scope?: Scope,
 ) => {
-  const run: Run = { environment, isInit: true, current: undefined, isStopped: false };
+  const run: Run = {
+    environment,
+    isInit: true,
+    isEnabled: false,
+    current: undefined,
+    isStopped: false,
+  };
   getRunner(expression, environment, true)(
     run,
     scope,
@@ -1039,7 +1068,13 @@ export const forEachSuccessor = (
   onSuccessor: (successor: Successor) => boolean,
   scope?: Scope,
 ) => {
-  const run: Run = { environment, isInit: false, current: state, isStopped: false };
+  const run: Run = {
+    environment,
+    isInit: false,
+    isEnabled: false,
+    current: state,
+    isStopped: false,
+  };
   const counter = { successors: 0 };
   getRunner(expression, environment, false)(
     run,
@@ -1050,8 +1085,12 @@ export const forEachSuccessor = (
     (partial, action) => {
       if (run.isStopped) return;
       if (!isComplete(partial)) {
-        throw new TlaEvaluationError(
-          `Successor state is not completely specified by action ${action ?? "Next"}. The following variables are not assigned: ${getMissingVariables(partial, environment).join(", ")}`,
+        const missing = getMissingVariables(partial, environment);
+        throw new TlaIncompleteSuccessorError(
+          `Successor state is not completely specified by action ${action ?? "Next"}. The following variables are not assigned: ${missing.join(", ")}`,
+          partial,
+          action,
+          missing,
         );
       }
       counter.successors++;

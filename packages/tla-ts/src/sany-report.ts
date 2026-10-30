@@ -1,0 +1,209 @@
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
+import type { Module } from "./ast";
+import { TlaSyntaxError, PcalRuntimeError, TlaSanyFatalError } from "./errors";
+import { extractModule, parseModule } from "./parser";
+import { createPcalParams } from "./pcal-ast";
+import { createPcalSession } from "./pcal-parse";
+import { validatePcalModule } from "./pcal-validate";
+import { generateSanySpecification } from "./sany-generator";
+import { checkModuleLevels } from "./sany-levels";
+import { lintSanyModule } from "./sany-linter";
+import { SANY_STANDARD_MODULES } from "./sany-modules";
+import { formatSanyLocation, type SanyMessage } from "./sany-nodes";
+import { getUnboxedSource } from "./sany-source";
+
+export interface SanyReport {
+  text: string;
+  isFailed: boolean;
+}
+
+// ErrorDetails.toString.
+const formatMessage = (message: SanyMessage) =>
+  `${formatSanyLocation(message.location)}\n\n${message.text}`;
+
+// Errors.toString: the errors and then the warnings of SANY's parsing phase.
+const formatParseErrors = (messages: SanyMessage[]) => {
+  const errors = messages.filter((message) => !message.isWarning);
+  const warnings = messages.filter((message) => message.isWarning);
+  return [
+    errors.length > 0 ? `*** Errors: ${errors.length}\n\n` : "",
+    ...errors.map((error) => `${formatMessage(error)}\n\n\n`),
+    warnings.length > 0 ? `*** Warnings: ${warnings.length}\n\n` : "",
+    ...warnings.map((warning) => `${formatMessage(warning)}\n\n\n`),
+  ].join("");
+};
+
+// The modules a module and its inner modules extend, other than its inner modules.
+const getExtendees = (module: Module) => {
+  const innerNames = new Set<string>();
+  const extendees: string[] = [];
+  const visit = (current: Module) => {
+    innerNames.add(current.name);
+    extendees.push(...current.extends);
+    current.modules.forEach(visit);
+  };
+  visit(module);
+  return extendees.filter((extendee) => !innerNames.has(extendee));
+};
+
+// HACK: the report parses a module to find the lines SANY's validation of its PlusCal reads, and
+// a module that doesn't parse is one SANY stops at before validating it.
+const parseValidatedModule = (text: string) => {
+  try {
+    return parseModule(getUnboxedSource(text));
+  } catch (error) {
+    if (error instanceof TlaSyntaxError) return undefined;
+    throw error;
+  }
+};
+
+// What SANY prints while TLC runs it on the specification in rootPath, without the lines that name
+// each file it parses and each module it processes, and whether SANY rejects the specification.
+// loadModule finds the source of the other modules, and SANY's standard modules fill in the rest.
+export const getSanyReport = (
+  rootPath: string,
+  loadModule: (name: string) => string | undefined = () => undefined,
+): SanyReport => {
+  const name = basename(rootPath, ".tla");
+  const source = readFileSync(rootPath, "utf8");
+  const lines: string[] = [];
+  const log = (text: string) => lines.push(`${text}\n`);
+  const isFailed = { value: false };
+  const standardNames = new Set<string>();
+  // The messages of SANY's parsing phase, which come from its validation of PlusCal, and whether
+  // SANY has printed them and whether one is an error that ends its run before semantic analysis.
+  const parseMessages: SanyMessage[] = [];
+  const parsePhase = { isReported: false, isAborted: false };
+  const session = createPcalSession(createPcalParams(), log);
+  const loadedModules = new Map<string, { text: string; module: Module }>();
+  // SpecObj.validateParseUnit: Errors.addMessage drops a message it already has.
+  const validate = (moduleName: string) => {
+    const loaded = loadedModules.get(moduleName);
+    const range = loaded?.module.location.range;
+    if (loaded === undefined || range === undefined) return;
+    const fileLines = loaded.text.split(/\r\n|\r|\n/);
+    const results = validatePcalModule(
+      session,
+      fileLines.slice(range.start.line - 1, range.end.line),
+    );
+    const isTlaChanged = results.has("TLA_DIVERGENCE_EXISTS");
+    const isPcalChanged = results.has("PCAL_DIVERGENCE_EXISTS");
+    const text =
+      isTlaChanged && isPcalChanged
+        ? `Both the PlusCal algorithm and its TLA+ translation in module ${moduleName} have changed since the last translation.`
+        : isTlaChanged
+          ? `The TLA+ translation in module ${moduleName} has changed since its last translation.`
+          : isPcalChanged
+            ? `The PlusCal algorithm in module ${moduleName} has changed since its last translation.`
+            : results.has("ERROR_ENCOUNTERED")
+              ? `An unexpected problem was encountered attempting to validate the specification for ${moduleName}`
+              : undefined;
+    if (text === undefined) return;
+    const isWarning = !results.has("ERROR_ENCOUNTERED") || isTlaChanged || isPcalChanged;
+    if (parseMessages.some((message) => message.text === text)) return;
+    parseMessages.push({ location: moduleName, text, isWarning });
+  };
+  // SpecObj.loadSpec validates the root module once it parses, and a module each time SANY
+  // resolves another module's EXTENDS of it, which the report does when the generator loads it,
+  // and for a module loaded earlier, when the generator loads a module that extends it.
+  const loadValidatedModule = (moduleName: string, text: string) => {
+    if (loadedModules.has(moduleName)) return;
+    const module = parseValidatedModule(text);
+    if (module === undefined || module.name !== moduleName) return;
+    const extenders = [...loadedModules.values()].filter((loaded) =>
+      getExtendees(loaded.module).includes(moduleName),
+    );
+    loadedModules.set(moduleName, { text, module });
+    extenders.forEach(() => validate(moduleName));
+    getExtendees(module)
+      .filter((extendee) => extendee !== moduleName && loadedModules.has(extendee))
+      .forEach(validate);
+  };
+  // SANY.frontEndParse: once SANY has loaded the specification, it prints the warnings of its
+  // parsing phase, and when there are errors, every message, and stops.
+  const reportParseMessages = () => {
+    if (parsePhase.isReported) return;
+    parsePhase.isReported = true;
+    const warnings = parseMessages.filter((message) => message.isWarning);
+    if (warnings.length > 0) {
+      log(`Warnings (${warnings.length}) during syntax parsing of ${name}:\n\n`);
+      warnings.forEach((warning) => log(`${formatMessage(warning)}\n\n\n`));
+    }
+    if (warnings.length === parseMessages.length) return;
+    log(formatParseErrors(parseMessages));
+    isFailed.value = true;
+    parsePhase.isAborted = true;
+  };
+  const loadSource = (moduleName: string) => {
+    const standard = SANY_STANDARD_MODULES.get(moduleName);
+    const text =
+      loadModule(moduleName) ??
+      (standard === undefined ? extractModule(source, moduleName) : undefined);
+    // The standard modules have no PlusCal, and SANY validates an extracted module's own text.
+    if (text !== undefined) {
+      loadValidatedModule(moduleName, text);
+      return text;
+    }
+    if (standard !== undefined) standardNames.add(moduleName);
+    return standard;
+  };
+  const generate = () => {
+    // HACK: SANY reports a fatal error of its parsing phase by the exception it throws, so the
+    // report catches the TlaSyntaxError the generator throws for one.
+    try {
+      loadValidatedModule(name, source);
+      validate(name);
+      return generateSanySpecification(source, loadSource, {
+        rootFileName: name,
+        // SANY.frontEndSemanticAnalysis: after each module, SANY level-checks it if there are no
+        // errors yet, then prints every message so far.
+        onModule: (module, messages) => {
+          reportParseMessages();
+          if (parsePhase.isAborted) return;
+          if (messages.every((message) => message.isWarning)) checkModuleLevels(module, messages);
+          if (messages.length === 0) return;
+          const warnings = messages.filter((message) => message.isWarning);
+          if (warnings.length > 0) {
+            log(`*** Warnings: ${warnings.length}\n`);
+            warnings.forEach((warning) => log(`${formatMessage(warning)}\n\n\n`));
+          }
+          const errors = messages.filter((message) => !message.isWarning);
+          if (errors.length === 0) return;
+          isFailed.value = true;
+          log(`Semantic errors:\n\n*** Errors: ${errors.length}\n`);
+          errors.forEach((error) => log(`${formatMessage(error)}\n\n`));
+        },
+      });
+    } catch (error) {
+      // SANY.frontEndParse turns a Java exception of its validation of PlusCal into a fatal
+      // error, printing the exception and its messages so far.
+      if (error instanceof PcalRuntimeError) {
+        log(`\nFatal errors while parsing TLA+ spec in file ${name}\n`);
+        log(error.message);
+        log(formatParseErrors(parseMessages));
+        isFailed.value = true;
+        return undefined;
+      }
+      if (!(error instanceof TlaSanyFatalError)) throw error;
+      const fatal = { location: error.location, text: error.message, isWarning: false };
+      if (error.parseError !== undefined) log(`***Parse Error***\n${error.parseError}`);
+      log(`\nFatal errors while parsing TLA+ spec in file ${name}\n`);
+      log(formatMessage(fatal));
+      log(formatParseErrors(parsePhase.isReported ? [fatal] : [...parseMessages, fatal]));
+      isFailed.value = true;
+      return undefined;
+    }
+  };
+  const specification = generate();
+  if (specification !== undefined) reportParseMessages();
+  // SANY.frontEndLinting: when SANY accepts the specification, it lints the modules that are not
+  // its standard modules.
+  if (specification !== undefined && !isFailed.value) {
+    specification.modules
+      .filter((module) => !standardNames.has(module.name))
+      .flatMap(lintSanyModule)
+      .forEach((warning) => log(`${formatMessage(warning)}\n\n\n`));
+  }
+  return { text: lines.join(""), isFailed: isFailed.value };
+};

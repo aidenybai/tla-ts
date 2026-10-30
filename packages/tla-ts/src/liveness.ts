@@ -1,5 +1,5 @@
 import { isLocallyResolved, type Definition, type Expression } from "./ast";
-import { TlaConfigError, TlaEvaluationError } from "./errors";
+import { TlaEvaluationError } from "./errors";
 import {
   describeLocation,
   bindDefinitions,
@@ -20,6 +20,7 @@ import {
 import { mapChildren } from "./instances";
 import { ACTION_LEVEL, TEMPORAL_LEVEL } from "./levels";
 import { isEnabled } from "./successors";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   createBoolean,
   createJunction,
@@ -41,6 +42,15 @@ export interface TemporalProperty extends ScopedExpression {
 }
 
 const MAXIMUM_EXPANSION_DEPTH = 100;
+
+// TLC expands a temporal formula that refers to itself until Java's stack overflows.
+const createStackOverflowError = () =>
+  setExitCode(
+    new TlaEvaluationError(
+      "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.",
+    ),
+    EXIT_STATUS.error,
+  );
 
 const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 
@@ -150,13 +160,25 @@ export const expandTemporal = (
   environment: Environment,
   isUnrollingForall: boolean,
   expanding = new Set<Definition>(),
+  // Whether the expansion entered the body of an instance's definition. Like TLC, it then no
+  // longer expands an operator applied to arguments.
+  isSubstituted = false,
 ): ScopedExpression[] => {
   const expand = (
     child: Expression,
     childScope: Scope | undefined,
     childExpanding = expanding,
+    definition?: Definition,
   ): ScopedExpression[] =>
-    expandTemporal(child, childScope, environment, isUnrollingForall, childExpanding);
+    expandTemporal(
+      child,
+      childScope,
+      environment,
+      isUnrollingForall,
+      childExpanding,
+      isSubstituted ||
+        (definition !== undefined && environment.substitutedDefinitions.has(definition)),
+    );
   if (expression.kind === "And") {
     return expression.operands.flatMap((operand) => expand(operand, scope));
   }
@@ -179,9 +201,9 @@ export const expandTemporal = (
       getDefinitionLevel(definition, environment) > 0
     ) {
       if (expanding.has(definition)) {
-        throw new TlaConfigError(`The definition of ${expression.name} refers to itself`);
+        throw createStackOverflowError();
       }
-      return expand(definition.body, undefined, new Set([...expanding, definition]));
+      return expand(definition.body, undefined, new Set([...expanding, definition]), definition);
     }
   }
   const context = getConstantContext(environment, scope);
@@ -190,8 +212,13 @@ export const expandTemporal = (
     const definition = isLocallyResolved(expression)
       ? undefined
       : getDefinition(expression.operator, environment);
-    if (operator?.kind === "Closure" && !definition?.isRecursive) {
-      return expand(operator.body, bindOperatorArguments(operator, expression.args, context));
+    if (operator?.kind === "Closure" && !definition?.isRecursive && !isSubstituted) {
+      return expand(
+        operator.body,
+        bindOperatorArguments(operator, expression.args, context),
+        expanding,
+        definition,
+      );
     }
   }
   const isUnrolled =
@@ -262,9 +289,7 @@ export const toLiveExpression = (
     scope: Scope | undefined,
   ) => {
     if (expansion.depth >= MAXIMUM_EXPANSION_DEPTH) {
-      throw new TlaEvaluationError(
-        `TLC overflowed the stack while expanding the temporal formula at ${describeLocation(expression)}`,
-      );
+      throw createStackOverflowError();
     }
     expansion.depth++;
     const result = convert(body, bodyScope);

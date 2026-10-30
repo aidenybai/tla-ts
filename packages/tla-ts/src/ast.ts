@@ -343,6 +343,8 @@ export interface FunctionDefinition {
   body: Expression;
   isLocal: boolean;
   isRecursive: boolean;
+  // Whether the body applies the function, which SANY makes a recursive function definition.
+  isSelfReferential?: boolean;
   location: SourceLocation;
 }
 

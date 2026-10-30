@@ -297,15 +297,16 @@ export const getJavaInteger = (value: Value, signature: string) => {
   return value;
 };
 
-export const getIntegersSignature = (method: string, result: string, arity: number) =>
-  `public static tlc2.value.impl.${result} tlc2.module.Integers.${method}(${Array.from({ length: arity }, () => "tlc2.value.impl.IntValue").join(",")})`;
+export const getJavaSignature = (module: string, method: string, result: string, arity: number) =>
+  `public static tlc2.value.impl.${result} tlc2.module.${module}.${method}(${Array.from({ length: arity }, () => "tlc2.value.impl.IntValue").join(",")})`;
 
 export const defineArithmetic = (
+  module: string,
   name: string,
   method: string,
   compute: (left: number, right: number) => number,
 ) => {
-  const signature = getIntegersSignature(method, "IntValue", 2);
+  const signature = getJavaSignature(module, method, "IntValue", 2);
   return defineBinary(name, (left, right) => {
     const leftNumber = getJavaInteger(left, signature);
     const rightNumber = getJavaInteger(right, signature);
@@ -324,9 +325,17 @@ const getIntegerArgument = (value: Value, position: string, name: string) => {
   return value;
 };
 
-export const defineComparison = (name: string, compare: (left: number, right: number) => boolean) =>
+// The error of an argument that isn't an integer names the operator as TLC's method does.
+export const defineComparison = (
+  name: string,
+  compare: (left: number, right: number) => boolean,
+  errorName = name,
+) =>
   defineBinary(name, (left, right) =>
-    compare(getIntegerArgument(left, "first", name), getIntegerArgument(right, "second", name)),
+    compare(
+      getIntegerArgument(left, "first", errorName),
+      getIntegerArgument(right, "second", errorName),
+    ),
   );
 
 export const defineLazyOperator = (

@@ -272,7 +272,7 @@ const toDisjunctiveNormalForm = (expression: LiveExpression): LiveExpression => 
           total.value *= normal.operands.length;
           if (total.value > MAXIMUM_DISJUNCTS) {
             throw new TlaEvaluationError(
-              "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form",
+              "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form.",
             );
           }
         }

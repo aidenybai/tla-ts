@@ -75,6 +75,20 @@ describe("TLCExt operators match TLC", () => {
     );
   });
 
+  it("compares AssertError's message with the error's, which holds its code under -tool", async () => {
+    const results = await Promise.all(
+      [false, true].map((isTool) =>
+        check({
+          source:
+            '---- MODULE M ----\nEXTENDS Naturals, TLCExt\nASSUME AssertError("The second argument of \\\\div is 0.", 1 \\div 0)\n====',
+          config: "",
+          isTool,
+        }),
+      ),
+    );
+    expect(results.map((result) => result.status)).toEqual(["success", "assumption-violation"]);
+  });
+
   it("stops checking when TLCGetAndSet sets the exit key", async () => {
     const result = await checkModule(
       'Init == x = 0\nNext == x < 5 /\\ x\' = x + 1 /\\ (x = 2 => TLCGetAndSet("exit", LAMBDA old, new : new, TRUE, FALSE) = FALSE)',

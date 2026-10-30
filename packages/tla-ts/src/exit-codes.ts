@@ -41,10 +41,11 @@ export const withLivenessExitCode = (
   const checker = withErrorExitCode(create);
   return (
     checker && {
+      branches: checker.branches,
       addInitialState: (index, state) =>
         withErrorExitCode(() => checker.addInitialState(index, state)),
-      addState: (index, state, successors) =>
-        withErrorExitCode(() => checker.addState(index, state, successors)),
+      addState: (index, state, successors, tracing) =>
+        withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
       findViolation: () => withErrorExitCode(() => checker.findViolation()),
       getViolatedProperties: (path, cycleStart) =>
         withErrorExitCode(() => checker.getViolatedProperties(path, cycleStart)),

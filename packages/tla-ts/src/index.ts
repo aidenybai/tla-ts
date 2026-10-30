@@ -1,5 +1,6 @@
 export type {
   CheckOptions,
+  CheckProgress,
   CheckResult,
   CheckStatus,
   EvaluationFailure,
