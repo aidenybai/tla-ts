@@ -4,7 +4,9 @@
 // instantiation completes and checks.
 import { AstManager, KIND_APP, KIND_VAR, OP_AND, OP_EQ, OP_ITE, SORT_BOOL, SORT_INT } from "./ast";
 import { ObjHashtable } from "./hashtable";
+import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { ModelEvaluator } from "./model-evaluator";
+import { Rewriter } from "./rewriter";
 
 interface FuncEntry {
   args: number[];
@@ -181,10 +183,17 @@ export class ProtoModel {
   private finiteSorts = new Set<number>();
   private boolRandom: RandomGen;
   private evaluator: ModelEvaluator;
+  // m_rewrite: the th_rewriter that cleanup simplifies the interpretations with.
+  private rewriter: Rewriter;
 
   constructor(readonly manager: AstManager) {
     this.boolRandom = new RandomGen(manager.kinds.length);
     this.evaluator = new ModelEvaluator(manager, this);
+    this.rewriter = new Rewriter(manager, {
+      isEliminatingAnd: false,
+      arith: TACTIC_ARITH_OPTIONS,
+      isRewritingPatterns: false,
+    });
   }
 
   registerConst(decl: number, value: number) {
@@ -317,7 +326,7 @@ export class ProtoModel {
       } else if (manager.kinds[current] === KIND_APP && manager.args[current].length > 0) {
         const decl = manager.decls[current];
         if (this.auxDecls.has(decl)) foundAuxDecls.add(decl);
-        result = this.evaluator.mkApp(
+        result = this.rewriter.mkApp(
           decl,
           manager.args[current].map((arg) => visit(arg)),
           manager.sorts[current],
