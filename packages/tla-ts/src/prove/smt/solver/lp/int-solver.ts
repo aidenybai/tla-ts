@@ -48,13 +48,26 @@ const getPatchingDeltas = (x: Rational, alpha: Rational) => {
   return { plus, minus: plus.sub(Rational.of(alpha.den)) };
 };
 
+interface Parity {
+  offset: bigint;
+  modulus: bigint;
+  row: RowCell[];
+}
+
 export class IntSolver {
   private numberOfCalls = 0;
+  // m_parities and m_inserted_vars of the GCD test, for one test.
+  private parities = new Map<number, Parity[]>();
+  private parityColumns: number[] = [];
   private lcubePeriod: number;
   readonly explanation = new Explanation();
 
+  private initialDioCallsPeriod: number;
+  private dioUndefInARow = 0;
+
   constructor(private solver: LarSolver) {
     this.lcubePeriod = solver.settings.intFindCubePeriod;
+    this.initialDioCallsPeriod = solver.settings.dioCallsPeriod;
   }
 
   private isColumnIntInf(column: number) {
@@ -90,7 +103,36 @@ export class IntSolver {
     if (this.hitPeriod(this.lcubePeriod) && this.lcubePeriod < 1 << 30) this.lcubePeriod *= 2;
     solver.moveNonBasicColumnsToBounds();
     this.hitPeriod(settings.hnfCutPeriod);
-    return this.branch();
+    if (this.shouldSolveDiophantineEquations()) this.solveDiophantineEquations();
+    if (settings.isDioEnablingGomoryCuts) this.hitPeriod(settings.intGomoryCutPeriod);
+    const move = this.branch();
+    return settings.isCanceled() ? { kind: "undef" } : move;
+  }
+
+  // should_solve_dioph_eq: a draw with the current period, which relaxes toward the initial one
+  // when it misses.
+  private shouldSolveDiophantineEquations() {
+    const settings = this.solver.settings;
+    const isHit = this.hitPeriod(settings.dioCallsPeriod);
+    if (!isHit && settings.dioCallsPeriod > this.initialDioCallsPeriod) {
+      const decrease = settings.dioCallsPeriodDecrease;
+      settings.dioCallsPeriod =
+        settings.dioCallsPeriod > this.initialDioCallsPeriod + decrease
+          ? settings.dioCallsPeriod - decrease
+          : this.initialDioCallsPeriod;
+    }
+    return isHit;
+  }
+
+  // solve_dioph_eq when the solver finds nothing: the period doubles, and Gomory cuts and the GCD
+  // test start after enough failures in a row.
+  private solveDiophantineEquations() {
+    const settings = this.solver.settings;
+    settings.dioCallsPeriod *= 2;
+    this.dioUndefInARow++;
+    if (this.dioUndefInARow < settings.dioGomoryEnablePeriod) return;
+    settings.isDioEnablingGomoryCuts = true;
+    settings.isRunningGcdTest = true;
   }
 
   // GCD test.
@@ -98,19 +140,37 @@ export class IntSolver {
   private gcdTest(): LiaMove {
     const solver = this.solver;
     solver.settings.stats.gcdCalls++;
+    if (this.isGcdTestFeasible()) return { kind: "undef" };
+    solver.settings.stats.gcdConflicts++;
+    return { kind: "conflict" };
+  }
+
+  // gcd_test: the rows of fractional basic columns, then the other rows of the columns whose
+  // parity a row fixed.
+  private isGcdTestFeasible() {
+    const solver = this.solver;
+    this.parities.clear();
+    this.parityColumns = [];
+    const visited = new Set<number>();
     for (let rowIndex = 0; rowIndex < solver.getRowCount(); rowIndex++) {
       const basic = solver.core.basis[rowIndex];
       if (!solver.isInt(basic) || solver.getValue(basic).isInt()) continue;
-      if (!this.gcdTestForRow(rowIndex)) {
-        solver.settings.stats.gcdConflicts++;
-        return { kind: "conflict" };
-      }
+      if (!this.gcdTestForRow(rowIndex)) return false;
+      visited.add(rowIndex);
     }
-    return { kind: "undef" };
+    for (let index = this.parityColumns.length; index-- > 0;)
+      for (const cell of solver.core.matrix.columns[this.parityColumns[index]]) {
+        if (visited.has(cell.row)) continue;
+        visited.add(cell.row);
+        if (!this.gcdTestForRow(cell.row)) return false;
+      }
+    return true;
   }
 
   private gcdTestForRow(rowIndex: number) {
     const solver = this.solver;
+    const basic = solver.core.basis[rowIndex];
+    if (!solver.isInt(basic)) return true;
     const row = solver.getRow(rowIndex);
     let lcmDen = 1n;
     for (const cell of row) lcmDen = getLcm(lcmDen, cell.coeff.den);
@@ -119,6 +179,8 @@ export class IntSolver {
     let gcds = Rational.zero;
     let leastCoeff = Rational.zero;
     let isLeastCoeffBounded = false;
+    let isLeastCoeffUnique = false;
+    let leastCoeffColumn = 0;
     for (const cell of row) {
       const column = cell.column;
       const scaled = lcm.mul(cell.coeff);
@@ -133,6 +195,8 @@ export class IntSolver {
         gcds = magnitude;
         leastCoeff = magnitude;
         isLeastCoeffBounded = isBounded;
+        isLeastCoeffUnique = true;
+        leastCoeffColumn = column;
         continue;
       }
       gcds = Rational.of(getGcd(gcds.num, magnitude.num));
@@ -140,7 +204,12 @@ export class IntSolver {
       if (comparison < 0) {
         leastCoeff = magnitude;
         isLeastCoeffBounded = isBounded;
-      } else if (comparison === 0) isLeastCoeffBounded = isLeastCoeffBounded && isBounded;
+        isLeastCoeffUnique = true;
+        leastCoeffColumn = column;
+      } else if (comparison === 0) {
+        isLeastCoeffBounded = isLeastCoeffBounded && isBounded;
+        isLeastCoeffUnique = false;
+      }
     }
     if (gcds.isZero()) return true;
     if (!consts.div(gcds).isInt()) {
@@ -150,10 +219,56 @@ export class IntSolver {
     if (
       isLeastCoeffBounded &&
       !leastCoeff.equals(Rational.one) &&
-      !solver.getValue(solver.core.basis[rowIndex]).isInt() &&
+      !solver.getValue(basic).isInt() &&
       !this.extGcdTest(row, lcm, consts, leastCoeff)
     )
       return false;
+    if (!isLeastCoeffUnique) return true;
+    return this.accumulateParity(row, leastCoeffColumn, lcm, consts, leastCoeff);
+  }
+
+  // accumulate_parity: the row fixes the residue of its unique least column modulo the gcd of the
+  // others, and two rows that fix different residues for the same modulus conflict.
+  private accumulateParity(
+    row: RowCell[],
+    leastColumn: number,
+    lcm: Rational,
+    consts: Rational,
+    leastCoeff: Rational,
+  ) {
+    const solver = this.solver;
+    let modulus = 0n;
+    let isLeastNegative = false;
+    for (const cell of row) {
+      if (cell.column === leastColumn) isLeastNegative = cell.coeff.isNegative();
+      else if (!solver.isFixed(cell.column)) {
+        const magnitude = lcm.mul(cell.coeff).abs().num;
+        if (getGcd(leastCoeff.num, magnitude) !== leastCoeff.num) return true;
+        modulus = modulus === 0n ? magnitude : getGcd(modulus, magnitude);
+        if (modulus === 1n) return true;
+      }
+    }
+    modulus /= leastCoeff.num;
+    if (modulus === 0n) return true;
+    const quotient = consts.div(leastCoeff);
+    if (!quotient.isInt()) return true;
+    let offset = ((quotient.num % modulus) + modulus) % modulus;
+    if (!isLeastNegative && offset !== 0n) offset = modulus - offset;
+    return this.insertParity(leastColumn, row, offset, modulus);
+  }
+
+  private insertParity(column: number, row: RowCell[], offset: bigint, modulus: bigint) {
+    const parities = this.parities.get(column) ?? [];
+    for (const parity of parities) {
+      if (parity.modulus !== modulus) continue;
+      if (parity.offset === offset) return true;
+      this.fillExplanationFromFixedColumns(row);
+      this.fillExplanationFromFixedColumns(parity.row);
+      return false;
+    }
+    this.parityColumns.push(column);
+    parities.push({ offset, modulus, row });
+    this.parities.set(column, parities);
     return true;
   }
 
@@ -206,7 +321,7 @@ export class IntSolver {
     solver.settings.stats.patches++;
     solver.removeFixedVarsFromBase();
     for (const column of solver.core.basis)
-      if (!solver.getValue(column).isInt() && solver.isInt(column) && !solver.isFixed(column))
+      if (!solver.getModelValue(column).isInt() && solver.isInt(column) && !solver.isFixed(column))
         this.patchBasicColumn(column);
     if (solver.hasInfInt()) return false;
     solver.settings.stats.patchesSuccess++;
@@ -218,7 +333,7 @@ export class IntSolver {
     for (const cell of solver.getRow(solver.core.heading[basic])) {
       if (cell.column === basic || !solver.isInt(cell.column) || cell.coeff.isInt()) continue;
       const deltas = getPatchingDeltas(
-        getFractionalPart(solver.getValue(basic).x),
+        getFractionalPart(solver.getModelValue(basic)),
         getFractionalPart(cell.coeff),
       );
       if (deltas === undefined) continue;

@@ -36,6 +36,13 @@ export class LpSettings {
   readonly intFindCubePeriod = 4;
   readonly hnfCutPeriod = 4;
   readonly intGomoryCutPeriod = 4;
+  // lp.dio_calls_period, which the Diophantine solver's results move, its decrease, and
+  // lp.dio_gomory_enable_period.
+  dioCallsPeriod = 4;
+  readonly dioCallsPeriodDecrease = 2;
+  readonly dioGomoryEnablePeriod = 16;
+  // lp.dio_cuts_enable_gomory, which turns on when the Diophantine solver keeps failing.
+  isDioEnablingGomoryCuts = false;
   // lp.dio is on, so the GCD test runs when dio_run_gcd is on.
   isRunningGcdTest = true;
 

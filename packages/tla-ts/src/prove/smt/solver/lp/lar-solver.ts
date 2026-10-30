@@ -61,7 +61,8 @@ export class LarSolver {
   private fixedBaseVarSet = new IndexedUintSet();
   private normalizedTermsToColumns = new Map<string, { coeff: Rational; column: number }>();
   private isRegisteringTerms = false;
-  private delta = Rational.one;
+  // m_delta: zero until init_model sets it.
+  private delta = Rational.zero;
   // The callback of nla for the columns whose bounds changed.
   onChangedBounds: ((columns: IndexedUintSet) => void) | undefined;
 
