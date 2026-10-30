@@ -20,9 +20,16 @@ export interface SanyReport {
   specification?: SanySpecification;
 }
 
+// Where SANY reads a module from: a file of its own, the file of the root module, which holds the
+// root module's inner modules too, or the files of its standard modules.
+export type SanyModuleOrigin = "file" | "root file" | "standard";
+
 export interface SanyReportOptions {
   // The file name SANY's caller gives it, which it prints in its messages about the specification.
   fileName?: string;
+  // TLC runs SANY to print the file it parses each module from, as describeFile names it, and each
+  // module it analyzes and lints.
+  describeFile?: (moduleName: string, origin: SanyModuleOrigin) => string;
   // tla2sany.xml.XMLExporter runs SANY with its validAstSettings, which neither lint the modules
   // nor validate their PlusCal, and prints only SANY's errors.
   isXmlExport?: boolean;
@@ -43,6 +50,19 @@ const formatParseErrors = (messages: SanyMessage[]) => {
     ...warnings.map((warning) => `${formatMessage(warning)}\n\n\n`),
   ].join("");
 };
+
+// tla2sany.semantic.StandardModules: SANY lints the modules other than these.
+const UNLINTED_MODULES = new Set([
+  "FiniteSets",
+  "Sequences",
+  "Bags",
+  "Naturals",
+  "Integers",
+  "Reals",
+  "RealTime",
+  "Randomization",
+  "TLC",
+]);
 
 // The modules a module and its inner modules extend, other than its inner modules.
 const getExtendees = (module: Module) => {
@@ -68,9 +88,9 @@ const parseValidatedModule = (text: string) => {
   }
 };
 
-// What SANY prints while TLC runs it on the specification in rootPath, without the lines that name
-// each file it parses and each module it processes, and whether SANY rejects the specification.
-// loadModule finds the source of the other modules, and SANY's standard modules fill in the rest.
+// What SANY prints while TLC runs it on the specification in rootPath, and whether SANY rejects the
+// specification. loadModule finds the source of the other modules, and SANY's standard modules fill
+// in the rest.
 export const getSanyReport = (
   rootPath: string,
   loadModule: (name: string) => string | undefined = () => undefined,
@@ -87,8 +107,11 @@ export const getSanyReport = (
   const warn = (text: string) => {
     if (!options.isXmlExport) log(text);
   };
+  const describeFile = options.describeFile;
+  const origins = new Map<string, SanyModuleOrigin>([
+    [rootName, existsSync(rootPath) ? "file" : "standard"],
+  ]);
   const isFailed = { value: false };
-  const standardNames = new Set<string>();
   // The messages of SANY's parsing phase, which come from its validation of PlusCal, and whether
   // SANY has printed them and whether one is an error that ends its run before semantic analysis.
   const parseMessages: SanyMessage[] = [];
@@ -155,18 +178,19 @@ export const getSanyReport = (
   };
   const loadSource = (moduleName: string) => {
     const standard = SANY_STANDARD_MODULES.get(moduleName);
-    const text =
-      loadModule(moduleName) ??
-      (standard === undefined && source !== undefined
+    const file = loadModule(moduleName);
+    const extracted =
+      file === undefined && standard === undefined && source !== undefined
         ? extractModule(source, moduleName)
-        : undefined);
+        : undefined;
+    const text = file ?? extracted;
+    origins.set(
+      moduleName,
+      file !== undefined ? "file" : extracted !== undefined ? "root file" : "standard",
+    );
     // The standard modules have no PlusCal, and SANY validates an extracted module's own text.
-    if (text !== undefined) {
-      loadValidatedModule(moduleName, text);
-      return text;
-    }
-    if (standard !== undefined) standardNames.add(moduleName);
-    return standard;
+    if (text !== undefined) loadValidatedModule(moduleName, text);
+    return text ?? standard;
   };
   const generate = () => {
     // HACK: SANY reports a fatal error of its parsing phase by the exception it throws, so the
@@ -179,10 +203,20 @@ export const getSanyReport = (
       validate(rootName);
       return generateSanySpecification(source, loadSource, {
         rootFileName: rootName,
+        onParse: (moduleName) => {
+          if (describeFile) {
+            log(`Parsing file ${describeFile(moduleName, origins.get(moduleName) ?? "file")}`);
+          }
+        },
+        onAnalyze: (moduleName) => {
+          reportParseMessages();
+          if (describeFile && !parsePhase.isAborted) {
+            log(`Semantic processing of module ${moduleName}`);
+          }
+        },
         // SANY.frontEndSemanticAnalysis: after each module, SANY level-checks it if there are no
         // errors yet, then prints every message so far.
         onModule: (module, messages) => {
-          reportParseMessages();
           if (parsePhase.isAborted) return;
           if (messages.every((message) => message.isWarning)) checkModuleLevels(module, messages);
           if (messages.length === 0) return;
@@ -221,12 +255,11 @@ export const getSanyReport = (
   const specification = generate();
   if (specification !== undefined) reportParseMessages();
   // SANY.frontEndLinting: when SANY accepts the specification, it lints the modules that are not
-  // its standard modules.
+  // its standard modules, then prints the warnings.
   if (specification !== undefined && !isFailed.value && !options.isXmlExport) {
-    specification.modules
-      .filter((module) => !standardNames.has(module.name))
-      .flatMap(lintSanyModule)
-      .forEach((warning) => log(`${formatMessage(warning)}\n\n\n`));
+    const linted = specification.modules.filter((module) => !UNLINTED_MODULES.has(module.name));
+    if (describeFile) linted.forEach((module) => log(`Linting of module ${module.name}`));
+    linted.flatMap(lintSanyModule).forEach((warning) => log(`${formatMessage(warning)}\n\n\n`));
   }
   return {
     text: lines.join(""),

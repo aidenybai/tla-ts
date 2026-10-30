@@ -146,6 +146,10 @@ export interface SanySpecification {
 export interface SanyGenerationOptions {
   // The name of the root module's file, which SANY requires to match the module's name.
   rootFileName?: string;
+  // Called before SANY parses the file of each module, and before it analyzes each external
+  // module, in its order.
+  onParse?: (name: string) => void;
+  onAnalyze?: (name: string) => void;
   // Called after each external module, in the order SANY analyzes them.
   onModule?: (module: ModuleNode, messages: SanyMessage[]) => void;
 }
@@ -336,6 +340,7 @@ export const generateSanySpecification = (
         importer,
       );
     }
+    options.onParse?.(name);
     const module = parseSource(name, text);
     if (module.name !== name) {
       throw new TlaSanyFatalError(
@@ -2615,6 +2620,7 @@ export const generateSanySpecification = (
   };
 
   order.forEach((name) => {
+    options.onAnalyze?.(name);
     const entry = getSource(name, undefined);
     const context = createContext();
     // A module's context starts as a copy of SANY's global context of builtins, whose list of

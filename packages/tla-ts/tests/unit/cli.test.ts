@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -40,13 +40,18 @@ describe("the CLI prints traces like TLC", () => {
   });
 });
 
+// The lines in which TLC reports its version and runtime, and the files SANY parses.
+const STARTUP_LINE =
+  /^(TLC2 Version |Running breadth-first search |Parsing file |Semantic processing of module |Linting of module )/;
+
 // TLC's output for the same models without -tool, with the time it ran and the dates it printed as _,
-// and without its first lines, which report its version and the files SANY parsed.
+// and without its startup lines.
 const getSteadyLines = (output: string) =>
   output
     .replace(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/g, "_")
     .replace(/ in \d\ds at /g, " in _ at ")
-    .split("\n");
+    .split("\n")
+    .filter((line) => !STARTUP_LINE.test(line));
 
 const TLC_REPORTS = [
   [
@@ -251,7 +256,59 @@ describe("the CLI reports results like TLC", () => {
   it("rejects -lncheck without a strategy like TLC", () => {
     const result = runCli("cli-output", "Lasso", ["-lncheck"]);
     expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Error: expect a strategy such as final for -lncheck option.\n");
+    expect(result.stdout.split("\n").slice(1)).toEqual([
+      "Error: Error: expect a strategy such as final for -lncheck option.",
+      "Usage: java tlc2.TLC [-help] [-option] inputfile",
+      "",
+    ]);
+  });
+
+  it("names a spec given by an absolute path by its file name, as TLC runs from its directory", () => {
+    const directory = join(FIXTURES, "cli-output");
+    const result = runCliWith("cli-output", [
+      "-config",
+      "Success.cfg",
+      join(directory, "Missing.tla"),
+    ]);
+    expect(result.status).toBe(150);
+    expect(result.stderr).toBe(
+      `File does not exist: ${directory}/Missing.tla while looking in these directories: ${directory}, , classpath:/tla2sany/StandardModules, classpath:/\n`,
+    );
+    expect(result.stdout).toContain("\nFatal errors while parsing TLA+ spec in file Missing\n");
+  });
+
+  it("reports its version and runtime, then the files SANY parses, the modules it analyzes and the modules it lints", () => {
+    const directory = join(FIXTURES, "cli-output");
+    const args = [
+      "-Djava.io.tmpdir=/tmp",
+      "-cp",
+      "/lib/tla2tools.jar",
+      "tlc2.TLC",
+      "-workers",
+      "2",
+      "-seed",
+      "7",
+      "Success",
+    ];
+    const result = runCliWith("cli-output", args);
+    const lines = result.stdout.split("\n");
+    expect(lines[0]).toMatch(/^TLC2 Version \d+\.\d+\.\d+ \(rev: tla-ts\)$/);
+    expect(lines[1]).toMatch(
+      /^Running breadth-first search Model-Checking with fp 0 and seed 7 with 2 workers on \d+ cores with \d+MB heap and 0MB offheap memory \[pid: \d+\] \(.+, Node\.js .+, MemFPSet, MemStateQueue\)\.$/,
+    );
+    expect(lines[2]).toBe(`Parsing file ${realpathSync(join(directory, "Success.tla"))}`);
+    expect(lines[3]).toMatch(
+      new RegExp(
+        `^Parsing file ${realpathSync("/tmp")}/tlc-\\d+/Naturals\\.tla \\(jar:file:/lib/tla2tools\\.jar!/tla2sany/StandardModules/Naturals\\.tla\\)$`,
+      ),
+    );
+    expect(lines.slice(4, 7)).toEqual([
+      "Semantic processing of module Naturals",
+      "Semantic processing of module Success",
+      "Linting of module Success",
+    ]);
+    // TLC names its copies of the standard modules at random, and tla-ts the same way each run.
+    expect(runCliWith("cli-output", args).stdout.split("\n")[3]).toBe(lines[3]);
   });
 });
 
@@ -619,6 +676,8 @@ describe("the CLI prints messages for a program to read like TLC", () => {
     expect(result.status).toBe(12);
     const step = (n: number) => `<<"step", ${n}>>`;
     expect(getToolSequence(result.stdout)).toEqual([
+      "2262",
+      "2187",
       "2220",
       "2219",
       "2185",
@@ -649,6 +708,8 @@ describe("the CLI prints messages for a program to read like TLC", () => {
       (name) => (n: number) => `<<"${name}", ${n}>>`,
     );
     expect(getToolSequence(result.stdout)).toEqual([
+      "2262",
+      "2187",
       "2220",
       "2219",
       "2185",
@@ -698,6 +759,8 @@ describe("the CLI prints messages for a program to read like TLC", () => {
     const result = runTool("Always");
     expect(result.status).toBe(12);
     expect(getToolSequence(result.stdout)).toEqual([
+      "2262",
+      "2187",
       "2220",
       "2219",
       "2185",

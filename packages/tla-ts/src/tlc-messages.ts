@@ -3,6 +3,7 @@ import { TlaModuleError, type TlaEvaluationError } from "./errors";
 // TLC's codes for the messages it prints, from tlc2.output.EC.
 export const MESSAGE_CODE = {
   general: 1000,
+  commandLineError: 1102,
   initialState: 2102,
   nestedExpression: 2103,
   assumptionFalse: 2104,
@@ -23,6 +24,7 @@ export const MESSAGE_CODE = {
   constantLevelInvariant: 2149,
   javaOverrideLoaded: 2168,
   starting: 2185,
+  modelChecking: 2187,
   finished: 2186,
   computingInit: 2189,
   initGenerated1: 2190,
@@ -38,6 +40,7 @@ export const MESSAGE_CODE = {
   sanyFinished: 2219,
   startingSany: 2220,
   stateLevelProperty: 2255,
+  version: 2262,
   noSpecificationButProperty: 2257,
   noFairnessButProperty: 2259,
   counterExample: 2264,
@@ -51,6 +54,7 @@ export const MESSAGE_CODE = {
   postconditionFailed: 2405,
   possibleUnwitnessed: 2780,
   parsingFailed: 3002,
+  configFileError: 5001,
 } as const;
 
 // TLC's message levels, from tlc2.output.MP.

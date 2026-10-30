@@ -132,7 +132,11 @@ describe("the CLI takes TLC's -dump flag", () => {
   it("asks for a file name", () => {
     const result = runCli(["-dump"]);
     expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Error: A file name for dumping states required.\n");
+    expect(result.stdout.split("\n").slice(1)).toEqual([
+      "Error: Error: A file name for dumping states required.",
+      "Usage: java tlc2.TLC [-help] [-option] inputfile",
+      "",
+    ]);
   });
 
   it("rejects a format it cannot write like TLC", () => {

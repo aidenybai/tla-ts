@@ -4,6 +4,7 @@
     "module": "Preserve",
     "moduleResolution": "Bundler",
     "esModuleInterop": true,
+    "resolveJsonModule": true,
     "strict": true,
     "noEmit": true,
     "noUnusedLocals": true,

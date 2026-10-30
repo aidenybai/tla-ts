@@ -8,9 +8,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
-import { availableParallelism } from "node:os";
+import { arch, availableParallelism, release, tmpdir, type } from "node:os";
 import { pathToFileURL } from "node:url";
+import { getHeapStatistics } from "node:v8";
+import { version } from "../package.json";
 import type { Expression } from "./ast";
 import { describeRange } from "./evaluate";
 import type {
@@ -49,7 +52,7 @@ import {
   getOutDegreeSummary,
 } from "./tlc-summary";
 import { SANY_STANDARD_MODULES } from "./sany-modules";
-import { getSanyReport } from "./sany-report";
+import { getSanyReport, type SanyModuleOrigin } from "./sany-report";
 import { exportSanyXml, XML_EXPORT_EXIT_CODE } from "./sany-xml";
 import {
   createMessagePrinter,
@@ -563,31 +566,133 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
 };
 
 // Like TLC, tla-ts finds a module in the directory of the spec, then in each library directory.
-const createModuleLoader = (directories: string[]) => (name: string) =>
-  directories
-    .map((directory) => join(directory, `${name}.tla`))
-    .filter((path) => existsSync(path))
-    .map((path) => readFileSync(path, "utf8"))[0];
+const findModuleFile = (directories: string[], name: string) =>
+  directories.map((directory) => join(directory, `${name}.tla`)).find(existsSync);
+
+const createModuleLoader = (directories: string[]) => (name: string) => {
+  const path = findModuleFile(directories, name);
+  return path === undefined ? undefined : readFileSync(path, "utf8");
+};
+
+// SimpleFilenameToStream: SANY names the file of a module it can't find, and where it looked.
+const printMissingFile = (userDirectory: string, fileName: string, directories: string[]) =>
+  console.error(
+    `File does not exist: ${userDirectory}/${fileName} while looking in these directories: ${userDirectory}, ${directories.join(", ")}, classpath:/tla2sany/StandardModules, classpath:/`,
+  );
+
+// Java's Files.createTempDirectory names a directory by a random unsigned long. tla-ts derives it
+// from what the directory holds, so that each run of a spec prints the same files.
+const getTemporaryName = (contents: string) =>
+  createHash("sha256").update(contents).digest().readBigUInt64BE().toString();
+
+// The file TLC's SANY says it parses each module from: the real path of a module's own file, or a
+// copy in a temporary directory of a module from the root module's file or from the jar on the
+// class path, followed by where TLC copied it from.
+const createFileDescriber = (
+  specPath: string,
+  directories: string[],
+  java: JavaProperties,
+  metadir: string | undefined,
+) => {
+  const temporary = java.temporaryDirectory ?? tmpdir();
+  const temporaryDirectory = existsSync(temporary) ? realpathSync(temporary) : resolve(temporary);
+  const libraryDirectory = join(temporaryDirectory, `tlc-${getTemporaryName(resolve(specPath))}`);
+  const jar = java.classPath?.split(delimiter).find((entry) => entry.endsWith(".jar"));
+  return (name: string, origin: SanyModuleOrigin) => {
+    const fileName = `${name}.tla`;
+    if (origin === "file") return realpathSync(findModuleFile(directories, name) ?? specPath);
+    // FileUtil.createTempFile copies a module from the root module's file into the -metadir.
+    if (origin === "root file") {
+      const directory = metadir === undefined ? temporaryDirectory : resolve(metadir);
+      const root = realpathSync(specPath);
+      return `${join(directory, getTemporaryName(`${root} ${name}`), fileName)} (${root})`;
+    }
+    const copy = join(libraryDirectory, fileName);
+    return jar === undefined
+      ? copy
+      : `${copy} (jar:file:${pathToFileURL(resolve(jar)).pathname}!/tla2sany/StandardModules/${fileName})`;
+  };
+};
+
+const printWelcome = (printer: MessagePrinter) =>
+  printer.print(MESSAGE_CODE.version, MESSAGE_LEVEL.none, `TLC2 Version ${version} (rev: tla-ts)`);
+
+// TLC.printErrorMsg: TLC says which version it is, then why it can't read its options.
+const printCommandLineError = (printer: MessagePrinter, message: string) => {
+  printWelcome(printer);
+  printer.print(
+    MESSAGE_CODE.commandLineError,
+    MESSAGE_LEVEL.error,
+    `${message}\nUsage: java tlc2.TLC [-help] [-option] inputfile`,
+  );
+  return 1;
+};
+
+// TLC.printStartupBanner, with what runs tla-ts in place of the JVM. tla-ts keeps its fingerprints
+// and its queue of states in memory.
+const printStartupBanner = (printer: MessagePrinter, seed: string, workers: number) =>
+  printer.print(
+    MESSAGE_CODE.modelChecking,
+    MESSAGE_LEVEL.none,
+    `Running breadth-first search Model-Checking with fp 0 and seed ${BigInt(seed)} with ${workers} worker${workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 0MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit, MemFPSet, MemStateQueue).`,
+  );
 
 const checkSpec = async (
   specPath: string,
   args: ParsedArgs,
-  libraries: string[],
+  java: JavaProperties,
   printer: MessagePrinter,
 ) => {
-  if (!existsSync(specPath)) {
-    console.error(`Cannot find the specification file ${specPath}`);
-    return EXIT_STATUS.configParseError;
+  // TLC.handleParameters: TLC reads its options before it says which version it is.
+  const seed = args.has("-seed") ? args.get("-seed")?.[0] : "0";
+  if (seed === undefined) return printCommandLineError(printer, "Error: seed required.");
+  if (!isJavaLong(seed)) {
+    return printCommandLineError(
+      printer,
+      `Error: An integer for seed required. But encountered ${seed}`,
+    );
   }
-  const source = readFileSync(specPath, "utf8");
-  const fileName = basename(specPath, ".tla");
+  const livenessCheck = args.has("-lncheck") ? args.get("-lncheck")?.[0]?.toLowerCase() : "default";
+  if (livenessCheck === undefined) {
+    return printCommandLineError(
+      printer,
+      "Error: expect a strategy such as final for -lncheck option.",
+    );
+  }
+  const dumpValues = args.get("-dump");
+  if (dumpValues?.length === 0) {
+    return printCommandLineError(printer, "Error: A file name for dumping states required.");
+  }
+  const unsupportedFormat =
+    dumpValues?.length === 2 &&
+    UNSUPPORTED_DUMP_FORMATS.find((format) => dumpValues[0].toLowerCase().includes(format));
+  if (unsupportedFormat) {
+    console.error(`Error: tla-ts does not support the -dump format ${unsupportedFormat}.`);
+    return 1;
+  }
+  // tla-ts fingerprints states as TLC does with -fp 0.
+  const fingerprint = args.get("-fp")?.[0];
+  if (fingerprint !== undefined && Number(fingerprint) !== 0) {
+    console.error(
+      `Error: tla-ts fingerprints states as TLC does with -fp 0, not -fp ${fingerprint}.`,
+    );
+    return 1;
+  }
+  const workers = getWorkerCount(args.get("-workers"));
+  printWelcome(printer);
+  printStartupBanner(printer, seed, workers);
   const configPath =
     args.get("-config")?.[0] ??
     (args.has("-config") ? undefined : specPath.replace(/\.tla$/, ".cfg"));
   if (!configPath || !existsSync(configPath)) {
-    console.error(`Cannot find the configuration file ${configPath ?? ""}`);
+    printer.print(
+      MESSAGE_CODE.configFileError,
+      MESSAGE_LEVEL.error,
+      `TLC encountered the following error when trying to read the configuration file ${configPath ?? ""}:\nFile not found.`,
+    );
     return EXIT_STATUS.configParseError;
   }
+  const fileName = basename(specPath, ".tla");
   const timing: Timing = { start: Date.now(), liveness: undefined, isParsed: false };
   // Without -tool, TLC prints how long it ran for a person to read.
   const printFinished = () => {
@@ -626,43 +731,11 @@ const checkSpec = async (
   })();
   if (config instanceof TlaConfigError) return printFailure(config);
   if (args.has("-deadlock")) config.checkDeadlock = false;
-  const seed = args.has("-seed") ? args.get("-seed")?.[0] : "0";
-  if (seed === undefined) {
-    console.error("Error: seed required.");
-    return 1;
-  }
-  if (!isJavaLong(seed)) {
-    console.error(`Error: An integer for seed required. But encountered ${seed}`);
-    return 1;
-  }
-  const livenessCheck = args.has("-lncheck") ? args.get("-lncheck")?.[0]?.toLowerCase() : "default";
-  if (livenessCheck === undefined) {
-    console.error("Error: expect a strategy such as final for -lncheck option.");
-    return 1;
-  }
-  const dumpValues = args.get("-dump");
-  if (dumpValues?.length === 0) {
-    console.error("Error: A file name for dumping states required.");
-    return 1;
-  }
-  const unsupportedFormat =
-    dumpValues?.length === 2 &&
-    UNSUPPORTED_DUMP_FORMATS.find((format) => dumpValues[0].toLowerCase().includes(format));
-  if (unsupportedFormat) {
-    console.error(`Error: tla-ts does not support the -dump format ${unsupportedFormat}.`);
-    return 1;
-  }
-  // tla-ts fingerprints states as TLC does with -fp 0.
-  const fingerprint = args.get("-fp")?.[0];
-  if (fingerprint !== undefined && Number(fingerprint) !== 0) {
-    console.error(
-      `Error: tla-ts fingerprints states as TLC does with -fp 0, not -fp ${fingerprint}.`,
-    );
-    return 1;
-  }
   const directory = dirname(specPath);
-  const loadModule = createModuleLoader([directory, ...libraries]);
+  const directories = [directory, ...java.libraries];
+  const loadModule = createModuleLoader(directories);
   const run = async () => {
+    const source = readFileSync(specPath, "utf8");
     const moduleName = parseModule(source).name;
     if (moduleName !== fileName) {
       throw new TlaSanyFatalError(
@@ -671,7 +744,7 @@ const checkSpec = async (
       );
     }
     const result = await check({
-      workers: getWorkerCount(args.get("-workers")),
+      workers,
       livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
       seed: BigInt(seed),
       dump: dumpValues && getDump(dumpValues),
@@ -699,8 +772,23 @@ const checkSpec = async (
   if (printer.isTool) {
     printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");
   }
-  // TLC prints the warnings SANY reports, and the errors it rejects the spec for.
-  const sany = getSanyReport(specPath, loadModule);
+  // TLC.handleParameters: SANY names the spec as TLC's arguments do, except that TLC runs from the
+  // directory of a spec given by an absolute path, and names it by its file name. SANY looks for
+  // the spec's modules in the spec's directory and the TLA-Library directories.
+  const isAbsoluteSpec = isAbsolute(specPath);
+  const specName = isAbsoluteSpec ? fileName : specPath.replace(/\.tla$/, "");
+  if (!existsSync(specPath) && !SANY_STANDARD_MODULES.has(fileName)) {
+    printMissingFile(
+      isAbsoluteSpec ? directory : process.cwd(),
+      isAbsoluteSpec ? `${fileName}.tla` : `./${specName}.tla`,
+      [...(isAbsoluteSpec || directory === "." ? [] : [directory]), ...java.libraries],
+    );
+  }
+  // TLC prints what SANY prints as it parses the spec, and the errors it rejects the spec for.
+  const sany = getSanyReport(specPath, loadModule, {
+    fileName: specName,
+    describeFile: createFileDescriber(specPath, directories, java, args.get("-metadir")?.[0]),
+  });
   process.stdout.write(sany.text);
   if (sany.isFailed) {
     printCheckProgress(printer, { kind: "parsed" }, timing, directory);
@@ -956,7 +1044,7 @@ const prove = (args: string[]) => {
     : (failures[0] ?? EXIT_STATUS.success);
 };
 
-const checkSpecs = async (args: string[], libraries: string[]) => {
+const checkSpecs = async (args: string[], java: JavaProperties) => {
   const parsed = CHECK_COMMAND.parse(args);
   const inputs = getInputPaths(parsed.positionals);
   const isConfigured = parsed.has("-config");
@@ -988,7 +1076,7 @@ const checkSpecs = async (args: string[], libraries: string[]) => {
   const findSpec = (path: string) =>
     existsSync(path) || isAbsolute(path)
       ? path
-      : (libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
+      : (java.libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
   const paths = [...new Set(specPaths.map(findSpec))];
   return runEach(
     paths,
@@ -996,7 +1084,7 @@ const checkSpecs = async (args: string[], libraries: string[]) => {
       // TLC checks one spec, so tla-ts names each of several it checks.
       if (paths.length > 1)
         console.log(`Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`);
-      return checkSpec(path, parsed, libraries, printer);
+      return checkSpec(path, parsed, java, printer);
     },
     () => createMessagePrinter(parsed.has("-tool"), !parsed.has("-nowarning")),
   );
@@ -1054,36 +1142,52 @@ const exportXml = (args: string[]) => {
 // Tools that run TLC with Java, such as the statechart skill of pstack, can run tla-ts in place of
 // java, as in `tla-ts -DTLA-Library=lib -cp tla2tools.jar tlc2.TLC Spec`. tla-ts searches the
 // TLA-Library directories for modules as TLC does, though not as XMLExporter, which ignores them,
-// and ignores the class path and other options.
+// names the files in java.io.tmpdir and the jar on the class path that TLC would copy and read
+// modules from, and ignores the other options.
 const JAVA_MAIN_CLASSES = ["tlc2.TLC", "tla2sany.xml.XMLExporter"];
 
 const TLA_LIBRARY_PROPERTY = "-DTLA-Library=";
 
+const TEMPORARY_DIRECTORY_PROPERTY = "-Djava.io.tmpdir=";
+
+// What the java command sets for TLC: the TLA-Library directories it searches for modules, the
+// class path it finds its standard modules on, and java.io.tmpdir, where it copies them.
+interface JavaProperties {
+  libraries: string[];
+  classPath?: string;
+  temporaryDirectory?: string;
+}
+
 interface JavaLaunch {
   mainClass: string;
   args: string[];
-  libraries: string[];
+  java: JavaProperties;
 }
 
 const getJavaLaunch = (args: string[]): JavaLaunch | undefined => {
-  const libraries: string[] = [];
+  const java: JavaProperties = { libraries: [] };
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
-    if (arg === "-cp" || arg === "-classpath" || arg === "--class-path") index++;
-    else if (arg === "-jar")
-      return { mainClass: "tlc2.TLC", args: args.slice(index + 2), libraries };
-    else if (arg.startsWith(TLA_LIBRARY_PROPERTY)) {
-      libraries.push(...arg.slice(TLA_LIBRARY_PROPERTY.length).split(delimiter));
+    if (arg === "-cp" || arg === "-classpath" || arg === "--class-path") {
+      index++;
+      java.classPath = args[index];
+    } else if (arg === "-jar") {
+      java.classPath = args[index + 1];
+      return { mainClass: "tlc2.TLC", args: args.slice(index + 2), java };
+    } else if (arg.startsWith(TLA_LIBRARY_PROPERTY)) {
+      java.libraries.push(...arg.slice(TLA_LIBRARY_PROPERTY.length).split(delimiter));
+    } else if (arg.startsWith(TEMPORARY_DIRECTORY_PROPERTY)) {
+      java.temporaryDirectory = arg.slice(TEMPORARY_DIRECTORY_PROPERTY.length);
     } else if (!arg.startsWith("-D") && !arg.startsWith("-X")) {
       const isLaunch = index > 0 || JAVA_MAIN_CLASSES.includes(arg);
-      return isLaunch ? { mainClass: arg, args: args.slice(index + 1), libraries } : undefined;
+      return isLaunch ? { mainClass: arg, args: args.slice(index + 1), java } : undefined;
     }
   }
   return undefined;
 };
 
 const runJavaClass = (launch: JavaLaunch) => {
-  if (launch.mainClass === "tlc2.TLC") return checkSpecs(launch.args, launch.libraries);
+  if (launch.mainClass === "tlc2.TLC") return checkSpecs(launch.args, launch.java);
   if (launch.mainClass === "tla2sany.xml.XMLExporter") {
     return reportErrors(() => exportXml(launch.args));
   }
@@ -1096,7 +1200,7 @@ const runJavaClass = (launch: JavaLaunch) => {
 const run = async (args: string[]) => {
   if (args[0] === "prove") return reportErrors(() => prove(args.slice(1)));
   const launch = getJavaLaunch(args);
-  return launch ? runJavaClass(launch) : checkSpecs(args, []);
+  return launch ? runJavaClass(launch) : checkSpecs(args, { libraries: [] });
 };
 
 export const runCli = async () => {
