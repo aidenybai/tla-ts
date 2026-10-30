@@ -88,23 +88,31 @@ const findUnrepresentable = (
 };
 
 // The lines of Java's identity Transformer, which pretty prints with an indent amount of 2.
-const printElement = (element: XmlElement, depth: number, indentAmount: number): string[] => {
+const printElement = (
+  element: XmlElement,
+  depth: number,
+  indentAmount: number,
+  lines: string[],
+): void => {
   const indent = " ".repeat(depth * indentAmount);
   // An element whose text or character data is empty has no content, like an element without
   // children.
   if (element.cdata) {
     const data = element.cdata.replaceAll("]]>", "]]]]><![CDATA[>");
-    return [`${indent}<${element.tag}><![CDATA[${data}]]></${element.tag}>`];
+    lines.push(`${indent}<${element.tag}><![CDATA[${data}]]></${element.tag}>`);
+    return;
   }
   if (element.text) {
-    return [`${indent}<${element.tag}>${escapeXml(element.text)}</${element.tag}>`];
+    lines.push(`${indent}<${element.tag}>${escapeXml(element.text)}</${element.tag}>`);
+    return;
   }
-  if (element.children.length === 0) return [`${indent}<${element.tag}/>`];
-  return [
-    `${indent}<${element.tag}>`,
-    ...element.children.flatMap((child) => printElement(child, depth + 1, indentAmount)),
-    `${indent}</${element.tag}>`,
-  ];
+  if (element.children.length === 0) {
+    lines.push(`${indent}<${element.tag}/>`);
+    return;
+  }
+  lines.push(`${indent}<${element.tag}>`);
+  for (const child of element.children) printElement(child, depth + 1, indentAmount, lines);
+  lines.push(`${indent}</${element.tag}>`);
 };
 
 const getLocationElement = (location: SanyLocation) =>
@@ -1016,8 +1024,7 @@ export const exportSanyXml = (
       XML_EXPORT_EXIT_CODE.unrepresentableCharacter,
     );
   }
-  const declaration = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>';
-  return options.isTerse
-    ? [declaration, ...printElement(document, 0, 0)].join("")
-    : `${[declaration, ...printElement(document, 0, 2)].join("\n")}\n`;
+  const lines = ['<?xml version="1.0" encoding="UTF-8" standalone="no"?>'];
+  printElement(document, 0, options.isTerse ? 0 : 2, lines);
+  return options.isTerse ? lines.join("") : `${lines.join("\n")}\n`;
 };

@@ -43,27 +43,37 @@ export const isToken = (file: SourceFile, index: number, text: string) =>
   file.tokens[index].text === text &&
   file.tokens[index].kind !== "String";
 
+// The number of tokens, in source order, before a position, or at or before it when isAtCounted.
+const countTokensBefore = (
+  file: SourceFile,
+  position: { line: number; column: number },
+  isAtCounted: boolean,
+) => {
+  let low = 0;
+  let high = file.tokens.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    const token = file.tokens[middle];
+    const isBefore =
+      token.line < position.line ||
+      (token.line === position.line &&
+        (isAtCounted ? token.column <= position.column : token.column < position.column));
+    if (isBefore) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+};
+
 // The index of the first token at or after a position.
 export const getTokenIndex = (file: SourceFile, position: { line: number; column: number }) => {
   const exact = file.tokenIndexes.get(getPositionKey(position.line, position.column));
   if (exact !== undefined) return exact;
-  const index = file.tokens.findIndex(
-    (token) =>
-      token.line > position.line ||
-      (token.line === position.line && token.column >= position.column),
-  );
-  return index === -1 ? file.tokens.length - 1 : index;
+  return Math.min(countTokensBefore(file, position, false), file.tokens.length - 1);
 };
 
 // The index of the last token at or before a position.
-export const getEndTokenIndex = (file: SourceFile, position: { line: number; column: number }) => {
-  const index = file.tokens.findLastIndex(
-    (token) =>
-      token.line < position.line ||
-      (token.line === position.line && token.column <= position.column),
-  );
-  return Math.max(index, 0);
-};
+export const getEndTokenIndex = (file: SourceFile, position: { line: number; column: number }) =>
+  Math.max(countTokensBefore(file, position, true) - 1, 0);
 
 export const getMatchingIndex = (file: SourceFile, openIndex: number) => {
   const opener = file.tokens[openIndex].text;
