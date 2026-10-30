@@ -1,5 +1,4 @@
 import { PcalError, PcalRuntimeError } from "./errors";
-import { crc32 } from "node:zlib";
 import {
   formatPcalNode,
   getPcalLocation,
@@ -31,7 +30,9 @@ const CHECKSUM_PATTERN = new RegExp(
 );
 
 // Validator.checksum: CRC32 of the string's bytes, in Long.toHexString's unpadded lowercase hex.
-const getChecksum = (text: string) => crc32(Buffer.from(text, "utf8")).toString(16);
+// Only a spec with PlusCal needs node:zlib, so it loads then rather than at startup.
+const getChecksum = (text: string) =>
+  process.getBuiltinModule("node:zlib").crc32(Buffer.from(text, "utf8")).toString(16);
 
 // PcalDebug.reportError: an UnrecoverablePositionedException names its statement's position.
 export const reportPcalError = (session: PcalSession, error: PcalError) => {
