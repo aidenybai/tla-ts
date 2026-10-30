@@ -446,12 +446,12 @@ const getProperties = (config: ModelConfig, environment: Environment): Propertie
   config.properties.forEach((name) => {
     const definition = getConfigPredicate("property", name, environment);
     if (!definition) return;
-    expandTemporal(definition.body, undefined, environment, true).forEach((item) => {
+    expandTemporal(definition.body, undefined, environment, true, name).forEach((item) => {
       const conjunct = item.expression;
       if (isConstantTrue(item, environment, "property")) return;
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
         properties.actionProperties.push({
-          name,
+          name: item.name,
           box: conjunct.expression,
           action: conjunct.expression.action,
           subscript: conjunct.expression.subscript,
@@ -463,12 +463,22 @@ const getProperties = (config: ModelConfig, environment: Environment): Propertie
         conjunct.kind === "Always" &&
         getLevel(conjunct.expression, item.scope, environment) <= 1
       ) {
-        properties.invariants.push({ name, expression: conjunct.expression, scope: item.scope });
+        // TLC names the invariant []P after P when P is an operator name.
+        const expression = conjunct.expression;
+        properties.invariants.push({
+          name: expression.kind === "Identifier" ? expression.name : item.name,
+          expression,
+          scope: item.scope,
+        });
         return;
       }
       const level = getLevel(conjunct, item.scope, environment);
       if (level < ACTION_LEVEL) {
-        properties.initialPredicates.push({ name, expression: conjunct, scope: item.scope });
+        properties.initialPredicates.push({
+          name: item.name,
+          expression: conjunct,
+          scope: item.scope,
+        });
         return;
       }
       if (level === ACTION_LEVEL) {

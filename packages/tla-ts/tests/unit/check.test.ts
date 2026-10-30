@@ -1601,6 +1601,33 @@ describe("initial predicate and next-state relation match TLC", () => {
   const checkSource = (body: string, config: string) =>
     check({ source: `---- MODULE M ----\n${body}\n====`, config });
 
+  it.each([
+    ["[](FALSE)", "FALSE"],
+    ["[]Bad", "Bad"],
+    ["[](Op(1))", "Property"],
+    ["Op(1)", "Op"],
+    ["Two(0)", "line 6, col 11 to line 6, col 15 of module M"],
+    ["[](x = 0) /\\ [](x = 1)", "line 8, col 26 to line 8, col 34 of module M"],
+    ["[](x = 0) /\\ (x = 1)", "line 8, col 27 to line 8, col 31 of module M"],
+    ["\\A n \\in {0, 1} : x # n", "line 8, col 31 to line 8, col 35 of module M"],
+    ["[](x < 9) /\\ [][x = 7]_x", "line 8, col 26 to line 8, col 36 of module M"],
+  ])("names the part of property %s that fails as TLC does", async (property, name) => {
+    const result = await checkSource(
+      `EXTENDS Integers\nVARIABLE x\nBad == x = 1\nOp(n) == x = n\nTwo(n) == x # n /\\ x # n + 1\nSpec == x = 0 /\\ [][x' = x + 1 /\\ x < 3]_x\nProperty == ${property}`,
+      "SPECIFICATION Spec\nPROPERTY Property\nCHECK_DEADLOCK FALSE",
+    );
+    expect(result.violation?.name).toBe(name);
+  });
+
+  it("rejects a property that quantifies over no elements as a tautology", async () => {
+    await expect(
+      checkSource(
+        "VARIABLE x\nSpec == x = 0 /\\ [][x' = x]_x\nProperty == \\A n \\in {} : x # n",
+        "SPECIFICATION Spec\nPROPERTY Property",
+      ),
+    ).rejects.toThrow("Temporal formula is a tautology (its negation is unsatisfiable).");
+  });
+
   it("explores no states when a spec without variables has no initial predicate", async () => {
     const result = await checkSource("ASSUME TRUE\nSpec == [][TRUE]_<<>>", "SPECIFICATION Spec");
     expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([

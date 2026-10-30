@@ -1,7 +1,9 @@
 import { isLocallyResolved, type Definition, type Expression } from "./ast";
 import { TlaConfigError, TlaEvaluationError } from "./errors";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
+  describeRange,
   bindDefinitions,
   bindOperatorArguments,
   evaluate,
@@ -34,6 +36,10 @@ import type { Value } from "./values";
 export interface ScopedExpression {
   expression: Expression;
   scope: Scope | undefined;
+}
+
+export interface NamedExpression extends ScopedExpression {
+  name: string;
 }
 
 export interface TemporalProperty extends ScopedExpression {
@@ -144,21 +150,27 @@ const getDefinitionLevel = (definition: Definition, environment: Environment) =>
   return level;
 };
 
+export const TAUTOLOGY_MESSAGE = "Temporal formula is a tautology (its negation is unsatisfiable).";
+
+// TLC names each part of a property after the operator it expands, or after the location of the
+// conjunct or quantifier body it splits off.
 export const expandTemporal = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
-  isUnrollingForall: boolean,
+  isProperty: boolean,
+  name = "",
   expanding = new Set<Definition>(),
-): ScopedExpression[] => {
+): NamedExpression[] => {
   const expand = (
     child: Expression,
     childScope: Scope | undefined,
+    childName = name,
     childExpanding = expanding,
-  ): ScopedExpression[] =>
-    expandTemporal(child, childScope, environment, isUnrollingForall, childExpanding);
+  ): NamedExpression[] =>
+    expandTemporal(child, childScope, environment, isProperty, childName, childExpanding);
   if (expression.kind === "And") {
-    return expression.operands.flatMap((operand) => expand(operand, scope));
+    return expression.operands.flatMap((operand) => expand(operand, scope, describeRange(operand)));
   }
   if (expression.kind === "Label") return expand(expression.body, scope);
   if (expression.kind === "Let") {
@@ -181,33 +193,58 @@ export const expandTemporal = (
       if (expanding.has(definition)) {
         throw new TlaConfigError(`The definition of ${expression.name} refers to itself`);
       }
-      return expand(definition.body, undefined, new Set([...expanding, definition]));
+      return expand(
+        definition.body,
+        undefined,
+        expression.name,
+        new Set([...expanding, definition]),
+      );
     }
   }
   const context = getConstantContext(environment, scope);
-  if (expression.kind === "Apply" && getLevel(expression, scope, environment) === TEMPORAL_LEVEL) {
+  // A property expands every operator it applies and unrolls every \A over constant sets, but a
+  // specification only expands the temporal ones.
+  const isExpanded = (child: Expression) =>
+    isProperty || getLevel(child, scope, environment) === TEMPORAL_LEVEL;
+  if (expression.kind === "Apply" && isExpanded(expression)) {
     const operator = resolveApplyOperator(expression, context);
     const definition = isLocallyResolved(expression)
       ? undefined
       : getDefinition(expression.operator, environment);
-    if (operator?.kind === "Closure" && !definition?.isRecursive) {
-      return expand(operator.body, bindOperatorArguments(operator, expression.args, context));
+    const isExpandable =
+      operator?.kind === "Closure" &&
+      operator.params.length === expression.args.length &&
+      !definition?.isRecursive;
+    if (isExpandable) {
+      return expand(
+        operator.body,
+        bindOperatorArguments(operator, expression.args, context),
+        expression.operator,
+      );
     }
   }
   const isUnrolled =
-    isUnrollingForall &&
+    isProperty &&
     expression.kind === "Forall" &&
-    getLevel(expression.body, scope, environment) === TEMPORAL_LEVEL &&
     expression.bounds.every((bound) => getLevel(bound.set, scope, environment) === 0);
   if (isUnrolled) {
-    const expanded: ScopedExpression[] = [];
+    const expanded: NamedExpression[] = [];
+    const bindings = { count: 0 };
     forEachBinding(expression.bounds, context, (boundScope) => {
-      expanded.push(...expand(expression.body, boundScope));
+      bindings.count++;
+      expanded.push(...expand(expression.body, boundScope, describeRange(expression.body)));
       return false;
     });
+    // TLC rejects a property that quantifies over no elements before it checks anything.
+    if (bindings.count === 0) {
+      throw setExitCode(
+        new TlaEvaluationError(TAUTOLOGY_MESSAGE),
+        EXIT_STATUS.livenessEvaluationFailure,
+      );
+    }
     return expanded;
   }
-  return [{ expression, scope }];
+  return [{ expression, scope, name }];
 };
 
 const bindLetDefinitions = (

@@ -2,6 +2,7 @@ import { TlaEvaluationError } from "./errors";
 import { hasRepeatedEffects, type Environment } from "./evaluate";
 import {
   evaluateLive,
+  TAUTOLOGY_MESSAGE,
   evaluateOnLasso,
   toLiveExpression,
   type ScopedExpression,
@@ -121,7 +122,7 @@ export const createLivenessChecker = (
     fairness.length === 0 ? violation : createJunction("And", [...fairness, violation]);
   const solutions = getSolutions(formula);
   if (solutions.length === 0) {
-    throw new TlaEvaluationError("Temporal formula is a tautology (its negation is unsatisfiable)");
+    throw new TlaEvaluationError(TAUTOLOGY_MESSAGE);
   }
   const actionIds = new Map<string, number>();
   const checks = solutions.map((solution): Check => ({
