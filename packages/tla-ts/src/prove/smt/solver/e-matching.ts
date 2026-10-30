@@ -646,8 +646,10 @@ export class Mam {
     )
       return;
     this.trigger = trigger;
-    this.bindings = Array.from({ length: trigger.numDecls }, () => null);
-    this.generations = [this.context.getGeneration(candidate)];
+    this.bindings.length = trigger.numDecls;
+    this.bindings.fill(null);
+    this.generations.length = 0;
+    this.generations.push(this.context.getGeneration(candidate));
     this.goalTop = 0;
     this.stepIndex = 0;
     this.pushGoals(manager.args[first], candidate.args);
@@ -805,7 +807,7 @@ export class Mam {
         if (best.length === 0) return best;
       }
     }
-    return best ?? [...all];
+    return best ?? all;
   }
 
   // compiler::gen_mp_filter: the congruent term of a pattern whose variables are all bound.
