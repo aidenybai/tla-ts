@@ -38,7 +38,15 @@ interface Step {
 interface CodeTree {
   triggers: Trigger[];
   candidates: Enode[];
+  // code_tree::m_candidate_gc_threshold: the number of candidates at which duplicates are dropped.
+  candidateGcThreshold: number;
 }
+
+const mkCodeTree = (trigger: Trigger): CodeTree => ({
+  triggers: [trigger],
+  candidates: [],
+  candidateGcThreshold: 10000,
+});
 
 // A step from a term to its parent: the parent's label, the position of the term in it, and an
 // optional ground argument the parent must also have.
@@ -198,8 +206,7 @@ export class Mam {
     const hash = this.getLabelHash(path.label);
     if (hash < 32) tree.filter = 1 << hash;
     else tree.filterHigh = 1 << hash;
-    if (path.child === null)
-      tree.code = { triggers: [triggers[path.patternIndex]], candidates: [] };
+    if (path.child === null) tree.code = mkCodeTree(triggers[path.patternIndex]);
     else tree.firstChild = this.mkPathTree(path.child, triggers);
     return tree;
   }
@@ -228,7 +235,7 @@ export class Mam {
         });
       } else if (found.code !== null) this.addTrigger(found.code, triggers[path.patternIndex]);
       else {
-        found.code = { triggers: [triggers[path.patternIndex]], candidates: [] };
+        found.code = mkCodeTree(triggers[path.patternIndex]);
         this.context.pushTrail(() => {
           found.code = null;
         });
@@ -475,14 +482,19 @@ export class Mam {
         this.addTrigger(tree, triggers[firstIndex]);
         return;
       }
-      this.trees.set(label, { triggers: [triggers[firstIndex]], candidates: [] });
+      this.trees.set(label, mkCodeTree(triggers[firstIndex]));
       this.context.pushTrail(() => this.trees.delete(label));
     });
   }
 
+  // add_candidate, with compress_candidates, which keeps the first of each candidate once there are
+  // many, as match does.
   private addCandidateTo(tree: CodeTree, node: Enode) {
     if (tree.candidates.length === 0) this.toMatch.push(tree);
     tree.candidates.push(node);
+    if (tree.candidates.length < tree.candidateGcThreshold) return;
+    tree.candidates = [...new Set(tree.candidates)];
+    if (2 * tree.candidates.length > tree.candidateGcThreshold) tree.candidateGcThreshold *= 2;
   }
 
   relevantEh(node: Enode, isLazy: boolean) {
