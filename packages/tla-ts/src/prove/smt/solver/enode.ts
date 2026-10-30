@@ -23,12 +23,11 @@ export type EqJustification =
 
 export const AXIOM_EQ_JUSTIFICATION: EqJustification = { kind: "axiom" };
 
-// trans: the next node on the transitivity branch toward the root of the proof tree, and why the two
-// are equal.
-export interface Trans {
-  target: Enode;
-  justification: EqJustification;
-}
+// The congruence justifications, which carry no data of their own and so are shared.
+export const CONGRUENCE_JUSTIFICATIONS: readonly EqJustification[] = [
+  { kind: "congruence", isCommutative: false },
+  { kind: "congruence", isCommutative: true },
+];
 
 export class Enode {
   root: Enode = this;
@@ -36,7 +35,10 @@ export class Enode {
   cg: Enode = this;
   classSize = 1;
   parents: Enode[] = [];
-  trans: Trans | null = null;
+  // m_trans: the next node on the transitivity branch toward the root of the proof tree, and why the
+  // two are equal.
+  transTarget: Enode | null = null;
+  transJustification: EqJustification = AXIOM_EQ_JUSTIFICATION;
   thVar = -1;
   // The approximate label sets of the class, 64 bits in two words: the low 32 bits, then the high.
   lbls = 0;

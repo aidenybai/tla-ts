@@ -20,7 +20,7 @@ import {
 } from "./ast";
 import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { CaseSplitQueue } from "./case-split-queue";
-import { CgTable } from "./cg-table";
+import { CgTable, getCongruenceJustification } from "./cg-table";
 import {
   BinJustification,
   BJustification,
@@ -405,14 +405,11 @@ export abstract class Internalizer {
         );
         this.pushEq(node, this.trueEnode, AXIOM_EQ_JUSTIFICATION);
       } else if (isCgcEnabled) {
-        const result = this.cgTable.insert(node);
-        if (result.node !== node) {
-          node.cg = result.node;
-          if (!isEq) this.mergeCgcGenerations(node, generation, result.node);
-          this.pushEq(node, result.node, {
-            kind: "congruence",
-            isCommutative: result.isCommutative,
-          });
+        const congruent = this.cgTable.insert(node);
+        if (congruent !== node) {
+          node.cg = congruent;
+          if (!isEq) this.mergeCgcGenerations(node, generation, congruent);
+          this.pushEq(node, congruent, getCongruenceJustification(node, congruent));
         }
       }
       if (!isEq) {

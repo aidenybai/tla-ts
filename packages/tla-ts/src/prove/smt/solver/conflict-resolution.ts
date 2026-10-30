@@ -49,15 +49,15 @@ export class ConflictResolution {
   }
 
   private findCommonAncestor(first: Enode, second: Enode) {
-    for (let node: Enode | undefined = first; node !== undefined; node = node.trans?.target)
+    for (let node: Enode | null = first; node !== null; node = node.transTarget)
       node.isMarked2 = true;
     let result = second;
     while (!result.isMarked2) {
-      const target = result.trans?.target;
-      if (target === undefined) break;
+      const target = result.transTarget;
+      if (target === null) break;
       result = target;
     }
-    for (let node: Enode | undefined = first; node !== undefined; node = node.trans?.target)
+    for (let node: Enode | null = first; node !== null; node = node.transTarget)
       node.isMarked2 = false;
     return result;
   }
@@ -79,10 +79,10 @@ export class ConflictResolution {
   private eqBranchToLiterals(start: Enode, ancestor: Enode) {
     let node = start;
     while (node !== ancestor) {
-      const trans = node.trans;
-      if (trans === null) break;
-      this.eqJustificationToLiterals(node, trans.target, trans.justification);
-      node = trans.target;
+      const target = node.transTarget;
+      if (target === null) break;
+      this.eqJustificationToLiterals(node, target, node.transJustification);
+      node = target;
     }
   }
 

@@ -3,6 +3,7 @@
 // relevancy propagation, the arithmetic theory and quantifier instantiation, with Z3's default
 // parameters for UFNIA.
 import { AstManager, FAMILY_ARITH, KIND_APP, KIND_QUANTIFIER, KIND_VAR } from "./ast";
+import { getCongruenceJustification } from "./cg-table";
 import { BJustification, Clause, CLS_LEARNED } from "./clause";
 import { ConflictResolution } from "./conflict-resolution";
 import {
@@ -342,21 +343,24 @@ export class Context extends Internalizer {
   // Equalities.
 
   private getClosestVar(start: Enode) {
-    for (let node: Enode | undefined = start; node !== undefined; node = node.trans?.target)
+    for (let node: Enode | null = start; node !== null; node = node.transTarget)
       if (node.thVar >= 0) return node.thVar;
     return -1;
   }
 
   private invertTrans(start: Enode) {
-    let trans = start.trans;
+    let current = start.transTarget;
+    let justification = start.transJustification;
     let previous = start;
-    start.trans = null;
-    while (trans !== null) {
-      const current = trans.target;
-      const next = current.trans;
-      current.trans = { target: previous, justification: trans.justification };
+    start.transTarget = null;
+    while (current !== null) {
+      const next = current.transTarget;
+      const nextJustification = current.transJustification;
+      current.transTarget = previous;
+      current.transJustification = justification;
       previous = current;
-      trans = next;
+      current = next;
+      justification = nextJustification;
     }
   }
 
@@ -455,7 +459,8 @@ export class Context extends Internalizer {
     this.qmanager.addEqEh(r1, r2);
     this.mergeTheoryVars(n2, n1, justification);
     this.invertTrans(n1);
-    n1.trans = { target: n2, justification };
+    n1.transTarget = n2;
+    n1.transJustification = justification;
     this.removeParentsFromCgTable(r1);
     let current = r1;
     do {
@@ -528,19 +533,16 @@ export class Context extends Internalizer {
       const parentGeneration = parent.isEq
         ? 0
         : (this.r1ParentGenerations.get(parent) ?? this.getGeneration(parent));
-      const result = this.cgTable.insert(parent);
-      if (result.node === parent) {
+      const congruent = this.cgTable.insert(parent);
+      if (congruent === parent) {
         parent.generation = parentGeneration;
         r2.parents.push(parent);
         continue;
       }
-      parent.cg = result.node;
-      this.mergeCgcGenerations(parent, parentGeneration, result.node);
-      if (result.node.root !== parent.root)
-        this.pushEq(parent, result.node, {
-          kind: "congruence",
-          isCommutative: result.isCommutative,
-        });
+      parent.cg = congruent;
+      this.mergeCgcGenerations(parent, parentGeneration, congruent);
+      if (congruent.root !== parent.root)
+        this.pushEq(parent, congruent, getCongruenceJustification(parent, congruent));
     }
     this.r1ParentGenerations.clear();
   }
@@ -577,12 +579,12 @@ export class Context extends Internalizer {
         if (cached === undefined) continue;
         generation = cached;
       }
-      const result = this.cgTable.insert(parent);
-      parent.cg = result.node;
-      if (result.node === parent) parent.generation = generation;
+      const congruent = this.cgTable.insert(parent);
+      parent.cg = congruent;
+      if (congruent === parent) parent.generation = generation;
     }
     if (r2.thVar >= 0 && this.theory.getEnode(r2.thVar).root !== r2) r2.thVar = -1;
-    n1.trans = null;
+    n1.transTarget = null;
     this.invertTrans(r1);
   }
 
