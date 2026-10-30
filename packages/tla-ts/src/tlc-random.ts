@@ -1,4 +1,5 @@
 import { TlaEvaluationError } from "./errors";
+import type { TlcVersion } from "./tlc-version";
 import {
   createRecord,
   createSortedFunction,
@@ -286,7 +287,7 @@ const getModulusAndMultiplier = (size: number) => {
 
 // EnumerableValue.SubsetEnumerator: count indices below size from a full-period linear
 // congruential generator that starts at random.nextInt(size).
-const getSubsetIndices = (count: number, size: number, random: JavaRandom) => {
+const getSubsetIndicesMaster = (count: number, size: number, random: JavaRandom) => {
   if (size <= 0) return [];
   const generator = getModulusAndMultiplier(size);
   const state = { index: BigInt(random.nextInt(size)) };
@@ -297,6 +298,18 @@ const getSubsetIndices = (count: number, size: number, random: JavaRandom) => {
     } while (state.index >= size);
     return state.index;
   });
+};
+
+// TLC 1.7.4's EnumerableValue.SubsetEnumerator: the i-th index is (x * i + a) mod size, for a
+// prime x above size and a = random.nextInt(size), so the first size indices are distinct.
+const getSubsetIndices174 = (count: number, size: number, random: JavaRandom) => {
+  if (size <= 0) return [];
+  const stride = BigInt(size < 191 ? 191 : MAXIMUM_INT);
+  const offset = BigInt(random.nextInt(size));
+  return Array.from(
+    { length: Math.min(count, size) },
+    (_, index) => (stride * BigInt(index) + offset) % BigInt(size),
+  );
 };
 
 const LARGE_STRIDE = (1n << 63n) - 1n - 24n;
@@ -352,15 +365,27 @@ const getProduct = (set: Value): Product | undefined => {
   return undefined;
 };
 
+// TLC 1.7.4 enumerates a set of tuples to draw from it.
+export const getEnumeratedFactors = (set: Value, version: TlcVersion) =>
+  version === "1.7.4" && typeof set === "object" && set.kind === "ProductSet"
+    ? set.factors
+    : undefined;
+
 // Enumerable#getRandomSubset, which Randomization's RandomSubset calls.
-export const getRandomSubset = (count: number, set: Value, random: JavaRandom): Value[] => {
+export const getRandomSubset = (
+  count: number,
+  set: Value,
+  random: JavaRandom,
+  version: TlcVersion,
+): Value[] => {
   if (isEmptySet(set)) return [];
+  const getSubsetIndices = version === "1.7.4" ? getSubsetIndices174 : getSubsetIndicesMaster;
   if (typeof set === "object" && set.kind === "Interval") {
     return getSubsetIndices(count, Math.max(0, set.high - set.low + 1), random).map(
       (index) => set.low + Number(index),
     );
   }
-  const product = getProduct(set);
+  const product = getEnumeratedFactors(set, version) ? undefined : getProduct(set);
   if (product) {
     const size = product.lists.reduce((total, list) => total * BigInt(list.length), 1n);
     const indices =

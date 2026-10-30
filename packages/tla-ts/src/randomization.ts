@@ -1,8 +1,8 @@
-import { defineStateOperator, getValue } from "./builtins";
-import { TlaEvaluationError, TlaModuleError } from "./errors";
+import { createJavaOverrideError, defineStateOperator, getValue } from "./builtins";
+import { TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
-import { getRandomSubset, type JavaRandom } from "./tlc-random";
+import { getEnumeratedFactors, getRandomSubset, type JavaRandom } from "./tlc-random";
 import {
   createSet,
   createTuple,
@@ -13,6 +13,12 @@ import {
   toFiniteSet,
   type Value,
 } from "./values";
+
+const RANDOM_SUBSET_SIGNATURE =
+  "public static tlc2.value.impl.Value tlc2.module.Randomization.RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value)";
+
+// TLCGlobals.setBound: TLC 1.7.4's ValueVec holds at most this many elements of a set.
+const SET_BOUND_174 = 1000000;
 
 const createArgumentError = (position: string, name: string, expected: string, value: string) =>
   new TlaModuleError(
@@ -77,15 +83,26 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
       throw createArgumentError("first", "RandomSubset", "nonnegative integer", formatValue(count));
     }
     if (count < 0) {
-      throw new TlaEvaluationError(
-        `Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.Randomization.RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\n${count}`,
-      );
+      throw createJavaOverrideError(RANDOM_SUBSET_SIGNATURE, String(count));
     }
     const set = getValue(args, 1, "RandomSubset");
     if (!isSetValue(set) || (!isEmptySet(set) && !isEnumerable(set))) {
       throw createArgumentError("second", "RandomSubset", "a finite set", formatValue(set));
     }
-    return createSet(getRandomSubset(count, set, runtime.getRandom()));
+    const factors = getEnumeratedFactors(set, runtime.version);
+    if (factors) {
+      const size = factors.reduce<number>(
+        (total, factor) => total * toFiniteSet(factor).elements.length,
+        1,
+      );
+      if (size > SET_BOUND_174) {
+        throw createJavaOverrideError(
+          RANDOM_SUBSET_SIGNATURE,
+          `Attempted to construct a set with too many elements (>${SET_BOUND_174}).`,
+        );
+      }
+    }
+    return createSet(getRandomSubset(count, set, runtime.getRandom(), runtime.version));
   }),
   defineStateOperator("RandomSetOfSubsets", 3, (args) => getRandomSetOfSubsets(args, runtime)),
   defineStateOperator("TestRandomSetOfSubsets", 3, (args) =>
