@@ -55,8 +55,7 @@ interface Check {
   offsets: number[];
   results: { bytes: Uint8Array; length: number };
   initial: number[];
-  nodeIds: Map<number, number>;
-  nodesByState: Map<number, number[]>;
+  nodeIds: NodeTable;
   isDone: boolean[];
   errorNode: number | undefined;
 }
@@ -74,6 +73,25 @@ const pushNode = (check: Check, state: number, tableauNode: number) => {
   check.successors.push([]);
   check.offsets.push(-1);
   return check.nodeStates.length - 1;
+};
+
+// A Map holds at most 2^24 entries, so each tableau node of a state finds its node in an
+// open-addressing table of (state plus one, tableau node, node) triples.
+interface NodeTable {
+  slots: Int32Array;
+  size: number;
+  shift: number;
+}
+
+const getNodeSlot = (table: NodeTable, state: number, tableauNode: number) => {
+  const mask = table.slots.length / 3 - 1;
+  const hash = Math.imul(Math.imul(state, 0x9e3779b1) ^ tableauNode, 0x85ebca6b) >>> table.shift;
+  for (let index = hash; ; index = (index + 1) & mask) {
+    const slot = index * 3;
+    const stored = table.slots[slot];
+    if (stored === 0 || (stored === state + 1 && table.slots[slot + 1] === tableauNode))
+      return slot;
+  }
 };
 
 const isWritten = (check: Check, node: number) => check.offsets[node] !== -1;
@@ -124,8 +142,7 @@ export const createLivenessChecker = (
     offsets: [],
     results: { bytes: new Uint8Array(1024), length: 0 },
     initial: [],
-    nodeIds: new Map(),
-    nodesByState: new Map(),
+    nodeIds: { slots: new Int32Array(3 << 10), size: 0, shift: 22 },
     isDone: [],
     errorNode: undefined,
   }));
@@ -211,18 +228,35 @@ export const createLivenessChecker = (
         model.infinitelyOftenActions.length === 0,
     );
 
-  const getNodeId = (check: Check, state: number, tableauNode: number) =>
-    check.solution.tableau
-      ? check.nodeIds.get(state * check.solution.tableau.nodes.length + tableauNode)
-      : state;
+  const getNodeId = (check: Check, state: number, tableauNode: number) => {
+    if (!check.solution.tableau) return state;
+    const slots = check.nodeIds.slots;
+    const slot = getNodeSlot(check.nodeIds, state, tableauNode);
+    return slots[slot] === 0 ? undefined : slots[slot + 2];
+  };
   const recordNode = (check: Check, state: number, tableauNode: number) => {
     const node = pushNode(check, state, tableauNode);
-    check.nodeIds.set(state * (check.solution.tableau?.nodes.length ?? 1) + tableauNode, node);
-    const siblings = check.nodesByState.get(state);
-    if (siblings) siblings.push(node);
-    else check.nodesByState.set(state, [node]);
+    const table = check.nodeIds;
+    if (++table.size * 2 > table.slots.length / 3) {
+      const old = table.slots;
+      table.slots = new Int32Array(old.length * 2);
+      table.shift--;
+      for (let slot = 0; slot < old.length; slot += 3) {
+        if (old[slot] !== 0)
+          table.slots.set(
+            old.subarray(slot, slot + 3),
+            getNodeSlot(table, old[slot] - 1, old[slot + 1]),
+          );
+      }
+    }
+    table.slots.set([state + 1, tableauNode, node], getNodeSlot(table, state, tableauNode));
     return node;
   };
+  // A state's nodes in the order they were recorded, which is the order of their ids.
+  const getStateNodes = (check: Check, tableau: Tableau, state: number) =>
+    tableau.nodes
+      .flatMap((_, tableauNode) => getNodeId(check, state, tableauNode) ?? [])
+      .sort((left, right) => left - right);
   const writeNode = (
     check: Check,
     node: number,
@@ -346,7 +380,7 @@ export const createLivenessChecker = (
     );
     check.isDone[index] = true;
     // TLC expands the nodes recorded before the loop, not the ones the loop records.
-    for (const node of (check.nodesByState.get(index) ?? []).slice()) {
+    for (const node of getStateNodes(check, tableau, index)) {
       const successors = check.successors[node];
       const actions: Uint8Array[] = [];
       set.forEach((successor, position) => {
