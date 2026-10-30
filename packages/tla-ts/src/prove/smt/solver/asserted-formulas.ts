@@ -143,6 +143,10 @@ export class AssertedFormulas {
   private names: DefinedNames;
   private patternInference: PatternInferenceRw;
   private hasQuantifiers = false;
+  // The scopes that are pushed only when a formula is asserted, and the number of formulas when
+  // each pushed scope began.
+  private numLazyScopes = 0;
+  private scopeLims: number[] = [];
 
   constructor(private manager: AstManager) {
     this.formulas = new RefVector(manager);
@@ -156,7 +160,36 @@ export class AssertedFormulas {
     this.patternInference = new PatternInferenceRw(manager, new PatternInference(manager));
   }
 
+  // push_scope: the scope is pushed when a formula is asserted in it.
+  push() {
+    this.numLazyScopes++;
+  }
+
+  // pop_scope: removes the formulas, names and substitutions since the matching push.
+  pop() {
+    if (this.numLazyScopes > 0) {
+      this.numLazyScopes--;
+      return;
+    }
+    const size = this.scopeLims.pop() as number;
+    this.names.pop();
+    this.substitution.pop();
+    this.formulas.shrink(size);
+    this.qhead = size;
+    this.flushCache();
+  }
+
+  // force_push: the pushed formulas are already reduced and committed.
+  private forcePush() {
+    for (; this.numLazyScopes > 0; this.numLazyScopes--) {
+      this.substitution.push();
+      this.scopeLims.push(this.formulas.size);
+      this.names.push();
+    }
+  }
+
   assertExpr(expr: number) {
+    this.forcePush();
     const manager = this.manager;
     if (manager.isTrue(expr)) return;
     this.setEliminateAnd(false);

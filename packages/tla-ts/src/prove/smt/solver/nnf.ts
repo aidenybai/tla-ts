@@ -31,10 +31,25 @@ export class DefinedNames {
   private names = new Map<number, number>();
   private exprs: RefVector;
   private nameRefs: RefVector;
+  private lims: number[] = [];
 
   constructor(private manager: AstManager) {
     this.exprs = new RefVector(manager);
     this.nameRefs = new RefVector(manager);
+  }
+
+  push() {
+    this.lims.push(this.exprs.size);
+  }
+
+  // pop_scope: forgets the names since the matching push, the last first.
+  pop() {
+    const size = this.lims.pop() as number;
+    while (this.exprs.size > size) {
+      this.names.delete(this.exprs.items[this.exprs.size - 1]);
+      this.exprs.shrink(this.exprs.size - 1);
+      this.nameRefs.shrink(this.nameRefs.size - 1);
+    }
   }
 
   // mk_name: (n x1 ... xk) for the free variables x1 ... xk of the quantifier, with n => q and q => n
