@@ -5,6 +5,7 @@
 import { KIND_APP, KIND_VAR, OP_AND, OP_EQ, OP_FALSE, OP_ITE, OP_NOT, OP_OR, OP_TRUE } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
+import { RefVector } from "./ref-vector";
 import { VarSubst } from "./var-subst";
 
 const EAGER_COST_THRESHOLD = 10;
@@ -161,11 +162,14 @@ export class QiQueue {
   private subst: VarSubst;
   private instances = new Map<string, number>();
   private instanceRefs: number[] = [];
+  // m_instances: the lemmas, which the queue holds until their scope is popped.
+  private lemmas: RefVector;
   numInstances = 0;
 
   constructor(private context: Context) {
     this.checker = new Checker(context);
     this.subst = new VarSubst(context.manager, true);
+    this.lemmas = new RefVector(context.manager);
   }
 
   private getInstance(quantifier: number, bindings: number[]) {
@@ -224,26 +228,30 @@ export class QiQueue {
     const manager = context.manager;
     const data = manager.getQuantifier(entry.quantifier);
     if (this.checker.isSat(data.body, entry.bindings)) return;
-    const instance = context.rewriter.rewrite(
-      this.getInstance(
-        entry.quantifier,
-        entry.bindings.map((binding) => binding.owner),
-      ),
+    const substituted = this.getInstance(
+      entry.quantifier,
+      entry.bindings.map((binding) => binding.owner),
     );
-    if (instance === manager.trueExpr) return;
-    const negated = manager.mkNot(entry.quantifier);
-    const lemma =
-      manager.getOp(instance) === OP_OR
-        ? manager.mkOr([negated, ...manager.args[instance]])
-        : instance === manager.falseExpr
-          ? negated
-          : manager.mkOr([negated, instance]);
-    this.numInstances++;
-    const newGeneration =
-      data.weight > 0 || entry.cost > 0
-        ? Math.trunc(entry.cost)
-        : Math.max(entry.generation + 1, Math.trunc(entry.cost));
-    context.internalizeAssertion(lemma, newGeneration);
+    manager.incRef(substituted);
+    const instance = context.rewriter.rewrite(substituted);
+    if (instance !== manager.trueExpr) {
+      const negated = manager.mkNot(entry.quantifier);
+      const lemma =
+        manager.getOp(instance) === OP_OR
+          ? manager.mkOr([negated, ...manager.args[instance]])
+          : instance === manager.falseExpr
+            ? negated
+            : manager.mkOr([negated, instance]);
+      this.lemmas.push(lemma);
+      this.numInstances++;
+      const newGeneration =
+        data.weight > 0 || entry.cost > 0
+          ? Math.trunc(entry.cost)
+          : Math.max(entry.generation + 1, Math.trunc(entry.cost));
+      context.internalizeAssertion(lemma, newGeneration);
+    }
+    manager.decRef(instance);
+    manager.decRef(substituted);
   }
 
   finalCheckEh() {
@@ -260,17 +268,18 @@ export class QiQueue {
   }
 
   push() {
-    this.scopes.push(this.delayedEntries.length, this.instantiatedTrail.length);
+    this.scopes.push(this.delayedEntries.length, this.instantiatedTrail.length, this.lemmas.size);
   }
 
   pop(numScopes: number) {
-    const offset = this.scopes.length - numScopes * 2;
+    const offset = this.scopes.length - numScopes * 3;
     const delayedLimit = this.scopes[offset];
     const trailLimit = this.scopes[offset + 1];
     for (let index = trailLimit; index < this.instantiatedTrail.length; index++)
       this.delayedEntries[this.instantiatedTrail[index]].isInstantiated = false;
     this.instantiatedTrail.length = trailLimit;
     this.delayedEntries.length = delayedLimit;
+    this.lemmas.shrink(this.scopes[offset + 2]);
     this.newEntries = [];
     this.scopes.length = offset;
   }
