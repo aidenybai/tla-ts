@@ -307,8 +307,8 @@ export const collectMacroCandidates = (manager: AstManager, quantifier: number) 
       if (manager.getOp(inner) === OP_EQ && manager.isBool(manager.args[inner][0])) {
         const lhs = manager.args[inner][0];
         const rhs = manager.args[inner][1];
-        const negatedRhs = manager.mkNot(rhs);
         const negatedLhs = manager.mkNot(lhs);
+        const negatedRhs = manager.mkNot(rhs);
         if (!insertQuasi(lhs, negatedRhs)) insertHint(lhs, negatedRhs);
         if (!insertQuasi(rhs, negatedLhs)) insertHint(rhs, negatedLhs);
       }
@@ -321,7 +321,20 @@ export const collectMacroCandidates = (manager: AstManager, quantifier: number) 
     }
   };
 
-  for (const literal of clause ?? [body]) collectCore(literal, data.sorts.length);
+  // The expressions that collect_macro_candidates_core creates live until it returns, except those
+  // that the candidates hold.
+  for (const literal of clause ?? [body]) {
+    const start = candidates.length;
+    manager.withTemporaries(
+      () => collectCore(literal, data.sorts.length),
+      () =>
+        candidates
+          .slice(start)
+          .flatMap((candidate) =>
+            candidate.cond === null ? [candidate.def] : [candidate.def, candidate.cond],
+          ),
+    );
+  }
   return candidates;
 };
 
