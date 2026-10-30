@@ -14,6 +14,10 @@ export interface LpStats {
   bpRowsAnalyzed: number;
   offsetEqs: number;
   fixedEqs: number;
+  dioCalls: number;
+  dioTightenConflicts: number;
+  dioRewriteConflicts: number;
+  dioStateResets: number;
 }
 
 export class LpSettings {
@@ -29,6 +33,10 @@ export class LpSettings {
     bpRowsAnalyzed: 0,
     offsetEqs: 0,
     fixedEqs: 0,
+    dioCalls: 0,
+    dioTightenConflicts: 0,
+    dioRewriteConflicts: 0,
+    dioStateResets: 0,
   };
   readonly maxRowLengthForBoundPropagation = 300;
   readonly maxIterationsWithNoImprovements = 2000000;
@@ -40,13 +48,14 @@ export class LpSettings {
   readonly intGomoryCutPeriod = 4;
   // lp.dio_calls_period, which the Diophantine solver's results move, its decrease, and
   // lp.dio_gomory_enable_period.
-  dioCallsPeriod = 4;
+  dioCallsPeriod = 1;
   readonly dioCallsPeriodDecrease = 2;
   readonly dioGomoryEnablePeriod = 16;
-  // lp.dio_cuts_enable_gomory, which turns on when the Diophantine solver keeps failing.
-  isDioEnablingGomoryCuts = false;
-  // lp.dio is on, so the GCD test runs when dio_run_gcd is on.
-  isRunningGcdTest = true;
+  // m_run_gomory_with_dio: Gomory cuts run once the Diophantine solver keeps failing.
+  isRunningGomoryWithDio = false;
+  // lp.dio_ignore_big_nums and lp.dio_undo_max_work.
+  readonly isDioIgnoringBigNums = true;
+  readonly dioUndoMaxWork = 1000000;
 
   constructor(readonly isCanceled: () => boolean) {}
 

@@ -5,6 +5,9 @@
 import { Rational } from "../rational";
 import type { LarTerm } from "./lar-term";
 
+const getTermCells = (term: LarTerm) =>
+  [...term.coeffs].map((entry) => ({ column: entry[0], coeff: entry[1] }));
+
 export interface RowCell {
   column: number;
   offset: number;
@@ -47,13 +50,23 @@ export class StaticMatrix {
     this.rowOffsets.pop();
   }
 
+  addColumnsUpTo(column: number) {
+    while (column >= this.columns.length) this.addColumn();
+  }
+
+  clear() {
+    this.rows = [];
+    this.columns = [];
+    this.rowOffsets = [];
+  }
+
   // set: appends a nonzero cell to the row and to the column.
   set(row: number, column: number, coeff: Rational) {
     if (coeff.isZero()) return;
     this.addNewElement(row, column, coeff);
   }
 
-  private addNewElement(row: number, column: number, coeff: Rational) {
+  addNewElement(row: number, column: number, coeff: Rational) {
     const rowCells = this.rows[row];
     const columnCells = this.columns[column];
     rowCells.push({ column, offset: columnCells.length, coeff });
@@ -112,6 +125,77 @@ export class StaticMatrix {
       this.removeElement(targetCells, targetCells[index]);
       cancelled--;
     }
+  }
+
+  multiplyRow(row: number, alpha: Rational) {
+    for (const cell of this.rows[row]) cell.coeff = cell.coeff.mul(alpha);
+  }
+
+  divideRow(row: number, alpha: Rational) {
+    for (const cell of this.rows[row]) cell.coeff = cell.coeff.div(alpha);
+  }
+
+  // add_rows: adds row from multiplied by alpha to row to.
+  addRows(alpha: Rational, from: number, to: number) {
+    this.addCellsToRow(to, this.rows[from], alpha, -1);
+  }
+
+  // pivot_row_to_row_given_cell_with_sign: eliminates the pivot column from the row of the cell by
+  // adding the pivot row times the sign.
+  pivotRowToRowGivenCellWithSign(
+    pivotRow: number,
+    cell: ColumnCell,
+    pivotColumn: number,
+    sign: number,
+  ) {
+    this.pivotCellsToRow(this.rows[pivotRow], cell, pivotColumn, sign);
+  }
+
+  // pivot_term_to_row_given_cell: the same with the cells of a term in place of the pivot row.
+  pivotTermToRowGivenCell(term: LarTerm, cell: ColumnCell, pivotColumn: number, sign: number) {
+    this.pivotCellsToRow(getTermCells(term), cell, pivotColumn, sign);
+  }
+
+  // add_term_to_row: adds the term multiplied by alpha to the row.
+  addTermToRow(alpha: Rational, term: LarTerm, row: number) {
+    for (const entry of term.coeffs) this.addColumnsUpTo(entry[0]);
+    this.addCellsToRow(row, getTermCells(term), alpha, -1);
+  }
+
+  private pivotCellsToRow(
+    cells: readonly { column: number; coeff: Rational }[],
+    cell: ColumnCell,
+    pivotColumn: number,
+    sign: number,
+  ) {
+    const target = cell.row;
+    const alpha = this.getVal(cell).neg().mul(Rational.fromNumber(sign));
+    const targetCells = this.rows[target];
+    this.removeElement(targetCells, targetCells[cell.offset]);
+    this.addCellsToRow(target, cells, alpha, pivotColumn);
+  }
+
+  // The cells times alpha added to the row, skipping a column, and the cells that cancel removed
+  // from the end.
+  private addCellsToRow(
+    row: number,
+    cells: readonly { column: number; coeff: Rational }[],
+    alpha: Rational,
+    skippedColumn: number,
+  ) {
+    const targetCells = this.rows[row];
+    this.scanRowToOffsets(targetCells);
+    const previousSize = targetCells.length;
+    for (const source of cells) {
+      if (source.column === skippedColumn) continue;
+      const offset = this.rowOffsets[source.column];
+      if (offset === -1) this.addNewElement(row, source.column, alpha.mul(source.coeff));
+      else targetCells[offset].coeff = targetCells[offset].coeff.add(source.coeff.mul(alpha));
+    }
+    for (let index = 0; index < previousSize; index++)
+      this.rowOffsets[targetCells[index].column] = -1;
+    for (let index = targetCells.length; index-- > 0;)
+      if (targetCells[index].coeff.isZero()) this.removeElement(targetCells, targetCells[index]);
   }
 
   transposeRows(first: number, second: number) {

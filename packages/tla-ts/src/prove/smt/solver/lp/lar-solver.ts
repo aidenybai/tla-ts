@@ -65,6 +65,9 @@ export class LarSolver {
   private delta = Rational.zero;
   // The callback of nla for the columns whose bounds changed.
   onChangedBounds: ((columns: IndexedUintSet) => void) | undefined;
+  // m_add_term_callback and m_update_column_bound_callback, which the Diophantine solver sets.
+  onAddTerm: ((term: LarTerm) => void) | undefined;
+  onColumnBoundUpdate: ((column: number) => void) | undefined;
 
   constructor(isCanceled: () => boolean) {
     this.settings = new LpSettings(isCanceled);
@@ -102,6 +105,10 @@ export class LarSolver {
 
   isFixed(column: number) {
     return this.core.isFixed(column);
+  }
+
+  isFree(column: number) {
+    return this.core.getColumnType(column) === COLUMN_FREE;
   }
 
   hasTerm(column: number) {
@@ -224,6 +231,7 @@ export class LarSolver {
       this.usageInTerms.set(entry[0], this.usageInTerms.get(entry[0]) + 1);
     }
     if (this.isRegisteringTerms) this.registerNormalizedTerm(term, column);
+    this.onAddTerm?.(term);
     return column;
   }
 
@@ -460,6 +468,7 @@ export class LarSolver {
       setType(COLUMN_FIXED);
     if (!wasFixed && this.isFixed(column)) this.onFixed?.(column);
     if (this.isBase(column) && this.isFixed(column)) this.fixedBaseVarSet.add(column);
+    this.onColumnBoundUpdate?.(column);
   }
 
   // m_fixed_var_eh, which theory_lra leaves unset.
@@ -677,6 +686,10 @@ export class LarSolver {
   }
 
   // Scopes.
+
+  pushTrail(undo: () => void) {
+    this.trail.push(undo);
+  }
 
   push() {
     this.trailScopes.push(this.trail.length);
