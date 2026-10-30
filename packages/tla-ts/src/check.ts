@@ -1650,7 +1650,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   // Before TLC prints a trace, it rebuilds from the initial predicate the states it does not keep,
   // all but the last `known` ones. As it prints each later step, it finds the action that takes
-  // the step. Then it rebuilds the trace once more, unless the trace is a liveness counterexample.
+  // the step. Then it rebuilds the trace once more, unless the trace is a liveness counterexample
+  // or TLC is 1.7.4.
   const toTrace = (
     steps: Successor[],
     path: number[],
@@ -1687,7 +1688,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         }
         return traceStep;
       }),
-      traceOutput: known > 0 ? [initialOutput, ...outputs].flat() : [],
+      traceOutput:
+        known > 0 && environment.runtime.version !== "1.7.4"
+          ? [initialOutput, ...outputs].flat()
+          : [],
     };
   };
   const getSpecInitialStates = () =>
@@ -1742,12 +1746,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   // TLC prints an initial state on its own without evaluating the alias.
   // TLCTrace#getTrace recovers even a lone initial state from the initial predicate, printing
-  // again.
+  // again, though TLC 1.7.4 doesn't.
   const getStateTrace = (index: number): Behavior =>
     parents[index] === -1
       ? {
           trace: [{ action: undefined, label: undefined, state: toRecord(states[index]) }],
-          traceOutput: getOutput(getSpecInitialStates).lines,
+          traceOutput:
+            environment.runtime.version === "1.7.4" ? [] : getOutput(getSpecInitialStates).lines,
         }
       : getTrace(index);
   // TLC names the initial state it was checking unless a standard module's Java code failed.

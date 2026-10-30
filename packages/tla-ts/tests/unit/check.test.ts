@@ -2083,4 +2083,17 @@ describe("check matches TLC 1.7.4", () => {
       ),
     );
   });
+  it("doesn't rebuild the trace, so it prints nothing of the states again", async () => {
+    const getTraceOutput = async (version: TlcVersion) => {
+      const result = await check({
+        source:
+          '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ PrintT("init")\nNext == x = 5 /\\ x\' = x\n====',
+        config: "INIT Init\nNEXT Next",
+        version,
+      });
+      return result.violation?.traceOutput;
+    };
+    expect(await getTraceOutput("master")).toEqual(['"init"']);
+    expect(await getTraceOutput("1.7.4")).toEqual([]);
+  });
 });
