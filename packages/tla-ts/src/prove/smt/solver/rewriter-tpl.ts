@@ -6,6 +6,13 @@ import { SmtCanceledError } from "../../../errors";
 import { ActCache } from "./act-cache";
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_ITE, type AstManager } from "./ast";
 
+// A result that the main loop rewrites again to depth levels, like Z3's BR_REWRITE1 (depth 1) to
+// BR_REWRITE_FULL (depth Infinity).
+export interface Rewrite {
+  expr: number;
+  depth: number;
+}
+
 // rewriter_tpl's frame states.
 const PROCESS_CHILDREN = 0;
 const REWRITE_BUILTIN = 1;
@@ -295,7 +302,8 @@ export class InvVarShifter extends VarShifterCore {
 }
 
 // rewriter_tpl with default_rewriter_cfg. A configuration overrides the hooks. The results of
-// reduceApp and reduceQuantifier come with a reference, and -1 is Z3's BR_FAILED or false.
+// reduceApp and reduceQuantifier come with a reference, and -1 is Z3's BR_FAILED or false. A
+// Rewrite from reduceApp is rewritten again.
 export class RewriterTpl extends RewriterCore {
   // m_r: the last result, which Z3 holds until it assigns the next one.
   private lastResult = -1;
@@ -327,7 +335,7 @@ export class RewriterTpl extends RewriterCore {
     return undefined;
   }
 
-  protected reduceApp(_decl: number, _args: number[], _sort: number) {
+  protected reduceApp(_decl: number, _args: number[], _sort: number): number | Rewrite {
     return -1;
   }
 
@@ -497,14 +505,7 @@ export class RewriterTpl extends RewriterCore {
   private processApp(expr: number, frame: Frame) {
     const manager = this.manager;
     if (frame.state === REWRITE_BUILTIN) {
-      const result = this.resultStack[this.resultStack.length - 1];
-      this.setLastResult(result);
-      this.shrinkResults(this.resultStack.length - 1);
-      this.shrinkResults(this.resultStack.length - 1);
-      this.pushResult(result);
-      this.cacheResult(expr, result, frame.isCaching);
-      this.frames.pop();
-      this.setNewChildFlag(expr, -1);
+      this.finishRewriteBuiltin(expr, frame);
       return;
     }
     const args = manager.args[expr];
@@ -529,6 +530,17 @@ export class RewriterTpl extends RewriterCore {
     }
     const newArgs = this.resultStack.slice(frame.spos);
     const reduced = this.reduceApp(decl, newArgs, manager.sorts[expr]);
+    if (typeof reduced !== "number") {
+      // BR_REWRITE: the result replaces the arguments and is rewritten to the depth it asks for.
+      this.setLastResult(reduced.expr);
+      manager.decRef(reduced.expr);
+      this.shrinkResults(frame.spos);
+      this.pushResult(reduced.expr);
+      frame.state = REWRITE_BUILTIN;
+      if (this.visit(reduced.expr, reduced.depth)) this.finishRewriteBuiltin(expr, frame);
+      this.setLastResult(-1);
+      return;
+    }
     if (reduced === -1)
       this.setLastResult(
         frame.hasNewChild ? manager.mkApp(decl, newArgs, manager.sorts[expr]) : expr,
@@ -546,6 +558,18 @@ export class RewriterTpl extends RewriterCore {
     this.setLastResult(-1);
   }
 
+  // REWRITE_BUILTIN: the result of the rewritten term replaces the term on the result stack.
+  private finishRewriteBuiltin(expr: number, frame: Frame) {
+    const result = this.resultStack[this.resultStack.length - 1];
+    this.setLastResult(result);
+    this.shrinkResults(this.resultStack.length - 1);
+    this.shrinkResults(this.resultStack.length - 1);
+    this.pushResult(result);
+    this.cacheResult(expr, result, frame.isCaching);
+    this.frames.pop();
+    this.setNewChildFlag(expr, -1);
+  }
+
   // constant_fold: an ite whose condition rewrote to true or false becomes the chosen branch.
   private isConstantFolded(expr: number, frame: Frame) {
     const manager = this.manager;
@@ -560,16 +584,7 @@ export class RewriterTpl extends RewriterCore {
     this.shrinkResults(frame.spos);
     this.pushResult(arg);
     frame.state = REWRITE_BUILTIN;
-    if (this.visit(arg, frame.maxDepth)) {
-      const result = this.resultStack[this.resultStack.length - 1];
-      this.setLastResult(result);
-      this.shrinkResults(this.resultStack.length - 1);
-      this.shrinkResults(this.resultStack.length - 1);
-      this.pushResult(result);
-      this.cacheResult(expr, result, frame.isCaching);
-      this.frames.pop();
-      this.setNewChildFlag(expr, -1);
-    }
+    if (this.visit(arg, frame.maxDepth)) this.finishRewriteBuiltin(expr, frame);
     this.setLastResult(-1);
     return true;
   }

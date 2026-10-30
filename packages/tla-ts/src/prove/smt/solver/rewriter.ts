@@ -31,7 +31,7 @@ import {
   SORT_BOOL,
   SORT_INT,
 } from "./ast";
-import { RewriterTpl } from "./rewriter-tpl";
+import { type Rewrite, RewriterTpl } from "./rewriter-tpl";
 import { elimUnusedVars } from "./var-subst";
 
 export interface RewriterOptions {
@@ -77,13 +77,10 @@ export class Rewriter extends RewriterTpl {
     private isNestedDer = false,
   ) {
     super(manager);
-    this.arith = new ArithRewriter(manager, options.arith, (expr, depth) =>
-      this.reduceTo(expr, depth),
-    );
+    this.arith = new ArithRewriter(manager, options.arith);
   }
 
-  // Rewrites the top depth levels of a term that a rewrite returned, like BR_REWRITE1 and
-  // BR_REWRITE2.
+  // Rewrites the top depth levels of a term, outside the main loop.
   private reduceTo(expr: number, depth: number): number {
     const manager = this.manager;
     if (depth === 0 || manager.kinds[expr] !== KIND_APP || manager.args[expr].length === 0)
@@ -118,7 +115,10 @@ export class Rewriter extends RewriterTpl {
   }
 
   protected reduceApp(decl: number, args: number[], sort: number) {
-    return this.manager.withTemporaries(() => this.mkAppCore(decl, args, sort));
+    return this.manager.withTemporaries(
+      () => this.reduceAppCore(decl, args, sort),
+      (result) => [typeof result === "number" ? result : result.expr],
+    );
   }
 
   protected reduceQuantifier(expr: number, body: number, patterns: number[]) {
@@ -198,7 +198,13 @@ export class Rewriter extends RewriterTpl {
     return patterns.map((pattern) => manager.mkPattern(manager.args[pattern].map(replace)));
   }
 
+  // th_rewriter's mk_app, with the result of a Rewrite rewritten again.
   mkAppCore(decl: number, args: number[], sort: number): number {
+    const reduced = this.reduceAppCore(decl, args, sort);
+    return typeof reduced === "number" ? reduced : this.reduceTo(reduced.expr, reduced.depth);
+  }
+
+  private reduceAppCore(decl: number, args: number[], sort: number): number | Rewrite {
     const manager = this.manager;
     this.checkLimit();
     const op = manager.funcDecls[decl].op;

@@ -18,6 +18,7 @@ import {
   OP_UMINUS,
   SORT_INT,
 } from "./ast";
+import type { Rewrite } from "./rewriter-tpl";
 
 export interface ArithRewriterOptions {
   // poly_rewriter's som: distributes products over sums.
@@ -29,10 +30,6 @@ export interface ArithRewriterOptions {
   // arith_rewriter's gcd_rounding: divides integer atoms by the gcd of their coefficients.
   isGcdRounding: boolean;
 }
-
-// A rewrite that returns a term the caller rewrites again to this depth, like BR_REWRITE1 and
-// BR_REWRITE2 in Z3.
-export type Reduce = (expr: number, depth: number) => number;
 
 const ARITH_OPS = new Set([
   OP_NUM,
@@ -53,8 +50,11 @@ export class PolyRewriter {
   constructor(
     protected manager: AstManager,
     protected options: ArithRewriterOptions,
-    protected reduce: Reduce,
   ) {}
+
+  protected reduce(expr: number, depth: number): Rewrite {
+    return { expr, depth };
+  }
 
   protected isZero(expr: number) {
     return this.manager.isNumeral(expr) && this.manager.values[expr] === 0;
@@ -196,7 +196,7 @@ export class PolyRewriter {
     return this.mkAddApp(isOrdered ? newArgs : this.sortMonomials(newArgs, constant === 0 ? 0 : 1));
   }
 
-  mkMul(args: number[]): number | undefined {
+  mkMul(args: number[]): number | Rewrite | undefined {
     if (args.length < 2) return undefined;
     const isFlatMonomial =
       args.length === 2 &&
@@ -212,7 +212,7 @@ export class PolyRewriter {
     return this.mkNflatMul(flat) ?? this.mkMulApp(flat);
   }
 
-  private mkNflatMul(args: number[]): number | undefined {
+  private mkNflatMul(args: number[]): number | Rewrite | undefined {
     const manager = this.manager;
     if (
       args.length === 2 &&

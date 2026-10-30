@@ -15,6 +15,7 @@ import {
 } from "./ast";
 import { getGcd } from "./rational";
 import { type ArithRewriterOptions, PolyRewriter } from "./poly-rewriter";
+import type { Rewrite } from "./rewriter-tpl";
 
 // The parameters that asserted_formulas gives the kernel's rewriter, which also simplifies instances.
 export const KERNEL_ARITH_OPTIONS: ArithRewriterOptions = {
@@ -31,9 +32,6 @@ export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
   isArithIneqLhs: false,
   isGcdRounding: false,
 };
-
-// BR_REWRITE_FULL: the result is rewritten again at every depth.
-const FULL_DEPTH = Number.MAX_SAFE_INTEGER;
 
 // SMT-LIB's div and mod, whose remainder is never negative.
 const getEuclideanDiv = (dividend: number, divisor: number) =>
@@ -220,7 +218,7 @@ export class ArithRewriter extends PolyRewriter {
     if (divided === undefined) return undefined;
     return this.reduce(
       this.mkIntIte(manager.mkEq(zero, right), this.mkIdivApp(left, zero), divided),
-      FULL_DEPTH,
+      Infinity,
     );
   }
 
@@ -563,7 +561,7 @@ export class ArithRewriter extends PolyRewriter {
     originalRight: number,
     kind: number,
     sides: number[],
-  ): number | undefined {
+  ): number | Rewrite | undefined {
     const manager = this.manager;
     const setSide = (index: number, expr: number) => {
       manager.incRef(expr);
