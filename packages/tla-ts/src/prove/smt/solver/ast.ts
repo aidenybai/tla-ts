@@ -193,7 +193,7 @@ export class AstManager {
   ];
   // The hash of each uninterpreted declaration, and of each builtin by its Z3 declaration.
   private declHashes: number[] = [];
-  private builtinHashes = new Map<string, number>();
+  private builtinHashes = new Map<string | number, number>();
   private table = new Map<string, number>();
   private appTable = new Map<number, number[]>();
   // The small id of the next sort or declaration. Z3 makes declarations of its own as it goes, which
@@ -361,11 +361,17 @@ export class AstManager {
     return { name: builtin[0], kind: builtin[1], domain };
   }
 
+  // The domain of a builtin other than pattern depends only on the sort of an argument and the
+  // number of arguments, which key the cache without a string.
   private getBuiltinHash(op: number, args: number[], range: number) {
-    const signature = this.getBuiltinSignature(op, args);
-    const key = `${op}:${signature.domain.join(",")}:${range}`;
+    const argSort = (op === OP_ITE ? this.sorts[args[1]] : this.sorts[args[0]]) ?? 0;
+    const key =
+      op === OP_PATTERN
+        ? `${args.map((arg) => this.sorts[arg]).join(",")}:${range}`
+        : op + 32 * (argSort + 65536 * (range + 65536 * args.length));
     const existing = this.builtinHashes.get(key);
     if (existing !== undefined) return existing;
+    const signature = this.getBuiltinSignature(op, args);
     const family =
       op === OP_PATTERN ? Z3_PATTERN_FAMILY : op < OP_NUM ? Z3_BASIC_FAMILY : Z3_ARITH_FAMILY;
     const hash = this.getFuncDeclHash(

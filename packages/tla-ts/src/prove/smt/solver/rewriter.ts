@@ -45,25 +45,44 @@ export interface RewriterOptions {
 }
 
 // The distinct literals of a flat conjunction or disjunction. It finds a complementary pair through
-// the atoms of the negated literals, without creating each negation.
+// the atoms of the negated literals, without creating each negation. A short list is searched
+// directly, and a long one through sets.
+const MAX_SCANNED_LITERALS = 8;
+
 class FlatLiterals {
   readonly list: number[] = [];
-  private seen = new Set<number>();
-  private negatedAtoms = new Set<number>();
+  private seen: Set<number> | null = null;
+  private negatedAtoms: Set<number> | null = null;
 
   constructor(private manager: AstManager) {}
 
   // Adds a literal, and returns whether its complement is already there.
   add(literal: number) {
     const manager = this.manager;
-    if (this.seen.has(literal)) return false;
+    if (this.has(literal)) return false;
     const isNegated = manager.isNot(literal);
-    if (isNegated ? this.seen.has(manager.args[literal][0]) : this.negatedAtoms.has(literal))
-      return true;
-    this.seen.add(literal);
-    if (isNegated) this.negatedAtoms.add(manager.args[literal][0]);
+    if (isNegated ? this.has(manager.args[literal][0]) : this.hasNegationOf(literal)) return true;
     this.list.push(literal);
+    if (this.seen !== null) {
+      this.seen.add(literal);
+      if (isNegated) this.negatedAtoms?.add(manager.args[literal][0]);
+    } else if (this.list.length > MAX_SCANNED_LITERALS) {
+      this.seen = new Set(this.list);
+      this.negatedAtoms = new Set(
+        this.list.filter((item) => manager.isNot(item)).map((item) => manager.args[item][0]),
+      );
+    }
     return false;
+  }
+
+  private has(literal: number) {
+    return this.seen === null ? this.list.includes(literal) : this.seen.has(literal);
+  }
+
+  private hasNegationOf(atom: number) {
+    const manager = this.manager;
+    if (this.negatedAtoms !== null) return this.negatedAtoms.has(atom);
+    return this.list.some((item) => manager.isNot(item) && manager.args[item][0] === atom);
   }
 }
 

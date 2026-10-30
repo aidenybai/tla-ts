@@ -158,9 +158,10 @@ export class QiQueue {
   private scopes: number[] = [];
   private checker: Checker;
   // cached_var_subst: each instance by its quantifier and bindings, which the queue holds with them
-  // until the next search.
+  // until the next search. instanceRefs lists the quantifier, the bindings and the instance of each,
+  // and instances maps a hash of the key to where its entries start there.
   private subst: VarSubst;
-  private instances = new Map<string, number>();
+  private instances = new Map<number, number[]>();
   private instanceRefs: number[] = [];
   // m_instances: the lemmas, which the queue holds until their scope is popped.
   private lemmas: RefVector;
@@ -174,14 +175,22 @@ export class QiQueue {
 
   private getInstance(quantifier: number, bindings: number[]) {
     const manager = this.context.manager;
-    const key = `${quantifier}:${bindings.join(",")}`;
-    const cached = this.instances.get(key);
-    if (cached !== undefined) return cached;
+    const refs = this.instanceRefs;
+    let hash = quantifier;
+    for (const binding of bindings) hash = (Math.imul(hash, 0x9e3779b1) + binding) | 0;
+    const bucket = this.instances.get(hash);
+    for (const start of bucket ?? []) {
+      let isSame = refs[start] === quantifier;
+      for (let index = 0; index < bindings.length && isSame; index++)
+        isSame = refs[start + 1 + index] === bindings[index];
+      if (isSame) return refs[start + 1 + bindings.length];
+    }
     const instance = this.subst.apply(manager.getQuantifier(quantifier).body, bindings);
-    this.instances.set(key, instance);
+    if (bucket === undefined) this.instances.set(hash, [refs.length]);
+    else bucket.push(refs.length);
     manager.incRef(quantifier);
     for (const binding of bindings) manager.incRef(binding);
-    this.instanceRefs.push(quantifier, ...bindings, instance);
+    refs.push(quantifier, ...bindings, instance);
     return instance;
   }
 

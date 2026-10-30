@@ -84,6 +84,7 @@ export class Context extends Internalizer {
   private phaseCounter = 0;
   private finalCheckIndex = 0;
   private r1ParentGenerations = new Map<Enode, number>();
+  private erasedGenerations = new Map<Enode, number>();
   private lastSearchFailure = FAILURE_OK;
 
   constructor(manager: AstManager, params: SmtParams) {
@@ -549,7 +550,8 @@ export class Context extends Internalizer {
     const savedNext = r1.next;
     r1.next = r2.next;
     r2.next = savedNext;
-    const erasedGenerations = new Map<Enode, number>();
+    const erasedGenerations = this.erasedGenerations;
+    erasedGenerations.clear();
     for (let index = r2NumParents; index < r2.parents.length; index++) {
       const parent = r2.parents[index];
       if (parent.isCgcEnabled) {
