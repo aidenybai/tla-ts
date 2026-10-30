@@ -822,6 +822,7 @@ export class Context extends Internalizer {
           while (this.clausesToReinit.length <= this.scopeLevel) this.clausesToReinit.push([]);
           this.clausesToReinit[this.scopeLevel].push(clause);
         } else {
+          if (clause.isReinternalizeAtoms) this.releaseAtoms(clause);
           clause.isReinit = false;
           clause.isReinternalizeAtoms = false;
         }
@@ -869,7 +870,7 @@ export class Context extends Internalizer {
       return false;
     const newLevel = resolution.newScopeLevel;
     const literals = resolution.lemma;
-    const atoms = resolution.lemmaAtoms;
+    const atoms = resolution.lemmaAtoms.items;
     const visited = new Set<number>();
     if (resolution.lemmaIscopeLevel > newLevel)
       this.cacheGenerationOfLiterals(literals, newLevel, visited);
@@ -890,6 +891,7 @@ export class Context extends Internalizer {
       if (wasRelevant[index]) this.markLiteralAsRelevant(literals[index]);
     this.cachedGeneration.clear();
     this.mkClause([...literals], null, CLS_LEARNED);
+    resolution.lemmaAtoms.reset();
     this.bvarInc *= INV_DECAY;
     this.updatePhaseCacheCounter();
     return true;

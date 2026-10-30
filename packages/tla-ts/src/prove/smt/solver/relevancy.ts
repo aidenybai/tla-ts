@@ -20,6 +20,7 @@ const TRAIL_HANDLER = 2;
 
 export class RelevancyPropagator {
   private qhead = 0;
+  // m_relevant_exprs: the relevant expressions in the order they were marked, which it holds.
   private relevantExprs: number[] = [];
   // A flag per expression, which grows with the expressions marked.
   private isRelevantFlags = new Uint8Array(1024);
@@ -46,8 +47,7 @@ export class RelevancyPropagator {
       handler();
       return;
     }
-    this.trailKinds.push(TRAIL_HANDLER);
-    this.trailExprs.push(source);
+    this.pushTrail(TRAIL_HANDLER, source);
     const list = this.handlers.get(source);
     if (list === undefined) this.handlers.set(source, [handler]);
     else list.push(handler);
@@ -70,7 +70,13 @@ export class RelevancyPropagator {
     const list = this.watches[index].get(expr);
     if (list === undefined) this.watches[index].set(expr, [handler]);
     else list.push(handler);
-    this.trailKinds.push(value ? TRAIL_POS_WATCH : TRAIL_NEG_WATCH);
+    this.pushTrail(value ? TRAIL_POS_WATCH : TRAIL_NEG_WATCH, expr);
+  }
+
+  // push_trail: the trail holds its expressions.
+  private pushTrail(kind: number, expr: number) {
+    this.context.manager.incRef(expr);
+    this.trailKinds.push(kind);
     this.trailExprs.push(expr);
   }
 
@@ -82,18 +88,22 @@ export class RelevancyPropagator {
     const offset = this.scopes.length - numScopes * 2;
     const relevantLimit = this.scopes[offset];
     const trailLimit = this.scopes[offset + 1];
+    const manager = this.context.manager;
     for (let index = this.relevantExprs.length - 1; index >= relevantLimit; index--)
       this.isRelevantFlags[this.relevantExprs[index]] = 0;
-    this.relevantExprs.length = relevantLimit;
+    for (const expr of this.relevantExprs.splice(relevantLimit)) manager.decRef(expr);
     this.qhead = relevantLimit;
     for (let index = this.trailKinds.length - 1; index >= trailLimit; index--) {
       const kind = this.trailKinds[index];
       const map =
         kind === TRAIL_HANDLER ? this.handlers : this.watches[kind === TRAIL_POS_WATCH ? 1 : 0];
-      const list = map.get(this.trailExprs[index]);
-      if (list === undefined) continue;
-      list.pop();
-      if (list.length === 0) map.delete(this.trailExprs[index]);
+      const expr = this.trailExprs[index];
+      const list = map.get(expr);
+      if (list !== undefined) {
+        list.pop();
+        if (list.length === 0) map.delete(expr);
+      }
+      manager.decRef(expr);
     }
     this.trailKinds.length = trailLimit;
     this.trailExprs.length = trailLimit;
@@ -107,6 +117,7 @@ export class RelevancyPropagator {
       this.isRelevantFlags = flags;
     }
     this.isRelevantFlags[expr] = 1;
+    this.context.manager.incRef(expr);
     this.relevantExprs.push(expr);
     this.context.relevantEh(expr);
   }

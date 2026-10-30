@@ -21,7 +21,7 @@ import {
   type AstManager,
 } from "./ast";
 import type { Context } from "./context";
-import { collectMacroCandidates } from "./model-macro-solver";
+import { collectMacroCandidates, releaseCondMacros } from "./model-macro-solver";
 import { pullQuant } from "./pull-quant";
 import { Rewriter } from "./rewriter";
 import { AufSolver, type Evaluate, InstantiationSet, Node } from "./auf-solver";
@@ -66,8 +66,9 @@ export class QuantifierInfo {
     this.condMacros = collectMacroCandidates(manager, this.flatQ);
   }
 
-  // ~quantifier_info.
+  // ~quantifier_info: the conditional macros go before the flat quantifier.
   release() {
+    releaseCondMacros(this.manager, this.condMacros);
     this.manager.decRef(this.flatQ);
   }
 

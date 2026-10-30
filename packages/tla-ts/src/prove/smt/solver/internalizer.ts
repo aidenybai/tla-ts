@@ -883,12 +883,13 @@ export abstract class Internalizer {
     const condition = this.getLiteral(args[0]);
     this.mkClause([negate(condition), this.getLiteral(thenEq)], null, CLS_AUX);
     this.mkClause([condition, this.getLiteral(elseEq)], null, CLS_AUX);
+    // ite_term_relevancy_eh: it marks the terms for the propagator, which propagates them later.
     const handler = () => {
       if (!this.isRelevant(expr)) return;
-      this.markAsRelevant(args[0]);
+      this.relevancy.markAsRelevant(args[0]);
       const value = this.findAssignment(args[0]);
-      if (value < 0) this.markAsRelevant(elseEq);
-      else if (value > 0) this.markAsRelevant(thenEq);
+      if (value < 0) this.relevancy.markAsRelevant(elseEq);
+      else if (value > 0) this.relevancy.markAsRelevant(thenEq);
     };
     this.addRelWatch(condition, handler);
     this.addRelWatch(negate(condition), handler);
@@ -1096,12 +1097,11 @@ export abstract class Internalizer {
     }
     const iscopeLevel = isLemma ? this.getMaxIscopeLevel(literals) : 0;
     const isSavingAtoms = isLemma && iscopeLevel > this.baseLevel;
-    const clause = new Clause(
-      literals,
-      kind,
-      justification,
-      isSavingAtoms ? literals.map((literal) => this.boolVar2Expr[getVar(literal)]) : null,
-    );
+    const atoms = isSavingAtoms
+      ? literals.map((literal) => this.boolVar2Expr[getVar(literal)])
+      : null;
+    for (const atom of atoms ?? []) this.manager.incRef(atom);
+    const clause = new Clause(literals, kind, justification, atoms);
     if (isLemma) {
       this.swapLiterals(clause, 1, this.selectLearnedWatchLiteral(clause));
       this.lemmas.push(clause);
@@ -1125,6 +1125,13 @@ export abstract class Internalizer {
     this.removeWatchLiteral(clause, 0);
     this.removeWatchLiteral(clause, 1);
     clause.isDeleted = true;
+    if (clause.isReinternalizeAtoms) this.releaseAtoms(clause);
+  }
+
+  // release_atoms: the clause no longer holds its atoms.
+  protected releaseAtoms(clause: Clause) {
+    for (const atom of clause.atoms ?? []) this.manager.decRef(atom);
+    clause.atoms = null;
   }
 
   protected deleteClauses(clauses: Clause[], oldSize: number) {

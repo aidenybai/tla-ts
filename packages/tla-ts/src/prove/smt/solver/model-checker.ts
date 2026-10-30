@@ -28,7 +28,8 @@ interface Instance {
 class AuxContext {
   private context: Context;
   private asserted: AssertedFormulas;
-  // theory_polymorphism's m_qhead: the number of formulas when it last added an assumption.
+  // theory_polymorphism's m_qhead: the number of formulas when it last added an assumption. Its
+  // trail restores it when the scope is popped, and no formula is asserted outside the scopes.
   private polyQhead = 0;
 
   constructor(private manager: AstManager) {
@@ -38,12 +39,13 @@ class AuxContext {
 
   push() {
     this.context.push();
-    this.asserted = new AssertedFormulas(this.manager);
-    this.polyQhead = 0;
+    this.asserted.push();
   }
 
   pop() {
     this.context.pop(1);
+    this.asserted.pop();
+    this.polyQhead = 0;
   }
 
   assert(formula: number) {
