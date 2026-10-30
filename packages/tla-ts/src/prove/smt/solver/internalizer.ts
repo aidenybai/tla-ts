@@ -385,9 +385,12 @@ export abstract class Internalizer {
 
   // Boolean variables and enodes.
 
+  // mk_bool_var: m_b_internalized_stack holds a reference to the expression until the variable is
+  // deleted.
   mkBoolVar(expr: number) {
     const boolVar = toBoolVar(this.numBoolVars++);
     const literal = mkLiteral(boolVar);
+    this.manager.incRef(expr);
     this.exprToBoolVar[expr] = boolVar;
     this.boolVar2Expr[boolVar] = expr;
     this.levels[boolVar] = 0;
@@ -429,6 +432,7 @@ export abstract class Internalizer {
     this.binaryWatches[literal + 1] = undefined;
     this.binJustifications[literal] = undefined;
     this.binJustifications[literal + 1] = undefined;
+    this.manager.decRef(expr);
   }
 
   protected isAtom(boolVar: BoolVar) {
@@ -484,6 +488,8 @@ export abstract class Internalizer {
     for (const arg of args) arg.root.addParent(node);
     if (manager.isUniqueValue(expr)) node.isInterpreted = true;
     this.exprToEnode[expr] = node;
+    // m_e_internalized_stack holds a reference to the expression until the enode is deleted.
+    manager.incRef(expr);
     this.trailKinds.push(UNDO_MK_ENODE);
     this.enodes.push(node);
     if (args.length > 0) {
@@ -517,6 +523,7 @@ export abstract class Internalizer {
     if (node.isCgr() && node.usesCgTable()) this.cgTable.erase(node);
     if (node.args.length > 0 && !node.isEq) this.decl2enodes.get(node.decl)?.pop();
     for (const arg of node.args) arg.root.parents.pop();
+    this.manager.decRef(node.owner);
   }
 
   protected mergeCgcGenerations(first: Enode, firstGeneration: number, second: Enode) {
