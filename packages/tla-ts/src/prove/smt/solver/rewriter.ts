@@ -470,7 +470,11 @@ export class Rewriter extends RewriterTpl {
     return undefined;
   }
 
-  mkDistinct(args: number[]) {
+  // bool_rewriter::mk_distinct_core: two arguments become a disequality, which the main loop rewrites
+  // again, since mk_eq may dispatch to other rewriters. Z3 keeps a longer distinct, which tlapm does
+  // not send, and this port expands it into disequalities.
+  private mkDistinct(args: number[]): number | Rewrite {
+    if (args.length === 2) return { expr: this.mkNot(this.mkEq(args[0], args[1])), depth: 2 };
     const pairs: number[] = [];
     for (let left = 0; left < args.length; left++)
       for (let right = left + 1; right < args.length; right++)
