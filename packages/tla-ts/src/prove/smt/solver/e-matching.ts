@@ -710,11 +710,16 @@ export class Mam {
     if (trigger === null) return;
     const context = this.context;
     if (this.stepIndex === trigger.steps.length) {
+      // ON_MATCH: the generations of the matched terms and of the bindings.
       let maxGeneration = 0;
       for (const generation of this.generations)
         maxGeneration = Math.max(maxGeneration, generation);
       const result: Enode[] = [];
-      for (const binding of this.bindings) if (binding !== null) result.push(binding);
+      for (const binding of this.bindings)
+        if (binding !== null) {
+          result.push(binding);
+          maxGeneration = Math.max(maxGeneration, context.getGeneration(binding));
+        }
       if (result.length === trigger.numDecls)
         this.onMatch(trigger.quantifier, result, maxGeneration);
       return;
