@@ -753,17 +753,23 @@ export class AstManager {
     return this.someSubterm(expr, (current) => this.isModelValue(current));
   }
 
+  // for_each_expr: visits the subterms with a stack of its own, so deep terms do not exhaust the call
+  // stack.
   private someSubterm(expr: number, predicate: (expr: number) => boolean) {
     const visited = new Set<number>();
-    const visit = (current: number): boolean => {
-      if (visited.has(current)) return false;
+    const todo = [expr];
+    while (todo.length > 0) {
+      const current = todo.pop() as number;
+      if (visited.has(current)) continue;
       visited.add(current);
       const kind = this.kinds[current];
-      if (kind === KIND_VAR) return false;
-      if (kind === KIND_QUANTIFIER) return visit(this.getQuantifier(current).body);
-      return predicate(current) || this.args[current].some((arg) => visit(arg));
-    };
-    return visit(expr);
+      if (kind === KIND_QUANTIFIER) todo.push(this.getQuantifier(current).body);
+      else if (kind !== KIND_VAR) {
+        if (predicate(current)) return true;
+        todo.push(...this.args[current]);
+      }
+    }
+    return false;
   }
 
   mkNot(expr: number) {
