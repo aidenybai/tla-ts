@@ -625,6 +625,14 @@ describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path
     expect(getToolSequence(result.stdout).slice(-4)).toEqual(["2267", "2200", "2199", "2186"]);
   });
 
+  it("prints the sources of the values it fails to fingerprint rather than the call stack", () => {
+    const result = check174("Unfingerprinted");
+    expect(result.status).toBe(75);
+    expect(result.stdout).toContain(
+      "Fingerprint Stack Trace:\n0) line 8, col 18 to line 8, col 30 of module Unfingerprinted\n\nReason:\n",
+    );
+  });
+
   it("reports an error in the config as an unexpected exception", () => {
     const result = check174("Aliased");
     expect(result.status).toBe(255);

@@ -538,10 +538,11 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
       const fingerprint = failure.fingerprint;
       if (fingerprint) {
         // TLC prints the call stack when the replay has one, and otherwise the sources of the
-        // values it failed to fingerprint, innermost first.
-        const trace = failure.callStack?.length
-          ? formatCallStack(failure.callStack)
-          : formatFingerprintTrace(fingerprint.sources);
+        // values it failed to fingerprint, innermost first. TLC 1.7.4 always prints the sources.
+        const trace =
+          failure.callStack?.length && printer.version !== "1.7.4"
+            ? formatCallStack(failure.callStack)
+            : formatFingerprintTrace(fingerprint.sources);
         print(
           MESSAGE_CODE.fingerprintFailed,
           MESSAGE_LEVEL.error,
