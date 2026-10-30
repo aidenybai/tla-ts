@@ -262,10 +262,10 @@ const printProgress = (
   );
 };
 
-// The messages TLC prints for a program to read as the search goes.
 const getClassPath = (directory: string, module: string) => join(directory, `${module}.class`);
 
-const printToolProgress = (
+// The messages TLC prints as the search goes.
+const printCheckProgress = (
   printer: MessagePrinter,
   progress: CheckProgress,
   timing: Timing,
@@ -275,7 +275,7 @@ const printToolProgress = (
   switch (progress.kind) {
     case "parsed":
       timing.isParsed = true;
-      print(MESSAGE_CODE.sanyFinished, MESSAGE_LEVEL.none, "SANY finished.");
+      if (printer.isTool) print(MESSAGE_CODE.sanyFinished, MESSAGE_LEVEL.none, "SANY finished.");
       print(
         MESSAGE_CODE.starting,
         MESSAGE_LEVEL.none,
@@ -589,12 +589,15 @@ const checkSpec = async (
     return EXIT_STATUS.configParseError;
   }
   const timing: Timing = { start: Date.now(), liveness: undefined, isParsed: false };
-  const printFinished = () =>
+  // Without -tool, TLC prints how long it ran for a person to read.
+  const printFinished = () => {
+    const runtime = Date.now() - timing.start;
     printer.print(
       MESSAGE_CODE.finished,
       MESSAGE_LEVEL.none,
-      `Finished in ${Date.now() - timing.start}ms at (${formatTlcDate(new Date())})`,
+      `Finished in ${printer.isTool ? `${runtime}ms` : formatTlcDuration(runtime)} at (${formatTlcDate(new Date())})`,
     );
+  };
   const printParsingFailed = () =>
     printer.print(
       MESSAGE_CODE.parsingFailed,
@@ -617,7 +620,7 @@ const checkSpec = async (
     try {
       return parseConfig(readFileSync(configPath, "utf8"));
     } catch (error) {
-      if (!printer.isTool || !(error instanceof TlaConfigError)) throw error;
+      if (!(error instanceof TlaConfigError)) throw error;
       return error;
     }
   })();
@@ -674,9 +677,7 @@ const checkSpec = async (
       dump: dumpValues && getDump(dumpValues),
       isTool: printer.isTool,
       isWarningEnabled: !args.has("-nowarning"),
-      onProgress: printer.isTool
-        ? (progress) => printToolProgress(printer, progress, timing, directory)
-        : undefined,
+      onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
       source,
       config,
       onPause: () => readSync(0, Buffer.alloc(1)),
@@ -692,19 +693,17 @@ const checkSpec = async (
       },
     });
     printResult(result, printer, timing);
-    if (printer.isTool) printFinished();
+    printFinished();
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
   };
-  if (!printer.isTool) {
-    console.log(`Checking ${basename(specPath)} with ${basename(configPath)}`);
-    return run();
+  if (printer.isTool) {
+    printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");
   }
-  printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");
   // TLC prints the warnings SANY reports, and the errors it rejects the spec for.
   const sany = getSanyReport(specPath, loadModule);
   process.stdout.write(sany.text);
   if (sany.isFailed) {
-    printToolProgress(printer, { kind: "parsed" }, timing, directory);
+    printCheckProgress(printer, { kind: "parsed" }, timing, directory);
     printParsingFailed();
     printFinished();
     return EXIT_STATUS.specParseError;
@@ -714,7 +713,7 @@ const checkSpec = async (
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     if (error instanceof TlaSyntaxError) console.log(formatSanyErrors(error, fileName));
-    if (!timing.isParsed) printToolProgress(printer, { kind: "parsed" }, timing, directory);
+    if (!timing.isParsed) printCheckProgress(printer, { kind: "parsed" }, timing, directory);
     return printFailure(error);
   }
 };
@@ -764,17 +763,18 @@ const reportErrors = async (
   }
 };
 
-// Runs each path in turn, so an error in one leaves the others to report. The exit code is the
-// first that is not success.
+// Runs each path in turn, as TLC runs in a process of its own, so an error in one leaves the others
+// to report. The exit code is the first that is not success.
 const runEach = async (
   paths: string[],
-  runPath: (path: string) => number | Promise<number>,
-  printer: MessagePrinter,
+  runPath: (path: string, printer: MessagePrinter) => number | Promise<number>,
+  createPrinter: () => MessagePrinter,
 ) => {
   const exitCodes: number[] = [];
   for (const [index, path] of paths.entries()) {
     if (index > 0) console.log("");
-    exitCodes.push(await reportErrors(() => runPath(path), printer));
+    const printer = createPrinter();
+    exitCodes.push(await reportErrors(() => runPath(path, printer), printer));
   }
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
 };
@@ -984,16 +984,21 @@ const checkSpecs = async (args: string[], libraries: string[]) => {
     console.error("Error: -config applies to one specification, but several were given.");
     return 1;
   }
-  const printer = createMessagePrinter(parsed.has("-tool"), !parsed.has("-nowarning"));
   // TLC also looks for the spec itself in the library directories.
   const findSpec = (path: string) =>
     existsSync(path) || isAbsolute(path)
       ? path
       : (libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
+  const paths = [...new Set(specPaths.map(findSpec))];
   return runEach(
-    [...new Set(specPaths.map(findSpec))],
-    (path) => checkSpec(path, parsed, libraries, printer),
-    printer,
+    paths,
+    (path, printer) => {
+      // TLC checks one spec, so tla-ts names each of several it checks.
+      if (paths.length > 1)
+        console.log(`Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`);
+      return checkSpec(path, parsed, libraries, printer);
+    },
+    () => createMessagePrinter(parsed.has("-tool"), !parsed.has("-nowarning")),
   );
 };
 

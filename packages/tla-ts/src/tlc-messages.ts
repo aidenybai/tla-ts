@@ -73,18 +73,28 @@ export interface MessagePrinter {
 
 // With -tool, TLC wraps each message in markers that name its code and level, so that a program
 // can read the output. Lines outside the markers, such as the output of Print, stay as they are.
-// TLC's -nowarning drops each message that MP.printWarning would print.
-export const createMessagePrinter = (isTool: boolean, isWarningEnabled = true): MessagePrinter => ({
-  isTool,
-  print: (code, level, text) => {
-    if (level === MESSAGE_LEVEL.warning && !isWarningEnabled) return;
-    console.log(
-      isTool
+// MP.printWarning prints a warning once, which -nowarning drops, and without -tool, TLC follows the
+// first warning with how to drop them.
+export const createMessagePrinter = (isTool: boolean, isWarningEnabled = true): MessagePrinter => {
+  const warnings = new Set<string>();
+  return {
+    isTool,
+    print: (code, level, text) => {
+      const isWarning = level === MESSAGE_LEVEL.warning;
+      if (isWarning && !isWarningEnabled) return;
+      const hint =
+        isWarning && !isTool && warnings.size === 0
+          ? "\n(Use the -nowarning option to disable this warning.)"
+          : "";
+      const message = isTool
         ? `@!@!@STARTMSG ${code}:${level} @!@!@\n${text}\n@!@!@ENDMSG ${code} @!@!@`
-        : `${LEVEL_PREFIXES[level]}${text}`,
-    );
-  },
-});
+        : `${LEVEL_PREFIXES[level]}${text}${hint}`;
+      if (isWarning && warnings.has(message)) return;
+      if (isWarning) warnings.add(message);
+      console.log(message);
+    },
+  };
+};
 
 // The messages that TLC builds from a message code, from tlc2.output.MP, by their code and
 // template, with whether TLC throws them as an EvalException rather than a TLCRuntimeException.
@@ -289,9 +299,9 @@ export const formatTlcDuration = (milliseconds: number) => {
   const seconds = Math.floor(milliseconds / 1000) % 60;
   const minutes = Math.floor(milliseconds / 60_000) % 60;
   const hours = Math.floor(milliseconds / 3_600_000);
-  if (hours >= 24) return `${Math.floor(hours / 24)}d ${pad(hours % 24)}h`;
-  if (hours > 0) return `${pad(hours)}h ${pad(minutes)}min`;
-  return minutes > 0 ? `${pad(minutes)}min ${pad(seconds)}s` : `${pad(seconds)}s`;
+  if (milliseconds > 86_400_000) return `${Math.floor(hours / 24)}d ${pad(hours % 24)}h`;
+  if (milliseconds > 3_600_000) return `${pad(hours % 24)}h ${pad(minutes)}min`;
+  return milliseconds > 60_000 ? `${pad(minutes)}min ${pad(seconds)}s` : `${pad(seconds)}s`;
 };
 
 // TLC's SimpleDateFormat("yyyy-MM-dd HH:mm:ss") in the local time zone.

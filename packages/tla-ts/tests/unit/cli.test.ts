@@ -16,7 +16,7 @@ const runCli = (directory: string, name: string, args: string[] = []) =>
   runCliWith(directory, [`${name}.tla`, ...args]);
 
 const getCheckedSpecs = (output: string) =>
-  output.split("\n").filter((line) => line.startsWith("Checking "));
+  output.split("\n").filter((line) => /^Checking \S+\.tla with /.test(line));
 
 const getStateLines = (output: string) =>
   output.split("\n").filter((line) => line.includes(" = ") && !line.startsWith("State"));
@@ -40,17 +40,31 @@ describe("the CLI prints traces like TLC", () => {
   });
 });
 
-// TLC's output for the same models, without the lines that report versions, progress and time.
+// TLC's output for the same models without -tool, with the time it ran and the dates it printed as _,
+// and without its first lines, which report its version and the files SANY parsed.
+const getSteadyLines = (output: string) =>
+  output
+    .replace(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/g, "_")
+    .replace(/ in \d\ds at /g, " in _ at ")
+    .split("\n");
+
 const TLC_REPORTS = [
   [
     "AssumptionFalse",
     10,
-    ["Error: Assumption line 4, col 20 to line 4, col 24 of module AssumptionFalse is false."],
+    [
+      "Starting... (_)",
+      "Error: Assumption line 4, col 20 to line 4, col 24 of module AssumptionFalse is false.",
+      "Finished in _ at (_)",
+    ],
   ],
   [
     "Success",
     0,
     [
+      "Starting... (_)",
+      "Computing initial states...",
+      "Finished computing initial states: 2 distinct states generated at _.",
       "Model checking completed. No error has been found.",
       "  Estimates of the probability that TLC did not check all reachable states",
       "  because two distinct states had the same fingerprint:",
@@ -58,13 +72,31 @@ const TLC_REPORTS = [
       "10 states generated, 6 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 3.",
       "The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).",
+      "Finished in _ at (_)",
     ],
   ],
-  ["InitialInvariant", 12, ["Error: Invariant Inv is violated by the initial state:", "x = 0", ""]],
+  [
+    "InitialInvariant",
+    12,
+    [
+      "Starting... (_)",
+      "Computing initial states...",
+      "Error: Invariant Inv is violated by the initial state:",
+      "x = 0",
+      "",
+      "Finished in _ at (_)",
+    ],
+  ],
   [
     "Lasso",
     13,
     [
+      "Starting... (_)",
+      "Implied-temporal checking--satisfiability problem has 1 branches.",
+      "Computing initial states...",
+      "Finished computing initial states: 1 distinct state generated at _.",
+      "Progress(2) at _: 3 states generated, 2 distinct states found, 0 states left on queue.",
+      "Checking temporal properties for the complete state space with 2 total distinct states at (_)",
       "Error: Temporal property Prop was violated.",
       "",
       "Error: The following behavior constitutes a counter-example:",
@@ -77,14 +109,22 @@ const TLC_REPORTS = [
       "",
       "Back to state 1: <Next line 5, col 9 to line 5, col 18 of module Lasso>",
       "",
+      "Finished checking temporal properties in _ at _",
       "3 states generated, 2 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 2.",
+      "Finished in _ at (_)",
     ],
   ],
   [
     "Lassos",
     13,
     [
+      "Starting... (_)",
+      "Implied-temporal checking--satisfiability problem has 2 branches.",
+      "Computing initial states...",
+      "Finished computing initial states: 1 distinct state generated at _.",
+      "Progress(3) at _: 4 states generated, 3 distinct states found, 0 states left on queue.",
+      "Checking 2 branches of temporal properties for the complete state space with 6 total distinct states at (_)",
       "Error: Temporal properties Reach, Settle, and Stop were violated.",
       "",
       "Error: The following behavior constitutes a counter-example:",
@@ -100,14 +140,20 @@ const TLC_REPORTS = [
       "",
       "Back to state 1: <Next line 5, col 9 to line 5, col 24 of module Lassos>",
       "",
+      "Finished checking temporal properties in _ at _",
       "4 states generated, 3 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 3.",
+      "Finished in _ at (_)",
     ],
   ],
   [
     "SafetyProperty",
     12,
     [
+      "Starting... (_)",
+      "Implied-temporal checking--satisfiability problem has 1 branches.",
+      "Computing initial states...",
+      "Finished computing initial states: 1 distinct state generated at _.",
       "Error: Temporal property Bounded was violated.",
       "",
       "Error: The following behavior constitutes a counter-example:",
@@ -120,12 +166,16 @@ const TLC_REPORTS = [
       "",
       "3 states generated, 3 distinct states found, 1 states left on queue.",
       "The depth of the complete state graph search is 3.",
+      "Finished in _ at (_)",
     ],
   ],
   [
     "FailedInvariant",
     76,
     [
+      "Starting... (_)",
+      "Computing initial states...",
+      "Finished computing initial states: 1 distinct state generated at _.",
       "Error: Evaluating invariant Inv failed.",
       "The second argument of \\div is 0.",
       "Error: The behavior up to this point is:",
@@ -141,31 +191,61 @@ const TLC_REPORTS = [
       "3 states generated, 3 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 3.",
       "The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).",
+      "Finished in _ at (_)",
     ],
   ],
-  ["NoNext", 75, ["Error: No next state actions defined to generate successor states from."]],
+  [
+    "NoNext",
+    75,
+    [
+      "Starting... (_)",
+      "Computing initial states...",
+      "Finished computing initial states: 1 distinct state generated at _.",
+      "Error: No next state actions defined to generate successor states from.",
+      "Finished in _ at (_)",
+    ],
+  ],
 ] as const;
 
 describe("the CLI reports results like TLC", () => {
   it.each(TLC_REPORTS)("reports %s", (name, code, lines) => {
     const result = runCli("cli-output", name);
     expect(result.status).toBe(code);
-    expect(result.stdout.split("\n").slice(1)).toEqual([...lines, ""]);
+    expect(getSteadyLines(result.stdout)).toEqual([...lines, ""]);
   });
 
   it("checks liveness on the complete state graph with -lncheck final", () => {
     const [, code, lines] = TLC_REPORTS.find((report) => report[0] === "Lasso") ?? [];
     const result = runCli("cli-output", "Lasso", ["-lncheck", "final"]);
     expect(result.status).toBe(code);
-    expect(result.stdout.split("\n").slice(1)).toEqual([...(lines ?? []), ""]);
+    expect(getSteadyLines(result.stdout)).toEqual([...(lines ?? []), ""]);
   });
 
   it("rejects a spec whose file name differs from its module name like TLC", () => {
     const result = runCli("cli-module-name", "Renamed");
+    const reason =
+      "File name 'Renamed' does not match the name 'Other' of the top level module it contains.";
     expect(result.status).toBe(150);
-    expect(result.stderr).toBe(
-      "TlaSyntaxError: File name 'Renamed' does not match the name 'Other' of the top level module it contains.\n",
-    );
+    expect(getSteadyLines(result.stdout)).toEqual([
+      "",
+      "Fatal errors while parsing TLA+ spec in file Renamed",
+      "",
+      "Unknown location",
+      "",
+      reason,
+      "*** Errors: 1",
+      "",
+      "Unknown location",
+      "",
+      reason,
+      "",
+      "",
+      "",
+      "Starting... (_)",
+      "Error: Parsing or semantic analysis failed.",
+      "Finished in _ at (_)",
+      "",
+    ]);
   });
 
   it("rejects -lncheck without a strategy like TLC", () => {
@@ -330,9 +410,10 @@ describe("the CLI takes several specs and globs", () => {
   });
 
   it("checks the spec beside a configuration", () => {
+    const [, , lines] = TLC_REPORTS.find((report) => report[0] === "Success") ?? [];
     const result = runCliWith("cli-output", ["Success.cfg"]);
     expect(result.status).toBe(0);
-    expect(getCheckedSpecs(result.stdout)).toEqual(["Checking Success.tla with Success.cfg"]);
+    expect(getSteadyLines(result.stdout)).toEqual([...(lines ?? []), ""]);
   });
 
   it("rejects -config with several specs", () => {
