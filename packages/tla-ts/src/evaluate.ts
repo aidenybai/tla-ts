@@ -1920,6 +1920,12 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       return compileIdentifier(expression, environment);
     case "Apply":
       return compileApply(expression, environment);
+    case "Bracket":
+      return () => {
+        throw new TlaEvaluationError(
+          `A bracket without a function or subscript is not an expression at ${describeLocation(expression)}`,
+        );
+      };
     case "OperatorReference":
     case "Lambda":
       return () => {

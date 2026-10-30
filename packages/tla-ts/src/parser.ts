@@ -722,13 +722,14 @@ const parse = (source: string, mode: ParseMode): Module => {
         expect("]");
         return { kind: "Except", function: expression, updates, location };
       }
+      if (!isTlapm && !isAt("]_")) {
+        const args = [expression];
+        while (accept(",")) args.push(parseExpression());
+        expect("]");
+        return { kind: "Bracket", args, location };
+      }
       expect("]_");
-      return {
-        kind: "BoxAction",
-        action: expression,
-        subscript: parseSubscript(),
-        location,
-      };
+      return { kind: "BoxAction", action: expression, subscript: parseSubscript(), location };
     });
 
   const parseBrace = (start: Token): Expression =>
@@ -908,8 +909,13 @@ const parse = (source: string, mode: ParseMode): Module => {
         ? { kind: "Apply", operator, args: qualifiedArgs, argumentCounts, location }
         : { kind: "Apply", operator, args: qualifiedArgs, location };
     }
-    if (token.kind === "Operator" && isOperatorName(token.text) && isAt("("))
+    // SANY reads an infix or postfix operator as a primary expression, with or without arguments.
+    if (token.kind === "Operator" && isOperatorName(token.text) && isAt("(")) {
       return { kind: "Apply", operator: token.text, args: parseArguments(), location };
+    }
+    if (token.kind === "Operator" && isOperatorName(token.text) && !isTlapm) {
+      return { kind: "Identifier", name: token.text, location };
+    }
     switch (token.text) {
       case "(": {
         const expression = withoutOffside(() => parseExpression());

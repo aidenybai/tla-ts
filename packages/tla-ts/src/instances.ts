@@ -183,6 +183,8 @@ export const mapChildren = (
         function: plain(expression.function),
         args: expression.args.map(plain),
       };
+    case "Bracket":
+      return { ...expression, args: expression.args.map(plain) };
     case "FieldAccess":
       return { ...expression, record: plain(expression.record) };
     case "Product":

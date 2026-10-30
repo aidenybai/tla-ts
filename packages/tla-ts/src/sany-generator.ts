@@ -299,6 +299,20 @@ const getDependencies = (module: Module) => {
 
 // Builds the semantic graph SANY builds for a specification and its modules, in the order SANY
 // analyzes them: a module after the modules it extends and instantiates.
+const POSTFIX_OPERATOR_TEXTS = new Set(["'", "^+", "^*", "^#"]);
+
+// SANY's syntax node for an operator that appears where an expression is required. The parser reads
+// a prefix operator other than ~ and -. as a LAMBDA.
+const getOperatorNodeKind = (
+  expression: Expression & { kind: "OperatorReference" | "Lambda" },
+  text: string,
+) => {
+  if (POSTFIX_OPERATOR_TEXTS.has(text)) return "N_GenPostfixOp";
+  return expression.kind === "Lambda" || text === "~" || text === "-."
+    ? "N_GenNonExpPrefixOp"
+    : "N_GenInfixOp";
+};
+
 export const generateSanySpecification = (
   rootSource: string,
   loadModule: (name: string) => string | undefined,
@@ -1175,6 +1189,13 @@ export const generateSanySpecification = (
         return undefined;
       }
       const span = getExpressionSpan(file, expression);
+      // SANY reports an operator applied like a function, as in op(a, b), as an unknown operator.
+      if (
+        file.tokens[span.start].text === expression.operator &&
+        isToken(file, span.start + 1, "(")
+      ) {
+        return undefined;
+      }
       const firstSpan = getParenthesizedSpan(file, getExpressionSpan(file, expression.args[0]));
       const isPrefix = expression.args.length === 1 && firstSpan.start !== span.start;
       const index = isPrefix ? span.start : firstSpan.end + 1;
@@ -1236,11 +1257,23 @@ export const generateSanySpecification = (
           }
           return node;
         }
-        case "OperatorReference":
-        case "Lambda":
-          throw new TlaSyntaxError(
-            `An operator appears where an expression is required at line ${location.beginLine}`,
+        case "Bracket":
+          addError(
+            getTokenLocation(file, getExpressionSpan(file, expression).start),
+            "Unsupported expression type `['.",
           );
+          return { ...createNullNode(location), isAbsent: true };
+        case "OperatorReference":
+        case "Lambda": {
+          const text = file.tokens[getExpressionSpan(file, expression).start].text;
+          addError(
+            location,
+            text === "LAMBDA"
+              ? "LAMBDA expression used where an expression is required."
+              : `Unsupported expression type \`${getOperatorNodeKind(expression, text)}'.`,
+          );
+          return { ...createNullNode(location), isAbsent: true };
+        }
         case "And":
         case "Or":
           return generateJunction(expression);

@@ -658,6 +658,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
             ? toOperand(expression.args[0], scope)
             : { data: applyBuiltin(SET_LEVELS, expression.args, scope) },
         ]);
+      // SANY's semantic checker rejects the expression without computing its level.
+      case "Bracket":
+        return createData();
       case "FieldAccess":
         return applyDefined(SELECT_LEVELS, [
           toOperand(expression.record, scope),

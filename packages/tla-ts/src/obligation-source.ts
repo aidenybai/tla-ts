@@ -609,6 +609,8 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         );
       case "ExceptAt":
         return at({ kind: "At", isExcept }, { location });
+      case "Bracket":
+        throw new TlaProofError("Unexpected [ without a function or subscript");
       case "FunctionApplication":
         return at(
           {

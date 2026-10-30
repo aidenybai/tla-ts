@@ -228,6 +228,14 @@ export interface FunctionApplicationExpression {
   location: SourceLocation;
 }
 
+// SANY parses [e1, ..., en] as a function application without the function, and its semantic
+// checker rejects it.
+export interface BracketExpression {
+  kind: "Bracket";
+  args: Expression[];
+  location: SourceLocation;
+}
+
 export interface FieldAccessExpression {
   kind: "FieldAccess";
   record: Expression;
@@ -311,6 +319,7 @@ export type Expression =
   | ExceptExpression
   | ExceptAtExpression
   | FunctionApplicationExpression
+  | BracketExpression
   | FieldAccessExpression
   | ProductExpression
   | TemporalExpression
@@ -558,6 +567,8 @@ export const getChildren = (expression: Expression): Expression[] => {
       ];
     case "FunctionApplication":
       return [expression.function, ...expression.args];
+    case "Bracket":
+      return expression.args;
     case "FieldAccess":
       return [expression.record];
     case "Product":

@@ -101,6 +101,65 @@ Spec == Init /\\ [][Next]_x
     },
   );
 
+  it("reports an action without a subscript as an unsupported expression", () => {
+    const report = getReport({
+      Box: "---- MODULE Box ----\nVARIABLE x\nSpec == x = 0 /\\ [][x' = x] /\\ [x, x] = 1\n====\n",
+    });
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toBe(
+      toText([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 3, col 20 to line 3, col 20 of module Box",
+        "",
+        "Unsupported expression type `['.",
+        "",
+        "",
+        "line 3, col 32 to line 3, col 32 of module Box",
+        "",
+        "Unsupported expression type `['.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  // The messages come from SANY.
+  it.each([
+    ["x == {|}", "line 2, col 7 to line 2, col 7", "Unknown operator: `|'."],
+    ["x == @@(1, 2)", "line 2, col 6 to line 2, col 7", "Unknown operator: `@@'."],
+    [
+      "x == {\\cup}",
+      "line 2, col 7 to line 2, col 10",
+      "The operator \\union requires 2 arguments.",
+    ],
+    [
+      "F(a) == a\nx == F(\\in)",
+      "line 3, col 8 to line 3, col 10",
+      "Unsupported expression type `N_GenInfixOp'.",
+    ],
+    [
+      "F(a) == a\nx == F(SUBSET)",
+      "line 3, col 8 to line 3, col 13",
+      "Unsupported expression type `N_GenNonExpPrefixOp'.",
+    ],
+    [
+      "F(a) == a\nx == F(^#)",
+      "line 3, col 8 to line 3, col 9",
+      "Unsupported expression type `N_GenPostfixOp'.",
+    ],
+    [
+      "F(a) == a\nx == F(LAMBDA y : y)",
+      "line 3, col 8 to line 3, col 19",
+      "LAMBDA expression used where an expression is required.",
+    ],
+  ])("reports an operator where %j needs an expression", (body, range, message) => {
+    const report = getReport({ M: `---- MODULE M ----\n${body}\n====\n` });
+    expect(report.text).toContain(`*** Errors: 1\n\n${range} of module M\n\n${message}\n`);
+  });
+
   it("reports a multiply defined operator with a warning and an error", () => {
     const report = getReport({ Twice: "---- MODULE Twice ----\nOp == 1\nOp == 2\n====\n" });
     expect(report.isFailed).toBe(true);
