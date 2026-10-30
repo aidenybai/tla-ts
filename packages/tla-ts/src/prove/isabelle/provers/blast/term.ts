@@ -290,8 +290,11 @@ export const norm = (term: BlastTerm): BlastTerm => {
   }
 };
 
-const blastHeadOf = (term: BlastTerm): BlastTerm =>
-  term.kind === "App" ? blastHeadOf(term.fun) : term;
+const blastHeadOf = (term: BlastTerm) => {
+  let head = term;
+  while (head.kind === "App") head = head.fun;
+  return head;
+};
 
 const wkNormAux = (term: BlastTerm): BlastTerm => {
   switch (term.kind) {
