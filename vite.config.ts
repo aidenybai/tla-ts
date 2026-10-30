@@ -11,6 +11,7 @@ export default defineConfig({
     ignorePatterns: [
       "packages/tla-ts/tests/conformance/sany.json",
       "packages/tla-ts/tests/conformance/tlapm.json",
+      "packages/tla-ts/tests/conformance/proofs.json",
     ],
   },
   lint: {
