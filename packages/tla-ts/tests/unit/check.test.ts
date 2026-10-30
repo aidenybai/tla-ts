@@ -633,6 +633,24 @@ ASSUME TLCFP(a) = -887695703
     ).toBe("success");
   });
 
+  it("names why a state-level substitute failed like TLC", async () => {
+    await expect(
+      checkModule(
+        "CONSTANT C\nFoo == IF CHOOSE n \\in {} : TRUE THEN x ELSE x",
+        "CONSTANT C <- Foo",
+      ),
+    ).rejects.toThrow(
+      new TlaConfigError(
+        "The configuration file substitutes constant C with non-constant Foo - specifically: Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 7, col 11 to line 7, col 32 of module M",
+      ),
+    );
+    await expect(
+      checkModule("CONSTANT C\nFoo == (1 \\div 0) + x", "CONSTANT C <- Foo"),
+    ).rejects.toThrow(
+      new TlaConfigError("The configuration file substitutes constant C with non-constant Foo"),
+    );
+  });
+
   it("accepts a substitute that a constant-level standard operator defines", async () => {
     const result = await check({
       source:
