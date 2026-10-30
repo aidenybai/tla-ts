@@ -89,6 +89,7 @@ export class Context extends Internalizer {
   constructor(manager: AstManager, params: SmtParams) {
     super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
     this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
+    this.theory.init();
   }
 
   // The search stops with unknown when the manager's resource limit cancels it.
@@ -736,7 +737,7 @@ export class Context extends Internalizer {
     const trailLimit = this.scopeTrailLimits[newLevel];
     for (let index = this.trail.length - 1; index >= trailLimit; index--) this.trail[index]();
     this.trail.length = trailLimit;
-    this.theory.popScopeEh();
+    this.theory.popScopeEh(numScopes);
     this.eqPropagationQueue = [];
     this.thEqQueue = [];
     this.thDiseqQueue = [];
