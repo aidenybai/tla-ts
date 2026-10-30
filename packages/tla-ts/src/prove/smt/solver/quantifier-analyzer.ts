@@ -59,10 +59,16 @@ export class QuantifierInfo {
     private context: Context,
     readonly quantifier: number,
   ) {
-    this.flatQ = manager.hasQuantifierFlags[manager.getQuantifier(quantifier).body]
-      ? pullQuant(manager, quantifier)
-      : quantifier;
+    // m_flat_q, which holds a reference.
+    const isNested = manager.hasQuantifierFlags[manager.getQuantifier(quantifier).body];
+    this.flatQ = isNested ? pullQuant(manager, quantifier) : quantifier;
+    if (!isNested) manager.incRef(quantifier);
     this.condMacros = collectMacroCandidates(manager, this.flatQ);
+  }
+
+  // ~quantifier_info.
+  release() {
+    this.manager.decRef(this.flatQ);
   }
 
   insertQInfo(info: QInfo) {

@@ -727,6 +727,26 @@ export class AstManager {
     return op === OP_NUM || op === OP_TRUE || op === OP_FALSE || op === OP_MODEL_VALUE;
   }
 
+  // are_distinct: the plugin of the first term's family, or of the second's for a user term, tells
+  // two terms apart. Every plugin separates distinct unique values, and arith also separates b from
+  // (+ b k) and (+ k b) for a nonzero numeral k.
+  areDistinct(first: number, second: number) {
+    if (this.kinds[first] !== KIND_APP || this.kinds[second] !== KIND_APP) return false;
+    if (first !== second && this.isUniqueValue(first) && this.isUniqueValue(second)) return true;
+    const family = this.funcDecls[this.decls[first]].family;
+    if (
+      (family === FAMILY_USER ? this.funcDecls[this.decls[second]].family : family) !== FAMILY_ARITH
+    )
+      return false;
+    const isOffsetOf = (sum: number, term: number) => {
+      if (this.getOp(sum) !== OP_ADD || this.args[sum].length !== 2) return false;
+      const args = this.args[sum];
+      const isNonZero = (expr: number) => this.isNumeral(expr) && this.values[expr] !== 0;
+      return (args[0] === term && isNonZero(args[1])) || (args[1] === term && isNonZero(args[0]));
+    };
+    return isOffsetOf(first, second) || isOffsetOf(second, first);
+  }
+
   isModelValue(expr: number) {
     return this.getOp(expr) === OP_MODEL_VALUE;
   }

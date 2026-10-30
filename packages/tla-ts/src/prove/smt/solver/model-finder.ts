@@ -51,8 +51,10 @@ export class ModelFinder {
 
   popScope(numScopes: number) {
     const limit = this.scopes[this.scopes.length - numScopes];
-    for (let index = limit; index < this.quantifiers.length; index++)
+    for (let index = limit; index < this.quantifiers.length; index++) {
+      this.q2info.get(this.quantifiers[index])?.release();
       this.q2info.delete(this.quantifiers[index]);
+    }
     this.quantifiers.length = limit;
     this.scopes.length -= numScopes;
   }

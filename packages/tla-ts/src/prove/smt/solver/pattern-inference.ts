@@ -40,13 +40,10 @@ const isSameSet = (left: Set<number>, right: Set<number>) =>
 const isSubset = (left: Set<number>, right: Set<number>) =>
   [...left].every((element) => right.has(element));
 
-// pattern_inference_cfg, which asserted_formulas keeps as long as it lives. Its vectors hold their
-// candidates as long as Z3's do: m_candidates until the end of mk_patterns, and m_tmp1 and m_tmp2
-// until the next mk_patterns that has candidates.
+// pattern_inference_cfg, which asserted_formulas keeps as long as it lives. m_candidates holds its
+// candidates until the end of mk_patterns.
 export class PatternInference {
   private candidates: RefVector;
-  private tmp1: RefVector;
-  private tmp2: RefVector;
   private candidateInfos = new Map<number, CandidateInfo>();
   private numBindings = 0;
   private isArithForbidden = true;
@@ -55,8 +52,6 @@ export class PatternInference {
 
   constructor(private manager: AstManager) {
     this.candidates = new RefVector(manager);
-    this.tmp1 = new RefVector(manager);
-    this.tmp2 = new RefVector(manager);
   }
 
   private isForbidden(expr: number) {
@@ -279,25 +274,22 @@ export class PatternInference {
     this.collect(body);
     const result: number[] = [];
     if (this.candidates.size > 0) {
-      const tmp1 = this.tmp1;
-      const tmp2 = this.tmp2;
-      tmp1.reset();
-      for (const candidate of this.filterLoopingPatterns()) tmp1.push(candidate);
-      tmp2.reset();
-      for (const candidate of tmp1.items)
-        if (!this.containsSubpattern(candidate)) tmp2.push(candidate);
-      tmp1.reset();
-      for (const candidate of tmp2.items) {
+      const looseCandidates = this.filterLoopingPatterns().filter(
+        (candidate) => !this.containsSubpattern(candidate),
+      );
+      // m_tmp1: the candidates that do not cover every variable, which may form a multi-pattern.
+      const partialCandidates: number[] = [];
+      for (const candidate of looseCandidates) {
         const info = this.candidateInfos.get(candidate);
         if (info !== undefined && info.freeVars.size === numBindings)
           result.push(this.mkPattern(candidate));
-        else tmp1.push(candidate);
+        else partialCandidates.push(candidate);
       }
       const numExtraMultiPatterns = result.length === 0 ? 1 : 0;
-      if (numExtraMultiPatterns > 0 && tmp1.size > 0) {
-        // std::stable_sort with m_pattern_weight_lt, which reorders m_tmp1 itself.
+      if (numExtraMultiPatterns > 0 && partialCandidates.length > 0) {
+        // std::stable_sort with m_pattern_weight_lt.
         const weightOf = (candidate: number) => this.candidateInfos.get(candidate);
-        tmp1.items = tmp1.items
+        const sorted = partialCandidates
           .map((candidate, index) => ({ candidate, index }))
           .sort((left, right) => {
             const leftInfo = weightOf(left.candidate);
@@ -309,7 +301,7 @@ export class PatternInference {
             return left.index - right.index;
           })
           .map((entry) => entry.candidate);
-        this.candidatesToMultiPatterns(numExtraMultiPatterns, tmp1.items, result);
+        this.candidatesToMultiPatterns(numExtraMultiPatterns, sorted, result);
       }
     }
     this.candidateInfos = new Map();

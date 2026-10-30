@@ -1,52 +1,13 @@
 // Ported from Z3 (src/smt/mam.cpp), MIT license, see z3-license.txt. Matching of quantifier
-// patterns against the E-graph. Z3 compiles patterns into code trees for an abstract machine; this
-// port keeps Z3's triggering scheme (candidates from new relevant terms, and the inverted path
-// index with approximate label sets for merges) and matches each candidate with a backtracking
-// search that follows the same rules: nested applications match congruence roots in the class of
-// the argument, and the other patterns of a multi-pattern are joined like CONTINUE and GET_CGR.
-import { AstManager, KIND_APP, KIND_VAR } from "./ast";
+// patterns against the E-graph with Z3's matching abstract machine: the patterns are compiled into
+// code trees, new relevant terms become candidates of the tree for their label, and the inverted
+// path index with approximate label sets finds the candidates that a merge creates.
+import { AstManager, KIND_VAR } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import { hashU, mkMix } from "./hash";
-
-export interface Trigger {
-  quantifier: number;
-  patterns: number[];
-  firstIndex: number;
-  numDecls: number;
-  steps: Step[];
-}
-
-// How a CONTINUE instruction finds candidates for an argument: the parents of a bound variable or a
-// ground term (depth 1), or the parents of the parents of a bound variable (depth 2).
-interface Joint {
-  slot: number;
-  ground: number;
-  nestedDecl: number;
-  nestedPosition: number;
-}
-
-// One pattern of a multi-pattern after the first. A filter step has all its variables bound and
-// only looks up the congruent term.
-interface Step {
-  pattern: number;
-  isFilter: boolean;
-  joints: (Joint | null)[];
-}
-
-// A code tree: the triggers that start with the same label, and the terms waiting to be matched.
-interface CodeTree {
-  triggers: Trigger[];
-  candidates: Enode[];
-  // code_tree::m_candidate_gc_threshold: the number of candidates at which duplicates are dropped.
-  candidateGcThreshold: number;
-}
-
-const mkCodeTree = (trigger: Trigger): CodeTree => ({
-  triggers: [trigger],
-  candidates: [],
-  candidateGcThreshold: 10000,
-});
+import { type CodeTree, Compiler, hasHash, type LabelHasher } from "./mam-compiler";
+import { Interpreter, type OnMatch } from "./mam-interpreter";
 
 // A step from a term to its parent: the parent's label, the position of the term in it, and an
 // optional ground argument the parent must also have.
@@ -73,12 +34,6 @@ interface PathTree {
   sibling: PathTree | null;
 }
 
-// approx_set::may_contain, on a set of 64 bits in two words.
-const hasHash = (low: number, high: number, hash: number) =>
-  ((hash < 32 ? low : high) & (1 << hash)) !== 0;
-
-export type OnMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) => void;
-
 const isEqualPath = (first: Path, second: Path): boolean => {
   let left = first;
   let right = second;
@@ -96,12 +51,18 @@ const isEqualPath = (first: Path, second: Path): boolean => {
   }
 };
 
-export class Mam {
+// A multi-pattern of a quantifier: the terms of one of its patterns.
+interface MultiPattern {
+  quantifier: number;
+  patterns: number[];
+}
+
+export class Mam implements LabelHasher {
   private trees = new Map<number, CodeTree>();
   // m_shared_enodes: the ground terms of the patterns.
   private sharedEnodes = new Set<Enode>();
   private toMatch: CodeTree[] = [];
-  private newPatterns: Trigger[] = [];
+  private newPatterns: MultiPattern[] = [];
   private pc = new Map<number, PathTree>();
   private pp = new Map<number, (PathTree | null)[]>();
   private plbls = new Set<number>();
@@ -109,18 +70,23 @@ export class Mam {
   private r1: Enode | null = null;
   private r2: Enode | null = null;
   private labelHashes: number[] = [];
+  private compiler: Compiler;
+  private interpreter: Interpreter;
 
   constructor(
     private context: Context,
-    private onMatch: OnMatch,
-  ) {}
+    onMatch: OnMatch,
+  ) {
+    this.compiler = new Compiler(context.manager, context, this);
+    this.interpreter = new Interpreter(context, onMatch);
+  }
 
   private get manager(): AstManager {
     return this.context.manager;
   }
 
   // label_hasher: Bob Jenkins' mix of the small id of a declaration, in [0, 64).
-  private getLabelHash(decl: number) {
+  getLabelHash(decl: number) {
     const cached = this.labelHashes[decl];
     if (cached !== undefined) return cached;
     const hash = mkMix(17, 3, this.manager.funcDecls[decl].smallId) & 63;
@@ -135,6 +101,11 @@ export class Mam {
       node.lblHash = -1;
     });
     this.updateLbls(node, node.lblHash);
+  }
+
+  getLblHash(node: Enode) {
+    if (node.lblHash === -1) this.setLblHash(node);
+    return node.lblHash;
   }
 
   hasWork() {
@@ -187,13 +158,13 @@ export class Mam {
       if (this.context.isRelevant(node.owner)) this.updateLbls(node, hash);
   }
 
-  private addTrigger(tree: CodeTree, trigger: Trigger) {
-    tree.triggers.push(trigger);
-    this.context.pushTrail(() => tree.triggers.pop());
+  // mk_code: the code tree of a path, which runs each candidate once.
+  private mkCode(mp: MultiPattern, patternIndex: number) {
+    return this.compiler.mkTree(mp.quantifier, mp.patterns, patternIndex, true);
   }
 
   // mk_path_tree: a chain of path tree nodes whose last one has a code for the path's pattern.
-  private mkPathTree(path: Path, triggers: Trigger[]): PathTree {
+  private mkPathTree(path: Path, mp: MultiPattern): PathTree {
     const tree: PathTree = {
       label: path.label,
       argIndex: path.argIndex,
@@ -208,13 +179,13 @@ export class Mam {
     const hash = this.getLabelHash(path.label);
     if (hash < 32) tree.filter = 1 << hash;
     else tree.filterHigh = 1 << hash;
-    if (path.child === null) tree.code = mkCodeTree(triggers[path.patternIndex]);
-    else tree.firstChild = this.mkPathTree(path.child, triggers);
+    if (path.child === null) tree.code = this.mkCode(mp, path.patternIndex);
+    else tree.firstChild = this.mkPathTree(path.child, mp);
     return tree;
   }
 
   // compiler::insert for path trees.
-  private insertPath(head: PathTree, path: Path, triggers: Trigger[]) {
+  private insertPath(head: PathTree, path: Path, mp: MultiPattern) {
     let isLabelFound = false;
     let last = head;
     for (let tree: PathTree | null = head; tree !== null; tree = tree.sibling) {
@@ -229,15 +200,16 @@ export class Mam {
         continue;
       const found = tree;
       if (path.child !== null && found.firstChild !== null)
-        this.insertPath(found.firstChild, path.child, triggers);
+        this.insertPath(found.firstChild, path.child, mp);
       else if (path.child !== null) {
-        found.firstChild = this.mkPathTree(path.child, triggers);
+        found.firstChild = this.mkPathTree(path.child, mp);
         this.context.pushTrail(() => {
           found.firstChild = null;
         });
-      } else if (found.code !== null) this.addTrigger(found.code, triggers[path.patternIndex]);
+      } else if (found.code !== null)
+        this.compiler.insert(found.code, mp.quantifier, mp.patterns, path.patternIndex, false);
       else {
-        found.code = mkCodeTree(triggers[path.patternIndex]);
+        found.code = this.mkCode(mp, path.patternIndex);
         this.context.pushTrail(() => {
           found.code = null;
         });
@@ -245,7 +217,7 @@ export class Mam {
       return;
     }
     const previous = last;
-    previous.sibling = this.mkPathTree(path, triggers);
+    previous.sibling = this.mkPathTree(path, mp);
     this.context.pushTrail(() => {
       previous.sibling = null;
     });
@@ -261,24 +233,24 @@ export class Mam {
     else head.filterHigh |= 1 << hash;
   }
 
-  private updatePc(firstHash: number, secondHash: number, path: Path, triggers: Trigger[]) {
+  private updatePc(firstHash: number, secondHash: number, path: Path, mp: MultiPattern) {
     const key = firstHash * 64 + secondHash;
     const existing = this.pc.get(key);
     if (existing !== undefined) {
-      this.insertPath(existing, path, triggers);
+      this.insertPath(existing, path, mp);
       return;
     }
-    this.pc.set(key, this.mkPathTree(path, triggers));
+    this.pc.set(key, this.mkPathTree(path, mp));
     this.context.pushTrail(() => this.pc.delete(key));
   }
 
-  private insertPpPath(entry: (PathTree | null)[], index: number, path: Path, triggers: Trigger[]) {
+  private insertPpPath(entry: (PathTree | null)[], index: number, path: Path, mp: MultiPattern) {
     const existing = entry[index];
     if (existing !== null) {
-      this.insertPath(existing, path, triggers);
+      this.insertPath(existing, path, mp);
       return;
     }
-    entry[index] = this.mkPathTree(path, triggers);
+    entry[index] = this.mkPathTree(path, mp);
     this.context.pushTrail(() => {
       entry[index] = null;
     });
@@ -289,7 +261,7 @@ export class Mam {
     inputSecondHash: number,
     inputFirst: Path,
     inputSecond: Path,
-    triggers: Trigger[],
+    mp: MultiPattern,
   ) {
     const isSwapped = inputFirstHash > inputSecondHash;
     const firstHash = isSwapped ? inputSecondHash : inputFirstHash;
@@ -304,15 +276,15 @@ export class Mam {
       this.context.pushTrail(() => this.pp.delete(key));
     }
     if (firstHash === secondHash) {
-      this.insertPpPath(entry, 0, first, triggers);
-      if (!isEqualPath(first, second)) this.insertPpPath(entry, 0, second, triggers);
+      this.insertPpPath(entry, 0, first, mp);
+      if (!isEqualPath(first, second)) this.insertPpPath(entry, 0, second, mp);
       return;
     }
-    this.insertPpPath(entry, 0, first, triggers);
-    this.insertPpPath(entry, 1, second, triggers);
+    this.insertPpPath(entry, 0, first, mp);
+    this.insertPpPath(entry, 1, second, mp);
   }
 
-  private getGroundEnode(expr: number) {
+  getGroundEnode(expr: number) {
     const context = this.context;
     if (!context.isEInternalized(expr)) context.internalize(expr, false);
     return context.getEnode(expr) ?? null;
@@ -323,7 +295,7 @@ export class Mam {
     parentPath: Path | null,
     patternIndex: number,
     varPaths: Path[][],
-    triggers: Trigger[],
+    mp: MultiPattern,
   ) {
     const manager = this.manager;
     const args = manager.args[pattern];
@@ -352,7 +324,7 @@ export class Mam {
             this.getLabelHash(path.label),
             existing,
             path,
-            triggers,
+            mp,
           );
         }
         if (!isFound) paths.push(path);
@@ -362,130 +334,44 @@ export class Mam {
         const node = this.getGroundEnode(child);
         if (node === null) continue;
         this.updatePlbls(label);
-        if (node.lblHash === -1) this.setLblHash(node);
-        this.updatePc(this.getLabelHash(label), node.lblHash, path, triggers);
+        this.updatePc(this.getLabelHash(label), this.getLblHash(node), path, mp);
         continue;
       }
       const childLabel = manager.decls[child];
       this.updatePlbls(label);
       this.updateClbls(childLabel);
-      this.updatePc(this.getLabelHash(label), this.getLabelHash(childLabel), path, triggers);
-      this.updateFilters(child, path, patternIndex, varPaths, triggers);
+      this.updatePc(this.getLabelHash(label), this.getLabelHash(childLabel), path, mp);
+      this.updateFilters(child, path, patternIndex, varPaths, mp);
     }
-  }
-
-  // compiler::linearise_multi_pattern: the next pattern is the first one whose variables are all
-  // bound, else the one with the most bound variables.
-  private getSteps(patterns: number[], firstIndex: number, numDecls: number): Step[] {
-    const manager = this.manager;
-    const isBound = Array.from({ length: numDecls }, () => false);
-    const bind = (term: number) => {
-      if (manager.kinds[term] === KIND_VAR) isBound[numDecls - 1 - manager.values[term]] = true;
-      else for (const arg of manager.args[term]) bind(arg);
-    };
-    const countBound = (term: number): { count: number; hasUnbound: boolean } => {
-      if (manager.kinds[term] === KIND_VAR) {
-        const isTermBound = isBound[numDecls - 1 - manager.values[term]];
-        return { count: isTermBound ? 1 : 0, hasUnbound: !isTermBound };
-      }
-      let count = 0;
-      let hasUnbound = false;
-      for (const arg of manager.args[term]) {
-        const inner = countBound(arg);
-        count += inner.count;
-        hasUnbound ||= inner.hasUnbound;
-      }
-      return { count, hasUnbound };
-    };
-    const getBoundSlot = (term: number) =>
-      manager.kinds[term] === KIND_VAR && isBound[numDecls - 1 - manager.values[term]]
-        ? numDecls - 1 - manager.values[term]
-        : -1;
-    bind(patterns[firstIndex]);
-    const isProcessed = patterns.map((_pattern, index) => index === firstIndex);
-    const steps: Step[] = [];
-    for (let round = 1; round < patterns.length; round++) {
-      let best = -1;
-      let bestCount = 0;
-      let isFilter = false;
-      for (let index = 0; index < patterns.length; index++) {
-        if (isProcessed[index]) continue;
-        const counted = countBound(patterns[index]);
-        if (!counted.hasUnbound) {
-          best = index;
-          isFilter = true;
-          break;
-        }
-        if (best === -1 || counted.count > bestCount) {
-          best = index;
-          bestCount = counted.count;
-        }
-      }
-      isProcessed[best] = true;
-      const pattern = patterns[best];
-      const args = manager.args[pattern];
-      const hasDepth1 = args.some((arg) => getBoundSlot(arg) !== -1 || manager.isGround(arg));
-      const joints = isFilter
-        ? []
-        : args.map((arg): Joint | null => {
-            if (hasDepth1) {
-              const slot = getBoundSlot(arg);
-              if (slot !== -1) return { slot, ground: -1, nestedDecl: -1, nestedPosition: -1 };
-              return manager.isGround(arg)
-                ? { slot: -1, ground: arg, nestedDecl: -1, nestedPosition: -1 }
-                : null;
-            }
-            if (manager.kinds[arg] !== KIND_APP) return null;
-            const nestedPosition = manager.args[arg].findIndex(
-              (innerArg) => getBoundSlot(innerArg) !== -1,
-            );
-            if (nestedPosition === -1) return null;
-            return {
-              slot: getBoundSlot(manager.args[arg][nestedPosition]),
-              ground: -1,
-              nestedDecl: manager.decls[arg],
-              nestedPosition,
-            };
-          });
-      steps.push({ pattern, isFilter, joints });
-      bind(pattern);
-    }
-    return steps;
   }
 
   addPattern(quantifier: number, patterns: number[]) {
     const manager = this.manager;
     if (patterns.every((pattern) => manager.isGround(pattern))) return;
     if (patterns.some((pattern) => manager.hasQuantifierFlags[pattern])) return;
+    const mp = { quantifier, patterns };
     const numDecls = manager.getQuantifier(quantifier).sorts.length;
-    const triggers = patterns.map((_pattern, firstIndex) => ({
-      quantifier,
-      patterns,
-      firstIndex,
-      numDecls,
-      steps: this.getSteps(patterns, firstIndex, numDecls),
-    }));
     const varPaths: Path[][] = Array.from({ length: numDecls }, () => []);
-    patterns.forEach((pattern, index) =>
-      this.updateFilters(pattern, null, index, varPaths, triggers),
-    );
+    patterns.forEach((pattern, index) => this.updateFilters(pattern, null, index, varPaths, mp));
     this.collectGroundExprs(patterns);
-    this.newPatterns.push(triggers[0]);
+    this.newPatterns.push(mp);
+    // code_tree_map::add_pattern for each pattern as the first one.
     patterns.forEach((pattern, firstIndex) => {
       if (manager.isGround(pattern)) return;
       const label = manager.decls[pattern];
       const tree = this.trees.get(label);
       if (tree !== undefined) {
-        this.addTrigger(tree, triggers[firstIndex]);
+        if (tree.numArgs === manager.args[pattern].length)
+          this.compiler.insert(tree, quantifier, patterns, firstIndex, false);
         return;
       }
-      this.trees.set(label, mkCodeTree(triggers[firstIndex]));
+      this.trees.set(label, this.compiler.mkTree(quantifier, patterns, firstIndex, false));
       this.context.pushTrail(() => this.trees.delete(label));
     });
   }
 
-  // collect_ground_exprs: the ground terms of the patterns, which theory combination treats as
-  // shared. A ground pattern also becomes relevant.
+  // collect_ground_exprs: the ground patterns become relevant enodes, and the ground subterms of the
+  // other patterns become enodes that theory combination treats as shared.
   private collectGroundExprs(patterns: number[]) {
     const manager = this.manager;
     const todo: number[] = [];
@@ -500,12 +386,12 @@ export class Mam {
       this.addSharedEnode(node);
     }
     while (todo.length > 0) {
-      const expr = todo.pop() ?? -1;
-      if (manager.isGround(expr)) {
-        const node = this.getGroundEnode(expr);
+      const term = todo.pop() as number;
+      if (manager.isGround(term)) {
+        const node = this.getGroundEnode(term);
         if (node !== null) this.addSharedEnode(node);
       } else
-        for (const arg of manager.args[expr]) if (manager.kinds[arg] === KIND_APP) todo.push(arg);
+        for (const arg of manager.args[term]) if (manager.kinds[arg] !== KIND_VAR) todo.push(arg);
     }
   }
 
@@ -652,47 +538,51 @@ export class Mam {
   }
 
   match() {
-    const toMatch = this.toMatch;
-    this.toMatch = [];
-    for (const tree of toMatch) {
-      const candidates = tree.candidates;
+    for (const tree of this.toMatch) {
+      if (!this.interpreter.execute(tree)) return;
       tree.candidates = [];
-      const seen = new Set<Enode>();
-      for (const node of candidates) {
-        if (seen.has(node) || !node.isCgr()) continue;
-        if (this.context.checkCanceled()) return;
-        seen.add(node);
-        for (const trigger of tree.triggers) this.matchTrigger(trigger, node);
-      }
     }
-    // match_new_patterns: one temporary tree per label, in the order the labels first appear.
-    const byLabel = new Map<number, Trigger[]>();
-    for (const trigger of this.newPatterns) {
-      const label = this.manager.decls[trigger.patterns[0]];
-      const list = byLabel.get(label);
-      if (list === undefined) byLabel.set(label, [trigger]);
-      else list.push(trigger);
-    }
-    this.newPatterns = [];
-    for (const entry of byLabel) {
-      if (this.context.checkCanceled()) return;
-      for (const node of this.context.enodesOf(entry[0]))
-        if (this.context.isRelevant(node.owner))
-          for (const trigger of entry[1]) this.matchTrigger(trigger, node);
-    }
+    this.toMatch = [];
+    if (this.newPatterns.length > 0) this.matchNewPatterns();
   }
 
-  // rematch: every code tree, in the order of their labels, against every relevant term.
+  // match_new_patterns: one temporary tree per label, in the order the labels first appear, run
+  // against the relevant terms with the label.
+  private matchNewPatterns() {
+    const context = this.context;
+    const manager = this.manager;
+    const tmpTrees = new Map<number, CodeTree>();
+    for (const mp of this.newPatterns) {
+      if (context.checkCanceled()) break;
+      const label = manager.decls[mp.patterns[0]];
+      if (context.enodesOf(label).length === 0) continue;
+      const tree = tmpTrees.get(label);
+      if (tree === undefined)
+        tmpTrees.set(label, this.compiler.mkTree(mp.quantifier, mp.patterns, 0, false));
+      else this.compiler.insert(tree, mp.quantifier, mp.patterns, 0, true);
+    }
+    for (const entry of tmpTrees) {
+      const nodes = context.enodesOf(entry[0]);
+      for (let index = 0; index < nodes.length; index++)
+        if (context.isRelevant(nodes[index].owner))
+          this.interpreter.executeCore(entry[1], nodes[index]);
+    }
+    this.newPatterns = [];
+  }
+
+  // rematch: every code tree, in the order of their labels' small ids, against every relevant term.
   rematch() {
-    const labels = [...this.trees.keys()].sort((left, right) => left - right);
+    const context = this.context;
+    const funcDecls = this.manager.funcDecls;
+    const labels = [...this.trees.keys()].sort(
+      (left, right) => funcDecls[left].smallId - funcDecls[right].smallId,
+    );
     for (const label of labels) {
-      const tree = this.trees.get(label);
-      if (tree === undefined) continue;
-      for (const node of this.context.enodesOf(label)) {
-        if (this.context.checkCanceled()) return;
-        if (this.context.isRelevant(node.owner))
-          for (const trigger of tree.triggers) this.matchTrigger(trigger, node);
-      }
+      const tree = this.trees.get(label) as CodeTree;
+      const nodes = context.enodesOf(label);
+      for (let index = 0; index < nodes.length; index++)
+        if (context.isRelevant(nodes[index].owner))
+          this.interpreter.executeCore(tree, nodes[index]);
     }
   }
 
@@ -700,208 +590,5 @@ export class Mam {
     for (const tree of this.toMatch) tree.candidates = [];
     this.toMatch = [];
     this.newPatterns = [];
-  }
-
-  // The state of the backtracking search: the terms left to match against nodes, the bindings in
-  // declaration order, and the generations of the matched terms.
-  private trigger: Trigger | null = null;
-  private bindings: (Enode | null)[] = [];
-  private generations: number[] = [];
-  private goalPatterns: number[] = [];
-  private goalNodes: Enode[] = [];
-  private goalTop = 0;
-  private stepIndex = 0;
-  private numSteps = 0;
-
-  private matchTrigger(trigger: Trigger, candidate: Enode) {
-    const manager = this.manager;
-    const first = trigger.patterns[trigger.firstIndex];
-    if (
-      candidate.decl !== manager.decls[first] ||
-      candidate.args.length !== manager.args[first].length
-    )
-      return;
-    this.trigger = trigger;
-    this.bindings.length = trigger.numDecls;
-    this.bindings.fill(null);
-    this.generations.length = 0;
-    this.generations.push(this.context.getGeneration(candidate));
-    this.goalTop = 0;
-    this.stepIndex = 0;
-    this.pushGoals(manager.args[first], candidate.args);
-    this.run();
-    this.trigger = null;
-  }
-
-  private pushGoals(patternArgs: number[], nodeArgs: Enode[]) {
-    for (let index = patternArgs.length - 1; index >= 0; index--) {
-      this.goalPatterns[this.goalTop] = patternArgs[index];
-      this.goalNodes[this.goalTop] = nodeArgs[index];
-      this.goalTop++;
-    }
-  }
-
-  private run() {
-    if (this.goalTop === 0) {
-      this.runStep();
-      return;
-    }
-    const manager = this.manager;
-    this.goalTop--;
-    const top = this.goalTop;
-    const pattern = this.goalPatterns[top];
-    const node = this.goalNodes[top];
-    if (manager.kinds[pattern] === KIND_VAR) {
-      const slot = this.bindings.length - 1 - manager.values[pattern];
-      const bound = this.bindings[slot];
-      if (bound === null) {
-        this.bindings[slot] = node;
-        this.run();
-        this.bindings[slot] = null;
-      } else if (bound.root === node.root) this.run();
-    } else if (manager.isGround(pattern)) {
-      const ground = this.context.getEnode(pattern);
-      if (ground !== undefined && ground.root === node.root) this.run();
-    } else {
-      const decl = manager.decls[pattern];
-      const patternArgs = manager.args[pattern];
-      const root = node.root;
-      let member = root;
-      do {
-        if (member.decl === decl && member.isCgr() && member.args.length === patternArgs.length) {
-          this.generations.push(this.context.getGeneration(member));
-          this.pushGoals(patternArgs, member.args);
-          this.run();
-          this.goalTop = top;
-          this.generations.pop();
-        }
-        member = member.next;
-      } while (member !== root);
-    }
-    this.goalPatterns[top] = pattern;
-    this.goalNodes[top] = node;
-    this.goalTop = top + 1;
-  }
-
-  private runStep() {
-    const trigger = this.trigger;
-    if (trigger === null) return;
-    const context = this.context;
-    if (this.stepIndex === trigger.steps.length) {
-      // ON_MATCH: the generations of the matched terms and of the bindings.
-      let maxGeneration = 0;
-      for (const generation of this.generations)
-        maxGeneration = Math.max(maxGeneration, generation);
-      const result: Enode[] = [];
-      for (const binding of this.bindings)
-        if (binding !== null) {
-          result.push(binding);
-          maxGeneration = Math.max(maxGeneration, context.getGeneration(binding));
-        }
-      if (result.length === trigger.numDecls)
-        this.onMatch(trigger.quantifier, result, maxGeneration);
-      return;
-    }
-    const step = trigger.steps[this.stepIndex];
-    const savedGenerations = this.generations.length;
-    this.stepIndex++;
-    if (step.isFilter) {
-      if (this.getFiltered(step.pattern) !== undefined) this.run();
-    } else {
-      const patternArgs = this.manager.args[step.pattern];
-      for (const node of this.getCandidates(step)) {
-        if ((++this.numSteps & 1023) === 0 && context.checkCanceled()) break;
-        if (
-          node.args.length !== patternArgs.length ||
-          !node.isCgr() ||
-          !context.isRelevant(node.owner)
-        )
-          continue;
-        this.generations.push(context.getGeneration(node));
-        this.pushGoals(patternArgs, node.args);
-        this.run();
-        this.goalTop = 0;
-        this.generations.length = savedGenerations;
-      }
-    }
-    this.stepIndex--;
-    this.generations.length = savedGenerations;
-  }
-
-  private getJointRoot(joint: Joint) {
-    return joint.ground !== -1
-      ? this.context.getEnode(joint.ground)?.root
-      : this.bindings[joint.slot]?.root;
-  }
-
-  private isRelevantParent(parent: Enode, decl: number, position: number, child: Enode) {
-    return (
-      parent.decl === decl &&
-      position < parent.args.length &&
-      this.context.isRelevant(parent.owner) &&
-      parent.isCgr() &&
-      parent.args[position].root === child
-    );
-  }
-
-  // interpreter::mk_depth1_vector and mk_depth2_vector.
-  private getJointCandidates(joint: Joint, decl: number, argIndex: number) {
-    const root = this.getJointRoot(joint);
-    const result: Enode[] = [];
-    if (root === undefined) return result;
-    if (joint.nestedDecl === -1) {
-      for (const parent of root.parents)
-        if (this.isRelevantParent(parent, decl, argIndex, root)) result.push(parent);
-      return result;
-    }
-    for (const parent of root.parents) {
-      if (!this.isRelevantParent(parent, joint.nestedDecl, joint.nestedPosition, root)) continue;
-      const parentRoot = parent.root;
-      for (const grandparent of parentRoot.parents)
-        if (this.isRelevantParent(grandparent, decl, argIndex, parentRoot))
-          result.push(grandparent);
-    }
-    return result;
-  }
-
-  // interpreter::init_continue: the smallest candidate vector among the joints.
-  private getCandidates(step: Step) {
-    const decl = this.manager.decls[step.pattern];
-    const all = this.context.enodesOf(decl);
-    for (const joint of step.joints) {
-      if (joint === null || joint.nestedDecl !== -1) continue;
-      const root = this.getJointRoot(joint);
-      if (root === undefined || root.parents.length === 0) return [];
-    }
-    let best: Enode[] | null = null;
-    for (let argIndex = 0; argIndex < step.joints.length; argIndex++) {
-      const joint = step.joints[argIndex];
-      if (joint === null) continue;
-      const current = this.getJointCandidates(joint, decl, argIndex);
-      if (current.length < all.length && (best === null || current.length < best.length)) {
-        best = current;
-        if (best.length === 0) return best;
-      }
-    }
-    return best ?? all;
-  }
-
-  // compiler::gen_mp_filter: the congruent term of a pattern whose variables are all bound.
-  private getFiltered(term: number): Enode | undefined {
-    const manager = this.manager;
-    const context = this.context;
-    if (manager.kinds[term] === KIND_VAR)
-      return this.bindings[this.bindings.length - 1 - manager.values[term]] ?? undefined;
-    if (manager.isGround(term)) return context.getEnode(term);
-    const args: Enode[] = [];
-    for (const arg of manager.args[term]) {
-      const node = this.getFiltered(arg);
-      if (node === undefined) return undefined;
-      args.push(node);
-    }
-    const found = context.findCongruent(manager.decls[term], args);
-    if (found === undefined || !context.isRelevant(found.owner)) return undefined;
-    this.generations.push(context.getGeneration(found));
-    return found;
   }
 }
