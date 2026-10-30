@@ -3,8 +3,9 @@
 // default configuration uses for UFNIA: atoms become bounds on linear terms, the simplex checks
 // them during propagation, equalities with the E-graph go through the arith_eq_adapter axioms,
 // and the final check runs the GCD test, branches on fractional values and assumes equalities
-// between shared terms with equal values. Nonlinear products are opaque, so a model that depends
-// on them is reported as unknown.
+// between shared terms with equal values. Nonlinear products, and div and mod by a term, are
+// opaque. As in nla's init_to_refine (src/math/lp/nla_core.cpp), a model whose values satisfy them
+// needs no refinement, and the theory gives up on any other.
 import {
   AstManager,
   FAMILY_ARITH,
@@ -60,7 +61,8 @@ export class TheoryLra {
   private processedEqs = new Set<string>();
   private processedDivMods = new Set<string>();
   private fixedVars = new Map<string, number>();
-  // Terms that the theory treats as uninterpreted, so a model may not satisfy them.
+  // Terms that the theory treats as uninterpreted, so a model may not satisfy them. Their
+  // arguments have variables, as the factors of an nla monomial do.
   private unsupportedTerms: number[] = [];
 
   constructor(private context: Context) {
@@ -194,10 +196,16 @@ export class TheoryLra {
       if (!linearized.constant.isZero()) linearized.coeffs.set(this.oneVar, linearized.constant);
       return this.mkTermVar(linearized.coeffs, expr);
     }
-    if (op === OP_MUL) this.unsupportedTerms.push(expr);
+    if (op === OP_MUL) this.foundUnsupported(expr);
     const variable = this.simplex.mkVar();
     this.varExprs.push(expr);
     return variable;
+  }
+
+  // found_unsupported: the list of unsupported terms is on the trail.
+  private foundUnsupported(expr: number) {
+    this.unsupportedTerms.push(expr);
+    this.context.pushTrail(() => this.unsupportedTerms.pop());
   }
 
   private isNonlinear(expr: number) {
@@ -245,8 +253,11 @@ export class TheoryLra {
     if (context.isEInternalized(expr)) return true;
     context.mkEnode(expr, false, false, op !== OP_ADD && op !== OP_MUL);
     this.getVarOfTerm(expr);
-    if ((op === OP_IDIV || op === OP_MOD) && !manager.isNumeral(manager.args[expr][1]))
-      this.unsupportedTerms.push(expr);
+    const args = manager.args[expr];
+    const isDivision = (op === OP_IDIV || op === OP_MOD) && !manager.isNumeral(args[1]);
+    if (isDivision) this.foundUnsupported(expr);
+    if (isDivision || (op === OP_MUL && this.isNonlinear(expr)))
+      for (const arg of args) if (!manager.isNumeral(arg)) this.getVarOfTerm(arg);
     // Without relevancy, the axioms of div and mod come with the term.
     if (!context.relevancy.isEnabled) this.relevantEh(expr);
     return true;
@@ -771,8 +782,40 @@ export class TheoryLra {
       return FC_CONTINUE;
     }
     if (this.assumeEqs()) return FC_CONTINUE;
-    if (this.unsupportedTerms.some((term) => context.isRelevant(term))) return FC_GIVEUP;
+    if (this.unsupportedTerms.some((term) => context.isRelevant(term) && !this.isSatisfied(term)))
+      return FC_GIVEUP;
     return FC_DONE;
+  }
+
+  // The value that the model gives the class of a term, if the class has a variable.
+  private getModelValue(expr: number) {
+    const manager = this.manager;
+    if (manager.isNumeral(expr)) return Rational.fromNumber(manager.values[expr]);
+    const root = this.context.getEnode(expr)?.root;
+    return root === undefined || root.thVar < 0 ? undefined : this.simplex.values[root.thVar];
+  }
+
+  // Whether the values of a product, or of div or mod by a nonzero term, agree with the values of
+  // its arguments. The remainder of SMT-LIB's division is in [0, |divisor|).
+  private isSatisfied(term: number) {
+    const manager = this.manager;
+    const value = this.getModelValue(term);
+    if (value === undefined) return false;
+    const values: Rational[] = [];
+    for (const arg of manager.args[term]) {
+      const argValue = this.getModelValue(arg);
+      if (argValue === undefined || !argValue.isInt()) return false;
+      values.push(argValue);
+    }
+    const op = manager.getOp(term);
+    if (op === OP_MUL)
+      return values.reduce((product, factor) => product.mul(factor), Rational.one).equals(value);
+    const dividend = values[0];
+    const divisor = values[1];
+    if (divisor.isZero()) return false;
+    const magnitude = divisor.isNegative() ? divisor.neg() : divisor;
+    const remainder = dividend.sub(magnitude.mul(dividend.div(magnitude).floor()));
+    return value.equals(op === OP_MOD ? remainder : dividend.sub(remainder).div(divisor));
   }
 
   pushScopeEh() {}
