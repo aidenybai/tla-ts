@@ -1,6 +1,7 @@
 // Ported from Z3 (src/ast/ast.h, src/ast/ast.cpp), MIT license, see z3-license.txt.
 // A hash-consed DAG of applications, de Bruijn variables and quantifiers, as in Z3's ast_manager.
 import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
+import { Rational } from "./rational";
 import type { ResourceLimit } from "./rlimit";
 
 export const KIND_APP = 0;
@@ -9,6 +10,7 @@ export const KIND_QUANTIFIER = 2;
 
 export const SORT_BOOL = 0;
 export const SORT_INT = 1;
+export const SORT_REAL = 2;
 
 export const FAMILY_BASIC = 0;
 export const FAMILY_ARITH = 1;
@@ -39,8 +41,12 @@ export const OP_IDIV = 19;
 export const OP_MOD = 20;
 export const OP_ABS = 21;
 export const OP_PATTERN = 22;
-export const OP_UNINTERPRETED = 23;
-export const OP_MODEL_VALUE = 24;
+export const OP_DIV = 23;
+export const OP_TO_REAL = 24;
+export const OP_TO_INT = 25;
+export const OP_IS_INT = 26;
+export const OP_UNINTERPRETED = 27;
+export const OP_MODEL_VALUE = 28;
 
 // A Z3 symbol: a string, or a number for a numerical symbol, which Z3 prints as k!n.
 export type SmtSymbol = string | number;
@@ -95,7 +101,15 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
   ["mod", FAMILY_ARITH, OP_MOD, SORT_INT],
   ["abs", FAMILY_ARITH, OP_ABS, SORT_INT],
   ["pattern", FAMILY_BASIC, OP_PATTERN, SORT_BOOL],
+  ["/", FAMILY_ARITH, OP_DIV, SORT_REAL],
+  ["to_real", FAMILY_ARITH, OP_TO_REAL, SORT_REAL],
+  ["to_int", FAMILY_ARITH, OP_TO_INT, SORT_INT],
+  ["is_int", FAMILY_ARITH, OP_IS_INT, SORT_BOOL],
 ];
+
+// The Real sort and the declarations that only Real terms use, which getNumAsts leaves out, so that
+// the counts of integer problems stay as they were.
+const NUM_REAL_ASTS = 5;
 
 // Z3's family ids and decl kinds, which its AST hashes include.
 const Z3_BASIC_FAMILY = 0;
@@ -129,11 +143,16 @@ const Z3_BUILTINS = new Map<number, [string, number, number]>([
   [OP_MOD, ["mod", 16, 2]],
   [OP_ABS, ["abs", 21, 1]],
   [OP_PATTERN, ["pattern", 0, -1]],
+  [OP_DIV, ["/", 10, 2]],
+  [OP_TO_REAL, ["to_real", 18, 1]],
+  [OP_TO_INT, ["to_int", 19, 1]],
+  [OP_IS_INT, ["is_int", 20, 1]],
 ]);
 
-// The small ids of the Int declarations Z3 makes when it starts, from arith_decl_plugin::set_manager.
-// Z3 makes =, ite and distinct per sort on first use, which the manager does not follow, so they
-// get -1.
+// The small ids of the Int declarations Z3 makes when it starts, from arith_decl_plugin::set_manager,
+// which Real terms share. The declarations of Real terms only have the ids of Real's /, Int's
+// to_real, Real's to_int and is_int. Z3 makes =, ite and distinct per sort on first use, which the
+// manager does not follow, so they get -1.
 const Z3_SMALL_IDS = new Map([
   [OP_TRUE, 1],
   [OP_FALSE, 2],
@@ -153,6 +172,10 @@ const Z3_SMALL_IDS = new Map([
   [OP_MOD, 41],
   [OP_UMINUS, 42],
   [OP_ABS, 50],
+  [OP_DIV, 24],
+  [OP_TO_REAL, 43],
+  [OP_TO_INT, 45],
+  [OP_IS_INT, 47],
 ]);
 
 // The small id of the first sort or declaration a problem declares, after Z3's own.
@@ -165,6 +188,9 @@ const FIRST_FREE_ID = 22;
 // symbol::hash: a numerical symbol hashes to its number.
 const getSymbolHash = (symbol: SmtSymbol) =>
   typeof symbol === "number" ? symbol : stringHash(symbol, 17);
+
+// Whether a sort is Int or Real.
+export const isArithSort = (sort: number) => sort === SORT_INT || sort === SORT_REAL;
 
 // mpz_manager::hash: the absolute value of an integer below 2^32, else the hash of its 32-bit digits,
 // least significant first.
@@ -188,7 +214,7 @@ export class AstManager {
   sorts: number[] = [];
   // The index of a variable or model value, or of a numeral's value in numeralValues.
   values: number[] = [];
-  private numeralValues: bigint[] = [];
+  private numeralValues: Rational[] = [];
   // One more than the largest free de Bruijn index, so 0 means the expression is ground.
   freeVarBounds: number[] = [];
   hasQuantifierFlags: boolean[] = [];
@@ -197,10 +223,11 @@ export class AstManager {
   hashes: number[] = [];
   quantifiers = new Map<number, QuantifierData>();
   funcDecls: FuncDecl[] = [];
-  sortNames: string[] = ["Bool", "Int"];
+  sortNames: string[] = ["Bool", "Int", "Real"];
   private sortHashes = [
     combineHash(getSymbolHash("Bool"), getInfoHash(Z3_BASIC_FAMILY, 0, [])),
     combineHash(getSymbolHash("Int"), getInfoHash(Z3_ARITH_FAMILY, 1, [])),
+    combineHash(getSymbolHash("Real"), getInfoHash(Z3_ARITH_FAMILY, 0, [])),
   ];
   // The hash of each uninterpreted declaration, and of each builtin by its Z3 declaration.
   private declHashes: number[] = [];
@@ -255,7 +282,7 @@ export class AstManager {
 
   // get_num_asts: the live expressions, declarations and sorts.
   getNumAsts() {
-    return this.numLive + this.funcDecls.length + this.sortNames.length;
+    return this.numLive + this.funcDecls.length + this.sortNames.length - NUM_REAL_ASTS;
   }
 
   incRef(expr: number) {
@@ -345,7 +372,7 @@ export class AstManager {
     this.sortHashes.push(
       combineHash(
         getSymbolHash(name),
-        getInfoHash(Z3_USER_SORT_FAMILY, this.sortNames.length - 2, []),
+        getInfoHash(Z3_USER_SORT_FAMILY, this.sortNames.length - 3, []),
       ),
     );
     this.sortNames.push(name);
@@ -540,28 +567,35 @@ export class AstManager {
 
   // A numeral's declaration has the parameters (value, is_int), and a rational hashes as
   // hash(numerator) + 3 hash(denominator).
-  private internNumeral(key: string, name: string, value: bigint, isInt: boolean) {
+  private internNumeral(key: string, value: Rational, sort: number) {
     const existing = this.table.get(key);
     if (existing !== undefined) return this.revive(existing);
     this.numeralValues.push(value);
-    return this.intern(key, KIND_APP, OP_NUM, [], SORT_INT, this.numeralValues.length - 1, () =>
+    const isInt = sort === SORT_INT;
+    return this.intern(key, KIND_APP, OP_NUM, [], sort, this.numeralValues.length - 1, () =>
       this.getFuncDeclHash(
-        name,
+        isInt ? "Int" : "Real",
         [],
-        SORT_INT,
-        getInfoHash(Z3_ARITH_FAMILY, 0, [(getIntegerHash(value) + 3) >>> 0, isInt ? 1 : 0]),
+        sort,
+        getInfoHash(Z3_ARITH_FAMILY, 0, [
+          (getIntegerHash(value.num) + 3 * getIntegerHash(value.den)) >>> 0,
+          isInt ? 1 : 0,
+        ]),
       ),
     );
   }
 
-  // A real numeral, which Z3's theory_lra creates for its constants 0 and 1. tla-ts has no real sort,
-  // so it stands in for the numeral, with its own id, and no expression uses it.
-  mkRealNumeral(value: number) {
-    return this.internNumeral(`r${value}`, "Real", BigInt(value), false);
+  mkRealNumeral(value: Rational) {
+    return this.internNumeral(`r${value}`, value, SORT_REAL);
   }
 
   mkNumeral(value: bigint) {
-    return this.internNumeral(`n${value}`, "Int", value, true);
+    return this.internNumeral(`n${value}`, Rational.of(value), SORT_INT);
+  }
+
+  // mk_numeral(value, is_int).
+  mkNumeralOfSort(value: Rational, sort: number) {
+    return sort === SORT_INT ? this.mkNumeral(value.num) : this.mkRealNumeral(value);
   }
 
   // mk_model_value: the element with this index in the universe of an uninterpreted sort.
@@ -687,6 +721,10 @@ export class AstManager {
     return this.sorts[expr] === SORT_INT;
   }
 
+  isReal(expr: number) {
+    return this.sorts[expr] === SORT_REAL;
+  }
+
   isTrue(expr: number) {
     return expr === this.trueExpr;
   }
@@ -712,12 +750,20 @@ export class AstManager {
     return this.getOp(expr) === OP_NUM;
   }
 
+  // The value of an integer numeral.
   getNumeral(expr: number) {
-    return this.isNumeral(expr) ? this.getNumeralValue(expr) : undefined;
+    return this.isNumeral(expr) && this.sorts[expr] === SORT_INT
+      ? this.getNumeralValue(expr)
+      : undefined;
   }
 
-  // The value of an expression that is a numeral.
+  // The value of an expression that is an integer numeral.
   getNumeralValue(expr: number) {
+    return this.numeralValues[this.values[expr]].num;
+  }
+
+  // The value of an expression that is a numeral of either sort.
+  getRationalValue(expr: number) {
     return this.numeralValues[this.values[expr]];
   }
 
@@ -732,7 +778,7 @@ export class AstManager {
   }
 
   isUninterpretedSort(sort: number) {
-    return sort > SORT_INT;
+    return sort > SORT_REAL;
   }
 
   // An uninterpreted constant, such as a declared constant or a Skolem constant.
@@ -753,7 +799,8 @@ export class AstManager {
   getTimesMinusOneArg(expr: number) {
     if (this.getOp(expr) !== OP_MUL || this.args[expr].length !== 2) return undefined;
     const coefficient = this.args[expr][0];
-    return this.isNumeral(coefficient) && this.getNumeralValue(coefficient) === -1n
+    return this.isNumeral(coefficient) &&
+      this.getRationalValue(coefficient).equals(Rational.minusOne)
       ? this.args[expr][1]
       : undefined;
   }
@@ -819,7 +866,11 @@ export class AstManager {
       const data = this.getQuantifier(expr);
       return `(${data.isForall ? "forall" : "exists"} (${data.sorts.length}) ${this.toString(data.body)})`;
     }
-    if (this.getOp(expr) === OP_NUM) return String(this.getNumeralValue(expr));
+    if (this.getOp(expr) === OP_NUM) {
+      const value = this.getRationalValue(expr);
+      if (this.sorts[expr] === SORT_INT) return String(value.num);
+      return value.isInt() ? `${value.num}.0` : `(/ ${value.num}.0 ${value.den}.0)`;
+    }
     const name = this.getDeclName(expr);
     const args = this.args[expr];
     return args.length === 0

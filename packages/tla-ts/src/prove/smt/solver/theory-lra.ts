@@ -143,9 +143,9 @@ export class TheoryLra {
   init() {
     const manager = this.manager;
     this.oneVar = this.addConst(manager.mkNumeral(1n), 1, true);
-    this.realOneVar = this.addConst(manager.mkRealNumeral(1), 1, false);
+    this.realOneVar = this.addConst(manager.mkRealNumeral(Rational.one), 1, false);
     this.zeroVar = this.addConst(manager.mkNumeral(0n), 0, true);
-    this.realZeroVar = this.addConst(manager.mkRealNumeral(0), 0, false);
+    this.realZeroVar = this.addConst(manager.mkRealNumeral(Rational.zero), 0, false);
   }
 
   private addConst(expr: number, value: number, isInt: boolean) {
