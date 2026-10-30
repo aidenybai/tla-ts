@@ -86,6 +86,15 @@ class FlatLiterals {
   }
 }
 
+// A term that reduceTo is rewriting: the depth left for its arguments, its next argument, and where
+// its arguments' results start.
+interface ReduceFrame {
+  expr: number;
+  depth: number;
+  childIndex: number;
+  spos: number;
+}
+
 // rewriter_tpl with th_rewriter_cfg.
 export class Rewriter extends RewriterTpl {
   private arith: ArithRewriter;
@@ -100,16 +109,36 @@ export class Rewriter extends RewriterTpl {
     this.arith = new ArithRewriter(manager, options.arith);
   }
 
-  // Rewrites the top depth levels of a term, outside the main loop.
+  // Rewrites the top depth levels of a term, outside the main loop. Like rewriter_tpl, it keeps its
+  // frames on an explicit stack, so a deep term or a long chain of rewrites cannot overflow the call
+  // stack.
   private reduceTo(expr: number, depth: number): number {
     const manager = this.manager;
-    if (depth === 0 || manager.kinds[expr] !== KIND_APP || manager.args[expr].length === 0)
-      return expr;
-    return this.mkAppCore(
-      manager.decls[expr],
-      manager.args[expr].map((arg) => this.reduceTo(arg, depth - 1)),
-      manager.sorts[expr],
-    );
+    const frames: ReduceFrame[] = [];
+    const results: number[] = [];
+    const visit = (term: number, termDepth: number) => {
+      if (termDepth === 0 || manager.kinds[term] !== KIND_APP || manager.args[term].length === 0)
+        results.push(term);
+      else frames.push({ expr: term, depth: termDepth - 1, childIndex: 0, spos: results.length });
+    };
+    visit(expr, depth);
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1];
+      const args = manager.args[frame.expr];
+      if (frame.childIndex < args.length) {
+        visit(args[frame.childIndex++], frame.depth);
+        continue;
+      }
+      frames.pop();
+      const reduced = this.reduceAppCore(
+        manager.decls[frame.expr],
+        results.splice(frame.spos),
+        manager.sorts[frame.expr],
+      );
+      if (typeof reduced === "number") results.push(reduced);
+      else visit(reduced.expr, reduced.depth);
+    }
+    return results[0];
   }
 
   // updt_params with elim_and, which asserted_formulas turns on after NNF. The caller resets the
