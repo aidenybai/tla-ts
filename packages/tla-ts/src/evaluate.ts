@@ -36,11 +36,11 @@ import {
   getIntervalElements,
   getSequenceElements,
   getValueHash,
-  isEnumerable,
   isFunctionValue,
   isOverriddenSet,
   isSameValue,
   markLambdaFunction,
+  isReducible,
   isSetValue,
   MAXIMUM_INTEGER,
   MINIMUM_INTEGER,
@@ -1420,7 +1420,13 @@ const compileFunctionConstruction = (
   const set = getEvaluator(bound.set, environment);
   return (context) => {
     const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
-    if (expression.isRecursive || isKeptLazy || !isEnumerable(domain)) {
+    // TLC builds the function only when it reduces every domain, and evaluates the body lazily
+    // otherwise.
+    const domains =
+      typeof domain === "object" && domain.kind === "ProductSet" && bounds.length > 1
+        ? domain.factors
+        : [domain];
+    if (expression.isRecursive || isKeptLazy || !domains.every(isReducible)) {
       const functionValue = createLazyFunction(
         domain,
         (argument) => body(withScope(context, bindArgument(bounds, context.scope, argument))),
@@ -1514,10 +1520,7 @@ const compileSetComprehension = (
           predicate(withScope(context, bindPattern(context.scope, pattern, element))),
           "a set filter predicate",
         );
-      const isReducible =
-        typeof base === "object" &&
-        (base.kind === "Set" || base.kind === "MixedSet" || base.kind === "Interval");
-      if (!isReducible) {
+      if (!isReducible(base)) {
         if (isSetValue(base)) return { kind: "FilteredSet", base, test };
         throw new TlaEvaluationError(
           `TLC encountered a non-enumerable quantifier bound ${formatValue(base)} at ${describeLocation(expression.bound.set)}`,

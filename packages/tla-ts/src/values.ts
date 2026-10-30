@@ -137,6 +137,13 @@ export const isSetValue = (value: Value) =>
   value.kind !== "Function" &&
   value.kind !== "LazyFunction";
 
+export type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
+
+// TLC reduces a set enumeration or an interval eagerly, and keeps every other set lazy.
+export const isReducible = (value: Value): value is ReducibleSet =>
+  typeof value === "object" &&
+  (value.kind === "Set" || value.kind === "MixedSet" || value.kind === "Interval");
+
 export const isFunctionValue = (value: Value): value is FunctionValue | LazyFunctionValue =>
   typeof value === "object" && (value.kind === "Function" || value.kind === "LazyFunction");
 
@@ -2106,8 +2113,11 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
         return `[${parameters} |-> <expression ${source.body}>]`;
       }
       const functionValue = toFiniteFunction(value);
+      // TLC normalizes a lambda's domain to print it, but evaluates its body afterward.
+      const formatRange = (inner: Value) =>
+        formatValue(inner, isStrict, isNormalized && value.kind === "Function");
       if (functionValue.domain.every((key, index) => key === index + 1)) {
-        return `<<${functionValue.range.map(format).join(", ")}>>`;
+        return `<<${functionValue.range.map(formatRange).join(", ")}>>`;
       }
       if (functionValue.domain.every((key) => typeof key === "string" && isFieldName(key))) {
         const isSorted =
@@ -2115,9 +2125,9 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
         const pairs = isSorted
           ? functionValue.domain.map((key, index) => [key, functionValue.range[index]])
           : getWrittenPairs(functionValue);
-        return `[${pairs.map((pair) => `${String(pair[0])} |-> ${format(pair[1])}`).join(", ")}]`;
+        return `[${pairs.map((pair) => `${String(pair[0])} |-> ${formatRange(pair[1])}`).join(", ")}]`;
       }
-      return `(${functionValue.domain.map((key, index) => `${format(key)} :> ${format(functionValue.range[index])}`).join(" @@ ")})`;
+      return `(${functionValue.domain.map((key, index) => `${format(key)} :> ${formatRange(functionValue.range[index])}`).join(" @@ ")})`;
     }
   }
 };

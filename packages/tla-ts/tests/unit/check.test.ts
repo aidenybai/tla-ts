@@ -1096,6 +1096,23 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("evaluates a function over a domain TLC keeps lazy only where it is applied", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nASSUME PrintT([b |-> 0])\nASSUME PrintT([s \\in SUBSET {1} |-> 1 \\div Cardinality(s)][{1}])\nASSUME PrintT([v \\in {0} |-> [a |-> 1, b |-> 2]])\nASSUME PrintT([v \\in SUBSET {0} |-> [a |-> 1, b |-> 2]])\nASSUME PrintT([v \\in {0} \\X {1} |-> [a |-> 1, b |-> 2]])\n====",
+      config: "",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(prints.slice(1)).toEqual([
+      "1",
+      "(0 :> [b |-> 2, a |-> 1])",
+      "({} :> [a |-> 1, b |-> 2] @@ {0} :> [a |-> 1, b |-> 2])",
+      "(<<0, 1>> :> [a |-> 1, b |-> 2])",
+    ]);
+  });
+
   it("sorts a record TLC compares with itself and the records inside it", async () => {
     const prints: string[] = [];
     await check({
