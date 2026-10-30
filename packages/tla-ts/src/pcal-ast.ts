@@ -19,7 +19,7 @@ export interface PcalExpr {
 }
 
 // IntPair, as the "Java coordinates" of a token in an expression.
-export interface PcalCoord {
+interface PcalCoord {
   line: number;
   item: number;
 }
@@ -87,7 +87,7 @@ interface PcalBase {
   lbl: string;
 }
 
-export interface PcalUniprocess extends PcalBase {
+interface PcalUniprocess extends PcalBase {
   kind: "Uniprocess";
   name: string;
   decls: PcalVarDecl[];
@@ -97,7 +97,7 @@ export interface PcalUniprocess extends PcalBase {
   body: PcalStmt[];
 }
 
-export interface PcalMultiprocess extends PcalBase {
+interface PcalMultiprocess extends PcalBase {
   kind: "Multiprocess";
   name: string;
   decls: PcalVarDecl[];
@@ -119,7 +119,7 @@ export interface PcalProcedure extends PcalBase {
 }
 
 // AST.UNFAIR_PROC, WF_PROC and SF_PROC index FairnessString.
-export const PCAL_FAIRNESS = ["unfair", "wf", "sf"];
+const PCAL_FAIRNESS = ["unfair", "wf", "sf"];
 
 export interface PcalProcess extends PcalBase {
   kind: "Process";
@@ -177,14 +177,14 @@ export interface PcalLhs extends PcalBase {
   sub: PcalExpr;
 }
 
-export interface PcalIf extends PcalBase {
+interface PcalIf extends PcalBase {
   kind: "If";
   test: PcalExpr;
   Then: PcalStmt[];
   Else: PcalStmt[];
 }
 
-export interface PcalEither extends PcalBase {
+interface PcalEither extends PcalBase {
   kind: "Either";
   ors: PcalStmt[][];
 }
@@ -202,17 +202,17 @@ export interface PcalWhen extends PcalBase {
   exp: PcalExpr;
 }
 
-export interface PcalPrintS extends PcalBase {
+interface PcalPrintS extends PcalBase {
   kind: "PrintS";
   exp: PcalExpr;
 }
 
-export interface PcalAssert extends PcalBase {
+interface PcalAssert extends PcalBase {
   kind: "Assert";
   exp: PcalExpr;
 }
 
-export interface PcalSkip extends PcalBase {
+interface PcalSkip extends PcalBase {
   kind: "Skip";
 }
 
@@ -256,14 +256,14 @@ export interface PcalCallReturn extends PcalBase {
   args: PcalExpr[];
 }
 
-export interface PcalCallGoto extends PcalBase {
+interface PcalCallGoto extends PcalBase {
   kind: "CallGoto";
   after: string;
   to: string;
   args: PcalExpr[];
 }
 
-export interface PcalGoto extends PcalBase {
+interface PcalGoto extends PcalBase {
   kind: "Goto";
   to: string;
 }
@@ -396,6 +396,12 @@ export const normalizePcalExpr = (expr: PcalExpr) => {
   expr.anchorTokCol = anchorTokCol;
 };
 
+export const createNormalizedPcalExpr = (tokens: PcalToken[][]) => {
+  const expr = createPcalExpr(tokens);
+  normalizePcalExpr(expr);
+  return expr;
+};
+
 // TLAExpr.renormalize: shifts each line right by as much as its anchor token has moved.
 const renormalizePcalExpr = (expr: PcalExpr) => {
   const anchorTokens = expr.anchorTokens;
@@ -415,15 +421,8 @@ const renormalizePcalExpr = (expr: PcalExpr) => {
   });
 };
 
-export const clonePcalExpr = (expr: PcalExpr) => {
-  const result = createPcalExpr(
-    expr.tokens.map((line) =>
-      line.map((token) => createPcalToken(token.string, token.column, token.type)),
-    ),
-  );
-  normalizePcalExpr(result);
-  return result;
-};
+export const clonePcalExpr = (expr: PcalExpr) =>
+  createNormalizedPcalExpr(expr.tokens.map((line) => line.map((token) => ({ ...token }))));
 
 // TLAExpr.prepend: puts prefix in front of the expression, spaces columns before its first token.
 export const prependPcalExpr = (expr: PcalExpr, prefix: PcalExpr, spaces: number) => {
@@ -447,8 +446,6 @@ export const prependPcalExpr = (expr: PcalExpr, prefix: PcalExpr, spaces: number
   expr.anchorTokCol = anchorTokCol;
   renormalizePcalExpr(expr);
 };
-
-const isEmptyPcalExpr = (expr: PcalExpr) => expr.tokens.length === 0;
 
 export const isOneTokenPcalExpr = (expr: PcalExpr) =>
   expr.tokens.length === 1 && expr.tokens[0].length === 1;
@@ -482,7 +479,7 @@ export const stepPcalCoord = (expr: PcalExpr, coord: PcalCoord, steps: number) =
 // TLAExpr.findNextInstanceIn: the next token id at or after start that is not a record field
 // name, such as the a in r.a, [a |-> 1] or [a : S].
 const findNextInstance = (expr: PcalExpr, id: string, start: PcalCoord) => {
-  for (let coord = isEmptyPcalExpr(expr) ? undefined : { ...start }; coord !== undefined;) {
+  for (let coord = expr.tokens.length === 0 ? undefined : { ...start }; coord !== undefined;) {
     const token = getPcalTokenAt(expr, coord);
     const isString = token.type === PCAL_TOKEN.string;
     // The id is an identifier, so a token that is the id is none of the tokens skipped below.
@@ -617,35 +614,38 @@ export const substitutePcalExpr = (
       undefined,
     );
     if (nearest === undefined) return;
-    const nextIndex = nearest.index;
-    const nextPosition = nearest.position;
-    const afterNext = stepPcalCoord(expr, nextPosition, 1);
-    const newPosition = substituteAt(expr, exprs[nextIndex], nextPosition, isParenthesized);
-    next[nextIndex] =
-      newPosition === undefined ? undefined : findNextInstance(expr, names[nextIndex], newPosition);
+    const afterNext = stepPcalCoord(expr, nearest.position, 1);
+    const newPosition = substituteAt(expr, exprs[nearest.index], nearest.position, isParenthesized);
+    next[nearest.index] =
+      newPosition === undefined
+        ? undefined
+        : findNextInstance(expr, names[nearest.index], newPosition);
     next.forEach((position, index) => {
-      if (index === nextIndex || position === undefined || newPosition === undefined) return;
+      if (index === nearest.index || position === undefined || newPosition === undefined) return;
       // HACK: TLAExpr.substituteForAll dereferences afterNextPos without checking for null, which
       // throws a NullPointerException when the substituted token ends the expression.
       if (afterNext === undefined) {
         throw new PcalRuntimeError("NullPointerException: TLAExpr.substituteForAll");
       }
-      if (position.line === nextPosition.line) position.item += newPosition.item - afterNext.item;
+      if (position.line === nearest.position.line)
+        position.item += newPosition.item - afterNext.item;
       position.line += newPosition.line - afterNext.line;
     });
   }
 };
 
+export const getSubstitutedPcalExpr = (expr: PcalExpr, args: PcalExpr[], params: string[]) => {
+  const result = clonePcalExpr(expr);
+  substitutePcalExpr(result, args, params);
+  return result;
+};
+
 // TLAExpr.SeqSubstituteForAll.
 export const substitutePcalExprs = (exprs: PcalExpr[], args: PcalExpr[], params: string[]) =>
-  exprs.map((expr) => {
-    const result = clonePcalExpr(expr);
-    substitutePcalExpr(result, args, params);
-    return result;
-  });
+  exprs.map((expr) => getSubstitutedPcalExpr(expr, args, params));
 
 // TLAExpr.toString, which names the column of a junction except in TLC 1.7.4.
-export const formatPcalExpr = (expr: PcalExpr, version?: TlcVersion) => {
+const formatPcalExpr = (expr: PcalExpr, version?: TlcVersion) => {
   const getColumn = (token: PcalToken) => (version === "1.7.4" ? "" : `(col${token.column}) `);
   const tokens = expr.tokens.map((line) =>
     line.map((token) => {
@@ -656,9 +656,10 @@ export const formatPcalExpr = (expr: PcalExpr, version?: TlcVersion) => {
       return `"${token.string}"`;
     }),
   );
+  const firstTokenLine = tokens.findIndex((line) => line.length > 0);
   const text = tokens
     .map((line, index) => {
-      const isAfterToken = tokens.slice(0, index).some((previous) => previous.length > 0);
+      const isAfterToken = firstTokenLine !== -1 && index > firstTokenLine;
       return line.map((token, item) => (isAfterToken || item > 0 ? `, ${token}` : token)).join("");
     })
     .join("\n");

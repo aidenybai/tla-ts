@@ -1,11 +1,5 @@
 import { PcalError, PcalBugError } from "./errors";
-import {
-  createPcalExpr,
-  createPcalToken,
-  normalizePcalExpr,
-  PCAL_TOKEN,
-  type PcalToken,
-} from "./pcal-ast";
+import { createNormalizedPcalExpr, createPcalToken, PCAL_TOKEN, type PcalToken } from "./pcal-ast";
 
 // PcalCharReader: reads the algorithm's characters from the lines between a start and an end
 // position, returning "\n" at the end of each line and "\t" at the end of the input. Columns count
@@ -505,18 +499,15 @@ const tokenize = (
   };
   while (scan.state !== "done" && !scan.isExprEnd) step(scan.nextChar);
   if (scan.nextChar !== "\n") backspacePcalReader(reader);
-  const result = createPcalExpr(scan.lines);
-  normalizePcalExpr(result);
-  return result;
+  return createNormalizedPcalExpr(scan.lines);
 };
 
-// Tokenize.TokenizeExpr.
-export const tokenizePcalExpr = (state: PcalTokenizerState, reader: PcalCharReader) =>
-  tokenize(state, reader, true, false);
-
-// Tokenize.TokenizeDefineBlock.
-export const tokenizePcalDefineBlock = (state: PcalTokenizerState, reader: PcalCharReader) =>
-  tokenize(state, reader, true, true);
+// Tokenize.TokenizeExpr and TokenizeDefineBlock.
+export const tokenizePcalExpr = (
+  state: PcalTokenizerState,
+  reader: PcalCharReader,
+  isInDefineBlock: boolean,
+) => tokenize(state, reader, true, isInDefineBlock);
 
 // Tokenize.GetAlgorithmToken.
 export const getPcalAlgorithmToken = (state: PcalTokenizerState, reader: PcalCharReader) => {

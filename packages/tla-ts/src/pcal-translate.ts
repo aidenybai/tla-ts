@@ -1,5 +1,6 @@
 import { PcalError, PcalBugError } from "./errors";
 import {
+  createNormalizedPcalExpr,
   createPcalBase,
   createPcalExpr,
   createPcalToken,
@@ -163,11 +164,25 @@ const createPcalSymbolTable = (ast: PcalAlgorithm) => {
     initialPC: undefined,
   };
 
-  const extractLabeledStmt = (ls: PcalLabeledStmt, context: string, contextType: string) => {
-    if (!insertSymbol(table, PCAL_SYMBOL.label, ls.label, context, contextType, ls.line, ls.col)) {
-      table.errorReport += `\nLabel ${ls.label} redefined at line ${ls.line}, column ${ls.col}`;
+  const extractLabeledStmt = (
+    labeledStmt: PcalLabeledStmt,
+    context: string,
+    contextType: string,
+  ) => {
+    if (
+      !insertSymbol(
+        table,
+        PCAL_SYMBOL.label,
+        labeledStmt.label,
+        context,
+        contextType,
+        labeledStmt.line,
+        labeledStmt.col,
+      )
+    ) {
+      table.errorReport += `\nLabel ${labeledStmt.label} redefined at line ${labeledStmt.line}, column ${labeledStmt.col}`;
     }
-    ls.stmts.forEach((stmt) => extractStmt(stmt, context, contextType));
+    labeledStmt.stmts.forEach((stmt) => extractStmt(stmt, context, contextType));
   };
 
   const extractStmt = (stmt: PcalStmt, context: string, contextType: string): void => {
@@ -218,9 +233,13 @@ const createPcalSymbolTable = (ast: PcalAlgorithm) => {
     }
   };
 
-  const extractVarDecl = (decl: PcalVarDecl, context: string) => {
-    const type = context === "" ? PCAL_SYMBOL.global : PCAL_SYMBOL.processVar;
-    if (!insertSymbol(table, type, decl.var, context, "process", decl.line, decl.col)) {
+  const extractVarDecl = (
+    decl: PcalVarDecl | PcalPVarDecl,
+    context: string,
+    contextType = "process",
+    type: number = context === "" ? PCAL_SYMBOL.global : PCAL_SYMBOL.processVar,
+  ) => {
+    if (!insertSymbol(table, type, decl.var, context, contextType, decl.line, decl.col)) {
       table.errorReport += `\n${PCAL_SYMBOL_TYPE_NAMES[type]} ${decl.var} redefined at line ${decl.line}, column ${decl.col}`;
     }
   };
@@ -247,36 +266,12 @@ const createPcalSymbolTable = (ast: PcalAlgorithm) => {
       procedure.line,
       procedure.col,
     );
-    procedure.decls.forEach((decl) => {
-      if (
-        !insertSymbol(
-          table,
-          PCAL_SYMBOL.procedureVar,
-          decl.var,
-          procedure.name,
-          "procedure",
-          decl.line,
-          decl.col,
-        )
-      ) {
-        table.errorReport += `\nProcedure variable ${decl.var} redefined at line ${decl.line}, column ${decl.col}`;
-      }
-    });
-    procedure.params.forEach((param) => {
-      if (
-        !insertSymbol(
-          table,
-          PCAL_SYMBOL.parameter,
-          param.var,
-          procedure.name,
-          "procedure",
-          param.line,
-          param.col,
-        )
-      ) {
-        table.errorReport += `\nParameter ${param.var} redefined at line ${param.line}, column ${param.col}`;
-      }
-    });
+    procedure.decls.forEach((decl) =>
+      extractVarDecl(decl, procedure.name, "procedure", PCAL_SYMBOL.procedureVar),
+    );
+    procedure.params.forEach((param) =>
+      extractVarDecl(param, procedure.name, "procedure", PCAL_SYMBOL.parameter),
+    );
     procedure.body.forEach((stmt) =>
       extractLabeledStmt(toLabeledStmt(stmt), procedure.name, "procedure"),
     );
@@ -313,10 +308,8 @@ const createPcalSymbolTable = (ast: PcalAlgorithm) => {
   ast.decls.forEach((decl) => extractVarDecl(decl, ""));
   ast.prcds.forEach(extractProcedure);
   if (ast.kind === "Multiprocess") ast.procs.forEach(extractProcess);
-  if (ast.kind === "Uniprocess" && ast.body.length > 0) {
-    table.initialPC = toLabeledStmt(ast.body[0]).label;
-  }
   if (ast.kind === "Uniprocess") {
+    if (ast.body.length > 0) table.initialPC = toLabeledStmt(ast.body[0]).label;
     ast.body.forEach((stmt) => extractLabeledStmt(toLabeledStmt(stmt), "", ""));
   }
   if (table.errorReport.length > 0) throw new PcalError(table.errorReport);
@@ -368,9 +361,7 @@ const fixPcalIds = (ast: PcalAlgorithm, table: PcalSymbolTable, log: (line: stri
         const useMe = useThisVar(table, token.string, context);
         if (names.includes(token.string) || useMe === token.string) return;
         names.push(token.string);
-        const replacement = createPcalExpr([[createPcalToken(useMe, 0, PCAL_TOKEN.ident)]]);
-        normalizePcalExpr(replacement);
-        replacements.push(replacement);
+        replacements.push(createNormalizedPcalExpr([[identToken(useMe)]]));
       }),
     );
     if (replacements.length > 0) substitutePcalExpr(expr, replacements, names, false);
@@ -389,9 +380,9 @@ const fixPcalIds = (ast: PcalAlgorithm, table: PcalSymbolTable, log: (line: stri
   const fixProcedureName = (name: string | undefined, context: string) =>
     name === undefined ? undefined : useThis(table, PCAL_SYMBOL.procedure, name, context);
 
-  const fixLabeledStmt = (ls: PcalLabeledStmt, context: string) => {
-    ls.label = useThis(table, PCAL_SYMBOL.label, ls.label, context);
-    ls.stmts.forEach((stmt) => fixStmt(stmt, context));
+  const fixLabeledStmt = (labeledStmt: PcalLabeledStmt, context: string) => {
+    labeledStmt.label = useThis(table, PCAL_SYMBOL.label, labeledStmt.label, context);
+    labeledStmt.stmts.forEach((stmt) => fixStmt(stmt, context));
   };
 
   const fixStmt = (stmt: PcalStmt, context: string): void => {
@@ -566,12 +557,6 @@ const addedToken = (string: string) => createPcalToken(string, 0, PCAL_TOKEN.add
 const builtInToken = (string: string) => createPcalToken(string, 0, PCAL_TOKEN.builtin);
 const identToken = (string: string) => createPcalToken(string, 0, PCAL_TOKEN.ident);
 
-const makeExpr = (tokens: PcalToken[][]) => {
-  const expr = createPcalExpr(tokens);
-  normalizePcalExpr(expr);
-  return expr;
-};
-
 // PcalTranslate.TokVectorToExpr: copies the tokens onto one line, spaces columns apart.
 const tokensToExpr = (tokens: PcalToken[], spaces: number) => {
   const line: PcalToken[] = [];
@@ -581,7 +566,7 @@ const tokensToExpr = (tokens: PcalToken[], spaces: number) => {
       previous === undefined ? 0 : previous.column + getPcalTokenWidth(previous) + spaces;
     line.push(createPcalToken(token.string, column, token.type));
   });
-  return makeExpr([line]);
+  return createNormalizedPcalExpr([line]);
 };
 
 // PcalTranslate.MakeNewStackTopExprPretty: lays out a pushed stack frame one field per line with
@@ -639,8 +624,12 @@ const createAssign = (assigns: PcalSingleAssign[], line = 0, col = 0): PcalAssig
   ass: assigns,
 });
 
-const makeAssign = (variable: string, expr: PcalExpr) =>
-  createAssign([createSingleAssign(variable, makeExpr([]), expr)]);
+const makeAssign = (variable: string, expr: PcalExpr, line = 0, col = 0) =>
+  createAssign(
+    [createSingleAssign(variable, createNormalizedPcalExpr([]), expr, line, col)],
+    line,
+    col,
+  );
 
 // PcalTranslate.IsTRUE, which indexes the first line of an expression without checking it has one.
 const isTrue = (expr: PcalExpr) => {
@@ -662,20 +651,28 @@ const checkPC = (label: string): PcalWhen => ({
 // HACK: PcalSymTab.ProcedureEntry leaves iPC null for a procedure with no statements, which
 // StringToken keeps and AST.toString prints as "null".
 const updatePC = (next: string | undefined) =>
-  makeAssign("pc", makeExpr([[stringToken(next ?? "null")]]));
+  makeAssign("pc", createNormalizedPcalExpr([[stringToken(next ?? "null")]]));
 
 // `Head(stack).field`.
+const getStackHeadTokens = (field: string) => [
+  identToken("Head"),
+  builtInToken("("),
+  addedToken("stack"),
+  builtInToken(")"),
+  builtInToken("."),
+  identToken(field),
+];
+
+// `Tail(stack)`.
+const getStackTailTokens = () => [
+  identToken("Tail"),
+  builtInToken("("),
+  addedToken("stack"),
+  builtInToken(")"),
+];
+
 const createStackHeadExpr = (field: string) =>
-  makeExpr([
-    [
-      identToken("Head"),
-      builtInToken("("),
-      addedToken("stack"),
-      builtInToken(")"),
-      builtInToken("."),
-      identToken(field),
-    ],
-  ]);
+  createNormalizedPcalExpr([getStackHeadTokens(field)]);
 
 // The `<< [ procedure |-> "name", pc |-> ..., var |-> var ] >> \o ...` that ExplodeCall and
 // ExplodeCallReturn push onto the stack.
@@ -706,6 +703,34 @@ const createStackPushExpr = (
   prettifyStackTopExpr(expr);
   normalizePcalExpr(expr);
   return expr;
+};
+
+// The statements a call explodes into after its stack push: the parameters' and the procedure
+// variables' initial values and the jump to the procedure's first label.
+const createCallStmts = (
+  assign: PcalAssign,
+  entry: PcalProcedureEntry,
+  call: PcalCall | PcalCallReturn,
+): PcalStmt[] => {
+  if (entry.params.length !== call.args.length) {
+    throw new PcalError(`Procedure ${call.to} called with wrong number of arguments`, call);
+  }
+  entry.params.forEach((param, index) =>
+    assign.ass.push(
+      createSingleAssign(
+        param.var,
+        createNormalizedPcalExpr([]),
+        call.args[index],
+        call.line,
+        call.col,
+      ),
+    ),
+  );
+  return [
+    assign,
+    ...entry.decls.map((decl) => makeAssign(decl.var, decl.val, call.line, call.col)),
+    updatePC(entry.initialPC),
+  ];
 };
 
 // CopyAndExplodeLastStmt's triple: the statements with their last one exploded, the labeled
@@ -739,35 +764,11 @@ const explodePcalAlgorithm = (
       [...entry.decls, ...entry.params],
       [builtInToken("\\o"), addedToken("stack")],
     );
-    const assign = createAssign(
-      [createSingleAssign("stack", makeExpr([]), stackPush, call.line, call.col)],
-      call.line,
-      call.col,
-    );
-    if (entry.params.length !== call.args.length) {
-      throw new PcalError(`Procedure ${call.to} called with wrong number of arguments`, call);
-    }
-    entry.params.forEach((param, index) =>
-      assign.ass.push(
-        createSingleAssign(param.var, makeExpr([]), call.args[index], call.line, call.col),
-      ),
-    );
-    const result: PcalStmt[] = [assign];
-    entry.decls.forEach((decl) =>
-      result.push(
-        createAssign(
-          [createSingleAssign(decl.var, makeExpr([]), decl.val, call.line, call.col)],
-          call.line,
-          call.col,
-        ),
-      ),
-    );
-    result.push(updatePC(entry.initialPC));
-    return result;
+    return createCallStmts(makeAssign("stack", stackPush, call.line, call.col), entry, call);
   };
 
   const explodeReturn = (stmt: PcalReturn) => {
-    if (stmt.from === undefined) stmt.from = context.procedure;
+    stmt.from ??= context.procedure;
     const from = stmt.from;
     if (from === undefined) throw new PcalError("`return' statement not in procedure", stmt);
     const procedureIndex = findProcedureIndex(table, from);
@@ -785,10 +786,7 @@ const explodePcalAlgorithm = (
       restore("pc", createStackHeadExpr("pc")),
       ...entry.decls.map((decl) => restore(decl.var, createStackHeadExpr(decl.var))),
       ...entry.params.map((param) => restore(param.var, createStackHeadExpr(param.var))),
-      restore(
-        "stack",
-        makeExpr([[identToken("Tail"), builtInToken("("), addedToken("stack"), builtInToken(")")]]),
-      ),
+      restore("stack", createNormalizedPcalExpr([getStackTailTokens()])),
     ];
   };
 
@@ -821,45 +819,15 @@ const explodePcalAlgorithm = (
       );
       const stackPush = createStackPushExpr(
         stmt.to,
-        [
-          identToken("Head"),
-          builtInToken("("),
-          addedToken("stack"),
-          builtInToken(")"),
-          builtInToken("."),
-          identToken("pc"),
-        ],
+        getStackHeadTokens("pc"),
         [...toEntry.decls, ...toEntry.params],
-        [
-          builtInToken("\\o"),
-          identToken("Tail"),
-          builtInToken("("),
-          addedToken("stack"),
-          builtInToken(")"),
-        ],
+        [builtInToken("\\o"), ...getStackTailTokens()],
       );
-      assign.ass.push(createSingleAssign("stack", makeExpr([]), stackPush, stmt.line, stmt.col));
-    }
-    if (toEntry.params.length !== stmt.args.length) {
-      throw new PcalError(`Procedure ${stmt.to} called with wrong number of arguments`, stmt);
-    }
-    toEntry.params.forEach((param, index) =>
       assign.ass.push(
-        createSingleAssign(param.var, makeExpr([]), stmt.args[index], stmt.line, stmt.col),
-      ),
-    );
-    const result: PcalStmt[] = [assign];
-    toEntry.decls.forEach((decl) =>
-      result.push(
-        createAssign(
-          [createSingleAssign(decl.var, makeExpr([]), decl.val, stmt.line, stmt.col)],
-          stmt.line,
-          stmt.col,
-        ),
-      ),
-    );
-    result.push(updatePC(toEntry.initialPC));
-    return result;
+        createSingleAssign("stack", createNormalizedPcalExpr([]), stackPush, stmt.line, stmt.col),
+      );
+    }
+    return createCallStmts(assign, toEntry, stmt);
   };
 
   // PcalTranslate.CopyAndExplodeLastStmt: explodes the last statement of stmts in place, recursing
@@ -961,20 +929,20 @@ const explodePcalAlgorithm = (
     return exploded;
   };
 
-  const explodeLabeledStmt = (ls: PcalLabeledStmt, next: string): PcalLabeledStmt[] => {
-    const first = ls.stmts.length > 0 ? ls.stmts[0] : undefined;
-    if (first !== undefined && first.kind === "While") return explodeWhile(ls, first, next);
-    const exploded = copyAndExplodeLastStmtWithGoto([...ls.stmts], next);
+  const explodeLabeledStmt = (labeledStmt: PcalLabeledStmt, next: string): PcalLabeledStmt[] => {
+    const first = labeledStmt.stmts.at(0);
+    if (first?.kind === "While") return explodeWhile(labeledStmt, first, next);
+    const exploded = copyAndExplodeLastStmtWithGoto([...labeledStmt.stmts], next);
     const result: PcalLabeledStmt[] = [];
     // With omitPC, PcalTranslate.ExplodeLabeledStmt drops the labeled statement itself.
     if (!omitPC) {
-      exploded.stmts.unshift(checkPC(ls.label));
+      exploded.stmts.unshift(checkPC(labeledStmt.label));
       result.push({
         ...createPcalBase(),
         kind: "LabeledStmt",
-        col: ls.col,
-        line: ls.line,
-        label: ls.label,
+        col: labeledStmt.col,
+        line: labeledStmt.line,
+        label: labeledStmt.label,
         stmts: exploded.stmts,
       });
     }
@@ -983,39 +951,42 @@ const explodePcalAlgorithm = (
   };
 
   const explodeLabeledStmtSeq = (seq: PcalLabeledStmt[], next: string) =>
-    seq.flatMap((ls, index) =>
-      explodeLabeledStmt(ls, index < seq.length - 1 ? seq[index + 1].label : next),
+    seq.flatMap((labeledStmt, index) =>
+      explodeLabeledStmt(labeledStmt, index < seq.length - 1 ? seq[index + 1].label : next),
     );
 
   // PcalTranslate.ExplodeWhile: the loop's label tests the condition, running the unlabeled body
   // or the statements after the loop.
-  const explodeWhile = (ls: PcalLabeledStmt, loop: PcalWhile, next: string) => {
-    const newLs: PcalLabeledStmt = {
+  const explodeWhile = (labeledStmt: PcalLabeledStmt, loop: PcalWhile, next: string) => {
+    const unlabDoNext = loop.labDo.length === 0 ? labeledStmt.label : loop.labDo[0].label;
+    const explodedBody = copyAndExplodeLastStmtWithGoto([...loop.unlabDo], unlabDoNext);
+    const explodedRest = copyAndExplodeLastStmtWithGoto(labeledStmt.stmts.slice(1), next);
+    const isForever = isTrue(loop.test);
+    const loopStmts: PcalStmt[] = isForever
+      ? explodedBody.stmts
+      : [
+          {
+            ...createPcalBase(),
+            kind: "If",
+            test: loop.test,
+            Then: explodedBody.stmts,
+            Else: explodedRest.stmts,
+          },
+        ];
+    const newLabeledStmt: PcalLabeledStmt = {
       ...createPcalBase(),
       kind: "LabeledStmt",
-      col: ls.col,
-      line: ls.line,
-      label: ls.label,
-      stmts: [],
+      col: labeledStmt.col,
+      line: labeledStmt.line,
+      label: labeledStmt.label,
+      stmts: [...(omitPC ? [] : [checkPC(labeledStmt.label)]), ...loopStmts],
     };
-    if (!omitPC) newLs.stmts.push(checkPC(ls.label));
-    const unlabDoNext = loop.labDo.length === 0 ? ls.label : loop.labDo[0].label;
-    const explodedBody = copyAndExplodeLastStmtWithGoto([...loop.unlabDo], unlabDoNext);
-    const explodedRest = copyAndExplodeLastStmtWithGoto(ls.stmts.slice(1), next);
-    if (isTrue(loop.test)) newLs.stmts.push(...explodedBody.stmts);
-    else {
-      newLs.stmts.push({
-        ...createPcalBase(),
-        kind: "If",
-        test: loop.test,
-        Then: explodedBody.stmts,
-        Else: explodedRest.stmts,
-      });
-    }
-    const result = [newLs, ...explodeLabeledStmtSeq(loop.labDo, ls.label)];
-    result.push(...explodedBody.labeledStmts);
-    if (!isTrue(loop.test)) result.push(...explodedRest.labeledStmts);
-    return result;
+    return [
+      newLabeledStmt,
+      ...explodeLabeledStmtSeq(loop.labDo, labeledStmt.label),
+      ...explodedBody.labeledStmts,
+      ...(isForever ? [] : explodedRest.labeledStmts),
+    ];
   };
 
   const explodeLabelIf = (stmt: PcalLabelIf, next: string) => {
@@ -1235,8 +1206,9 @@ const checkPcalTlaGen = (xast: PcalAlgorithm, omitPC: boolean) => {
     });
 
   xast.prcds.forEach((procedure) => genBody(procedure.body));
-  if (xast.kind === "Uniprocess") genBody(xast.body);
-  else xast.procs.forEach((process) => genBody(process.body));
+  (xast.kind === "Uniprocess" ? [xast.body] : xast.procs.map((process) => process.body)).forEach(
+    genBody,
+  );
 };
 
 // PCalTLAGenerator.removeNameConflicts followed by translate, for what they do to the AST and the

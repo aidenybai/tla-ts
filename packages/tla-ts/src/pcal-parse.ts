@@ -1,15 +1,17 @@
 import { PcalError, PcalRuntimeError, PcalBugError } from "./errors";
 import {
   clonePcalExpr,
+  createNormalizedPcalExpr,
   createPcalBase,
   getElement,
   getPcalLocation,
   getPcalTokenAt,
+  getSubstitutedPcalExpr,
+  isOneTokenPcalExpr,
   normalizePcalExpr,
   PCAL_TOKEN,
   prependPcalExpr,
   stepPcalCoord,
-  substitutePcalExpr,
   substitutePcalExprs,
   type PcalAlgorithm,
   type PcalAssign,
@@ -37,7 +39,6 @@ import {
   createPcalTokenizerState,
   getPcalAlgorithmToken,
   peekPcalReader,
-  tokenizePcalDefineBlock,
   tokenizePcalExpr,
   type PcalCharReader,
   type PcalTokenizerState,
@@ -94,7 +95,7 @@ interface PcalParserState {
   omitStutteringWhenDone: boolean;
 }
 
-export interface PcalParseResult {
+interface PcalParseResult {
   ast: PcalAlgorithm;
   omitPC: boolean;
   omitStutteringWhenDone: boolean;
@@ -102,11 +103,8 @@ export interface PcalParseResult {
 }
 
 // PcalParams.DefaultVarInit: the value of a variable declared without one.
-const createDefaultVarInit = () => {
-  const expr = createPcalExpr([[createPcalToken("defaultInitValue", 0, 0)]]);
-  normalizePcalExpr(expr);
-  return expr;
-};
+const createDefaultVarInit = () =>
+  createNormalizedPcalExpr([[createPcalToken("defaultInitValue", 0, 0)]]);
 
 // ParseAlgorithm.Union.
 const getUnion = (first: string[], second: string[]) => [
@@ -216,9 +214,7 @@ export const parsePcalAlgorithm = (
     if (state.lookaheadSize !== 0) {
       throw new PcalBugError("ParseAlgorithm: GetExpr called after lookahead");
     }
-    const result = isDefineBlock
-      ? tokenizePcalDefineBlock(session.tokenizer, reader)
-      : tokenizePcalExpr(session.tokenizer, reader);
+    const result = tokenizePcalExpr(session.tokenizer, reader, isDefineBlock);
     lookahead.tokens[0] = session.tokenizer.delimiter;
     lookahead.columns[0] = session.tokenizer.delimiterCol;
     lookahead.lines[0] = session.tokenizer.delimiterLine;
@@ -368,15 +364,7 @@ export const parsePcalAlgorithm = (
     const isEnd = (token: string) =>
       (state.pSyntax && ["end", "else", "elsif", "or"].includes(token)) ||
       (state.cSyntax && token === "}");
-    while (!isEnd(peekAtAlgToken(1))) {
-      const label = getLabel();
-      if (state.cSyntax && peekAtAlgToken(1) === "{") result.push(...getCStmtSeq(label));
-      else {
-        const stmt = getStmt();
-        stmt.lbl = label;
-        result.push(stmt);
-      }
-    }
+    while (!isEnd(peekAtAlgToken(1))) result.push(...getCStmt());
     if (state.cSyntax && result.length === 0) parsingError("Empty statement list");
     return result;
   };
@@ -395,7 +383,7 @@ export const parsePcalAlgorithm = (
 
   const getCStmt = () => {
     const label = getLabel();
-    if (peekAtAlgToken(1) === "{") return getCStmtSeq(label);
+    if (state.cSyntax && peekAtAlgToken(1) === "{") return getCStmtSeq(label);
     const stmt = getStmt();
     stmt.lbl = label;
     return [stmt];
@@ -417,23 +405,20 @@ export const parsePcalAlgorithm = (
       gobbleThis(";");
       return { ...createPcalBase(), kind: "When", col, line, exp };
     }
-    if (next === "print") {
-      mustGobbleThis("print");
+    if (next === "print" || next === "assert") {
+      mustGobbleThis(next);
       const col = lastToken.column;
       const line = lastToken.line;
       const exp = getExpr();
-      if (exp.tokens.length === 0) parsingError("Empty expression in print statement at ");
+      if (exp.tokens.length === 0) parsingError(`Empty expression in ${next} statement at `);
       gobbleThis(";");
-      return { ...createPcalBase(), kind: "PrintS", col, line, exp };
-    }
-    if (next === "assert") {
-      mustGobbleThis("assert");
-      const col = lastToken.column;
-      const line = lastToken.line;
-      const exp = getExpr();
-      if (exp.tokens.length === 0) parsingError("Empty expression in assert statement at ");
-      gobbleThis(";");
-      return { ...createPcalBase(), kind: "Assert", col, line, exp };
+      return {
+        ...createPcalBase(),
+        kind: next === "print" ? "PrintS" : "Assert",
+        col,
+        line,
+        exp,
+      };
     }
     if (next === "skip") {
       mustGobbleThis("skip");
@@ -640,6 +625,23 @@ export const parsePcalAlgorithm = (
     return result;
   };
 
+  // The arguments of a call or macro call, through its ")" and ";".
+  const getCallArgs = () => {
+    const args: PcalExpr[] = [];
+    if (peekPastAlgToken(0)[0] !== ")") {
+      for (;;) {
+        const arg = getExpr();
+        args.push(arg);
+        if (arg.tokens.length === 0) parsingError("Empty argument in call statement at ");
+        if (peekAtAlgToken(1) === ")") break;
+        gobbleThis(",");
+      }
+    }
+    gobbleThis(")");
+    gobbleThis(";");
+    return args;
+  };
+
   const getCall = (): PcalCall => {
     mustGobbleThis("call");
     const result: PcalCall = {
@@ -652,16 +654,7 @@ export const parsePcalAlgorithm = (
       args: [],
     };
     gobbleThis("(");
-    const hasMoreArgs = { value: peekPastAlgToken(0)[0] !== ")" };
-    while (hasMoreArgs.value) {
-      const arg = getExpr();
-      result.args.push(arg);
-      if (arg.tokens.length === 0) parsingError("Empty argument in call statement at ");
-      if (peekAtAlgToken(1) !== ")") gobbleThis(",");
-      else hasMoreArgs.value = false;
-    }
-    gobbleThis(")");
-    gobbleThis(";");
+    result.args = getCallArgs();
     if (!state.proceduresCalled.includes(result.to)) state.proceduresCalled.push(result.to);
     return result;
   };
@@ -708,16 +701,7 @@ export const parsePcalAlgorithm = (
     result.col = lastToken.column;
     result.line = lastToken.line;
     mustGobbleThis("(");
-    const hasMoreArgs = { value: peekPastAlgToken(0)[0] !== ")" };
-    while (hasMoreArgs.value) {
-      const arg = getExpr();
-      result.args.push(arg);
-      if (arg.tokens.length === 0) parsingError("Empty argument in call statement at ");
-      if (peekAtAlgToken(1) !== ")") gobbleThis(",");
-      else hasMoreArgs.value = false;
-    }
-    gobbleThis(")");
-    gobbleThis(";");
+    result.args = getCallArgs();
     return result;
   };
 
@@ -957,10 +941,6 @@ export const parsePcalAlgorithm = (
     return progress.hasLabel || progress.isNextLabeled;
   };
 
-  const addLabelsToStmtSeq = (stmts: PcalStmt[]) => {
-    addLabels(stmts, true, false, [], []);
-  };
-
   // ParseAlgorithm.FixStmtSeq: splits each compound statement's sequences into the statements
   // before their first label and the labeled statements from it on.
   const fixStmtSeq = (stmts: PcalStmt[]) => {
@@ -1115,8 +1095,9 @@ export const parsePcalAlgorithm = (
     return 0;
   };
 
-  // ParseAlgorithm.MakeLabeledStmtSeq.
+  // ParseAlgorithm.AddLabelsToStmtSeq followed by MakeLabeledStmtSeq.
   const makeLabeledStmtSeq = (stmts: PcalStmt[]) => {
+    addLabels(stmts, true, false, [], []);
     const result = makeLabeledStmts(stmts);
     result.forEach((stmt) => classifyStmtSeq(stmt.stmts));
     return result;
@@ -1131,11 +1112,7 @@ export const parsePcalAlgorithm = (
     macroLine: number,
     macroCol: number,
   ): PcalStmt => {
-    const substitute = (expr: PcalExpr) => {
-      const result = clonePcalExpr(expr);
-      substitutePcalExpr(result, args, names);
-      return result;
-    };
+    const substitute = (expr: PcalExpr) => getSubstitutedPcalExpr(expr, args, names);
     const substituteAll = (stmts: PcalStmt[]) =>
       stmts.map((inner) => substituteInStmt(inner, args, names, macroLine, macroCol));
     const substituteLabeled = (stmts: PcalLabeledStmt[]) =>
@@ -1265,18 +1242,16 @@ export const parsePcalAlgorithm = (
     macroLine: number,
     macroCol: number,
   ): PcalSingleAssign => {
-    const rhs = clonePcalExpr(assign.rhs);
-    substitutePcalExpr(rhs, args, names);
+    const rhs = getSubstitutedPcalExpr(assign.rhs, args, names);
     const lhs: PcalLhs = {
       ...createPcalBase(),
       kind: "Lhs",
       var: assign.lhs.var,
-      sub: assign.lhs.sub,
+      sub:
+        assign.lhs.sub.tokens.length === 0
+          ? assign.lhs.sub
+          : getSubstitutedPcalExpr(assign.lhs.sub, args, names),
     };
-    if (assign.lhs.sub.tokens.length !== 0) {
-      lhs.sub = clonePcalExpr(assign.lhs.sub);
-      substitutePcalExpr(lhs.sub, args, names);
-    }
     const result: PcalSingleAssign = {
       ...createPcalBase(),
       kind: "SingleAssign",
@@ -1371,8 +1346,7 @@ export const parsePcalAlgorithm = (
     if (labeled.stmts.length === 0) return;
     const whileStmt = labeled.stmts[0];
     if (labeled.stmts.length > 1 || whileStmt.kind !== "While") return clear();
-    const tokens = whileStmt.test.tokens;
-    if (tokens.length !== 1 || tokens[0].length !== 1 || tokens[0][0].string !== "TRUE") {
+    if (!isOneTokenPcalExpr(whileStmt.test) || whileStmt.test.tokens[0][0].string !== "TRUE") {
       return clear();
     }
     if (whileStmt.labDo.length > 0) state.omitPC = false;
@@ -1406,6 +1380,13 @@ export const parsePcalAlgorithm = (
       session.log(`  ${label} at ${state.addedLabelsLocs[index]}`),
     );
   };
+
+  const fixProcedures = (macros: PcalMacro[]) =>
+    state.procedures.forEach((procedure) => {
+      state.currentProcedure = procedure.name;
+      expandMacrosInStmtSeq(procedure.body, macros);
+      procedure.body = makeLabeledStmtSeq(procedure.body);
+    });
 
   const parse = (): PcalAlgorithm => {
     if (isFairAlgorithm) {
@@ -1456,19 +1437,13 @@ export const parsePcalAlgorithm = (
       checkForDuplicateMacros(macros);
       const omitsStutteringWhenDone = procs.map((proc) => {
         expandMacrosInStmtSeq(proc.body, macros);
-        addLabelsToStmtSeq(proc.body);
         proc.body = makeLabeledStmtSeq(proc.body);
         state.omitStutteringWhenDone = true;
         checkBody(proc.body);
         return state.omitStutteringWhenDone;
       });
       state.omitStutteringWhenDone = omitsStutteringWhenDone.includes(true);
-      state.procedures.forEach((procedure) => {
-        state.currentProcedure = procedure.name;
-        expandMacrosInStmtSeq(procedure.body, macros);
-        addLabelsToStmtSeq(procedure.body);
-        procedure.body = makeLabeledStmtSeq(procedure.body);
-      });
+      fixProcedures(macros);
       if (state.addedLabels.length > 0) {
         if (!params.labelFlag) throwAddedLabels();
         reportLabels();
@@ -1504,16 +1479,10 @@ export const parsePcalAlgorithm = (
     const body = getStmtSeq();
     checkForDuplicateMacros(macros);
     expandMacrosInStmtSeq(body, macros);
-    state.procedures.forEach((procedure) => {
-      state.currentProcedure = procedure.name;
-      expandMacrosInStmtSeq(procedure.body, macros);
-      addLabelsToStmtSeq(procedure.body);
-      procedure.body = makeLabeledStmtSeq(procedure.body);
-    });
+    fixProcedures(macros);
     // The first brace ends the body that gobbleBeginOrLeftBrace began.
     if (state.cSyntax) gobbleThis("}");
     gobbleEndOrRightBrace("algorithm");
-    addLabelsToStmtSeq(body);
     const labeledBody = makeLabeledStmtSeq(body);
     if (state.addedLabels.length > 0) {
       if (state.hasLabel && !params.labelFlag) throwAddedLabels();

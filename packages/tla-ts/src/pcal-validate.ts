@@ -12,7 +12,7 @@ import { translatePcalAlgorithm } from "./pcal-translate";
 import type { TlcVersion } from "./tlc-version";
 
 // Validator.ValidationResult.
-export type PcalValidationResult =
+type PcalValidationResult =
   | "NO_PLUSCAL_EXISTS"
   | "NO_TRANSLATION_EXISTS"
   | "NO_PCAL_CHECKSUMS_EXIST"
@@ -34,14 +34,17 @@ const CHECKSUM_PATTERN = new RegExp(
 const getChecksum = (text: string) =>
   process.getBuiltinModule("node:zlib").crc32(Buffer.from(text, "utf8")).toString(16);
 
+const reportUnrecoverableError = (session: PcalSession, message: string) =>
+  session.log(`\nUnrecoverable error:\n -- ${message}.\n`);
+
 // PcalDebug.reportError: an UnrecoverablePositionedException names its statement's position.
-export const reportPcalError = (session: PcalSession, error: PcalError) => {
-  const message =
+const reportPcalError = (session: PcalSession, error: PcalError) =>
+  reportUnrecoverableError(
+    session,
     error.node === undefined || error.node.line === 0
       ? error.message
-      : `${error.message}\n    at ${getPcalLocation(error.node)}`;
-  session.log(`\nUnrecoverable error:\n -- ${message}.\n`);
-};
+      : `${error.message}\n    at ${getPcalLocation(error.node)}`,
+  );
 
 // trans.removeTabs: tabs reach the next multiple of 8, and every line gets a trailing space.
 const removeTabs = (lines: string[]) =>
@@ -113,7 +116,7 @@ const findToken = (lines: string[], location: PcalSearchLocation, token: string)
 
 // trans.CommandLineError.
 const reportCommandLineError = (session: PcalSession, message: string) =>
-  session.log(`\nUnrecoverable error:\n -- Command-line error: ${message}.\n`);
+  reportUnrecoverableError(session, `Command-line error: ${message}`);
 
 // trans.parseAndProcessArguments for the options of a "PlusCal options" statement, which set the
 // translator's options for the rest of SANY's run.
@@ -141,11 +144,11 @@ const processOptionArguments = (session: PcalSession, args: string[]) => {
       case "-myspec":
       case "myspec": {
         const isMyspec = option.endsWith("myspec");
-        if (isMyspec) params.myspecOption = true;
-        else params.specOption = true;
+        params[isMyspec ? "myspecOption" : "specOption"] = true;
         if (params.specOption && params.myspecOption) {
-          session.log(
-            "\nUnrecoverable error:\n -- Command-line error: \nCan have at most one of the options -spec, -myspec, -spec2, -myspec2, writeAST.\n",
+          reportCommandLineError(
+            session,
+            "\nCan have at most one of the options -spec, -myspec, -spec2, -myspec2, writeAST",
           );
           return;
         }
@@ -214,10 +217,11 @@ const processOptionArguments = (session: PcalSession, args: string[]) => {
         // PcalParams.ProcessVersion.
         const version = getPcalVersionNumber(argument);
         if (version < 0 || version > PCAL_VERSION_WEIGHT) {
-          session.log(
+          reportUnrecoverableError(
+            session,
             version < 0
-              ? `\nUnrecoverable error:\n -- Illegal version ${argument} specified..\n`
-              : `\nUnrecoverable error:\n -- Specified version ${argument} later than current version 1.12.\n`,
+              ? `Illegal version ${argument} specified.`
+              : `Specified version ${argument} later than current version 1.12`,
           );
           reportCommandLineError(session, "Bad version number");
           return;
@@ -256,7 +260,7 @@ const processOptions = (session: PcalSession, lines: string[], location: PcalSea
   location.column += "options".length;
   const afterOptions = gotoNextNonSpace(lines, location);
   if (!afterOptions.slice(location.column).startsWith("(")) {
-    session.log("\nUnrecoverable error:\n -- `PlusCal options' not followed by '('.\n");
+    reportUnrecoverableError(session, "`PlusCal options' not followed by '('");
     return;
   }
   location.column += 1;
@@ -273,7 +277,7 @@ const processOptions = (session: PcalSession, lines: string[], location: PcalSea
     location.column = end;
   }
   if (location.line >= lines.length) {
-    session.log("\nUnrecoverable error:\n -- No closing ')' found in options statement.\n");
+    reportUnrecoverableError(session, "No closing ')' found in options statement");
     return;
   }
   processOptionArguments(session, args);
