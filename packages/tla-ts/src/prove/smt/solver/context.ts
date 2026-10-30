@@ -167,7 +167,7 @@ export class Context extends Internalizer {
         for (let position = 2; position < literals.length; position++) {
           const candidate = literals[position];
           if (this.assignment[candidate] !== L_FALSE) {
-            (this.watches[negate(candidate)] ??= []).push(clause);
+            this.addWatch(negate(candidate), clause);
             literals[1] = candidate;
             literals[position] = notLiteral;
             if (clause.atoms !== null) {

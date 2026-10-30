@@ -850,7 +850,15 @@ export abstract class Internalizer {
   }
 
   protected addWatchLiteral(clause: Clause, index: number) {
-    (this.watches[negate(clause.literals[index])] ??= []).push(clause);
+    this.addWatch(negate(clause.literals[index]), clause);
+  }
+
+  // A literal's first watch gets a list of its own size, since growing an empty list allocates room
+  // for many.
+  protected addWatch(literal: Literal, clause: Clause) {
+    const list = this.watches[literal];
+    if (list === undefined) this.watches[literal] = [clause];
+    else list.push(clause);
   }
 
   protected removeWatchLiteral(clause: Clause, index: number) {
@@ -901,7 +909,7 @@ export abstract class Internalizer {
       const removed: Literal[] = [];
       if (!this.simplifyAuxClauseLiterals(literals, removed)) return null;
       if (removed.length > 0)
-        justification = new UnitResolutionJustification(justification, removed);
+        justification = new UnitResolutionJustification(justification, [...removed]);
     }
     if (literals.length === 0) {
       this.setConflict(justification ?? "axiom", null);
