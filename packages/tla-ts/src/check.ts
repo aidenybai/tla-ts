@@ -276,8 +276,11 @@ const getInvariants = (names: string[], environment: Environment) => {
         levels.params.size === 0
           ? ""
           : "\nNote that a bug can cause TLC to incorrectly report this error.\nIf you believe your TLA+ or PlusCal specification to be correct,\nplease check if this bug described in LevelNode.java starting at line 590ff affects you.";
-      throw new TlaConfigError(
-        `The invariant ${name} is not a state predicate (one with no primes or temporal operators).${note}`,
+      throw setExitCode(
+        new TlaConfigError(
+          `The invariant ${name} is not a state predicate (one with no primes or temporal operators).${note}`,
+        ),
+        EXIT_STATUS.safetyEvaluationFailure,
       );
     }
     return [{ name, expression: createIdentifier(name), scope: undefined }];
