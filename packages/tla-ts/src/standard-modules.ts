@@ -40,6 +40,7 @@ import {
   isEnumerable,
   isFiniteSet,
   isFunctionValue,
+  isReducible,
   isSetValue,
   toFiniteSet,
   unionSorted,
@@ -47,7 +48,7 @@ import {
   createEnumeratedSet,
   EMPTY_SET,
   isEnumeratedSet,
-  type IntervalValue,
+  type ReducibleSet,
   type MixedSetValue,
   type SetOperationValue,
   type SetValue,
@@ -74,12 +75,6 @@ const unionInTree = (sets: SetValue[], start: number, end: number): SetValue => 
 };
 
 const SET_OPERATORS: SetOperationValue["operator"][] = ["\\cup", "\\cap", "\\"];
-
-type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
-
-const isReducible = (value: Value): value is ReducibleSet =>
-  typeof value === "object" &&
-  (value.kind === "Set" || value.kind === "MixedSet" || value.kind === "Interval");
 
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
 
