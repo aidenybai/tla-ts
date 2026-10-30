@@ -841,6 +841,18 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("reports a SUBSET too large to enumerate like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = SUBSET (SUBSET (1..36))\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+      "Overflow when computing the number of elements in:\nSUBSET (1..36)",
+      75,
+    ]);
+  });
+
   it("reports a CASE with no true guard in the next-state relation like TLC", async () => {
     const result = await check({
       source:

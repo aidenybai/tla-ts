@@ -1224,9 +1224,7 @@ const enumerateSet = (value: Value): Value[] => {
       if (isOverriddenSet(value.base)) getCardinality(value.base);
       const base = toFiniteSet(value.base).elements;
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
-        throw new TlaEvaluationError(
-          `SUBSET of a set with ${base.length} elements is too large to enumerate`,
-        );
+        throw new TlaEvaluationError(describeOverflow(value));
       }
       return getSortedSubsets(base);
     }
