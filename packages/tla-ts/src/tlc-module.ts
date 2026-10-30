@@ -1,4 +1,4 @@
-import { TlaModuleError } from "./errors";
+import { TlaEvaluationError, TlaModuleError } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
 import type { Builtin } from "./evaluate";
 import { prettyPrint } from "./pretty-print";
@@ -48,7 +48,7 @@ const getRuntimeValue = (
   state: (Value | undefined)[] | undefined,
 ) => {
   if (!runtime.isStarted && CHECKER_KEYS.has(key)) {
-    throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
+    throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
   }
   const duration = Math.floor((Date.now() - runtime.startedAt) / 1000);
   switch (key) {
@@ -104,11 +104,11 @@ const getRuntimeValue = (
   }
   if (key.startsWith(NAMED_REGISTER_PREFIX)) {
     const value = getNamedRegisters(runtime).get(key);
-    if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
+    if (value === undefined) throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
     return value;
   }
   if (key.startsWith("-D")) return rankString(runtime.properties.get(key.slice(2)) ?? key);
-  throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
+  throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
 };
 
 const getPermutations = (elements: Value[]): Value[][] =>
@@ -197,11 +197,11 @@ export const createTlcOperators = (
     const key = getValue(args, 0, "TLCGet");
     if (typeof key === "number" && key >= 0) {
       const value = runtime.registers.get(key);
-      if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
+      if (value === undefined) throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
       return value;
     }
     if (typeof key !== "string") {
-      throw new TlaModuleError(
+      throw new TlaEvaluationError(
         `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
       );
     }

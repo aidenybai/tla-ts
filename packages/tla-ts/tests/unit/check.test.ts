@@ -810,6 +810,33 @@ const getFailureSummary = (result: CheckResult) => [
 ];
 
 describe("evaluation errors match TLC", () => {
+  it("reports a failing TLCGet as a failure of its Java method like TLC", async () => {
+    const signature =
+      "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
+    const cases = [
+      ["TLCGet(42)", "TLCGet(42) was undefined."],
+      ['TLCGet("nope")', "TLCGet(nope) was undefined."],
+      [
+        "TLCGet(<<1>>)",
+        "The argument of TLCGet should be a nonnegative integer, but instead it is:\n<<1>>",
+      ],
+    ];
+    const results = await Promise.all(
+      cases.map((item) =>
+        check({
+          source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = ${item[0]}\nNext == UNCHANGED x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ),
+    );
+    expect(results.map((result) => [result.failure?.message, result.failure?.exitCode])).toEqual(
+      cases.map((item) => [
+        `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${item[1]}`,
+        75,
+      ]),
+    );
+  });
+
   it("reports a CASE with no true guard like TLC", async () => {
     const result = await check({
       source:
