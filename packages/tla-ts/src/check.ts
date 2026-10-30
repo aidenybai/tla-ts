@@ -1305,7 +1305,8 @@ const getFailureMessage = (error: TlaEvaluationError, isNextState: boolean) => {
 
 // TLC finishes the -dump file whether or not the search finds a violation.
 export const checkSequentially = (options: CheckOptions): CheckResult => {
-  const stateWriter = options.dump && createStateWriter(options.dump, options.writeFile);
+  const stateWriter =
+    options.dump && createStateWriter(options.dump, options.writeFile, options.version);
   const result = searchStates(options, stateWriter);
   stateWriter?.close();
   return result;
@@ -2170,6 +2171,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     current.isExpanding = false;
     if (outcome.result) return outcome.result;
     const addLiveState = () => {
+      if (liveness && source && options.version === "1.7.4") stateWriter?.writeStuttering(source);
       const accepted = liveness?.addState(index, state, liveSuccessors);
       if (!liveness || !accepted) return undefined;
       const steps = getPathSteps(accepted);

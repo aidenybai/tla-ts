@@ -1,5 +1,7 @@
 // A port of TLC's -dump writers, tlc2.util.StateWriter and tlc2.util.DotStateWriter.
 
+import type { TlcVersion } from "./tlc-version";
+
 export interface StateDump {
   path: string;
   dot?: boolean;
@@ -29,6 +31,8 @@ export interface StateWriter {
     isSeen: boolean,
     action: GraphAction | undefined,
   ) => void;
+  // The stuttering step of a state that TLC 1.7.4 adds to the behavior graph.
+  writeStuttering: (state: GraphState) => void;
   close: () => void;
 }
 
@@ -77,14 +81,23 @@ const createPlainWriter = (dump: StateDump, writeFile: WriteFile): StateWriter =
     writeSuccessor: (_state, successor, isSeen) => {
       if (!isSeen) writeState(successor);
     },
+    // TLC 1.7.4 writes the state again, as it takes the stuttering step for one to a new state.
+    writeStuttering: writeState,
     close: () => writeFile?.(dump.path, states.join("")),
   };
 };
 
-const createDotWriter = (dump: StateDump, writeFile: WriteFile): StateWriter => {
+// TLC 1.7.4 draws its nodes as ellipses, gives them no tooltip, and labels an edge with the name
+// of its action alone.
+const createDotWriter = (
+  dump: StateDump,
+  writeFile: WriteFile,
+  version: TlcVersion | undefined,
+): StateWriter => {
+  const is174 = version === "1.7.4";
   const lines = [
     "strict digraph DiskGraph {\n",
-    "node [shape=box,style=rounded]\n",
+    is174 ? "" : "node [shape=box,style=rounded]\n",
     dump.colorize ? `edge [colorscheme="${COLOR_SCHEME}"]\n` : "",
     "nodesep=0.35;\n",
     "subgraph cluster_graph {\n",
@@ -137,15 +150,22 @@ const createDotWriter = (dump: StateDump, writeFile: WriteFile): StateWriter => 
     },
     writeSuccessor: (state, successor, isSeen, action) => {
       const color = dump.colorize ? String(getColor(action)) : "black";
-      const label = dump.actionLabels && action ? escape(action.signature) : "";
+      const label =
+        dump.actionLabels && action ? escape(is174 ? action.name : action.signature) : "";
       lines.push(
         `${state.fingerprint} -> ${successor.fingerprint} [label="${label}",color="${color}",fontcolor="${color}"];\n`,
       );
       if (!isSeen) {
+        const tooltip = is174 ? "" : `,tooltip="${toDot(successor.getText())}"`;
         lines.push(
-          `${successor.fingerprint} [label="${toDot(successor.getLabel())}",tooltip="${toDot(successor.getText())}"];\n`,
+          `${successor.fingerprint} [label="${toDot(successor.getLabel())}"${tooltip}];\n`,
         );
       }
+      addRank(state);
+      writeSnapshot();
+    },
+    writeStuttering: (state) => {
+      lines.push(`${state.fingerprint} -> ${state.fingerprint} [style="dashed"];\n`);
       addRank(state);
       writeSnapshot();
     },
@@ -153,5 +173,8 @@ const createDotWriter = (dump: StateDump, writeFile: WriteFile): StateWriter => 
   };
 };
 
-export const createStateWriter = (dump: StateDump, writeFile: WriteFile) =>
-  dump.dot ? createDotWriter(dump, writeFile) : createPlainWriter(dump, writeFile);
+export const createStateWriter = (
+  dump: StateDump,
+  writeFile: WriteFile,
+  version: TlcVersion | undefined,
+) => (dump.dot ? createDotWriter(dump, writeFile, version) : createPlainWriter(dump, writeFile));

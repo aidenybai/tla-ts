@@ -1,0 +1,12 @@
+State 1:
+picked = {}
+
+State 2:
+picked = {w1}
+
+State 3:
+picked = {}
+
+State 4:
+picked = {w1}
+

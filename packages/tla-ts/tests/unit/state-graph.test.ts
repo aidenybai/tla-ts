@@ -7,8 +7,8 @@ import { check, type CheckOptions } from "../../src";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
-// TLC 1.8.0 -dump output for each model, recorded with -fp 0 so that its fingerprints match, and
-// with -seed 4 for RandomElementXandY.
+// TLC 1.8.0 -dump output for each model, and TLC 1.7.4's for the files whose names end in 174,
+// recorded with -fp 0 so that its fingerprints match, and with -seed 4 for RandomElementXandY.
 const readTlcDump = (name: string) => readFileSync(join(FIXTURES, "state-graph", name), "utf8");
 
 const dumpFixture = async (
@@ -79,6 +79,19 @@ describe("check dumps the state graph like TLC's -dump", () => {
   it("lists the reachable states without dot", async () => {
     const dump = await dumpFixture("counter", "Counter", { path: "Counter.dump" });
     expect(dump.written.get("Counter.dump")).toBe(readTlcDump("Counter.dump"));
+  });
+
+  it("writes the stuttering steps of a liveness check like TLC 1.7.4, and plain edge labels", async () => {
+    const options = { version: "1.7.4" } as const;
+    const dot = await dumpFixture(
+      "state-graph",
+      "Picks",
+      { path: "Picks174.dot", dot: true, actionLabels: true },
+      options,
+    );
+    expect(dot.written.get("Picks174.dot")).toBe(readTlcDump("Picks174.dot"));
+    const plain = await dumpFixture("state-graph", "Picks", { path: "Picks174.dump" }, options);
+    expect(plain.written.get("Picks174.dump")).toBe(readTlcDump("Picks174.dump"));
   });
 
   it("writes the graph of a single TLC worker when several are asked for", async () => {
