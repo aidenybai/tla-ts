@@ -3,6 +3,7 @@
 // relevancy propagation, the arithmetic theory and quantifier instantiation, with Z3's default
 // parameters for UFNIA.
 import { AstManager, FAMILY_ARITH, KIND_APP, KIND_QUANTIFIER, KIND_VAR } from "./ast";
+import { getCongruenceJustification } from "./cg-table";
 import { BJustification, Clause, CLS_LEARNED } from "./clause";
 import { ConflictResolution } from "./conflict-resolution";
 import {
@@ -13,7 +14,7 @@ import {
   EqRootPropagationJustification,
   MpIffJustification,
 } from "./enode";
-import { Internalizer } from "./internalizer";
+import { Internalizer, UNDO_ADD_EQ, UNDO_LBLS, UNDO_TH_VAR } from "./internalizer";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate } from "./literal";
 import { mkModel } from "./model-generator";
@@ -84,6 +85,7 @@ export class Context extends Internalizer {
   private phaseCounter = 0;
   private finalCheckIndex = 0;
   private r1ParentGenerations = new Map<Enode, number>();
+  private erasedGenerations = new Map<Enode, number>();
   private lastSearchFailure = FAILURE_OK;
 
   constructor(manager: AstManager, params: SmtParams) {
@@ -129,7 +131,7 @@ export class Context extends Internalizer {
       this.qhead++;
       const notLiteral = negate(literal);
       const binary = this.binaryWatches[literal];
-      if (binary.length > 0) {
+      if (binary !== undefined && binary.length > 0) {
         const justification = this.getBinJustification(literal);
         for (let index = binary.length - 1; index >= 0; index--) {
           const other = binary[index];
@@ -142,10 +144,11 @@ export class Context extends Internalizer {
         }
       }
       const list = this.watches[literal];
+      if (list === undefined) continue;
       let kept = 0;
       let index = 0;
       for (; index < list.length; index++) {
-        const clause = list[index];
+        const clause: Clause = list[index];
         const literals = clause.literals;
         if (literals[0] === notLiteral) {
           literals[0] = literals[1];
@@ -166,7 +169,7 @@ export class Context extends Internalizer {
         for (let position = 2; position < literals.length; position++) {
           const candidate = literals[position];
           if (this.assignment[candidate] !== L_FALSE) {
-            this.watches[negate(candidate)].push(clause);
+            this.addWatch(negate(candidate), clause);
             literals[1] = candidate;
             literals[position] = notLiteral;
             if (clause.atoms !== null) {
@@ -341,21 +344,24 @@ export class Context extends Internalizer {
   // Equalities.
 
   private getClosestVar(start: Enode) {
-    for (let node: Enode | undefined = start; node !== undefined; node = node.trans?.target)
+    for (let node: Enode | null = start; node !== null; node = node.transTarget)
       if (node.thVar >= 0) return node.thVar;
     return -1;
   }
 
   private invertTrans(start: Enode) {
-    let trans = start.trans;
+    let current = start.transTarget;
+    let justification = start.transJustification;
     let previous = start;
-    start.trans = null;
-    while (trans !== null) {
-      const current = trans.target;
-      const next = current.trans;
-      current.trans = { target: previous, justification: trans.justification };
+    start.transTarget = null;
+    while (current !== null) {
+      const next = current.transTarget;
+      const nextJustification = current.transJustification;
+      current.transTarget = previous;
+      current.transJustification = justification;
       previous = current;
-      trans = next;
+      current = next;
+      justification = nextJustification;
     }
   }
 
@@ -407,10 +413,9 @@ export class Context extends Internalizer {
     const root = node.root;
     const rootVar = root.thVar;
     node.thVar = thVar;
-    this.trail.push(() => {
-      node.thVar = -1;
-      if (node.root !== node && node.root.thVar === thVar) node.root.thVar = -1;
-    });
+    this.trailInts.push(thVar);
+    this.trailNodes.push(node);
+    this.trailKinds.push(UNDO_TH_VAR);
     if (rootVar < 0) {
       if (root !== node) root.thVar = thVar;
       this.pushNewThDiseqs(root, thVar);
@@ -454,7 +459,8 @@ export class Context extends Internalizer {
     this.qmanager.addEqEh(r1, r2);
     this.mergeTheoryVars(n2, n1, justification);
     this.invertTrans(n1);
-    n1.trans = { target: n2, justification };
+    n1.transTarget = n2;
+    n1.transJustification = justification;
     this.removeParentsFromCgTable(r1);
     let current = r1;
     do {
@@ -462,9 +468,9 @@ export class Context extends Internalizer {
       current = current.next;
     } while (current !== r1);
     this.reinsertParentsIntoCgTable(r1, r2);
-    const finalN1 = n1;
-    const finalR1 = r1;
-    this.trail.push(() => this.undoAddEq(finalR1, finalN1, r2NumParents));
+    this.trailInts.push(r2NumParents);
+    this.trailNodes.push(r1, n1);
+    this.trailKinds.push(UNDO_ADD_EQ);
     if (n2.isBool) this.propagateBoolEnodeAssignment(r1, r2, n1, n2);
     const savedNext = r1.next;
     r1.next = r2.next;
@@ -480,12 +486,9 @@ export class Context extends Internalizer {
       (r2Plbls | r1.plbls) !== r2Plbls ||
       (r2PlblsHigh | r1.plblsHigh) !== r2PlblsHigh
     ) {
-      this.trail.push(() => {
-        r2.lbls = r2Lbls;
-        r2.lblsHigh = r2LblsHigh;
-        r2.plbls = r2Plbls;
-        r2.plblsHigh = r2PlblsHigh;
-      });
+      this.trailInts.push(r2Lbls, r2LblsHigh, r2Plbls, r2PlblsHigh);
+      this.trailNodes.push(r2);
+      this.trailKinds.push(UNDO_LBLS);
       r2.lbls |= r1.lbls;
       r2.lblsHigh |= r1.lblsHigh;
       r2.plbls |= r1.plbls;
@@ -521,27 +524,51 @@ export class Context extends Internalizer {
         }
       }
       if (!parent.isCgcEnabled) {
-        r2.parents.push(parent);
+        r2.addParent(parent);
         continue;
       }
       const parentGeneration = parent.isEq
         ? 0
         : (this.r1ParentGenerations.get(parent) ?? this.getGeneration(parent));
-      const result = this.cgTable.insert(parent);
-      if (result.node === parent) {
+      const congruent = this.cgTable.insert(parent);
+      if (congruent === parent) {
         parent.generation = parentGeneration;
-        r2.parents.push(parent);
+        r2.addParent(parent);
         continue;
       }
-      parent.cg = result.node;
-      this.mergeCgcGenerations(parent, parentGeneration, result.node);
-      if (result.node.root !== parent.root)
-        this.pushEq(parent, result.node, {
-          kind: "congruence",
-          isCommutative: result.isCommutative,
-        });
+      parent.cg = congruent;
+      this.mergeCgcGenerations(parent, parentGeneration, congruent);
+      if (congruent.root !== parent.root)
+        this.pushEq(parent, congruent, getCongruenceJustification(parent, congruent));
     }
     this.r1ParentGenerations.clear();
+  }
+
+  protected override undoTrailEntry(kind: number) {
+    switch (kind) {
+      case UNDO_ADD_EQ: {
+        const n1 = this.popTrailNode();
+        this.undoAddEq(this.popTrailNode(), n1, this.popTrailInt());
+        return;
+      }
+      case UNDO_LBLS: {
+        const node = this.popTrailNode();
+        node.plblsHigh = this.popTrailInt();
+        node.plbls = this.popTrailInt();
+        node.lblsHigh = this.popTrailInt();
+        node.lbls = this.popTrailInt();
+        return;
+      }
+      case UNDO_TH_VAR: {
+        const node = this.popTrailNode();
+        const thVar = this.popTrailInt();
+        node.thVar = -1;
+        if (node.root !== node && node.root.thVar === thVar) node.root.thVar = -1;
+        return;
+      }
+      default:
+        super.undoTrailEntry(kind);
+    }
   }
 
   private undoAddEq(r1: Enode, n1: Enode, r2NumParents: number) {
@@ -550,7 +577,8 @@ export class Context extends Internalizer {
     const savedNext = r1.next;
     r1.next = r2.next;
     r2.next = savedNext;
-    const erasedGenerations = new Map<Enode, number>();
+    const erasedGenerations = this.erasedGenerations;
+    erasedGenerations.clear();
     for (let index = r2NumParents; index < r2.parents.length; index++) {
       const parent = r2.parents[index];
       if (parent.isCgcEnabled) {
@@ -575,12 +603,12 @@ export class Context extends Internalizer {
         if (cached === undefined) continue;
         generation = cached;
       }
-      const result = this.cgTable.insert(parent);
-      parent.cg = result.node;
-      if (result.node === parent) parent.generation = generation;
+      const congruent = this.cgTable.insert(parent);
+      parent.cg = congruent;
+      if (congruent === parent) parent.generation = generation;
     }
     if (r2.thVar >= 0 && this.theory.getEnode(r2.thVar).root !== r2) r2.thVar = -1;
-    n1.trans = null;
+    n1.transTarget = null;
     this.invertTrans(r1);
   }
 
@@ -655,7 +683,7 @@ export class Context extends Internalizer {
   incBvarActivity(boolVar: BoolVar) {
     this.activity[boolVar] += this.bvarInc;
     if (this.activity[boolVar] > ACTIVITY_LIMIT) {
-      for (let index = 0; index < this.activity.length; index++)
+      for (let index = 0; index < this.numBoolVars; index++)
         this.activity[index] *= INV_ACTIVITY_LIMIT;
       this.bvarInc *= INV_ACTIVITY_LIMIT;
     }
@@ -666,7 +694,7 @@ export class Context extends Internalizer {
     this.scopeLevel++;
     this.scopeAssignedLimits.push(this.assignedLiterals.length);
     this.scopeAuxClauseLimits.push(this.auxClauses.length);
-    this.scopeTrailLimits.push(this.trail.length);
+    this.scopeTrailLimits.push(this.trailKinds.length);
     this.relevancy.push();
     this.qmanager.push();
     this.theory.pushScopeEh();
@@ -734,9 +762,7 @@ export class Context extends Internalizer {
     this.deleteClauses(this.auxClauses, this.scopeAuxClauseLimits[newLevel]);
     this.relevancy.pop(numScopes);
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
-    const trailLimit = this.scopeTrailLimits[newLevel];
-    for (let index = this.trail.length - 1; index >= trailLimit; index--) this.trail[index]();
-    this.trail.length = trailLimit;
+    this.popTrail(this.scopeTrailLimits[newLevel]);
     this.theory.popScopeEh(numScopes);
     this.eqPropagationQueue = [];
     this.thEqQueue = [];
@@ -750,7 +776,7 @@ export class Context extends Internalizer {
       this.baseLevel = newLevel;
       this.searchLevel = newLevel;
     }
-    const numBoolVars = this.boolVar2Expr.length;
+    const numBoolVars = this.numBoolVars;
     this.reinitClauses(numScopes, numBoolVars);
     return numBoolVars;
   }

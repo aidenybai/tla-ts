@@ -67,43 +67,66 @@ export class VarSubst {
   }
 }
 
+// A term whose children replaceFreeVars is rebuilding: where its children's results start on the
+// result stack, and the next child to visit.
+interface ReplaceFrame {
+  expr: number;
+  shift: number;
+  start: number;
+  next: number;
+}
+
 // Rebuilds expr with each free variable replaced. replace gets the variable, its de Bruijn index
-// relative to expr, and the number of binders above it.
+// relative to expr, and the number of binders above it. Like Z3's rewriter_tpl, it keeps its own
+// stack, so deep terms do not exhaust the call stack.
 export const replaceFreeVars = (
   manager: AstManager,
   expr: number,
   replace: (variable: number, index: number, shift: number) => number,
 ) => {
   const cache = new Map<number, number>();
-  const visit = (current: number, shift: number): number => {
-    if (manager.freeVarBounds[current] <= shift) return current;
+  const frames: ReplaceFrame[] = [];
+  const results: number[] = [];
+  const visit = (current: number, shift: number) => {
+    if (manager.freeVarBounds[current] <= shift) {
+      results.push(current);
+      return;
+    }
     const key = current * 64 + shift;
     const cached = cache.get(key);
-    if (cached !== undefined) return cached;
-    const kind = manager.kinds[current];
-    let result: number;
-    if (kind === KIND_VAR) result = replace(current, manager.values[current] - shift, shift);
-    else if (kind === KIND_APP)
-      result = manager.mkApp(
-        manager.decls[current],
-        manager.args[current].map((arg) => visit(arg, shift)),
-        manager.sorts[current],
-      );
+    if (cached !== undefined) results.push(cached);
+    else if (manager.kinds[current] !== KIND_VAR)
+      frames.push({ expr: current, shift, start: results.length, next: 0 });
     else {
-      const data = manager.getQuantifier(current);
-      const innerShift = shift + data.sorts.length;
-      result = manager.mkQuantifier({
-        ...data,
-        body: visit(data.body, innerShift),
-        patterns: data.patterns.map((pattern) =>
-          manager.mkPattern(manager.args[pattern].map((innerTerm) => visit(innerTerm, innerShift))),
-        ),
-      });
+      const result = replace(current, manager.values[current] - shift, shift);
+      cache.set(key, result);
+      results.push(result);
     }
-    cache.set(key, result);
-    return result;
   };
-  return visit(expr, 0);
+  visit(expr, 0);
+  while (frames.length > 0) {
+    const frame = frames[frames.length - 1];
+    const current = frame.expr;
+    const data = manager.kinds[current] === KIND_QUANTIFIER ? manager.getQuantifier(current) : null;
+    // A quantifier's children are its body and its patterns, under its binders.
+    const numChildren = data === null ? manager.args[current].length : 1 + data.patterns.length;
+    if (frame.next < numChildren) {
+      const index = frame.next++;
+      if (data === null) visit(manager.args[current][index], frame.shift);
+      else
+        visit(index === 0 ? data.body : data.patterns[index - 1], frame.shift + data.sorts.length);
+      continue;
+    }
+    const children = results.splice(frame.start);
+    const result =
+      data === null
+        ? manager.mkApp(manager.decls[current], children, manager.sorts[current])
+        : manager.mkQuantifier({ ...data, body: children[0], patterns: children.slice(1) });
+    frames.pop();
+    cache.set(current * 64 + frame.shift, result);
+    results.push(result);
+  }
+  return results[0];
 };
 
 // var_shifter: a free variable with index at least bound moves by aboveShift, any other by

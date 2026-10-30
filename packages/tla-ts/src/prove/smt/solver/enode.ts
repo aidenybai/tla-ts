@@ -23,20 +23,26 @@ export type EqJustification =
 
 export const AXIOM_EQ_JUSTIFICATION: EqJustification = { kind: "axiom" };
 
-// trans: the next node on the transitivity branch toward the root of the proof tree, and why the two
-// are equal.
-export interface Trans {
-  target: Enode;
-  justification: EqJustification;
-}
+// The congruence justifications, which carry no data of their own and so are shared.
+export const CONGRUENCE_JUSTIFICATIONS: readonly EqJustification[] = [
+  { kind: "congruence", isCommutative: false },
+  { kind: "congruence", isCommutative: true },
+];
+
+// The arguments of a leaf and the parents of a node without any. Nothing adds to it: addParent gives a
+// node its own list, so that a node with one parent holds one entry instead of V8's sixteen.
+export const NO_ENODES: Enode[] = [];
 
 export class Enode {
   root: Enode = this;
   next: Enode = this;
   cg: Enode = this;
   classSize = 1;
-  parents: Enode[] = [];
-  trans: Trans | null = null;
+  parents: Enode[] = NO_ENODES;
+  // m_trans: the next node on the transitivity branch toward the root of the proof tree, and why the
+  // two are equal.
+  transTarget: Enode | null = null;
+  transJustification: EqJustification = AXIOM_EQ_JUSTIFICATION;
   thVar = -1;
   // The approximate label sets of the class, 64 bits in two words: the low 32 bits, then the high.
   lbls = 0;
@@ -59,6 +65,11 @@ export class Enode {
     readonly isCgcEnabled: boolean,
     readonly iscopeLevel: number,
   ) {}
+
+  addParent(parent: Enode) {
+    if (this.parents.length === 0) this.parents = [parent];
+    else this.parents.push(parent);
+  }
 
   isCgr() {
     return this.cg === this;

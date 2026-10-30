@@ -8,6 +8,16 @@ import type { ProtoModel } from "./proto-model";
 import { FuncInterp } from "./proto-model";
 import { Rewriter } from "./rewriter";
 
+// An expression whose children visit is evaluating: the cache and bindings it is evaluated with,
+// where its children's results start on the result stack, and the next child to visit.
+interface EvalFrame {
+  expr: number;
+  cache: Map<number, number>;
+  bindings: number[];
+  start: number;
+  next: number;
+}
+
 export class ModelEvaluator {
   private rewriter: Rewriter;
   private isModelCompletion = false;
@@ -29,27 +39,69 @@ export class ModelEvaluator {
   }
 
   // Rewrites expr, where the variable (:var i) below the binders stands for bindings[i] when
-  // bindings is not empty, as when a macro is expanded.
-  private visit(expr: number, cache: Map<number, number>, bindings: number[]): number {
-    const cached = cache.get(expr);
-    if (cached !== undefined) return cached;
+  // bindings is not empty, as when a macro is expanded. Like Z3's rewriter_tpl, it keeps its own
+  // stack, so deep terms do not exhaust the call stack.
+  private visit(expr: number, cache: Map<number, number>, bindings: number[]) {
     const manager = this.manager;
-    const kind = manager.kinds[expr];
-    let result = expr;
-    if (kind === KIND_VAR) {
-      const index = manager.values[expr];
-      result = index < bindings.length ? bindings[index] : expr;
-    } else if (kind === KIND_QUANTIFIER) {
-      const data = manager.getQuantifier(expr);
-      result = manager.mkQuantifier({ ...data, body: this.visit(data.body, new Map(), []) });
-    } else if (manager.args[expr].length > 0 || manager.isUninterpreted(expr))
-      result = this.mkApp(
-        manager.decls[expr],
-        manager.args[expr].map((arg) => this.visit(arg, cache, bindings)),
-        manager.sorts[expr],
-      );
-    cache.set(expr, result);
-    return result;
+    const frames: EvalFrame[] = [];
+    const results: number[] = [];
+    const enter = (
+      current: number,
+      currentCache: Map<number, number>,
+      currentBindings: number[],
+    ) => {
+      const cached = currentCache.get(current);
+      if (cached !== undefined) results.push(cached);
+      else if (manager.kinds[current] === KIND_VAR) {
+        const index = manager.values[current];
+        const result = index < currentBindings.length ? currentBindings[index] : current;
+        currentCache.set(current, result);
+        results.push(result);
+      } else if (
+        manager.kinds[current] === KIND_QUANTIFIER ||
+        manager.args[current].length > 0 ||
+        manager.isUninterpreted(current)
+      )
+        frames.push({
+          expr: current,
+          cache: currentCache,
+          bindings: currentBindings,
+          start: results.length,
+          next: 0,
+        });
+      else {
+        currentCache.set(current, current);
+        results.push(current);
+      }
+    };
+    enter(expr, cache, bindings);
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1];
+      const current = frame.expr;
+      // A quantifier's body is evaluated on its own, without the bindings.
+      const children =
+        manager.kinds[current] === KIND_QUANTIFIER
+          ? [manager.getQuantifier(current).body]
+          : manager.args[current];
+      if (frame.next < children.length) {
+        const isBody = manager.kinds[current] === KIND_QUANTIFIER;
+        enter(
+          children[frame.next++],
+          isBody ? new Map() : frame.cache,
+          isBody ? [] : frame.bindings,
+        );
+        continue;
+      }
+      const evaluated = results.splice(frame.start);
+      const result =
+        manager.kinds[current] === KIND_QUANTIFIER
+          ? manager.mkQuantifier({ ...manager.getQuantifier(current), body: evaluated[0] })
+          : this.mkApp(manager.decls[current], evaluated, manager.sorts[current]);
+      frames.pop();
+      frame.cache.set(current, result);
+      results.push(result);
+    }
+    return results[0];
   }
 
   // evaluator_cfg::reduce_app on arguments that are already evaluated.

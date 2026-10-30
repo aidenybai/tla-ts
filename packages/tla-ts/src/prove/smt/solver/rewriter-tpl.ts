@@ -69,8 +69,10 @@ class RewriterCore {
   }
 
   protected shrinkResults(size: number) {
-    const removed = this.resultStack.splice(size);
-    for (const expr of removed) this.manager.decRef(expr);
+    const resultStack = this.resultStack;
+    for (let index = size; index < resultStack.length; index++)
+      this.manager.decRef(resultStack[index]);
+    resultStack.length = size;
   }
 
   protected setNewChildFlag(oldExpr: number, newExpr: number) {

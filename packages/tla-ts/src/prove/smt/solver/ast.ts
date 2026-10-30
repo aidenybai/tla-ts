@@ -193,9 +193,14 @@ export class AstManager {
   ];
   // The hash of each uninterpreted declaration, and of each builtin by its Z3 declaration.
   private declHashes: number[] = [];
-  private builtinHashes = new Map<string, number>();
+  private builtinHashes = new Map<string | number, number>();
   private table = new Map<string, number>();
-  private appTable = new Map<number, number[]>();
+  // The hash-consing table of applications: open addressing with linear probing over the handles,
+  // -1 for an empty slot, which takes a few bytes per application where a map of buckets takes
+  // dozens. Applications stay in it when they are deleted, so a lookup can create them again.
+  private appHandles = new Int32Array(1024).fill(-1);
+  private appHashes = new Int32Array(1024);
+  private numApps = 0;
   // The small id of the next sort or declaration. Z3 makes declarations of its own as it goes, which
   // the manager does not follow, so only the declarations of a problem's prelude match Z3's.
   private nextSmallId = FIRST_DECLARED_SMALL_ID;
@@ -361,11 +366,17 @@ export class AstManager {
     return { name: builtin[0], kind: builtin[1], domain };
   }
 
+  // The domain of a builtin other than pattern depends only on the sort of an argument and the
+  // number of arguments, which key the cache without a string.
   private getBuiltinHash(op: number, args: number[], range: number) {
-    const signature = this.getBuiltinSignature(op, args);
-    const key = `${op}:${signature.domain.join(",")}:${range}`;
+    const argSort = (op === OP_ITE ? this.sorts[args[1]] : this.sorts[args[0]]) ?? 0;
+    const key =
+      op === OP_PATTERN
+        ? `${args.map((arg) => this.sorts[arg]).join(",")}:${range}`
+        : op + 32 * (argSort + 65536 * (range + 65536 * args.length));
     const existing = this.builtinHashes.get(key);
     if (existing !== undefined) return existing;
+    const signature = this.getBuiltinSignature(op, args);
     const family =
       op === OP_PATTERN ? Z3_PATTERN_FAMILY : op < OP_NUM ? Z3_BASIC_FAMILY : Z3_ARITH_FAMILY;
     const hash = this.getFuncDeclHash(
@@ -467,17 +478,17 @@ export class AstManager {
     let hash = decl;
     for (let index = 0; index < args.length; index++)
       hash = (Math.imul(hash, 0x9e3779b1) + args[index]) | 0;
-    const bucket = this.appTable.get(hash);
-    if (bucket !== undefined)
-      for (const candidate of bucket) {
-        if (this.decls[candidate] !== decl || this.kinds[candidate] !== KIND_APP) continue;
-        const candidateArgs = this.args[candidate];
-        if (candidateArgs.length !== args.length) continue;
-        let isSame = true;
-        for (let index = 0; index < args.length && isSame; index++)
-          isSame = candidateArgs[index] === args[index];
-        if (isSame) return this.revive(candidate);
-      }
+    const mask = this.appHandles.length - 1;
+    for (let slot = hash & mask; this.appHandles[slot] !== -1; slot = (slot + 1) & mask) {
+      const candidate = this.appHandles[slot];
+      if (this.appHashes[slot] !== hash || this.decls[candidate] !== decl) continue;
+      const candidateArgs = this.args[candidate];
+      if (candidateArgs.length !== args.length) continue;
+      let isSame = true;
+      for (let index = 0; index < args.length && isSame; index++)
+        isSame = candidateArgs[index] === args[index];
+      if (isSame) return this.revive(candidate);
+    }
     const declHash =
       this.funcDecls[decl].family === FAMILY_USER
         ? this.declHashes[decl]
@@ -493,10 +504,27 @@ export class AstManager {
         declHash,
       ),
     );
-    if (bucket === undefined) this.appTable.set(hash, [id]);
-    else bucket.push(id);
+    this.insertApp(hash, id);
     this.registerNode(id);
     return id;
+  }
+
+  private insertApp(hash: number, id: number) {
+    if (2 * (this.numApps + 1) > this.appHandles.length) {
+      const handles = this.appHandles;
+      const hashes = this.appHashes;
+      this.appHandles = new Int32Array(2 * handles.length).fill(-1);
+      this.appHashes = new Int32Array(2 * handles.length);
+      this.numApps = 0;
+      for (let slot = 0; slot < handles.length; slot++)
+        if (handles[slot] !== -1) this.insertApp(hashes[slot], handles[slot]);
+    }
+    const mask = this.appHandles.length - 1;
+    let slot = hash & mask;
+    while (this.appHandles[slot] !== -1) slot = (slot + 1) & mask;
+    this.appHandles[slot] = id;
+    this.appHashes[slot] = hash;
+    this.numApps++;
   }
 
   // A real numeral, which Z3's theory_lra creates for its constants 0 and 1. tla-ts has no real sort,
@@ -725,17 +753,23 @@ export class AstManager {
     return this.someSubterm(expr, (current) => this.isModelValue(current));
   }
 
+  // for_each_expr: visits the subterms with a stack of its own, so deep terms do not exhaust the call
+  // stack.
   private someSubterm(expr: number, predicate: (expr: number) => boolean) {
     const visited = new Set<number>();
-    const visit = (current: number): boolean => {
-      if (visited.has(current)) return false;
+    const todo = [expr];
+    while (todo.length > 0) {
+      const current = todo.pop() as number;
+      if (visited.has(current)) continue;
       visited.add(current);
       const kind = this.kinds[current];
-      if (kind === KIND_VAR) return false;
-      if (kind === KIND_QUANTIFIER) return visit(this.getQuantifier(current).body);
-      return predicate(current) || this.args[current].some((arg) => visit(arg));
-    };
-    return visit(expr);
+      if (kind === KIND_QUANTIFIER) todo.push(this.getQuantifier(current).body);
+      else if (kind !== KIND_VAR) {
+        if (predicate(current)) return true;
+        todo.push(...this.args[current]);
+      }
+    }
+    return false;
   }
 
   mkNot(expr: number) {

@@ -345,7 +345,9 @@ export const parseSmtlib = (
     return mkApp(decl, args, manager.funcDecls[decl].range);
   };
 
-  const parseTerm = (sexpr: SExpr): number => {
+  // A term without nested applications to parse first: a symbol, a quantifier, a let or an
+  // annotation.
+  const parseLeaf = (sexpr: SExpr): number => {
     if (typeof sexpr === "string") {
       if (/^[0-9]+$/.test(sexpr)) return manager.mkNumeral(Number(sexpr));
       if (sexpr === "true") return manager.trueExpr;
@@ -360,13 +362,41 @@ export const parseSmtlib = (
     const head = sexpr[0];
     if (head === "forall" || head === "exists") return parseQuantifier(sexpr, head === "forall");
     if (head === "let") return parseLet(sexpr);
-    if (head === "!") {
-      const named = parseTerm(sexpr[1]);
-      // name_expr: cmd_context keeps a named expression as a macro.
-      if (sexpr.includes(":named")) manager.incRef(named);
-      return named;
+    const named = parseTerm(sexpr[1]);
+    // name_expr: cmd_context keeps a named expression as a macro.
+    if (sexpr.includes(":named")) manager.incRef(named);
+    return named;
+  };
+
+  // Applications keep their own stack, like Z3's parser, so deeply nested terms do not exhaust the
+  // call stack. Each frame has an application's name, its list, where its arguments start on the
+  // result stack, and its next argument.
+  const parseTerm = (sexpr: SExpr): number => {
+    const frames: { name: string; list: SExpr[]; start: number; next: number }[] = [];
+    const results: number[] = [];
+    const enter = (current: SExpr) => {
+      const head = Array.isArray(current) ? current[0] : undefined;
+      if (
+        !Array.isArray(current) ||
+        head === "forall" ||
+        head === "exists" ||
+        head === "let" ||
+        head === "!"
+      )
+        results.push(parseLeaf(current));
+      else frames.push({ name: expectSymbol(head), list: current, start: results.length, next: 1 });
+    };
+    enter(sexpr);
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1];
+      if (frame.next < frame.list.length) {
+        enter(frame.list[frame.next++]);
+        continue;
+      }
+      frames.pop();
+      results.push(parseApp(frame.name, results.splice(frame.start)));
     }
-    return parseApp(expectSymbol(head), sexpr.slice(1).map(parseTerm));
+    return results[0];
   };
 
   let hasCheckSat = false;

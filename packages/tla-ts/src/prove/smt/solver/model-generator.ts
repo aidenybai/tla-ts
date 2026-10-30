@@ -21,12 +21,14 @@ export const mkModel = (context: Context): GeneratedModel => {
     if (node.root === node && context.isRelevant(node.owner) && manager.isModelValue(node.owner))
       model.registerValue(node.owner);
   // mk_bool_model.
-  for (const expr of context.boolVar2Expr)
+  for (let boolVar = 0; boolVar < context.numBoolVars; boolVar++) {
+    const expr = context.boolVar2Expr[boolVar];
     if (manager.isUninterpretedConst(expr) && context.isRelevant(expr))
       model.registerConst(
         manager.decls[expr],
         context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr,
       );
+  }
   // mk_values: the values of the integer classes that the theory does not know are fresh, so they
   // come after all the other values.
   const root2value = new Map<Enode, number>();

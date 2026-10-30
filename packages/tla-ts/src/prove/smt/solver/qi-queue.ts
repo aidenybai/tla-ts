@@ -19,11 +19,23 @@ interface Entry {
   isInstantiated: boolean;
 }
 
+// A copy of the array with room for the index, at least twice as long.
+const grow = (array: Int32Array, index: number) => {
+  const grown = new Int32Array(Math.max(2 * array.length, index + 1));
+  grown.set(array);
+  return grown;
+};
+
 // smt::checker: evaluates a quantifier body under bindings with the E-graph and the assignment.
 class Checker {
   private bindings: Enode[] = [];
-  private checkCache = new Map<number, boolean>();
-  private enodeCache = new Map<number, Enode | null>();
+  // The caches of a run, by expression, which hold an entry for the run whose stamp it has. So a run
+  // starts with them empty without clearing them.
+  private stamp = 0;
+  private checkStamps = new Int32Array(1024);
+  private checkResults = new Int32Array(1024);
+  private enodeStamps = new Int32Array(1024);
+  private enodeResults: (Enode | null)[] = [];
 
   constructor(private context: Context) {}
 
@@ -37,17 +49,20 @@ class Checker {
 
   private run(body: number, bindings: Enode[], isTrue: boolean) {
     this.bindings = bindings;
-    this.checkCache.clear();
-    this.enodeCache.clear();
+    this.stamp++;
     return this.check(body, 0, isTrue);
   }
 
   private check(expr: number, depth: number, isTrue: boolean): boolean {
     const key = expr * 2 + (isTrue ? 1 : 0);
-    const cached = this.checkCache.get(key);
-    if (cached !== undefined) return cached;
+    if (key >= this.checkStamps.length) {
+      this.checkStamps = grow(this.checkStamps, key);
+      this.checkResults = grow(this.checkResults, key);
+    }
+    if (this.checkStamps[key] === this.stamp) return this.checkResults[key] === 1;
     const result = this.checkCore(expr, depth, isTrue);
-    this.checkCache.set(key, result);
+    this.checkStamps[key] = this.stamp;
+    this.checkResults[key] = result ? 1 : 0;
     return result;
   }
 
@@ -133,20 +148,22 @@ class Checker {
     const existing = context.getEnode(expr);
     if (existing !== undefined && context.isRelevant(expr)) return existing;
     if (manager.kinds[expr] !== KIND_APP || manager.args[expr].length === 0) return null;
-    const cached = this.enodeCache.get(expr);
-    if (cached !== undefined) return cached;
+    if (expr >= this.enodeStamps.length) this.enodeStamps = grow(this.enodeStamps, expr);
+    if (this.enodeStamps[expr] === this.stamp) return this.enodeResults[expr];
     const argNodes: Enode[] = [];
     for (const arg of manager.args[expr]) {
       const node = this.getEnodeEqTo(arg);
       if (node === null) {
-        this.enodeCache.set(expr, null);
+        this.enodeStamps[expr] = this.stamp;
+        this.enodeResults[expr] = null;
         return null;
       }
       argNodes.push(node);
     }
     const found = context.findCongruent(manager.decls[expr], argNodes);
     const result = found !== undefined && context.isRelevant(found.owner) ? found : null;
-    this.enodeCache.set(expr, result);
+    this.enodeStamps[expr] = this.stamp;
+    this.enodeResults[expr] = result;
     return result;
   }
 }
@@ -158,9 +175,10 @@ export class QiQueue {
   private scopes: number[] = [];
   private checker: Checker;
   // cached_var_subst: each instance by its quantifier and bindings, which the queue holds with them
-  // until the next search.
+  // until the next search. instanceRefs lists the quantifier, the bindings and the instance of each,
+  // and instances maps a hash of the key to where its entries start there.
   private subst: VarSubst;
-  private instances = new Map<string, number>();
+  private instances = new Map<number, number[]>();
   private instanceRefs: number[] = [];
   // m_instances: the lemmas, which the queue holds until their scope is popped.
   private lemmas: RefVector;
@@ -174,14 +192,22 @@ export class QiQueue {
 
   private getInstance(quantifier: number, bindings: number[]) {
     const manager = this.context.manager;
-    const key = `${quantifier}:${bindings.join(",")}`;
-    const cached = this.instances.get(key);
-    if (cached !== undefined) return cached;
+    const refs = this.instanceRefs;
+    let hash = quantifier;
+    for (const binding of bindings) hash = (Math.imul(hash, 0x9e3779b1) + binding) | 0;
+    const bucket = this.instances.get(hash);
+    for (const start of bucket ?? []) {
+      let isSame = refs[start] === quantifier;
+      for (let index = 0; index < bindings.length && isSame; index++)
+        isSame = refs[start + 1 + index] === bindings[index];
+      if (isSame) return refs[start + 1 + bindings.length];
+    }
     const instance = this.subst.apply(manager.getQuantifier(quantifier).body, bindings);
-    this.instances.set(key, instance);
+    if (bucket === undefined) this.instances.set(hash, [refs.length]);
+    else bucket.push(refs.length);
     manager.incRef(quantifier);
     for (const binding of bindings) manager.incRef(binding);
-    this.instanceRefs.push(quantifier, ...bindings, instance);
+    refs.push(quantifier, ...bindings, instance);
     return instance;
   }
 

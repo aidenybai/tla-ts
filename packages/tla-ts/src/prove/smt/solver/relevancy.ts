@@ -21,7 +21,8 @@ const TRAIL_HANDLER = 2;
 export class RelevancyPropagator {
   private qhead = 0;
   private relevantExprs: number[] = [];
-  private isRelevantSet = new Set<number>();
+  // A flag per expression, which grows with the expressions marked.
+  private isRelevantFlags = new Uint8Array(1024);
   private handlers = new Map<number, RelevancyHandler[]>();
   private watches = [new Map<number, RelevancyHandler[]>(), new Map<number, RelevancyHandler[]>()];
   private trailKinds: number[] = [];
@@ -36,7 +37,7 @@ export class RelevancyPropagator {
   ) {}
 
   isRelevant(expr: number) {
-    return !this.isEnabled || this.isRelevantSet.has(expr);
+    return !this.isEnabled || this.isRelevantFlags[expr] === 1;
   }
 
   addHandler(source: number, handler: RelevancyHandler) {
@@ -82,7 +83,7 @@ export class RelevancyPropagator {
     const relevantLimit = this.scopes[offset];
     const trailLimit = this.scopes[offset + 1];
     for (let index = this.relevantExprs.length - 1; index >= relevantLimit; index--)
-      this.isRelevantSet.delete(this.relevantExprs[index]);
+      this.isRelevantFlags[this.relevantExprs[index]] = 0;
     this.relevantExprs.length = relevantLimit;
     this.qhead = relevantLimit;
     for (let index = this.trailKinds.length - 1; index >= trailLimit; index--) {
@@ -100,7 +101,12 @@ export class RelevancyPropagator {
   }
 
   private setRelevant(expr: number) {
-    this.isRelevantSet.add(expr);
+    if (expr >= this.isRelevantFlags.length) {
+      const flags = new Uint8Array(Math.max(2 * this.isRelevantFlags.length, expr + 1));
+      flags.set(this.isRelevantFlags);
+      this.isRelevantFlags = flags;
+    }
+    this.isRelevantFlags[expr] = 1;
     this.relevantExprs.push(expr);
     this.context.relevantEh(expr);
   }
