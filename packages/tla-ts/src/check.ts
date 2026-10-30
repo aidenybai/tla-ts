@@ -70,6 +70,7 @@ import { createCounterExample } from "./tlc-ext";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import {
   combineHash,
+  createModelValue,
   formatState,
   formatValue,
   getValueHash,
@@ -1547,6 +1548,31 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return toFailure(error, getStateTrace(index), undefined, getPartialOutDegrees());
     }
   };
+  // TLC names the action when the next-state relation has more than one, and prints the
+  // incomplete successor with null for each variable it leaves undefined.
+  const reportIncompleteSuccessor = (error: TlaIncompleteStateError, index: number) => {
+    nextActions.value ??= getNextActions(config, environment, specification.instanceActions);
+    const actions = nextActions.value;
+    const action =
+      actions.length === 1 ? actions[0] : actions.find((item) => item.name === error.action);
+    const variables = `variable${error.missing.length > 1 ? "s are" : " is"} not defined: ${error.missing.join(", ")}.\n`;
+    runtime.generatedStates++;
+    return toFailure(
+      actions.length === 1
+        ? error
+        : new TlaEvaluationError(
+            `Successor state is not completely specified by action ${error.action} of the next-state relation. The following ${variables}`,
+          ),
+      [
+        ...getStateTrace(index),
+        {
+          action: error.action,
+          label: action && getActionLabel(action),
+          state: toRecord(error.state.map((value) => value ?? createModelValue("null"))),
+        },
+      ],
+    );
+  };
   // TLC names the properties and the step back into the cycle from the states it prints.
   const reportLasso = (checker: LivenessChecker, lasso: Lasso) => {
     const path = [...lasso.prefix, ...lasso.cycle];
@@ -1592,7 +1618,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     try {
       outcome.result = expandState(index);
     } catch (error) {
-      outcome.result = toFailure(toNextStateError(error), getStateTrace(index));
+      outcome.result =
+        error instanceof TlaIncompleteStateError
+          ? reportIncompleteSuccessor(error, index)
+          : toFailure(toNextStateError(error), getStateTrace(index));
     }
     if (outcome.result) return outcome.result;
     outDegrees[getOutDegreeBucket()]++;

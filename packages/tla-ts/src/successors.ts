@@ -1058,7 +1058,9 @@ export const forEachSuccessor = (
       if (run.isStopped) return;
       if (!isComplete(partial)) {
         throw new TlaIncompleteStateError(
-          `Successor state is not completely specified by action ${action ?? "Next"}. The following variables are not assigned: ${getMissingVariables(partial, environment).join(", ")}`,
+          partial,
+          action,
+          getMissingVariables(partial, environment).sort(),
         );
       }
       counter.successors++;
