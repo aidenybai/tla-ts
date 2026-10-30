@@ -12,7 +12,12 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
-import { getUnexpectedException, TlaSanyFatalError, UNEXPECTED_EXCEPTION } from "../../src/errors";
+import {
+  getUnexpectedException,
+  TlaSanyFatalError,
+  TlaStackOverflowError,
+  UNEXPECTED_EXCEPTION,
+} from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc-version";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
@@ -2138,6 +2143,22 @@ describe("check matches TLC 1.7.4", () => {
       new TlaEvaluationError(
         `${getUnexpectedException("tlc2.tool.EvalException")}TLCGet(diameter) was undefined.`,
       ),
+    );
+  });
+
+  it("evaluates the arguments of a recursive temporal operator it expands", async () => {
+    const checkProperty = (property: string, version: TlcVersion) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nRECURSIVE R(_)\nR(n) == IF n = 0 THEN <>(x = 1) ELSE R(n - 1)\nP == ${property}\n====`,
+        config: "SPECIFICATION Spec\nPROPERTY P",
+        version,
+      }).then((result) => result.status);
+    const stackOverflow = new TlaStackOverflowError();
+    expect(await checkProperty("R(2)", "master")).toBe("liveness-violation");
+    await expect(checkProperty("R(2)", "1.7.4")).rejects.toThrow(stackOverflow);
+    await expect(checkProperty("R(x)", "master")).rejects.toThrow(stackOverflow);
+    await expect(checkProperty("R(x)", "1.7.4")).rejects.toThrow(
+      "TLC cannot handle the temporal formula line 9, col 6 to line 9, col 9 of module M",
     );
   });
 });

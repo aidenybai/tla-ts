@@ -64,6 +64,15 @@ export class TlaEvaluationError extends TlaError {
   }
 }
 
+// A Java StackOverflowError, which TLC catches only at the top, unlike the exceptions of evaluation.
+export class TlaStackOverflowError extends TlaEvaluationError {
+  constructor() {
+    super(
+      "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.",
+    );
+  }
+}
+
 // A next-state action left variables of a successor state unassigned. TLC reports the partial
 // state, with null for each unassigned variable.
 export class TlaIncompleteSuccessorError extends TlaEvaluationError {

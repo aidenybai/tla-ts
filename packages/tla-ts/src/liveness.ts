@@ -1,7 +1,8 @@
 import { isLocallyResolved, type Definition, type Expression } from "./ast";
-import { TlaEvaluationError } from "./errors";
+import { TlaEvaluationError, TlaStackOverflowError } from "./errors";
 import {
   describeLocation,
+  describeRange,
   bindDefinitions,
   bindOperatorArguments,
   evaluate,
@@ -44,13 +45,7 @@ export interface TemporalProperty extends ScopedExpression {
 const MAXIMUM_EXPANSION_DEPTH = 100;
 
 // TLC expands a temporal formula that refers to itself until Java's stack overflows.
-const createStackOverflowError = () =>
-  setExitCode(
-    new TlaEvaluationError(
-      "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.",
-    ),
-    EXIT_STATUS.error,
-  );
+const createStackOverflowError = () => setExitCode(new TlaStackOverflowError(), EXIT_STATUS.error);
 
 const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 
@@ -66,9 +61,7 @@ const getConstantContext = (environment: Environment, scope: Scope | undefined):
 });
 
 const createCannotHandleError = (expression: Expression) =>
-  new TlaEvaluationError(
-    `TLC cannot handle the temporal formula at ${describeLocation(expression)}`,
-  );
+  new TlaEvaluationError(`TLC cannot handle the temporal formula ${describeRange(expression)}`);
 
 export const getLevel = (
   expression: Expression,
@@ -286,6 +279,7 @@ export const toLiveExpression = (
   };
 
   const expansion = { depth: 0 };
+  const is174 = environment.runtime.version === "1.7.4";
 
   const expand = (
     body: Expression,
@@ -314,7 +308,9 @@ export const toLiveExpression = (
         ? lookupScope(scope, name)
         : undefined;
     if (binding?.kind === "Thunk" && definitionThunks.has(binding)) {
-      return expand(binding.expression, binding.scope, expression, scope);
+      return expandCall(expression, () =>
+        expand(binding.expression, binding.scope, expression, scope),
+      );
     }
     const operator =
       binding?.kind === "Operator"
@@ -326,7 +322,42 @@ export const toLiveExpression = (
             : resolveGlobalOperator(name, environment);
     if (operator?.kind !== "Closure") throw createCannotHandleError(expression);
     const args = expression.kind === "Apply" ? expression.args : [];
-    return expand(operator.body, bindOperatorArguments(operator, args, context), expression, scope);
+    const isRecursive =
+      !isLocallyResolved(expression) && getDefinition(name, environment)?.isRecursive === true;
+    return expandCall(
+      expression,
+      () => {
+        // TLC 1.7.4 evaluates the arguments of an operator it expands.
+        if (is174) {
+          args
+            .filter((arg) => arg.kind !== "Lambda" && arg.kind !== "OperatorReference")
+            .forEach((arg) => evaluate(arg, context));
+        }
+        return expand(
+          operator.body,
+          bindOperatorArguments(operator, args, context),
+          expression,
+          scope,
+        );
+      },
+      isRecursive,
+    );
+  };
+
+  // TLC takes an application of an operator whose expansion fails for a formula it can't handle,
+  // except that TLC after 1.7.4 fails as the expansion of a recursive operator does.
+  const expandCall = (
+    expression: Expression,
+    expandBody: () => LiveExpression,
+    isRecursive = false,
+  ) => {
+    try {
+      return expandBody();
+    } catch (error) {
+      const isRethrown = error instanceof TlaStackOverflowError || (isRecursive && !is174);
+      if (!(error instanceof TlaEvaluationError) || isRethrown) throw error;
+      throw createCannotHandleError(expression);
+    }
   };
 
   const convertQuantifier = (
@@ -400,7 +431,8 @@ export const toLiveExpression = (
       case "Exists":
         return convertQuantifier(expression, scope);
       case "If": {
-        if (getLevel(expression.condition, scope, environment) === 0) {
+        // TLC 1.7.4 translates both branches whatever the guard.
+        if (!is174 && getLevel(expression.condition, scope, environment) === 0) {
           const condition = evaluate(expression.condition, getConstantContext(environment, scope));
           if (typeof condition === "boolean") {
             return convert(condition ? expression.consequent : expression.alternative, scope);
