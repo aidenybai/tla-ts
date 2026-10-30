@@ -10,7 +10,7 @@ import {
   unify,
   type BlastState,
   type Branch,
-  type Choice,
+  type Choices,
   type Formula,
   type Level,
 } from "./state";
@@ -22,6 +22,7 @@ import {
   incrBlastBoundvars,
   insTerm,
   isGoal,
+  mkBlastAbs,
   mkBlastApp,
   mkBlastConst,
   mkBlastVar,
@@ -51,17 +52,19 @@ export const negOfGoals = (state: BlastState, pairs: readonly Level[]): Level[] 
     unsafe: level.unsafe,
   }));
 
-// Replaces the atomic term old by new.
+// Replaces the atomic term old by new, returning the very same term where nothing changes.
 const substAtomic = (old: BlastTerm, replacement: BlastTerm, term: BlastTerm): BlastTerm => {
   if (term.kind === "Var" && term.ref.value !== undefined)
     return substAtomic(old, replacement, term.ref.value);
-  if (term.kind === "Abs")
-    return { kind: "Abs", name: term.name, body: substAtomic(old, replacement, term.body) };
-  if (term.kind === "App")
-    return mkBlastApp(
-      substAtomic(old, replacement, term.fun),
-      substAtomic(old, replacement, term.arg),
-    );
+  if (term.kind === "Abs") {
+    const body = substAtomic(old, replacement, term.body);
+    return body === term.body ? term : mkBlastAbs(term.name, body);
+  }
+  if (term.kind === "App") {
+    const fun = substAtomic(old, replacement, term.fun);
+    const arg = substAtomic(old, replacement, term.arg);
+    return fun === term.fun && arg === term.arg ? term : mkBlastApp(fun, arg);
+  }
   return blastAconv(term, old) ? replacement : term;
 };
 
@@ -253,17 +256,17 @@ export const prune = (
   state: BlastState,
   nbrs: number,
   nxtVars: readonly BlastTerm[],
-  choices: readonly Choice[],
-): readonly Choice[] => {
+  choices: Choices,
+): Choices => {
   if (nbrs === 1) return choices;
   let last = choices;
   let ntrl = state.trail.length;
-  for (let position = 0; position < choices.length; position += 1) {
-    const choice = choices[position];
+  for (let current = choices; current !== undefined; current = current.tail) {
+    const choice = current.head;
     if (choice.nbrs < nbrs) return last;
     if (choice.nbrs > nbrs) continue;
     if (clashVar(state, nxtVars, ntrl - choice.ntrl, ntrl)) return last;
-    last = choices.slice(position + 1);
+    last = current.tail;
     ntrl = choice.ntrl;
   }
   return last;

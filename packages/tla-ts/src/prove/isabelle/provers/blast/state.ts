@@ -61,6 +61,17 @@ export interface Branch {
   readonly lim: number;
 }
 
+// A list that shares its tail, as ML's lists do, so that adding to its front takes constant time.
+export interface List<Item> {
+  readonly head: Item;
+  readonly tail: List<Item> | undefined;
+}
+
+export const cons = <Item>(head: Item, tail: List<Item> | undefined): List<Item> => ({
+  head,
+  tail,
+});
+
 // A choice point: the trail length and branch count when it was made, and the token its handler
 // catches. The token is undefined for PROVE, the end of the search.
 export interface Choice {
@@ -86,11 +97,14 @@ class Backtrack {
   }
 }
 
+// The choice points, latest first. The last is PROVE's.
+export type Choices = List<Choice> | undefined;
+
 export const isBacktrackTo = (error: unknown, token: object | undefined) =>
   error instanceof Backtrack && error.token === token;
 
-export const backtrack = (choices: readonly Choice[]): never => {
-  throw new Backtrack(choices.length === 0 ? undefined : choices[0].token);
+export const backtrack = (choices: Choices): never => {
+  throw new Backtrack(choices?.head.token);
 };
 
 // Name.variant on the state's names, for names without trailing underscores.

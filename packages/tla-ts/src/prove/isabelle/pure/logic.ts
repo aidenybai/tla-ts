@@ -25,6 +25,7 @@ import {
   mayOccur,
   propT,
   substBounds,
+  type App,
   type Term,
   type Typ,
 } from "./term";
@@ -71,18 +72,18 @@ export const mkEquals = (left: Term, right: Term) => {
   return mkApp(mkApp(mkConst("Pure.eq", funTs([type, type], propT)), left), right);
 };
 
-const isConstApp2 = (
-  term: Term,
-  name: string,
-): term is Extract<Term, { kind: "App" }> & {
-  fun: Extract<Term, { kind: "App" }>;
-} =>
+// A term c $ x $ y.
+interface ConstApp2 extends App {
+  readonly fun: App;
+}
+
+const isConstApp2 = (term: Term, name: string): term is ConstApp2 =>
   term.kind === "App" &&
   term.fun.kind === "App" &&
   term.fun.fun.kind === "Const" &&
   term.fun.fun.name === name;
 
-export const isEquals = (term: Term) => isConstApp2(term, "Pure.eq");
+export const isEquals = (term: Term): term is ConstApp2 => isConstApp2(term, "Pure.eq");
 
 export const destEquals = (term: Term): [Term, Term] => {
   if (!isConstApp2(term, "Pure.eq")) throw new TlaIsabelleError("TERM", "dest_equals");
@@ -94,7 +95,7 @@ export const implies = mkConst("Pure.imp", funTs([propT, propT], propT));
 export const mkImplies = (premise: Term, conclusion: Term) =>
   mkApp(mkApp(implies, premise), conclusion);
 
-export const isImplies = (term: Term) => isConstApp2(term, "Pure.imp");
+export const isImplies = (term: Term): term is ConstApp2 => isConstApp2(term, "Pure.imp");
 
 export const destImplies = (term: Term): [Term, Term] => {
   if (!isConstApp2(term, "Pure.imp")) throw new TlaIsabelleError("TERM", "dest_implies");

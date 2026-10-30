@@ -168,12 +168,22 @@ export const deleteTaggedBrl = <Tagged extends { isElim: boolean; rule: Thm }>(
   };
 };
 
-// Library.order_list: by tag, dropping all but the last item with each tag.
+// Library.order_list: by tag, dropping all but the last item with each tag. The lists are short,
+// so this sorts them by insertion, which keeps items with equal tags in order as Isabelle's sort.
 export const orderList = <Item>(items: readonly { tag: number; item: Item }[]): Item[] => {
-  const sorted = [...items].sort((left, right) => left.tag - right.tag);
-  return sorted
-    .filter((entry, index) => index + 1 >= sorted.length || sorted[index + 1].tag !== entry.tag)
-    .map((entry) => entry.item);
+  const sorted = [...items];
+  for (let index = 1; index < sorted.length; index += 1) {
+    const entry = sorted[index];
+    let position = index;
+    for (; position > 0 && sorted[position - 1].tag > entry.tag; position -= 1)
+      sorted[position] = sorted[position - 1];
+    sorted[position] = entry;
+  }
+  const result: Item[] = [];
+  for (let index = 0; index < sorted.length; index += 1)
+    if (index + 1 === sorted.length || sorted[index + 1].tag !== sorted[index].tag)
+      result.push(sorted[index].item);
+  return result;
 };
 
 // Tactic.biresolution_from_nets_tac

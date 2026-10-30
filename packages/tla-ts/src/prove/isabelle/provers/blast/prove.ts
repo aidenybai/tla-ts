@@ -30,21 +30,27 @@ import {
   unify,
   type BlastState,
   type Branch,
-  type Choice,
+  cons,
+  type Choices,
   type Formula,
   type Level,
+  type List,
 } from "./state";
 import {
   addTermVars,
   addTermsVars,
   isGoal,
   norm,
+  sameVars,
   varsInVars,
   type BlastTerm,
   type VarRef,
 } from "./term";
 
-export type Continuation = (tactics: readonly GoalTactic[], choices: readonly Choice[]) => Seq<Thm>;
+// The tactics that replay the inferences so far, latest first.
+type Tactics = List<GoalTactic> | undefined;
+
+export type Continuation = (tactics: Tactics, choices: Choices) => Seq<Thm>;
 
 // A step either finishes the search or continues the same branches without a choice point, which
 // blast.ML does by a tail call. prv loops on the latter, so a long search can't exhaust the stack.
@@ -52,15 +58,12 @@ type Step =
   | { readonly kind: "done"; readonly result: Seq<Thm> }
   | {
       readonly kind: "next";
-      readonly tactics: readonly GoalTactic[];
-      readonly choices: readonly Choice[];
+      readonly tactics: Tactics;
+      readonly choices: Choices;
       readonly brs: readonly Branch[];
     };
 
 const done = (result: Seq<Thm>): Step => ({ kind: "done", result });
-
-const sameVars = (left: readonly VarRef[], right: readonly VarRef[]) =>
-  left.length === right.length && left.every((ref, index) => ref === right[index]);
 
 const addPremsVars = (prems: readonly (readonly BlastTerm[])[], vars: readonly VarRef[]) =>
   prems.reduceRight((result, prem) => addTermsVars(prem, result), vars);
@@ -75,11 +78,7 @@ export const prove = (
   const unsafeList = [context.claset.unsafe];
 
   // Applies a safe rule only, possibly allowing instantiation; defers any unsafe formulae.
-  const safeStep = (
-    tactics: readonly GoalTactic[],
-    choices: readonly Choice[],
-    brs: readonly Branch[],
-  ): Step => {
+  const safeStep = (tactics: Tactics, choices: Choices, brs: readonly Branch[]): Step => {
     const token = {};
     const branch = brs[0];
     const rest = brs.slice(1);
@@ -117,8 +116,8 @@ export const prove = (
         // Discourages branching updates.
         const lim = isUpdated ? branch.lim - (1 + log4(rules.length)) : branch.lim;
         const vars = addPremsVars(rule.prems, varsInVars(branch.vars));
-        const nextChoices = [{ ntrl, nbrs, token }, ...choices];
-        const nextTactics = [rule.tactic(isUpdated, false, true), ...tactics];
+        const nextChoices = cons({ ntrl, nbrs, token }, choices);
+        const nextTactics = cons(rule.tactic(isUpdated, false, true), tactics);
         try {
           if (rule.prems.length === 0)
             return prv(nextTactics, prune(state, nbrs, nxtVars, nextChoices), rest);
@@ -143,9 +142,9 @@ export const prove = (
       for (const literal of literals) {
         const tactic = tryClose(state, formula, literal);
         if (tactic === undefined) continue;
-        const nextChoices = prune(state, nbrs, nxtVars, [{ ntrl, nbrs, token }, ...choices]);
+        const nextChoices = prune(state, nbrs, nxtVars, cons({ ntrl, nbrs, token }, choices));
         try {
-          return prv([tactic, ...tactics], nextChoices, rest);
+          return prv(cons(tactic, tactics), nextChoices, rest);
         } catch (error) {
           if (!isBacktrackTo(error, token)) throw error;
           clearTo(state, ntrl);
@@ -168,7 +167,7 @@ export const prove = (
     if (substituted !== undefined)
       return {
         kind: "next",
-        tactics: [context.data.hypSubstTac(context.limits), ...tactics],
+        tactics: cons(context.data.hypSubstTac(context.limits), tactics),
         choices,
         brs: [substituted, ...rest],
       };
@@ -189,7 +188,7 @@ export const prove = (
     const deferred: Formula = { term: negOfGoal(state, formula), md };
     return {
       kind: "next",
-      tactics: isGoal(formula) ? [negOfGoalTac(state), ...tactics] : tactics,
+      tactics: isGoal(formula) ? cons(negOfGoalTac(state), tactics) : tactics,
       choices,
       brs: [
         {
@@ -204,11 +203,7 @@ export const prove = (
   };
 
   // No safe steps are possible at any level: applies an unsafe rule.
-  const unsafeStep = (
-    tactics: readonly GoalTactic[],
-    choices: readonly Choice[],
-    brs: readonly Branch[],
-  ): Step => {
+  const unsafeStep = (tactics: Tactics, choices: Choices, brs: readonly Branch[]): Step => {
     const token = {};
     const branch = brs[0];
     const rest = brs.slice(1);
@@ -264,11 +259,10 @@ export const prove = (
           return undefined;
         }
         try {
-          return prv(
-            [tactic, ...tactics],
-            [{ ntrl, nbrs: brs.length, token }, ...choices],
-            [...rule.prems.map((prem) => newPrem(newVars, rule.major, isDup, lim, prem)), ...rest],
-          );
+          return prv(cons(tactic, tactics), cons({ ntrl, nbrs: brs.length, token }, choices), [
+            ...rule.prems.map((prem) => newPrem(newVars, rule.major, isDup, lim, prem)),
+            ...rest,
+          ]);
         } catch (error) {
           if (!isBacktrackTo(error, token)) throw error;
           if (!mayUndo) return backtrack(choices);
@@ -298,8 +292,8 @@ export const prove = (
   };
 
   const prv = (
-    initialTactics: readonly GoalTactic[],
-    initialChoices: readonly Choice[],
+    initialTactics: Tactics,
+    initialChoices: Choices,
     branches: readonly Branch[],
   ): Seq<Thm> => {
     let tactics = initialTactics;
@@ -346,5 +340,9 @@ export const prove = (
     }
   };
 
-  return prv([], [{ ntrl: state.trail.length, nbrs: initial.length, token: undefined }], initial);
+  return prv(
+    undefined,
+    cons({ ntrl: state.trail.length, nbrs: initial.length, token: undefined }, undefined),
+    initial,
+  );
 };

@@ -31,7 +31,10 @@ import {
   blastSubstBound,
   fromConst,
   listBlastComb,
+  mkBlastAbs,
   mkBlastBound,
+  mkBlastFree,
+  mkBlastSkolem,
   mkBlastVar,
   mkGoal,
   stripBlastImpConcl,
@@ -96,7 +99,7 @@ const fromSubgoal = (state: BlastState, term: Term): BlastTerm => {
       case "Const":
         return apply(fromConst(state.context.consts, tvars, head.name, head.type));
       case "Free":
-        return apply({ kind: "Free", name: head.name });
+        return apply(mkBlastFree(head.name));
       case "Bound":
         return apply(mkBlastBound(head.index));
       case "Var": {
@@ -117,7 +120,7 @@ const fromSubgoal = (state: BlastState, term: Term): BlastTerm => {
       }
       case "Abs":
         if (args.length > 0) throw new Trans("argument not in normal form");
-        return { kind: "Abs", name: head.name, body: from(level + 1, head.body) };
+        return mkBlastAbs(head.name, from(level + 1, head.body));
       case "App":
         throw new Trans("strip_comb");
     }
@@ -126,7 +129,7 @@ const fromSubgoal = (state: BlastState, term: Term): BlastTerm => {
   let result = from(0, discardForalls(term));
   for (let index = 0; index < npars; index += 1) {
     const args = vars.filter((entry) => !entry.bounds.includes(index)).map((entry) => entry.ref);
-    result = blastSubstBound({ kind: "Skolem", name: gensym(state, "T"), args }, result);
+    result = blastSubstBound(mkBlastSkolem(gensym(state, "T"), args), result);
   }
   return result;
 };
@@ -194,7 +197,10 @@ const rawBlast =
     const cont: Continuation = (tactics, choices) => {
       const cell = (() => {
         try {
-          return everyTac([...tactics].reverse().map((tactic) => tactic(1)))(goalState).pull();
+          const replay: Tactic[] = [];
+          for (let current = tactics; current !== undefined; current = current.tail)
+            replay.push(current.head(1));
+          return everyTac(replay.reverse())(goalState).pull();
         } catch (error) {
           if (isTermError(error)) return backtrack(choices);
           throw error;

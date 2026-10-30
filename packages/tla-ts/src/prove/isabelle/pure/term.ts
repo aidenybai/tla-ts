@@ -26,28 +26,33 @@ export type Typ =
   | { readonly kind: "TFree"; readonly name: string; readonly sort: Sort }
   | { readonly kind: "TVar"; readonly name: string; readonly index: number; readonly sort: Sort };
 
+// The fields of every kind of term. A term has all of them, with the ones its kind doesn't use
+// undefined, and the constructors below list them in this order. So all terms share one object
+// layout, and V8 compiles the many switches on kind to monomorphic loads.
+interface TermFields {
+  readonly name: string;
+  readonly type: Typ;
+  readonly index: number;
+  readonly body: Term;
+  readonly fun: Term;
+  readonly arg: Term;
+  readonly loose: number;
+  readonly maxidx: number;
+  readonly flags: number;
+}
+
+type TermOf<Kind extends string, Used extends keyof TermFields> = { readonly kind: Kind } & Pick<
+  TermFields,
+  Used
+> & { readonly [Key in Exclude<keyof TermFields, Used>]: undefined };
+
 export type Term =
-  | { readonly kind: "Const"; readonly name: string; readonly type: Typ }
-  | { readonly kind: "Free"; readonly name: string; readonly type: Typ }
-  | { readonly kind: "Var"; readonly name: string; readonly index: number; readonly type: Typ }
-  | { readonly kind: "Bound"; readonly index: number }
-  | {
-      readonly kind: "Abs";
-      readonly name: string;
-      readonly type: Typ;
-      readonly body: Term;
-      readonly loose: number;
-      readonly maxidx: number;
-      readonly flags: number;
-    }
-  | {
-      readonly kind: "App";
-      readonly fun: Term;
-      readonly arg: Term;
-      readonly loose: number;
-      readonly maxidx: number;
-      readonly flags: number;
-    };
+  | TermOf<"Const", "name" | "type">
+  | TermOf<"Free", "name" | "type">
+  | TermOf<"Var", "name" | "index" | "type">
+  | TermOf<"Bound", "index">
+  | TermOf<"Abs", "name" | "type" | "body" | "loose" | "maxidx" | "flags">
+  | TermOf<"App", "fun" | "arg" | "loose" | "maxidx" | "flags">;
 
 export type Var = Extract<Term, { kind: "Var" }>;
 export type Abs = Extract<Term, { kind: "Abs" }>;
@@ -119,20 +124,62 @@ export const mkTVar = (name: string, index: number, sort: Sort = []): Typ => ({
   sort,
 });
 
-export const mkConst = (name: string, type: Typ): Term => ({ kind: "Const", name, type });
-export const mkFree = (name: string, type: Typ): Term => ({ kind: "Free", name, type });
+export const mkConst = (name: string, type: Typ): Term => ({
+  kind: "Const",
+  name,
+  type,
+  index: undefined,
+  body: undefined,
+  fun: undefined,
+  arg: undefined,
+  loose: undefined,
+  maxidx: undefined,
+  flags: undefined,
+});
+export const mkFree = (name: string, type: Typ): Term => ({
+  kind: "Free",
+  name,
+  type,
+  index: undefined,
+  body: undefined,
+  fun: undefined,
+  arg: undefined,
+  loose: undefined,
+  maxidx: undefined,
+  flags: undefined,
+});
 export const mkVar = (name: string, index: number, type: Typ): Var => ({
   kind: "Var",
   name,
-  index,
   type,
+  index,
+  body: undefined,
+  fun: undefined,
+  arg: undefined,
+  loose: undefined,
+  maxidx: undefined,
+  flags: undefined,
 });
-export const mkBound = (index: number): Term => ({ kind: "Bound", index });
+export const mkBound = (index: number): Term => ({
+  kind: "Bound",
+  name: undefined,
+  type: undefined,
+  index,
+  body: undefined,
+  fun: undefined,
+  arg: undefined,
+  loose: undefined,
+  maxidx: undefined,
+  flags: undefined,
+});
 export const mkAbs = (name: string, type: Typ, body: Term): Term => ({
   kind: "Abs",
   name,
   type,
+  index: undefined,
   body,
+  fun: undefined,
+  arg: undefined,
   loose: Math.max(looseOf(body) - 1, 0),
   maxidx: maxidxOfTerm(body, maxidxOfTyp(type)),
   flags:
@@ -141,6 +188,10 @@ export const mkAbs = (name: string, type: Typ, body: Term): Term => ({
 });
 export const mkApp = (fun: Term, arg: Term): Term => ({
   kind: "App",
+  name: undefined,
+  type: undefined,
+  index: undefined,
+  body: undefined,
   fun,
   arg,
   loose: Math.max(looseOf(fun), looseOf(arg)),

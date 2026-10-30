@@ -58,6 +58,7 @@ import {
   mkAbs,
   mkApp,
   mkConst,
+  mkFree,
   mkVar,
   propT,
   stripAllBody,
@@ -424,7 +425,7 @@ const instantiateTypesTerm = (tyenv: TyEnv, term: Term): Term => {
     case "Const":
       return mkConst(term.name, substType(tyenv, term.type));
     case "Free":
-      return { kind: "Free", name: term.name, type: substType(tyenv, term.type) };
+      return mkFree(term.name, substType(tyenv, term.type));
     case "Var":
       return mkVar(term.name, term.index, substType(tyenv, term.type));
     case "Bound":
