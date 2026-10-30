@@ -218,11 +218,12 @@ export class Rewriter extends RewriterTpl {
       case OP_IMPLIES:
         return this.mkOr([this.mkNot(args[0]), args[1]]);
       case OP_XOR:
-        return this.mkNot(this.mkEq(args[0], args[1]));
+        return this.mkEq(this.mkNot(args[0]), args[1]);
       case OP_EQ:
         return (
           (manager.sorts[args[0]] === SORT_INT ? this.arith.mkEq(args[0], args[1]) : undefined) ??
-          this.mkEq(args[0], args[1])
+          this.mkEqCore(args[0], args[1]) ??
+          manager.mkEq(args[0], args[1])
         );
       case OP_DISTINCT:
         return this.mkDistinct(args);
@@ -255,9 +256,12 @@ export class Rewriter extends RewriterTpl {
     }
   }
 
-  mkNot(arg: number) {
+  // bool_rewriter::mk_not: (not (= a b)) of Booleans is (= (not a) b).
+  mkNot(arg: number): number {
     const manager = this.manager;
     if (manager.isNot(arg)) return manager.args[arg][0];
+    if (manager.getOp(arg) === OP_EQ && manager.sorts[manager.args[arg][0]] === SORT_BOOL)
+      return this.mkEq(this.mkNot(manager.args[arg][0]), manager.args[arg][1]);
     return manager.mkNot(arg);
   }
 
@@ -408,8 +412,18 @@ export class Rewriter extends RewriterTpl {
     return true;
   }
 
+  // bool_rewriter::mk_eq, which does not rewrite the result of mk_eq_core again.
+  mkEq(left: number, right: number): number {
+    const result = this.mkEqCore(left, right);
+    return result === undefined
+      ? this.manager.mkEq(left, right)
+      : typeof result === "number"
+        ? result
+        : result.expr;
+  }
+
   // bool_rewriter::mk_eq_core, after arith_rewriter::mk_eq_core folds numerals.
-  mkEq(inputLeft: number, inputRight: number): number {
+  private mkEqCore(inputLeft: number, inputRight: number): number | Rewrite | undefined {
     const manager = this.manager;
     if (inputLeft === inputRight) return manager.trueExpr;
     if (manager.isUniqueValue(inputLeft) && manager.isUniqueValue(inputRight))
@@ -418,7 +432,7 @@ export class Rewriter extends RewriterTpl {
     if (iteEq !== undefined) return iteEq;
     const iteValueEq = this.mkIteValueEq(inputLeft, inputRight);
     if (iteValueEq !== undefined) return iteValueEq;
-    if (manager.sorts[inputLeft] !== SORT_BOOL) return manager.mkEq(inputLeft, inputRight);
+    if (manager.sorts[inputLeft] !== SORT_BOOL) return undefined;
     const isUnfolded = manager.isNot(inputLeft) && manager.isNot(inputRight);
     const left = isUnfolded ? manager.args[inputLeft][0] : inputLeft;
     const right = isUnfolded ? manager.args[inputRight][0] : inputRight;
@@ -430,9 +444,24 @@ export class Rewriter extends RewriterTpl {
     const isSwapped = manager.isNot(right);
     const lhs = isSwapped ? right : left;
     const rhs = isSwapped ? left : right;
-    if (manager.isNot(lhs)) return this.mkNot(this.mkEq(manager.args[lhs][0], rhs));
-    if (isUnfolded) return this.mkEq(lhs, rhs);
-    return manager.mkEq(lhs, rhs);
+    if (manager.isNot(lhs))
+      return { expr: manager.mkNot(manager.mkEq(manager.args[lhs][0], rhs)), depth: 2 };
+    if (isUnfolded) return { expr: manager.mkEq(lhs, rhs), depth: 1 };
+    // (= (= a b) (= a (not b))) is false.
+    if (manager.getOp(lhs) === OP_EQ && manager.getOp(rhs) === OP_EQ) {
+      const leftArgs = manager.args[lhs];
+      const rightArgs = manager.args[rhs];
+      const isNegationOf = (expr: number, other: number) =>
+        manager.isNot(expr) && manager.args[expr][0] === other;
+      if (
+        (leftArgs[0] === rightArgs[0] &&
+          (isNegationOf(rightArgs[1], leftArgs[1]) || isNegationOf(leftArgs[1], rightArgs[1]))) ||
+        (leftArgs[1] === rightArgs[1] &&
+          (isNegationOf(rightArgs[0], leftArgs[0]) || isNegationOf(leftArgs[0], rightArgs[0])))
+      )
+        return manager.falseExpr;
+    }
+    return undefined;
   }
 
   mkDistinct(args: number[]) {
