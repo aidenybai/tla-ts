@@ -18,15 +18,26 @@ interface TrivialObligationRecord {
   status: "trivial";
 }
 
+// tlapm's default SMT method writes .smt inputs, and its Z3 method writes .smt2 inputs.
 interface DecidedObligationRecord {
   id: number;
   loc: string;
-  status: "proved" | "failed";
   prover: string;
   timeUsed?: number;
   smt?: BackendRecord;
+  z3?: BackendRecord;
   zenon?: BackendRecord<"unsat" | "unknown">;
   isabelle?: BackendRecord<"unsat" | "unknown">;
+}
+
+interface ProvedObligationRecord extends DecidedObligationRecord {
+  status: "proved";
+}
+
+// tlapm's reason is "false" when a backend refuted the obligation, "timeout", or its own message.
+interface FailedObligationRecord extends DecidedObligationRecord {
+  status: "failed";
+  reason?: string;
 }
 
 // tlapm stopped before a backend answered.
@@ -38,7 +49,8 @@ interface UnfinishedObligationRecord {
 
 export type ObligationRecord =
   | TrivialObligationRecord
-  | DecidedObligationRecord
+  | ProvedObligationRecord
+  | FailedObligationRecord
   | UnfinishedObligationRecord;
 
 export type ObligationStatus = ObligationRecord["status"];

@@ -118,13 +118,16 @@ const getObligationRecord = (id: number, fields: Map<string, string>): Obligatio
   if (!isObligationStatus(status)) throw new Error(`tlapm sent unknown status "${status}"`);
   if (status !== "proved" && status !== "failed") return { id, loc, status };
   const timeUsed = fields.get("meth")?.match(/time-used: ([\d.]+)/)?.[1];
-  return {
+  const decided = {
     id,
     loc,
-    status,
     prover: fields.get("prover") ?? "",
     ...(timeUsed !== undefined && { timeUsed: Number(timeUsed) }),
   };
+  const reason = fields.get("reason");
+  return status === "proved"
+    ? { ...decided, status }
+    : { ...decided, status, ...(reason !== undefined && { reason }) };
 };
 
 const readOutput = (path: string) =>
@@ -177,7 +180,7 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
     writeFileSync(join(inputsDirectory, `${name}${extension}`), run.text);
     writeFileSync(join(inputsDirectory, `${name}${extension}.out`), run.backendOutput);
   };
-  // SMT, Zenon and Isabelle inputs name their obligation in a header, and LS4 inputs don't.
+  // SMT, Z3, Zenon and Isabelle inputs name their obligation in a header, and LS4 inputs don't.
   const getObligationRuns = <Verdict extends BackendVerdict>(
     extension: string,
     getDigest: (text: string) => string,
@@ -193,6 +196,9 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
 
   getObligationRuns(".smt", getInputDigest, getSmtVerdict).forEach((run) => {
     if (run.obligation) run.obligation.smt = run.record;
+  });
+  getObligationRuns(".smt2", getInputDigest, getSmtVerdict).forEach((run) => {
+    if (run.obligation) run.obligation.z3 = run.record;
   });
   getObligationRuns(".znn", getInputDigest, getZenonVerdict).forEach((run) => {
     if (run.obligation) run.obligation.zenon = run.record;
