@@ -72,6 +72,9 @@
     "test": "vp test",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "fflate": "^0.8.3"
+  },
   "devDependencies": {
     "@types/node": "^22",
     "publint": "^0.3.0",
