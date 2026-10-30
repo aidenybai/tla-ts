@@ -1,4 +1,5 @@
 import { createSanyLexer, getKind, type SanyToken } from "./sany-lexer";
+import { SANY_OPERATOR_SYNONYMS } from "./tlc-modules";
 
 // The report SANY's parser, TLAplusParser, gives for a module it fails to parse. This interprets
 // the grammar of javacc/tla+.jj the way the code JavaCC generates from it runs: the productions,
@@ -61,12 +62,43 @@ type Unit =
 // A token kind in angle brackets, a production's name, or a unit.
 type Part = Unit | string;
 
+// A SyntaxTreeNode: a token, or what a production matched, which spans from its first token to
+// its last.
+interface SyntaxNode {
+  kind: string;
+  heirs: SyntaxNode[];
+  first: SanyToken;
+  last: SanyToken;
+}
+
+// The production being parsed: the nodes of what it has matched, and the node it returns if that
+// is not a node of its own kind over them.
+interface Frame {
+  heirs: SyntaxNode[];
+  node: SyntaxNode | undefined;
+}
+
 interface Production {
   // The name TLAplusParser.bpa pushes on the message stack, if the production calls it.
   message: string | undefined;
   body: SequenceUnit;
-  // Java code that runs after the production's epa, given the token bpa pushed.
-  exit: ((state: ParserState, start: SanyToken) => string | undefined) | undefined;
+  // Java code that runs after the production's epa.
+  exit: ((frame: Frame, state: ParserState) => string | void) | undefined;
+}
+
+// An Operator of Operators.CanonicalOperators. None of them is right-associative.
+interface Operator {
+  name: string;
+  low: number;
+  high: number;
+  isLeftAssociative: boolean;
+  fix: "prefix" | "postfix" | "infix" | "nfix";
+}
+
+// An OSelement of OperatorStack: an operand, or an operator with its node.
+interface StackElement {
+  node: SyntaxNode;
+  operator: Operator | undefined;
 }
 
 interface Analysis {
@@ -100,9 +132,10 @@ interface ParserState {
   messages: { name: string; token: SanyToken }[];
   moduleName: string | undefined;
   junctions: { kind: number; column: number }[];
-  // For each Expression being parsed, whether its OperatorStack is empty or has a prefix or
-  // infix operator on top: OperatorStack.preInEmptyTop.
-  operatorStacks: boolean[];
+  frames: Frame[];
+  // OperatorStack's stack of stacks, one for each Expression being parsed.
+  operatorStacks: StackElement[][];
+  lastOperator: Operator | undefined;
   proofLevels: number[];
   isTerminalProof: boolean;
   // Whether FairnessHook is set, which it is if the last NoOpExtension ended with arguments.
@@ -149,6 +182,130 @@ const ESCAPES: Record<string, string> = {
   '"': '\\"',
   "'": "\\'",
   "\\": "\\\\",
+};
+
+const createOperators = (
+  fix: Operator["fix"],
+  low: number,
+  high: number,
+  isLeftAssociative: boolean,
+  ...names: string[]
+) => names.map((name): [string, Operator] => [name, { name, low, high, isLeftAssociative, fix }]);
+
+// Operators.CanonicalOperators, but for ".", which only OperatorStack.reduceRecord handles.
+const CANONICAL_OPERATORS = new Map([
+  ...createOperators("postfix", 160, 160, true, "["),
+  ...createOperators("postfix", 150, 150, false, "'", "^+", "^*", "^#"),
+  ...createOperators("prefix", 120, 120, false, "-."),
+  ...createOperators("prefix", 100, 130, false, "SUBSET", "UNION", "DOMAIN"),
+  ...createOperators("prefix", 40, 150, false, "[]", "<>", "ENABLED", "UNCHANGED"),
+  ...createOperators("prefix", 40, 40, true, "\\lnot"),
+  ...createOperators("nfix", 100, 130, true, "\\times"),
+  ...createOperators("infix", 140, 140, false, "^", "^^"),
+  ...createOperators("infix", 130, 130, false, "/", "//", "\\oslash", "\\div"),
+  ...createOperators(
+    "infix",
+    130,
+    130,
+    true,
+    "*",
+    "&&",
+    "&",
+    "**",
+    "\\odot",
+    "\\otimes",
+    "\\star",
+    "\\o",
+    "\\bigcirc",
+    "\\bullet",
+  ),
+  ...createOperators("infix", 110, 110, true, "-", "--", "\\ominus"),
+  ...createOperators("infix", 100, 110, true, "|", "||", "%%"),
+  ...createOperators("infix", 100, 110, false, "%"),
+  ...createOperators("infix", 100, 100, true, "+", "++", "\\oplus"),
+  ...createOperators("infix", 90, 140, false, "\\wr"),
+  ...createOperators(
+    "infix",
+    90,
+    130,
+    true,
+    "$$",
+    "$",
+    "??",
+    "##",
+    "\\uplus",
+    "\\sqcap",
+    "\\sqcup",
+  ),
+  ...createOperators("infix", 90, 130, false, "!!"),
+  ...createOperators("infix", 90, 90, false, "...", ".."),
+  ...createOperators("infix", 80, 80, true, "\\intersect", "\\union"),
+  ...createOperators("infix", 80, 80, false, "\\"),
+  ...createOperators("infix", 70, 70, false, "<:", ":>"),
+  ...createOperators("infix", 60, 60, true, "@@"),
+  ...createOperators("infix", 50, 140, true, "\\cdot"),
+  ...createOperators(
+    "infix",
+    50,
+    50,
+    false,
+    "=",
+    "/=",
+    "<",
+    ">",
+    "\\in",
+    "\\notin",
+    "\\leq",
+    "\\geq",
+    "\\subseteq",
+    "\\subset",
+    "\\supseteq",
+    "\\supset",
+    "\\sqsubseteq",
+    "\\sqsubset",
+    "\\sqsupseteq",
+    "\\sqsupset",
+    "\\prec",
+    "\\preceq",
+    "\\succ",
+    "\\succeq",
+    "\\sim",
+    "\\simeq",
+    "\\approx",
+    "\\cong",
+    "\\asymp",
+    "\\doteq",
+    "\\propto",
+    "\\ll",
+    "\\gg",
+    "|-",
+    "|=",
+    "-|",
+    "=|",
+    ":=",
+    "::=",
+  ),
+  ...createOperators("infix", 30, 30, true, "\\land", "\\lor"),
+  ...createOperators("infix", 20, 20, false, "~>", "\\equiv", "-+->"),
+  ...createOperators("infix", 10, 10, false, "=>"),
+]);
+
+// Operators.getOperator, which knows an operator by its name or a synonym.
+const OPERATORS = new Map([
+  ...CANONICAL_OPERATORS,
+  ...SANY_OPERATOR_SYNONYMS.flatMap((synonyms) =>
+    synonyms.slice(1).map((synonym) => [synonym, CANONICAL_OPERATORS.get(synonyms[0])] as const),
+  ),
+]);
+// OperatorStack's fcnOp, which a function application's "[" pushes, and Operator.VoidOperator,
+// which OperatorStack.finalReduce pushes to reduce the whole stack.
+const FCN_OPERATOR = OPERATORS.get("[");
+const VOID_OPERATOR: Operator = {
+  name: "$$_void",
+  low: 0,
+  high: 0,
+  isLeftAssociative: false,
+  fix: "infix",
 };
 
 const tokens = (kinds: Iterable<number>): TokensUnit => ({ type: "tokens", kinds: new Set(kinds) });
@@ -214,10 +371,10 @@ const isNextKind =
   (state: ParserState) =>
     names.some((name) => getToken(state, 1).kind === getKind(name));
 
-// JunctionListContext.isAboveCurrent and isNewBullet for the next token.
-const isAboveCurrent = (state: ParserState) => {
+// JunctionListContext.isAboveCurrent, for the next token by default, and isNewBullet.
+const isAboveCurrent = (state: ParserState, column = getToken(state, 1).beginColumn) => {
   const junction = state.junctions.at(-1);
-  return junction === undefined || junction.column < getToken(state, 1).beginColumn;
+  return junction === undefined || junction.column < column;
 };
 
 const isNewBullet = (state: ParserState) => {
@@ -236,9 +393,179 @@ const setFieldName = (state: ParserState) => {
   if (FIELD_NAME_KINDS.has(token.kind)) token.kind = IDENTIFIER;
 };
 
-// SyntaxTreeNode.getLocation for a token, as Location.toString prints it.
-const formatLocation = (state: ParserState, token: SanyToken) =>
-  `line ${token.beginLine}, col ${token.beginColumn} to line ${token.beginLine}, col ${token.beginColumn + token.image.length - 1} of module ${state.moduleName}`;
+// SyntaxTreeNode.getLocation for the tokens first to last, as Location.toString prints it.
+const formatLocation = (state: ParserState, first: SanyToken, last = first) =>
+  `line ${first.beginLine}, col ${first.beginColumn} to line ${last.beginLine}, col ${last.beginColumn + last.image.length - 1} of module ${state.moduleName}`;
+
+const createNode = (kind: string, heirs: SyntaxNode[]) => ({
+  kind,
+  heirs,
+  first: heirs[0].first,
+  last: heirs[heirs.length - 1].last,
+});
+
+// The node offset nodes back among those of what the production being parsed has matched.
+const getHeir = (state: ParserState, offset: number) => {
+  const heirs = state.frames[state.frames.length - 1].heirs;
+  return heirs[heirs.length - offset];
+};
+
+const getOperatorStack = (state: ParserState) =>
+  state.operatorStacks[state.operatorStacks.length - 1];
+
+// Operator.succ and Operator.prec: whether left binds tighter than right, or looser.
+const isTighter = (left: Operator, right: Operator) => left.low > right.high;
+const isLooser = (left: Operator, right: Operator) => left.high < right.low;
+
+// Operators.getMixfix, which turns "-" into the prefix "-.".
+const getMixfix = (operator: Operator) =>
+  operator.fix === "prefix" ? operator : OPERATORS.get(`${operator.name}.`);
+
+// OperatorStack.reducePostfix: replaces the operand and postfix operator below index top with
+// their expression.
+const reducePostfix = (stack: StackElement[], top: number) => {
+  const operand = stack[top - 2].node;
+  const postfix = stack[top - 1];
+  stack.splice(top - 2, 2, {
+    node:
+      postfix.operator === FCN_OPERATOR
+        ? createNode("FcnAppl", [operand, ...postfix.node.heirs])
+        : createNode("PostfixExpr", [operand, postfix.node]),
+    operator: undefined,
+  });
+};
+
+// OperatorStack.reducePrefix and reduceInfix: replace the operator below the top of the stack and
+// its operands with their expression.
+const reduceOperator = (stack: StackElement[], operator: Operator) => {
+  const top = stack.length - 1;
+  if (operator.fix !== "infix" && operator.fix !== "nfix") {
+    stack.splice(top - 2, 2, {
+      node: createNode("PrefixExpr", [stack[top - 2].node, stack[top - 1].node]),
+      operator: undefined,
+    });
+    return;
+  }
+  const left = stack[top - 3].node;
+  const isTimes = operator.fix === "nfix";
+  stack.splice(top - 3, 3, {
+    node: createNode(isTimes ? "Times" : "InfixExpr", [
+      ...(isTimes && left.kind === "Times" ? left.heirs : [left]),
+      stack[top - 2].node,
+      stack[top - 1].node,
+    ]),
+    operator: undefined,
+  });
+};
+
+// OperatorStack.reduceStack, run when an operator is pushed: it reduces the operators below it
+// that bind tighter, and gives the message it throws where precedence can't order two operators,
+// or two operands follow each other. The grammar pushes an infix or postfix operator only after an
+// operand, except for a "-" that Expression takes for a prefix one, so the checks that reject
+// other orders never fail and are left out.
+const reduceStack = (state: ParserState): string | undefined => {
+  const stack = getOperatorStack(state);
+  const top = stack.length - 1;
+  const right = stack[top];
+  const middle = stack[top - 1];
+  const left = stack[top - 2];
+  if (right.operator === undefined || right.operator.fix === "prefix") return undefined;
+  if (middle.operator?.fix === "postfix") {
+    reducePostfix(stack, top);
+    return reduceStack(state);
+  }
+  if (middle.operator !== undefined) {
+    const mixfix = getMixfix(right.operator);
+    return mixfix !== undefined && isTighter(middle.operator, mixfix)
+      ? `\n  Precedence conflict between ops ${middle.operator.name} in block ${formatLocation(state, middle.node.first, middle.node.last)} and ${mixfix.name}.`
+      : undefined;
+  }
+  if (left === undefined) return undefined;
+  if (left.operator === undefined) {
+    return `Expression at location ${formatLocation(state, left.node.first, left.node.last)} and expression at location ${formatLocation(state, middle.node.first, middle.node.last)} follow each other without any intervening operator.`;
+  }
+  if (right.operator.fix === "postfix") {
+    if (isLooser(left.operator, right.operator)) return undefined;
+    if (!isTighter(left.operator, right.operator)) {
+      return `Precedence conflict between ops ${left.operator.name} in block ${formatLocation(state, right.node.first, right.node.last)} and ${right.operator.name}.`;
+    }
+    reduceOperator(stack, left.operator);
+    return reduceStack(state);
+  }
+  const mixfix = getMixfix(left.operator);
+  const operator =
+    mixfix !== undefined && (top === 2 || stack[top - 3].operator !== undefined)
+      ? mixfix
+      : left.operator;
+  if (isLooser(operator, right.operator)) return undefined;
+  if (
+    !isTighter(operator, right.operator) &&
+    !(operator === right.operator && operator.isLeftAssociative)
+  ) {
+    return `\n  Precedence conflict between ops ${operator.name} in block ${formatLocation(state, left.node.first, left.node.last)} and ${right.operator.name}.`;
+  }
+  if (operator.fix !== "postfix") {
+    reduceOperator(stack, operator);
+    return reduceStack(state);
+  }
+  const location = formatLocation(state, left.node.first, left.node.last);
+  if (left.node.first.beginLine < middle.node.first.beginLine && right.operator.name === "=") {
+    return `\n  *** Hint *** You may have mistyped ==\n  Illegal combination of operators ${operator.name} in block ${location} and =.`;
+  }
+  return right.operator === VOID_OPERATOR
+    ? `\n Error following expression at  ${location}, missing operator or separator.`
+    : `\n  Illegal combination of operators ${operator.name} in block ${location} and ${right.operator.name}.`;
+};
+
+// OperatorStack.pushOnStack for the node of the production just parsed: an operand, or, if
+// isOperator holds of it, an operator, which reduceStack reduces with what is below it.
+const pushOnStack = (isOperator: (node: SyntaxNode) => boolean) =>
+  action((state) => {
+    const stack = getOperatorStack(state);
+    const node = getHeir(state, 1);
+    if (!isOperator(node)) {
+      stack.push({ node, operator: undefined });
+      return undefined;
+    }
+    stack.push({ node, operator: state.lastOperator });
+    return stack.length === 1 ? undefined : reduceStack(state);
+  });
+const PUSH_OPERAND = pushOnStack(() => false);
+const PUSH_OPERATOR = pushOnStack(() => true);
+
+// TLAplusParser's lastOp, which the productions of operators set.
+const SET_LAST_OPERATOR = action((state) => {
+  state.lastOperator = OPERATORS.get(state.token.image);
+});
+
+// The OpArgs node that a PrimitiveExp's heirs end with, directly or in their last "!" extension.
+const getArguments = (heirs: SyntaxNode[]) => {
+  const last = heirs[heirs.length - 1];
+  const node = last.kind === "BangExt" ? last.heirs[last.heirs.length - 1] : last;
+  return node.kind === "OpArgs" ? node : undefined;
+};
+
+// TLAplusParser.isLabel: whether a node is an identifier, or an operator applied to identifiers.
+const isLabel = (node: SyntaxNode) => {
+  if (node.kind === "GeneralId") return true;
+  const opArgs = node.kind === "OpApplication" ? getArguments(node.heirs) : undefined;
+  return (
+    opArgs !== undefined &&
+    opArgs.heirs.every((argument, index) => index % 2 === 0 || argument.kind === "GeneralId")
+  );
+};
+
+// The first node below node, stopping at junction lists, that does not start to the right of the
+// current junction list's bullet: what TLAplusParser.checkIndentation reports.
+const getMisindentedNode = (state: ParserState, node: SyntaxNode): SyntaxNode | undefined => {
+  for (const child of node.heirs) {
+    if (child.kind === "Junctions") continue;
+    if (!isAboveCurrent(state, child.first.beginColumn)) return child;
+    const misindented = getMisindentedNode(state, child);
+    if (misindented !== undefined) return misindented;
+  }
+  return undefined;
+};
 
 // TLAplusParser.belchDEF, which inserts a DEFBREAK token before the left-hand side of the next
 // definition. It reverses the links of the tokens it walks over, so that `next` leads back toward
@@ -374,12 +701,6 @@ const checkStepLevel = (problem: string) =>
       : `${formatLocation(state, state.token)}: ${problem}`,
   );
 
-// OperatorStack.pushOnStack, which pushes an operand or an operator on the current stack.
-const pushOnStack = (isPrefixOrInfix: boolean) =>
-  action((state) => {
-    state.operatorStacks[state.operatorStacks.length - 1] = isPrefixOrInfix;
-  });
-
 const PREFIX_OPERATOR = tokens(
   [
     "op_26",
@@ -412,14 +733,15 @@ const STEP_START = tokens(
 const getPrefixOperators = () =>
   zeroOrMore(
     lookahead({ expansion: [choice(PREFIX_OPERATOR, "<op_77>")], semantic: isAboveCurrent }),
-    choice(sequence("PrefixOp", pushOnStack(true)), sequence("InfixOp", pushOnStack(true))),
+    choice("PrefixOp", "InfixOp"),
+    PUSH_OPERATOR,
   );
 const getOperand = () =>
   choice(
     sequence(
       lookahead({ expansion: ["OpenStart"], semantic: isAboveCurrent }),
       "OpenExpression",
-      pushOnStack(false),
+      PUSH_OPERAND,
     ),
     sequence(lookahead({ semantic: isAboveCurrent }), "ExtendableExpr"),
   );
@@ -713,10 +1035,10 @@ const PRODUCTIONS: Record<string, Production> = {
     expect("Expression or Op. Symbol"),
     "OpOrExpr",
   ]),
-  PrefixOp: production(undefined, [PREFIX_OPERATOR]),
-  NonExpPrefixOp: production(undefined, [NONEXP_PREFIX_OPERATOR]),
-  InfixOp: production("Infix Op", [INFIX_OPERATOR]),
-  PostfixOp: production(undefined, [POSTFIX_OPERATOR]),
+  PrefixOp: production(undefined, [PREFIX_OPERATOR, SET_LAST_OPERATOR]),
+  NonExpPrefixOp: production(undefined, [NONEXP_PREFIX_OPERATOR, SET_LAST_OPERATOR]),
+  InfixOp: production("Infix Op", [INFIX_OPERATOR, SET_LAST_OPERATOR]),
+  PostfixOp: production(undefined, [POSTFIX_OPERATOR, SET_LAST_OPERATOR]),
   Identifier: production(undefined, ["<IDENTIFIER>"]),
   Assumption: production("Assumption", [
     expect("ASSUM..."),
@@ -760,7 +1082,17 @@ const PRODUCTIONS: Record<string, Production> = {
           sequence(
             lookahead({ amount: 2 }),
             "IdentDecl",
-            optional("<IN>", expect("Expression"), "Expression"),
+            optional(
+              "<IN>",
+              action((state) => {
+                const declaration = getHeir(state, 2);
+                return declaration.heirs.length > 1
+                  ? `declared symbol with arguments before \\in at ${formatLocation(state, declaration.first, declaration.last)}`
+                  : undefined;
+              }),
+              expect("Expression"),
+              "Expression",
+            ),
           ),
           "SomeFixDecl",
         ),
@@ -885,7 +1217,16 @@ const PRODUCTIONS: Record<string, Production> = {
       "CaseStep",
       "AssertStep",
     ),
-    optional(lookahead({ semantic: beginsProof }), "Proof"),
+    optional(
+      lookahead({ semantic: beginsProof }),
+      action((state) => {
+        const step = getHeir(state, 1);
+        return ["PickStep", "CaseStep", "AssertStep"].includes(step.kind)
+          ? undefined
+          : `${formatLocation(state, step.first, step.last)}: proof of step that does not take a proof.`;
+      }),
+      "Proof",
+    ),
   ]),
   DefStep: production("DefStep", [
     optional("<DEFINE>"),
@@ -979,51 +1320,57 @@ const PRODUCTIONS: Record<string, Production> = {
     zeroOrMore("<COMMA>", "OpOrExpr"),
     "<RBR>",
   ]),
-  OpOrExpr: production(undefined, [
-    choice(
-      sequence(
-        lookahead({
-          amount: 2,
-          expansion: [
-            choice(NONEXP_PREFIX_OPERATOR, INFIX_OPERATOR, POSTFIX_OPERATOR),
-            tokens(
-              [
-                "COMMA",
-                "RBR",
-                "DEFBREAK",
-                "LOCAL",
-                "INSTANCE",
-                "THEOREM",
-                "ASSUME",
-                "END_MODULE",
-                "SEPARATOR",
-                "_BM0",
-                "ASSUMPTION",
-                "CONSTANT",
-                "VARIABLE",
-                "RECURSIVE",
-              ].map(getKind),
+  OpOrExpr: production(
+    undefined,
+    [
+      choice(
+        sequence(
+          lookahead({
+            amount: 2,
+            expansion: [
+              choice(NONEXP_PREFIX_OPERATOR, INFIX_OPERATOR, POSTFIX_OPERATOR),
+              tokens(
+                [
+                  "COMMA",
+                  "RBR",
+                  "DEFBREAK",
+                  "LOCAL",
+                  "INSTANCE",
+                  "THEOREM",
+                  "ASSUME",
+                  "END_MODULE",
+                  "SEPARATOR",
+                  "_BM0",
+                  "ASSUMPTION",
+                  "CONSTANT",
+                  "VARIABLE",
+                  "RECURSIVE",
+                ].map(getKind),
+              ),
+            ],
+            semantic: isAboveCurrent,
+          }),
+          choice(
+            "NonExpPrefixOp",
+            sequence(
+              "InfixOp",
+              action((state) =>
+                state.token.image === "\\X" || state.token.image === "\\times"
+                  ? `${formatLocation(state, state.token)}: \\X may not be used as an infix operator.`
+                  : undefined,
+              ),
             ),
-          ],
-          semantic: isAboveCurrent,
-        }),
-        choice(
-          "NonExpPrefixOp",
-          sequence(
-            "InfixOp",
-            action((state) =>
-              state.token.image === "\\X" || state.token.image === "\\times"
-                ? `${formatLocation(state, state.token)}: \\X may not be used as an infix operator.`
-                : undefined,
-            ),
+            "PostfixOp",
           ),
-          "PostfixOp",
         ),
+        sequence(lookahead({ expansion: ["<LAMBDA>"], semantic: isAboveCurrent }), "Lambda"),
+        "Expression",
       ),
-      sequence(lookahead({ expansion: ["<LAMBDA>"], semantic: isAboveCurrent }), "Lambda"),
-      "Expression",
-    ),
-  ]),
+    ],
+    (frame) => {
+      frame.node = frame.heirs[0];
+    },
+  ),
   ParenExpr: production(undefined, ["<LBR>", "Expression", "<RBR>"]),
   SomeQuant: production("Quantified form", [
     choice("<EXISTS>", "<FORALL>"),
@@ -1084,7 +1431,18 @@ const PRODUCTIONS: Record<string, Production> = {
           "Expression",
           optional(
             choice(
-              sequence("<COLON>", "QuantBound", zeroOrMore("<COMMA>", "QuantBound")),
+              sequence(
+                "<COLON>",
+                action((state) => {
+                  const expression = getHeir(state, 2);
+                  return expression.kind === "InfixExpr" &&
+                    expression.heirs[1].first.image === "\\in"
+                    ? `Form {a \\in b : c \\in d }, at line ${state.token.beginLine}, is not allowed`
+                    : undefined;
+                }),
+                "QuantBound",
+                zeroOrMore("<COMMA>", "QuantBound"),
+              ),
               oneOrMore("<COMMA>", "Expression"),
             ),
           ),
@@ -1132,7 +1490,15 @@ const PRODUCTIONS: Record<string, Production> = {
       sequence(
         "Expression",
         choice(
-          sequence(zeroOrMore("<COMMA>", "Expression"), "<RSB>"),
+          sequence(
+            zeroOrMore("<COMMA>", "Expression"),
+            "<RSB>",
+            action((state) => {
+              const frame = state.frames[state.frames.length - 1];
+              frame.node = createNode("FcnAppl", frame.heirs);
+              state.lastOperator = FCN_OPERATOR;
+            }),
+          ),
           sequence("<ARROW>", "Expression", "<RSB>"),
           sequence("<EXCEPT>", "ExceptSpec", zeroOrMore("<COMMA>", "ExceptSpec"), "<RSB>"),
           sequence("<ARSB>", "ReducedExpression"),
@@ -1192,10 +1558,10 @@ const PRODUCTIONS: Record<string, Production> = {
         }),
       ),
     ],
-    (state, start) =>
+    (frame, state) =>
       state.isFairnessParenthesized.pop() || state.isFairnessHooked
         ? undefined
-        : `Ill-structured fairness expression at line ${start.beginLine}, column ${start.beginColumn}`,
+        : `Ill-structured fairness expression at line ${frame.heirs[0].first.beginLine}, column ${frame.heirs[0].first.beginColumn}`,
   ),
   IfThenElse: production("IF THEN ELSE", [
     "<IF>",
@@ -1236,7 +1602,18 @@ const PRODUCTIONS: Record<string, Production> = {
       state.junctions.pop();
     }),
   ]),
-  JuncItem: production("Junction Item", [choice("<OR>", "<AND>"), "Expression"]),
+  JuncItem: production(
+    "Junction Item",
+    [choice("<OR>", "<AND>"), "Expression"],
+    // TLAplusParser.checkIndentation.
+    (frame, state) => {
+      const item = getMisindentedNode(state, frame.heirs[1]);
+      return (
+        item &&
+        `Item at ${formatLocation(state, item.first, item.last)} is not properly indented inside conjunction or  disjunction list item at ${formatLocation(state, frame.heirs[0].first, frame.heirs[1].last)}`
+      );
+    },
+  ),
   UnboundOrBoundChoose: production("(Un)Bounded Choose", [
     "<CHOOSE>",
     choice("Identifier", "IdentifierTuple"),
@@ -1254,35 +1631,51 @@ const PRODUCTIONS: Record<string, Production> = {
     expect("Expression"),
     "Expression",
   ]),
-  Expression: production("Expression", [
-    action((state) => {
-      state.operatorStacks.push(true);
-    }),
-    getPrefixOperators(),
-    getOperand(),
-    action((state) => {
+  Expression: production(
+    "Expression",
+    [
+      action((state) => {
+        state.operatorStacks.push([]);
+      }),
+      getPrefixOperators(),
+      getOperand(),
+    ],
+    // OperatorStack.finalReduce, which pushes an operator that binds looser than any other, whose
+    // node, null in Java, is never printed.
+    (frame, state) => {
+      const stack = getOperatorStack(state);
+      stack.push({ node: frame.heirs[0], operator: VOID_OPERATOR });
+      const message = reduceStack(state);
+      frame.node = stack[0].node;
       state.operatorStacks.pop();
-    }),
-  ]),
+      return message;
+    },
+  ),
   ExtendableExpr: production("ExtendableExpr", [
     choice(
       sequence(
         lookahead({
           expansion: [choice("<AND>", "<OR>")],
-          semantic: (state) => state.operatorStacks.at(-1) ?? true,
+          // OperatorStack.preInEmptyTop.
+          semantic: (state) => {
+            const top = state.operatorStacks.at(-1)?.at(-1);
+            return (
+              top === undefined || (top.operator !== undefined && top.operator.fix !== "postfix")
+            );
+          },
         }),
         "Junctions",
-        pushOnStack(false),
       ),
-      sequence("ParenthesesExpression", pushOnStack(false)),
-      sequence("PrimitiveExp", pushOnStack(false)),
+      "ParenthesesExpression",
+      "PrimitiveExp",
     ),
+    PUSH_OPERAND,
     zeroOrMore(
       choice(
         sequence(
           lookahead({ expansion: ["PostfixOp"], semantic: isAboveCurrent }),
           "PostfixOp",
-          pushOnStack(false),
+          PUSH_OPERATOR,
         ),
         sequence(
           lookahead({ expansion: ["<DOT>"], semantic: isAboveCurrent }),
@@ -1290,12 +1683,26 @@ const PRODUCTIONS: Record<string, Production> = {
           action(setFieldName),
           lookahead({ semantic: isAboveCurrent }),
           "Identifier",
+          // OperatorStack.reduceRecord, which first applies a postfix operator on top.
+          action((state) => {
+            const stack = getOperatorStack(state);
+            if (stack[stack.length - 1].operator !== undefined) reducePostfix(stack, stack.length);
+            stack[stack.length - 1] = {
+              node: createNode("RecordComponent", [
+                stack[stack.length - 1].node,
+                getHeir(state, 2),
+                getHeir(state, 1),
+              ]),
+              operator: undefined,
+            };
+          }),
         ),
         sequence(
           lookahead({ expansion: ["<LSB>"], semantic: isAboveCurrent }),
           expect("function argument"),
           "SBracketCases",
-          pushOnStack(false),
+          // TLAplusParser.isGenOp, which holds of a function application.
+          pushOnStack((node) => node.kind === "FcnAppl"),
         ),
       ),
     ),
@@ -1304,45 +1711,89 @@ const PRODUCTIONS: Record<string, Production> = {
         sequence(
           lookahead({ expansion: ["InfixOp"], semantic: isAboveCurrent }),
           "InfixOp",
-          pushOnStack(true),
+          PUSH_OPERATOR,
           getPrefixOperators(),
           getOperand(),
         ),
         sequence(
           lookahead({ expansion: ["<COLONCOLON>"], semantic: isAboveCurrent }),
           "<COLONCOLON>",
+          action((state) => {
+            const stack = getOperatorStack(state);
+            if (!isLabel(stack[stack.length - 1].node)) {
+              return `\`::' at ${formatLocation(state, state.token)} does not follow a label.`;
+            }
+            stack.pop();
+            return undefined;
+          }),
           "Expression",
-          pushOnStack(false),
+          // TLAplusParser.labelDoesNotChangeParse, given the operator parsed last.
+          action((state) => {
+            const stack = getOperatorStack(state);
+            const labeled = getHeir(state, 1);
+            const operator = stack.at(-1)?.operator;
+            if (
+              (labeled.kind === "InfixExpr" || labeled.kind === "PostfixExpr") &&
+              operator !== undefined &&
+              state.lastOperator !== undefined &&
+              !isLooser(operator, state.lastOperator)
+            ) {
+              const label = getHeir(state, 3);
+              return `Removing label at ${formatLocation(state, label.first, label.last)} would change expression parsing.`;
+            }
+            stack.push({
+              node: createNode("Label", [getHeir(state, 3), getHeir(state, 2), labeled]),
+              operator: undefined,
+            });
+            return undefined;
+          }),
         ),
       ),
     ),
   ]),
-  PrimitiveExp: production("Primitive expression", [
-    choice(
-      sequence(lookahead({ expansion: ["String"], semantic: isAboveCurrent }), "String"),
-      sequence(lookahead({ expansion: ["<NUMBER_LITERAL>"], semantic: isAboveCurrent }), "Number"),
-      sequence(
-        choice(
-          "Identifier",
-          sequence(
-            choice("<ProofStepLexeme>", "<ProofImplicitStepLexeme>"),
-            action((state) => {
-              if (getProofLevel(state) < 0 && state.proofLevels.length <= 1)
-                return `${formatLocation(state, state.token)}: Step number used outside proof.`;
-              return state.token.image[1] === "+"
-                ? `${formatLocation(state, state.token)}: <+> step number used in an expression.`
-                : undefined;
-            }),
+  PrimitiveExp: production(
+    "Primitive expression",
+    [
+      choice(
+        sequence(lookahead({ expansion: ["String"], semantic: isAboveCurrent }), "String"),
+        sequence(
+          lookahead({ expansion: ["<NUMBER_LITERAL>"], semantic: isAboveCurrent }),
+          "Number",
+        ),
+        sequence(
+          choice(
+            "Identifier",
+            sequence(
+              choice("<ProofStepLexeme>", "<ProofImplicitStepLexeme>"),
+              action((state) => {
+                if (getProofLevel(state) < 0 && state.proofLevels.length <= 1)
+                  return `${formatLocation(state, state.token)}: Step number used outside proof.`;
+                return state.token.image[1] === "+"
+                  ? `${formatLocation(state, state.token)}: <+> step number used in an expression.`
+                  : undefined;
+              }),
+            ),
+            "InfixOp",
+            "PostfixOp",
+            sequence(lookahead({ expansion: ["<op_76>"] }), "NonExpPrefixOp"),
           ),
-          "InfixOp",
-          "PostfixOp",
-          sequence(lookahead({ expansion: ["<op_76>"] }), "NonExpPrefixOp"),
+          optional(lookahead({ amount: 2 }), "OpArgs"),
+          zeroOrMore("BangExt"),
         ),
-        optional(lookahead({ amount: 2 }), "OpArgs"),
-        zeroOrMore("BangExt"),
       ),
-    ),
-  ]),
+    ],
+    (frame) => {
+      const head = frame.heirs[0];
+      frame.node =
+        head.kind === "String" || head.kind === "Number"
+          ? head
+          : getArguments(frame.heirs) !== undefined
+            ? createNode("OpApplication", frame.heirs)
+            : frame.heirs.length === 1
+              ? createNode("GeneralId", frame.heirs)
+              : undefined;
+    },
+  ),
   BangExt: production("Bang Extension", [
     "<BANG>",
     choice(
@@ -1365,19 +1816,28 @@ const PRODUCTIONS: Record<string, Production> = {
       "StructOp",
     ),
   ]),
-  StructOp: production("StructOp", [
-    expect("`<<' , `>>' , `:' , `@' , or number"),
-    choice(
-      "<LAB>",
-      "<RAB>",
-      "<COLON>",
-      "Number",
-      sequence(
-        lookahead({ semantic: (state) => getToken(state, 1).image === "@" }),
-        "<IDENTIFIER>",
+  StructOp: production(
+    "StructOp",
+    [
+      expect("`<<' , `>>' , `:' , `@' , or number"),
+      choice(
+        "<LAB>",
+        "<RAB>",
+        "<COLON>",
+        "Number",
+        sequence(
+          lookahead({ semantic: (state) => getToken(state, 1).image === "@" }),
+          "<IDENTIFIER>",
+        ),
       ),
-    ),
-  ]),
+    ],
+    (frame, state) => {
+      const number = frame.heirs[0];
+      return number.kind === "Number" && number.heirs.length > 1
+        ? `Illegal structural term at ${formatLocation(state, number.first, number.last)}`
+        : undefined;
+    },
+  ),
   OpenStart: production(undefined, [
     choice(
       "<CASE>",
@@ -1608,29 +2068,42 @@ const consume = (state: ParserState, kinds: Set<number>) => {
   }
   state.token = next;
   state.generation++;
+  state.frames[state.frames.length - 1].heirs.push({
+    kind: "token",
+    heirs: [],
+    first: next,
+    last: next,
+  });
   return true;
 };
 
-const parseProduction = (state: ParserState, production: Production) => {
-  const start = getToken(state, 1);
+// Parses a production, and adds the node it returns to those of the production that called it.
+const parseProduction = (state: ParserState, name: string) => {
+  const production = PRODUCTIONS[name];
   if (production.message !== undefined) {
-    state.messages.push({ name: production.message, token: start });
+    state.messages.push({ name: production.message, token: getToken(state, 1) });
     state.expecting = "";
   }
+  const frame: Frame = { heirs: [], node: undefined };
+  state.frames.push(frame);
   if (!parse(state, production.body)) return false;
+  state.frames.pop();
   if (production.message !== undefined) {
     state.messages.pop();
     state.expecting = "";
   }
-  const message = production.exit?.(state, start);
-  return message === undefined || fail(state, message);
+  const message = production.exit?.(frame, state);
+  if (typeof message === "string") return fail(state, message);
+  const node = frame.node ?? (frame.heirs.length === 0 ? undefined : createNode(name, frame.heirs));
+  if (node !== undefined) state.frames.at(-1)?.heirs.push(node);
+  return true;
 };
 
 // Runs the parse-mode code JavaCC generates for unit. It returns false once a ParseException's
 // report is recorded.
 const parse = (state: ParserState, unit: Unit): boolean => {
   if (unit.type === "tokens") return consume(state, unit.kinds);
-  if (unit.type === "call") return parseProduction(state, PRODUCTIONS[unit.name]);
+  if (unit.type === "call") return parseProduction(state, unit.name);
   if (unit.type === "action") {
     const message = unit.run(state);
     return message === undefined || fail(state, message);
@@ -1681,7 +2154,9 @@ export const getSanyParseError = (source: string) => {
     messages: [],
     moduleName: undefined,
     junctions: [],
+    frames: [],
     operatorStacks: [],
+    lastOperator: undefined,
     proofLevels: [],
     isTerminalProof: false,
     isFairnessHooked: false,
