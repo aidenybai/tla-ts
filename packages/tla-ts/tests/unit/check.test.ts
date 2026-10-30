@@ -1718,6 +1718,17 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect([result.generatedStates, result.distinctStates]).toEqual(counts);
   });
 
+  it.each([
+    ["UNION {UNION (SUBSET {{1}, {1, 2}}), {1}}", [8, 3]],
+    ["UNION {{1}, UNION (SUBSET {{1}, {1, 2}})}", [6, 3]],
+  ])("streams a lazy UNION in %s until a sort compares it as TLC does", async (set, counts) => {
+    const result = await checkSource(
+      `VARIABLE x\nInit == x \\in ${set}\nNext == UNCHANGED x`,
+      "INIT Init\nNEXT Next",
+    );
+    expect([result.generatedStates, result.distinctStates]).toEqual(counts);
+  });
+
   it("keeps a set operation lazy unless TLC can reduce both sets", async () => {
     const getCounts = async (set: string) => {
       const result = await checkSource(
