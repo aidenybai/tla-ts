@@ -2,7 +2,8 @@
 // resolution: a quantified variable that a literal of the body defines is replaced by its
 // definition.
 import { KIND_QUANTIFIER, KIND_VAR, OP_EQ, SORT_BOOL, type AstManager } from "./ast";
-import { flattenAnd, flattenOr } from "./ast-util";
+import { flattenAndVector, flattenOrVector } from "./ast-util";
+import { RefVector } from "./ref-vector";
 import { collectUsedVars, elimUnusedVars, replaceFreeVars, shiftVars } from "./var-subst";
 
 // Substitutes the variables with de Bruijn index i < map.length that have a definition in map,
@@ -119,9 +120,22 @@ const reduceDer = (manager: AstManager, expr: number) => {
     !isOccurring(manager, single.index, single.definition)
   )
     return data.isForall ? manager.falseExpr : manager.trueExpr;
-  const literals = data.isForall
-    ? flattenOr(manager, [data.body])
-    : flattenAnd(manager, [data.body]);
+  // The literals vector holds its expressions until reduce1 returns, and releases them in order.
+  const vector = new RefVector(manager);
+  manager.withoutTemporaries(() => {
+    vector.push(data.body);
+    if (data.isForall) flattenOrVector(manager, vector);
+    else flattenAndVector(manager, vector);
+  });
+  const result = reduceLiterals(manager, expr, vector.items);
+  vector.reset();
+  return result;
+};
+
+// The rest of der::reduce1, on the flattened literals of the body.
+const reduceLiterals = (manager: AstManager, expr: number, literals: number[]) => {
+  const data = manager.getQuantifier(expr);
+  const count = data.sorts.length;
   const definitions: (number | undefined)[] = [];
   const positions = literals.map((literal) => {
     const found = getVarDefinition(manager, literal, count, data.isForall);
@@ -143,15 +157,18 @@ const reduceDer = (manager: AstManager, expr: number) => {
     return index === -1 || definitions[index] === undefined;
   });
   const empty = data.isForall ? manager.falseExpr : manager.trueExpr;
-  const combined =
+  // apply_substitution holds the junction of the kept literals until it returns.
+  const combined = manager.withoutTemporaries(() =>
     kept.length === 0
       ? empty
       : kept.length === 1
         ? kept[0]
         : data.isForall
           ? manager.mkOr(kept)
-          : manager.mkAnd(kept);
-  return manager.mkQuantifier({
+          : manager.mkAnd(kept),
+  );
+  manager.incRef(combined);
+  const result = manager.mkQuantifier({
     ...data,
     body: substitutePartial(manager, combined, substitution),
     patterns: data.patterns.map((pattern) =>
@@ -160,6 +177,8 @@ const reduceDer = (manager: AstManager, expr: number) => {
       ),
     ),
   });
+  manager.decRef(combined);
+  return result;
 };
 
 // der::operator(): reduces until nothing changes, then drops the eliminated variables.
