@@ -2096,4 +2096,18 @@ describe("check matches TLC 1.7.4", () => {
     expect(await getTraceOutput("master")).toEqual(['"init"']);
     expect(await getTraceOutput("1.7.4")).toEqual([]);
   });
+
+  it("doesn't expand a specification that applies an operator to arguments", async () => {
+    const getStatus = (version: TlcVersion) =>
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nS(v) == v = 0 /\\ [][v' = v]_v\nSpec == S(x)\n====",
+        config: "SPECIFICATION Spec",
+        version,
+      }).then((result) => result.status);
+    expect(await getStatus("master")).toBe("success");
+    await expect(getStatus("1.7.4")).rejects.toThrow(
+      "The configuration file did not specify the initial state predicate.",
+    );
+  });
 });

@@ -207,7 +207,12 @@ export const expandTemporal = (
     }
   }
   const context = getConstantContext(environment, scope);
-  if (expression.kind === "Apply" && getLevel(expression, scope, environment) === TEMPORAL_LEVEL) {
+  // TLC 1.7.4 never expands an operator applied to arguments.
+  if (
+    expression.kind === "Apply" &&
+    environment.runtime.version !== "1.7.4" &&
+    getLevel(expression, scope, environment) === TEMPORAL_LEVEL
+  ) {
     const operator = resolveApplyOperator(expression, context);
     const definition = isLocallyResolved(expression)
       ? undefined
