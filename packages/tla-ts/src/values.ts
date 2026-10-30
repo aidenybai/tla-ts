@@ -1774,6 +1774,7 @@ export const applyFunction = (
   functionValue: Value,
   argument: Value,
   describeMissing?: (functionValue: FunctionValue) => string,
+  describeNonFunction?: (value: Value) => string,
 ): Value => {
   if (typeof functionValue === "object" && functionValue.kind === "LazyFunction") {
     if (!isElementOf(argument, functionValue.domain)) {
@@ -1787,7 +1788,8 @@ export const applyFunction = (
   }
   if (typeof functionValue !== "object" || functionValue.kind !== "Function") {
     throw new TlaEvaluationError(
-      `Attempted to apply ${formatValue(functionValue)}, which is not a function`,
+      describeNonFunction?.(functionValue) ??
+        `Attempted to apply ${formatValue(functionValue)}, which is not a function`,
     );
   }
   const position = findKeyIndex(functionValue.domain, argument);

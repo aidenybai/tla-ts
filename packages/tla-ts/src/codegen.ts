@@ -10,6 +10,8 @@ import {
   getSubsetOperator,
   getEvaluator,
   getFieldError,
+  getNonFunctionError,
+  getNonRecordError,
   isClosedConstant,
   isTlcInteger,
   isValueArgument,
@@ -250,12 +252,13 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "FunctionApplication": {
       keepLazy(expression.function);
       const functionCode = generate(expression.function);
+      const describeNonFunction = addReference(generator, getNonFunctionError(expression));
       if (expression.args.length === 1)
-        return `apply(${functionCode}, ${generate(expression.args[0])})`;
-      return `apply(${functionCode}, tuple([${expression.args.map((arg) => generate(arg)).join(", ")}]))`;
+        return `apply(${functionCode}, ${generate(expression.args[0])}, undefined, ${describeNonFunction})`;
+      return `apply(${functionCode}, tuple([${expression.args.map((arg) => generate(arg)).join(", ")}]), undefined, ${describeNonFunction})`;
     }
     case "FieldAccess":
-      return `apply(${generate(expression.record)}, ${JSON.stringify(expression.field)}, ${addReference(generator, getFieldError(expression))})`;
+      return `apply(${generate(expression.record)}, ${JSON.stringify(expression.field)}, ${addReference(generator, getFieldError(expression))}, ${addReference(generator, getNonRecordError(expression))})`;
     case "Record": {
       const fields = getSortedFields(expression.fields);
       if (hasDuplicateFields(fields)) return generateDelegate(generator, expression, frame);
