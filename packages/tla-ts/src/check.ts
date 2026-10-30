@@ -1569,9 +1569,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         (tlcFingerprints[index] ??= Number(
           BigInt.asIntN(32, runtime.getFingerprint(states[index])),
         )),
-      getSuccessors: (state) => {
+      getSuccessors: (source, state) => {
         const successors: LiveSuccessor[] = [];
         if (spec.next === undefined) return successors;
+        // The constraints read the level of the state whose successors they check, as when TLC
+        // explored it.
+        const livenessSource = current.livenessSource;
+        current.livenessSource = source;
         forEachSuccessor(
           spec.next,
           state,
@@ -1589,6 +1593,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           },
           spec.scope,
         );
+        current.livenessSource = livenessSource;
         return successors;
       },
     }),
@@ -1928,6 +1933,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   runtime.getLevel = (state) => {
     const source = current.livenessSource;
+    // TLC 1.7.4 reads the level of the state its worker explores, whichever state it evaluates.
+    if (options.version === "1.7.4") {
+      const explored = source !== -1 ? source : current.isExpanding ? current.index : -1;
+      return explored === -1 ? 0 : depths[explored];
+    }
     if (source !== -1) return state === states[source] ? depths[source] : depths[source] + 1;
     if (state === current.candidate) return current.candidateLevel;
     if (current.index === -1) return 0;

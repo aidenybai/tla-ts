@@ -2110,4 +2110,18 @@ describe("check matches TLC 1.7.4", () => {
       "The configuration file did not specify the initial state predicate.",
     );
   });
+
+  it("reads the level of the state it explores in a constraint", async () => {
+    const getDistinctStates = async (version: TlcVersion) => {
+      const result = await check({
+        source:
+          '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = x + 1\nC == TLCGet("level") < 3\n====',
+        config: "INIT Init\nNEXT Next\nCONSTRAINT C\nCHECK_DEADLOCK FALSE",
+        version,
+      });
+      return result.distinctStates;
+    };
+    expect(await getDistinctStates("master")).toBe(2);
+    expect(await getDistinctStates("1.7.4")).toBe(3);
+  });
 });

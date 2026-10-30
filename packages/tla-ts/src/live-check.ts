@@ -50,7 +50,7 @@ export interface LivenessChecker {
 
 export interface LiveGraph {
   getFingerprint: (index: number) => number;
-  getSuccessors: (state: Value[]) => LiveSuccessor[];
+  getSuccessors: (index: number, state: Value[]) => LiveSuccessor[];
 }
 
 // Numbers in a typed array that doubles as it fills, so a graph of millions of nodes takes a few
@@ -442,7 +442,7 @@ export const createLivenessChecker = (
       actions.push(selfActions);
       if (existing === undefined) expandLate(check, tableau, state, index, target);
     }
-    for (const successor of graph.getSuccessors(state)) {
+    for (const successor of graph.getSuccessors(index, state)) {
       const successorActions = checkAction(check, index, state, successor.state);
       const isDone = check.isDone[successor.index] === true;
       for (const next of tableauNode.successors) {
