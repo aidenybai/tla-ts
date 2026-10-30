@@ -162,6 +162,8 @@ const FIRST_DECLARED_SMALL_ID = 143;
 // The ids of Z3's own expressions when it starts: the undef proof, true and false, then pi, euler, a
 // bit-vector numeral, fifteen real variables and a sum of two of them, which no problem shares.
 const FIRST_FREE_ID = 22;
+// MAX_SMALL_NUM_TO_CACHE: arith_decl_plugin holds the numerals below it once it makes them.
+const MAX_SMALL_NUM_TO_CACHE = 16;
 
 // symbol::hash: a numerical symbol hashes to its number.
 const getSymbolHash = (symbol: SmtSymbol) =>
@@ -217,6 +219,9 @@ export class AstManager {
   // The expressions created since the innermost withTemporaries began, which it holds like the
   // expr_ref temporaries of a Z3 function.
   private temporaries: number[] | null = null;
+  // m_small_ints and m_small_reals: the numerals below MAX_SMALL_NUM_TO_CACHE, which are held.
+  private smallInts: number[] = [];
+  private smallReals: number[] = [];
   readonly trueExpr: number;
   readonly falseExpr: number;
 
@@ -535,13 +540,17 @@ export class AstManager {
   // A real numeral, which Z3's theory_lra creates for its constants 0 and 1. tla-ts has no real sort,
   // so it stands in for the numeral, with its own id, and no expression uses it.
   mkRealNumeral(value: number) {
-    return this.intern(`r${value}`, KIND_APP, OP_NUM, [], SORT_INT, value, () =>
-      this.getFuncDeclHash(
-        "Real",
-        [],
-        SORT_INT,
-        getInfoHash(Z3_ARITH_FAMILY, 0, [(Math.abs(value) + 3) >>> 0, 0]),
+    return this.holdSmallNumeral(
+      this.intern(`r${value}`, KIND_APP, OP_NUM, [], SORT_INT, value, () =>
+        this.getFuncDeclHash(
+          "Real",
+          [],
+          SORT_INT,
+          getInfoHash(Z3_ARITH_FAMILY, 0, [(Math.abs(value) + 3) >>> 0, 0]),
+        ),
       ),
+      value,
+      this.smallReals,
     );
   }
 
@@ -550,14 +559,25 @@ export class AstManager {
       throw new SmtUnsupportedError(`the numeral ${value} is too large`);
     // The Int numeral declaration has the parameters (value, is_int), and a rational hashes as
     // |numerator| + 3 |denominator|.
-    return this.intern(`n${value}`, KIND_APP, OP_NUM, [], SORT_INT, value === 0 ? 0 : value, () =>
-      this.getFuncDeclHash(
-        "Int",
-        [],
-        SORT_INT,
-        getInfoHash(Z3_ARITH_FAMILY, 0, [(Math.abs(value) + 3) >>> 0, 1]),
+    return this.holdSmallNumeral(
+      this.intern(`n${value}`, KIND_APP, OP_NUM, [], SORT_INT, value === 0 ? 0 : value, () =>
+        this.getFuncDeclHash(
+          "Int",
+          [],
+          SORT_INT,
+          getInfoHash(Z3_ARITH_FAMILY, 0, [(Math.abs(value) + 3) >>> 0, 1]),
+        ),
       ),
+      value,
+      this.smallInts,
     );
+  }
+
+  private holdSmallNumeral(numeral: number, value: number, cache: number[]) {
+    if (value < 0 || value >= MAX_SMALL_NUM_TO_CACHE || cache[value] !== undefined) return numeral;
+    this.incRef(numeral);
+    cache[value] = numeral;
+    return numeral;
   }
 
   // mk_model_value: the element with this index in the universe of an uninterpreted sort.
