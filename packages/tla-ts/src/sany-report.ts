@@ -37,6 +37,8 @@ export interface SanyReportOptions {
   isXmlExport?: boolean;
   // The TLC whose SANY to reproduce.
   version?: TlcVersion;
+  // Prints what SANY prints as it goes, before the report holds all of it.
+  onPrint?: (text: string) => void;
 }
 
 // ErrorDetails.toString.
@@ -114,7 +116,11 @@ export const getSanyReport = (
     ? readFileSync(rootPath, "utf8")
     : standardModules.get(rootName);
   const lines: string[] = [];
-  const log = (text: string) => lines.push(`${text}\n`);
+  const write = (text: string) => {
+    lines.push(text);
+    options.onPrint?.(text);
+  };
+  const log = (text: string) => write(`${text}\n`);
   const isTlc174 = options.version === "1.7.4";
   // TLC 1.7.4's XMLExporter discards what SANY prints to ToolIO.out rather than its error stream.
   const isToolOutputDiscarded = isTlc174 && options.isXmlExport;
@@ -280,7 +286,7 @@ export const getSanyReport = (
       // TLC 1.7.4's SANY aborts with an AbortException, and keeps the message as an abort.
       if (isTlc174) {
         log("tla2sany.semantic.AbortException");
-        lines.push(`*** Abort messages: 1\n\n${formatMessage(fatal)}\n\n\n`);
+        write(`*** Abort messages: 1\n\n${formatMessage(fatal)}\n\n\n`);
         isFailed.value = true;
         return undefined;
       }

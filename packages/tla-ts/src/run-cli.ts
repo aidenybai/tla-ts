@@ -642,6 +642,10 @@ const printMissingFile = (userDirectory: string, fileName: string, directories: 
     `File does not exist: ${userDirectory}/${fileName} while looking in these directories: ${userDirectory}, ${directories.join(", ")}, classpath:/tla2sany/StandardModules, classpath:/`,
   );
 
+// The URL of the directory of SANY's standard modules in a tla2tools.jar.
+const getStandardModulesUrl = (jar: string) =>
+  `jar:file:${pathToFileURL(resolve(jar)).pathname}!/tla2sany/StandardModules/`;
+
 // Java's Files.createTempDirectory names a directory by a random unsigned long. tla-ts derives it
 // from what the directory holds, so that each run of a spec prints the same files.
 const getTemporaryName = (contents: string) =>
@@ -673,9 +677,7 @@ const createFileDescriber = (
       return `${join(directory, getTemporaryName(`${root} ${name}`), fileName)} (${root})`;
     }
     const copy = join(libraryDirectory, fileName);
-    return jar === undefined
-      ? copy
-      : `${copy} (jar:file:${pathToFileURL(resolve(jar)).pathname}!/tla2sany/StandardModules/${fileName})`;
+    return jar === undefined ? copy : `${copy} (${getStandardModulesUrl(jar)}${fileName})`;
   };
 };
 
@@ -844,7 +846,16 @@ const checkSpec = async (
   // the spec's modules in the spec's directory and the TLA-Library directories.
   const isAbsoluteSpec = isAbsolute(specPath);
   const specName = isAbsoluteSpec ? fileName : specPath.replace(/\.tla$/, "");
-  if (!existsSync(specPath) && !SANY_STANDARD_MODULES.has(fileName)) {
+  const jar = getJar(java);
+  const reportMissingFile =
+    version === "1.7.4" && jar !== undefined
+      ? createMissingFilePrinter174(specPath, java, jar)
+      : undefined;
+  if (reportMissingFile) {
+    if (!existsSync(specPath) && !SANY_174_STANDARD_MODULES.has(fileName)) {
+      reportMissingFile(`${fileName}.tla`);
+    }
+  } else if (!existsSync(specPath) && !SANY_STANDARD_MODULES.has(fileName)) {
     printMissingFile(
       isAbsoluteSpec ? directory : process.cwd(),
       isAbsoluteSpec ? `${fileName}.tla` : `./${specName}.tla`,
@@ -852,18 +863,22 @@ const checkSpec = async (
     );
   }
   // TLC prints what SANY prints as it parses the spec, and the errors it rejects the spec for.
-  const sany = getSanyReport(specPath, loadModule, {
-    fileName: specName,
-    describeFile: createFileDescriber(
-      specPath,
-      directories,
-      java,
-      args.get("-metadir")?.[0],
+  const sany = getSanyReport(
+    specPath,
+    reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
+    {
+      fileName: specName,
+      describeFile: createFileDescriber(
+        specPath,
+        directories,
+        java,
+        args.get("-metadir")?.[0],
+        version,
+      ),
       version,
-    ),
-    version,
-  });
-  process.stdout.write(sany.text);
+      onPrint: (text) => process.stdout.write(text),
+    },
+  );
   if (sany.isFailed) {
     printCheckProgress(printer, { kind: "parsed" }, timing, directory);
     printParsingFailed();
@@ -1251,6 +1266,42 @@ const exportXml = (args: string[]) => {
   });
 };
 
+// TLC 1.7.4's FileUtil.createNamedInputStream names the last file that SimpleFilenameToStream
+// looked for a module in, and the directories it looks in, the standard modules in the jar last.
+const printMissingFile174 = (path: string, libraries: string[], jar: string) =>
+  console.error(
+    `File does not exist: ${isAbsolute(path) ? path : `${process.cwd()}/${path}`} while looking in these directories: ${[...libraries, getStandardModulesUrl(jar)].join(", ")}`,
+  );
+
+// SimpleFilenameToStream ends a library directory with a separator.
+const toLibraryPath = (directory: string) =>
+  directory.endsWith("/") ? directory : `${directory}/`;
+
+// TLC 1.7.4's SimpleFilenameToStream looks for a module in the directory of a spec that TLC is
+// given by an absolute path, then in the directory that a relative path names, or else in the
+// TLA-Library directories.
+const createMissingFilePrinter174 = (specPath: string, java: JavaProperties, jar: string) => {
+  const specDirectory = specPath.slice(0, specPath.lastIndexOf("/") + 1);
+  const isRelativeToDirectory = !isAbsolute(specPath) && specDirectory !== "";
+  const libraries = (isRelativeToDirectory ? [specDirectory] : java.libraries).map(toLibraryPath);
+  const lastDirectory =
+    libraries.length > 0
+      ? libraries[libraries.length - 1]
+      : isAbsolute(specPath)
+        ? specDirectory
+        : "";
+  return (fileName: string) => printMissingFile174(`${lastDirectory}${fileName}`, libraries, jar);
+};
+
+// TLC 1.7.4's SANY reports each module it can't find as it looks for it.
+const reportMissingModules174 =
+  (loadModule: (name: string) => string | undefined, onMissing: (fileName: string) => void) =>
+  (name: string) => {
+    const text = loadModule(name);
+    if (text === undefined && !SANY_174_STANDARD_MODULES.has(name)) onMissing(`${name}.tla`);
+    return text;
+  };
+
 // TLC 1.7.4's XMLExporter.main throws an exception for an argument it can't take or a
 // specification without a root module.
 const printXmlExporterException = (exception: string, line: number) => {
@@ -1296,33 +1347,18 @@ const exportXml174 = (args: string[], jar: string) => {
   const fileName = `${name.replace(/\.tla$/i, "")}.tla`;
   // SimpleFilenameToStream looks for a module in the working directory, then in the -I
   // directories, or the root directory when there are none, then among the standard modules.
-  const libraries = (includes.length === 0 ? ["/"] : includes).map((library) =>
-    library.endsWith("/") ? library : `${library}/`,
-  );
+  const libraries = (includes.length === 0 ? ["/"] : includes).map(toLibraryPath);
   const directories = [".", ...libraries];
-  const standardModules = `jar:file:${pathToFileURL(resolve(jar)).pathname}!/tla2sany/StandardModules/`;
-  // FileUtil.createNamedInputStream names the last file it looked for a module in.
-  const printMissingFile = (moduleFileName: string) => {
-    const lastPath = `${libraries[libraries.length - 1]}${moduleFileName}`;
-    console.error(
-      `File does not exist: ${isAbsolute(lastPath) ? lastPath : `${process.cwd()}/${lastPath}`} while looking in these directories: ${[...libraries, standardModules].join(", ")}`,
-    );
-  };
+  const printMissingFile = (moduleFileName: string) =>
+    printMissingFile174(`${libraries[libraries.length - 1]}${moduleFileName}`, libraries, jar);
   const path = directories.map((directory) => resolve(directory, fileName)).find(existsSync);
   if (path === undefined && !SANY_174_STANDARD_MODULES.has(basename(fileName, ".tla"))) {
     printMissingFile(fileName);
     return EXIT_STATUS.success;
   }
-  const loadModule = createModuleLoader(directories);
   const sany = getSanyReport(
     path ?? fileName,
-    (moduleName) => {
-      const text = loadModule(moduleName);
-      if (text === undefined && !SANY_174_STANDARD_MODULES.has(moduleName)) {
-        printMissingFile(`${moduleName}.tla`);
-      }
-      return text;
-    },
+    reportMissingModules174(createModuleLoader(directories), printMissingFile),
     {
       fileName: name,
       isXmlExport: true,

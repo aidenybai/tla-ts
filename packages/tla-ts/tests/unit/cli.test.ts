@@ -624,6 +624,17 @@ describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path
     );
     expect(getToolSequence(result.stdout).slice(-4)).toEqual(["2267", "2200", "2199", "2186"]);
   });
+
+  it("names the file it looked for a module in that it can't find", () => {
+    const result = check174("Lost");
+    expect(result.status).toBe(150);
+    expect(result.stderr).toBe(
+      `File does not exist: ${join(FIXTURES, "tlc-174", "Gone.tla")} while looking in these directories: jar:file:${pathToFileURL(JAR_174).pathname}!/tla2sany/StandardModules/\n`,
+    );
+    expect(result.stdout).toContain(
+      "Unknown location\n\nCannot find source file for module Gone imported in module Lost.\n",
+    );
+  });
 });
 
 describe("the CLI takes several specs and globs", () => {
