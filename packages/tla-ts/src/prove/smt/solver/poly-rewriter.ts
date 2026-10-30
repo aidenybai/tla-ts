@@ -94,12 +94,13 @@ export class PolyRewriter {
   // mon_lt::ordinal, without powers.
   protected getOrdinal(expr: number) {
     const manager = this.manager;
-    if (manager.kinds[expr] !== KIND_APP || !ARITH_OPS.has(manager.getOp(expr))) return expr;
+    if (manager.kinds[expr] !== KIND_APP || !ARITH_OPS.has(manager.getOp(expr)))
+      return manager.ids[expr];
     if (this.isMul(expr)) {
       const args = manager.args[expr];
-      return this.manager.isNumeral(args[0]) ? args[1] : expr;
+      return manager.ids[manager.isNumeral(args[0]) ? args[1] : expr];
     }
-    return this.manager.isNumeral(expr) ? -1 : expr;
+    return manager.isNumeral(expr) ? -1 : manager.ids[expr];
   }
 
   protected sortMonomials(monomials: number[], start: number) {
