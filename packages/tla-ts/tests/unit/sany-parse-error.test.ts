@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import { getSanyParseError } from "../../src/sany-parse-error";
 
-const toText = (lines: string[]) => lines.map((line) => `${line}\n`).join("");
+const toText = (lines: string[]) =>
+  `***Parse Error***\n${lines.map((line) => `${line}\n`).join("")}`;
 
 // The modules come from the conformance corpora unless they test one of the checks SANY's parser
 // makes as it builds the syntax tree, and the expected reports are what SANY's parser prints for
-// them after "***Parse Error***".
+// them.
 describe("getSanyParseError", () => {
   it("reports where a record constructor has an expression for a field name", () => {
     const source = `---- MODULE definition_parse_error ----
@@ -338,6 +339,58 @@ EXTENDS Naturals, Sequences, FiniteSets , TLC
   ])("reports $check", (testCase) => {
     expect(getSanyParseError(`---- MODULE Test ----\n${testCase.body}\n====\n`)).toBe(
       toText(testCase.report),
+    );
+  });
+
+  // The modules and messages come from SANY.
+  it.each([
+    [
+      "a character no token starts with",
+      "x == 1 ; 2\n====\n",
+      'Lexical error at line 2, column 8.  Encountered: ";" (59), after : ""',
+    ],
+    [
+      "a token prefix",
+      'x == "a" ?\n====\n',
+      'Lexical error at line 2, column 11.  Encountered: "\\n" (10), after : "?"',
+    ],
+    [
+      "an invalid escape",
+      'x == "a\\qb"\n====\n',
+      'Lexical error at line 2, column 9.  Encountered: "q" (113), after : "\\"a\\\\"',
+    ],
+    [
+      "a string at the end of the file",
+      'x == "abc',
+      'Lexical error at line 2, column 10.  Encountered: <EOF> after : "\\"abc"',
+    ],
+    [
+      "a comment that ends the last line",
+      "(* abc\n",
+      'Lexical error at line 3, column 0.  Encountered: <EOF> after : ""',
+    ],
+    [
+      "an end-of-line comment at the end of the file",
+      "x == 1 \\* abc",
+      'Lexical error at line 2, column 14.  Encountered: <EOF> after : ""',
+    ],
+    [
+      "a comment open over lines",
+      "(* abc\n\n",
+      "Lexical {error: EOF reached, possibly open comment starting around line 2",
+    ],
+    [
+      "a comment open after a nested comment",
+      "(* \n(* \n *) abc\n\n",
+      "Lexical {error: EOF reached, possibly open comment starting around line 4",
+    ],
+  ])("reports the lexical error of %s", (_, body, message) => {
+    expect(getSanyParseError(`---- MODULE M ----\n${body}`)).toBe(message);
+  });
+
+  it("reports a parse error for a comment that ends the file with a bracket", () => {
+    expect(getSanyParseError("---- MODULE M ----\nx == 1\n(* abc (* d *)")).toMatch(
+      /^\*\*\*Parse Error\*\*\*\n/,
     );
   });
 

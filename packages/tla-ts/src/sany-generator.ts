@@ -376,7 +376,7 @@ export const generateSanySpecification = (
       return parseSanyModule(getUnboxedSource(text));
     } catch (error) {
       if (!(error instanceof TlaSyntaxError)) throw error;
-      throw getParseFailure(`***Parse Error***\n${getSanyParseError(text) ?? error.message}`);
+      throw getParseFailure(getSanyParseError(text) ?? `***Parse Error***\n${error.message}`);
     }
   };
 

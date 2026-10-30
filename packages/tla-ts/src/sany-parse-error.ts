@@ -116,7 +116,7 @@ interface LookaheadCall {
 
 interface ParserState {
   readToken: () => SanyToken;
-  isLexicalError: boolean;
+  lexicalError: string | undefined;
   token: SanyToken;
   // jj_gen, which counts consumed tokens, and its value at the last failed jj_ntk switch.
   generation: number;
@@ -2110,19 +2110,18 @@ const parse = (state: ParserState, unit: Unit): boolean => {
   return true;
 };
 
-// SANY's report of a module its parser fails to parse, or undefined if the parser accepts the
-// module or its lexer rejects it.
+// What SANY reports for a module its lexer or parser rejects, or undefined if it accepts the module.
 export const getSanyParseError = (source: string) => {
   const readToken = createSanyLexer(source);
   const start: SanyToken = { kind: EOF, image: "", beginLine: 0, beginColumn: 0, next: undefined };
   const state: ParserState = {
     readToken: () => {
       const token = readToken();
-      if (token) return token;
-      state.isLexicalError = true;
+      if (typeof token !== "string") return token;
+      state.lexicalError ??= token;
       return { ...start, next: undefined };
     },
-    isLexicalError: false,
+    lexicalError: undefined,
     token: start,
     generation: 0,
     failedSwitchGeneration: -1,
@@ -2147,5 +2146,6 @@ export const getSanyParseError = (source: string) => {
     report: undefined,
   };
   const isParsed = parse(state, { type: "call", name: "CompilationUnit" });
-  return isParsed || state.isLexicalError ? undefined : state.report;
+  if (state.lexicalError !== undefined) return state.lexicalError;
+  return isParsed || state.report === undefined ? undefined : `***Parse Error***\n${state.report}`;
 };

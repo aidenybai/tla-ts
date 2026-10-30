@@ -361,8 +361,27 @@ const getPositions = (source: string) => {
   return { lines, columns };
 };
 
-// A lazy token stream over source, which returns undefined where JavaCC's token manager throws a
-// TokenMgrError: at a character no token starts with, or at the end of the file in a comment.
+// The characters of a string literal that a string literal could still continue.
+const STRING_PREFIX = /"(?:[^"\n\r\\]|\\[ntrf\\"])*\\?/y;
+const LITERAL_PREFIXES = new Set(
+  [...LITERALS.keys()].flatMap((image) =>
+    Array.from({ length: image.length - 1 }, (_, index) => image.slice(0, index + 1)),
+  ),
+);
+
+// The characters JavaCC's token manager reads at offset while some token could still continue.
+const getTokenPrefix = (source: string, offset: number) => {
+  let length = 0;
+  while (LITERAL_PREFIXES.has(source.slice(offset, offset + length + 1))) length++;
+  return source.slice(
+    offset,
+    offset + Math.max(length, getMatchLength(STRING_PREFIX, source, offset)),
+  );
+};
+
+// A lazy token stream over source, which returns SANY's message for the TokenMgrError JavaCC's
+// token manager throws at a character no token continues with, or at the end of the file in a
+// comment.
 export const createSanyLexer = (source: string) => {
   const positions = getPositions(source);
   const state = { offset: 0, mode: "DEFAULT" };
@@ -375,29 +394,50 @@ export const createSanyLexer = (source: string) => {
   });
   // JavaCC places the end of the file at the file's last character.
   const getEndOfFile = () => createToken(getKind("EOF"), source.length - 1, 0);
+  // The lexer read the characters from start to end, and TLAplusParser.parse reports the end of
+  // the file in a token that starts on an earlier line as an open comment.
+  const getLexicalError = (start: number, end: number, after: string) => {
+    const index = end - 1;
+    const line = positions.lines[index];
+    const column = positions.columns[index];
+    if (end < source.length) return formatLexicalError(line, column, source[index], after);
+    if (positions.lines[start] !== line) {
+      return `Lexical {error: EOF reached, possibly open comment starting around line ${positions.lines[start]}`;
+    }
+    return source[index] === "\n" || source[index] === "\r"
+      ? formatLexicalError(line + 1, 0, undefined, after)
+      : formatLexicalError(line, column + 1, undefined, after);
+  };
+  // A comment is a chain of MORE matches, which restarts after each nested comment bracket, and the
+  // end of the file right after a bracket ends the token stream.
   const skipComment = () => {
-    if (source.startsWith("\\*", state.offset)) {
-      const end = source.slice(state.offset).search(/[\n\r]/);
-      if (end === -1) return false;
+    const start = state.offset;
+    if (source.startsWith("\\*", start)) {
+      const end = source.slice(start).search(/[\n\r]/);
+      if (end === -1) return getLexicalError(start, source.length, "");
       state.offset += end + 1;
-      return true;
+      return undefined;
     }
     let depth = 0;
-    let offset = state.offset;
+    let chainStart = start;
+    let offset = start;
     while (offset < source.length) {
       if (source.startsWith("(*", offset)) {
         depth++;
         offset += 2;
+        if (depth > 1) chainStart = offset;
       } else if (source.startsWith("*)", offset)) {
         depth--;
         offset += 2;
+        chainStart = offset;
         if (depth === 0) {
           state.offset = offset;
-          return true;
+          return undefined;
         }
       } else offset++;
     }
-    return false;
+    state.offset = offset;
+    return chainStart === source.length ? undefined : getLexicalError(chainStart, offset, "");
   };
   const getSkippingToken = (patterns: [string, RegExp[]][]): SanyToken => {
     while (state.offset < source.length) {
@@ -413,17 +453,26 @@ export const createSanyLexer = (source: string) => {
     }
     return getEndOfFile();
   };
-  const getNextToken = (): SanyToken | undefined => {
+  const getNextToken = (): SanyToken | string => {
     if (state.mode === "DEFAULT") return getSkippingToken(DEFAULT_PATTERNS);
     if (state.mode === "PRAGMA") return getSkippingToken(PRAGMA_PATTERNS);
     while (state.offset < source.length) {
-      if (" \t\n\r".includes(source[state.offset])) state.offset++;
-      else if (source.startsWith("(*", state.offset) || source.startsWith("\\*", state.offset)) {
-        if (!skipComment()) return undefined;
+      const offset = state.offset;
+      if (" \t\n\r".includes(source[offset])) state.offset++;
+      else if (source.startsWith("(*", offset) || source.startsWith("\\*", offset)) {
+        const error = skipComment();
+        if (error !== undefined) return error;
       } else {
-        const match = matchSpecToken(source, state.offset);
-        if (match.length === 0) return undefined;
-        const token = createToken(match.kind, state.offset, match.length);
+        const match = matchSpecToken(source, offset);
+        if (match.length === 0) {
+          // JavaCC reads on while a token could continue, and one more character.
+          const prefix = getTokenPrefix(source, offset);
+          const end = Math.min(offset + prefix.length + 1, source.length);
+          const read = source.slice(offset, end);
+          const after = end < source.length ? prefix : read.length > 1 ? read : "";
+          return getLexicalError(offset, end, after);
+        }
+        const token = createToken(match.kind, offset, match.length);
         state.offset += match.length;
         return token;
       }
@@ -468,7 +517,11 @@ export const formatLexicalError = (
 // outside a comment by its low byte, and stops at one whose low byte is below 0x80.
 export const getSany174LexicalError = (source: string) => {
   const readToken = createSanyLexer(source);
-  for (let token = readToken(); token && token.kind !== getKind("EOF"); token = readToken()) {
+  for (
+    let token = readToken();
+    typeof token !== "string" && token.kind !== getKind("EOF");
+    token = readToken()
+  ) {
     const index = token.image.split("").findIndex((character) => {
       const code = character.charCodeAt(0);
       return code > 0xff && (code & 0xff) < 0x80;

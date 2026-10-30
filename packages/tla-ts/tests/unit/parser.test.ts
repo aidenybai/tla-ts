@@ -112,6 +112,13 @@ describe("parseModule reads operators like SANY", () => {
     expect(definition?.body).toMatchObject({ kind: "Apply", operator });
   });
 
+  it.each(['"a\\qb"', '"a\\ b"', '"a\rb"'])(
+    "rejects the string %j that SANY's lexer stops in",
+    (string) => {
+      expect(() => parseModule(`---- MODULE M ----\nA == ${string}\n====`)).toThrow(TlaSyntaxError);
+    },
+  );
+
   it.each([
     ["the root module", "---- MODULE M ----\nA == 1\n"],
     ["a nested module", `---- MODULE M ----\n---- MODULE Inner ----\nA == 1\n`],
