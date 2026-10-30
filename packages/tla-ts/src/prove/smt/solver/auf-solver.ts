@@ -3,7 +3,8 @@
 // variables that must share an instantiation set, and each group gets a projection function that
 // maps any value to the value of a term in its set.
 import { OP_ADD, OP_ITE, OP_LT, OP_SUB, SORT_BOOL, SORT_INT, type AstManager } from "./ast";
-import { ObjMap } from "./hashtable";
+import { combineHash } from "./hash";
+import { ObjHashtable, ObjMap } from "./hashtable";
 import { FuncInterp, RandomGen, type ProtoModel } from "./proto-model";
 import { Rewriter } from "./rewriter";
 
@@ -157,11 +158,16 @@ interface AFINode {
   node: Node;
 }
 
+// The number that keys an argument position of a declaration in m_A_f_is.
+const ARITY_BOUND = 2 ** 20;
+const getAFIKey = (decl: number, index: number) => decl * ARITY_BOUND + index;
+
 // auf_solver: the "almost uninterpreted fragment" of the paper.
 export class AufSolver {
   private nodes: Node[] = [];
   private uvars = new Map<string, Node>();
-  private aFIs = new Map<string, AFINode>();
+  // m_A_f_is, a table in Z3's slot order, hashed like pair_hash of the declaration and position.
+  private aFIs: ObjMap<AFINode>;
   private sort2k = new Map<number, number>();
   private model: ProtoModel | null = null;
   private evalCache = [new Map<number, number | null>(), new Map<number, number | null>()];
@@ -171,7 +177,11 @@ export class AufSolver {
   constructor(
     private manager: AstManager,
     readonly rewriter: Rewriter,
-  ) {}
+  ) {
+    this.aFIs = new ObjMap((key) =>
+      combineHash(manager.getDeclHash(Math.floor(key / ARITY_BOUND)), key % ARITY_BOUND),
+    );
+  }
 
   reset() {
     this.nodes = [];
@@ -211,7 +221,7 @@ export class AufSolver {
   }
 
   getAFI(decl: number, index: number) {
-    const key = `${decl}:${index}`;
+    const key = getAFIKey(decl, index);
     const existing = this.aFIs.get(key);
     if (existing !== undefined) return existing.node;
     const node = new Node(this.nodes.length, this.manager.funcDecls[decl].domain[index]);
@@ -419,17 +429,20 @@ export class AufSolver {
     node.setProj(decl);
   }
 
+  // collect_partial_funcs: a func_decl_set, in Z3's slot order.
   private collectPartialFuncs() {
+    const manager = this.manager;
     const model = this.getModel();
-    const result: number[] = [];
-    for (const entry of this.aFIs.values()) {
-      if (result.includes(entry.decl)) continue;
-      let interp = model.funcInterps.get(entry.decl);
+    const result = new ObjHashtable((decl) => manager.getDeclHash(decl));
+    for (const entry of this.aFIs.entries()) {
+      const decl = entry[1].decl;
+      if (result.has(decl)) continue;
+      let interp = model.funcInterps.get(decl);
       if (interp === undefined) {
-        interp = new FuncInterp(this.manager, this.manager.funcDecls[entry.decl].domain.length);
-        model.registerFunc(entry.decl, interp);
+        interp = new FuncInterp(manager, manager.funcDecls[decl].domain.length);
+        model.registerFunc(decl, interp);
       }
-      if (interp.isPartial()) result.push(entry.decl);
+      if (interp.isPartial()) result.add(decl);
     }
     return result;
   }
@@ -468,10 +481,10 @@ export class AufSolver {
   }
 
   private getFIProj(decl: number, index: number) {
-    return this.aFIs.get(`${decl}:${index}`)?.node.getProj() ?? null;
+    return this.aFIs.get(getAFIKey(decl, index))?.node.getProj() ?? null;
   }
 
-  private completePartialFuncs(partialFuncs: number[]) {
+  private completePartialFuncs(partialFuncs: ObjHashtable) {
     const manager = this.manager;
     const model = this.getModel();
     for (const decl of partialFuncs) {
