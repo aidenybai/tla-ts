@@ -984,7 +984,15 @@ export class TheoryLra {
     if (this.context.checkCanceled()) return false;
     const move = this.lia.check();
     if (move.kind === "branch") this.mkBound(this.lia.term, move.offset, !move.isUpper);
-    else if (move.kind === "conflict") {
+    else if (move.kind === "cut") {
+      this.resetEvidence();
+      for (const constraint of this.lia.explanation) this.setEvidence(constraint);
+      const atom = this.mkBound(this.lia.term, move.offset, !move.isUpper);
+      this.context.assign(
+        this.context.getLiteral(atom),
+        new TheoryJustification(this.coreLiterals, []),
+      );
+    } else if (move.kind === "conflict") {
       this.explanation.clear();
       this.explanation.addExplanation(this.lia.explanation);
       this.setConflict();
@@ -1042,6 +1050,7 @@ export class TheoryLra {
     );
     context.internalize(atom, true);
     context.markAsRelevant(atom);
+    return atom;
   }
 
   private initVariableValues() {

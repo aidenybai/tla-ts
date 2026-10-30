@@ -35,6 +35,8 @@ export class LpSettings {
   readonly isPropagatingEqs = true;
   readonly intFindCubePeriod = 4;
   readonly hnfCutPeriod = 4;
+  readonly limitOnRowsForHnfCutter = 75;
+  readonly limitOnColumnsForHnfCutter = 150;
   readonly intGomoryCutPeriod = 4;
   // lp.dio_calls_period, which the Diophantine solver's results move, its decrease, and
   // lp.dio_gomory_enable_period.

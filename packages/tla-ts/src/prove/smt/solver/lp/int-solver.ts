@@ -1,14 +1,15 @@
 // Ported from Z3 (src/math/lp/int_solver.cpp, src/math/lp/int_gcd_test.cpp,
 // src/math/lp/int_branch.cpp), MIT license, see z3-license.txt. The integer check of the final
 // check: the GCD test on rows, patching fractional basic columns through integer non-basic ones,
-// the cube test, Gomory cuts, and a branch on a fractional basic column. The largest cube, HNF
-// cuts and the Diophantine solver are not ported: they return undef, after drawing the random
-// numbers that decide whether they run, so the generator stays in step.
+// the cube test, HNF and Gomory cuts, and a branch on a fractional basic column. The largest cube
+// and the Diophantine solver are not ported: they return undef, after drawing the random numbers
+// that decide whether they run, so the generator stays in step.
 import { getGcd, getLcm, Rational } from "../rational";
 import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
 import { linearize, mkJoin } from "./dependency";
 import { Explanation } from "./explanation";
 import { getGomoryCuts } from "./gomory";
+import { makeHnfCut } from "./hnf-cutter";
 import { findCube } from "./int-cube";
 import type { LarSolver } from "./lar-solver";
 import { LarTerm } from "./lar-term";
@@ -20,6 +21,7 @@ export type LiaMove =
   | { kind: "undef" }
   | { kind: "conflict" }
   | { kind: "continue" }
+  | { kind: "cut"; offset: Rational; isUpper: boolean }
   | { kind: "branch"; isUpper: boolean; offset: Rational };
 
 const getFractionalPart = (value: Rational) => value.sub(value.floor());
@@ -144,7 +146,10 @@ export class IntSolver {
     if (this.hitPeriod(settings.intFindCubePeriod) && findCube(solver)) return { kind: "sat" };
     if (this.hitPeriod(this.lcubePeriod) && this.lcubePeriod < 1 << 30) this.lcubePeriod *= 2;
     solver.moveNonBasicColumnsToBounds();
-    this.hitPeriod(settings.hnfCutPeriod);
+    if (this.hitPeriod(settings.hnfCutPeriod)) {
+      const move = makeHnfCut(this);
+      if (move.kind !== "undef") return move;
+    }
     if (this.shouldSolveDiophantineEquations()) this.solveDiophantineEquations();
     if (settings.isDioEnablingGomoryCuts && this.hitPeriod(settings.intGomoryCutPeriod)) {
       const move = getGomoryCuts(this, 2);
