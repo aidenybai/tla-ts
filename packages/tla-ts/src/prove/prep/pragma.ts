@@ -4,8 +4,8 @@
 // obligation.
 
 import { TlapmBugError, TlaProverError } from "../../errors";
-import type { Expr, Hyp, Locus, Sequent } from "../../obligation-expression";
-import type { OldMethod, PragmaSetting } from "../../obligation-pragma";
+import type { Expr, Hyp, Locus, Sequent } from "../../obligations/expression";
+import type { OldMethod, PragmaSetting } from "../../obligations/pragma";
 
 // A method, named after the Method.t constructor tlapm reports it by. A Z3 resource budget turns
 // the time limit off.

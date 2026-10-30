@@ -18,8 +18,8 @@ import {
   type Param,
   type Scope,
   type Sequent,
-} from "../../obligation-expression";
-import { getLevelInfo } from "../../obligation-levels";
+} from "../../obligations/expression";
+import { getLevelInfo } from "../../obligations/levels";
 
 interface Declaration {
   name: string;

@@ -2,15 +2,15 @@
 // An obligation as the Isabelle/TLA+ theory tlapm writes for Isabelle to prove with a tactic.
 
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
-import { createContext, getBoundName, popNames, pushName } from "../../obligation-ctx";
+import { createContext, getBoundName, popNames, pushName } from "../../obligations/ctx";
 import {
   shiftExpr,
   type Bound,
   type Builtin,
   type Expr,
   type Sequent,
-} from "../../obligation-expression";
-import { pickle } from "../../obligation-pickle";
+} from "../../obligations/expression";
+import { pickle } from "../../obligations/pickle";
 
 const cook = (name: string) => `is${pickle(name)}`;
 

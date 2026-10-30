@@ -1,7 +1,7 @@
 // A port of tlapm's anonymization (Expr.Anon, Elab.desugar and Proof.Anon): names become de Bruijn
 // indices into the context, builtin definitions are inlined, and anonymous steps get names.
 
-import { TlapmBugError, TlaProofError } from "./errors";
+import { TlapmBugError, TlaProofError } from "../errors";
 import {
   adjoin,
   adjoinAll,
@@ -35,9 +35,9 @@ import {
   type Selector,
   type Sequent,
   type WhereDefined,
-} from "./obligation-expression";
-import { resolveSubexpression } from "./obligation-deref";
-import { getTime } from "./obligation-temporal";
+} from "./expression";
+import { resolveSubexpression } from "./deref";
+import { getTime } from "./temporal";
 import {
   getStepName,
   getUnique,
@@ -47,7 +47,7 @@ import {
   type StepNumber,
   type UseDef,
   type Usable,
-} from "./obligation-proof";
+} from "./proof";
 
 const DUMMY_FACT: Hyp = {
   kind: "Fact",

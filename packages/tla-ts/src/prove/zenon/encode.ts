@@ -2,7 +2,7 @@
 // each visible fact and a $goal, naming identifiers as Isabelle does.
 
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
-import { createContext, getBoundName, popNames, pushName } from "../../obligation-ctx";
+import { createContext, getBoundName, popNames, pushName } from "../../obligations/ctx";
 import {
   shiftExpr,
   type Bound,
@@ -10,9 +10,9 @@ import {
   type Expr,
   type Hyp,
   type Sequent,
-} from "../../obligation-expression";
-import { format, formatDelimited, renderDoc, text, type Doc } from "../../obligation-format";
-import { pickle } from "../../obligation-pickle";
+} from "../../obligations/expression";
+import { format, formatDelimited, renderDoc, text, type Doc } from "../../obligations/format";
+import { pickle } from "../../obligations/pickle";
 
 const SPACE = format("@ ");
 

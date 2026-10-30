@@ -1,7 +1,7 @@
 // Generates the proof obligations tlapm prints for a module, in tlapm's order and layout.
 
-import { TlaProofError, TlaSyntaxError, type SyntaxFailure } from "./errors";
-import { createAnonymizer } from "./obligation-anon";
+import { TlaProofError, TlaSyntaxError, type SyntaxFailure } from "../errors";
+import { createAnonymizer } from "./anon";
 import {
   getAtPrefix,
   getErrorNote,
@@ -10,8 +10,8 @@ import {
   type Locus,
   type ObligationWarning,
   type Sequent,
-} from "./obligation-expression";
-import { createGenerator, type LineRange } from "./obligation-generate";
+} from "./expression";
+import { createGenerator, type LineRange } from "./generate";
 import {
   compareNames,
   expandInstance,
@@ -24,14 +24,14 @@ import {
   type Mule,
   type TheoremSummary,
   type Pipeline,
-} from "./obligation-module";
-import { formatObligation } from "./obligation-printer";
-import type { Counter, ObligationKind } from "./obligation-proof";
-import type { OldMethod } from "./obligation-pragma";
-import { createSource } from "./obligation-source";
-import { tokenize } from "./lexer";
-import { parseTlapmModule } from "./parser";
-import type { Module } from "./ast";
+} from "./module";
+import { formatObligation } from "./printer";
+import type { Counter, ObligationKind } from "./proof";
+import type { OldMethod } from "./pragma";
+import { createSource } from "./source";
+import { tokenize } from "../lexer";
+import { parseTlapmModule } from "../parser";
+import type { Module } from "../ast";
 
 export interface ObligationSource {
   file: string;

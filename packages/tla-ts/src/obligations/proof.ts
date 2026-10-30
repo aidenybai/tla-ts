@@ -1,7 +1,7 @@
 // tlapm's proof IR (P_t).
 
-import type { Bound, Defn, Expr, Locus, Sequent } from "./obligation-expression";
-import type { OldMethod } from "./obligation-pragma";
+import type { Bound, Defn, Expr, Locus, Sequent } from "./expression";
+import type { OldMethod } from "./pragma";
 
 export type StepNumber =
   | { kind: "Named"; level: number; label: string; isAnonymous: boolean }

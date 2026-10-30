@@ -2,7 +2,13 @@
 // backend/smtlib.ml): TLA+ values share one sort Idv, set membership is the predicate TLA__Mem,
 // and each symbol the obligation uses brings the symbols and axioms encode/n_data.ml lists for it.
 
-import { adjoin, type Expr, type Hyp, type Scope, type Sequent } from "../../obligation-expression";
+import {
+  adjoin,
+  type Expr,
+  type Hyp,
+  type Scope,
+  type Sequent,
+} from "../../obligations/expression";
 import { compareStrings } from "../ocaml";
 import { collectSymbols } from "./axiomatize";
 import { createPrinter } from "./context";
