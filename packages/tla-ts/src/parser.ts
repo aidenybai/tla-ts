@@ -141,6 +141,19 @@ const POSTFIX_OPERATORS = new Set(["^+", "^*", "^#"]);
 
 const PREFIX_OPERATOR_REFERENCES = new Set(["-", "~", "-."]);
 
+// The prefix operators SANY reads in a definition's left-hand side, built-in ones included.
+const DEFINABLE_PREFIX_OPERATORS = new Set([
+  "-.",
+  "~",
+  "[]",
+  "<>",
+  "ENABLED",
+  "UNCHANGED",
+  "SUBSET",
+  "UNION",
+  "DOMAIN",
+]);
+
 const EXPRESSION_PREFIXES = new Set([
   "-",
   "~",
@@ -1167,7 +1180,8 @@ const parse = (source: string, mode: ParseMode): Module => {
         { name: right, arity: 0 },
       ]);
     }
-    const isPrefixDefinition = token.kind === "Operator" && token.text === "-.";
+    const isPrefixDefinition =
+      token.kind !== "String" && DEFINABLE_PREFIX_OPERATORS.has(token.text);
     const isPostfixDefinition =
       token.kind === "Identifier" && POSTFIX_OPERATORS.has(peek(1).text) && isAt("==", 2);
     if (isPrefixDefinition || isPostfixDefinition) {
@@ -1276,7 +1290,12 @@ const parse = (source: string, mode: ParseMode): Module => {
     const token = peek();
     const next = peek(1);
     if (token.kind !== "Identifier") {
-      return isAt("-.") && next.kind === "Identifier" && isAt("==", 2);
+      return (
+        token.kind !== "String" &&
+        DEFINABLE_PREFIX_OPERATORS.has(token.text) &&
+        next.kind === "Identifier" &&
+        isAt("==", 2)
+      );
     }
     if (isAt("(", 1) || isAt("[", 1)) return isAt("==", getClosingOffset(1));
     if (next.kind === "Operator" && POSTFIX_OPERATORS.has(next.text)) return isAt("==", 2);

@@ -117,6 +117,35 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it.each([
+    ["<>", "<>"],
+    ["~", "\\lnot"],
+    ["SUBSET", "SUBSET"],
+  ])("reads a definition of the built-in prefix operator %s and rejects it", (operator, name) => {
+    const definition = `${operator} a == a`;
+    const report = getReport({ Prefix: `---- MODULE Prefix ----\n${definition}\n====\n` });
+    const location = `line 2, col 1 to line 2, col ${definition.length} of module Prefix`;
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toBe(
+      toText([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        location,
+        "",
+        `Operator ${name} already defined or declared.`,
+        "",
+        "",
+        location,
+        "",
+        `Symbol ${name} is a built-in operator, and cannot be redefined.`,
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("warns about a record field named like a definition", () => {
     const report = getReport({
       Fields: "---- MODULE Fields ----\nfoo == 1\nr == [foo |-> 2]\n====\n",
