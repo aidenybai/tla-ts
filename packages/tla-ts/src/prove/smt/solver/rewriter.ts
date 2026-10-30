@@ -92,6 +92,12 @@ export class Rewriter extends RewriterTpl {
     );
   }
 
+  // updt_params with elim_and, which asserted_formulas turns on after NNF. The caller resets the
+  // rewriter.
+  setEliminatingAnd(isEliminatingAnd: boolean) {
+    this.options = { ...this.options, isEliminatingAnd };
+  }
+
   // th_rewriter::set_substitution: rewrites replace each key of the substitution with its value, and
   // the rewriter is reset. The caller may extend the substitution between rewrites without a reset.
   setSubstitution(substitution: Map<number, number>) {

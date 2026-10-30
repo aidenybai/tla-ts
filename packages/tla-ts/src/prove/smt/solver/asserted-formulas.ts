@@ -1,14 +1,15 @@
 // Ported from Z3 (src/solver/assertions/asserted_formulas.cpp), MIT license, see z3-license.txt. The
 // preprocessing that the SMT kernel runs on its assertions before search.
-import { AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR } from "./ast";
+import { AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
 import { mkNot } from "./ast-util";
-import { toNnf } from "./nnf";
+import { DefinedNames, Nnf } from "./nnf";
 import { inferPatterns } from "./pattern-inference";
 import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
+import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 
 // asserted_formulas::push_assertion: splits conjunctions and negated disjunctions.
-const pushAssertion = (manager: AstManager, expr: number, result: number[]) => {
+const pushAssertion = (manager: AstManager, expr: number, result: RefVector) => {
   if (manager.isTrue(expr)) return;
   const op = manager.getOp(expr);
   if (op === OP_AND) {
@@ -21,17 +22,6 @@ const pushAssertion = (manager: AstManager, expr: number, result: number[]) => {
     return;
   }
   result.push(expr);
-};
-
-// simplify_fmls: a formula that the rewriter changes is split again.
-const rewriteFormulas = (manager: AstManager, rewriter: Rewriter, formulas: number[]) => {
-  const result: number[] = [];
-  for (const formula of formulas) {
-    const rewritten = rewriter.rewrite(formula);
-    if (rewritten === formula) result.push(formula);
-    else pushAssertion(manager, rewritten, result);
-  }
-  return result;
 };
 
 const inferAllPatterns = (manager: AstManager, expr: number): number => {
@@ -76,169 +66,268 @@ const isGreater = (manager: AstManager, left: number, right: number): boolean =>
   return false;
 };
 
-// update_substitution: the first entry for a key wins, as in scoped_expr_substitution.
-const updateSubstitution = (
-  manager: AstManager,
-  expr: number,
-  substitution: Map<number, number>,
-) => {
-  const insert = (key: number, value: number) => {
-    if (!substitution.has(key)) substitution.set(key, value);
-  };
-  if (manager.isGround(expr) && manager.getOp(expr) === OP_EQ) {
-    const left = manager.args[expr][0];
-    const right = manager.args[expr][1];
-    if (isGreater(manager, left, right)) {
-      insert(left, right);
-      return;
-    }
-    if (isGreater(manager, right, left)) {
-      insert(right, left);
-      return;
-    }
-  }
-  if (manager.isNot(expr)) insert(manager.args[expr][0], manager.falseExpr);
-  else insert(expr, manager.trueExpr);
-};
+// expr_substitution under scoped_expr_substitution: the first entry for a key wins, and pop removes
+// the entries since the matching push. The map and the trail hold their keys and values.
+class Substitution {
+  readonly map = new Map<number, number>();
+  private trail: RefVector;
+  private trailLims: number[] = [];
 
-// asserted_formulas::propagate_values: a forward and a backward pass that rewrite each formula with
-// the committed substitution and the units of the formulas before it. Z3 stops after one round,
-// since the passes add no formula. When a formula changed, reduce-asserted rewrites them all.
-const propagateValues = (
-  manager: AstManager,
-  rewriter: Rewriter,
-  formulas: number[],
-  committed: Map<number, number>,
-) => {
-  let isChanged = false;
-  for (const isForward of [true, false]) {
-    const substitution = new Map(committed);
-    rewriter.setSubstitution(substitution);
-    for (const step of formulas.keys()) {
-      const index = isForward ? step : formulas.length - 1 - step;
-      const rewritten = rewriter.rewrite(formulas[index]);
-      if (rewritten !== formulas[index]) isChanged = true;
-      formulas[index] = rewritten;
-      updateSubstitution(manager, rewritten, substitution);
-    }
+  constructor(private manager: AstManager) {
+    this.trail = new RefVector(manager);
   }
-  rewriter.setSubstitution(committed);
-  return isChanged ? rewriteFormulas(manager, rewriter, formulas) : formulas;
-};
 
-// asserted_formulas::flatten_clauses: an ite at the top becomes two clauses, and a conjunction
-// that occurs in one binary clause is distributed.
-const flattenClauses = (manager: AstManager, formulas: number[]) => {
-  const isConjunction = (expr: number) =>
-    manager.isNot(expr) && manager.getOp(manager.args[expr][0]) === OP_OR;
-  let current = formulas;
-  for (let isChanged = true; isChanged;) {
-    isChanged = false;
-    const occurrences = new Map<number, number>();
-    for (const formula of current) {
-      if (manager.getOp(formula) !== OP_OR || manager.args[formula].length !== 2) continue;
-      for (const arg of manager.args[formula])
-        if (isConjunction(arg)) occurrences.set(arg, (occurrences.get(arg) ?? 0) + 1);
-    }
-    const next: number[] = [];
-    for (const formula of current) {
-      if (manager.getOp(formula) === OP_OR && manager.args[formula].length === 2) {
-        const args = manager.args[formula];
-        const conjunctionIndex = [1, 0].find(
-          (index) => isConjunction(args[index]) && occurrences.get(args[index]) === 1,
-        );
-        if (conjunctionIndex !== undefined) {
-          const other = args[1 - conjunctionIndex];
-          for (const arg of manager.args[manager.args[args[conjunctionIndex]][0]])
-            next.push(manager.mkOr([other, mkNot(manager, arg)]));
-          isChanged = true;
-          continue;
-        }
-      }
-      if (manager.getOp(formula) === OP_ITE) {
-        const args = manager.args[formula];
-        next.push(manager.mkOr([mkNot(manager, args[0]), args[1]]));
-        next.push(manager.mkOr([args[0], args[2]]));
-        isChanged = true;
-        continue;
-      }
-      next.push(formula);
-    }
-    current = next;
+  insert(key: number, value: number) {
+    if (this.map.has(key)) return;
+    this.manager.incRef(key);
+    this.manager.incRef(value);
+    this.map.set(key, value);
+    this.trail.push(key);
   }
-  return current;
-};
+
+  push() {
+    this.trailLims.push(this.trail.size);
+  }
+
+  pop() {
+    const size = this.trailLims.pop() as number;
+    for (const key of this.trail.items.slice(size)) {
+      this.manager.decRef(this.map.get(key) as number);
+      this.map.delete(key);
+      this.manager.decRef(key);
+    }
+    this.trail.shrink(size);
+  }
+
+  // update_substitution: a ground equality is oriented by the order, and any other formula maps to
+  // true, or its atom to false.
+  update(expr: number) {
+    const manager = this.manager;
+    if (manager.isGround(expr) && manager.getOp(expr) === OP_EQ) {
+      const left = manager.args[expr][0];
+      const right = manager.args[expr][1];
+      if (isGreater(manager, left, right)) {
+        this.insert(left, right);
+        return;
+      }
+      if (isGreater(manager, right, left)) {
+        this.insert(right, left);
+        return;
+      }
+    }
+    if (manager.isNot(expr)) this.insert(manager.args[expr][0], manager.falseExpr);
+    else this.insert(expr, manager.trueExpr);
+  }
+}
 
 // asserted_formulas: the assertions of a context. Each assertion is rewritten when it is asserted,
 // and reduce preprocesses the new ones. Their units and oriented equalities then rewrite the later
-// assertions.
+// assertions. Like Z3, it holds its formulas, so that expressions are deleted in Z3's order.
 export class AssertedFormulas {
-  private formulas: number[] = [];
+  private formulas: RefVector;
   private qhead = 0;
-  private substitution = new Map<number, number>();
-  private simplifier: Rewriter;
-  private reducer: Rewriter;
-  private names = new Map<number, number>();
+  private substitution: Substitution;
+  private rewriter: Rewriter;
+  private isEliminatingAnd = false;
+  private isReducePending = true;
+  private names: DefinedNames;
 
   constructor(private manager: AstManager) {
-    this.simplifier = new Rewriter(manager, {
+    this.formulas = new RefVector(manager);
+    this.substitution = new Substitution(manager);
+    this.rewriter = new Rewriter(manager, {
       isEliminatingAnd: false,
       arith: KERNEL_ARITH_OPTIONS,
       isRewritingPatterns: true,
     });
-    this.reducer = new Rewriter(manager, {
-      isEliminatingAnd: true,
-      arith: KERNEL_ARITH_OPTIONS,
-      isRewritingPatterns: true,
-    });
+    this.names = new DefinedNames(manager);
   }
 
   assertExpr(expr: number) {
-    pushAssertion(this.manager, this.simplifier.rewrite(expr), this.formulas);
+    const manager = this.manager;
+    if (manager.isTrue(expr)) return;
+    this.setEliminateAnd(false);
+    const rewritten = this.rewriter.rewrite(expr);
+    pushAssertion(manager, rewritten, this.formulas);
+    manager.decRef(rewritten);
+    this.isReducePending = true;
   }
 
   getNumFormulas() {
-    return this.formulas.length;
+    return this.formulas.size;
   }
 
   // reduce and commit: the new formulas after preprocessing, which the context internalizes.
   reduce() {
+    if (this.qhead === this.formulas.size) return [];
+    this.setEliminateAnd(false);
+    this.propagateValues();
+    this.isReducePending = true;
+    this.nnfCnf();
+    this.setEliminateAnd(true);
+    this.reduceAsserted();
     const manager = this.manager;
-    const reducer = this.reducer;
-    const pending = this.formulas.splice(this.qhead);
-    if (pending.length === 0) return pending;
-    const simplifier = this.simplifier;
-    const propagated = propagateValues(manager, simplifier, pending, this.substitution);
-    // nnf_cnf: the rewriter, which does not eliminate and yet, rewrites each normal form.
-    const normalized: number[] = [];
-    for (const formula of propagated)
-      for (const normal of toNnf(manager, formula, this.names))
-        pushAssertion(manager, simplifier.rewrite(normal), normalized);
-    // set_eliminate_and flushes the rewriter's cache, so reduce-asserted rewrites every formula. It
-    // runs again if pattern inference changed a formula.
-    simplifier.reset();
-    reducer.setSubstitution(this.substitution);
-    const reduced = rewriteFormulas(manager, reducer, normalized);
-    let isChanged = false;
-    const inferred: number[] = [];
-    for (const formula of reduced) {
-      const result = inferAllPatterns(manager, formula);
-      if (result === formula) inferred.push(formula);
-      else {
-        isChanged = true;
-        pushAssertion(manager, result, inferred);
-      }
-    }
-    const result = flattenClauses(
-      manager,
-      isChanged ? rewriteFormulas(manager, reducer, inferred) : inferred,
-    );
-    this.simplifier.setSubstitution(this.substitution);
-    for (const formula of result) {
-      this.formulas.push(formula);
-      updateSubstitution(manager, formula, this.substitution);
-    }
-    this.qhead = this.formulas.length;
+    if (
+      this.simplifyFormulas((formula) =>
+        manager.withTemporaries(() => inferAllPatterns(manager, formula)),
+      )
+    )
+      this.isReducePending = true;
+    this.reduceAsserted();
+    this.isReducePending = true;
+    this.flattenClauses();
+    this.flushCache();
+    const result = this.formulas.items.slice(this.qhead);
+    for (const formula of result) this.substitution.update(formula);
+    this.qhead = this.formulas.size;
     return result;
+  }
+
+  // flush_cache: the rewriter is reset, with the committed substitution.
+  private flushCache() {
+    this.rewriter.setSubstitution(this.substitution.map);
+  }
+
+  private setEliminateAnd(isEliminatingAnd: boolean) {
+    if (this.isEliminatingAnd === isEliminatingAnd) return;
+    this.isEliminatingAnd = isEliminatingAnd;
+    this.isReducePending = true;
+    this.rewriter.setEliminatingAnd(isEliminatingAnd);
+    this.flushCache();
+  }
+
+  // swap_asserted_formulas: the new formulas replace those from qhead on.
+  private swapFormulas(formulas: RefVector) {
+    this.formulas.shrink(this.qhead);
+    for (const formula of formulas.items) this.formulas.push(formula);
+    formulas.reset();
+  }
+
+  // simplify_fmls: a formula that simplify changes is split again. simplify returns its result with
+  // a reference. Whether a formula changed.
+  private simplifyFormulas(simplify: (formula: number) => number) {
+    const manager = this.manager;
+    const formulas = new RefVector(manager);
+    let isChanged = false;
+    for (let index = this.qhead; index < this.formulas.size; index++) {
+      const formula = this.formulas.items[index];
+      const result = simplify(formula);
+      if (result === formula) formulas.push(formula);
+      else {
+        pushAssertion(manager, result, formulas);
+        isChanged = true;
+      }
+      manager.decRef(result);
+    }
+    this.swapFormulas(formulas);
+    return isChanged;
+  }
+
+  // reduce_asserted_formulas: the rewriter rewrites the formulas, unless they are already in its
+  // normal form.
+  private reduceAsserted() {
+    if (!this.isReducePending) return;
+    this.simplifyFormulas((formula) => this.rewriter.rewrite(formula));
+    this.isReducePending = false;
+  }
+
+  // asserted_formulas::propagate_values: a forward and a backward pass that rewrite each formula with
+  // the committed substitution and the units of the formulas before it. Z3 stops after one round,
+  // since the passes add no formula. When a formula changed, reduce-asserted rewrites them all.
+  private propagateValues() {
+    const manager = this.manager;
+    const substitution = this.substitution;
+    const size = this.formulas.size;
+    let numPropagated = 0;
+    const propagate = (index: number) => {
+      const formula = this.formulas.items[index];
+      manager.incRef(formula);
+      const rewritten = this.rewriter.rewrite(formula);
+      this.formulas.set(index, rewritten);
+      substitution.update(rewritten);
+      if (rewritten !== formula) numPropagated++;
+      manager.decRef(rewritten);
+      manager.decRef(formula);
+    };
+    this.flushCache();
+    substitution.push();
+    for (let index = this.qhead; index < size; index++) propagate(index);
+    this.flushCache();
+    substitution.pop();
+    substitution.push();
+    for (let index = size - 1; index >= this.qhead; index--) propagate(index);
+    substitution.pop();
+    this.flushCache();
+    if (numPropagated > 0) this.reduceAsserted();
+  }
+
+  // asserted_formulas::nnf_cnf: one NNF object normalizes every formula, and the rewriter, which does
+  // not eliminate and yet, rewrites each normal form and the definitions of the names it introduced.
+  private nnfCnf() {
+    const manager = this.manager;
+    const nnf = new Nnf(manager, this.names);
+    const formulas = new RefVector(manager);
+    const todo = new RefVector(manager);
+    for (let index = this.qhead; index < this.formulas.size; index++) {
+      todo.reset();
+      let result = nnf.apply(this.formulas.items[index], todo);
+      todo.push(result);
+      for (let position = 0; position < todo.size; position++) {
+        const rewritten = this.rewriter.rewrite(todo.items[position]);
+        manager.decRef(result);
+        result = rewritten;
+        pushAssertion(manager, result, formulas);
+      }
+      manager.decRef(result);
+    }
+    this.swapFormulas(formulas);
+    todo.reset();
+    nnf.release();
+  }
+
+  // asserted_formulas::flatten_clauses: an ite at the top becomes two clauses, and a conjunction
+  // that occurs in one binary clause is distributed.
+  private flattenClauses() {
+    const manager = this.manager;
+    const mkNegation = (expr: number) =>
+      manager.isNot(expr) ? manager.args[expr][0] : manager.mkApp(OP_NOT, [expr], SORT_BOOL);
+    const isConjunction = (expr: number) =>
+      manager.isNot(expr) && manager.getOp(manager.args[expr][0]) === OP_OR;
+    for (let isChanged = true; isChanged;) {
+      isChanged = false;
+      const formulas = new RefVector(manager);
+      const occurrences = new Map<number, number>();
+      for (let index = this.qhead; index < this.formulas.size; index++) {
+        const formula = this.formulas.items[index];
+        if (manager.getOp(formula) !== OP_OR || manager.args[formula].length !== 2) continue;
+        for (const arg of manager.args[formula])
+          if (isConjunction(arg)) occurrences.set(arg, (occurrences.get(arg) ?? 0) + 1);
+      }
+      for (let index = this.qhead; index < this.formulas.size; index++) {
+        const formula = this.formulas.items[index];
+        if (manager.getOp(formula) === OP_OR && manager.args[formula].length === 2) {
+          const args = manager.args[formula];
+          const conjunctionIndex = [1, 0].find(
+            (position) => isConjunction(args[position]) && occurrences.get(args[position]) === 1,
+          );
+          if (conjunctionIndex !== undefined) {
+            const other = args[1 - conjunctionIndex];
+            for (const arg of manager.args[manager.args[args[conjunctionIndex]][0]])
+              formulas.push(manager.mkApp(OP_OR, [other, mkNegation(arg)], SORT_BOOL));
+            isChanged = true;
+            continue;
+          }
+        }
+        if (manager.getOp(formula) === OP_ITE) {
+          const args = manager.args[formula];
+          formulas.push(manager.mkApp(OP_OR, [mkNegation(args[0]), args[1]], SORT_BOOL));
+          formulas.push(manager.mkApp(OP_OR, [args[0], args[2]], SORT_BOOL));
+          isChanged = true;
+          continue;
+        }
+        formulas.push(formula);
+      }
+      this.swapFormulas(formulas);
+    }
   }
 }
