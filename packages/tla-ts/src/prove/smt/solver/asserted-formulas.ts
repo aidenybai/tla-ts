@@ -1,25 +1,37 @@
 // Ported from Z3 (src/solver/assertions/asserted_formulas.cpp), MIT license, see z3-license.txt. The
 // preprocessing that the SMT kernel runs on its assertions before search.
 import { AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR } from "./ast";
+import { mkNot } from "./ast-util";
 import { toNnf } from "./nnf";
 import { inferPatterns } from "./pattern-inference";
 import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { Rewriter } from "./rewriter";
 
 // asserted_formulas::push_assertion: splits conjunctions and negated disjunctions.
-const pushAssertion = (manager: AstManager, rewriter: Rewriter, expr: number, result: number[]) => {
+const pushAssertion = (manager: AstManager, expr: number, result: number[]) => {
   if (manager.isTrue(expr)) return;
   const op = manager.getOp(expr);
   if (op === OP_AND) {
-    for (const arg of manager.args[expr]) pushAssertion(manager, rewriter, arg, result);
+    for (const arg of manager.args[expr]) pushAssertion(manager, arg, result);
     return;
   }
   if (op === OP_NOT && manager.getOp(manager.args[expr][0]) === OP_OR) {
     for (const arg of manager.args[manager.args[expr][0]])
-      pushAssertion(manager, rewriter, rewriter.mkNot(arg), result);
+      pushAssertion(manager, mkNot(manager, arg), result);
     return;
   }
   result.push(expr);
+};
+
+// simplify_fmls: a formula that the rewriter changes is split again.
+const rewriteFormulas = (manager: AstManager, rewriter: Rewriter, formulas: number[]) => {
+  const result: number[] = [];
+  for (const formula of formulas) {
+    const rewritten = rewriter.rewrite(formula);
+    if (rewritten === formula) result.push(formula);
+    else pushAssertion(manager, rewritten, result);
+  }
+  return result;
 };
 
 const inferAllPatterns = (manager: AstManager, expr: number): number => {
@@ -111,19 +123,12 @@ const propagateValues = (
     }
   }
   rewriter.setSubstitution(committed);
-  if (!isChanged) return formulas;
-  const reduced: number[] = [];
-  for (const formula of formulas) {
-    const rewritten = rewriter.rewrite(formula);
-    if (rewritten === formula) reduced.push(formula);
-    else pushAssertion(manager, rewriter, rewritten, reduced);
-  }
-  return reduced;
+  return isChanged ? rewriteFormulas(manager, rewriter, formulas) : formulas;
 };
 
 // asserted_formulas::flatten_clauses: an ite at the top becomes two clauses, and a conjunction
 // that occurs in one binary clause is distributed.
-const flattenClauses = (manager: AstManager, rewriter: Rewriter, formulas: number[]) => {
+const flattenClauses = (manager: AstManager, formulas: number[]) => {
   const isConjunction = (expr: number) =>
     manager.isNot(expr) && manager.getOp(manager.args[expr][0]) === OP_OR;
   let current = formulas;
@@ -145,14 +150,14 @@ const flattenClauses = (manager: AstManager, rewriter: Rewriter, formulas: numbe
         if (conjunctionIndex !== undefined) {
           const other = args[1 - conjunctionIndex];
           for (const arg of manager.args[manager.args[args[conjunctionIndex]][0]])
-            next.push(manager.mkOr([other, rewriter.mkNot(arg)]));
+            next.push(manager.mkOr([other, mkNot(manager, arg)]));
           isChanged = true;
           continue;
         }
       }
       if (manager.getOp(formula) === OP_ITE) {
         const args = manager.args[formula];
-        next.push(manager.mkOr([rewriter.mkNot(args[0]), args[1]]));
+        next.push(manager.mkOr([mkNot(manager, args[0]), args[1]]));
         next.push(manager.mkOr([args[0], args[2]]));
         isChanged = true;
         continue;
@@ -189,7 +194,7 @@ export class AssertedFormulas {
   }
 
   assertExpr(expr: number) {
-    pushAssertion(this.manager, this.simplifier, this.simplifier.rewrite(expr), this.formulas);
+    pushAssertion(this.manager, this.simplifier.rewrite(expr), this.formulas);
   }
 
   getNumFormulas() {
@@ -202,18 +207,32 @@ export class AssertedFormulas {
     const reducer = this.reducer;
     const pending = this.formulas.splice(this.qhead);
     if (pending.length === 0) return pending;
-    const propagated = propagateValues(manager, this.simplifier, pending, this.substitution);
-    reducer.setSubstitution(this.substitution);
+    const simplifier = this.simplifier;
+    const propagated = propagateValues(manager, simplifier, pending, this.substitution);
+    // nnf_cnf: the rewriter, which does not eliminate and yet, rewrites each normal form.
     const normalized: number[] = [];
     for (const formula of propagated)
       for (const normal of toNnf(manager, formula, this.names))
-        pushAssertion(
-          manager,
-          reducer,
-          reducer.rewrite(inferAllPatterns(manager, reducer.rewrite(normal))),
-          normalized,
-        );
-    const result = flattenClauses(manager, reducer, normalized);
+        pushAssertion(manager, simplifier.rewrite(normal), normalized);
+    // set_eliminate_and flushes the rewriter's cache, so reduce-asserted rewrites every formula. It
+    // runs again if pattern inference changed a formula.
+    simplifier.reset();
+    reducer.setSubstitution(this.substitution);
+    const reduced = rewriteFormulas(manager, reducer, normalized);
+    let isChanged = false;
+    const inferred: number[] = [];
+    for (const formula of reduced) {
+      const result = inferAllPatterns(manager, formula);
+      if (result === formula) inferred.push(formula);
+      else {
+        isChanged = true;
+        pushAssertion(manager, result, inferred);
+      }
+    }
+    const result = flattenClauses(
+      manager,
+      isChanged ? rewriteFormulas(manager, reducer, inferred) : inferred,
+    );
     this.simplifier.setSubstitution(this.substitution);
     for (const formula of result) {
       this.formulas.push(formula);
