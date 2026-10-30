@@ -3,7 +3,7 @@
 // license, see z3-license.txt. The tableau, the column values and bounds, and the primal simplex
 // that lar_solver runs with the tableau_rows strategy: the smallest infeasible basic column
 // leaves, and the entering column is the one in its row that frees the fewest bounded basics.
-import type { Rational } from "../rational";
+import { Rational } from "../rational";
 import { IndexedUintSet, StackedVector, VarHeap } from "./containers";
 import type { LpSettings } from "./lp-settings";
 import { Impq } from "./numeric-pair";
@@ -20,6 +20,7 @@ export const LP_INFEASIBLE = 1;
 export const LP_OPTIMAL = 2;
 export const LP_FEASIBLE = 3;
 export const LP_CANCELLED = 4;
+export const LP_UNBOUNDED = 5;
 
 const BLAND_MODE_THRESHOLD = 1000;
 
@@ -38,6 +39,8 @@ export class CoreSolver {
   infRowIndex = -1;
   infeasibleSumSign = 0;
   infeasibleCombination: [Rational, number][] = [];
+  // m_d: the reduced costs while maximize_term runs the tableau_costs strategy, kept on pivots.
+  reducedCosts: Rational[] | undefined;
   private isBlandMode = false;
   private leftBasis = new IndexedUintSet();
   private leftBasisRepeated = 0;
@@ -188,7 +191,19 @@ export class CoreSolver {
       this.touchedRows?.add(cell.row);
       matrix.pivotRowToRowGivenCell(pivotRow, cell, column);
     }
+    if (this.reducedCosts !== undefined)
+      this.pivotToReducedCosts(this.reducedCosts, pivotRow, column);
     return true;
+  }
+
+  // pivot_to_reduced_costs_tableau: eliminates the reduced cost of the column that enters.
+  private pivotToReducedCosts(reducedCosts: Rational[], pivotRow: number, column: number) {
+    const alpha = reducedCosts[column];
+    if (alpha.isZero()) return;
+    for (const cell of this.matrix.rows[pivotRow])
+      if (cell.column !== column)
+        reducedCosts[cell.column] = reducedCosts[cell.column].sub(alpha.mul(cell.coeff));
+    reducedCosts[column] = Rational.zero;
   }
 
   pivot(entering: number, leaving: number) {
