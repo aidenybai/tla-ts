@@ -35,7 +35,7 @@ export class DefaultQuantifierManager {
   private qiQueue: QiQueue;
   private mam: Mam;
   private lazyMam: Mam;
-  private fingerprints = new FingerprintSet();
+  private fingerprints: FingerprintSet;
   private isActive = false;
   private lazyMatchingIndex = 0;
   private mbqi: Mbqi | null = null;
@@ -45,6 +45,7 @@ export class DefaultQuantifierManager {
     isMbqi: boolean,
   ) {
     this.qiQueue = new QiQueue(context);
+    this.fingerprints = new FingerprintSet(context.manager);
     const onMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) =>
       this.addInstance(quantifier, bindings, maxGeneration);
     this.mam = new Mam(context, onMatch);
@@ -130,9 +131,12 @@ export class DefaultQuantifierManager {
 
   addInstance(quantifier: number, bindings: Enode[], maxGeneration: number) {
     const generation = Math.max(maxGeneration, this.getGeneration(quantifier));
-    const roots = bindings.map((binding) => binding.root);
-    if (!this.fingerprints.insert(quantifier, roots)) return;
-    this.qiQueue.insert(quantifier, roots, generation);
+    if (!this.fingerprints.insert(quantifier, bindings)) return;
+    this.qiQueue.insert(
+      quantifier,
+      bindings.map((binding) => binding.root),
+      generation,
+    );
   }
 
   finalCheckEh(isFull: boolean) {

@@ -83,10 +83,9 @@ export const stringHash = (text: string, initValue: number) => {
   return state[2];
 };
 
-// get_composite_hash with the default kind hash (17) over child hashes.
-export const getCompositeHash = (childHashes: number[]) => {
+// get_composite_hash over child hashes, with the default kind hash of 17.
+export const getCompositeHash = (childHashes: number[], kindHash = 17) => {
   const count = childHashes.length;
-  const kindHash = 17;
   const state = mkState(GOLDEN_RATIO, GOLDEN_RATIO, 11);
   switch (count) {
     case 0:
