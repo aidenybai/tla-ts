@@ -87,10 +87,11 @@ export abstract class Internalizer {
   protected isTrueFirstFlags: boolean[] = [];
   // Per literal.
   protected assignment: number[] = [];
-  protected watches: Clause[][] = [];
+  // Like Z3's watch lists, a literal's lists are created when the first clause is added.
+  protected watches: (Clause[] | undefined)[] = [];
   // The binary clauses of the binary clause optimization: the literals each literal propagates when it
   // becomes true, which Z3 visits newest first and before the clauses.
-  protected binaryWatches: Literal[][] = [];
+  protected binaryWatches: (Literal[] | undefined)[] = [];
   private binJustifications: BinJustification[] = [];
   // Per expression.
   protected exprToBoolVar: (BoolVar | undefined)[] = [];
@@ -302,8 +303,8 @@ export abstract class Internalizer {
     this.isQuantifierFlags.push(false);
     this.isTrueFirstFlags.push(false);
     this.assignment.push(L_UNDEF, L_UNDEF);
-    this.watches.push([], []);
-    this.binaryWatches.push([], []);
+    this.watches.push(undefined, undefined);
+    this.binaryWatches.push(undefined, undefined);
     this.caseSplitQueue.mkVar(boolVar);
     this.trail.push(this.undoMkBoolVar);
     return boolVar;
@@ -849,11 +850,12 @@ export abstract class Internalizer {
   }
 
   protected addWatchLiteral(clause: Clause, index: number) {
-    this.watches[negate(clause.literals[index])].push(clause);
+    (this.watches[negate(clause.literals[index])] ??= []).push(clause);
   }
 
   protected removeWatchLiteral(clause: Clause, index: number) {
     const list = this.watches[negate(clause.literals[index])];
+    if (list === undefined) return;
     const position = list.indexOf(clause);
     if (position === -1) return;
     list.copyWithin(position, position + 1);
@@ -913,8 +915,8 @@ export abstract class Internalizer {
     if (literals.length === 2 && this.isUsingBinaryClauseOpt(literals[0], literals[1], isLemma)) {
       const first = literals[0];
       const second = literals[1];
-      this.binaryWatches[negate(first)].push(second);
-      this.binaryWatches[negate(second)].push(first);
+      (this.binaryWatches[negate(first)] ??= []).push(second);
+      (this.binaryWatches[negate(second)] ??= []).push(first);
       if (this.assignment[first] === L_FALSE)
         this.assign(second, this.getBinJustification(negate(first)));
       else if (this.assignment[second] === L_FALSE)

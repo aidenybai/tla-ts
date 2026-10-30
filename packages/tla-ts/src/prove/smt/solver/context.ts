@@ -129,7 +129,7 @@ export class Context extends Internalizer {
       this.qhead++;
       const notLiteral = negate(literal);
       const binary = this.binaryWatches[literal];
-      if (binary.length > 0) {
+      if (binary !== undefined && binary.length > 0) {
         const justification = this.getBinJustification(literal);
         for (let index = binary.length - 1; index >= 0; index--) {
           const other = binary[index];
@@ -142,10 +142,11 @@ export class Context extends Internalizer {
         }
       }
       const list = this.watches[literal];
+      if (list === undefined) continue;
       let kept = 0;
       let index = 0;
       for (; index < list.length; index++) {
-        const clause = list[index];
+        const clause: Clause = list[index];
         const literals = clause.literals;
         if (literals[0] === notLiteral) {
           literals[0] = literals[1];
@@ -166,7 +167,7 @@ export class Context extends Internalizer {
         for (let position = 2; position < literals.length; position++) {
           const candidate = literals[position];
           if (this.assignment[candidate] !== L_FALSE) {
-            this.watches[negate(candidate)].push(clause);
+            (this.watches[negate(candidate)] ??= []).push(clause);
             literals[1] = candidate;
             literals[position] = notLiteral;
             if (clause.atoms !== null) {
