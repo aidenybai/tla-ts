@@ -1,5 +1,6 @@
 import { TlaConfigError } from "./errors";
 import { matchOperator } from "./lexer";
+import { formatLexicalError } from "./sany-lexer";
 
 export type ConfigValue =
   | { kind: "Number"; value: number }
@@ -74,33 +75,15 @@ const KEYWORDS = new Set([
 
 const SYMBOLS = ["<-", "<<", ">>", "=", "{", "}", ",", "[", "]", "(", ")", "!"];
 
-// JavaCC's TokenMgrError.addEscapes, which TLC's lexical errors use.
-const ESCAPES = new Map([
-  ["\b", "\\b"],
-  ["\t", "\\t"],
-  ["\n", "\\n"],
-  ["\f", "\\f"],
-  ["\r", "\\r"],
-]);
-
-const escapeLexeme = (text: string) =>
-  text.replace(/[\b\t\n\f\r"'\\]/g, (character) => ESCAPES.get(character) ?? `\\${character}`);
-
 // TLC reads a configuration file with the TLA+ lexer. A lexical error ends the tokens; TLC reports
 // it only when it reads that far.
 const tokenizeConfig = (source: string) => {
   const tokens: ConfigToken[] = [];
   const cursor = { index: 0, line: 1, lineStart: 0 };
   const addLexicalError = (index: number, after: string) => {
-    const character = source[index];
-    const column = index - cursor.lineStart + 1;
-    const encountered =
-      character === undefined
-        ? "<EOF> "
-        : `"${escapeLexeme(character)}" (${character.charCodeAt(0)}), `;
     tokens.push({
       kind: "Error",
-      text: `Lexical error at line ${cursor.line}, column ${column}.  Encountered: ${encountered}after : "${escapeLexeme(after)}"`,
+      text: formatLexicalError(cursor.line, index - cursor.lineStart + 1, source[index], after),
       line: cursor.line,
     });
   };

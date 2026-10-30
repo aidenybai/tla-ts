@@ -27,7 +27,12 @@ export const addSanyMessage = (messages: SanyMessage[], message: SanyMessage) =>
 export const formatSanyLocation = (location: SanyMessage["location"]) => {
   if (location === undefined) return "Unknown location";
   if (typeof location === "string") return `In module ${location}`;
-  return `line ${location.beginLine}, col ${location.beginColumn} to line ${location.endLine}, col ${location.endColumn} of module ${location.file}`;
+  // Location.toString names only the module of a location at line 0, column 0.
+  const { beginLine, beginColumn, endLine, endColumn } = location;
+  if (beginLine === 0 && beginColumn === 0 && endLine === 0 && endColumn === 0) {
+    return `In module ${location.file}`;
+  }
+  return `line ${beginLine}, col ${beginColumn} to line ${endLine}, col ${endColumn} of module ${location.file}`;
 };
 
 // SANY's ArgLevelParam: the level of argument index of operator op depends on param.

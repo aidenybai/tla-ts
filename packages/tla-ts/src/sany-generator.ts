@@ -1,4 +1,5 @@
 import { TEMPORAL_LEVEL } from "./levels";
+import type { TlcVersion } from "./tlc-version";
 import type {
   AssumeProve,
   Assumption,
@@ -21,6 +22,7 @@ import { getChildren } from "./ast";
 import { TlaSanyFatalError, TlaSyntaxError, TlaUnsupportedError } from "./errors";
 import { parseSanyModule } from "./parser";
 import { createBuiltins, createLevelFields } from "./sany-builtins";
+import { getSany174LexicalError } from "./sany-lexer";
 import { getSanyParseError } from "./sany-parse-error";
 import {
   addSanyMessage,
@@ -152,6 +154,8 @@ export interface SanyGenerationOptions {
   onAnalyze?: (name: string) => void;
   // Called after each external module, in the order SANY analyzes them.
   onModule?: (module: ModuleNode, messages: SanyMessage[]) => void;
+  // The TLC whose SANY to reproduce, which decides how SANY numbers the nodes it creates.
+  version?: TlcVersion;
 }
 
 interface SymbolTable {
@@ -288,7 +292,8 @@ export const generateSanySpecification = (
     addSanyMessage(messages, { location, text, isWarning: false });
   const addWarning = (location: SanyLocation | undefined, text: string) =>
     addSanyMessage(messages, { location, text, isWarning: true });
-  const counter = { value: 0 };
+  // TLC 1.7.4's SANY numbers its first node 0, and the master builds create one before.
+  const counter = { value: options.version === "1.7.4" ? -1 : 0 };
   const getId = () => ++counter.value;
 
   // SymbolTable.addSymbol: a symbol joins the innermost context unless its name is taken, which is
@@ -301,17 +306,19 @@ export const generateSanySpecification = (
       addToContext(getTopContext(table), symbol);
       return;
     }
-    if (binding.kind === "OpDef" && binding.defKind === "BuiltIn") {
+    const isConflict =
+      symbol.kind === "FormalParam" ||
+      getSymbolKind(binding) !== getSymbolKind(symbol) ||
+      getSymbolArity(binding) !== getSymbolArity(symbol);
+    // TLC 1.7.4's SANY reports a conflict before the redefinition of a built-in operator.
+    const isBuiltIn = binding.kind === "OpDef" && binding.defKind === "BuiltIn";
+    if (isBuiltIn && !(isConflict && options.version === "1.7.4")) {
       addError(
         symbol.location,
         `Symbol ${symbol.name} is a built-in operator, and cannot be redefined.`,
       );
       return;
     }
-    const isConflict =
-      symbol.kind === "FormalParam" ||
-      getSymbolKind(binding) !== getSymbolKind(symbol) ||
-      getSymbolArity(binding) !== getSymbolArity(symbol);
     if (isConflict) {
       addError(
         symbol.location,
@@ -326,14 +333,23 @@ export const generateSanySpecification = (
   };
   // SANY numbers its semantic nodes as it creates them, which the UIDs of its XML export show:
   // Context's static initializer creates the builtins, SANY.frontEndInitialize creates them again
-  // for the specification, and the Generator class creates its InAssumeDummyNode.
-  createBuiltins(getId);
+  // for the specification, and the Generator class creates its InAssumeDummyNode. TLC 1.7.4's SANY
+  // creates the builtins only for the specification.
+  if (options.version !== "1.7.4") createBuiltins(getId);
   const builtins = createBuiltins(getId);
   getId();
   const externalModules = new Map<string, ExternalModule>();
   const sources = new Map<string, { file: SourceFile; module: Module }>();
 
   const parseSource = (name: string, text: string) => {
+    const getParseFailure = (parseError: string) =>
+      new TlaSanyFatalError(
+        `Could not parse module ${name} from file ${name}.tla`,
+        name,
+        parseError,
+      );
+    const lexicalError = options.version === "1.7.4" ? getSany174LexicalError(text) : undefined;
+    if (lexicalError !== undefined) throw getParseFailure(lexicalError);
     // HACK: the parser's errors are not SANY's, so a module that fails to parse gets the report
     // of SANY's parser, and the parser's own report where SANY's parser would accept the module,
     // such as for an error SANY finds after parsing.
@@ -341,11 +357,7 @@ export const generateSanySpecification = (
       return parseSanyModule(getUnboxedSource(text));
     } catch (error) {
       if (!(error instanceof TlaSyntaxError)) throw error;
-      throw new TlaSanyFatalError(
-        `Could not parse module ${name} from file ${name}.tla`,
-        name,
-        getSanyParseError(text) ?? error.message,
-      );
+      throw getParseFailure(`***Parse Error***\n${getSanyParseError(text) ?? error.message}`);
     }
   };
 
@@ -353,9 +365,10 @@ export const generateSanySpecification = (
     const cached = sources.get(name);
     if (cached) return cached;
     if (text === undefined) {
+      // TLC 1.7.4's SANY gives the error no location.
       throw new TlaSanyFatalError(
         `Cannot find source file for module ${name} imported in module ${importer}.`,
-        importer,
+        options.version === "1.7.4" ? undefined : importer,
       );
     }
     options.onParse?.(name);
@@ -1760,8 +1773,9 @@ export const generateSanySpecification = (
           existing.isImplicit = false;
         } else substs.push({ op: target, expr, isImplicit: false });
       });
+      // TLC 1.7.4's SANY checks the arity of only the substitutions that the INSTANCE writes.
       substs
-        .filter((subst) => subst.isImplicit)
+        .filter((subst) => subst.isImplicit && options.version !== "1.7.4")
         .forEach((subst) => checkArity(subst.op, subst.expr));
       // SubstInNode.matchAll.
       declarations
@@ -1911,7 +1925,8 @@ export const generateSanySpecification = (
         preComments,
       });
       addSymbol(symbolTable, moduleDefinition);
-      definitions?.push(moduleDefinition);
+      // TLC 1.7.4's SANY leaves the definition out of the definitions of a LET.
+      if (options.version !== "1.7.4") definitions?.push(moduleDefinition);
     };
 
     // generateInstance: an INSTANCE step of a proof is located at the step's body and adds no

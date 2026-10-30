@@ -54,6 +54,7 @@ import {
 import { SANY_STANDARD_MODULES } from "./sany-modules";
 import { getSanyReport, type SanyModuleOrigin } from "./sany-report";
 import { exportSanyXml, XML_EXPORT_EXIT_CODE } from "./sany-xml";
+import { getTlcVersion, type TlcVersion } from "./tlc-version";
 import {
   createMessagePrinter,
   formatTlcDate,
@@ -638,14 +639,17 @@ const createFileDescriber = (
   directories: string[],
   java: JavaProperties,
   metadir: string | undefined,
+  version: TlcVersion,
 ) => {
   const temporary = java.temporaryDirectory ?? tmpdir();
   const temporaryDirectory = existsSync(temporary) ? realpathSync(temporary) : resolve(temporary);
   const libraryDirectory = join(temporaryDirectory, `tlc-${getTemporaryName(resolve(specPath))}`);
-  const jar = java.classPath?.split(delimiter).find((entry) => entry.endsWith(".jar"));
+  const jar = getJar(java);
   return (name: string, origin: SanyModuleOrigin) => {
     const fileName = `${name}.tla`;
     if (origin === "file") return realpathSync(findModuleFile(directories, name) ?? specPath);
+    // TLC 1.7.4 copies a standard module into the temporary directory itself.
+    if (version === "1.7.4") return join(temporaryDirectory, fileName);
     // FileUtil.createTempFile copies a module from the root module's file into the -metadir.
     if (origin === "root file") {
       const directory = metadir === undefined ? temporaryDirectory : resolve(metadir);
@@ -724,6 +728,7 @@ const checkSpec = async (
     return 1;
   }
   const workers = getWorkerCount(args.get("-workers"));
+  const version = getTlcVersion(getJar(java));
   printWelcome(printer);
   printStartupBanner(printer, seed, workers);
   const configPath =
@@ -832,7 +837,14 @@ const checkSpec = async (
   // TLC prints what SANY prints as it parses the spec, and the errors it rejects the spec for.
   const sany = getSanyReport(specPath, loadModule, {
     fileName: specName,
-    describeFile: createFileDescriber(specPath, directories, java, args.get("-metadir")?.[0]),
+    describeFile: createFileDescriber(
+      specPath,
+      directories,
+      java,
+      args.get("-metadir")?.[0],
+      version,
+    ),
+    version,
   });
   process.stdout.write(sany.text);
   if (sany.isFailed) {
@@ -1188,7 +1200,7 @@ const exportXml = (args: string[]) => {
     isXmlExport: true,
   });
   process.stderr.write(sany.text);
-  if (sany.specification === undefined) {
+  if (sany.isFailed || sany.specification === undefined) {
     console.error("ERROR: Failed to parse module.");
     return XML_EXPORT_EXIT_CODE.specParsingFailure;
   }
@@ -1231,6 +1243,10 @@ interface JavaProperties {
   classPath?: string;
   temporaryDirectory?: string;
 }
+
+// The tla2tools.jar on the class path.
+const getJar = (java: JavaProperties) =>
+  java.classPath?.split(delimiter).find((entry) => entry.endsWith(".jar"));
 
 interface JavaLaunch {
   mainClass: string;

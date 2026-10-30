@@ -421,3 +421,59 @@ export const createSanyLexer = (source: string) => {
   };
   return getNextToken;
 };
+
+// JavaCC's TokenMgrError.addEscapes, which escapes the characters of a lexical error's message.
+const LEXEME_ESCAPES = new Map([
+  ["\b", "\\b"],
+  ["\t", "\\t"],
+  ["\n", "\\n"],
+  ["\f", "\\f"],
+  ["\r", "\\r"],
+  ['"', '\\"'],
+  ["'", "\\'"],
+  ["\\", "\\\\"],
+]);
+
+const escapeLexeme = (text: string) =>
+  text.replace(
+    // eslint-disable-next-line no-control-regex
+    /[\0-\x1f"'\\\x7f-\uffff]/g,
+    (character) =>
+      LEXEME_ESCAPES.get(character) ??
+      (character === "\0" ? "" : `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`),
+  );
+
+// TokenMgrError.LexicalError: the character the lexer stopped at, or the end of the file, and the
+// characters of the token it had read.
+export const formatLexicalError = (
+  line: number,
+  column: number,
+  character: string | undefined,
+  after: string,
+) =>
+  `Lexical error at line ${line}, column ${column}.  Encountered: ${character === undefined ? "<EOF> " : `"${escapeLexeme(character)}" (${character.charCodeAt(0)}), `}after : "${escapeLexeme(after)}"`;
+
+// TLC 1.7.4's lexer, which JavaCC generated without UNICODE_INPUT, stops at a character past
+// U+00FF outside a comment.
+export const getSany174LexicalError = (source: string) => {
+  const readToken = createSanyLexer(source);
+  for (let token = readToken(); token && token.kind !== getKind("EOF"); token = readToken()) {
+    const index = token.image.search(/[^\0-\xff]/);
+    if (index === -1) continue;
+    const column = token.image
+      .slice(1, index + 1)
+      .split("")
+      .reduce(
+        (previous, character) =>
+          character === "\t" ? previous + 8 - (previous % 8) : previous + 1,
+        token.beginColumn,
+      );
+    return formatLexicalError(
+      token.beginLine,
+      column,
+      token.image[index],
+      token.image.slice(0, index),
+    );
+  }
+  return undefined;
+};

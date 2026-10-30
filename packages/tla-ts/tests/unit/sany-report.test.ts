@@ -516,3 +516,106 @@ end algorithm; *)
     );
   });
 });
+
+// The expected reports are what the SANY of TLC 1.7.4's tla2tools.jar prints.
+describe("getSanyReport for TLC 1.7.4", () => {
+  const options: SanyReportOptions = { version: "1.7.4" };
+
+  it("prints the errors and warnings of a module together", () => {
+    const report = getReport(
+      {
+        Twice: `---- MODULE Twice ----
+Op == 1
+Op == 2
+Unknown == Missing
+====
+`,
+      },
+      options,
+    );
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toBe(
+      toText([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 3, col 1 to line 3, col 7 of module Twice",
+        "",
+        "Operator Op already defined or declared.",
+        "",
+        "",
+        "line 4, col 12 to line 4, col 18 of module Twice",
+        "",
+        "Unknown operator: `Missing'.",
+        "",
+        "",
+        "*** Warnings: 1",
+        "",
+        "line 3, col 1 to line 3, col 7 of module Twice",
+        "",
+        "Multiple declarations or definitions for symbol Op.  ",
+        "This duplicates the one at line 2, col 1 to line 2, col 7 of module Twice.",
+        "",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("aborts on a character past U+00FF in a string, which its lexer cannot read", () => {
+    const report = getReport(
+      {
+        Checked: `---- MODULE Checked ----
+X == "✓"
+====
+`,
+      },
+      options,
+    );
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toBe(
+      toText([
+        'Lexical error at line 2, column 7.  Encountered: "\\u2713" (10003), after : "\\""',
+        "",
+        "Fatal errors while parsing TLA+ spec in file Checked",
+        "",
+        "tla2sany.semantic.AbortException",
+        "*** Abort messages: 1",
+        "",
+        "In module Checked",
+        "",
+        "Could not parse module Checked from file Checked.tla",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("aborts without a location on a module it cannot find", () => {
+    const report = getReport(
+      {
+        Lonely: `---- MODULE Lonely ----
+EXTENDS Absent
+====
+`,
+      },
+      options,
+    );
+    expect(report.text).toBe(
+      toText([
+        "",
+        "Fatal errors while parsing TLA+ spec in file Lonely",
+        "",
+        "tla2sany.semantic.AbortException",
+        "*** Abort messages: 1",
+        "",
+        "Unknown location",
+        "",
+        "Cannot find source file for module Absent imported in module Lonely.",
+        "",
+        "",
+      ]),
+    );
+  });
+});
