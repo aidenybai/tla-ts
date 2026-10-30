@@ -972,6 +972,21 @@ const parse = (source: string, mode: ParseMode): Module => {
     throw createUnexpected(`Unexpected ${describe(token)}`, token);
   };
 
+  // SANY rejects the operator after a prefix operator's operand unless it binds looser than the
+  // prefix operator.
+  const parsePrefixOperand = (operator: Token, low: number, high: number) => {
+    const operand = parseExpression(high + 1);
+    const next = peek();
+    const nextHigh =
+      next.text === "'" || POSTFIX_OPERATORS.has(next.text)
+        ? 15
+        : INFIX_OPERATORS.get(next.text)?.high;
+    if (!isTlapm && next.kind === "Operator" && nextHigh !== undefined && nextHigh >= low) {
+      throw createError(`Precedence conflict between ${operator.text} and ${next.text}`, next);
+    }
+    return operand;
+  };
+
   const parsePrefix = (): Expression => {
     const token = peek();
     const location = getLocation(token);
@@ -982,32 +997,43 @@ const parse = (source: string, mode: ParseMode): Module => {
       switch (token.text) {
         case "~":
           advance();
-          return { kind: "Apply", operator: "~", args: [parseExpression(5)], location };
+          return {
+            kind: "Apply",
+            operator: "~",
+            args: [parsePrefixOperand(token, 4, 4)],
+            location,
+          };
         case "-":
           advance();
           return {
             kind: "Apply",
             operator: "-.",
-            args: [parseExpression(NEGATION_PRECEDENCE + 1)],
+            args: [parsePrefixOperand(token, NEGATION_PRECEDENCE, NEGATION_PRECEDENCE)],
             location,
           };
         case "[]":
           advance();
-          return { kind: "Always", expression: parseExpression(16), location };
+          return { kind: "Always", expression: parsePrefixOperand(token, 4, 15), location };
         case "<>":
           advance();
-          return { kind: "Eventually", expression: parseExpression(16), location };
+          return { kind: "Eventually", expression: parsePrefixOperand(token, 4, 15), location };
         case "ENABLED":
           advance();
-          return { kind: "Enabled", expression: parseExpression(16), location };
+          return { kind: "Enabled", expression: parsePrefixOperand(token, 4, 15), location };
         case "UNCHANGED":
           advance();
-          return { kind: "Unchanged", expression: parseExpression(16), location };
+          return { kind: "Unchanged", expression: parsePrefixOperand(token, 4, 15), location };
         case "SUBSET":
         case "UNION":
         case "DOMAIN":
           advance();
-          return { kind: "Apply", operator: token.text, args: [parseExpression(9)], location };
+          return {
+            kind: "Apply",
+            operator: token.text,
+            // tlapm gives these operators the precedence 8 of the TLA+ book, and SANY 10-13.
+            args: [isTlapm ? parseExpression(9) : parsePrefixOperand(token, 10, 13)],
+            location,
+          };
       }
     }
     return parsePrimary();

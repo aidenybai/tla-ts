@@ -91,6 +91,27 @@ describe("parseModule reads operators like SANY", () => {
     },
   );
 
+  it.each(["SUBSET a + b", "DOMAIN a \\o b", "- a \\X b", "[]a = b", "<>a \\cdot b", "[]a'"])(
+    "rejects an operator after the operand of a prefix operator it overlaps in %s",
+    (expression) => {
+      expect(() =>
+        parseModule(`---- MODULE M ----\nCONSTANTS a, b\nA == ${expression}\n====`),
+      ).toThrow(TlaSyntaxError);
+    },
+  );
+
+  it.each([
+    ["SUBSET 0..2", ".."],
+    ["UNION a \\cup b", "\\cup"],
+    ["SUBSET a ^ b", "SUBSET"],
+    ["~a = b", "~"],
+  ])("groups %s under %s as SANY does", (expression, operator) => {
+    const definition = parseModule(
+      `---- MODULE M ----\nCONSTANTS a, b\nA == ${expression}\n====`,
+    ).definitions.find((item) => item.name === "A");
+    expect(definition?.body).toMatchObject({ kind: "Apply", operator });
+  });
+
   it.each([
     ["the root module", "---- MODULE M ----\nA == 1\n"],
     ["a nested module", `---- MODULE M ----\n---- MODULE Inner ----\nA == 1\n`],
