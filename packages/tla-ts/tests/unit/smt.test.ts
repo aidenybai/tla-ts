@@ -72,6 +72,25 @@ describe("decideSmt", () => {
     expect(["unsat", "unknown"]).toContain(decideSmt(getDeepProblem(20000), { timeLimitMs: 5000 }));
   });
 
+  // Doubles round 2^53 + 1 to 2^53 and 2^54 + 3 to 2^54 + 4, which flips each verdict.
+  it("tells apart numerals past 2^53", () => {
+    const problem = [
+      "(declare-fun x () Int)",
+      "(assert (= x 9007199254740993))",
+      "(assert (not (= x 9007199254740992)))",
+      "(check-sat)",
+    ].join("\n");
+    expect(decideSmt(problem, { timeLimitMs: 5000 })).toBe("sat");
+  });
+
+  it("computes exactly with numerals past 2^53", () => {
+    const problems = [
+      "(assert (= (* 2 x) 18014398509481987))",
+      "(assert (= x 1180591620717411303424))\n(assert (not (= (div (- 1180591620717411303425) x) (- 2))))",
+    ].map((assertions) => `(declare-fun x () Int)\n${assertions}\n(check-sat)\n`);
+    for (const problem of problems) expect(decideSmt(problem, { timeLimitMs: 5000 })).toBe("unsat");
+  });
+
   it("rejects an ill-sorted application", () => {
     expect(() =>
       decideSmt("(declare-fun p (Int) Bool)\n(assert (p true))\n(check-sat)\n", {

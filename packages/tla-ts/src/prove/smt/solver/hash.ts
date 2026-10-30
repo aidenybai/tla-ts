@@ -55,8 +55,8 @@ export const combineHash = (first: number, second: number) =>
 
 const encoder = new TextEncoder();
 
-export const stringHash = (text: string, initValue: number) => {
-  const data = encoder.encode(text);
+// string_hash, over the bytes of a string or of a number's digits.
+export const bytesHash = (data: Uint8Array, initValue: number) => {
   const readUnsigned = (offset: number) =>
     (data[offset] |
       (data[offset + 1] << 8) |
@@ -82,6 +82,9 @@ export const stringHash = (text: string, initValue: number) => {
   mix(state);
   return state[2];
 };
+
+export const stringHash = (text: string, initValue: number) =>
+  bytesHash(encoder.encode(text), initValue);
 
 // get_composite_hash with the default kind hash (17) over child hashes.
 export const getCompositeHash = (childHashes: number[]) => {

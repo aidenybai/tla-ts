@@ -142,9 +142,9 @@ export class TheoryLra {
   // runs it once, when it registers the theory.
   init() {
     const manager = this.manager;
-    this.oneVar = this.addConst(manager.mkNumeral(1), 1, true);
+    this.oneVar = this.addConst(manager.mkNumeral(1n), 1, true);
     this.realOneVar = this.addConst(manager.mkRealNumeral(1), 1, false);
-    this.zeroVar = this.addConst(manager.mkNumeral(0), 0, true);
+    this.zeroVar = this.addConst(manager.mkNumeral(0n), 0, true);
     this.realZeroVar = this.addConst(manager.mkRealNumeral(0), 0, false);
   }
 
@@ -293,18 +293,18 @@ export class TheoryLra {
         for (let position = 1; position < args.length; position++)
           push(args[position], coeffs[index].neg());
       } else if (op === OP_MUL && args.length === 2 && manager.isNumeral(args[0])) {
-        coeffs[index] = coeffs[index].mul(Rational.fromNumber(manager.values[args[0]]));
+        coeffs[index] = coeffs[index].mul(Rational.of(manager.getNumeralValue(args[0])));
         terms[index] = args[1];
         toEnsureEnode.push(args[0]);
       } else if (op === OP_MUL && args.length === 2 && manager.isNumeral(args[1])) {
-        coeffs[index] = coeffs[index].mul(Rational.fromNumber(manager.values[args[1]]));
+        coeffs[index] = coeffs[index].mul(Rational.of(manager.getNumeralValue(args[1])));
         terms[index] = args[0];
         toEnsureEnode.push(args[1]);
       } else if (op === OP_MUL) {
         addVar(index, this.internalizeMul(term));
         index++;
       } else if (op === OP_NUM) {
-        addVar(index, this.internalizeNumeral(term, Rational.fromNumber(manager.values[term])));
+        addVar(index, this.internalizeNumeral(term, Rational.of(manager.getNumeralValue(term))));
         index++;
       } else if (op === OP_UMINUS) {
         coeffs[index] = coeffs[index].neg();
@@ -414,7 +414,7 @@ export class TheoryLra {
       return true;
     }
     const term = isRightNumeral ? args[0] : args[1];
-    const value = Rational.fromNumber(manager.values[isRightNumeral ? args[1] : args[0]]);
+    const value = Rational.of(manager.getNumeralValue(isRightNumeral ? args[1] : args[0]));
     const isLower = (op === OP_GE) === isRightNumeral;
     const thVar = this.internalizeDef(term);
     const bound = this.mkVarBound(boolVar, thVar, isLower, value);
@@ -627,7 +627,7 @@ export class TheoryLra {
       const difference = manager.mkApp(OP_SUB, [args[0], args[1]], SORT_INT);
       const normalized = manager.mkApp(
         manager.getOp(atom),
-        [difference, manager.mkNumeral(0)],
+        [difference, manager.mkNumeral(0n)],
         SORT_BOOL,
       );
       const first = this.mkLiteral(atom);
@@ -729,7 +729,7 @@ export class TheoryLra {
         const expr = this.getExpr(thVar);
         if (
           this.manager.isNumeral(expr) &&
-          Rational.fromNumber(this.manager.values[expr]).equals(value)
+          Rational.of(this.manager.getNumeralValue(expr)).equals(value)
         )
           return null;
       }
@@ -1035,17 +1035,17 @@ export class TheoryLra {
         const expr = this.getExpr(entry[0]);
         return entry[1].equals(Rational.one)
           ? expr
-          : manager.mkApp(OP_MUL, [manager.mkNumeral(Number(entry[1].num)), expr], SORT_INT);
+          : manager.mkApp(OP_MUL, [manager.mkNumeral(entry[1].num), expr], SORT_INT);
       });
     const term =
       summands.length === 0
-        ? manager.mkNumeral(0)
+        ? manager.mkNumeral(0n)
         : summands.length === 1
           ? summands[0]
           : manager.mkApp(OP_ADD, summands, SORT_INT);
     const atom = manager.mkApp(
       isLower ? OP_GE : OP_LE,
-      [term, manager.mkNumeral(Number(offset.num))],
+      [term, manager.mkNumeral(offset.num)],
       SORT_BOOL,
     );
     context.internalize(atom, true);
@@ -1172,7 +1172,7 @@ export class TheoryLra {
   }
 
   private getValueExpr(thVar: number) {
-    return this.manager.mkNumeral(Number(this.getValue(thVar).floor().num));
+    return this.manager.mkNumeral(this.getValue(thVar).floor().num);
   }
 
   // Scopes.
@@ -1235,7 +1235,7 @@ export class TheoryLra {
       t1 = t2;
       t2 = saved;
     }
-    const zero = manager.mkNumeral(0);
+    const zero = manager.mkNumeral(0n);
     let le: number;
     let ge: number;
     if (manager.isNumeral(t2)) {
@@ -1244,7 +1244,7 @@ export class TheoryLra {
     } else {
       const difference = manager.mkApp(
         OP_ADD,
-        [t1, manager.mkApp(OP_MUL, [manager.mkNumeral(-1), t2], SORT_INT)],
+        [t1, manager.mkApp(OP_MUL, [manager.mkNumeral(-1n), t2], SORT_INT)],
         SORT_INT,
       );
       le = manager.mkApp(OP_LE, [difference, zero], SORT_BOOL);
@@ -1342,11 +1342,11 @@ export class TheoryLra {
   private mkIdivModAxioms(dividend: number, divisor: number) {
     const manager = this.manager;
     const context = this.context;
-    if (manager.getNumeral(divisor) === 0) return;
+    if (manager.getNumeral(divisor) === 0n) return;
     const quotient = manager.mkApp(OP_IDIV, [dividend, divisor], SORT_INT);
     const remainder = manager.mkApp(OP_MOD, [dividend, divisor], SORT_INT);
-    const zero = manager.mkNumeral(0);
-    if (manager.getNumeral(dividend) === 0) {
+    const zero = manager.mkNumeral(0n);
+    if (manager.getNumeral(dividend) === 0n) {
       // q != 0 implies div 0 q = 0 and mod 0 q = 0.
       const isDivisorNonnegative = this.mkLiteral(manager.mkApp(OP_GE, [divisor, zero], SORT_BOOL));
       const isDivisorNonpositive = this.mkLiteral(manager.mkApp(OP_LE, [divisor, zero], SORT_BOOL));
@@ -1373,12 +1373,12 @@ export class TheoryLra {
       this.mkAxiom([eq]);
       this.mkEqAxioms(this.ensureEnode(combination), this.ensureEnode(dividend));
       this.mkAxiom([this.mkLiteral(manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL))]);
-      const upper = manager.mkNumeral(Math.abs(divisorValue) - 1);
+      const upper = manager.mkNumeral((divisorValue < 0n ? -divisorValue : divisorValue) - 1n);
       this.mkAxiom([this.mkLiteral(manager.mkApp(OP_LE, [remainder, upper], SORT_BOOL))]);
       return;
     }
     // q = 0 or (mod p q) >= 0, q >= 0 or (mod p q) + q <= -1, and q <= 0 or (mod p q) - q <= -1.
-    const minusOne = manager.mkNumeral(-1);
+    const minusOne = manager.mkNumeral(-1n);
     const isZero = this.mkLiteral(manager.mkEq(divisor, zero));
     const isRemainderNonnegative = this.mkLiteral(
       manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL),
@@ -1444,7 +1444,7 @@ export class TheoryLra {
   // The value that the model gives the class of a term, if the class has a variable.
   private getModelValue(expr: number) {
     const manager = this.manager;
-    if (manager.isNumeral(expr)) return Rational.fromNumber(manager.values[expr]);
+    if (manager.isNumeral(expr)) return Rational.of(manager.getNumeralValue(expr));
     const root = this.context.getEnode(expr)?.root;
     return root === undefined || root.thVar < 0 ? undefined : this.getValue(root.thVar);
   }

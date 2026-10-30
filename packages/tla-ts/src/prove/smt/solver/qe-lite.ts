@@ -5,7 +5,7 @@
 // disjunction. Like Z3, the port counts references, so that expressions are created and deleted in
 // Z3's order. Arrays, bit-vectors and datatypes are not ported, as tlapm's encoding does not produce
 // them.
-import { SmtCanceledError, SmtUnsupportedError } from "../../../errors";
+import { SmtCanceledError } from "../../../errors";
 import {
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -34,6 +34,7 @@ import { isOccurring } from "./der";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import type { Goal } from "./goal";
 import { ObjHashtable } from "./hashtable";
+import { getGcd } from "./rational";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 import { BetaReducer, InvVarShifter, RewriterTpl } from "./rewriter-tpl";
@@ -75,19 +76,6 @@ const newRewriter = (manager: AstManager) =>
     arith: TACTIC_ARITH_OPTIONS,
     isRewritingPatterns: false,
   });
-
-const getGcd = (first: number, second: number) => {
-  let left = Math.abs(first);
-  let right = Math.abs(second);
-  while (right !== 0) [left, right] = [right, left % right];
-  return left;
-};
-
-const checkSafe = (value: number) => {
-  if (!Number.isSafeInteger(value))
-    throw new SmtUnsupportedError(`the coefficient ${value} is too large`);
-  return value;
-};
 
 // A summand of a linear equation and whether it is on the left-hand side.
 interface SignedExpr {
@@ -257,20 +245,20 @@ class EqDer {
   }
 
   // arith_solve_plugin::is_invertible_const: a numeral that a variable's coefficient may be.
-  private getInvertibleConst(expr: number): number | undefined {
+  private getInvertibleConst(expr: number): bigint | undefined {
     const manager = this.manager;
     if (manager.getOp(expr) === OP_UMINUS) {
       const inner = this.getInvertibleConst(manager.args[expr][0]);
       return inner === undefined ? undefined : -inner;
     }
     const value = manager.getNumeral(expr);
-    return value === 1 || value === -1 ? value : undefined;
+    return value === 1n || value === -1n ? value : undefined;
   }
 
   // arith_solve_plugin::is_invertible_mul: a variable times an invertible coefficient.
   private getInvertibleMul(expr: number) {
     const manager = this.manager;
-    if (this.isVariable(expr)) return { variable: expr, coefficient: 1 };
+    if (this.isVariable(expr)) return { variable: expr, coefficient: 1n };
     if (manager.getOp(expr) !== OP_MUL || manager.args[expr].length !== 2) return undefined;
     const [first, second] = manager.args[expr];
     const secondValue = this.getInvertibleConst(second);
@@ -308,20 +296,20 @@ class EqDer {
         done.push(...todo);
         // mk_term: the other summands times the inverse of the coefficient, negated on the
         // variable's side.
-        const coefficient = 1 / mul.coefficient;
+        const coefficient = 1n / mul.coefficient;
         const isLeft = item.isLeft;
         const terms = new RefVector(manager);
         for (const summand of done) {
           const factor = summand.isLeft === isLeft ? -coefficient : coefficient;
           terms.push(
-            factor === 1
+            factor === 1n
               ? summand.expr
               : manager.mkApp(OP_MUL, [manager.mkNumeral(factor), summand.expr], SORT_INT),
           );
         }
         const term =
           terms.size === 0
-            ? manager.mkNumeral(0)
+            ? manager.mkNumeral(0n)
             : terms.size === 1
               ? terms.items[0]
               : manager.mkApp(OP_ADD, terms.items, SORT_INT);
@@ -343,12 +331,12 @@ class EqDer {
       manager.decRef(solved.term);
       return result;
     }
-    const isLeftZero = manager.getNumeral(inputLeft) === 0;
+    const isLeftZero = manager.getNumeral(inputLeft) === 0n;
     let left = isLeftZero ? inputRight : inputLeft;
     let right = isLeftZero ? inputLeft : inputRight;
     const leftArgs = manager.args[left];
     if (
-      manager.getNumeral(right) === 0 &&
+      manager.getNumeral(right) === 0n &&
       manager.getOp(left) === OP_ADD &&
       leftArgs.length === 2
     ) {
@@ -378,15 +366,15 @@ class EqDer {
       if (!manager.isNumeral(second)) return -1;
       [first, second] = [second, first];
     }
-    if (manager.values[first] === 0) {
-      const result = manager.mkEq(lhs, manager.mkNumeral(0));
+    if (manager.getNumeralValue(first) === 0n) {
+      const result = manager.mkEq(lhs, manager.mkNumeral(0n));
       manager.incRef(result);
       return result;
     }
     const held = new RefVector(manager);
     const quotientEq = manager.mkEq(second, manager.mkApp(OP_IDIV, [lhs, first], SORT_INT));
     held.push(quotientEq);
-    const zero = manager.mkNumeral(0);
+    const zero = manager.mkNumeral(0n);
     held.push(zero);
     const remainder = manager.mkApp(OP_MOD, [lhs, first], SORT_INT);
     held.push(remainder);
@@ -584,8 +572,8 @@ class EqDer {
 interface Constraint {
   lits: number[];
   xs: number[];
-  as: number[];
-  c: number;
+  as: bigint[];
+  c: bigint;
   isStrict: boolean;
   isDead: boolean;
 }
@@ -802,8 +790,8 @@ class Fm {
     const args = manager.getOp(fml) === OP_OR ? manager.args[fml] : [fml];
     const lits: number[] = [];
     const xs: number[] = [];
-    const as: number[] = [];
-    let c = 0;
+    const as: bigint[] = [];
+    let c = 0n;
     let isStrict = false;
     for (const arg of args) {
       if (this.isLiteral(arg)) {
@@ -815,12 +803,12 @@ class Fm {
       isStrict = isNegated;
       const isFlipped = manager.getOp(atom) === OP_GE ? !isNegated : isNegated;
       const [lhs, rhs] = manager.args[atom];
-      c = isFlipped ? -manager.values[rhs] : manager.values[rhs];
+      c = isFlipped ? -manager.getNumeralValue(rhs) : manager.getNumeralValue(rhs);
       const monomials = manager.getOp(lhs) === OP_ADD ? manager.args[lhs] : [lhs];
       let isAllInt = true;
       for (const monomial of monomials) {
         const isScaled = manager.getOp(monomial) === OP_MUL && manager.args[monomial].length === 2;
-        const coefficient = isScaled ? manager.values[manager.args[monomial][0]] : 1;
+        const coefficient = isScaled ? manager.getNumeralValue(manager.args[monomial][0]) : 1n;
         const variable = this.toVar(isScaled ? manager.args[monomial][1] : monomial);
         xs.push(variable);
         as.push(isFlipped ? -coefficient : coefficient);
@@ -837,12 +825,12 @@ class Fm {
   // normalize_coeffs: divides by the gcd of the coefficients and the constant.
   private normalizeCoeffs(constraint: Constraint) {
     if (constraint.xs.length === 0) return;
-    let divisor = Math.abs(constraint.c);
+    let divisor = constraint.c < 0n ? -constraint.c : constraint.c;
     for (const coefficient of constraint.as) {
-      if (divisor === 1) break;
+      if (divisor === 1n) break;
       divisor = getGcd(coefficient, divisor);
     }
-    if (divisor === 1) return;
+    if (divisor === 1n) return;
     constraint.c /= divisor;
     constraint.as = constraint.as.map((coefficient) => coefficient / divisor);
   }
@@ -851,7 +839,7 @@ class Fm {
     return (
       constraint.lits.length === 0 &&
       constraint.xs.length === 0 &&
-      (constraint.c < 0 || (constraint.isStrict && constraint.c === 0))
+      (constraint.c < 0n || (constraint.isStrict && constraint.c === 0n))
     );
   }
 
@@ -866,7 +854,7 @@ class Fm {
     constraint.xs.forEach((variable, index) => {
       if (this.forbidden[variable]) return;
       isIndexed = true;
-      (constraint.as[index] < 0 ? this.lowers : this.uppers)[variable].push(constraint);
+      (constraint.as[index] < 0n ? this.lowers : this.uppers)[variable].push(constraint);
     });
     if (isIndexed) {
       if (!this.subTodo.includes(constraint)) this.subTodo.push(constraint);
@@ -894,12 +882,13 @@ class Fm {
     const manager = this.manager;
     let ineq = -1;
     if (constraint.xs.length === 0) {
-      if (constraint.c > 0 || (!constraint.isStrict && constraint.c === 0)) return manager.trueExpr;
+      if (constraint.c > 0n || (!constraint.isStrict && constraint.c === 0n))
+        return manager.trueExpr;
     } else {
       const monomials = constraint.xs.map((variable, index) => {
         const expr = this.var2expr.items[variable];
         const coefficient = constraint.as[index];
-        return coefficient === 1
+        return coefficient === 1n
           ? expr
           : manager.mkApp(OP_MUL, [manager.mkNumeral(coefficient), expr], SORT_INT);
       });
@@ -952,7 +941,7 @@ class Fm {
     let isBestLower = false;
     constraint.xs.forEach((variable, index) => {
       if (this.forbidden[variable]) return;
-      const isLower = constraint.as[index] < 0;
+      const isLower = constraint.as[index] < 0n;
       const candidates = (isLower ? this.lowers : this.uppers)[variable];
       if (candidates.length < bestSize) {
         best = variable;
@@ -1005,7 +994,8 @@ class Fm {
     for (const constraint of constraints)
       for (const [index, other] of constraint.xs.entries()) {
         if (!this.isInt[other]) return { isAllInt: false, isUnit };
-        if (other === variable && Math.abs(constraint.as[index]) !== 1) isUnit = false;
+        if (other === variable && constraint.as[index] !== 1n && constraint.as[index] !== -1n)
+          isUnit = false;
       }
     return { isAllInt: true, isUnit };
   }
@@ -1029,25 +1019,25 @@ class Fm {
     this.counter += lower.xs.length + upper.xs.length + lower.lits.length + upper.lits.length;
     const a = -lower.as[lower.xs.indexOf(variable)];
     const b = upper.as[upper.xs.indexOf(variable)];
-    let c = checkSafe(lower.c * b + upper.c * a);
+    let c = lower.c * b + upper.c * a;
     let isStrict = lower.isStrict || upper.isStrict;
     const xs: number[] = [];
-    const as: number[] = [];
+    const as: bigint[] = [];
     lower.xs.forEach((other, index) => {
       if (other === variable) return;
       this.var2pos[other] = xs.length;
       xs.push(other);
-      as.push(checkSafe(lower.as[index] * b));
+      as.push(lower.as[index] * b);
     });
     upper.xs.forEach((other, index) => {
       if (other === variable) return;
       const position = this.var2pos[other];
       if (position === -1) {
         xs.push(other);
-        as.push(checkSafe(upper.as[index] * a));
-      } else as[position] = checkSafe(as[position] + upper.as[index] * a);
+        as.push(upper.as[index] * a);
+      } else as[position] += upper.as[index] * a;
     });
-    const kept = as.flatMap((coefficient, index) => (coefficient === 0 ? [] : [index]));
+    const kept = as.flatMap((coefficient, index) => (coefficient === 0n ? [] : [index]));
     const newXs = kept.map((index) => xs[index]);
     const newAs = kept.map((index) => as[index]);
     if (isStrict && newXs.every((other) => this.isInt[other])) {
@@ -1055,7 +1045,7 @@ class Fm {
       c--;
     }
     for (const other of lower.xs) this.var2pos[other] = -1;
-    if (newXs.length === 0 && (c > 0 || (!isStrict && c === 0))) return undefined;
+    if (newXs.length === 0 && (c > 0n || (!isStrict && c === 0n))) return undefined;
     for (const lit of lower.lits) this.bvar2sign[Math.abs(lit)] = lit < 0 ? -1 : 1;
     const lits = [...lower.lits];
     let isTautology = false;
@@ -1067,7 +1057,7 @@ class Fm {
     }
     for (const lit of lower.lits) this.bvar2sign[Math.abs(lit)] = 0;
     if (isTautology) return undefined;
-    if (lits.length === 0 && newXs.length === 0 && (c < 0 || (isStrict && c === 0))) {
+    if (lits.length === 0 && newXs.length === 0 && (c < 0n || (isStrict && c === 0n))) {
       this.isInconsistent = true;
       return undefined;
     }
@@ -1318,16 +1308,16 @@ class QeLite {
       manager.kinds[term] === KIND_VAR && manager.values[term] === index;
     const isVarOnLeft = isIndex(lhs) && manager.isNumeral(rhs);
     if (!isVarOnLeft && !(isIndex(rhs) && manager.isNumeral(lhs))) return undefined;
-    const numeral = manager.values[isVarOnLeft ? rhs : lhs];
+    const numeral = manager.getNumeralValue(isVarOnLeft ? rhs : lhs);
     const value = isVarOnLeft
       ? isStrict
-        ? numeral - 1
+        ? numeral - 1n
         : numeral
       : isStrict
-        ? numeral + 1
+        ? numeral + 1n
         : numeral;
     if (!isNegated) return { isLower: !isVarOnLeft, value };
-    return { isLower: isVarOnLeft, value: isVarOnLeft ? value + 1 : value - 1 };
+    return { isLower: isVarOnLeft, value: isVarOnLeft ? value + 1n : value - 1n };
   }
 
   // try_expand_bounded_quantifier: the disjunction of the body over every value of the integer
@@ -1345,8 +1335,8 @@ class QeLite {
     const conjs = new RefVector(manager);
     conjs.push(body);
     flattenAndVector(manager, conjs);
-    const lowers: (number | undefined)[] = [];
-    const uppers: (number | undefined)[] = [];
+    const lowers: (bigint | undefined)[] = [];
+    const uppers: (bigint | undefined)[] = [];
     const isBoundConj = conjs.items.map((conj) => {
       let isBound = false;
       for (const index of remaining) {
@@ -1360,7 +1350,7 @@ class QeLite {
       }
       return isBound;
     });
-    let domainSize = 1;
+    let domainSize = 1n;
     for (const index of remaining) {
       const lower = lowers[index];
       const upper = uppers[index];
@@ -1368,8 +1358,8 @@ class QeLite {
         conjs.reset();
         return -1;
       }
-      const size = upper - lower + 1;
-      if (size <= 0) {
+      const size = upper - lower + 1n;
+      if (size <= 0n) {
         conjs.reset();
         return assign(manager, -1, manager.falseExpr);
       }
@@ -1388,7 +1378,7 @@ class QeLite {
     // Like Z3, an unused variable keeps the sort of the declaration at its index.
     for (let index = 0; index < numDecls; index++)
       if (!used[index]) substMap.set(index, manager.mkVar(index, sorts[index]));
-    const values = remaining.map((index) => lowers[index] ?? 0);
+    const values = remaining.map((index) => lowers[index] ?? 0n);
     const subst = new VarSubst(manager, false);
     const shifter = new InvVarShifter(manager);
     const disjuncts = new RefVector(manager);
@@ -1411,8 +1401,8 @@ class QeLite {
       let position = remaining.length - 1;
       for (; position >= 0; position--) {
         values[position]++;
-        if (values[position] <= (uppers[remaining[position]] ?? 0)) break;
-        values[position] = lowers[remaining[position]] ?? 0;
+        if (values[position] <= (uppers[remaining[position]] ?? 0n)) break;
+        values[position] = lowers[remaining[position]] ?? 0n;
       }
       if (position < 0) break;
     }

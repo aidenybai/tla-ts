@@ -224,7 +224,9 @@ export class ProtoModel {
 
   private mkValue(index: number, sort: number) {
     const value =
-      sort === SORT_INT ? this.manager.mkNumeral(index) : this.manager.mkModelValue(index, sort);
+      sort === SORT_INT
+        ? this.manager.mkNumeral(BigInt(index))
+        : this.manager.mkModelValue(index, sort);
     this.getValueSet(sort).add(value);
     return value;
   }
@@ -260,7 +262,9 @@ export class ProtoModel {
     let next = this.nextValue.get(sort) ?? 0;
     for (;;) {
       const value =
-        sort === SORT_INT ? this.manager.mkNumeral(next) : this.manager.mkModelValue(next, sort);
+        sort === SORT_INT
+          ? this.manager.mkNumeral(BigInt(next))
+          : this.manager.mkModelValue(next, sort);
       next++;
       if (!set.has(value)) {
         set.add(value);

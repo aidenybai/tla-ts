@@ -349,7 +349,7 @@ export const parseSmtlib = (
   // annotation.
   const parseLeaf = (sexpr: SExpr): number => {
     if (typeof sexpr === "string") {
-      if (/^[0-9]+$/.test(sexpr)) return manager.mkNumeral(Number(sexpr));
+      if (/^[0-9]+$/.test(sexpr)) return manager.mkNumeral(BigInt(sexpr));
       if (sexpr === "true") return manager.trueExpr;
       if (sexpr === "false") return manager.falseExpr;
       const binding = lookup(sexpr);

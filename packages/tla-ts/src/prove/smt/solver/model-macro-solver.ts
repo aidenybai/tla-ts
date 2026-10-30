@@ -153,7 +153,7 @@ export const collectMacroCandidates = (manager: AstManager, quantifier: number) 
     rewriter.mkAppCore(OP_SUB, [first, second], SORT_INT);
   const mkAdd = (args: number[]) =>
     args.length === 0
-      ? manager.mkNumeral(0)
+      ? manager.mkNumeral(0n)
       : args.length === 1
         ? args[0]
         : manager.mkApp(OP_ADD, args, SORT_INT);

@@ -33,17 +33,27 @@ export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
   isGcdRounding: false,
 };
 
-// SMT-LIB's div and mod, whose remainder is never negative.
-const getEuclideanDiv = (dividend: number, divisor: number) =>
-  divisor > 0 ? Math.floor(dividend / divisor) : -Math.floor(dividend / -divisor);
+// mpz_manager's div and mod: SMT-LIB's, whose remainder is never negative. By a positive divisor,
+// div is the floor of the quotient.
+const getEuclideanDiv = (dividend: bigint, divisor: bigint) => {
+  const quotient = dividend / divisor;
+  if (dividend >= 0n || quotient * divisor === dividend) return quotient;
+  return divisor < 0n ? quotient + 1n : quotient - 1n;
+};
 
-const getEuclideanMod = (dividend: number, divisor: number) =>
-  dividend - divisor * getEuclideanDiv(dividend, divisor);
+const getEuclideanMod = (dividend: bigint, divisor: bigint) => {
+  const remainder = dividend % divisor;
+  if (remainder >= 0n) return remainder;
+  return divisor > 0n ? remainder + divisor : remainder - divisor;
+};
+
+// The ceiling of the quotient by a positive divisor.
+const getCeilDiv = (dividend: bigint, divisor: bigint) => -getEuclideanDiv(-dividend, divisor);
 
 // symmod: the remainder closest to zero, for a positive modulus.
-const getSymmetricMod = (value: number, modulus: number) => {
+const getSymmetricMod = (value: bigint, modulus: bigint) => {
   const remainder = getEuclideanMod(value, modulus);
-  return 2 * remainder > modulus ? remainder - modulus : remainder;
+  return 2n * remainder > modulus ? remainder - modulus : remainder;
 };
 
 const KIND_LE = 0;
@@ -120,11 +130,11 @@ export class ArithRewriter extends PolyRewriter {
     const divisorArgs = this.getFlatMul(divisor);
     this.removeFactor(factor, dividendArgs);
     this.removeFactor(factor, divisorArgs);
-    const zero = manager.mkNumeral(0);
+    const zero = manager.mkNumeral(0n);
     const newDividend =
-      dividendArgs.length === 0 ? manager.mkNumeral(1) : this.mkFlatMulApp(dividendArgs);
+      dividendArgs.length === 0 ? manager.mkNumeral(1n) : this.mkFlatMulApp(dividendArgs);
     const newDivisor =
-      divisorArgs.length === 0 ? manager.mkNumeral(1) : this.mkFlatMulApp(divisorArgs);
+      divisorArgs.length === 0 ? manager.mkNumeral(1n) : this.mkFlatMulApp(divisorArgs);
     return this.mkIntIte(
       manager.mkEq(zero, factor),
       this.mkIdivApp(zero, zero),
@@ -144,8 +154,8 @@ export class ArithRewriter extends PolyRewriter {
     const manager = this.manager;
     const dividendArgs = this.getFlatMul(dividend);
     const divisorArgs = this.getFlatMul(divisor);
-    let dividendValue = 1;
-    let divisorValue = 1;
+    let dividendValue = 1n;
+    let divisorValue = 1n;
     let dividendNumeral: number | undefined;
     let divisorNumeral: number | undefined;
     const marked = new Set(dividendArgs);
@@ -159,15 +169,15 @@ export class ArithRewriter extends PolyRewriter {
       const value = manager.getNumeral(arg);
       // A common factor of -1 stays, or the rewriting of (div (* -1 x) (* -1 y)) diverges. Z3's
       // check stores the -1 as the dividend's value.
-      if (marked.has(arg) && value !== -1) return this.removeDivisor(arg, dividend, divisor);
-      if (marked.has(arg)) dividendValue = -1;
+      if (marked.has(arg) && value !== -1n) return this.removeDivisor(arg, dividend, divisor);
+      if (marked.has(arg)) dividendValue = -1n;
       if (value === undefined) continue;
       divisorValue = value;
       divisorNumeral = arg;
     }
-    const gcd = Number(getGcd(BigInt(dividendValue), BigInt(divisorValue)));
-    if (gcd === 1) return undefined;
-    const reduced = (args: number[], numeral: number | undefined, value: number) => {
+    const gcd = getGcd(dividendValue, divisorValue);
+    if (gcd === 1n) return undefined;
+    const reduced = (args: number[], numeral: number | undefined, value: bigint) => {
       const index = args.indexOf(numeral ?? -1);
       if (index !== -1) args[index] = manager.mkNumeral(value / gcd);
       return this.mkFlatMulApp(args);
@@ -183,23 +193,23 @@ export class ArithRewriter extends PolyRewriter {
     const manager = this.manager;
     const dividend = manager.getNumeral(left);
     const divisor = manager.getNumeral(right);
-    if (dividend !== undefined && divisor !== undefined && divisor !== 0)
+    if (dividend !== undefined && divisor !== undefined && divisor !== 0n)
       return manager.mkNumeral(getEuclideanDiv(dividend, divisor));
-    if (divisor === 1) return left;
-    if (divisor === -1) return this.reduce(this.mkFlatMulApp([manager.mkNumeral(-1), left]), 1);
-    if (divisor === 0) return undefined;
-    const zero = manager.mkNumeral(0);
+    if (divisor === 1n) return left;
+    if (divisor === -1n) return this.reduce(this.mkFlatMulApp([manager.mkNumeral(-1n), left]), 1);
+    if (divisor === 0n) return undefined;
+    const zero = manager.mkNumeral(0n);
     if (left === right)
       return this.reduce(
-        this.mkIntIte(manager.mkEq(left, zero), this.mkIdivApp(zero, zero), manager.mkNumeral(1)),
+        this.mkIntIte(manager.mkEq(left, zero), this.mkIdivApp(zero, zero), manager.mkNumeral(1n)),
         3,
       );
-    if (divisor !== undefined && divisor > 0 && this.isAdd(left)) {
+    if (divisor !== undefined && divisor > 0n && this.isAdd(left)) {
       let isChanged = false;
-      let added = 0;
+      let added = 0n;
       const args = manager.args[left].map((arg) => {
         const value = manager.getNumeral(arg);
-        if (value === undefined || value <= 0 || getEuclideanMod(value, divisor) === value)
+        if (value === undefined || value <= 0n || getEuclideanMod(value, divisor) === value)
           return arg;
         isChanged = true;
         added += getEuclideanDiv(value, divisor);
@@ -227,15 +237,15 @@ export class ArithRewriter extends PolyRewriter {
     const manager = this.manager;
     const dividend = manager.getNumeral(left);
     const divisor = manager.getNumeral(right);
-    if (dividend !== undefined && divisor !== undefined && divisor !== 0)
+    if (dividend !== undefined && divisor !== undefined && divisor !== 0n)
       return manager.mkNumeral(getEuclideanMod(dividend, divisor));
-    if (divisor === 1 || divisor === -1) return manager.mkNumeral(0);
-    const zero = manager.mkNumeral(0);
+    if (divisor === 1n || divisor === -1n) return manager.mkNumeral(0n);
+    const zero = manager.mkNumeral(0n);
     if (left === right && divisor === undefined)
       return this.mkIntIte(manager.mkEq(right, zero), this.mkModApp(zero, zero), zero);
     // mod is idempotent on a nonzero modulus.
     if (manager.getOp(left) === OP_MOD && manager.args[left][1] === right) {
-      if (divisor !== undefined && divisor !== 0) return left;
+      if (divisor !== undefined && divisor !== 0n) return left;
       if (divisor === undefined)
         return this.reduce(
           this.mkIntIte(
@@ -247,7 +257,7 @@ export class ArithRewriter extends PolyRewriter {
         );
     }
     // Propagates mod inside a sum or product only if there is something to reduce.
-    if (divisor !== undefined && divisor > 0 && (this.isAdd(left) || this.isMul(left))) {
+    if (divisor !== undefined && divisor > 0n && (this.isAdd(left) || this.isMul(left))) {
       let isChanged = false;
       const args = manager.args[left].map((arg) => {
         const value = manager.getNumeral(arg);
@@ -298,10 +308,10 @@ export class ArithRewriter extends PolyRewriter {
       this.isMul(left) && leftArgs.length === 2 ? manager.getNumeral(leftArgs[0]) : undefined;
     if (
       divisor !== undefined &&
-      divisor > 0 &&
+      divisor > 0n &&
       factor !== undefined &&
-      factor > 0 &&
-      divisor % factor === 0
+      factor > 0n &&
+      divisor % factor === 0n
     )
       return this.reduce(
         manager.mkApp(
@@ -316,7 +326,7 @@ export class ArithRewriter extends PolyRewriter {
       );
     // mod x -y = mod x y.
     const rightArgs = manager.args[right];
-    if (this.isMul(right) && rightArgs.length === 2 && manager.getNumeral(rightArgs[0]) === -1)
+    if (this.isMul(right) && rightArgs.length === 2 && manager.getNumeral(rightArgs[0]) === -1n)
       return this.reduce(this.mkModApp(left, rightArgs[1]), 1);
     if (manager.getOp(right) === OP_ITE)
       return this.reduce(
@@ -336,7 +346,7 @@ export class ArithRewriter extends PolyRewriter {
       manager.mkApp(
         OP_ITE,
         [
-          this.mkAtom(arg, this.manager.mkNumeral(0), KIND_GE),
+          this.mkAtom(arg, this.manager.mkNumeral(0n), KIND_GE),
           arg,
           manager.mkApp(OP_UMINUS, [arg], SORT_INT),
         ],
@@ -366,7 +376,7 @@ export class ArithRewriter extends PolyRewriter {
     const counts = new Map<number, number>();
     for (const arg of args) {
       if (this.manager.isNumeral(arg)) {
-        if (this.manager.values[arg] < 0) isNegative = !isNegative;
+        if (this.manager.getNumeralValue(arg) < 0n) isNegative = !isNegative;
       } else counts.set(arg, (counts.get(arg) ?? 0) + 1);
     }
     if (isNegative) return false;
@@ -375,31 +385,32 @@ export class ArithRewriter extends PolyRewriter {
     if (odd.length !== 2) return false;
     const isSuccessor = (base: number, sum: number) => {
       if (!this.isAdd(sum)) return false;
-      let offset = 0;
+      let offset = 0n;
       let numBase = 0;
       for (const arg of this.manager.args[sum]) {
-        if (this.manager.isNumeral(arg)) offset += this.manager.values[arg];
+        if (this.manager.isNumeral(arg)) offset += this.manager.getNumeralValue(arg);
         else if (arg === base) numBase++;
         else return false;
       }
-      return numBase === 1 && (offset === 1 || offset === -1);
+      return numBase === 1 && (offset === 1n || offset === -1n);
     };
     return isSuccessor(odd[0], odd[1]) || isSuccessor(odd[1], odd[0]);
   }
 
   private negateMonomial(expr: number) {
     const manager = this.manager;
-    if (this.manager.isNumeral(expr)) return this.manager.mkNumeral(-this.manager.values[expr]);
+    if (this.manager.isNumeral(expr))
+      return this.manager.mkNumeral(-this.manager.getNumeralValue(expr));
     if (this.isMul(expr)) {
       const args = manager.args[expr];
       if (!this.manager.isNumeral(args[0]))
-        return this.mkMulApp([this.manager.mkNumeral(-1), expr]);
-      const value = this.manager.values[args[0]];
+        return this.mkMulApp([this.manager.mkNumeral(-1n), expr]);
+      const value = this.manager.getNumeralValue(args[0]);
       const rest = args.slice(1);
-      const factors = value === -1 ? rest : [this.manager.mkNumeral(-value), ...rest];
+      const factors = value === -1n ? rest : [this.manager.mkNumeral(-value), ...rest];
       return factors.length === 1 ? factors[0] : manager.mkApp(OP_MUL, factors, SORT_INT);
     }
-    return manager.mkApp(OP_MUL, [this.manager.mkNumeral(-1), expr], SORT_INT);
+    return manager.mkApp(OP_MUL, [this.manager.mkNumeral(-1n), expr], SORT_INT);
   }
 
   private getNegatedPolynomial(expr: number) {
@@ -407,7 +418,7 @@ export class ArithRewriter extends PolyRewriter {
     const isNegativeMonomial = (term: number) =>
       this.isMul(term) &&
       this.manager.isNumeral(manager.args[term][0]) &&
-      this.manager.values[manager.args[term][0]] < 0;
+      this.manager.getNumeralValue(manager.args[term][0]) < 0n;
     if (isNegativeMonomial(expr)) return this.negateMonomial(expr);
     if (!this.isAdd(expr) || !isNegativeMonomial(manager.args[expr][0])) return undefined;
     return manager.mkApp(
@@ -421,13 +432,13 @@ export class ArithRewriter extends PolyRewriter {
   private getSeparated(left: number, right: number, kind: number) {
     const manager = this.manager;
     if (kind === KIND_EQ || !this.manager.isNumeral(right)) return undefined;
-    const rightValue = this.manager.values[right];
-    if (kind === KIND_GE && rightValue === 0 && this.isMul(left) && this.isNonNegative(left))
+    const rightValue = this.manager.getNumeralValue(right);
+    if (kind === KIND_GE && rightValue === 0n && this.isMul(left) && this.isNonNegative(left))
       return manager.trueExpr;
-    let bound = 0;
+    let bound = 0n;
     let hasBound = true;
     for (const arg of this.getMonomials(left)) {
-      if (this.manager.isNumeral(arg)) bound += this.manager.values[arg];
+      if (this.manager.isNumeral(arg)) bound += this.manager.getNumeralValue(arg);
       else if (kind === KIND_LE && this.isNonNegative(arg)) continue;
       else if (kind === KIND_GE) {
         const negated = this.getNegatedPolynomial(arg);
@@ -439,8 +450,8 @@ export class ArithRewriter extends PolyRewriter {
     if (kind === KIND_GE && bound > rightValue) return undefined;
     if (kind === KIND_LE && bound > rightValue) return manager.falseExpr;
     if (kind === KIND_GE && bound < rightValue) return manager.falseExpr;
-    const zero = this.manager.mkNumeral(0);
-    if (bound === 0 && this.isMul(left)) {
+    const zero = this.manager.mkNumeral(0n);
+    if (bound === 0n && this.isMul(left)) {
       const factors: number[] = [];
       this.flattenMul(left, factors);
       return this.reduce(
@@ -473,18 +484,20 @@ export class ArithRewriter extends PolyRewriter {
     ) {
       const product = this.getPowerProduct(inputLeft);
       const coefficient = this.getCoefficient(inputLeft);
-      const isNegative = coefficient < 0;
+      const isNegative = coefficient < 0n;
       const scale = isNegative ? -coefficient : coefficient;
       const kind = isNegative ? getInverse(inputKind) : inputKind;
-      if (coefficient === 0 || (!isNegative && scale === 1)) return undefined;
-      const quotient =
-        (isNegative ? -this.manager.values[inputRight] : this.manager.values[inputRight]) / scale;
-      if (Number.isInteger(quotient))
-        return this.mkAtom(product, this.manager.mkNumeral(quotient), kind);
+      if (coefficient === 0n || (!isNegative && scale === 1n)) return undefined;
+      const value = this.manager.getNumeralValue(inputRight);
+      const bound = isNegative ? -value : value;
+      if (bound % scale === 0n)
+        return this.mkAtom(product, this.manager.mkNumeral(bound / scale), kind);
       if (kind === KIND_EQ) return manager.falseExpr;
       return this.mkAtom(
         product,
-        this.manager.mkNumeral(kind === KIND_LE ? Math.floor(quotient) : Math.ceil(quotient)),
+        this.manager.mkNumeral(
+          kind === KIND_LE ? getEuclideanDiv(bound, scale) : getCeilDiv(bound, scale),
+        ),
         kind,
       );
     }
@@ -494,36 +507,38 @@ export class ArithRewriter extends PolyRewriter {
     const kind = isSwapped ? getInverse(inputKind) : inputKind;
     if (!this.manager.isNumeral(right) || manager.getOp(left) !== OP_MOD) return undefined;
     const divisor = manager.args[left][1];
-    if (!this.manager.isNumeral(divisor) || this.manager.values[divisor] === 0) return undefined;
-    const value = this.manager.values[right];
-    const modulus = Math.abs(this.manager.values[divisor]);
-    if (value < 0) return kind === KIND_GE ? manager.trueExpr : manager.falseExpr;
-    if (value === 0 && kind === KIND_GE) return manager.trueExpr;
-    if (value > 0 && value >= modulus)
+    if (!this.manager.isNumeral(divisor) || this.manager.getNumeralValue(divisor) === 0n)
+      return undefined;
+    const value = this.manager.getNumeralValue(right);
+    const divisorValue = this.manager.getNumeralValue(divisor);
+    const modulus = divisorValue < 0n ? -divisorValue : divisorValue;
+    if (value < 0n) return kind === KIND_GE ? manager.trueExpr : manager.falseExpr;
+    if (value === 0n && kind === KIND_GE) return manager.trueExpr;
+    if (value > 0n && value >= modulus)
       return kind === KIND_LE ? manager.trueExpr : manager.falseExpr;
-    if (value + 1 === modulus && kind === KIND_LE) return manager.trueExpr;
+    if (value + 1n === modulus && kind === KIND_LE) return manager.trueExpr;
     return undefined;
   }
 
   // div_polynomial: undefined when a constant is not divisible and the atom is an equality.
-  private dividePolynomial(expr: number, divisor: number, rounding: "floor" | "ceil" | "none") {
+  private dividePolynomial(expr: number, divisor: bigint, rounding: "floor" | "ceil" | "none") {
     const newArgs: number[] = [];
     for (const arg of this.getMonomials(expr)) {
       if (this.manager.isNumeral(arg)) {
-        const quotient = this.manager.values[arg] / divisor;
-        if (!Number.isInteger(quotient) && rounding === "none") return undefined;
-        const rounded = Number.isInteger(quotient)
-          ? quotient
-          : rounding === "floor"
-            ? Math.floor(quotient)
-            : Math.ceil(quotient);
-        if (rounded !== 0) newArgs.push(this.manager.mkNumeral(rounded));
+        const value = this.manager.getNumeralValue(arg);
+        const isDivisible = value % divisor === 0n;
+        if (!isDivisible && rounding === "none") return undefined;
+        const rounded =
+          isDivisible || rounding === "floor"
+            ? getEuclideanDiv(value, divisor)
+            : getCeilDiv(value, divisor);
+        if (rounded !== 0n) newArgs.push(this.manager.mkNumeral(rounded));
         continue;
       }
       const coefficient = this.getCoefficient(arg) / divisor;
       const product = this.getPowerProduct(arg);
-      if (coefficient === 1) newArgs.push(product);
-      else if (coefficient !== 0)
+      if (coefficient === 1n) newArgs.push(product);
+      else if (coefficient !== 0n)
         newArgs.push(
           this.manager.mkApp(OP_MUL, [this.manager.mkNumeral(coefficient), product], SORT_INT),
         );
@@ -533,17 +548,17 @@ export class ArithRewriter extends PolyRewriter {
 
   // get_coeffs_gcd: the gcd of the coefficients, or 0 when there is no monomial, and the number of
   // non-zero constants.
-  private getCoeffsGcd(expr: number, state: { gcd: number; isFirst: boolean; numConsts: number }) {
+  private getCoeffsGcd(expr: number, state: { gcd: bigint; isFirst: boolean; numConsts: number }) {
     for (const arg of this.getMonomials(expr)) {
       if (this.manager.isNumeral(arg)) {
-        if (this.manager.values[arg] !== 0) state.numConsts++;
+        if (this.manager.getNumeralValue(arg) !== 0n) state.numConsts++;
         continue;
       }
       state.gcd = state.isFirst
         ? this.getCoefficient(arg)
-        : Number(getGcd(BigInt(this.getCoefficient(arg)), BigInt(state.gcd)));
+        : getGcd(this.getCoefficient(arg), state.gcd);
       state.isFirst = false;
-      if (state.gcd === 1) return;
+      if (state.gcd === 1n) return;
     }
   }
 
@@ -577,8 +592,8 @@ export class ArithRewriter extends PolyRewriter {
     let left = cancelled === undefined ? originalLeft : cancelled.lhs;
     let right = cancelled === undefined ? originalRight : cancelled.rhs;
     if (this.manager.isNumeral(left) && this.manager.isNumeral(right)) {
-      const leftValue = this.manager.values[left];
-      const rightValue = this.manager.values[right];
+      const leftValue = this.manager.getNumeralValue(left);
+      const rightValue = this.manager.getNumeralValue(right);
       const holds =
         kind === KIND_LE
           ? leftValue <= rightValue
@@ -592,12 +607,12 @@ export class ArithRewriter extends PolyRewriter {
     const bound = this.getBound(left, right, kind) ?? this.getBound(right, left, getInverse(kind));
     if (bound !== undefined) return bound;
     if (this.options.isGcdRounding) {
-      const state = { gcd: 0, isFirst: true, numConsts: 0 };
+      const state = { gcd: 0n, isFirst: true, numConsts: 0 };
       this.getCoeffsGcd(left, state);
-      if ((state.isFirst || state.gcd !== 1) && state.numConsts <= 1)
+      if ((state.isFirst || state.gcd !== 1n) && state.numConsts <= 1)
         this.getCoeffsGcd(right, state);
-      const divisor = Math.abs(state.gcd);
-      if (!state.isFirst && divisor !== 1 && state.numConsts <= 1) {
+      const divisor = state.gcd < 0n ? -state.gcd : state.gcd;
+      if (!state.isFirst && divisor !== 1n && state.numConsts <= 1) {
         const newLeft = this.dividePolynomial(
           left,
           divisor,
@@ -620,8 +635,8 @@ export class ArithRewriter extends PolyRewriter {
     if (manager.getOp(left) === OP_ITE && this.manager.isNumeral(right)) {
       const iteArgs = manager.args[left];
       const condition = iteArgs[0];
-      const rightValue = this.manager.values[right];
-      const holds = (value: number) =>
+      const rightValue = this.manager.getNumeralValue(right);
+      const holds = (value: bigint) =>
         kind === KIND_LE
           ? value <= rightValue
           : kind === KIND_GE
@@ -630,7 +645,7 @@ export class ArithRewriter extends PolyRewriter {
       if (this.manager.isNumeral(iteArgs[1])) {
         const rest = this.mkAtom(iteArgs[2], right, kind);
         return this.reduce(
-          holds(this.manager.values[iteArgs[1]])
+          holds(this.manager.getNumeralValue(iteArgs[1]))
             ? manager.mkOr([condition, rest])
             : manager.mkAnd([manager.mkNot(condition), rest]),
           2,
@@ -639,7 +654,7 @@ export class ArithRewriter extends PolyRewriter {
       if (this.manager.isNumeral(iteArgs[2])) {
         const rest = this.mkAtom(iteArgs[1], right, kind);
         return this.reduce(
-          holds(this.manager.values[iteArgs[2]])
+          holds(this.manager.getNumeralValue(iteArgs[2]))
             ? manager.mkOr([manager.mkNot(condition), rest])
             : manager.mkAnd([condition, rest]),
           2,
@@ -652,7 +667,7 @@ export class ArithRewriter extends PolyRewriter {
         : undefined;
     if (negated !== undefined) {
       setSide(0, negated);
-      const negatedRight = this.manager.mkNumeral(-this.manager.values[right]);
+      const negatedRight = this.manager.mkNumeral(-this.manager.getNumeralValue(right));
       setSide(1, negatedRight);
       return this.mkAtom(negated, negatedRight, getInverse(kind));
     }

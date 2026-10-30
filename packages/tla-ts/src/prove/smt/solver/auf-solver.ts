@@ -356,7 +356,7 @@ export class AufSolver {
   private addMonoExceptions(node: Node) {
     if (node.sort !== SORT_INT) return;
     const rewriter = this.rewriter;
-    const one = this.manager.mkNumeral(1);
+    const one = this.manager.mkNumeral(1n);
     for (const exception of node.getExceptions()) {
       const minusOne = rewriter.mkAppCore(OP_SUB, [exception, one], SORT_INT);
       const plusOne = rewriter.mkAppCore(OP_ADD, [exception, one], SORT_INT);
@@ -387,7 +387,11 @@ export class AufSolver {
     const values = this.getInstantiationSetValues(node);
     if (values.length === 0) return;
     if (node.sort !== SORT_INT || !values.every((value) => manager.isNumeral(value))) return;
-    values.sort((first, second) => manager.values[first] - manager.values[second]);
+    values.sort((first, second) => {
+      const firstValue = manager.getNumeralValue(first);
+      const secondValue = manager.getNumeralValue(second);
+      return firstValue < secondValue ? -1 : firstValue > secondValue ? 1 : 0;
+    });
     const variable = manager.mkVar(0, node.sort);
     let projection = values[values.length - 1];
     for (let index = values.length - 1; index >= 1; index--)

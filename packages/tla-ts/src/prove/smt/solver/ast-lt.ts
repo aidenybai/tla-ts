@@ -15,7 +15,7 @@ import {
 // The parts of a func_decl that lt compares: its name, parameters, domain and range.
 interface DeclKey {
   name: SmtSymbol;
-  parameters: number[];
+  parameters: (number | bigint)[];
   domain: number[];
   range: number;
 }
@@ -24,7 +24,7 @@ interface DeclKey {
 const PARAM_INT = 0;
 const PARAM_RATIONAL = 3;
 
-const compareValues = (first: number, second: number) =>
+const compareValues = (first: number | bigint, second: number | bigint) =>
   first === second ? 0 : first < second ? -1 : 1;
 
 // lt on symbols: numerical symbols come first, by number, and other names compare by their bytes.
@@ -46,7 +46,7 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
   if (decl.op === OP_NUM)
     return {
       name: "Int",
-      parameters: [PARAM_RATIONAL, manager.values[expr], PARAM_INT, 1],
+      parameters: [PARAM_RATIONAL, manager.getNumeralValue(expr), PARAM_INT, 1],
       domain: [],
       range,
     };

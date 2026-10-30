@@ -1,7 +1,6 @@
 // Ported from Z3 (src/ast/ast.h, src/ast/ast.cpp), MIT license, see z3-license.txt.
 // A hash-consed DAG of applications, de Bruijn variables and quantifiers, as in Z3's ast_manager.
-import { SmtUnsupportedError } from "../../../errors";
-import { astArrayHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
+import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
 import type { ResourceLimit } from "./rlimit";
 
 export const KIND_APP = 0;
@@ -167,17 +166,29 @@ const FIRST_FREE_ID = 22;
 const getSymbolHash = (symbol: SmtSymbol) =>
   typeof symbol === "number" ? symbol : stringHash(symbol, 17);
 
+// mpz_manager::hash: the absolute value of an integer below 2^32, else the hash of its 32-bit digits,
+// least significant first.
+const getIntegerHash = (value: bigint) => {
+  const magnitude = value < 0n ? -value : value;
+  if (magnitude <= 0xffffffffn) return Number(magnitude);
+  const digits: number[] = [];
+  for (let rest = magnitude; rest > 0n; rest >>= 32n) digits.push(Number(rest & 0xffffffffn));
+  return bytesHash(new Uint8Array(Uint32Array.from(digits).buffer), 17);
+};
+
 // decl_info::hash.
 const getInfoHash = (family: number, kind: number, parameterHashes: number[]) =>
   mkMix(family, kind, parameterHashes.length === 0 ? 0 : getCompositeHash(parameterHashes));
 
 export class AstManager {
   kinds: number[] = [];
-  // The declaration of an application, the index of a variable, or the value of a numeral.
+  // The declaration of an application.
   decls: number[] = [];
   args: number[][] = [];
   sorts: number[] = [];
+  // The index of a variable or model value, or of a numeral's value in numeralValues.
   values: number[] = [];
+  private numeralValues: bigint[] = [];
   // One more than the largest free de Bruijn index, so 0 means the expression is ground.
   freeVarBounds: number[] = [];
   hasQuantifierFlags: boolean[] = [];
@@ -527,32 +538,30 @@ export class AstManager {
     this.numApps++;
   }
 
-  // A real numeral, which Z3's theory_lra creates for its constants 0 and 1. tla-ts has no real sort,
-  // so it stands in for the numeral, with its own id, and no expression uses it.
-  mkRealNumeral(value: number) {
-    return this.intern(`r${value}`, KIND_APP, OP_NUM, [], SORT_INT, value, () =>
+  // A numeral's declaration has the parameters (value, is_int), and a rational hashes as
+  // hash(numerator) + 3 hash(denominator).
+  private internNumeral(key: string, name: string, value: bigint, isInt: boolean) {
+    const existing = this.table.get(key);
+    if (existing !== undefined) return this.revive(existing);
+    this.numeralValues.push(value);
+    return this.intern(key, KIND_APP, OP_NUM, [], SORT_INT, this.numeralValues.length - 1, () =>
       this.getFuncDeclHash(
-        "Real",
+        name,
         [],
         SORT_INT,
-        getInfoHash(Z3_ARITH_FAMILY, 0, [(Math.abs(value) + 3) >>> 0, 0]),
+        getInfoHash(Z3_ARITH_FAMILY, 0, [(getIntegerHash(value) + 3) >>> 0, isInt ? 1 : 0]),
       ),
     );
   }
 
-  mkNumeral(value: number) {
-    if (!Number.isSafeInteger(value))
-      throw new SmtUnsupportedError(`the numeral ${value} is too large`);
-    // The Int numeral declaration has the parameters (value, is_int), and a rational hashes as
-    // |numerator| + 3 |denominator|.
-    return this.intern(`n${value}`, KIND_APP, OP_NUM, [], SORT_INT, value === 0 ? 0 : value, () =>
-      this.getFuncDeclHash(
-        "Int",
-        [],
-        SORT_INT,
-        getInfoHash(Z3_ARITH_FAMILY, 0, [(Math.abs(value) + 3) >>> 0, 1]),
-      ),
-    );
+  // A real numeral, which Z3's theory_lra creates for its constants 0 and 1. tla-ts has no real sort,
+  // so it stands in for the numeral, with its own id, and no expression uses it.
+  mkRealNumeral(value: number) {
+    return this.internNumeral(`r${value}`, "Real", BigInt(value), false);
+  }
+
+  mkNumeral(value: bigint) {
+    return this.internNumeral(`n${value}`, "Int", value, true);
   }
 
   // mk_model_value: the element with this index in the universe of an uninterpreted sort.
@@ -704,7 +713,12 @@ export class AstManager {
   }
 
   getNumeral(expr: number) {
-    return this.isNumeral(expr) ? this.values[expr] : undefined;
+    return this.isNumeral(expr) ? this.getNumeralValue(expr) : undefined;
+  }
+
+  // The value of an expression that is a numeral.
+  getNumeralValue(expr: number) {
+    return this.numeralValues[this.values[expr]];
   }
 
   // Unique values are interpreted constants that are distinct from each other, as in Z3.
@@ -739,7 +753,7 @@ export class AstManager {
   getTimesMinusOneArg(expr: number) {
     if (this.getOp(expr) !== OP_MUL || this.args[expr].length !== 2) return undefined;
     const coefficient = this.args[expr][0];
-    return this.isNumeral(coefficient) && this.values[coefficient] === -1
+    return this.isNumeral(coefficient) && this.getNumeralValue(coefficient) === -1n
       ? this.args[expr][1]
       : undefined;
   }
@@ -805,7 +819,7 @@ export class AstManager {
       const data = this.getQuantifier(expr);
       return `(${data.isForall ? "forall" : "exists"} (${data.sorts.length}) ${this.toString(data.body)})`;
     }
-    if (this.getOp(expr) === OP_NUM) return String(this.values[expr]);
+    if (this.getOp(expr) === OP_NUM) return String(this.getNumeralValue(expr));
     const name = this.getDeclName(expr);
     const args = this.args[expr];
     return args.length === 0

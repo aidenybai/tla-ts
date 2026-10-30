@@ -318,7 +318,7 @@ export class QuantifierAnalyzer {
   }
 
   private isZero(expr: number) {
-    return this.manager.isNumeral(expr) && this.manager.values[expr] === 0;
+    return this.manager.getNumeral(expr) === 0n;
   }
 
   private isVarAndVar(lhs: number, rhs: number) {
@@ -343,7 +343,7 @@ export class QuantifierAnalyzer {
     if (found === undefined) return undefined;
     if (isNegated) return { variable: found.variable, term: found.term };
     const isLe = (manager.getOp(atom) === OP_LE) !== found.isInverted;
-    const one = manager.mkNumeral(1);
+    const one = manager.mkNumeral(1n);
     return {
       variable: found.variable,
       term: isLe ? this.mkAdd(found.term, one) : this.mkSub(found.term, one),
