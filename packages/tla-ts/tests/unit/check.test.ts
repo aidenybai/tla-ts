@@ -84,6 +84,14 @@ describe("check matches TLC", () => {
     expect((await checkModule("ASSUME 5 \\in UNION {Nat}")).status).toBe("success");
   });
 
+  it("defers a set operation on a value that isn't a set until it enumerates the result", async () => {
+    expect((await checkModule("ASSUME ({} \\cup 0) = 0")).status).toBe("success");
+    const result = await checkModule("ASSUME Cardinality({1} \\cup 0) = 1");
+    expect(result.violation?.message).toContain(
+      "Attempted to enumerate S \\cup T when S:\n{1}\nand T:\n0\nare not both enumerable",
+    );
+  });
+
   it("compares power sets through their bases", async () => {
     expect((await checkModule("ASSUME SUBSET (1..23) \\subseteq SUBSET (1..42)")).status).toBe(
       "success",

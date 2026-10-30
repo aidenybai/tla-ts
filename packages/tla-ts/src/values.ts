@@ -300,6 +300,9 @@ const compareStrings = (left: string, right: string) => {
 export const isOverriddenSet = (value: Value): value is InfiniteSetValue | SequenceSetValue =>
   typeof value === "object" && (value.kind === "InfiniteSet" || value.kind === "SequenceSet");
 
+// Whether TLC implements the value in a class that is Enumerable, though enumerating it may fail.
+const isEnumerableClass = (value: Value) => isSetValue(value) && !isOverriddenSet(value);
+
 const isOverriddenComparison = (left: Value, right: Value) =>
   (isOverriddenSet(left) || isOverriddenSet(right)) &&
   !(
@@ -1335,7 +1338,7 @@ const enumerateSet = (value: Value): Value[] => {
     case "SetOperation": {
       if (
         value.operator === "\\cup" &&
-        (isOverriddenSet(value.left) || isOverriddenSet(value.right))
+        (!isEnumerableClass(value.left) || !isEnumerableClass(value.right))
       ) {
         throw new TlaEvaluationError(
           `Attempted to enumerate S \\cup T when S:\n${formatValue(value.left)}\nand T:\n${formatValue(value.right)}\nare not both enumerable`,
@@ -1343,21 +1346,21 @@ const enumerateSet = (value: Value): Value[] => {
       }
       if (
         value.operator === "\\cap" &&
-        isOverriddenSet(value.left) &&
-        isOverriddenSet(value.right)
+        !isEnumerableClass(value.left) &&
+        !isEnumerableClass(value.right)
       ) {
         throw new TlaEvaluationError(
           `Attempted to enumerate S \\cap T when neither S:\n${formatValue(value.left)}\nnor T:\n${formatValue(value.right)}\nis enumerable`,
         );
       }
-      if (value.operator === "\\" && isOverriddenSet(value.left)) {
+      if (value.operator === "\\" && !isEnumerableClass(value.left)) {
         throw new TlaEvaluationError(
           `Attempted to enumerate S \\ T when S:\n${formatValue(value.left)}\nis not enumerable.`,
         );
       }
       if (value.operator === "\\cup")
         return unionSorted(toFiniteSet(value.left), toFiniteSet(value.right)).elements;
-      const isLeftEnumerated = value.operator === "\\" || isEnumerable(value.left);
+      const isLeftEnumerated = value.operator === "\\" || isEnumerableClass(value.left);
       const enumerated = isLeftEnumerated ? value.left : value.right;
       const other = isLeftEnumerated ? value.right : value.left;
       return toFiniteSet(enumerated).elements.filter(
@@ -1412,14 +1415,14 @@ export const getStreamedElements = (value: Value): Value[] => {
   }
   if (value.kind !== "SetOperation") return toFiniteSet(value).elements;
   if (value.operator === "\\cup") {
-    return isOverriddenSet(value.left) || isOverriddenSet(value.right)
+    return !isEnumerableClass(value.left) || !isEnumerableClass(value.right)
       ? toFiniteSet(value).elements
       : [...getStreamedElements(value.left), ...getStreamedElements(value.right)];
   }
-  const isLeftEnumerated = value.operator === "\\" || isEnumerable(value.left);
+  const isLeftEnumerated = value.operator === "\\" || isEnumerableClass(value.left);
   const enumerated = isLeftEnumerated ? value.left : value.right;
   const other = isLeftEnumerated ? value.right : value.left;
-  if (isOverriddenSet(enumerated)) return toFiniteSet(value).elements;
+  if (!isEnumerableClass(enumerated)) return toFiniteSet(value).elements;
   return getStreamedElements(enumerated).filter(
     (element) => isElementOf(element, other) === (value.operator === "\\cap"),
   );

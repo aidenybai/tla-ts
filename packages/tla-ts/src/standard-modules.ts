@@ -138,10 +138,12 @@ export const CORE_OPERATORS: Builtin[] = [
     if (isPowerSets) return isSubsetOf(toFiniteSet(left.base).elements, right.base);
     return isSubsetOf(toFiniteSet(left).elements, right);
   }),
+  // TLC defers the set operations of values that aren't sets to the enumeration or the membership
+  // tests of the result.
   ...SET_OPERATORS.map((operator) =>
     defineOperator(operator, 2, (args) => {
-      const left = getSet(args, 0, operator);
-      const right = getSet(args, 1, operator);
+      const left = getValue(args, 0, operator);
+      const right = getValue(args, 1, operator);
       if (isReducible(left) && isReducible(right) && !isMixedSet(left) && !isMixedSet(right)) {
         if (operator === "\\cup" && isEmptySet(left)) return right;
         const merge =
