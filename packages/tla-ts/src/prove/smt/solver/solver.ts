@@ -2,7 +2,7 @@
 // license, see z3-license.txt. Decides an SMT-LIB problem the way `z3 -smt2 AUTO_CONFIG=false
 // smt.MBQI=true` does for tlapm's UFNIA obligations.
 import { SmtCanceledError, SmtUnsupportedError } from "../../../errors";
-import type { Verdict } from "../../verdict";
+import type { DecideOptions, Verdict } from "../../verdict";
 import { AssertedFormulas } from "./asserted-formulas";
 import { AstManager } from "./ast";
 import { Context } from "./context";
@@ -11,18 +11,13 @@ import { applyUfniaTactic } from "./quant-tactics";
 import { ResourceLimit } from "./rlimit";
 import { parseSmtlib } from "./smtlib-parser";
 
-export interface DecideSmtOptions {
-  timeLimitMs: number;
-  signal?: AbortSignal;
-}
-
 interface SmtCheck {
   verdict: Verdict;
   numInstances: number;
 }
 
 // The verdict, and the number of quantifier instances the search made.
-export const checkSmt = (text: string, options: DecideSmtOptions): SmtCheck => {
+export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
   const manager = new AstManager(
     new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
   );
@@ -50,7 +45,7 @@ export const checkSmt = (text: string, options: DecideSmtOptions): SmtCheck => {
 
 // Throws SmtParseError on malformed input. Input outside the subset the solver supports is unknown,
 // and so is a search that runs past the time limit or that the signal aborts.
-export const decideSmt = (text: string, options: DecideSmtOptions): Verdict => {
+export const decideSmt = (text: string, options: DecideOptions): Verdict => {
   try {
     return checkSmt(text, options).verdict;
   } catch (error) {
