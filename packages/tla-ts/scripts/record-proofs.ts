@@ -124,7 +124,8 @@ const getObligationRecord = (id: number, fields: Map<string, string>): Obligatio
     prover: fields.get("prover") ?? "",
     ...(timeUsed !== undefined && { timeUsed: Number(timeUsed) }),
   };
-  const reason = fields.get("reason");
+  // Later lines of a reason can list this machine's PATH.
+  const reason = fields.get("reason")?.split("\n")[0];
   return status === "proved"
     ? { ...decided, status }
     : { ...decided, status, ...(reason !== undefined && { reason }) };
