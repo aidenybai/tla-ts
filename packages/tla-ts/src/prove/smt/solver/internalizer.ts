@@ -883,12 +883,13 @@ export abstract class Internalizer {
     const condition = this.getLiteral(args[0]);
     this.mkClause([negate(condition), this.getLiteral(thenEq)], null, CLS_AUX);
     this.mkClause([condition, this.getLiteral(elseEq)], null, CLS_AUX);
+    // ite_term_relevancy_eh: it marks the terms for the propagator, which propagates them later.
     const handler = () => {
       if (!this.isRelevant(expr)) return;
-      this.markAsRelevant(args[0]);
+      this.relevancy.markAsRelevant(args[0]);
       const value = this.findAssignment(args[0]);
-      if (value < 0) this.markAsRelevant(elseEq);
-      else if (value > 0) this.markAsRelevant(thenEq);
+      if (value < 0) this.relevancy.markAsRelevant(elseEq);
+      else if (value > 0) this.relevancy.markAsRelevant(thenEq);
     };
     this.addRelWatch(condition, handler);
     this.addRelWatch(negate(condition), handler);
