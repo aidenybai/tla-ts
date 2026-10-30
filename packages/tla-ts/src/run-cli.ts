@@ -356,7 +356,7 @@ const printCheckProgress = (
         `The formula ${progress.name} is a state-level formula, but it was used as a PROPERTY (or PROPERTIES), where a temporal formula is typically expected. State-level formulas used as PROPERTY or PROPERTIES are only checked in the initial state. To verify that the formula ${progress.name} holds in all states of every behavior, use INVARIANT ${progress.name} instead. Alternatively, applying the "always" temporal operator ([]) to the state-level formula ${progress.name} changes it into a temporal formula, asserting that ${progress.name} holds in all states of every behavior. See https://explain.tlapl.us/invariants-and-properties for additional details.`,
       );
       return;
-    case "liveness-prepared":
+    case "liveness-initializing":
       if (progress.isSymmetric) {
         print(
           MESSAGE_CODE.livenessSymmetry,
@@ -372,6 +372,8 @@ const printCheckProgress = (
           "Declaring state or action constraints during liveness checking is dangerous: Please read section 14.3.5 on page 247 of Specifying Systems (https://lamport.azurewebsites.net/tla/book.html) and optionally the discussion at https://discuss.tlapl.us/msg00994.html for more details.",
         );
       }
+      return;
+    case "liveness-prepared":
       print(
         MESSAGE_CODE.temporalBranches,
         MESSAGE_LEVEL.none,

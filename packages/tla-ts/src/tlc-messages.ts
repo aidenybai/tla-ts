@@ -169,6 +169,7 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
     false,
   ],
   [2213, "TLC cannot handle the temporal formula %1%", false],
+  [2214, "Temporal formulas containing actions must be of forms <>[]A or []<>A.", false],
   [2215, "TLC expected a %1% value, but did not find one. %2%", false],
   [2222, "The constant parameter %1% is not assigned a value by the configuration file.", false],
   [

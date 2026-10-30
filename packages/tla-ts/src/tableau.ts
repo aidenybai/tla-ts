@@ -555,7 +555,7 @@ const classify = (expression: LiveExpression, classification: Classification) =>
   }
   if (containsAction(expression)) {
     throw new TlaEvaluationError(
-      "TLC cannot handle the temporal formula: actions may only appear as []<>A or <>[]A",
+      "Temporal formulas containing actions must be of forms <>[]A or []<>A.",
     );
   }
   classification.formulas.push(expression);

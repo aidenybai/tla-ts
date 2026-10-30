@@ -201,6 +201,17 @@ const TLC_REPORTS = [
     ],
   ],
   [
+    "EventualAction",
+    255,
+    [
+      "Starting... (_)",
+      "Warning: Declaring symmetry during liveness checking is dangerous. It might cause TLC to miss violations of the stated liveness properties. Please check liveness without symmetry defined.",
+      "(Use the -nowarning option to disable this warning.)",
+      "Error: Temporal formulas containing actions must be of forms <>[]A or []<>A.",
+      "Finished in _ at (_)",
+    ],
+  ],
+  [
     "NoNext",
     75,
     [
@@ -696,6 +707,7 @@ describe("the CLI takes several specs and globs", () => {
     expect(result.status).toBe(10);
     expect(getCheckedSpecs(result.stdout)).toEqual([
       "Checking AssumptionFalse.tla with AssumptionFalse.cfg",
+      "Checking EventualAction.tla with EventualAction.cfg",
       "Checking FailedInvariant.tla with FailedInvariant.cfg",
       "Checking InitialInvariant.tla with InitialInvariant.cfg",
       "Checking Lasso.tla with Lasso.cfg",

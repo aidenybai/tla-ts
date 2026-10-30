@@ -133,7 +133,8 @@ export type CheckProgress =
   | { kind: "parsed" }
   | { kind: "constant-level-invariant"; name: string }
   | { kind: "state-level-property"; name: string }
-  | { kind: "liveness-prepared"; branches: number; isSymmetric: boolean; isConstrained: boolean }
+  | { kind: "liveness-initializing"; isSymmetric: boolean; isConstrained: boolean }
+  | { kind: "liveness-prepared"; branches: number }
   | { kind: "initial-states-started" }
   | { kind: "initial-states-progress"; count: number }
   | { kind: "initial-states-computed"; initialStates: InitialStates }
@@ -1584,6 +1585,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     });
   const isReducing = config.view !== undefined || config.symmetry !== undefined;
   const tlcFingerprints: number[] = [];
+  // TLC warns about the liveness checker before it builds it.
+  if (search.properties.liveness.length > 0) {
+    options.onProgress?.({
+      kind: "liveness-initializing",
+      isSymmetric: search.isSymmetric,
+      isConstrained: config.constraints.length > 0 || config.actionConstraints.length > 0,
+    });
+  }
   // TLC reports an EvalException in building the liveness checker as an exception it didn't expect.
   const liveness = withLivenessExitCode(() =>
     withUnexpectedEvalException(() =>
@@ -2104,12 +2113,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
 
   const outcome: { result: CheckResult | undefined } = { result: undefined };
   if (liveness) {
-    options.onProgress?.({
-      kind: "liveness-prepared",
-      branches: liveness.branches,
-      isSymmetric: search.isSymmetric,
-      isConstrained: config.constraints.length > 0 || config.actionConstraints.length > 0,
-    });
+    options.onProgress?.({ kind: "liveness-prepared", branches: liveness.branches });
   }
   // TLC checks the assumptions once it has built the liveness checker in ModelChecker's
   // constructor.
