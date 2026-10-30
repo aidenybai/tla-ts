@@ -30,11 +30,14 @@ Steps == INSTANCE CounterSteps WITH Limit <- N, count <- x
 const loadModule = (name: string) =>
   name === "CounterSteps" ? COUNTER_STEPS : SANY_STANDARD_MODULES.get(name);
 
-const generate = () => {
-  const specification = generateSanySpecification(SPEC, loadModule);
+const generate = (source = SPEC) => {
+  const specification = generateSanySpecification(source, loadModule);
   specification.modules.forEach((module) => checkModuleLevels(module));
   return specification;
 };
+
+const isRejected = (source: string) =>
+  generate(source).messages.some((message) => !message.isWarning);
 
 const SUBEXPRESSIONS = `---- MODULE Subexpressions ----
 EXTENDS Naturals
@@ -64,13 +67,7 @@ Instantiated(e) == I(NotLeibniz)!D(e)
 Lambda(f) == Apply(LAMBDA z : ENABLED z, f)
 ====`;
 
-const getRoot = (source: string) => {
-  const specification = generateSanySpecification(source, (name) =>
-    SANY_STANDARD_MODULES.get(name),
-  );
-  specification.modules.forEach((module) => checkModuleLevels(module));
-  return specification.root;
-};
+const getRoot = (source: string) => generate(source).root;
 
 const getDefinition = (module: ModuleNode, name: string) => {
   const definition = getOpDefs(module).find((candidate) => candidate.name === name);
@@ -146,7 +143,7 @@ describe("SANY XML export", () => {
   });
 
   it("prints the XML that SANY's XMLExporter prints", () => {
-    const xml = exportSanyXml(SPEC, loadModule);
+    const xml = exportSanyXml(generate());
     const lines = xml.split("\n");
     expect(lines.slice(0, 3)).toEqual([
       '<?xml version="1.0" encoding="UTF-8" standalone="no"?>',
@@ -200,11 +197,13 @@ THEOREM TRUE
   BY ${reference}
 <1> QED
 ====`;
-    expect(exportSanyXml(proof("DEF F"), () => undefined)).toContain("<DefStepNode>");
-    expect(() => exportSanyXml(proof("DEF <1>1"), () => undefined)).toThrow(
-      new TlaUnsupportedError("unsupported kind: 37 in xml export"),
+    expect(exportSanyXml(generate(proof("DEF F")))).toContain("<DefStepNode>");
+    expect(() => exportSanyXml(generate(proof("DEF <1>1")))).toThrow(
+      new TlaUnsupportedError(
+        "java.lang.IllegalArgumentException: unsupported kind: 37 in xml export",
+      ),
     );
-    expect(() => exportSanyXml(proof("<1>2"), () => undefined)).toThrow(TlaSyntaxError);
+    expect(isRejected(proof("<1>2"))).toBe(true);
   });
 
   it("marks a []ASSUME/[]PROVE as boxed", () => {
@@ -212,17 +211,12 @@ THEOREM TRUE
 VARIABLE x
 THEOREM ${statement}
 ====`;
-    const xml = exportSanyXml(theorem("T == []ASSUME x = 1 []PROVE x = 1"), () => undefined);
+    const xml = exportSanyXml(generate(theorem("T == []ASSUME x = 1 []PROVE x = 1")));
     expect(xml).toContain("<boxed/>");
     expect(xml).toContain("<begin>14</begin>");
-    expect(() => exportSanyXml(theorem("[]ASSUME x = 1 PROVE x = 1"), () => undefined)).toThrow(
-      TlaSyntaxError,
-    );
+    expect(() => generate(theorem("[]ASSUME x = 1 PROVE x = 1"))).toThrow(TlaSyntaxError);
     expect(() =>
-      exportSanyXml(
-        theorem("ASSUME x = 1, []ASSUME x = 2 []PROVE x = 2 PROVE x = 1"),
-        () => undefined,
-      ),
+      generate(theorem("ASSUME x = 1, []ASSUME x = 2 []PROVE x = 2 PROVE x = 1")),
     ).toThrow(TlaSyntaxError);
   });
 
@@ -230,8 +224,6 @@ THEOREM ${statement}
     const source = `---- MODULE FormFeed ----
 S == "a\\fb"
 ====`;
-    expect(() => exportSanyXml(source, () => undefined)).toThrow(
-      /U\+000C in the StringValue element/,
-    );
+    expect(() => exportSanyXml(generate(source))).toThrow(/U\+000C in the StringValue element/);
   });
 });

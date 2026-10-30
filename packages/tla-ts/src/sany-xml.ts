@@ -1,11 +1,8 @@
-import { TlaSyntaxError, TlaUnsupportedError } from "./errors";
-import { generateSanySpecification } from "./sany-generator";
-import { checkModuleLevels } from "./sany-levels";
-import { SANY_STANDARD_MODULES } from "./sany-modules";
-import { extractModule } from "./parser";
+import { TlaUnsupportedError } from "./errors";
+import { setExitCode } from "./exit-codes";
+import type { SanySpecification } from "./sany-generator";
 import {
   CONSTANT_DECL_KIND,
-  formatSanyLocation,
   VARIABLE_DECL_KIND,
   getDeclarations,
   getOpDefs,
@@ -23,6 +20,13 @@ import {
   type InstanceNode,
   type UseOrHideNode,
 } from "./sany-nodes";
+
+// XMLExporterExitCode, and the status Java exits with on an exception that nothing catches.
+export const XML_EXPORT_EXIT_CODE = {
+  uncaughtException: 1,
+  specParsingFailure: 2,
+  unrepresentableCharacter: 7,
+} as const;
 
 interface XmlElement {
   tag: string;
@@ -195,7 +199,12 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
       case "OpDef": {
         // SANY's XMLExporter fails on the definition of a proof step that a DEF clause names.
         if (node.defKind === "NumberedProofStep") {
-          throw new TlaUnsupportedError("unsupported kind: 37 in xml export");
+          throw setExitCode(
+            new TlaUnsupportedError(
+              "java.lang.IllegalArgumentException: unsupported kind: 37 in xml export",
+            ),
+            XML_EXPORT_EXIT_CODE.uncaughtException,
+          );
         }
         if (node.defKind === "ModuleInstance") {
           return withLevel(
@@ -575,25 +584,19 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
 
 type ExportedNode = LevelNode | InstanceNode | UseOrHideNode | ProofPartNode;
 
-// The specification in the XML format of SANY's tla2sany.xml.XMLExporter, as its -o option prints
-// it: every module the root module depends on, the standard modules among them, with the level of
-// every expression.
-export const exportSanyXml = (source: string, loadModule: (name: string) => string | undefined) => {
-  const specification = generateSanySpecification(
-    source,
-    (name) => loadModule(name) ?? SANY_STANDARD_MODULES.get(name) ?? extractModule(source, name),
-  );
-  const error = specification.messages.find((message) => !message.isWarning);
-  if (error) {
-    throw new TlaSyntaxError(`${formatSanyLocation(error.location)}\n\n${error.text}`);
-  }
-  specification.modules.forEach((module) => checkModuleLevels(module));
+// The specification SANY accepts, level-checked, in the XML format of SANY's
+// tla2sany.xml.XMLExporter, as its -o option prints it: every module the root module depends on,
+// the standard modules among them, with the level of every expression.
+export const exportSanyXml = (specification: SanySpecification) => {
   const document = exportSpecification(specification.modules, specification.root);
   const unrepresentable = findUnrepresentable(document);
   if (unrepresentable) {
     const codePoint = unrepresentable.character.codePointAt(0) ?? 0;
-    throw new TlaUnsupportedError(
-      `The spec contains the character U+${codePoint.toString(16).toUpperCase().padStart(4, "0")} in the ${unrepresentable.tag} element. XML 1.0 cannot represent that character in character data, not even as a numeric character reference, so the spec cannot be exported until the character is removed from it.`,
+    throw setExitCode(
+      new TlaUnsupportedError(
+        `The spec contains the character U+${codePoint.toString(16).toUpperCase().padStart(4, "0")} in the ${unrepresentable.tag} element. XML 1.0 cannot represent that character in character data, not even as a numeric character reference, so the spec cannot be exported until the character is removed from it.`,
+      ),
+      XML_EXPORT_EXIT_CODE.unrepresentableCharacter,
     );
   }
   return [

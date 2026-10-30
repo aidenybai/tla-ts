@@ -175,6 +175,132 @@ describe("the CLI reports results like TLC", () => {
   });
 });
 
+// What SANY's XMLExporter prints to standard error for the same modules, and its exit code.
+const XML_EXPORT_FAILURES = [
+  [
+    "Renamed.tla",
+    2,
+    [
+      "",
+      "Fatal errors while parsing TLA+ spec in file Renamed.tla",
+      "",
+      "Unknown location",
+      "",
+      "File name 'Renamed' does not match the name 'Other' of the top level module it contains.",
+      "*** Errors: 1",
+      "",
+      "Unknown location",
+      "",
+      "File name 'Renamed' does not match the name 'Other' of the top level module it contains.",
+      "",
+      "",
+      "",
+      "ERROR: Failed to parse module.",
+    ],
+  ],
+  [
+    "Twice.tla",
+    2,
+    [
+      "Semantic errors:",
+      "",
+      "*** Errors: 1",
+      "",
+      "line 3, col 1 to line 3, col 7 of module Twice",
+      "",
+      "Operator Op already defined or declared.",
+      "",
+      "",
+      "ERROR: Failed to parse module.",
+    ],
+  ],
+  [
+    "LevelError.tla",
+    2,
+    [
+      "Semantic errors:",
+      "",
+      "*** Errors: 1",
+      "",
+      "line 8, col 8 to line 8, col 16 of module LevelError",
+      "",
+      "Level error in applying operator I!Foo:",
+      "The level of argument 1 exceeds the maximum level allowed by the operator.",
+      "",
+      "",
+      "ERROR: Failed to parse module.",
+    ],
+  ],
+  [
+    "DefineStep.tla",
+    1,
+    [
+      'Exception in thread "main" java.lang.IllegalArgumentException: unsupported kind: 37 in xml export',
+    ],
+  ],
+  [
+    "FormFeed.tla",
+    7,
+    [
+      "ERROR: The spec contains the character U+000C in the StringValue element. XML 1.0 cannot represent that character in character data, not even as a numeric character reference, so the spec cannot be exported until the character is removed from it.",
+    ],
+  ],
+  [
+    "nested/Root.tla",
+    2,
+    [
+      "",
+      "Fatal errors while parsing TLA+ spec in file nested/Root.tla",
+      "",
+      "In module Root",
+      "",
+      "Cannot find source file for module Sibling imported in module Root.",
+      "*** Errors: 1",
+      "",
+      "In module Root",
+      "",
+      "Cannot find source file for module Sibling imported in module Root.",
+      "",
+      "",
+      "",
+      "ERROR: Failed to parse module.",
+    ],
+  ],
+] as const;
+
+const exportXml = (args: string[]) =>
+  runCliWith("xml-export", ["tla2sany.xml.XMLExporter", "-o", ...args]);
+
+describe("the CLI exports XML like SANY's XMLExporter", () => {
+  it.each(XML_EXPORT_FAILURES)("fails on %s", (file, code, lines) => {
+    const result = exportXml([file]);
+    expect(result.status).toBe(code);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe([...lines, ""].join("\n"));
+  });
+
+  it("finds the root module and the modules it extends in the -I directories", () => {
+    const result = exportXml(["-I", "nested", "Root"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("<RootModule>Root</RootModule>");
+  });
+
+  it("names the file of a root module it cannot find and where it looked", () => {
+    const directory = join(FIXTURES, "xml-export");
+    const result = exportXml(["-I", "nested", "Missing"]);
+    expect(result.status).toBe(2);
+    expect(result.stderr.split("\n").slice(0, 7)).toEqual([
+      `File does not exist: ${directory}/./Missing.tla while looking in these directories: ${directory}, nested, classpath:/tla2sany/StandardModules, classpath:/`,
+      "",
+      "Fatal errors while parsing TLA+ spec in file Missing",
+      "",
+      "Unknown location",
+      "",
+      "Cannot find source file for module Missing",
+    ]);
+  });
+});
+
 describe("the CLI takes several specs and globs", () => {
   it("checks each spec a glob matches and exits with the first failure", () => {
     const result = runCliWith("cli-output", ["*.tla"]);

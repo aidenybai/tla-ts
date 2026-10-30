@@ -16,9 +16,10 @@ const getReport = (modules: Record<string, string>) => {
     writeFileSync(join(directory, `${name}.tla`), source),
   );
   const [root] = Object.keys(modules);
-  return getSanyReport(join(directory, `${root}.tla`), (name) =>
+  const { text, isFailed } = getSanyReport(join(directory, `${root}.tla`), (name) =>
     name in modules ? readFileSync(join(directory, `${name}.tla`), "utf8") : undefined,
   );
+  return { text, isFailed };
 };
 
 const toText = (lines: string[]) => lines.map((line) => `${line}\n`).join("");
