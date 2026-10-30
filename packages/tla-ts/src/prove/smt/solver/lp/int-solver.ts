@@ -1,13 +1,14 @@
 // Ported from Z3 (src/math/lp/int_solver.cpp, src/math/lp/int_gcd_test.cpp,
 // src/math/lp/int_branch.cpp), MIT license, see z3-license.txt. The integer check of the final
 // check: the GCD test on rows, patching fractional basic columns through integer non-basic ones,
-// and a branch on a fractional basic column. Cubes, HNF cuts, the Diophantine solver and Gomory
-// cuts are not ported: they return undef, after drawing the random numbers that decide whether
-// they run, so the generator stays in step.
+// the cube test, and a branch on a fractional basic column. The largest cube, HNF cuts, the
+// Diophantine solver and Gomory cuts are not ported: they return undef, after drawing the random
+// numbers that decide whether they run, so the generator stays in step.
 import { getGcd, getLcm, Rational } from "../rational";
 import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_FREE } from "./core-solver";
 import { linearize, mkJoin } from "./dependency";
 import { Explanation } from "./explanation";
+import { findCube } from "./int-cube";
 import type { LarSolver } from "./lar-solver";
 import { Impq } from "./numeric-pair";
 import type { RowCell } from "./static-matrix";
@@ -99,7 +100,7 @@ export class IntSolver {
     this.numberOfCalls++;
     if (gcdMove.kind !== "undef") return gcdMove;
     if (this.patchBasicColumns()) return { kind: "sat" };
-    this.hitPeriod(settings.intFindCubePeriod);
+    if (this.hitPeriod(settings.intFindCubePeriod) && findCube(solver)) return { kind: "sat" };
     if (this.hitPeriod(this.lcubePeriod) && this.lcubePeriod < 1 << 30) this.lcubePeriod *= 2;
     solver.moveNonBasicColumnsToBounds();
     this.hitPeriod(settings.hnfCutPeriod);
