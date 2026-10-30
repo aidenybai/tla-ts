@@ -5,6 +5,7 @@ import {
   bindOperatorArguments,
   evaluate,
   forEachBinding,
+  freezeCallStack,
   isConstantLevel,
   lookupScope,
   resolveApplyOperator,
@@ -16,7 +17,7 @@ import {
   type State,
   toUnspecifiedSubscriptError,
 } from "./evaluate";
-import { getStreamedElements, isEnumerable, valuesEqual, type Value } from "./values";
+import { getStreamedElements, isTlcEnumerable, setTrace, valuesEqual, type Value } from "./values";
 
 // When TLC fails to compute the initial states or the successors of a state, it computes them
 // again with its CallStackTool, which records each node it visits, and prints where the failure
@@ -51,13 +52,20 @@ interface Replay {
 const withFrame = <Result>(replay: Replay, expression: Expression, run: () => Result): Result => {
   const callStack = replay.callStack;
   callStack.expressions.push(expression);
+  const outerSets = setTrace.sets;
+  const sets = outerSets ?? [];
+  const depth = sets.length;
+  setTrace.sets = sets;
   try {
     return run();
   } catch (error) {
-    callStack.isFrozen = true;
+    // A quantifier enumerates its bounds outside any evaluation.
+    freezeCallStack(callStack, sets.slice(depth), error);
     throw error;
   } finally {
     if (!callStack.isFrozen) callStack.expressions.pop();
+    sets.length = depth;
+    setTrace.sets = outerSets;
   }
 };
 
@@ -324,7 +332,8 @@ const visitAssignment = (
     if (evaluate(expression, context) === true) proceed(replay, items, partial);
     return;
   }
-  if (!isEnumerable(set)) throw new TlaEvaluationError("The right side of \\IN is not enumerable.");
+  if (!isTlcEnumerable(set))
+    throw new TlaEvaluationError("The right side of \\IN is not enumerable.");
   for (const element of getStreamedElements(set)) {
     proceed(replay, items, assign(partial, index, element));
   }

@@ -1129,7 +1129,7 @@ export const createRecord = (fields: [string, Value][]): FunctionValue =>
   setFunctionClass(createFunction(fields), "record");
 
 // TLC's Enumerable classes: every set except the ones it implements in Java.
-const isTlcEnumerable = (value: Value) => isSetValue(value) && !isOverriddenSet(value);
+export const isTlcEnumerable = (value: Value) => isSetValue(value) && !isOverriddenSet(value);
 
 const formatUnion = (value: UnionValue, isStrict = false) =>
   `UNION(${formatValue(value.base, isStrict)})`;
@@ -1389,7 +1389,10 @@ export const toFiniteSet = (value: Value): SetValue => {
   }
   const cached = typeof value === "object" ? finiteSets.get(value) : undefined;
   if (cached) return cached;
+  const sets = setTrace.sets;
+  sets?.push(value);
   const elements = enumerateSet(value);
+  sets?.pop();
   const isSorted =
     typeof value === "object" &&
     (value.kind === "MixedSet" ||
@@ -1408,6 +1411,14 @@ export const toFiniteSet = (value: Value): SetValue => {
 // so an element that two of them share comes up once for each.
 export const getStreamedElements = (value: Value): Value[] => {
   if (typeof value !== "object" || finiteSets.has(value)) return toFiniteSet(value).elements;
+  const sets = setTrace.sets;
+  sets?.push(value);
+  const elements = streamElements(value);
+  sets?.pop();
+  return elements;
+};
+
+const streamElements = (value: ObjectValue): Value[] => {
   if (value.kind === "Union") {
     return getUnionSets(value).flatMap((set, index) =>
       getStreamedElements(getUnionSet(set, index, value)),
@@ -1635,13 +1646,13 @@ const describeNonSetMembership = (element: Value, value: Value) => {
   return `${prefix} function ${formatValue(value)}`;
 };
 
-// The sets whose membership is being checked, outermost first, while TLC's CallStackTool replays a
-// computation. A failed check leaves the sets it was in, each of which TLC adds to the
-// FingerprintException when it has a source.
-export const membershipTrace: { sets: Value[] | undefined } = { sets: undefined };
+// The sets whose membership is being checked or whose elements are being enumerated, outermost
+// first, while TLC's CallStackTool replays a computation. A failed check or enumeration leaves the
+// sets it was in, each of which TLC adds to the FingerprintException when it has a source.
+export const setTrace: { sets: Value[] | undefined } = { sets: undefined };
 
 export const isElementOf = (element: Value, set: Value): boolean => {
-  const sets = membershipTrace.sets;
+  const sets = setTrace.sets;
   if (sets === undefined) return isElementOfSet(element, set);
   sets.push(set);
   const isElement = isElementOfSet(element, set);

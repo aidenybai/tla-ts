@@ -60,7 +60,7 @@ import {
   type ObjectValue,
   type Value,
   markNormalized,
-  membershipTrace,
+  setTrace,
 } from "./values";
 import type { TlcVersion } from "./tlc-version";
 
@@ -1182,10 +1182,10 @@ const traceEvaluator =
   ): Evaluator =>
   (context) => {
     callStack.expressions.push(expression);
-    const outerSets = membershipTrace.sets;
+    const outerSets = setTrace.sets;
     const sets = outerSets ?? [];
     const depth = sets.length;
-    membershipTrace.sets = sets;
+    setTrace.sets = sets;
     try {
       const computed = evaluator(context);
       const rebind =
@@ -1199,29 +1199,40 @@ const traceEvaluator =
       }
       return value;
     } catch (error) {
-      // A method of a value with a source raises a FingerprintException, which each value with a
-      // source whose method called it heads in turn. CallStack#freeze adds their sources to the
-      // stack, outermost first.
       const receiver = getReceiver(expression);
       const value = receiver && callStack.values.get(receiver);
-      const sources = [value, ...sets.slice(depth).filter((set) => set !== value)].flatMap(
-        (item) => {
-          const source = typeof item === "object" ? callStack.sources.get(item) : undefined;
-          return source ? [source] : [];
-        },
+      freezeCallStack(
+        callStack,
+        [value, ...sets.slice(depth).filter((set) => set !== value)],
+        error,
       );
-      if (!callStack.isFrozen && sources.length > 0 && error instanceof TlaEvaluationError) {
-        callStack.expressions.push(...sources);
-        callStack.fingerprint = { sources, reason: error.message };
-      }
-      callStack.isFrozen = true;
       throw error;
     } finally {
       if (!callStack.isFrozen) callStack.expressions.pop();
       sets.length = depth;
-      membershipTrace.sets = outerSets;
+      setTrace.sets = outerSets;
     }
   };
+
+// A method of a value with a source raises a FingerprintException, which each value with a source
+// whose method called it heads in turn. CallStack#freeze adds their sources to the stack, outermost
+// first. The values are those whose methods failed, outermost first.
+export const freezeCallStack = (
+  callStack: CallStack,
+  values: (Value | undefined)[],
+  error: unknown,
+) => {
+  // A set that streams its elements enumerates itself too, so it can appear twice.
+  const sources = [...new Set(values)].flatMap((item) => {
+    const source = typeof item === "object" ? callStack.sources.get(item) : undefined;
+    return source ? [source] : [];
+  });
+  if (!callStack.isFrozen && sources.length > 0 && error instanceof TlaEvaluationError) {
+    callStack.expressions.push(...sources);
+    callStack.fingerprint = { sources, reason: error.message };
+  }
+  callStack.isFrozen = true;
+};
 
 // A copy of the environment that records the call stack of each evaluation, with evaluators of its
 // own since the environment's evaluators record nothing.

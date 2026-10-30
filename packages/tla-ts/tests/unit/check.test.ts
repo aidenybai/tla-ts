@@ -991,6 +991,35 @@ describe("evaluation errors match TLC", () => {
     expect([result.distinctStates, result.failure?.exitCode]).toEqual([3, 75]);
   });
 
+  // A set with a source raises a FingerprintException when TLC's replay fails to enumerate it, unless
+  // a Java method that enumerates it wraps the failure.
+  it.each([
+    ["\\E n \\in ({1} \\cup 2) : x' = n", ["Apply"]],
+    ["x' = x /\\ \\A n \\in ({1} \\cup 2) : TRUE", ["Apply"]],
+    ["x' = CHOOSE n \\in ({1} \\cup 2) : TRUE", ["Apply"]],
+    ["x' = Cardinality({n + 1 : n \\in ({1} \\cup 2)})", ["Apply"]],
+    ["x' \\in ({1} \\cup 2)", ["Apply"]],
+    ["x' \\in {1} \\cup ({1} \\cup 2)", ["Apply", "Apply"]],
+    ["x' \\in UNION {Nat}", ["Apply"]],
+    ["x' = Cardinality({n \\in ({1} \\cup 2) : TRUE})", undefined],
+  ])(
+    "reports the sources of a set the replay of %s fails to enumerate like TLC",
+    async (next, sources) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.fingerprint?.sources.map((source) => source.kind)).toEqual(sources);
+    },
+  );
+
+  it("reports a set TLC can't enumerate in computing next states like TLC", async () => {
+    const result = await checkSteps("Step == x' \\in Nat", "INIT Init\nNEXT Step");
+    expect(result.failure?.message).toBe(
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, the right side of \\IN is not enumerable.\nline 6, col 9 to line 6, col 18 of module M",
+    );
+  });
+
   // CallStackTool copies a SetPredValue without its source, so TLC reports where it evaluated the
   // filter rather than where it built it.
   it.each([

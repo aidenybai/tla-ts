@@ -9,6 +9,7 @@ import {
   toFiniteFunction,
   MAXIMUM_INTEGER,
   MINIMUM_INTEGER,
+  setTrace,
   toFiniteSet,
   type Value,
 } from "./values";
@@ -270,13 +271,17 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
   const guard =
     <Arguments extends unknown[]>(compute: (...args: Arguments) => Value) =>
     (...args: Arguments) => {
+      const depth = setTrace.sets?.length ?? 0;
       try {
         return compute(...args);
       } catch (error) {
         const isWrapped =
           error instanceof TlaEvaluationError &&
           (builtin.isLazy === true || !(error instanceof TlaModuleError));
-        throw isWrapped ? createJavaOverrideError(signature, error.message) : error;
+        if (!isWrapped) throw error;
+        // The wrapping error replaces a FingerprintException that a set with a source raised.
+        if (setTrace.sets) setTrace.sets.length = depth;
+        throw createJavaOverrideError(signature, error.message);
       }
     };
   return {

@@ -40,7 +40,7 @@ import {
   formatValue,
   getStreamedElements,
   isElementOf,
-  isEnumerable,
+  isTlcEnumerable,
   valuesEqual,
   type Value,
 } from "./values";
@@ -419,9 +419,9 @@ const compileMembership = (
     const evaluated = evaluate(set, context);
     const value: Value =
       expression.operator === "\\subseteq" ? { kind: "Subset", base: evaluated } : evaluated;
-    if (!isEnumerable(value)) {
+    if (!isTlcEnumerable(value)) {
       throw new TlaEvaluationError(
-        `In computing next states, the right side of \\in is not enumerable: ${formatValue(value)} at ${describeLocation(expression)}`,
+        `${UNEXPECTED_EXCEPTION}In computing next states, the right side of \\IN is not enumerable.\n${describeRange(expression)}`,
       );
     }
     const elements = getStreamedElements(value);
