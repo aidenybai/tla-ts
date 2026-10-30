@@ -9,6 +9,7 @@
 import type { Seq } from "../../pure/seq";
 import type { GoalTactic } from "../../pure/tactical";
 import { checkInterrupt } from "../../pure/interrupt";
+import { cons, type List } from "../../pure/list";
 import type { Thm } from "../../pure/thm";
 import {
   addLit,
@@ -30,11 +31,9 @@ import {
   unify,
   type BlastState,
   type Branch,
-  cons,
   type Choices,
   type Formula,
   type Level,
-  type List,
 } from "./state";
 import {
   addTermVars,

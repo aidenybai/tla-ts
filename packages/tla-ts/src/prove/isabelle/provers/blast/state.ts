@@ -7,6 +7,7 @@
 import { bumpInit, bumpString } from "../../pure/name";
 import type { GoalTactic } from "../../pure/tactical";
 import type { Limits } from "../../pure/interrupt";
+import type { List } from "../../pure/list";
 import type { Thm } from "../../pure/thm";
 import type { Claset } from "../classical";
 import type { RuleTemplate } from "./rules";
@@ -60,17 +61,6 @@ export interface Branch {
   // The resource limit.
   readonly lim: number;
 }
-
-// A list that shares its tail, as ML's lists do, so that adding to its front takes constant time.
-export interface List<Item> {
-  readonly head: Item;
-  readonly tail: List<Item> | undefined;
-}
-
-export const cons = <Item>(head: Item, tail: List<Item> | undefined): List<Item> => ({
-  head,
-  tail,
-});
 
 // A choice point: the trail length and branch count when it was made, and the token its handler
 // catches. The token is undefined for PROVE, the end of the search.

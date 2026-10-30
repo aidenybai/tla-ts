@@ -15,6 +15,7 @@ import {
   type Cell,
   type Seq,
 } from "./seq";
+import { cons, type List } from "./list";
 import { aconv } from "./term";
 import { nprems, premOf, type Thm } from "./thm";
 
@@ -304,25 +305,32 @@ export const condTac =
   (state) =>
     test(state) ? onTrue(state) : onFalse(state);
 
-// Search.DEPTH_FIRST: depth-first search for a state satisfying the test.
+// Search.DEPTH_FIRST: depth-first search for a state satisfying the test. The stack of
+// alternatives and the states already returned are lists, as in Isabelle, since the stack can grow
+// as deep as the search goes.
 export const depthFirst = (test: (state: Thm) => boolean, tactic: Tactic): Tactic => {
-  const depth = (used: readonly Thm[], stack: readonly Seq<Thm>[]): Cell<Thm> => {
+  const isUsed = (used: List<Thm> | undefined, state: Thm) => {
+    for (let current = used; current !== undefined; current = current.tail)
+      if (eqThm(current.head, state)) return true;
+    return false;
+  };
+  const depth = (used: List<Thm> | undefined, stack: List<Seq<Thm>> | undefined): Cell<Thm> => {
     let current = stack;
-    while (current.length > 0) {
-      const cell = current[0].pull();
+    while (current !== undefined) {
+      const cell = current.head.pull();
       if (cell === undefined) {
-        current = current.slice(1);
+        current = current.tail;
         continue;
       }
       const state = cell[0];
-      const rest = [cell[1], ...current.slice(1)];
-      if (test(state) && !used.some((other) => eqThm(other, state)))
-        return [state, makeSeq(() => depth([state, ...used], rest))];
-      current = [tactic(state), ...rest];
+      const rest = cons(cell[1], current.tail);
+      if (test(state) && !isUsed(used, state))
+        return [state, makeSeq(() => depth(cons(state, used), rest))];
+      current = cons(tactic(state), rest);
     }
     return undefined;
   };
-  return (state) => makeSeq(() => depth([], [singleSeq(state)]));
+  return (state) => makeSeq(() => depth(undefined, cons(singleSeq(state), undefined)));
 };
 
 export const hasFewerPrems = (count: number) => (state: Thm) => nprems(state) < count;
