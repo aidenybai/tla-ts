@@ -49,11 +49,15 @@ interface Check {
   actionIds: Int32Array;
   nodeStates: number[];
   nodeTableaux: number[];
-  successors: number[][];
+  // The successors a node gathers until it is written.
+  pending: (number[] | undefined)[];
   // Each written node's state results, then its action results edge by edge, from the node's
   // offset in one buffer, so a node costs no objects of its own. An unwritten node has offset -1.
   offsets: number[];
   results: { bytes: Uint8Array; length: number };
+  // Each written node's successor count, then its successors, from the node's edge offset.
+  edgeOffsets: number[];
+  edges: { ids: Int32Array; length: number };
   initial: number[];
   nodeIds: NodeTable;
   isDone: boolean[];
@@ -70,8 +74,9 @@ const removeRepeats = (path: number[]) =>
 const pushNode = (check: Check, state: number, tableauNode: number) => {
   check.nodeStates.push(state);
   check.nodeTableaux.push(tableauNode);
-  check.successors.push([]);
+  check.pending.push(undefined);
   check.offsets.push(-1);
+  check.edgeOffsets.push(-1);
   return check.nodeStates.length - 1;
 };
 
@@ -95,6 +100,13 @@ const getNodeSlot = (table: NodeTable, state: number, tableauNode: number) => {
 };
 
 const isWritten = (check: Check, node: number) => check.offsets[node] !== -1;
+
+const getPending = (check: Check, node: number) => (check.pending[node] ??= []);
+
+const getSuccessors = (check: Check, node: number) => {
+  const offset = check.edgeOffsets[node];
+  return check.edges.ids.subarray(offset + 1, offset + 1 + check.edges.ids[offset]);
+};
 
 const getStateResult = (check: Check, node: number, position: number) =>
   check.results.bytes[check.offsets[node] + position] === 1;
@@ -138,9 +150,11 @@ export const createLivenessChecker = (
     }),
     nodeStates: [],
     nodeTableaux: [],
-    successors: [],
+    pending: [],
     offsets: [],
     results: { bytes: new Uint8Array(1024), length: 0 },
+    edgeOffsets: [],
+    edges: { ids: new Int32Array(1024), length: 0 },
     initial: [],
     nodeIds: { slots: new Int32Array(3 << 10), size: 0, shift: 22 },
     isDone: [],
@@ -277,8 +291,19 @@ export const createLivenessChecker = (
       results.bytes.set(edge, offset + stateResults.length + position * actionCount),
     );
     check.offsets[node] = offset;
-    // A node gets no successors once written, so it keeps them without spare capacity.
-    check.successors[node] = check.successors[node].slice();
+    const successors = check.pending[node] ?? [];
+    const edges = check.edges;
+    const edgeOffset = edges.length;
+    edges.length += successors.length + 1;
+    if (edges.length > edges.ids.length) {
+      const grown = new Int32Array(Math.max(2 * edges.ids.length, edges.length));
+      grown.set(edges.ids);
+      edges.ids = grown;
+    }
+    edges.ids[edgeOffset] = successors.length;
+    edges.ids.set(successors, edgeOffset + 1);
+    check.edgeOffsets[node] = edgeOffset;
+    check.pending[node] = undefined;
   };
 
   // TLC collects a state's successors and the state itself in a SetOfStates, a hash set it
@@ -331,7 +356,7 @@ export const createLivenessChecker = (
     const stateResults = checkState(check, index, state);
     const tableauNode = tableau.nodes[check.nodeTableaux[node]];
     const actions: Uint8Array[] = [];
-    const successors = check.successors[node];
+    const successors = getPending(check, node);
     const selfActions =
       tableauNode.successors.length > 0
         ? checkAction(check, index, state, state)
@@ -381,7 +406,7 @@ export const createLivenessChecker = (
     check.isDone[index] = true;
     // TLC expands the nodes recorded before the loop, not the ones the loop records.
     for (const node of getStateNodes(check, tableau, index)) {
-      const successors = check.successors[node];
+      const successors = getPending(check, node);
       const actions: Uint8Array[] = [];
       set.forEach((successor, position) => {
         const isDone = check.isDone[successor.index] === true;
@@ -415,7 +440,7 @@ export const createLivenessChecker = (
     index: number,
   ) => {
     while (check.nodeStates.length <= index) pushNode(check, check.nodeStates.length, -1);
-    const successors = check.successors[index];
+    const successors = getPending(check, index);
     const actions: Uint8Array[] = [];
     set.forEach((successor, position) => {
       if (isWritten(check, successor.index) && successors.includes(successor.index)) return;
@@ -438,7 +463,7 @@ export const createLivenessChecker = (
     }
     for (let position = 0; position < queue.length; position++) {
       const current = queue[position];
-      for (const next of check.successors[current]) {
+      for (const next of getSuccessors(check, current)) {
         if (next === current && check.solution.tableau) continue;
         if (next === target) {
           const path = [target];
@@ -467,7 +492,7 @@ export const createLivenessChecker = (
     const components: number[] = [];
 
     const isStuttering = (node: number) => {
-      const edge = check.successors[node].indexOf(node);
+      const edge = getSuccessors(check, node).indexOf(node);
       return edge !== -1 && isAllowed(node, edge);
     };
     const isFulfilled = (node: number, promise: Solution["promises"][number]) =>
@@ -495,7 +520,7 @@ export const createLivenessChecker = (
       );
       const isActionSatisfied = model.infinitelyOftenActions.every((position) =>
         [...members].some((node) =>
-          check.successors[node].some(
+          getSuccessors(check, node).some(
             (next, edge) =>
               members.has(next) && isAllowed(node, edge) && getAction(node, edge, position),
           ),
@@ -550,7 +575,7 @@ export const createLivenessChecker = (
           if (remaining.count <= 0) break;
           const step = { last: -1, unvisited: -1 };
           const countBeforeActions = remaining.count;
-          const successors = check.successors[current.node];
+          const successors = getSuccessors(check, current.node);
           const taken = successors.some((next, edge) => {
             if (membersByState.has(check.nodeStates[next])) {
               if (!isMember(next) || !isAllowed(current.node, edge)) return false;
@@ -585,7 +610,8 @@ export const createLivenessChecker = (
             }
             current.node = previous;
             step.unvisited =
-              check.successors[previous].find((next) => isMember(next) && !seen.has(next)) ?? -1;
+              getSuccessors(check, previous).find((next) => isMember(next) && !seen.has(next)) ??
+              -1;
           }
           take(step.unvisited);
           seen.add(step.unvisited);
@@ -615,7 +641,7 @@ export const createLivenessChecker = (
       const queue: [number, number][] = [];
       for (let state = start, parent = -1, position = 0; ; position++) {
         for (const node of membersByState.get(state) ?? []) {
-          for (const [edge, next] of check.successors[node].entries()) {
+          for (const [edge, next] of getSuccessors(check, node).entries()) {
             if (next === node || !isAllowedEdge(node, edge)) continue;
             if (next === root) {
               const path: number[] = [];
@@ -668,7 +694,7 @@ export const createLivenessChecker = (
         stack.push(lowLink, node, SCC_MARKER);
         components.push(node);
         const nextLowLink = { value: counter.link++ };
-        check.successors[node].forEach((next, edge) => {
+        getSuccessors(check, node).forEach((next, edge) => {
           if (!isWritten(check, next)) return;
           if (!isAllowed(node, edge)) {
             if (links[next] === UNVISITED) queue.push(next);
