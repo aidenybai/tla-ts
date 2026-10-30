@@ -140,6 +140,7 @@ export abstract class Internalizer {
   enodes: Enode[] = [];
   protected decl2enodes = new Map<number, Enode[]>();
   trueEnode: Enode;
+  private isDiseqTmp = -1;
   falseEnode: Enode;
   protected generation = 0;
   protected cachedGeneration = new Map<number, number>();
@@ -304,9 +305,24 @@ export abstract class Internalizer {
     return this.cgTable.findFor(decl, args, decl === OP_EQ);
   }
 
-  // is_diseq: an equality between the two classes is false.
+  // is_diseq_core: the roots are distinct values, or an equality between the two classes is false.
+  // The congruence table is searched with m_is_diseq_tmp, an equality of the sort, which holds a
+  // reference until an equality of another sort replaces it.
   isDiseq(first: Enode, second: Enode) {
-    return this.cgTable.findFor(OP_EQ, [first, second], true)?.root === this.falseEnode;
+    const manager = this.manager;
+    if (manager.areDistinct(first.root.owner, second.root.owner)) return true;
+    const tmp = this.isDiseqTmp;
+    if (tmp === -1 || manager.sorts[manager.args[tmp][0]] !== manager.sorts[first.owner]) {
+      if (tmp !== -1) manager.decRef(tmp);
+      this.isDiseqTmp = manager.mkEq(first.owner, second.owner);
+      manager.incRef(this.isDiseqTmp);
+    }
+    const root = this.cgTable.findFor(OP_EQ, [first, second], true)?.root;
+    if (root === undefined || root === this.trueEnode) return false;
+    return (
+      root === this.falseEnode ||
+      (this.isRelevant(root.owner) && this.getAssignmentOfExpr(root.owner) === L_FALSE)
+    );
   }
 
   enodesOf(decl: number) {
