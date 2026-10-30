@@ -11,6 +11,7 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
+import { UNEXPECTED_EXCEPTION } from "../../src/errors";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -610,10 +611,26 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
-  it("rejects a symmetry that names a constant", async () => {
-    await expect(checkModule("CONSTANT P", "CONSTANT P = {p1, p2}\nSYMMETRY P")).rejects.toThrow(
-      TlaConfigError,
+  it("reports a symmetry that isn't a set of permutations like TLC", async () => {
+    await expect(checkModule("", "SYMMETRY P")).rejects.toThrow(
+      new TlaConfigError(
+        "The symmetry function P specified in the configuration file\nis not defined in the specification.",
+      ),
     );
+    const cases = [
+      [
+        "CONSTANT P",
+        "CONSTANT P = {p1, p2}\nSYMMETRY P",
+        "The symmetry function P must specify a set of permutations.",
+      ],
+      ["P == 1", "SYMMETRY P", "The symmetry operator must specify a set of functions."],
+      ["P == {1}", "SYMMETRY P", "The symmetry values must be function records."],
+    ];
+    for (const item of cases) {
+      await expect(checkModule(item[0], item[1])).rejects.toThrow(
+        new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${item[2]}`),
+      );
+    }
   });
 
   it("rejects substituting a constant with a state-level definition", async () => {

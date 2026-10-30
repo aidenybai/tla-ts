@@ -1,5 +1,6 @@
-import { TlaConfigError } from "./errors";
+import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import { evaluate, type Environment } from "./evaluate";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   compareValues,
   createFunction,
@@ -47,9 +48,13 @@ const composePermutations = (first: Images, second: Images) => {
   return composed;
 };
 
-const toImages = (value: Value, name: string) => {
+// TLC checks the symmetry set outside any phase that reports an error itself.
+const createSymmetryError = (message: string) =>
+  setExitCode(new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${message}`), EXIT_STATUS.error);
+
+const toImages = (value: Value) => {
   if (!isFunctionValue(value)) {
-    throw new TlaConfigError(`The symmetry values of ${name} must be functions`);
+    throw createSymmetryError("The symmetry values must be function records.");
   }
   const functionValue = toFiniteFunction(value);
   const permutation: Images = new Map();
@@ -65,8 +70,13 @@ const toImages = (value: Value, name: string) => {
 
 export const getSymmetryGroup = (name: string, environment: Environment): Permutation[] => {
   const definition = environment.definitions.get(name);
+  if (definition === undefined && !environment.constants.has(name)) {
+    throw new TlaConfigError(
+      `The symmetry function ${name} specified in the configuration file\nis not defined in the specification.`,
+    );
+  }
   if (definition?.kind !== "Operator" || definition.params.length > 0) {
-    throw new TlaConfigError(`The symmetry function ${name} must specify a set of permutations`);
+    throw createSymmetryError(`The symmetry function ${name} must specify a set of permutations.`);
   }
   const value = evaluate(definition.body, {
     environment,
@@ -75,9 +85,9 @@ export const getSymmetryGroup = (name: string, environment: Environment): Permut
     next: undefined,
   });
   if (!isSetValue(value) || !isEnumerable(value)) {
-    throw new TlaConfigError("The symmetry operator must specify a set of functions");
+    throw createSymmetryError("The symmetry operator must specify a set of functions.");
   }
-  const permutations = toFiniteSet(value).elements.map((element) => toImages(element, name));
+  const permutations = toFiniteSet(value).elements.map(toImages);
   const isDisabled =
     definition.body.kind === "Apply" && definition.body.args.length >= permutations.length;
   if (isDisabled) return [];
