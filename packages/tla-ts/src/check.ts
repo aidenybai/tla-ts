@@ -379,8 +379,11 @@ const getSpecification = (config: ModelConfig, environment: Environment): Specif
       conjunct.kind === "Always" &&
       getLevel(conjunct.expression, item.scope, environment) < ACTION_LEVEL
     ) {
-      throw new TlaConfigError(
-        `TLC cannot handle []P in the specification ${config.specification} when P is a state predicate`,
+      throw setExitCode(
+        new TlaConfigError(
+          `TLC cannot handle the temporal formula ${describeRange(conjunct.expression)}`,
+        ),
+        EXIT_STATUS.error,
       );
     }
     const level = getLevel(conjunct, item.scope, environment);

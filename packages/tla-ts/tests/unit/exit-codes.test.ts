@@ -57,6 +57,13 @@ describe("CLI exit codes match TLC", () => {
     expect(await getFailureExitCode(STEP, config)).toBe(151);
   });
 
+  it("exits with 255 for a box over a state predicate in the specification", async () => {
+    const config = "SPECIFICATION Spec";
+    expect(
+      await getFailureExitCode(`${STEP}\nSpec == Init /\\ [][Next]_x /\\ [](x < 3)`, config),
+    ).toBe(255);
+  });
+
   it("exits with 75 when an invariant fails on an initial state and 76 afterwards", async () => {
     const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
     expect(await getFailureExitCode(`${STEP}\nInv == 1 \\div 0 = x`, config)).toBe(75);
