@@ -1037,7 +1037,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const parents: number[] = [];
   const actions: (string | undefined)[] = [];
   const depths: number[] = [];
-  const buckets = new Map<number, number | number[]>();
+  // A Map holds at most 2^24 entries, so an open-addressing table keeps each seen state's index
+  // plus one, probed by the state's hash.
+  const seen = {
+    slots: new Int32Array(1 << 16),
+    hashes: new Int32Array(1 << 16),
+    size: 0,
+    shift: 16,
+  };
   const canonicalizeState = createCanonicalizer();
 
   const toRecord = (state: Value[]): Record<string, Value> =>
@@ -1197,19 +1204,37 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     return true;
   };
+  const getSlot = (hash: number) => Math.imul(hash, 0x9e3779b1) >>> seen.shift;
   const findStateIndex = (hash: number, state: Value[]) => {
-    const bucket = buckets.get(hash);
-    if (bucket === undefined) return -1;
-    if (typeof bucket === "number") {
-      return isSameState(fingerprintStates[bucket], state) ? bucket : -1;
+    const mask = seen.slots.length - 1;
+    for (let slot = getSlot(hash); ; slot = (slot + 1) & mask) {
+      const entry = seen.slots[slot];
+      if (entry === 0) return -1;
+      if (seen.hashes[slot] === hash && isSameState(fingerprintStates[entry - 1], state)) {
+        return entry - 1;
+      }
     }
-    return bucket.find((index) => isSameState(fingerprintStates[index], state)) ?? -1;
+  };
+  const insertSeen = (hash: number, entry: number) => {
+    const mask = seen.slots.length - 1;
+    let slot = getSlot(hash);
+    while (seen.slots[slot] !== 0) slot = (slot + 1) & mask;
+    seen.slots[slot] = entry;
+    seen.hashes[slot] = hash;
   };
   const markSeen = (hash: number, index: number) => {
-    const bucket = buckets.get(hash);
-    if (bucket === undefined) buckets.set(hash, index);
-    else if (typeof bucket === "number") buckets.set(hash, [bucket, index]);
-    else bucket.push(index);
+    seen.size++;
+    if (seen.size * 2 > seen.slots.length) {
+      const slots = seen.slots;
+      const hashes = seen.hashes;
+      seen.slots = new Int32Array(slots.length * 2);
+      seen.hashes = new Int32Array(slots.length * 2);
+      seen.shift--;
+      for (let slot = 0; slot < slots.length; slot++) {
+        if (slots[slot] !== 0) insertSeen(hashes[slot], slots[slot]);
+      }
+    }
+    insertSeen(hash, index + 1);
   };
   const countDistinctState = (depth: number) => {
     runtime.distinctStates = states.length + 1;
