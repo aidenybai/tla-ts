@@ -1069,13 +1069,16 @@ const isTlcEnumerable = (value: Value) => isSetValue(value) && !isOverriddenSet(
 const formatUnion = (value: UnionValue, isStrict = false) =>
   `UNION(${formatValue(value.base, isStrict)})`;
 
-const getUnionSets = (value: UnionValue) => {
+const getUnionSets = (
+  value: UnionValue,
+  getElements = (set: Value) => toFiniteSet(set).elements,
+) => {
   if (!isTlcEnumerable(value.base)) {
     throw new TlaEvaluationError(
       `Attempted to enumerate the nonenumerable set:\n${formatUnion(value)}`,
     );
   }
-  return toFiniteSet(value.base).elements;
+  return getElements(value.base);
 };
 
 const getUnionSet = (set: Value, index: number, union: UnionValue) => {
@@ -1111,7 +1114,7 @@ export const isEnumerable = (value: Value): boolean => {
     case "ProductSet":
       return value.factors.every(isEnumerable) || getEmptiness(value) === true;
     case "Union":
-      return isEnumerable(value.base) && toFiniteSet(value.base).elements.every(isEnumerable);
+      return isEnumerable(value.base) && getStreamedElements(value.base).every(isEnumerable);
     case "SetOperation":
       if (value.operator === "\\cup") return isEnumerable(value.left) && isEnumerable(value.right);
       if (value.operator === "\\cap") return isEnumerable(value.left) || isEnumerable(value.right);
@@ -1345,8 +1348,10 @@ export const toFiniteSet = (value: Value): SetValue => {
 // so an element that two of them share comes up once for each.
 export const getStreamedElements = (value: Value): Value[] => {
   if (typeof value !== "object" || finiteSets.has(value)) return toFiniteSet(value).elements;
+  // TLC streams the sets of a UNION it hasn't enumerated, so a set that appears twice there yields
+  // its elements twice.
   if (value.kind === "Union") {
-    return getUnionSets(value).flatMap((set, index) =>
+    return getUnionSets(value, getStreamedElements).flatMap((set, index) =>
       getStreamedElements(getUnionSet(set, index, value)),
     );
   }
