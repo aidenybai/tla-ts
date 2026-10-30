@@ -1,16 +1,16 @@
 // Ported from Z3 (src/math/lp/int_solver.cpp, src/math/lp/int_gcd_test.cpp,
 // src/math/lp/int_branch.cpp), MIT license, see z3-license.txt. The integer check of the final
 // check: the GCD test on rows, patching fractional basic columns through integer non-basic ones,
-// the cube test, HNF and Gomory cuts, and a branch on a fractional basic column. The largest cube
-// and the Diophantine solver are not ported: they return undef, after drawing the random numbers
-// that decide whether they run, so the generator stays in step.
+// the cube and largest cube tests, HNF cuts, the Diophantine solver, Gomory cuts, and a branch on a
+// fractional basic column.
 import { getGcd, getLcm, Rational } from "../rational";
 import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
 import { linearize, mkJoin } from "./dependency";
+import { DiophantineSolver } from "./dioph-eq";
 import { Explanation } from "./explanation";
 import { getGomoryCuts } from "./gomory";
 import { makeHnfCut } from "./hnf-cutter";
-import { findCube } from "./int-cube";
+import { findCube, findLargestCube } from "./int-cube";
 import type { LarSolver } from "./lar-solver";
 import { LarTerm } from "./lar-term";
 import { Impq } from "./numeric-pair";
@@ -70,12 +70,15 @@ export class IntSolver {
   // m_t: the term of a branch or a cut, kept across calls as Z3 keeps its table.
   readonly term = new LarTerm();
 
+  private dio: DiophantineSolver;
   private initialDioCallsPeriod: number;
+  // m_dio_undef_in_a_row: the Diophantine solver's calls in a row that found nothing.
   private dioUndefInARow = 0;
 
   constructor(readonly solver: LarSolver) {
     this.lcubePeriod = solver.settings.intFindCubePeriod;
     this.initialDioCallsPeriod = solver.settings.dioCallsPeriod;
+    this.dio = new DiophantineSolver(this);
   }
 
   isColumnIntInf(column: number) {
@@ -121,8 +124,8 @@ export class IntSolver {
     if (!solver.hasInfInt()) return { kind: "sat" };
     this.term.clear();
     this.explanation.clear();
-    let move: LiaMove = { kind: "undef" };
-    if (solver.settings.isRunningGcdTest) move = this.gcdTest();
+    // lp.dio_run_gcd is off, so the GCD test runs only when the Diophantine solver ignores terms.
+    const move: LiaMove = this.dio.hasIgnoredTerms ? this.gcdTest() : { kind: "undef" };
     const core = solver.core;
     const savedTouchedRows = core.touchedRows;
     core.touchedRows = null;
@@ -144,18 +147,31 @@ export class IntSolver {
     const settings = solver.settings;
     if (this.patchBasicColumns()) return { kind: "sat" };
     if (this.hitPeriod(settings.intFindCubePeriod) && findCube(solver)) return { kind: "sat" };
-    if (this.hitPeriod(this.lcubePeriod) && this.lcubePeriod < 1 << 30) this.lcubePeriod *= 2;
+    if (this.hitPeriod(this.lcubePeriod) && this.findLcube()) return { kind: "sat" };
     solver.moveNonBasicColumnsToBounds();
     if (this.hitPeriod(settings.hnfCutPeriod)) {
       const move = makeHnfCut(this);
       if (move.kind !== "undef") return move;
     }
-    if (this.shouldSolveDiophantineEquations()) this.solveDiophantineEquations();
-    if (settings.isDioEnablingGomoryCuts && this.hitPeriod(settings.intGomoryCutPeriod)) {
+    if (this.shouldSolveDiophantineEquations()) {
+      const move = this.solveDiophantineEquations();
+      if (move.kind !== "undef") return move;
+    }
+    const isGomoryAllowed = settings.isRunningGomoryWithDio || this.dio.hasIgnoredTerms;
+    if (isGomoryAllowed && this.hitPeriod(settings.intGomoryCutPeriod)) {
       const move = getGomoryCuts(this, 2);
       if (move.kind !== "undef") return move;
     }
     return this.branch();
+  }
+
+  // find_lcube: the period doubles while the largest cube finds nothing, and resets when it finds a
+  // solution.
+  private findLcube() {
+    const isSat = findLargestCube(this.solver);
+    if (isSat) this.lcubePeriod = this.solver.settings.intFindCubePeriod;
+    else if (this.lcubePeriod < 1 << 30) this.lcubePeriod *= 2;
+    return isSat;
   }
 
   // should_solve_dioph_eq: a draw with the current period, which relaxes toward the initial one
@@ -173,15 +189,23 @@ export class IntSolver {
     return isHit;
   }
 
-  // solve_dioph_eq when the solver finds nothing: the period doubles, and Gomory cuts and the GCD
-  // test start after enough failures in a row.
-  private solveDiophantineEquations() {
+  // solve_dioph_eq: a conflict resets the period and stops Gomory cuts, and nothing found doubles
+  // the period and starts Gomory cuts after enough failures in a row. Z3 also sets the GCD test's
+  // flag, which it does not read while the Diophantine solver is on.
+  private solveDiophantineEquations(): LiaMove {
     const settings = this.solver.settings;
+    if (this.dio.check() === "conflict") {
+      this.dio.explain(this.explanation);
+      settings.dioCallsPeriod = this.initialDioCallsPeriod;
+      this.dioUndefInARow = 0;
+      settings.isRunningGomoryWithDio = false;
+      return { kind: "conflict" };
+    }
     settings.dioCallsPeriod *= 2;
     this.dioUndefInARow++;
-    if (this.dioUndefInARow < settings.dioGomoryEnablePeriod) return;
-    settings.isDioEnablingGomoryCuts = true;
-    settings.isRunningGcdTest = true;
+    if (this.dioUndefInARow >= settings.dioGomoryEnablePeriod)
+      settings.isRunningGomoryWithDio = true;
+    return { kind: "undef" };
   }
 
   // GCD test.
