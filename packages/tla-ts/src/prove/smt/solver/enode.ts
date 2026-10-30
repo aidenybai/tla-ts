@@ -29,12 +29,16 @@ export const CONGRUENCE_JUSTIFICATIONS: readonly EqJustification[] = [
   { kind: "congruence", isCommutative: true },
 ];
 
+// The arguments of a leaf and the parents of a node without any. Nothing adds to it: addParent gives a
+// node its own list, so that a node with one parent holds one entry instead of V8's sixteen.
+export const NO_ENODES: Enode[] = [];
+
 export class Enode {
   root: Enode = this;
   next: Enode = this;
   cg: Enode = this;
   classSize = 1;
-  parents: Enode[] = [];
+  parents: Enode[] = NO_ENODES;
   // m_trans: the next node on the transitivity branch toward the root of the proof tree, and why the
   // two are equal.
   transTarget: Enode | null = null;
@@ -61,6 +65,11 @@ export class Enode {
     readonly isCgcEnabled: boolean,
     readonly iscopeLevel: number,
   ) {}
+
+  addParent(parent: Enode) {
+    if (this.parents.length === 0) this.parents = [parent];
+    else this.parents.push(parent);
+  }
 
   isCgr() {
     return this.cg === this;

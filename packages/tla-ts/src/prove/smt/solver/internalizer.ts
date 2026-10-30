@@ -35,6 +35,7 @@ import {
   EqJustification,
   EqPropagationJustification,
   Justification,
+  NO_ENODES,
   UnitResolutionJustification,
 } from "./enode";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
@@ -444,13 +445,14 @@ export abstract class Internalizer {
   mkEnode(expr: number, isSuppressingArgs: boolean, isMergeTf: boolean, isCgcEnabled: boolean) {
     const manager = this.manager;
     const generation = this.cachedGeneration.get(expr) ?? this.generation;
-    const args = isSuppressingArgs
-      ? []
-      : manager.args[expr].map((arg) => {
-          const argNode = this.exprToEnode[arg];
-          if (argNode === undefined) throw new Error("an argument was not internalized");
-          return argNode;
-        });
+    const args =
+      isSuppressingArgs || manager.args[expr].length === 0
+        ? NO_ENODES
+        : manager.args[expr].map((arg) => {
+            const argNode = this.exprToEnode[arg];
+            if (argNode === undefined) throw new Error("an argument was not internalized");
+            return argNode;
+          });
     const isEq = !isSuppressingArgs && manager.getOp(expr) === OP_EQ;
     const node = new Enode(
       expr,
@@ -463,7 +465,7 @@ export abstract class Internalizer {
       isCgcEnabled,
       this.scopeLevel,
     );
-    for (const arg of args) arg.root.parents.push(node);
+    for (const arg of args) arg.root.addParent(node);
     if (manager.isUniqueValue(expr)) node.isInterpreted = true;
     this.exprToEnode[expr] = node;
     this.trailKinds.push(UNDO_MK_ENODE);

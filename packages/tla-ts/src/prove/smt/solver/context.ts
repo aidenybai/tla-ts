@@ -523,7 +523,7 @@ export class Context extends Internalizer {
         }
       }
       if (!parent.isCgcEnabled) {
-        r2.parents.push(parent);
+        r2.addParent(parent);
         continue;
       }
       const parentGeneration = parent.isEq
@@ -532,7 +532,7 @@ export class Context extends Internalizer {
       const congruent = this.cgTable.insert(parent);
       if (congruent === parent) {
         parent.generation = parentGeneration;
-        r2.parents.push(parent);
+        r2.addParent(parent);
         continue;
       }
       parent.cg = congruent;
