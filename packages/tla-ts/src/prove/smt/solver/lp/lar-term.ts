@@ -17,6 +17,10 @@ export class LarTerm {
     return this.coeffs.size;
   }
 
+  clear() {
+    this.coeffs.clear();
+  }
+
   addMonomial(coeff: Rational, column: number) {
     if (coeff.isZero()) return;
     const existing = this.coeffs.get(column);

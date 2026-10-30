@@ -1,15 +1,17 @@
 // Ported from Z3 (src/math/lp/int_solver.cpp, src/math/lp/int_gcd_test.cpp,
 // src/math/lp/int_branch.cpp), MIT license, see z3-license.txt. The integer check of the final
 // check: the GCD test on rows, patching fractional basic columns through integer non-basic ones,
-// the cube test, and a branch on a fractional basic column. The largest cube, HNF cuts, the
-// Diophantine solver and Gomory cuts are not ported: they return undef, after drawing the random
+// the cube test, Gomory cuts, and a branch on a fractional basic column. The largest cube, HNF
+// cuts and the Diophantine solver are not ported: they return undef, after drawing the random
 // numbers that decide whether they run, so the generator stays in step.
 import { getGcd, getLcm, Rational } from "../rational";
-import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_FREE } from "./core-solver";
+import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
 import { linearize, mkJoin } from "./dependency";
 import { Explanation } from "./explanation";
+import { getGomoryCuts } from "./gomory";
 import { findCube } from "./int-cube";
 import type { LarSolver } from "./lar-solver";
+import { LarTerm } from "./lar-term";
 import { Impq } from "./numeric-pair";
 import type { RowCell } from "./static-matrix";
 
@@ -17,7 +19,8 @@ export type LiaMove =
   | { kind: "sat" }
   | { kind: "undef" }
   | { kind: "conflict" }
-  | { kind: "branch"; column: number; isUpper: boolean; offset: Rational };
+  | { kind: "continue" }
+  | { kind: "branch"; isUpper: boolean; offset: Rational };
 
 const getFractionalPart = (value: Rational) => value.sub(value.floor());
 
@@ -62,17 +65,49 @@ export class IntSolver {
   private parityColumns: number[] = [];
   private lcubePeriod: number;
   readonly explanation = new Explanation();
+  // m_t: the term of a branch or a cut, kept across calls as Z3 keeps its table.
+  readonly term = new LarTerm();
 
   private initialDioCallsPeriod: number;
   private dioUndefInARow = 0;
 
-  constructor(private solver: LarSolver) {
+  constructor(readonly solver: LarSolver) {
     this.lcubePeriod = solver.settings.intFindCubePeriod;
     this.initialDioCallsPeriod = solver.settings.dioCallsPeriod;
   }
 
-  private isColumnIntInf(column: number) {
+  isColumnIntInf(column: number) {
     return this.solver.isInt(column) && !this.solver.getValue(column).isInt();
+  }
+
+  atBound(column: number) {
+    const core = this.solver.core;
+    const value = core.x[column];
+    switch (core.getColumnType(column)) {
+      case COLUMN_FIXED:
+      case COLUMN_BOXED:
+        return core.lowerBounds[column].equals(value) || core.upperBounds[column].equals(value);
+      case COLUMN_LOWER:
+        return core.lowerBounds[column].equals(value);
+      case COLUMN_UPPER:
+        return core.upperBounds[column].equals(value);
+      default:
+        return false;
+    }
+  }
+
+  atLower(column: number) {
+    const core = this.solver.core;
+    const type = core.getColumnType(column);
+    const hasLower = type === COLUMN_FIXED || type === COLUMN_BOXED || type === COLUMN_LOWER;
+    return hasLower && core.lowerBounds[column].equals(core.x[column]);
+  }
+
+  atUpper(column: number) {
+    const core = this.solver.core;
+    const type = core.getColumnType(column);
+    const hasUpper = type === COLUMN_FIXED || type === COLUMN_BOXED || type === COLUMN_UPPER;
+    return hasUpper && core.upperBounds[column].equals(core.x[column]);
   }
 
   private hitPeriod(period: number) {
@@ -82,6 +117,7 @@ export class IntSolver {
   check(): LiaMove {
     const solver = this.solver;
     if (!solver.hasInfInt()) return { kind: "sat" };
+    this.term.clear();
     this.explanation.clear();
     let move: LiaMove = { kind: "undef" };
     if (solver.settings.isRunningGcdTest) move = this.gcdTest();
@@ -94,20 +130,27 @@ export class IntSolver {
   }
 
   private checkAfterGcd(gcdMove: LiaMove): LiaMove {
-    const solver = this.solver;
-    const settings = solver.settings;
+    const settings = this.solver.settings;
     if (settings.isCanceled()) return { kind: "undef" };
     this.numberOfCalls++;
-    if (gcdMove.kind !== "undef") return gcdMove;
+    const move = gcdMove.kind === "undef" ? this.getMoveAfterGcd() : gcdMove;
+    return settings.isCanceled() ? { kind: "undef" } : move;
+  }
+
+  private getMoveAfterGcd(): LiaMove {
+    const solver = this.solver;
+    const settings = solver.settings;
     if (this.patchBasicColumns()) return { kind: "sat" };
     if (this.hitPeriod(settings.intFindCubePeriod) && findCube(solver)) return { kind: "sat" };
     if (this.hitPeriod(this.lcubePeriod) && this.lcubePeriod < 1 << 30) this.lcubePeriod *= 2;
     solver.moveNonBasicColumnsToBounds();
     this.hitPeriod(settings.hnfCutPeriod);
     if (this.shouldSolveDiophantineEquations()) this.solveDiophantineEquations();
-    if (settings.isDioEnablingGomoryCuts) this.hitPeriod(settings.intGomoryCutPeriod);
-    const move = this.branch();
-    return settings.isCanceled() ? { kind: "undef" } : move;
+    if (settings.isDioEnablingGomoryCuts && this.hitPeriod(settings.intGomoryCutPeriod)) {
+      const move = getGomoryCuts(this, 2);
+      if (move.kind !== "undef") return move;
+    }
+    return this.branch();
   }
 
   // should_solve_dioph_eq: a draw with the current period, which relaxes toward the initial one
@@ -378,11 +421,13 @@ export class IntSolver {
     if (column === -1) return { kind: "sat" };
     const settings = solver.settings;
     solver.settings.stats.branches++;
+    this.term.clear();
+    this.term.addMonomial(Rational.one, column);
     const isUpper = settings.getRandomNext() % 2 !== 0;
     const value = solver.getValue(column);
     const isFree = solver.core.getColumnType(column) === COLUMN_FREE;
     const offset = isFree ? Rational.zero : isUpper ? value.floor() : value.ceil();
-    return { kind: "branch", column, isUpper, offset };
+    return { kind: "branch", isUpper, offset };
   }
 
   private findInfIntBaseColumn() {

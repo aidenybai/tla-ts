@@ -751,6 +751,8 @@ export class TheoryLra {
     const solver = this.solver;
     const v1 = solver.getExternal(first);
     const v2 = solver.getExternal(second);
+    // Z3 assumes both columns have theory variables, but a cut column has none.
+    if (v1 === NULL_THEORY_VAR || v2 === NULL_THEORY_VAR) return;
     if (this.isEqual(v1, v2) || this.isIntVar(v1) !== this.isIntVar(v2)) return;
     const value = Rational.zero;
     const deps = [
@@ -981,7 +983,7 @@ export class TheoryLra {
   private isLiaSat() {
     if (this.context.checkCanceled()) return false;
     const move = this.lia.check();
-    if (move.kind === "branch") this.mkBound(move.column, move.offset, !move.isUpper);
+    if (move.kind === "branch") this.mkBound(this.lia.term, move.offset, !move.isUpper);
     else if (move.kind === "conflict") {
       this.explanation.clear();
       this.explanation.addExplanation(this.lia.explanation);
@@ -990,13 +992,11 @@ export class TheoryLra {
     return move.kind === "sat";
   }
 
-  // mk_bound: the atom of a bound on a column, over the theory variables of its term.
-  private mkBound(column: number, inputOffset: Rational, inputIsLower: boolean) {
+  // mk_bound: the atom of a bound on an lp term, over the theory variables of its columns.
+  private mkBound(lpTerm: LarTerm, inputOffset: Rational, inputIsLower: boolean) {
     const manager = this.manager;
     const context = this.context;
-    let coeffs = this.solver.hasTerm(column)
-      ? this.getTermCoeffs(this.solver.getTerm(column))
-      : [[this.solver.getExternal(column), Rational.one] as [number, Rational]];
+    let coeffs = this.getTermCoeffs(lpTerm);
     let offset = inputOffset;
     let isLower = inputIsLower;
     let lcm = offset.den;
