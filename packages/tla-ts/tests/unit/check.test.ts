@@ -853,6 +853,18 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("reports a variable read before the initial predicate assigns it like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLES x, y\nInit == y = x /\\ x = 0\nNext == UNCHANGED <<x, y>>\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+      "In evaluation, the identifier x is either undefined or not an operator.\nline 3, col 13 to line 3, col 13 of module M",
+      75,
+    ]);
+  });
+
   it("reports a CASE with no true guard in the next-state relation like TLC", async () => {
     const result = await check({
       source:
