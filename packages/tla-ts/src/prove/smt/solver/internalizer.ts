@@ -16,7 +16,7 @@ import {
   OP_OR,
   OP_XOR,
   SORT_BOOL,
-  SORT_INT,
+  isArithSort,
 } from "./ast";
 import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { CaseSplitQueue } from "./case-split-queue";
@@ -740,7 +740,7 @@ export abstract class Internalizer {
   }
 
   private isArithSort(eq: number) {
-    return this.manager.sorts[this.manager.args[eq][0]] === SORT_INT;
+    return isArithSort(this.manager.sorts[this.manager.args[eq][0]]);
   }
 
   private internalizeTheoryAtom(expr: number, isGateContext: boolean) {
@@ -854,6 +854,9 @@ export abstract class Internalizer {
     const existing = this.exprToEnode[expr];
     if (existing !== undefined) {
       this.updateGeneration(existing);
+      // The theory may have made a nested term, such as the 2 of (* 2 x), without a variable, which
+      // it needs once the term occurs elsewhere.
+      if (manager.getFamily(expr) === FAMILY_ARITH) this.theory.internalizeTerm(expr);
       return;
     }
     if (manager.getOp(expr) === OP_ITE) {

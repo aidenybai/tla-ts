@@ -8,14 +8,16 @@ import {
   KIND_QUANTIFIER,
   KIND_VAR,
   OP_NUM,
+  SORT_INT,
   type AstManager,
   type SmtSymbol,
 } from "./ast";
+import { Rational } from "./rational";
 
 // The parts of a func_decl that lt compares: its name, parameters, domain and range.
 interface DeclKey {
   name: SmtSymbol;
-  parameters: (number | bigint)[];
+  parameters: (number | Rational)[];
   domain: number[];
   range: number;
 }
@@ -24,8 +26,15 @@ interface DeclKey {
 const PARAM_INT = 0;
 const PARAM_RATIONAL = 3;
 
-const compareValues = (first: number | bigint, second: number | bigint) =>
+const compareValues = (first: number, second: number) =>
   first === second ? 0 : first < second ? -1 : 1;
+
+const compareParameters = (first: number | Rational, second: number | Rational) =>
+  first instanceof Rational && second instanceof Rational
+    ? first.compare(second)
+    : typeof first === "number" && typeof second === "number"
+      ? compareValues(first, second)
+      : 0;
 
 // lt on symbols: numerical symbols come first, by number, and other names compare by their bytes.
 const compareNames = (first: SmtSymbol, second: SmtSymbol) => {
@@ -43,13 +52,15 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
   if (decl.family === FAMILY_USER)
     return { name: decl.name, parameters: [], domain: decl.domain, range };
   // A numeral's declaration has the parameters (value, is_int), and a model value's (index, sort).
-  if (decl.op === OP_NUM)
+  if (decl.op === OP_NUM) {
+    const isInt = range === SORT_INT;
     return {
-      name: "Int",
-      parameters: [PARAM_RATIONAL, manager.getNumeralValue(expr), PARAM_INT, 1],
+      name: isInt ? "Int" : "Real",
+      parameters: [PARAM_RATIONAL, manager.getRationalValue(expr), PARAM_INT, isInt ? 1 : 0],
       domain: [],
       range,
     };
+  }
   if (decl.family === FAMILY_MODEL_VALUE)
     return { name: decl.name, parameters: [PARAM_INT, manager.values[expr]], domain: [], range };
   const builtin = manager.getBuiltinSignature(decl.op, args);
@@ -69,7 +80,7 @@ const compareDecls = (manager: AstManager, first: number, second: number) => {
   const byParameterCount = compareValues(firstKey.parameters.length, secondKey.parameters.length);
   if (byParameterCount !== 0) return byParameterCount;
   for (let index = 0; index < firstKey.parameters.length; index++) {
-    const byParameter = compareValues(firstKey.parameters[index], secondKey.parameters[index]);
+    const byParameter = compareParameters(firstKey.parameters[index], secondKey.parameters[index]);
     if (byParameter !== 0) return byParameter;
   }
   for (let index = 0; index < firstKey.domain.length; index++) {

@@ -709,7 +709,8 @@ class Fm {
     const op = manager.getOp(atom);
     if ((op !== OP_LE && op !== OP_GE) || manager.args[atom].length !== 2) return false;
     const [lhs, rhs] = manager.args[atom];
-    return manager.isNumeral(rhs) && this.isLinearPol(lhs);
+    // Z3's fm also eliminates Real variables, whose rational coefficients the port does not keep.
+    return manager.isInt(lhs) && manager.isNumeral(rhs) && this.isLinearPol(lhs);
   }
 
   // is_occ: a clause of literals with one linear inequality.

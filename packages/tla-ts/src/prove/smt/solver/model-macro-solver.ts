@@ -18,11 +18,11 @@ import {
   OP_OR,
   OP_SUB,
   SORT_BOOL,
-  SORT_INT,
   type AstManager,
 } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { FuncInterp, type ProtoModel } from "./proto-model";
+import { Rational } from "./rational";
 import { Rewriter } from "./rewriter";
 import { replaceFreeVars } from "./var-subst";
 
@@ -178,13 +178,13 @@ const collectCandidates = (manager: AstManager, quantifier: number) => {
         ? args[0]
         : rewriter.mkAppCore(OP_AND, args, SORT_BOOL);
   const mkSub = (first: number, second: number) =>
-    rewriter.mkAppCore(OP_SUB, [first, second], SORT_INT);
-  const mkAdd = (args: number[]) =>
+    rewriter.mkAppCore(OP_SUB, [first, second], manager.sorts[first]);
+  const mkAdd = (args: number[], sort: number) =>
     args.length === 0
-      ? manager.mkNumeral(0n)
+      ? manager.mkNumeralOfSort(Rational.zero, sort)
       : args.length === 1
         ? args[0]
-        : manager.mkApp(OP_ADD, args, SORT_INT);
+        : manager.mkApp(OP_ADD, args, sort);
   const isClause =
     isLiteral(manager, body) ||
     (manager.getOp(body) === OP_OR && manager.args[body].every((arg) => isLiteral(manager, arg)));
@@ -329,7 +329,10 @@ const collectCandidates = (manager: AstManager, quantifier: number) => {
       const isHint = !isArithMacro && isPolyHint(manager, lhs, head, monomial);
       if (!isArithMacro && !isHint) return false;
       scope(() => {
-        const rest = mkAdd(lhsArgs.filter((arg) => arg !== monomial));
+        const rest = mkAdd(
+          lhsArgs.filter((arg) => arg !== monomial),
+          manager.sorts[lhs],
+        );
         const def = isNegated ? mkSub(rest, rhs) : mkSub(rhs, rest);
         // A hint's right-hand side may contain variables that are not arguments of the head.
         if (isHint && !isPolyHint(manager, def, head, null)) return;

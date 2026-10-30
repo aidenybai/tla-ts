@@ -3,6 +3,7 @@
 import { SmtParseError, SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
+  FAMILY_ARITH,
   FAMILY_BASIC,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -10,11 +11,13 @@ import {
   OP_ADD,
   OP_AND,
   OP_DISTINCT,
+  OP_DIV,
   OP_EQ,
   OP_GE,
   OP_GT,
   OP_IDIV,
   OP_IMPLIES,
+  OP_IS_INT,
   OP_ITE,
   OP_LE,
   OP_LT,
@@ -23,6 +26,8 @@ import {
   OP_NOT,
   OP_OR,
   OP_SUB,
+  OP_TO_INT,
+  OP_TO_REAL,
   OP_TRUE,
   OP_FALSE,
   OP_UMINUS,
@@ -30,7 +35,10 @@ import {
   OP_XOR,
   SORT_BOOL,
   SORT_INT,
+  SORT_REAL,
+  isArithSort,
 } from "./ast";
+import { Rational } from "./rational";
 import { shiftVars } from "./var-subst";
 
 type SExpr = string | SExpr[];
@@ -56,11 +64,21 @@ const BUILTIN_OPS = new Map<string, number>([
   ["xor", OP_XOR],
   ["ite", OP_ITE],
   ["distinct", OP_DISTINCT],
+  ["+", OP_ADD],
   ["*", OP_MUL],
+  ["/", OP_DIV],
   ["div", OP_IDIV],
   ["mod", OP_MOD],
   ["abs", OP_ABS],
+  ["to_real", OP_TO_REAL],
+  ["to_int", OP_TO_INT],
+  ["is_int", OP_IS_INT],
 ]);
+
+// arith_decl_plugin's use_coercion: the operators that are Real when any argument is Real.
+const COERCING_OPS = new Set([OP_ADD, OP_SUB, OP_UMINUS, OP_MUL, OP_LE, OP_GE, OP_LT, OP_GT]);
+
+const DECIMAL = /^([0-9]+)\.([0-9]+)$/;
 
 const CHAINABLE_OPS = new Map<string, number>([
   ["=", OP_EQ],
@@ -139,6 +157,7 @@ export const parseSmtlib = (
   const sorts = new Map<string, number>([
     ["Bool", SORT_BOOL],
     ["Int", SORT_INT],
+    ["Real", SORT_REAL],
   ]);
   const funcs = new Map<string, number>();
   const assertions: number[] = [];
@@ -159,47 +178,108 @@ export const parseSmtlib = (
     return undefined;
   };
 
-  // Checks the sorts and the arity of an application, so the solver only sees well-sorted terms,
-  // and that quantifiers occur only under Boolean connectives.
-  const mkApp = (decl: number, args: number[], sort: number) => {
+  // basic_decl_plugin::join: Int and Real join to Real. Other sorts join only with themselves.
+  const getJoin = (args: number[]) => {
+    const argSorts = args.map((arg) => manager.sorts[arg]);
+    if (!argSorts.every(isArithSort)) return argSorts[0];
+    return argSorts.includes(SORT_REAL) ? SORT_REAL : SORT_INT;
+  };
+
+  // The sort of the arguments of a builtin, as Z3's decl plugins pick its declaration.
+  const getDomainSort = (op: number, args: number[]) => {
+    if (op === OP_ITE) return getJoin(args.slice(1));
+    if (op === OP_EQ || op === OP_DISTINCT) return getJoin(args);
+    if (COERCING_OPS.has(op)) return getJoin(args) === SORT_REAL ? SORT_REAL : SORT_INT;
+    if (op === OP_ABS || op === OP_TO_REAL || op === OP_TO_INT) return manager.sorts[args[0]];
+    if (op === OP_IDIV || op === OP_MOD) return SORT_INT;
+    if (op === OP_DIV || op === OP_IS_INT) return SORT_REAL;
+    return SORT_BOOL;
+  };
+
+  const getRange = (op: number, domainSort: number) =>
+    op === OP_TO_REAL || op === OP_DIV
+      ? SORT_REAL
+      : op === OP_TO_INT || op === OP_IDIV || op === OP_MOD
+        ? SORT_INT
+        : op === OP_ITE ||
+            op === OP_ABS ||
+            op === OP_ADD ||
+            op === OP_SUB ||
+            op === OP_UMINUS ||
+            op === OP_MUL
+          ? domainSort
+          : SORT_BOOL;
+
+  // ast_manager::coerce_to: an Int argument of a Real position becomes to_real, and a Real argument
+  // of an Int position to_int.
+  const coerce = (arg: number, sort: number) => {
+    const argSort = manager.sorts[arg];
+    if (argSort === sort || !isArithSort(argSort) || !isArithSort(sort)) return arg;
+    return sort === SORT_REAL
+      ? manager.mkApp(OP_TO_REAL, [arg], SORT_REAL)
+      : manager.mkApp(OP_TO_INT, [arg], SORT_INT);
+  };
+
+  // Coerces the arguments of an application to the sorts of its declaration, as Z3 does with its
+  // default int_real_coercions, then checks their sorts and number, so the solver only sees
+  // well-sorted terms, and that quantifiers occur only under Boolean connectives.
+  const mkApp = (decl: number, inputArgs: number[], domainSort?: number) => {
     const op = manager.funcDecls[decl].op;
     const name = manager.funcDecls[decl].name;
-    const argSorts = args.map((arg) => manager.sorts[arg]);
-    const isAll = (expected: number) => argSorts.every((argSort) => argSort === expected);
+    const isUninterpreted = op === OP_UNINTERPRETED;
+    const domain = manager.funcDecls[decl].domain;
+    const builtinSort = isUninterpreted ? -1 : (domainSort ?? getDomainSort(op, inputArgs));
+    const getExpected = (index: number) =>
+      isUninterpreted ? domain[index] : op === OP_ITE && index === 0 ? SORT_BOOL : builtinSort;
+    const args = inputArgs.map((arg, index) =>
+      getExpected(index) === undefined ? arg : coerce(arg, getExpected(index)),
+    );
     const isArity = (min: number, max: number) => args.length >= min && args.length <= max;
+    const isArityOk = isUninterpreted
+      ? args.length === domain.length
+      : op === OP_AND || op === OP_OR
+        ? true
+        : op === OP_ITE
+          ? isArity(3, 3)
+          : op === OP_EQ || op === OP_DISTINCT
+            ? isArity(2, Infinity)
+            : op === OP_NOT ||
+                op === OP_UMINUS ||
+                op === OP_ABS ||
+                op === OP_TO_REAL ||
+                op === OP_TO_INT ||
+                op === OP_IS_INT
+              ? isArity(1, 1)
+              : op === OP_IMPLIES ||
+                  op === OP_XOR ||
+                  op === OP_IDIV ||
+                  op === OP_MOD ||
+                  op === OP_DIV ||
+                  op === OP_LE ||
+                  op === OP_GE ||
+                  op === OP_LT ||
+                  op === OP_GT
+                ? isArity(2, 2)
+                : isArity(1, Infinity);
+    const isBuiltinArith = manager.funcDecls[decl].family === FAMILY_ARITH;
     const isWellSorted =
-      op === OP_UNINTERPRETED
-        ? argSorts.length === manager.funcDecls[decl].domain.length &&
-          argSorts.every((argSort, index) => argSort === manager.funcDecls[decl].domain[index])
-        : op === OP_AND || op === OP_OR
-          ? isAll(SORT_BOOL)
-          : op === OP_NOT
-            ? isArity(1, 1) && isAll(SORT_BOOL)
-            : op === OP_IMPLIES || op === OP_XOR
-              ? isArity(2, 2) && isAll(SORT_BOOL)
-              : op === OP_ITE
-                ? isArity(3, 3) && argSorts[0] === SORT_BOOL && argSorts[1] === argSorts[2]
-                : op === OP_EQ || op === OP_DISTINCT
-                  ? isArity(2, Infinity) && isAll(argSorts[0])
-                  : op === OP_UMINUS || op === OP_ABS
-                    ? isArity(1, 1) && isAll(SORT_INT)
-                    : op === OP_IDIV ||
-                        op === OP_MOD ||
-                        op === OP_LE ||
-                        op === OP_GE ||
-                        op === OP_LT ||
-                        op === OP_GT
-                      ? isArity(2, 2) && isAll(SORT_INT)
-                      : isArity(1, Infinity) && isAll(SORT_INT);
+      isArityOk &&
+      (!isBuiltinArith || isArithSort(builtinSort)) &&
+      args.every((arg, index) => manager.sorts[arg] === getExpected(index));
     if (!isWellSorted) throw new SmtParseError(`ill-sorted application of ${name}`);
-    return manager.mkApp(decl, args, sort);
+    return manager.mkApp(
+      decl,
+      args,
+      isUninterpreted ? manager.funcDecls[decl].range : getRange(op, builtinSort),
+    );
   };
 
   const mkChain = (op: number, args: number[]) => {
+    const domainSort = getDomainSort(op, args);
     const pairs: number[] = [];
     for (let index = 0; index + 1 < args.length; index++)
-      pairs.push(mkApp(op, [args[index], args[index + 1]], SORT_BOOL));
-    return pairs.length === 1 ? pairs[0] : mkApp(OP_AND, pairs, SORT_BOOL);
+      pairs.push(mkApp(op, [args[index], args[index + 1]], domainSort));
+    return pairs.length === 1 ? pairs[0] : mkApp(OP_AND, pairs);
   };
 
   const expectBool = (expr: number) => {
@@ -327,22 +407,17 @@ export const parseSmtlib = (
   const parseApp = (name: string, args: number[]) => {
     const chainable = CHAINABLE_OPS.get(name);
     if (chainable !== undefined) return mkChain(chainable, args);
-    if (name === "-")
-      return args.length === 1 ? mkApp(OP_UMINUS, args, SORT_INT) : mkApp(OP_SUB, args, SORT_INT);
-    if (name === "+") return mkApp(OP_ADD, args, SORT_INT);
+    if (name === "-") return mkApp(args.length === 1 ? OP_UMINUS : OP_SUB, args);
+    // ast_manager::mk_app: / is left associative, so more arguments nest to the left.
+    if (name === "/" && args.length > 2)
+      return args
+        .slice(1)
+        .reduce((dividend, divisor) => mkApp(OP_DIV, [dividend, divisor]), args[0]);
     const op = BUILTIN_OPS.get(name);
-    if (op !== undefined) {
-      const sort =
-        op === OP_ITE
-          ? manager.sorts[args[1]]
-          : op === OP_MUL || op === OP_IDIV || op === OP_MOD || op === OP_ABS
-            ? SORT_INT
-            : SORT_BOOL;
-      return mkApp(op, args, sort);
-    }
+    if (op !== undefined) return mkApp(op, args);
     const decl = funcs.get(name);
     if (decl === undefined) throw new SmtParseError(`unknown function ${name}`);
-    return mkApp(decl, args, manager.funcDecls[decl].range);
+    return mkApp(decl, args);
   };
 
   // A term without nested applications to parse first: a symbol, a quantifier, a let or an
@@ -350,6 +425,11 @@ export const parseSmtlib = (
   const parseLeaf = (sexpr: SExpr): number => {
     if (typeof sexpr === "string") {
       if (/^[0-9]+$/.test(sexpr)) return manager.mkNumeral(BigInt(sexpr));
+      const decimal = DECIMAL.exec(sexpr);
+      if (decimal !== null)
+        return manager.mkRealNumeral(
+          Rational.of(BigInt(decimal[1] + decimal[2]), 10n ** BigInt(decimal[2].length)),
+        );
       if (sexpr === "true") return manager.trueExpr;
       if (sexpr === "false") return manager.falseExpr;
       const binding = lookup(sexpr);

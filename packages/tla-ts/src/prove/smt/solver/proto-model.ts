@@ -2,7 +2,17 @@
 // src/model/value_factory.cpp, src/model/model_core.cpp), MIT license, see z3-license.txt. The
 // model that the SMT kernel builds from a satisfying assignment, and that model-based quantifier
 // instantiation completes and checks.
-import { AstManager, KIND_APP, KIND_VAR, OP_AND, OP_EQ, OP_ITE, SORT_BOOL, SORT_INT } from "./ast";
+import {
+  AstManager,
+  KIND_APP,
+  KIND_VAR,
+  OP_AND,
+  OP_EQ,
+  OP_ITE,
+  SORT_BOOL,
+  isArithSort,
+} from "./ast";
+import { Rational } from "./rational";
 import { ObjHashtable } from "./hashtable";
 import { ModelEvaluator } from "./model-evaluator";
 
@@ -222,11 +232,15 @@ export class ProtoModel {
     return created;
   }
 
+  // arith_factory's values are the integers, of either sort.
+  private mkIndexedValue(index: number, sort: number) {
+    return isArithSort(sort)
+      ? this.manager.mkNumeralOfSort(Rational.of(BigInt(index)), sort)
+      : this.manager.mkModelValue(index, sort);
+  }
+
   private mkValue(index: number, sort: number) {
-    const value =
-      sort === SORT_INT
-        ? this.manager.mkNumeral(BigInt(index))
-        : this.manager.mkModelValue(index, sort);
+    const value = this.mkIndexedValue(index, sort);
     this.getValueSet(sort).add(value);
     return value;
   }
@@ -261,10 +275,7 @@ export class ProtoModel {
     const set = this.getValueSet(sort);
     let next = this.nextValue.get(sort) ?? 0;
     for (;;) {
-      const value =
-        sort === SORT_INT
-          ? this.manager.mkNumeral(BigInt(next))
-          : this.manager.mkModelValue(next, sort);
+      const value = this.mkIndexedValue(next, sort);
       next++;
       if (!set.has(value)) {
         set.add(value);

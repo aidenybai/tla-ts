@@ -2,7 +2,16 @@
 // sets and the AUF solver of the model finder: the solver groups the argument positions and
 // variables that must share an instantiation set, and each group gets a projection function that
 // maps any value to the value of a term in its set.
-import { OP_ADD, OP_ITE, OP_LT, OP_SUB, SORT_BOOL, SORT_INT, type AstManager } from "./ast";
+import {
+  OP_ADD,
+  OP_ITE,
+  OP_LT,
+  OP_SUB,
+  SORT_BOOL,
+  SORT_INT,
+  isArithSort,
+  type AstManager,
+} from "./ast";
 import { combineHash } from "./hash";
 import { ObjHashtable, ObjMap } from "./hashtable";
 import { FuncInterp, RandomGen, type ProtoModel } from "./proto-model";
@@ -304,7 +313,7 @@ export class AufSolver {
 
   // Uninterpreted sorts are not assumed infinite in benchmarks with quantifiers.
   private isInfinite(sort: number) {
-    return sort === SORT_INT;
+    return isArithSort(sort);
   }
 
   private getKFor(sort: number) {
@@ -396,12 +405,10 @@ export class AufSolver {
     this.addMonoExceptions(node);
     const values = this.getInstantiationSetValues(node);
     if (values.length === 0) return;
-    if (node.sort !== SORT_INT || !values.every((value) => manager.isNumeral(value))) return;
-    values.sort((first, second) => {
-      const firstValue = manager.getNumeralValue(first);
-      const secondValue = manager.getNumeralValue(second);
-      return firstValue < secondValue ? -1 : firstValue > secondValue ? 1 : 0;
-    });
+    if (!isArithSort(node.sort) || !values.every((value) => manager.isNumeral(value))) return;
+    values.sort((first, second) =>
+      manager.getRationalValue(first).compare(manager.getRationalValue(second)),
+    );
     const variable = manager.mkVar(0, node.sort);
     let projection = values[values.length - 1];
     for (let index = values.length - 1; index >= 1; index--)
