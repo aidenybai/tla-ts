@@ -1068,6 +1068,32 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("reports an argument outside the domain of a tuple, record, or function like TLC", async () => {
+    const cases = [
+      ["<<1, 2>>[3]", "Attempted to access index 3 of tuple\n<<1, 2>>\nwhich is out of bounds."],
+      ['<<1, 2>>["a"]', 'Attempted to access tuple at a non integral index: "a"'],
+      ["[a |-> 1][2]", "Attempted to access record by a non-string argument: 2"],
+      ['[a |-> 1]["b"]', "Attempted to access nonexistent field 'b' of record\n[a |-> 1]"],
+      [
+        "(1 :> 2)[3]",
+        "Attempted to apply function:\n<<2>>\nto argument 3, which is not in the domain of the function.",
+      ],
+      ["<<>>.b", 'Attempted to apply function with integer domain to the non-integer argument "b"'],
+      [
+        "[n \\in 0..2 |-> n].b",
+        'Attempted to apply function with integer domain to the non-integer argument "b"',
+      ],
+      [
+        "[n \\in {} |-> n].b",
+        'Attempted to apply function:\n<<>>\nto argument "b", which is not in the domain of the function.',
+      ],
+    ];
+    const messages = await Promise.all(
+      cases.map(async (item) => (await checkModule(`ASSUME ${item[0]} = 0`)).violation?.message),
+    );
+    expect(messages).toEqual(cases.map((item) => item[1]));
+  });
+
   it("reports an overflowing cardinality without enumerating the set", async () => {
     const result = await checkModule("ASSUME Cardinality(SUBSET (1..31)) > 0");
     expect(result.violation?.message).toBe(

@@ -1752,10 +1752,61 @@ export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunc
   return functionValue;
 };
 
-const describeMissingArgument = (functionValue: Value, argument: Value) =>
-  typeof functionValue === "object" && lambdaFunctions.has(functionValue)
-    ? `In applying the function\n${prettyPrint(formatValue(functionValue))},\nthe first argument is:\n${prettyPrint(formatValue(argument))}\nwhich is not in its domain.\n`
-    : `Attempted to apply function ${formatValue(functionValue)} to ${formatValue(argument)}, which is not in its domain`;
+// TLC applies a tuple, a record and a function over an interval with their own classes, and each
+// reports a missing argument in its own words.
+const getFunctionClass = (functionValue: FunctionValue) => {
+  const domain = functionValue.domain;
+  if (domain.length === 0) return lambdaFunctions.has(functionValue) ? "FcnRcdValue" : "TupleValue";
+  if (domain === intervalDomains[domain.length]) return "TupleValue";
+  if (intervalArrays.has(domain)) return "IntervalFcnRcdValue";
+  return domain.every((key) => typeof key === "string") ? "RecordValue" : "FcnRcdValue";
+};
+
+const describeNotInDomain = (functionValue: FunctionValue, argument: Value) =>
+  `Attempted to apply function:\n${prettyPrint(formatValue(functionValue))}\nto argument ${prettyPrint(formatValue(argument))}, which is not in the domain of the function.`;
+
+const describeNonIntegerArgument = (argument: Value) =>
+  `Attempted to apply function with integer domain to the non-integer argument ${prettyPrint(formatValue(argument))}`;
+
+const describeMissingArgument = (
+  functionValue: FunctionValue | LazyFunctionValue,
+  argument: Value,
+) => {
+  if (lambdaFunctions.has(functionValue) || functionValue.kind === "LazyFunction")
+    return `In applying the function\n${prettyPrint(formatValue(functionValue))},\nthe first argument is:\n${prettyPrint(formatValue(argument))}\nwhich is not in its domain.\n`;
+  const functionClass = getFunctionClass(functionValue);
+  if (functionClass === "TupleValue")
+    return typeof argument === "number"
+      ? `Attempted to access index ${argument} of tuple\n${prettyPrint(formatValue(functionValue))}\nwhich is out of bounds.`
+      : `Attempted to access tuple at a non integral index: ${prettyPrint(formatValue(argument))}`;
+  if (functionClass === "RecordValue")
+    return typeof argument === "string"
+      ? `Attempted to access nonexistent field '${argument}' of record\n${prettyPrint(formatValue(functionValue))}`
+      : `Attempted to access record by a non-string argument: ${prettyPrint(formatValue(argument))}`;
+  return functionClass === "IntervalFcnRcdValue" && typeof argument !== "number"
+    ? describeNonIntegerArgument(argument)
+    : describeNotInDomain(functionValue, argument);
+};
+
+// TLC selects a field of a value that isn't a record from the function the value converts to,
+// which keeps a tuple's domain as an interval.
+export const describeMissingField = (functionValue: FunctionValue, field: string) =>
+  getFunctionClass(functionValue) === "FcnRcdValue"
+    ? describeNotInDomain(functionValue, field)
+    : describeNonIntegerArgument(field);
+
+export const isRecordValue = (functionValue: FunctionValue) =>
+  getFunctionClass(functionValue) === "RecordValue";
+
+// TLC checks the type of an argument to a tuple or a record before it looks the argument up, so
+// it never compares the argument with a key of another type.
+const isForeignKey = (domain: Value[], argument: Value) => {
+  const first = domain[0];
+  return typeof first === "number"
+    ? typeof argument !== "number" &&
+        (domain === intervalDomains[domain.length] || intervalArrays.has(domain))
+    : typeof first === "string" && typeof argument !== "string";
+};
 
 const findKeyIndex = (domain: Value[], argument: Value) => {
   const first = domain[0];
@@ -1792,7 +1843,9 @@ export const applyFunction = (
         `Attempted to apply ${formatValue(functionValue)}, which is not a function`,
     );
   }
-  const position = findKeyIndex(functionValue.domain, argument);
+  const position = isForeignKey(functionValue.domain, argument)
+    ? -1
+    : findKeyIndex(functionValue.domain, argument);
   if (position === -1) {
     throw new TlaEvaluationError(
       describeMissing?.(functionValue) ?? describeMissingArgument(functionValue, argument),

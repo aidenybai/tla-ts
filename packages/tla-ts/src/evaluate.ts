@@ -30,6 +30,7 @@ import {
   createSortedSet,
   createWrittenRecord,
   createTuple,
+  describeMissingField,
   formatValue,
   getDomain,
   getFunctionDomain,
@@ -38,6 +39,7 @@ import {
   getValueHash,
   isFunctionValue,
   isOverriddenSet,
+  isRecordValue,
   isSameValue,
   markLambdaFunction,
   isReducible,
@@ -47,6 +49,7 @@ import {
   toFiniteSet,
   updateFunction,
   valuesEqual,
+  type FunctionValue,
   type LazyFunctionSource,
   type LazyFunctionValue,
   type Value,
@@ -182,8 +185,10 @@ export const getConjunctError = (
 };
 
 export const getFieldError =
-  (expression: Expression & { kind: "FieldAccess" }) => (record: Value) =>
-    `Attempted to select nonexistent field "${expression.field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`;
+  (expression: Expression & { kind: "FieldAccess" }) => (record: FunctionValue) =>
+    isRecordValue(record)
+      ? `Attempted to select nonexistent field "${expression.field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`
+      : describeMissingField(record, expression.field);
 
 export const getNonFunctionError = (expression: Expression) => (value: Value) =>
   `A non-function (${getKindString(value)}) was applied as a function.\n${describeRange(expression)}`;
