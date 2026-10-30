@@ -2,7 +2,7 @@
 // model from the current assignment: every relevant equivalence class gets a value, Booleans from
 // the assignment, integers from the arithmetic theory and other sorts from fresh model values, and
 // each congruence root of an uninterpreted function becomes an entry of its interpretation.
-import { FAMILY_USER, SORT_BOOL, SORT_INT } from "./ast";
+import { FAMILY_USER, SORT_BOOL, isArithSort } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import { FuncInterp, ProtoModel } from "./proto-model";
@@ -29,8 +29,8 @@ export const mkModel = (context: Context): GeneratedModel => {
         context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr,
       );
   }
-  // mk_values: the values of the integer classes that the theory does not know are fresh, so they
-  // come after all the other values.
+  // mk_values: the values of the arithmetic classes that the theory does not know are fresh, so
+  // they come after all the other values.
   const root2value = new Map<Enode, number>();
   const freshRoots: Enode[] = [];
   for (const node of context.enodes) {
@@ -41,15 +41,17 @@ export const mkModel = (context: Context): GeneratedModel => {
     if (manager.isUniqueValue(expr)) root2value.set(node, expr);
     else if (sort === SORT_BOOL)
       root2value.set(node, context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr);
-    else if (sort === SORT_INT) {
+    else if (isArithSort(sort)) {
       const value = context.theory?.mkValue(node);
       if (value === undefined) freshRoots.push(node);
       else root2value.set(node, value);
     } else root2value.set(node, model.getFreshValue(sort) ?? model.getSomeValue(sort));
   }
   for (const value of root2value.values()) model.registerValue(value);
-  for (const node of freshRoots)
-    root2value.set(node, model.getFreshValue(SORT_INT) ?? model.getSomeValue(SORT_INT));
+  for (const node of freshRoots) {
+    const sort = manager.sorts[node.owner];
+    root2value.set(node, model.getFreshValue(sort) ?? model.getSomeValue(sort));
+  }
   const getValue = (node: Enode) =>
     root2value.get(node.root) ?? model.getSomeValue(manager.sorts[node.owner]);
   for (const node of context.enodes)

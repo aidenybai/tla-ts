@@ -16,7 +16,7 @@ import {
   OP_OR,
   OP_XOR,
   SORT_BOOL,
-  SORT_INT,
+  isArithSort,
 } from "./ast";
 import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { CaseSplitQueue } from "./case-split-queue";
@@ -717,7 +717,7 @@ export abstract class Internalizer {
   }
 
   private isArithSort(eq: number) {
-    return this.manager.sorts[this.manager.args[eq][0]] === SORT_INT;
+    return isArithSort(this.manager.sorts[this.manager.args[eq][0]]);
   }
 
   private internalizeTheoryAtom(expr: number, isGateContext: boolean) {
