@@ -11,6 +11,8 @@ import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
 import {
   getErrorExitCode,
+  isStackOverflow,
+  STACK_OVERFLOW,
   TlaConfigError,
   TlaEvaluationError,
   TlaIncompleteStateError,
@@ -248,7 +250,7 @@ const getConstantValue = (name: string, definition: Definition, environment: Env
   try {
     return evaluate(createIdentifier(name), getContext(environment, undefined, undefined));
   } catch (error) {
-    if (error instanceof TlaEvaluationError) return undefined;
+    if (error instanceof TlaEvaluationError || isStackOverflow(error)) return undefined;
     throw error;
   }
 };
@@ -929,9 +931,16 @@ const withHeadline = (error: unknown, headline: string) =>
 // TLC finishes the -dump file whether or not the search finds a violation.
 export const checkSequentially = (options: CheckOptions): CheckResult => {
   const stateWriter = options.dump && createStateWriter(options.dump, options.writeFile);
-  const result = searchStates(options, stateWriter);
-  stateWriter?.close();
-  return result;
+  try {
+    return searchStates(options, stateWriter);
+  } catch (error) {
+    // TLC reports a stack overflow outside the search as a failure of its own, with exit code 255.
+    throw isStackOverflow(error)
+      ? setExitCode(new TlaEvaluationError(STACK_OVERFLOW), EXIT_STATUS.error)
+      : error;
+  } finally {
+    stateWriter?.close();
+  }
 };
 
 const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefined): CheckResult => {
@@ -1194,7 +1203,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     trace: TraceStep[],
     initialState?: Value[],
     failureOutDegrees?: number[],
-  ) => {
+  ): CheckResult => {
+    // TLC exits with 255 on a stack overflow while it computes next states, and prints the
+    // behavior up to the state it was expanding.
+    if (isStackOverflow(error)) {
+      return current.isExpanding
+        ? toFailure(
+            setExitCode(new TlaEvaluationError(STACK_OVERFLOW), EXIT_STATUS.error),
+            getStateTrace(current.index),
+          )
+        : toFailure(new TlaEvaluationError(STACK_OVERFLOW), trace, initialState);
+    }
     if (!(error instanceof TlaEvaluationError)) throw error;
     return {
       ...createResult("error", undefined, {

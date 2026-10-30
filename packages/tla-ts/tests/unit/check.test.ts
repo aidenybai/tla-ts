@@ -11,7 +11,7 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
-import { UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { STACK_OVERFLOW, UNEXPECTED_EXCEPTION } from "../../src/errors";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -901,6 +901,16 @@ describe("evaluation errors match TLC", () => {
       "The current version of TLC does not support action composition.  An incomplete implementation can be enabled via the tlc2.tool.impl.Tool.cdot=true java property.",
       75,
     ]);
+  });
+
+  it("reports a stack overflow in the next-state relation like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nRECURSIVE R(_)\nR(n) == R(n + 1)\nInit == x = 0\nNext == x' = R(0)\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.message).toBe(STACK_OVERFLOW);
+    expect(result.failure?.trace.map((step) => step.state.x)).toEqual([0]);
   });
 
   it("reports a CASE with no true guard like TLC", async () => {

@@ -1,5 +1,5 @@
 import { isLocallyResolved, type Definition, type Expression } from "./ast";
-import { TlaConfigError, TlaEvaluationError } from "./errors";
+import { STACK_OVERFLOW, TlaEvaluationError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
@@ -191,7 +191,7 @@ export const expandTemporal = (
       getDefinitionLevel(definition, environment) > 0
     ) {
       if (expanding.has(definition)) {
-        throw new TlaConfigError(`The definition of ${expression.name} refers to itself`);
+        throw setExitCode(new TlaEvaluationError(STACK_OVERFLOW), EXIT_STATUS.error);
       }
       return expand(
         definition.body,
@@ -299,9 +299,7 @@ export const toLiveExpression = (
     scope: Scope | undefined,
   ) => {
     if (expansion.depth >= MAXIMUM_EXPANSION_DEPTH) {
-      throw new TlaEvaluationError(
-        `TLC overflowed the stack while expanding the temporal formula at ${describeLocation(expression)}`,
-      );
+      throw setExitCode(new TlaEvaluationError(STACK_OVERFLOW), EXIT_STATUS.error);
     }
     expansion.depth++;
     const result = convert(body, bodyScope);
