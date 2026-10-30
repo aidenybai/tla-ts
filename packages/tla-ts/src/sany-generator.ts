@@ -375,10 +375,14 @@ export const generateSanySpecification = (
     path.pop();
     if (!order.includes(name)) order.push(name);
   };
-  // SpecObj.loadSpec: SANY loads the first module it finds unloaded searching from the root, each
-  // module's extended modules before the modules they import, and the instantiated modules only
-  // once it has loaded every extended module.
-  const findUnloaded = (
+  // SpecObj.loadSpec: SANY resolves the first name it finds unresolved searching from the root,
+  // each module's extended modules before the modules they import, and the instantiated modules
+  // only once it has resolved every extended module. SANY resolves a name in the context of the
+  // module that names it, so a module another module loaded is unresolved until SANY reaches it
+  // from this one.
+  const resolutions = new Set<string>();
+  const isResolved = (importer: string, name: string) => resolutions.has(`${importer} ${name}`);
+  const findUnresolved = (
     name: string,
     kind: "extendees" | "instancees",
     visited: Set<string>,
@@ -387,10 +391,12 @@ export const generateSanySpecification = (
     if (!entry || visited.has(name)) return undefined;
     visited.add(name);
     const dependencies = getDependencies(entry.module);
-    const unloaded = dependencies[kind].find((dependency) => !sources.has(dependency));
-    if (unloaded !== undefined) return { name: unloaded, importer: name };
+    const unresolved = dependencies[kind].find((dependency) => !isResolved(name, dependency));
+    if (unresolved !== undefined) return { name: unresolved, importer: name };
     for (const dependency of [...dependencies.extendees, ...dependencies.instancees]) {
-      const found = findUnloaded(dependency, kind, visited);
+      const found = isResolved(name, dependency)
+        ? findUnresolved(dependency, kind, visited)
+        : undefined;
       if (found) return found;
     }
     return undefined;
@@ -398,10 +404,11 @@ export const generateSanySpecification = (
   const loadSpecification = (rootName: string) => {
     getSource(rootName, rootSource);
     const findNext = () =>
-      findUnloaded(rootName, "extendees", new Set()) ??
-      findUnloaded(rootName, "instancees", new Set());
+      findUnresolved(rootName, "extendees", new Set()) ??
+      findUnresolved(rootName, "instancees", new Set());
     for (let next = findNext(); next !== undefined; next = findNext()) {
-      getSource(next.name, loadModule(next.name), next.importer);
+      if (!sources.has(next.name)) getSource(next.name, loadModule(next.name), next.importer);
+      resolutions.add(`${next.importer} ${next.name}`);
     }
   };
   const rootName = options.rootFileName ?? parseSource("", rootSource).name;

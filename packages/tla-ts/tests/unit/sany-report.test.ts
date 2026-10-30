@@ -2,22 +2,24 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
-import { getSanyReport } from "../../src/sany-report";
+import { getSanyReport, type SanyReportOptions } from "../../src/sany-report";
 
 const directories: string[] = [];
 
 afterAll(() => directories.forEach((directory) => rmSync(directory, { recursive: true })));
 
 // Writes each module to its own file, then reports on the first one.
-const getReport = (modules: Record<string, string>) => {
+const getReport = (modules: Record<string, string>, options?: SanyReportOptions) => {
   const directory = mkdtempSync(join(tmpdir(), "sany-report-"));
   directories.push(directory);
   Object.entries(modules).forEach(([name, source]) =>
     writeFileSync(join(directory, `${name}.tla`), source),
   );
   const [root] = Object.keys(modules);
-  const { text, isFailed } = getSanyReport(join(directory, `${root}.tla`), (name) =>
-    name in modules ? readFileSync(join(directory, `${name}.tla`), "utf8") : undefined,
+  const { text, isFailed } = getSanyReport(
+    join(directory, `${root}.tla`),
+    (name) => (name in modules ? readFileSync(join(directory, `${name}.tla`), "utf8") : undefined),
+    options,
   );
   return { text, isFailed };
 };
@@ -38,6 +40,31 @@ Spec == Init /\\ [][Next]_x
 `,
     });
     expect(report).toEqual({ text: "", isFailed: false });
+  });
+
+  it("parses a module once the module that names it reaches it, though another loaded it", () => {
+    const report = getReport(
+      {
+        Root: "---- MODULE Root ----\nEXTENDS A, B\nI == INSTANCE C\n====\n",
+        A: "---- MODULE A ----\nLOCAL INSTANCE D\n====\n",
+        B: "---- MODULE B ----\nLOCAL INSTANCE A\nLOCAL INSTANCE E\n====\n",
+        C: "---- MODULE C ----\nEXTENDS F, E, G\n====\n",
+        E: "---- MODULE E ----\nEXTENDS D\n====\n",
+        D: "---- MODULE D ----\n====\n",
+        F: "---- MODULE F ----\n====\n",
+        G: "---- MODULE G ----\n====\n",
+      },
+      { describeFile: (name) => `${name}.tla` },
+    );
+    const order = ["D", "A", "E", "B", "F", "G", "C", "Root"];
+    expect(report).toEqual({
+      text: toText([
+        ...["Root", "A", "B", "C", "F", "E", "G", "D"].map((name) => `Parsing file ${name}.tla`),
+        ...order.map((name) => `Semantic processing of module ${name}`),
+        ...order.map((name) => `Linting of module ${name}`),
+      ]),
+      isFailed: false,
+    });
   });
 
   it("reports an unresolved infix operator twice", () => {
