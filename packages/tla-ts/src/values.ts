@@ -1274,7 +1274,14 @@ const enumerateSet = (value: Value): Value[] => {
       return elements;
     }
     case "Subset": {
-      if (isOverriddenSet(value.base)) getCardinality(value.base);
+      // SubsetValue.toSetEnum sizes the set before it enumerates it, and enumerates only the empty
+      // set of a value of size 0, a function with an empty domain among them.
+      if (getCardinality(value.base) === 0) return getSortedSubsets([]);
+      if (!isSetValue(value.base)) {
+        throw new TlaEvaluationError(
+          `Attempted to compute the value of an expression of form\nSUBSET S, but S is a non-enumerable value:\n${prettyPrint(formatValue(value.base))}`,
+        );
+      }
       const base = toFiniteSet(value.base).elements;
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
         throw new TlaEvaluationError(describeOverflow(value));
@@ -1490,8 +1497,22 @@ const describeOverflow = (value: Value) =>
 // TLC 1.7.4 sizes every component of a set of functions, records, or tuples without first
 // checking whether one is empty, so an infinite component fails even beside an empty one.
 export const getCardinality = (value: Value, version?: TlcVersion): number => {
-  if (typeof value !== "object") return toFiniteSet(value).elements.length;
+  if (typeof value !== "object") {
+    const kind =
+      typeof value === "number" ? "integer" : typeof value === "string" ? "string" : "boolean";
+    throw new TlaEvaluationError(
+      `Attempted to compute the number of elements in the ${kind} ${formatValue(value)}.`,
+    );
+  }
   switch (value.kind) {
+    case "ModelValue":
+      throw new TlaEvaluationError(
+        `Attempted to compute the number of elements in the model value ${formatValue(value)}.`,
+      );
+    case "Function":
+      return value.domain.length;
+    case "LazyFunction":
+      return getCardinality(value.domain, version);
     case "Interval": {
       const size = Math.max(0, value.high - value.low + 1);
       if (size > MAXIMUM_INTEGER) {

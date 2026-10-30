@@ -1227,11 +1227,26 @@ describe("evaluation errors match TLC", () => {
       ["1 \\in TRUE", "Attempted to check if the value:\n1\nis an element of the boolean TRUE"],
       ["1 \\in [a |-> 1]", "Attempted to check if element:\n1\nis in the record:\n[a |-> 1]"],
       ["1 \\in <<1>>", "Attempted to check set membership in a tuple value."],
+      [
+        "(SUBSET 0)..2 = {}",
+        "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntervalValue tlc2.module.Integers.DotDot(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.SubsetValue to tlc2.value.impl.IntValue",
+      ],
+      ["SUBSET 0 = {}", "Attempted to compute the number of elements in the integer 0."],
+      ['SUBSET "a" = {}', 'Attempted to compute the number of elements in the string "a".'],
+      [
+        "SUBSET <<1, 2>> = {}",
+        "Attempted to compute the value of an expression of form\nSUBSET S, but S is a non-enumerable value:\n<<1, 2>>",
+      ],
     ];
     const messages = await Promise.all(
       cases.map(async (item) => (await checkModule(`ASSUME ${item[0]}`)).violation?.message),
     );
     expect(messages).toEqual(cases.map((item) => item[1]));
+  });
+
+  it("enumerates SUBSET of a function with an empty domain as {{}} like TLC", async () => {
+    const result = await checkModule("ASSUME SUBSET <<>> = {{}}");
+    expect(result.status).toBe("success");
   });
 
   it("locates IF, CHOOSE, conjunction, DOMAIN, and field errors like TLC", async () => {
