@@ -93,7 +93,10 @@ export abstract class Internalizer {
   abstract readonly theory: TheoryLra;
   abstract readonly qmanager: DefaultQuantifierManager;
 
-  // Per Boolean variable.
+  // Per Boolean variable. Like Z3's vectors, the arrays keep their size when a variable is deleted,
+  // since V8 shrinks an array's storage when it pops and copies it again when it grows. Only the
+  // first numBoolVars entries are live.
+  numBoolVars = 0;
   boolVar2Expr: number[] = [];
   levels: number[] = [];
   internLevels: number[] = [];
@@ -114,7 +117,7 @@ export abstract class Internalizer {
   // The binary clauses of the binary clause optimization: the literals each literal propagates when it
   // becomes true, which Z3 visits newest first and before the clauses.
   protected binaryWatches: (Literal[] | undefined)[] = [];
-  private binJustifications: BinJustification[] = [];
+  private binJustifications: (BinJustification | undefined)[] = [];
   // Per expression.
   protected exprToBoolVar: (BoolVar | undefined)[] = [];
   protected exprToEnode: (Enode | undefined)[] = [];
@@ -166,7 +169,7 @@ export abstract class Internalizer {
         activity: this.activity,
         getIsSearching: () => this.isSearching,
         getRandomValue: () => this.getRandomValue(),
-        getNumBoolVars: () => this.boolVar2Expr.length,
+        getNumBoolVars: () => this.numBoolVars,
         isUnassigned: (boolVar) => this.assignment[mkLiteral(boolVar)] === L_UNDEF,
       },
       isDelayingNewCaseSplits,
@@ -366,52 +369,49 @@ export abstract class Internalizer {
   // Boolean variables and enodes.
 
   mkBoolVar(expr: number) {
-    const boolVar = toBoolVar(this.boolVar2Expr.length);
+    const boolVar = toBoolVar(this.numBoolVars++);
+    const literal = mkLiteral(boolVar);
     this.exprToBoolVar[expr] = boolVar;
-    this.boolVar2Expr.push(expr);
-    this.levels.push(0);
-    this.internLevels.push(this.scopeLevel);
-    this.justifications.push(null);
-    this.marks.push(false);
-    this.activity.push(this.isSearching ? -((this.getRandomValue() % 1000) / 1000) : 0);
-    this.phaseAvailable.push(false);
-    this.phases.push(false);
-    this.isEqFlags.push(false);
-    this.isEnodeFlags.push(false);
-    this.isTheoryFlags.push(false);
-    this.isQuantifierFlags.push(false);
-    this.isTrueFirstFlags.push(false);
-    this.assignment.push(L_UNDEF, L_UNDEF);
-    this.watches.push(undefined, undefined);
-    this.binaryWatches.push(undefined, undefined);
+    this.boolVar2Expr[boolVar] = expr;
+    this.levels[boolVar] = 0;
+    this.internLevels[boolVar] = this.scopeLevel;
+    this.justifications[boolVar] = null;
+    this.marks[boolVar] = false;
+    this.activity[boolVar] = this.isSearching ? -((this.getRandomValue() % 1000) / 1000) : 0;
+    this.phaseAvailable[boolVar] = false;
+    this.phases[boolVar] = false;
+    this.isEqFlags[boolVar] = false;
+    this.isEnodeFlags[boolVar] = false;
+    this.isTheoryFlags[boolVar] = false;
+    this.isQuantifierFlags[boolVar] = false;
+    this.isTrueFirstFlags[boolVar] = false;
+    this.assignment[literal] = L_UNDEF;
+    this.assignment[literal + 1] = L_UNDEF;
+    this.watches[literal] = undefined;
+    this.watches[literal + 1] = undefined;
+    this.binaryWatches[literal] = undefined;
+    this.binaryWatches[literal + 1] = undefined;
     this.caseSplitQueue.mkVar(boolVar);
     this.trailKinds.push(UNDO_MK_BOOL_VAR);
     return boolVar;
   }
 
+  // The arrays keep the deleted variable's entries, which mkBoolVar overwrites. Those that hold
+  // objects are cleared, so the objects can be collected.
   private undoMkBoolVar() {
-    const boolVar = toBoolVar(this.boolVar2Expr.length - 1);
+    const boolVar = toBoolVar(--this.numBoolVars);
+    const literal = mkLiteral(boolVar);
     const expr = this.boolVar2Expr[boolVar];
     this.caseSplitQueue.delVar(boolVar);
     if (this.isQuantifierFlags[boolVar]) this.qmanager.del(expr);
     this.exprToBoolVar[expr] = undefined;
-    this.boolVar2Expr.pop();
-    this.levels.pop();
-    this.internLevels.pop();
-    this.justifications.pop();
-    this.marks.pop();
-    this.activity.pop();
-    this.phaseAvailable.pop();
-    this.phases.pop();
-    this.isEqFlags.pop();
-    this.isEnodeFlags.pop();
-    this.isTheoryFlags.pop();
-    this.isQuantifierFlags.pop();
-    this.isTrueFirstFlags.pop();
-    this.assignment.length -= 2;
-    this.watches.length -= 2;
-    this.binaryWatches.length -= 2;
-    this.binJustifications.length = Math.min(this.binJustifications.length, this.watches.length);
+    this.justifications[boolVar] = null;
+    this.watches[literal] = undefined;
+    this.watches[literal + 1] = undefined;
+    this.binaryWatches[literal] = undefined;
+    this.binaryWatches[literal + 1] = undefined;
+    this.binJustifications[literal] = undefined;
+    this.binJustifications[literal + 1] = undefined;
   }
 
   protected isAtom(boolVar: BoolVar) {

@@ -682,7 +682,7 @@ export class Context extends Internalizer {
   incBvarActivity(boolVar: BoolVar) {
     this.activity[boolVar] += this.bvarInc;
     if (this.activity[boolVar] > ACTIVITY_LIMIT) {
-      for (let index = 0; index < this.activity.length; index++)
+      for (let index = 0; index < this.numBoolVars; index++)
         this.activity[index] *= INV_ACTIVITY_LIMIT;
       this.bvarInc *= INV_ACTIVITY_LIMIT;
     }
@@ -775,7 +775,7 @@ export class Context extends Internalizer {
       this.baseLevel = newLevel;
       this.searchLevel = newLevel;
     }
-    const numBoolVars = this.boolVar2Expr.length;
+    const numBoolVars = this.numBoolVars;
     this.reinitClauses(numScopes, numBoolVars);
     return numBoolVars;
   }
