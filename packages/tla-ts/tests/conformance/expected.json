@@ -1,5 +1,107 @@
 [
   {
+    "id": "ccf/tla/consensus/MCabs.cfg",
+    "status": "success",
+    "generatedStates": 5819,
+    "distinctStates": 349,
+    "depth": 4,
+    "tlcMilliseconds": 114511
+  },
+  {
+    "id": "ccf/tla/consensus/MCccfraft.cfg",
+    "status": "error",
+    "tlcMilliseconds": 1750
+  },
+  {
+    "id": "ccf/tla/consensus/SIMccfraft.cfg",
+    "status": "error",
+    "tlcMilliseconds": 3594
+  },
+  {
+    "id": "ccf/tla/consensus/Traceccfraft.cfg",
+    "status": "assumption-violation",
+    "traceLength": 0,
+    "tlcMilliseconds": 1606
+  },
+  {
+    "id": "ccf/tla/consistency/Consistency.cfg",
+    "status": "error",
+    "tlcMilliseconds": 301049
+  },
+  {
+    "id": "ccf/tla/consistency/MCMultiNode.cfg",
+    "status": "success",
+    "generatedStates": 3896264,
+    "distinctStates": 1546226,
+    "depth": 15,
+    "tlcMilliseconds": 131890
+  },
+  {
+    "id": "ccf/tla/consistency/MCMultiNodeReads.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300081
+  },
+  {
+    "id": "ccf/tla/consistency/MCMultiNodeReadsAlt.cfg",
+    "status": "success",
+    "generatedStates": 353036,
+    "distinctStates": 166428,
+    "depth": 12,
+    "tlcMilliseconds": 57166
+  },
+  {
+    "id": "ccf/tla/consistency/MCSingleNode.cfg",
+    "status": "success",
+    "generatedStates": 88557,
+    "distinctStates": 63449,
+    "depth": 15,
+    "tlcMilliseconds": 12122
+  },
+  {
+    "id": "ccf/tla/consistency/MCSingleNodeReads.cfg",
+    "status": "success",
+    "generatedStates": 281317,
+    "distinctStates": 210806,
+    "depth": 15,
+    "tlcMilliseconds": 42183
+  },
+  {
+    "id": "ccf/tla/consistency/MultiNodeReads.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300158
+  },
+  {
+    "id": "ccf/tla/consistency/TraceMultiNodeReads.cfg",
+    "status": "error",
+    "tlcMilliseconds": 1049
+  },
+  {
+    "id": "cockroach/docs/tla-plus/ParallelCommits/ParallelCommits.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300071
+  },
+  {
+    "id": "cockroach/docs/tla-plus/StoreLiveness/StoreLiveness.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300157
+  },
+  {
+    "id": "etcd-raft/tla/MCetcdraft.cfg",
+    "status": "error",
+    "tlcMilliseconds": 1414
+  },
+  {
+    "id": "etcd-raft/tla/Traceetcdraft.cfg",
+    "status": "assumption-violation",
+    "traceLength": 0,
+    "tlcMilliseconds": 1713
+  },
+  {
+    "id": "etcd-raft/tla/etcdraft.cfg",
+    "status": "error",
+    "tlcMilliseconds": 1607
+  },
+  {
     "id": "examples/specifications/Bakery-Boulangerie/MCBakery.cfg",
     "status": "success",
     "generatedStates": 3403584,
@@ -814,6 +916,361 @@
     "distinctStates": 288,
     "depth": 11,
     "tlcMilliseconds": 841
+  },
+  {
+    "id": "kafka/groupprotocol/consumer_group_protocol_kip_848_v2.cfg",
+    "status": "deadlock",
+    "traceLength": 11,
+    "tlcMilliseconds": 3679
+  },
+  {
+    "id": "kafka/kafka_data_replication/kraft/kip-966/kafka_replication_kip_966.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300048
+  },
+  {
+    "id": "kafka/kafka_data_replication/kraft/v3.5/kafka_replication_v3_5.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300054
+  },
+  {
+    "id": "kafka/kraft/kip_853/kraft_kip_853.cfg",
+    "status": "error",
+    "tlcMilliseconds": 548
+  },
+  {
+    "id": "kafka/kraft/kip_996/kraft_kip_996.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300030
+  },
+  {
+    "id": "kafka/transactions/diary/01_InitPidRequest/tlaplus/kafka_transactions.cfg",
+    "status": "deadlock",
+    "traceLength": 5,
+    "tlcMilliseconds": 736
+  },
+  {
+    "id": "kafka/transactions/diary/02_AddPartitionsToTxn/tlaplus/kafka_transactions.cfg",
+    "status": "deadlock",
+    "traceLength": 18,
+    "tlcMilliseconds": 2338
+  },
+  {
+    "id": "mongodb-txns/MultiShardTxn/ClientCentricTests.cfg",
+    "status": "success",
+    "generatedStates": 1602,
+    "distinctStates": 801,
+    "depth": 1,
+    "tlcMilliseconds": 1665
+  },
+  {
+    "id": "mongodb-txns/MultiShardTxn/MCMultiShardTxn.cfg",
+    "status": "deadlock",
+    "traceLength": 9,
+    "tlcMilliseconds": 1323
+  },
+  {
+    "id": "mongodb-txns/MultiShardTxn/MultiShardTxn.cfg",
+    "status": "error",
+    "tlcMilliseconds": 255
+  },
+  {
+    "id": "mongodb-txns/MultiShardTxn/Storage.cfg",
+    "status": "deadlock",
+    "traceLength": 8,
+    "tlcMilliseconds": 1750
+  },
+  {
+    "id": "mongodb-txns/SingleLog/MCMDBProps.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300092
+  },
+  {
+    "id": "mongodb-txns/SingleLog/MDBLinearizability.cfg",
+    "status": "success",
+    "generatedStates": 21748,
+    "distinctStates": 2247,
+    "depth": 9,
+    "tlcMilliseconds": 11771
+  },
+  {
+    "id": "mongodb-txns/SingleShardTxn/ShardTxn.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300056
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Concurrency/OrderedTicketSemaphore/MCOrderedTicketSemaphore.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300022
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Replication/MongoReplReconfig/MCMongoReplReconfig.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300019
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Replication/PipelinedOplog/MCPipelinedOplog.cfg",
+    "status": "success",
+    "generatedStates": 5652,
+    "distinctStates": 2321,
+    "depth": 42,
+    "tlcMilliseconds": 1362
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Replication/RaftMongo/MCRaftMongo.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300023
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Replication/RaftMongoReplTimestamp/MCRaftMongoReplTimestamp.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300022
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Sharding/MoveRange/MCMoveRange.cfg",
+    "status": "success",
+    "generatedStates": 527042,
+    "distinctStates": 220597,
+    "depth": 26,
+    "tlcMilliseconds": 21780
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Sharding/RangeDeletionsSecondaryNodes/MCRangeDeletionsSecondaryNodes.cfg",
+    "status": "success",
+    "generatedStates": 72,
+    "distinctStates": 39,
+    "depth": 8,
+    "tlcMilliseconds": 360
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Sharding/TxnsCollectionIncarnation/MCTxnsCollectionIncarnation.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300047
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Sharding/TxnsMoveRange/MCTxnsMoveRange.cfg",
+    "status": "success",
+    "generatedStates": 1238092,
+    "distinctStates": 423490,
+    "depth": 14,
+    "tlcMilliseconds": 18100
+  },
+  {
+    "id": "mongodb/src/mongo/tla_plus/Streams/ExactInitialSync/MCExactInitialSync.cfg",
+    "status": "success",
+    "generatedStates": 39107880,
+    "distinctStates": 9610407,
+    "depth": 20,
+    "tlcMilliseconds": 119098
+  },
+  {
+    "id": "pingcap/CollapseRollbacks/Test1.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300057
+  },
+  {
+    "id": "pingcap/CollapseRollbacks/Test2.cfg",
+    "status": "deadlock",
+    "traceLength": 14,
+    "tlcMilliseconds": 2006
+  },
+  {
+    "id": "pingcap/ConcurrentPercolator/Test1.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300040
+  },
+  {
+    "id": "pingcap/ConcurrentPercolator/Test2.cfg",
+    "status": "deadlock",
+    "traceLength": 14,
+    "tlcMilliseconds": 2125
+  },
+  {
+    "id": "pingcap/DistributedTransaction/Test1.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300089
+  },
+  {
+    "id": "pingcap/DistributedTransaction/Test2.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300054
+  },
+  {
+    "id": "pingcap/DistributedTransaction/Test3.cfg",
+    "status": "success",
+    "generatedStates": 15969,
+    "distinctStates": 1722,
+    "depth": 22,
+    "tlcMilliseconds": 1404
+  },
+  {
+    "id": "pingcap/DistributedTransaction/Test4.cfg",
+    "status": "error",
+    "tlcMilliseconds": 355
+  },
+  {
+    "id": "pingcap/DistributedTransaction/Test5.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300063
+  },
+  {
+    "id": "pingcap/OptimizedCommitTS/Test1.cfg",
+    "status": "success",
+    "generatedStates": 12009349,
+    "distinctStates": 2806275,
+    "depth": 31,
+    "tlcMilliseconds": 287508
+  },
+  {
+    "id": "pingcap/OptimizedCommitTS/Test2.cfg",
+    "status": "success",
+    "generatedStates": 13321,
+    "distinctStates": 4546,
+    "depth": 17,
+    "tlcMilliseconds": 1516
+  },
+  {
+    "id": "pingcap/Percolator/Test1.cfg",
+    "status": "deadlock",
+    "traceLength": 26,
+    "tlcMilliseconds": 69364
+  },
+  {
+    "id": "pingcap/Percolator/Test2.cfg",
+    "status": "deadlock",
+    "traceLength": 14,
+    "tlcMilliseconds": 1248
+  },
+  {
+    "id": "pingcap/ResolvedTS/MC.cfg",
+    "status": "success",
+    "generatedStates": 2182249,
+    "distinctStates": 481533,
+    "depth": 23,
+    "tlcMilliseconds": 58506
+  },
+  {
+    "id": "raft/specifications/flexible-raft/FlexibleRaft.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300045
+  },
+  {
+    "id": "raft/specifications/pull-raft/KRaft.cfg",
+    "status": "deadlock",
+    "traceLength": 18,
+    "tlcMilliseconds": 25014
+  },
+  {
+    "id": "raft/specifications/pull-raft/KRaftWithReconfig.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300058
+  },
+  {
+    "id": "raft/specifications/pull-raft/PullRaft.cfg",
+    "status": "deadlock",
+    "traceLength": 19,
+    "tlcMilliseconds": 8347
+  },
+  {
+    "id": "raft/specifications/pull-raft/PullRaftVariant2.cfg",
+    "status": "deadlock",
+    "traceLength": 20,
+    "tlcMilliseconds": 11695
+  },
+  {
+    "id": "raft/specifications/raft-and-fsync/RaftFsync.cfg",
+    "status": "deadlock",
+    "traceLength": 19,
+    "tlcMilliseconds": 14613
+  },
+  {
+    "id": "raft/specifications/standard-raft/Raft.cfg",
+    "status": "deadlock",
+    "traceLength": 18,
+    "tlcMilliseconds": 9468
+  },
+  {
+    "id": "raft/specifications/standard-raft/RaftWithReconfigAddRemove.cfg",
+    "status": "error",
+    "tlcMilliseconds": 476
+  },
+  {
+    "id": "raft/specifications/standard-raft/RaftWithReconfigJointConsensus.cfg",
+    "status": "deadlock",
+    "traceLength": 11,
+    "tlcMilliseconds": 19019
+  },
+  {
+    "id": "s3-wal/chroma/Wal3.cfg",
+    "status": "error",
+    "tlcMilliseconds": 332
+  },
+  {
+    "id": "s3-wal/cursor/Continuity.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300023
+  },
+  {
+    "id": "s3-wal/jay-jamieson-objwal/ObjWAL.cfg",
+    "status": "success",
+    "generatedStates": 190893,
+    "distinctStates": 75793,
+    "depth": 44,
+    "tlcMilliseconds": 3908
+  },
+  {
+    "id": "s3-wal/opendata/Buffer.cfg",
+    "status": "error",
+    "tlcMilliseconds": 307
+  },
+  {
+    "id": "s3-wal/opendata/BufferAsWAL.cfg",
+    "status": "success",
+    "generatedStates": 5250541,
+    "distinctStates": 1389537,
+    "depth": 49,
+    "tlcMilliseconds": 102281
+  },
+  {
+    "id": "s3-wal/oswald/Oswald.cfg",
+    "status": "success",
+    "generatedStates": 15930846,
+    "distinctStates": 3606090,
+    "depth": 56,
+    "tlcMilliseconds": 264280
+  },
+  {
+    "id": "s3-wal/s2c/S2C.cfg",
+    "status": "success",
+    "generatedStates": 2058641,
+    "distinctStates": 684441,
+    "depth": 82,
+    "tlcMilliseconds": 34136
+  },
+  {
+    "id": "s3-wal/s2c/S2CFencing.cfg",
+    "status": "success",
+    "generatedStates": 12722216,
+    "distinctStates": 3274048,
+    "depth": 99,
+    "tlcMilliseconds": 165242
+  },
+  {
+    "id": "s3-wal/slatedb/SlateDBWAL.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300029
+  },
+  {
+    "id": "s3-wal/slatedb/SlateDBWAL_CAS.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300032
+  },
+  {
+    "id": "s3-wal/walgit/Walgit.cfg",
+    "status": "invariant-violation",
+    "violation": "ValidManifest",
+    "traceLength": 1,
+    "tlcMilliseconds": 294
   },
   {
     "id": "spectacle/specs/AbstractRaft.cfg",
@@ -2082,6 +2539,112 @@
     "distinctStates": 1,
     "depth": 1,
     "tlcMilliseconds": 1403
+  },
+  {
+    "id": "summerset/tla+/bodega/Bodega_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300052
+  },
+  {
+    "id": "summerset/tla+/bodega_refine_lease/BodegaRefine_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300084
+  },
+  {
+    "id": "summerset/tla+/bodega_refine_lease/Bodega_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300071
+  },
+  {
+    "id": "summerset/tla+/bodega_refine_lease/RosterLeases_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300086
+  },
+  {
+    "id": "summerset/tla+/crossword/Crossword_MC.cfg",
+    "status": "success",
+    "generatedStates": 1581200,
+    "distinctStates": 485988,
+    "depth": 25,
+    "tlcMilliseconds": 120149
+  },
+  {
+    "id": "summerset/tla+/multipaxos_canonical/ConsensusMulti.cfg",
+    "status": "success",
+    "generatedStates": 31,
+    "distinctStates": 18,
+    "depth": 5,
+    "tlcMilliseconds": 695
+  },
+  {
+    "id": "summerset/tla+/multipaxos_canonical/MultiPaxos_MC.cfg",
+    "status": "success",
+    "generatedStates": 1676240,
+    "distinctStates": 174755,
+    "depth": 27,
+    "tlcMilliseconds": 218373
+  },
+  {
+    "id": "summerset/tla+/multipaxos_leader_lease/MultiPaxos_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300085
+  },
+  {
+    "id": "summerset/tla+/multipaxos_practical/ConsensusMulti.cfg",
+    "status": "success",
+    "generatedStates": 31,
+    "distinctStates": 18,
+    "depth": 5,
+    "tlcMilliseconds": 795
+  },
+  {
+    "id": "summerset/tla+/multipaxos_practical/MultiPaxos_MC.cfg",
+    "status": "success",
+    "generatedStates": 7084273,
+    "distinctStates": 832785,
+    "depth": 29,
+    "tlcMilliseconds": 266350
+  },
+  {
+    "id": "summerset/tla+/multipaxos_refine_lease/LeaseProtocol_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300143
+  },
+  {
+    "id": "summerset/tla+/multipaxos_refine_lease/MultiPaxosRefine_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300063
+  },
+  {
+    "id": "summerset/tla+/multipaxos_refine_lease/MultiPaxos_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300062
+  },
+  {
+    "id": "summerset/tla+/multipaxos_smr_addon/MultiPaxos_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300055
+  },
+  {
+    "id": "summerset/tla+/multipaxos_smr_style/MultiPaxos_MC.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300136
+  },
+  {
+    "id": "summerset/tla+/paxos/ConsensusSingle.cfg",
+    "status": "success",
+    "generatedStates": 3,
+    "distinctStates": 3,
+    "depth": 2,
+    "tlcMilliseconds": 701
+  },
+  {
+    "id": "summerset/tla+/paxos/Paxos_MC.cfg",
+    "status": "success",
+    "generatedStates": 84303,
+    "distinctStates": 17153,
+    "depth": 25,
+    "tlcMilliseconds": 15669
   },
   {
     "id": "tla-rs/test_cases/official/Paxos.cfg",
@@ -5194,5 +5757,32 @@
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/testinvalidinvariant.cfg",
     "status": "error",
     "tlcMilliseconds": 350
+  },
+  {
+    "id": "vsr/vsr-revisited/paper/VSR.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300046
+  },
+  {
+    "id": "vsr/vsr-revisited/paper/analysis/01-view-changes/VR_ASSUME_NEWVIEWCHANGE.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300050
+  },
+  {
+    "id": "vsr/vsr-revisited/paper/analysis/01-view-changes/VR_INC_RESEND.cfg",
+    "status": "error",
+    "tlcMilliseconds": 300033
+  },
+  {
+    "id": "vsr/vsr-revisited/paper/analysis/03-state-transfer/VR_STATE_TRANSFER.cfg",
+    "status": "deadlock",
+    "traceLength": 13,
+    "tlcMilliseconds": 101873
+  },
+  {
+    "id": "vsr/vsr-revisited/paper/analysis/04-application-state/VR_APP_STATE.cfg",
+    "status": "deadlock",
+    "traceLength": 13,
+    "tlcMilliseconds": 97978
   }
 ]
