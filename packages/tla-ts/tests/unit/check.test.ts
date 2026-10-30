@@ -1968,6 +1968,23 @@ describe("check matches TLC 1.7.4", () => {
     expect(await getOutDegrees("master")).toEqual([0, 1, 1]);
   });
 
+  it("words a missing tuple index or record field as TLC 1.7.4 does", async () => {
+    const tuple = await check174(
+      'Init == x = 0\nNext == x\' = x + 1\nName == <<"zero", "one">>\nInv == Name[x + 1] # "none"',
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(tuple.failure?.message).toContain(
+      'Attempted to apply tuple\n<<"zero", "one">>\nto integer 3 which is out of domain.',
+    );
+    const record = await check174(
+      'Init == x = 0\nNext == x\' = x + 1\nR == [a |-> 1]\nInv == R[IF x = 0 THEN "a" ELSE "b"] = 1',
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(record.failure?.message).toContain(
+      "Attempted to apply the record\n[a |-> 1]\nto nonexistent record field b.",
+    );
+  });
+
   it("doesn't explain a set it can't enumerate", async () => {
     const result = await check174("Init == x = 0\nNext == \\E n \\in Nat : x' = n");
     expect(result.failure?.message).toContain(

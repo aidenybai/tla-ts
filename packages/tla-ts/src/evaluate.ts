@@ -23,6 +23,7 @@ import { contextualApplications, mapChildren, substitutedExpressions } from "./i
 import { isEnabled } from "./successors";
 import {
   applyFunction,
+  describeMissingArgument,
   combineHash,
   compareValues,
   createFunction,
@@ -253,6 +254,13 @@ export const getConjunctError = (
 export const getFieldError =
   (expression: Expression & { kind: "FieldAccess" }) => (record: Value) =>
     `Attempted to select nonexistent field "${expression.field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`;
+
+// TLC 1.7.4 words what a tuple or a record lacks differently.
+export const getMissingArgumentError = (version: TlcVersion | undefined) =>
+  version === "1.7.4"
+    ? (functionValue: Value, argument: Value) =>
+        describeMissingArgument(functionValue, argument, version)
+    : undefined;
 
 export const getDomainOperator = (expression: Expression) => (value: Value) => {
   if (!isFunctionValue(value)) {
@@ -2046,12 +2054,18 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         );
       };
       const args = expression.args.map(child);
+      const describeMissing = getMissingArgumentError(environment.runtime.version);
       if (args.length === 1) {
         const argument = args[0];
-        return (context) => applyFunction(evaluateFunction(context), argument(context));
+        return (context) =>
+          applyFunction(evaluateFunction(context), argument(context), describeMissing);
       }
       return (context) =>
-        applyFunction(evaluateFunction(context), createTuple(args.map((arg) => arg(context))));
+        applyFunction(
+          evaluateFunction(context),
+          createTuple(args.map((arg) => arg(context))),
+          describeMissing,
+        );
     }
     case "FieldAccess": {
       const record = child(expression.record);

@@ -9,6 +9,7 @@ import {
   getSubsetOperator,
   getEvaluator,
   getFieldError,
+  getMissingArgumentError,
   getQuantifierElements,
   isClosedConstant,
   isTlcInteger,
@@ -254,9 +255,11 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "FunctionApplication": {
       keepLazy(expression.function);
       const functionCode = generate(expression.function);
+      const describeMissing = getMissingArgumentError(generator.environment.runtime.version);
+      const error = describeMissing ? `, ${addReference(generator, describeMissing)}` : "";
       if (expression.args.length === 1)
-        return `apply(${functionCode}, ${generate(expression.args[0])})`;
-      return `apply(${functionCode}, tuple([${expression.args.map((arg) => generate(arg)).join(", ")}]))`;
+        return `apply(${functionCode}, ${generate(expression.args[0])}${error})`;
+      return `apply(${functionCode}, tuple([${expression.args.map((arg) => generate(arg)).join(", ")}])${error})`;
     }
     case "FieldAccess":
       return `apply(${generate(expression.record)}, ${JSON.stringify(expression.field)}, ${addReference(generator, getFieldError(expression))})`;

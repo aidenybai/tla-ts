@@ -1,5 +1,6 @@
 import { TlaEvaluationError, TlaModuleError } from "./errors";
 import { prettyPrint } from "./pretty-print";
+import type { TlcVersion } from "./tlc-version";
 
 export interface ModelValue {
   kind: "ModelValue";
@@ -1792,20 +1793,35 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
   throw new TlaEvaluationError(`Expected a function but found ${formatValue(value)}`);
 };
 
-const describeMissingArgument = (functionValue: Value, argument: Value) => {
+export const describeMissingArgument = (
+  functionValue: Value,
+  argument: Value,
+  version?: TlcVersion,
+) => {
   const shown = prettyPrint(formatValue(functionValue));
   const shownArgument = prettyPrint(formatValue(argument));
+  const is174 = version === "1.7.4";
   switch (getFunctionClass(functionValue)) {
     case "lambda":
       return `In applying the function\n${shown},\nthe first argument is:\n${shownArgument}\nwhich is not in its domain.\n`;
     case "tuple":
-      return typeof argument === "number"
-        ? `Attempted to access index ${argument} of tuple\n${shown}\nwhich is out of bounds.`
-        : `Attempted to access tuple at a non integral index: ${shownArgument}`;
+      if (typeof argument !== "number") {
+        return is174
+          ? "Attempted to apply tuple to a non-integer argument."
+          : `Attempted to access tuple at a non integral index: ${shownArgument}`;
+      }
+      return is174
+        ? `Attempted to apply tuple\n${shown}\nto integer ${argument} which is out of domain.`
+        : `Attempted to access index ${argument} of tuple\n${shown}\nwhich is out of bounds.`;
     case "record":
-      return typeof argument === "string"
-        ? `Attempted to access nonexistent field '${argument}' of record\n${shown}`
-        : `Attempted to access record by a non-string argument: ${shownArgument}`;
+      if (typeof argument !== "string") {
+        return is174
+          ? `Attempted to apply record to a non-string value ${shownArgument}.`
+          : `Attempted to access record by a non-string argument: ${shownArgument}`;
+      }
+      return is174
+        ? `Attempted to apply the record\n${shown}\nto nonexistent record field ${argument}.`
+        : `Attempted to access nonexistent field '${argument}' of record\n${shown}`;
     default:
       return `Attempted to apply function:\n${shown}\nto argument ${shownArgument}, which is not in the domain of the function.`;
   }
@@ -1827,7 +1843,7 @@ const findKeyIndex = (domain: Value[], argument: Value) => {
 export const applyFunction = (
   functionValue: Value,
   argument: Value,
-  describeMissing?: (functionValue: FunctionValue) => string,
+  describeMissing?: (functionValue: FunctionValue, argument: Value) => string,
 ): Value => {
   if (typeof functionValue === "object" && functionValue.kind === "LazyFunction") {
     if (!isElementOf(argument, functionValue.domain)) {
@@ -1847,7 +1863,8 @@ export const applyFunction = (
   const position = findKeyIndex(functionValue.domain, argument);
   if (position === -1) {
     throw new TlaEvaluationError(
-      describeMissing?.(functionValue) ?? describeMissingArgument(functionValue, argument),
+      describeMissing?.(functionValue, argument) ??
+        describeMissingArgument(functionValue, argument),
     );
   }
   return functionValue.range[position];
