@@ -616,6 +616,25 @@ ASSUME TLCFP(a) = -887695703
     );
   });
 
+  it("reports the unassigned constant TLC finds first", async () => {
+    const cases = [
+      [
+        "CONSTANT TableId\nCONSTANT Snapshot\nCONSTANT BranchId",
+        "CONSTANT TableId = 1",
+        "BranchId",
+      ],
+      ["CONSTANTS Zeta, Alpha, Mid, N", "CONSTANT Mid = 1", "Zeta"],
+      ["CONSTANTS N, Procs, Values, Acceptors, Quorums", "CONSTANT Procs = 1", "Quorums"],
+    ];
+    for (const [body, config, name] of cases) {
+      await expect(checkModule(body, config)).rejects.toThrow(
+        new TlaConfigError(
+          `The constant parameter ${name} is not assigned a value by the configuration file.`,
+        ),
+      );
+    }
+  });
+
   it("rejects substituting a constant with a state-level definition", async () => {
     await expect(checkModule("CONSTANT C\nFoo == x", "CONSTANT C <- Foo")).rejects.toThrow(
       TlaConfigError,

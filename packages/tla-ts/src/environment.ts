@@ -47,6 +47,7 @@ import { CORE_OPERATORS, getStandardModule, STANDARD_DEPENDENCIES } from "./stan
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import { checkInstances, type InstanceCheck } from "./substitution-levels";
+import { getTlcDeclarationOrder } from "./tlc-order";
 import {
   checkInteger,
   createModelValue,
@@ -908,11 +909,19 @@ export const createEnvironment = (
       if (symbol.key === key && name !== key) definitions.set(name, alias);
     });
   });
-  declaredConstants.forEach((name) => {
-    if (!constants.has(name) && !substitutions.has(name) && !operatorKeys.has(name)) {
-      throw new TlaConfigError(`The constant ${name} is not assigned a value by the configuration`);
-    }
-  });
+  const unassigned = declaredConstants.filter(
+    (name) => !constants.has(name) && !substitutions.has(name) && !operatorKeys.has(name),
+  );
+  if (unassigned.length > 0) {
+    // TLC reports the first constant it finds unassigned in SANY's order of declarations.
+    const name =
+      getTlcDeclarationOrder(options.source, options.loadModule, "constant").find((constant) =>
+        unassigned.includes(constant),
+      ) ?? unassigned[0];
+    throw new TlaConfigError(
+      `The constant parameter ${name} is not assigned a value by the configuration file.`,
+    );
+  }
 
   const environment: Environment = {
     runtime,

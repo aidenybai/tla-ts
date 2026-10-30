@@ -278,9 +278,13 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
     (name === undefined ? undefined : nestedModules.get(name)) ?? getFile(name);
 };
 
-// The variables in the order TLC compares them: the reverse of the root module's context
-// enumeration, as ModuleNode.getVariableDecls returns them.
-export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader): string[] => {
+// The constants or variables in the order of ModuleNode.getConstantDecls or getVariableDecls: the
+// reverse of the root module's context enumeration. TLC compares a state's variables in this order.
+export const getTlcDeclarationOrder = (
+  source: string,
+  loadModule: ModuleLoader,
+  kind: "constant" | "variable",
+): string[] => {
   const getParsed = createModuleSet(source, loadModule);
   const getUnits = (unit: ParsedModule) => {
     const tokens = unit.tokens;
@@ -400,7 +404,7 @@ export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader): s
   };
   return getContext(undefined)
     .enumerate()
-    .filter((entry) => entry.kind === "variable")
+    .filter((entry) => entry.kind === kind)
     .map((entry) => entry.name)
     .reverse();
 };
