@@ -13,11 +13,13 @@ import {
   OP_ADD,
   OP_AND,
   OP_DISTINCT,
+  OP_DIV,
   OP_EQ,
   OP_GE,
   OP_GT,
   OP_IDIV,
   OP_IMPLIES,
+  OP_IS_INT,
   OP_ITE,
   OP_LE,
   OP_LT,
@@ -26,10 +28,12 @@ import {
   OP_NOT,
   OP_OR,
   OP_SUB,
+  OP_TO_INT,
+  OP_TO_REAL,
   OP_UMINUS,
   OP_XOR,
   SORT_BOOL,
-  SORT_INT,
+  isArithSort,
 } from "./ast";
 import { type Rewrite, RewriterTpl } from "./rewriter-tpl";
 import { sortByKey } from "./sort";
@@ -247,7 +251,7 @@ export class Rewriter extends RewriterTpl {
         return this.mkEq(this.mkNot(args[0]), args[1]);
       case OP_EQ:
         return (
-          (manager.sorts[args[0]] === SORT_INT ? this.arith.mkEq(args[0], args[1]) : undefined) ??
+          (isArithSort(manager.sorts[args[0]]) ? this.arith.mkEq(args[0], args[1]) : undefined) ??
           this.mkEqCore(args[0], args[1]) ??
           manager.mkEq(args[0], args[1])
         );
@@ -277,6 +281,14 @@ export class Rewriter extends RewriterTpl {
         return this.arith.mkMod(args[0], args[1]) ?? manager.mkApp(decl, args, sort);
       case OP_ABS:
         return this.arith.mkAbs(args[0]);
+      case OP_DIV:
+        return this.arith.mkDiv(args[0], args[1]) ?? manager.mkApp(decl, args, sort);
+      case OP_TO_REAL:
+        return this.arith.mkToReal(args[0]) ?? manager.mkApp(decl, args, sort);
+      case OP_TO_INT:
+        return this.arith.mkToInt(args[0]) ?? manager.mkApp(decl, args, sort);
+      case OP_IS_INT:
+        return this.arith.mkIsInt(args[0]);
       default:
         return manager.mkApp(decl, args, sort);
     }
