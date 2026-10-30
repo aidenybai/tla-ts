@@ -9,11 +9,40 @@ export interface SanyLocation {
   endColumn: number;
 }
 
+// An error or warning SANY reports, with the location its message names. A location of undefined
+// is SANY's unknown location, and one that is just a module name stands for the whole module.
+export interface SanyMessage {
+  location: SanyLocation | string | undefined;
+  text: string;
+  isWarning: boolean;
+}
+
+// Errors.addMessage: SANY keeps one copy of each message.
+export const addSanyMessage = (messages: SanyMessage[], message: SanyMessage) => {
+  const key = JSON.stringify(message);
+  if (!messages.some((candidate) => JSON.stringify(candidate) === key)) messages.push(message);
+};
+
+// Location.toString.
+export const formatSanyLocation = (location: SanyMessage["location"]) => {
+  if (location === undefined) return "Unknown location";
+  if (typeof location === "string") return `In module ${location}`;
+  return `line ${location.beginLine}, col ${location.beginColumn} to line ${location.endLine}, col ${location.endColumn} of module ${location.file}`;
+};
+
 // SANY's ArgLevelParam: the level of argument index of operator op depends on param.
 export interface ArgLevelParam {
   op: SymbolNode;
   index: number;
   param: SymbolNode;
+}
+
+// SANY's ParamAndPosition with its level in a SetOfArgLevelConstraints: the argument at position of
+// operator param must be allowed a level of at least level.
+export interface ArgLevelConstraint {
+  param: SymbolNode;
+  position: number;
+  level: number;
 }
 
 // The fields of SANY's LevelNode. levelChecked is 0 until levelCheck runs, and SANY exports a level
@@ -26,6 +55,10 @@ export interface LevelFields {
   allParams: Set<SymbolNode>;
   nonLeibnizParams: Set<SymbolNode>;
   argLevelParams: Map<string, ArgLevelParam>;
+  levelCorrect: boolean;
+  // SetOfLevelConstraints: the highest level each parameter may have.
+  levelConstraints: Map<SymbolNode, number>;
+  argLevelConstraints: Map<string, ArgLevelConstraint>;
 }
 
 // SANY's kinds of declared symbols, from tla2sany.semantic.ASTConstants.
@@ -50,7 +83,7 @@ export interface OpDeclNode extends LevelFields {
 
 export interface OpDefNode extends LevelFields {
   kind: "OpDef";
-  defKind: "UserDefined" | "BuiltIn" | "ModuleInstance";
+  defKind: "UserDefined" | "BuiltIn" | "ModuleInstance" | "NumberedProofStep";
   name: string;
   arity: number;
   params: FormalParamNode[] | undefined;
@@ -69,6 +102,11 @@ export interface OpDefNode extends LevelFields {
   isLeibnizArg: boolean[] | undefined;
   isLeibniz: boolean;
   opLevelCond: boolean[][][] | undefined;
+  maxLevels: number[];
+  minMaxLevel: number[][] | undefined;
+  labels: Map<string, LabelNode>;
+  // The DEFINE, USE, HIDE or INSTANCE step that a NumberedProofStep definition names.
+  step: ProofStepNode | undefined;
 }
 
 export interface ThmOrAssumpDefNode extends LevelFields {
@@ -80,6 +118,12 @@ export interface ThmOrAssumpDefNode extends LevelFields {
   isLocal: boolean;
   location: SanyLocation;
   module: ModuleNode;
+  labels: Map<string, LabelNode>;
+  isLeibnizArg: boolean[];
+  isLeibniz: boolean;
+  opLevelCond: boolean[][][];
+  maxLevels: number[];
+  minMaxLevel: number[][];
 }
 
 export interface ModuleNode {
@@ -93,6 +137,12 @@ export interface ModuleNode {
   definitions: SemanticNode[];
   opDefsInRecursiveSection: OpDefNode[];
   isLevelChecked: boolean;
+  levelCorrect: boolean;
+  argLevelParams: Map<string, ArgLevelParam>;
+  levelConstraints: Map<SymbolNode, number>;
+  argLevelConstraints: Map<string, ArgLevelConstraint>;
+  // ModuleNode.getRecords: the record constructors and sets of records generated for the module.
+  records: OpApplNode[];
 }
 
 export type SymbolNode = FormalParamNode | OpDeclNode | OpDefNode | ThmOrAssumpDefNode | ModuleNode;
@@ -134,6 +184,7 @@ export interface LetInNode extends LevelFields {
   opDefs: (OpDefNode | ThmOrAssumpDefNode)[];
   instances: InstanceNode[];
   body: ExprNode;
+  context: Context;
   location: SanyLocation;
 }
 
@@ -142,6 +193,8 @@ export interface LabelNode extends LevelFields {
   name: string;
   params: FormalParamNode[];
   body: LevelNode;
+  labels: Map<string, LabelNode>;
+  isAssumeProve: boolean;
   location: SanyLocation;
 }
 
@@ -199,9 +252,13 @@ export interface TheoremNode extends LevelFields {
   location: SanyLocation;
 }
 
+// A fact of a BY, USE or HIDE: an expression, an ASSUME/PROVE or NEW clause, a module, or the
+// definition of a module instance.
+export type FactNode = LevelNode | ModuleNode | OpDefNode;
+
 export interface LeafProofNode extends LevelFields {
   kind: "LeafProof";
-  facts: (LevelNode | ThmOrAssumpDefNode | ModuleNode)[];
+  facts: FactNode[];
   defs: (OpDefNode | ThmOrAssumpDefNode | ModuleNode)[];
   isOmitted: boolean;
   isOnly: boolean;
@@ -244,7 +301,7 @@ export interface AssumeProveNode extends LevelFields {
 
 export interface UseOrHideNode extends LevelFields {
   kind: "UseOrHide";
-  facts: (LevelNode | ThmOrAssumpDefNode | ModuleNode)[];
+  facts: FactNode[];
   defs: (OpDefNode | ThmOrAssumpDefNode | ModuleNode)[];
   isOnly: boolean;
   isHide: boolean;
@@ -360,6 +417,9 @@ export const addToContext = (context: Context, symbol: SymbolNode) => {
   putHashtableValue(context.table, getSymbolKey(symbol), symbol, symbol.name);
   context.symbols.push(symbol);
 };
+
+export const getSymbolArity = (node: SymbolNode) =>
+  node.kind === "ThmOrAssumpDef" ? node.params.length : node.kind === "Module" ? 0 : node.arity;
 
 export const getContextSymbol = (context: Context, name: string) =>
   getHashtableValue(context.table, name);

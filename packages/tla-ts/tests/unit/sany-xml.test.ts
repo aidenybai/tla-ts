@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { TlaSyntaxError, TlaUnsupportedError } from "../../src/errors";
 import { generateSanySpecification } from "../../src/sany-generator";
 import { checkModuleLevels } from "../../src/sany-levels";
 import { SANY_STANDARD_MODULES } from "../../src/sany-modules";
@@ -33,6 +34,42 @@ const generate = () => {
   const specification = generateSanySpecification(SPEC, loadModule);
   specification.modules.forEach((module) => checkModuleLevels(module));
   return specification;
+};
+
+const SUBEXPRESSIONS = `---- MODULE Subexpressions ----
+EXTENDS Naturals
+VARIABLE x
+Inv == x > 0 /\\ x < 9
+Op(a) == lab :: a + 1
+Ex == \\E y \\in {1} : y = x
+Second == Inv!2
+Labeled == Op(2)!lab
+Bound == Ex!(3)
+====`;
+
+const HIGHER_ORDER = `---- MODULE HigherOrder ----
+VARIABLE v
+---- MODULE Inner ----
+CONSTANT C(_)
+D(w) == C(w)
+====
+NotLeibniz(p) == ENABLED p
+Apply(F(_), y) == F(y)
+Direct(a) == Apply(NotLeibniz, a)
+Passed(G(_), b) == Apply(G, b)
+Indirect(c) == Passed(NotLeibniz, c)
+Let(d) == LET H(z) == ENABLED z IN Apply(H, d)
+I(K(_)) == INSTANCE Inner WITH C <- K
+Instantiated(e) == I(NotLeibniz)!D(e)
+Lambda(f) == Apply(LAMBDA z : ENABLED z, f)
+====`;
+
+const getRoot = (source: string) => {
+  const specification = generateSanySpecification(source, (name) =>
+    SANY_STANDARD_MODULES.get(name),
+  );
+  specification.modules.forEach((module) => checkModuleLevels(module));
+  return specification.root;
 };
 
 const getDefinition = (module: ModuleNode, name: string) => {
@@ -119,5 +156,82 @@ describe("SANY XML export", () => {
     expect(xml).toContain("<pre-comments><![CDATA[\\* The first state.]]></pre-comments>");
     expect(xml.match(/<ModuleNodeRef>/g)?.length).toBeGreaterThanOrEqual(3);
     expect(lines.at(-1)).toBe("</modules>");
+  });
+
+  it("resolves subexpression references as SANY's selectorToNode does", () => {
+    const root = getRoot(SUBEXPRESSIONS);
+    const getBody = (name: string) => {
+      const body = getDefinition(root, name).body;
+      if (body?.kind !== "OpAppl") throw new Error(`${name} is not an application`);
+      return body;
+    };
+    expect(getBody("Second").operator.name).toBe("$Nop");
+    expect(getBody("Second").operands[0]).toBe(getBody("Inv").operands[1]);
+    const labeled = getBody("Labeled").operator;
+    expect(labeled.kind === "OpDef" ? [labeled.name, labeled.body?.kind] : []).toEqual([
+      "LAMBDA",
+      "Label",
+    ]);
+    const bound = getBody("Bound").operator;
+    expect(bound.kind === "OpDef" ? bound.params?.map((param) => param.name) : []).toEqual(["y"]);
+    expect(getBody("Bound").operands.map((operand) => operand?.kind)).toEqual(["Numeral"]);
+  });
+
+  it("finds parameters that a higher-order operator makes non-Leibniz", () => {
+    const root = getRoot(HIGHER_ORDER);
+    expect(
+      ["Apply", "Direct", "Passed", "Indirect", "Let", "Instantiated", "Lambda"].map(
+        (name) => getDefinition(root, name).isLeibnizArg,
+      ),
+    ).toEqual([[true, true], [false], [true, true], [false], [true], [false], [false]]);
+    expect(getDefinition(root, "Apply").opLevelCond).toEqual([
+      [[false], [true]],
+      [[], []],
+    ]);
+  });
+
+  it("fails as SANY does on the definition of a DEFINE step", () => {
+    const proof = (reference: string) => `---- MODULE Steps ----
+F == 1
+THEOREM TRUE
+<1>1. DEFINE G == 2
+<1>2. USE DEF F
+<1>3. G = 2
+  BY ${reference}
+<1> QED
+====`;
+    expect(exportSanyXml(proof("DEF F"), () => undefined)).toContain("<DefStepNode>");
+    expect(() => exportSanyXml(proof("DEF <1>1"), () => undefined)).toThrow(
+      new TlaUnsupportedError("unsupported kind: 37 in xml export"),
+    );
+    expect(() => exportSanyXml(proof("<1>2"), () => undefined)).toThrow(TlaSyntaxError);
+  });
+
+  it("marks a []ASSUME/[]PROVE as boxed", () => {
+    const theorem = (statement: string) => `---- MODULE Boxed ----
+VARIABLE x
+THEOREM ${statement}
+====`;
+    const xml = exportSanyXml(theorem("T == []ASSUME x = 1 []PROVE x = 1"), () => undefined);
+    expect(xml).toContain("<boxed/>");
+    expect(xml).toContain("<begin>14</begin>");
+    expect(() => exportSanyXml(theorem("[]ASSUME x = 1 PROVE x = 1"), () => undefined)).toThrow(
+      TlaSyntaxError,
+    );
+    expect(() =>
+      exportSanyXml(
+        theorem("ASSUME x = 1, []ASSUME x = 2 []PROVE x = 2 PROVE x = 1"),
+        () => undefined,
+      ),
+    ).toThrow(TlaSyntaxError);
+  });
+
+  it("fails as SANY does on a character that XML 1.0 cannot represent", () => {
+    const source = `---- MODULE FormFeed ----
+S == "a\\fb"
+====`;
+    expect(() => exportSanyXml(source, () => undefined)).toThrow(
+      /U\+000C in the StringValue element/,
+    );
   });
 });

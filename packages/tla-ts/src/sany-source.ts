@@ -137,6 +137,31 @@ const getOffset = (file: SourceFile, line: number, column: number) => {
   return offset;
 };
 
+// SANY lexes []ASSUME and []PROVE as single tokens.
+export const isBoxToken = (file: SourceFile, index: number) => {
+  const box = file.tokens[index];
+  const next = file.tokens[index + 1];
+  return (
+    box?.kind === "Operator" &&
+    box.text === "[]" &&
+    next?.kind === "Keyword" &&
+    (next.text === "ASSUME" || next.text === "PROVE") &&
+    next.line === box.line &&
+    next.column === box.endColumn + 1
+  );
+};
+
+// HACK: the tla-ts parser has no []ASSUME or []PROVE, so it parses the source with each such []
+// blanked out, which keeps every other token where it was.
+export const getUnboxedSource = (source: string) => {
+  const file = createSourceFile("", source);
+  return file.tokens.reduce((text, token, index) => {
+    if (!isBoxToken(file, index)) return text;
+    const offset = getOffset(file, token.line, token.column);
+    return `${text.slice(0, offset)}  ${text.slice(offset + 2)}`;
+  }, source);
+};
+
 // The comments between a token and the one before it, which SANY's parser attaches to the token.
 export const getPreComments = (file: SourceFile, index: number) => {
   const previous = file.tokens[index - 1];

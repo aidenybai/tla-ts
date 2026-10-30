@@ -97,6 +97,14 @@ describe("parseModule reads operators like SANY", () => {
     ).toThrow("The operator M requires 1 arguments at line 7, column 9");
   });
 
+  it("substitutes an operator of a parameterized instance without the instance's arguments", () => {
+    expect(() =>
+      parseModule(
+        `---- MODULE M ----\n${INNER}\n---- MODULE N ----\nCONSTANT Op(_)\n====\nN1 == INSTANCE N WITH Op <- M!Foo\n====`,
+      ),
+    ).not.toThrow();
+  });
+
   it("cites an operator of a parameterized instance in a DEF clause without arguments", () => {
     const module = parseModule(
       `---- MODULE M ----\n${INNER}\nTHEOREM M(1)!Foo = M(1)!Foo\nBY DEF M!Foo\n====`,

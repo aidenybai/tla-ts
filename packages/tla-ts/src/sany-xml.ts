@@ -1,13 +1,17 @@
+import { TlaSyntaxError, TlaUnsupportedError } from "./errors";
 import { generateSanySpecification } from "./sany-generator";
 import { checkModuleLevels } from "./sany-levels";
 import { SANY_STANDARD_MODULES } from "./sany-modules";
+import { extractModule } from "./parser";
 import {
   CONSTANT_DECL_KIND,
+  formatSanyLocation,
   VARIABLE_DECL_KIND,
   getDeclarations,
   getOpDefs,
   type AssumeNode,
   type ExprOrOpArgNode,
+  type FactNode,
   type LevelNode,
   type ModuleNode,
   type OpApplNode,
@@ -15,7 +19,6 @@ import {
   type Subst,
   type SymbolNode,
   type TheoremNode,
-  type ThmOrAssumpDefNode,
   type ProofPartNode,
   type InstanceNode,
   type UseOrHideNode,
@@ -48,6 +51,23 @@ const XML_ENTITIES: Record<string, string> = {
 
 const escapeXml = (text: string) =>
   text.replace(/[&<>\r]/g, (character) => XML_ENTITIES[character]);
+
+// A character outside XML 1.0's Char production.
+const UNREPRESENTABLE_CHARACTER = /[^\t\n\r\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u;
+
+// XMLExporter.findUnrepresentableCharacterData: the first element, in document order, whose
+// character data XML 1.0 cannot represent, with the character.
+const findUnrepresentable = (
+  element: XmlElement,
+): { tag: string; character: string } | undefined => {
+  const character = (element.cdata ?? element.text)?.match(UNREPRESENTABLE_CHARACTER)?.[0];
+  if (character !== undefined) return { tag: element.tag, character };
+  for (const child of element.children) {
+    const found = findUnrepresentable(child);
+    if (found) return found;
+  }
+  return undefined;
+};
 
 // The pretty printing of Java's identity Transformer with an indent amount of 2.
 const printElement = (element: XmlElement, depth: number): string[] => {
@@ -151,7 +171,7 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
     return comments.length > 0 ? [{ tag: "pre-comments", cdata: text, children: [] }] : [];
   };
 
-  function exportDefinition(node: ContextNode, isOtherBug: boolean): XmlElement {
+  const exportDefinition = (node: ContextNode, isOtherBug: boolean): XmlElement => {
     switch (node.kind) {
       case "FormalParam":
         return withLevel(
@@ -173,6 +193,10 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
           node.location,
         );
       case "OpDef": {
+        // SANY's XMLExporter fails on the definition of a proof step that a DEF clause names.
+        if (node.defKind === "NumberedProofStep") {
+          throw new TlaUnsupportedError("unsupported kind: 37 in xml export");
+        }
         if (node.defKind === "ModuleInstance") {
           return withLevel(
             createElement("ModuleInstanceKind", [
@@ -259,11 +283,11 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
           ],
         };
     }
-  }
+  };
 
   // The children of a ModuleNode element after its name, built in the order SANY builds them so
   // that the context entries they add appear in the same order.
-  function exportModuleChildren(module: ModuleNode): XmlElement[] {
+  const exportModuleChildren = (module: ModuleNode): XmlElement[] => {
     return [
       createText("uniquename", module.name),
       createElement(
@@ -289,7 +313,7 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
         .filter((definition): definition is ModuleNode => definition.kind === "Module")
         .map((inner) => getReference(inner)),
     ];
-  }
+  };
 
   const exportSubst = (subst: Subst, isOtherBug: boolean) =>
     createElement("Subst", [getReference(subst.op), exportExpression(subst.expr, isOtherBug)]);
@@ -337,12 +361,12 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
     ]);
   };
 
-  const exportFact = (fact: LevelNode | ThmOrAssumpDefNode | ModuleNode, isOtherBug: boolean) =>
-    fact.kind === "Module" || fact.kind === "ThmOrAssumpDef"
+  const exportFact = (fact: FactNode, isOtherBug: boolean) =>
+    fact.kind === "Module" || fact.kind === "OpDef"
       ? getReference(fact, isOtherBug)
       : exportExpression(fact, isOtherBug);
 
-  function exportExpression(node: ExportedNode, isOtherBug: boolean): XmlElement {
+  const exportExpression = (node: ExportedNode, isOtherBug: boolean): XmlElement => {
     switch (node.kind) {
       case "OpAppl":
         return withLevel(exportApplication(node, isOtherBug), node, node.location);
@@ -533,7 +557,7 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
           node.location,
         );
     }
-  }
+  };
 
   const moduleReferences = modules.map((module) => getReference(module));
   const context = createElement(
@@ -551,19 +575,6 @@ const exportSpecification = (modules: ModuleNode[], root: ModuleNode) => {
 
 type ExportedNode = LevelNode | InstanceNode | UseOrHideNode | ProofPartNode;
 
-const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-// MonolithSpecExtractor.module: a module that no file defines can follow the root module in the
-// root module's file, from its ---- MODULE line to the next ==== line.
-const extractModule = (source: string, name: string) => {
-  const start = new RegExp(`^-----*\\s*MODULE\\s+${escapeRegExp(name)}\\s*----*$`);
-  const lines = source.split(/\r?\n/);
-  const first = lines.findIndex((line) => start.test(line));
-  if (first === -1) return undefined;
-  const last = lines.findIndex((line, index) => index > first && line.startsWith("===="));
-  return `${lines.slice(first, last === -1 ? undefined : last + 1).join("\n")}\n`;
-};
-
 // The specification in the XML format of SANY's tla2sany.xml.XMLExporter, as its -o option prints
 // it: every module the root module depends on, the standard modules among them, with the level of
 // every expression.
@@ -572,8 +583,19 @@ export const exportSanyXml = (source: string, loadModule: (name: string) => stri
     source,
     (name) => loadModule(name) ?? SANY_STANDARD_MODULES.get(name) ?? extractModule(source, name),
   );
+  const error = specification.messages.find((message) => !message.isWarning);
+  if (error) {
+    throw new TlaSyntaxError(`${formatSanyLocation(error.location)}\n\n${error.text}`);
+  }
   specification.modules.forEach((module) => checkModuleLevels(module));
   const document = exportSpecification(specification.modules, specification.root);
+  const unrepresentable = findUnrepresentable(document);
+  if (unrepresentable) {
+    const codePoint = unrepresentable.character.codePointAt(0) ?? 0;
+    throw new TlaUnsupportedError(
+      `The spec contains the character U+${codePoint.toString(16).toUpperCase().padStart(4, "0")} in the ${unrepresentable.tag} element. XML 1.0 cannot represent that character in character data, not even as a numeric character reference, so the spec cannot be exported until the character is removed from it.`,
+    );
+  }
   return [
     '<?xml version="1.0" encoding="UTF-8" standalone="no"?>',
     ...printElement(document, 0),

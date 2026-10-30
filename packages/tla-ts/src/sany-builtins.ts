@@ -93,6 +93,9 @@ export const createLevelFields = (id: number): LevelFields => ({
   allParams: new Set(),
   nonLeibnizParams: new Set(),
   argLevelParams: new Map(),
+  levelCorrect: true,
+  levelConstraints: new Map(),
+  argLevelConstraints: new Map(),
 });
 
 // The builtin operators in the order SANY adds them to its global context.
@@ -134,5 +137,9 @@ export const createBuiltins = (getId: () => number) =>
       isLeibnizArg: isLevelSet ? isLeibnizArg : undefined,
       isLeibniz: isLeibnizArg?.every(Boolean) ?? true,
       opLevelCond: undefined,
+      maxLevels: arity < 0 ? (maxLevels ?? []).slice(0, 1) : (maxLevels ?? []),
+      minMaxLevel: undefined,
+      labels: new Map(),
+      step: undefined,
     };
   });

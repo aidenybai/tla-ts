@@ -172,8 +172,10 @@ const bindFormals = (scope: Scope, formals: OperatorParam[]) =>
 
 const toFormals = (names: string[]) => names.map((name) => ({ name, arity: 0 }));
 
+// The levels of tla2sany.semantic.LevelConstants.
+export const CONSTANT_LEVEL = 0;
+export const VARIABLE_LEVEL = 1;
 export const ACTION_LEVEL = 2;
-
 export const TEMPORAL_LEVEL = 3;
 
 const createLevelError = (message: string, location: SourceLocation) =>
