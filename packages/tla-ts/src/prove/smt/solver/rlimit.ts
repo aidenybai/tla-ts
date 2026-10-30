@@ -4,6 +4,7 @@
 // epoch, when the signal aborts, or when the heap is nearly full.
 export class ResourceLimit {
   private isCanceled = false;
+  private numChecks = 0;
 
   constructor(
     private deadline: number,
@@ -14,7 +15,9 @@ export class ResourceLimit {
   inc() {
     if (
       !this.isCanceled &&
-      (Date.now() > this.deadline || this.signal?.aborted === true || isHeapNearlyFull())
+      (Date.now() > this.deadline ||
+        this.signal?.aborted === true ||
+        ((++this.numChecks & HEAP_CHECK_MASK) === 0 && isHeapNearlyFull()))
     )
       this.isCanceled = true;
     return !this.isCanceled;
@@ -27,6 +30,8 @@ export class ResourceLimit {
 // heap statistics come from node:v8, which Node, Deno and Bun provide. In V8 the used and the
 // available size add up to the heap limit, and in Bun to the memory of the machine.
 const HEAP_FRACTION = 0.8;
+// The heap is checked on every 128th call, since reading its statistics costs more than the clock.
+const HEAP_CHECK_MASK = 127;
 const v8 = typeof process === "undefined" ? undefined : process.getBuiltinModule?.("node:v8");
 
 const isHeapNearlyFull = () => {
