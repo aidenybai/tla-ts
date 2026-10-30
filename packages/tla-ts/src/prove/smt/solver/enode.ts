@@ -38,8 +38,11 @@ export class Enode {
   parents: Enode[] = [];
   trans: Trans | null = null;
   thVar = -1;
+  // The approximate label sets of the class, 64 bits in two words: the low 32 bits, then the high.
   lbls = 0;
+  lblsHigh = 0;
   plbls = 0;
+  plblsHigh = 0;
   lblHash = -1;
   isMarked = false;
   isMarked2 = false;

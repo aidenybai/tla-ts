@@ -56,6 +56,8 @@ export interface FuncDecl {
   domain: number[];
   range: number;
   isSkolem: boolean;
+  // Z3's small id of the declaration, which its matcher hashes.
+  smallId: number;
 }
 
 export interface QuantifierData {
@@ -130,6 +132,33 @@ const Z3_BUILTINS = new Map<number, [string, number, number]>([
   [OP_PATTERN, ["pattern", 0, -1]],
 ]);
 
+// The small ids of the Int declarations Z3 makes when it starts, from arith_decl_plugin::set_manager.
+// Z3 makes =, ite and distinct per sort on first use, which the manager does not follow, so they
+// get -1.
+const Z3_SMALL_IDS = new Map([
+  [OP_TRUE, 1],
+  [OP_FALSE, 2],
+  [OP_AND, 3],
+  [OP_OR, 4],
+  [OP_XOR, 5],
+  [OP_NOT, 6],
+  [OP_IMPLIES, 7],
+  [OP_LE, 17],
+  [OP_GE, 18],
+  [OP_LT, 19],
+  [OP_GT, 20],
+  [OP_ADD, 36],
+  [OP_SUB, 37],
+  [OP_MUL, 38],
+  [OP_IDIV, 39],
+  [OP_MOD, 41],
+  [OP_UMINUS, 42],
+  [OP_ABS, 50],
+]);
+
+// The small id of the first sort or declaration a problem declares, after Z3's own.
+const FIRST_DECLARED_SMALL_ID = 143;
+
 // The ids of Z3's own expressions when it starts: the undef proof, true and false, then pi, euler, a
 // bit-vector numeral, fifteen real variables and a sum of two of them, which no problem shares.
 const FIRST_FREE_ID = 22;
@@ -167,6 +196,9 @@ export class AstManager {
   private builtinHashes = new Map<string, number>();
   private table = new Map<string, number>();
   private appTable = new Map<number, number[]>();
+  // The small id of the next sort or declaration. Z3 makes declarations of its own as it goes, which
+  // the manager does not follow, so only the declarations of a problem's prelude match Z3's.
+  private nextSmallId = FIRST_DECLARED_SMALL_ID;
   // ast_manager::m_fresh_id, which numbers fresh declarations and variable names.
   private freshId = 0;
   // Z3's id of each expression, which orders Z3's sorts. Like Z3, the manager counts references and
@@ -192,6 +224,7 @@ export class AstManager {
         domain: [],
         range: builtin[3],
         isSkolem: false,
+        smallId: Z3_SMALL_IDS.get(builtin[2]) ?? -1,
       });
     this.trueExpr = this.mkApp(OP_TRUE, [], SORT_BOOL);
     this.falseExpr = this.mkApp(OP_FALSE, [], SORT_BOOL);
@@ -300,6 +333,7 @@ export class AstManager {
       ),
     );
     this.sortNames.push(name);
+    this.nextSmallId++;
     return this.sortNames.length - 1;
   }
 
@@ -358,6 +392,7 @@ export class AstManager {
       domain,
       range,
       isSkolem,
+      smallId: this.nextSmallId++,
     });
     return this.funcDecls.length - 1;
   }
@@ -504,6 +539,7 @@ export class AstManager {
       domain: [],
       range: sort,
       isSkolem: false,
+      smallId: this.nextSmallId++,
     });
     const sortHash = this.sortHashes[sort];
     return this.intern(key, KIND_APP, this.funcDecls.length - 1, [], sort, index, () =>

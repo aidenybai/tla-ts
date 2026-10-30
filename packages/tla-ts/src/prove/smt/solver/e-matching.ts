@@ -7,6 +7,7 @@
 import { AstManager, KIND_APP, KIND_VAR } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
+import { hashU, mkMix } from "./hash";
 
 export interface Trigger {
   quantifier: number;
@@ -58,14 +59,17 @@ interface PathTree {
   groundArgIndex: number;
   groundArg: Enode | null;
   filter: number;
+  filterHigh: number;
   code: CodeTree | null;
   firstChild: PathTree | null;
   sibling: PathTree | null;
 }
 
-export type OnMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) => void;
+// approx_set::may_contain, on a set of 64 bits in two words.
+const hasHash = (low: number, high: number, hash: number) =>
+  ((hash < 32 ? low : high) & (1 << hash)) !== 0;
 
-const getLabelHash = (decl: number) => (Math.imul(decl + 17, 0x9e3779b1) >>> 27) & 31;
+export type OnMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) => void;
 
 const isEqualPath = (first: Path, second: Path): boolean => {
   let left = first;
@@ -94,6 +98,7 @@ export class Mam {
   private clbls = new Set<number>();
   private r1: Enode | null = null;
   private r2: Enode | null = null;
+  private labelHashes: number[] = [];
 
   constructor(
     private context: Context,
@@ -104,31 +109,53 @@ export class Mam {
     return this.context.manager;
   }
 
+  // label_hasher: Bob Jenkins' mix of the small id of a declaration, in [0, 64).
+  private getLabelHash(decl: number) {
+    const cached = this.labelHashes[decl];
+    if (cached !== undefined) return cached;
+    const hash = mkMix(17, 3, this.manager.funcDecls[decl].smallId) & 63;
+    this.labelHashes[decl] = hash;
+    return hash;
+  }
+
+  // enode::set_lbl_hash: a ground term of a pattern hashes its id, and its root's labels take it.
+  private setLblHash(node: Enode) {
+    node.lblHash = hashU(this.manager.ids[node.owner]) & 63;
+    this.context.pushTrail(() => {
+      node.lblHash = -1;
+    });
+    this.updateLbls(node, node.lblHash);
+  }
+
   hasWork() {
     return this.toMatch.length > 0 || this.newPatterns.length > 0;
   }
 
   private updateLbls(node: Enode, hash: number) {
     const root = node.root;
-    const bit = 1 << hash;
-    if ((root.lbls & bit) !== 0) return;
-    const saved = root.lbls;
+    if (hasHash(root.lbls, root.lblsHigh, hash)) return;
+    const low = root.lbls;
+    const high = root.lblsHigh;
     this.context.pushTrail(() => {
-      root.lbls = saved;
+      root.lbls = low;
+      root.lblsHigh = high;
     });
-    root.lbls |= bit;
+    if (hash < 32) root.lbls |= 1 << hash;
+    else root.lblsHigh |= 1 << hash;
   }
 
   private updateChildrenPlbls(node: Enode, hash: number) {
-    const bit = 1 << hash;
     for (const arg of node.args) {
       const root = arg.root;
-      if ((root.plbls & bit) !== 0) continue;
-      const saved = root.plbls;
+      if (hasHash(root.plbls, root.plblsHigh, hash)) continue;
+      const low = root.plbls;
+      const high = root.plblsHigh;
       this.context.pushTrail(() => {
-        root.plbls = saved;
+        root.plbls = low;
+        root.plblsHigh = high;
       });
-      root.plbls |= bit;
+      if (hash < 32) root.plbls |= 1 << hash;
+      else root.plblsHigh |= 1 << hash;
     }
   }
 
@@ -136,7 +163,7 @@ export class Mam {
     if (this.plbls.has(decl)) return;
     this.plbls.add(decl);
     this.context.pushTrail(() => this.plbls.delete(decl));
-    const hash = getLabelHash(decl);
+    const hash = this.getLabelHash(decl);
     for (const node of this.context.enodesOf(decl))
       if (this.context.isRelevant(node.owner)) this.updateChildrenPlbls(node, hash);
   }
@@ -145,7 +172,7 @@ export class Mam {
     if (this.clbls.has(decl)) return;
     this.clbls.add(decl);
     this.context.pushTrail(() => this.clbls.delete(decl));
-    const hash = getLabelHash(decl);
+    const hash = this.getLabelHash(decl);
     for (const node of this.context.enodesOf(decl))
       if (this.context.isRelevant(node.owner)) this.updateLbls(node, hash);
   }
@@ -162,11 +189,15 @@ export class Mam {
       argIndex: path.argIndex,
       groundArgIndex: path.groundArgIndex,
       groundArg: path.groundArg,
-      filter: 1 << getLabelHash(path.label),
+      filter: 0,
+      filterHigh: 0,
       code: null,
       firstChild: null,
       sibling: null,
     };
+    const hash = this.getLabelHash(path.label);
+    if (hash < 32) tree.filter = 1 << hash;
+    else tree.filterHigh = 1 << hash;
     if (path.child === null)
       tree.code = { triggers: [triggers[path.patternIndex]], candidates: [] };
     else tree.firstChild = this.mkPathTree(path.child, triggers);
@@ -210,15 +241,19 @@ export class Mam {
       previous.sibling = null;
     });
     if (isLabelFound) return;
-    const savedFilter = head.filter;
-    head.filter |= 1 << getLabelHash(path.label);
+    const low = head.filter;
+    const high = head.filterHigh;
     this.context.pushTrail(() => {
-      head.filter = savedFilter;
+      head.filter = low;
+      head.filterHigh = high;
     });
+    const hash = this.getLabelHash(path.label);
+    if (hash < 32) head.filter |= 1 << hash;
+    else head.filterHigh |= 1 << hash;
   }
 
   private updatePc(firstHash: number, secondHash: number, path: Path, triggers: Trigger[]) {
-    const key = firstHash * 32 + secondHash;
+    const key = firstHash * 64 + secondHash;
     const existing = this.pc.get(key);
     if (existing !== undefined) {
       this.insertPath(existing, path, triggers);
@@ -252,7 +287,7 @@ export class Mam {
     const secondHash = isSwapped ? inputFirstHash : inputSecondHash;
     const first = isSwapped ? inputSecond : inputFirst;
     const second = isSwapped ? inputFirst : inputSecond;
-    const key = firstHash * 32 + secondHash;
+    const key = firstHash * 64 + secondHash;
     let entry = this.pp.get(key);
     if (entry === undefined) {
       entry = [null, null];
@@ -304,8 +339,8 @@ export class Mam {
           this.updatePlbls(existing.label);
           this.updatePlbls(path.label);
           this.updatePp(
-            getLabelHash(existing.label),
-            getLabelHash(path.label),
+            this.getLabelHash(existing.label),
+            this.getLabelHash(path.label),
             existing,
             path,
             triggers,
@@ -318,14 +353,14 @@ export class Mam {
         const node = this.getGroundEnode(child);
         if (node === null) continue;
         this.updatePlbls(label);
-        if (node.lblHash === -1) node.lblHash = (Math.imul(node.owner + 7, 0x85ebca6b) >>> 27) & 31;
-        this.updatePc(getLabelHash(label), node.lblHash, path, triggers);
+        if (node.lblHash === -1) this.setLblHash(node);
+        this.updatePc(this.getLabelHash(label), node.lblHash, path, triggers);
         continue;
       }
       const childLabel = manager.decls[child];
       this.updatePlbls(label);
       this.updateClbls(childLabel);
-      this.updatePc(getLabelHash(label), getLabelHash(childLabel), path, triggers);
+      this.updatePc(this.getLabelHash(label), this.getLabelHash(childLabel), path, triggers);
       this.updateFilters(child, path, patternIndex, varPaths, triggers);
     }
   }
@@ -453,7 +488,7 @@ export class Mam {
   relevantEh(node: Enode, isLazy: boolean) {
     if (node.lblHash !== -1) this.updateLbls(node, node.lblHash);
     if (node.args.length === 0) return;
-    const hash = getLabelHash(node.decl);
+    const hash = this.getLabelHash(node.decl);
     if (this.clbls.has(node.decl)) this.updateLbls(node, hash);
     if (this.plbls.has(node.decl)) this.updateChildrenPlbls(node, hash);
     const tree = this.trees.get(node.decl);
@@ -482,17 +517,18 @@ export class Mam {
       const nodes = pending.get(level) ?? [];
       pending.delete(level);
       const filter = level.filter;
+      const filterHigh = level.filterHigh;
       const visitedParents = new Set<Enode>();
       const queuedRoots = new Set<Enode>();
       for (const node of nodes) {
         const child = node.root;
-        if ((child.plbls & filter) === 0) continue;
+        if ((child.plbls & filter) === 0 && (child.plblsHigh & filterHigh) === 0) continue;
         for (const parent of child.parents) {
           if (parent.isEq) continue;
           const label = parent.decl;
           const parentRoot = parent.root;
           if (
-            (filter & (1 << getLabelHash(label))) === 0 ||
+            !hasHash(filter, filterHigh, this.getLabelHash(label)) ||
             visitedParents.has(parent) ||
             (parent.cg !== parent && this.isEqModMerge(parent.cg, parentRoot)) ||
             !context.isRelevant(parent.owner)
@@ -526,33 +562,29 @@ export class Mam {
   }
 
   private processPc(r1: Enode, r2: Enode) {
-    const plbls = r1.plbls;
-    const clbls = r2.lbls;
-    if (plbls === 0 || clbls === 0) return;
-    for (let parentHash = 0; parentHash < 32; parentHash++) {
-      if ((plbls & (1 << parentHash)) === 0) continue;
+    if ((r1.plbls === 0 && r1.plblsHigh === 0) || (r2.lbls === 0 && r2.lblsHigh === 0)) return;
+    for (let parentHash = 0; parentHash < 64; parentHash++) {
+      if (!hasHash(r1.plbls, r1.plblsHigh, parentHash)) continue;
       if (this.context.checkCanceled()) return;
-      for (let childHash = 0; childHash < 32; childHash++)
-        if ((clbls & (1 << childHash)) !== 0)
-          this.collectParents(r1, this.pc.get(parentHash * 32 + childHash));
+      for (let childHash = 0; childHash < 64; childHash++)
+        if (hasHash(r2.lbls, r2.lblsHigh, childHash))
+          this.collectParents(r1, this.pc.get(parentHash * 64 + childHash));
     }
   }
 
   private processPp(r1: Enode, r2: Enode) {
-    const plbls1 = r1.plbls;
-    const plbls2 = r2.plbls;
-    if (plbls1 === 0 || plbls2 === 0) return;
-    for (let firstHash = 0; firstHash < 32; firstHash++) {
-      if ((plbls1 & (1 << firstHash)) === 0) continue;
+    if ((r1.plbls === 0 && r1.plblsHigh === 0) || (r2.plbls === 0 && r2.plblsHigh === 0)) return;
+    for (let firstHash = 0; firstHash < 64; firstHash++) {
+      if (!hasHash(r1.plbls, r1.plblsHigh, firstHash)) continue;
       if (this.context.checkCanceled()) return;
-      for (let secondHash = 0; secondHash < 32; secondHash++) {
-        if ((plbls2 & (1 << secondHash)) === 0) continue;
+      for (let secondHash = 0; secondHash < 64; secondHash++) {
+        if (!hasHash(r2.plbls, r2.plblsHigh, secondHash)) continue;
         const isSwapped = firstHash > secondHash;
         const lowHash = isSwapped ? secondHash : firstHash;
         const highHash = isSwapped ? firstHash : secondHash;
         const lowRoot = isSwapped ? r2 : r1;
         const highRoot = isSwapped ? r1 : r2;
-        const entry = this.pp.get(lowHash * 32 + highHash);
+        const entry = this.pp.get(lowHash * 64 + highHash);
         if (entry === undefined) continue;
         if (lowHash === highHash) {
           if (lowRoot.parents.length <= highRoot.parents.length)

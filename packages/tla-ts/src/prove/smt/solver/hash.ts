@@ -39,7 +39,7 @@ export const mkMix = (a: number, b: number, c: number) => {
   return state[2];
 };
 
-const hashU = (value: number) => {
+export const hashU = (value: number) => {
   let a = value >>> 0;
   a = (a + 0x7ed55d16 + (a << 12)) >>> 0;
   a = (a ^ 0xc761c23c ^ (a >>> 19)) >>> 0;

@@ -470,14 +470,25 @@ export class Context extends Internalizer {
     r2.next = savedNext;
     r2.classSize += r1.classSize;
     const r2Lbls = r2.lbls;
+    const r2LblsHigh = r2.lblsHigh;
     const r2Plbls = r2.plbls;
-    if ((r2Lbls | r1.lbls) !== r2Lbls || (r2Plbls | r1.plbls) !== r2Plbls) {
+    const r2PlblsHigh = r2.plblsHigh;
+    if (
+      (r2Lbls | r1.lbls) !== r2Lbls ||
+      (r2LblsHigh | r1.lblsHigh) !== r2LblsHigh ||
+      (r2Plbls | r1.plbls) !== r2Plbls ||
+      (r2PlblsHigh | r1.plblsHigh) !== r2PlblsHigh
+    ) {
       this.trail.push(() => {
         r2.lbls = r2Lbls;
+        r2.lblsHigh = r2LblsHigh;
         r2.plbls = r2Plbls;
+        r2.plblsHigh = r2PlblsHigh;
       });
       r2.lbls |= r1.lbls;
+      r2.lblsHigh |= r1.lblsHigh;
       r2.plbls |= r1.plbls;
+      r2.plblsHigh |= r1.plblsHigh;
     }
   }
 
