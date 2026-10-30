@@ -907,7 +907,9 @@ const compileAction = (
         try {
           return holds(unchanged, getContext(run, scope, nextPartial));
         } catch (error) {
-          throw run.isEnabled ? toUnspecifiedSubscriptError(error) : error;
+          throw run.isEnabled
+            ? toUnspecifiedSubscriptError(error, environment.runtime.version)
+            : error;
         }
       };
       return (run, scope, partial, action, isFixed, onComplete) =>

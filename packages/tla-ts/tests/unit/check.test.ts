@@ -1985,6 +1985,29 @@ describe("check matches TLC 1.7.4", () => {
     );
   });
 
+  it("reports an error in adding a state to the behavior graph as TLC 1.7.4's worker does", async () => {
+    const result = await check174(
+      "Init == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nProp == []<>(1 \\div x = 1)",
+      "SPECIFICATION Spec\nPROPERTY Prop",
+    );
+    expect(result.failure?.message).toBe(
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a tlc2.tool.EvalException\n: The second argument of \\div is 0.",
+    );
+    expect([result.failure?.trace, result.failure?.callStack, result.failure?.exitCode]).toEqual([
+      [],
+      undefined,
+      255,
+    ]);
+  });
+
+  it("exits successfully after an error in adding an initial state to the behavior graph, as TLC 1.7.4 does", async () => {
+    const result = await check174(
+      "Init == x = 0\nNext == (x = 0 /\\ x' = 1) \\/ UNCHANGED x\nSpec == Init /\\ [][Next]_x\nProp == <>~ENABLED (x' > x)",
+      "SPECIFICATION Spec\nPROPERTY Prop",
+    );
+    expect(result.failure?.exitCode).toBe(0);
+  });
+
   it("doesn't explain a set it can't enumerate", async () => {
     const result = await check174("Init == x = 0\nNext == \\E n \\in Nat : x' = n");
     expect(result.failure?.message).toContain(

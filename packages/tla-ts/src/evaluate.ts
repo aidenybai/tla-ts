@@ -1847,9 +1847,9 @@ export const createUnassignedError = (name: string, expression: Expression) =>
   );
 
 // TLC's Tool#enabled reads the subscript of <<A>>_v in the successor as a state of its own, and
-// names the fairness condition when A leaves a variable of v unassigned.
-export const toUnspecifiedSubscriptError = (error: unknown) =>
-  error instanceof TlaUnassignedError
+// names the fairness condition when A leaves a variable of v unassigned, unlike TLC 1.7.4's.
+export const toUnspecifiedSubscriptError = (error: unknown, version: TlcVersion | undefined) =>
+  error instanceof TlaUnassignedError && version !== "1.7.4"
     ? new TlaEvaluationError(
         `The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable ${error.variable} occurring in the state formula v.\n`,
       )

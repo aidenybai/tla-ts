@@ -174,7 +174,9 @@ const isChanged = (replay: Replay, item: Item, partial: State) => {
         next: undefined,
       });
     } catch (error) {
-      throw replay.isEnabled ? toUnspecifiedSubscriptError(error) : error;
+      throw replay.isEnabled
+        ? toUnspecifiedSubscriptError(error, environment.runtime.version)
+        : error;
     }
   })();
   return !valuesEqual(before, after);

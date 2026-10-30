@@ -15,6 +15,7 @@ import {
   TlaEvaluationError,
   TlaIncompleteSuccessorError,
   TlaModuleError,
+  getUnexpectedException,
   UNEXPECTED_EXCEPTION,
 } from "./errors";
 import type { JavaOverride } from "./java-overrides";
@@ -1263,15 +1264,20 @@ const withHeadline = (error: unknown, code: number, headline: string) => {
 
 const UNEXPECTED_HEADLINE = UNEXPECTED_EXCEPTION.slice(0, UNEXPECTED_EXCEPTION.indexOf("\n"));
 
+// The starts of TLC's messages for the exceptions it didn't expect.
+const UNEXPECTED_EXCEPTIONS = [
+  UNEXPECTED_EXCEPTION,
+  getUnexpectedException("tlc2.tool.EvalException"),
+];
+
 // The text of an error's message, with the message of a coded error inside it marked in -tool
 // output as TLC marks it.
 const formatErrorMessage = (error: TlaEvaluationError, isTool: boolean): string => {
   const headed = headedErrors.get(error);
   if (headed) return `${headed.headline}\n${formatErrorMessage(headed.inner, isTool)}`;
   const message = error.message;
-  return message.startsWith(UNEXPECTED_EXCEPTION)
-    ? `${UNEXPECTED_EXCEPTION}${formatNestedMessage(message.slice(UNEXPECTED_EXCEPTION.length), isTool)}`
-    : formatNestedMessage(message, isTool);
+  const prefix = UNEXPECTED_EXCEPTIONS.find((start) => message.startsWith(start)) ?? "";
+  return `${prefix}${formatNestedMessage(message.slice(prefix.length), isTool)}`;
 };
 
 // How TLC reports an error: with the code of its own message for an error that it reports with a
@@ -1736,6 +1742,16 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       : getTrace(index);
   // TLC names the initial state it was checking unless a standard module's Java code failed.
   const getFailureExitCode = (error: TlaEvaluationError, options: FailureOptions) => {
+    // TLC 1.7.4 exits with the result of its replay of the initial states, which only fails again
+    // when the error isn't in adding a state it has already seen to the behavior graph.
+    if (
+      options.isInitial &&
+      !options.callStack &&
+      !options.fingerprint &&
+      environment.runtime.version === "1.7.4"
+    ) {
+      return EXIT_STATUS.success;
+    }
     if (!options.callStack) {
       return options.isInitial ? getInitialExitCode(error) : getErrorExitCode(error);
     }
@@ -2209,6 +2225,21 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     try {
       return addLiveState();
     } catch (error) {
+      // TLC 1.7.4's worker reports an error in adding a state to the behavior graph as an exception
+      // it didn't expect, without the trace or a call stack, and exits as for any general error.
+      if (environment.runtime.version === "1.7.4" && error instanceof TlaEvaluationError) {
+        const exceptionClass = isEvalException(error)
+          ? "tlc2.tool.EvalException"
+          : "java.lang.RuntimeException";
+        const unexpected = new TlaEvaluationError(
+          `${getUnexpectedException(exceptionClass)}${error.message}`,
+        );
+        return toFailure(
+          setExitCode(unexpected, EXIT_STATUS.error),
+          { trace: [] },
+          { outDegrees: getFailureOutDegrees() },
+        );
+      }
       // TLC's Worker#doNextCheckLiveness adds the state again to find the call stack, prints it
       // before the error, and reports the error as one in computing next states.
       const replay = getReplayFailure((tracing) =>
