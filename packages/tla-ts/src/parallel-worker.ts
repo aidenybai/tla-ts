@@ -59,6 +59,7 @@ const run = (start: StartMessage, parent: Port) => {
     print: () => {},
     files: { readFile: undefined, writeFile: undefined },
     isTool: start.isTool,
+    isTraceRecorded: start.isTraceRecorded,
     isWarningEnabled: start.isWarningEnabled,
   });
   const environment = specification.environment;

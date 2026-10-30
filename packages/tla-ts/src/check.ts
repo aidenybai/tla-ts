@@ -114,8 +114,10 @@ export interface CheckOptions {
   livenessCheck?: "default" | "final";
   // TLC's -dump: writes the reachable states, or with `dot` the state graph, through writeFile.
   dump?: StateDump;
-  // TLC's -tool, which changes the messages of TLC's errors and which modules TLC loads.
+  // TLC's -tool, which changes the messages of TLC's errors.
   isTool?: boolean;
+  // Whether TLC records a binary trace for its trace exploration spec, for which it loads Integers.
+  isTraceRecorded?: boolean;
   // False for TLC's -nowarning, which changes how TLC computes the successors of some actions.
   isWarningEnabled?: boolean;
   // The TLC whose output tla-ts reproduces, which changes how TLC labels an action.
@@ -1383,6 +1385,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     files: { readFile: options.readFile, writeFile: options.writeFile },
     seed: options.seed,
     isTool: options.isTool,
+    isTraceRecorded: options.isTraceRecorded,
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
   });

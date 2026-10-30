@@ -717,6 +717,19 @@ const printStartupBanner = (printer: MessagePrinter, seed: string, workers: numb
     `Running breadth-first search Model-Checking with fp 0 and seed ${BigInt(seed)} with ${workers} worker${workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 0MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit, MemFPSet, MemStateQueue).`,
   );
 
+// TLC loads Integers for the binary trace that its trace exploration spec records. -generateSpecTE
+// turns the spec on, and -tool, -continue, -noGenerateSpecTE and -noTE turn it off, as
+// -noGenerateSpecTEBin and -noTEBin turn off the binary trace. TLC 1.7.4 records no such trace.
+const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) => {
+  const flags = [...args.unknown, ...args.options.map((option) => option.name)];
+  const has = (name: string, alias = name) =>
+    flags.some((flag) => flag === name || flag.toLowerCase() === alias.toLowerCase());
+  const isSpecGenerated =
+    has("-generateSpecTE") ||
+    (!has("-noGenerateSpecTE", "-noTE") && !has("-tool") && !has("-continue"));
+  return version !== "1.7.4" && isSpecGenerated && !has("-noGenerateSpecTEBin", "-noTEBin");
+};
+
 const checkSpec = async (
   specPath: string,
   args: ParsedArgs,
@@ -840,6 +853,7 @@ const checkSpec = async (
       seed: BigInt(seed),
       dump: dumpValues && getDump(dumpValues),
       isTool: printer.isTool,
+      isTraceRecorded: isTraceRecorded(args, version),
       isWarningEnabled: !args.has("-nowarning"),
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),

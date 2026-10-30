@@ -74,9 +74,10 @@ interface EnvironmentOptions {
   seed?: bigint;
   // Links the modules without a model, as SANY does, so a declared constant needs no value.
   isUnconfigured?: boolean;
-  // TLC's -tool. Without it TLC loads its trace exploration spec, which loads Integers, whose Java
-  // methods then compute the arithmetic of Naturals.
   isTool?: boolean;
+  // TLC loads Integers for the binary trace of its trace exploration spec, and Integers' Java
+  // methods then compute the arithmetic of Naturals.
+  isTraceRecorded?: boolean;
   isWarningEnabled?: boolean;
   version?: TlcVersion;
 }
@@ -966,7 +967,7 @@ export const createEnvironment = (
     );
   }
 
-  if (!options.isTool) {
+  if (options.isTraceRecorded) {
     builtins.forEach((builtin, name) => {
       const replacement = getTraceSpecArithmetic(builtin);
       if (replacement) builtins.set(name, replacement);

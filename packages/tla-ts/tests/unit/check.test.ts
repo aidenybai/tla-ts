@@ -1249,6 +1249,21 @@ describe("evaluation errors match TLC", () => {
     expect(result.status).toBe("success");
   });
 
+  it.each([
+    [true, "Integers"],
+    [false, "Naturals"],
+  ])(
+    "names the Java class of .. by whether TLC records a trace (%s)",
+    async (isTraceRecorded, module) => {
+      const result = await check({
+        source: '---- MODULE M ----\nEXTENDS Naturals\nASSUME 1 .. "a" = {}\n====',
+        config: "",
+        isTraceRecorded,
+      });
+      expect(result.violation?.message).toContain(`tlc2.module.${module}.DotDot`);
+    },
+  );
+
   it("locates IF, CHOOSE, conjunction, DOMAIN, and field errors like TLC", async () => {
     const cases = [
       [
