@@ -305,12 +305,6 @@ class CostsSimplex {
   }
 }
 
-const getTermValue = (solver: LarSolver, term: LarTerm) => {
-  let value = Impq.zero;
-  for (const entry of term.coeffs) value = value.add(solver.getValue(entry[0]).mul(entry[1]));
-  return value;
-};
-
 // maximize_term_on_feasible_r_solver: the costs of the term and their reduced costs, the simplex,
 // and the term's value at the optimum, or undefined when it is unbounded or cancelled.
 const maximizeOnFeasibleSolver = (solver: LarSolver, term: LarTerm) => {
@@ -333,9 +327,7 @@ const maximizeOnFeasibleSolver = (solver: LarSolver, term: LarTerm) => {
   core.reducedCosts = undefined;
   const status = core.status;
   core.status = LP_OPTIMAL;
-  return status === LP_UNBOUNDED || status === LP_CANCELLED
-    ? undefined
-    : getTermValue(solver, term);
+  return status === LP_UNBOUNDED || status === LP_CANCELLED ? undefined : term.apply(core.x);
 };
 
 // maximize_term without fixing the integer columns: the maximum of the column or of its term, or

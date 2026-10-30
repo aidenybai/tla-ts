@@ -18,6 +18,9 @@ export interface LpStats {
   dioTightenConflicts: number;
   dioRewriteConflicts: number;
   dioStateResets: number;
+  lcubeCalls: number;
+  lcubeSuccess: number;
+  lcubeFlipSuccess: number;
 }
 
 export class LpSettings {
@@ -37,11 +40,16 @@ export class LpSettings {
     dioTightenConflicts: 0,
     dioRewriteConflicts: 0,
     dioStateResets: 0,
+    lcubeCalls: 0,
+    lcubeSuccess: 0,
+    lcubeFlipSuccess: 0,
   };
   readonly maxRowLengthForBoundPropagation = 300;
   readonly maxIterationsWithNoImprovements = 2000000;
   readonly isPropagatingEqs = true;
   readonly intFindCubePeriod = 4;
+  // lp.lcube_flips: the most flips that repair a rounded cube center.
+  readonly lcubeFlips = 16;
   readonly hnfCutPeriod = 4;
   readonly limitOnRowsForHnfCutter = 75;
   readonly limitOnColumnsForHnfCutter = 150;

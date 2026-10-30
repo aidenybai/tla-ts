@@ -1,9 +1,8 @@
 // Ported from Z3 (src/math/lp/int_solver.cpp, src/math/lp/int_gcd_test.cpp,
 // src/math/lp/int_branch.cpp), MIT license, see z3-license.txt. The integer check of the final
 // check: the GCD test on rows, patching fractional basic columns through integer non-basic ones,
-// the cube test, HNF cuts, the Diophantine solver, Gomory cuts, and a branch on a fractional basic
-// column. The largest cube is not ported: it returns undef, after drawing the random number that
-// decides whether it runs, so the generator stays in step.
+// the cube and largest cube tests, HNF cuts, the Diophantine solver, Gomory cuts, and a branch on a
+// fractional basic column.
 import { getGcd, getLcm, Rational } from "../rational";
 import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
 import { linearize, mkJoin } from "./dependency";
@@ -11,7 +10,7 @@ import { DiophantineSolver } from "./dioph-eq";
 import { Explanation } from "./explanation";
 import { getGomoryCuts } from "./gomory";
 import { makeHnfCut } from "./hnf-cutter";
-import { findCube } from "./int-cube";
+import { findCube, findLargestCube } from "./int-cube";
 import type { LarSolver } from "./lar-solver";
 import { LarTerm } from "./lar-term";
 import { Impq } from "./numeric-pair";
@@ -148,7 +147,7 @@ export class IntSolver {
     const settings = solver.settings;
     if (this.patchBasicColumns()) return { kind: "sat" };
     if (this.hitPeriod(settings.intFindCubePeriod) && findCube(solver)) return { kind: "sat" };
-    if (this.hitPeriod(this.lcubePeriod) && this.lcubePeriod < 1 << 30) this.lcubePeriod *= 2;
+    if (this.hitPeriod(this.lcubePeriod) && this.findLcube()) return { kind: "sat" };
     solver.moveNonBasicColumnsToBounds();
     if (this.hitPeriod(settings.hnfCutPeriod)) {
       const move = makeHnfCut(this);
@@ -164,6 +163,15 @@ export class IntSolver {
       if (move.kind !== "undef") return move;
     }
     return this.branch();
+  }
+
+  // find_lcube: the period doubles while the largest cube finds nothing, and resets when it finds a
+  // solution.
+  private findLcube() {
+    const isSat = findLargestCube(this.solver);
+    if (isSat) this.lcubePeriod = this.solver.settings.intFindCubePeriod;
+    else if (this.lcubePeriod < 1 << 30) this.lcubePeriod *= 2;
+    return isSat;
   }
 
   // should_solve_dioph_eq: a draw with the current period, which relaxes toward the initial one

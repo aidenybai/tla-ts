@@ -2,6 +2,7 @@
 // columns, kept in a u_map so that its iteration order is Z3's.
 import { ObjMap } from "../hashtable";
 import { Rational } from "../rational";
+import { Impq } from "./numeric-pair";
 
 const getIdentityHash = (key: number) => key;
 
@@ -31,6 +32,13 @@ export class LarTerm {
     const sum = existing.add(coeff);
     if (sum.isZero()) this.coeffs.delete(column);
     else this.coeffs.replace(column, sum);
+  }
+
+  // apply: the value of the term at the column values.
+  apply(values: Impq[]) {
+    let value = Impq.zero;
+    for (const entry of this.coeffs) value = value.add(values[entry[0]].mul(entry[1]));
+    return value;
   }
 
   // subst_by_term: replaces the term column by its definition.
