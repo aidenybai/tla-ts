@@ -2,8 +2,11 @@ import {
   createModelValue,
   createSortedFunction,
   createSortedSet,
+  type FunctionClass,
   getDomainInterval,
+  getFunctionClass,
   getFunctionDomain,
+  setFunctionClass,
   type Value,
 } from "./values";
 
@@ -15,6 +18,9 @@ const MODEL_VALUE = 4;
 const SET = 5;
 const FUNCTION = 6;
 const INTERVAL_FUNCTION = 7;
+
+// A function's TLC class follows its tag, so a worker words errors about it as TLC does.
+const FUNCTION_CLASSES: (FunctionClass | undefined)[] = [undefined, "lambda", "tuple", "record"];
 
 export interface EncodedStates {
   words: Int32Array;
@@ -76,11 +82,13 @@ export const createStateEncoder = (): StateEncoder => {
       const interval = getDomainInterval(value.domain);
       if (interval) {
         push(INTERVAL_FUNCTION);
+        push(FUNCTION_CLASSES.indexOf(getFunctionClass(value)));
         push(interval.low);
         push(value.range.length);
         return value.range.every(encodeValue);
       }
       push(FUNCTION);
+      push(FUNCTION_CLASSES.indexOf(getFunctionClass(value)));
       push(value.domain.length);
       return value.domain.every(encodeValue) && value.range.every(encodeValue);
     }
@@ -117,16 +125,20 @@ export const createStateDecoder =
       if (tag === INTEGER) return words[cursor.index++];
       if (tag === STRING) return encoded.strings[words[cursor.index++]];
       if (tag === MODEL_VALUE) return createModelValue(encoded.strings[words[cursor.index++]]);
+      if (tag === SET) return createSortedSet(decodeElements(words[cursor.index++]));
+      const functionClass = FUNCTION_CLASSES[words[cursor.index++]];
       if (tag === INTERVAL_FUNCTION) {
         const low = words[cursor.index++];
         const length = words[cursor.index++];
         const domain = getFunctionDomain({ kind: "Interval", low, high: low + length - 1 });
-        return createSortedFunction(domain, decodeElements(length));
+        return setFunctionClass(
+          createSortedFunction(domain, decodeElements(length)),
+          functionClass,
+        );
       }
       const length = words[cursor.index++];
-      if (tag === SET) return createSortedSet(decodeElements(length));
       const domain = decodeElements(length);
-      return createSortedFunction(domain, decodeElements(length));
+      return setFunctionClass(createSortedFunction(domain, decodeElements(length)), functionClass);
     };
     return Array.from({ length: encoded.count }, () =>
       Array.from({ length: width }, () => decodeValue()),

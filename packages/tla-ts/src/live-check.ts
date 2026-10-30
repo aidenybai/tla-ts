@@ -29,6 +29,8 @@ export interface Lasso {
 }
 
 export interface LivenessChecker {
+  // How many solutions of the negated properties TLC checks, which it calls branches.
+  branches: number;
   addInitialState: (index: number, state: Value[]) => void;
   addState: (index: number, state: Value[], successors: LiveSuccessor[]) => number[] | undefined;
   findViolation: () => Lasso | undefined;
@@ -654,6 +656,7 @@ export const createLivenessChecker = (
   };
 
   return {
+    branches: checks.length,
     addInitialState: (index, state) => {
       shared.states.clear();
       shared.actions.clear();

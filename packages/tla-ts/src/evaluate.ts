@@ -25,15 +25,19 @@ import {
   combineHash,
   compareValues,
   createFunction,
+  createRecord,
   createEnumeratedSet,
   createSortedFunction,
+  createSortedRecord,
   createSortedSet,
   createWrittenRecord,
   createTuple,
   formatValue,
+  getCardinality,
   getDomain,
   getFunctionDomain,
   getIntervalElements,
+  getFunctionClass,
   getSequenceElements,
   getValueHash,
   isEnumerable,
@@ -44,6 +48,7 @@ import {
   isSetValue,
   MAXIMUM_INTEGER,
   MINIMUM_INTEGER,
+  toFiniteFunction,
   toFiniteSet,
   updateFunction,
   valuesEqual,
@@ -109,11 +114,23 @@ export interface Environment {
   builtins: Map<string, Builtin>;
   constants: Map<string, Value>;
   substitutions: Map<string, string>;
+  // The name SANY gives each definition that a named instance such as `M == INSTANCE Module`
+  // copies, such as M!Op, by the key of the copy.
+  instanceNames: Map<string, string>;
   variables: string[];
   variableIndex: Map<string, number>;
   definitionValues: Map<Definition, Value>;
   constantLevels: Map<Definition, boolean>;
   evaluators: WeakMap<Expression, Evaluator>;
+  // The expressions being evaluated, outermost first, when the environment replays an error to
+  // find where it occurred, as TLC's CallStackTool does.
+  callStack?: CallStack;
+}
+
+export interface CallStack {
+  expressions: Expression[];
+  // TLC stops popping the stack once an evaluation fails, so it keeps where the failure occurred.
+  isFrozen: boolean;
 }
 
 export interface Context {
@@ -336,17 +353,37 @@ export const getEnumeratedElements = (set: Value, expression: Expression) => {
     : toFiniteSet(set).elements;
 };
 
+// The elements a quantifier visits. Like TLC, it keeps an interval as an interval, so that it can
+// stop at the first witness in a large interval such as 1..2000000000 without listing it.
+export const getQuantifierElements = (set: Value, expression: Expression) => {
+  if (typeof set !== "object" || set.kind !== "Interval")
+    return getEnumeratedElements(set, expression);
+  getCardinality(set);
+  return set;
+};
+
+const someElement = (
+  elements: ReturnType<typeof getQuantifierElements>,
+  visit: (element: Value) => boolean,
+) => {
+  if (Array.isArray(elements)) return elements.some(visit);
+  for (let element = elements.low; element <= elements.high; element++) {
+    if (visit(element)) return true;
+  }
+  return false;
+};
+
 export const forEachBinding = (
   bounds: Bound[],
   context: Context,
   visit: (scope: Scope | undefined) => boolean,
 ): boolean => {
   const sets = bounds.map((bound) =>
-    getEnumeratedElements(evaluate(bound.set, context), bound.set),
+    getQuantifierElements(evaluate(bound.set, context), bound.set),
   );
   const visitBound = (index: number, scope: Scope | undefined): boolean => {
     if (index < 0) return visit(scope);
-    return sets[index].some((element) =>
+    return someElement(sets[index], (element) =>
       visitBound(index - 1, bindPattern(scope, bounds[index].pattern, element)),
     );
   };
@@ -462,6 +499,36 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
   return definition.bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
 };
 
+// The functions that a constructor builds over an interval or an enumerated set, which TLC builds
+// as a FcnRcdValue unless it keeps the constructor lazy.
+const reducibleFunctions = new WeakSet<object>();
+
+const isReducible = (domain: Value) =>
+  typeof domain === "object" &&
+  (domain.kind === "Interval" || domain.kind === "Set" || domain.kind === "MixedSet");
+
+// TLC computes a constant definition when it starts, without keeping a function it constructs
+// lazy, so a function over an interval or an enumerated set is a FcnRcdValue.
+const toStartupValue = (definition: Definition, value: Value): Value => {
+  if (typeof value !== "object" || getFunctionClass(value) !== "lambda") return value;
+  if (definition.kind === "Operator") {
+    return reducibleFunctions.has(value) && value.kind === "Function"
+      ? createSortedFunction(value.domain, value.range)
+      : value;
+  }
+  if (definition.isSelfReferential || value.kind !== "LazyFunction" || !isReducible(value.domain)) {
+    return value;
+  }
+  try {
+    const finite = toFiniteFunction(value);
+    return createSortedFunction(finite.domain, finite.range);
+  } catch (error) {
+    // TLC leaves a definition it fails to compute to evaluate where the spec uses it.
+    if (error instanceof TlaEvaluationError) return value;
+    throw error;
+  }
+};
+
 const evaluateDefinitionBody = (definition: Definition, context: Context) =>
   definition.kind === "Function"
     ? createRecursiveFunction(definition, context)
@@ -479,7 +546,7 @@ const evaluateDefinitionValue = (definition: Definition, context: Context) => {
   const topLevel = withScope(context, undefined);
   if (!isConstant) return evaluateDefinitionBody(definition, topLevel);
   const value = context.environment.runtime.evaluateAtStartup(() =>
-    evaluateDefinitionBody(definition, topLevel),
+    toStartupValue(definition, evaluateDefinitionBody(definition, topLevel)),
   );
   context.environment.definitionValues.set(definition, value);
   return value;
@@ -1011,12 +1078,36 @@ const isStateCached = (expression: Expression, environment: Environment) =>
   getReadVariables(expression, environment) !== undefined &&
   !hasFreeLocals(expression, NO_BOUND_NAMES);
 
+const traceEvaluator =
+  (expression: Expression, evaluator: Evaluator, callStack: CallStack): Evaluator =>
+  (context) => {
+    callStack.expressions.push(expression);
+    try {
+      return evaluator(context);
+    } catch (error) {
+      callStack.isFrozen = true;
+      throw error;
+    } finally {
+      if (!callStack.isFrozen) callStack.expressions.pop();
+    }
+  };
+
+// A copy of the environment that records the call stack of each evaluation, with evaluators of its
+// own since the environment's evaluators record nothing.
+export const createTracingEnvironment = (environment: Environment): Environment => ({
+  ...environment,
+  evaluators: new WeakMap(),
+  callStack: { expressions: [], isFrozen: false },
+});
+
 export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
   const cached = environment.evaluators.get(expression);
   if (cached) return cached;
   const compiled = compile(expression, environment);
-  const evaluator =
-    isWorthCaching(expression) && isClosedConstant(expression, environment)
+  const callStack = environment.callStack;
+  const evaluator = callStack
+    ? traceEvaluator(expression, compiled, callStack)
+    : isWorthCaching(expression) && isClosedConstant(expression, environment)
       ? cacheFirstValue(compiled)
       : isStateCached(expression, environment)
         ? cacheStateValue(compiled)
@@ -1028,6 +1119,7 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
 const entryEvaluators = new WeakMap<Expression, Evaluator>();
 
 const getEntryEvaluator = (expression: Expression, environment: Environment) => {
+  if (environment.callStack) return getEvaluator(expression, environment);
   const cached = entryEvaluators.get(expression);
   if (cached) return cached;
   const evaluator =
@@ -1343,15 +1435,15 @@ const compileQuantifier = (
     const name = bound.pattern.name;
     const set = getEvaluator(bound.set, environment);
     return (context) => {
-      const elements = getEnumeratedElements(set(context), bound.set);
-      for (let index = 0; index < elements.length; index++) {
-        const result = expectBoolean(
-          body(withScope(context, bindValue(context.scope, name, elements[index]))),
-          description,
-        );
-        if (result !== isForall) return result;
-      }
-      return isForall;
+      const isFound = someElement(
+        getQuantifierElements(set(context), bound.set),
+        (element) =>
+          expectBoolean(
+            body(withScope(context, bindValue(context.scope, name, element))),
+            description,
+          ) !== isForall,
+      );
+      return isFound ? !isForall : isForall;
     };
   }
   const bounds = expression.bounds;
@@ -1360,17 +1452,15 @@ const compileQuantifier = (
     const sets = bounds.map((item) => getEvaluator(item.set, environment));
     return (context) => {
       const lists = sets.map((set, index) =>
-        getEnumeratedElements(set(context), bounds[index].set),
+        getQuantifierElements(set(context), bounds[index].set),
       );
       const visit = (index: number, scope: Scope | undefined): boolean => {
         if (index < 0) {
           return expectBoolean(body(withScope(context, scope)), description) !== isForall;
         }
-        const list = lists[index];
-        for (let position = 0; position < list.length; position++) {
-          if (visit(index - 1, bindValue(scope, names[index], list[position]))) return true;
-        }
-        return false;
+        return someElement(lists[index], (element) =>
+          visit(index - 1, bindValue(scope, names[index], element)),
+        );
       };
       return visit(bounds.length - 1, context.scope) ? !isForall : isForall;
     };
@@ -1431,12 +1521,14 @@ const compileFunctionConstruction = (
     if (isSingleName && bound.pattern.kind === "Name") {
       const name = bound.pattern.name;
       const keys = getFunctionDomain(domain);
-      return markLambdaFunction(
+      const functionValue = markLambdaFunction(
         createSortedFunction(
           keys,
           keys.map((key) => body(withScope(context, bindValue(context.scope, name, key)))),
         ),
       );
+      if (isReducible(domain)) reducibleFunctions.add(functionValue);
+      return functionValue;
     }
     const pairs: [Value, Value][] = [];
     forEachBinding(bounds, context, (scope) => {
@@ -1584,8 +1676,8 @@ const compileRecord = (recordFields: RecordField[], environment: Environment): E
   const values = fields.map((field) => getEvaluator(field.value, environment));
   if (hasDuplicates) {
     return (context) =>
-      createFunction(
-        fields.map((field, index): [Value, Value] => [field.name, values[index](context)]),
+      createRecord(
+        fields.map((field, index): [string, Value] => [field.name, values[index](context)]),
       );
   }
   const names = fields.map((field) => field.name);
@@ -1599,7 +1691,7 @@ const compileRecord = (recordFields: RecordField[], environment: Environment): E
       );
   }
   return (context) =>
-    createSortedFunction(
+    createSortedRecord(
       names,
       values.map((value) => value(context)),
     );

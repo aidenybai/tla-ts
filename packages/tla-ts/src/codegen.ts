@@ -3,13 +3,13 @@ import {
   bindValue,
   expectBoolean,
   findGlobalName,
-  getEnumeratedElements,
   getConditionError,
   getConjunctError,
   getDomainOperator,
   getSubsetOperator,
   getEvaluator,
   getFieldError,
+  getQuantifierElements,
   isClosedConstant,
   isTlcInteger,
   isValueArgument,
@@ -27,7 +27,7 @@ import {
 import {
   applyFunction,
   createEnumeratedSet,
-  createSortedFunction,
+  createSortedRecord,
   createTuple,
   createWrittenRecord,
   valuesEqual,
@@ -78,10 +78,10 @@ const createRuntime = () => ({
   apply: applyFunction,
   tuple: createTuple,
   set: createEnumeratedSet,
-  record: createSortedFunction,
+  record: createSortedRecord,
   writtenRecord: createWrittenRecord,
   equal: valuesEqual,
-  enumerate: getEnumeratedElements,
+  enumerate: getQuantifierElements,
   unassigned: (name: string, expression: Expression): never => {
     throw createUnassignedError(name, expression);
   },
@@ -160,9 +160,13 @@ const generateQuantifier = (
     return local;
   });
   const test = `if (bool(${generateExpression(generator, expression.body, inner)}, ${description}) !== ${isForall}) return ${!isForall};`;
+  // enumerate returns an array, or an interval, which has a low end, to step through.
   const loops = elements.reduce((code, element, index) => {
     const position = createLocal(generator);
-    return `for (let ${position} = 0; ${position} < ${lists[index]}.length; ${position}++) { const ${element} = ${lists[index]}[${position}]; ${code} }`;
+    const low = createLocal(generator);
+    const size = createLocal(generator);
+    const list = lists[index];
+    return `for (let ${position} = 0, ${low} = ${list}.low, ${size} = ${low} === undefined ? ${list}.length : ${list}.high - ${low} + 1; ${position} < ${size}; ${position}++) { const ${element} = ${low} === undefined ? ${list}[${position}] : ${low} + ${position}; ${code} }`;
   }, test);
   const parameters = outer.map((local) => `, ${local}`).join("");
   generator.helpers.push(

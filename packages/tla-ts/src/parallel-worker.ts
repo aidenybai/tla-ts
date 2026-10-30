@@ -58,6 +58,7 @@ const run = (start: StartMessage, parent: Port) => {
     loadClass: (name) => classes.get(name),
     print: () => {},
     files: { readFile: undefined, writeFile: undefined },
+    isTraceSpecLoaded: start.isTraceSpecLoaded,
   });
   const environment = specification.environment;
   const search = createSearch(start.config, environment, () =>

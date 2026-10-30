@@ -4,8 +4,11 @@ import {
   checkSequentially,
   createSearch,
   findAssumptionViolation,
+  reportStateLevelProperties,
   type CheckOptions,
+  type CheckProgress,
   type CheckResult,
+  type InitialStates,
 } from "./check";
 import { parseConfig, type ModelConfig } from "./config";
 import { createEnvironment } from "./environment";
@@ -43,6 +46,7 @@ export interface StartMessage {
   index: number;
   ports: (Port | undefined)[];
   seed: EncodedStates;
+  isTraceSpecLoaded: boolean | undefined;
   fingerprints: SharedFingerprints;
   requests: Int32Array;
   remaining: Int32Array;
@@ -104,13 +108,22 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
   const print = options.onPrint ?? console.log;
   const printed = { count: 0 };
-  // The search on the calling thread prints what this one printed while it started, so it skips that.
+  const reported = new Set<CheckProgress["kind"]>();
+  const report = (progress: CheckProgress) => {
+    reported.add(progress.kind);
+    options.onProgress?.(progress);
+  };
+  // The search on the calling thread prints and reports what this one did while it started, so it
+  // skips that.
   const fallBack = () => {
     const skipped = { count: printed.count };
     return checkSequentially({
       ...options,
       config,
       onPrint: (text) => (skipped.count-- > 0 ? undefined : print(text)),
+      onProgress: (progress) => {
+        if (!reported.has(progress.kind)) options.onProgress?.(progress);
+      },
     });
   };
   const count = options.workers ?? 1;
@@ -147,11 +160,14 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       print(text);
     },
     files: { readFile: options.readFile, writeFile: options.writeFile },
+    isTraceSpecLoaded: options.isTraceSpecLoaded,
   });
+  report({ kind: "parsed" });
   const environment = specification.environment;
   const search = createSearch(config, environment, () =>
     getTlcVariableOrder(options.source, loadModule),
   );
+  if (search) reportStateLevelProperties(config, environment, report);
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
   if (
     !search ||
@@ -172,6 +188,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     distinctStates: 0,
     queuedStates: 0,
     depth: 0,
+    initialStates: undefined as InitialStates | undefined,
     outDegrees: Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0),
   };
   const tlcFingerprints: BigInt64Array[] = [];
@@ -217,6 +234,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     return true;
   };
   // The sequential search reports a violation or a failed evaluation in the initial states.
+  report({ kind: "initial-states-started" });
   try {
     if (!seedInitialStates(search.spec.init)) return fallBack();
   } catch (error) {
@@ -225,6 +243,11 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   }
   if (getRankedStringCount() !== startupStrings) return fallBack();
   statistics.depth = statistics.generatedStates === 0 ? 0 : 1;
+  statistics.initialStates = {
+    generated: statistics.generatedStates,
+    distinct: statistics.distinctStates,
+  };
+  report({ kind: "initial-states-computed", initialStates: statistics.initialStates });
   if (statistics.distinctStates === 0) return createSuccess();
 
   const reports: WorkerMessage[] = [];
@@ -266,6 +289,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       index,
       ports,
       seed,
+      isTraceSpecLoaded: options.isTraceSpecLoaded,
       fingerprints: shared.fingerprints,
       requests,
       remaining,

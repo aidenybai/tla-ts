@@ -175,7 +175,7 @@ export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] 
 };
 
 export const createWrittenRecord = (names: Value[], range: Value[], writtenNames: Value[]) =>
-  setWrittenOrder(createSortedFunction(names, range), writtenNames);
+  setWrittenOrder(createSortedRecord(names, range), writtenNames);
 
 // TLC sorts a value it compares even with itself, and every value inside it, so a value it has
 // hashed or fingerprinted is already sorted.
@@ -416,6 +416,31 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   fingerprint: 0,
   writtenKeys: undefined,
 });
+
+// TLC words a failed function application by the Java class of the function: FcnLambdaValue for
+// [x \in S |-> e], TupleValue for <<...>> and what the sequence operators build, RecordValue for
+// [a |-> e], and FcnRcdValue for any other function.
+export type FunctionClass = "lambda" | "tuple" | "record";
+
+const functionClasses = new WeakMap<ObjectValue, FunctionClass>();
+
+export const setFunctionClass = <FunctionLike extends FunctionValue | LazyFunctionValue>(
+  functionValue: FunctionLike,
+  functionClass: FunctionClass | undefined,
+) => {
+  if (functionClass !== undefined) functionClasses.set(functionValue, functionClass);
+  return functionValue;
+};
+
+export const getFunctionClass = (value: Value) =>
+  typeof value === "object" ? functionClasses.get(value) : undefined;
+
+export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunctionValue>(
+  functionValue: FunctionLike,
+) => setFunctionClass(functionValue, "lambda");
+
+export const createSortedRecord = (names: Value[], range: Value[]) =>
+  setFunctionClass(createSortedFunction(names, range), "record");
 
 export const valuesEqual = (left: Value, right: Value): boolean => {
   if (left === right) {
@@ -1059,9 +1084,10 @@ const getIntervalValue = (high: number): IntervalValue => {
 };
 
 export const createTuple = (elements: Value[]): FunctionValue =>
-  createSortedFunction(getIntervalDomain(elements.length), elements);
+  setFunctionClass(createSortedFunction(getIntervalDomain(elements.length), elements), "tuple");
 
-export const createRecord = (fields: [string, Value][]): FunctionValue => createFunction(fields);
+export const createRecord = (fields: [string, Value][]): FunctionValue =>
+  setFunctionClass(createFunction(fields), "record");
 
 // TLC's Enumerable classes: every set except the ones it implements in Java.
 const isTlcEnumerable = (value: Value) => isSetValue(value) && !isOverriddenSet(value);
@@ -1701,27 +1727,35 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "LazyFunction") {
     if (!isEnumerable(value.domain)) getCardinality(value.domain);
     const domain = getFunctionDomain(value.domain);
-    return createSortedFunction(
-      domain,
-      domain.map((key) => value.apply(key)),
+    return setFunctionClass(
+      createSortedFunction(
+        domain,
+        domain.map((key) => value.apply(key)),
+      ),
+      getFunctionClass(value),
     );
   }
   throw new TlaEvaluationError(`Expected a function but found ${formatValue(value)}`);
 };
 
-const lambdaFunctions = new WeakSet<ObjectValue>();
-
-export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunctionValue>(
-  functionValue: FunctionLike,
-) => {
-  lambdaFunctions.add(functionValue);
-  return functionValue;
+const describeMissingArgument = (functionValue: Value, argument: Value) => {
+  const shown = prettyPrint(formatValue(functionValue));
+  const shownArgument = prettyPrint(formatValue(argument));
+  switch (getFunctionClass(functionValue)) {
+    case "lambda":
+      return `In applying the function\n${shown},\nthe first argument is:\n${shownArgument}\nwhich is not in its domain.\n`;
+    case "tuple":
+      return typeof argument === "number"
+        ? `Attempted to access index ${argument} of tuple\n${shown}\nwhich is out of bounds.`
+        : `Attempted to access tuple at a non integral index: ${shownArgument}`;
+    case "record":
+      return typeof argument === "string"
+        ? `Attempted to access nonexistent field '${argument}' of record\n${shown}`
+        : `Attempted to access record by a non-string argument: ${shownArgument}`;
+    default:
+      return `Attempted to apply function:\n${shown}\nto argument ${shownArgument}, which is not in the domain of the function.`;
+  }
 };
-
-const describeMissingArgument = (functionValue: Value, argument: Value) =>
-  typeof functionValue === "object" && lambdaFunctions.has(functionValue)
-    ? `In applying the function\n${prettyPrint(formatValue(functionValue))},\nthe first argument is:\n${prettyPrint(formatValue(argument))}\nwhich is not in its domain.\n`
-    : `Attempted to apply function ${formatValue(functionValue)} to ${formatValue(argument)}, which is not in its domain`;
 
 const findKeyIndex = (domain: Value[], argument: Value) => {
   const first = domain[0];
@@ -1744,7 +1778,7 @@ export const applyFunction = (
   if (typeof functionValue === "object" && functionValue.kind === "LazyFunction") {
     if (!isElementOf(argument, functionValue.domain)) {
       throw new TlaEvaluationError(
-        lambdaFunctions.has(functionValue)
+        getFunctionClass(functionValue) === "lambda"
           ? describeMissingArgument(functionValue, argument)
           : `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
       );
@@ -1790,12 +1824,15 @@ export const updateFunction = (
   if (isLazy) {
     if (!isElementOf(argument, functionValue.domain)) return functionValue;
     const updated = update(functionValue.apply(argument));
-    return {
-      kind: "LazyFunction",
-      domain: functionValue.domain,
-      apply: (key) => (isEqualLikeTlc(argument, key) ? updated : functionValue.apply(key)),
-      source: functionValue.source,
-    };
+    return setFunctionClass<LazyFunctionValue>(
+      {
+        kind: "LazyFunction",
+        domain: functionValue.domain,
+        apply: (key) => (isEqualLikeTlc(argument, key) ? updated : functionValue.apply(key)),
+        source: functionValue.source,
+      },
+      getFunctionClass(functionValue),
+    );
   }
   const finite = toFiniteFunction(functionValue);
   const position = findKeyIndex(finite.domain, argument);
@@ -1804,7 +1841,10 @@ export const updateFunction = (
   const previous = finite.range[position];
   const next = update(previous);
   range[position] = next;
-  const updated = createSortedFunction(finite.domain, range);
+  const updated = setFunctionClass(
+    createSortedFunction(finite.domain, range),
+    getFunctionClass(finite),
+  );
   updated.writtenKeys = finite.writtenKeys;
   if (finite.hash !== 0) {
     const key = finite.domain[position];

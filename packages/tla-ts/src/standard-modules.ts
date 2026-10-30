@@ -11,7 +11,7 @@ import {
   getNumber,
   getOperator,
   getSet,
-  getIntegersSignature,
+  getJavaSignature,
   getJavaInteger,
   getValue,
   isOutOfRange,
@@ -184,51 +184,70 @@ export const CORE_OPERATORS: Builtin[] = [
   }),
 ];
 
-const DOT_DOT_SIGNATURE = getIntegersSignature("DotDot", "IntervalValue", 2);
+const NEG_SIGNATURE = getJavaSignature("Integers", "Neg", "IntValue", 1);
 
-const NEG_SIGNATURE = getIntegersSignature("Neg", "IntValue", 1);
+// TLC overrides the arithmetic of Naturals with the Java methods of tlc2.module.Naturals, or with
+// those of tlc2.module.Integers when the spec loads Integers, and names the method in an error.
+const createArithmeticOperators = (module: string) => {
+  const dotDotSignature = getJavaSignature(module, "DotDot", "IntervalValue", 2);
+  return [
+    defineArithmetic(module, "+", "Plus", (left, right) => left + right),
+    defineArithmetic(module, "-", "Minus", (left, right) => left - right),
+    defineArithmetic(module, "*", "Times", (left, right) => left * right),
+    defineArithmetic(module, "^", "Expt", (base, exponent) => {
+      if (exponent < 0) {
+        throw new TlaModuleError(
+          `The second argument of ^ should be a natural number, but instead it is:\n${exponent}`,
+        );
+      }
+      if (base === 0 && exponent === 0) throw new TlaModuleError("0^0 is undefined.");
+      return base ** exponent;
+    }),
+    defineArithmetic(module, "\\div", "Divide", (left, right) => {
+      if (right === 0) throw new TlaModuleError("The second argument of \\div is 0.");
+      const quotient = Math.floor(left / right);
+      if (isOutOfRange(quotient)) throw createOverflowError(`${left} \\div ${right}`);
+      return quotient;
+    }),
+    defineArithmetic(module, "%", "Mod", (left, right) => {
+      if (right <= 0) {
+        throw new TlaModuleError(
+          `The second argument of % should be a positive number, but instead it is:\n${right}`,
+        );
+      }
+      return ((left % right) + right) % right;
+    }),
+    defineOperator("..", 2, (args) => ({
+      kind: "Interval",
+      low: getJavaInteger(getValue(args, 0, ".."), dotDotSignature),
+      high: getJavaInteger(getValue(args, 1, ".."), dotDotSignature),
+    })),
+  ];
+};
+
+const NATURALS_ARITHMETIC = createArithmeticOperators("Naturals");
+
+const INTEGERS_ARITHMETIC = createArithmeticOperators("Integers");
+
+// The operators of Naturals that TLC overrides with the methods of tlc2.module.Integers when it
+// loads Integers for its trace exploration spec, by the operator each replaces.
+export const getTraceSpecArithmetic = (builtin: Builtin | undefined) => {
+  const index = builtin ? NATURALS_ARITHMETIC.indexOf(builtin) : -1;
+  return index === -1 ? undefined : INTEGERS_ARITHMETIC[index];
+};
 
 const NATURALS_OPERATORS = [
   defineConstant("Nat", { kind: "InfiniteSet", name: "Nat" }),
-  defineArithmetic("+", "Plus", (left, right) => left + right),
-  defineArithmetic("-", "Minus", (left, right) => left - right),
-  defineArithmetic("*", "Times", (left, right) => left * right),
-  defineArithmetic("^", "Expt", (base, exponent) => {
-    if (exponent < 0) {
-      throw new TlaModuleError(
-        `The second argument of ^ should be a natural number, but instead it is:\n${exponent}`,
-      );
-    }
-    if (base === 0 && exponent === 0) throw new TlaModuleError("0^0 is undefined.");
-    return base ** exponent;
-  }),
-  defineArithmetic("\\div", "Divide", (left, right) => {
-    if (right === 0) throw new TlaModuleError("The second argument of \\div is 0.");
-    const quotient = Math.floor(left / right);
-    if (isOutOfRange(quotient)) throw createOverflowError(`${left} \\div ${right}`);
-    return quotient;
-  }),
-  defineArithmetic("%", "Mod", (left, right) => {
-    if (right <= 0) {
-      throw new TlaModuleError(
-        `The second argument of % should be a positive number, but instead it is:\n${right}`,
-      );
-    }
-    return ((left % right) + right) % right;
-  }),
+  ...NATURALS_ARITHMETIC,
   defineComparison("<", (left, right) => left < right),
   defineComparison(">", (left, right) => left > right),
   defineComparison("<=", (left, right) => left <= right),
   defineComparison(">=", (left, right) => left >= right),
-  defineOperator("..", 2, (args) => ({
-    kind: "Interval",
-    low: getJavaInteger(getValue(args, 0, ".."), DOT_DOT_SIGNATURE),
-    high: getJavaInteger(getValue(args, 1, ".."), DOT_DOT_SIGNATURE),
-  })),
 ];
 
 const INTEGERS_OPERATORS = [
   defineConstant("Int", { kind: "InfiniteSet", name: "Int" }),
+  ...INTEGERS_ARITHMETIC,
   defineOperator("-.", 1, (args) => {
     const value = getJavaInteger(getValue(args, 0, "-"), NEG_SIGNATURE);
     if (isOutOfRange(-value)) throw createOverflowError(`-${value}`);

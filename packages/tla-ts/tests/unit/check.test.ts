@@ -11,6 +11,7 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
+import { UNEXPECTED_EXCEPTION } from "../../src/errors";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -206,7 +207,7 @@ describe("check matches TLC", () => {
     });
     expect([result.status, result.failure?.message]).toEqual([
       "error",
-      'Attempted to check equality of integer 2 with non-integer:\n"a"',
+      `${UNEXPECTED_EXCEPTION}Attempted to check equality of integer 2 with non-integer:\n"a"`,
     ]);
   });
 
@@ -1416,6 +1417,13 @@ describe("name resolution matches SANY", () => {
   it("accepts recursive functions, named assumptions, and operator aliases", async () => {
     const result = await checkSource(
       "EXTENDS Naturals\nRECURSIVE fact\ntwice[n \\in Nat] == fact[n] * 2\nfact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]\nASSUME Positive == twice[3] = 12\nASSUME Positive\na \\oplus b == a + b\nASSUME 1 (+) 2 = 3",
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it("keeps a recursive function lazy, so it computes only the arguments a spec applies it to", async () => {
+    const result = await checkSource(
+      "EXTENDS Naturals\nsteps[n \\in 0..20] == IF n = 1 THEN 0 ELSE IF n % 2 = 0 THEN 1 + steps[n \\div 2] ELSE 1 + steps[3 * n + 1]\nASSUME steps[5] = 5",
     );
     expect(result.status).toBe("success");
   });

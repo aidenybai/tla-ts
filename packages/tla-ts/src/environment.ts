@@ -43,7 +43,12 @@ import {
   type Symbols,
 } from "./resolve";
 import { createRuntime } from "./runtime";
-import { CORE_OPERATORS, getStandardModule, STANDARD_DEPENDENCIES } from "./standard-modules";
+import {
+  CORE_OPERATORS,
+  getStandardModule,
+  getTraceSpecArithmetic,
+  STANDARD_DEPENDENCIES,
+} from "./standard-modules";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import { checkInstances, type InstanceCheck } from "./substitution-levels";
@@ -63,6 +68,11 @@ interface EnvironmentOptions {
   print: (text: string) => void;
   files: FileSystem;
   seed?: bigint;
+  // Links the modules without a model, as SANY does, so a declared constant needs no value.
+  isUnconfigured?: boolean;
+  // Whether TLC loads its trace exploration spec, as it does unless it runs with -tool. The spec
+  // loads Integers, whose Java methods then compute the arithmetic of Naturals.
+  isTraceSpecLoaded?: boolean;
 }
 
 interface Specification {
@@ -70,6 +80,8 @@ interface Specification {
   assumptions: Assumption[];
   variableLocations: SourceLocation[];
   instanceActions: Map<string, InstanceAction>;
+  rootConstants: Declaration[];
+  rootSymbols: Symbols;
 }
 
 export interface InstanceAction {
@@ -237,6 +249,7 @@ export const createEnvironment = (
   const createName = (name: string) => `${name}#${copyCount.value++}`;
   const instanceChecks: InstanceCheck[] = [];
   const instanceActions = new Map<string, InstanceAction>();
+  const instanceNames = new Map<string, string>();
 
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
@@ -385,6 +398,9 @@ export const createEnvironment = (
       addDefinition: (source, name, create) => {
         const key = createName(`${name}@${module.name}`);
         definitions.set(key, create(key));
+        if (instance.name !== undefined) {
+          instanceNames.set(key, `${instance.name}!${instanceNames.get(source) ?? name}`);
+        }
         parameterized.set(key, !isParameterFree);
         copySources.set(key, { source, prefix: instance.params.length });
         return key;
@@ -909,10 +925,18 @@ export const createEnvironment = (
     });
   });
   declaredConstants.forEach((name) => {
-    if (!constants.has(name) && !substitutions.has(name) && !operatorKeys.has(name)) {
+    const isAssigned = constants.has(name) || substitutions.has(name) || operatorKeys.has(name);
+    if (!isAssigned && !options.isUnconfigured) {
       throw new TlaConfigError(`The constant ${name} is not assigned a value by the configuration`);
     }
   });
+
+  if (options.isTraceSpecLoaded !== false) {
+    builtins.forEach((builtin, name) => {
+      const replacement = getTraceSpecArithmetic(builtin);
+      if (replacement) builtins.set(name, replacement);
+    });
+  }
 
   const environment: Environment = {
     runtime,
@@ -920,6 +944,7 @@ export const createEnvironment = (
     builtins,
     constants,
     substitutions,
+    instanceNames,
     variables,
     variableIndex: getVariableIndex(
       variables,
@@ -983,5 +1008,7 @@ export const createEnvironment = (
     assumptions,
     variableLocations: linkedRoot.variableLocations,
     instanceActions,
+    rootConstants: linkedRoot.constants,
+    rootSymbols: linkedRoot.visible,
   };
 };
