@@ -154,6 +154,7 @@ export class Rewriter extends RewriterTpl {
         ? manager.mkQuantifier({
             ...data,
             sorts: [...data.sorts, ...nested.sorts],
+            names: [...data.names, ...nested.names],
             body: nested.body,
             patterns: [],
             weight: Math.min(data.weight, nested.weight),

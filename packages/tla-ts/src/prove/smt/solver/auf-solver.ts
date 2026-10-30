@@ -398,7 +398,7 @@ export class AufSolver {
       );
     const interp = new FuncInterp(manager, 1);
     interp.setElse(projection);
-    const decl = manager.mkFreshFuncDecl("pi", [node.sort], node.sort, false);
+    const decl = manager.mkFreshFuncDecl(null, [node.sort], node.sort);
     this.getModel().registerAuxDecl(decl, interp);
     node.setProj(decl);
   }
@@ -407,7 +407,7 @@ export class AufSolver {
     const manager = this.manager;
     this.setProjectionElse(node);
     const values = this.getInstantiationSetValues(node);
-    const decl = manager.mkFreshFuncDecl("pi", [node.sort], node.sort, false);
+    const decl = manager.mkFreshFuncDecl(null, [node.sort], node.sort);
     const interp = new FuncInterp(manager, 1);
     this.getModel().registerAuxDecl(decl, interp);
     const elseExpr = node.getElse();
@@ -488,7 +488,7 @@ export class AufSolver {
         return manager.mkApp(proj, [variable], sort);
       });
       if (!hasProj) continue;
-      const auxDecl = manager.mkFreshFuncDecl(data.name, data.domain, data.range, false);
+      const auxDecl = manager.mkFreshFuncDecl(data.name, data.domain, data.range);
       const newInterp = new FuncInterp(manager, data.domain.length);
       newInterp.setElse(manager.mkApp(auxDecl, args, data.range));
       model.reregisterDecl(decl, newInterp, auxDecl);

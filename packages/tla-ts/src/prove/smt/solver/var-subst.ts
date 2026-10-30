@@ -1,6 +1,6 @@
 // Ported from Z3 (src/ast/rewriter/var_subst.cpp), MIT license, see z3-license.txt. Substitution and
 // shifting of de Bruijn variables.
-import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, type AstManager } from "./ast";
+import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, type AstManager, type SmtSymbol } from "./ast";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import { BetaReducer } from "./rewriter-tpl";
 
@@ -172,6 +172,7 @@ export const elimUnusedVars = (manager: AstManager, expr: number) => {
   const numKept = used.filter(Boolean).length;
   const bindings: number[] = [];
   const keptSorts: number[] = [];
+  const keptNames: SmtSymbol[] = [];
   let nextIndex = numKept;
   for (let declIndex = 0; declIndex < count; declIndex++) {
     const varIndex = count - 1 - declIndex;
@@ -179,6 +180,7 @@ export const elimUnusedVars = (manager: AstManager, expr: number) => {
       nextIndex--;
       bindings[declIndex] = manager.mkVar(nextIndex, data.sorts[declIndex]);
       keptSorts.push(data.sorts[declIndex]);
+      keptNames.push(data.names[declIndex]);
     } else bindings[declIndex] = manager.mkVar(0, data.sorts[declIndex]);
   }
   const remap = (term: number) => substitute(manager, term, bindings, numKept);
@@ -186,6 +188,7 @@ export const elimUnusedVars = (manager: AstManager, expr: number) => {
   return manager.mkQuantifier({
     ...data,
     sorts: keptSorts,
+    names: keptNames,
     body: remap(data.body),
     patterns: data.patterns.map((pattern) => manager.mkPattern(manager.args[pattern].map(remap))),
   });

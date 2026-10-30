@@ -38,7 +38,7 @@ export const toNnf = (manager: AstManager, expr: number, names: Map<number, numb
       sort === undefined ? manager.trueExpr : manager.mkVar(index, sort),
     );
     const name = manager.mkApp(
-      manager.mkFreshFuncDecl("z3name", varSorts, SORT_BOOL, true),
+      manager.mkFreshFuncDecl("z3name", varSorts, SORT_BOOL),
       args,
       SORT_BOOL,
     );
@@ -51,6 +51,7 @@ export const toNnf = (manager: AstManager, expr: number, names: Map<number, numb
             manager.mkQuantifier({
               isForall: true,
               sorts: varSorts.toReversed(),
+              names: varSorts.map((_sort, index) => index),
               body: conjunct,
               patterns: [manager.mkPattern([name])],
               weight: 1,
@@ -92,9 +93,16 @@ export const toNnf = (manager: AstManager, expr: number, names: Map<number, numb
       argVars.push(manager.mkVar(index - count, sort));
       argSorts.push(sort);
     }
-    const bindings = data.sorts.map((sort) =>
-      manager.mkApp(manager.mkFreshFuncDecl("sk", argSorts, sort, true), argVars, sort),
-    );
+    // The Skolem function of the last variable comes first, and takes the variable's name.
+    const bindings: number[] = [];
+    for (let index = count - 1; index >= 0; index--) {
+      const sort = data.sorts[index];
+      bindings[index] = manager.mkApp(
+        manager.mkFreshFuncDecl(data.names[index], argSorts, sort),
+        argVars,
+        sort,
+      );
+    }
     return substitute(manager, data.body, bindings);
   };
 

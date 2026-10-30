@@ -1,7 +1,15 @@
 // Ported from Z3 (src/ast/normal_forms/pull_quant.cpp), MIT license, see z3-license.txt. Pulls
 // the universal quantifiers nested in a formula in Skolem normal form to the top, so the model
 // finder sees one flat quantifier.
-import { KIND_APP, KIND_QUANTIFIER, OP_AND, OP_NOT, OP_OR, type AstManager } from "./ast";
+import {
+  KIND_APP,
+  KIND_QUANTIFIER,
+  OP_AND,
+  OP_NOT,
+  OP_OR,
+  type AstManager,
+  type SmtSymbol,
+} from "./ast";
 import { shiftVars } from "./var-subst";
 
 const mkNot = (manager: AstManager, expr: number) =>
@@ -21,7 +29,10 @@ const pullFromApp = (manager: AstManager, decl: number, args: number[], sort: nu
     });
   }
   let isForall: boolean | undefined;
-  const sorts: number[][] = [];
+  // The variables in reverse, the last variable of the first quantifier first. A name that repeats
+  // becomes a fresh one.
+  const sorts: number[] = [];
+  const names: SmtSymbol[] = [];
   let weight = Number.POSITIVE_INFINITY;
   let qid = "";
   for (const child of args) {
@@ -31,10 +42,18 @@ const pullFromApp = (manager: AstManager, decl: number, args: number[], sort: nu
     else if (isForall !== data.isForall) return undefined;
     if (sorts.length === 0) qid = data.qid;
     weight = Math.min(weight, data.weight);
-    sorts.push(data.sorts);
+    for (let index = data.sorts.length - 1; index >= 0; index--) {
+      const name = data.names[index];
+      sorts.push(data.sorts[index]);
+      names.push(
+        names.includes(name)
+          ? manager.mkFreshVarName(typeof name === "number" ? null : name)
+          : name,
+      );
+    }
   }
   if (isForall === undefined) return undefined;
-  const numDecls = sorts.reduce((total, innerSorts) => total + innerSorts.length, 0);
+  const numDecls = sorts.length;
   let shiftAmount = 0;
   const adjusted = args.map((child) => {
     if (manager.kinds[child] !== KIND_QUANTIFIER) return shiftVars(manager, child, 0, numDecls, 0);
@@ -51,7 +70,8 @@ const pullFromApp = (manager: AstManager, decl: number, args: number[], sort: nu
   });
   return manager.mkQuantifier({
     isForall,
-    sorts: sorts.reverse().flat(),
+    sorts: sorts.reverse(),
+    names: names.reverse(),
     body: manager.mkApp(decl, adjusted, sort),
     patterns: [],
     weight,
@@ -89,6 +109,7 @@ export const pullQuant = (manager: AstManager, expr: number) => {
         result = manager.mkQuantifier({
           isForall: true,
           sorts: [...data.sorts, ...nested.sorts],
+          names: [...data.names, ...nested.names],
           body: nested.body,
           patterns: [],
           weight: Math.min(data.weight, nested.weight),

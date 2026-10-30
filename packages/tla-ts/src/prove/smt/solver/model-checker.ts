@@ -144,7 +144,7 @@ export class ModelChecker {
     const sks: number[] = [];
     for (let index = 0; index < numDecls; index++) {
       const sort = data.sorts[numDecls - index - 1];
-      const sk = manager.mkFreshConst("x", sort);
+      const sk = manager.mkFreshConst(null, sort);
       sks[numDecls - index - 1] = sk;
       if (model.isFinite(sort))
         aux.assert(

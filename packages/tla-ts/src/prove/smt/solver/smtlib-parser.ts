@@ -205,10 +205,10 @@ export const parseSmtlib = (
   const parseQuantifier = (list: SExpr[], isForall: boolean) => {
     const declarations = expectList(list[1]);
     const scope = new Map<string, Binding>();
+    const names = declarations.map((declaration) => expectSymbol(expectList(declaration)[0]));
     const varSorts = declarations.map((declaration, index) => {
-      const pair = expectList(declaration);
-      const sort = parseSort(pair[1]);
-      scope.set(expectSymbol(pair[0]), { depth: depth + index, sort, expr: -1, isBoundVar: true });
+      const sort = parseSort(expectList(declaration)[1]);
+      scope.set(names[index], { depth: depth + index, sort, expr: -1, isBoundVar: true });
       return sort;
     });
     scopes.push(scope);
@@ -239,6 +239,7 @@ export const parseSmtlib = (
     const quantifier = manager.mkQuantifier({
       isForall,
       sorts: varSorts,
+      names,
       body,
       patterns,
       weight,

@@ -43,8 +43,14 @@ export const OP_PATTERN = 22;
 export const OP_UNINTERPRETED = 23;
 export const OP_MODEL_VALUE = 24;
 
+// A Z3 symbol: a string, or a number for a numerical symbol, which Z3 prints as k!n.
+export type SmtSymbol = string | number;
+
+export const getSymbolName = (symbol: SmtSymbol) =>
+  typeof symbol === "number" ? `k!${symbol}` : symbol;
+
 export interface FuncDecl {
-  name: string;
+  name: SmtSymbol;
   family: number;
   op: number;
   domain: number[];
@@ -55,6 +61,8 @@ export interface FuncDecl {
 export interface QuantifierData {
   isForall: boolean;
   sorts: number[];
+  // The names of the variables, which tell apart quantifiers that differ only in them, as in Z3.
+  names: SmtSymbol[];
   body: number;
   // Applications of the pattern declaration to the terms of each multi-pattern.
   patterns: number[];
@@ -126,8 +134,9 @@ const Z3_BUILTINS = new Map<number, [string, number, number]>([
 // bit-vector numeral, fifteen real variables and a sum of two of them, which no problem shares.
 const FIRST_FREE_ID = 22;
 
-// symbol::hash, for string symbols.
-const getSymbolHash = (name: string) => stringHash(name, 17);
+// symbol::hash: a numerical symbol hashes to its number.
+const getSymbolHash = (symbol: SmtSymbol) =>
+  typeof symbol === "number" ? symbol : stringHash(symbol, 17);
 
 // decl_info::hash.
 const getInfoHash = (family: number, kind: number, parameterHashes: number[]) =>
@@ -158,7 +167,8 @@ export class AstManager {
   private builtinHashes = new Map<string, number>();
   private table = new Map<string, number>();
   private appTable = new Map<number, number[]>();
-  private freshCounter = 0;
+  // ast_manager::m_fresh_id, which numbers fresh declarations and variable names.
+  private freshId = 0;
   // Z3's id of each expression, which orders Z3's sorts. Like Z3, the manager counts references and
   // gives the id of a deleted expression to the next expression it creates, so its ids follow
   // Z3's. A deleted expression stays in the tables with the id -1 until it is created again.
@@ -294,7 +304,7 @@ export class AstManager {
   }
 
   // The hash of a func_decl node: its name, range, info and domain.
-  private getFuncDeclHash(name: string, domain: number[], range: number, infoHash: number) {
+  private getFuncDeclHash(name: SmtSymbol, domain: number[], range: number, infoHash: number) {
     return astArrayHash(
       domain.map((sort) => this.sortHashes[sort]),
       combineHash(combineHash(getSymbolHash(name), this.sortHashes[range]), infoHash),
@@ -334,7 +344,7 @@ export class AstManager {
     return hash;
   }
 
-  mkFuncDecl(name: string, domain: number[], range: number, isSkolem = false) {
+  mkFuncDecl(name: SmtSymbol, domain: number[], range: number, isSkolem = false) {
     this.declHashes[this.funcDecls.length] = this.getFuncDeclHash(
       name,
       domain,
@@ -352,9 +362,18 @@ export class AstManager {
     return this.funcDecls.length - 1;
   }
 
-  mkFreshFuncDecl(prefix: string, domain: number[], range: number, isSkolem: boolean) {
-    this.freshCounter++;
-    return this.mkFuncDecl(`${prefix}!${this.freshCounter}`, domain, range, isSkolem);
+  // mk_fresh_func_decl: without a prefix the name is the numerical symbol of the fresh id.
+  mkFreshFuncDecl(prefix: SmtSymbol | null, domain: number[], range: number, isSkolem = true) {
+    const name = prefix === null ? this.freshId : `${getSymbolName(prefix)}!${this.freshId}`;
+    this.freshId++;
+    return this.mkFuncDecl(name, domain, range, isSkolem);
+  }
+
+  // mk_fresh_var_name.
+  mkFreshVarName(prefix: string | null) {
+    const name = `${prefix ?? "var"}!${this.freshId}`;
+    this.freshId++;
+    return name;
   }
 
   private intern(
@@ -484,8 +503,8 @@ export class AstManager {
     );
   }
 
-  mkFreshConst(prefix: string, sort: number) {
-    return this.mkApp(this.mkFreshFuncDecl(prefix, [], sort, false), [], sort);
+  mkFreshConst(prefix: SmtSymbol | null, sort: number) {
+    return this.mkApp(this.mkFreshFuncDecl(prefix, [], sort), [], sort);
   }
 
   mkVar(index: number, sort: number) {
@@ -495,9 +514,11 @@ export class AstManager {
   }
 
   mkQuantifier(data: QuantifierData) {
-    const key = `q${data.isForall ? 1 : 0}:${data.sorts.join(",")}:${data.body}:${data.patterns.join(
-      ",",
-    )}:${data.weight}`;
+    if (data.names.length !== data.sorts.length)
+      throw new Error("a quantifier needs a name for each variable");
+    const key = `q${data.isForall ? 1 : 0}:${data.sorts.join(",")}:${JSON.stringify(data.names)}:${
+      data.body
+    }:${data.patterns.join(",")}:${data.weight}`;
     const existing = this.table.get(key);
     if (existing !== undefined) return this.revive(existing);
     const id = this.create(
@@ -518,7 +539,12 @@ export class AstManager {
     this.table.set(key, id);
     const bodyBound = this.freeVarBounds[data.body];
     this.freeVarBounds[id] = Math.max(0, bodyBound - data.sorts.length);
-    this.quantifiers.set(id, { ...data, sorts: [...data.sorts], patterns: [...data.patterns] });
+    this.quantifiers.set(id, {
+      ...data,
+      sorts: [...data.sorts],
+      names: [...data.names],
+      patterns: [...data.patterns],
+    });
     this.registerNode(id);
     return id;
   }
@@ -686,7 +712,7 @@ export class AstManager {
   }
 
   getDeclName(expr: number) {
-    return this.funcDecls[this.decls[expr]].name;
+    return getSymbolName(this.funcDecls[this.decls[expr]].name);
   }
 
   toString(expr: number): string {
