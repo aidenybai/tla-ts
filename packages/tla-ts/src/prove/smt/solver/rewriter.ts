@@ -216,7 +216,7 @@ export class Rewriter extends RewriterTpl {
     const op = manager.funcDecls[decl].op;
     switch (op) {
       case OP_AND:
-        return this.mkAnd(args);
+        return this.mkAndCore(args);
       case OP_OR:
         return this.mkOr(args);
       case OP_NOT:
@@ -271,62 +271,73 @@ export class Rewriter extends RewriterTpl {
     return manager.mkNot(arg);
   }
 
-  // bool_rewriter::mk_flat_or_core and mk_nflat_or_core: flattens, drops false and duplicates, and
-  // detects true or a complementary pair. With sort_disjunctions, a disjunction that changed or is
-  // out of ast_lt's order is stably sorted by id.
+  // bool_rewriter::mk_flat_or_core and mk_nflat_or_core: lifts the disjuncts of nested disjunctions
+  // one level, drops false and duplicates, and detects true or a complementary pair. With
+  // sort_disjunctions, a disjunction that changed or is out of ast_lt's order is stably sorted by id.
   mkOr(args: number[]): number {
     const manager = this.manager;
+    const isNested = args.some((arg) => manager.getOp(arg) === OP_OR);
+    const flatArgs = isNested
+      ? args.flatMap((arg) => (manager.getOp(arg) === OP_OR ? manager.args[arg] : [arg]))
+      : args;
     const literals = new FlatLiterals(manager);
-    let isChanged = false;
     let numCandidates = 0;
-    const add = (arg: number): boolean => {
-      if (manager.getOp(arg) === OP_OR) {
-        isChanged = true;
-        for (const innerArg of manager.args[arg]) if (add(innerArg)) return true;
-        return false;
-      }
-      if (manager.isTrue(arg)) return true;
-      if (manager.isFalse(arg)) {
-        isChanged = true;
-        return false;
-      }
+    for (const arg of flatArgs) {
+      if (manager.isTrue(arg)) return manager.trueExpr;
+      if (manager.isFalse(arg)) continue;
       numCandidates++;
-      return literals.add(arg);
-    };
-    for (const arg of args) if (add(arg)) return manager.trueExpr;
+      if (literals.add(arg)) return manager.trueExpr;
+    }
     const result = literals.list;
     const isOutOfOrder = result.some(
       (arg, index) => index > 0 && isAstLess(manager, arg, result[index - 1]),
     );
-    if (isChanged || numCandidates !== result.length || isOutOfOrder)
+    if (isNested || numCandidates !== flatArgs.length || isOutOfOrder)
       result.sort((first, second) => manager.ids[first] - manager.ids[second]);
     return manager.mkOr(result);
   }
 
+  // bool_rewriter::mk_and_core: with elim_and, mk_and_as_or. Otherwise mk_flat_and_core lifts the
+  // conjuncts of nested conjunctions one level, and has the result rewritten again.
+  private mkAndCore(args: number[]): number | Rewrite {
+    const manager = this.manager;
+    if (this.options.isEliminatingAnd) return this.mkAndAsOr(args);
+    if (!args.some((arg) => manager.getOp(arg) === OP_AND)) return this.mkNflatAnd(args);
+    const flatArgs = args.flatMap((arg) =>
+      manager.getOp(arg) === OP_AND ? manager.args[arg] : [arg],
+    );
+    return { expr: this.mkNflatAnd(flatArgs), depth: 1 };
+  }
+
+  // bool_rewriter::mk_and, which takes the result of mk_and_core as it is.
   mkAnd(args: number[]): number {
+    const result = this.mkAndCore(args);
+    return typeof result === "number" ? result : result.expr;
+  }
+
+  // bool_rewriter::mk_nflat_and_core: drops true and duplicates, and detects false or a complementary
+  // pair.
+  private mkNflatAnd(args: number[]) {
     const manager = this.manager;
     const literals = new FlatLiterals(manager);
-    const add = (arg: number): boolean => {
-      if (manager.getOp(arg) === OP_AND) {
-        for (const innerArg of manager.args[arg]) if (add(innerArg)) return true;
-        return false;
-      }
-      if (
-        this.options.isEliminatingAnd &&
-        manager.isNot(arg) &&
-        manager.getOp(manager.args[arg][0]) === OP_OR
-      ) {
-        for (const innerArg of manager.args[manager.args[arg][0]])
-          if (add(this.mkNot(innerArg))) return true;
-        return false;
-      }
-      if (manager.isFalse(arg)) return true;
-      return !manager.isTrue(arg) && literals.add(arg);
-    };
-    for (const arg of args) if (add(arg)) return manager.falseExpr;
+    for (const arg of args) {
+      if (manager.isTrue(arg)) continue;
+      if (manager.isFalse(arg) || literals.add(arg)) return manager.falseExpr;
+    }
     const result = literals.list;
-    if (result.length <= 1 || !this.options.isEliminatingAnd) return manager.mkAnd(result);
-    return this.mkNot(this.mkOr(result.map((innerArg) => this.mkNot(innerArg))));
+    if (result.length === 0) return manager.trueExpr;
+    return result.length === 1 ? result[0] : manager.mkAnd(result);
+  }
+
+  // bool_rewriter::mk_and_as_or: the negation of the disjunction of the negated conjuncts. Each
+  // negation is built with its own temporaries, and the negations outlive the disjunction.
+  private mkAndAsOr(args: number[]) {
+    const manager = this.manager;
+    const negations = args.map((arg) => manager.withTemporaries(() => this.mkNot(arg)));
+    const result = manager.withTemporaries(() => this.mkNot(this.mkOr(negations)));
+    for (const negation of negations) manager.decRef(negation);
+    manager.releaseLater(result);
+    return result;
   }
 
   // try_ite_eq: (ite c t e) = t is c when e is a value distinct from t, and likewise for e.
