@@ -155,13 +155,13 @@ const mkMonFactorization = (monic: Monic): Factorization => ({
   mon: monic,
 });
 
-export interface NlaEquality {
+interface NlaEquality {
   readonly first: number;
   readonly second: number;
   readonly explanation: Explanation;
 }
 
-export interface NlaFixedEquality {
+interface NlaFixedEquality {
   readonly lpVar: number;
   readonly value: Rational;
   readonly explanation: Explanation;

@@ -5,7 +5,7 @@
 import { Rational } from "../rational";
 import { getPower } from "./dep-intervals";
 
-export interface NexScalar {
+interface NexScalar {
   readonly kind: "scalar";
   readonly value: Rational;
 }

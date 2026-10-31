@@ -19,7 +19,7 @@ import {
 } from "./nex";
 
 // occ: how many summands a variable divides, and its smallest power among them.
-export interface Occ {
+interface Occ {
   occs: number;
   power: number;
 }

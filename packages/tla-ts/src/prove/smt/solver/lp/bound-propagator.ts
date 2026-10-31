@@ -11,7 +11,7 @@ import type { LarSolver } from "./lar-solver";
 import type { RowCell } from "./static-matrix";
 
 // The theory side of lp_bound_propagator.
-export interface BoundPropagatorHost {
+interface BoundPropagatorHost {
   columnIsInteresting(column: number): boolean;
   boundIsInteresting(column: number, kind: number, value: Rational): boolean;
   isEqual(first: number, second: number): boolean;

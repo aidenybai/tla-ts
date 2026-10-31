@@ -28,27 +28,27 @@ export class PddMemoryOut extends Error {
   }
 }
 
-export interface PddMonomial {
+interface PddMonomial {
   coeff: Rational;
   vars: number[];
 }
 
-export interface PddCoefficient {
+interface PddCoefficient {
   coeff: Rational;
   isConstant: boolean;
 }
 
-export interface PddPower {
+interface PddPower {
   var: number;
   degree: number;
 }
 
-export interface PddFactor {
+interface PddFactor {
   lc: Pdd;
   rest: Pdd;
 }
 
-export interface PddVarFactors {
+interface PddVarFactors {
   vars: number[];
   poly: Pdd;
 }

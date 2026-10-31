@@ -10,12 +10,12 @@ import { Pdd, PddManager, PddMemoryOut } from "./pdd";
 import { shrink } from "../array";
 
 export const SOLVED = 0;
-export const PROCESSED = 1;
+const PROCESSED = 1;
 export const TO_SIMPLIFY = 2;
 
 const UINT_MAX = 0xffffffff;
 
-export interface PddSolverConfig {
+interface PddSolverConfig {
   eqsThreshold: number;
   exprSizeLimit: number;
   exprDegreeLimit: number;
@@ -45,7 +45,7 @@ interface Subst {
   dep: Dependency;
 }
 
-export class PddSolverStats {
+class PddSolverStats {
   simplified = 0;
   maxExprSize = 0;
   maxExprDegree = 0;

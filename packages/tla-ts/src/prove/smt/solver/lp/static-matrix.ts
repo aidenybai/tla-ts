@@ -14,7 +14,7 @@ export interface RowCell {
   coeff: Rational;
 }
 
-export interface ColumnCell {
+interface ColumnCell {
   row: number;
   offset: number;
 }
