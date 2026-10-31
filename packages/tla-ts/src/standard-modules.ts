@@ -40,6 +40,7 @@ import {
   isEnumerable,
   isFiniteSet,
   isFunctionValue,
+  computeLikeTlcOnFailure,
   isReducibleSet,
   isSetValue,
   toFiniteSet,
@@ -155,7 +156,11 @@ export const CORE_OPERATORS: Builtin[] = [
             : operator === "\\cap"
               ? intersectSorted
               : differenceSorted;
-        return merge(toFiniteSet(left), toFiniteSet(right));
+        // The merge compares the elements, which TLC tests for membership one by one instead.
+        return computeLikeTlcOnFailure(
+          () => merge(toFiniteSet(left), toFiniteSet(right)),
+          () => combineReducible(operator, left, right),
+        );
       }
       if (isReducibleSet(left)) return combineReducible(operator, left, right);
       if (operator !== "\\" && isReducibleSet(right))

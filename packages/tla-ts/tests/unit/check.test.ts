@@ -1113,6 +1113,20 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.fingerprint?.sources.map((source) => source.kind)).toEqual(sources);
   });
 
+  // Reducible#cup, cap and diff test each element for membership in the other set, which a set
+  // enumeration TLC hasn't normalized checks with equals.
+  it.each([
+    ['{3} \\cup {"a"}', 'Attempted to check equality of integer 3 with non-integer:\n"a"'],
+    ['(1..2) \\cap {"a"}', 'Attempted to check equality of string "a" with non-string:\n1'],
+    ['{"a"} \\ {3}', 'Attempted to check equality of integer 3 with non-integer:\n"a"'],
+  ])("fails to compute %s with TLC's reason", async (set, reason) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ (${set}) = {}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.fingerprint?.reason).toBe(reason);
+  });
+
   // TLC builds a function in a method of the FcnLambdaValue that CallStackTool gives a source, so
   // the replay fails to fingerprint it when its body fails.
   it.each([

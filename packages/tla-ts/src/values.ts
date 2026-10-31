@@ -1720,7 +1720,7 @@ export const setTrace: { sets: Value[] | undefined; callStack?: TracedCallStack 
 
 // Takes a fast path, and computes as TLC does where it fails. TLC never takes the fast path, so
 // the failure's leftovers in the replay's trace go first.
-const computeLikeTlcOnFailure = <Result>(
+export const computeLikeTlcOnFailure = <Result>(
   compute: () => Result,
   computeLikeTlc: (error: TlaEvaluationError) => Result,
 ): Result => {
