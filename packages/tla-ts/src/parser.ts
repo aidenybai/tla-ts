@@ -1772,6 +1772,13 @@ const parse = (source: string, mode: ParseMode): Module => {
     return withRange(proof, start);
   };
 
+  // SANY binds the name of a theorem or assumption that a module already defines to the first
+  // definition, warning of the second.
+  const addFactDefinition = (module: Module, definition: Definition) => {
+    if (module.definitions.some((other) => other.name === definition.name)) return;
+    module.definitions.push(definition);
+  };
+
   const parseTheorem = (module: Module) => {
     const start = cursor.index;
     const keyword = advance();
@@ -1793,7 +1800,8 @@ const parse = (source: string, mode: ParseMode): Module => {
     module.theorems.push(theorem);
     module.units.push({ kind: "Theorem", theorem });
     if (name === undefined || statement.kind === "AssumeProve") return;
-    module.definitions.push(
+    addFactDefinition(
+      module,
       withRange(
         {
           kind: "Operator",
@@ -1911,7 +1919,7 @@ const parse = (source: string, mode: ParseMode): Module => {
           module.assumptions.push(assumption);
           module.units.push({ kind: "Assumption", assumption });
           if (assumption.name !== undefined) {
-            module.definitions.push({
+            addFactDefinition(module, {
               kind: "Operator",
               name: assumption.name,
               params: [],

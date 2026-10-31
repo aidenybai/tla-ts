@@ -42,6 +42,14 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([2, 1, 1]);
   });
 
+  it.each([
+    ["two theorems", "THEOREM Thm == x = 0\nTHEOREM Thm == x = 1"],
+    ["an assumption and a theorem", "ASSUME Thm == TRUE\nTHEOREM Thm == x = 1"],
+  ])("evaluates the first of %s with the same name as SANY binds it", async (_, facts) => {
+    const result = await checkModule(`${facts}\nInv == Thm`, "INVARIANT Inv");
+    expect(result.status).toBe("success");
+  });
+
   it("decides sets of functions, records, and tuples from an empty argument", async () => {
     const result = await checkFixture("empty-sets", "EmptySets");
     expect(result.violation?.message).toBeUndefined();
