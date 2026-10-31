@@ -35,9 +35,12 @@ class AuxContext {
   // theory_polymorphism's m_assumption, which holds its last assumption.
   private polyAssumption = -1;
 
+  // The context makes its asserted formulas first. Its theories hold only constants that exist by
+  // now, so setup_context can run at once.
   constructor(private manager: AstManager) {
-    this.context = new Context(manager, { isMbqi: false, relevancyLevel: 0 });
     this.asserted = new AssertedFormulas(manager);
+    this.context = new Context(manager, { isMbqi: false, relevancyLevel: 0 });
+    this.context.setupContext();
   }
 
   push() {

@@ -62,7 +62,8 @@ export interface SmtParams {
 }
 
 export class Context extends Internalizer {
-  readonly theory: TheoryLra = new TheoryLra(this);
+  // setup_context makes the theories after the first formulas are asserted.
+  theory!: TheoryLra;
   readonly qmanager: DefaultQuantifierManager;
   readonly conflictResolution: ConflictResolution = new ConflictResolution(this);
   private qhead = 0;
@@ -91,6 +92,10 @@ export class Context extends Internalizer {
   constructor(manager: AstManager, params: SmtParams) {
     super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
     this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
+  }
+
+  setupContext() {
+    this.theory = new TheoryLra(this);
   }
 
   // The search stops with unknown when the manager's resource limit cancels it.

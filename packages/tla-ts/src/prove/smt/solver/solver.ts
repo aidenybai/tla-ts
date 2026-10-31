@@ -26,11 +26,13 @@ export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
   const incremental = new AssertedFormulas(manager);
   const problem = parseSmtlib(text, manager, (assertion) => incremental.assertExpr(assertion));
   if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
+  const goal = applyUfniaTactic(manager, problem.assertions);
+  // smt_tactic makes the context, which makes its asserted formulas first, and asserts the goal.
+  // setup_context then makes the theories, before the formulas are reduced.
   const asserted = new AssertedFormulas(manager);
-  for (const assertion of applyUfniaTactic(manager, problem.assertions))
-    asserted.assertExpr(assertion);
-  // setup_context comes before the formulas are reduced.
   const context = new Context(manager, { isMbqi: true, relevancyLevel: 2 });
+  for (const assertion of goal) asserted.assertExpr(assertion);
+  context.setupContext();
   const formulas = asserted.reduce();
   for (const formula of formulas) {
     if (context.isInconsistent()) break;
