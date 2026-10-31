@@ -477,6 +477,21 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it.each([
+    ["1.7.4", 2],
+    ["master", 1],
+  ] as const)(
+    "checks the level of an operator applied to []A as TLC %s's SANY does",
+    (version, errorCount) => {
+      const report = getReport(
+        { Strong: "---- MODULE Strong ----\nVARIABLE x\nL == SF_x([](x' = 1))\n====\n" },
+        { version },
+      );
+      expect(report.text).toContain(`*** Errors: ${errorCount}\n`);
+      expect(report.text.includes("Level error in applying operator $SF")).toBe(errorCount === 2);
+    },
+  );
+
   it("locates a substitution for a parameter of the definition at its target", () => {
     const report = getReport({
       Outer: "---- MODULE Outer ----\nM(a) == INSTANCE Inner WITH a <- 1, C <- a\n====\n",

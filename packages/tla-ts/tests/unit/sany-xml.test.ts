@@ -32,7 +32,9 @@ const loadModule = (name: string) =>
 
 const generate = (source = SPEC) => {
   const specification = generateSanySpecification(source, loadModule);
-  specification.modules.forEach((module) => checkModuleLevels(module));
+  specification.modules.forEach((module) =>
+    checkModuleLevels(module, { messages: [], isTlc174: false }),
+  );
   return specification;
 };
 

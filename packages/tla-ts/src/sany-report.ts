@@ -272,7 +272,8 @@ export const getSanyReport = (
         // errors yet, then prints every message so far.
         onModule: (module, messages) => {
           if (parsePhase.isAborted) return;
-          if (messages.every((message) => message.isWarning)) checkModuleLevels(module, messages);
+          if (messages.every((message) => message.isWarning))
+            checkModuleLevels(module, { messages, isTlc174 });
           if (messages.length === 0) return;
           if (messages.some((message) => !message.isWarning)) isFailed.value = true;
           // TLC 1.7.4's SANY prints the errors and warnings together.
