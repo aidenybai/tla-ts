@@ -502,6 +502,14 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it.each(["USE", "HIDE", "THEOREM TRUE BY", "THEOREM TRUE\n<1> USE\n<1> QED"])(
+    "reports %j with nothing after its keyword as SANY does",
+    (statement) => {
+      const report = getReport({ Empty: `---- MODULE Empty ----\n${statement}\n====\n` });
+      expect(report.text).toContain("\n\nEmpty BY, USE, or HIDE\n");
+    },
+  );
+
   it("locates a substitution for a parameter of the definition at its target", () => {
     const report = getReport({
       Outer: "---- MODULE Outer ----\nM(a) == INSTANCE Inner WITH a <- 1, C <- a\n====\n",

@@ -2426,10 +2426,21 @@ export const generateSanySpecification = (
         return [symbol];
       });
 
+    // SANY's generateUseOrHide rejects a BY, USE, or HIDE with nothing after its keyword before it
+    // reads the facts.
+    const checkKeywordOnly = (
+      statement: UseOrHide | Extract<Proof, { kind: "By" }>,
+      location: SanyLocation,
+    ) => {
+      if (statement.isOnly || statement.facts.length + statement.defs.length > 0) return;
+      addError(location, "Empty BY, USE, or HIDE");
+    };
+
     const generateUseOrHide = (use: UseOrHide): UseOrHideNode => {
+      const location = getSpanLocation(file, getUnitSpan(use.location));
+      checkKeywordOnly(use, location);
       const facts = generateFacts(use.facts);
       const defs = generateDefs(use.defs);
-      const location = getSpanLocation(file, getUnitSpan(use.location));
       if (facts.length + defs.length === 0) addError(location, "Empty USE or HIDE statement.");
       // UseOrHideNode.factCheck, after SANY generates the node: a HIDE cites facts by name only.
       if (use.kind === "Hide") {
@@ -2590,11 +2601,12 @@ export const generateSanySpecification = (
     });
 
     const generateLeafProof = (proof: Exclude<Proof, { kind: "Steps" }>): LeafProofNode => {
+      const location = getSpanLocation(file, getUnitSpan(proof.location));
+      if (proof.kind === "By") checkKeywordOnly(proof, location);
       const facts = proof.kind === "By" ? generateFacts(proof.facts) : [];
       const defs = proof.kind === "By" ? generateDefs(proof.defs) : [];
       // SANY reads a BY proof's facts and definitions from the UseOrHideNode it makes of them.
       if (proof.kind === "By") getId();
-      const location = getSpanLocation(file, getUnitSpan(proof.location));
       if (proof.kind === "By" && facts.length + defs.length === 0) addError(location, "Empty BY");
       return {
         ...createLevelFields(getId()),
