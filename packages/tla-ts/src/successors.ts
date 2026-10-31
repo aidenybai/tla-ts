@@ -35,7 +35,7 @@ import {
   type State,
 } from "./evaluate";
 import { mapChildren } from "./instances";
-import { isAssignedShortcut, replayEnabled } from "./tlc-replay";
+import { isAssignedShortcut, LITERAL_KINDS, replayEnabled } from "./tlc-replay";
 import {
   createTuple,
   formatValue,
@@ -92,15 +92,30 @@ const assign = (partial: State, index: number, value: Value) => {
   return copy;
 };
 
-const holds = (expression: Expression, context: Context) => {
+// TLC's message for a conjunct that isn't a boolean, which differs for a literal it walks to rather
+// than evaluates.
+const getNonBooleanMessage = (
+  run: Run,
+  value: Value,
+  expression: Expression,
+  isWalked: boolean,
+) => {
+  const node = describeNode(expression);
+  if (isWalked && LITERAL_KINDS.has(expression.kind)) {
+    return run.isEnabled
+      ? `Attempted to compute ENABLED on a non-boolean expression.\n${node}`
+      : `The ${run.isInit ? "init" : "next"} state relation is not a boolean expression.\n${node}`;
+  }
+  const computing = run.isInit ? "initial states" : run.isEnabled ? "ENABLED" : "next states";
+  return `In computing ${computing}, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${node}`;
+};
+
+const holds = (run: Run, expression: Expression, context: Context, isWalked = true) => {
   const value = evaluate(expression, context);
   if (typeof value === "boolean") return value;
-  try {
-    throw new TlaEvaluationError(getExpectedExpression("next states", value, expression));
-  } catch (error) {
-    // TLC fails with an unexpected exception when the next-state relation isn't a boolean.
-    throw context.next === undefined ? error : setExitCode(error, EXIT_STATUS.error);
-  }
+  const error = new TlaEvaluationError(getNonBooleanMessage(run, value, expression, isWalked));
+  // TLC fails with an unexpected exception when the next-state relation isn't a boolean.
+  throw run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
 };
 
 const isAssignmentOperator = (operator: string) =>
@@ -339,9 +354,8 @@ const compileConjunction = (
     for (let index = start; index < conjuncts.length; index++) {
       if (index > 0 && isShortcut && isComplete(current)) {
         context ??= getContext(run, scope, current);
-        const isTrue = run.isInit ? holdsInInit : holds;
         for (let rest = index; rest < conjuncts.length; rest++) {
-          if (!isTrue(conjuncts[rest].expression, context)) return;
+          if (!holds(run, conjuncts[rest].expression, context, false)) return;
         }
         onComplete(current, action);
         return;
@@ -349,7 +363,7 @@ const compileConjunction = (
       const conjunct = conjuncts[index];
       if (conjunct.kind === "Guard") {
         context ??= getContext(run, scope, current);
-        if (!holds(conjunct.expression, context)) return;
+        if (!holds(run, conjunct.expression, context)) return;
         continue;
       }
       if (conjunct.kind === "Assign") {
@@ -390,20 +404,10 @@ const compileConjunction = (
     runFrom(0, run, scope, partial, action, onComplete);
 };
 
-// TLC's message for a conjunct of the initial predicate or of an action that isn't a boolean.
-const getExpectedExpression = (computing: string, value: Value, expression: Expression) =>
-  `In computing ${computing}, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${describeNode(expression)}`;
-
-const holdsInInit = (expression: Expression, context: Context) => {
-  const value = evaluate(expression, context);
-  if (typeof value === "boolean") return value;
-  throw new TlaEvaluationError(getExpectedExpression("initial states", value, expression));
-};
-
 const compileGuard =
   (expression: Expression): Runner =>
   (run, scope, partial, action, _isFixed, onComplete) => {
-    if (holds(expression, getContext(run, scope, partial))) onComplete(partial, action);
+    if (holds(run, expression, getContext(run, scope, partial))) onComplete(partial, action);
   };
 
 const compileMembership = (
@@ -415,7 +419,7 @@ const compileMembership = (
     const index = getIndex(run, scope, partial);
     const context = getContext(run, scope, partial);
     if (partial[index] !== undefined) {
-      if (holds(expression, context)) onComplete(partial, action);
+      if (holds(run, expression, context)) onComplete(partial, action);
       return;
     }
     const evaluated = evaluate(set, context);
@@ -556,7 +560,7 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
       );
       return;
     }
-    if (holds(unchanged, getContext(run, scope, partial))) onComplete(partial, action);
+    if (holds(run, unchanged, getContext(run, scope, partial))) onComplete(partial, action);
   };
 };
 
@@ -791,7 +795,7 @@ const compileAction = (
               const elementScope = bindValue(boundScope, hoisted.names[index], element);
               if (index === sets.length - 1) {
                 const guardContext = getContext(run, elementScope, partial);
-                if (!hoisted.guards.every((guard) => holds(guard, guardContext))) continue;
+                if (!hoisted.guards.every((guard) => holds(run, guard, guardContext))) continue;
               }
               visit(index - 1, elementScope);
             }
@@ -826,7 +830,7 @@ const compileAction = (
         );
         if (isBoundToValues) {
           const isSatisfied = scopes.every((boundScope) =>
-            holds(expression.body, getContext(run, boundScope, partial)),
+            holds(run, expression.body, getContext(run, boundScope, partial)),
           );
           if (isSatisfied) onComplete(partial, action);
           return;
@@ -840,7 +844,7 @@ const compileAction = (
             const isSatisfied = scopes
               .slice(index)
               .every((boundScope) =>
-                holdsInInit(expression.body, getContext(run, boundScope, nextPartial)),
+                holds(run, expression.body, getContext(run, boundScope, nextPartial)),
               );
             if (isSatisfied) onComplete(nextPartial, nextAction);
             return;
@@ -907,7 +911,7 @@ const compileAction = (
       const unchanged = getUnchangedWrapper(expression.subscript);
       const isUnchanged = (run: Run, scope: Scope | undefined, nextPartial: State) => {
         try {
-          return holds(unchanged, getContext(run, scope, nextPartial));
+          return holds(run, unchanged, getContext(run, scope, nextPartial));
         } catch (error) {
           throw run.isEnabled
             ? toUnspecifiedSubscriptError(error, environment.runtime.version)

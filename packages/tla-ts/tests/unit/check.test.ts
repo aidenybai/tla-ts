@@ -1297,33 +1297,46 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  const EXPECTED_BOOLEAN = "TLC expected a boolean expression,\nbut instead found";
+
+  // TLC evaluates the conjuncts left once every variable has a value, and walks the others.
   it.each([
-    ["x = 0 /\\ 3", "x' = x", "initial states", "3.\n3"],
+    ["x = 0 /\\ 3", "x' = x", `In computing initial states, ${EXPECTED_BOOLEAN} 3.\n3`],
     [
       "x = 0 /\\ Op(x)",
       "x' = x",
-      "initial states",
-      "1.\nline 5, col 18 to line 5, col 22 of module M",
+      `In computing initial states, ${EXPECTED_BOOLEAN} 1.\nline 5, col 18 to line 5, col 22 of module M`,
     ],
     [
       "x = 0",
       "x' = x /\\ (0 \\div 3)",
-      "next states",
-      "0.\nline 6, col 20 to line 6, col 27 of module M",
+      `In computing next states, ${EXPECTED_BOOLEAN} 0.\nline 6, col 20 to line 6, col 27 of module M`,
     ],
-    ["x = 0", "x' = x /\\ \\b11", "next states", "3.\n\\b11"],
-  ])(
-    "words a conjunct of %s or %s that isn't a boolean like TLC",
-    async (init, next, computing, found) => {
-      const result = await check({
-        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nOp(a) == a + 1\nInit == ${init}\nNext == ${next}\n====`,
-        config: "INIT Init\nNEXT Next",
-      });
-      expect(result.failure?.message).toContain(
-        `In computing ${computing}, TLC expected a boolean expression,\nbut instead found ${found}`,
-      );
-    },
-  );
+    ["x = 0", "x' = x /\\ \\b11", `In computing next states, ${EXPECTED_BOOLEAN} 3.\n\\b11`],
+    ["3 /\\ x = 0", "x' = x", "The init state relation is not a boolean expression.\n3"],
+    ["x = 0", "3 /\\ x' = x", "The next state relation is not a boolean expression.\n3"],
+  ])("words a conjunct of %s or %s that isn't a boolean like TLC", async (init, next, message) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nOp(a) == a + 1\nInit == ${init}\nNext == ${next}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.message).toContain(message);
+  });
+
+  // TLC's enabled walks the action, and words a literal it walks to differently.
+  it.each([
+    ["3", "Attempted to compute ENABLED on a non-boolean expression.\n3"],
+    [
+      "x + 3",
+      `In computing ENABLED, ${EXPECTED_BOOLEAN} 3.\nline 5, col 31 to line 5, col 35 of module M`,
+    ],
+  ])("words a conjunct of a fair action that is %s like TLC", async (value, message) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nA == x' = x /\\ (IF x = 0 THEN ${value} ELSE TRUE)\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)\n====`,
+      config: "SPECIFICATION Spec\nPROPERTY P",
+    });
+    expect(result.failure?.message).toContain(message);
+  });
 
   it("enumerates SUBSET of a function with an empty domain as {{}} like TLC", async () => {
     const result = await checkModule("ASSUME SUBSET <<>> = {{}}");

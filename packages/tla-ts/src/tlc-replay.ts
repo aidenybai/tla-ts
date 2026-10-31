@@ -346,7 +346,7 @@ const visitAssignment = (
 
 const ASSIGNMENT_OPERATORS = new Set(["=", "\\in", "\\subseteq"]);
 
-const LITERAL_KINDS = new Set<Expression["kind"]>(["Number", "Decimal", "String"]);
+export const LITERAL_KINDS = new Set<Expression["kind"]>(["Number", "Decimal", "String"]);
 
 const visitApplication = (
   replay: Replay,
