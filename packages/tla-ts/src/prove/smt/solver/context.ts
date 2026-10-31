@@ -60,6 +60,12 @@ const FAILURE_THEORY = 1;
 const FAILURE_QUANTIFIERS = 2;
 const FAILURE_CANCELED = 3;
 
+type SearchFailure =
+  | typeof FAILURE_OK
+  | typeof FAILURE_THEORY
+  | typeof FAILURE_QUANTIFIERS
+  | typeof FAILURE_CANCELED;
+
 // smt_params: the kernel runs model-based quantifier instantiation with relevancy level 2 and the
 // CS_ACTIVITY_DELAY_NEW case split queue. The model checker's auxiliary context runs neither, as Z3
 // sets its relevancy level to 0 and its case split strategy to CS_ACTIVITY.
@@ -69,7 +75,8 @@ interface SmtParams {
 }
 
 export class Context extends Internalizer {
-  // setup_context makes the theories after the first formulas are asserted.
+  // setup_context makes the theories after the first formulas are asserted, so the field starts
+  // unassigned.
   theory!: TheoryLra;
   readonly qmanager: DefaultQuantifierManager;
   readonly conflictResolution: ConflictResolution = new ConflictResolution(this);
@@ -95,7 +102,7 @@ export class Context extends Internalizer {
   private finalCheckIndex = 0;
   private r1ParentGenerations = new Map<Enode, number>();
   private erasedGenerations = new Map<Enode, number>();
-  private lastSearchFailure = FAILURE_OK;
+  private lastSearchFailure: SearchFailure = FAILURE_OK;
   // m_model_generator's model, m_proto_model and m_model.
   private generatedModel: GeneratedModel | null = null;
   private protoModel: ProtoModel | null = null;
@@ -938,7 +945,7 @@ export class Context extends Internalizer {
     if (status !== FC_DONE) return status;
     const oldIndex = this.finalCheckIndex;
     let result = FC_DONE;
-    let failure = FAILURE_OK;
+    let failure: SearchFailure = FAILURE_OK;
     let level = 1;
     let maxLevel = 1;
     for (;;) {
