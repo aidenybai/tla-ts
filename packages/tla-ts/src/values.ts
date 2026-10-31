@@ -937,9 +937,17 @@ const searchLikeTlc = (element: Value, sorted: Value[]) => {
   return { index: bounds.low, isFound: false };
 };
 
-// TLC checks membership in a set enumeration it hasn't sorted element by element.
+// TLC checks membership in a set enumeration it hasn't sorted element by element, with the equals
+// method of each member, which a member with a source heads the failure of.
 const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
-  elements.some((member) => equalsLikeTlc(member, element));
+  elements.some((member) => {
+    const sets = setTrace.sets;
+    if (sets === undefined) return equalsLikeTlc(member, element);
+    sets.push(member);
+    const isEqual = equalsLikeTlc(member, element);
+    sets.pop();
+    return isEqual;
+  });
 
 // The sets TLC has normalized, whose membership ValueVec.search checks by binary search with
 // compareTo instead of element by element.
@@ -1711,9 +1719,10 @@ interface TracedCallStack {
   fingerprint?: unknown;
 }
 
-// The sets whose membership is being checked or whose elements are being enumerated, outermost
-// first, while TLC's CallStackTool replays a computation. A failed check or enumeration leaves the
-// sets it was in, each of which TLC adds to the FingerprintException when it has a source.
+// The sets whose membership is being checked or whose elements are being enumerated, and the
+// members being compared, outermost first, while TLC's CallStackTool replays a computation. A failed
+// check or enumeration leaves the values it was in, each of which TLC adds to the
+// FingerprintException when it has a source.
 export const setTrace: { sets: Value[] | undefined; callStack?: TracedCallStack } = {
   sets: undefined,
 };
