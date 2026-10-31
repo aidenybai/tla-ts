@@ -416,6 +416,16 @@ export class Context extends Internalizer {
   }
 
   attachThVar(node: Enode, thVar: number) {
+    const oldVar = node.thVar;
+    // A variable that an equality moved to the node's list, which the node's own replaces.
+    if (oldVar >= 0) {
+      node.thVar = thVar;
+      this.pushTrail(() => {
+        node.thVar = oldVar;
+      });
+      this.pushNewThEq(thVar, oldVar);
+      return;
+    }
     const root = node.root;
     const rootVar = root.thVar;
     node.thVar = thVar;
