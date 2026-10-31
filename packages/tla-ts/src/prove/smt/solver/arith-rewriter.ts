@@ -1,6 +1,6 @@
 // Ported from Z3 (src/ast/rewriter/arith_rewriter.cpp), MIT license, see z3-license.txt. Only
-// linear arithmetic is ported, without powers, algebraic numbers, hoisting or nonlinear factoring,
-// which tlapm's encoding does not produce.
+// linear arithmetic and nonlinear factoring are ported, without powers, algebraic numbers or
+// hoisting, which tlapm's encoding does not produce.
 import {
   OP_ADD,
   OP_GE,
@@ -787,6 +787,118 @@ export class ArithRewriter extends PolyRewriter {
     }
     if (isChanged && left === originalLeft && right === originalRight) return undefined;
     if (isChanged) return this.mkAtom(left, right, kind);
+    return this.factorLeGeEq(left, right, kind);
+  }
+
+  // factor_le_ge_eq: a sum with a nonlinear factor f, fg >= 0, splits on the signs of f and g.
+  private factorLeGeEq(left: number, right: number, kind: number) {
+    if (!this.isZero(right)) return undefined;
+    const factor = this.findNlFactor(left);
+    if (factor === undefined) return undefined;
+    const manager = this.manager;
+    const rest = this.removeNlFactor(factor, left);
+    const zero = manager.mkNumeralOfSort(Rational.zero, manager.sorts[left]);
+    const factorEq = this.mkArithEq(factor, zero);
+    const restEq = this.mkArithEq(rest, zero);
+    const isZeroProduct = manager.mkOr([factorEq, restEq]);
+    if (kind === KIND_EQ) return this.reduce(isZeroProduct, 3);
+    const factorGe = manager.mkApp(OP_GE, [factor, zero], SORT_BOOL);
+    const restGe = manager.mkApp(OP_GE, [rest, zero], SORT_BOOL);
+    const isSameSign = manager.mkEq(factorGe, restGe);
+    return this.reduce(
+      manager.mkOr([kind === KIND_GE ? isSameSign : manager.mkNot(isSameSign), isZeroProduct]),
+      3,
+    );
+  }
+
+  // arith_util::mk_eq: a numeral goes right, and otherwise the side with the smaller id goes left.
+  private mkArithEq(left: number, right: number) {
+    const manager = this.manager;
+    const isSwapped =
+      manager.isNumeral(left) ||
+      (!manager.isNumeral(right) && manager.ids[left] > manager.ids[right]);
+    const lhs = isSwapped ? right : left;
+    const rhs = isSwapped ? left : right;
+    if (lhs === rhs) return manager.trueExpr;
+    if (manager.isNumeral(lhs) && manager.isNumeral(rhs)) return manager.falseExpr;
+    return manager.mkEq(lhs, rhs);
+  }
+
+  // find_nl_factor: a factor of the first nonlinear product of a sum that divides every monomial.
+  private findNlFactor(expr: number) {
+    const sum = [expr];
+    for (let index = 0; index < sum.length; index++) {
+      const arg = sum[index];
+      if (this.isAdd(arg)) {
+        sum.push(...this.manager.args[arg]);
+        continue;
+      }
+      if (!this.isMul(arg)) continue;
+      const muls: number[] = [];
+      this.getNlMuls(arg, muls);
+      if (muls.length <= 1) continue;
+      return muls.find((mul) => this.isAddFactor(mul, expr));
+    }
     return undefined;
+  }
+
+  // get_nl_muls: the factors of a product that are not numerals.
+  private getNlMuls(expr: number, muls: number[]) {
+    if (this.isMul(expr)) for (const arg of this.manager.args[expr]) this.getNlMuls(arg, muls);
+    else if (!this.manager.isNumeral(expr)) muls.push(expr);
+  }
+
+  private isMulFactor(factor: number, expr: number): boolean {
+    if (this.isMul(expr))
+      return this.manager.args[expr].some((arg) => this.isMulFactor(factor, arg));
+    return factor === expr;
+  }
+
+  private isAddFactor(factor: number, expr: number): boolean {
+    if (this.isAdd(expr))
+      return this.manager.args[expr].every((arg) => this.isAddFactor(factor, arg));
+    return this.isMulFactor(factor, expr);
+  }
+
+  // remove_factor: the sum or product without one occurrence of the factor in each monomial.
+  private removeNlFactor(factor: number, expr: number): number {
+    const manager = this.manager;
+    const sort = manager.sorts[expr];
+    if (this.isMul(expr)) {
+      const rest = [expr];
+      for (let index = 0; index < rest.length; index++) {
+        const arg = rest[index];
+        if (this.isMul(arg)) {
+          rest.push(...manager.args[arg]);
+          rest[index] = rest[rest.length - 1];
+          rest.pop();
+          index--;
+          continue;
+        }
+        if (arg === factor) {
+          rest[index] = rest[rest.length - 1];
+          rest.pop();
+          break;
+        }
+      }
+      if (rest.length === 0) return manager.mkNumeralOfSort(Rational.one, sort);
+      return rest.length === 1 ? rest[0] : manager.mkApp(OP_MUL, rest, sort);
+    }
+    if (this.isAdd(expr)) {
+      const sum = [expr];
+      for (let index = 0; index < sum.length; index++) {
+        const arg = sum[index];
+        if (this.isAdd(arg)) {
+          sum.push(...manager.args[arg]);
+          sum[index] = sum[sum.length - 1];
+          sum.pop();
+          index--;
+          continue;
+        }
+        sum[index] = this.removeNlFactor(factor, arg);
+      }
+      return sum.length === 1 ? sum[0] : manager.mkApp(OP_ADD, sum, sort);
+    }
+    return manager.mkNumeralOfSort(Rational.one, sort);
   }
 }
