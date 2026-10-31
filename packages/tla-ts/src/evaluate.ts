@@ -349,11 +349,26 @@ export const expectBoolean = (value: Value, description: string) => {
 export const getDefinition = (name: string, environment: Environment) =>
   environment.definitions.get(environment.substitutions.get(name) ?? name);
 
-const isStateDependent = (expression: Expression, environment: Environment): boolean => {
+// TLC bounds the level of every action and temporal operator above constant, whatever its operands.
+const NONCONSTANT_KINDS = new Set<Expression["kind"]>([
+  "Prime",
+  "Unchanged",
+  "Enabled",
+  "BoxAction",
+  "AngleAction",
+  "Always",
+  "Eventually",
+  "WeakFairness",
+  "StrongFairness",
+]);
+
+const NONCONSTANT_OPERATORS = new Set(["~>", "-+->", "\\cdot"]);
+
+const isNonconstant = (expression: Expression, environment: Environment): boolean => {
   if (
-    expression.kind === "Prime" ||
-    expression.kind === "Unchanged" ||
-    expression.kind === "Enabled"
+    NONCONSTANT_KINDS.has(expression.kind) ||
+    (expression.kind === "UnboundedQuantifier" && expression.isTemporal === true) ||
+    (expression.kind === "Apply" && NONCONSTANT_OPERATORS.has(expression.operator))
   ) {
     return true;
   }
@@ -370,7 +385,7 @@ const isStateDependent = (expression: Expression, environment: Environment): boo
     if (definition && !environment.constants.has(name) && !isConstantLevel(definition, environment))
       return true;
   }
-  return getChildren(expression).some((child) => isStateDependent(child, environment));
+  return getChildren(expression).some((child) => isNonconstant(child, environment));
 };
 
 export const isConstantLevel = (definition: Definition, environment: Environment): boolean => {
@@ -378,9 +393,9 @@ export const isConstantLevel = (definition: Definition, environment: Environment
   if (cached !== undefined) return cached;
   environment.constantLevels.set(definition, true);
   const isConstant =
-    !isStateDependent(definition.body, environment) &&
+    !isNonconstant(definition.body, environment) &&
     (definition.kind === "Operator" ||
-      !definition.bounds.some((bound) => isStateDependent(bound.set, environment)));
+      !definition.bounds.some((bound) => isNonconstant(bound.set, environment)));
   environment.constantLevels.set(definition, isConstant);
   return isConstant;
 };
@@ -1542,7 +1557,7 @@ const compileApply = (
   // TLC sorts the value of a constant TLCEval argument only where no context binds a name.
   if (global?.kind === "Builtin" && global.name === "TLCEval" && args.length === 1) {
     const operand = getEvaluator(args[0], environment);
-    if (contextualApplications.has(expression) || isStateDependent(args[0], environment)) {
+    if (contextualApplications.has(expression) || isNonconstant(args[0], environment)) {
       return operand;
     }
     return (context) =>

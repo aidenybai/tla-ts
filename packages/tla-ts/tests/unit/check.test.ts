@@ -2434,6 +2434,22 @@ describe("check matches TLC 1.7.4", () => {
     );
   });
 
+  // TLC doesn't evaluate a definition with a temporal operator before it checks the property.
+  it.each(["1.7.4" as const, "master" as const])(
+    "reports a property quantified over no values as a tautology in TLC %s",
+    async (version) => {
+      const result = check({
+        source:
+          "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == \\A k \\in {} : <>TRUE\n====",
+        config: "SPECIFICATION Spec\nPROPERTY P",
+        version,
+      });
+      await expect(result).rejects.toThrow(
+        new TlaEvaluationError("Temporal formula is a tautology (its negation is unsatisfiable)."),
+      );
+    },
+  );
+
   // An EvalException, which Java code throws, leaves its message out.
   it.each([
     [
