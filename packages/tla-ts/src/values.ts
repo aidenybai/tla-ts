@@ -1341,7 +1341,7 @@ const enumerateSet = (value: Value): Value[] => {
       return getCartesianProduct(factors).map(createTuple);
     }
     case "FilteredSet":
-      if (isOverriddenSet(value.base)) {
+      if (!isSetValue(value.base) || isOverriddenSet(value.base)) {
         throw new TlaEvaluationError(
           `Attempted to enumerate { x \\in S : p(x) } when S:\n${formatValue(value.base)}\nis not enumerable`,
         );

@@ -1814,12 +1814,8 @@ const compileSetComprehension = (
     };
     return (context) => {
       const base = set(context);
-      if (!isReducible(base)) {
-        if (isSetValue(base)) return createFiltered(base, context, predicate);
-        throw new TlaEvaluationError(
-          `TLC encountered a non-enumerable quantifier bound ${formatValue(base)} at ${describeLocation(expression.bound.set)}`,
-        );
-      }
+      // TLC filters any value it can't enumerate lazily, and fails only when it uses the result.
+      if (!isReducible(base)) return createFiltered(base, context, predicate);
       return createSortedSet(toFiniteSet(base).elements.filter(createTest(predicate, context)));
     };
   }

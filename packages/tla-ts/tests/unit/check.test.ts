@@ -1415,6 +1415,10 @@ describe("evaluation errors match TLC", () => {
       ],
       ["ASSUME \\A e \\in 1 : TRUE", "TLC encountered a non-enumerable quantifier bound\n1.\n1"],
       [
+        "ASSUME {e \\in 1 : TRUE} = {}",
+        "Attempted to enumerate { x \\in S : p(x) } when S:\n1\nis not enumerable",
+      ],
+      [
         "ASSUME CHOOSE e \\in 3 : TRUE",
         "Attempted to compute the value of an expression of\nform CHOOSE x \\in S: P, but S was not enumerable.\nline 6, col 8 to line 6, col 28 of module M",
       ],
