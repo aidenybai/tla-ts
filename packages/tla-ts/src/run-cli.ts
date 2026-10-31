@@ -145,6 +145,14 @@ const printResult = (result: CheckResult) => {
       printState(result.failure.initialState);
     }
     printTrace(result.failure.trace);
+    const replay = result.failure.replay;
+    replay?.output.forEach((line) => console.log(line));
+    if (replay?.callStack) {
+      const frames = replay.callStack.map((frame, index) => `${index}. ${frame}\n`).join("");
+      console.log(
+        `Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n${frames ? `${frames}\n` : "    The error call stack is empty.\n"}`,
+      );
+    }
   } else if (result.violation) {
     const violation = result.violation;
     const name = violation.name;

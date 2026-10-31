@@ -48,6 +48,7 @@ import {
   toFiniteSet,
   updateFunction,
   valuesEqual,
+  type FilteredSetValue,
   type FunctionValue,
   type LazyFunctionSource,
   type LazyFunctionValue,
@@ -116,6 +117,7 @@ export interface Environment {
   definitionValues: Map<Definition, Value>;
   constantLevels: Map<Definition, boolean>;
   evaluators: WeakMap<Expression, Evaluator>;
+  trace?: Expression[];
 }
 
 export interface Context {
@@ -1019,16 +1021,38 @@ const isStateCached = (expression: Expression, environment: Environment) =>
   getReadVariables(expression, environment) !== undefined &&
   !hasFreeLocals(expression, NO_BOUND_NAMES);
 
+// CallStackTool also evaluates the predicate of a lazy set filter it returns, even one that TLC
+// made before the replay.
+const filteredSetRetracers = new WeakMap<
+  FilteredSetValue,
+  (environment: Environment) => FilteredSetValue
+>();
+
 export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
   const cached = environment.evaluators.get(expression);
   if (cached) return cached;
   const compiled = compile(expression, environment);
-  const evaluator =
+  const cachedEvaluator =
     isWorthCaching(expression) && isClosedConstant(expression, environment)
       ? cacheFirstValue(compiled)
       : isStateCached(expression, environment)
         ? cacheStateValue(compiled)
         : compiled;
+  const trace = environment.trace;
+  // TLC's CallStackTool pushes each expression it evaluates and keeps the stack when one fails.
+  const evaluator: Evaluator = trace
+    ? (context) => {
+        const depth = trace.length;
+        trace.push(expression);
+        const value = cachedEvaluator(context);
+        trace.length = depth;
+        const retrace =
+          typeof value === "object" && value.kind === "FilteredSet"
+            ? filteredSetRetracers.get(value)
+            : undefined;
+        return retrace ? retrace(environment) : value;
+      }
+    : cachedEvaluator;
   environment.evaluators.set(expression, evaluator);
   return evaluator;
 };
@@ -1036,6 +1060,7 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
 const entryEvaluators = new WeakMap<Expression, Evaluator>();
 
 export const getEntryEvaluator = (expression: Expression, environment: Environment) => {
+  if (environment.trace) return getEvaluator(expression, environment);
   const cached = entryEvaluators.get(expression);
   if (cached) return cached;
   const evaluator =
@@ -1528,13 +1553,21 @@ const compileSetComprehension = (
     const pattern = expression.bound.pattern;
     return (context) => {
       const base = set(context);
-      const test = (element: Value) =>
+      const getTest = (evaluatePredicate: Evaluator) => (element: Value) =>
         expectBoolean(
-          predicate(withScope(context, bindPattern(context.scope, pattern, element))),
+          evaluatePredicate(withScope(context, bindPattern(context.scope, pattern, element))),
           "a set filter predicate",
         );
+      const test = getTest(predicate);
       if (!isReducible(base)) {
-        if (isSetValue(base)) return { kind: "FilteredSet", base, test };
+        if (isSetValue(base)) {
+          const filtered: FilteredSetValue = { kind: "FilteredSet", base, test };
+          filteredSetRetracers.set(filtered, (traced) => ({
+            ...filtered,
+            test: getTest(getEvaluator(expression.predicate, traced)),
+          }));
+          return filtered;
+        }
         throw new TlaEvaluationError(
           `TLC encountered a non-enumerable quantifier bound ${formatValue(base)} at ${describeLocation(expression.bound.set)}`,
         );
