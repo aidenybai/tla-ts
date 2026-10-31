@@ -35,6 +35,13 @@ interface InfixOperator extends Precedence {
   isAssociative: boolean;
 }
 
+// TLAplusParser.lastOp, the operator parsed last, and the operator an operand being parsed follows
+// in its expression.
+interface OperatorContext {
+  last?: Precedence;
+  preceding?: Precedence;
+}
+
 // SANY's precedences of a postfix operator and of the "[" of a function application.
 const POSTFIX_PRECEDENCE: Precedence = { low: 15, high: 15 };
 const FUNCTION_PRECEDENCE: Precedence = { low: 16, high: 16 };
@@ -342,9 +349,7 @@ const parse = (source: string, mode: ParseMode): Module => {
   const isTlapm = mode === "tlapm";
   const tokens = tokenize(source);
   const cursor = { index: 0, offsideColumns: [] as number[] };
-  // TLAplusParser.lastOp, the operator parsed last, and the operator an operand being parsed
-  // follows in its expression.
-  const operators: { last?: Precedence; preceding?: Precedence } = {};
+  const operators: OperatorContext = {};
   // A RECURSIVE declaration covers the definitions of its own LET or module.
   const recursiveScopes: Set<string>[] = [];
   const factNames = new Set<string>();
