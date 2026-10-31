@@ -12,7 +12,13 @@ import {
 import { BUNDLED_MODULES } from "./bundled-modules";
 import type { ConfigValue, ModelConfig } from "./config";
 import type { FileSystem } from "./json";
-import { TlaConfigError, TlaEvaluationError, TlaSyntaxError, TlaSanyFatalError } from "./errors";
+import {
+  TlaConfigError,
+  TlaEvaluationError,
+  TlaMissingModuleError,
+  TlaSanyFatalError,
+  TlaSyntaxError,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   createBigNumberError,
@@ -318,11 +324,7 @@ export const createEnvironment = (
       options.loadModule?.(name) ??
       BUNDLED_MODULES.get(name) ??
       extractModule(options.source, name);
-    if (source === undefined)
-      throw new TlaSanyFatalError(
-        `Cannot find source file for module ${name} imported in module ${importer}.`,
-        importer,
-      );
+    if (source === undefined) throw new TlaMissingModuleError(name, importer);
     const module = parseModule(source);
     if (module.name !== name) {
       throw new TlaSanyFatalError(

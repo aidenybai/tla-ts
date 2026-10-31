@@ -21,7 +21,12 @@ import type {
   UseOrHide,
 } from "./ast";
 import { getChildren } from "./ast";
-import { TlaSanyFatalError, TlaSyntaxError, TlaUnsupportedError } from "./errors";
+import {
+  TlaMissingModuleError,
+  TlaSanyFatalError,
+  TlaSyntaxError,
+  TlaUnsupportedError,
+} from "./errors";
 import { parseSanyModule } from "./parser";
 import { createBuiltins, createLevelFields } from "./sany-builtins";
 import { getSany174LexicalError } from "./sany-lexer";
@@ -425,11 +430,7 @@ export const generateSanySpecification = (
     const cached = sources.get(name);
     if (cached) return cached;
     if (text === undefined) {
-      // TLC 1.7.4's SANY gives the error no location.
-      throw new TlaSanyFatalError(
-        `Cannot find source file for module ${name} imported in module ${importer}.`,
-        options.version === "1.7.4" ? undefined : importer,
-      );
+      throw new TlaMissingModuleError(name, importer, options.version !== "1.7.4");
     }
     options.onParse?.(name);
     const module = parseSource(name, text);

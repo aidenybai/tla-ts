@@ -49,6 +49,17 @@ export class TlaSanyFatalError extends TlaSyntaxError {
   }
 }
 
+// A module that another imports and SANY can't find, which SANY reports in the importer, except
+// TLC 1.7.4's SANY, which gives it no location.
+export class TlaMissingModuleError extends TlaSanyFatalError {
+  constructor(name: string, importer: string | undefined, isLocated = true) {
+    super(
+      `Cannot find source file for module ${name} imported in module ${importer}.`,
+      isLocated ? importer : undefined,
+    );
+  }
+}
+
 export class TlaConfigError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);

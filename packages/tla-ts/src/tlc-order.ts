@@ -2,7 +2,7 @@
 // state's variables in the order of SANY's symbol table. This reproduces both orders.
 import type { Module, SourceLocation } from "./ast";
 import type { ConfigValue, ModelConfig } from "./config";
-import { TlaSanyFatalError } from "./errors";
+import { TlaMissingModuleError } from "./errors";
 import { tokenize, type Token } from "./lexer";
 import { extractModule, parseModule } from "./parser";
 import { isBefore } from "./resolve";
@@ -536,10 +536,7 @@ export const getTlcStringOrder = (
     // SANY stops at the first module it can't find, in the order it reads them.
     if (getParsed(name).tokens.length === 0) {
       const importer = module.unit ?? getModuleName(getParsed(undefined).tokens);
-      throw new TlaSanyFatalError(
-        `Cannot find source file for module ${name} imported in module ${importer}.`,
-        importer,
-      );
+      throw new TlaMissingModuleError(name, importer);
     }
     getParsedTexts(getUnitTokens(name)).forEach(intern);
   }
