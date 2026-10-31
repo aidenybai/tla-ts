@@ -5,11 +5,10 @@ import {
   type Expression,
   type Module,
   type OperatorParam,
-  type SourceLocation,
 } from "./ast";
-import { TlaSyntaxError } from "./errors";
+import { createSemanticError, TlaSyntaxError } from "./errors";
 import { mapChildren } from "./instances";
-import { getBoundNames, getPatternNames } from "./resolve";
+import { collectSemanticErrors, getBoundNames, getPatternNames } from "./resolve";
 import { STANDARD_LEVELS } from "./standard-levels";
 
 interface LevelData {
@@ -176,8 +175,13 @@ export const ACTION_LEVEL = 2;
 
 export const TEMPORAL_LEVEL = 3;
 
-const createLevelError = (message: string, location: SourceLocation) =>
-  new TlaSyntaxError(`${message} at line ${location.line}, column ${location.column}`);
+// SANY reports a level error at the range of the expression it rejects.
+const createLevelError = (message: string, expression: Expression) =>
+  expression.location.range
+    ? createSemanticError(`${message}.`, expression.location.range)
+    : new TlaSyntaxError(
+        `${message} at line ${expression.location.line}, column ${expression.location.column}`,
+      );
 
 const LOGICAL_OPERATORS = new Set(["/\\", "\\/", "=>", "<=>"]);
 
@@ -237,13 +241,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       if (operand.operator || operand.declared) return;
       if (operand.data.level > getMaxLevel(operator, index)) {
         throw new TlaSyntaxError(
-          `Level error in applying operator ${operator.name}: The level of argument ${index + 1} exceeds the maximum level allowed by the operator.`,
+          `Level error in applying operator ${operator.name}:\nThe level of argument ${index + 1} exceeds the maximum level allowed by the operator`,
         );
       }
     });
     if (ranges.some((range) => range.level > ACTION_LEVEL)) {
       throw new TlaSyntaxError(
-        `Level error in applying operator ${operator.name}: The level of the range for a bounded variable exceeds the maximum level allowed by the operator.`,
+        `Level error in applying operator ${operator.name}:\nThe level of the range for a bounded variable exceeds the maximum level allowed by the operator`,
       );
     }
     const getOperand = (formal: string) => {
@@ -444,10 +448,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       ? applyDeclared(resolved.name, resolved.level, operands)
       : applyDefined(resolved.levels, operands);
 
-  const checkJunction = (operands: Operand[], location: SourceLocation) => {
+  const checkJunction = (operands: Operand[], expression: Expression) => {
     const levels = operands.map((operand) => operand.data.level);
     if (levels.includes(ACTION_LEVEL) && levels.includes(TEMPORAL_LEVEL)) {
-      throw createLevelError("Formula has both temporal formula and action as arguments", location);
+      throw createLevelError(
+        "Formula has both temporal formula and action as arguments",
+        expression,
+      );
     }
   };
 
@@ -456,10 +463,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     if (isLeadsTo && operands.some((operand) => operand.data.level === ACTION_LEVEL)) {
       throw createLevelError(
         "Action used where only temporal formula or state predicate allowed",
-        expression.location,
+        expression,
       );
     }
-    if (LOGICAL_OPERATORS.has(expression.operator)) checkJunction(operands, expression.location);
+    if (LOGICAL_OPERATORS.has(expression.operator)) checkJunction(operands, expression);
   };
 
   const checkTemporal = (
@@ -473,7 +480,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       expression.kind === "Always"
         ? "[] followed by action not of form [A]_v"
         : "<> followed by action not of form <<A>>_v",
-      expression.location,
+      expression,
     );
   };
 
@@ -501,7 +508,17 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return data;
   };
 
+  // SANY reports a level error of an operator's arguments at the application.
   const analyze = (expression: Expression, scope: Scope): LevelData => {
+    try {
+      return analyzeNode(expression, scope);
+    } catch (error) {
+      if (!(error instanceof TlaSyntaxError) || error.sany) throw error;
+      throw createLevelError(error.message, expression);
+    }
+  };
+
+  const analyzeNode = (expression: Expression, scope: Scope): LevelData => {
     switch (expression.kind) {
       case "Number":
       case "Decimal":
@@ -521,7 +538,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "And":
       case "Or": {
         const operands = toOperands(expression.operands, scope);
-        checkJunction(operands, expression.location);
+        checkJunction(operands, expression);
         return applyDefined(JUNCTION_LEVELS, operands);
       }
       case "Prime":
@@ -561,13 +578,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           expression.bounds.map((bound) => bound.set),
           getBoundNames(expression.bounds),
         );
-        if (
-          data.level === TEMPORAL_LEVEL &&
-          expression.bounds.some((bound) => analyze(bound.set, scope).level === ACTION_LEVEL)
-        ) {
+        const actionBound =
+          data.level === TEMPORAL_LEVEL
+            ? expression.bounds.find((bound) => analyze(bound.set, scope).level === ACTION_LEVEL)
+            : undefined;
+        if (actionBound) {
           throw createLevelError(
             "Action-level bound of quantified temporal formula",
-            expression.location,
+            actionBound.set,
           );
         }
         return data;
@@ -838,13 +856,23 @@ const analyzeAssumeProve = (
 // SANY checks the level of every definition, assumption, and theorem of a module.
 export const checkModuleLevels = (module: Module, context: LevelContext) => {
   const analyzer = createLevelAnalyzer(context);
-  module.definitions
-    .filter((definition) => !definition.name.includes("!"))
-    .forEach((definition) => analyzer.analyzeDefinition(definition, new Map()));
-  module.assumptions.forEach((assumption) => analyzer.analyze(assumption.expression, new Map()));
-  module.theorems.forEach((theorem) =>
-    theorem.statement.kind === "AssumeProve"
-      ? analyzeAssumeProve(theorem.statement, new Map(), analyzer)
-      : analyzer.analyze(theorem.statement, new Map()),
-  );
+  collectSemanticErrors([
+    ...module.definitions
+      .filter((definition) => !definition.name.includes("!"))
+      .map((definition) => ({
+        location: definition.location,
+        check: () => analyzer.analyzeDefinition(definition, new Map()),
+      })),
+    ...module.assumptions.map((assumption) => ({
+      location: assumption.location,
+      check: () => analyzer.analyze(assumption.expression, new Map()),
+    })),
+    ...module.theorems.map((theorem) => ({
+      location: theorem.location,
+      check: () =>
+        theorem.statement.kind === "AssumeProve"
+          ? analyzeAssumeProve(theorem.statement, new Map(), analyzer)
+          : analyzer.analyze(theorem.statement, new Map()),
+    })),
+  ]);
 };

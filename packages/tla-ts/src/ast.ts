@@ -194,6 +194,7 @@ export interface FunctionSetExpression {
 export interface RecordField {
   name: string;
   value: Expression;
+  location: SourceLocation;
 }
 
 export interface RecordExpression {

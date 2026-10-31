@@ -11,7 +11,12 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
-import { createSanyError, STACK_OVERFLOW, UNEXPECTED_EXCEPTION } from "../../src/errors";
+import {
+  createSanyError,
+  createSemanticError,
+  STACK_OVERFLOW,
+  UNEXPECTED_EXCEPTION,
+} from "../../src/errors";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -1915,6 +1920,40 @@ describe("level checking matches SANY", () => {
     ).rejects.toThrow("Level error in applying operator Foo");
   });
 
+  it.each([
+    [
+      "b == x' ~> []x\nh == <>(x')\nbar == [](x')\nn == \\A i \\in {}, j \\in x' : []x",
+      [
+        [
+          "line 3, col 6 to line 3, col 14",
+          "Action used where only temporal formula or state predicate allowed.",
+        ],
+        ["line 4, col 6 to line 4, col 11", "<> followed by action not of form <<A>>_v."],
+        ["line 5, col 8 to line 5, col 13", "[] followed by action not of form [A]_v."],
+        ["line 6, col 25 to line 6, col 26", "Action-level bound of quantified temporal formula."],
+      ],
+    ],
+    [
+      "Foo == [ab |-> 1, c |-> 2, ab |-> 3, c |-> 4]\nBar == [a : {1}, a : {2}]",
+      [
+        ["line 3, col 28 to line 3, col 29", "Non-unique fields in constructor."],
+        ["line 3, col 38 to line 3, col 38", "Non-unique fields in constructor."],
+        ["line 4, col 18 to line 4, col 18", "Non-unique fields in constructor."],
+      ],
+    ],
+  ])("reports every error SANY reports in %j", async (definitions, errors) => {
+    await expect(
+      check({
+        source: `---- MODULE M ----\nVARIABLE x\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        errors.map(([location, message]) => ({ location: `${location} of module M`, message })),
+      ),
+    );
+  });
+
   // SANY bounds a sequence argument by the level its LAMBDA allows for the elements.
   it.each([
     "SelectSeq(s, LAMBDA a : a' = 1)",
@@ -1927,7 +1966,14 @@ describe("level checking matches SANY", () => {
         config: "INIT Init\nNEXT Next",
       }),
     ).rejects.toThrow(
-      "Level error in applying operator F: The level of argument 1 exceeds the maximum level allowed by the operator.",
+      createSemanticError(
+        "Level error in applying operator F:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        {
+          module: "M",
+          start: { line: 5, column: 6 },
+          end: { line: 5, column: 10 },
+        },
+      ),
     );
   });
 });
