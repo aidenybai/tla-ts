@@ -10,7 +10,6 @@ import {
   formatSanyLocation,
   isAbsent,
   type AssumeNode,
-  type ExprOrOpArgNode,
   type FactNode,
   type LevelNode,
   type ModuleNode,
@@ -694,12 +693,13 @@ const exportSpecification = (
         last.operator.name === "$Pair" &&
         last.operands[0] === undefined);
     const operator = getReference(node.operator, JAVA_CALLS.operator, isOtherBug);
-    const operands = node.operands.map((operand, index) =>
-      operand === undefined && index === 0 && isOtherBug
+    // Only the pair of a CASE's OTHER arm lacks an operand, its first.
+    const operands = node.operands.map((operand) =>
+      operand === undefined
         ? isTlc174
           ? createText("StringNode", "$Other")
           : createElement("StringNode", [createText("StringValue", "$Other")])
-        : exportExpression(operand as ExprOrOpArgNode, JAVA_CALLS.operand, isOtherBug),
+        : exportExpression(operand, JAVA_CALLS.operand, isOtherBug),
     );
     const tupleOrs = node.tupleOrs;
     const boundSymbols =
