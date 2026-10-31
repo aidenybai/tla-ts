@@ -439,6 +439,8 @@ export class TheoryLra {
           } else if (op === OP_MOD) {
             const isNonzeroDivisor = this.isNonzeroNumeral(args[1]);
             if (!isNonzeroDivisor) this.foundUnderspecified(term);
+            // Without relevancy, Z3 makes the axioms before it registers the division with nla.
+            if (!context.relevancy.isEnabled) this.mkIdivModAxioms(args[0], args[1]);
             if (this.nla !== undefined && isNonzeroDivisor) {
               const quotient = manager.mkApp(OP_IDIV, args, SORT_INT);
               context.internalize(quotient, false);
@@ -457,7 +459,7 @@ export class TheoryLra {
             this.foundUnsupported(term);
             for (const arg of args) toEnsureVar.push(arg);
           }
-          if (!context.relevancy.isEnabled) this.relevantEh(term);
+          if (!context.relevancy.isEnabled && op !== OP_MOD) this.relevantEh(term);
         }
       } else {
         this.internalizeArgs(term);
