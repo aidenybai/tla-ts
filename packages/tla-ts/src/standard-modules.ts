@@ -344,7 +344,7 @@ const SEQUENCES_OPERATORS = withJavaMethods("Sequences", [
     const end = getNumber(args, 2, "SubSeq");
     if (start > end) return sliceSequence(sequence, 0, 0);
     const outOfDomain =
-      start < 1
+      start < 1 || start > sequence.length
         ? { position: "second", value: start }
         : end > sequence.length
           ? { position: "third", value: end }

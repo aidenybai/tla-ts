@@ -1191,6 +1191,10 @@ describe("evaluation errors match TLC", () => {
         "The third argument of SubSeq must be in the domain of its first argument:\n<<1, 2>>\n, but instead it is\n3",
       ],
       [
+        "SubSeq(<<>>, 1, 1) = <<>>",
+        "The second argument of SubSeq must be in the domain of its first argument:\n<<>>\n, but instead it is\n1",
+      ],
+      [
         "SelectSeq(<<1>>, LAMBDA e: 1) = <<>>",
         "The second argument of SelectSeq should be a operator, but instead it is:\n1",
       ],
