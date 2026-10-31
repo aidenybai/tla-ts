@@ -521,6 +521,14 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reads MODULE as the start of a fact", () => {
+    const report = getReport({
+      Facts:
+        "---- MODULE Facts ----\nTHEOREM T == TRUE\nUSE MODULE Facts, T\nTHEOREM TRUE BY MODULE Facts\n====\n",
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
   it("reads a DEF clause entry that isn't a name as SANY reads its syntax node", () => {
     const report = getReport({
       Defs: "---- MODULE Defs ----\nA == 1\nTHEOREM TRUE BY A DEF UNION A, A + 1, (A), A(1), A\n====\n",

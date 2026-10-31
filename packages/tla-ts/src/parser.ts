@@ -300,6 +300,7 @@ const FACT_KEYWORDS = new Set([
   "IF",
   "LAMBDA",
   "LET",
+  "MODULE",
   "SF_",
   "SUBSET",
   "UNCHANGED",
