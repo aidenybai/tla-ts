@@ -228,9 +228,9 @@ export const getConditionError = (expression: Expression, value: Value) =>
     `A non-boolean expression (${getKindString(value)}) was used as the condition of an IF.\n${describeRange(expression)}`,
   );
 
-// TLC parses an infix chain of /\ as nested binary conjunctions and a bulleted list as one
-// conjunction list, and it words the error differently for each.
-export const getConjunctError = (
+// TLC parses an infix chain of /\ or \/ as nested binary junctions and a bulleted list as one
+// junction list, and it words the error differently for each.
+export const getJunctionError = (
   expression: Expression & { kind: "And" | "Or" },
   index: number,
   value: Value,
@@ -244,12 +244,12 @@ export const getConjunctError = (
     // SANY prints a numeral as its value instead of its location.
     const description = operand.kind === "Number" ? String(operand.value) : describeRange(operand);
     return new TlaEvaluationError(
-      `A non-boolean expression (${getKindString(value)}) was used as a formula in a conjunction.\n${description}`,
+      `A non-boolean expression (${getKindString(value)}) was used as a formula in a ${expression.kind === "And" ? "conjunction" : "disjunction"}.\n${description}`,
     );
   }
   const end = expression.prefixEnds?.[Math.max(index, 1) - 1] ?? range.end;
   return new TlaEvaluationError(
-    `Attempted to evaluate an expression of form P /\\ Q when ${index === 0 ? "P" : "Q"} was\n${getKindString(value)}.\n${describeRange({ ...expression, location: { ...expression.location, range: { ...range, end } } })}`,
+    `Attempted to evaluate an expression of form P ${expression.kind === "And" ? "/\\" : "\\/"} Q when ${index === 0 ? "P" : "Q"} was\n${getKindString(value)}.\n${describeRange({ ...expression, location: { ...expression.location, range: { ...range, end } } })}`,
   );
 };
 
@@ -1938,7 +1938,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       return (context) => {
         for (let index = 0; index < operands.length; index++) {
           const value = operands[index](context);
-          if (typeof value !== "boolean") throw getConjunctError(expression, index, value);
+          if (typeof value !== "boolean") throw getJunctionError(expression, index, value);
           if (!value) return false;
         }
         return true;
@@ -1948,7 +1948,9 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const operands = expression.operands.map(child);
       return (context) => {
         for (let index = 0; index < operands.length; index++) {
-          if (expectBoolean(operands[index](context), "a disjunct")) return true;
+          const value = operands[index](context);
+          if (typeof value !== "boolean") throw getJunctionError(expression, index, value);
+          if (value) return true;
         }
         return false;
       };

@@ -4,7 +4,7 @@ import {
   expectBoolean,
   findGlobalName,
   getConditionError,
-  getConjunctError,
+  getJunctionError,
   getDomainOperator,
   getSubsetOperator,
   getEvaluator,
@@ -72,8 +72,8 @@ const createRuntime = () => ({
     if (typeof value !== "boolean") throw getConditionError(expression, value);
     return value;
   },
-  conjunct: (value: Value, expression: Expression & { kind: "And" | "Or" }, index: number) => {
-    if (typeof value !== "boolean") throw getConjunctError(expression, index, value);
+  junct: (value: Value, expression: Expression & { kind: "And" | "Or" }, index: number) => {
+    if (typeof value !== "boolean") throw getJunctionError(expression, index, value);
     return value;
   },
   apply: applyFunction,
@@ -244,12 +244,12 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     }
     case "Apply":
       return generateApply(generator, expression, frame);
-    case "And": {
+    case "And":
+    case "Or": {
       const node = addReference(generator, expression);
-      return `(${expression.operands.map((operand, index) => `conjunct(${generate(operand)}, ${node}, ${index})`).join(" && ")})`;
+      const operator = expression.kind === "And" ? " && " : " || ";
+      return `(${expression.operands.map((operand, index) => `junct(${generate(operand)}, ${node}, ${index})`).join(operator)})`;
     }
-    case "Or":
-      return `(${expression.operands.map((operand) => `bool(${generate(operand)}, "a disjunct")`).join(" || ")})`;
     case "If":
       return `(condition(${generate(expression.condition)}, ${addReference(generator, expression)}) ? ${generate(expression.consequent)} : ${generate(expression.alternative)})`;
     case "FunctionApplication": {

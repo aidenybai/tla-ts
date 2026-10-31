@@ -1189,6 +1189,10 @@ describe("evaluation errors match TLC", () => {
         "1 /\\ (TRUE)",
         "Attempted to evaluate an expression of form P /\\ Q when P was\nan integer.\nline 6, col 8 to line 6, col 18 of module M",
       ],
+      [
+        "FALSE \\/ (1) \\/ TRUE",
+        "Attempted to evaluate an expression of form P \\/ Q when Q was\nan integer.\nline 6, col 8 to line 6, col 19 of module M",
+      ],
       ["Head(<<>>) = 0", "Attempted to apply Head to the empty sequence."],
       ["Tail(<<>>) = 0", "Attempted to apply Tail to the empty sequence."],
       ["Len(1) = 0", "The argument of Len should be a sequence, but instead it is:\n1"],
