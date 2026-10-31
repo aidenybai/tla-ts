@@ -16,6 +16,10 @@ export const runModuleWorkers = async <Result>(
     process.on("message", (index: number) => {
       void work(records[index]).then((result) => process.send?.({ result }));
     });
+    // The script's top-level await on this promise never settles in a worker, and Node warns and
+    // exits with code 13 when the event loop empties under one. So the worker exits once the parent
+    // lets it go.
+    process.once("disconnect", () => process.exit(0));
     return new Promise(() => {});
   }
   const jobsIndex = process.argv.indexOf("--jobs");
