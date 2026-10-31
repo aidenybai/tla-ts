@@ -20,7 +20,9 @@ export class ConflictResolution {
   newScopeLevel = 0;
   lemmaIscopeLevel = 0;
   private unmark: BoolVar[] = [];
-  private levelSet = new Set<number>();
+  // m_lvl_set: a level_approx_set, whose bit level mod 32 stands for each level of the lemma, so
+  // other levels can pass for them.
+  private levelSet = 0;
   private minimizationStack: BoolVar[] = [];
 
   constructor(private context: Context) {
@@ -266,7 +268,7 @@ export class ConflictResolution {
     const boolVar = getVar(antecedent);
     const level = context.levels[boolVar];
     if (context.marks[boolVar] || level <= context.baseLevel) return true;
-    if (!this.levelSet.has(level)) return false;
+    if ((this.levelSet & (1 << (level & 31))) === 0) return false;
     context.marks[boolVar] = true;
     this.unmark.push(boolVar);
     this.minimizationStack.push(boolVar);
@@ -321,7 +323,8 @@ export class ConflictResolution {
   private minimizeLemma() {
     const context = this.context;
     this.unmark = [];
-    this.levelSet = new Set(this.lemma.map((literal) => context.levels[getVar(literal)]));
+    this.levelSet = 0;
+    for (const literal of this.lemma) this.levelSet |= 1 << (context.levels[getVar(literal)] & 31);
     let kept = 1;
     for (let index = 1; index < this.lemma.length; index++) {
       const literal = this.lemma[index];
