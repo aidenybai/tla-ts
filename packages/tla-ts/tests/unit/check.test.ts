@@ -1353,6 +1353,30 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("applies a set operator to a value that isn't a set until it needs its elements, like TLC", async () => {
+    const result = await checkModule(
+      [
+        "ASSUME 1 \\in ({1} \\cup 0)",
+        "ASSUME 1 \\in (0 \\cup {1})",
+        'ASSUME 1 \\in ((1..2) \\cup "a")',
+        "ASSUME ({} \\cup 0) = 0",
+        "ASSUME ({} \\cap 0) = {}",
+      ].join("\n"),
+    );
+    expect(result.failure).toBeUndefined();
+    expect(result.violation).toBeUndefined();
+    const messages = await Promise.all(
+      ["2 \\in ({1} \\cup 0)", "1 \\in (0 \\ {1})", "Cardinality({1} \\cup 0) = 1"].map(
+        async (expression) => (await checkModule(`ASSUME ${expression}`)).violation?.message,
+      ),
+    );
+    expect(messages).toEqual([
+      "Attempted to check if the value:\n2\nis an element of the integer 0",
+      "Attempted to check if the value:\n1\nis an element of the integer 0",
+      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to enumerate S \\cup T when S:\n{1}\nand T:\n0\nare not both enumerable",
+    ]);
+  });
+
   it("names the Java class of Naturals in an arithmetic error unless the spec loads Integers, like TLC", async () => {
     const cases = [
       ["Naturals", "Naturals"],

@@ -135,8 +135,8 @@ export const CORE_OPERATORS: Builtin[] = [
   }),
   ...SET_OPERATORS.map((operator) =>
     defineOperator(operator, 2, (args) => {
-      const left = getSet(args, 0, operator);
-      const right = getSet(args, 1, operator);
+      const left = getValue(args, 0, operator);
+      const right = getValue(args, 1, operator);
       if (isReducible(left) && isReducible(right) && !isMixedSet(left) && !isMixedSet(right)) {
         if (operator === "\\cup" && isEmptySet(left)) return right;
         const merge =

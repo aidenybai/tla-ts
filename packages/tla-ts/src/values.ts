@@ -1326,7 +1326,7 @@ const enumerateSet = (value: Value): Value[] => {
     case "SetOperation": {
       if (
         value.operator === "\\cup" &&
-        (isOverriddenSet(value.left) || isOverriddenSet(value.right))
+        (!isTlcEnumerable(value.left) || !isTlcEnumerable(value.right))
       ) {
         throw new TlaEvaluationError(
           `Attempted to enumerate S \\cup T when S:\n${formatValue(value.left)}\nand T:\n${formatValue(value.right)}\nare not both enumerable`,
@@ -1334,14 +1334,14 @@ const enumerateSet = (value: Value): Value[] => {
       }
       if (
         value.operator === "\\cap" &&
-        isOverriddenSet(value.left) &&
-        isOverriddenSet(value.right)
+        !isTlcEnumerable(value.left) &&
+        !isTlcEnumerable(value.right)
       ) {
         throw new TlaEvaluationError(
           `Attempted to enumerate S \\cap T when neither S:\n${formatValue(value.left)}\nnor T:\n${formatValue(value.right)}\nis enumerable`,
         );
       }
-      if (value.operator === "\\" && isOverriddenSet(value.left)) {
+      if (value.operator === "\\" && !isTlcEnumerable(value.left)) {
         throw new TlaEvaluationError(
           `Attempted to enumerate S \\ T when S:\n${formatValue(value.left)}\nis not enumerable.`,
         );
@@ -1428,14 +1428,14 @@ export const getStreamedElements = (value: Value): Value[] => {
   }
   if (value.kind !== "SetOperation") return toFiniteSet(value).elements;
   if (value.operator === "\\cup") {
-    return isOverriddenSet(value.left) || isOverriddenSet(value.right)
+    return !isTlcEnumerable(value.left) || !isTlcEnumerable(value.right)
       ? toFiniteSet(value).elements
       : [...getStreamedElements(value.left), ...getStreamedElements(value.right)];
   }
   const isLeftEnumerated = value.operator === "\\" || isEnumerable(value.left);
   const enumerated = isLeftEnumerated ? value.left : value.right;
   const other = isLeftEnumerated ? value.right : value.left;
-  if (isOverriddenSet(enumerated)) return toFiniteSet(value).elements;
+  if (!isTlcEnumerable(enumerated)) return toFiniteSet(value).elements;
   return getStreamedElements(enumerated).filter(
     (element) => isElementOf(element, other) === (value.operator === "\\cap"),
   );
