@@ -22,6 +22,7 @@ import { mapChildren } from "./instances";
 import { ACTION_LEVEL, TEMPORAL_LEVEL } from "./levels";
 import { isEnabled } from "./successors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
+import { isEvalException } from "./tlc-messages";
 import {
   createBoolean,
   createJunction,
@@ -72,8 +73,11 @@ const getConstantContext = (environment: Environment, scope: Scope | undefined):
   next: undefined,
 });
 
-const createCannotHandleError = (expression: Expression) =>
-  new TlaEvaluationError(`TLC cannot handle the temporal formula ${describeRange(expression)}`);
+// TLC adds the message of the error that stopped it, when it has one.
+const createCannotHandleError = (expression: Expression, inner?: string) =>
+  new TlaEvaluationError(
+    `TLC cannot handle the temporal formula ${describeRange(expression)}${inner === undefined ? "" : `:\n${inner}`}`,
+  );
 
 export const getLevel = (
   expression: Expression,
@@ -391,11 +395,23 @@ export const toLiveExpression = (
     );
     if (!isConstant) throw createCannotHandleError(expression);
     const operands: LiveExpression[] = [];
-    forEachBinding(expression.bounds, getConstantContext(environment, scope), (boundScope) => {
-      operands.push(convert(expression.body, boundScope));
-      return false;
-    });
     const isForall = expression.kind === "Forall";
+    // TLC takes a quantified formula whose body fails for one it can't handle, and under \A it adds
+    // the message of a failure that isn't an EvalException.
+    try {
+      forEachBinding(expression.bounds, getConstantContext(environment, scope), (boundScope) => {
+        operands.push(convert(expression.body, boundScope));
+        return false;
+      });
+    } catch (error) {
+      if (!(error instanceof TlaEvaluationError) || error instanceof TlaStackOverflowError) {
+        throw error;
+      }
+      throw createCannotHandleError(
+        expression,
+        isForall && !isEvalException(error) ? error.message : undefined,
+      );
+    }
     if (operands.length === 0) return createBoolean(isForall);
     const result = createJunction(isForall ? "And" : "Or", operands);
     const level = getLiveLevel(result);

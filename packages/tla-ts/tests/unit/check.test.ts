@@ -2433,4 +2433,33 @@ describe("check matches TLC 1.7.4", () => {
       "TLC cannot handle the temporal formula line 9, col 6 to line 9, col 9 of module M",
     );
   });
+
+  // An EvalException, which Java code throws, leaves its message out.
+  it.each([
+    [
+      "1.7.4" as const,
+      "\\A k \\in 0..1 : <>(2 \\in 1)",
+      "TLC cannot handle the temporal formula line 7, col 6 to line 7, col 32 of module M:\nAttempted to check if the value:\n2\nis an element of the integer 1",
+    ],
+    [
+      "1.7.4" as const,
+      "\\A k \\in 0..1 : <>(1 \\div 0 = k)",
+      "TLC cannot handle the temporal formula line 7, col 6 to line 7, col 37 of module M",
+    ],
+    [
+      "master" as const,
+      "\\E k \\in 0..1 : <>(2 \\in 1)",
+      "TLC cannot handle the temporal formula line 7, col 6 to line 7, col 32 of module M",
+    ],
+  ])(
+    "fails a quantified formula whose body fails in TLC %s as one it can't handle",
+    async (version, property, message) => {
+      const result = check({
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == ${property}\n====`,
+        config: "SPECIFICATION Spec\nPROPERTY P",
+        version,
+      });
+      await expect(result).rejects.toThrow(new TlaEvaluationError(message));
+    },
+  );
 });

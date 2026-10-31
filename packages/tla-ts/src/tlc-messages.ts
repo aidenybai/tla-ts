@@ -292,6 +292,7 @@ const INNER_MESSAGE_PREFIXES = new Map([
   [1000, "\n: "],
   [2105, "failed.\n"],
   [2154, "but it produced the following error:\n"],
+  [2213, ":\n"],
   [2281, " - specifically: "],
 ]);
 

@@ -662,6 +662,24 @@ describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path
     );
   });
 
+  it("marks the message of a temporal formula it can't handle inside another", () => {
+    const result = check174("Unhandled");
+    expect(result.status).toBe(255);
+    expect(result.stdout).toContain(
+      [
+        "@!@!@STARTMSG 2213:1 @!@!@",
+        "TLC cannot handle the temporal formula line 7, col 9 to line 7, col 51 of module Unhandled:",
+        "@!@!@STARTMSG 2213:0 @!@!@",
+        "TLC cannot handle the temporal formula line 7, col 25 to line 7, col 51 of module Unhandled:",
+        "Attempted to check if the value:",
+        "2",
+        "is an element of the integer 1",
+        "@!@!@ENDMSG 2213 @!@!@",
+        "@!@!@ENDMSG 2213 @!@!@",
+      ].join("\n"),
+    );
+  });
+
   it("reports an error in the config as an unexpected exception", () => {
     const result = check174("Aliased");
     expect(result.status).toBe(255);
