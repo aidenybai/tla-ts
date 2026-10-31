@@ -2,7 +2,7 @@
 // z3-license.txt. The lemmas of nla on div, mod and /: monotonicity in the dividend and the
 // divisor, bounded divisions by numerals, and divisibility closures over a shared divisor. Z3
 // skips the check while nra's model is in use, which never happens here since nra is not ported.
-import { Rational } from "../rational";
+import { getEuclideanDiv, Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
 import { LarTerm } from "./lar-term";
 import { KIND_NE, LemmaBuilder, mkIneq, type NlaCore } from "./nla-core";
@@ -25,11 +25,8 @@ interface DivisionValues {
 }
 
 // div on integers: Euclidean division, as mpz_manager::div.
-const getIntDiv = (dividend: Rational, divisor: Rational) => {
-  const quotient = dividend.num / divisor.num;
-  if (dividend.num >= 0n || quotient * divisor.num === dividend.num) return Rational.of(quotient);
-  return Rational.of(divisor.num < 0n ? quotient + 1n : quotient - 1n);
-};
+const getIntDiv = (dividend: Rational, divisor: Rational) =>
+  Rational.of(getEuclideanDiv(dividend.num, divisor.num));
 
 const mkDifference = (first: number, second: number) =>
   new LarTerm([

@@ -23,33 +23,6 @@ import { Impq } from "./numeric-pair";
 import { LemmaBuilder, NLA_PARAMS, type NlaCore } from "./nla-core";
 import type { Monic } from "./nla-emonics";
 
-// The n-th root of an integer when it is exact.
-const getIntRoot = (value: bigint, degree: number): bigint | undefined => {
-  if (value < 0n) {
-    if (degree % 2 === 0) return undefined;
-    const root = getIntRoot(-value, degree);
-    return root === undefined ? undefined : -root;
-  }
-  if (value < 2n || degree === 1) return value;
-  const exponent = BigInt(degree);
-  let low = 0n;
-  let high = 1n;
-  while (high ** exponent <= value) high *= 2n;
-  while (high - low > 1n) {
-    const mid = (low + high) / 2n;
-    if (mid ** exponent <= value) low = mid;
-    else high = mid;
-  }
-  return low ** exponent === value ? low : undefined;
-};
-
-// root: the n-th root of a rational when it is rational.
-const getRoot = (value: Rational, degree: number) => {
-  const num = getIntRoot(value.num, degree);
-  const den = num === undefined ? undefined : getIntRoot(value.den, degree);
-  return num === undefined || den === undefined ? undefined : Rational.of(num, den);
-};
-
 interface Gain {
   isUnbounded: boolean;
   minGain: Rational;
@@ -352,7 +325,7 @@ export class MonomialBounds {
       !core.hasUpperBound(lpVar) || candidate.compare(core.getUpperBound(lpVar)) < 0;
     let isTightened = false;
     if (!range.isUpperInf) {
-      const root = getRoot(range.upper, exponent);
+      const root = range.upper.root(exponent);
       if (root !== undefined && isImprovingUpper(root)) {
         this.propagateLpBound(lpVar, range.isUpperOpen ? KIND_LT : KIND_LE, root, range.upperDep);
         isTightened = true;
@@ -365,7 +338,7 @@ export class MonomialBounds {
       !core.getUpperBound(lpVar).isPositive() &&
       !range.lower.isNegative()
     ) {
-      const root = getRoot(range.lower, exponent);
+      const root = range.lower.root(exponent);
       if (root !== undefined && isImprovingUpper(root.neg())) {
         const dep = mkJoin(range.lowerDep, core.lra.getUpperWitness(lpVar));
         this.propagateLpBound(lpVar, range.isLowerOpen ? KIND_LT : KIND_LE, root.neg(), dep);
@@ -382,7 +355,7 @@ export class MonomialBounds {
     let isTightened = false;
     if (exponent % 2 === 1) {
       if (!range.isLowerInf) {
-        const root = getRoot(range.lower, exponent);
+        const root = range.lower.root(exponent);
         if (root !== undefined && isImprovingLower(root)) {
           this.propagateLpBound(lpVar, range.isLowerOpen ? KIND_GT : KIND_GE, root, range.lowerDep);
           isTightened = true;
@@ -391,7 +364,7 @@ export class MonomialBounds {
       return isTightened;
     }
     if (!range.isUpperInf && !range.upper.isNegative()) {
-      const root = getRoot(range.upper, exponent);
+      const root = range.upper.root(exponent);
       if (root !== undefined && isImprovingLower(root.neg())) {
         this.propagateLpBound(
           lpVar,
@@ -408,7 +381,7 @@ export class MonomialBounds {
       !core.getLowerBound(lpVar).isNegative() &&
       !range.lower.isNegative()
     ) {
-      const root = getRoot(range.lower, exponent);
+      const root = range.lower.root(exponent);
       if (root !== undefined && isImprovingLower(root)) {
         const dep = mkJoin(range.lowerDep, core.lra.getLowerWitness(lpVar));
         this.propagateLpBound(lpVar, range.isLowerOpen ? KIND_GT : KIND_GE, root, dep);

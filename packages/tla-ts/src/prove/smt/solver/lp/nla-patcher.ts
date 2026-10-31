@@ -6,27 +6,6 @@ import type { Impq } from "./numeric-pair";
 import type { NlaCore } from "./nla-core";
 import type { Monic } from "./nla-emonics";
 
-// The square root of a non-negative integer when it is a perfect square.
-const getIntSqrt = (value: bigint) => {
-  if (value < 0n) return undefined;
-  if (value < 2n) return value;
-  let root = value;
-  let next = (root + 1n) / 2n;
-  while (next < root) {
-    root = next;
-    next = (root + value / root) / 2n;
-  }
-  return root * root === value ? root : undefined;
-};
-
-const getPerfectSquareRoot = (value: Rational) => {
-  const num = getIntSqrt(value.num);
-  if (num === undefined) return undefined;
-  if (value.den === 1n) return Rational.of(num);
-  const den = getIntSqrt(value.den);
-  return den === undefined ? undefined : Rational.of(num, den);
-};
-
 // in_power: whether the variable at an index occurs next to an equal one.
 const isInPower = (vars: number[], index: number) => {
   const lpVar = vars[index];
@@ -100,7 +79,7 @@ export class Patcher {
     }
     if (!this.varBreaksCorrectMonic(lpVar) && this.tryToPatch(product)) return;
     if (monic.vars.length === 2 && monic.vars[0] === monic.vars[1]) {
-      const root = getPerfectSquareRoot(product);
+      const root = product.root(2);
       if (root === undefined) return;
       this.patchedVar = monic.vars[0];
       if (!this.varBreaksCorrectMonic(this.patchedVar))

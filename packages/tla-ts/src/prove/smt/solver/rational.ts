@@ -19,6 +19,40 @@ export const getLcm = (first: bigint, second: bigint) => {
   return (product < 0n ? -product : product) / getGcd(first, second);
 };
 
+// mpz_manager's div and mod: SMT-LIB's, whose remainder is never negative. By a positive divisor,
+// div is the floor of the quotient.
+export const getEuclideanDiv = (dividend: bigint, divisor: bigint) => {
+  const quotient = dividend / divisor;
+  if (dividend >= 0n || quotient * divisor === dividend) return quotient;
+  return divisor < 0n ? quotient + 1n : quotient - 1n;
+};
+
+export const getEuclideanMod = (dividend: bigint, divisor: bigint) => {
+  const remainder = dividend % divisor;
+  if (remainder >= 0n) return remainder;
+  return divisor > 0n ? remainder + divisor : remainder - divisor;
+};
+
+// The n-th root of an integer when it is exact.
+const getIntRoot = (value: bigint, degree: number): bigint | undefined => {
+  if (value < 0n) {
+    if (degree % 2 === 0) return undefined;
+    const root = getIntRoot(-value, degree);
+    return root === undefined ? undefined : -root;
+  }
+  if (value < 2n || degree === 1) return value;
+  const exponent = BigInt(degree);
+  let low = 0n;
+  let high = 1n;
+  while (high ** exponent <= value) high *= 2n;
+  while (high - low > 1n) {
+    const mid = (low + high) / 2n;
+    if (mid ** exponent <= value) low = mid;
+    else high = mid;
+  }
+  return low ** exponent === value ? low : undefined;
+};
+
 export class Rational {
   static readonly zero = new Rational(0n, 1n);
   static readonly one = new Rational(1n, 1n);
@@ -81,6 +115,13 @@ export class Rational {
 
   abs() {
     return this.num < 0n ? this.neg() : this;
+  }
+
+  // root: the n-th root when it is rational.
+  root(degree: number) {
+    const num = getIntRoot(this.num, degree);
+    const den = num === undefined ? undefined : getIntRoot(this.den, degree);
+    return num === undefined || den === undefined ? undefined : Rational.of(num, den);
   }
 
   pow(exponent: number) {

@@ -3,7 +3,7 @@
 // equations, which dd::solver saturates, and the equations then yield lemmas: interval conflicts,
 // quotient and residue bounds, failed gcd tests, fixed variables, factorizations, and new linear
 // rows. Z3's nlsat conflict check (is_nla_conflict) is not ported, nor are the statistics.
-import { getGcd, getLcm, Rational } from "../rational";
+import { getEuclideanMod, getGcd, getLcm, Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_LE, KIND_LT } from "./constraints";
 import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
 import {
@@ -65,40 +65,15 @@ const getDenominator = (value: Rational) => Rational.of(value.den);
 const divides = (divisor: Rational, value: Rational) =>
   divisor.isZero() ? value.isZero() : value.num % divisor.num === 0n;
 
-// mod: the Euclidean residue of the integer a modulo the positive integer m.
-const getMod = (value: Rational, modulus: Rational) =>
-  Rational.of(((value.num % modulus.num) + modulus.num) % modulus.num);
-
-const getSqrt = (value: bigint) => {
-  if (value < 2n) return value;
-  let root = value;
-  let next = (root + 1n) / 2n;
-  while (next < root) {
-    root = next;
-    next = (root + value / root) / 2n;
-  }
-  return root;
-};
-
-// is_perfect_square: the root of a nonnegative rational whose numerator and denominator are both
-// squares.
-const getSquareRoot = (value: Rational) => {
-  if (value.isNegative()) return null;
-  const numRoot = getSqrt(value.num);
-  const denRoot = getSqrt(value.den);
-  if (numRoot * numRoot !== value.num || denRoot * denRoot !== value.den) return null;
-  return Rational.of(numRoot, denRoot);
-};
-
 // ps_root: the root a of a^2 * M^2, a perfect square with every variable of even multiplicity.
 const getPerfectSquareRoot = (coeff: Rational, vars: number[]) => {
-  if (vars.length % 2 === 1) return null;
-  const root = getSquareRoot(coeff);
-  if (root === null) return null;
+  if (vars.length % 2 === 1) return undefined;
+  const root = coeff.root(2);
+  if (root === undefined) return undefined;
   for (let index = 0; index < vars.length;) {
     const start = index;
     while (index < vars.length && vars[index] === vars[start]) index++;
-    if ((index - start) % 2 === 1) return null;
+    if ((index - start) % 2 === 1) return undefined;
   }
   return root;
 };
@@ -410,7 +385,7 @@ export class Grobner {
       if (!isOk || modulus.isZero()) continue;
       const offset = constant.div(coeff);
       if (!offset.isInt()) continue;
-      const target = getMod(offset.neg(), modulus);
+      const target = Rational.of(getEuclideanMod(offset.neg().num, modulus.num));
       const value = this.core.val(variable);
       if (value.isNegative() || value.compare(modulus) >= 0 || value.equals(target)) continue;
       this.addDependencies(new LemmaBuilder(this.core), equation)
@@ -617,11 +592,11 @@ export class Grobner {
     for (let first = 0; first < count; first++) {
       if (isDeleted[first]) continue;
       const firstRoot = getPerfectSquareRoot(monomials[first].coeff, monomials[first].vars);
-      if (firstRoot === null) continue;
+      if (firstRoot === undefined) continue;
       for (let second = first + 1; second < count && !isDeleted[first]; second++) {
         if (isDeleted[second]) continue;
         const secondRoot = getPerfectSquareRoot(monomials[second].coeff, monomials[second].vars);
-        if (secondRoot === null) continue;
+        if (secondRoot === undefined) continue;
         for (let cross = first + 1; cross < count; cross++) {
           if (cross === second || isDeleted[cross]) continue;
           if (

@@ -18,7 +18,7 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
-import { getGcd, Rational } from "./rational";
+import { getEuclideanDiv, getEuclideanMod, getGcd, Rational } from "./rational";
 import { type ArithRewriterOptions, PolyRewriter } from "./poly-rewriter";
 import type { Rewrite } from "./rewriter-tpl";
 
@@ -36,20 +36,6 @@ export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
   isSortSums: false,
   isArithIneqLhs: false,
   isGcdRounding: false,
-};
-
-// mpz_manager's div and mod: SMT-LIB's, whose remainder is never negative. By a positive divisor,
-// div is the floor of the quotient.
-const getEuclideanDiv = (dividend: bigint, divisor: bigint) => {
-  const quotient = dividend / divisor;
-  if (dividend >= 0n || quotient * divisor === dividend) return quotient;
-  return divisor < 0n ? quotient + 1n : quotient - 1n;
-};
-
-const getEuclideanMod = (dividend: bigint, divisor: bigint) => {
-  const remainder = dividend % divisor;
-  if (remainder >= 0n) return remainder;
-  return divisor > 0n ? remainder + divisor : remainder - divisor;
 };
 
 // The ceiling of the quotient by a positive divisor.
