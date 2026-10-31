@@ -35,6 +35,17 @@ describe("liveness matches TLC", () => {
     expect([result.generatedStates, result.distinctStates]).toEqual([92, 36]);
   });
 
+  // The search takes longer than the three seconds before TLC's first periodic check, and every
+  // state the check sees can stutter forever.
+  it("finds a lasso in the part of the graph that TLC's periodic check sees", async () => {
+    const result = await check({
+      source:
+        "---- MODULE Tree ----\nEXTENDS Naturals\nVARIABLE x\nNext == x < 4000000 /\\ x' \\in {2 * x + 1, 2 * x + 2}\nSpec == x = 0 /\\ [][Next]_x\nProperty == TRUE ~> FALSE\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Property",
+    });
+    expect(result.status).toBe("liveness-violation");
+  }, 60_000);
+
   it("reports a lasso whose cycle returns to an earlier state", async () => {
     const result = await check({
       source: SOURCE,

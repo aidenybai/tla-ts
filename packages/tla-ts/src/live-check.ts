@@ -100,7 +100,9 @@ const getNodeSlot = (table: NodeTable, state: number, tableauNode: number) => {
   }
 };
 
-const isWritten = (check: Check, node: number) => check.offsets[node] !== -1;
+// Without a tableau a node is a state, so a successor the search hasn't expanded yet may lie past
+// the per-node arrays.
+const isWritten = (check: Check, node: number) => (check.offsets[node] ?? -1) !== -1;
 
 const getPending = (check: Check, node: number) => (check.pending[node] ??= []);
 
