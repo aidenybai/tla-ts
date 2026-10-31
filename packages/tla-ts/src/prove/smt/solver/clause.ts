@@ -6,6 +6,7 @@ import type { Literal } from "./literal";
 export const CLS_AUX = 0;
 export const CLS_LEARNED = 1;
 export const CLS_TH_AXIOM = 2;
+export const CLS_TH_LEMMA = 3;
 
 // b_justification(l) of BIN_CLAUSE kind: a binary clause propagated because the literal l became true.
 export class BinJustification {
@@ -20,6 +21,8 @@ export class Clause {
   activity = 1;
   isReinit = false;
   isReinternalizeAtoms = false;
+  // clause_del_eh: runs once when the clause is deleted.
+  delEh: (() => void) | null = null;
 
   constructor(
     public literals: Literal[],
@@ -32,6 +35,6 @@ export class Clause {
   ) {}
 
   isLemma() {
-    return this.kind === CLS_LEARNED;
+    return this.kind === CLS_LEARNED || this.kind === CLS_TH_LEMMA;
   }
 }

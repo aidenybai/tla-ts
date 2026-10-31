@@ -27,6 +27,7 @@ import {
   CLS_AUX,
   CLS_LEARNED,
   CLS_TH_AXIOM,
+  CLS_TH_LEMMA,
   Clause,
 } from "./clause";
 import {
@@ -968,6 +969,25 @@ export abstract class Internalizer {
     return true;
   }
 
+  // simplify_aux_lemma_literals: unlike an aux clause, a theory lemma keeps its false literals, so it
+  // needs no unit resolution justification.
+  private simplifyAuxLemmaLiterals(literals: Literal[]) {
+    sortByKey(literals, (literal) => literal);
+    let previous: Literal | null = null;
+    let kept = 0;
+    for (const literal of literals) {
+      if (this.levels[getVar(literal)] <= this.baseLevel && this.assignment[literal] === L_TRUE)
+        return false;
+      if (previous !== null && literal === negate(previous)) return false;
+      if (literal !== previous) {
+        previous = literal;
+        literals[kept++] = literal;
+      }
+    }
+    shrink(literals, kept);
+    return true;
+  }
+
   protected selectWatchLiteral(clause: Clause, startingAt: number) {
     let minTrue = -1;
     let maxFalse = -1;
@@ -1069,10 +1089,18 @@ export abstract class Internalizer {
     this.clausesToReinit[level].push(clause);
   }
 
-  mkClause(input: Literal[], inputJustification: Justification | null, kind: number) {
+  mkClause(
+    input: Literal[],
+    inputJustification: Justification | null,
+    kind: number,
+    delEh: (() => void) | null = null,
+  ) {
     let literals = input;
     let justification = inputJustification;
-    if (kind !== CLS_LEARNED) {
+    if (kind === CLS_TH_LEMMA) {
+      literals = [...input];
+      if (!this.simplifyAuxLemmaLiterals(literals)) return null;
+    } else if (kind !== CLS_LEARNED) {
       literals = [...input];
       const removed: Literal[] = [];
       if (!this.simplifyAuxClauseLiterals(literals, removed)) return null;
@@ -1087,7 +1115,7 @@ export abstract class Internalizer {
       this.assign(literals[0], justification ?? "axiom");
       return null;
     }
-    const isLemma = kind === CLS_LEARNED;
+    const isLemma = kind === CLS_LEARNED || kind === CLS_TH_LEMMA;
     if (literals.length === 2 && this.isUsingBinaryClauseOpt(literals[0], literals[1], isLemma)) {
       const first = literals[0];
       const second = literals[1];
@@ -1112,14 +1140,26 @@ export abstract class Internalizer {
       atoms,
       isSavingAtoms ? literals.map(isNegated) : null,
     );
+    clause.delEh = delEh;
     if (isLemma) {
-      this.swapLiterals(clause, 1, this.selectLearnedWatchLiteral(clause));
+      if (kind === CLS_LEARNED)
+        this.swapLiterals(clause, 1, this.selectLearnedWatchLiteral(clause));
+      else {
+        this.swapLiterals(clause, 0, this.selectWatchLiteral(clause, 0));
+        this.swapLiterals(clause, 1, this.selectWatchLiteral(clause, 1));
+      }
       this.lemmas.push(clause);
       this.addWatchLiteral(clause, 0);
       this.addWatchLiteral(clause, 1);
+      // A theory lemma that conflicts or propagates above the base level is checked again when the
+      // level is backtracked.
+      const isPropagating =
+        this.assignment[literals[0]] === L_FALSE || this.assignment[literals[1]] === L_FALSE;
       if (this.assignment[literals[0]] === L_FALSE) this.setConflict(clause, null);
       else if (this.assignment[literals[1]] === L_FALSE) this.assign(literals[0], clause);
-      if (isSavingAtoms) this.markForReinit(clause, iscopeLevel, true);
+      const isReinit = kind === CLS_TH_LEMMA && isPropagating && this.scopeLevel > this.baseLevel;
+      if (isSavingAtoms || isReinit)
+        this.markForReinit(clause, isReinit ? this.scopeLevel : iscopeLevel, isSavingAtoms);
       return clause;
     }
     this.auxClauses.push(clause);
@@ -1135,6 +1175,7 @@ export abstract class Internalizer {
     this.removeWatchLiteral(clause, 0);
     this.removeWatchLiteral(clause, 1);
     clause.isDeleted = true;
+    clause.delEh?.();
     if (clause.isReinternalizeAtoms) this.releaseAtoms(clause);
   }
 

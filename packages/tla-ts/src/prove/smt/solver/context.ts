@@ -5,8 +5,9 @@
 import type { AssertedFormulas } from "./asserted-formulas";
 import { AstManager, FAMILY_ARITH, KIND_APP, KIND_QUANTIFIER, KIND_VAR } from "./ast";
 import { getCongruenceJustification } from "./cg-table";
-import { BJustification, Clause, CLS_LEARNED } from "./clause";
+import { BJustification, Clause, CLS_LEARNED, CLS_TH_LEMMA } from "./clause";
 import { ConflictResolution } from "./conflict-resolution";
+import { DynAckManager } from "./dyn-ack";
 import {
   Enode,
   EqConflictJustification,
@@ -72,6 +73,7 @@ export class Context extends Internalizer {
   theory!: TheoryLra;
   readonly qmanager: DefaultQuantifierManager;
   readonly conflictResolution: ConflictResolution = new ConflictResolution(this);
+  private readonly dynAck = new DynAckManager(this);
   private qhead = 0;
   private scopeAssignedLimits: number[] = [];
   private scopeAuxClauseLimits: number[] = [];
@@ -484,7 +486,7 @@ export class Context extends Internalizer {
       current.root = r2;
       current = current.next;
     } while (current !== r1);
-    this.reinsertParentsIntoCgTable(r1, r2);
+    this.reinsertParentsIntoCgTable(r1, r2, n1, n2, justification);
     this.trailInts.push(r2NumParents);
     this.trailNodes.push(r1, n1);
     this.trailKinds.push(UNDO_ADD_EQ);
@@ -506,7 +508,15 @@ export class Context extends Internalizer {
     }
   }
 
-  private reinsertParentsIntoCgTable(r1: Enode, r2: Enode) {
+  // n1 = n2, justified by the justification, implied r1 = r2. A congruence that makes a false
+  // equality true is the root of a conflict, which dynamic Ackermannization counts.
+  private reinsertParentsIntoCgTable(
+    r1: Enode,
+    r2: Enode,
+    n1: Enode,
+    n2: Enode,
+    justification: EqJustification,
+  ) {
     const r1Parents = r1.parents;
     for (let index = 0; index < r1Parents.length; index++) {
       const parent = r1Parents[index];
@@ -516,9 +526,13 @@ export class Context extends Internalizer {
         const lhs = parent.args[0];
         const rhs = parent.args[1];
         if (lhs.root === rhs.root) {
-          const boolVar = this.getBoolVar(parent.owner);
-          if (this.assignment[mkLiteral(boolVar)] !== L_TRUE)
-            this.assign(mkLiteral(boolVar), new EqPropagationJustification(lhs, rhs));
+          const literal = mkLiteral(this.getBoolVar(parent.owner));
+          const value = this.assignment[literal];
+          if (value !== L_TRUE) {
+            if (value === L_FALSE && justification.kind === "congruence")
+              this.dynAck.cgConflictEh(n1.owner, n2.owner);
+            this.assign(literal, new EqPropagationJustification(lhs, rhs));
+          }
           continue;
         }
       }
@@ -627,8 +641,12 @@ export class Context extends Internalizer {
     let target = start;
     do {
       const boolVar = this.getBoolVar(target.owner);
-      if (this.assignment[mkLiteral(boolVar)] !== value)
+      const targetValue = this.assignment[mkLiteral(boolVar)];
+      if (targetValue !== value) {
+        if (targetValue !== L_UNDEF && this.isCongruent(source, target) && source.args.length > 0)
+          this.dynAck.cgConflictEh(source.owner, target.owner);
         this.assign(mkLiteral(boolVar, value === L_FALSE), this.mkMpIff(source, target));
+      }
       target = target.next;
     } while (target !== start);
   }
@@ -799,6 +817,7 @@ export class Context extends Internalizer {
             const atom = atoms[index];
             this.internalize(atom, !this.manager.isNot(atom));
             clause.literals[index] = mkLiteral(this.getBoolVar(atom), atomSigns[index]);
+            if (clause.kind === CLS_TH_LEMMA) this.markLiteralAsRelevant(clause.literals[index]);
           }
           this.swapLiterals(clause, 0, this.selectWatchLiteral(clause, 0));
           this.swapLiterals(clause, 1, this.selectWatchLiteral(clause, 1));
@@ -808,6 +827,24 @@ export class Context extends Internalizer {
           else if (this.assignment[clause.literals[1]] === L_FALSE)
             this.assign(clause.literals[0], clause);
           isKept = true;
+        } else {
+          const first = clause.literals[0];
+          const second = clause.literals[1];
+          if (clause.kind === CLS_TH_LEMMA) {
+            this.markLiteralAsRelevant(first);
+            this.markLiteralAsRelevant(second);
+          }
+          if (this.assignment[first] === L_FALSE && this.isEmptyClause(clause)) {
+            this.setConflict(clause, null);
+            isKept = true;
+          } else if (
+            this.assignment[second] === L_FALSE &&
+            this.assignment[first] === L_UNDEF &&
+            this.isUnitClause(clause)
+          ) {
+            this.assign(first, clause);
+            isKept = true;
+          }
         }
         if (isKept && this.scopeLevel > this.baseLevel) {
           while (this.clausesToReinit.length <= this.scopeLevel) this.clausesToReinit.push([]);
@@ -820,6 +857,24 @@ export class Context extends Internalizer {
       }
       this.clausesToReinit[level] = [];
     }
+  }
+
+  private isEmptyClause(clause: Clause) {
+    return clause.literals.every((literal) => this.assignment[literal] === L_FALSE);
+  }
+
+  // is_unit_clause: exactly one literal is unassigned and the rest are false.
+  private isUnitClause(clause: Clause) {
+    let isFound = false;
+    for (const literal of clause.literals) {
+      const value = this.assignment[literal];
+      if (value === L_TRUE) return false;
+      if (value === L_UNDEF) {
+        if (isFound) return false;
+        isFound = true;
+      }
+    }
+    return isFound;
   }
 
   // guess with PS_CACHING_CONSERVATIVE: the cached phase while phase caching is on, else false.
@@ -942,6 +997,7 @@ export class Context extends Internalizer {
             return L_UNDEF;
         }
         if (this.numConflictsSinceLemmaGc > LEMMA_GC_INITIAL) this.delInactiveLemmas();
+        this.dynAck.propagateEh();
       }
       if (this.isResourceLimitExceeded() && !this.isInconsistent()) return L_UNDEF;
       if (this.checkCanceled()) return L_UNDEF;
@@ -1169,6 +1225,7 @@ export class Context extends Internalizer {
     this.resetModel();
     this.theory.initSearchEh();
     this.qmanager.initSearchEh();
+    this.dynAck.initSearchEh();
     this.numConflicts = 0;
     this.numConflictsSinceRestart = 0;
     this.numConflictsSinceLemmaGc = 0;
