@@ -21,6 +21,14 @@ export interface LpStats {
   lcubeCalls: number;
   lcubeSuccess: number;
   lcubeFlipSuccess: number;
+  nlaCalls: number;
+  nlaAddBounds: number;
+  nlaPropagateBounds: number;
+  nlaPropagateEq: number;
+  nlaLemmas: number;
+  nlaBoundsImprovements: number;
+  nlaThrottledLemmas: number;
+  nraCalls: number;
 }
 
 export class LpSettings {
@@ -43,6 +51,14 @@ export class LpSettings {
     lcubeCalls: 0,
     lcubeSuccess: 0,
     lcubeFlipSuccess: 0,
+    nlaCalls: 0,
+    nlaAddBounds: 0,
+    nlaPropagateBounds: 0,
+    nlaPropagateEq: 0,
+    nlaLemmas: 0,
+    nlaBoundsImprovements: 0,
+    nlaThrottledLemmas: 0,
+    nraCalls: 0,
   };
   readonly maxRowLengthForBoundPropagation = 300;
   readonly maxIterationsWithNoImprovements = 2000000;

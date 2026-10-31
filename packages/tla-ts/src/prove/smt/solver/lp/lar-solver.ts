@@ -573,6 +573,40 @@ export class LarSolver {
     return false;
   }
 
+  insideBounds(column: number, value: Impq) {
+    const core = this.core;
+    if (core.hasUpperBound(column) && value.compare(core.upperBounds[column]) > 0) return false;
+    return !(core.hasLowerBound(column) && value.compare(core.lowerBounds[column]) < 0);
+  }
+
+  // try_to_patch: sets a column to a value unless the column or a basic column it moves is blocked,
+  // reporting each changed column.
+  tryToPatch(
+    column: number,
+    value: Rational,
+    isBlocked: (column: number, value: Impq) => boolean,
+    changeReport: (column: number) => void,
+  ) {
+    const core = this.core;
+    if (this.isBase(column) && !this.removeFromBasis(column)) return false;
+    const target = new Impq(value);
+    if (isBlocked(column, target)) return false;
+    const delta = core.x[column].sub(target);
+    for (const cell of core.matrix.columns[column]) {
+      const basic = core.basis[cell.row];
+      if (isBlocked(basic, delta.mul(core.matrix.getVal(cell)).add(core.x[basic]))) return false;
+    }
+    const change = target.sub(core.x[column]);
+    core.x[column] = target;
+    changeReport(column);
+    for (const cell of core.matrix.columns[column]) {
+      const basic = core.basis[cell.row];
+      core.addDeltaToXAndTrackFeasibility(basic, change.mul(core.matrix.getVal(cell).neg()));
+      changeReport(basic);
+    }
+    return true;
+  }
+
   moveNonBasicColumnsToBounds() {
     const core = this.core;
     let isChanged = false;
@@ -675,6 +709,45 @@ export class LarSolver {
       value: bound.x,
       isStrict: isUpper ? bound.y.isNegative() : bound.y.isPositive(),
     };
+  }
+
+  // get_rid_of_inf_eps: the values with δ instantiated small enough to keep strict bounds strict.
+  getRidOfInfEps() {
+    const core = this.core;
+    const columnCount = this.getColumnCount();
+    if (core.x.slice(0, columnCount).every((value) => value.y.isZero())) return;
+    let delta = Rational.one;
+    const updateDelta = (low: Impq, high: Impq) => {
+      if (low.x.compare(high.x) < 0 && low.y.compare(high.y) > 0) {
+        const candidate = high.x.sub(low.x).div(low.y.sub(high.y));
+        if (candidate.compare(delta) < 0) delta = candidate;
+      }
+    };
+    for (let column = 0; column < columnCount; column++) {
+      if (core.hasLowerBound(column)) updateDelta(core.lowerBounds[column], core.x[column]);
+      if (core.hasUpperBound(column)) updateDelta(core.x[column], core.upperBounds[column]);
+    }
+    for (let column = 0; column < columnCount; column++) {
+      const value = core.x[column];
+      if (!value.y.isZero()) core.x[column] = new Impq(value.x.add(delta.mul(value.y)));
+    }
+  }
+
+  pushExplanation(dep: Dependency, explanation: Explanation) {
+    for (const constraint of linearize([dep])) explanation.push(constraint);
+  }
+
+  // get_bound_constraint_witnesses_for_column: the witnesses of both bounds.
+  getBoundWitnesses(column: number) {
+    return mkJoin(this.columns[column].lowerWitness, this.columns[column].upperWitness);
+  }
+
+  // collect_more_rows_for_lp_propagation: the rows of the columns whose bounds nla changed.
+  collectMoreRowsForLpPropagation() {
+    for (const column of this.columnsWithChangedBounds.elems) {
+      if (this.core.isBase(column)) this.addTouchedRow(this.core.heading[column]);
+      else this.addColumnRowsToTouchedRows(column);
+    }
   }
 
   getLowerWitness(column: number) {
