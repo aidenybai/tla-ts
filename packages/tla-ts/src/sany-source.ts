@@ -125,6 +125,18 @@ export const getParenthesizedSpan = (file: SourceFile, span: TokenSpan): TokenSp
   return span;
 };
 
+// SANY's parser keeps the parentheses around an argument of an operator, which the span of the
+// argument's expression leaves out. Those of the operator's own arguments follow its name.
+export const getArgumentSpan = (file: SourceFile, span: TokenSpan): TokenSpan => {
+  const start = span.start - 1;
+  const end = span.end + 1;
+  const isParenthesized =
+    isToken(file, start, "(") &&
+    getMatchingIndex(file, start) === end &&
+    (isToken(file, start - 1, "(") || isToken(file, start - 1, ","));
+  return isParenthesized ? getArgumentSpan(file, { start, end }) : span;
+};
+
 export const getSpanLocation = (file: SourceFile, span: TokenSpan): SanyLocation => ({
   file: file.name,
   beginLine: file.tokens[span.start].line,

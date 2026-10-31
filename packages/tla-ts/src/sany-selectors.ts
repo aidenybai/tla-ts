@@ -42,7 +42,12 @@ interface SelectorGenerator {
   resolveSymbol: (name: string) => SymbolNode | undefined;
   resolveSynonym: (name: string) => string;
   generateExpression: (expression: Expression) => ExprNode;
-  generateArgument: (operator: SymbolNode, index: number, argument: Expression) => ExprOrOpArgNode;
+  generateArgument: (
+    operator: SymbolNode,
+    index: number,
+    argument: Expression,
+    location: SanyLocation,
+  ) => ExprOrOpArgNode;
   createOpAppl: (
     operator: SymbolNode,
     operands: ExprOrOpArgNode[],
@@ -293,6 +298,7 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
                   symbol,
                   argumentIndex + walk.definitionArityFound,
                   argument,
+                  getItemLocation(walk.index),
                 ),
               ),
             );

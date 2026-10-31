@@ -80,6 +80,7 @@ import {
   createSourceFile,
   findNameTokens,
   findToken,
+  getArgumentSpan,
   getExpressionSpan,
   getMatchingIndex,
   getParenthesizedSpan,
@@ -296,6 +297,14 @@ const getDependencies = (module: Module) => {
     importers,
   };
 };
+
+// The expressions that can name an operator, as Generator.generateExprOrOpArg tells them apart.
+const OPERATOR_ARGUMENT_KINDS = new Set<Expression["kind"]>([
+  "Identifier",
+  "Subexpression",
+  "OperatorReference",
+  "Lambda",
+]);
 
 // Builds the semantic graph SANY builds for a specification and its modules, in the order SANY
 // analyzes them: a module after the modules it extends and instantiates.
@@ -723,7 +732,8 @@ export const generateSanySpecification = (
       resolveSymbol: (name) => resolveSymbol(symbolTable, name),
       resolveSynonym,
       generateExpression: (expression) => generateExpression(expression),
-      generateArgument: (operator, index, argument) => generateArgument(operator, index, argument),
+      generateArgument: (operator, index, argument, location) =>
+        generateArgument(operator, index, argument, location),
       createOpAppl: (operator, operands, location) => {
         const node = createOpAppl(operator, operands, location);
         matchArguments(operator, operands, location);
@@ -872,18 +882,21 @@ export const generateSanySpecification = (
       });
     };
 
+    // tla-ts desugars an operator symbol passed as an argument, such as SUBSET or -., into a LAMBDA
+    // without a range.
+    const getOperatorArgumentName = (argument: Expression) =>
+      argument.kind === "OperatorReference"
+        ? argument.operator
+        : argument.kind === "Lambda" && argument.body.kind === "Apply"
+          ? argument.body.operator
+          : file.tokens[getTokenIndex(file, argument.location)].text;
+
     const generateOperatorArgument = (argument: Expression, expectedArity: number): OpArgNode => {
       const location = getLocation(argument);
       if (argument.kind === "Lambda") {
         if (argument.location.range !== undefined)
           return createOpArg(generateLambda(argument), location);
-        // tla-ts desugars an operator symbol passed as an argument, such as SUBSET or -., into a
-        // LAMBDA without a range.
-        const name =
-          argument.body.kind === "Apply"
-            ? argument.body.operator
-            : file.tokens[getTokenIndex(file, argument.location)].text;
-        return createOpArg(resolveName(name, location), location);
+        return createOpArg(resolveName(getOperatorArgumentName(argument), location), location);
       }
       if (argument.kind === "Identifier" || argument.kind === "Subexpression") {
         const node = generateSelector(argument, expectedArity, false, false);
@@ -902,15 +915,61 @@ export const generateSanySpecification = (
       );
     };
 
-    // generateExprOrOpArg: an argument is an operator where the parameter takes arguments.
-    const generateArgument = (operator: SymbolNode, index: number, argument: Expression) => {
+    // generateExprOrOpArg: an argument is an operator where the parameter takes arguments. SANY
+    // reports an argument that doesn't fit at the operator's name and carries on.
+    const generateArgument = (
+      operator: SymbolNode,
+      index: number,
+      argument: Expression,
+      operatorLocation: SanyLocation,
+    ): ExprOrOpArgNode => {
       const isDefinition =
         operator.kind === "OpDef" &&
         (operator.defKind === "UserDefined" || operator.defKind === "ModuleInstance");
       const expectedArity = isDefinition ? (operator.params?.[index]?.arity ?? 0) : 0;
-      return expectedArity === 0
-        ? generateExpression(argument)
-        : generateOperatorArgument(argument, expectedArity);
+      if (expectedArity === 0) return generateExpression(argument);
+      const span = getExpressionSpan(file, argument);
+      const location = getSpanLocation(file, span);
+      const position = `${index + 1} (counting from 1)`;
+      const argumentSpan = getArgumentSpan(file, span);
+      if (argumentSpan !== span || !OPERATOR_ARGUMENT_KINDS.has(argument.kind)) {
+        addError(
+          getSpanLocation(file, argumentSpan),
+          `An expression appears as argument number ${position} to operator '${operator.name}', in a position an operator is required.`,
+        );
+        return createNullNode(location);
+      }
+      if (argument.kind === "Identifier" || argument.kind === "Subexpression") {
+        // The selector names the operator, or reports why not and gives SANY's nullOAN.
+        const node = generateSelector(argument, expectedArity, false, false);
+        if (node.kind === "OpArg" || node.kind === "OpAppl") return node;
+        throw new TlaSyntaxError(
+          `Expected an operator argument at ${formatSanyLocation(location)}`,
+        );
+      }
+      if (argument.kind === "Lambda" && argument.location.range !== undefined) {
+        const lambda = generateLambda(argument);
+        const arity = getSymbolArity(lambda);
+        if (arity === expectedArity) return createOpArg(lambda, location);
+        addError(
+          operatorLocation,
+          `Lambda expression with arity ${arity} used as argument ${index + 1} of operator \`${operator.name}', \nbut an operator of arity ${expectedArity} is required.`,
+        );
+        return createNullNode(location);
+      }
+      const name = getOperatorArgumentName(argument);
+      const symbol = resolveSymbol(symbolTable, resolveSynonym(name));
+      if (symbol === undefined) {
+        addError(location, `Could not find declaration or definition of symbol '${name}'.`);
+        return createNullNode(location);
+      }
+      const arity = getSymbolArity(symbol);
+      if (arity === expectedArity) return createOpArg(symbol, location);
+      addError(
+        operatorLocation,
+        `Operator with incorrect arity passed as argument. \nOperator '${symbol.name}' of arity ${arity} is argument number ${position} to operator \`${formatSanyLocation(operator.location)}', \nbut an operator of arity ${expectedArity} was expected.`,
+      );
+      return createNullNode(location);
     };
 
     // A /\ B /\ C nests as ((A /\ B) /\ C) in SANY; tla-ts flattens it.

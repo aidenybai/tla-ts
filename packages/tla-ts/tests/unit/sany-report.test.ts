@@ -171,6 +171,43 @@ Spec == Init /\\ [][Next]_x
     expect(report.text).toContain(`${range} of module M\n\nUnknown operator: \`Z!Nope'.\n`);
   });
 
+  const EXPRESSION_ARGUMENT =
+    "An expression appears as argument number 1 (counting from 1) to operator 'Apply', in a position an operator is required.";
+  it.each([
+    ["UNCHANGED x", "line 6, col 12 to line 6, col 22", EXPRESSION_ARGUMENT],
+    ["(F)", "line 6, col 12 to line 6, col 14", EXPRESSION_ARGUMENT],
+    [
+      "-.",
+      "line 6, col 12 to line 6, col 13",
+      "Could not find declaration or definition of symbol '-.'.",
+    ],
+    [
+      "LAMBDA y, z : y",
+      "line 6, col 6 to line 6, col 10",
+      "Lambda expression with arity 2 used as argument 1 of operator `Apply', \nbut an operator of arity 1 is required.",
+    ],
+    [
+      "+",
+      "line 6, col 6 to line 6, col 10",
+      "Operator with incorrect arity passed as argument. \nOperator '+' of arity 2 is argument number 1 (counting from 1) to operator `line 5, col 1 to line 5, col 22 of module M', \nbut an operator of arity 1 was expected.",
+    ],
+  ])(
+    "reports the operator argument %j that doesn't fit as SANY does",
+    (argument, range, message) => {
+      const report = getReport({
+        M: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nF(y) == y\nApply(G(_), v) == G(v)\nA == Apply(${argument}, x)\n====\n`,
+      });
+      expect(report.text).toContain(`*** Errors: 2\n\n${range} of module M\n\n${message}\n`);
+    },
+  );
+
+  it("takes the parentheses of an operator's only argument for the operator's own", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nF(y) == y\nOp(G(_)) == G(1)\nA == Op(F)\n====\n",
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
   it("reports a multiply defined operator with a warning and an error", () => {
     const report = getReport({ Twice: "---- MODULE Twice ----\nOp == 1\nOp == 2\n====\n" });
     expect(report.isFailed).toBe(true);
