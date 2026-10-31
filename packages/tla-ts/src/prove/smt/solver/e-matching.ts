@@ -8,7 +8,7 @@ import type { Enode } from "./enode";
 import { hashU, mkMix } from "./hash";
 import { type CodeTree, Compiler, hasHash, type LabelHasher } from "./mam-compiler";
 import { Interpreter, type OnMatch } from "./mam-interpreter";
-import { shrink } from "./array";
+import { setAt, shrink } from "./array";
 
 // A step from a term to its parent: the parent's label, the position of the term in it, and an
 // optional ground argument the parent must also have.
@@ -33,6 +33,8 @@ interface PathTree {
   code: CodeTree | null;
   firstChild: PathTree | null;
   sibling: PathTree | null;
+  // The roots that collect_parents visits at this node, while it walks the tree.
+  todo: Enode[] | null;
 }
 
 const isEqualPath = (first: Path, second: Path): boolean => {
@@ -70,7 +72,10 @@ export class Mam implements LabelHasher {
   private clbls = new Set<number>();
   private r1: Enode | null = null;
   private r2: Enode | null = null;
-  private labelHashes: number[] = [];
+  // The nodes that collect_parents marks, to unmark at the end of each level.
+  private visitedParents: Enode[] = [];
+  private queuedRoots: Enode[] = [];
+  private labelHashes: (number | undefined)[] = [];
   // m_trail_stack: the matcher undoes its changes with a trail of its own, which the quantifier
   // manager pops before the context pops its trail.
   private trail: (() => void)[] = [];
@@ -95,7 +100,7 @@ export class Mam implements LabelHasher {
     const cached = this.labelHashes[decl];
     if (cached !== undefined) return cached;
     const hash = mkMix(17, 3, this.manager.funcDecls[decl].smallId) & 63;
-    this.labelHashes[decl] = hash;
+    setAt(this.labelHashes, decl, hash);
     return hash;
   }
 
@@ -196,6 +201,7 @@ export class Mam implements LabelHasher {
       code: null,
       firstChild: null,
       sibling: null,
+      todo: null,
     };
     const hash = this.getLabelHash(path.label);
     if (hash < 32) tree.filter = 1 << hash;
@@ -459,20 +465,21 @@ export class Mam implements LabelHasher {
   }
 
   // collect_parents: walks the path tree level by level from the merged class, visiting each parent
-  // once per level, and hands the terms where a path ends to that path's code.
+  // once per level, and hands the terms where a path ends to that path's code. The mark of a parent
+  // says it was visited at this level, and the second mark of a root says it is queued for the next.
   private collectParents(start: Enode, head: PathTree | null | undefined) {
     if (head === null || head === undefined) return;
     const context = this.context;
     const levels: PathTree[] = [head];
-    const pending = new Map<PathTree, Enode[]>([[head, [start]]]);
+    const visitedParents = this.visitedParents;
+    const queuedRoots = this.queuedRoots;
+    head.todo = [start];
     for (let index = 0; index < levels.length; index++) {
       const level = levels[index];
-      const nodes = pending.get(level) ?? [];
-      pending.delete(level);
+      const nodes = level.todo ?? [];
+      level.todo = null;
       const filter = level.filter;
       const filterHigh = level.filterHigh;
-      const visitedParents = new Set<Enode>();
-      const queuedRoots = new Set<Enode>();
       for (const node of nodes) {
         const child = node.root;
         if ((child.plbls & filter) === 0 && (child.plblsHigh & filterHigh) === 0) continue;
@@ -482,7 +489,7 @@ export class Mam implements LabelHasher {
           const parentRoot = parent.root;
           if (
             !hasHash(filter, filterHigh, this.getLabelHash(label)) ||
-            visitedParents.has(parent) ||
+            parent.isMarked ||
             (parent.cg !== parent && this.isEqModMerge(parent.cg, parentRoot)) ||
             !context.isRelevant(parent.owner)
           )
@@ -499,18 +506,24 @@ export class Mam implements LabelHasher {
             if (tree.code !== null) this.addCandidateTo(tree.code, parent);
             const next = tree.firstChild;
             if (next === null) continue;
-            let queue = pending.get(next);
-            if (queue === undefined) {
-              queue = [];
-              pending.set(next, queue);
+            if (next.todo === null) {
+              next.todo = [];
               levels.push(next);
             }
-            if (!queuedRoots.has(parentRoot)) queue.push(parentRoot);
+            if (!parentRoot.isMarked2) next.todo.push(parentRoot);
           }
-          visitedParents.add(parent);
-          queuedRoots.add(parentRoot);
+          parent.isMarked = true;
+          visitedParents.push(parent);
+          if (!parentRoot.isMarked2) {
+            parentRoot.isMarked2 = true;
+            queuedRoots.push(parentRoot);
+          }
         }
       }
+      for (const parent of visitedParents) parent.isMarked = false;
+      for (const root of queuedRoots) root.isMarked2 = false;
+      visitedParents.length = 0;
+      queuedRoots.length = 0;
     }
   }
 

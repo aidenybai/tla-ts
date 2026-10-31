@@ -57,7 +57,7 @@ import { RelevancyPropagator } from "./relevancy";
 import { Rewriter } from "./rewriter";
 import { sortByKey } from "./sort";
 import type { TheoryLra } from "./theory-lra";
-import { shrink } from "./array";
+import { setAt, shrink } from "./array";
 
 // DEEP_EXPR_THRESHOLD: the depth above which internalize_deep sorts an expression's subterms.
 const DEEP_EXPR_THRESHOLD = 1024;
@@ -547,7 +547,7 @@ export abstract class Internalizer {
     );
     for (const arg of args) arg.root.addParent(node);
     if (manager.isUniqueValue(expr)) node.isInterpreted = true;
-    this.exprToEnode[expr] = node;
+    setAt(this.exprToEnode, expr, node);
     // m_e_internalized_stack holds a reference to the expression until the enode is deleted.
     manager.incRef(expr);
     this.trailKinds.push(UNDO_MK_ENODE);
