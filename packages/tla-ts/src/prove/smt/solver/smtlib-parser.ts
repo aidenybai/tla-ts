@@ -444,9 +444,10 @@ export const parseSmtlib = (
     if (head === "let") return parseLet(sexpr);
     const named = parseTerm(sexpr[1]);
     // name_expr: cmd_context keeps a named expression as a macro.
-    if (sexpr.includes(":named")) {
+    const nameIndex = sexpr.indexOf(":named");
+    if (nameIndex !== -1) {
       manager.incRef(named);
-      manager.mkMacroDecls();
+      manager.mkMacro(sexpr[nameIndex + 1] as string, named);
     }
     return named;
   };

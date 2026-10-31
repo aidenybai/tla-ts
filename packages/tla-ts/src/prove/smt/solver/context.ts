@@ -986,10 +986,13 @@ export class Context extends Internalizer {
     return generated;
   }
 
-  // get_model: the model that the proto model makes, which the caller holds too.
+  // get_model: the model that the proto model makes, which the caller holds too. add_rec_funs gives
+  // each named expression without an interpretation its expression.
   getModel() {
     if (this.model !== null) return this.model;
     const model = (this.protoModel ?? this.mkProtoModel().model).mkModel();
+    for (const entry of this.manager.macros)
+      if (!model.constInterps.has(entry[0])) model.registerConst(entry[0], entry[1]);
     model.incRef();
     this.model = model;
     return model;
