@@ -80,7 +80,7 @@ export class Enode {
   }
 
   usesCgTable() {
-    return this.args.length > 0 && this.isCgcEnabled;
+    return this.args.length > 0 && this.isCgcEnabled && !this.isTrueEq();
   }
 }
 
