@@ -1293,12 +1293,18 @@ const UNEXPECTED_EVAL_EXCEPTION = getUnexpectedException("tlc2.tool.EvalExceptio
 const getWrappedException = (error: TlaEvaluationError) =>
   isEvalException(error) ? WRAPPED_EVAL_EXCEPTION : WRAPPED_RUNTIME_EXCEPTION;
 
-const withUnexpectedEvalException = <Result>(compute: () => Result) => {
+// TLC reports an EvalException, or a TLCRuntimeException without a message of its own, as an
+// exception it didn't expect.
+const withUnexpectedException = <Result>(compute: () => Result) => {
   try {
     return compute();
   } catch (error) {
-    if (!(error instanceof TlaEvaluationError) || !isEvalException(error)) throw error;
-    throw new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`);
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    if (isEvalException(error)) {
+      throw new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`);
+    }
+    if (getCodedMessage(error.message)) throw error;
+    throw new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`);
   }
 };
 
@@ -1604,9 +1610,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       isConstrained: search.isConstrained,
     });
   }
-  // TLC reports an EvalException in building the liveness checker as an exception it didn't expect.
   const liveness = withLivenessExitCode(() =>
-    withUnexpectedEvalException(() =>
+    withUnexpectedException(() =>
       createLivenessChecker(search.properties.liveness, spec.temporals, environment, {
         getFingerprint: (index) =>
           (tlcFingerprints[index] ??= Number(

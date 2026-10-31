@@ -2092,6 +2092,28 @@ describe("check matches TLC 1.7.4", () => {
     ]);
   });
 
+  // TLC evaluates the constant parts of the properties as it builds the liveness checker.
+  it.each([
+    [
+      "<>(1 \\notin SUBSET 1)",
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to check if the non-enumerable value\n1\nis element of\nSUBSET 1",
+    ],
+    [
+      "<>(1 + 1)",
+      "TLC expected a boolean value, but did not find one. line 6, col 9 to line 6, col 13 of module M",
+    ],
+  ])(
+    "reports an error in the constant part of the property %s as TLC does",
+    async (property, message) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nSpec == Init /\\ [][x' = x]_x\nP == ${property}\n====`,
+          config: "SPECIFICATION Spec\nPROPERTY P",
+        }),
+      ).rejects.toMatchObject({ message });
+    },
+  );
+
   it("exits successfully after an error in adding an initial state to the behavior graph, as TLC 1.7.4 does", async () => {
     const result = await check174(
       "Init == x = 0\nNext == (x = 0 /\\ x' = 1) \\/ UNCHANGED x\nSpec == Init /\\ [][Next]_x\nProp == <>~ENABLED (x' > x)",

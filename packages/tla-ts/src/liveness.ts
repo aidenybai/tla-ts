@@ -1,7 +1,6 @@
 import { isLocallyResolved, type Definition, type Expression } from "./ast";
 import { TlaEvaluationError, TlaStackOverflowError } from "./errors";
 import {
-  describeLocation,
   describeRange,
   bindDefinitions,
   bindOperatorArguments,
@@ -269,7 +268,7 @@ export const toLiveExpression = (
       const value = evaluate(expression, getConstantContext(environment, scope));
       if (typeof value !== "boolean") {
         throw new TlaEvaluationError(
-          `TLC expected a boolean in the temporal formula at ${describeLocation(expression)}`,
+          `TLC expected a boolean value, but did not find one. ${describeRange(expression)}`,
         );
       }
       return createBoolean(value);
