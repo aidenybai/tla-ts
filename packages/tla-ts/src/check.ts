@@ -1749,7 +1749,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return toAliasRecord(value, fieldOrder) ?? toRecord(state);
     } catch (error) {
       if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
-      return { ...toRecord(state), _ALIASEvalError: error.message };
+      return {
+        ...toRecord(state),
+        _ALIASEvalError: formatNestedMessage(error.message, options.isTool ?? false),
+      };
     }
   };
   // TLC finds the action of a step as the first action that takes it, evaluated as when the search

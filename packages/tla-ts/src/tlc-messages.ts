@@ -189,6 +189,8 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
     false,
   ],
   [2227, "The configuration file cannot specify both INIT/NEXT and SPECIFICATION fields.", false],
+  [2228, "TLC requires %1% not to take any argument.", false],
+  [2228, "TLC requires %1% not to take any argument, but one was given: %2%", false],
   [
     2229,
     "The %1% %2% specified in the configuration file\nis not defined in the specification.",
