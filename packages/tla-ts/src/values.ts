@@ -473,10 +473,34 @@ export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunc
 
 const fingerprintedValues = new WeakSet<ObjectValue>();
 
+// The lazy sets TLC has cached the elements of. TLC caches a set as the receiver of compareTo,
+// equals, size, and fingerPrint, not as their argument, and enumerates the sets an uncached one
+// combines, duplicates and all.
+const cachedSets = new WeakSet<ObjectValue>();
+
+// Whether the spec has built a UNION or \cup set, the sets that stream duplicates, so that a spec
+// without one skips tracking what TLC caches.
+const streamedSetPresence = { isPresent: false };
+
+export const markStreamedSet = <Streamed extends UnionValue | SetOperationValue>(
+  value: Streamed,
+) => {
+  streamedSetPresence.isPresent = true;
+  return value;
+};
+
+const cacheSet = (value: Value) => {
+  if (streamedSetPresence.isPresent && typeof value === "object") cachedSets.add(value);
+};
+
 // FcnLambdaValue#fingerPrint caches the FcnRcdValue the function enumerates to, which applies it
 // from then on, so a function TLC has fingerprinted is no longer a lambda.
 export const markFingerprinted = (value: Value): void => {
-  if (!lambdaPresence.isPresent || typeof value !== "object" || fingerprintedValues.has(value)) {
+  if (
+    (!lambdaPresence.isPresent && !streamedSetPresence.isPresent) ||
+    typeof value !== "object" ||
+    fingerprintedValues.has(value)
+  ) {
     return;
   }
   fingerprintedValues.add(value);
@@ -484,14 +508,19 @@ export const markFingerprinted = (value: Value): void => {
     if (value.functionClass === "lambda") value.functionClass = undefined;
     value.domain.forEach(markFingerprinted);
     value.range.forEach(markFingerprinted);
+  } else if (value.kind === "Set" || value.kind === "MixedSet") {
+    value.elements.forEach(markFingerprinted);
+  } else if (isSetValue(value) && isEnumerable(value)) {
+    cacheSet(value);
+    toFiniteSet(value).elements.forEach(markFingerprinted);
   }
-  if (value.kind === "Set" || value.kind === "MixedSet") value.elements.forEach(markFingerprinted);
 };
 
 export const createSortedRecord = (names: Value[], range: Value[]) =>
   setFunctionClass(createSortedFunction(names, range), "record");
 
 export const valuesEqual = (left: Value, right: Value): boolean => {
+  cacheSet(left);
   if (left === right) {
     if (writtenOrderUse.isUsed) forgetWrittenOrder(left);
     return left !== ANY_SET || compareAny(left);
@@ -987,6 +1016,8 @@ const isStrictlySorted = (elements: Value[]) => {
 };
 
 export const createSet = (elements: Value[]): SetValue => {
+  // ValueVec.sort compares each element after the first with those before it.
+  for (let index = 1; index < elements.length; index++) cacheSet(elements[index]);
   if (elements.length < 2 || isStrictlySorted(elements)) return createSortedSet(elements);
   const sorted = [...elements].sort(compareValues);
   const unique = [sorted[0]];
@@ -1485,7 +1516,7 @@ export const toFiniteSet = (value: Value): SetValue => {
 // TLC's Enumerator for a lazy set streams the sets it combines until the set caches its elements,
 // so an element that two of them share comes up once for each.
 export const getStreamedElements = (value: Value): Value[] => {
-  if (typeof value !== "object" || finiteSets.has(value)) return toFiniteSet(value).elements;
+  if (typeof value !== "object" || cachedSets.has(value)) return toFiniteSet(value).elements;
   const sets = setTrace.sets;
   sets?.push(value);
   const elements = streamElements(value);
@@ -1505,7 +1536,7 @@ const getCombinedSets = (value: ObjectValue) =>
 // Whether a set streams its elements in another order than the normalized set, so that a set of
 // tuples, records, or functions it is a component of has to stream too.
 const isStreamedApart = (value: Value): boolean => {
-  if (typeof value !== "object" || finiteSets.has(value)) return false;
+  if (typeof value !== "object" || cachedSets.has(value)) return false;
   if (value.kind === "Union") return true;
   if (value.kind === "FilteredSet") return isStreamedApart(value.base);
   if (value.kind === "SetOperation") {
@@ -1652,6 +1683,7 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
         () => `Overflow when computing the number of elements in ${formatValue(value)}`,
       );
     default:
+      cacheSet(value);
       return toFiniteSet(value).elements.length;
   }
 };
@@ -1809,6 +1841,8 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":
+      // SetEnumValue.member compares the element with the set's.
+      cacheSet(element);
       return computeLikeTlcOnFailure(
         () => findIndex(set.elements, element) !== -1,
         () =>

@@ -42,6 +42,7 @@ import {
   isFunctionValue,
   computeLikeTlcOnFailure,
   isReducibleSet,
+  markStreamedSet,
   isSetValue,
   toFiniteSet,
   unionSorted,
@@ -100,7 +101,9 @@ const combineReducible = (
     );
   }
   if (elements.length === 0) return other;
-  if (!isReducibleSet(other)) return { kind: "SetOperation", operator, left: set, right: other };
+  if (!isReducibleSet(other)) {
+    return markStreamedSet({ kind: "SetOperation", operator, left: set, right: other });
+  }
   const added = toFiniteSet(other).elements.filter((element) => !isElementOf(element, set));
   return createEnumeratedSet([...elements, ...added]);
 };
@@ -165,7 +168,7 @@ export const CORE_OPERATORS: Builtin[] = [
       if (isReducibleSet(left)) return combineReducible(operator, left, right);
       if (operator !== "\\" && isReducibleSet(right))
         return combineReducible(operator, right, left);
-      return { kind: "SetOperation", operator, left, right };
+      return markStreamedSet({ kind: "SetOperation", operator, left, right });
     }),
   ),
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getValue(args, 0, "SUBSET") })),
@@ -173,7 +176,7 @@ export const CORE_OPERATORS: Builtin[] = [
     const outer = getSet(args, 0, "UNION");
     const sets = isEnumeratedSet(outer) ? outer.elements.filter(isEnumeratedSet) : [];
     if (!isEnumeratedSet(outer) || sets.length !== outer.elements.length) {
-      return { kind: "Union", base: outer };
+      return markStreamedSet({ kind: "Union", base: outer });
     }
     if (isMixedSet(outer) || sets.some(isMixedSet)) {
       const union: MixedSetValue = { kind: "MixedSet", elements: [] };

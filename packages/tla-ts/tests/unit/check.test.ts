@@ -2837,6 +2837,27 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect(await getCounts("{1} \\cup {1, 2}")).toEqual([4, 2]);
   });
 
+  it.each<[TlcVersion, number[]]>([
+    ["master", [21, 17, 25]],
+    ["1.7.4", [21, 21, 25]],
+  ])("streams a lazy UNION's duplicates until TLC %s caches the set", async (version, expected) => {
+    const nexts = [
+      "y' \\in UNION {UNION {0..2, {1}}, {7}}",
+      "\\E e \\in UNION {UNION {0..2, {1}}, {7}} : y' = e",
+      "y' \\in {1} \\X UNION {UNION {0..2, {1}}, {1, 2}}",
+    ];
+    const results = await Promise.all(
+      nexts.map((next) =>
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == (${next}) /\\ UNCHANGED x\n====`,
+          config: "INIT Init\nNEXT Next",
+          version,
+        }),
+      ),
+    );
+    expect(results.map((result) => result.generatedStates)).toEqual(expected);
+  });
+
   it("reports initial states without a next-state action", async () => {
     await expect(checkSource("VARIABLE x\nInit == x \\in {1, 2}", "INIT Init")).rejects.toThrow(
       /No next state actions defined to generate successor states from/,
