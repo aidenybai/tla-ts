@@ -2372,9 +2372,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
       } catch (error) {
         // TLC 1.7.4 reports the wrapped error without the trace, except for a failed property,
-        // which it reports with the trace before it rethrows. The error stops its worker.
+        // which it reports with the trace before it rethrows. The error stops its worker before it
+        // adds the state to the behavior graph.
+        const replay = is174
+          ? getOutput(() => replayNext(state))
+          : replayFailedNext(index, liveSuccessors);
         if (is174 && error instanceof TlaEvaluationError && !headedErrors.has(error)) {
-          const replay = getOutput(() => replayNext(state));
           outcome.result = toFailure(
             new TlaEvaluationError(`${getWrappedException(error)}${error.message}`, error),
             appendTraceOutput({ trace: [] }, replay.lines),
@@ -2382,7 +2385,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           );
           return true;
         }
-        const replay = replayFailedNext(index, liveSuccessors);
         // A successor TLC can't fingerprint fails again as TLC prints it in the trace, which TLC
         // reports as an exception it didn't expect.
         const isTraceFailed = getFingerprintState(successor.state).some(

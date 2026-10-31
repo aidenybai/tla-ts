@@ -1588,6 +1588,16 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.traceOutput).toEqual(['<<"s", 1>>']);
   });
 
+  // The rethrown error stops TLC 1.7.4's worker before it adds the state to the behavior graph.
+  it("leaves out the state an action property fails on from the behavior graph in TLC 1.7.4", async () => {
+    const result = await checkSteps(
+      `Step == Next /\\ PrintT(<<"s", x>>)\nSpec == Init /\\ [][Step]_x /\\ WF_x(Step)\nP == [][x' < 2 \\/ 1 \\div 0 = 0]_x\nL == <>(x = 3)`,
+      "SPECIFICATION Spec\nPROPERTY P\nPROPERTY L",
+      "1.7.4",
+    );
+    expect(result.failure?.traceOutput).toEqual(['<<"s", 1>>']);
+  });
+
   it.each(["1.7.4" as const, undefined])(
     "names an action property that fails to evaluate in TLC %s",
     async (version) => {
