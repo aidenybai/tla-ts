@@ -37,11 +37,23 @@ export interface ScopedExpression {
   scope: Scope | undefined;
 }
 
+// A part of a temporal formula, with the name TLC gives the part when the formula is a property:
+// a conjunct's location, or the name of the definition the part is the body of.
+interface ExpandedExpression extends ScopedExpression {
+  name: string | undefined;
+}
+
 export interface TemporalProperty extends ScopedExpression {
   name: string;
 }
 
 const MAXIMUM_EXPANSION_DEPTH = 100;
+
+export const createTautologyError = () =>
+  setExitCode(
+    new TlaEvaluationError("Temporal formula is a tautology (its negation is unsatisfiable)."),
+    EXIT_STATUS.livenessEvaluationFailure,
+  );
 
 // TLC expands a temporal formula that refers to itself until Java's stack overflows.
 const createStackOverflowError = () => setExitCode(new TlaStackOverflowError(), EXIT_STATUS.error);
@@ -155,13 +167,15 @@ export const expandTemporal = (
   // Whether the expansion entered the body of an instance's definition. Like TLC, it then no
   // longer expands an operator applied to arguments.
   isSubstituted = false,
-): ScopedExpression[] => {
+  name?: string,
+): ExpandedExpression[] => {
   const expand = (
     child: Expression,
     childScope: Scope | undefined,
+    childName = name,
     childExpanding = expanding,
     definition?: Definition,
-  ): ScopedExpression[] =>
+  ): ExpandedExpression[] =>
     expandTemporal(
       child,
       childScope,
@@ -170,9 +184,10 @@ export const expandTemporal = (
       childExpanding,
       isSubstituted ||
         (definition !== undefined && environment.substitutedDefinitions.has(definition)),
+      childName,
     );
   if (expression.kind === "And") {
-    return expression.operands.flatMap((operand) => expand(operand, scope));
+    return expression.operands.flatMap((operand) => expand(operand, scope, describeRange(operand)));
   }
   if (expression.kind === "Label") return expand(expression.body, scope);
   if (expression.kind === "Let") {
@@ -195,7 +210,13 @@ export const expandTemporal = (
       if (expanding.has(definition)) {
         throw createStackOverflowError();
       }
-      return expand(definition.body, undefined, new Set([...expanding, definition]), definition);
+      return expand(
+        definition.body,
+        undefined,
+        definition.name,
+        new Set([...expanding, definition]),
+        definition,
+      );
     }
   }
   const context = getConstantContext(environment, scope);
@@ -213,6 +234,7 @@ export const expandTemporal = (
       return expand(
         operator.body,
         bindOperatorArguments(operator, expression.args, context),
+        expression.operator,
         expanding,
         definition,
       );
@@ -221,17 +243,17 @@ export const expandTemporal = (
   const isUnrolled =
     isUnrollingForall &&
     expression.kind === "Forall" &&
-    getLevel(expression.body, scope, environment) === TEMPORAL_LEVEL &&
     expression.bounds.every((bound) => getLevel(bound.set, scope, environment) === 0);
   if (isUnrolled) {
-    const expanded: ScopedExpression[] = [];
+    const expanded: ExpandedExpression[] = [];
     forEachBinding(expression.bounds, context, (boundScope) => {
-      expanded.push(...expand(expression.body, boundScope));
+      expanded.push(...expand(expression.body, boundScope, describeRange(expression.body)));
       return false;
     });
+    if (expanded.length === 0) throw createTautologyError();
     return expanded;
   }
-  return [{ expression, scope }];
+  return [{ expression, scope, name }];
 };
 
 const bindLetDefinitions = (

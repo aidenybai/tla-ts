@@ -2096,6 +2096,38 @@ describe("check matches TLC 1.7.4", () => {
     ]);
   });
 
+  const checkProperty = (property: string, version?: "1.7.4") =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x, b\nInit == x = 0 /\\ b = FALSE\nNext == x' = x /\\ b' = ~b\nSpec == Init /\\ [][Next]_<<x, b>>\n${property}\n====`,
+      config: "SPECIFICATION Spec\nPROPERTY P",
+      version,
+    });
+
+  // TLC names a part of a property by its location, or by the definition it is the body of.
+  it.each([
+    [undefined, "P == []b", "b"],
+    [undefined, "P == []FALSE", "FALSE"],
+    [undefined, "P == [](x # 0) /\\ TRUE", "line 7, col 6 to line 7, col 14 of module M"],
+    [undefined, "P == x # 0 /\\ TRUE", "line 7, col 6 to line 7, col 10 of module M"],
+    [undefined, "Q == [][b' = b]_b\nP == Q /\\ TRUE", "Q"],
+    [undefined, "P == \\A c \\in {0, 1} : x # c", "line 7, col 24 to line 7, col 28 of module M"],
+    ["1.7.4" as const, "P == \\A c \\in {0, 1} : x # c", "P"],
+  ])(
+    "names the violated part of a property as TLC %s does: %s",
+    async (version, property, name) => {
+      expect((await checkProperty(property, version)).violation?.name).toBe(name);
+    },
+  );
+
+  it.each([undefined, "1.7.4" as const])(
+    "reports a property that quantifies over the empty set as a tautology (TLC %s)",
+    async (version) => {
+      await expect(checkProperty("P == \\A c \\in {} : []b", version)).rejects.toThrow(
+        "Temporal formula is a tautology (its negation is unsatisfiable).",
+      );
+    },
+  );
+
   // TLC evaluates the constant parts of the properties as it builds the liveness checker.
   it.each([
     [

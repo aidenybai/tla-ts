@@ -666,12 +666,15 @@ const getProperties = (config: ModelConfig, environment: Environment): Propertie
   config.properties.forEach((name) => {
     const definition = getConfigPredicate("property", name, environment);
     if (!definition) return;
-    expandTemporal(definition.body, undefined, environment, true).forEach((item) => {
+    // TLC 1.7.4 doesn't unroll a property that quantifies over a constant set.
+    const isUnrollingForall = environment.runtime.version !== "1.7.4";
+    expandTemporal(definition.body, undefined, environment, isUnrollingForall).forEach((item) => {
       const conjunct = item.expression;
       if (isConstantTrue(item, environment, "property")) return;
+      const partName = item.name ?? name;
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
         properties.actionProperties.push({
-          name,
+          name: partName,
           box: conjunct.expression,
           action: conjunct.expression.action,
           subscript: conjunct.expression.subscript,
@@ -683,15 +686,11 @@ const getProperties = (config: ModelConfig, environment: Environment): Propertie
         conjunct.kind === "Always" &&
         getLevel(conjunct.expression, item.scope, environment) <= 1
       ) {
-        // TLC names the invariant by the definition the property asserts always holds, if any.
+        // TLC names the invariant by the operator the property asserts always holds, when it
+        // applies the operator to no arguments.
         const body = conjunct.expression;
-        const definition =
-          body.kind === "Identifier" ? getDefinition(body.name, environment) : undefined;
         properties.invariants.push({
-          name:
-            definition?.kind === "Operator" && definition.params.length === 0
-              ? definition.name
-              : name,
+          name: body.kind === "Identifier" ? body.name : partName,
           expression: body,
           scope: item.scope,
         });
@@ -699,7 +698,11 @@ const getProperties = (config: ModelConfig, environment: Environment): Propertie
       }
       const level = getLevel(conjunct, item.scope, environment);
       if (level < ACTION_LEVEL) {
-        properties.initialPredicates.push({ name, expression: conjunct, scope: item.scope });
+        properties.initialPredicates.push({
+          name: partName,
+          expression: conjunct,
+          scope: item.scope,
+        });
         return;
       }
       if (level === ACTION_LEVEL) {

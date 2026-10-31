@@ -1,7 +1,7 @@
 import { TlaEvaluationError } from "./errors";
-import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { hasRepeatedEffects, type Environment } from "./evaluate";
 import {
+  createTautologyError,
   evaluateLive,
   evaluateOnLasso,
   toLiveExpression,
@@ -224,10 +224,7 @@ export const createLivenessChecker = (
     fairness.length === 0 ? violation : createJunction("And", [...fairness, violation]);
   const solutions = getSolutions(formula);
   if (solutions.length === 0) {
-    throw setExitCode(
-      new TlaEvaluationError("Temporal formula is a tautology (its negation is unsatisfiable)."),
-      EXIT_STATUS.livenessEvaluationFailure,
-    );
+    throw createTautologyError();
   }
   const actionIds = new Map<string, number>();
   const checks = solutions.map((solution): Check => ({
