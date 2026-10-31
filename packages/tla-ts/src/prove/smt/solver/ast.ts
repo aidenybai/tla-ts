@@ -45,8 +45,13 @@ export const OP_DIV = 23;
 export const OP_TO_REAL = 24;
 export const OP_TO_INT = 25;
 export const OP_IS_INT = 26;
-export const OP_UNINTERPRETED = 27;
-export const OP_MODEL_VALUE = 28;
+// Z3's div0, idiv0 and mod0: division by zero, which theory_lra's found_underspecified equates with
+// the division it stands for.
+export const OP_DIV0 = 27;
+export const OP_IDIV0 = 28;
+export const OP_MOD0 = 29;
+export const OP_UNINTERPRETED = 30;
+export const OP_MODEL_VALUE = 31;
 
 // A Z3 symbol: a string, or a number for a numerical symbol, which Z3 prints as k!n.
 export type SmtSymbol = string | number;
@@ -105,6 +110,9 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
   ["to_real", FAMILY_ARITH, OP_TO_REAL, SORT_REAL],
   ["to_int", FAMILY_ARITH, OP_TO_INT, SORT_INT],
   ["is_int", FAMILY_ARITH, OP_IS_INT, SORT_BOOL],
+  ["/0", FAMILY_ARITH, OP_DIV0, SORT_REAL],
+  ["div0", FAMILY_ARITH, OP_IDIV0, SORT_INT],
+  ["mod0", FAMILY_ARITH, OP_MOD0, SORT_INT],
 ];
 
 // Z3's family ids and decl kinds, which its AST hashes include.
@@ -143,12 +151,16 @@ const Z3_BUILTINS = new Map<number, [string, number, number]>([
   [OP_TO_REAL, ["to_real", 18, 1]],
   [OP_TO_INT, ["to_int", 19, 1]],
   [OP_IS_INT, ["is_int", 20, 1]],
+  [OP_DIV0, ["/0", 12, 2]],
+  [OP_IDIV0, ["div0", 13, 2]],
+  [OP_MOD0, ["mod0", 17, 2]],
 ]);
 
 // The small ids of the Int declarations Z3 makes when it starts, from arith_decl_plugin::set_manager,
 // which Real terms share. The declarations of Real terms only have the ids of Real's /, Int's
-// to_real, Real's to_int and is_int. Z3 makes =, ite, distinct, pattern and numeral declarations per
-// signature on first use, so they get -1 here, and their small ids are kept by signature.
+// to_real, Real's to_int and is_int. Z3 makes =, ite, distinct, pattern, numeral, /0, div0 and mod0
+// declarations per signature on first use, so they get -1 here, and their small ids are kept by
+// signature.
 const Z3_SMALL_IDS = new Map([
   [OP_TRUE, 1],
   [OP_FALSE, 2],
@@ -314,6 +326,7 @@ export class AstManager {
     if (decl === OP_NUM) return [`n${this.values[expr]}:${this.hashes[expr]}`, false];
     if (decl === OP_EQ) return [`e${this.sorts[args[0]]}`, true];
     if (decl === OP_ITE) return [`i${this.sorts[expr]}`, true];
+    if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return [`z${decl}`, false];
     if (decl === OP_DISTINCT || decl === OP_PATTERN)
       return [`${decl}:${args.map((arg) => this.sorts[arg]).join(",")}`, false];
     if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) return [`m${decl}`, false];
