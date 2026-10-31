@@ -35,7 +35,7 @@ export class DefaultQuantifierManager {
   private qiQueue: QiQueue;
   private mam: Mam;
   private lazyMam: Mam;
-  private fingerprints = new FingerprintSet();
+  private fingerprints: FingerprintSet;
   private isActive = false;
   private lazyMatchingIndex = 0;
   private mbqi: Mbqi | null = null;
@@ -45,6 +45,7 @@ export class DefaultQuantifierManager {
     isMbqi: boolean,
   ) {
     this.qiQueue = new QiQueue(context);
+    this.fingerprints = new FingerprintSet(context.manager);
     const onMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) =>
       this.addInstance(quantifier, bindings, maxGeneration);
     this.mam = new Mam(context, onMatch);
@@ -95,6 +96,11 @@ export class DefaultQuantifierManager {
     }
   }
 
+  // is_shared: a ground term of a pattern, once a quantifier was asserted.
+  isShared(node: Enode) {
+    return this.isActive && (this.mam.isShared(node) || this.lazyMam.isShared(node));
+  }
+
   addEqEh(first: Enode, second: Enode) {
     if (this.quantifiers.length > 0) this.mam.addEqEh(first, second);
   }
@@ -106,14 +112,16 @@ export class DefaultQuantifierManager {
   }
 
   push() {
+    this.mam.pushScope();
+    this.lazyMam.pushScope();
     this.mbqi?.finder.pushScope();
     this.qiQueue.push();
     this.fingerprints.push();
   }
 
   pop(numScopes: number) {
-    this.mam.popScope();
-    this.lazyMam.popScope();
+    this.mam.popScope(numScopes);
+    this.lazyMam.popScope(numScopes);
     this.mbqi?.finder.popScope(numScopes);
     this.qiQueue.pop(numScopes);
     this.fingerprints.pop(numScopes);
@@ -130,9 +138,12 @@ export class DefaultQuantifierManager {
 
   addInstance(quantifier: number, bindings: Enode[], maxGeneration: number) {
     const generation = Math.max(maxGeneration, this.getGeneration(quantifier));
-    const roots = bindings.map((binding) => binding.root);
-    if (!this.fingerprints.insert(quantifier, roots)) return;
-    this.qiQueue.insert(quantifier, roots, generation);
+    if (!this.fingerprints.insert(quantifier, bindings)) return;
+    this.qiQueue.insert(
+      quantifier,
+      bindings.map((binding) => binding.root),
+      generation,
+    );
   }
 
   finalCheckEh(isFull: boolean) {

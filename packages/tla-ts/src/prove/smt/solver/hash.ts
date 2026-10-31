@@ -30,8 +30,16 @@ const mix = (state: Uint32Array) => {
   state[2] = c;
 };
 
-// The a, b and c of Z3's mix, which wrap like its unsigned integers.
-const mkState = (a: number, b: number, c: number) => Uint32Array.of(a, b, c);
+// The a, b and c of Z3's mix, which wrap like its unsigned integers. No hash function calls another
+// while it uses the state, so they share one rather than allocating one per hash.
+const sharedState = new Uint32Array(3);
+
+const mkState = (a: number, b: number, c: number) => {
+  sharedState[0] = a;
+  sharedState[1] = b;
+  sharedState[2] = c;
+  return sharedState;
+};
 
 export const mkMix = (a: number, b: number, c: number) => {
   const state = mkState(a, b, c);
@@ -39,7 +47,7 @@ export const mkMix = (a: number, b: number, c: number) => {
   return state[2];
 };
 
-const hashU = (value: number) => {
+export const hashU = (value: number) => {
   let a = value >>> 0;
   a = (a + 0x7ed55d16 + (a << 12)) >>> 0;
   a = (a ^ 0xc761c23c ^ (a >>> 19)) >>> 0;
@@ -55,8 +63,8 @@ export const combineHash = (first: number, second: number) =>
 
 const encoder = new TextEncoder();
 
-export const stringHash = (text: string, initValue: number) => {
-  const data = encoder.encode(text);
+// string_hash, over the bytes of a string or of a number's digits.
+export const bytesHash = (data: Uint8Array, initValue: number) => {
   const readUnsigned = (offset: number) =>
     (data[offset] |
       (data[offset + 1] << 8) |
@@ -83,10 +91,12 @@ export const stringHash = (text: string, initValue: number) => {
   return state[2];
 };
 
-// get_composite_hash with the default kind hash (17) over child hashes.
-export const getCompositeHash = (childHashes: number[]) => {
+export const stringHash = (text: string, initValue: number) =>
+  bytesHash(encoder.encode(text), initValue);
+
+// get_composite_hash over child hashes, with the default kind hash of 17.
+export const getCompositeHash = (childHashes: number[], kindHash = 17) => {
   const count = childHashes.length;
-  const kindHash = 17;
   const state = mkState(GOLDEN_RATIO, GOLDEN_RATIO, 11);
   switch (count) {
     case 0:

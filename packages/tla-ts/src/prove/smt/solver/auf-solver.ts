@@ -2,14 +2,17 @@
 // sets and the AUF solver of the model finder: the solver groups the argument positions and
 // variables that must share an instantiation set, and each group gets a projection function that
 // maps any value to the value of a term in its set.
-import { OP_ADD, OP_ITE, OP_LT, OP_SUB, SORT_BOOL, SORT_INT, type AstManager } from "./ast";
-import { ObjMap } from "./hashtable";
+import { OP_ITE, OP_LT, SORT_BOOL, SORT_INT, isArithSort, type AstManager } from "./ast";
+import { combineHash } from "./hash";
+import { ObjHashtable, ObjMap } from "./hashtable";
 import { FuncInterp, RandomGen, type ProtoModel } from "./proto-model";
+import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 
 export type Evaluate = (expr: number) => number | null;
 
-// instantiation_set: the S_{k,j} sets of the paper, with the generation of each term.
+// instantiation_set: the S_{k,j} sets of the paper, with the generation of each term. The set holds
+// its terms.
 export class InstantiationSet {
   readonly elems: ObjMap<number>;
   readonly inv: ObjMap<number>;
@@ -22,11 +25,18 @@ export class InstantiationSet {
 
   insert(expr: number, generation: number) {
     if (this.elems.has(expr) || this.manager.containsModelValue(expr)) return;
+    this.manager.incRef(expr);
     this.elems.set(expr, generation);
   }
 
   remove(expr: number) {
     this.elems.delete(expr);
+    this.manager.decRef(expr);
+  }
+
+  // ~instantiation_set.
+  release() {
+    for (const entry of this.elems) this.manager.decRef(entry[0]);
   }
 
   getInv(value: number, model: ProtoModel) {
@@ -108,6 +118,11 @@ export class Node {
     this.set = new InstantiationSet(manager);
   }
 
+  // ~node.
+  release() {
+    this.set?.release();
+  }
+
   // Only closed terms join the set.
   insert(manager: AstManager, expr: number, generation: number) {
     if (manager.isGround(expr)) this.getRoot().set?.insert(expr, generation);
@@ -157,28 +172,49 @@ interface AFINode {
   node: Node;
 }
 
+// The number that keys an argument position of a declaration in m_A_f_is.
+const ARITY_BOUND = 2 ** 20;
+const getAFIKey = (decl: number, index: number) => decl * ARITY_BOUND + index;
+
 // auf_solver: the "almost uninterpreted fragment" of the paper.
 export class AufSolver {
   private nodes: Node[] = [];
   private uvars = new Map<string, Node>();
-  private aFIs = new Map<string, AFINode>();
+  // m_A_f_is, a table in Z3's slot order, hashed like pair_hash of the declaration and position.
+  private aFIs: ObjMap<AFINode>;
   private sort2k = new Map<number, number>();
+  // m_ks, the range of m_sort2k.
+  private ks: RefVector;
   private model: ProtoModel | null = null;
-  private evalCache = [new Map<number, number | null>(), new Map<number, number | null>()];
+  // m_eval_cache for each model completion flag, and m_eval_cache_range, which holds the results.
+  private evalCache = [new Map<number, number>(), new Map<number, number>()];
+  private evalCacheRange: RefVector;
   private rootNodes: Node[] = [];
   private newConstraints: number[] = [];
-  private random = new RandomGen(0);
+  // m_rand, seeded with the steps the resource limit counted before the solver was made, which
+  // then counts one more.
+  private random: RandomGen;
   constructor(
     private manager: AstManager,
     readonly rewriter: Rewriter,
-  ) {}
+  ) {
+    this.evalCacheRange = new RefVector(manager);
+    this.ks = new RefVector(manager);
+    this.random = new RandomGen(manager.limit.count >>> 0);
+    manager.limit.inc();
+    this.aFIs = new ObjMap((key) =>
+      combineHash(manager.getDeclHash(Math.floor(key / ARITY_BOUND)), key % ARITY_BOUND),
+    );
+  }
 
   reset() {
+    for (const node of this.nodes) node.release();
     this.nodes = [];
     this.uvars.clear();
     this.aFIs.clear();
     this.rootNodes = [];
     this.sort2k.clear();
+    this.ks.reset();
   }
 
   setModel(model: ProtoModel) {
@@ -194,6 +230,7 @@ export class AufSolver {
   private resetEvalCache() {
     this.evalCache[0].clear();
     this.evalCache[1].clear();
+    this.evalCacheRange.reset();
   }
 
   private mkNode(key: string, map: Map<string, Node>, sort: number) {
@@ -211,7 +248,7 @@ export class AufSolver {
   }
 
   getAFI(decl: number, index: number) {
-    const key = `${decl}:${index}`;
+    const key = getAFIKey(decl, index);
     const existing = this.aFIs.get(key);
     if (existing !== undefined) return existing.node;
     const node = new Node(this.nodes.length, this.manager.funcDecls[decl].domain[index]);
@@ -250,6 +287,7 @@ export class AufSolver {
     if (cached !== undefined) return cached;
     const result = this.getModel().eval(expr, isModelCompletion);
     cache.set(expr, result);
+    this.evalCacheRange.pushOwned(result);
     return result;
   }
 
@@ -294,7 +332,7 @@ export class AufSolver {
 
   // Uninterpreted sorts are not assumed infinite in benchmarks with quantifiers.
   private isInfinite(sort: number) {
-    return sort === SORT_INT;
+    return isArithSort(sort);
   }
 
   private getKFor(sort: number) {
@@ -303,6 +341,7 @@ export class AufSolver {
     const created = this.manager.mkFreshConst("k", sort);
     this.getModel().registerAuxDecl(this.manager.decls[created]);
     this.sort2k.set(sort, created);
+    this.ks.push(created);
     return created;
   }
 
@@ -356,10 +395,10 @@ export class AufSolver {
   private addMonoExceptions(node: Node) {
     if (node.sort !== SORT_INT) return;
     const rewriter = this.rewriter;
-    const one = this.manager.mkNumeral(1);
+    const one = this.manager.mkNumeral(1n);
     for (const exception of node.getExceptions()) {
-      const minusOne = rewriter.mkAppCore(OP_SUB, [exception, one], SORT_INT);
-      const plusOne = rewriter.mkAppCore(OP_ADD, [exception, one], SORT_INT);
+      const minusOne = rewriter.mkSub(exception, one);
+      const plusOne = rewriter.mkAdd([exception, one]);
       node.insert(this.manager, plusOne, 0);
       node.insert(this.manager, minusOne, 0);
     }
@@ -386,8 +425,10 @@ export class AufSolver {
     this.addMonoExceptions(node);
     const values = this.getInstantiationSetValues(node);
     if (values.length === 0) return;
-    if (node.sort !== SORT_INT || !values.every((value) => manager.isNumeral(value))) return;
-    values.sort((first, second) => manager.values[first] - manager.values[second]);
+    if (!isArithSort(node.sort) || !values.every((value) => manager.isNumeral(value))) return;
+    values.sort((first, second) =>
+      manager.getRationalValue(first).compare(manager.getRationalValue(second)),
+    );
     const variable = manager.mkVar(0, node.sort);
     let projection = values[values.length - 1];
     for (let index = values.length - 1; index >= 1; index--)
@@ -398,7 +439,7 @@ export class AufSolver {
       );
     const interp = new FuncInterp(manager, 1);
     interp.setElse(projection);
-    const decl = manager.mkFreshFuncDecl("pi", [node.sort], node.sort, false);
+    const decl = manager.mkFreshFuncDecl(null, [node.sort], node.sort);
     this.getModel().registerAuxDecl(decl, interp);
     node.setProj(decl);
   }
@@ -407,7 +448,7 @@ export class AufSolver {
     const manager = this.manager;
     this.setProjectionElse(node);
     const values = this.getInstantiationSetValues(node);
-    const decl = manager.mkFreshFuncDecl("pi", [node.sort], node.sort, false);
+    const decl = manager.mkFreshFuncDecl(null, [node.sort], node.sort);
     const interp = new FuncInterp(manager, 1);
     this.getModel().registerAuxDecl(decl, interp);
     const elseExpr = node.getElse();
@@ -419,17 +460,20 @@ export class AufSolver {
     node.setProj(decl);
   }
 
+  // collect_partial_funcs: a func_decl_set, in Z3's slot order.
   private collectPartialFuncs() {
+    const manager = this.manager;
     const model = this.getModel();
-    const result: number[] = [];
-    for (const entry of this.aFIs.values()) {
-      if (result.includes(entry.decl)) continue;
-      let interp = model.funcInterps.get(entry.decl);
+    const result = new ObjHashtable((decl) => manager.getDeclHash(decl));
+    for (const entry of this.aFIs.entries()) {
+      const decl = entry[1].decl;
+      if (result.has(decl)) continue;
+      let interp = model.funcInterps.get(decl);
       if (interp === undefined) {
-        interp = new FuncInterp(this.manager, this.manager.funcDecls[entry.decl].domain.length);
-        model.registerFunc(entry.decl, interp);
+        interp = new FuncInterp(manager, manager.funcDecls[decl].domain.length);
+        model.registerFunc(decl, interp);
       }
-      if (interp.isPartial()) result.push(entry.decl);
+      if (interp.isPartial()) result.add(decl);
     }
     return result;
   }
@@ -468,10 +512,10 @@ export class AufSolver {
   }
 
   private getFIProj(decl: number, index: number) {
-    return this.aFIs.get(`${decl}:${index}`)?.node.getProj() ?? null;
+    return this.aFIs.get(getAFIKey(decl, index))?.node.getProj() ?? null;
   }
 
-  private completePartialFuncs(partialFuncs: number[]) {
+  private completePartialFuncs(partialFuncs: ObjHashtable) {
     const manager = this.manager;
     const model = this.getModel();
     for (const decl of partialFuncs) {
@@ -488,7 +532,7 @@ export class AufSolver {
         return manager.mkApp(proj, [variable], sort);
       });
       if (!hasProj) continue;
-      const auxDecl = manager.mkFreshFuncDecl(data.name, data.domain, data.range, false);
+      const auxDecl = manager.mkFreshFuncDecl(data.name, data.domain, data.range);
       const newInterp = new FuncInterp(manager, data.domain.length);
       newInterp.setElse(manager.mkApp(auxDecl, args, data.range));
       model.reregisterDecl(decl, newInterp, auxDecl);

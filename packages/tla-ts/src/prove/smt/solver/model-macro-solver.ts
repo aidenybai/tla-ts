@@ -16,13 +16,12 @@ import {
   OP_LE,
   OP_NOT,
   OP_OR,
-  OP_SUB,
   SORT_BOOL,
-  SORT_INT,
   type AstManager,
 } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { FuncInterp, type ProtoModel } from "./proto-model";
+import { Rational } from "./rational";
 import { Rewriter } from "./rewriter";
 import { replaceFreeVars } from "./var-subst";
 
@@ -131,12 +130,40 @@ const isPolyHint = (manager: AstManager, poly: number, head: number, exception: 
   );
 };
 
-// macro_util::collect_macro_candidates for a quantifier, with an empty forbidden set.
+// quantifier_macro_info::collect_macro_candidates, with an empty forbidden set. Each candidate holds
+// a reference to its definition and condition, which releaseCondMacros releases. Like macro_util,
+// the expressions of each step live until the step returns.
 export const collectMacroCandidates = (manager: AstManager, quantifier: number) => {
   const data = manager.getQuantifier(quantifier);
-  const body = data.isForall ? data.body : manager.mkNot(data.body);
+  // qa: an existential quantifier becomes a universal one of the negated body until the candidates
+  // are collected.
+  const qa = data.isForall
+    ? quantifier
+    : manager.withTemporaries(() =>
+        manager.mkQuantifier({ ...data, isForall: true, body: manager.mkNot(data.body) }),
+      );
+  const candidates = manager.hasQuantifierFlags[manager.getQuantifier(qa).body]
+    ? []
+    : collectCandidates(manager, qa);
+  if (qa !== quantifier) manager.decRef(qa);
+  return candidates;
+};
+
+// ~cond_macro, for each candidate in order.
+export const releaseCondMacros = (manager: AstManager, candidates: CondMacro[]) => {
+  for (const candidate of candidates) {
+    if (candidate.cond !== null) manager.decRef(candidate.cond);
+    manager.decRef(candidate.def);
+  }
+};
+
+// macro_util::collect_macro_candidates.
+const collectCandidates = (manager: AstManager, quantifier: number) => {
+  const data = manager.getQuantifier(quantifier);
+  const body = data.body;
   const candidates: CondMacro[] = [];
-  if (manager.hasQuantifierFlags[body]) return candidates;
+  // The expressions of a step without a reference live until the step returns.
+  const scope = (step: () => void) => manager.withTemporaries(step, () => []);
   const rewriter = new Rewriter(manager, {
     isEliminatingAnd: false,
     arith: TACTIC_ARITH_OPTIONS,
@@ -149,14 +176,13 @@ export const collectMacroCandidates = (manager: AstManager, quantifier: number) 
       : args.length === 1
         ? args[0]
         : rewriter.mkAppCore(OP_AND, args, SORT_BOOL);
-  const mkSub = (first: number, second: number) =>
-    rewriter.mkAppCore(OP_SUB, [first, second], SORT_INT);
-  const mkAdd = (args: number[]) =>
+  const mkSub = (first: number, second: number) => rewriter.mkSub(first, second);
+  const mkAdd = (args: number[], sort: number) =>
     args.length === 0
-      ? manager.mkNumeral(0)
+      ? manager.mkNumeralOfSort(Rational.zero, sort)
       : args.length === 1
         ? args[0]
-        : manager.mkApp(OP_ADD, args, SORT_INT);
+        : manager.mkApp(OP_ADD, args, sort);
   const isClause =
     isLiteral(manager, body) ||
     (manager.getOp(body) === OP_OR && manager.args[body].every((arg) => isLiteral(manager, arg)));
@@ -166,12 +192,25 @@ export const collectMacroCandidates = (manager: AstManager, quantifier: number) 
     clause !== null &&
     clause.some((literal) => literal !== exceptLiteral && manager.isOccurring(decl, literal));
 
-  const getRestClauseAsCond = (exceptLiteral: number) => {
-    if (clause === null) return null;
-    const negated = clause
-      .filter((literal) => literal !== exceptLiteral)
-      .map((literal) => mkNot(literal));
-    return negated.length === 0 ? null : mkAnd(negated);
+  // get_rest_clause_as_cond: the condition comes with a reference, which the caller releases.
+  const getRestClauseAsCond = (exceptLiteral: number) =>
+    clause === null
+      ? null
+      : manager.withTemporaries(
+          () => {
+            const negated = clause
+              .filter((literal) => literal !== exceptLiteral)
+              .map((literal) => mkNot(literal));
+            return negated.length === 0 ? null : mkAnd(negated);
+          },
+          (cond) => (cond === null ? [] : [cond]),
+        );
+
+  // A step with the rest of the clause as its condition, which it holds until it returns.
+  const withRestClauseAsCond = (exceptLiteral: number, step: (cond: number | null) => void) => {
+    const cond = getRestClauseAsCond(exceptLiteral);
+    step(cond);
+    if (cond !== null) manager.decRef(cond);
   };
 
   // normalize_expr: the variables of the head become (:var 0) ... (:var n-1) in order.
@@ -188,26 +227,34 @@ export const collectMacroCandidates = (manager: AstManager, quantifier: number) 
         });
   };
 
+  // insert_macro: the candidate holds references to the normalized definition and condition.
   const insertMacro = (
     head: number,
     def: number,
     cond: number | null,
     isIneq: boolean,
     isHint: boolean,
-  ) => {
-    candidates.push({
-      decl: manager.decls[head],
-      def: normalize(head, def),
-      cond: cond !== null ? normalize(head, cond) : isHint ? null : manager.trueExpr,
-      isIneq,
-      isSatisfyAtom: true,
-      isHint,
-      weight: data.weight,
+  ) =>
+    scope(() => {
+      const normDef = normalize(head, def);
+      const normCond = cond !== null ? normalize(head, cond) : isHint ? null : manager.trueExpr;
+      manager.incRef(normDef);
+      if (normCond !== null) manager.incRef(normCond);
+      candidates.push({
+        decl: manager.decls[head],
+        def: normDef,
+        cond: normCond,
+        isIneq,
+        isSatisfyAtom: true,
+        isHint,
+        weight: data.weight,
+      });
     });
-  };
 
   // insert_quasi_macro: a head whose arguments are not distinct variables gets fresh variables,
-  // and for a macro the equalities between them and the arguments join the condition.
+  // and for a macro the equalities between them and the arguments join the condition. new_head,
+  // extra_cond and new_cond hold references until it returns, and are released in the reverse
+  // order of their declarations.
   const insertQuasiMacro = (
     head: number,
     numDecls: number,
@@ -220,25 +267,45 @@ export const collectMacroCandidates = (manager: AstManager, quantifier: number) 
       insertMacro(head, def, cond, isIneq, isHint);
       return;
     }
-    const seen = new Set<number>();
-    const newArgs: number[] = [];
-    const newConds: number[] = [];
-    let nextVarIndex = numDecls;
-    for (const arg of manager.args[head]) {
-      if (manager.kinds[arg] === KIND_VAR && !seen.has(manager.values[arg])) {
-        seen.add(manager.values[arg]);
-        newArgs.push(arg);
-        continue;
-      }
-      const newVar = manager.mkVar(nextVarIndex, manager.sorts[arg]);
-      nextVarIndex++;
-      newArgs.push(newVar);
-      if (!isHint) newConds.push(manager.mkEq(newVar, arg));
-    }
-    const newHead = manager.mkApp(manager.decls[head], newArgs, manager.sorts[head]);
-    const extraCond = mkAnd(newConds);
-    const newCond = isHint ? null : cond === null ? extraCond : mkAnd([cond, extraCond]);
-    insertMacro(newHead, def, newCond, isIneq, isHint);
+    // quasi_macro_head_to_macro_head and hint_to_macro_head: the condition comes before the head.
+    const converted = manager.withTemporaries(
+      () => {
+        const seen = new Set<number>();
+        const newArgs: number[] = [];
+        const newConds: number[] = [];
+        let nextVarIndex = numDecls;
+        for (const arg of manager.args[head]) {
+          if (manager.kinds[arg] === KIND_VAR && !seen.has(manager.values[arg])) {
+            seen.add(manager.values[arg]);
+            newArgs.push(arg);
+            continue;
+          }
+          const newVar = manager.mkVar(nextVarIndex, manager.sorts[arg]);
+          nextVarIndex++;
+          newArgs.push(newVar);
+          if (!isHint) newConds.push(manager.mkEq(newVar, arg));
+        }
+        const extraCond = isHint ? null : mkAnd(newConds);
+        return {
+          extraCond,
+          newHead: manager.mkApp(manager.decls[head], newArgs, manager.sorts[head]),
+        };
+      },
+      (result) =>
+        result.extraCond === null ? [result.newHead] : [result.extraCond, result.newHead],
+    );
+    const extraCond = converted.extraCond;
+    const newCond =
+      extraCond === null
+        ? null
+        : cond === null
+          ? extraCond
+          : manager.withTemporaries(() => mkAnd([cond, extraCond]));
+    if (newCond === extraCond && extraCond !== null) manager.incRef(extraCond);
+    insertMacro(converted.newHead, def, newCond, isIneq, isHint);
+    if (newCond !== null) manager.decRef(newCond);
+    if (extraCond !== null) manager.decRef(extraCond);
+    manager.decRef(converted.newHead);
   };
 
   const collectArith = (
@@ -259,18 +326,21 @@ export const collectMacroCandidates = (manager: AstManager, quantifier: number) 
         !isRestContainingDecl(decl, atom);
       const isHint = !isArithMacro && isPolyHint(manager, lhs, head, monomial);
       if (!isArithMacro && !isHint) return false;
-      const rest = mkAdd(lhsArgs.filter((arg) => arg !== monomial));
-      const def = isNegated ? mkSub(rest, rhs) : mkSub(rhs, rest);
-      // A hint's right-hand side may contain variables that are not arguments of the head.
-      if (!isHint || isPolyHint(manager, def, head, null))
-        insertQuasiMacro(
-          head,
-          numDecls,
-          def,
-          isHint ? null : getRestClauseAsCond(atom),
-          isIneq,
-          isHint,
+      scope(() => {
+        const rest = mkAdd(
+          lhsArgs.filter((arg) => arg !== monomial),
+          manager.sorts[lhs],
         );
+        const def = isNegated ? mkSub(rest, rhs) : mkSub(rhs, rest);
+        // A hint's right-hand side may contain variables that are not arguments of the head.
+        if (isHint && !isPolyHint(manager, def, head, null)) return;
+        // add_arith_macro_candidate.
+        if (isHint) insertQuasiMacro(head, numDecls, def, null, isIneq, true);
+        else
+          withRestClauseAsCond(atom, (cond) =>
+            insertQuasiMacro(head, numDecls, def, cond, isIneq, false),
+          );
+      });
       return true;
     };
     for (const arg of lhsArgs) {
@@ -289,7 +359,9 @@ export const collectMacroCandidates = (manager: AstManager, quantifier: number) 
         isRestContainingDecl(manager.decls[lhs], atom)
       )
         return false;
-      insertQuasiMacro(lhs, numDecls, rhs, getRestClauseAsCond(atom), false, false);
+      withRestClauseAsCond(atom, (cond) =>
+        insertQuasiMacro(lhs, numDecls, rhs, cond, false, false),
+      );
       return true;
     };
     const insertHint = (lhs: number, rhs: number) => {
@@ -304,14 +376,15 @@ export const collectMacroCandidates = (manager: AstManager, quantifier: number) 
     }
     if (op === OP_NOT) {
       const inner = manager.args[atom][0];
-      if (manager.getOp(inner) === OP_EQ && manager.isBool(manager.args[inner][0])) {
-        const lhs = manager.args[inner][0];
-        const rhs = manager.args[inner][1];
-        const negatedRhs = manager.mkNot(rhs);
-        const negatedLhs = manager.mkNot(lhs);
-        if (!insertQuasi(lhs, negatedRhs)) insertHint(lhs, negatedRhs);
-        if (!insertQuasi(rhs, negatedLhs)) insertHint(rhs, negatedLhs);
-      }
+      if (manager.getOp(inner) === OP_EQ && manager.isBool(manager.args[inner][0]))
+        scope(() => {
+          const lhs = manager.args[inner][0];
+          const rhs = manager.args[inner][1];
+          const negatedLhs = manager.mkNot(lhs);
+          const negatedRhs = manager.mkNot(rhs);
+          if (!insertQuasi(lhs, negatedRhs)) insertHint(lhs, negatedRhs);
+          if (!insertQuasi(rhs, negatedLhs)) insertHint(rhs, negatedLhs);
+        });
     }
     if (op === OP_EQ || op === OP_LE || op === OP_GE) {
       const lhs = manager.args[atom][0];
@@ -321,7 +394,7 @@ export const collectMacroCandidates = (manager: AstManager, quantifier: number) 
     }
   };
 
-  for (const literal of clause ?? [body]) collectCore(literal, data.sorts.length);
+  for (const literal of clause ?? [body]) scope(() => collectCore(literal, data.sorts.length));
   return candidates;
 };
 

@@ -13,16 +13,15 @@ import {
   OP_LE,
   OP_NOT,
   OP_OR,
-  OP_SUB,
   OP_XOR,
   FAMILY_BASIC,
   FAMILY_USER,
-  SORT_INT,
   type AstManager,
 } from "./ast";
 import type { Context } from "./context";
-import { collectMacroCandidates } from "./model-macro-solver";
+import { collectMacroCandidates, releaseCondMacros } from "./model-macro-solver";
 import { pullQuant } from "./pull-quant";
+import { Rational } from "./rational";
 import { Rewriter } from "./rewriter";
 import { AufSolver, type Evaluate, InstantiationSet, Node } from "./auf-solver";
 
@@ -59,10 +58,17 @@ export class QuantifierInfo {
     private context: Context,
     readonly quantifier: number,
   ) {
-    this.flatQ = manager.hasQuantifierFlags[manager.getQuantifier(quantifier).body]
-      ? pullQuant(manager, quantifier)
-      : quantifier;
+    // m_flat_q, which holds a reference.
+    const isNested = manager.hasQuantifierFlags[manager.getQuantifier(quantifier).body];
+    this.flatQ = isNested ? pullQuant(manager, quantifier) : quantifier;
+    if (!isNested) manager.incRef(quantifier);
     this.condMacros = collectMacroCandidates(manager, this.flatQ);
+  }
+
+  // ~quantifier_info: the conditional macros go before the flat quantifier.
+  release() {
+    releaseCondMacros(this.manager, this.condMacros);
+    this.manager.decRef(this.flatQ);
   }
 
   insertQInfo(info: QInfo) {
@@ -116,7 +122,7 @@ export class QuantifierInfo {
     for (const enode of context.enodesOf(decl))
       if (context.isRelevant(enode.owner)) {
         const arg = enode.args[argIndex];
-        node.insert(this.manager, arg.owner, arg.generation);
+        node.insert(this.manager, arg.owner, context.getGeneration(arg));
       }
   }
 
@@ -140,8 +146,8 @@ export class QuantifierInfo {
                 const arg = enode.args[info.argIndex];
                 sJ.insert(
                   manager,
-                  solver.rewriter.mkAppCore(OP_SUB, [arg.owner, info.offset], SORT_INT),
-                  arg.generation,
+                  solver.rewriter.mkSub(arg.owner, info.offset),
+                  context.getGeneration(arg),
                 );
               }
           } else {
@@ -158,7 +164,7 @@ export class QuantifierInfo {
             const node = solver.getUvar(flatQ, info.varIndex);
             for (const enode of context.enodes)
               if (context.isRelevant(enode.owner) && manager.sorts[enode.owner] === sort)
-                node.insert(manager, enode.owner, enode.generation);
+                node.insert(manager, enode.owner, context.getGeneration(enode));
           }
           break;
         }
@@ -185,7 +191,7 @@ export class QuantifierInfo {
     for (const entry of from.getInstantiationSet().elems)
       to.insert(
         this.manager,
-        rewriter.mkAppCore(isPlus ? OP_ADD : OP_SUB, [entry[0], offset], SORT_INT),
+        isPlus ? rewriter.mkAdd([entry[0], offset]) : rewriter.mkSub(entry[0], offset),
         entry[1],
       );
   }
@@ -203,7 +209,7 @@ export class QuantifierInfo {
         for (const enode of this.context.enodesOf(info.decl))
           if (this.context.isRelevant(enode.owner)) {
             const arg = enode.args[info.argIndex];
-            set.insert(arg.owner, arg.generation);
+            set.insert(arg.owner, this.context.getGeneration(arg));
           }
       }
       for (const set of sets) set?.mkInverse(evaluate);
@@ -271,16 +277,16 @@ export class QuantifierAnalyzer {
       } else return undefined;
     }
     if (variable === undefined) return undefined;
-    const term = args.length === 1 ? args[0] : this.rewriter.mkAppCore(OP_ADD, args, SORT_INT);
+    const term = args.length === 1 ? args[0] : this.rewriter.mkAdd(args);
     return { variable, term, isInverted };
   }
 
   private mkSub(first: number, second: number) {
-    return this.rewriter.mkAppCore(OP_SUB, [first, second], SORT_INT);
+    return this.rewriter.mkSub(first, second);
   }
 
   private mkAdd(first: number, second: number) {
-    return this.rewriter.mkAppCore(OP_ADD, [first, second], SORT_INT);
+    return this.rewriter.mkAdd([first, second]);
   }
 
   private isVarAndGround(lhs: number, rhs: number) {
@@ -318,7 +324,7 @@ export class QuantifierAnalyzer {
   }
 
   private isZero(expr: number) {
-    return this.manager.isNumeral(expr) && this.manager.values[expr] === 0;
+    return this.manager.getNumeral(expr) === 0n;
   }
 
   private isVarAndVar(lhs: number, rhs: number) {
@@ -343,7 +349,7 @@ export class QuantifierAnalyzer {
     if (found === undefined) return undefined;
     if (isNegated) return { variable: found.variable, term: found.term };
     const isLe = (manager.getOp(atom) === OP_LE) !== found.isInverted;
-    const one = manager.mkNumeral(1);
+    const one = manager.mkNumeralOfSort(Rational.one, manager.sorts[found.term]);
     return {
       variable: found.variable,
       term: isLe ? this.mkAdd(found.term, one) : this.mkSub(found.term, one),

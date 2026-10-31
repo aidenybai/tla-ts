@@ -14,12 +14,12 @@ const FREE_CELL = -2;
 export class ActCache {
   private slots = INIT_SLOTS;
   private capacity = INIT_SLOTS + INIT_CELLAR;
-  private keys: number[] = [];
-  private offsets: number[] = [];
-  private values: number[] = [];
+  private keys = new Int32Array(0);
+  private offsets = new Int32Array(0);
+  private values = new Int32Array(0);
   // Whether client code looked the entry up, the tag of Z3's value pointer.
-  private isUsed: boolean[] = [];
-  private nexts: number[] = [];
+  private isUsed = new Uint8Array(0);
+  private nexts = new Int32Array(0);
   private nextCell = INIT_SLOTS;
   private freeCell = NO_CELL;
   private size = 0;
@@ -41,11 +41,11 @@ export class ActCache {
   private initTable(slots: number, cellar: number) {
     this.slots = slots;
     this.capacity = slots + cellar;
-    this.keys = [];
-    this.offsets = [];
-    this.values = [];
-    this.isUsed = [];
-    this.nexts = Array.from({ length: this.capacity }, () => FREE_CELL);
+    this.keys = new Int32Array(this.capacity);
+    this.offsets = new Int32Array(this.capacity);
+    this.values = new Int32Array(this.capacity);
+    this.isUsed = new Uint8Array(this.capacity);
+    this.nexts = new Int32Array(this.capacity).fill(FREE_CELL);
     this.nextCell = slots;
     this.freeCell = NO_CELL;
     this.size = 0;
@@ -178,8 +178,17 @@ export class ActCache {
     if (this.freeCell === NO_CELL && this.nextCell >= this.capacity) this.expandTable();
     const slot = this.getHash(key, offset) & (this.slots - 1);
     if (this.nexts[slot] !== FREE_CELL) {
-      for (let cell = slot; cell !== NO_CELL; cell = this.nexts[cell])
-        if (this.keys[cell] === key && this.offsets[cell] === offset) return;
+      for (let cell = slot; cell !== NO_CELL; cell = this.nexts[cell]) {
+        if (this.keys[cell] !== key || this.offsets[cell] !== offset) continue;
+        // A new value replaces the old one and clears the tag, though it is not counted as unused.
+        if (this.values[cell] !== value) {
+          this.manager.incRef(value);
+          this.manager.decRef(this.values[cell]);
+          this.values[cell] = value;
+          this.isUsed[cell] = 0;
+        }
+        return;
+      }
       // The new entry takes the slot, and the old head moves to a free cell after it.
       const moved = this.getFreeCell();
       this.copyCell(moved, slot);
@@ -194,14 +203,14 @@ export class ActCache {
     this.keys[slot] = key;
     this.offsets[slot] = offset;
     this.values[slot] = value;
-    this.isUsed[slot] = false;
+    this.isUsed[slot] = 0;
   }
 
   find(key: number, offset: number) {
     const cell = this.findCell(key, offset);
     if (cell === NO_CELL) return undefined;
     if (!this.isUsed[cell]) {
-      this.isUsed[cell] = true;
+      this.isUsed[cell] = 1;
       this.numUnused--;
     }
     return this.values[cell];
@@ -209,7 +218,7 @@ export class ActCache {
 
   // reset: releases the entries in the table's order.
   reset() {
-    for (let slot = 0; slot < this.slots; slot++) {
+    for (let slot = 0; slot < this.slots && this.size > 0; slot++) {
       if (this.nexts[slot] === FREE_CELL) continue;
       for (let cell = slot; cell !== NO_CELL; cell = this.nexts[cell]) {
         this.manager.decRef(this.keys[cell]);

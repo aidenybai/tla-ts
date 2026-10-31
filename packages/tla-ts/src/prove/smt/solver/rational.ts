@@ -12,6 +12,13 @@ export const getGcd = (first: bigint, second: bigint) => {
   return left;
 };
 
+const isBigInt = (value: bigint) => value <= -2147483648n || value > 2147483647n;
+
+export const getLcm = (first: bigint, second: bigint) => {
+  const product = first * second;
+  return (product < 0n ? -product : product) / getGcd(first, second);
+};
+
 export class Rational {
   static readonly zero = new Rational(0n, 1n);
   static readonly one = new Rational(1n, 1n);
@@ -70,6 +77,15 @@ export class Rational {
 
   neg() {
     return new Rational(-this.num, this.den);
+  }
+
+  abs() {
+    return this.num < 0n ? this.neg() : this;
+  }
+
+  // is_big: mpz keeps a numerator or denominator outside a 32-bit int as a bignum.
+  isBig() {
+    return isBigInt(this.num) || isBigInt(this.den);
   }
 
   compare(other: Rational) {

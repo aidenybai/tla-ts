@@ -5,10 +5,24 @@
 import { SmtCanceledError } from "../../../errors";
 import { ActCache } from "./act-cache";
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_ITE, type AstManager } from "./ast";
+import { shrink } from "./array";
+
+// A result that the main loop rewrites again to depth levels, like Z3's BR_REWRITE1 (depth 1) to
+// BR_REWRITE_FULL (depth Infinity).
+export interface Rewrite {
+  expr: number;
+  depth: number;
+}
+
+// The depth to rewrite a Rewrite's result to. A frame keeps its depth in two bits, where 3 is
+// RW_UNBOUNDED_DEPTH, so BR_REWRITE3 rewrites the result without a bound.
+export const getRewriteDepth = (rewrite: Rewrite) =>
+  rewrite.depth >= 3 ? Infinity : rewrite.depth;
 
 // rewriter_tpl's frame states.
 const PROCESS_CHILDREN = 0;
 const REWRITE_BUILTIN = 1;
+const EXPAND_DEF = 2;
 
 // A rewrite still to finish: its expression, state, next child, the depth left to rewrite, where
 // its children's results start on the result stack, whether to cache its result, and whether a
@@ -62,8 +76,10 @@ class RewriterCore {
   }
 
   protected shrinkResults(size: number) {
-    const removed = this.resultStack.splice(size);
-    for (const expr of removed) this.manager.decRef(expr);
+    const resultStack = this.resultStack;
+    for (let index = size; index < resultStack.length; index++)
+      this.manager.decRef(resultStack[index]);
+    shrink(resultStack, size);
   }
 
   protected setNewChildFlag(oldExpr: number, newExpr: number) {
@@ -295,7 +311,8 @@ export class InvVarShifter extends VarShifterCore {
 }
 
 // rewriter_tpl with default_rewriter_cfg. A configuration overrides the hooks. The results of
-// reduceApp and reduceQuantifier come with a reference, and -1 is Z3's BR_FAILED or false.
+// reduceApp and reduceQuantifier come with a reference, and -1 is Z3's BR_FAILED or false. A
+// Rewrite from reduceApp is rewritten again.
 export class RewriterTpl extends RewriterCore {
   // m_r: the last result, which Z3 holds until it assigns the next one.
   private lastResult = -1;
@@ -304,11 +321,14 @@ export class RewriterTpl extends RewriterCore {
   private bindings: number[] = [];
   private shifts: number[] = [];
   private shifter: VarShifter;
-  private numSteps = 0;
+  private invShifter: InvVarShifter;
+  // m_blocked: the constants that a nested rewriter does not expand.
+  private blocked = new Set<number>();
 
   constructor(manager: AstManager) {
     super(manager);
     this.shifter = new VarShifter(manager);
+    this.invShifter = new InvVarShifter(manager);
   }
 
   protected isFlatAssoc(_decl: number) {
@@ -327,18 +347,27 @@ export class RewriterTpl extends RewriterCore {
     return undefined;
   }
 
-  protected reduceApp(_decl: number, _args: number[], _sort: number) {
+  protected reduceApp(_decl: number, _args: number[], _sort: number): number | Rewrite {
     return -1;
+  }
+
+  // get_macro: the definition of decl over (:var i) for argument i, or -1.
+  protected getMacro(_decl: number) {
+    return -1;
+  }
+
+  // reduce_macro: whether a ground definition is rewritten rather than taken as it is.
+  protected isReducingMacro() {
+    return false;
   }
 
   protected reduceQuantifier(_expr: number, _body: number, _patterns: number[]) {
     return -1;
   }
 
-  // Throws SmtCanceledError when the resource limit cancels the rewrite. The check runs every 256
-  // steps rather than on each step.
-  protected checkLimit() {
-    if ((++this.numSteps & 255) === 0 && !this.manager.limit.inc()) throw new SmtCanceledError();
+  // A rewriter with the same configuration, for a constant that rewrites to a term with arguments.
+  protected mkNested(): RewriterTpl {
+    return new RewriterTpl(this.manager);
   }
 
   // set_inv_bindings: (:var i) becomes bindings[n - 1 - i], and -1 keeps it.
@@ -362,6 +391,7 @@ export class RewriterTpl extends RewriterCore {
     this.bindings = [];
     this.shifts = [];
     this.shifter.reset();
+    this.invShifter.reset();
   }
 
   // cleanup: releases every cache.
@@ -369,11 +399,14 @@ export class RewriterTpl extends RewriterCore {
     this.cleanupCore();
     this.bindings = [];
     this.shifter.cleanup();
+    this.invShifter.cleanup();
     this.shifts = [];
   }
 
-  // ~rewriter_tpl: the shifter's caches go first, then the rewriter's.
+  // ~rewriter_tpl: the shifters' caches go first, the inverse shifter's before the other's, then
+  // the rewriter's.
   release() {
+    this.invShifter.release();
     this.shifter.release();
     this.releaseCaches();
   }
@@ -390,9 +423,12 @@ export class RewriterTpl extends RewriterCore {
       }
       this.root = expr;
       this.numQvars = 0;
+      // main_loop and each step of resume_core count a step of the resource limit, and throw
+      // SmtCanceledError when it cancels the rewrite.
+      if (!manager.limit.inc()) throw new SmtCanceledError();
       if (!this.visit(expr, Infinity))
         while (this.frames.length > 0) {
-          this.checkLimit();
+          if (!manager.limit.inc()) throw new SmtCanceledError();
           const frame = this.frames[this.frames.length - 1];
           const curr = frame.curr;
           if (frame.childIndex === 0 && frame.state === PROCESS_CHILDREN && frame.isCaching) {
@@ -404,8 +440,14 @@ export class RewriterTpl extends RewriterCore {
               continue;
             }
           }
-          if (manager.kinds[curr] === KIND_APP) this.processApp(curr, frame);
-          else this.processQuantifier(curr, frame);
+          const kind = manager.kinds[curr];
+          if (kind === KIND_APP) this.processApp(curr, frame);
+          else if (kind === KIND_QUANTIFIER) this.processQuantifier(curr, frame);
+          else {
+            // A definition that is a variable gets a frame of its own.
+            this.frames.pop();
+            this.processVar(curr);
+          }
         }
       return this.resultStack.pop() as number;
     });
@@ -418,7 +460,7 @@ export class RewriterTpl extends RewriterCore {
     return this.rewrite(expr);
   }
 
-  private setLastResult(expr: number) {
+  protected setLastResult(expr: number) {
     if (expr !== -1) this.manager.incRef(expr);
     if (this.lastResult !== -1) this.manager.decRef(this.lastResult);
     this.lastResult = expr;
@@ -461,11 +503,67 @@ export class RewriterTpl extends RewriterCore {
       return true;
     }
     if (kind === KIND_APP && manager.args[expr].length === 0) {
-      this.pushResult(expr);
+      if (!this.processConst(expr)) this.rewriteConstResult(expr);
       return true;
     }
     this.pushFrame(expr, isCaching, maxDepth === Infinity ? maxDepth : maxDepth - 1);
     return false;
+  }
+
+  // process_const: a constant is reduced, and a constant it rewrites to is reduced again. It
+  // returns false when the constant rewrites to a term with arguments, which m_r holds. The constant
+  // being reduced is held, like Z3's t.
+  private processConst(expr: number) {
+    const manager = this.manager;
+    let current = expr;
+    manager.incRef(current);
+    for (let isRetried = false; ; isRetried = true) {
+      const reduced = this.reduceApp(manager.decls[current], [], manager.sorts[current]);
+      if (reduced !== -1) {
+        const result = typeof reduced === "number" ? reduced : reduced.expr;
+        this.setLastResult(result);
+        manager.decRef(result);
+      }
+      if (reduced === -1 && !isRetried) {
+        this.pushResult(current);
+        manager.decRef(current);
+        return true;
+      }
+      if (typeof reduced === "number") {
+        if (reduced === -1) this.setLastResult(current);
+        this.pushResult(this.lastResult);
+        this.setLastResult(-1);
+        this.setNewChildFlag(expr, -1);
+        manager.decRef(current);
+        return true;
+      }
+      const result = reduced.expr;
+      if (manager.kinds[result] !== KIND_APP || manager.args[result].length > 0) {
+        manager.decRef(current);
+        return false;
+      }
+      manager.incRef(result);
+      manager.decRef(current);
+      current = result;
+    }
+  }
+
+  // A constant that rewrites to a term with arguments: a rewriter with the same configuration
+  // rewrites the term, with the constant blocked so that it is not expanded again. m_r keeps the
+  // result.
+  private rewriteConstResult(expr: number) {
+    const manager = this.manager;
+    if (!this.blocked.has(expr)) {
+      const nested = this.mkNested();
+      for (const blocked of this.blocked) nested.blocked.add(blocked);
+      nested.blocked.add(expr);
+      const result = nested.rewrite(this.lastResult);
+      this.setLastResult(result);
+      manager.decRef(result);
+      nested.release();
+    }
+    this.setNewChildFlag(expr, -1);
+    this.pushResult(this.lastResult);
   }
 
   // process_var: a bound variable becomes its binding, shifted over the quantifiers entered since
@@ -497,14 +595,11 @@ export class RewriterTpl extends RewriterCore {
   private processApp(expr: number, frame: Frame) {
     const manager = this.manager;
     if (frame.state === REWRITE_BUILTIN) {
-      const result = this.resultStack[this.resultStack.length - 1];
-      this.setLastResult(result);
-      this.shrinkResults(this.resultStack.length - 1);
-      this.shrinkResults(this.resultStack.length - 1);
-      this.pushResult(result);
-      this.cacheResult(expr, result, frame.isCaching);
-      this.frames.pop();
-      this.setNewChildFlag(expr, -1);
+      this.finishRewriteBuiltin(expr, frame);
+      return;
+    }
+    if (frame.state === EXPAND_DEF) {
+      this.finishExpandDef(expr, frame);
       return;
     }
     const args = manager.args[expr];
@@ -529,7 +624,36 @@ export class RewriterTpl extends RewriterCore {
     }
     const newArgs = this.resultStack.slice(frame.spos);
     const reduced = this.reduceApp(decl, newArgs, manager.sorts[expr]);
-    if (reduced === -1)
+    if (typeof reduced !== "number") {
+      // BR_REWRITE: the result replaces the arguments and is rewritten to the depth it asks for.
+      this.setLastResult(reduced.expr);
+      manager.decRef(reduced.expr);
+      this.shrinkResults(frame.spos);
+      this.pushResult(reduced.expr);
+      frame.state = REWRITE_BUILTIN;
+      if (this.visit(reduced.expr, getRewriteDepth(reduced)))
+        this.finishRewriteBuiltin(expr, frame);
+      this.setLastResult(-1);
+      return;
+    }
+    const definition = reduced === -1 ? this.getMacro(decl) : -1;
+    if (definition !== -1 && (!manager.isGroundApp(definition) || this.isReducingMacro())) {
+      // The definition is rewritten with the arguments bound to its variables.
+      frame.state = EXPAND_DEF;
+      const size = this.bindings.length;
+      for (let index = newArgs.length - 1; index >= 0; index--) {
+        this.bindings.push(newArgs[index]);
+        this.shifts.push(size);
+      }
+      this.pushResult(definition);
+      this.beginScope();
+      this.numQvars += newArgs.length;
+      this.root = definition;
+      this.pushFrame(definition, false, Infinity);
+      return;
+    }
+    if (definition !== -1) this.setLastResult(definition);
+    else if (reduced === -1)
       this.setLastResult(
         frame.hasNewChild ? manager.mkApp(decl, newArgs, manager.sorts[expr]) : expr,
       );
@@ -546,6 +670,42 @@ export class RewriterTpl extends RewriterCore {
     this.setLastResult(-1);
   }
 
+  // REWRITE_BUILTIN: the result of the rewritten term replaces the term on the result stack.
+  private finishRewriteBuiltin(expr: number, frame: Frame) {
+    const result = this.resultStack[this.resultStack.length - 1];
+    this.setLastResult(result);
+    this.shrinkResults(this.resultStack.length - 1);
+    this.shrinkResults(this.resultStack.length - 1);
+    this.pushResult(result);
+    this.cacheResult(expr, result, frame.isCaching);
+    this.frames.pop();
+    this.setNewChildFlag(expr, -1);
+  }
+
+  // EXPAND_DEF: the rewritten definition, with its variables moved back down, replaces the term.
+  // m_r keeps it until the next result.
+  private finishExpandDef(expr: number, frame: Frame) {
+    const manager = this.manager;
+    const numArgs = manager.args[expr].length;
+    shrink(this.bindings, this.bindings.length - numArgs);
+    shrink(this.shifts, this.shifts.length - numArgs);
+    this.numQvars -= numArgs;
+    this.endScope();
+    const rewritten = this.resultStack[this.resultStack.length - 1];
+    if (manager.isGroundApp(rewritten)) this.setLastResult(rewritten);
+    else {
+      const shifted = this.invShifter.shift(rewritten, numArgs);
+      this.setLastResult(shifted);
+      manager.decRef(shifted);
+    }
+    const result = this.lastResult;
+    this.shrinkResults(frame.spos);
+    this.pushResult(result);
+    this.cacheResult(expr, result, frame.isCaching);
+    this.frames.pop();
+    this.setNewChildFlag(expr, -1);
+  }
+
   // constant_fold: an ite whose condition rewrote to true or false becomes the chosen branch.
   private isConstantFolded(expr: number, frame: Frame) {
     const manager = this.manager;
@@ -560,16 +720,7 @@ export class RewriterTpl extends RewriterCore {
     this.shrinkResults(frame.spos);
     this.pushResult(arg);
     frame.state = REWRITE_BUILTIN;
-    if (this.visit(arg, frame.maxDepth)) {
-      const result = this.resultStack[this.resultStack.length - 1];
-      this.setLastResult(result);
-      this.shrinkResults(this.resultStack.length - 1);
-      this.shrinkResults(this.resultStack.length - 1);
-      this.pushResult(result);
-      this.cacheResult(expr, result, frame.isCaching);
-      this.frames.pop();
-      this.setNewChildFlag(expr, -1);
-    }
+    if (this.visit(arg, frame.maxDepth)) this.finishRewriteBuiltin(expr, frame);
     this.setLastResult(-1);
     return true;
   }
@@ -611,8 +762,8 @@ export class RewriterTpl extends RewriterCore {
     const result = this.lastResult;
     this.shrinkResults(frame.spos);
     this.pushResult(result);
-    this.bindings.length -= numDecls;
-    this.shifts.length -= numDecls;
+    shrink(this.bindings, this.bindings.length - numDecls);
+    shrink(this.shifts, this.shifts.length - numDecls);
     this.endScope();
     this.cacheResult(expr, result, frame.isCaching);
     this.setLastResult(-1);

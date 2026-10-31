@@ -2,7 +2,16 @@
 // model from the current assignment: every relevant equivalence class gets a value, Booleans from
 // the assignment, integers from the arithmetic theory and other sorts from fresh model values, and
 // each congruence root of an uninterpreted function becomes an entry of its interpretation.
-import { FAMILY_USER, SORT_BOOL, SORT_INT } from "./ast";
+import {
+  FAMILY_MODEL_VALUE,
+  FAMILY_USER,
+  type FuncDecl,
+  OP_DIV0,
+  OP_IDIV0,
+  OP_MOD0,
+  SORT_BOOL,
+  isArithSort,
+} from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import { FuncInterp, ProtoModel } from "./proto-model";
@@ -11,6 +20,15 @@ export interface GeneratedModel {
   model: ProtoModel;
   root2value: Map<Enode, number>;
 }
+
+// include_func_interp: the model interprets uninterpreted functions, theory_lra's divisions by zero,
+// and the decls of a family without a theory, such as model values, which stand for themselves.
+const isIncludedFuncInterp = (decl: FuncDecl) =>
+  decl.family === FAMILY_USER ||
+  decl.family === FAMILY_MODEL_VALUE ||
+  decl.op === OP_DIV0 ||
+  decl.op === OP_IDIV0 ||
+  decl.op === OP_MOD0;
 
 export const mkModel = (context: Context): GeneratedModel => {
   const manager = context.manager;
@@ -21,14 +39,17 @@ export const mkModel = (context: Context): GeneratedModel => {
     if (node.root === node && context.isRelevant(node.owner) && manager.isModelValue(node.owner))
       model.registerValue(node.owner);
   // mk_bool_model.
-  for (const expr of context.boolVar2Expr)
+  for (let boolVar = 0; boolVar < context.numBoolVars; boolVar++) {
+    const expr = context.boolVar2Expr[boolVar];
     if (manager.isUninterpretedConst(expr) && context.isRelevant(expr))
       model.registerConst(
         manager.decls[expr],
         context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr,
       );
-  // mk_values: the values of the integer classes that the theory does not know are fresh, so they
-  // come after all the other values.
+  }
+  // mk_values: the values of the arithmetic classes that the theory does not know are fresh, so
+  // they come after all the other values. Like Z3, that includes the class of a numeral without a
+  // theory variable, such as a coefficient.
   const root2value = new Map<Enode, number>();
   const freshRoots: Enode[] = [];
   for (const node of context.enodes) {
@@ -36,18 +57,20 @@ export const mkModel = (context: Context): GeneratedModel => {
     const expr = node.owner;
     if (!context.isRelevant(expr) && !manager.isUniqueValue(expr)) continue;
     const sort = manager.sorts[expr];
-    if (manager.isUniqueValue(expr)) root2value.set(node, expr);
-    else if (sort === SORT_BOOL)
+    if (sort === SORT_BOOL)
       root2value.set(node, context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr);
-    else if (sort === SORT_INT) {
+    else if (manager.isUniqueValue(expr) && !isArithSort(sort)) root2value.set(node, expr);
+    else if (isArithSort(sort)) {
       const value = context.theory?.mkValue(node);
       if (value === undefined) freshRoots.push(node);
       else root2value.set(node, value);
     } else root2value.set(node, model.getFreshValue(sort) ?? model.getSomeValue(sort));
   }
   for (const value of root2value.values()) model.registerValue(value);
-  for (const node of freshRoots)
-    root2value.set(node, model.getFreshValue(SORT_INT) ?? model.getSomeValue(SORT_INT));
+  for (const node of freshRoots) {
+    const sort = manager.sorts[node.owner];
+    root2value.set(node, model.getFreshValue(sort) ?? model.getSomeValue(sort));
+  }
   const getValue = (node: Enode) =>
     root2value.get(node.root) ?? model.getSomeValue(manager.sorts[node.owner]);
   for (const node of context.enodes)
@@ -56,7 +79,7 @@ export const mkModel = (context: Context): GeneratedModel => {
   // mk_func_interps.
   for (const node of context.enodes) {
     const expr = node.owner;
-    if (!context.isRelevant(expr) || manager.funcDecls[node.decl].family !== FAMILY_USER) continue;
+    if (!context.isRelevant(expr) || !isIncludedFuncInterp(manager.funcDecls[node.decl])) continue;
     if (node.args.length === 0) {
       model.registerConst(node.decl, getValue(node));
       continue;

@@ -2,9 +2,12 @@
 // search: a CDCL loop over Boolean variables combined with an E-graph for congruence closure,
 // relevancy propagation, the arithmetic theory and quantifier instantiation, with Z3's default
 // parameters for UFNIA.
+import type { AssertedFormulas } from "./asserted-formulas";
 import { AstManager, FAMILY_ARITH, KIND_APP, KIND_QUANTIFIER, KIND_VAR } from "./ast";
-import { BJustification, Clause, CLS_LEARNED } from "./clause";
+import { getCongruenceJustification } from "./cg-table";
+import { BJustification, Clause, CLS_LEARNED, CLS_TH_LEMMA } from "./clause";
 import { ConflictResolution } from "./conflict-resolution";
+import { DynAckManager } from "./dyn-ack";
 import {
   Enode,
   EqConflictJustification,
@@ -13,13 +16,15 @@ import {
   EqRootPropagationJustification,
   MpIffJustification,
 } from "./enode";
-import { Internalizer } from "./internalizer";
+import { Internalizer, UNDO_ADD_EQ, UNDO_TH_VAR } from "./internalizer";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate } from "./literal";
 import { mkModel } from "./model-generator";
+import type { GeneratedModel } from "./model-generator";
 import type { ProtoModel } from "./proto-model";
 import { DefaultQuantifierManager } from "./quantifier-manager";
 import { TheoryLra } from "./theory-lra";
+import { shrink } from "./array";
 
 export const FC_DONE = 0;
 export const FC_CONTINUE = 1;
@@ -37,6 +42,8 @@ const AGILITY_FACTOR = 0.9999;
 // The LGC_FIXED lemma garbage collection: lemma_gc_initial conflicts between collections, and the
 // activity and unassigned literal thresholds of del_inactive_lemmas2.
 const LEMMA_GC_INITIAL = 5000;
+// theory_lra::num_final_check_levels: level 2 also runs nlsat's full check.
+const NUM_ARITH_FINAL_CHECK_LEVELS = 2;
 const NEW_OLD_RATIO = 16;
 const OLD_CLAUSE_ACTIVITY = 500;
 const NEW_CLAUSE_RELEVANCY = 45;
@@ -51,6 +58,7 @@ export const CHECK_MODEL_RESTART = 2;
 export const FAILURE_OK = 0;
 export const FAILURE_THEORY = 1;
 export const FAILURE_QUANTIFIERS = 2;
+const FAILURE_CANCELED = 3;
 
 // smt_params: the kernel runs model-based quantifier instantiation with relevancy level 2 and the
 // CS_ACTIVITY_DELAY_NEW case split queue. The model checker's auxiliary context runs neither, as Z3
@@ -61,9 +69,11 @@ export interface SmtParams {
 }
 
 export class Context extends Internalizer {
-  readonly theory: TheoryLra = new TheoryLra(this);
+  // setup_context makes the theories after the first formulas are asserted.
+  theory!: TheoryLra;
   readonly qmanager: DefaultQuantifierManager;
   readonly conflictResolution: ConflictResolution = new ConflictResolution(this);
+  private readonly dynAck = new DynAckManager(this);
   private qhead = 0;
   private scopeAssignedLimits: number[] = [];
   private scopeAuxClauseLimits: number[] = [];
@@ -84,11 +94,22 @@ export class Context extends Internalizer {
   private phaseCounter = 0;
   private finalCheckIndex = 0;
   private r1ParentGenerations = new Map<Enode, number>();
+  private erasedGenerations = new Map<Enode, number>();
   private lastSearchFailure = FAILURE_OK;
+  // m_model_generator's model, m_proto_model and m_model.
+  private generatedModel: GeneratedModel | null = null;
+  private protoModel: ProtoModel | null = null;
+  private model: ProtoModel | null = null;
 
   constructor(manager: AstManager, params: SmtParams) {
     super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
     this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
+  }
+
+  // register_plugin initializes each theory it registers.
+  setupContext() {
+    this.theory = new TheoryLra(this);
+    this.theory.init();
   }
 
   // The search stops with unknown when the manager's resource limit cancels it.
@@ -124,11 +145,12 @@ export class Context extends Internalizer {
 
   private bcp() {
     while (this.qhead < this.assignedLiterals.length) {
+      if (this.checkCanceled()) return true;
       const literal = this.assignedLiterals[this.qhead];
       this.qhead++;
       const notLiteral = negate(literal);
       const binary = this.binaryWatches[literal];
-      if (binary.length > 0) {
+      if (binary !== undefined && binary.length > 0) {
         const justification = this.getBinJustification(literal);
         for (let index = binary.length - 1; index >= 0; index--) {
           const other = binary[index];
@@ -141,19 +163,15 @@ export class Context extends Internalizer {
         }
       }
       const list = this.watches[literal];
+      if (list === undefined) continue;
       let kept = 0;
       let index = 0;
       for (; index < list.length; index++) {
-        const clause = list[index];
+        const clause: Clause = list[index];
         const literals = clause.literals;
         if (literals[0] === notLiteral) {
           literals[0] = literals[1];
           literals[1] = notLiteral;
-          if (clause.atoms !== null) {
-            const savedAtom = clause.atoms[0];
-            clause.atoms[0] = clause.atoms[1];
-            clause.atoms[1] = savedAtom;
-          }
         }
         const firstLiteral = literals[0];
         const firstValue = this.assignment[firstLiteral];
@@ -165,14 +183,9 @@ export class Context extends Internalizer {
         for (let position = 2; position < literals.length; position++) {
           const candidate = literals[position];
           if (this.assignment[candidate] !== L_FALSE) {
-            this.watches[negate(candidate)].push(clause);
+            this.addWatch(negate(candidate), clause);
             literals[1] = candidate;
             literals[position] = notLiteral;
-            if (clause.atoms !== null) {
-              const savedAtom = clause.atoms[1];
-              clause.atoms[1] = clause.atoms[position];
-              clause.atoms[position] = savedAtom;
-            }
             isFound = true;
             break;
           }
@@ -181,19 +194,19 @@ export class Context extends Internalizer {
         list[kept++] = clause;
         if (firstValue === L_FALSE) {
           for (index++; index < list.length; index++) list[kept++] = list[index];
-          list.length = kept;
+          shrink(list, kept);
           this.setConflict(clause, null);
           return false;
         }
         this.assignCore(firstLiteral, clause, false);
       }
-      list.length = kept;
+      shrink(list, kept);
     }
     return true;
   }
 
   private propagateEqs() {
-    for (let index = 0; index < this.eqPropagationQueue.length; index++) {
+    for (let index = 0; index < this.eqPropagationQueue.length && !this.checkCanceled(); index++) {
       const entry = this.eqPropagationQueue[index];
       this.addEq(entry.lhs, entry.rhs, entry.justification);
       if (this.isInconsistent()) {
@@ -207,7 +220,7 @@ export class Context extends Internalizer {
 
   private propagateAtoms() {
     const queue = this.atomPropagationQueue;
-    for (let index = 0; index < queue.length; index++) {
+    for (let index = 0; index < queue.length && !this.checkCanceled(); index++) {
       const literal = queue[index];
       const boolVar = getVar(literal);
       const value = this.assignment[mkLiteral(boolVar)];
@@ -329,7 +342,7 @@ export class Context extends Internalizer {
       if (this.isInconsistent()) return false;
       if (!this.checkCanceled()) this.qmanager.propagate();
       if (this.isInconsistent()) return false;
-      if (this.checkCanceled()) {
+      if (this.isResourceLimitExceeded()) {
         this.qhead = qhead;
         return true;
       }
@@ -340,21 +353,24 @@ export class Context extends Internalizer {
   // Equalities.
 
   private getClosestVar(start: Enode) {
-    for (let node: Enode | undefined = start; node !== undefined; node = node.trans?.target)
+    for (let node: Enode | null = start; node !== null; node = node.transTarget)
       if (node.thVar >= 0) return node.thVar;
     return -1;
   }
 
   private invertTrans(start: Enode) {
-    let trans = start.trans;
+    let current = start.transTarget;
+    let justification = start.transJustification;
     let previous = start;
-    start.trans = null;
-    while (trans !== null) {
-      const current = trans.target;
-      const next = current.trans;
-      current.trans = { target: previous, justification: trans.justification };
+    start.transTarget = null;
+    while (current !== null) {
+      const next = current.transTarget;
+      const nextJustification = current.transJustification;
+      current.transTarget = previous;
+      current.transJustification = justification;
       previous = current;
-      trans = next;
+      current = next;
+      justification = nextJustification;
     }
   }
 
@@ -403,30 +419,26 @@ export class Context extends Internalizer {
   }
 
   attachThVar(node: Enode, thVar: number) {
+    const oldVar = node.thVar;
+    // A variable that an equality moved to the node's list, which the node's own replaces.
+    if (oldVar >= 0) {
+      node.thVar = thVar;
+      this.pushTrail(() => {
+        node.thVar = oldVar;
+      });
+      this.pushNewThEq(thVar, oldVar);
+      return;
+    }
     const root = node.root;
     const rootVar = root.thVar;
     node.thVar = thVar;
-    this.trail.push(() => {
-      node.thVar = -1;
-      if (node.root !== node && node.root.thVar === thVar) node.root.thVar = -1;
-    });
+    this.trailInts.push(thVar);
+    this.trailNodes.push(node);
+    this.trailKinds.push(UNDO_TH_VAR);
     if (rootVar < 0) {
       if (root !== node) root.thVar = thVar;
       this.pushNewThDiseqs(root, thVar);
     } else if (root !== node) this.pushNewThEq(rootVar, thVar);
-  }
-
-  private isCongruent(first: Enode, second: Enode) {
-    if (first.decl !== second.decl || first.args.length !== second.args.length) return false;
-    let isSame = true;
-    for (let index = 0; index < first.args.length && isSame; index++)
-      isSame = first.args[index].root === second.args[index].root;
-    if (isSame) return true;
-    return (
-      first.isEq &&
-      first.args[0].root === second.args[1].root &&
-      first.args[1].root === second.args[0].root
-    );
   }
 
   addEq(inputN1: Enode, inputN2: Enode, justification: EqJustification) {
@@ -453,32 +465,23 @@ export class Context extends Internalizer {
     this.qmanager.addEqEh(r1, r2);
     this.mergeTheoryVars(n2, n1, justification);
     this.invertTrans(n1);
-    n1.trans = { target: n2, justification };
+    n1.transTarget = n2;
+    n1.transJustification = justification;
     this.removeParentsFromCgTable(r1);
     let current = r1;
     do {
       current.root = r2;
       current = current.next;
     } while (current !== r1);
-    this.reinsertParentsIntoCgTable(r1, r2);
-    const finalN1 = n1;
-    const finalR1 = r1;
-    this.trail.push(() => this.undoAddEq(finalR1, finalN1, r2NumParents));
+    this.reinsertParentsIntoCgTable(r1, r2, n1, n2, justification);
+    this.trailInts.push(r2NumParents);
+    this.trailNodes.push(r1, n1);
+    this.trailKinds.push(UNDO_ADD_EQ);
     if (n2.isBool) this.propagateBoolEnodeAssignment(r1, r2, n1, n2);
     const savedNext = r1.next;
     r1.next = r2.next;
     r2.next = savedNext;
     r2.classSize += r1.classSize;
-    const r2Lbls = r2.lbls;
-    const r2Plbls = r2.plbls;
-    if ((r2Lbls | r1.lbls) !== r2Lbls || (r2Plbls | r1.plbls) !== r2Plbls) {
-      this.trail.push(() => {
-        r2.lbls = r2Lbls;
-        r2.plbls = r2Plbls;
-      });
-      r2.lbls |= r1.lbls;
-      r2.plbls |= r1.plbls;
-    }
   }
 
   private removeParentsFromCgTable(r1: Enode) {
@@ -492,7 +495,15 @@ export class Context extends Internalizer {
     }
   }
 
-  private reinsertParentsIntoCgTable(r1: Enode, r2: Enode) {
+  // n1 = n2, justified by the justification, implied r1 = r2. A congruence that makes a false
+  // equality true is the root of a conflict, which dynamic Ackermannization counts.
+  private reinsertParentsIntoCgTable(
+    r1: Enode,
+    r2: Enode,
+    n1: Enode,
+    n2: Enode,
+    justification: EqJustification,
+  ) {
     const r1Parents = r1.parents;
     for (let index = 0; index < r1Parents.length; index++) {
       const parent = r1Parents[index];
@@ -502,34 +513,54 @@ export class Context extends Internalizer {
         const lhs = parent.args[0];
         const rhs = parent.args[1];
         if (lhs.root === rhs.root) {
-          const boolVar = this.getBoolVar(parent.owner);
-          if (this.assignment[mkLiteral(boolVar)] !== L_TRUE)
-            this.assign(mkLiteral(boolVar), new EqPropagationJustification(lhs, rhs));
+          const literal = mkLiteral(this.getBoolVar(parent.owner));
+          const value = this.assignment[literal];
+          if (value !== L_TRUE) {
+            if (value === L_FALSE && justification.kind === "congruence")
+              this.dynAck.cgConflictEh(n1.owner, n2.owner);
+            this.assign(literal, new EqPropagationJustification(lhs, rhs));
+          }
           continue;
         }
       }
       if (!parent.isCgcEnabled) {
-        r2.parents.push(parent);
+        r2.addParent(parent);
         continue;
       }
       const parentGeneration = parent.isEq
         ? 0
         : (this.r1ParentGenerations.get(parent) ?? this.getGeneration(parent));
-      const result = this.cgTable.insert(parent);
-      if (result.node === parent) {
+      const congruent = this.cgTable.insert(parent);
+      if (congruent === parent) {
         parent.generation = parentGeneration;
-        r2.parents.push(parent);
+        r2.addParent(parent);
         continue;
       }
-      parent.cg = result.node;
-      this.mergeCgcGenerations(parent, parentGeneration, result.node);
-      if (result.node.root !== parent.root)
-        this.pushEq(parent, result.node, {
-          kind: "congruence",
-          isCommutative: result.isCommutative,
-        });
+      parent.cg = congruent;
+      this.mergeCgcGenerations(parent, parentGeneration, congruent);
+      if (congruent.root !== parent.root)
+        this.pushEq(parent, congruent, getCongruenceJustification(parent, congruent));
     }
     this.r1ParentGenerations.clear();
+  }
+
+  protected override undoTrailEntry(kind: number) {
+    switch (kind) {
+      case UNDO_ADD_EQ: {
+        const n1 = this.popTrailNode();
+        this.undoAddEq(this.popTrailNode(), n1, this.popTrailInt());
+        return;
+      }
+      case UNDO_TH_VAR: {
+        const node = this.popTrailNode();
+        const thVar = this.popTrailInt();
+        node.thVar = -1;
+        if (node.root !== node && node.root.thVar === thVar) node.root.thVar = -1;
+        return;
+      }
+      default:
+        super.undoTrailEntry(kind);
+    }
   }
 
   private undoAddEq(r1: Enode, n1: Enode, r2NumParents: number) {
@@ -538,7 +569,8 @@ export class Context extends Internalizer {
     const savedNext = r1.next;
     r1.next = r2.next;
     r2.next = savedNext;
-    const erasedGenerations = new Map<Enode, number>();
+    const erasedGenerations = this.erasedGenerations;
+    erasedGenerations.clear();
     for (let index = r2NumParents; index < r2.parents.length; index++) {
       const parent = r2.parents[index];
       if (parent.isCgcEnabled) {
@@ -551,7 +583,7 @@ export class Context extends Internalizer {
       current.root = r1;
       current = current.next;
     } while (current !== r1);
-    r2.parents.length = r2NumParents;
+    shrink(r2.parents, r2NumParents);
     for (const parent of r1.parents) {
       if (!parent.isCgcEnabled) continue;
       const cg = parent.cg;
@@ -563,12 +595,12 @@ export class Context extends Internalizer {
         if (cached === undefined) continue;
         generation = cached;
       }
-      const result = this.cgTable.insert(parent);
-      parent.cg = result.node;
-      if (result.node === parent) parent.generation = generation;
+      const congruent = this.cgTable.insert(parent);
+      parent.cg = congruent;
+      if (congruent === parent) parent.generation = generation;
     }
     if (r2.thVar >= 0 && this.theory.getEnode(r2.thVar).root !== r2) r2.thVar = -1;
-    n1.trans = null;
+    n1.transTarget = null;
     this.invertTrans(r1);
   }
 
@@ -596,8 +628,12 @@ export class Context extends Internalizer {
     let target = start;
     do {
       const boolVar = this.getBoolVar(target.owner);
-      if (this.assignment[mkLiteral(boolVar)] !== value)
+      const targetValue = this.assignment[mkLiteral(boolVar)];
+      if (targetValue !== value) {
+        if (targetValue !== L_UNDEF && this.isCongruent(source, target) && source.args.length > 0)
+          this.dynAck.cgConflictEh(source.owner, target.owner);
         this.assign(mkLiteral(boolVar, value === L_FALSE), this.mkMpIff(source, target));
+      }
       target = target.next;
     } while (target !== start);
   }
@@ -643,7 +679,7 @@ export class Context extends Internalizer {
   incBvarActivity(boolVar: BoolVar) {
     this.activity[boolVar] += this.bvarInc;
     if (this.activity[boolVar] > ACTIVITY_LIMIT) {
-      for (let index = 0; index < this.activity.length; index++)
+      for (let index = 0; index < this.numBoolVars; index++)
         this.activity[index] *= INV_ACTIVITY_LIMIT;
       this.bvarInc *= INV_ACTIVITY_LIMIT;
     }
@@ -654,7 +690,7 @@ export class Context extends Internalizer {
     this.scopeLevel++;
     this.scopeAssignedLimits.push(this.assignedLiterals.length);
     this.scopeAuxClauseLimits.push(this.auxClauses.length);
-    this.scopeTrailLimits.push(this.trail.length);
+    this.scopeTrailLimits.push(this.trailKinds.length);
     this.relevancy.push();
     this.qmanager.push();
     this.theory.pushScopeEh();
@@ -705,7 +741,7 @@ export class Context extends Internalizer {
       this.justifications[getVar(literal)] = null;
       this.caseSplitQueue.unassignVar(getVar(literal));
     }
-    this.assignedLiterals.length = oldLimit;
+    shrink(this.assignedLiterals, oldLimit);
     this.qhead = oldLimit;
   }
 
@@ -715,30 +751,28 @@ export class Context extends Internalizer {
     this.qmanager.pop(numScopes);
     if (newLevel < this.baseLevel) {
       this.deleteClauses(this.lemmas, this.baseScopeLemmaLimits[newLevel]);
-      this.baseScopeLemmaLimits.length = newLevel;
+      shrink(this.baseScopeLemmaLimits, newLevel);
     }
     this.conflict = undefined;
     this.notLiteral = null;
     this.deleteClauses(this.auxClauses, this.scopeAuxClauseLimits[newLevel]);
     this.relevancy.pop(numScopes);
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
-    const trailLimit = this.scopeTrailLimits[newLevel];
-    for (let index = this.trail.length - 1; index >= trailLimit; index--) this.trail[index]();
-    this.trail.length = trailLimit;
-    this.theory.popScopeEh();
+    this.popTrail(this.scopeTrailLimits[newLevel]);
+    this.theory.popScopeEh(numScopes);
     this.eqPropagationQueue = [];
     this.thEqQueue = [];
     this.thDiseqQueue = [];
     this.atomPropagationQueue = [];
-    this.scopeAssignedLimits.length = newLevel;
-    this.scopeAuxClauseLimits.length = newLevel;
-    this.scopeTrailLimits.length = newLevel;
+    shrink(this.scopeAssignedLimits, newLevel);
+    shrink(this.scopeAuxClauseLimits, newLevel);
+    shrink(this.scopeTrailLimits, newLevel);
     this.scopeLevel = newLevel;
     if (newLevel < this.baseLevel) {
       this.baseLevel = newLevel;
       this.searchLevel = newLevel;
     }
-    const numBoolVars = this.boolVar2Expr.length;
+    const numBoolVars = this.numBoolVars;
     this.reinitClauses(numScopes, numBoolVars);
     return numBoolVars;
   }
@@ -761,15 +795,16 @@ export class Context extends Internalizer {
         }
         let isKept = false;
         const atoms = clause.atoms;
-        if (clause.isReinternalizeAtoms && atoms !== null) {
+        const atomSigns = clause.atomSigns;
+        if (clause.isReinternalizeAtoms && atoms !== null && atomSigns !== null) {
           for (let index = 0; index < 2; index++)
             if (getVar(clause.literals[index]) < numBoolVars)
               this.removeWatchLiteral(clause, index);
           for (let index = 0; index < clause.literals.length; index++) {
             const atom = atoms[index];
-            const isNegatedLiteral = isNegated(clause.literals[index]);
             this.internalize(atom, !this.manager.isNot(atom));
-            clause.literals[index] = mkLiteral(this.getBoolVar(atom), isNegatedLiteral);
+            clause.literals[index] = mkLiteral(this.getBoolVar(atom), atomSigns[index]);
+            if (clause.kind === CLS_TH_LEMMA) this.markLiteralAsRelevant(clause.literals[index]);
           }
           this.swapLiterals(clause, 0, this.selectWatchLiteral(clause, 0));
           this.swapLiterals(clause, 1, this.selectWatchLiteral(clause, 1));
@@ -779,17 +814,54 @@ export class Context extends Internalizer {
           else if (this.assignment[clause.literals[1]] === L_FALSE)
             this.assign(clause.literals[0], clause);
           isKept = true;
+        } else {
+          const first = clause.literals[0];
+          const second = clause.literals[1];
+          if (clause.kind === CLS_TH_LEMMA) {
+            this.markLiteralAsRelevant(first);
+            this.markLiteralAsRelevant(second);
+          }
+          if (this.assignment[first] === L_FALSE && this.isEmptyClause(clause)) {
+            this.setConflict(clause, null);
+            isKept = true;
+          } else if (
+            this.assignment[second] === L_FALSE &&
+            this.assignment[first] === L_UNDEF &&
+            this.isUnitClause(clause)
+          ) {
+            this.assign(first, clause);
+            isKept = true;
+          }
         }
         if (isKept && this.scopeLevel > this.baseLevel) {
           while (this.clausesToReinit.length <= this.scopeLevel) this.clausesToReinit.push([]);
           this.clausesToReinit[this.scopeLevel].push(clause);
         } else {
+          if (clause.isReinternalizeAtoms) this.releaseAtoms(clause);
           clause.isReinit = false;
           clause.isReinternalizeAtoms = false;
         }
       }
       this.clausesToReinit[level] = [];
     }
+  }
+
+  private isEmptyClause(clause: Clause) {
+    return clause.literals.every((literal) => this.assignment[literal] === L_FALSE);
+  }
+
+  // is_unit_clause: exactly one literal is unassigned and the rest are false.
+  private isUnitClause(clause: Clause) {
+    let isFound = false;
+    for (const literal of clause.literals) {
+      const value = this.assignment[literal];
+      if (value === L_TRUE) return false;
+      if (value === L_UNDEF) {
+        if (isFound) return false;
+        isFound = true;
+      }
+    }
+    return isFound;
   }
 
   // guess with PS_CACHING_CONSERVATIVE: the cached phase while phase caching is on, else false.
@@ -831,7 +903,7 @@ export class Context extends Internalizer {
       return false;
     const newLevel = resolution.newScopeLevel;
     const literals = resolution.lemma;
-    const atoms = resolution.lemmaAtoms;
+    const atoms = resolution.lemmaAtoms.items;
     const visited = new Set<number>();
     if (resolution.lemmaIscopeLevel > newLevel)
       this.cacheGenerationOfLiterals(literals, newLevel, visited);
@@ -848,10 +920,13 @@ export class Context extends Internalizer {
           ? negate(this.getLiteral(atoms[index]))
           : this.getLiteral(atoms[index]);
       }
+    // restore_relevancy: marking propagates, so it only marks the literals that lost relevancy.
     for (let index = 0; index < literals.length; index++)
-      if (wasRelevant[index]) this.markLiteralAsRelevant(literals[index]);
+      if (wasRelevant[index] && !this.isRelevant(this.boolVar2Expr[getVar(literals[index])]))
+        this.markLiteralAsRelevant(literals[index]);
     this.cachedGeneration.clear();
     this.mkClause([...literals], null, CLS_LEARNED);
+    resolution.lemmaAtoms.reset();
     this.bvarInc *= INV_DECAY;
     this.updatePhaseCacheCounter();
     return true;
@@ -864,14 +939,33 @@ export class Context extends Internalizer {
     const oldIndex = this.finalCheckIndex;
     let result = FC_DONE;
     let failure = FAILURE_OK;
-    do {
+    let level = 1;
+    let maxLevel = 1;
+    for (;;) {
       const isTheory = this.finalCheckIndex === 0;
-      const check = isTheory ? this.theory.finalCheckEh() : qmanager.finalCheckEh(true);
-      if (isTheory && check === FC_GIVEUP) failure = FAILURE_THEORY;
+      // Z3 registers every theory for UFNIA, and only arithmetic acts on tlapm's obligations. Of
+      // the theories between arithmetic and the quantifiers, theory_finite_set makes a set.range
+      // declaration, and its assume_eqs draws a random value.
+      if (!isTheory) {
+        this.manager.initFiniteSetPlugin();
+        this.getRandomValue();
+      }
+      const check = isTheory ? this.theory.finalCheckEh(level) : qmanager.finalCheckEh(true);
+      if (isTheory) maxLevel = Math.max(maxLevel, NUM_ARITH_FINAL_CHECK_LEVELS);
+      // Z3 reads the cancel flag after each theory's final check, and a canceled check gives up.
+      const isCanceled = isTheory && this.checkCanceled();
+      if (isCanceled) failure = FAILURE_CANCELED;
+      else if (isTheory && check === FC_GIVEUP) failure = FAILURE_THEORY;
       this.finalCheckIndex = (this.finalCheckIndex + 1) % 2;
       if (check === FC_CONTINUE) return FC_CONTINUE;
-      if (check === FC_GIVEUP) result = FC_GIVEUP;
-    } while (this.finalCheckIndex !== oldIndex);
+      if (check === FC_GIVEUP || isCanceled) result = FC_GIVEUP;
+      if (this.finalCheckIndex !== oldIndex) continue;
+      if (level >= maxLevel || result === FC_DONE || this.canPropagate()) break;
+      // A higher level reruns every check with the give-up state of the lower one cleared.
+      level++;
+      result = FC_DONE;
+      failure = FAILURE_OK;
+    }
     if (this.canPropagate()) return FC_CONTINUE;
     if (result === FC_GIVEUP && failure !== FAILURE_OK) this.lastSearchFailure = failure;
     return result;
@@ -882,7 +976,7 @@ export class Context extends Internalizer {
       while (!this.propagate()) {
         if (!this.resolveConflict()) return L_FALSE;
         if (!this.isInconsistent()) {
-          if (this.checkCanceled()) return L_UNDEF;
+          if (this.isResourceLimitExceeded() || this.checkCanceled()) return L_UNDEF;
           if (
             this.numConflictsSinceRestart > this.restartThreshold &&
             this.scopeLevel - this.baseLevel > 2
@@ -890,7 +984,9 @@ export class Context extends Internalizer {
             return L_UNDEF;
         }
         if (this.numConflictsSinceLemmaGc > LEMMA_GC_INITIAL) this.delInactiveLemmas();
+        this.dynAck.propagateEh();
       }
+      if (this.isResourceLimitExceeded() && !this.isInconsistent()) return L_UNDEF;
       if (this.checkCanceled()) return L_UNDEF;
       if (!this.decide()) {
         if (this.isInconsistent()) return L_FALSE;
@@ -898,25 +994,66 @@ export class Context extends Internalizer {
         if (status === FC_DONE) return L_TRUE;
         if (status === FC_GIVEUP) return L_UNDEF;
       }
+      if (this.isResourceLimitExceeded() && !this.isInconsistent()) return L_UNDEF;
     }
   }
 
-  // mk_proto_model: the model of the current assignment, which the quantifier manager adjusts.
+  // resource_limits_exceeded: while searching, a failure stops the search, and the cancel flag is
+  // read twice.
+  private isResourceLimitExceeded() {
+    if (this.isSearching && (this.lastSearchFailure !== FAILURE_OK || this.checkCanceled()))
+      return true;
+    return this.checkCanceled();
+  }
+
+  // reset_model: the model generator still holds the proto model.
+  private resetModel() {
+    this.model?.decRef();
+    this.model = null;
+    this.protoModel?.decRef();
+    this.protoModel = null;
+  }
+
+  // mk_proto_model: the model of the current assignment, which the quantifier manager adjusts. The
+  // model generator releases the last model first.
   mkProtoModel() {
+    this.generatedModel?.model.decRef();
     const generated = mkModel(this);
+    generated.model.incRef();
+    this.generatedModel = generated;
     this.qmanager.adjustModel(generated.model);
     generated.model.completePartialFuncs(false);
     generated.model.cleanup();
+    generated.model.incRef();
+    this.protoModel = generated.model;
     return generated;
+  }
+
+  // get_model: the model that the proto model makes, which the caller holds too. add_rec_funs gives
+  // each named expression without an interpretation its expression.
+  getModel() {
+    if (this.model !== null) return this.model;
+    const model = (this.protoModel ?? this.mkProtoModel().model).mkModel();
+    for (const entry of this.manager.macros)
+      if (!model.constInterps.has(entry[0])) model.registerConst(entry[0], entry[1]);
+    model.incRef();
+    this.model = model;
+    return model;
   }
 
   // validate_model: every relevant ground literal of the assignment holds in the model.
   validateModel(model: ProtoModel) {
+    const manager = this.manager;
     for (const literal of this.assignedLiterals) {
       const atom = this.boolVar2Expr[getVar(literal)];
-      if (!this.isRelevant(atom) || !this.manager.isGround(atom)) continue;
-      const value = model.eval(isNegated(literal) ? this.manager.mkNot(atom) : atom, false);
-      if (value === this.manager.falseExpr) return false;
+      if (!this.isRelevant(atom)) continue;
+      // n and res of Z3's loop hold the literal and its value.
+      const expr = isNegated(literal) ? manager.mkNot(atom) : atom;
+      manager.incRef(expr);
+      const value = manager.isGround(expr) ? model.eval(expr, false) : -1;
+      if (value !== -1) manager.decRef(value);
+      manager.decRef(expr);
+      if (value === manager.falseExpr) return false;
     }
     return true;
   }
@@ -926,6 +1063,7 @@ export class Context extends Internalizer {
   // and force a restart.
   private restart(status: number, currentLevel: number): number | undefined {
     const qmanager = this.qmanager;
+    this.resetModel();
     let isForcedRestart = false;
     if (this.lastSearchFailure !== FAILURE_OK) {
       if (
@@ -1017,7 +1155,7 @@ export class Context extends Internalizer {
       }
       lemmas[kept++] = clause;
     }
-    lemmas.length = kept;
+    shrink(lemmas, kept);
     this.numConflictsSinceLemmaGc = 0;
   }
 
@@ -1040,6 +1178,20 @@ export class Context extends Internalizer {
     if (this.scopeLevel > this.baseLevel) this.popScope(this.scopeLevel - this.baseLevel);
   }
 
+  // internalize_assertions: the formulas of the asserted formulas, after preprocessing. When they
+  // are inconsistent, none is internalized and the context has an axiom conflict.
+  internalizeAssertions(asserted: AssertedFormulas) {
+    const formulas = asserted.reduce();
+    if (asserted.isInconsistent) {
+      this.setConflict("axiom", null);
+      return;
+    }
+    for (const formula of formulas) {
+      if (this.isInconsistent()) break;
+      this.internalizeAssertion(formula, 0);
+    }
+  }
+
   // init_assumptions: the search runs above a scope where the assumptions hold.
   initAssumptions(assumptions: number[]) {
     if (assumptions.length > 0) {
@@ -1057,8 +1209,10 @@ export class Context extends Internalizer {
 
   search() {
     if (this.isInconsistent()) return L_FALSE;
+    this.resetModel();
     this.theory.initSearchEh();
     this.qmanager.initSearchEh();
+    this.dynAck.initSearchEh();
     this.numConflicts = 0;
     this.numConflictsSinceRestart = 0;
     this.numConflictsSinceLemmaGc = 0;

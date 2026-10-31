@@ -58,6 +58,12 @@ export class ObjMap<V> {
     return slot === -1 ? undefined : this.values[slot];
   }
 
+  // find_core and an assignment to the entry: unlike insert, never grows the table.
+  replace(key: number, value: V) {
+    const slot = this.findSlot(key);
+    if (slot !== -1) this.values[slot] = value;
+  }
+
   set(key: number, value: V) {
     if ((this.size + this.numDeleted) << 2 > this.capacity * 3) this.moveTable(this.capacity << 1);
     const mask = this.capacity - 1;

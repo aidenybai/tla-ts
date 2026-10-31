@@ -43,6 +43,10 @@
     "z3": "unsat",
     "source": "examples/specifications/ewd840/EWD840_proof.tla/49.smt"
   },
+  "EWD998PCal_proof-475.smt": {
+    "z3": "unsat",
+    "source": "examples/specifications/ewd998/EWD998PCal_proof.tla/475.smt"
+  },
   "EmptySetEqCases_proofs-1004.smt": {
     "z3": "unsat",
     "source": "tlc/tlatools/org.lamport.tlatools/test-model/EmptySetEqCases_proofs.tla/1004.smt"

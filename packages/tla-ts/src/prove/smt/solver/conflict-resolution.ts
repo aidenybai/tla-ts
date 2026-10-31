@@ -5,6 +5,8 @@ import { BinJustification, type BJustification } from "./clause";
 import type { Context } from "./context";
 import { Enode, EqJustification, Justification } from "./enode";
 import { BoolVar, getVar, Literal, negate } from "./literal";
+import { RefVector } from "./ref-vector";
+import { shrink } from "./array";
 
 export class ConflictResolution {
   private antecedents: Literal[] = [];
@@ -13,29 +15,37 @@ export class ConflictResolution {
   private todoEqs: Enode[] = [];
   private processedEqs = new Set<string>();
   lemma: Literal[] = [];
-  lemmaAtoms: number[] = [];
+  // m_lemma_atoms: the atoms of the lemma, which it holds until the lemma is a clause.
+  readonly lemmaAtoms: RefVector;
   private conflictLevel = 0;
   newScopeLevel = 0;
   lemmaIscopeLevel = 0;
   private unmark: BoolVar[] = [];
-  private levelSet = new Set<number>();
+  // m_lvl_set: a level_approx_set, whose bit level mod 32 stands for each level of the lemma, so
+  // other levels can pass for them.
+  private levelSet = 0;
   private minimizationStack: BoolVar[] = [];
 
-  constructor(private context: Context) {}
+  constructor(private context: Context) {
+    this.lemmaAtoms = new RefVector(context.manager);
+  }
 
   markLiteral(literal: Literal) {
     this.antecedents.push(literal);
   }
 
+  // mark_eq: the pair starts with the node whose owner has the smaller id, which fixes the order in
+  // which eq2literals walks the two branches.
   markEq(first: Enode, second: Enode) {
     if (first === second) return;
-    const key =
-      first.owner < second.owner
-        ? `${first.owner}:${second.owner}`
-        : `${second.owner}:${first.owner}`;
+    const ids = this.context.manager.ids;
+    const isSwapped = ids[first.owner] > ids[second.owner];
+    const lower = isSwapped ? second : first;
+    const upper = isSwapped ? first : second;
+    const key = `${lower.owner}:${upper.owner}`;
     if (this.processedEqs.has(key)) return;
     this.processedEqs.add(key);
-    this.todoEqs.push(first, second);
+    this.todoEqs.push(lower, upper);
   }
 
   markJustification(justification: Justification) {
@@ -49,15 +59,15 @@ export class ConflictResolution {
   }
 
   private findCommonAncestor(first: Enode, second: Enode) {
-    for (let node: Enode | undefined = first; node !== undefined; node = node.trans?.target)
+    for (let node: Enode | null = first; node !== null; node = node.transTarget)
       node.isMarked2 = true;
     let result = second;
     while (!result.isMarked2) {
-      const target = result.trans?.target;
-      if (target === undefined) break;
+      const target = result.transTarget;
+      if (target === null) break;
       result = target;
     }
-    for (let node: Enode | undefined = first; node !== undefined; node = node.trans?.target)
+    for (let node: Enode | null = first; node !== null; node = node.transTarget)
       node.isMarked2 = false;
     return result;
   }
@@ -79,10 +89,10 @@ export class ConflictResolution {
   private eqBranchToLiterals(start: Enode, ancestor: Enode) {
     let node = start;
     while (node !== ancestor) {
-      const trans = node.trans;
-      if (trans === null) break;
-      this.eqJustificationToLiterals(node, trans.target, trans.justification);
-      node = trans.target;
+      const target = node.transTarget;
+      if (target === null) break;
+      this.eqJustificationToLiterals(node, target, node.transJustification);
+      node = target;
     }
   }
 
@@ -108,7 +118,7 @@ export class ConflictResolution {
   private unmarkJustifications(oldHead: number) {
     for (let index = oldHead; index < this.todoJustifications.length; index++)
       this.todoJustifications[index].isMarked = false;
-    this.todoJustifications.length = oldHead;
+    shrink(this.todoJustifications, oldHead);
     this.todoJustificationsHead = oldHead;
     this.todoEqs.length = 0;
     this.processedEqs.clear();
@@ -126,18 +136,6 @@ export class ConflictResolution {
 
   justificationToLiterals(justification: Justification) {
     const result = this.justificationToLiteralsCore(justification);
-    this.unmarkJustifications(0);
-    return result;
-  }
-
-  // Explains why two nodes are in one class, for theories that need the literals.
-  eqToLiterals(first: Enode, second: Enode) {
-    const saved = this.antecedents;
-    this.antecedents = [];
-    this.markEq(first, second);
-    this.processJustifications();
-    const result = this.antecedents;
-    this.antecedents = saved;
     this.unmarkJustifications(0);
     return result;
   }
@@ -196,7 +194,7 @@ export class ConflictResolution {
   resolve(conflict: BJustification, notLiteral: Literal | null) {
     const context = this.context;
     this.lemma = [];
-    this.lemmaAtoms = [];
+    this.lemmaAtoms.reset();
     let justification = conflict;
     let consequent = notLiteral !== null ? negate(notLiteral) : context.falseLiteral;
     this.conflictLevel = this.getMaxLevel(consequent, justification);
@@ -238,7 +236,7 @@ export class ConflictResolution {
       context.marks[consequentVar] = false;
     } while (marks.count > 0);
     this.lemma[0] = negate(consequent);
-    this.lemmaAtoms[0] = context.boolVar2Expr[getVar(consequent)];
+    this.lemmaAtoms.set(0, context.boolVar2Expr[getVar(consequent)]);
     this.finalizeResolve();
     return true;
   }
@@ -262,7 +260,7 @@ export class ConflictResolution {
     const boolVar = getVar(antecedent);
     const level = context.levels[boolVar];
     if (context.marks[boolVar] || level <= context.baseLevel) return true;
-    if (!this.levelSet.has(level)) return false;
+    if ((this.levelSet & (1 << (level & 31))) === 0) return false;
     context.marks[boolVar] = true;
     this.unmark.push(boolVar);
     this.minimizationStack.push(boolVar);
@@ -278,7 +276,7 @@ export class ConflictResolution {
   private resetUnmark(oldSize: number, oldHead: number) {
     for (let index = oldSize; index < this.unmark.length; index++)
       this.context.marks[this.unmark[index]] = false;
-    this.unmark.length = oldSize;
+    shrink(this.unmark, oldSize);
     this.unmarkJustifications(oldHead);
   }
 
@@ -317,19 +315,20 @@ export class ConflictResolution {
   private minimizeLemma() {
     const context = this.context;
     this.unmark = [];
-    this.levelSet = new Set(this.lemma.map((literal) => context.levels[getVar(literal)]));
+    this.levelSet = 0;
+    for (const literal of this.lemma) this.levelSet |= 1 << (context.levels[getVar(literal)] & 31);
     let kept = 1;
     for (let index = 1; index < this.lemma.length; index++) {
       const literal = this.lemma[index];
       if (this.isImpliedByMarked(literal)) this.unmark.push(getVar(literal));
       else {
         this.lemma[kept] = literal;
-        this.lemmaAtoms[kept] = this.lemmaAtoms[index];
+        if (kept !== index) this.lemmaAtoms.set(kept, this.lemmaAtoms.items[index]);
         kept++;
       }
     }
     this.resetUnmark(0, 0);
-    this.lemma.length = kept;
-    this.lemmaAtoms.length = kept;
+    shrink(this.lemma, kept);
+    this.lemmaAtoms.shrink(kept);
   }
 }

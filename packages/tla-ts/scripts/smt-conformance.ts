@@ -22,7 +22,8 @@ const listInputs = (directory: string): string[] =>
     .sort()
     .flatMap((entry) => {
       const path = join(directory, entry);
-      return statSync(path).isDirectory() ? listInputs(path) : path.endsWith(".smt") ? [path] : [];
+      if (statSync(path).isDirectory()) return listInputs(path);
+      return path.endsWith(".smt") || path.endsWith(".smt2") ? [path] : [];
     });
 
 // Z3 rejects malformed input with an error, which counts as unknown.

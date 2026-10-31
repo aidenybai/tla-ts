@@ -3,6 +3,7 @@
 // and E-matching and the theories only look at relevant terms.
 import { AstManager, KIND_APP, OP_AND, OP_IMPLIES, OP_ITE, OP_OR } from "./ast";
 import type { Enode } from "./enode";
+import { shrink } from "./array";
 
 export type RelevancyHandler = () => void;
 
@@ -20,8 +21,10 @@ const TRAIL_HANDLER = 2;
 
 export class RelevancyPropagator {
   private qhead = 0;
+  // m_relevant_exprs: the relevant expressions in the order they were marked, which it holds.
   private relevantExprs: number[] = [];
-  private isRelevantSet = new Set<number>();
+  // A flag per expression, which grows with the expressions marked.
+  private isRelevantFlags = new Uint8Array(1024);
   private handlers = new Map<number, RelevancyHandler[]>();
   private watches = [new Map<number, RelevancyHandler[]>(), new Map<number, RelevancyHandler[]>()];
   private trailKinds: number[] = [];
@@ -36,7 +39,7 @@ export class RelevancyPropagator {
   ) {}
 
   isRelevant(expr: number) {
-    return !this.isEnabled || this.isRelevantSet.has(expr);
+    return !this.isEnabled || this.isRelevantFlags[expr] === 1;
   }
 
   addHandler(source: number, handler: RelevancyHandler) {
@@ -45,8 +48,7 @@ export class RelevancyPropagator {
       handler();
       return;
     }
-    this.trailKinds.push(TRAIL_HANDLER);
-    this.trailExprs.push(source);
+    this.pushTrail(TRAIL_HANDLER, source);
     const list = this.handlers.get(source);
     if (list === undefined) this.handlers.set(source, [handler]);
     else list.push(handler);
@@ -69,7 +71,13 @@ export class RelevancyPropagator {
     const list = this.watches[index].get(expr);
     if (list === undefined) this.watches[index].set(expr, [handler]);
     else list.push(handler);
-    this.trailKinds.push(value ? TRAIL_POS_WATCH : TRAIL_NEG_WATCH);
+    this.pushTrail(value ? TRAIL_POS_WATCH : TRAIL_NEG_WATCH, expr);
+  }
+
+  // push_trail: the trail holds its expressions.
+  private pushTrail(kind: number, expr: number) {
+    this.context.manager.incRef(expr);
+    this.trailKinds.push(kind);
     this.trailExprs.push(expr);
   }
 
@@ -81,26 +89,38 @@ export class RelevancyPropagator {
     const offset = this.scopes.length - numScopes * 2;
     const relevantLimit = this.scopes[offset];
     const trailLimit = this.scopes[offset + 1];
+    const manager = this.context.manager;
     for (let index = this.relevantExprs.length - 1; index >= relevantLimit; index--)
-      this.isRelevantSet.delete(this.relevantExprs[index]);
-    this.relevantExprs.length = relevantLimit;
+      this.isRelevantFlags[this.relevantExprs[index]] = 0;
+    for (let index = relevantLimit; index < this.relevantExprs.length; index++)
+      manager.decRef(this.relevantExprs[index]);
+    shrink(this.relevantExprs, relevantLimit);
     this.qhead = relevantLimit;
     for (let index = this.trailKinds.length - 1; index >= trailLimit; index--) {
       const kind = this.trailKinds[index];
       const map =
         kind === TRAIL_HANDLER ? this.handlers : this.watches[kind === TRAIL_POS_WATCH ? 1 : 0];
-      const list = map.get(this.trailExprs[index]);
-      if (list === undefined) continue;
-      list.pop();
-      if (list.length === 0) map.delete(this.trailExprs[index]);
+      const expr = this.trailExprs[index];
+      const list = map.get(expr);
+      if (list !== undefined) {
+        list.pop();
+        if (list.length === 0) map.delete(expr);
+      }
+      manager.decRef(expr);
     }
-    this.trailKinds.length = trailLimit;
-    this.trailExprs.length = trailLimit;
-    this.scopes.length = offset;
+    shrink(this.trailKinds, trailLimit);
+    shrink(this.trailExprs, trailLimit);
+    shrink(this.scopes, offset);
   }
 
   private setRelevant(expr: number) {
-    this.isRelevantSet.add(expr);
+    if (expr >= this.isRelevantFlags.length) {
+      const flags = new Uint8Array(Math.max(2 * this.isRelevantFlags.length, expr + 1));
+      flags.set(this.isRelevantFlags);
+      this.isRelevantFlags = flags;
+    }
+    this.isRelevantFlags[expr] = 1;
+    this.context.manager.incRef(expr);
     this.relevantExprs.push(expr);
     this.context.relevantEh(expr);
   }

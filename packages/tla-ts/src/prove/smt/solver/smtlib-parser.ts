@@ -3,15 +3,21 @@
 import { SmtParseError, SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
+  FAMILY_ARITH,
+  FAMILY_BASIC,
+  KIND_QUANTIFIER,
+  KIND_VAR,
   OP_ABS,
   OP_ADD,
   OP_AND,
   OP_DISTINCT,
+  OP_DIV,
   OP_EQ,
   OP_GE,
   OP_GT,
   OP_IDIV,
   OP_IMPLIES,
+  OP_IS_INT,
   OP_ITE,
   OP_LE,
   OP_LT,
@@ -20,12 +26,19 @@ import {
   OP_NOT,
   OP_OR,
   OP_SUB,
+  OP_TO_INT,
+  OP_TO_REAL,
+  OP_TRUE,
+  OP_FALSE,
   OP_UMINUS,
   OP_UNINTERPRETED,
   OP_XOR,
   SORT_BOOL,
   SORT_INT,
+  SORT_REAL,
+  isArithSort,
 } from "./ast";
+import { Rational } from "./rational";
 import { shiftVars } from "./var-subst";
 
 type SExpr = string | SExpr[];
@@ -51,11 +64,21 @@ const BUILTIN_OPS = new Map<string, number>([
   ["xor", OP_XOR],
   ["ite", OP_ITE],
   ["distinct", OP_DISTINCT],
+  ["+", OP_ADD],
   ["*", OP_MUL],
+  ["/", OP_DIV],
   ["div", OP_IDIV],
   ["mod", OP_MOD],
   ["abs", OP_ABS],
+  ["to_real", OP_TO_REAL],
+  ["to_int", OP_TO_INT],
+  ["is_int", OP_IS_INT],
 ]);
+
+// arith_decl_plugin's use_coercion: the operators that are Real when any argument is Real.
+const COERCING_OPS = new Set([OP_ADD, OP_SUB, OP_UMINUS, OP_MUL, OP_LE, OP_GE, OP_LT, OP_GT]);
+
+const DECIMAL = /^([0-9]+)\.([0-9]+)$/;
 
 const CHAINABLE_OPS = new Map<string, number>([
   ["=", OP_EQ],
@@ -134,6 +157,7 @@ export const parseSmtlib = (
   const sorts = new Map<string, number>([
     ["Bool", SORT_BOOL],
     ["Int", SORT_INT],
+    ["Real", SORT_REAL],
   ]);
   const funcs = new Map<string, number>();
   const assertions: number[] = [];
@@ -154,47 +178,108 @@ export const parseSmtlib = (
     return undefined;
   };
 
-  // Checks the sorts and the arity of an application, so the solver only sees well-sorted terms,
-  // and that quantifiers occur only under Boolean connectives.
-  const mkApp = (decl: number, args: number[], sort: number) => {
+  // basic_decl_plugin::join: Int and Real join to Real. Other sorts join only with themselves.
+  const getJoin = (args: number[]) => {
+    const argSorts = args.map((arg) => manager.sorts[arg]);
+    if (!argSorts.every(isArithSort)) return argSorts[0];
+    return argSorts.includes(SORT_REAL) ? SORT_REAL : SORT_INT;
+  };
+
+  // The sort of the arguments of a builtin, as Z3's decl plugins pick its declaration.
+  const getDomainSort = (op: number, args: number[]) => {
+    if (op === OP_ITE) return getJoin(args.slice(1));
+    if (op === OP_EQ || op === OP_DISTINCT) return getJoin(args);
+    if (COERCING_OPS.has(op)) return getJoin(args) === SORT_REAL ? SORT_REAL : SORT_INT;
+    if (op === OP_ABS || op === OP_TO_REAL || op === OP_TO_INT) return manager.sorts[args[0]];
+    if (op === OP_IDIV || op === OP_MOD) return SORT_INT;
+    if (op === OP_DIV || op === OP_IS_INT) return SORT_REAL;
+    return SORT_BOOL;
+  };
+
+  const getRange = (op: number, domainSort: number) =>
+    op === OP_TO_REAL || op === OP_DIV
+      ? SORT_REAL
+      : op === OP_TO_INT || op === OP_IDIV || op === OP_MOD
+        ? SORT_INT
+        : op === OP_ITE ||
+            op === OP_ABS ||
+            op === OP_ADD ||
+            op === OP_SUB ||
+            op === OP_UMINUS ||
+            op === OP_MUL
+          ? domainSort
+          : SORT_BOOL;
+
+  // ast_manager::coerce_to: an Int argument of a Real position becomes to_real, and a Real argument
+  // of an Int position to_int.
+  const coerce = (arg: number, sort: number) => {
+    const argSort = manager.sorts[arg];
+    if (argSort === sort || !isArithSort(argSort) || !isArithSort(sort)) return arg;
+    return sort === SORT_REAL
+      ? manager.mkApp(OP_TO_REAL, [arg], SORT_REAL)
+      : manager.mkApp(OP_TO_INT, [arg], SORT_INT);
+  };
+
+  // Coerces the arguments of an application to the sorts of its declaration, as Z3 does with its
+  // default int_real_coercions, then checks their sorts and number, so the solver only sees
+  // well-sorted terms, and that quantifiers occur only under Boolean connectives.
+  const mkApp = (decl: number, inputArgs: number[], domainSort?: number) => {
     const op = manager.funcDecls[decl].op;
     const name = manager.funcDecls[decl].name;
-    const argSorts = args.map((arg) => manager.sorts[arg]);
-    const isAll = (expected: number) => argSorts.every((argSort) => argSort === expected);
+    const isUninterpreted = op === OP_UNINTERPRETED;
+    const domain = manager.funcDecls[decl].domain;
+    const builtinSort = isUninterpreted ? -1 : (domainSort ?? getDomainSort(op, inputArgs));
+    const getExpected = (index: number) =>
+      isUninterpreted ? domain[index] : op === OP_ITE && index === 0 ? SORT_BOOL : builtinSort;
+    const args = inputArgs.map((arg, index) =>
+      getExpected(index) === undefined ? arg : coerce(arg, getExpected(index)),
+    );
     const isArity = (min: number, max: number) => args.length >= min && args.length <= max;
+    const isArityOk = isUninterpreted
+      ? args.length === domain.length
+      : op === OP_AND || op === OP_OR
+        ? true
+        : op === OP_ITE
+          ? isArity(3, 3)
+          : op === OP_EQ || op === OP_DISTINCT
+            ? isArity(2, Infinity)
+            : op === OP_NOT ||
+                op === OP_UMINUS ||
+                op === OP_ABS ||
+                op === OP_TO_REAL ||
+                op === OP_TO_INT ||
+                op === OP_IS_INT
+              ? isArity(1, 1)
+              : op === OP_IMPLIES ||
+                  op === OP_XOR ||
+                  op === OP_IDIV ||
+                  op === OP_MOD ||
+                  op === OP_DIV ||
+                  op === OP_LE ||
+                  op === OP_GE ||
+                  op === OP_LT ||
+                  op === OP_GT
+                ? isArity(2, 2)
+                : isArity(1, Infinity);
+    const isBuiltinArith = manager.funcDecls[decl].family === FAMILY_ARITH;
     const isWellSorted =
-      op === OP_UNINTERPRETED
-        ? argSorts.length === manager.funcDecls[decl].domain.length &&
-          argSorts.every((argSort, index) => argSort === manager.funcDecls[decl].domain[index])
-        : op === OP_AND || op === OP_OR
-          ? isAll(SORT_BOOL)
-          : op === OP_NOT
-            ? isArity(1, 1) && isAll(SORT_BOOL)
-            : op === OP_IMPLIES || op === OP_XOR
-              ? isArity(2, 2) && isAll(SORT_BOOL)
-              : op === OP_ITE
-                ? isArity(3, 3) && argSorts[0] === SORT_BOOL && argSorts[1] === argSorts[2]
-                : op === OP_EQ || op === OP_DISTINCT
-                  ? isArity(2, Infinity) && isAll(argSorts[0])
-                  : op === OP_UMINUS || op === OP_ABS
-                    ? isArity(1, 1) && isAll(SORT_INT)
-                    : op === OP_IDIV ||
-                        op === OP_MOD ||
-                        op === OP_LE ||
-                        op === OP_GE ||
-                        op === OP_LT ||
-                        op === OP_GT
-                      ? isArity(2, 2) && isAll(SORT_INT)
-                      : isArity(1, Infinity) && isAll(SORT_INT);
+      isArityOk &&
+      (!isBuiltinArith || isArithSort(builtinSort)) &&
+      args.every((arg, index) => manager.sorts[arg] === getExpected(index));
     if (!isWellSorted) throw new SmtParseError(`ill-sorted application of ${name}`);
-    return manager.mkApp(decl, args, sort);
+    return manager.mkApp(
+      decl,
+      args,
+      isUninterpreted ? manager.funcDecls[decl].range : getRange(op, builtinSort),
+    );
   };
 
   const mkChain = (op: number, args: number[]) => {
+    const domainSort = getDomainSort(op, args);
     const pairs: number[] = [];
     for (let index = 0; index + 1 < args.length; index++)
-      pairs.push(mkApp(op, [args[index], args[index + 1]], SORT_BOOL));
-    return pairs.length === 1 ? pairs[0] : mkApp(OP_AND, pairs, SORT_BOOL);
+      pairs.push(mkApp(op, [args[index], args[index + 1]], domainSort));
+    return pairs.length === 1 ? pairs[0] : mkApp(OP_AND, pairs);
   };
 
   const expectBool = (expr: number) => {
@@ -202,13 +287,49 @@ export const parseSmtlib = (
     return expr;
   };
 
+  // push_pattern_frame with ignore_bad_patterns: (t1 ... tn) is a multi-pattern, (f a ...) a pattern
+  // of one term, and a pattern that starts with a constant is dropped unparsed.
+  const parsePattern = (sexpr: SExpr) => {
+    if (!Array.isArray(sexpr) || sexpr.length === 0) return undefined;
+    const head = sexpr[0];
+    if (Array.isArray(head)) return manager.mkPattern(sexpr.map(parseTerm));
+    const decl = head === "true" || head === "false" ? -1 : funcs.get(head);
+    if (decl === -1 || (decl !== undefined && manager.funcDecls[decl].domain.length === 0))
+      return undefined;
+    return manager.mkPattern([parseTerm(sexpr)]);
+  };
+
+  // pattern_validator: a pattern has no Boolean operator other than equality, no quantifier, and
+  // every variable of its quantifier.
+  const isValidPattern = (pattern: number, numDecls: number) => {
+    const found = new Set<number>();
+    const isValid = (expr: number): boolean => {
+      const kind = manager.kinds[expr];
+      if (kind === KIND_QUANTIFIER) return false;
+      if (kind === KIND_VAR) {
+        if (manager.values[expr] < numDecls) found.add(manager.values[expr]);
+        return true;
+      }
+      const funcDecl = manager.funcDecls[manager.decls[expr]];
+      if (
+        funcDecl.family === FAMILY_BASIC &&
+        funcDecl.op !== OP_EQ &&
+        funcDecl.op !== OP_TRUE &&
+        funcDecl.op !== OP_FALSE
+      )
+        return false;
+      return manager.args[expr].every(isValid);
+    };
+    return manager.args[pattern].every(isValid) && found.size === numDecls;
+  };
+
   const parseQuantifier = (list: SExpr[], isForall: boolean) => {
     const declarations = expectList(list[1]);
     const scope = new Map<string, Binding>();
+    const names = declarations.map((declaration) => expectSymbol(expectList(declaration)[0]));
     const varSorts = declarations.map((declaration, index) => {
-      const pair = expectList(declaration);
-      const sort = parseSort(pair[1]);
-      scope.set(expectSymbol(pair[0]), { depth: depth + index, sort, expr: -1, isBoundVar: true });
+      const sort = parseSort(expectList(declaration)[1]);
+      scope.set(names[index], { depth: depth + index, sort, expr: -1, isBoundVar: true });
       return sort;
     });
     scopes.push(scope);
@@ -229,21 +350,38 @@ export const parseSmtlib = (
       for (let index = 2; index < bodySExpr.length; index += 2) {
         const keyword = bodySExpr[index];
         const value = bodySExpr[index + 1];
-        if (keyword === ":pattern")
-          patterns.push(manager.mkPattern(expectList(value).map(parseTerm)));
-        else if (keyword === ":weight") weight = Number(value);
+        if (keyword === ":pattern") {
+          const pattern = parsePattern(value);
+          if (pattern !== undefined) {
+            manager.incRef(pattern);
+            patterns.push(pattern);
+          }
+        } else if (keyword === ":weight") weight = Number(value);
         else if (keyword === ":qid") qid = expectSymbol(value);
       }
     scopes.pop();
     depth -= varSorts.length;
+    // pop_quant_frame: the invalid patterns leave the parser's stack before the quantifier is made,
+    // and the valid ones after.
+    let numKept = 0;
+    for (const pattern of patterns) {
+      if (!isValidPattern(pattern, varSorts.length)) continue;
+      manager.incRef(pattern);
+      manager.decRef(patterns[numKept]);
+      patterns[numKept] = pattern;
+      numKept++;
+    }
+    for (const removed of patterns.splice(numKept)) manager.decRef(removed);
     const quantifier = manager.mkQuantifier({
       isForall,
       sorts: varSorts,
+      names,
       body,
       patterns,
       weight,
       qid,
     });
+    for (const pattern of patterns) manager.decRef(pattern);
     for (const boundVar of boundVars) manager.decRef(boundVar);
     return quantifier;
   };
@@ -269,27 +407,29 @@ export const parseSmtlib = (
   const parseApp = (name: string, args: number[]) => {
     const chainable = CHAINABLE_OPS.get(name);
     if (chainable !== undefined) return mkChain(chainable, args);
-    if (name === "-")
-      return args.length === 1 ? mkApp(OP_UMINUS, args, SORT_INT) : mkApp(OP_SUB, args, SORT_INT);
-    if (name === "+") return mkApp(OP_ADD, args, SORT_INT);
+    if (name === "-") return mkApp(args.length === 1 ? OP_UMINUS : OP_SUB, args);
+    // ast_manager::mk_app: / is left associative, so more arguments nest to the left.
+    if (name === "/" && args.length > 2)
+      return args
+        .slice(1)
+        .reduce((dividend, divisor) => mkApp(OP_DIV, [dividend, divisor]), args[0]);
     const op = BUILTIN_OPS.get(name);
-    if (op !== undefined) {
-      const sort =
-        op === OP_ITE
-          ? manager.sorts[args[1]]
-          : op === OP_MUL || op === OP_IDIV || op === OP_MOD || op === OP_ABS
-            ? SORT_INT
-            : SORT_BOOL;
-      return mkApp(op, args, sort);
-    }
+    if (op !== undefined) return mkApp(op, args);
     const decl = funcs.get(name);
     if (decl === undefined) throw new SmtParseError(`unknown function ${name}`);
-    return mkApp(decl, args, manager.funcDecls[decl].range);
+    return mkApp(decl, args);
   };
 
-  const parseTerm = (sexpr: SExpr): number => {
+  // A term without nested applications to parse first: a symbol, a quantifier, a let or an
+  // annotation.
+  const parseLeaf = (sexpr: SExpr): number => {
     if (typeof sexpr === "string") {
-      if (/^[0-9]+$/.test(sexpr)) return manager.mkNumeral(Number(sexpr));
+      if (/^[0-9]+$/.test(sexpr)) return manager.mkNumeral(BigInt(sexpr));
+      const decimal = DECIMAL.exec(sexpr);
+      if (decimal !== null)
+        return manager.mkRealNumeral(
+          Rational.of(BigInt(decimal[1] + decimal[2]), 10n ** BigInt(decimal[2].length)),
+        );
       if (sexpr === "true") return manager.trueExpr;
       if (sexpr === "false") return manager.falseExpr;
       const binding = lookup(sexpr);
@@ -302,13 +442,45 @@ export const parseSmtlib = (
     const head = sexpr[0];
     if (head === "forall" || head === "exists") return parseQuantifier(sexpr, head === "forall");
     if (head === "let") return parseLet(sexpr);
-    if (head === "!") {
-      const named = parseTerm(sexpr[1]);
-      // name_expr: cmd_context keeps a named expression as a macro.
-      if (sexpr.includes(":named")) manager.incRef(named);
-      return named;
+    const named = parseTerm(sexpr[1]);
+    // name_expr: cmd_context keeps a named expression as a macro.
+    const nameIndex = sexpr.indexOf(":named");
+    if (nameIndex !== -1) {
+      manager.incRef(named);
+      manager.mkMacro(sexpr[nameIndex + 1] as string, named);
     }
-    return parseApp(expectSymbol(head), sexpr.slice(1).map(parseTerm));
+    return named;
+  };
+
+  // Applications keep their own stack, like Z3's parser, so deeply nested terms do not exhaust the
+  // call stack. Each frame has an application's name, its list, where its arguments start on the
+  // result stack, and its next argument.
+  const parseTerm = (sexpr: SExpr): number => {
+    const frames: { name: string; list: SExpr[]; start: number; next: number }[] = [];
+    const results: number[] = [];
+    const enter = (current: SExpr) => {
+      const head = Array.isArray(current) ? current[0] : undefined;
+      if (
+        !Array.isArray(current) ||
+        head === "forall" ||
+        head === "exists" ||
+        head === "let" ||
+        head === "!"
+      )
+        results.push(parseLeaf(current));
+      else frames.push({ name: expectSymbol(head), list: current, start: results.length, next: 1 });
+    };
+    enter(sexpr);
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1];
+      if (frame.next < frame.list.length) {
+        enter(frame.list[frame.next++]);
+        continue;
+      }
+      frames.pop();
+      results.push(parseApp(frame.name, results.splice(frame.start)));
+    }
+    return results[0];
   };
 
   let hasCheckSat = false;
