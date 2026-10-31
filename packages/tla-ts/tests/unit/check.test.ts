@@ -73,6 +73,24 @@ describe("check matches TLC", () => {
   );
 
   it.each([
+    ["1.7.4", ["1", "3", "0", "1", "2"], 11],
+    ["master", ["0", "1", "2", "3"], 9],
+  ] as const)(
+    "enumerates the bound of a quantifier over a lazy union as TLC %s does",
+    async (version, printed, generatedStates) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == (\\E <<a, b>> \\in {1, 3} \\X UNION {0..2, {1, 3}} : TRUE) /\\ x' = x\nASSUME \\A a \\in UNION {{3, 1}, 0..2} : PrintT(a)\nASSUME PrintT(CHOOSE a \\in UNION {{3}, 0..2} : TRUE)\n====`,
+        config: "INIT Init\nNEXT Next",
+        version,
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual([...printed, "0"]);
+      expect(result.generatedStates).toBe(generatedStates);
+    },
+  );
+
+  it.each([
     ["1.7.4", "[Nat -> {}]", "assumption-violation"],
     ["1.7.4", "[{} -> Nat]", "assumption-violation"],
     ["1.7.4", "[a : {}, b : Nat]", "success"],

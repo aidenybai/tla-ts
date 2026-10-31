@@ -159,7 +159,7 @@ const generateQuantifier = (
   const lists = expression.bounds.map(() => createLocal(generator));
   const declarations = expression.bounds.map(
     (bound, index) =>
-      `const ${lists[index]} = enumerate(${generateExpression(generator, bound.set, inner)}, ${addReference(generator, bound.set)});`,
+      `const ${lists[index]} = enumerate(${generateExpression(generator, bound.set, inner)}, ${addReference(generator, bound.set)}, ${JSON.stringify(generator.environment.runtime.version)});`,
   );
   const elements = expression.bounds.map((bound) => {
     const local = createLocal(generator);

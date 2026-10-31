@@ -24,7 +24,7 @@ import {
   getLazyFunction,
   toKeepLazyContext,
   getDefinition,
-  getEnumeratedElements,
+  getContextElements,
   getReevaluatedDefinitions,
   lookupScope,
   resolveApplyOperator,
@@ -751,7 +751,7 @@ const compileAction = (
       if (expression.bounds.length === 1 && bound.pattern.kind === "Name") {
         const name = bound.pattern.name;
         return (run, scope, partial, action, isFixed, onComplete) => {
-          const elements = getEnumeratedElements(
+          const elements = getContextElements(
             evaluate(bound.set, getContext(run, scope, partial)),
             bound.set,
             environment.runtime.version,
@@ -774,7 +774,7 @@ const compileAction = (
         return (run, scope, partial, action, isFixed, onComplete) => {
           const context = getContext(run, scope, partial);
           const sets = expression.bounds.map((innerBound) =>
-            getEnumeratedElements(
+            getContextElements(
               evaluate(innerBound.set, context),
               innerBound.set,
               environment.runtime.version,

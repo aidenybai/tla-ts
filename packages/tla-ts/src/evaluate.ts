@@ -41,6 +41,7 @@ import {
   getDomain,
   getFunctionDomain,
   getIntervalElements,
+  getStreamedElements,
   getFunctionClass,
   getSequenceElements,
   getValueHash,
@@ -460,7 +461,7 @@ const getBoundExplanation = (set: Value, text: string) => {
 
 // TLC enumerates every set except the ones it implements in Java, so any other set fails as its own
 // class does.
-export const getEnumeratedElements = (set: Value, expression: Expression, version: TlcVersion) => {
+const checkEnumerable = (set: Value, expression: Expression, version: TlcVersion) => {
   if (!isSetValue(set) || isOverriddenSet(set)) {
     const text = formatValue(set);
     // TLC 1.7.4 doesn't explain why it can't enumerate a set.
@@ -471,19 +472,37 @@ export const getEnumeratedElements = (set: Value, expression: Expression, versio
         : `TLC encountered the non-enumerable quantifier bound\n${text}\n${describeNode(expression)}\n${explanation}`,
     );
   }
+};
+
+const getEnumeratedElements = (set: Value, expression: Expression, version: TlcVersion) => {
+  checkEnumerable(set, expression, version);
   return typeof set === "object" && set.kind === "Interval"
     ? getIntervalElements(set)
     : toFiniteSet(set).elements;
 };
 
-// The elements a quantifier visits. Like TLC, it keeps an interval as an interval, so that it can
-// stop at the first witness in a large interval such as 1..2000000000 without listing it.
-export const getQuantifierElements = (set: Value, expression: Expression, version: TlcVersion) => {
-  if (typeof set !== "object" || set.kind !== "Interval")
-    return getEnumeratedElements(set, expression, version);
+// The elements Tool.contexts binds to the bound of a quantifier or a set map. TLC 1.7.4 streams a
+// lazy set's elements, where later versions normalize the set first.
+export const getContextElements = (set: Value, expression: Expression, version: TlcVersion) => {
+  if (version !== "1.7.4") return getEnumeratedElements(set, expression, version);
+  checkEnumerable(set, expression, version);
+  return getStreamedElements(set);
+};
+
+// Like TLC, a quantifier keeps an interval as an interval, so that it can stop at the first witness
+// in a large interval such as 1..2000000000 without listing it.
+const getKeptInterval = (set: Value) => {
+  if (typeof set !== "object" || set.kind !== "Interval") return undefined;
   getCardinality(set);
   return set;
 };
+
+export const getQuantifierElements = (set: Value, expression: Expression, version: TlcVersion) =>
+  getKeptInterval(set) ?? getContextElements(set, expression, version);
+
+// CHOOSE and a function constructor visit the elements of the normalized set.
+const getNormalizedElements = (set: Value, expression: Expression, version: TlcVersion) =>
+  getKeptInterval(set) ?? getEnumeratedElements(set, expression, version);
 
 const someElement = (
   elements: ReturnType<typeof getQuantifierElements>,
@@ -1877,7 +1896,14 @@ const compileFunctionConstruction = (
       return isReducibleSet(domain) ? functionValue : markLambdaFunction(functionValue);
     }
     const pairs: [Value, Value][] = [];
-    forEachBinding(bounds, context, (scope) => {
+    const sets = bounds.map((item) =>
+      getNormalizedElements(
+        evaluate(item.set, context),
+        item.set,
+        context.environment.runtime.version,
+      ),
+    );
+    forEachBoundElement(bounds, sets, context.scope, (scope) => {
       const key =
         bounds.length === 1
           ? (lookupKey(bound.pattern, scope) ?? false)
@@ -2064,7 +2090,7 @@ const compileSetComprehension = (
       );
     }
     const chosen = { value: undefined as Value | undefined };
-    const elements = getQuantifierElements(base, set, context.environment.runtime.version);
+    const elements = getNormalizedElements(base, set, context.environment.runtime.version);
     someElement(elements, (element) => {
       const scope = bindPattern(context.scope, expression.pattern, element);
       if (!expectBoolean(body(withScope(context, scope)), "the body of CHOOSE")) return false;
