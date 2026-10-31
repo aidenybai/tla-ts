@@ -216,7 +216,8 @@ class EqDer {
     const manager = this.manager;
     const isEq = manager.getOp(expr) === OP_EQ;
     if (isEq) {
-      const [lhs, rhs] = manager.args[expr];
+      const lhs = manager.args[expr][0];
+      const rhs = manager.args[expr][1];
       const isSwapped = !this.isVariable(lhs);
       if (this.isVariable(isSwapped ? rhs : lhs)) {
         vars.push(isSwapped ? rhs : lhs);
@@ -260,7 +261,8 @@ class EqDer {
     const manager = this.manager;
     if (this.isVariable(expr)) return { variable: expr, coefficient: 1n };
     if (manager.getOp(expr) !== OP_MUL || manager.args[expr].length !== 2) return undefined;
-    const [first, second] = manager.args[expr];
+    const first = manager.args[expr][0];
+    const second = manager.args[expr][1];
     const secondValue = this.getInvertibleConst(second);
     if (this.isVariable(first) && secondValue !== undefined)
       return { variable: first, coefficient: secondValue };
@@ -332,20 +334,19 @@ class EqDer {
       return result;
     }
     const isLeftZero = manager.getNumeral(inputLeft) === 0n;
-    let left = isLeftZero ? inputRight : inputLeft;
-    let right = isLeftZero ? inputLeft : inputRight;
+    const left = isLeftZero ? inputRight : inputLeft;
+    const right = isLeftZero ? inputLeft : inputRight;
     const leftArgs = manager.args[left];
-    if (
-      manager.getNumeral(right) === 0n &&
-      manager.getOp(left) === OP_ADD &&
-      leftArgs.length === 2
-    ) {
-      const negatedSecond = manager.getTimesMinusOneArg(leftArgs[1]);
-      const negatedFirst = manager.getTimesMinusOneArg(leftArgs[0]);
-      if (negatedSecond !== undefined) [left, right] = [leftArgs[0], negatedSecond];
-      else if (negatedFirst !== undefined) [left, right] = [leftArgs[1], negatedFirst];
-    }
-    const result = manager.mkEq(left, right);
+    const isBinarySum =
+      manager.getNumeral(right) === 0n && manager.getOp(left) === OP_ADD && leftArgs.length === 2;
+    const negatedSecond = isBinarySum ? manager.getTimesMinusOneArg(leftArgs[1]) : undefined;
+    const negatedFirst = isBinarySum ? manager.getTimesMinusOneArg(leftArgs[0]) : undefined;
+    const result =
+      negatedSecond !== undefined
+        ? manager.mkEq(leftArgs[0], negatedSecond)
+        : negatedFirst !== undefined
+          ? manager.mkEq(leftArgs[1], negatedFirst)
+          : manager.mkEq(left, right);
     manager.incRef(result);
     return result;
   }
@@ -354,18 +355,17 @@ class EqDer {
   // when k is zero.
   private tryIntMulSolve(atom: number) {
     const manager = this.manager;
-    let [lhs, rhs] = manager.args[atom];
-    if (manager.sorts[lhs] !== SORT_INT) return -1;
-    if (manager.getOp(rhs) !== OP_MUL) {
-      if (manager.getOp(lhs) !== OP_MUL) return -1;
-      [lhs, rhs] = [rhs, lhs];
-    }
-    if (manager.args[rhs].length !== 2) return -1;
-    let [first, second] = manager.args[rhs];
-    if (!manager.isNumeral(first)) {
-      if (!manager.isNumeral(second)) return -1;
-      [first, second] = [second, first];
-    }
+    const atomArgs = manager.args[atom];
+    if (manager.sorts[atomArgs[0]] !== SORT_INT) return -1;
+    const isMulOnLeft = manager.getOp(atomArgs[1]) !== OP_MUL;
+    if (isMulOnLeft && manager.getOp(atomArgs[0]) !== OP_MUL) return -1;
+    const lhs = atomArgs[isMulOnLeft ? 1 : 0];
+    const factors = manager.args[atomArgs[isMulOnLeft ? 0 : 1]];
+    if (factors.length !== 2) return -1;
+    const isNumeralSecond = !manager.isNumeral(factors[0]);
+    if (isNumeralSecond && !manager.isNumeral(factors[1])) return -1;
+    const first = factors[isNumeralSecond ? 1 : 0];
+    const second = factors[isNumeralSecond ? 0 : 1];
     if (manager.getNumeralValue(first) === 0n) {
       const result = manager.mkEq(lhs, manager.mkNumeral(0n));
       manager.incRef(result);
@@ -392,7 +392,8 @@ class EqDer {
     const manager = this.manager;
     const mulSolved = this.tryIntMulSolve(atom);
     if (mulSolved !== -1) return mulSolved;
-    const [lhs, rhs] = manager.args[atom];
+    const lhs = manager.args[atom][0];
+    const rhs = manager.args[atom][1];
     let variable = assign(manager, -1, lhs);
     let term = assign(manager, -1, rhs);
     const solved = this.solveLinear(lhs, rhs);
@@ -411,7 +412,8 @@ class EqDer {
     const manager = this.manager;
     let result = assign(manager, -1, atom);
     if (manager.getOp(atom) === OP_EQ) {
-      const [lhs, rhs] = manager.args[atom];
+      const lhs = manager.args[atom][0];
+      const rhs = manager.args[atom][1];
       if (manager.isNot(lhs) && this.isVariable(manager.args[lhs][0]))
         result = assign(manager, result, manager.mkEq(manager.args[lhs][0], mkNot(manager, rhs)));
       else if (manager.isNot(rhs) && this.isVariable(manager.args[rhs][0]))
@@ -420,7 +422,9 @@ class EqDer {
         result = assign(manager, result, manager.mkEq(rhs, lhs));
     }
     if (manager.getOp(atom) === OP_ITE) {
-      const [condition, thenExpr, elseExpr] = manager.args[atom];
+      const condition = manager.args[atom][0];
+      const thenExpr = manager.args[atom][1];
+      const elseExpr = manager.args[atom][2];
       const thenSolved = this.solveBasic(thenExpr, true);
       const elseSolved = this.solveBasic(elseExpr, true);
       if (
@@ -552,7 +556,8 @@ class EqDer {
       for (let position = 0; position < conjs.size; position++) {
         const conj = conjs.items[position];
         if (!manager.isNot(conj) || manager.getOp(manager.args[conj][0]) !== OP_EQ) continue;
-        const [lhs, rhs] = manager.args[manager.args[conj][0]];
+        const lhs = manager.args[manager.args[conj][0]][0];
+        const rhs = manager.args[manager.args[conj][0]][1];
         if (
           (this.isVariable(lhs) && this.isUnconstrained(lhs, rhs, position, conjs.items)) ||
           (this.isVariable(rhs) && this.isUnconstrained(rhs, lhs, position, conjs.items))
@@ -683,7 +688,8 @@ class Fm {
   private getMonomialVar(expr: number) {
     const manager = this.manager;
     if (manager.getOp(expr) === OP_MUL && manager.args[expr].length === 2) {
-      const [coefficient, variable] = manager.args[expr];
+      const coefficient = manager.args[expr][0];
+      const variable = manager.args[expr][1];
       if (manager.isNumeral(coefficient) && this.isVariable(variable)) return variable;
     }
     return this.isVariable(expr) ? expr : -1;
@@ -708,7 +714,8 @@ class Fm {
     const atom = manager.isNot(expr) ? manager.args[expr][0] : expr;
     const op = manager.getOp(atom);
     if ((op !== OP_LE && op !== OP_GE) || manager.args[atom].length !== 2) return false;
-    const [lhs, rhs] = manager.args[atom];
+    const lhs = manager.args[atom][0];
+    const rhs = manager.args[atom][1];
     // Z3's fm also eliminates Real variables, whose rational coefficients the port does not keep.
     return manager.isInt(lhs) && manager.isNumeral(rhs) && this.isLinearPol(lhs);
   }
@@ -803,7 +810,8 @@ class Fm {
       const atom = isNegated ? manager.args[arg][0] : arg;
       isStrict = isNegated;
       const isFlipped = manager.getOp(atom) === OP_GE ? !isNegated : isNegated;
-      const [lhs, rhs] = manager.args[atom];
+      const lhs = manager.args[atom][0];
+      const rhs = manager.args[atom][1];
       c = isFlipped ? -manager.getNumeralValue(rhs) : manager.getNumeralValue(rhs);
       const monomials = manager.getOp(lhs) === OP_ADD ? manager.args[lhs] : [lhs];
       let isAllInt = true;
@@ -993,7 +1001,8 @@ class Fm {
   private analyze(constraints: Constraint[], variable: number) {
     let isUnit = true;
     for (const constraint of constraints)
-      for (const [index, other] of constraint.xs.entries()) {
+      for (let index = 0; index < constraint.xs.length; index++) {
+        const other = constraint.xs[index];
         if (!this.isInt[other]) return { isAllInt: false, isUnit };
         if (other === variable && constraint.as[index] !== 1n && constraint.as[index] !== -1n)
           isUnit = false;
