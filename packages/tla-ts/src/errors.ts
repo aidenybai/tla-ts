@@ -86,6 +86,32 @@ export class TlaUnsupportedError extends TlaError {
   }
 }
 
+// The SMT solver met input outside the SMT-LIB subset that tlapm emits, or a numeral too large for
+// its exact arithmetic. The solver answers unknown.
+export class SmtUnsupportedError extends TlaError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = "SmtUnsupportedError";
+  }
+}
+
+// The SMT solver ran past its time limit, or its signal aborted, in the middle of a rewrite. The
+// solver answers unknown.
+export class SmtCanceledError extends TlaError {
+  constructor() {
+    super("the SMT solver was canceled");
+    this.name = "SmtCanceledError";
+  }
+}
+
+// The SMT-LIB input is malformed: a syntax error, an undeclared symbol, or an ill-sorted application.
+export class SmtParseError extends TlaError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = "SmtParseError";
+  }
+}
+
 export const getErrorExitCode = (error: TlaError) =>
   getExitCode(error) ??
   (error instanceof TlaSyntaxError
