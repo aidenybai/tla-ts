@@ -26,7 +26,16 @@ export const setExitCode = <Thrown>(error: Thrown, code: number) => {
 
 export const getExitCode = (error: Error) => exitCodes.get(error);
 
-// TLC exits with 255 when it fails to process or evaluate a liveness property, in any phase.
+const ownExitCodes = new WeakMap<Error, number>();
+
+// The exit status of the error code TLC gives an EvalException, which TLC uses only where it
+// doesn't report the error again as a nested expression.
+export const setOwnExitCode = <Thrown extends Error>(error: Thrown, code: number) => {
+  ownExitCodes.set(error, code);
+  return error;
+};
+
+// TLC exits with 255 when it fails to process or evaluate a liveness property.
 const withErrorExitCode = <Result>(run: () => Result) => {
   try {
     return run();
@@ -41,8 +50,18 @@ export const withLivenessExitCode = (
   const checker = withErrorExitCode(create);
   return (
     checker && {
-      addInitialState: (index, state) =>
-        withErrorExitCode(() => checker.addInitialState(index, state)),
+      // TLC replays the initial states to report an error, but skips the liveness check of a
+      // state it has already seen, so it exits with the status of the error's own code.
+      addInitialState: (index, state) => {
+        try {
+          checker.addInitialState(index, state);
+        } catch (error) {
+          throw setExitCode(
+            error,
+            (error instanceof Error && ownExitCodes.get(error)) || EXIT_STATUS.error,
+          );
+        }
+      },
       addState: (index, state, successors) =>
         withErrorExitCode(() => checker.addState(index, state, successors)),
       findViolation: () => withErrorExitCode(() => checker.findViolation()),

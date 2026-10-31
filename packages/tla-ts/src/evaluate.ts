@@ -14,7 +14,7 @@ import {
 } from "./ast";
 import { getKindString } from "./builtins";
 import { TlaEvaluationError } from "./errors";
-import { EXIT_STATUS, setExitCode } from "./exit-codes";
+import { EXIT_STATUS, setExitCode, setOwnExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
@@ -1591,8 +1591,11 @@ export const hasDuplicateFields = (sortedFields: RecordField[]) =>
   sortedFields.some((field, index) => index > 0 && sortedFields[index - 1].name === field.name);
 
 export const createUnassignedError = (name: string, expression: Expression) =>
-  new TlaEvaluationError(
-    `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
+  setOwnExitCode(
+    new TlaEvaluationError(
+      `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
+    ),
+    EXIT_STATUS.configParseError,
   );
 
 export const createPrimeOutsideActionError = (expression: Expression) =>
