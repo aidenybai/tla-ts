@@ -636,6 +636,28 @@ describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path
     expect(getToolSequence(result.stdout).slice(-4)).toEqual(["2267", "2200", "2199", "2186"]);
   });
 
+  it("prints what rebuilding a counterexample prints after its heading, the prefix at once and the cycle state by state", () => {
+    const result = check174("CyclePrint");
+    expect(result.status).toBe(13);
+    const states = [0, 1, 2, 3].map(
+      (x) =>
+        `@!@!@STARTMSG 2217:4 @!@!@\n${x === 0 ? "1: <Initial predicate>" : `${x + 1}: <Next line 5, col 9 to line 5, col 63 of module CyclePrint>`}\nx = ${x}\n\n@!@!@ENDMSG 2217 @!@!@\n`,
+    );
+    expect(result.stdout).toContain(
+      [
+        "@!@!@STARTMSG 2264:1 @!@!@\nThe following behavior constitutes a counter-example:\n\n@!@!@ENDMSG 2264 @!@!@\n",
+        '"init"\n<<"n", 0>>\n<<"n", 1>>\n',
+        states[0],
+        states[1],
+        states[2],
+        '<<"n", 2>>\n',
+        states[3],
+        '<<"n", 3>>\n',
+        "@!@!@STARTMSG 2122:4 @!@!@\n3: Back to state",
+      ].join(""),
+    );
+  });
+
   it("prints the sources of the values it fails to fingerprint rather than the call stack", () => {
     const result = check174("Unfingerprinted");
     expect(result.status).toBe(75);

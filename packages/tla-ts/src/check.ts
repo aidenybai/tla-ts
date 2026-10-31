@@ -1800,7 +1800,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           ),
     );
     const outputs = found.map((step) => step.lines);
-    const rebuilt = steps.length - known;
+    const loopStart = traceOptions.loopStart;
+    // 1.7.4's LiveWorker#printTrace rebuilds a lasso up to the start of its cycle at once, and then
+    // each state of the cycle as it prints it.
+    const rebuilt = is174 && loopStart !== undefined ? loopStart + 1 : steps.length - known;
     const prefixOutput = rebuilt > 0 ? [initialOutput, ...outputs.slice(1, rebuilt)].flat() : [];
     return {
       trace: steps.map((step, position) => {
@@ -1811,7 +1814,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           state:
             alias === undefined
               ? toRecord(step.state)
-              : getAliasState(alias, steps, position, traceOptions.loopStart),
+              : getAliasState(alias, steps, position, loopStart),
           output: position === 0 ? prefixOutput : position < rebuilt ? [] : outputs[position],
         };
         if (alias !== undefined || action) {

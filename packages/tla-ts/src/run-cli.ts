@@ -258,10 +258,11 @@ const printTrace = (
     code: MESSAGE_CODE.behaviorUpToThisPoint,
     text: "The behavior up to this point is:",
   },
+  isRebuiltAfterHeading = false,
 ) => {
   if (trace.length > 0) printer.print(heading.code, MESSAGE_LEVEL.error, heading.text);
   trace.forEach((step, index) => {
-    if (index > 0) printTraceOutput(printer, step.output);
+    if (index > 0 || isRebuiltAfterHeading) printTraceOutput(printer, step.output);
     printer.print(
       MESSAGE_CODE.statePrint2,
       MESSAGE_LEVEL.state,
@@ -517,8 +518,11 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
   // A safety property's counterexample ends where it breaks, and a liveness one loops back.
   const isProperty = status === "property-violation";
   const isLasso = loopStart !== undefined && !isProperty;
-  // TLC rebuilds a liveness counterexample before it reports the violation.
-  if (isProperty || isLasso) printTraceOutput(printer, violation.trace[0]?.output);
+  const isCounterExample = isProperty || isLasso;
+  // TLC rebuilds a liveness counterexample before it reports the violation, and 1.7.4's
+  // LiveWorker#printTrace after it prints the heading of the counterexample.
+  const isRebuiltFirst = isCounterExample && printer.version !== "1.7.4";
+  if (isRebuiltFirst) printTraceOutput(printer, violation.trace[0]?.output);
   if (violation.counts) console.log(violation.counts);
   if (headline) {
     // TLC prints the initial state that violates a property in the same message.
@@ -528,8 +532,13 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
     print(headline.code, MESSAGE_LEVEL.error, text);
   }
   if (!isInitial) {
-    if (!isProperty && !isLasso) printTraceOutput(printer, violation.trace[0]?.output);
-    printTrace(printer, violation.trace, isProperty || isLasso ? COUNTER_EXAMPLE : undefined);
+    if (!isCounterExample) printTraceOutput(printer, violation.trace[0]?.output);
+    printTrace(
+      printer,
+      violation.trace,
+      isCounterExample ? COUNTER_EXAMPLE : undefined,
+      isCounterExample && !isRebuiltFirst,
+    );
     printTraceOutput(printer, violation.traceOutput);
   }
   if (isLasso) {
