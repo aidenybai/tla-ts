@@ -140,6 +140,13 @@ export interface EvaluationFailure {
   trace: TraceStep[];
   initialState: Record<string, Value> | undefined;
   exitCode: number;
+  replay?: Replay;
+}
+
+// TLC replays a failed step to print the expressions it was evaluating when the replay failed.
+export interface Replay {
+  output: string[];
+  callStack: string[] | undefined;
 }
 
 export interface CheckResult {
@@ -927,6 +934,27 @@ const toNextStateError = (error: unknown) =>
       )
     : withNextStateExitCode(error);
 
+// TLC keeps the stack only when an evaluation fails, and prints each expression on it once, however
+// many times in a row it pushed it.
+const getReplayedCallStack = (replay: () => void, trace: Expression[]) => {
+  try {
+    replay();
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) return [];
+    return trace
+      .flatMap((expression) => {
+        const range = expression.location.range;
+        return range
+          ? [
+              `Line ${range.start.line}, column ${range.start.column} to line ${range.end.line}, column ${range.end.column} in ${range.module}`,
+            ]
+          : [];
+      })
+      .filter((frame, index, frames) => index === 0 || frames[index - 1] !== frame);
+  }
+};
+
 const withHeadline = (error: unknown, headline: string) =>
   error instanceof TlaEvaluationError
     ? setExitCode(
@@ -955,9 +983,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const onPrint = options.onPrint ?? console.log;
   // TLC prints again while it rebuilds a trace, between the states it prints. Printing those lines
   // before the trace would misplace them, so rebuilding a trace prints nothing.
-  const output = { isMuted: false };
+  const output = { isMuted: false, replayed: undefined as string[] | undefined };
   const print = (text: string) => {
-    if (!output.isMuted) onPrint(text);
+    if (output.replayed) output.replayed.push(text);
+    else if (!output.isMuted) onPrint(text);
   };
   const withoutOutput = <Result>(rebuild: () => Result) => {
     output.isMuted = true;
@@ -1019,9 +1048,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     ),
   });
 
-  const search = createSearch(config, environment, () =>
-    getTlcDeclarationOrder(options.source, options.loadModule, "variable"),
-  );
+  const getVariableOrder = () =>
+    getTlcDeclarationOrder(options.source, options.loadModule, "variable");
+  const search = createSearch(config, environment, getVariableOrder);
   const assumptionViolation = findAssumptionViolation(specification.assumptions, environment);
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
   if (!search) return createSuccess();
@@ -1045,6 +1074,67 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
   const nextActions = { value: undefined as SpecAction[] | undefined };
+  const replayFailure = (
+    result: CheckResult,
+    replay: (tracedSearch: Search, traced: Environment) => void,
+  ): CheckResult => {
+    if (!result.failure) return result;
+    const trace: Expression[] = [];
+    const traced: Environment = { ...environment, evaluators: new WeakMap(), trace };
+    const tracedSearch = createSearch(config, traced, getVariableOrder);
+    if (!tracedSearch) return result;
+    const replayed: string[] = [];
+    output.replayed = replayed;
+    const callStack = getReplayedCallStack(() => replay(tracedSearch, traced), trace);
+    output.replayed = undefined;
+    return { ...result, failure: { ...result.failure, replay: { output: replayed, callStack } } };
+  };
+  // TLC checks every initial state again, as when it first generated them.
+  const replayInitialStates = (result: CheckResult) =>
+    replayFailure(result, (tracedSearch, traced) => {
+      if (spec.init === undefined) return;
+      forEachInitialState(
+        spec.init,
+        traced,
+        (state) => {
+          tracedSearch.satisfiesConstraints(state);
+          return (
+            tracedSearch.findViolatedInvariant(state) !== undefined ||
+            tracedSearch.findFailedInitialPredicate(state) !== undefined
+          );
+        },
+        spec.scope,
+      );
+    });
+  // TLC rebuilds the behavior up to the state it expanded before it replays the step.
+  const rebuildBehavior = (index: number): void => {
+    const parent = parents[index];
+    if (parent === -1) {
+      getSpecInitialStates();
+      return;
+    }
+    rebuildBehavior(parent);
+    getLabel(parent, states[parent], states[index]);
+  };
+  // TLC generates the successors of each action before it checks them. It checks the invariants
+  // only of a successor outside the model, since it has seen the others.
+  const replaySuccessors = (result: CheckResult, index: number) =>
+    replayFailure(result, (tracedSearch, traced) => {
+      rebuildBehavior(index);
+      const state = states[index];
+      nextActions.value ??= getNextActions(config, environment, specification.instanceActions);
+      nextActions.value.find((action) =>
+        getSuccessors(action.expression, state, traced, action.scope).some((successor) => {
+          const isInModel =
+            tracedSearch.satisfiesConstraints(successor.state) &&
+            tracedSearch.satisfiesActionConstraints(state, successor.state);
+          return (
+            (!isInModel && tracedSearch.findViolatedInvariant(successor.state) !== undefined) ||
+            tracedSearch.findViolatedActionProperty(state, successor.state) !== undefined
+          );
+        }),
+      );
+    });
   const isReducing = config.view !== undefined || config.symmetry !== undefined;
   const tlcFingerprints: number[] = [];
   const liveness = withLivenessExitCode(() =>
@@ -1472,10 +1562,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         spec.scope,
       );
     } catch (error) {
-      return toFailure(error, []);
+      return replayInitialStates(toFailure(error, []));
     }
   }
-  if (outcome.result) return outcome.result;
+  if (outcome.result) return replayInitialStates(outcome.result);
 
   const next = spec.next;
   if (next === undefined) {
@@ -1533,7 +1623,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       } catch (error) {
         // TLC reports a successor it cannot fingerprint as a failure of the state it expands.
         if (current.isFingerprinting) throw error;
-        outcome.result = toFailure(error, getTrace(index, successor));
+        const failure = toFailure(error, getTrace(index, successor));
+        outcome.result = isStackOverflow(error) ? failure : replaySuccessors(failure, index);
       }
       return outcome.result !== undefined;
     });
@@ -1629,10 +1720,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     try {
       outcome.result = expandState(index);
     } catch (error) {
-      outcome.result =
+      const failure =
         error instanceof TlaIncompleteStateError
           ? reportIncompleteSuccessor(error, index)
           : toFailure(toNextStateError(error), getStateTrace(index));
+      outcome.result =
+        error instanceof TlaIncompleteStateError || isStackOverflow(error)
+          ? failure
+          : replaySuccessors(failure, index);
     }
     if (outcome.result) return outcome.result;
     outDegrees[getOutDegreeBucket()]++;

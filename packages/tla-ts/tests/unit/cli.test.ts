@@ -144,6 +144,48 @@ const TLC_REPORTS = [
     ],
   ],
   ["NoNext", 75, ["Error: No next state actions defined to generate successor states from."]],
+  [
+    "FailedAssert",
+    14,
+    [
+      "Error: The first argument of Assert evaluated to FALSE; the second argument was:",
+      '"x is 1"',
+      "Error: The behavior up to this point is:",
+      "State 1: <Initial predicate>",
+      "x = 0",
+      "",
+      "State 2: <Next line 6, col 5 to line 7, col 30 of module FailedAssert>",
+      "x = 1",
+      "",
+      "Error: The error occurred when TLC was evaluating the nested",
+      "expressions at the following positions:",
+      "0. Line 6, column 5 to line 7, column 30 in FailedAssert",
+      "1. Line 6, column 8 to line 6, column 17 in FailedAssert",
+      "2. Line 7, column 8 to line 7, column 30 in FailedAssert",
+      "",
+      "",
+      "2 states generated, 2 distinct states found, 0 states left on queue.",
+      "The depth of the complete state graph search is 2.",
+    ],
+  ],
+  [
+    "FailedInitialInvariant",
+    75,
+    [
+      "Error: The first argument of Assert evaluated to FALSE; the second argument was:",
+      '"a is 1"',
+      "Error: The error occurred when TLC was evaluating the nested",
+      "expressions at the following positions:",
+      "0. Line 5, column 5 to line 6, column 15 in FailedInitialInvariant",
+      "1. Line 5, column 8 to line 5, column 17 in FailedInitialInvariant",
+      "2. Line 6, column 8 to line 6, column 15 in FailedInitialInvariant",
+      "3. Line 8, column 8 to line 8, column 30 in FailedInitialInvariant",
+      "",
+      "",
+      "1 states generated, 1 distinct states found, 1 states left on queue.",
+      "The depth of the complete state graph search is 1.",
+    ],
+  ],
 ] as const;
 
 describe("the CLI reports results like TLC", () => {
@@ -196,6 +238,8 @@ describe("the CLI takes several specs and globs", () => {
     expect(result.status).toBe(10);
     expect(getCheckedSpecs(result.stdout)).toEqual([
       "Checking AssumptionFalse.tla with AssumptionFalse.cfg",
+      "Checking FailedAssert.tla with FailedAssert.cfg",
+      "Checking FailedInitialInvariant.tla with FailedInitialInvariant.cfg",
       "Checking FailedInvariant.tla with FailedInvariant.cfg",
       "Checking InitialInvariant.tla with InitialInvariant.cfg",
       "Checking Lasso.tla with Lasso.cfg",

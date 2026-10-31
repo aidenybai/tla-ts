@@ -113,11 +113,30 @@ const holds = (expression: Expression, context: Context, value = evaluate(expres
 const isAssignmentOperator = (operator: string) =>
   operator === "=" || operator === "\\in" || operator === "\\subseteq";
 
+const tracedRunners = new WeakMap<Environment, WeakMap<Expression, Runner>[]>();
+
+const getRunners = (environment: Environment, isInit: boolean) => {
+  if (!environment.trace) return isInit ? initRunners : nextRunners;
+  const runners = tracedRunners.get(environment) ?? [new WeakMap(), new WeakMap()];
+  tracedRunners.set(environment, runners);
+  return runners[isInit ? 0 : 1];
+};
+
 const getRunner = (expression: Expression, environment: Environment, isInit: boolean): Runner => {
-  const runners = isInit ? initRunners : nextRunners;
+  const runners = getRunners(environment, isInit);
   const cached = runners.get(expression);
   if (cached) return cached;
-  const runner = compileAction(expression, environment, isInit);
+  const compiled = compileAction(expression, environment, isInit);
+  const trace = environment.trace;
+  // TLC's CallStackTool keeps an action's expression on the stack while the rest of the action runs.
+  const runner: Runner = trace
+    ? (run, scope, partial, action, isFixed, onComplete) => {
+        const depth = trace.length;
+        trace.push(expression);
+        compiled(run, scope, partial, action, isFixed, onComplete);
+        trace.length = depth;
+      }
+    : compiled;
   runners.set(expression, runner);
   return runner;
 };
@@ -199,6 +218,23 @@ const getUnchangedIndices = (
   if (!definition) return undefined;
   visited.add(expression.name);
   return getUnchangedIndices(definition.body, environment, visited);
+};
+
+// TLC's CallStackTool keeps each expression that UNCHANGED takes apart on the stack.
+const getUnchangedFrames = (expression: Expression, environment: Environment): Expression[] => {
+  if (expression.kind === "Tuple") {
+    return [
+      expression,
+      ...expression.elements.flatMap((element) => getUnchangedFrames(element, environment)),
+    ];
+  }
+  const definition =
+    expression.kind === "Identifier" && !environment.variableIndex.has(expression.name)
+      ? getZeroArityBody(expression.name, environment)
+      : undefined;
+  return definition
+    ? [expression, ...getUnchangedFrames(definition.body, environment)]
+    : [expression];
 };
 
 const ACTION_KINDS = new Set([
@@ -333,6 +369,7 @@ const compileConjunction = (
 ): Runner => {
   const conjuncts = operands.map((operand) => toConjunct(operand, environment, isInit));
   const evaluators: (Evaluator | undefined)[] = conjuncts.map(() => undefined);
+  const trace = environment.trace;
   const runFrom = (
     start: number,
     run: Run,
@@ -353,6 +390,12 @@ const compileConjunction = (
         return;
       }
       const conjunct = conjuncts[index];
+      if (trace) {
+        trace.push(conjunct.expression);
+        if (conjunct.expression.kind === "Unchanged") {
+          trace.push(...getUnchangedFrames(conjunct.expression.expression, environment));
+        }
+      }
       if (conjunct.kind === "Guard") {
         context ??= getContext(run, scope, current);
         const evaluator = (evaluators[index] ??= getEntryEvaluator(
@@ -771,7 +814,8 @@ const compileAction = (
           }
         };
       }
-      const hoisted = isInit ? undefined : getHoistedGuards(expression, environment);
+      const hoisted =
+        isInit || environment.trace ? undefined : getHoistedGuards(expression, environment);
       if (hoisted) {
         const rest = compileConjunction(hoisted.rest, environment, isInit);
         return (run, scope, partial, action, isFixed, onComplete) => {

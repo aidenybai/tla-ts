@@ -210,12 +210,16 @@ export const expandTemporal = (
       if (expanding.has(definition)) {
         throw setExitCode(new TlaEvaluationError(STACK_OVERFLOW), EXIT_STATUS.error);
       }
-      return expand(
+      const expanded = expand(
         definition.body,
         undefined,
         expression.name,
         new Set([...expanding, definition]),
       );
+      // TLC takes the body of a state-level definition in a specification as one initial predicate.
+      return !isProperty && getDefinitionLevel(definition, environment) < ACTION_LEVEL
+        ? [{ expression: definition.body, scope: undefined, name: expression.name }]
+        : expanded;
     }
   }
   const context = getConstantContext(environment, scope);
