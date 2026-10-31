@@ -328,6 +328,61 @@ const OPERATOR_ARGUMENT_KINDS = new Set<Expression["kind"]>([
   "Lambda",
 ]);
 
+// The parts of a DEF clause entry that isn't a name, as Generator.genIdToSelector reads them.
+interface DefEntryParts {
+  hasChildlessFirstChild: boolean | undefined;
+  last: TokenSpan;
+  // The kind of SANY's syntax node for the last part, or for a token its text.
+  lastKind: string | undefined;
+}
+
+// The kind of the syntax node SANY's parser builds for an expression of each kind.
+const SYNTAX_KINDS = new Map<Expression["kind"], string>([
+  ["Identifier", "N_GeneralId"],
+  ["Subexpression", "N_GeneralId"],
+  ["Number", "N_Number"],
+  ["Decimal", "N_Real"],
+  ["SetEnumeration", "N_SetEnumerate"],
+  ["SetFilter", "N_SubsetOf"],
+  ["SetMap", "N_SetOfAll"],
+  ["Tuple", "N_Tuple"],
+  ["FunctionApplication", "N_FcnAppl"],
+  ["FunctionConstruction", "N_FcnConst"],
+  ["FunctionSet", "N_SetOfFcns"],
+  ["Record", "N_RcdConstructor"],
+  ["RecordSet", "N_SetOfRcds"],
+  ["FieldAccess", "N_RecordComponent"],
+  ["Except", "N_Except"],
+  ["Prime", "N_PostfixExpr"],
+  ["Always", "N_PrefixExpr"],
+  ["Eventually", "N_PrefixExpr"],
+  ["Enabled", "N_PrefixExpr"],
+  ["Unchanged", "N_PrefixExpr"],
+  ["Forall", "N_BoundedQuant"],
+  ["Exists", "N_BoundedQuant"],
+  ["UnboundedQuantifier", "N_UnboundedQuant"],
+  ["Choose", "N_UnBoundedOrBoundedChoose"],
+  ["If", "N_IfThenElse"],
+  ["Case", "N_Case"],
+  ["Let", "N_LetIn"],
+  ["BoxAction", "N_ActionExpr"],
+  ["AngleAction", "N_ActionExpr"],
+  ["WeakFairness", "N_FairnessExpr"],
+  ["StrongFairness", "N_FairnessExpr"],
+]);
+
+// The syntax nodes whose first child is a node with children of its own. The first child of any
+// other is a token, or a node without children.
+const NESTED_FIRST_CHILD_KINDS = new Set([
+  "N_GeneralId",
+  "N_OpApplication",
+  "N_PrefixExpr",
+  "N_InfixExpr",
+  "N_PostfixExpr",
+  "N_FcnAppl",
+  "N_RecordComponent",
+]);
+
 // Builds the semantic graph SANY builds for a specification and its modules, in the order SANY
 // analyzes them: a module after the modules it extends and instantiates.
 const POSTFIX_OPERATOR_TEXTS = new Set(["'", "^+", "^*", "^#"]);
@@ -2195,9 +2250,155 @@ export const generateSanySpecification = (
         return getFactModule(fact.name);
       });
 
+    const isParenthesized = (span: TokenSpan) =>
+      isToken(file, span.start, "(") && getMatchingIndex(file, span.start) === span.end;
+    const getOperandSpan = (expression: Expression) =>
+      getParenthesizedSpan(file, getExpressionSpan(file, expression));
+    // How SANY's parser shapes an application: as a prefix, infix or postfix operator's, or a name's.
+    const getApplicationKind = (expression: Expression & { kind: "Apply" }, span: TokenSpan) => {
+      if (getOperandSpan(expression.args[0]).start === span.start) {
+        return expression.args.length === 2 ? "N_InfixExpr" : "N_PostfixExpr";
+      }
+      return file.tokens[span.start].kind === "Identifier" ? "N_OpApplication" : "N_PrefixExpr";
+    };
+    // The kind of SANY's syntax node for an expression, or for a token its text.
+    const getSyntaxKind = (expression: Expression, span: TokenSpan) => {
+      if (isParenthesized(span)) return "N_ParenExpr";
+      if (expression.kind === "String") return getTokenSource(file, span.start);
+      if (expression.kind === "Apply") return getApplicationKind(expression, span);
+      return SYNTAX_KINDS.get(expression.kind);
+    };
+    // Whether the first child of an expression's syntax node is a node without children, which
+    // Generator.genIdToSelector takes for an empty prefix of a name. A string is a token itself.
+    const hasChildlessFirstChild = (expression: Expression, span: TokenSpan) => {
+      if (expression.kind === "String" && !isParenthesized(span)) return false;
+      if (expression.kind === "Identifier" && !expression.name.includes("!")) return true;
+      const kind = getSyntaxKind(expression, span);
+      return kind === undefined || NESTED_FIRST_CHILD_KINDS.has(kind) ? undefined : true;
+    };
+    // Generator.genIdToSelector reads the syntax node of a DEF clause entry that isn't a name as
+    // a name: its first child as the name's prefix and its second as the name's last part.
+    const getDefEntryParts = (
+      expression: Expression,
+      span: TokenSpan,
+    ): DefEntryParts | undefined => {
+      const getPart = (operand: Expression, partSpan: TokenSpan) => ({
+        last: partSpan,
+        lastKind: getSyntaxKind(operand, partSpan),
+      });
+      if (isParenthesized(span)) {
+        const inner = { start: span.start + 1, end: span.end - 1 };
+        return { hasChildlessFirstChild: false, ...getPart(expression, inner) };
+      }
+      switch (expression.kind) {
+        case "If":
+          return {
+            hasChildlessFirstChild: false,
+            ...getPart(expression.condition, getOperandSpan(expression.condition)),
+          };
+        case "BoxAction":
+        case "AngleAction":
+          return {
+            hasChildlessFirstChild: false,
+            ...getPart(expression.action, getOperandSpan(expression.action)),
+          };
+        case "Tuple":
+        case "SetEnumeration": {
+          const first = expression.elements[0];
+          return first === undefined
+            ? {
+                hasChildlessFirstChild: false,
+                last: { start: span.end, end: span.end },
+                lastKind: file.tokens[span.end].text,
+              }
+            : { hasChildlessFirstChild: false, ...getPart(first, getOperandSpan(first)) };
+        }
+        case "Always":
+        case "Eventually":
+        case "Enabled":
+        case "Unchanged":
+          return {
+            hasChildlessFirstChild: true,
+            ...getPart(expression.expression, { start: span.start + 1, end: span.end }),
+          };
+        case "Prime":
+          return {
+            hasChildlessFirstChild: hasChildlessFirstChild(
+              expression.expression,
+              getOperandSpan(expression.expression),
+            ),
+            last: { start: span.end, end: span.end },
+            lastKind: "N_GenPostfixOp",
+          };
+        case "FunctionApplication":
+        case "FieldAccess": {
+          const operand =
+            expression.kind === "FunctionApplication" ? expression.function : expression.record;
+          const operandSpan = getOperandSpan(operand);
+          const next = operandSpan.end + 1;
+          return {
+            hasChildlessFirstChild: hasChildlessFirstChild(operand, operandSpan),
+            last: { start: next, end: next },
+            lastKind: file.tokens[next].text,
+          };
+        }
+        case "Apply": {
+          const kind = getApplicationKind(expression, span);
+          if (kind === "N_OpApplication") {
+            return expression.operator.includes("!")
+              ? undefined
+              : {
+                  hasChildlessFirstChild: true,
+                  last: { start: span.start + 1, end: span.end },
+                  lastKind: "N_OpArgs",
+                };
+          }
+          if (kind === "N_PrefixExpr") {
+            return {
+              hasChildlessFirstChild: true,
+              ...getPart(expression.args[0], { start: span.start + 1, end: span.end }),
+            };
+          }
+          const left = getOperandSpan(expression.args[0]);
+          const operator = left.end + 1;
+          return {
+            hasChildlessFirstChild: hasChildlessFirstChild(expression.args[0], left),
+            last: { start: operator, end: operator },
+            lastKind: kind === "N_InfixExpr" ? "N_GenInfixOp" : "N_GenPostfixOp",
+          };
+        }
+      }
+      return undefined;
+    };
+    // The errors of Generator.genIdToSelector and selectorToNode for a DEF clause entry that isn't
+    // a name, or false where SANY's reading of the entry isn't modeled.
+    const reportDefEntry = (expression: Expression) => {
+      const span = getParenthesizedSpan(file, getExpressionSpan(file, expression));
+      const isName =
+        expression.kind === "Identifier" ||
+        expression.kind === "Subexpression" ||
+        expression.kind === "OperatorReference";
+      if (isName && !isParenthesized(span)) return false;
+      const parts = getDefEntryParts(expression, span);
+      if (parts?.hasChildlessFirstChild === undefined || parts.lastKind === undefined) return false;
+      const lastLocation = getSpanLocation(file, parts.last);
+      if (parts.hasChildlessFirstChild) {
+        addError(getSpanLocation(file, span), "Was expecting a GeneralId.");
+      }
+      if (parts.lastKind === "N_OpArgs") {
+        addError(lastLocation, "Selector `!(...)' should not have argument(s).");
+      } else {
+        addError(lastLocation, "Unexpected token found.");
+        addError(lastLocation, `Need name or step number here, not \`${parts.lastKind}'.`);
+      }
+      addError(getSpanLocation(file, span), "DEF clause entry should describe a defined operator.");
+      return true;
+    };
+
     const generateDefs = (defs: Fact[]) =>
       defs.flatMap((fact): UseOrHideNode["defs"] => {
         if (fact.kind === "ModuleFact") return [getFactModule(fact.name)];
+        if (reportDefEntry(fact)) return [];
         const symbol = generateSelector(
           fact.kind === "OperatorReference"
             ? { kind: "Identifier", name: fact.operator, location: fact.location }
