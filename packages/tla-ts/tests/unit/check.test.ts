@@ -1692,6 +1692,27 @@ describe("name resolution matches SANY", () => {
         ["line 2, col 6 to line 2, col 8", "Couldn't resolve postfix operator symbol `^+'."],
       ],
     ],
+    ["Ab == 1\nf == Abc", [["line 3, col 6 to line 3, col 8", "Unknown operator: `Abc'."]]],
+    [
+      "EXTENDS Naturals\nf == -1",
+      [
+        [
+          "line 3, col 6 to line 3, col 6",
+          "Could not find declaration or definition of symbol '-.'.",
+        ],
+        ["line 3, col 6 to line 3, col 7", "Couldn't resolve prefix operator symbol `-.'."],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\ng == 1^+",
+      [
+        [
+          "line 3, col 7 to line 3, col 8",
+          "Could not find declaration or definition of symbol '^+'.",
+        ],
+        ["line 3, col 6 to line 3, col 8", "Couldn't resolve postfix operator symbol `^+'."],
+      ],
+    ],
     [
       "Foo(a) == a\ng == Foo(1,  2)",
       [["line 3, col 9 to line 3, col 15", "The operator Foo requires 1 arguments."]],

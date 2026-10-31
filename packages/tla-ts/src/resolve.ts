@@ -151,7 +151,7 @@ const getSymbolArity = (
   }
   // A name such as Inv!P1 selects the label P1 of a definition or theorem, which takes its own
   // arguments.
-  const prefix = name.slice(0, name.indexOf("!"));
+  const prefix = name.includes("!") ? name.slice(0, name.indexOf("!")) : "";
   const isSelected =
     prefix !== "" &&
     (lookupLocal(scope, prefix) !== undefined ||
