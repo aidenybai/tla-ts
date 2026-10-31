@@ -693,8 +693,9 @@ export const generateSanySpecification = (
       return symbol;
     };
 
-    // OpDefNode.match: an operator a definition takes must be given an operator of its arity
-    // that takes no operators.
+    // OpDefNode.match: a definition takes as many arguments as it has parameters, which differs
+    // from its arity only where its RECURSIVE declaration has another, and an operator it takes
+    // must be given an operator of its arity that takes no operators.
     const matchArguments = (
       operator: SymbolNode,
       operands: ExprOrOpArgNode[],
@@ -702,7 +703,13 @@ export const generateSanySpecification = (
     ) => {
       if (operator.kind !== "OpDef" || operator.defKind !== "UserDefined") return;
       const params = operator.params ?? [];
-      if (params.length !== operands.length) return;
+      if (params.length !== operands.length) {
+        addError(
+          location,
+          `Wrong number of arguments (${operands.length}) given to operator '${operator.name}', \nwhich requires ${params.length} arguments.`,
+        );
+        return;
+      }
       params.forEach((param, index) => {
         const operand = operands[index];
         if (param.arity === 0 && operand.kind === "OpArg") {
@@ -1633,8 +1640,8 @@ export const generateSanySpecification = (
         !existing.isDefined &&
         existing.letInLevel === state.curLevel
       ) {
+        // OpDefNode.setParams keeps the arity of the RECURSIVE declaration.
         existing.params = params;
-        existing.arity = params.length;
         existing.weights = params.map(() => 0);
         existing.maxLevels = params.map(() => TEMPORAL_LEVEL);
         existing.isLeibnizArg = params.map(() => true);

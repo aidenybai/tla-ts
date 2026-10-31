@@ -229,6 +229,20 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  // OpDefNode.setParams keeps the arity of the RECURSIVE declaration, so only OpDefNode.match
+  // finds the number of arguments wrong.
+  it.each([
+    ["RECURSIVE F(_)\nF == 1\nA == F(1)", "line 5, col 6 to line 5, col 9", 1, 0],
+    ["RECURSIVE F\nF(x) == 1\nA == F", "line 5, col 6 to line 5, col 6", 0, 1],
+    ["RECURSIVE F(_, _)\nF(x) == x\nA == F(1, 2)", "line 5, col 6 to line 5, col 12", 2, 1],
+  ])("reports %j as given the wrong number of arguments", (body, range, given, required) => {
+    const report = getReport({ M: `---- MODULE M ----\nEXTENDS Naturals\n${body}\n====\n` });
+    expect(report.text).toContain("*** Errors: 2\n");
+    expect(report.text).toContain(
+      `${range} of module M\n\nWrong number of arguments (${given}) given to operator 'F', \nwhich requires ${required} arguments.\n`,
+    );
+  });
+
   it("takes an instance between a RECURSIVE declaration and its definition", () => {
     const report = getReport({
       M: "---- MODULE M ----\nEXTENDS Naturals\nRECURSIVE F(_)\nI == INSTANCE Naturals\nF(n) == IF n = 0 THEN 0 ELSE F(n-1)\n====\n",
