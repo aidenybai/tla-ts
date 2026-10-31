@@ -133,8 +133,8 @@ const Z3_BUILTINS = new Map<number, [string, number, number]>([
 ]);
 
 // The small ids of the Int declarations Z3 makes when it starts, from arith_decl_plugin::set_manager.
-// Z3 makes =, ite and distinct per sort on first use, which the manager does not follow, so they
-// get -1.
+// Z3 makes =, ite, distinct, pattern and numeral declarations per signature on first use, so they
+// get -1 here, and their small ids are kept by signature.
 const Z3_SMALL_IDS = new Map([
   [OP_TRUE, 1],
   [OP_FALSE, 2],
@@ -203,9 +203,16 @@ export class AstManager {
   private appHandles = new Int32Array(1024).fill(-1);
   private appHashes = new Int32Array(1024);
   private numApps = 0;
-  // The small id of the next sort or declaration. Z3 makes declarations of its own as it goes, which
-  // the manager does not follow, so only the declarations of a problem's prelude match Z3's.
+  // id_gen for sorts and declarations: the small id of the next one, and the ids of deleted ones,
+  // which Z3 reuses the last freed first. Z3 keeps the declarations of =, ite, the user and the
+  // fresh declarations, and deletes the others with their last application.
   private nextSmallId = FIRST_DECLARED_SMALL_ID;
+  private freeSmallIds: number[] = [];
+  private numDecls = FIRST_DECLARED_SMALL_ID;
+  // The small id and the number of live applications of each builtin declaration that Z3 makes
+  // per signature, by its signature.
+  private signatureSmallIds = new Map<string, number>();
+  private signatureRefCounts = new Map<string, number>();
   // ast_manager::m_fresh_id, which numbers fresh declarations and variable names.
   private freshId = 0;
   // Z3's id of each expression, which orders Z3's sorts. Like Z3, the manager counts references and
@@ -247,9 +254,71 @@ export class AstManager {
     return this.refCounts[expr];
   }
 
-  // get_num_asts: the live expressions, declarations and sorts.
+  // get_num_asts: the live expressions, declarations and sorts, with Z3's own expressions.
   getNumAsts() {
-    return this.numLive + this.funcDecls.length + this.sortNames.length;
+    return this.numLive + FIRST_FREE_ID - 2 + this.numDecls;
+  }
+
+  private mkSmallId() {
+    this.numDecls++;
+    return this.freeSmallIds.length > 0 ? (this.freeSmallIds.pop() as number) : this.nextSmallId++;
+  }
+
+  // insert_macro: cmd_context keeps a named expression as a recursive function with one case, whose
+  // declaration and case predicate it holds.
+  mkMacroDecls() {
+    this.mkSmallId();
+    this.mkSmallId();
+  }
+
+  // The signature of a builtin declaration that Z3 makes on first use, and whether Z3 keeps it once
+  // made, or null for a declaration that is not one.
+  private getSignature(expr: number): [string, boolean] | null {
+    const decl = this.decls[expr];
+    const args = this.args[expr];
+    // The hash of a numeral tells an Int from a Real one.
+    if (decl === OP_NUM) return [`n${this.values[expr]}:${this.hashes[expr]}`, false];
+    if (decl === OP_EQ) return [`e${this.sorts[args[0]]}`, true];
+    if (decl === OP_ITE) return [`i${this.sorts[expr]}`, true];
+    if (decl === OP_DISTINCT || decl === OP_PATTERN)
+      return [`${decl}:${args.map((arg) => this.sorts[arg]).join(",")}`, false];
+    if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) return [`m${decl}`, false];
+    return null;
+  }
+
+  // An application holds its declaration, which Z3 makes with its first application.
+  private holdDecl(expr: number) {
+    const signature = this.getSignature(expr);
+    if (signature === null) return;
+    const key = signature[0];
+    const refCount = this.signatureRefCounts.get(key);
+    if (refCount !== undefined) {
+      this.signatureRefCounts.set(key, refCount + 1);
+      return;
+    }
+    const smallId = this.mkSmallId();
+    this.signatureSmallIds.set(key, smallId);
+    this.signatureRefCounts.set(key, signature[1] ? 2 : 1);
+    const decl = this.decls[expr];
+    if (decl !== OP_NUM && this.funcDecls[decl].family === FAMILY_MODEL_VALUE)
+      this.funcDecls[decl].smallId = smallId;
+  }
+
+  // The small id of the declaration a deleted application releases for good, or -1 when the
+  // declaration stays.
+  private releaseDecl(expr: number) {
+    const signature = this.getSignature(expr);
+    if (signature === null) return -1;
+    const key = signature[0];
+    const refCount = (this.signatureRefCounts.get(key) as number) - 1;
+    if (refCount > 0) {
+      this.signatureRefCounts.set(key, refCount);
+      return -1;
+    }
+    const smallId = this.signatureSmallIds.get(key) as number;
+    this.signatureRefCounts.delete(key);
+    this.signatureSmallIds.delete(key);
+    return smallId;
   }
 
   incRef(expr: number) {
@@ -289,7 +358,8 @@ export class AstManager {
   }
 
   // dec_ref and delete_node: an expression without references is deleted, and so are its children
-  // that lose their last reference, in the order of Z3's worklist.
+  // and declaration that lose their last reference, in the order of Z3's worklist. A released
+  // declaration's small id goes on the worklist as -1 - id.
   decRef(expr: number) {
     if (this.ids[expr] === -1) return;
     this.refCounts[expr]--;
@@ -297,7 +367,16 @@ export class AstManager {
     const worklist = [expr];
     while (worklist.length > 0) {
       const node = worklist.pop() as number;
+      if (node < 0) {
+        this.freeSmallIds.push(-1 - node);
+        this.numDecls--;
+        continue;
+      }
       this.deleteNode(node);
+      if (this.kinds[node] === KIND_APP) {
+        const smallId = this.releaseDecl(node);
+        if (smallId !== -1) worklist.push(-1 - smallId);
+      }
       for (const child of this.getChildren(node)) {
         this.refCounts[child]--;
         if (this.refCounts[child] === 0) worklist.push(child);
@@ -317,6 +396,7 @@ export class AstManager {
     this.numLive++;
     this.refCounts[expr] = 0;
     for (const child of this.getChildren(expr)) this.incRef(this.revive(child));
+    if (this.kinds[expr] === KIND_APP) this.holdDecl(expr);
     if (this.temporaries === null) return;
     this.incRef(expr);
     this.temporaries.push(expr);
@@ -343,7 +423,7 @@ export class AstManager {
       ),
     );
     this.sortNames.push(name);
-    this.nextSmallId++;
+    this.mkSmallId();
     return this.sortNames.length - 1;
   }
 
@@ -413,7 +493,7 @@ export class AstManager {
       domain,
       range,
       isSkolem,
-      smallId: this.nextSmallId++,
+      smallId: this.mkSmallId(),
     });
     return this.funcDecls.length - 1;
   }
@@ -592,7 +672,7 @@ export class AstManager {
       domain: [],
       range: sort,
       isSkolem: false,
-      smallId: this.nextSmallId++,
+      smallId: -1,
     });
     const sortHash = this.sortHashes[sort];
     return this.intern(key, KIND_APP, this.funcDecls.length - 1, [], sort, index, () =>
