@@ -1312,6 +1312,32 @@ describe("evaluation errors match TLC", () => {
     expect(messages).toEqual(cases.map((item) => item[1]));
   });
 
+  it("names the Java class of Naturals in an arithmetic error unless the spec loads Integers, like TLC", async () => {
+    const cases = [
+      ["Naturals", "Naturals"],
+      ["Naturals, Sequences", "Naturals"],
+      ["Naturals, Integers", "Integers"],
+      ["Naturals, TLCExt", "Integers"],
+    ];
+    const messages = await Promise.all(
+      cases.map(
+        async (item) =>
+          (
+            await check({
+              source: `---- MODULE M ----\nEXTENDS ${item[0]}\nASSUME 1 + "a" = 1\n====`,
+              config: "",
+            })
+          ).violation?.message,
+      ),
+    );
+    expect(messages).toEqual(
+      cases.map(
+        (item) =>
+          `Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.${item[1]}.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue`,
+      ),
+    );
+  });
+
   it("locates IF, CHOOSE, conjunction, DOMAIN, application, and field errors like TLC", async () => {
     const cases = [
       [
