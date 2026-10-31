@@ -289,6 +289,13 @@ THEOREM TRUE
     expect(xml).toMatch(/<OpDeclNodeRef>\s*<UID>156<\/UID>\s*<\/OpDeclNodeRef>\s*<\/NewSymbNode>/);
   });
 
+  // TLC 1.7.4's XMLExporter exports a specification with semantic errors, whose nodes SANY never
+  // level-checked.
+  it("leaves out the level of an assumption SANY never level-checked, as TLC 1.7.4 does", () => {
+    const xml = export174("---- MODULE Unchecked ----\nRECURSIVE F\nASSUME TRUE\nF == 1\n====")();
+    expect(xml).toMatch(/<AssumeNode>\s*<location>[\s\S]*?<\/location>\s*<body>/);
+  });
+
   it("marks a []ASSUME/[]PROVE as boxed", () => {
     const theorem = (statement: string) => `---- MODULE Boxed ----
 VARIABLE x

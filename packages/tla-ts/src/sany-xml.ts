@@ -612,9 +612,10 @@ const exportSpecification = (
           node.location,
         );
       case "Assume":
+        // AssumeNode#getLevel is its body's, which fails before the body is level-checked.
         return createElement("AssumeNode", [
           getLocationElement(node.location),
-          createText("level", node.body.level),
+          ...(node.body.levelChecked === 0 ? [] : [createText("level", node.body.level)]),
           ...(node.definition
             ? [
                 createElement("definition", [
