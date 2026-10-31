@@ -51,6 +51,58 @@ export class CoreSolver {
     return this.matrix.getColumnCount();
   }
 
+  // add_new_var_to_core_fields_for_mpq: a column at zero, basic in a new row or nonbasic.
+  addColumn(isBasic: boolean) {
+    const column = this.matrix.getColumnCount();
+    this.matrix.addColumn();
+    this.x.push(Impq.zero);
+    this.lowerBounds[column] = Impq.zero;
+    this.upperBounds[column] = Impq.zero;
+    if (isBasic) {
+      this.matrix.addRow();
+      this.heading.push(this.basis.length);
+      this.basis.push(column);
+      return;
+    }
+    this.heading.push(-this.nbasis.length - 1);
+    this.nbasis.push(column);
+  }
+
+  // remove_last_column_from_basis_tableau: the last column out of the basis or the nonbasic
+  // columns, once the tableau no longer holds it.
+  removeLastColumn(column: number) {
+    this.x.length = this.matrix.getColumnCount();
+    const position = this.heading[column];
+    if (position >= 0) {
+      const lastPosition = this.basis.length - 1;
+      if (position !== lastPosition) {
+        const moved = this.basis[lastPosition];
+        this.basis[position] = moved;
+        this.heading[moved] = position;
+      }
+      this.basis.pop();
+    } else {
+      const index = -1 - position;
+      const lastPosition = this.nbasis.length - 1;
+      if (index !== lastPosition) {
+        const moved = this.nbasis[lastPosition];
+        this.nbasis[index] = moved;
+        this.heading[moved] = -index - 1;
+      }
+      this.nbasis.pop();
+    }
+    this.heading.pop();
+  }
+
+  // The action, with pivots not recording the rows they touch.
+  withoutTouchedRows<T>(action: () => T) {
+    const savedTouchedRows = this.touchedRows;
+    this.touchedRows = null;
+    const result = action();
+    this.touchedRows = savedTouchedRows;
+    return result;
+  }
+
   getColumnType(column: number) {
     return this.columnTypes.get(column);
   }

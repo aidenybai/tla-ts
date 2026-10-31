@@ -125,12 +125,7 @@ export class IntSolver {
     this.explanation.clear();
     // lp.dio_run_gcd is off, so the GCD test runs only when the Diophantine solver ignores terms.
     const move: LiaMove = this.dio.hasIgnoredTerms ? this.gcdTest() : { kind: "undef" };
-    const core = solver.core;
-    const savedTouchedRows = core.touchedRows;
-    core.touchedRows = null;
-    const result = this.checkAfterGcd(move);
-    core.touchedRows = savedTouchedRows;
-    return result;
+    return solver.core.withoutTouchedRows(() => this.checkAfterGcd(move));
   }
 
   private checkAfterGcd(gcdMove: LiaMove): LiaMove {

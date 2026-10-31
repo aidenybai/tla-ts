@@ -152,21 +152,8 @@ export class LarSolver {
   }
 
   private addNewVarToCoreFields(isBasic: boolean) {
-    const core = this.core;
-    const column = this.getColumnCount();
-    core.matrix.addColumn();
-    core.x.push(Impq.zero);
-    core.lowerBounds[column] = Impq.zero;
-    core.upperBounds[column] = Impq.zero;
-    if (isBasic) {
-      core.matrix.addRow();
-      core.heading.push(core.basis.length);
-      core.basis.push(column);
-      this.addTouchedRow(this.getRowCount() - 1);
-      return;
-    }
-    core.heading.push(-core.nbasis.length - 1);
-    core.nbasis.push(column);
+    this.core.addColumn(isBasic);
+    if (isBasic) this.addTouchedRow(this.getRowCount() - 1);
   }
 
   private pushUndoAddColumn() {
@@ -295,27 +282,7 @@ export class LarSolver {
       if (core.heading[column] < 0)
         core.changeBasisUnconditionally(column, core.basis[matrix.getRowCount()]);
     } else matrix.popColumn();
-    core.x.length = matrix.getColumnCount();
-    const position = core.heading[column];
-    if (position >= 0) {
-      const lastPosition = core.basis.length - 1;
-      if (position !== lastPosition) {
-        const moved = core.basis[lastPosition];
-        core.basis[position] = moved;
-        core.heading[moved] = position;
-      }
-      core.basis.pop();
-    } else {
-      const index = -1 - position;
-      const lastPosition = core.nbasis.length - 1;
-      if (index !== lastPosition) {
-        const moved = core.nbasis[lastPosition];
-        core.nbasis[index] = moved;
-        core.heading[moved] = -index - 1;
-      }
-      core.nbasis.pop();
-    }
-    core.heading.pop();
+    core.removeLastColumn(column);
   }
 
   // Bounds.
@@ -538,24 +505,23 @@ export class LarSolver {
   // remove_fixed_vars_from_base: pivots fixed basic columns out of the basis.
   removeFixedVarsFromBase() {
     const core = this.core;
-    const savedTouchedRows = core.touchedRows;
-    core.touchedRows = null;
     const columnCount = this.getColumnCount();
     const toRemove: number[] = [];
-    for (const column of this.fixedBaseVarSet.elems) {
-      if (column >= columnCount || !this.isBase(column) || !this.isFixed(column)) {
-        toRemove.push(column);
-        continue;
+    core.withoutTouchedRows(() => {
+      for (const column of this.fixedBaseVarSet.elems) {
+        if (column >= columnCount || !this.isBase(column) || !this.isFixed(column)) {
+          toRemove.push(column);
+          continue;
+        }
+        for (const cell of core.matrix.rows[core.heading[column]]) {
+          if (this.isFixed(cell.column)) continue;
+          core.pivot(cell.column, column);
+          toRemove.push(column);
+          break;
+        }
       }
-      for (const cell of core.matrix.rows[core.heading[column]]) {
-        if (this.isFixed(cell.column)) continue;
-        core.pivot(cell.column, column);
-        toRemove.push(column);
-        break;
-      }
-    }
+    });
     for (const column of toRemove) this.fixedBaseVarSet.delete(column);
-    core.touchedRows = savedTouchedRows;
   }
 
   // remove_from_basis: pivots a basic column with the first non-fixed column of its row.
