@@ -407,12 +407,7 @@ export const generateSanySpecification = (
     // of SANY's parser, and the parser's own report where SANY's parser would accept the module,
     // such as for an error SANY finds after parsing.
     try {
-      const unboxed = getUnboxedSource(text);
-      // SANY's parser takes []ASSUME and []PROVE only in an ASSUME/PROVE, which unboxing hides.
-      if (unboxed !== text && getSanyParseError(text) !== undefined) {
-        throw new TlaSyntaxError("SANY rejects a []ASSUME or []PROVE outside an ASSUME/PROVE");
-      }
-      return parseSanyModule(unboxed);
+      return parseSanyModule(getUnboxedSource(text));
     } catch (error) {
       if (!(error instanceof TlaSyntaxError)) throw error;
       throw getParseFailure(getSanyParseError(text) ?? `***Parse Error***\n${error.message}`);

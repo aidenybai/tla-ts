@@ -12,7 +12,6 @@ import { getSany174LexicalError } from "./sany-lexer";
 import { lintSanyModule } from "./sany-linter";
 import { getSanyStandardModules } from "./sany-modules";
 import { formatSanyLocation, type SanyMessage } from "./sany-nodes";
-import { getSanyParseError } from "./sany-parse-error";
 import { getUnboxedSource } from "./sany-source";
 import type { TlcVersion } from "./tlc-version";
 
@@ -90,10 +89,7 @@ const getExtendees = (module: Module) => {
 // a module that doesn't parse is one SANY stops at before validating it.
 const parseValidatedModule = (text: string) => {
   try {
-    const unboxed = getUnboxedSource(text);
-    // SANY's parser takes []ASSUME and []PROVE only in an ASSUME/PROVE, which unboxing hides.
-    if (unboxed !== text && getSanyParseError(text) !== undefined) return undefined;
-    return parseModule(unboxed);
+    return parseModule(getUnboxedSource(text));
   } catch (error) {
     if (error instanceof TlaSyntaxError) return undefined;
     throw error;

@@ -1,6 +1,8 @@
 import type { Expression, SourceRange } from "./ast";
+import { TlaSyntaxError } from "./errors";
 import { tokenize, type Token } from "./lexer";
 import { getTabStop } from "./sany-lexer";
+import { getSanyParseError } from "./sany-parse-error";
 import type { SanyLocation } from "./sany-nodes";
 
 // The tokens of one file, to find the locations SANY gives to names, brackets and parentheses that
@@ -182,14 +184,19 @@ export const isBoxToken = (file: SourceFile, index: number) => {
 };
 
 // HACK: the tla-ts parser has no []ASSUME or []PROVE, so it parses the source with each such []
-// blanked out, which keeps every other token where it was.
+// blanked out, which keeps every other token where it was. SANY's parser takes them only in an
+// ASSUME/PROVE, which unboxing hides.
 export const getUnboxedSource = (source: string) => {
   const file = createSourceFile("", source);
-  return file.tokens.reduce((text, token, index) => {
+  const unboxed = file.tokens.reduce((text, token, index) => {
     if (!isBoxToken(file, index)) return text;
     const offset = getOffset(file, token.line, token.column);
     return `${text.slice(0, offset)}  ${text.slice(offset + 2)}`;
   }, source);
+  if (unboxed !== source && getSanyParseError(source) !== undefined) {
+    throw new TlaSyntaxError("SANY rejects a []ASSUME or []PROVE outside an ASSUME/PROVE");
+  }
+  return unboxed;
 };
 
 // The comments between a token and the one before it, which SANY's parser attaches to the token.
