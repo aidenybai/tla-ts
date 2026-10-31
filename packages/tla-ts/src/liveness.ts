@@ -1,6 +1,7 @@
 import { isLocallyResolved, type Definition, type Expression } from "./ast";
 import { TlaEvaluationError, TlaStackOverflowError } from "./errors";
 import {
+  describeNode,
   describeRange,
   bindDefinitions,
   bindOperatorArguments,
@@ -290,7 +291,7 @@ export const toLiveExpression = (
       const value = evaluate(expression, getConstantContext(environment, scope));
       if (typeof value !== "boolean") {
         throw new TlaEvaluationError(
-          `TLC expected a boolean value, but did not find one. ${expression.kind === "Number" ? (expression.text ?? expression.value) : describeRange(expression)}`,
+          `TLC expected a boolean value, but did not find one. ${describeNode(expression)}`,
         );
       }
       return createBoolean(value);

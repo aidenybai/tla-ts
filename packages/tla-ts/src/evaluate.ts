@@ -223,6 +223,12 @@ export const describeRange = (expression: Expression) => {
   return range ? formatRange(range) : describeLocation(expression);
 };
 
+// SANY prints a numeral as written and any other expression by its location.
+export const describeNode = (expression: Expression) =>
+  expression.kind === "Number"
+    ? (expression.text ?? String(expression.value))
+    : describeRange(expression);
+
 export const getConditionError = (expression: Expression, value: Value) =>
   new TlaEvaluationError(
     `A non-boolean expression (${getKindString(value)}) was used as the condition of an IF.\n${describeRange(expression)}`,
@@ -240,11 +246,8 @@ export const getJunctionError = (
     range?.start.line === expression.location.line &&
     range.start.column === expression.location.column;
   if (isBulleted || !range) {
-    const operand = expression.operands[index];
-    // SANY prints a numeral as its value instead of its location.
-    const description = operand.kind === "Number" ? String(operand.value) : describeRange(operand);
     return new TlaEvaluationError(
-      `A non-boolean expression (${getKindString(value)}) was used as a formula in a ${expression.kind === "And" ? "conjunction" : "disjunction"}.\n${description}`,
+      `A non-boolean expression (${getKindString(value)}) was used as a formula in a ${expression.kind === "And" ? "conjunction" : "disjunction"}.\n${describeNode(expression.operands[index])}`,
     );
   }
   const end = expression.prefixEnds?.[Math.max(index, 1) - 1] ?? range.end;

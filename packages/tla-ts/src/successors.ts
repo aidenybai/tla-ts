@@ -11,6 +11,7 @@ import { TlaEvaluationError, TlaIncompleteSuccessorError, UNEXPECTED_EXCEPTION }
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
+  describeNode,
   describeRange,
   bindArgument,
   bindDefinitions,
@@ -95,7 +96,7 @@ const holds = (expression: Expression, context: Context) => {
   const value = evaluate(expression, context);
   if (typeof value === "boolean") return value;
   try {
-    return expectBoolean(value, `the action at ${describeLocation(expression)}`);
+    throw new TlaEvaluationError(getExpectedExpression("next states", value, expression));
   } catch (error) {
     // TLC fails with an unexpected exception when the next-state relation isn't a boolean.
     throw context.next === undefined ? error : setExitCode(error, EXIT_STATUS.error);
@@ -392,11 +393,15 @@ const compileConjunction = (
     runFrom(0, run, scope, partial, action, onComplete);
 };
 
-const holdsInInit = (expression: Expression, context: Context) =>
-  expectBoolean(
-    evaluate(expression, context),
-    `the initial predicate at ${describeLocation(expression)}`,
-  );
+// TLC's message for a conjunct of the initial predicate or of an action that isn't a boolean.
+const getExpectedExpression = (computing: string, value: Value, expression: Expression) =>
+  `In computing ${computing}, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${describeNode(expression)}`;
+
+const holdsInInit = (expression: Expression, context: Context) => {
+  const value = evaluate(expression, context);
+  if (typeof value === "boolean") return value;
+  throw new TlaEvaluationError(getExpectedExpression("initial states", value, expression));
+};
 
 const compileGuard =
   (expression: Expression): Runner =>

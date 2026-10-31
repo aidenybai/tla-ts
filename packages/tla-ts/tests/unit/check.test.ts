@@ -1297,6 +1297,34 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it.each([
+    ["x = 0 /\\ 3", "x' = x", "initial states", "3.\n3"],
+    [
+      "x = 0 /\\ Op(x)",
+      "x' = x",
+      "initial states",
+      "1.\nline 5, col 18 to line 5, col 22 of module M",
+    ],
+    [
+      "x = 0",
+      "x' = x /\\ (0 \\div 3)",
+      "next states",
+      "0.\nline 6, col 20 to line 6, col 27 of module M",
+    ],
+    ["x = 0", "x' = x /\\ \\b11", "next states", "3.\n\\b11"],
+  ])(
+    "words a conjunct of %s or %s that isn't a boolean like TLC",
+    async (init, next, computing, found) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nOp(a) == a + 1\nInit == ${init}\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.message).toContain(
+        `In computing ${computing}, TLC expected a boolean expression,\nbut instead found ${found}`,
+      );
+    },
+  );
+
   it("enumerates SUBSET of a function with an empty domain as {{}} like TLC", async () => {
     const result = await checkModule("ASSUME SUBSET <<>> = {{}}");
     expect(result.status).toBe("success");

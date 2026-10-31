@@ -21,6 +21,7 @@ import {
 import type { JavaOverride } from "./java-overrides";
 import { EXIT_STATUS, getExitCode, setExitCode, withLivenessExitCode } from "./exit-codes";
 import {
+  describeNode,
   describeRange,
   createTracingEnvironment,
   evaluate,
@@ -892,18 +893,12 @@ const holdsLikeTlc = (
   return value;
 };
 
-// SANY prints a number by its digits and any other expression by its location.
 const getExpectedBoolean = (expression: Expression, environment: Environment) => {
   const definition =
     expression.kind === "Identifier" ? getDefinition(expression.name, environment) : undefined;
   const body = definition?.kind === "Operator" ? definition.body : expression;
   const range = definition?.kind === "Operator" ? definition.bodyRange : undefined;
-  const location =
-    body.kind === "Number"
-      ? (body.text ?? String(body.value))
-      : range
-        ? formatRange(range)
-        : describeRange(body);
+  const location = range && body.kind !== "Number" ? formatRange(range) : describeNode(body);
   return `TLC expected a boolean value, but did not find one. ${location}`;
 };
 
