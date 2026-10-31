@@ -10,22 +10,6 @@ import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
 
-// asserted_formulas::push_assertion: splits conjunctions and negated disjunctions.
-const pushAssertion = (manager: AstManager, expr: number, result: RefVector) => {
-  if (manager.isTrue(expr)) return;
-  const op = manager.getOp(expr);
-  if (op === OP_AND) {
-    for (const arg of manager.args[expr]) pushAssertion(manager, arg, result);
-    return;
-  }
-  if (op === OP_NOT && manager.getOp(manager.args[expr][0]) === OP_OR) {
-    for (const arg of manager.args[manager.args[expr][0]])
-      pushAssertion(manager, mkNot(manager, arg), result);
-    return;
-  }
-  result.push(expr);
-};
-
 // pattern_inference_rw: infers the patterns of each universal quantifier without patterns. Its
 // cache lives as long as the assertions, like Z3's.
 class PatternInferenceRw extends RewriterTpl {
@@ -145,6 +129,10 @@ export class AssertedFormulas {
   private patternInference: PatternInferenceRw;
   private bvSharing: MaxBvSharing;
   private hasQuantifiers = false;
+  // m_inconsistent: whether a formula is false, after which no formula is added or preprocessed.
+  private isInconsistent = false;
+  // m_inconsistent_old of each pushed scope.
+  private inconsistentScopes: boolean[] = [];
   // The scopes that are pushed only when a formula is asserted, and the number of formulas when
   // each pushed scope began.
   private numLazyScopes = 0;
@@ -175,6 +163,7 @@ export class AssertedFormulas {
       return;
     }
     const size = this.scopeLims.pop() as number;
+    this.isInconsistent = this.inconsistentScopes.pop() as boolean;
     this.bvSharing.popScope();
     this.names.pop();
     this.substitution.pop();
@@ -188,6 +177,7 @@ export class AssertedFormulas {
     for (; this.numLazyScopes > 0; this.numLazyScopes--) {
       this.substitution.push();
       this.scopeLims.push(this.formulas.size);
+      this.inconsistentScopes.push(this.isInconsistent);
       this.names.push();
       this.bvSharing.pushScope();
     }
@@ -196,11 +186,11 @@ export class AssertedFormulas {
   assertExpr(expr: number) {
     this.forcePush();
     const manager = this.manager;
-    if (manager.isTrue(expr)) return;
+    if (this.isInconsistent || manager.isTrue(expr)) return;
     this.setEliminateAnd(false);
     const rewritten = this.rewriter.rewrite(expr);
     if (manager.hasQuantifierFlags[expr]) this.hasQuantifiers = true;
-    pushAssertion(manager, rewritten, this.formulas);
+    this.pushAssertion(rewritten, this.formulas);
     manager.decRef(rewritten);
     this.isReducePending = true;
   }
@@ -212,28 +202,69 @@ export class AssertedFormulas {
   // reduce and commit: the new formulas after preprocessing, which the context internalizes.
   reduce() {
     if (this.qhead === this.formulas.size) return [];
+    if (!this.isInconsistent) this.reduceCore();
+    const result = this.formulas.items.slice(this.qhead);
+    for (const formula of result) this.substitution.update(formula);
+    this.qhead = this.formulas.size;
+    return result;
+  }
+
+  // asserted_formulas::reduce: each step but the last stops the preprocessing when a formula is
+  // false.
+  private reduceCore() {
     this.setEliminateAnd(false);
     this.propagateValues();
+    if (this.isInconsistent) return;
     this.isReducePending = true;
     this.nnfCnf();
+    if (this.isInconsistent) return;
     this.setEliminateAnd(true);
     this.reduceAsserted();
+    if (this.isInconsistent) return;
     if (
       this.hasQuantifiers &&
       this.simplifyFormulas((formula) => this.patternInference.rewrite(formula))
     )
       this.isReducePending = true;
+    if (this.isInconsistent) return;
     // max_bv_sharing, whose post_op reduces the formulas again.
     if (this.simplifyFormulas((formula) => this.bvSharing.rewrite(formula)))
       this.isReducePending = true;
+    if (this.isInconsistent) return;
     this.reduceAsserted();
+    if (this.isInconsistent) return;
     this.isReducePending = true;
     this.flattenClauses();
+    if (this.isInconsistent) return;
     this.flushCache();
-    const result = this.formulas.items.slice(this.qhead);
-    for (const formula of result) this.substitution.update(formula);
-    this.qhead = this.formulas.size;
-    return result;
+  }
+
+  // push_assertion: splits conjunctions and negated disjunctions. A false formula makes the
+  // assertions inconsistent.
+  private pushAssertion(expr: number, result: RefVector) {
+    const manager = this.manager;
+    if (this.isInconsistent || manager.isTrue(expr)) return;
+    if (manager.isFalse(expr)) {
+      result.push(expr);
+      this.isInconsistent = true;
+      return;
+    }
+    const op = manager.getOp(expr);
+    if (op === OP_AND) {
+      for (const arg of manager.args[expr]) this.pushAssertion(arg, result);
+      return;
+    }
+    if (op === OP_NOT && manager.getOp(manager.args[expr][0]) === OP_OR) {
+      for (const arg of manager.args[manager.args[expr][0]]) {
+        // narg holds the negation while it is pushed.
+        const negation = mkNot(manager, arg);
+        manager.incRef(negation);
+        this.pushAssertion(negation, result);
+        manager.decRef(negation);
+      }
+      return;
+    }
+    result.push(expr);
   }
 
   // flush_cache: the rewriter is reset, with the committed substitution.
@@ -267,7 +298,7 @@ export class AssertedFormulas {
       const result = simplify(formula);
       if (result === formula) formulas.push(formula);
       else {
-        pushAssertion(manager, result, formulas);
+        this.pushAssertion(result, formulas);
         isChanged = true;
       }
       manager.decRef(result);
@@ -297,6 +328,7 @@ export class AssertedFormulas {
       manager.incRef(formula);
       const rewritten = this.rewriter.rewrite(formula);
       this.formulas.set(index, rewritten);
+      if (manager.isFalse(rewritten)) this.isInconsistent = true;
       substitution.update(rewritten);
       if (rewritten !== formula) numPropagated++;
       manager.decRef(rewritten);
@@ -329,7 +361,7 @@ export class AssertedFormulas {
         const rewritten = this.rewriter.rewrite(todo.items[position]);
         manager.decRef(result);
         result = rewritten;
-        pushAssertion(manager, result, formulas);
+        this.pushAssertion(result, formulas);
       }
       manager.decRef(result);
     }
