@@ -2044,14 +2044,14 @@ describe("level checking matches SANY", () => {
     },
   );
 
-  it("rejects an argument above the level an instantiated operator allows", async () => {
+  it("rejects an argument above the level an instantiated operator allows, naming it like SANY", async () => {
     await expect(
       check({
         source:
           "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE y\nFoo == y' = 0\n====\nI(z) == INSTANCE Inner WITH y <- z\nFooBar == I(x')!Foo\nInit == x = 0\nNext == x' = x\n====",
         config: "INIT Init\nNEXT Next",
       }),
-    ).rejects.toThrow("Level error in applying operator Foo");
+    ).rejects.toThrow("Level error in applying operator I!Foo:");
   });
 
   it.each([

@@ -33,6 +33,7 @@ interface LevelContext {
   constants: Set<string>;
   variables: Set<string>;
   getDefinition: (name: string) => Definition | undefined;
+  getQualifiedName?: (name: string) => string | undefined;
 }
 
 type ScopeEntry =
@@ -205,7 +206,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     if (context.variables.has(name)) return { kind: "Declared", name, level: 1, arity: 0 };
     const definition = context.getDefinition(name);
     if (definition) {
-      return { kind: "Defined", levels: analyzeDefinition(definition, new Map()) };
+      const levels = analyzeDefinition(definition, new Map());
+      // SANY names a definition of an instance by its qualified name, as in I!Foo.
+      const qualifiedName = context.getQualifiedName?.(name);
+      return {
+        kind: "Defined",
+        levels: qualifiedName ? { ...levels, name: qualifiedName } : levels,
+      };
     }
     const signature = CORE_SIGNATURES.get(name) ?? STANDARD_LEVELS.get(name);
     if (signature) return { kind: "Defined", levels: signature };

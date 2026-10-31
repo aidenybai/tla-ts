@@ -244,6 +244,7 @@ export const createEnvironment = (
   const createName = (name: string) => `${name}#${copyCount.value++}`;
   const instanceChecks: InstanceCheck[] = [];
   const instanceActions = new Map<string, InstanceAction>();
+  const qualifiedNames = new Map<string, string>();
 
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
@@ -429,6 +430,7 @@ export const createEnvironment = (
       if (declarations.length > 0) {
         instanceActions.set(key, { name: `${instance.name}!${name}`, location: instance.location });
       }
+      qualifiedNames.set(key, `${instance.name}!${name}`);
       symbols.set(`${instance.name}!${name}`, {
         key,
         arity: symbol.arity + instance.params.length,
@@ -755,6 +757,7 @@ export const createEnvironment = (
       constants: new Set(constants.map((constant) => constant.name)),
       variables: new Set(variables),
       getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
+      getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
     });
     const linked = {
       module,
