@@ -468,9 +468,7 @@ export class Rewriter extends RewriterTpl {
   mkOr(args: number[]): number {
     const manager = this.manager;
     const isNested = args.some((arg) => manager.getOp(arg) === OP_OR);
-    const flatArgs = isNested
-      ? args.flatMap((arg) => (manager.getOp(arg) === OP_OR ? manager.args[arg] : [arg]))
-      : args;
+    const flatArgs = isNested ? this.flattenArgs(args, OP_OR) : args;
     const literals = this.literals;
     literals.clear();
     for (const arg of flatArgs) {
@@ -494,10 +492,18 @@ export class Rewriter extends RewriterTpl {
     const manager = this.manager;
     if (this.options.isEliminatingAnd) return this.mkAndAsOr(args);
     if (!args.some((arg) => manager.getOp(arg) === OP_AND)) return this.mkNflatAnd(args);
-    const flatArgs = args.flatMap((arg) =>
-      manager.getOp(arg) === OP_AND ? manager.args[arg] : [arg],
-    );
-    return { expr: this.mkNflatAnd(flatArgs), depth: 1 };
+    return { expr: this.mkNflatAnd(this.flattenArgs(args, OP_AND)), depth: 1 };
+  }
+
+  // The arguments with those that apply op replaced by their own arguments, one level deep.
+  private flattenArgs(args: number[], op: number) {
+    const manager = this.manager;
+    const flatArgs: number[] = [];
+    for (const arg of args)
+      if (manager.getOp(arg) === op)
+        for (const innerArg of manager.args[arg]) flatArgs.push(innerArg);
+      else flatArgs.push(arg);
+    return flatArgs;
   }
 
   // bool_rewriter::mk_and, which takes the result of mk_and_core as it is.
