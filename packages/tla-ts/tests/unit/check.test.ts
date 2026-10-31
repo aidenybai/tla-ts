@@ -1074,6 +1074,20 @@ describe("evaluation errors match TLC", () => {
     expect(getFailureSummary(result)).toEqual(["error", ["0", "1"], [3, 2, 0, 2], 75]);
   });
 
+  // TLC evaluates the whole predicate, not each conjunct on its own.
+  it.each(["INVARIANT", "CONSTRAINT"])(
+    "fails at a non-boolean conjunct of %s P as the conjunction does",
+    async (kind) => {
+      const result = await checkSteps(
+        "P == /\\ x < 3\n     /\\ IF x = 1 THEN 1 ELSE TRUE",
+        `INIT Init\nNEXT Next\n${kind} P`,
+      );
+      expect(result.failure?.message).toContain(
+        "A non-boolean expression (an integer) was used as a formula in a conjunction.\nline 7, col 9 to line 7, col 33 of module M",
+      );
+    },
+  );
+
   it("prints what the replay of a failed constraint prints after the trace", async () => {
     const result = await checkSteps(
       'C == PrintT(<<"c", x>>) /\\ (IF x = 2 THEN 1 \\in 2 ELSE TRUE)',

@@ -907,6 +907,14 @@ const getExpectedBoolean = (expression: Expression, environment: Environment) =>
   return `TLC expected a boolean value, but did not find one. ${location}`;
 };
 
+// TLC evaluates the whole predicate of a check, which fails at a conjunct that isn't a boolean as
+// the conjunction does.
+const holdsAsConjunct = (check: StateCheck, context: Context) =>
+  holdsLikeTlc(check.expression, context, (expression, environment) => {
+    holdsLikeTlc(check.predicate, context);
+    return getExpectedBoolean(expression, environment);
+  });
+
 const ignorePossible = () => {};
 
 const trackPossible = (items: NamedExpression[], runtime: CheckerRuntime, context: Context) =>
@@ -1087,7 +1095,7 @@ export const createSearch = (
                 parent[membership.variable],
                 evaluate(membership.set, context),
               )
-            : !holdsLikeTlc(invariant.expression, context);
+            : !holdsAsConjunct(invariant, context);
         } catch (error) {
           // TLC reports a failure only on a state after the initial states as an invariant failure.
           if (!parent) throw error;
@@ -1143,7 +1151,7 @@ export const createSearch = (
       constraints.every(
         (constraint) =>
           isUnchangedFor(constraint, state, parent) ||
-          holdsLikeTlc(constraint.expression, getContext(environment, state, undefined)),
+          holdsAsConjunct(constraint, getContext(environment, state, undefined)),
       ),
     findFailedInitialPredicate: (state) =>
       properties.initialPredicates.find(
