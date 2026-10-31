@@ -497,6 +497,30 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("binds no bound identifier in the body of a function whose name is already declared", () => {
+    const report = getReport({
+      Fold: "---- MODULE Fold ----\nF(it, S) == LET it[s \\in S] == s IN it\n====\n",
+    });
+    expect(report.text).toBe(
+      toText([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 2, col 17 to line 2, col 32 of module Fold",
+        "",
+        "Function name `it' already defined or declared.",
+        "",
+        "",
+        "line 2, col 32 to line 2, col 32 of module Fold",
+        "",
+        "Unknown operator: `s'.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("takes only an identifier or an operator for a substitution target", () => {
     const report = getReport({
       Outer: "---- MODULE Outer ----\nINSTANCE Inner WITH VARIABLES <- 1\n====\n",

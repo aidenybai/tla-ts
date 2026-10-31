@@ -1797,9 +1797,11 @@ export const generateSanySpecification = (
       definitions?.push(definitionNode);
       functions.unshift({ name: definition.name, node });
       pushLabelScope();
-      const body = withContext(context, () =>
-        generateWithParams(bounds.bounded.flat(), definition.body),
-      );
+      // Generator.processFunction binds the bound identifiers in the body only of a function it
+      // defines, whose name is new or declared RECURSIVE at this level.
+      const generateBody = () => generateWithParams(bounds.bounded.flat(), definition.body);
+      const body =
+        isRecursive || existing === undefined ? withContext(context, generateBody) : generateBody();
       definitionNode.labels = popLabels();
       functions.shift();
       node.operands = [body];
