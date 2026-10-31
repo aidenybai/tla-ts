@@ -11,7 +11,12 @@ import {
 import { LarSolver } from "../../src/prove/smt/solver/lp/lar-solver";
 import { NlaCore } from "../../src/prove/smt/solver/lp/nla-core";
 import { NraSolver } from "../../src/prove/smt/solver/lp/nra-solver";
-import { isolateRootsClosest, selectBetween } from "../../src/prove/smt/solver/nlsat/algebraic";
+import {
+  AlgebraicManager,
+  Anum,
+  isolateRootsClosest,
+  selectBetween,
+} from "../../src/prove/smt/solver/nlsat/algebraic";
 import { Mpbq } from "../../src/prove/smt/solver/nlsat/mpbq";
 import { NlsatSolver } from "../../src/prove/smt/solver/nlsat/solver";
 import { UpolynomialManager } from "../../src/prove/smt/solver/nlsat/upolynomial";
@@ -119,6 +124,141 @@ const runAlgebraicCommand = (input: string) => {
   const closest = isolateRootsClosest(pm, polynomial, sample, variable);
   return `closest${closest.roots.map((root, index) => ` ${closest.indices[index]}@${root}`).join("")}`;
 };
+
+// The harness's an programs: registers of real algebraic numbers, one command per line, each
+// printing its result, the numbers it refined, and roots as polynomial, index and interval.
+const runAnumProgram = (program: string) => {
+  const am = new AlgebraicManager();
+  const pm = new PolynomialManager();
+  const registers: Anum[] = [];
+  const getRegister = (index: number) => {
+    while (registers.length <= index) registers.push(new Anum(Rational.zero));
+    return registers[index];
+  };
+  const show = (anum: Anum) => {
+    if (anum.value instanceof Rational) return ` q${anum.value}`;
+    const index = am.getRootIndex(anum);
+    return ` r[${anum.value.p.join(" ")}]#${index}(${anum.value.lower},${anum.value.upper})`;
+  };
+  const runCommand = (words: string[]) => {
+    const numbers = words.slice(1, 4).map(Number);
+    switch (words[0]) {
+      case "q":
+        registers[numbers[0]] = new Anum(parseRational(words[2]));
+        return show(registers[numbers[0]]);
+      case "root": {
+        const roots = am.isolateRoots(pm, pm.fromCoeffs(words.slice(3).map(BigInt), 0), []);
+        if (numbers[1] > roots.length) return " error";
+        getRegister(numbers[0]);
+        registers[numbers[0]] = roots[numbers[1] - 1];
+        return show(registers[numbers[0]]);
+      }
+      case "add":
+      case "mul":
+      case "div":
+      case "sel": {
+        const first = getRegister(numbers[1]);
+        const second = getRegister(numbers[2]);
+        if (words[0] === "div" && am.isZero(second)) return " error";
+        const result =
+          words[0] === "add"
+            ? am.add(first, second)
+            : words[0] === "mul"
+              ? am.mul(first, second)
+              : words[0] === "div"
+                ? am.div(first, second)
+                : am.select(first, second);
+        getRegister(numbers[0]);
+        registers[numbers[0]] = am.copy(result);
+        return show(registers[numbers[0]]);
+      }
+      case "pow":
+      case "intlt":
+      case "intgt": {
+        const anum = getRegister(numbers[1]);
+        const result =
+          words[0] === "pow"
+            ? am.power(anum, numbers[2])
+            : words[0] === "intlt"
+              ? am.intLt(anum)
+              : am.intGt(anum);
+        getRegister(numbers[0]);
+        registers[numbers[0]] = am.copy(result);
+        return show(registers[numbers[0]]);
+      }
+      case "neg":
+        am.neg(getRegister(numbers[0]));
+        return show(registers[numbers[0]]);
+      case "inv":
+        if (am.isZero(getRegister(numbers[0]))) return " error";
+        am.inv(registers[numbers[0]]);
+        return show(registers[numbers[0]]);
+      case "cmp": {
+        const first = getRegister(numbers[0]);
+        const second = getRegister(numbers[1]);
+        return ` ${am.compare(first, second)}${show(first)}${show(second)}`;
+      }
+      case "isint":
+      case "israt": {
+        const anum = getRegister(numbers[0]);
+        return `${showFlag(words[0] === "isint" ? am.isInt(anum) : am.isRational(anum))}${show(anum)}`;
+      }
+      case "show":
+        return show(getRegister(numbers[0]));
+      default: {
+        const rest = words[0] === "closest" ? words.slice(2) : words.slice(1);
+        const separator = rest.indexOf(";");
+        const polynomial = parsePolynomial(pm, rest.slice(0, separator).join(" "));
+        const bindings = rest.slice(separator + 1).map((word) => word.split("=").map(Number));
+        const values: Anum[] = [];
+        for (const binding of bindings) values[binding[0]] = am.copy(getRegister(binding[1]));
+        let output = "";
+        let roots: Anum[] = [];
+        if (words[0] === "sign") output = ` ${am.evalSignAt(pm, polynomial, values)}`;
+        else if (words[0] === "iso") {
+          roots = am.isolateRoots(pm, polynomial, values);
+          output = ` roots${roots.map(show).join("")}`;
+        } else if (words[0] === "closest") {
+          const closest = am.isolateRootsClosest(pm, polynomial, values, parseRational(words[1]));
+          roots = closest.roots;
+          output = ` roots${roots.map(show).join("")} idx${closest.indices.map((index) => ` ${index}`).join("")}`;
+        } else {
+          const signed = am.isolateRootsWithSigns(pm, polynomial, values);
+          roots = signed.roots;
+          output = ` roots${roots.map(show).join("")} signs${signed.signs.map((sign) => ` ${sign}`).join("")}`;
+        }
+        // The roots go to registers 8 and up, for later commands.
+        roots.forEach((root, index) => {
+          getRegister(8 + index);
+          registers[8 + index] = am.copy(root);
+        });
+        output += " after";
+        for (const binding of bindings) {
+          registers[binding[1]] = am.copy(values[binding[0]]);
+          output += show(registers[binding[1]]);
+        }
+        return output;
+      }
+    }
+  };
+  return program
+    .split("\n")
+    .map((line) => `${line.split(" ")[0]}${runCommand(line.split(" "))}`)
+    .join("\n");
+};
+
+describe("nlsat real algebraic numbers", () => {
+  // Random programs over roots of univariate polynomials and rationals: arithmetic, comparison,
+  // integrality, sample selection, and the roots and signs of polynomials at algebraic points.
+  // Each line prints Z3's result and the intervals its refinements left behind.
+  const cases: [string, string][] = JSON.parse(
+    readFileSync(join(FIXTURES, "algebraic-numbers.json"), "utf8"),
+  );
+
+  it.each(cases)("%s", (program, expected) => {
+    expect(runAnumProgram(program)).toBe(expected);
+  });
+});
 
 describe("nlsat polynomial factorization", () => {
   // Products of random factors in two or three variables, up to degree 2 in each variable per
