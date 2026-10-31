@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { NlsatUnsupportedError } from "../../src/errors";
-import { L_FALSE } from "../../src/prove/smt/solver/lbool";
+import { L_FALSE, L_TRUE } from "../../src/prove/smt/solver/lbool";
 import {
   type ConstraintKind,
   KIND_EQ,
@@ -305,7 +305,7 @@ const runEvaluatorProgram = (program: string, expected: string) => {
   const registers: Anum[] = [];
   const sets: (IntervalSet | null)[] = [];
   const atoms: Atom[] = [];
-  const clause = { id: 0, literals: [], isLearned: false };
+  const clause = { id: 0, literals: [], isLearned: false, assumptions: null, isActive: false };
   const expectedLines = expected.split("\n");
   let variableCount = 0;
   const showSet = (set: IntervalSet | null | undefined) => {
@@ -795,30 +795,41 @@ describe("nlsat univariate polynomials", () => {
 // variable, and end. It prints each constraint's literal, then undef or the lemma.
 const runCheckAssignment = (input: string) => {
   const solver = new NlsatSolver();
-  const values: Rational[] = [];
+  const values: Anum[] = [];
   const output: string[] = [];
+  let count = 0;
   for (const line of input.split("\n")) {
     const words = line.split(" ");
-    if (words[0] === "v") values[Number(words[1])] = parseRational(`${words[2]}/${words[3]}`);
+    if (words[0] === "ca") count = Number(words[1]);
+    if (words[0] === "int")
+      for (let variable = 0; variable < count; variable++)
+        solver.mkVar(words[variable + 1] === "1");
+    if (words[0] === "v")
+      values[Number(words[1])] = new Anum(parseRational(`${words[2]}/${words[3]}`));
     if (words[0] !== "c") continue;
     const polynomial = parsePolynomial(solver.pm, words.slice(2).join(" "));
     const kind = words[1];
     const literal =
       kind === "LE"
-        ? solver.mkIneqLiteral("GT", polynomial) ^ 1
+        ? solver.mkIneqLiteral("GT", [polynomial], [false]) ^ 1
         : kind === "GE"
-          ? solver.mkIneqLiteral("LT", polynomial) ^ 1
-          : solver.mkIneqLiteral(kind === "EQ" ? "EQ" : kind === "LT" ? "LT" : "GT", polynomial);
-    solver.addUnitClause(literal);
+          ? solver.mkIneqLiteral("LT", [polynomial], [false]) ^ 1
+          : solver.mkIneqLiteral(
+              kind === "EQ" ? "EQ" : kind === "LT" ? "LT" : "GT",
+              [polynomial],
+              [false],
+            );
+    solver.mkExternalClause([literal], null);
     output.push(`lit ${literal}`);
   }
-  const result = solver.check(values);
+  const result = solver.checkAssignment(values);
   const literals = result.clause.map((literal) => {
     const atom = solver.getAtom(literal);
     const sign = (literal & 1) === 1 ? "!" : "+";
-    return ` ${literal} ${sign}${atom?.kind} ${atom === null ? "" : showPolynomial(atom.polynomial)}`;
+    const polynomial = atom !== null && isIneqAtom(atom) ? atom.polynomials[0] : null;
+    return ` ${literal} ${sign}${atom?.kind} ${polynomial === null ? "" : showPolynomial(polynomial)}`;
   });
-  output.push(result.status === "undef" ? "undef" : `lemma${literals.join("")}`);
+  output.push(result.result === L_FALSE ? `lemma${literals.join("")}` : "undef");
   return output.join("\n");
 };
 
@@ -834,7 +845,7 @@ describe("nlsat check_assignment", () => {
   });
 
   it("answers undef when every constraint holds, because of the clause [true]", () => {
-    expect(runCheckAssignment("ca 1\nc GT 1:0^1\nv 0 1 1\nend")).toBe("lit 2\nundef");
+    expect(runCheckAssignment("ca 1\nint 0\nc GT 1:0^1\nv 0 1 1\nend")).toBe("lit 2\nundef");
   });
 
   it("explains with a polynomial of degree 2 in its maximal variable by factoring it", () => {
@@ -844,9 +855,82 @@ describe("nlsat check_assignment", () => {
   });
 
   it("bounds an irrational root by linear polynomials, as Z3 does", () => {
-    expect(runCheckAssignment("ca 1\nc EQ 1:0^2 -2:\nv 0 1 1\nend")).toBe(
+    expect(runCheckAssignment("ca 1\nint 0\nc EQ 1:0^2 -2:\nv 0 1 1\nend")).toBe(
       "lit 2\nlemma 5 !GT [1:0^1 1:] 7 !LT [4:0^1 -5:] 3 !EQ [1:0^2 -2:]",
     );
+  });
+});
+
+// The harness command: search n max_conflicts, then int flags, one a KIND poly line per atom, and
+// cl assumption refs per clause, a ref being a signed 1-based atom number. It prints each clause's
+// literals, the verdict, the nonzero statistics, and the model or the core.
+const runSearch = (input: string) => {
+  const solver = new NlsatSolver();
+  const atoms: number[] = [];
+  const output: string[] = [];
+  const header = input.split("\n")[0].split(" ");
+  if (header[2] !== "0") solver.maxConflicts = Number(header[2]);
+  for (const line of input.split("\n")) {
+    const words = line.split(" ");
+    if (words[0] === "int") for (const flag of words.slice(1)) solver.mkVar(flag === "1");
+    if (words[0] === "a") {
+      const polynomial = parsePolynomial(solver.pm, words.slice(2).join(" "));
+      const kind = words[1];
+      atoms.push(
+        kind === "LE"
+          ? solver.mkIneqLiteral("GT", [polynomial], [false]) ^ 1
+          : kind === "GE"
+            ? solver.mkIneqLiteral("LT", [polynomial], [false]) ^ 1
+            : solver.mkIneqLiteral(
+                kind === "EQ" ? "EQ" : kind === "LT" ? "LT" : "GT",
+                [polynomial],
+                [false],
+              ),
+      );
+    }
+    if (words[0] !== "cl") continue;
+    const literals = words
+      .slice(2)
+      .map(Number)
+      .map((ref) => (ref > 0 ? atoms[ref - 1] : atoms[-ref - 1] ^ 1));
+    output.push(`clause ${literals.join(" ")}`);
+    solver.mkExternalClause(literals, words[1] === "-1" ? null : Number(words[1]));
+  }
+  const result = solver.check();
+  output.push(result === L_TRUE ? "sat" : result === L_FALSE ? "unsat" : "undef");
+  const stats = solver.stats;
+  const counts = [
+    ["conflicts", stats.conflicts],
+    ["propagations", stats.propagations],
+    ["decisions", stats.decisions],
+    ["restarts", stats.restarts],
+    ["stages", stats.stages],
+    ["irrational_assignments", stats.irrationalAssignments],
+  ] as const;
+  output.push(
+    `stats${counts.map((count) => (count[1] > 0 ? ` ${count[0]}=${count[1]}` : "")).join("")}`,
+  );
+  if (result === L_TRUE)
+    output.push(
+      `model${Array.from({ length: Number(header[1]) }, (_value, variable) => showAnum(solver.am, solver.getValue(variable))).join("")}`,
+    );
+  if (result === L_FALSE)
+    output.push(
+      `core${solver
+        .getCore()
+        .map((assumption) => ` ${assumption}`)
+        .join("")}`,
+    );
+  return output.join("\n");
+};
+
+describe("nlsat search", () => {
+  // Random clauses over atoms of degree 4 or less, with the verdict, statistics, model and core of
+  // Z3's nlsat check.
+  const cases: [string, string][] = JSON.parse(readFileSync(join(FIXTURES, "search.json"), "utf8"));
+
+  it.each(cases)("%s", (input, expected) => {
+    expect(runSearch(input)).toBe(expected);
   });
 });
 

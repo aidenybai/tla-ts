@@ -18,17 +18,27 @@ const FLIPPED_KIND: Record<IneqKind, IneqKind> = { EQ: "EQ", LT: "GT", GT: "LT" 
 
 export const flipKind = (kind: IneqKind) => FLIPPED_KIND[kind];
 
+// What the solver keeps per Boolean variable, reset when a variable is made or deleted.
+export interface BoolVarHooks {
+  onMk: (boolVar: number) => void;
+  onDelete: (boolVar: number) => void;
+}
+
 export class AtomTable {
   readonly atoms: (Atom | null)[] = [];
   private refCounts: number[] = [];
   private nextBoolVar = 0;
   private freeBoolVars: number[] = [];
   private ineqAtoms = new Map<string, IneqAtom>();
+  // Keyed by the variable at creation: like Z3's root atom table, renaming the variables leaves the
+  // key alone.
   private rootAtoms = new Map<string, RootAtom>();
+  private rootKeys = new Map<number, string>();
 
   constructor(
     private pm: PolynomialManager,
     private cache: PolynomialCache,
+    private hooks: BoolVarHooks | null = null,
   ) {
     this.mkBoolVar();
   }
@@ -38,7 +48,36 @@ export class AtomTable {
     const boolVar = this.freeBoolVars.pop() ?? this.nextBoolVar++;
     this.atoms[boolVar] = null;
     this.refCounts[boolVar] = 0;
+    this.hooks?.onMk(boolVar);
     return boolVar;
+  }
+
+  // degree: the degree of the atom's maximal variable.
+  getDegree(atom: Atom) {
+    if (!("polynomials" in atom)) return this.pm.degree(atom.polynomial, atom.maxVar);
+    let max = 0;
+    for (const polynomial of atom.polynomials)
+      max = Math.max(max, this.pm.degree(polynomial, atom.maxVar));
+    return max;
+  }
+
+  // reinit_cache: each polynomial back in the cache after a reset, and the maximal variables after
+  // a renaming.
+  reinitCache() {
+    for (const atom of this.atoms) {
+      if (atom === null || atom === undefined) continue;
+      if ("polynomials" in atom) {
+        let max = 0;
+        for (const polynomial of atom.polynomials) {
+          this.cache.mkUnique(polynomial);
+          max = Math.max(max, this.pm.maxVar(polynomial));
+        }
+        atom.maxVar = max;
+        continue;
+      }
+      this.cache.mkUnique(atom.polynomial);
+      atom.maxVar = this.pm.maxVar(atom.polynomial);
+    }
   }
 
   getAtom(literal: number) {
@@ -61,8 +100,12 @@ export class AtomTable {
     if (atom === null || atom === undefined) return;
     if (--this.refCounts[boolVar] > 0) return;
     if ("polynomials" in atom) this.ineqAtoms.delete(this.getIneqKey(atom));
-    else this.rootAtoms.delete(this.getRootKey(atom));
+    else {
+      this.rootAtoms.delete(this.rootKeys.get(boolVar)!);
+      this.rootKeys.delete(boolVar);
+    }
     this.atoms[boolVar] = null;
+    this.hooks?.onDelete(boolVar);
     this.freeBoolVars.push(boolVar);
   }
 
@@ -145,6 +188,7 @@ export class AtomTable {
     atom.boolVar = this.mkBoolVar();
     this.atoms[atom.boolVar] = atom;
     this.rootAtoms.set(key, atom);
+    this.rootKeys.set(atom.boolVar, key);
     return atom.boolVar;
   }
 }

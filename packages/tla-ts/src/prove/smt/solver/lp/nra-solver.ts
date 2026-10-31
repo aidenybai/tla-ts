@@ -14,8 +14,10 @@
 import { NlsatUnsupportedError, SmtInvariantError } from "../../../../errors";
 import { L_FALSE, L_UNDEF } from "../lbool";
 import { Rational, getLcm } from "../rational";
+import { Anum } from "../nlsat/algebraic";
 import { NlsatSolver } from "../nlsat/solver";
 import type { Polynomial } from "../nlsat/polynomial";
+import { isIneqAtom } from "../nlsat/types";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, type LarConstraint } from "./constraints";
 import { Explanation } from "./explanation";
 import type { LarSolver } from "./lar-solver";
@@ -89,9 +91,10 @@ export class NraSolver {
     // terms, scaled by an integer denominator to keep the coefficients integral.
     const definitions: Polynomial[] = [];
     const denominators: bigint[] = [];
-    const values: Rational[] = [];
+    const values: Anum[] = [];
     for (let lpVar = 0; lpVar < lra.columns.length; lpVar++) {
-      values.push(core.val(lpVar));
+      solver.mkVar(lra.isInt(lpVar));
+      values.push(new Anum(core.val(lpVar)));
       if (core.emons.isMonicVar(lpVar)) {
         let definition: Polynomial | null = null;
         let denominator = 1n;
@@ -142,18 +145,19 @@ export class NraSolver {
       const kind = constraint.kind;
       const literal =
         kind === KIND_LE
-          ? solver.mkIneqLiteral("GT", polynomial) ^ 1
+          ? solver.mkIneqLiteral("GT", [polynomial], [false]) ^ 1
           : kind === KIND_GE
-            ? solver.mkIneqLiteral("LT", polynomial) ^ 1
+            ? solver.mkIneqLiteral("LT", [polynomial], [false]) ^ 1
             : solver.mkIneqLiteral(
                 kind === KIND_LT ? "LT" : kind === KIND_GT ? "GT" : "EQ",
-                polynomial,
+                [polynomial],
+                [false],
               );
-      solver.addUnitClause(literal);
+      solver.mkExternalClause([literal], constraintIndex);
       literalConstraints.set(literal, constraintIndex);
     }
-    const result = solver.check(values);
-    if (result.status === "undef") return null;
+    const result = solver.checkAssignment(values);
+    if (result.result !== L_FALSE) return null;
     return { solver, clause: result.clause, literalConstraints };
   }
 
@@ -192,16 +196,22 @@ export class NraSolver {
       }
       const atom = solver.getAtom(literal);
       if (atom === null) throw new SmtInvariantError(`nlsat literal ${literal} has no atom`);
-      if (pm.totalDegree(atom.polynomial) > 1) {
+      // A root atom or a product of factors is unknown, and so is a nonlinear polynomial.
+      if (
+        !isIneqAtom(atom) ||
+        atom.polynomials.length !== 1 ||
+        pm.totalDegree(atom.polynomials[0]) > 1
+      ) {
         core.lemmas.pop();
         return L_UNDEF;
       }
       // process_polynomial_check_assignment, for a linear polynomial.
+      const polynomial = atom.polynomials[0];
       const term = new LarTerm();
       let bound = Rational.zero;
-      for (let index = 0; index < atom.polynomial.size; index++) {
-        const monomial = atom.polynomial.ms[index];
-        const coeff = Rational.of(atom.polynomial.as[index]);
+      for (let index = 0; index < polynomial.size; index++) {
+        const monomial = polynomial.ms[index];
+        const coeff = Rational.of(polynomial.as[index]);
         if (monomial.size === 0) bound = bound.sub(coeff);
         else term.addMonomial(coeff, monomial.vars[0]);
       }

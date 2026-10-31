@@ -1,6 +1,7 @@
 // Ported from Z3 (src/nlsat/nlsat_types.h, src/nlsat/nlsat_clause.h), MIT license, see
 // z3-license.txt. The atoms and clauses of nlsat. A literal is 2 * boolVar + sign, where sign 1
 // negates the atom.
+import type { Dependency } from "../lp/dependency";
 import type { Polynomial } from "./polynomial";
 
 export type IneqKind = "EQ" | "LT" | "GT";
@@ -28,10 +29,14 @@ export interface RootAtom {
 
 export type Atom = IneqAtom | RootAtom;
 
+// A clause, with the assumptions it depends on. isActive marks a learned clause that took part in
+// a conflict since the last garbage collection.
 export interface Clause {
   id: number;
   literals: number[];
   isLearned: boolean;
+  assumptions: Dependency;
+  isActive: boolean;
 }
 
 export const isIneqAtom = (atom: Atom): atom is IneqAtom =>

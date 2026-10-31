@@ -55,13 +55,17 @@ const RATIONAL_OPS: ValueOps<Rational> = {
   power: (base, exponent) => base.pow(exponent),
 };
 
+const getMonomialKey = (vars: readonly number[], degrees: readonly number[]) =>
+  vars.map((variable, index) => `${variable}^${degrees[index]}`).join(",");
+
 export class Monomial {
   readonly totalDegree: number;
 
+  // vars and degrees change only when the manager renames the variables.
   constructor(
     readonly id: number,
-    readonly vars: readonly number[],
-    readonly degrees: readonly number[],
+    public vars: readonly number[],
+    public degrees: readonly number[],
   ) {
     let total = 0;
     for (const degree of degrees) total += degree;
@@ -139,10 +143,17 @@ export class Polynomial {
     readonly as: bigint[],
     readonly ms: Monomial[],
   ) {
+    this.makeFirstMaximal();
+  }
+
+  // make_first_maximal: a monomial with the maximal variable at its maximal degree first.
+  makeFirstMaximal() {
+    if (this.ms.length <= 1) return;
     let maxPos = 0;
-    for (let index = 1; index < ms.length; index++)
-      if (isPoGreater(ms[index], ms[maxPos])) maxPos = index;
+    for (let index = 1; index < this.ms.length; index++)
+      if (isPoGreater(this.ms[index], this.ms[maxPos])) maxPos = index;
     this.swapFirst(maxPos);
+    this.isLexSorted = false;
   }
 
   get size() {
@@ -346,12 +357,33 @@ export class PolynomialManager {
   // Monomials.
 
   mkMonomial(vars: readonly number[], degrees: readonly number[]) {
-    const key = vars.map((variable, index) => `${variable}^${degrees[index]}`).join(",");
+    const key = getMonomialKey(vars, degrees);
     const existing = this.monomials.get(key);
     if (existing !== undefined) return existing;
     const monomial = new Monomial(this.monomials.size, vars, degrees);
     this.monomials.set(key, monomial);
     return monomial;
+  }
+
+  // rename: every variable x becomes permutation[x], in place in every monomial, as Z3 renames its
+  // monomial table. Z3 then moves a maximal monomial first in every live polynomial. Here that is
+  // the given polynomials, the ones nlsat keeps in its atoms. Others keep their order, which
+  // matches again once the order is restored.
+  rename(permutation: readonly number[], polynomials: Iterable<Polynomial>) {
+    const monomials = new Map<string, Monomial>();
+    for (const monomial of this.monomials.values()) {
+      const order = monomial.vars
+        .map((_variable, index) => index)
+        .sort(
+          (first, second) => permutation[monomial.vars[first]] - permutation[monomial.vars[second]],
+        );
+      const degrees = monomial.degrees;
+      monomial.degrees = order.map((index) => degrees[index]);
+      monomial.vars = order.map((index) => permutation[monomial.vars[index]]);
+      monomials.set(getMonomialKey(monomial.vars, monomial.degrees), monomial);
+    }
+    this.monomials = monomials;
+    for (const polynomial of polynomials) polynomial.makeFirstMaximal();
   }
 
   // mk_monomial(x, k): x^k, the unit for k = 0.
@@ -1641,6 +1673,13 @@ export class PolynomialCache {
   private factorizations = new Map<number, Polynomial[]>();
 
   constructor(readonly pm: PolynomialManager) {}
+
+  reset() {
+    this.table.clear();
+    this.inCache.clear();
+    this.pscChains.clear();
+    this.factorizations.clear();
+  }
 
   mkUnique(polynomial: Polynomial) {
     if (this.inCache.has(polynomial.id)) return polynomial;
