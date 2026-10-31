@@ -1804,22 +1804,24 @@ const parse = (source: string, mode: ParseMode): Module => {
       switch (token.text) {
         case "CONSTANT":
         case "CONSTANTS": {
-          advance();
+          const location = getLocation(advance());
           const declarations = parseDeclarations();
           module.constants.push(...declarations);
-          module.units.push({ kind: "Constants", declarations });
+          location.range = getRange(tokenIndex);
+          module.units.push({ kind: "Constants", declarations, location });
           continue;
         }
         case "VARIABLE":
         case "VARIABLES": {
-          advance();
+          const unitLocation = getLocation(advance());
           const declarations = parseSeparated(() => {
             const start = cursor.index;
             const location = getLocation(peek());
             return withRange({ name: expectIdentifier(), arity: 0, location }, start);
           });
           module.variables.push(...declarations);
-          module.units.push({ kind: "Variables", declarations });
+          unitLocation.range = getRange(tokenIndex);
+          module.units.push({ kind: "Variables", declarations, location: unitLocation });
           continue;
         }
         case "ASSUME":

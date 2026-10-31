@@ -475,8 +475,7 @@ export interface Theorem {
 
 // The units of a module in source order, for consumers that need the order across kinds.
 export type ModuleUnit =
-  | { kind: "Constants"; declarations: Declaration[] }
-  | { kind: "Variables"; declarations: Declaration[] }
+  | { kind: "Constants" | "Variables"; declarations: Declaration[]; location: SourceLocation }
   | { kind: "Recursive"; declarations: Declaration[] }
   | { kind: "Definition"; definition: Definition }
   | { kind: "Instance"; instance: Instance }

@@ -201,6 +201,28 @@ Spec == Init /\\ [][Next]_x
     },
   );
 
+  it.each([
+    ["VARIABLES x,\n  y", "line 4, col 1 to line 5, col 3", "A VARIABLE declaration"],
+    ["CONSTANT C", "line 4, col 1 to line 4, col 10", "A declaration"],
+    ["AXIOM A == TRUE", "line 4, col 1 to line 4, col 15", "An ASSUME"],
+    ["THEOREM T == TRUE", "line 4, col 1 to line 4, col 17", "A THEOREM"],
+    ["USE DEF F", "line 4, col 1 to line 4, col 9", "A USE or HIDE"],
+  ])("rejects %j between a RECURSIVE declaration and its definition", (unit, range, type) => {
+    const report = getReport({
+      M: `---- MODULE M ----\nEXTENDS Naturals\nRECURSIVE F(_)\n${unit}\nF(n) == IF n = 0 THEN 0 ELSE F(n-1)\n====\n`,
+    });
+    expect(report.text).toContain(
+      `*** Errors: 1\n\n${range} of module M\n\n${type} may not appear within a recursive definition section.\n`,
+    );
+  });
+
+  it("takes an instance between a RECURSIVE declaration and its definition", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nEXTENDS Naturals\nRECURSIVE F(_)\nI == INSTANCE Naturals\nF(n) == IF n = 0 THEN 0 ELSE F(n-1)\n====\n",
+    });
+    expect(report.isFailed).toBe(false);
+  });
+
   it("takes the parentheses of an operator's only argument for the operator's own", () => {
     const report = getReport({
       M: "---- MODULE M ----\nF(y) == y\nOp(G(_)) == G(1)\nA == Op(F)\n====\n",

@@ -2655,14 +2655,26 @@ export const generateSanySpecification = (
       currentModule.topLevel.push(...extendee.topLevel);
     });
 
+    // Generator.checkIfInRecursiveSection: only definitions and instances may come between a
+    // RECURSIVE declaration and the definition of what it declares.
+    const checkRecursiveSection = (location: SourceLocation, type: string) => {
+      if (state.unresolvedSum === 0) return;
+      addError(
+        getSpanLocation(file, getUnitSpan(location)),
+        `${type} may not appear within a recursive definition section.`,
+      );
+    };
+
     ast.units.forEach((unit) => {
       switch (unit.kind) {
         case "Variables":
+          checkRecursiveSection(unit.location, "A VARIABLE declaration");
           unit.declarations.forEach((declaration) =>
             createDeclaration(declaration, VARIABLE_DECL_KIND),
           );
           break;
         case "Constants":
+          checkRecursiveSection(unit.location, "A declaration");
           unit.declarations.forEach((declaration) =>
             createDeclaration(declaration, CONSTANT_DECL_KIND),
           );
@@ -2679,15 +2691,19 @@ export const generateSanySpecification = (
           else processModuleDefinition(unit.instance, undefined, undefined);
           break;
         case "Assumption":
+          checkRecursiveSection(unit.assumption.location, "An ASSUME");
           processAssumption(unit.assumption);
           break;
         case "Theorem":
+          checkRecursiveSection(unit.theorem.location, "A THEOREM");
           processTheorem(unit.theorem);
           break;
         case "Use":
+          checkRecursiveSection(unit.use.location, "A USE or HIDE");
           currentModule.topLevel.push(generateUseOrHide(unit.use));
           break;
         case "Module": {
+          checkRecursiveSection(unit.module.location, "A MODULE ");
           const innerTable = { contexts: [...symbolTable.contexts, createContext()] };
           const inner = generateModule(unit.module, file, currentModule, innerTable);
           // SymbolTable.addModule: an inner module's name must not be taken by another module,
