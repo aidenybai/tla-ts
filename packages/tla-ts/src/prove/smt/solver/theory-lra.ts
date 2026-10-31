@@ -1311,9 +1311,9 @@ export class TheoryLra {
     context.mkThAxiom([eqLiteral, negate(leLiteral), negate(geLiteral)]);
     const handler = () => {
       if (!context.isRelevant(first.owner) || !context.isRelevant(second.owner)) return;
-      context.markAsRelevant(eq);
-      context.markAsRelevant(le);
-      context.markAsRelevant(ge);
+      context.relevancy.markAsRelevant(eq);
+      context.relevancy.markAsRelevant(le);
+      context.relevancy.markAsRelevant(ge);
     };
     context.relevancy.addHandler(first.owner, handler);
     context.relevancy.addHandler(second.owner, handler);
