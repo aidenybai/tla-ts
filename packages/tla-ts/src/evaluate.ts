@@ -30,6 +30,7 @@ import {
   createSortedSet,
   createWrittenRecord,
   createTuple,
+  describeMissingField,
   formatValue,
   getDomain,
   getFunctionDomain,
@@ -38,6 +39,7 @@ import {
   getValueHash,
   isFunctionValue,
   isOverriddenSet,
+  isRecordValue,
   isSameValue,
   markLambdaFunction,
   isReducible,
@@ -47,6 +49,7 @@ import {
   toFiniteSet,
   updateFunction,
   valuesEqual,
+  type FunctionValue,
   type LazyFunctionSource,
   type LazyFunctionValue,
   type Value,
@@ -182,8 +185,17 @@ export const getConjunctError = (
 };
 
 export const getFieldError =
-  (expression: Expression & { kind: "FieldAccess" }) => (record: Value) =>
-    `Attempted to select nonexistent field "${expression.field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`;
+  (expression: Expression & { kind: "FieldAccess" }) => (record: FunctionValue) =>
+    isRecordValue(record)
+      ? `Attempted to select nonexistent field "${expression.field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`
+      : describeMissingField(record, expression.field);
+
+export const getNonFunctionError = (expression: Expression) => (value: Value) =>
+  `A non-function (${getKindString(value)}) was applied as a function.\n${describeRange(expression)}`;
+
+export const getNonRecordError =
+  (expression: Expression & { kind: "FieldAccess" }) => (value: Value) =>
+    `Attempted to select field "${expression.field}" from a non-record value ${formatValue(value)}\n${describeRange(expression)}`;
 
 export const getDomainOperator = (expression: Expression) => (value: Value) => {
   if (!isFunctionValue(value)) {
@@ -1764,18 +1776,31 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       keepLazy(expression.function);
       const evaluateFunction = child(expression.function);
       const args = expression.args.map(child);
+      const describeNonFunction = getNonFunctionError(expression);
       if (args.length === 1) {
         const argument = args[0];
-        return (context) => applyFunction(evaluateFunction(context), argument(context));
+        return (context) =>
+          applyFunction(
+            evaluateFunction(context),
+            argument(context),
+            undefined,
+            describeNonFunction,
+          );
       }
       return (context) =>
-        applyFunction(evaluateFunction(context), createTuple(args.map((arg) => arg(context))));
+        applyFunction(
+          evaluateFunction(context),
+          createTuple(args.map((arg) => arg(context))),
+          undefined,
+          describeNonFunction,
+        );
     }
     case "FieldAccess": {
       const record = child(expression.record);
       const field = expression.field;
       const describeMissing = getFieldError(expression);
-      return (context) => applyFunction(record(context), field, describeMissing);
+      const describeNonRecord = getNonRecordError(expression);
+      return (context) => applyFunction(record(context), field, describeMissing, describeNonRecord);
     }
     case "Product": {
       const factors = expression.factors.map(child);

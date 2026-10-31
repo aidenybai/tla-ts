@@ -1068,7 +1068,7 @@ describe("evaluation errors match TLC", () => {
     expect(messages).toEqual(cases.map((item) => item[1]));
   });
 
-  it("locates IF, CHOOSE, conjunction, DOMAIN, and field errors like TLC", async () => {
+  it("locates IF, CHOOSE, conjunction, DOMAIN, application, and field errors like TLC", async () => {
     const cases = [
       [
         "ASSUME IF 1 THEN TRUE ELSE FALSE",
@@ -1102,6 +1102,18 @@ describe("evaluation errors match TLC", () => {
         "ASSUME [a |-> 1].b = 0",
         'Attempted to select nonexistent field "b" from the record\n[a |-> 1]\nline 6, col 8 to line 6, col 18 of module M',
       ],
+      [
+        "ASSUME 3[1] = 0",
+        "A non-function (an integer) was applied as a function.\nline 6, col 8 to line 6, col 11 of module M",
+      ],
+      [
+        'ASSUME "ab"[1, 2] = 0',
+        "A non-function (a string) was applied as a function.\nline 6, col 8 to line 6, col 17 of module M",
+      ],
+      [
+        "ASSUME {1}.b = 0",
+        'Attempted to select field "b" from a non-record value {1}\nline 6, col 8 to line 6, col 12 of module M',
+      ],
     ];
     const messages = await Promise.all(
       cases.map(async (item) => (await checkModule(item[0])).violation?.message),
@@ -1127,6 +1139,32 @@ describe("evaluation errors match TLC", () => {
     expect((await checkModule('ASSUME [n \\in {"a"} |-> n]["b"] = 0')).violation?.message).toBe(
       'In applying the function\n[a |-> "a"],\nthe first argument is:\n"b"\nwhich is not in its domain.\n',
     );
+  });
+
+  it("reports an argument outside the domain of a tuple, record, or function like TLC", async () => {
+    const cases = [
+      ["<<1, 2>>[3]", "Attempted to access index 3 of tuple\n<<1, 2>>\nwhich is out of bounds."],
+      ['<<1, 2>>["a"]', 'Attempted to access tuple at a non integral index: "a"'],
+      ["[a |-> 1][2]", "Attempted to access record by a non-string argument: 2"],
+      ['[a |-> 1]["b"]', "Attempted to access nonexistent field 'b' of record\n[a |-> 1]"],
+      [
+        "(1 :> 2)[3]",
+        "Attempted to apply function:\n<<2>>\nto argument 3, which is not in the domain of the function.",
+      ],
+      ["<<>>.b", 'Attempted to apply function with integer domain to the non-integer argument "b"'],
+      [
+        "[n \\in 0..2 |-> n].b",
+        'Attempted to apply function with integer domain to the non-integer argument "b"',
+      ],
+      [
+        "[n \\in {} |-> n].b",
+        'Attempted to apply function:\n<<>>\nto argument "b", which is not in the domain of the function.',
+      ],
+    ];
+    const messages = await Promise.all(
+      cases.map(async (item) => (await checkModule(`ASSUME ${item[0]} = 0`)).violation?.message),
+    );
+    expect(messages).toEqual(cases.map((item) => item[1]));
   });
 
   it("reports an overflowing cardinality without enumerating the set", async () => {
