@@ -441,19 +441,6 @@ export class Context extends Internalizer {
     } else if (root !== node) this.pushNewThEq(rootVar, thVar);
   }
 
-  private isCongruent(first: Enode, second: Enode) {
-    if (first.decl !== second.decl || first.args.length !== second.args.length) return false;
-    let isSame = true;
-    for (let index = 0; index < first.args.length && isSame; index++)
-      isSame = first.args[index].root === second.args[index].root;
-    if (isSame) return true;
-    return (
-      first.isEq &&
-      first.args[0].root === second.args[1].root &&
-      first.args[1].root === second.args[0].root
-    );
-  }
-
   addEq(inputN1: Enode, inputN2: Enode, justification: EqJustification) {
     let n1 = inputN1;
     let n2 = inputN2;

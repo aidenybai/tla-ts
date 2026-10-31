@@ -92,6 +92,8 @@ export abstract class Internalizer {
   readonly relevancy: RelevancyPropagator;
   readonly caseSplitQueue: CaseSplitQueue;
   readonly cgTable = new CgTable();
+  // m_sticky_generation_updates: the generations that update_generation lowered, by node.
+  private stickyGenerationUpdates = new Map<Enode, number>();
   abstract readonly theory: TheoryLra;
   abstract readonly qmanager: DefaultQuantifierManager;
 
@@ -253,8 +255,8 @@ export abstract class Internalizer {
       case UNDO_CGC_GENERATIONS: {
         const second = this.popTrailNode();
         const first = this.popTrailNode();
-        second.generation = this.popTrailInt();
-        first.generation = this.popTrailInt();
+        const secondGeneration = this.popTrailInt();
+        this.undoMergeCgcGenerations(first, this.popTrailInt(), second, secondGeneration);
         return;
       }
       case UNDO_MERGE_TF:
@@ -383,7 +385,48 @@ export abstract class Internalizer {
   // get_generation: the generation of the congruence root. Equalities have generation 0, since
   // patterns have no equalities.
   getGeneration(node: Enode) {
-    return node.isEq ? 0 : node.cg.generation;
+    return node.isEq ? 0 : this.getCgRoot(node).generation;
+  }
+
+  // get_cg_root: a node's cg can be stale, so a node that is not a congruence root looks the root up.
+  private getCgRoot(node: Enode) {
+    if (!node.usesCgTable() || node.isCgr()) return node;
+    return this.cgTable.findFor(node.decl, node.args, node.isEq) ?? node;
+  }
+
+  private setGeneration(node: Enode, generation: number) {
+    if (!node.isEq) this.getCgRoot(node).generation = generation;
+  }
+
+  private undoMergeCgcGenerations(
+    first: Enode,
+    firstGeneration: number,
+    second: Enode,
+    secondGeneration: number,
+  ) {
+    this.setGeneration(first, firstGeneration);
+    this.setGeneration(second, secondGeneration);
+    // apply_sticky_updates: a lowered generation outlives the merge that it was made under.
+    for (const entry of this.stickyGenerationUpdates) {
+      if (entry[1] < firstGeneration && this.isCongruent(entry[0], first))
+        this.setGeneration(first, entry[1]);
+      else if (entry[1] < secondGeneration && this.isCongruent(entry[0], second))
+        this.setGeneration(second, entry[1]);
+    }
+  }
+
+  // congruent: only equalities are commutative here.
+  protected isCongruent(first: Enode, second: Enode) {
+    if (first.decl !== second.decl || first.args.length !== second.args.length) return false;
+    let isSame = true;
+    for (let index = 0; index < first.args.length && isSame; index++)
+      isSame = first.args[index].root === second.args[index].root;
+    if (isSame) return true;
+    return (
+      first.isEq &&
+      first.args[0].root === second.args[1].root &&
+      first.args[1].root === second.args[0].root
+    );
   }
 
   // Boolean variables and enodes.
@@ -527,6 +570,7 @@ export abstract class Internalizer {
     if (node.args.length > 0 && !node.isEq) this.decl2enodes.get(node.decl)?.pop();
     for (const arg of node.args) arg.root.parents.pop();
     this.manager.decRef(node.owner);
+    this.stickyGenerationUpdates.delete(node);
   }
 
   protected mergeCgcGenerations(first: Enode, firstGeneration: number, second: Enode) {
@@ -559,10 +603,14 @@ export abstract class Internalizer {
     this.isEnodeFlags[boolVar] = true;
   }
 
+  // update_generation: a node of a congruence class records its lower generation as sticky, so
+  // undoing a merge of the class keeps it.
   private updateGeneration(node: Enode) {
     if (node.isEq) return;
-    if (this.generation > 0 && this.generation < this.getGeneration(node))
-      node.cg.generation = this.generation;
+    if (this.generation > 0 && this.generation < this.getGeneration(node)) {
+      this.setGeneration(node, this.generation);
+      if (node.usesCgTable()) this.stickyGenerationUpdates.set(node, this.generation);
+    }
   }
 
   // Internalization.
