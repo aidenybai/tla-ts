@@ -18,6 +18,7 @@ import { Internalizer, UNDO_ADD_EQ, UNDO_TH_VAR } from "./internalizer";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate } from "./literal";
 import { mkModel } from "./model-generator";
+import type { GeneratedModel } from "./model-generator";
 import type { ProtoModel } from "./proto-model";
 import { DefaultQuantifierManager } from "./quantifier-manager";
 import { TheoryLra } from "./theory-lra";
@@ -90,6 +91,10 @@ export class Context extends Internalizer {
   private r1ParentGenerations = new Map<Enode, number>();
   private erasedGenerations = new Map<Enode, number>();
   private lastSearchFailure = FAILURE_OK;
+  // m_model_generator's model, m_proto_model and m_model.
+  private generatedModel: GeneratedModel | null = null;
+  private protoModel: ProtoModel | null = null;
+  private model: ProtoModel | null = null;
 
   constructor(manager: AstManager, params: SmtParams) {
     super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
@@ -903,9 +908,12 @@ export class Context extends Internalizer {
     for (;;) {
       const isTheory = this.finalCheckIndex === 0;
       // Z3 registers every theory for UFNIA, and only arithmetic acts on tlapm's obligations. Of
-      // the theories between arithmetic and the quantifiers, theory_finite_set::assume_eqs draws a
-      // random value.
-      if (!isTheory) this.getRandomValue();
+      // the theories between arithmetic and the quantifiers, theory_finite_set makes a set.range
+      // declaration, and its assume_eqs draws a random value.
+      if (!isTheory) {
+        this.manager.initFiniteSetPlugin();
+        this.getRandomValue();
+      }
       const check = isTheory ? this.theory.finalCheckEh(level) : qmanager.finalCheckEh(true);
       if (isTheory) maxLevel = Math.max(maxLevel, NUM_ARITH_FINAL_CHECK_LEVELS);
       if (isTheory && check === FC_GIVEUP) failure = FAILURE_THEORY;
@@ -948,22 +956,51 @@ export class Context extends Internalizer {
     }
   }
 
-  // mk_proto_model: the model of the current assignment, which the quantifier manager adjusts.
+  // reset_model: the model generator still holds the proto model.
+  private resetModel() {
+    this.model?.decRef();
+    this.model = null;
+    this.protoModel?.decRef();
+    this.protoModel = null;
+  }
+
+  // mk_proto_model: the model of the current assignment, which the quantifier manager adjusts. The
+  // model generator releases the last model first.
   mkProtoModel() {
+    this.generatedModel?.model.decRef();
     const generated = mkModel(this);
+    generated.model.incRef();
+    this.generatedModel = generated;
     this.qmanager.adjustModel(generated.model);
     generated.model.completePartialFuncs(false);
     generated.model.cleanup();
+    generated.model.incRef();
+    this.protoModel = generated.model;
     return generated;
+  }
+
+  // get_model: the model that the proto model makes, which the caller holds too.
+  getModel() {
+    if (this.model !== null) return this.model;
+    const model = (this.protoModel ?? this.mkProtoModel().model).mkModel();
+    model.incRef();
+    this.model = model;
+    return model;
   }
 
   // validate_model: every relevant ground literal of the assignment holds in the model.
   validateModel(model: ProtoModel) {
+    const manager = this.manager;
     for (const literal of this.assignedLiterals) {
       const atom = this.boolVar2Expr[getVar(literal)];
-      if (!this.isRelevant(atom) || !this.manager.isGround(atom)) continue;
-      const value = model.eval(isNegated(literal) ? this.manager.mkNot(atom) : atom, false);
-      if (value === this.manager.falseExpr) return false;
+      if (!this.isRelevant(atom)) continue;
+      // n and res of Z3's loop hold the literal and its value.
+      const expr = isNegated(literal) ? manager.mkNot(atom) : atom;
+      manager.incRef(expr);
+      const value = manager.isGround(expr) ? model.eval(expr, false) : -1;
+      if (value !== -1) manager.decRef(value);
+      manager.decRef(expr);
+      if (value === manager.falseExpr) return false;
     }
     return true;
   }
@@ -973,6 +1010,7 @@ export class Context extends Internalizer {
   // and force a restart.
   private restart(status: number, currentLevel: number): number | undefined {
     const qmanager = this.qmanager;
+    this.resetModel();
     let isForcedRestart = false;
     if (this.lastSearchFailure !== FAILURE_OK) {
       if (
@@ -1104,6 +1142,7 @@ export class Context extends Internalizer {
 
   search() {
     if (this.isInconsistent()) return L_FALSE;
+    this.resetModel();
     this.theory.initSearchEh();
     this.qmanager.initSearchEh();
     this.numConflicts = 0;

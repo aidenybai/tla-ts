@@ -15,6 +15,7 @@ import {
 import { combineHash } from "./hash";
 import { ObjHashtable, ObjMap } from "./hashtable";
 import { FuncInterp, RandomGen, type ProtoModel } from "./proto-model";
+import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 
 export type Evaluate = (expr: number) => number | null;
@@ -179,7 +180,9 @@ export class AufSolver {
   private aFIs: ObjMap<AFINode>;
   private sort2k = new Map<number, number>();
   private model: ProtoModel | null = null;
-  private evalCache = [new Map<number, number | null>(), new Map<number, number | null>()];
+  // m_eval_cache for each model completion flag, and m_eval_cache_range, which holds the results.
+  private evalCache = [new Map<number, number>(), new Map<number, number>()];
+  private evalCacheRange: RefVector;
   private rootNodes: Node[] = [];
   private newConstraints: number[] = [];
   // m_rand, seeded with the steps the resource limit counted before the solver was made, which
@@ -189,6 +192,7 @@ export class AufSolver {
     private manager: AstManager,
     readonly rewriter: Rewriter,
   ) {
+    this.evalCacheRange = new RefVector(manager);
     this.random = new RandomGen(manager.limit.count >>> 0);
     manager.limit.inc();
     this.aFIs = new ObjMap((key) =>
@@ -217,6 +221,7 @@ export class AufSolver {
   private resetEvalCache() {
     this.evalCache[0].clear();
     this.evalCache[1].clear();
+    this.evalCacheRange.reset();
   }
 
   private mkNode(key: string, map: Map<string, Node>, sort: number) {
@@ -273,6 +278,7 @@ export class AufSolver {
     if (cached !== undefined) return cached;
     const result = this.getModel().eval(expr, isModelCompletion);
     cache.set(expr, result);
+    this.evalCacheRange.pushOwned(result);
     return result;
   }
 

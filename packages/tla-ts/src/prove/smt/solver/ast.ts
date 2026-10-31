@@ -194,6 +194,8 @@ const FIRST_DECLARED_SMALL_ID = 143;
 const FIRST_FREE_ID = 22;
 // MAX_SMALL_NUM_TO_CACHE: arith_decl_plugin holds the numerals below it once it makes them.
 const MAX_SMALL_NUM_TO_CACHE = 16;
+// The sorts that finite_set_decl_plugin::init makes.
+const NUM_FINITE_SET_PLUGIN_SORTS = 7;
 
 // symbol::hash: a numerical symbol hashes to its number.
 const getSymbolHash = (symbol: SmtSymbol) =>
@@ -250,8 +252,8 @@ export class AstManager {
   private appHashes = new Int32Array(1024);
   private numApps = 0;
   // id_gen for sorts and declarations: the small id of the next one, and the ids of deleted ones,
-  // which Z3 reuses the last freed first. Z3 keeps the declarations of =, ite, the user and the
-  // fresh declarations, and deletes the others with their last application.
+  // which Z3 reuses the last freed first. Z3 keeps the declarations of = and ite, and deletes the
+  // others with their last reference.
   private nextSmallId = FIRST_DECLARED_SMALL_ID;
   private freeSmallIds: number[] = [];
   private numDecls = FIRST_DECLARED_SMALL_ID;
@@ -259,6 +261,11 @@ export class AstManager {
   // per signature, by its signature.
   private signatureSmallIds = new Map<string, number>();
   private signatureRefCounts = new Map<string, number>();
+  // The references to each user declaration: the script holds the declared ones, and applications
+  // and models hold the fresh ones. A deleted declaration keeps its small id here, in case an
+  // application of it is created again.
+  private declRefCounts: number[] = [];
+  private deletedDecls = new Set<number>();
   // ast_manager::m_fresh_id, which numbers fresh declarations and variable names.
   private freshId = 0;
   // Z3's id of each expression, which orders Z3's sorts. Like Z3, the manager counts references and
@@ -275,6 +282,7 @@ export class AstManager {
   // m_small_ints and m_small_reals: the numerals below MAX_SMALL_NUM_TO_CACHE, which are held.
   private smallInts: number[] = [];
   private smallReals: number[] = [];
+  private isFiniteSetPluginInitialized = false;
   readonly trueExpr: number;
   readonly falseExpr: number;
 
@@ -310,6 +318,17 @@ export class AstManager {
     return this.freeSmallIds.length > 0 ? (this.freeSmallIds.pop() as number) : this.nextSmallId++;
   }
 
+  // finite_set_decl_plugin::init, which the first final check of theory_finite_set runs when it
+  // makes a set.range declaration: the plugin makes the sorts A and B, three FiniteSet sorts and two
+  // Array sorts, which the manager keeps. The set.range declaration is released at once.
+  initFiniteSetPlugin() {
+    if (this.isFiniteSetPluginInitialized) return;
+    this.isFiniteSetPluginInitialized = true;
+    for (let index = 0; index < NUM_FINITE_SET_PLUGIN_SORTS; index++) this.mkSmallId();
+    this.freeSmallIds.push(this.mkSmallId());
+    this.numDecls--;
+  }
+
   // insert_macro: cmd_context keeps a named expression as a recursive function with one case, whose
   // declaration and case predicate it holds.
   mkMacroDecls() {
@@ -335,6 +354,11 @@ export class AstManager {
 
   // An application holds its declaration, which Z3 makes with its first application.
   private holdDecl(expr: number) {
+    const decl = this.decls[expr];
+    if (this.funcDecls[decl].family === FAMILY_USER) {
+      this.incDeclRef(decl);
+      return;
+    }
     const signature = this.getSignature(expr);
     if (signature === null) return;
     const key = signature[0];
@@ -346,7 +370,6 @@ export class AstManager {
     const smallId = this.mkSmallId();
     this.signatureSmallIds.set(key, smallId);
     this.signatureRefCounts.set(key, signature[1] ? 2 : 1);
-    const decl = this.decls[expr];
     if (decl !== OP_NUM && this.funcDecls[decl].family === FAMILY_MODEL_VALUE)
       this.funcDecls[decl].smallId = smallId;
   }
@@ -354,6 +377,13 @@ export class AstManager {
   // The small id of the declaration a deleted application releases for good, or -1 when the
   // declaration stays.
   private releaseDecl(expr: number) {
+    const decl = this.decls[expr];
+    if (this.funcDecls[decl].family === FAMILY_USER) {
+      this.declRefCounts[decl]--;
+      if (this.declRefCounts[decl] > 0) return -1;
+      this.deletedDecls.add(decl);
+      return this.funcDecls[decl].smallId;
+    }
     const signature = this.getSignature(expr);
     if (signature === null) return -1;
     const key = signature[0];
@@ -370,6 +400,19 @@ export class AstManager {
 
   incRef(expr: number) {
     this.refCounts[expr]++;
+  }
+
+  incDeclRef(decl: number) {
+    if (this.deletedDecls.delete(decl)) this.funcDecls[decl].smallId = this.mkSmallId();
+    this.declRefCounts[decl]++;
+  }
+
+  decDeclRef(decl: number) {
+    this.declRefCounts[decl]--;
+    if (this.declRefCounts[decl] > 0) return;
+    this.deletedDecls.add(decl);
+    this.freeSmallIds.push(this.funcDecls[decl].smallId);
+    this.numDecls--;
   }
 
   // Runs body, holding each expression it creates until it returns, then releases them, the last
@@ -542,6 +585,7 @@ export class AstManager {
       isSkolem,
       smallId: this.mkSmallId(),
     });
+    this.declRefCounts[this.funcDecls.length - 1] = 1;
     return this.funcDecls.length - 1;
   }
 
@@ -549,7 +593,9 @@ export class AstManager {
   mkFreshFuncDecl(prefix: SmtSymbol | null, domain: number[], range: number, isSkolem = true) {
     const name = prefix === null ? this.freshId : `${getSymbolName(prefix)}!${this.freshId}`;
     this.freshId++;
-    return this.mkFuncDecl(name, domain, range, isSkolem);
+    const decl = this.mkFuncDecl(name, domain, range, isSkolem);
+    this.declRefCounts[decl] = 0;
+    return decl;
   }
 
   // mk_fresh_var_name.

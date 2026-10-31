@@ -8,7 +8,6 @@ export class ResourceLimit {
   // m_count: the steps taken, which MBQI also uses as a random seed.
   count = 0;
   private isCanceled = false;
-  private numChecks = 0;
   // Watches for a full collection while the used size is past the threshold.
   private profiler: GCProfiler | null = null;
 
@@ -17,16 +16,15 @@ export class ResourceLimit {
     private signal?: AbortSignal,
   ) {}
 
-  // inc: counts a step and returns whether the work may go on. The clock is read on every 256th
-  // step, since a step costs less than reading it.
+  // inc: counts a step and returns whether the work may go on. The clock and the heap are read on
+  // every 256th step, since a step costs less than reading them. A step can allocate kilobytes, so
+  // reading the heap less often lets it fill between two readings.
   inc() {
     this.count++;
     if (
       !this.isCanceled &&
       (this.count & CLOCK_CHECK_MASK) === 0 &&
-      (Date.now() > this.deadline ||
-        this.signal?.aborted === true ||
-        ((++this.numChecks & HEAP_CHECK_MASK) === 0 && this.isHeapNearlyFull()))
+      (Date.now() > this.deadline || this.signal?.aborted === true || this.isHeapNearlyFull())
     ) {
       this.isCanceled = true;
       this.release();
@@ -72,6 +70,4 @@ export class ResourceLimit {
 // size add up to the heap limit. Bun reports the memory of the machine and no full collections.
 const HEAP_FRACTION = 0.8;
 const CLOCK_CHECK_MASK = 255;
-// The heap is checked on every 128th reading of the clock, since reading its statistics costs more.
-const HEAP_CHECK_MASK = 127;
 const v8 = typeof process === "undefined" ? undefined : process.getBuiltinModule?.("node:v8");

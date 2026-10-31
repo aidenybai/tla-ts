@@ -11,7 +11,7 @@ import type { ModelFinder } from "./model-finder";
 import type { ProtoModel } from "./proto-model";
 import type { DefaultQuantifierManager } from "./quantifier-manager";
 import { RefVector } from "./ref-vector";
-import { substitute } from "./var-subst";
+import { VarSubst } from "./var-subst";
 
 // qi_params' mbqi_max_cexs and mbqi_max_iterations.
 const MBQI_MAX_CEXS = 1;
@@ -82,11 +82,7 @@ class AuxContext {
     }
     context.initAssumptions(isAssuming ? [this.polyAssumption] : []);
     const result = context.search();
-    return result === L_TRUE
-      ? context.mkProtoModel().model
-      : result === L_FALSE
-        ? "unsat"
-        : "unknown";
+    return result === L_TRUE ? context.getModel() : result === L_FALSE ? "unsat" : "unknown";
   }
 }
 
@@ -152,17 +148,17 @@ export class ModelChecker {
   }
 
   // assert_neg_q_m: asserts the negated body under the model, with fresh constants for the
-  // variables.
-  private assertNegQM(aux: AuxContext, quantifier: number, model: ProtoModel) {
+  // variables, which sks holds.
+  private assertNegQM(aux: AuxContext, quantifier: number, model: ProtoModel, sks: RefVector) {
     const manager = this.manager;
     const data = manager.getQuantifier(quantifier);
     const body = model.eval(data.body, true);
     const numDecls = data.sorts.length;
-    const sks: number[] = [];
+    sks.resize(numDecls);
     for (let index = 0; index < numDecls; index++) {
       const sort = data.sorts[numDecls - index - 1];
       const sk = manager.mkFreshConst(null, sort);
-      sks[numDecls - index - 1] = sk;
+      sks.set(numDecls - index - 1, sk);
       if (model.isFinite(sort)) {
         // restrict_to_universe: ast_manager::mk_or, which keeps a single disjunct in an or.
         const universe = model.getKnownUniverse(sort).map((value) => manager.mkEq(sk, value));
@@ -172,8 +168,15 @@ export class ModelChecker {
         manager.decRef(constraint);
       }
     }
-    aux.assert(manager.mkNot(substitute(manager, body, sks)));
-    return sks;
+    const subst = new VarSubst(manager, true);
+    const skBody = subst.apply(body, sks.items);
+    const negated = manager.mkNot(skBody);
+    manager.incRef(negated);
+    aux.assert(negated);
+    manager.decRef(negated);
+    manager.decRef(skBody);
+    subst.release();
+    manager.decRef(body);
   }
 
   private addInstance(quantifier: number, cex: ProtoModel, sks: number[], isUsingInv: boolean) {
@@ -208,38 +211,52 @@ export class ModelChecker {
     const aux = this.aux ?? new AuxContext(manager);
     this.aux = aux;
     aux.push();
-    const isSatisfied = this.checkInScope(aux, quantifier, model);
+    // sks: the fresh constants of the variables, which are released before the scope is popped.
+    const sks = new RefVector(manager);
+    const isSatisfied = this.checkInScope(aux, quantifier, model, sks);
+    sks.reset();
     aux.pop();
     return isSatisfied;
   }
 
-  private checkInScope(aux: AuxContext, quantifier: number, model: ProtoModel) {
-    const manager = this.manager;
+  private checkInScope(aux: AuxContext, quantifier: number, model: ProtoModel, skRefs: RefVector) {
     const flatQ = this.modelFinder.getFlatQuantifier(quantifier);
-    const sks = this.assertNegQM(aux, flatQ, model);
+    this.assertNegQM(aux, flatQ, model, skRefs);
+    const sks = skRefs.items;
     const completeCex = aux.check();
     if (completeCex === "unsat") return true;
     if (completeCex === "unknown") return false;
+    // complete_cex and cex hold their models.
+    completeCex.incRef();
     // Try to find instances from the instantiation sets first.
     this.modelFinder.restrictSksToInstSet(quantifier, sks, (expr) => aux.assert(expr));
     let numNewInstances = 0;
     for (;;) {
       const cex = aux.check();
-      if (typeof cex === "string" || !this.addInstance(quantifier, cex, sks, true)) break;
-      numNewInstances++;
-      if (numNewInstances >= this.maxCexs) break;
-      // add_blocking_clause: diseqs and blocking_clause hold their terms until it is asserted.
-      const diseqs = new RefVector(manager);
-      for (const sk of sks)
-        diseqs.push(manager.mkNot(manager.mkEq(sk, cex.getSomeConstInterp(manager.decls[sk]))));
-      const blockingClause = manager.mkApp(OP_OR, diseqs.items, SORT_BOOL);
-      manager.incRef(blockingClause);
-      aux.assert(blockingClause);
-      manager.decRef(blockingClause);
-      diseqs.reset();
+      if (typeof cex === "string") break;
+      cex.incRef();
+      const isAdded = this.addInstance(quantifier, cex, sks, true);
+      if (isAdded) numNewInstances++;
+      if (isAdded && numNewInstances < this.maxCexs) this.addBlockingClause(aux, cex, sks);
+      cex.decRef();
+      if (!isAdded || numNewInstances >= this.maxCexs) break;
     }
     if (numNewInstances === 0) this.addInstance(quantifier, completeCex, sks, false);
+    completeCex.decRef();
     return false;
+  }
+
+  // add_blocking_clause: diseqs and blocking_clause hold their terms until it is asserted.
+  private addBlockingClause(aux: AuxContext, cex: ProtoModel, sks: number[]) {
+    const manager = this.manager;
+    const diseqs = new RefVector(manager);
+    for (const sk of sks)
+      diseqs.push(manager.mkNot(manager.mkEq(sk, cex.getSomeConstInterp(manager.decls[sk]))));
+    const blockingClause = manager.mkApp(OP_OR, diseqs.items, SORT_BOOL);
+    manager.incRef(blockingClause);
+    aux.assert(blockingClause);
+    manager.decRef(blockingClause);
+    diseqs.reset();
   }
 
   private checkQuantifiers(model: ProtoModel) {
