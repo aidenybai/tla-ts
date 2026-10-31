@@ -1402,13 +1402,18 @@ export class TheoryLra {
 
   // The model.
 
-  // init_model: the model knows the value of every theory variable, so fresh integers avoid them.
+  // init_model: the model knows the value of every theory variable without δ, so fresh numbers
+  // avoid them. Like get_value(enode*, expr_ref&), it skips an integer with a fractional value.
   initModel(model: ProtoModel) {
     this.initVariableValues();
     if (!this.isModelInitialized) return;
-    for (let thVar = 0; thVar < this.getNumVars(); thVar++)
-      if (this.solver.externalToLocalColumn(thVar) !== NULL_LPVAR)
-        model.registerValue(this.getValueExpr(thVar));
+    for (let thVar = 0; thVar < this.getNumVars(); thVar++) {
+      const column = this.solver.externalToLocalColumn(thVar);
+      const value = column === NULL_LPVAR ? undefined : this.solver.getExactValue(column);
+      if (value === undefined) continue;
+      if (!this.isIntVar(thVar)) model.registerValue(this.manager.mkRealNumeral(value));
+      else if (value.isInt()) model.registerValue(this.manager.mkNumeral(value.num));
+    }
   }
 
   // mk_value: the value of the class of a root, rounded down for an integer.
