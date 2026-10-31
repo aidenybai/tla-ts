@@ -49,7 +49,7 @@ export interface LivenessChecker {
 }
 
 export interface LiveGraph {
-  getFingerprint: (index: number) => number;
+  getFingerprint: (successor: LiveSuccessor) => number;
   getSuccessors: (index: number, state: Value[]) => LiveSuccessor[];
 }
 
@@ -383,7 +383,7 @@ export const createLivenessChecker = (
     };
     const insert = (slots: (LiveSuccessor | undefined)[], successor: LiveSuccessor) => {
       for (
-        let slot = (graph.getFingerprint(successor.index) & 0x7fffffff) % slots.length;
+        let slot = (graph.getFingerprint(successor) & 0x7fffffff) % slots.length;
         ;
         slot = (slot + 1) % slots.length
       ) {

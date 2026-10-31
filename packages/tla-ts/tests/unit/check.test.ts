@@ -1487,6 +1487,39 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.message).toContain(message);
   });
 
+  const checkFairPrint = (action: string, config: string, version: TlcVersion) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA == PrintT(x) /\\ ${action}\nSpec == Init /\\ [][A]_x /\\ WF_x(A)\nP == [](x = 0 => <>(x = 1))\nInv == x < 1\n====`,
+      config: `SPECIFICATION Spec\nPROPERTY P\n${config}`,
+      version,
+    });
+
+  // TLC's worker adds the state to the behavior graph after it prints the trace, and again with its
+  // call stack when that fails. TLC 1.7.4 adds it once and replays the next-state relation.
+  it.each([
+    ["master", 9],
+    ["1.7.4", 6],
+  ] as const)(
+    "prints what adding a state whose next states fail to the behavior graph prints in TLC %s",
+    async (version, count) => {
+      const result = await checkFairPrint("(x' = 1 \\/ x' = 1 \\div 0)", "", version);
+      expect(result.failure?.traceOutput).toEqual(Array.from({ length: count }, () => "0"));
+    },
+  );
+
+  it.each([
+    ["an invariant violation", "master", "INVARIANT Inv", ["0", "0", "0", "0", "0", "0", "0", "0"]],
+    ["an invariant violation", "1.7.4", "INVARIANT Inv", []],
+    ["a deadlock", "master", "", ["0", "1", "2"]],
+    ["a deadlock", "1.7.4", "", ["2"]],
+  ] as const)(
+    "prints what adding a state to the behavior graph prints after %s in TLC %s",
+    async (_, version, config, expected) => {
+      const result = await checkFairPrint("x < 2 /\\ x' = x + 1", config, version);
+      expect(result.violation?.traceOutput).toEqual(expected);
+    },
+  );
+
   it.each([
     ["master", "[i \\in 1..2 |-> i]", 'y["a"]', 'integer domain to the non-integer argument "a"'],
     [

@@ -305,7 +305,7 @@ interface FailureOptions {
 }
 
 // TLC prints what the spec prints as it replays a failure after the trace.
-const appendTraceOutput = (behavior: Behavior, lines: OutputLine[]) => ({
+const appendTraceOutput = <Traced extends Behavior>(behavior: Traced, lines: OutputLine[]) => ({
   ...behavior,
   traceOutput: [...(behavior.traceOutput ?? []), ...lines],
 });
@@ -1664,10 +1664,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const liveness = withLivenessExitCode(() =>
     withUnexpectedException(() =>
       createLivenessChecker(search.properties.liveness, spec.temporals, environment, {
-        getFingerprint: (index) =>
-          (tlcFingerprints[index] ??= Number(
-            BigInt.asIntN(32, runtime.getFingerprint(states[index])),
-          )),
+        getFingerprint: ({ index, state }) =>
+          (tlcFingerprints[index] ??= Number(BigInt.asIntN(32, runtime.getFingerprint(state)))),
         getSuccessors: (source, state) => {
           const successors: LiveSuccessor[] = [];
           if (spec.next === undefined) return successors;
@@ -2150,6 +2148,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       liveSuccessors.push({ index: existing, state: isStored ? stored : successor.state });
     }
     const isNew = isInModel && existing === -1;
+    // TLC adds a new state to the behavior graph's successors before it checks the invariants.
+    if (isNew && liveness) liveSuccessors.push({ index: states.length, state: successor.state });
     unstoredState.fingerprint = isNew ? fingerprintState : undefined;
     if (isNew) {
       countDistinctState(depths[index] + 1);
@@ -2190,7 +2190,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (!isNew) return undefined;
     if (!isCanonicalizedFirst) canonicalizeState(successor.state);
     markSeen(hash, states.length);
-    if (liveness) liveSuccessors.push({ index: states.length, state: successor.state });
     addState(successor.state, fingerprintState, index, successor.action);
     runtime.queueSize++;
     return undefined;
@@ -2300,13 +2299,26 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     );
     return replay?.callStack.length ? replay.callStack : undefined;
   };
-  // TLC prints the call stack of adding the state to the behavior graph instead of replaying the
-  // next-state relation.
+  // TLC's worker adds the state to the behavior graph after it prints the trace. On an error in that,
+  // it adds the state again to print the call stack instead of replaying the next-state relation,
+  // which TLC 1.7.4 doesn't.
+  const addFailedLiveState = (index: number, liveSuccessors: LiveSuccessor[]) => {
+    try {
+      liveness?.addState(index, states[index], liveSuccessors);
+      return undefined;
+    } catch (error) {
+      if (!(error instanceof TlaEvaluationError)) throw error;
+      return getLiveCallStack(index, liveSuccessors);
+    }
+  };
   const replayFailedNext = (index: number, liveSuccessors: LiveSuccessor[]) => {
-    const callStack = getLiveCallStack(index, liveSuccessors);
-    return callStack
-      ? { result: { callStack, fingerprint: undefined, isLiveCallStack: true }, lines: [] }
-      : getOutput(() => replayNext(states[index]));
+    const live = getOutput(() => addFailedLiveState(index, liveSuccessors));
+    if (live.result) {
+      const result = { callStack: live.result, fingerprint: undefined, isLiveCallStack: true };
+      return { result, lines: live.lines };
+    }
+    const replay = getOutput(() => replayNext(states[index]));
+    return { result: replay.result, lines: [...live.lines, ...replay.lines] };
   };
   // After the trace, TLC replays the next-state relation with its call stack, printing again.
   const reportNextStateFailure = (
@@ -2328,10 +2340,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       try {
         outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
       } catch (error) {
-        const replay = replayFailedNext(index, liveSuccessors);
         // TLC 1.7.4 reports the wrapped error without the trace, except for a failed property,
-        // which it reports with the trace before it rethrows.
+        // which it reports with the trace before it rethrows. The error stops its worker.
         if (is174 && error instanceof TlaEvaluationError && !headedErrors.has(error)) {
+          const replay = getOutput(() => replayNext(state));
           outcome.result = toFailure(
             new TlaEvaluationError(`${getWrappedException(error)}${error.message}`, error),
             appendTraceOutput({ trace: [] }, replay.lines),
@@ -2339,6 +2351,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           );
           return true;
         }
+        const replay = replayFailedNext(index, liveSuccessors);
         // A successor TLC can't fingerprint fails again as TLC prints it in the trace, which TLC
         // reports as an exception it didn't expect.
         const isTraceFailed = getFingerprintState(successor.state).some(
@@ -2365,11 +2378,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return outcome.result !== undefined;
     });
     current.isExpanding = false;
-    if (outcome.result?.violation) {
-      const callStack = getLiveCallStack(index, liveSuccessors);
-      return callStack ? { ...outcome.result, liveCallStack: callStack } : outcome.result;
+    const result = outcome.result;
+    // TLC 1.7.4's worker stops at a violation.
+    if (result?.violation && !is174) {
+      const live = getOutput(() => addFailedLiveState(index, liveSuccessors));
+      return {
+        ...result,
+        violation: appendTraceOutput(result.violation, live.lines),
+        ...(live.result && { liveCallStack: live.result }),
+      };
     }
-    if (outcome.result) return outcome.result;
+    if (result) return result;
     const addLiveState = () => {
       if (liveness && source && is174) stateWriter?.writeStuttering(source);
       const accepted = liveness?.addState(index, state, liveSuccessors);
@@ -2390,17 +2409,25 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       // TLC's worker still adds the deadlocked state to the behavior graph after it reports the
       // deadlock, and reports a temporal property that this violates. Then it counts the state as
       // expanded.
-      try {
-        const additional = addLiveState()?.violation;
-        const counted = withOutDegrees(deadlock, getPartialOutDegrees());
-        return additional ? { ...counted, additionalViolation: additional } : counted;
-      } catch (error) {
-        if (!(error instanceof TlaEvaluationError)) throw error;
-        // An error in adding the state stops TLC 1.7.4's worker before it counts the state.
-        const counted = withOutDegrees(deadlock, getFailureOutDegrees());
-        const callStack = getLiveCallStack(index, liveSuccessors);
-        return callStack ? { ...counted, liveCallStack: callStack } : counted;
-      }
+      const live = getOutput(() => {
+        try {
+          return { additional: addLiveState()?.violation };
+        } catch (error) {
+          if (!(error instanceof TlaEvaluationError)) throw error;
+          return { isFailed: true, callStack: getLiveCallStack(index, liveSuccessors) };
+        }
+      });
+      const reported = deadlock.violation
+        ? { ...deadlock, violation: appendTraceOutput(deadlock.violation, live.lines) }
+        : deadlock;
+      const { additional, isFailed, callStack } = live.result;
+      // An error in adding the state stops TLC 1.7.4's worker before it counts the state.
+      const counted = withOutDegrees(
+        reported,
+        isFailed ? getFailureOutDegrees() : getPartialOutDegrees(),
+      );
+      if (additional) return { ...counted, additionalViolation: additional };
+      return callStack ? { ...counted, liveCallStack: callStack } : counted;
     }
     try {
       return addLiveState();
