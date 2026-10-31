@@ -881,6 +881,18 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("reports a variable drawn from a set it can't enumerate like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in Nat\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.message).toBe(
+      "In computing initial states, the right side of \\IN is not enumerable.\nline 4, col 9 to line 4, col 17 of module M",
+    );
+    expect(result.failure?.exitCode).toBe(75);
+  });
+
   it("reports a CASE with no true guard in the next-state relation like TLC", async () => {
     const result = await check({
       source:
