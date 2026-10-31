@@ -517,6 +517,15 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("rejects USE ONLY in a module body but not in a proof", () => {
+    const getText = (body: string) =>
+      getReport({ Only: `---- MODULE Only ----\n${body}\n====\n` }).text;
+    expect(getText("USE ONLY TRUE")).toContain(
+      'Was expecting "==== or more Module body"\nEncountered "USE" at line 2, column 1',
+    );
+    expect(getText("THEOREM TRUE\n<1> USE ONLY TRUE\n<1> QED")).not.toContain("Parse Error");
+  });
+
   it("locates a substitution for a parameter of the definition at its target", () => {
     const report = getReport({
       Outer: "---- MODULE Outer ----\nM(a) == INSTANCE Inner WITH a <- 1, C <- a\n====\n",

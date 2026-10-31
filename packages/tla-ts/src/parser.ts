@@ -1933,6 +1933,10 @@ const parse = (source: string, mode: ParseMode): Module => {
         }
         case "USE":
         case "HIDE": {
+          // SANY's module body takes a USE only when ONLY doesn't follow it.
+          if (isAt("USE") && isAt("ONLY", 1)) {
+            throw createUnexpected(`Expected a module unit but found ${describe(token)}`);
+          }
           const use = parseUseOrHide();
           module.uses.push(use);
           module.units.push({ kind: "Use", use });
