@@ -12,12 +12,15 @@ import {
   FAMILY_BASIC,
   OP_ADD,
   OP_DIV,
+  OP_DIV0,
   OP_GE,
   OP_IDIV,
+  OP_IDIV0,
   OP_IS_INT,
   OP_ITE,
   OP_LE,
   OP_MOD,
+  OP_MOD0,
   OP_MUL,
   OP_NUM,
   OP_SUB,
@@ -119,6 +122,7 @@ export class TheoryLra {
   // m_not_handled: terms that the theory treats as uninterpreted, so a model may not satisfy them.
   // Their arguments have variables, as the factors of an nla monomial do.
   private unsupportedTerms: number[] = [];
+  private underspecifiedTerms: number[] = [];
   private processedEqs = new Set<string>();
   private nla: NlaCore | undefined;
 
@@ -231,6 +235,29 @@ export class TheoryLra {
   private foundUnsupported(expr: number) {
     this.unsupportedTerms.push(expr);
     this.context.pushTrail(() => this.unsupportedTerms.pop());
+  }
+
+  // found_underspecified: a division by a term or by zero equals the division by zero it stands
+  // for, which the model interprets freely.
+  private foundUnderspecified(expr: number) {
+    const manager = this.manager;
+    const context = this.context;
+    this.underspecifiedTerms.push(expr);
+    context.pushTrail(() => this.underspecifiedTerms.pop());
+    const op = manager.getOp(expr);
+    const args = manager.args[expr];
+    const zero = manager.mkNumeral(0n);
+    const dividend = op === OP_MOD ? manager.mkApp(OP_MOD, [args[0], zero], SORT_INT) : expr;
+    const byZero =
+      op === OP_DIV
+        ? manager.mkApp(OP_DIV0, args, SORT_REAL)
+        : op === OP_IDIV
+          ? manager.mkApp(OP_IDIV0, args, SORT_INT)
+          : manager.mkApp(OP_MOD0, [args[0], zero], SORT_INT);
+    const literal = this.mkEq(byZero, dividend);
+    if (context.relevancy.isEnabled)
+      context.relevancy.addDependency(dividend, context.boolVar2Expr[getVar(literal)]);
+    context.assign(literal, null);
   }
 
   private registerFixedVar(thVar: number, value: Rational) {
@@ -379,13 +406,11 @@ export class TheoryLra {
         index++;
         if (isFirst) {
           if (op === OP_DIV) {
-            // found_underspecified: / by 0 or by a term is opaque.
             const divisor = context.rewriter.rewrite(args[1]);
-            if (!manager.isNumeral(divisor) || manager.getRationalValue(divisor).isZero())
-              this.foundUnsupported(term);
+            if (!this.isNonzeroNumeral(divisor)) this.foundUnderspecified(term);
             for (const arg of args) toEnsureVar.push(arg);
           } else if (op === OP_IDIV) {
-            if (!this.isNonzeroNumeral(args[1])) this.foundUnsupported(term);
+            if (!this.isNonzeroNumeral(args[1])) this.foundUnderspecified(term);
             const remainder = manager.mkApp(OP_MOD, args, SORT_INT);
             context.internalize(remainder, false);
             if (context.relevancy.isEnabled) context.relevancy.addDependency(term, remainder);
@@ -397,7 +422,7 @@ export class TheoryLra {
             }
           } else if (op === OP_MOD) {
             const isNonzeroDivisor = this.isNonzeroNumeral(args[1]);
-            if (!isNonzeroDivisor) this.foundUnsupported(term);
+            if (!isNonzeroDivisor) this.foundUnderspecified(term);
             if (this.nla !== undefined && isNonzeroDivisor) {
               const quotient = manager.mkApp(OP_IDIV, args, SORT_INT);
               context.internalize(quotient, false);
@@ -410,7 +435,9 @@ export class TheoryLra {
               const columns = this.registerDivision(quotient, term);
               nla.divisions.addDivisibility(columns[3], columns[1], columns[2], columns[0]);
             }
-          } else if (op !== OP_TO_INT) {
+          } else if (op === OP_IDIV0 || op === OP_MOD0) {
+            for (const arg of args) toEnsureVar.push(arg);
+          } else if (op !== OP_TO_INT && op !== OP_DIV0) {
             this.foundUnsupported(term);
             for (const arg of args) toEnsureVar.push(arg);
           }
@@ -1077,9 +1104,8 @@ export class TheoryLra {
     if (nlaStatus === FC_GIVEUP) result = FC_GIVEUP;
     if (this.assumeEqs()) return FC_CONTINUE;
     if (this.unsupportedTerms.length > 0) this.initVariableValues();
-    for (const term of this.unsupportedTerms)
-      if (context.isRelevant(term) && !this.isSatisfied(term)) return FC_GIVEUP;
-    return result;
+    // eval_unsupported gives up on every term but powers, which are not supported here.
+    return this.unsupportedTerms.some((term) => context.isRelevant(term)) ? FC_GIVEUP : result;
   }
 
   // check_nla: whether the values of the monomials agree with their factors', or the lemmas that
@@ -1728,40 +1754,31 @@ export class TheoryLra {
       const family = this.manager.getFamily(parent.owner);
       if (family !== FAMILY_ARITH && family !== FAMILY_BASIC) return true;
     }
-    return false;
+    return this.isSharedWithUnderspecified(root);
   }
 
-  // The value that the model gives the class of a term, if the class has a variable.
-  private getModelValue(expr: number) {
+  // theory_lra::is_shared: whether the class is an argument of a division by a term or by zero.
+  private isSharedWithUnderspecified(root: Enode) {
     const manager = this.manager;
-    if (manager.isNumeral(expr)) return manager.getRationalValue(expr);
-    const root = this.context.getEnode(expr)?.root;
-    return root === undefined || root.thVar < 0 ? undefined : this.getValue(root.thVar);
+    const count = this.underspecifiedTerms.length;
+    if (count === 0) return false;
+    if (root.parents.length > 2 * count)
+      return this.underspecifiedTerms.some((term) =>
+        manager.args[term].some((arg) => this.context.getEnode(arg)?.root === root),
+      );
+    return root.parents.some((parent) => this.isUnderspecified(parent.owner));
   }
 
-  // Whether the values of a product, or of div, mod or / by a nonzero term, agree with the values of
-  // its arguments. The remainder of SMT-LIB's division is in [0, |divisor|).
-  private isSatisfied(term: number) {
-    if (!this.isModelInitialized) return false;
-    const manager = this.manager;
-    const value = this.getModelValue(term);
-    if (value === undefined) return false;
-    const values: Rational[] = [];
-    for (const arg of manager.args[term]) {
-      const argValue = this.getModelValue(arg);
-      if (argValue === undefined || (manager.isInt(arg) && !argValue.isInt())) return false;
-      values.push(argValue);
-    }
-    const op = manager.getOp(term);
-    if (op !== OP_MUL && op !== OP_IDIV && op !== OP_MOD && op !== OP_DIV) return false;
-    if (op === OP_MUL)
-      return values.reduce((product, factor) => product.mul(factor), Rational.one).equals(value);
-    const dividend = values[0];
-    const divisor = values[1];
-    if (divisor.isZero()) return false;
-    if (op === OP_DIV) return value.equals(dividend.div(divisor));
-    const magnitude = divisor.isNegative() ? divisor.neg() : divisor;
-    const remainder = dividend.sub(magnitude.mul(dividend.div(magnitude).floor()));
-    return value.equals(op === OP_MOD ? remainder : dividend.sub(remainder).div(divisor));
+  // arith_util::is_underspecified.
+  private isUnderspecified(expr: number) {
+    const op = this.manager.getOp(expr);
+    return (
+      op === OP_DIV ||
+      op === OP_IDIV ||
+      op === OP_MOD ||
+      op === OP_DIV0 ||
+      op === OP_IDIV0 ||
+      op === OP_MOD0
+    );
   }
 }
