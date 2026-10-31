@@ -38,6 +38,8 @@ const AGILITY_FACTOR = 0.9999;
 // The LGC_FIXED lemma garbage collection: lemma_gc_initial conflicts between collections, and the
 // activity and unassigned literal thresholds of del_inactive_lemmas2.
 const LEMMA_GC_INITIAL = 5000;
+// theory_lra::num_final_check_levels: level 2 also runs nlsat's full check.
+const NUM_ARITH_FINAL_CHECK_LEVELS = 2;
 const NEW_OLD_RATIO = 16;
 const OLD_CLAUSE_ACTIVITY = 500;
 const NEW_CLAUSE_RELEVANCY = 45;
@@ -896,18 +898,27 @@ export class Context extends Internalizer {
     const oldIndex = this.finalCheckIndex;
     let result = FC_DONE;
     let failure = FAILURE_OK;
-    do {
+    let level = 1;
+    let maxLevel = 1;
+    for (;;) {
       const isTheory = this.finalCheckIndex === 0;
       // Z3 registers every theory for UFNIA, and only arithmetic acts on tlapm's obligations. Of
       // the theories between arithmetic and the quantifiers, theory_finite_set::assume_eqs draws a
       // random value.
       if (!isTheory) this.getRandomValue();
       const check = isTheory ? this.theory.finalCheckEh() : qmanager.finalCheckEh(true);
+      if (isTheory) maxLevel = Math.max(maxLevel, NUM_ARITH_FINAL_CHECK_LEVELS);
       if (isTheory && check === FC_GIVEUP) failure = FAILURE_THEORY;
       this.finalCheckIndex = (this.finalCheckIndex + 1) % 2;
       if (check === FC_CONTINUE) return FC_CONTINUE;
       if (check === FC_GIVEUP) result = FC_GIVEUP;
-    } while (this.finalCheckIndex !== oldIndex);
+      if (this.finalCheckIndex !== oldIndex) continue;
+      if (level >= maxLevel || result === FC_DONE || this.canPropagate()) break;
+      // A higher level reruns every check with the give-up state of the lower one cleared.
+      level++;
+      result = FC_DONE;
+      failure = FAILURE_OK;
+    }
     if (this.canPropagate()) return FC_CONTINUE;
     if (result === FC_GIVEUP && failure !== FAILURE_OK) this.lastSearchFailure = failure;
     return result;
