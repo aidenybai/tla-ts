@@ -208,6 +208,12 @@ const createArithmeticOperators = (module: string) => {
     }),
     defineArithmetic(module, "\\div", "Divide", (left, right) => {
       if (right === 0) throw new TlaModuleError("The second argument of \\div is 0.");
+      // tlc2.module.Naturals#Divide floors only a quotient Java truncates below 0, and lets
+      // -2147483648 \div -1 overflow.
+      if (module === "Naturals") {
+        const truncated = Math.trunc(left / right) | 0;
+        return truncated < 0 && Math.imul(truncated, right) !== left ? truncated - 1 : truncated;
+      }
       const quotient = Math.floor(left / right);
       if (isOutOfRange(quotient)) throw createOverflowError(`${left} \\div ${right}`);
       return quotient;

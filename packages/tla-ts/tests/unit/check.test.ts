@@ -1264,6 +1264,26 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  // tlc2.module.Naturals#Divide rounds some negative quotients toward 0, and doesn't report an
+  // overflow, unlike tlc2.module.Integers#Divide.
+  it.each([
+    [false, "Naturals", ["<<0, 0, -2>>", "-2147483648"]],
+    [true, "Naturals", ["<<-1, -1, -2>>"]],
+    [false, "Integers", ["<<-1, -1, -2>>"]],
+  ])(
+    "divides negative integers as TLC does when it records a trace (%s) for a spec of %s",
+    async (isTraceRecorded, module, quotients) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS ${module}, TLC\nASSUME PrintT(<<1 \\div (0 - 2), (0 - 1) \\div 2, (0 - 3) \\div 2>>)\nASSUME PrintT((0 - 2147483647 - 1) \\div (0 - 1))\n====`,
+        config: "",
+        isTraceRecorded,
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(quotients);
+    },
+  );
+
   it("locates IF, CHOOSE, conjunction, DOMAIN, and field errors like TLC", async () => {
     const cases = [
       [
