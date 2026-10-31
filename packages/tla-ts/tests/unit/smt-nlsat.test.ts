@@ -7,7 +7,9 @@ import { LarSolver } from "../../src/prove/smt/solver/lp/lar-solver";
 import { NlaCore } from "../../src/prove/smt/solver/lp/nla-core";
 import { NraSolver } from "../../src/prove/smt/solver/lp/nra-solver";
 import { isolateRootsClosest, selectBetween } from "../../src/prove/smt/solver/nlsat/algebraic";
+import { Mpbq } from "../../src/prove/smt/solver/nlsat/mpbq";
 import { NlsatSolver } from "../../src/prove/smt/solver/nlsat/solver";
+import { UpolynomialManager } from "../../src/prove/smt/solver/nlsat/upolynomial";
 import { Rational } from "../../src/prove/smt/solver/rational";
 import {
   NlsatOutOfScope,
@@ -126,6 +128,126 @@ describe("nlsat algebraic numbers", () => {
 
   it("refuses a root variable of degree 2, whose roots may be irrational", () => {
     expect(() => runAlgebraicCommand("closest 1 3 2 2 0 1:1^2 -2:")).toThrow(NlsatOutOfScope);
+  });
+});
+const showCoeffs = (coeffs: readonly bigint[]) => ` [${coeffs.join(" ")}]`;
+
+const showFlag = (isTrue: boolean) => ` ${isTrue ? 1 : 0}`;
+
+// Isolates the roots of the square-free part, then makes each interval refinable, refines it to
+// width 1/2^20, and reports the root's index and the interval normalized around zero.
+const showIsolation = (um: UpolynomialManager, coeffs: readonly bigint[]) => {
+  const squareFree = um.squareFree(coeffs);
+  const isolated = um.sqfIsolateRoots(squareFree);
+  const refined = isolated.lowers.map((lower, index) => {
+    const refinable = um.isolating2refinable(squareFree, lower, isolated.uppers[index]);
+    if (!refinable.isInterval) return ` root ${refinable.lower}`;
+    const result = um.refineToPrecision(squareFree, refinable.lower, refinable.upper, 20);
+    const rootId = um.getRootId(squareFree, result.lower);
+    if (!result.isInterval)
+      return ` int ${refinable.lower} ${refinable.upper} proot ${result.lower} id${rootId}`;
+    const signLower = um.evalSignAtBq(squareFree, result.lower);
+    const normalized = um.normalizeInterval(squareFree, result.lower, result.upper, signLower);
+    const shownNormalized =
+      normalized === null
+        ? ` n0 ${result.lower} ${result.upper}`
+        : ` n1 ${normalized.lower} ${normalized.upper}`;
+    return ` int ${refinable.lower} ${refinable.upper} p ${result.lower} ${result.upper} id${rootId}${shownNormalized}`;
+  });
+  return `${showCoeffs(squareFree)} roots${isolated.roots.map((root) => ` ${root}`).join("")} intervals${isolated.lowers.map((lower, index) => ` ${lower} ${isolated.uppers[index]}`).join("")} refined${refined.join("")}`;
+};
+
+// The harness commands: <op> <coefficients from the constant term up> [; <operand>]. The ops
+// starting with z take a prime first and run over Z_p.
+const runUpolynomialCommand = (input: string) => {
+  const words = input.split(" ");
+  const op = words[0];
+  const isModular = op.startsWith("z");
+  const operands = words
+    .slice(isModular ? 2 : 1)
+    .join(" ")
+    .split(" ; ")
+    .map((operand) => (operand === "" ? [] : operand.split(" ")));
+  const um = new UpolynomialManager();
+  const toCoeffs = (operand: string[]) => um.set(operand.map(BigInt));
+  const first = toCoeffs(operands[0]);
+  if (isModular)
+    return `${op}${um.withZp(BigInt(words[1]), () => {
+      const x = um.set(first);
+      const y = um.set(toCoeffs(operands[1]));
+      if (op === "zgcd") return showCoeffs(um.gcd(x, y));
+      if (op === "zextgcd") {
+        const result = um.extGcd(x, y);
+        return showCoeffs(result.u) + showCoeffs(result.v) + showCoeffs(result.d);
+      }
+      if (op === "zdivrem") {
+        const division = um.divRem(x, y);
+        return showCoeffs(division.quotient) + showCoeffs(division.remainder);
+      }
+      if (op === "zsqf") return showCoeffs(um.squareFree(x));
+      if (op === "zsqfp") return showFlag(um.isSquareFree(x));
+      if (op === "zmonic") return showCoeffs(um.mkMonic(x));
+      if (op === "zdivides") return showFlag(um.divides(x, y));
+      if (op === "zmul") return showCoeffs(um.mul(x, y));
+      const exact = um.exactDiv(x, y);
+      return exact === null ? " 0" : ` 1${showCoeffs(exact)}`;
+    })}`;
+  const second = operands[1] ?? [];
+  if (op === "isolate") return `isolate${showIsolation(um, first)}`;
+  if (op === "gcd") return `gcd${showCoeffs(um.gcd(first, toCoeffs(second)))}`;
+  if (op === "divrem") {
+    const division = um.divRem(first, toCoeffs(second));
+    return `divrem ${division.power}${showCoeffs(division.quotient)}${showCoeffs(division.remainder)}`;
+  }
+  if (op === "srem") return `srem${showCoeffs(um.srem(first, toCoeffs(second)))}`;
+  if (op === "exact") {
+    const exact = um.exactDiv(first, toCoeffs(second));
+    return exact === null ? "exact 0" : `exact 1${showCoeffs(exact)}`;
+  }
+  if (op === "divides") return `divides${showFlag(um.divides(first, toCoeffs(second)))}`;
+  if (op === "sqf") return `sqf${showCoeffs(um.squareFree(first))}`;
+  if (op === "sqfp") return `sqfp${showFlag(um.isSquareFree(first))}`;
+  if (op === "sturm") return `sturm${um.sturmSeq(first).map(showCoeffs).join("")}`;
+  if (op === "tarski")
+    return `tarski${um.sturmTarskiSeq(first, toCoeffs(second)).map(showCoeffs).join("")}`;
+  if (op === "q2bq") {
+    const result = um.convertQ2bqInterval(
+      first,
+      parseRational(second[0]),
+      parseRational(second[1]),
+    );
+    return result.isInterval ? `q2bq 1 ${result.lower} ${result.upper}` : `q2bq 0 ${result.lower}`;
+  }
+  if (op === "knuth")
+    return `knuth ${um.knuthPositiveRootUpperBound(first)} ${um.knuthNegativeRootUpperBound(first)} ${um.nonzeroRootLowerBound(first)}`;
+  if (op === "flips")
+    return `flips${showCoeffs(um.pMinusX(first))}${showCoeffs(um.p1DivX(first))}${showCoeffs(um.removeZeroRoots(first))}`;
+  if (op === "transq") return `transq${showCoeffs(um.translateQ(first, parseRational(second[0])))}`;
+  if (op === "compq") return `compq${showCoeffs(um.composePQX(first, parseRational(second[0])))}`;
+  if (op === "signq") return `signq ${um.evalSignAtQ(first, parseRational(second[0]))}`;
+  if (op === "signbq")
+    return `signbq ${um.evalSignAtBq(first, Mpbq.of(BigInt(second[0]), Number(second[1])))}`;
+  return `pw${showCoeffs(um.pw(first, Number(second[0])))}`;
+};
+
+describe("nlsat univariate polynomials", () => {
+  // Products of random factors up to degree 3, so with repeated, rational and irrational roots, and
+  // what Z3's upolynomial manager computes for them: root isolation and refinement, gcds over Z and
+  // Z_p, pseudo-division, Sturm sequences and the transformations algebraic numbers use.
+  const cases: [string, string][] = JSON.parse(
+    readFileSync(join(FIXTURES, "upolynomial.json"), "utf8"),
+  );
+
+  it.each(cases)("%s", (input, expected) => {
+    expect(runUpolynomialCommand(input)).toBe(expected);
+  });
+
+  it("skips primes that divide a leading coefficient in the modular gcd", () => {
+    const um = new UpolynomialManager();
+    const shared = [-2n, 39103n * 39107n];
+    const first = um.mul([3n, 5n, 7n * 39103n], shared);
+    const second = um.mul(shared, [7n, 1n, 39103n]);
+    expect(um.gcd(first, second)).toEqual(shared);
   });
 });
 
