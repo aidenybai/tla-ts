@@ -5,8 +5,9 @@
 // Equations move between the solved, processed and to-simplify sets, each in an array where an
 // equation knows its index. Z3's solver::simplify runs the simplifier, which here is PddSimplifier
 // in pdd-simplifier, run by its caller.
+import { PddMemoryOutError } from "../../../../errors";
 import { Dependency, mkJoin } from "./dependency";
-import { Pdd, PddManager, PddMemoryOut } from "./pdd";
+import { Pdd, PddManager } from "./pdd";
 import { shrink } from "../array";
 
 export const SOLVED = 0;
@@ -188,7 +189,7 @@ export class PddSolver {
     try {
       while (!this.isDone() && this.step());
     } catch (error) {
-      if (!(error instanceof PddMemoryOut)) throw error;
+      if (!(error instanceof PddMemoryOutError)) throw error;
     }
   }
 

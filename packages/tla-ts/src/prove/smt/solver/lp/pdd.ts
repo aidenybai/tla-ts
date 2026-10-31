@@ -7,6 +7,7 @@
 // no garbage collection: node indices match Z3's until its first collection, and the node limit
 // counts every node made. The op cache keys on both operands, where Z3's eq_entry compares the
 // first operand of one entry with the second of the other.
+import { PddMemoryOutError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { shrink } from "../array";
 
@@ -20,13 +21,6 @@ const REDUCE_OP = 6;
 // Nodes below this index stand for the operations in the op cache, besides 0 and 1.
 const NO_OP = 10;
 const INITIAL_FREE_NODES = 1024;
-
-// mem_out: a node past the limit was needed outside an operation, which grows the limit instead.
-export class PddMemoryOut extends Error {
-  constructor() {
-    super("the pdd manager ran out of nodes");
-  }
-}
 
 interface PddMonomial {
   coeff: Rational;
@@ -674,7 +668,7 @@ export class PddManager {
     const existing = this.nodeTable.get(key);
     if (existing !== undefined) return existing;
     if (this.levels.length === this.numAllocated) {
-      if (this.numAllocated > this.maxNumNodes && !this.isApplying) throw new PddMemoryOut();
+      if (this.numAllocated > this.maxNumNodes && !this.isApplying) throw new PddMemoryOutError();
       while (this.numAllocated > this.maxNumNodes) this.maxNumNodes *= 2;
       this.numAllocated += Math.floor(this.numAllocated / 2);
     }

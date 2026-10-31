@@ -5,7 +5,7 @@
 // coefficients, which finds a conflict when the gcd does not divide the constant, and solved for a
 // column with a unit coefficient, or rewritten with a fresh column until one appears. The bounds of
 // the term columns are then tightened modulo the gcd of their terms after the substitutions.
-import { SmtUnsupportedError } from "../../../../errors";
+import { SmtInvariantError } from "../../../../errors";
 import { getGcd, getLcm, Rational } from "../rational";
 import { IndexedUintSet, UnorderedUintMap } from "./containers";
 import { KIND_GE, KIND_LE } from "./constraints";
@@ -186,7 +186,7 @@ class VarRegister {
   getLocal(external: number) {
     const local = this.externalToLocal.get(external);
     if (local === undefined)
-      throw new SmtUnsupportedError(`the Diophantine solver has no column for ${external}`);
+      throw new SmtInvariantError(`the Diophantine solver has no column for ${external}`);
     return local;
   }
 
@@ -230,7 +230,7 @@ class FreshDefinitions {
   getByFresh(fresh: number) {
     const definition = this.definitions.get(fresh);
     if (definition === undefined)
-      throw new SmtUnsupportedError(`the Diophantine solver has no definition for ${fresh}`);
+      throw new SmtInvariantError(`the Diophantine solver has no definition for ${fresh}`);
     return definition;
   }
 

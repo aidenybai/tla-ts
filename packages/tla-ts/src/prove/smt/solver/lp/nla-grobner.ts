@@ -3,6 +3,7 @@
 // equations, which dd::solver saturates, and the equations then yield lemmas: interval conflicts,
 // quotient and residue bounds, failed gcd tests, fixed variables, factorizations, and new linear
 // rows. Z3's nlsat conflict check (is_nla_conflict) is not ported, nor are the statistics.
+import { PddMemoryOutError } from "../../../../errors";
 import { getEuclideanMod, getGcd, getLcm, Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_LE, KIND_LT } from "./constraints";
 import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
@@ -28,7 +29,7 @@ import { NexCreator } from "./nex-creator";
 import { Impq } from "./numeric-pair";
 import type { RowCell } from "./static-matrix";
 import { type Ineq, KIND_NE, LemmaBuilder, mkIneq, NLA_PARAMS, type NlaCore } from "./nla-core";
-import { evaluatePdd, type Pdd, PddManager, PddMemoryOut } from "./pdd";
+import { evaluatePdd, type Pdd, PddManager } from "./pdd";
 import { getPddInterval } from "./pdd-interval";
 import { type Equation, getDefaultPddSolverConfig, PddSolver } from "./pdd-solver";
 
@@ -169,7 +170,7 @@ export class Grobner {
     try {
       return propagate();
     } catch (error) {
-      if (!(error instanceof PddMemoryOut)) throw error;
+      if (!(error instanceof PddMemoryOutError)) throw error;
       return false;
     }
   }
@@ -504,7 +505,7 @@ export class Grobner {
         if (this.core.isMonicVar(lpVar) && this.core.varIsFixed(lpVar)) this.addFixedMonic(lpVar);
       }
     } catch (error) {
-      if (!(error instanceof PddMemoryOut)) throw error;
+      if (!(error instanceof PddMemoryOutError)) throw error;
       return false;
     }
     const config = getDefaultPddSolverConfig();

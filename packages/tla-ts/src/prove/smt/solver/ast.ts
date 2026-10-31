@@ -1,5 +1,6 @@
 // Ported from Z3 (src/ast/ast.h, src/ast/ast.cpp), MIT license, see z3-license.txt.
 // A hash-consed DAG of applications, de Bruijn variables and quantifiers, as in Z3's ast_manager.
+import { SmtInvariantError } from "../../../errors";
 import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
@@ -585,7 +586,8 @@ export class AstManager {
   // The name, Z3 decl kind and domain of the Z3 declaration of a builtin application.
   getBuiltinSignature(op: number, args: number[]) {
     const builtin = Z3_BUILTINS.get(op);
-    if (builtin === undefined) throw new Error(`the operator ${op} has no Z3 declaration`);
+    if (builtin === undefined)
+      throw new SmtInvariantError(`the operator ${op} has no Z3 declaration`);
     const argSort = op === OP_ITE ? this.sorts[args[1]] : this.sorts[args[0]];
     const arity = builtin[2] === -1 ? args.length : builtin[2];
     const domain = Array.from({ length: arity }, (_, index) =>
@@ -714,7 +716,7 @@ export class AstManager {
   mkApp(decl: number, args: number[], sort: number) {
     // Numerals and model values carry their value, so only mkNumeral and mkModelValue create them.
     if (decl === OP_NUM || this.funcDecls[decl].family === FAMILY_MODEL_VALUE)
-      throw new Error(`${this.funcDecls[decl].name} needs a value`);
+      throw new SmtInvariantError(`${this.funcDecls[decl].name} needs a value`);
     let hash = decl;
     for (let index = 0; index < args.length; index++)
       hash = (Math.imul(hash, 0x9e3779b1) + args[index]) | 0;
@@ -850,7 +852,7 @@ export class AstManager {
 
   mkQuantifier(data: QuantifierData) {
     if (data.names.length !== data.sorts.length)
-      throw new Error("a quantifier needs a name for each variable");
+      throw new SmtInvariantError("a quantifier needs a name for each variable");
     const key = `q${data.isForall ? 1 : 0}:${data.sorts.join(",")}:${JSON.stringify(data.names)}:${
       data.body
     }:${data.patterns.join(",")}:${data.weight}`;
@@ -891,7 +893,7 @@ export class AstManager {
 
   getQuantifier(expr: number) {
     const data = this.quantifiers.get(expr);
-    if (data === undefined) throw new Error("the expression is not a quantifier");
+    if (data === undefined) throw new SmtInvariantError("the expression is not a quantifier");
     return data;
   }
 

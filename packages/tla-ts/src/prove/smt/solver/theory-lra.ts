@@ -6,6 +6,7 @@
 // equalities between shared terms with equal values. Nonlinear products and divisions go to nla
 // (src/math/lp/nla_core.cpp), which refines the model with lemmas. Z3's nra, which nla calls on
 // what its lemmas leave open, is not ported: there the theory gives up.
+import { SmtInvariantError } from "../../../errors";
 import {
   AstManager,
   FAMILY_ARITH,
@@ -213,7 +214,7 @@ export class TheoryLra {
     const context = this.context;
     if (!context.isEInternalized(expr)) context.internalize(expr, false);
     const node = context.getEnode(expr);
-    if (node === undefined) throw new Error("the term was not internalized");
+    if (node === undefined) throw new SmtInvariantError("the term was not internalized");
     return node;
   }
 

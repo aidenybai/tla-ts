@@ -3,7 +3,8 @@ import { KIND_EQ, KIND_GE, KIND_LE } from "../../src/prove/smt/solver/lp/constra
 import { mkLeaf, linearize } from "../../src/prove/smt/solver/lp/dependency";
 import { LarSolver } from "../../src/prove/smt/solver/lp/lar-solver";
 import { isConflictLemma, NlaCore } from "../../src/prove/smt/solver/lp/nla-core";
-import { evaluatePdd, Pdd, PddManager, PddMemoryOut } from "../../src/prove/smt/solver/lp/pdd";
+import { PddMemoryOutError } from "../../src/errors";
+import { evaluatePdd, Pdd, PddManager } from "../../src/prove/smt/solver/lp/pdd";
 import { PddSimplifier } from "../../src/prove/smt/solver/lp/pdd-simplifier";
 import { PddSolver, SOLVED } from "../../src/prove/smt/solver/lp/pdd-solver";
 import { Rational } from "../../src/prove/smt/solver/rational";
@@ -248,7 +249,7 @@ describe("pdd", () => {
     manager.setMaxNumNodes(0);
     let value = 2;
     while (manager.numNodes() < 1036) manager.mkVal(rational(value++));
-    expect(() => manager.mkVal(rational(value))).toThrow(PddMemoryOut);
+    expect(() => manager.mkVal(rational(value))).toThrow(PddMemoryOutError);
     expect(`${a.mul(b)}`).toBe("v1*v0");
     expect(manager.mkVal(rational(value)).val()).toEqual(rational(value));
   });

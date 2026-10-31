@@ -2,6 +2,7 @@
 // src/math/lp/var_register.h), MIT license, see z3-license.txt. Columns for theory variables and
 // for terms, whose rows the tableau keeps, bounds with dependencies on the constraints that set
 // them, and the push and pop of all of it.
+import { SmtInvariantError } from "../../../../errors";
 import { Rational } from "../rational";
 import { IndexedUintSet, StackedVector } from "./containers";
 import { ConstraintSet, KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
@@ -118,7 +119,7 @@ export class LarSolver {
 
   getTerm(column: number) {
     const term = this.columns[column].term;
-    if (term === null) throw new Error(`column ${column} has no term`);
+    if (term === null) throw new SmtInvariantError(`column ${column} has no term`);
     return term;
   }
 

@@ -1,6 +1,7 @@
 // Ported from Z3 (src/smt/smt_context.h, src/smt/smt_internalizer.cpp), MIT license, see
 // z3-license.txt. The state of the SMT kernel and the translation of formulas into it: Boolean
 // variables, enodes, clauses and relevancy watches. The search lives in context.ts.
+import { SmtInvariantError } from "../../../errors";
 import {
   AstManager,
   FAMILY_ARITH,
@@ -310,7 +311,7 @@ export abstract class Internalizer {
 
   getBoolVar(expr: number) {
     const boolVar = this.findBoolVar(expr);
-    if (boolVar === undefined) throw new Error("the formula has no Boolean variable");
+    if (boolVar === undefined) throw new SmtInvariantError("the formula has no Boolean variable");
     return boolVar;
   }
 
@@ -559,7 +560,8 @@ export abstract class Internalizer {
         ? NO_ENODES
         : manager.args[expr].map((arg) => {
             const argNode = this.exprToEnode[arg];
-            if (argNode === undefined) throw new Error("an argument was not internalized");
+            if (argNode === undefined)
+              throw new SmtInvariantError("an argument was not internalized");
             return argNode;
           });
     const isEq = !isSuppressingArgs && manager.getOp(expr) === OP_EQ;
