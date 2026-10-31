@@ -459,7 +459,7 @@ export class RewriterTpl extends RewriterCore {
     return this.rewrite(expr);
   }
 
-  private setLastResult(expr: number) {
+  protected setLastResult(expr: number) {
     if (expr !== -1) this.manager.incRef(expr);
     if (this.lastResult !== -1) this.manager.decRef(this.lastResult);
     this.lastResult = expr;
