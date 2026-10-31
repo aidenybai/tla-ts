@@ -43,8 +43,51 @@ export const KIND_NE = 3;
 
 const SMALL_RANGE = new Impq(Rational.of(4n));
 
+interface NlaParams {
+  horner: boolean;
+  hornerSubsFixed: number;
+  hornerFrequency: number;
+  hornerRowLengthLimit: number;
+  grobner: boolean;
+  grobnerRowLengthLimit: number;
+  grobnerFrequency: number;
+  grobnerEqsGrowth: number;
+  grobnerExprSizeGrowth: number;
+  grobnerExprDegreeGrowth: number;
+  grobnerMaxSimplified: number;
+  grobnerCnflToReport: number;
+  grobnerPropagateQuotients: boolean;
+  grobnerGcdTest: boolean;
+  grobnerExpDelay: boolean;
+  grobnerAdaptive: boolean;
+  grQ: number;
+  grobnerSubsFixed: number;
+  grobnerExpandTerms: boolean;
+  grobnerPerfectSquares: boolean;
+  branching: boolean;
+  nra: boolean;
+  nraCheckAssignment: boolean;
+  nraCheckAssignmentMaxFail: number;
+  order: boolean;
+  orderBinomialSign: boolean;
+  tangents: boolean;
+  tangentsBoxCorners: boolean;
+  expensivePatching: boolean;
+  expp: boolean;
+  monomialSandwich: boolean;
+  monomialSandwichMaxFanout: number;
+  monomialBinomialSign: boolean;
+  reducePseudoLinear: boolean;
+  delay: number;
+  propagateLinearMonomials: boolean;
+  linearizeViolatedMonomials: boolean;
+  optimizeBounds: boolean;
+  optimizeBoundsLpMaxVars: number;
+  crossNested: boolean;
+}
+
 // The arith.nl parameters of Z3's defaults that nla reads.
-export const NLA_PARAMS = {
+export const NLA_PARAMS: Readonly<NlaParams> = {
   horner: true,
   hornerSubsFixed: 2,
   hornerFrequency: 4,
