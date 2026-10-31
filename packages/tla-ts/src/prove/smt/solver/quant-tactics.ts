@@ -10,6 +10,7 @@ import { Goal } from "./goal";
 import { propagateValues } from "./propagate-values";
 import { applyQeLite } from "./qe-lite";
 import { Rewriter } from "./rewriter";
+import { RewriterTpl } from "./rewriter-tpl";
 
 // The simplify tactic.
 const simplify = (manager: AstManager, goal: Goal) => {
@@ -29,6 +30,43 @@ const simplify = (manager: AstManager, goal: Goal) => {
   }
   if (rewritten !== -1) manager.decRef(rewritten);
   goal.elimRedundancies();
+  rewriter.release();
+};
+
+// collect_occs: whether an uninterpreted constant occurs only once, where a term is visited once and
+// a quantifier's patterns are not visited.
+const hasUnconstrainedConst = (manager: AstManager, goal: Goal) => {
+  const visited = new Set<number>();
+  const consts: number[] = [];
+  const repeated = new Set<number>();
+  const todo = [...goal.forms.items];
+  while (todo.length > 0) {
+    const expr = todo.pop() as number;
+    const isConst = manager.isUninterpretedConst(expr);
+    if (visited.has(expr)) {
+      if (isConst) repeated.add(expr);
+      continue;
+    }
+    visited.add(expr);
+    if (isConst) consts.push(expr);
+    else if (manager.kinds[expr] === KIND_APP) todo.push(...manager.args[expr]);
+    else if (manager.kinds[expr] === KIND_QUANTIFIER) todo.push(manager.getQuantifier(expr).body);
+  }
+  return consts.some((expr) => !repeated.has(expr));
+};
+
+// elim_uncnstr_tactic::run without the elimination. Its rewriter still runs over the formulas when
+// some constant is unconstrained, and counts its steps. The rewriter starts as if the formulas had
+// changed, so it makes a second round.
+const elimUncnstr = (manager: AstManager, goal: Goal) => {
+  const isRewriting = hasUnconstrainedConst(manager, goal);
+  pinQuantifierBodies(manager, goal);
+  if (!isRewriting) return;
+  const rewriter = new RewriterTpl(manager);
+  for (let round = 0; round < 2; round++) {
+    for (const form of goal.forms.items) manager.decRef(rewriter.rewrite(form));
+    rewriter.reset();
+  }
   rewriter.release();
 };
 
@@ -69,7 +107,7 @@ export const applyUfniaTactic = (manager: AstManager, assertions: number[]) => {
   propagateValues(manager, goal);
   ctxSimplify(manager, goal);
   simplify(manager, goal);
-  if (!goal.isInconsistent) pinQuantifierBodies(manager, goal);
+  if (!goal.isInconsistent) elimUncnstr(manager, goal);
   simplify(manager, goal);
   if (!goal.isInconsistent) applyQeLite(manager, goal);
   return goal.forms.items;
