@@ -2312,13 +2312,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }, 0);
   };
   // TLC's worker adds a state to the behavior graph even after its next states fail or violate a
-  // property, and prints the call stack of an error in that. TLC 1.7.4 prints none.
+  // property, and prints the call stack of an error in that, unless the error is a
+  // FingerprintException, which the worker doesn't catch. TLC 1.7.4 prints none.
   const getLiveCallStack = (index: number, liveSuccessors: LiveSuccessor[]) => {
     if (!liveness || is174) return undefined;
     const replay = getReplayFailure((tracing) =>
       liveness.addState(index, states[index], liveSuccessors, tracing),
     );
-    return replay?.callStack.length ? replay.callStack : undefined;
+    return replay?.callStack.length && !replay.fingerprint ? replay.callStack : undefined;
   };
   // TLC's worker adds the state to the behavior graph after it prints the trace. On an error in that,
   // it adds the state again to print the call stack instead of replaying the next-state relation,

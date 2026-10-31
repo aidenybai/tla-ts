@@ -1620,6 +1620,20 @@ describe("evaluation errors match TLC", () => {
       version,
     });
 
+  // CallStackTool gives a set a source, so TLC's worker fails with a FingerprintException as it adds
+  // the state to the behavior graph again, which it doesn't catch, and TLC replays the next states.
+  it("replays the next states when adding a state to the behavior graph fails to fingerprint", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nA == (\\E k \\in {1} \\cup SUBSET 3 : TRUE) /\\ x' = x\nSpec == Init /\\ [][A]_x /\\ SF_x(A)\nLive == <>(x = 0)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Live",
+    });
+    expect([result.failure?.exitCode, result.failure?.fingerprint?.reason]).toEqual([
+      75,
+      "Attempted to compute the number of elements in the integer 3.",
+    ]);
+  });
+
   // TLC's worker adds the state to the behavior graph after it prints the trace, and again with its
   // call stack when that fails. TLC 1.7.4 adds it once and replays the next-state relation.
   it.each([
