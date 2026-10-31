@@ -23,7 +23,7 @@ import type {
   UseOrHide,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { getNumeralValue, tokenize, type Token } from "./lexer";
+import { getNumeralValue, readAtAsIdentifier, tokenize, type Token } from "./lexer";
 import { getSanyParseError } from "./sany-parse-error";
 
 interface Precedence {
@@ -347,7 +347,7 @@ type ParseMode = "tlc" | "tlapm" | "sany";
 
 const parse = (source: string, mode: ParseMode): Module => {
   const isTlapm = mode === "tlapm";
-  const tokens = tokenize(source);
+  const tokens = isTlapm ? tokenize(source) : tokenize(source).map(readAtAsIdentifier);
   const cursor = { index: 0, offsideColumns: [] as number[] };
   const operators: OperatorContext = {};
   // A RECURSIVE declaration covers the definitions of its own LET or module.
@@ -959,6 +959,8 @@ const parse = (source: string, mode: ParseMode): Module => {
         return { kind: "Label", name, params, body, location };
       }
       const hasArguments = isAt("(");
+      if (name === "@" && !hasArguments && !isSelectorAhead())
+        return { kind: "ExceptAt", location };
       const args = hasArguments ? parseArguments() : [];
       if (!isSelectorAhead()) {
         return hasArguments

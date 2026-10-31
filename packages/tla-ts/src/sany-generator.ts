@@ -1477,9 +1477,8 @@ export const generateSanySpecification = (
           const except = exceptStack[exceptStack.length - 1];
           const component = exceptSpecStack[exceptSpecStack.length - 1];
           if (except === undefined || component === undefined) {
-            throw new TlaSyntaxError(
-              `@ used where its meaning is not defined at line ${location.beginLine}`,
-            );
+            addError(location, "@ used where its meaning is not defined.");
+            return createNullNode(location);
           }
           return {
             ...createLevelFields(getId()),
@@ -2693,6 +2692,11 @@ export const generateSanySpecification = (
 
     const createDeclaration = (declaration: Declaration, declKind: number): OpDeclNode => {
       const span = getDeclarationSpan(declaration);
+      // Generator.processParameters makes the same check of a constant, of the name of its
+      // declaration's syntax node, which is never @.
+      if (declaration.name === "@" && declKind === VARIABLE_DECL_KIND) {
+        addError(getSpanLocation(file, span), "Attempted to declare '@' as a variable.");
+      }
       const node: OpDeclNode = {
         ...createLevelFields(getId()),
         levelChecked: 1,

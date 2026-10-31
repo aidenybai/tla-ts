@@ -335,6 +335,10 @@ const matchStep = (source: string, index: number) => {
   );
 };
 
+// SANY's lexer reads @ as an identifier, which stands for the value an EXCEPT changes only alone.
+export const readAtAsIdentifier = (token: Token): Token =>
+  token.kind === "Operator" && token.text === "@" ? { ...token, kind: "Identifier" } : token;
+
 const TAB_SIZE = 8;
 
 const getWidthAfter = (width: number, character: string | undefined) =>

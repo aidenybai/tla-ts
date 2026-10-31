@@ -517,6 +517,46 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reads @ as an identifier", () => {
+    const report = getReport({
+      At: "---- MODULE At ----\nVARIABLE @\nA == @ + 1\nB == \\A @ \\in {} : @\n====\n",
+    });
+    expect(report.text).toBe(
+      toText([
+        "Semantic errors:",
+        "",
+        "*** Errors: 5",
+        "",
+        "line 2, col 10 to line 2, col 10 of module At",
+        "",
+        "Attempted to declare '@' as a variable.",
+        "",
+        "",
+        "line 3, col 8 to line 3, col 8 of module At",
+        "",
+        "Could not find declaration or definition of symbol '+'.",
+        "",
+        "",
+        "line 3, col 6 to line 3, col 10 of module At",
+        "",
+        "Couldn't resolve infix operator symbol `+'.",
+        "",
+        "",
+        "line 4, col 9 to line 4, col 9 of module At",
+        "",
+        "Multiply-defined symbol '@': this definition or declaration conflicts ",
+        "with the one at line 2, col 10 to line 2, col 10 of module At.",
+        "",
+        "",
+        "line 4, col 20 to line 4, col 20 of module At",
+        "",
+        "@ used where its meaning is not defined.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("reports a substitution above the level the instantiated module allows", () => {
     const report = getReport({
       Outer: "---- MODULE Outer ----\nVARIABLE x\nI == INSTANCE Inner WITH C <- [](x = 0)\n====\n",

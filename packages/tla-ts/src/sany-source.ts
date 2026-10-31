@@ -1,6 +1,6 @@
 import type { Expression, SourceRange } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { tokenize, type Token } from "./lexer";
+import { readAtAsIdentifier, tokenize, type Token } from "./lexer";
 import { getTabStop } from "./sany-lexer";
 import { getSanyParseError } from "./sany-parse-error";
 import type { SanyLocation } from "./sany-nodes";
@@ -25,7 +25,9 @@ const OPENERS = new Map([
 const getPositionKey = (line: number, column: number) => `${line}:${column}`;
 
 export const createSourceFile = (name: string, source: string): SourceFile => {
-  const tokens = tokenize(source).filter((token) => token.kind !== "End");
+  const tokens = tokenize(source)
+    .filter((token) => token.kind !== "End")
+    .map(readAtAsIdentifier);
   const lineOffsets = [0, 0];
   for (let index = 0; index < source.length; index++) {
     if (source[index] === "\n") lineOffsets.push(index + 1);
