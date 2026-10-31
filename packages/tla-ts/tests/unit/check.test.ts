@@ -1099,6 +1099,20 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  // Reducible#diff and cap of a set enumeration or interval with a source raise a
+  // FingerprintException when they fail to test an element for membership in the other set.
+  it.each([
+    ["{k : k \\in {3}} \\ (3 \\cup {1})", ["SetMap", "Apply"]],
+    ["{k : k \\in {3}} \\cap (3 \\cup {1})", ["SetMap", "Apply"]],
+    ["(3 \\cup {1}) \\cap {k : k \\in {3}}", ["SetMap", "Apply"]],
+  ])("reports the set whose method computes %s and fails like TLC", async (set, sources) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ (${set}) = {}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.fingerprint?.sources.map((source) => source.kind)).toEqual(sources);
+  });
+
   // TLC builds a function in a method of the FcnLambdaValue that CallStackTool gives a source, so
   // the replay fails to fingerprint it when its body fails.
   it.each([

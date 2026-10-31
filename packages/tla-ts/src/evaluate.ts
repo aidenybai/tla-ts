@@ -185,13 +185,17 @@ const isSourced = (expression: Expression) =>
   (expression.kind === "Apply" && SOURCED_OPERATORS.has(expression.operator));
 
 // The argument whose method Tool#evalAppl calls to compute an operator, as with S.member(e) for
-// e \in S, or f.apply(e) for f[e] when f is a function.
-const getReceiver = (expression: Expression) => {
+// e \in S, f.apply(e) for f[e] when f is a function, or S.diff(T) for S \ T when S is Reducible.
+const getReceiver = (expression: Expression, values: CallStack["values"]) => {
   if (expression.kind === "FunctionApplication" || expression.kind === "Except") {
     return expression.function;
   }
   if (expression.kind !== "Apply" || expression.args.length !== 2) return undefined;
-  if (["\\subseteq", "=", "#"].includes(expression.operator)) return expression.args[0];
+  if (["\\subseteq", "=", "#", "\\"].includes(expression.operator)) return expression.args[0];
+  if (expression.operator === "\\cap" || expression.operator === "\\cup") {
+    const left = values.get(expression.args[0]);
+    return left !== undefined && isReducibleSet(left) ? expression.args[0] : expression.args[1];
+  }
   return expression.operator === "\\in" || expression.operator === "\\notin"
     ? expression.args[1]
     : undefined;
@@ -1260,7 +1264,7 @@ const traceEvaluator =
     } catch (error) {
       const failed = error instanceof Error ? callStack.failures.get(error) : undefined;
       if (error instanceof Error) callStack.failures.set(error, expression);
-      const receiver = getReceiver(expression);
+      const receiver = getReceiver(expression, callStack.values);
       const received =
         receiver && !getChildren(expression).some((child) => child === failed)
           ? callStack.values.get(receiver)
