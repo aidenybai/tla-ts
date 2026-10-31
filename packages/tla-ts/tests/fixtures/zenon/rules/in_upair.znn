@@ -1,0 +1,2 @@
+$hyp "h" (TLA.in a (TLA.upair b c))
+$goal (\/ (= a b) (= a c))

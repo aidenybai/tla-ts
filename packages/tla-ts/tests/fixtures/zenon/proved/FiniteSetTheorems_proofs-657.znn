@@ -1,0 +1,9 @@
+;; obligation #657
+$hyp "v'194" (a_CONSTANTunde_IsFiniteSetunde_a a_CONSTANTunde_Sunde_a)
+$hyp "a_CONSTANTunde_Aunde_a_in" (TLA.in a_CONSTANTunde_Aunde_a (TLA.SUBSET a_CONSTANTunde_Sunde_a))
+$hyp "a_CONSTANTunde_xunde_a_in" (TLA.in a_CONSTANTunde_xunde_a (TLA.setminus a_CONSTANTunde_Sunde_a
+a_CONSTANTunde_Aunde_a))
+$goal (TLA.in (TLA.Fcn (TLA.SUBSET a_CONSTANTunde_Aunde_a) ((a_CONSTANTunde_Bunde_a) (TLA.cup a_CONSTANTunde_Bunde_a
+(TLA.set a_CONSTANTunde_xunde_a))))
+(TLA.FuncSet (TLA.SUBSET a_CONSTANTunde_Aunde_a) (TLA.setOfAll (TLA.SUBSET a_CONSTANTunde_Aunde_a) ((a_CONSTANTunde_Bunde_a) (TLA.cup a_CONSTANTunde_Bunde_a
+(TLA.set a_CONSTANTunde_xunde_a))))))

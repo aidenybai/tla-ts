@@ -1,0 +1,125 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Hf:"(bChoice(DOMAIN((a_VARIABLEunde_networkunde_a[a_CONSTANTunde_Initiatorunde_a])), (\<lambda>a_CONSTANTunde_munde_a. ((a_CONSTANTunde_munde_a[''type''])=''tok'')))=a_CONSTANTunde_InitTokunde_a)" (is "?z_hh=_")
+ using v'162 by blast
+ have z_He:"(bChoice(a_CONSTANTunde_Nodeunde_a, (\<lambda>a_CONSTANTunde_iunde_a. bEx(DOMAIN((a_VARIABLEunde_networkunde_a[a_CONSTANTunde_iunde_a])), (\<lambda>a_CONSTANTunde_munde_a. ((a_CONSTANTunde_munde_a[''type''])=''tok'')))))=a_CONSTANTunde_Initiatorunde_a)" (is "?z_ht=_")
+ using v'161 by blast
+ have zenon_L1_: "(?z_hh=a_CONSTANTunde_InitTokunde_a) ==> ((CHOOSE x:((x \\in DOMAIN((a_VARIABLEunde_networkunde_a[?z_ht])))&((x[''type''])=''tok'')))~=a_CONSTANTunde_InitTokunde_a) ==> ((CHOOSE x:((x \\in a_CONSTANTunde_Nodeunde_a)&bEx(DOMAIN((a_VARIABLEunde_networkunde_a[x])), (\<lambda>a_CONSTANTunde_munde_a. ((a_CONSTANTunde_munde_a[''type''])=''tok'')))))=a_CONSTANTunde_Initiatorunde_a) ==> FALSE" (is "?z_hf ==> ?z_hba ==> ?z_hbj ==> FALSE")
+ proof -
+  assume z_Hf:"?z_hf"
+  assume z_Hba:"?z_hba" (is "?z_hbb~=_")
+  assume z_Hbj:"?z_hbj" (is "?z_hbk=_")
+  have z_Hbq: "(?z_hbb~=?z_hh)"
+  by (rule ssubst [where P="(\<lambda>zenon_Vvc. (?z_hbb~=zenon_Vvc))", OF z_Hf z_Hba])
+  have z_Hbu_z_Hbq: "(?z_hbb~=(CHOOSE x:((x \\in DOMAIN((a_VARIABLEunde_networkunde_a[a_CONSTANTunde_Initiatorunde_a])))&((x[''type''])=''tok'')))) == (?z_hbb~=?z_hh)" (is "?z_hbu == ?z_hbq")
+  by (unfold bChoose_def)
+  have z_Hbu: "?z_hbu" (is "_~=?z_hbv")
+  by (unfold z_Hbu_z_Hbq, fact z_Hbq)
+  have z_Hby: "(\\E zenon_Vga:(~(((zenon_Vga \\in DOMAIN((a_VARIABLEunde_networkunde_a[?z_ht])))&((zenon_Vga[''type''])=''tok''))<=>((zenon_Vga \\in DOMAIN((a_VARIABLEunde_networkunde_a[a_CONSTANTunde_Initiatorunde_a])))&((zenon_Vga[''type''])=''tok'')))))" (is "\\E x : ?z_hci(x)")
+  by (rule zenon_choose_diff_choose_0 [of "(\<lambda>x. ((x \\in DOMAIN((a_VARIABLEunde_networkunde_a[?z_ht])))&((x[''type''])=''tok'')))" "(\<lambda>x. ((x \\in DOMAIN((a_VARIABLEunde_networkunde_a[a_CONSTANTunde_Initiatorunde_a])))&((x[''type''])=''tok'')))", OF z_Hbu])
+  have z_Hcl: "?z_hci((CHOOSE zenon_Vga:(~(((zenon_Vga \\in DOMAIN((a_VARIABLEunde_networkunde_a[?z_ht])))&((zenon_Vga[''type''])=''tok''))<=>((zenon_Vga \\in DOMAIN((a_VARIABLEunde_networkunde_a[a_CONSTANTunde_Initiatorunde_a])))&((zenon_Vga[''type''])=''tok''))))))" (is "~(?z_hcn<=>?z_hco)")
+  by (rule zenon_ex_choose_0 [of "?z_hci", OF z_Hby])
+  show FALSE
+  proof (rule zenon_notequiv [OF z_Hcl])
+   assume z_Hcp:"(~?z_hcn)" (is "~(?z_hcq&?z_hcr)")
+   assume z_Hco:"?z_hco" (is "?z_hcs&_")
+   have z_Hcs: "?z_hcs"
+   by (rule zenon_and_0 [OF z_Hco])
+   have z_Hcr: "?z_hcr" (is "?z_hct=?z_hr")
+   by (rule zenon_and_1 [OF z_Hco])
+   show FALSE
+   proof (rule zenon_notand [OF z_Hcp])
+    assume z_Hcu:"(~?z_hcq)"
+    have z_Hcv_z_Hcu: "(~((CHOOSE zenon_Vga:(~(((zenon_Vga \\in DOMAIN((a_VARIABLEunde_networkunde_a[?z_ht])))&((zenon_Vga[''type''])=?z_hr))<=>((zenon_Vga \\in DOMAIN((a_VARIABLEunde_networkunde_a[a_CONSTANTunde_Initiatorunde_a])))&((zenon_Vga[''type''])=?z_hr))))) \\in DOMAIN((a_VARIABLEunde_networkunde_a[?z_hbk])))) == (~?z_hcq)" (is "?z_hcv == ?z_hcu")
+    by (unfold bChoose_def)
+    have z_Hcv: "?z_hcv" (is "~?z_hcw")
+    by (unfold z_Hcv_z_Hcu, fact z_Hcu)
+    show FALSE
+    proof (rule notE [OF z_Hcv])
+     have z_Hcz: "(DOMAIN((a_VARIABLEunde_networkunde_a[a_CONSTANTunde_Initiatorunde_a]))=DOMAIN((a_VARIABLEunde_networkunde_a[?z_hbk])))" (is "?z_hi=?z_hcx")
+     proof (rule zenon_nnpp [of "(?z_hi=?z_hcx)"])
+      assume z_Hda:"(?z_hi~=?z_hcx)"
+      show FALSE
+      proof (rule zenon_noteq [of "?z_hcx"])
+       have z_Hdb: "((a_VARIABLEunde_networkunde_a[a_CONSTANTunde_Initiatorunde_a])=(a_VARIABLEunde_networkunde_a[?z_hbk]))" (is "?z_hj=?z_hcy")
+       proof (rule zenon_nnpp [of "(?z_hj=?z_hcy)"])
+        assume z_Hdc:"(?z_hj~=?z_hcy)"
+        show FALSE
+        proof (rule zenon_noteq [of "?z_hcy"])
+         have z_Hdd: "(a_CONSTANTunde_Initiatorunde_a=?z_hbk)"
+         by (rule sym [OF z_Hbj])
+         have z_Hde: "(?z_hcy~=?z_hcy)"
+         by (rule subst [where P="(\<lambda>zenon_Vic. ((a_VARIABLEunde_networkunde_a[zenon_Vic])~=?z_hcy))", OF z_Hdd], fact z_Hdc)
+         thus "(?z_hcy~=?z_hcy)" .
+        qed
+       qed
+       have z_Hdj: "(?z_hcx~=?z_hcx)"
+       by (rule subst [where P="(\<lambda>zenon_Vfc. (DOMAIN(zenon_Vfc)~=?z_hcx))", OF z_Hdb], fact z_Hda)
+       thus "(?z_hcx~=?z_hcx)" .
+      qed
+     qed
+     have z_Hcw: "?z_hcw"
+     by (rule subst [where P="(\<lambda>zenon_Vyc. ((CHOOSE zenon_Vga:(~(((zenon_Vga \\in DOMAIN((a_VARIABLEunde_networkunde_a[?z_ht])))&((zenon_Vga[''type''])=?z_hr))<=>((zenon_Vga \\in ?z_hi)&((zenon_Vga[''type''])=?z_hr))))) \\in zenon_Vyc))", OF z_Hcz], fact z_Hcs)
+     thus "?z_hcw" .
+    qed
+   next
+    assume z_Hdr:"(?z_hct~=?z_hr)"
+    show FALSE
+    by (rule notE [OF z_Hdr z_Hcr])
+   qed
+  next
+   assume z_Hcn:"?z_hcn" (is "?z_hcq&?z_hcr")
+   assume z_Hds:"(~?z_hco)" (is "~(?z_hcs&_)")
+   have z_Hcq: "?z_hcq"
+   by (rule zenon_and_0 [OF z_Hcn])
+   have z_Hcr: "?z_hcr" (is "?z_hct=?z_hr")
+   by (rule zenon_and_1 [OF z_Hcn])
+   show FALSE
+   proof (rule zenon_notand [OF z_Hds])
+    assume z_Hdt:"(~?z_hcs)"
+    have z_Hcw_z_Hcq: "((CHOOSE zenon_Vga:(~(((zenon_Vga \\in DOMAIN((a_VARIABLEunde_networkunde_a[?z_ht])))&((zenon_Vga[''type''])=?z_hr))<=>((zenon_Vga \\in DOMAIN((a_VARIABLEunde_networkunde_a[a_CONSTANTunde_Initiatorunde_a])))&((zenon_Vga[''type''])=?z_hr))))) \\in DOMAIN((a_VARIABLEunde_networkunde_a[?z_hbk]))) == ?z_hcq" (is "?z_hcw == _")
+    by (unfold bChoose_def)
+    have z_Hcw: "?z_hcw"
+    by (unfold z_Hcw_z_Hcq, fact z_Hcq)
+    show FALSE
+    proof (rule notE [OF z_Hdt])
+     have z_Hdu: "(DOMAIN((a_VARIABLEunde_networkunde_a[?z_hbk]))=DOMAIN((a_VARIABLEunde_networkunde_a[a_CONSTANTunde_Initiatorunde_a])))" (is "?z_hcx=?z_hi")
+     proof (rule zenon_nnpp [of "(?z_hcx=?z_hi)"])
+      assume z_Hdv:"(?z_hcx~=?z_hi)"
+      show FALSE
+      proof (rule zenon_noteq [of "?z_hi"])
+       have z_Hdw: "((a_VARIABLEunde_networkunde_a[?z_hbk])=(a_VARIABLEunde_networkunde_a[a_CONSTANTunde_Initiatorunde_a]))" (is "?z_hcy=?z_hj")
+       proof (rule zenon_nnpp [of "(?z_hcy=?z_hj)"])
+        assume z_Hdx:"(?z_hcy~=?z_hj)"
+        show FALSE
+        proof (rule zenon_noteq [of "?z_hj"])
+         have z_Hdy: "(?z_hj~=?z_hj)"
+         by (rule subst [where P="(\<lambda>zenon_Vrb. ((a_VARIABLEunde_networkunde_a[zenon_Vrb])~=?z_hj))", OF z_Hbj], fact z_Hdx)
+         thus "(?z_hj~=?z_hj)" .
+        qed
+       qed
+       have z_Hed: "(?z_hi~=?z_hi)"
+       by (rule subst [where P="(\<lambda>zenon_Vpb. (DOMAIN(zenon_Vpb)~=?z_hi))", OF z_Hdw], fact z_Hdv)
+       thus "(?z_hi~=?z_hi)" .
+      qed
+     qed
+     have z_Hcs: "?z_hcs"
+     by (rule subst [where P="(\<lambda>zenon_Vyc. ((CHOOSE zenon_Vga:(~(((zenon_Vga \\in DOMAIN((a_VARIABLEunde_networkunde_a[?z_ht])))&((zenon_Vga[''type''])=?z_hr))<=>((zenon_Vga \\in ?z_hi)&((zenon_Vga[''type''])=?z_hr))))) \\in zenon_Vyc))", OF z_Hdu], fact z_Hcw)
+     thus "?z_hcs" .
+    qed
+   next
+    assume z_Hdr:"(?z_hct~=?z_hr)"
+    show FALSE
+    by (rule notE [OF z_Hdr z_Hcr])
+   qed
+  qed
+ qed
+ assume z_Hg:"((''pos'' :> (?z_ht) @@ ''q'' :> ((bChoice(DOMAIN((a_VARIABLEunde_networkunde_a[?z_ht])), (\<lambda>a_CONSTANTunde_munde_a. ((a_CONSTANTunde_munde_a[''type''])=''tok'')))[''q''])) @@ ''color'' :> ((bChoice(DOMAIN((a_VARIABLEunde_networkunde_a[?z_ht])), (\<lambda>a_CONSTANTunde_munde_a. ((a_CONSTANTunde_munde_a[''type''])=''tok'')))[''color''])))~=(''pos'' :> (a_CONSTANTunde_Initiatorunde_a) @@ ''q'' :> ((a_CONSTANTunde_InitTokunde_a[''q''])) @@ ''color'' :> ((a_CONSTANTunde_InitTokunde_a[''color'']))))" (is "?z_hei~=?z_hep")
+ have z_Hbj_z_He: "((CHOOSE x:((x \\in a_CONSTANTunde_Nodeunde_a)&bEx(DOMAIN((a_VARIABLEunde_networkunde_a[x])), (\<lambda>a_CONSTANTunde_munde_a. ((a_CONSTANTunde_munde_a[''type''])=''tok'')))))=a_CONSTANTunde_Initiatorunde_a) == (?z_ht=a_CONSTANTunde_Initiatorunde_a)" (is "?z_hbj == ?z_he")
+ by (unfold bChoose_def)
+ have z_Hbj: "?z_hbj" (is "?z_hbk=_")
+ by (unfold z_Hbj_z_He, fact z_He)
+ sorry
+qed
+(* END-PROOF *)

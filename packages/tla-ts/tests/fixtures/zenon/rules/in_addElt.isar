@@ -1,0 +1,34 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Ha:"(a \\in addElt(b, addElt(c, s)))" (is "?z_ha")
+ using h by blast
+ assume z_Hb:"(~((a=b)|((a=c)|(a \\in s))))" (is "~(?z_hj|?z_hk)")
+ have z_Hn: "(a~=b)"
+ by (rule zenon_notor_0 [OF z_Hb])
+ have z_Ho: "(~?z_hk)" (is "~(?z_hl|?z_hm)")
+ by (rule zenon_notor_1 [OF z_Hb])
+ have z_Hp: "(a~=c)"
+ by (rule zenon_notor_0 [OF z_Ho])
+ have z_Hq: "(~?z_hm)"
+ by (rule zenon_notor_1 [OF z_Ho])
+ show FALSE
+ proof (rule zenon_in_addElt [of "a" "b" "addElt(c, s)", OF z_Ha])
+  assume z_Hj:"?z_hj"
+  show FALSE
+  by (rule notE [OF z_Hn z_Hj])
+ next
+  assume z_Hr:"(a \\in addElt(c, s))" (is "?z_hr")
+  show FALSE
+  proof (rule zenon_in_addElt [of "a" "c" "s", OF z_Hr])
+   assume z_Hl:"?z_hl"
+   show FALSE
+   by (rule notE [OF z_Hp z_Hl])
+  next
+   assume z_Hm:"?z_hm"
+   show FALSE
+   by (rule notE [OF z_Hq z_Hm])
+  qed
+ qed
+qed
+(* END-PROOF *)

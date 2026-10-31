@@ -1,0 +1,56 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Ha:"(c1|c2)"
+ using c by blast
+ have z_Hb:"P(a)" (is "?z_hb")
+ using a by blast
+ have z_Hc:"P(b)" (is "?z_hc")
+ using b by blast
+ assume z_Hd:"(~P((CASE c1 -> a [] c2 -> b)))" (is "~?z_hi")
+ show FALSE
+ proof (rule zenon_or [OF z_Ha])
+  assume z_He:"c1"
+  show FALSE
+  proof (rule zenon_case2 [of "(\<lambda>zenon_Vf. (~P(zenon_Vf)))", OF z_Hd])
+   assume z_He:"c1"
+   assume z_Ho:"(~?z_hb)"
+   show FALSE
+   by (rule notE [OF z_Ho z_Hb])
+  next
+   assume z_Hf:"c2"
+   assume z_Hp:"(~?z_hc)"
+   show FALSE
+   by (rule notE [OF z_Hp z_Hc])
+  next
+   assume z_Hq:"((~c2)&((~c1)&TRUE))" (is "?z_hr&?z_hs")
+   have z_Hs: "?z_hs" (is "?z_ht&?z_hu")
+   by (rule zenon_and_1 [OF z_Hq])
+   have z_Ht: "?z_ht"
+   by (rule zenon_and_0 [OF z_Hs])
+   show FALSE
+   by (rule notE [OF z_Ht z_He])
+  qed
+ next
+  assume z_Hf:"c2"
+  show FALSE
+  proof (rule zenon_case2 [of "(\<lambda>zenon_Vf. (~P(zenon_Vf)))", OF z_Hd])
+   assume z_He:"c1"
+   assume z_Ho:"(~?z_hb)"
+   show FALSE
+   by (rule notE [OF z_Ho z_Hb])
+  next
+   assume z_Hf:"c2"
+   assume z_Hp:"(~?z_hc)"
+   show FALSE
+   by (rule notE [OF z_Hp z_Hc])
+  next
+   assume z_Hq:"((~c2)&((~c1)&TRUE))" (is "?z_hr&?z_hs")
+   have z_Hr: "?z_hr"
+   by (rule zenon_and_0 [OF z_Hq])
+   show FALSE
+   by (rule notE [OF z_Hr z_Hf])
+  qed
+ qed
+qed
+(* END-PROOF *)

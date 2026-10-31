@@ -24,15 +24,7 @@ import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
 import { getRankedStringCount, setStringOrder, type Value } from "./values";
-
-const WORKER_THREADS_MODULE = "node:worker_threads";
-
-export interface Port {
-  postMessage: (message: unknown, transfer?: unknown[]) => void;
-  addEventListener: (type: "message", listener: (event: { data: unknown }) => void) => void;
-  removeEventListener?: (type: "message", listener: (event: { data: unknown }) => void) => void;
-  start?: () => void;
-}
+import { spawnWorker, type Port } from "./worker";
 
 export interface StartMessage {
   type: "start";
@@ -66,39 +58,6 @@ export type WorkerMessage =
 export type CoordinatorMessage =
   | { type: "level"; level: number }
   | { type: "resize"; fingerprints: SharedFingerprints };
-
-interface WorkerHandle {
-  postMessage: (message: unknown, transfer?: unknown[]) => void;
-  terminate: () => void;
-}
-
-interface WebWorker {
-  postMessage: (message: unknown, transfer?: unknown[]) => void;
-  addEventListener: (type: string, listener: (event: { data: unknown }) => void) => void;
-  terminate: () => void;
-}
-
-declare const Worker: new (url: URL, options: { type: "module" }) => WebWorker;
-
-const spawnWorker = async (onMessage: (message: WorkerMessage) => void): Promise<WorkerHandle> => {
-  if (typeof Worker === "function") {
-    const worker = new Worker(new URL("./parallel-worker.js", import.meta.url), { type: "module" });
-    worker.addEventListener("message", (event) => onMessage(event.data as WorkerMessage));
-    worker.addEventListener("error", () => onMessage({ type: "abort" }));
-    return worker;
-  }
-  const threads: typeof import("node:worker_threads") = await import(
-    /* @vite-ignore */ /* webpackIgnore: true */ WORKER_THREADS_MODULE
-  );
-  const worker = new threads.Worker(new URL("./parallel-worker.js", import.meta.url));
-  worker.on("message", onMessage);
-  worker.on("error", () => onMessage({ type: "abort" }));
-  return {
-    postMessage: (message, transfer) =>
-      worker.postMessage(message, transfer as Parameters<typeof worker.postMessage>[1]),
-    terminate: () => void worker.terminate(),
-  };
-};
 
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const config = typeof options.config === "string" ? parseConfig(options.config) : options.config;
@@ -240,7 +199,15 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const ready = waitForReports(count);
   const requests = new Int32Array(new SharedArrayBuffer(count * 4));
   const remaining = new Int32Array(new SharedArrayBuffer(count * 4));
-  const workers = await Promise.all(Array.from({ length: count }, () => spawnWorker(onMessage)));
+  const workers = await Promise.all(
+    Array.from({ length: count }, () =>
+      spawnWorker(
+        new URL("./parallel-worker.js", import.meta.url),
+        (message) => onMessage(message as WorkerMessage),
+        () => onMessage({ type: "abort" }),
+      ),
+    ),
+  );
   const terminate = () => workers.forEach((worker) => worker.terminate());
   const channels = new Map<string, MessageChannel>();
   const getPort = (from: number, to: number) => {

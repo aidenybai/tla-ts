@@ -22,12 +22,15 @@ import {
   type Locus,
   type ObligationWarning,
   type Sequent,
+  type Time,
   type Visibility,
   mapChildren,
   stripProps,
 } from "./obligation-expression";
 import { format, renderDoc, type Doc } from "./obligation-format";
 import { printExpression } from "./obligation-printer";
+import type { OldMethod } from "./obligation-pragma";
+import { getScopeTime } from "./obligation-temporal";
 import {
   getStepName,
   getUnique,
@@ -48,6 +51,7 @@ const getProps = (from: Step) => ({
   location: from.location,
   step: from.step,
   isSuppressed: from.isSuppressed,
+  method: from.method,
 });
 
 const isAnonymous = (step: StepNumber | undefined) => step?.kind === "Named" && step.isAnonymous;
@@ -101,24 +105,27 @@ const getAssumedFacts = (offset: number, sequent: Sequent) =>
       : [],
   );
 
-const getStepDefinition = (step: Step, body: Expr): Hyp => {
+const getStepDefinition = (step: Step, body: Expr, time: Time): Hyp => {
   if (!step.step) throw new TlapmBugError();
   return {
     kind: "Defn",
     definition: { kind: "Operator", name: getStepName(step.step), body, location: step.location },
-    whereDefined: "Proof",
+    whereDefined: { kind: "Proof", time },
     visibility: "Visible",
     isLocal: true,
     location: step.location,
   };
 };
 
-const proveAssertion = (context: Hyp[], sequent: Sequent, step: Step) => {
+// The proof of an assertion leaves the always scope when the assertion assumes a fact that holds
+// only now.
+const proveAssertion = (context: Hyp[], sequent: Sequent, step: Step, time: Time) => {
   const visibility: Visibility = isAnonymous(step.step) ? "Visible" : "Hidden";
   const hyps = sequent.context.map((hyp): Hyp =>
     hyp.kind === "Fact" ? { ...hyp, visibility } : hyp,
   );
   const body = at({ kind: "List", bullet: "Refs", items: getAssumedFacts(2, sequent) }, step);
+  const scopeTime = getScopeTime(sequent.context, time);
   return {
     context: [
       ...context,
@@ -127,17 +134,20 @@ const proveAssertion = (context: Hyp[], sequent: Sequent, step: Step) => {
         kind: "Fact",
         expression: getTrue(step),
         visibility: "Hidden",
+        time,
         location: step.location,
       },
-      getStepDefinition(step, body),
+      getStepDefinition(step, body, scopeTime),
       {
         kind: "Fact",
         expression: at({ kind: "Ix", index: 1 }, step),
         visibility: "Hidden",
+        time: scopeTime,
         location: step.location,
       },
     ] satisfies Hyp[],
     active: shiftExpr(3, sequent.active),
+    time: scopeTime,
   };
 };
 
@@ -147,16 +157,18 @@ const useAssertion = (
   goal: Expr,
   sequent: Sequent,
   step: Step,
+  time: Time,
 ) => {
   const visibility: Visibility = isSuffices || isAnonymous(step.step) ? "Visible" : "Hidden";
   return {
     context: [
       ...context,
-      getStepDefinition(step, at(exprifySequent(sequent), step)),
+      getStepDefinition(step, at(exprifySequent(sequent), step), time),
       {
         kind: "Fact",
         expression: at({ kind: "Ix", index: 1 }, step),
         visibility,
+        time,
         location: step.location,
       },
     ] satisfies Hyp[],
@@ -164,7 +176,18 @@ const useAssertion = (
   };
 };
 
-const setDefinition = (visibility: Visibility, context: Hyp[], def: UseDef): Hyp[] => {
+// A cited step or definition keeps the scope it was proved in, and any other fact takes the
+// current one.
+const getFactTime = (context: Hyp[], fact: Expr, time: Time): Time => {
+  if (fact.kind !== "Ix") return time;
+  const hyp = context[context.length - fact.index];
+  if (hyp?.kind === "Fact") return hyp.time;
+  return hyp?.kind === "Defn" && typeof hyp.whereDefined === "object"
+    ? hyp.whereDefined.time
+    : "Always";
+};
+
+export const setDefinition = (visibility: Visibility, context: Hyp[], def: UseDef): Hyp[] => {
   if (def.kind !== "Dx") throw new TlaProofError(`Unknown definition ${def.name}`);
   const index = context.length - def.index;
   const hyp = context[index];
@@ -181,7 +204,7 @@ const isDomainMatch = (fact: Expr, domain: Expr) =>
   fact.args[0].index === 0 &&
   isEqualExpr(domain, fact.args[1]);
 
-const setExpression = (
+export const setExpression = (
   onWarning: (warning: ObligationWarning) => void,
   visibility: Visibility,
   fact: Expr,
@@ -216,7 +239,7 @@ export interface LineRange {
 }
 
 export interface Generator {
-  generate: (sequent: Sequent, proof: Proof) => Proof;
+  generate: (sequent: Sequent, proof: Proof, time: Time) => Proof;
   collect: (proof: Proof) => Obligation[];
   mutate: (
     context: Hyp[],
@@ -224,7 +247,7 @@ export interface Generator {
     usable: Usable,
     location: Locus | undefined,
   ) => [Hyp[], Obligation[]];
-  simplify: (context: Hyp[], goal: Expr, proof: Proof) => Proof;
+  simplify: (context: Hyp[], goal: Expr, proof: Proof, time: Time) => Proof;
 }
 
 // The bounds after a witnessed one, where a ditto takes the witnessed domain.
@@ -254,6 +277,7 @@ const getWitnessProof = (step: Step, aux: Expr[]): Proof => {
         usable: { facts: [shiftExpr(3, active)], defs: [] },
         isOnly: false,
         location: item.location,
+        method: step.method,
       },
       location: item.location,
     };
@@ -262,11 +286,13 @@ const getWitnessProof = (step: Step, aux: Expr[]): Proof => {
     at({ kind: "Ix", index: 2 * aux.length + 2 }, step),
     ...aux.map((_item, index) => at({ kind: "Ix", index: 2 * (aux.length - index) }, step)),
   ];
+  // tlapm removes the method from the QED.
   const qedProof: Proof = {
     kind: "By",
     usable: { facts, defs: [] },
     isOnly: true,
     ...getProps(step),
+    method: undefined,
   };
   return {
     kind: "Steps",
@@ -278,9 +304,9 @@ const getWitnessProof = (step: Step, aux: Expr[]): Proof => {
 
 const obligate = (
   sequent: Sequent,
-  from: { location?: Locus },
+  from: { location?: Locus; method?: OldMethod },
   kind: ObligationKind,
-): Obligation => ({ sequent, location: from.location, kind });
+): Obligation => ({ sequent, location: from.location, kind, method: from.method });
 
 export interface ProofSummary {
   total: number;
@@ -336,7 +362,7 @@ export const createGenerator = (
   lines: LineRange,
   onWarning: (warning: ObligationWarning) => void,
 ): Generator => {
-  const generate = (sequent: Sequent, proof: Proof): Proof => {
+  const generate = (sequent: Sequent, proof: Proof, time: Time): Proof => {
     const location = proof.location;
     if (
       !location ||
@@ -361,14 +387,17 @@ export const createGenerator = (
       case "By":
         throw new TlaProofError("Proof.Gen.generate");
       case "Steps": {
-        const [inner, steps] = mapAccumulate(sequent, proof.steps, generateStep);
-        const qedProof = generate(inner, proof.qed.proof);
+        const [inner, steps] = mapAccumulate({ sequent, time }, proof.steps, (state, step) => {
+          const [next, generated, nextTime] = generateStep(state.sequent, step, state.time);
+          return [{ sequent: next, time: nextTime }, generated];
+        });
+        const qedProof = generate(inner.sequent, proof.qed.proof, inner.time);
         return { ...proof, steps, qed: { ...proof.qed, proof: qedProof } };
       }
     }
   };
 
-  const generateStep = (sequent: Sequent, step: Step): [Sequent, Step] => {
+  const generateStep = (sequent: Sequent, step: Step, time: Time): [Sequent, Step, Time] => {
     switch (step.kind) {
       case "Forget": {
         const count = sequent.context.length;
@@ -377,7 +406,7 @@ export const createGenerator = (
             ? { ...hyp, visibility: "Hidden" }
             : hyp,
         );
-        return [{ ...sequent, context }, step];
+        return [{ ...sequent, context }, step, time];
       }
       case "Use": {
         const usable = step.usable;
@@ -388,11 +417,19 @@ export const createGenerator = (
             {
               context: [
                 ...sequent.context,
-                { kind: "Fact", expression: fact, visibility: "Visible", location: fact.location },
+                {
+                  kind: "Fact",
+                  expression: fact,
+                  visibility: "Visible",
+                  time: getFactTime(sequent.context, fact, time),
+                  location: fact.location,
+                  useLocation: step.useLocation,
+                },
               ],
               active: shiftExpr(1, sequent.active),
             },
             { ...step, obligations: [obligation] },
+            time,
           ];
         }
         if (usable.facts.length > 0)
@@ -401,7 +438,7 @@ export const createGenerator = (
           (current, def) => setDefinition("Visible", current, def),
           sequent.context,
         );
-        return [{ ...sequent, context }, step];
+        return [{ ...sequent, context }, step, time];
       }
       case "Hide": {
         const hidden = step.usable.defs.reduce(
@@ -412,7 +449,7 @@ export const createGenerator = (
           (current, fact) => setExpression(onWarning, "Hidden", fact, current),
           hidden,
         );
-        return [{ ...sequent, context }, step];
+        return [{ ...sequent, context }, step, time];
       }
       case "Define":
         return [
@@ -431,22 +468,27 @@ export const createGenerator = (
             active: shiftExpr(step.definitions.length, sequent.active),
           },
           step,
+          time,
         ];
       case "Assert": {
-        const proof = generate(proveAssertion(sequent.context, step.sequent, step), step.proof);
+        const inner = proveAssertion(sequent.context, step.sequent, step, time);
+        const proof = generate(inner, step.proof, inner.time);
         const generated: Step = { ...step, proof };
         return [
-          useAssertion(false, sequent.context, sequent.active, step.sequent, generated),
+          useAssertion(false, sequent.context, sequent.active, step.sequent, generated, time),
           generated,
+          time,
         ];
       }
       case "Suffices": {
         const proof = generate(
-          useAssertion(true, sequent.context, sequent.active, step.sequent, step),
+          useAssertion(true, sequent.context, sequent.active, step.sequent, step, time),
           step.proof,
+          time,
         );
         const generated: Step = { ...step, proof };
-        return [proveAssertion(sequent.context, step.sequent, generated), generated];
+        const next = proveAssertion(sequent.context, step.sequent, generated, time);
+        return [next, generated, next.time];
       }
       default:
         throw new TlaProofError("Proof.Gen.gen_step");
@@ -463,8 +505,9 @@ export const createGenerator = (
     const [sequent, generated] = generateStep(
       { context, active: { ...AT_NOWHERE, location } },
       mode === "Use"
-        ? { kind: "Use", usable, isOnly: false, location, step }
+        ? { kind: "Use", usable, isOnly: false, location, step, useLocation: location }
         : { kind: "Hide", usable, location, step },
+      "Always",
     );
     return [sequent.context, generated.obligations ?? []];
   };
@@ -626,7 +669,7 @@ export const createGenerator = (
     return { ...proof, steps };
   };
 
-  const simplify = (context: Hyp[], goal: Expr, original: Proof): Proof => {
+  const simplify = (context: Hyp[], goal: Expr, original: Proof, time: Time): Proof => {
     const proof = expandAt(original);
     switch (proof.kind) {
       case "Obvious":
@@ -652,6 +695,7 @@ export const createGenerator = (
           isOnly: false,
           location: fact.location,
           isSuppressed: proof.isSuppressed,
+          useLocation: proof.location,
         }));
         const forget: Step[] = proof.isOnly
           ? [{ kind: "Forget", count: usable.facts.length, location: proof.location }]
@@ -666,6 +710,7 @@ export const createGenerator = (
           location: proof.location,
           step: getAnonymous(level),
           isSuppressed: proof.isSuppressed,
+          method: proof.method,
         };
         return {
           kind: "Steps",
@@ -679,44 +724,52 @@ export const createGenerator = (
       case "Steps": {
         let currentContext = context;
         let currentGoal = goal;
+        let currentTime = time;
         const steps = proof.steps.flatMap((step) => {
-          const [nextContext, nextGoal, simplified] = simplifyStep(
+          const [nextContext, nextGoal, simplified, nextTime] = simplifyStep(
             currentContext,
             currentGoal,
             step,
+            currentTime,
           );
           currentContext = nextContext;
           currentGoal = nextGoal;
+          currentTime = nextTime;
           return simplified;
         });
-        const qedProof = simplify(currentContext, currentGoal, proof.qed.proof);
+        const qedProof = simplify(currentContext, currentGoal, proof.qed.proof, currentTime);
         return { ...proof, steps, qed: { ...proof.qed, proof: qedProof } };
       }
     }
   };
 
-  const simplifyStep = (context: Hyp[], goal: Expr, step: Step): [Hyp[], Expr, Step[]] => {
+  const simplifyStep = (
+    context: Hyp[],
+    goal: Expr,
+    step: Step,
+    time: Time,
+  ): [Hyp[], Expr, Step[], Time] => {
     const level = getLevel(step.step);
     switch (step.kind) {
       case "Forget":
-        return [context, goal, [step]];
+        return [context, goal, [step], time];
       case "Assert": {
-        const inner = proveAssertion(context, step.sequent, step);
+        const inner = proveAssertion(context, step.sequent, step, time);
         const simplified: Step = {
           ...step,
-          proof: simplify(inner.context, inner.active, step.proof),
+          proof: simplify(inner.context, inner.active, step.proof, inner.time),
         };
-        const next = useAssertion(false, context, goal, step.sequent, simplified);
-        return [next.context, next.active, [simplified]];
+        const next = useAssertion(false, context, goal, step.sequent, simplified, time);
+        return [next.context, next.active, [simplified], time];
       }
       case "Suffices": {
-        const inner = useAssertion(true, context, goal, step.sequent, step);
+        const inner = useAssertion(true, context, goal, step.sequent, step, time);
         const simplified: Step = {
           ...step,
-          proof: simplify(inner.context, inner.active, step.proof),
+          proof: simplify(inner.context, inner.active, step.proof, time),
         };
-        const next = proveAssertion(context, step.sequent, simplified);
-        return [next.context, next.active, [simplified]];
+        const next = proveAssertion(context, step.sequent, simplified, time);
+        return [next.context, next.active, [simplified], next.time];
       }
       case "Use": {
         const byProof: Proof = {
@@ -726,20 +779,23 @@ export const createGenerator = (
           location: step.location,
           step: step.step,
           isSuppressed: step.isSuppressed,
+          method: step.method,
         };
-        const simplified = simplify(context, goal, byProof);
+        const simplified = simplify(context, goal, byProof, time);
         if (simplified.kind !== "Steps")
           throw new TlaProofError("simplifying BY does not produce a non-leaf proof!");
         const assumed = step.usable.facts.map((): Hyp => ({
           kind: "Fact",
           expression: AT_NOWHERE,
           visibility: "Visible",
+          time,
           location: step.location,
         }));
         return [
           [...context, ...assumed],
           shiftExpr(step.usable.facts.length, goal),
           simplified.steps,
+          time,
         ];
       }
       case "Hide": {
@@ -759,7 +815,7 @@ export const createGenerator = (
               : entry,
           );
         }, context);
-        return [hidden, goal, [step]];
+        return [hidden, goal, [step], time];
       }
       case "Define":
         return [
@@ -768,7 +824,7 @@ export const createGenerator = (
             ...step.definitions.map((definition): Hyp => ({
               kind: "Defn",
               definition,
-              whereDefined: "Proof",
+              whereDefined: { kind: "Proof", time },
               visibility: "Visible",
               isLocal: true,
               location: step.location,
@@ -776,6 +832,7 @@ export const createGenerator = (
           ],
           shiftExpr(step.definitions.length, goal),
           [step],
+          time,
         ];
       case "Have": {
         const connective = exposeConnective(context, goal);
@@ -783,6 +840,7 @@ export const createGenerator = (
           kind: "Fact",
           expression: step.expression,
           visibility: "Visible",
+          time,
           location: step.location,
         };
         const isImplication = isBinary(connective, "Implies");
@@ -814,19 +872,21 @@ export const createGenerator = (
           location: step.location,
           step: step.step,
         });
-        return simplifyStep(context, goal, suffices);
+        return simplifyStep(context, goal, suffices, time);
       }
       case "Take":
         return simplifyStep(
           context,
           goal,
           renumberStep(level, getTakeSuffices(context, goal, step)),
+          time,
         );
       case "Witness":
         return simplifyStep(
           context,
           goal,
           renumberStep(level, getWitnessSuffices(context, goal, step)),
+          time,
         );
       case "Pcase": {
         const assertion: Step = {
@@ -837,6 +897,7 @@ export const createGenerator = (
                 kind: "Fact",
                 expression: step.expression,
                 visibility: "Visible",
+                time,
                 location: step.location,
               },
             ],
@@ -845,7 +906,7 @@ export const createGenerator = (
           proof: step.proof,
           ...getProps(step),
         };
-        return simplifyStep(context, goal, renumberStep(level, assertion));
+        return simplifyStep(context, goal, renumberStep(level, assertion), time);
       }
       case "Pick": {
         const existential: Expr = at(
@@ -853,13 +914,18 @@ export const createGenerator = (
           step,
         );
         const salted = getSalted(step.step, "ex");
-        const [assertContext, assertGoal, asserted] = simplifyStep(context, goal, {
-          kind: "Assert",
-          sequent: { context: [], active: existential },
-          proof: step.proof,
-          ...getProps(step),
-          step: salted,
-        });
+        const [assertContext, assertGoal, asserted, assertTime] = simplifyStep(
+          context,
+          goal,
+          {
+            kind: "Assert",
+            sequent: { context: [], active: existential },
+            proof: step.proof,
+            ...getProps(step),
+            step: salted,
+          },
+          time,
+        );
         const shifted = shiftExpr(2, existential);
         if (shifted.kind !== "Quant") throw new TlaProofError("Proof.Simplify.simplify_step/PICK");
         const hyps = [
@@ -868,16 +934,22 @@ export const createGenerator = (
             kind: "Fact",
             expression: shifted.body,
             visibility: "Visible",
+            time: assertTime,
             location: shifted.body.location,
           } satisfies Hyp,
         ];
-        const [nextContext, nextGoal, sufficed] = simplifyStep(assertContext, assertGoal, {
-          kind: "Suffices",
-          sequent: { context: hyps, active: shiftExpr(hyps.length, assertGoal) },
-          proof: { kind: "Omitted", omission: "Elsewhere", ...getProps(step) },
-          ...getProps(step),
-        });
-        return [nextContext, nextGoal, [...asserted, ...sufficed]];
+        const [nextContext, nextGoal, sufficed, nextTime] = simplifyStep(
+          assertContext,
+          assertGoal,
+          {
+            kind: "Suffices",
+            sequent: { context: hyps, active: shiftExpr(hyps.length, assertGoal) },
+            proof: { kind: "Omitted", omission: "Elsewhere", ...getProps(step) },
+            ...getProps(step),
+          },
+          assertTime,
+        );
+        return [nextContext, nextGoal, [...asserted, ...sufficed], nextTime];
       }
     }
   };
@@ -974,6 +1046,7 @@ export const createGenerator = (
               kind: "Fact",
               expression: getTrue(goal),
               visibility: "Visible",
+              time: "Now",
               location: step.location,
             },
           ],

@@ -1,0 +1,10 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ assume z_Ha:"(cond(TRUE, a, b)~=a)" (is "?z_hb~=_")
+ have z_Hf: "(a~=a)"
+ by (rule zenon_iftrue_0 [of "(\<lambda>zenon_Vf. (zenon_Vf~=a))" "a" "b", OF z_Ha])
+ show FALSE
+ by (rule zenon_noteq [OF z_Hf])
+qed
+(* END-PROOF *)

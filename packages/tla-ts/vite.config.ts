@@ -19,6 +19,7 @@ export default defineConfig({
       index: "./src/index.ts",
       cli: "./src/cli.ts",
       "parallel-worker": "./src/parallel-worker.ts",
+      "prove-worker": "./src/prove/prove-worker.ts",
     },
     format: ["esm", "cjs"],
     hash: false,

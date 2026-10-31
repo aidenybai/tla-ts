@@ -1,0 +1,58 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ assume z_Hc:"(a_CONSTANTunde_Fingerprintunde_a(prod(FuncSet(Nat, {}), {''d1''}))~=a_CONSTANTunde_Fingerprintunde_a({}))" (is "?z_hd~=?z_hk")
+ show FALSE
+ proof (rule zenon_noteq [of "?z_hk"])
+  have z_Hl: "(prod(FuncSet(Nat, {}), {''d1''})={})" (is "?z_he=_")
+  proof (rule zenon_nnpp [of "(?z_he={})"])
+   assume z_Hm:"(?z_he~={})"
+   have z_Hn: "(~(\\A zenon_Vu:((zenon_Vu \\in ?z_he)<=>(zenon_Vu \\in {}))))" (is "~(\\A x : ?z_ht(x))")
+   by (rule zenon_notsetequal_0 [of "?z_he" "{}", OF z_Hm])
+   have z_Hu: "(\\E zenon_Vu:(~((zenon_Vu \\in ?z_he)<=>(zenon_Vu \\in {}))))" (is "\\E x : ?z_hw(x)")
+   by (rule zenon_notallex_0 [of "?z_ht", OF z_Hn])
+   have z_Hx: "?z_hw((CHOOSE zenon_Vu:(~((zenon_Vu \\in ?z_he)<=>(zenon_Vu \\in {})))))" (is "~(?z_hz<=>?z_hba)")
+   by (rule zenon_ex_choose_0 [of "?z_hw", OF z_Hu])
+   show FALSE
+   proof (rule zenon_notequiv [OF z_Hx])
+    assume z_Hbb:"(~?z_hz)"
+    assume z_Hba:"?z_hba"
+    show FALSE
+    by (rule zenon_in_emptyset [of "(CHOOSE zenon_Vu:(~((zenon_Vu \\in ?z_he)<=>(zenon_Vu \\in {}))))", OF z_Hba])
+   next
+    assume z_Hz:"?z_hz"
+    assume z_Hbc:"(~?z_hba)"
+    have z_Hbd_z_Hz: "((CHOOSE zenon_Vu:(~((zenon_Vu \\in ?z_he)<=>(zenon_Vu \\in {})))) \\in Product(<<FuncSet(Nat, {}), {''d1''}>>)) == ?z_hz" (is "?z_hbd == _")
+    by (unfold prod_def)
+    have z_Hbd: "?z_hbd"
+    by (unfold z_Hbd_z_Hz, fact z_Hz)
+    let ?z_hy = "(CHOOSE zenon_Vu:(~((zenon_Vu \\in ?z_he)<=>(zenon_Vu \\in {}))))"
+    let ?z_hbf = "<<FuncSet(Nat, {}), {''d1''}>>"
+    have z_Hbg: "isASeq(?z_hbf)" by auto
+    have z_Hbh: "(1 \\in (1..Len(?z_hbf)))" by auto
+    have z_Hbl: "((?z_hy[1]) \\in (?z_hbf[1]))" (is "?z_hbl")
+    by (rule zenon_in_product_i [OF z_Hbd z_Hbg z_Hbh])
+    have z_Hbo: "((?z_hy[1]) \\in FuncSet(Nat, {}))" (is "?z_hbo")
+    using z_Hbl by auto
+    have z_Hbp: "(\\A zenon_Vqa:((zenon_Vqa \\in Nat)=>(((?z_hy[1])[zenon_Vqa]) \\in {})))" (is "\\A x : ?z_hbv(x)")
+    by (rule zenon_in_funcset_2 [of "(?z_hy[1])" "Nat" "{}", OF z_Hbo])
+    have z_Hbw: "?z_hbv(0)" (is "?z_hby=>?z_hbz")
+    by (rule zenon_all_0 [of "?z_hbv" "0", OF z_Hbp])
+    show FALSE
+    proof (rule zenon_imply [OF z_Hbw])
+     assume z_Hca:"(~?z_hby)"
+     show FALSE
+     by (rule zenon_in_nat_0 [of , OF z_Hca])
+    next
+     assume z_Hbz:"?z_hbz"
+     show FALSE
+     by (rule zenon_in_emptyset [of "((?z_hy[1])[0])", OF z_Hbz])
+    qed
+   qed
+  qed
+  have z_Hcc: "(?z_hk~=?z_hk)"
+  by (rule subst [where P="(\<lambda>zenon_Vf. (a_CONSTANTunde_Fingerprintunde_a(zenon_Vf)~=?z_hk))", OF z_Hl], fact z_Hc)
+  thus "(?z_hk~=?z_hk)" .
+ qed
+qed
+(* END-PROOF *)

@@ -1,6 +1,7 @@
 // tlapm's proof IR (P_t).
 
 import type { Bound, Defn, Expr, Locus, Sequent } from "./obligation-expression";
+import type { OldMethod } from "./obligation-pragma";
 
 export type StepNumber =
   | { kind: "Named"; level: number; label: string; isAnonymous: boolean }
@@ -23,17 +24,22 @@ export type ObligationKind =
   | { kind: "Error"; message: string }
   | { kind: "Omitted"; omission: Omission };
 
+// method is the one an old-style pragma names, which keeps find_meth from choosing.
 export interface Obligation {
   sequent: Sequent;
   location: Locus | undefined;
   kind: ObligationKind;
+  method?: OldMethod;
 }
 
+// useLocation is where a USE step comes from, so find_meth can tell apart the facts of each BY.
 interface ProofProps {
   location?: Locus;
   step?: StepNumber;
   isSuppressed?: boolean;
   obligations?: Obligation[];
+  method?: OldMethod;
+  useLocation?: Locus;
 }
 
 export type Proof = ProofCore & ProofProps;

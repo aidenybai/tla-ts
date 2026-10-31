@@ -175,6 +175,42 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       name === "IntLteq" ? "Bool" : "Idv",
     );
   switch (name) {
+    // SMT-LIB has no exponentiation, so IntExp keeps only its typing.
+    case "IntExp":
+      return fixed(
+        2,
+        ["Mem", "IntSet", "Cast_Int", "TIntLteq", "TIntLit_0", "TIntLit_1"],
+        [
+          axiom(
+            "IntExpTyping",
+            [],
+            `(forall ((x Idv) (y Idv)) (! (=> (and (${MEM} x ${INT_SET}) (${MEM} y ${INT_SET}) (or (distinct x (${CAST_INT} 0)) (${INT_LTEQ} (${CAST_INT} 1) y))) (${MEM} (${symbol} x y) ${INT_SET})) :pattern ((${symbol} x y))))`,
+          ),
+        ],
+      );
+    case "SelectSeq":
+      return spec(
+        undefined,
+        [
+          "Mem",
+          "Seq",
+          "Len",
+          "Append",
+          "FunApp",
+          "FunDom",
+          "IntSet",
+          "NatSet",
+          "Tuple_0",
+          "Proj_Int",
+        ],
+        [
+          axiom("SeqSelectseqTyping", [], undefined),
+          axiom("SeqSelectseqLen", [], undefined),
+          axiom("SeqSelectseqNil", [], undefined),
+          axiom("SeqSelectseqApp", [], undefined),
+          axiom("SeqSelectseqAppend", [], undefined),
+        ],
+      );
     case "Choose":
       return spec(undefined, [], [axiom("ChooseDef", [], undefined)]);
     case "Mem":

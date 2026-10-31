@@ -1,0 +1,125 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ assume z_Hb:"(a_CONSTANTunde_Fingerprintunde_a([''n1'' : ({''a''})])~=a_CONSTANTunde_Fingerprintunde_a(FuncSet({''n1''}, {''a''})))" (is "?z_hc~=?z_hh")
+ show FALSE
+ proof (rule zenon_noteq [of "?z_hh"])
+  have z_Hk: "([''n1'' : ({''a''})]=FuncSet({''n1''}, {''a''}))" (is "?z_hd=?z_hi")
+  proof (rule zenon_nnpp [of "(?z_hd=?z_hi)"])
+   assume z_Hl:"(?z_hd~=?z_hi)"
+   have z_Hm: "(~(\\A zenon_Vi:((zenon_Vi \\in ?z_hd)<=>(zenon_Vi \\in ?z_hi))))" (is "~(\\A x : ?z_hs(x))")
+   by (rule zenon_notsetequal_0 [of "?z_hd" "?z_hi", OF z_Hl])
+   have z_Ht: "(\\E zenon_Vi:(~((zenon_Vi \\in ?z_hd)<=>(zenon_Vi \\in ?z_hi))))" (is "\\E x : ?z_hv(x)")
+   by (rule zenon_notallex_0 [of "?z_hs", OF z_Hm])
+   have z_Hw: "?z_hv((CHOOSE zenon_Vi:(~((zenon_Vi \\in ?z_hd)<=>(zenon_Vi \\in ?z_hi)))))" (is "~(?z_hy<=>?z_hz)")
+   by (rule zenon_ex_choose_0 [of "?z_hv", OF z_Ht])
+   show FALSE
+   proof (rule zenon_notequiv [OF z_Hw])
+    assume z_Hba:"(~?z_hy)"
+    assume z_Hz:"?z_hz"
+    let ?z_hx = "(CHOOSE zenon_Vi:(~((zenon_Vi \\in ?z_hd)<=>(zenon_Vi \\in ?z_hi))))"
+    have z_Hbb: "isAFcn(?z_hx)" (is "?z_hbb")
+    proof (rule zenon_nnpp)
+     assume z_Hbc: "(~?z_hbb)"
+     have z_Hbb: "?z_hbb"
+     by (rule zenon_in_funcset_0 [of "?z_hx" "{''n1''}" "{''a''}", OF z_Hz])
+     show FALSE
+     by (rule notE [OF z_Hbc z_Hbb])
+    qed
+    have z_Hbd: "(DOMAIN(?z_hx)={''n1''})" (is "?z_hbe=?z_hj")
+    proof (rule zenon_nnpp)
+     assume z_Hbf: "(?z_hbe~=?z_hj)"
+     have z_Hbd: "(?z_hbe=?z_hj)"
+     by (rule zenon_in_funcset_1 [of "?z_hx" "?z_hj" "{''a''}", OF z_Hz])
+     show FALSE
+     by (rule notE [OF z_Hbf z_Hbd])
+    qed
+    have z_Hbg: "((?z_hx[''n1'']) \\in {''a''})" (is "?z_hbg")
+    proof (rule zenon_nnpp)
+     assume z_Hbi: "(~?z_hbg)"
+     have z_Hbj: "(\\A zenon_Vo:((zenon_Vo \\in ?z_hj)=>((?z_hx[zenon_Vo]) \\in {''a''})))" (is "\\A x : ?z_hbp(x)")
+     by (rule zenon_in_funcset_2 [of "?z_hx" "?z_hj" "{''a''}", OF z_Hz])
+     have z_Hbq: "?z_hbp(''n1'')" (is "?z_hbr=>_")
+     by (rule zenon_all_0 [of "?z_hbp" "''n1''", OF z_Hbj])
+     show FALSE
+     proof (rule zenon_imply [OF z_Hbq])
+      assume z_Hbs:"(~?z_hbr)"
+      have z_Hbt: "(''n1''~=''n1'')" (is "?z_he~=_")
+      by (rule zenon_notin_addElt_0 [of "?z_he" "?z_he" "{}", OF z_Hbs])
+      show FALSE
+      by (rule zenon_noteq [OF z_Hbt])
+     next
+      assume z_Hbg:"?z_hbg"
+      show FALSE
+      by (rule notE [OF z_Hbi z_Hbg])
+     qed
+    qed
+    show FALSE by (rule notE [OF z_Hba],
+                   rule zenon_inrecordsetI1 [OF z_Hbb z_Hbd z_Hbg ])
+   next
+    assume z_Hy:"?z_hy"
+    assume z_Hbv:"(~?z_hz)"
+    let ?z_hx = "(CHOOSE zenon_Vi:(~((zenon_Vi \\in ?z_hd)<=>(zenon_Vi \\in ?z_hi))))"
+    have z_Hbb: "isAFcn(?z_hx)" using z_Hy by auto
+    have z_Hbd: "(DOMAIN(?z_hx)={''n1''})" using z_Hy by auto
+    let ?z_hbw = "<<''n1''>>"
+    let ?z_hbx = "<<{''a''}>>"
+    have z_Hby: "(1 \\in DOMAIN(?z_hbw))" by auto
+    have z_Hcb: "((?z_hx[(?z_hbw[1])]) \\in (?z_hbx[1]))" (is "?z_hcb")
+    by (rule zenon_in_recordset_field [OF z_Hy z_Hby])
+    have z_Hbg: "((?z_hx[''n1'']) \\in {''a''})" (is "?z_hbg")
+    using z_Hcb by auto
+    show FALSE
+    proof (rule zenon_notin_funcset [of "?z_hx" "{''n1''}" "{''a''}", OF z_Hbv])
+     assume z_Hbc:"(~isAFcn(?z_hx))" (is "~?z_hbb")
+     show FALSE
+     by (rule notE [OF z_Hbc z_Hbb])
+    next
+     assume z_Hbf:"(DOMAIN(?z_hx)~={''n1''})" (is "?z_hbe~=?z_hj")
+     show FALSE
+     by (rule notE [OF z_Hbf z_Hbd])
+    next
+     assume z_Hcf:"(~(\\A zenon_Vo:((zenon_Vo \\in {''n1''})=>((?z_hx[zenon_Vo]) \\in {''a''}))))" (is "~(\\A x : ?z_hbp(x))")
+     have z_Hcg: "(\\E zenon_Vo:(~((zenon_Vo \\in {''n1''})=>((?z_hx[zenon_Vo]) \\in {''a''}))))" (is "\\E x : ?z_hci(x)")
+     by (rule zenon_notallex_0 [of "?z_hbp", OF z_Hcf])
+     have z_Hcj: "?z_hci((CHOOSE zenon_Vo:(~((zenon_Vo \\in {''n1''})=>((?z_hx[zenon_Vo]) \\in {''a''})))))" (is "~(?z_hcl=>?z_hcm)")
+     by (rule zenon_ex_choose_0 [of "?z_hci", OF z_Hcg])
+     have z_Hcl: "?z_hcl"
+     by (rule zenon_notimply_0 [OF z_Hcj])
+     have z_Hcn: "(~?z_hcm)"
+     by (rule zenon_notimply_1 [OF z_Hcj])
+     show FALSE
+     proof (rule zenon_in_addElt [of "(CHOOSE zenon_Vo:(~((zenon_Vo \\in {''n1''})=>((?z_hx[zenon_Vo]) \\in {''a''}))))" "''n1''" "{}", OF z_Hcl])
+      assume z_Hco:"((CHOOSE zenon_Vo:(~((zenon_Vo \\in {''n1''})=>((?z_hx[zenon_Vo]) \\in {''a''}))))=''n1'')" (is "?z_hck=?z_he")
+      show FALSE
+      proof (rule notE [OF z_Hcn])
+       have z_Hcp: "((?z_hx[?z_he])=(?z_hx[?z_hck]))" (is "?z_hbh=?z_hcq")
+       proof (rule zenon_nnpp [of "(?z_hbh=?z_hcq)"])
+        assume z_Hcr:"(?z_hbh~=?z_hcq)"
+        show FALSE
+        proof (rule zenon_noteq [of "?z_hcq"])
+         have z_Hcs: "(?z_he=?z_hck)"
+         by (rule sym [OF z_Hco])
+         have z_Hct: "(?z_hcq~=?z_hcq)"
+         by (rule subst [where P="(\<lambda>zenon_Vja. ((?z_hx[zenon_Vja])~=?z_hcq))", OF z_Hcs], fact z_Hcr)
+         thus "(?z_hcq~=?z_hcq)" .
+        qed
+       qed
+       have z_Hcm: "?z_hcm"
+       by (rule subst [where P="(\<lambda>zenon_Vr. (zenon_Vr \\in {''a''}))", OF z_Hcp], fact z_Hbg)
+       thus "?z_hcm" .
+      qed
+     next
+      assume z_Hdb:"((CHOOSE zenon_Vo:(~((zenon_Vo \\in {''n1''})=>((?z_hx[zenon_Vo]) \\in {''a''})))) \\in {})" (is "?z_hdb")
+      show FALSE
+      by (rule zenon_in_emptyset [of "(CHOOSE zenon_Vo:(~((zenon_Vo \\in {''n1''})=>((?z_hx[zenon_Vo]) \\in {''a''}))))", OF z_Hdb])
+     qed
+    qed
+   qed
+  qed
+  have z_Hdc: "(?z_hh~=?z_hh)"
+  by (rule subst [where P="(\<lambda>zenon_Vf. (a_CONSTANTunde_Fingerprintunde_a(zenon_Vf)~=?z_hh))", OF z_Hk], fact z_Hb)
+  thus "(?z_hh~=?z_hh)" .
+ qed
+qed
+(* END-PROOF *)

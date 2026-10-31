@@ -1,0 +1,29 @@
+;; obligation #55
+$hyp "v'309" (= a_VARIABLEunde_activeunde_a
+(TLA.Fcn a_CONSTANTunde_Procsunde_a ((a_CONSTANTunde_punde_a) (= a_CONSTANTunde_punde_a
+a_CONSTANTunde_Leaderunde_a))))
+$hyp "v'310" (= a_VARIABLEunde_msgsunde_a
+(TLA.Fcn a_CONSTANTunde_Edgesunde_a ((a_CONSTANTunde_eunde_a) 0)))
+$hyp "v'311" (= a_VARIABLEunde_acksunde_a
+(TLA.Fcn a_CONSTANTunde_Edgesunde_a ((a_CONSTANTunde_eunde_a) 0)))
+$hyp "v'312" (= a_VARIABLEunde_sentUnackedunde_a
+(TLA.Fcn a_CONSTANTunde_Edgesunde_a ((a_CONSTANTunde_eunde_a) 0)))
+$hyp "v'313" (= a_VARIABLEunde_rcvdUnackedunde_a
+(TLA.Fcn a_CONSTANTunde_Edgesunde_a ((a_CONSTANTunde_eunde_a) 0)))
+$hyp "v'314" (= a_VARIABLEunde_upEdgeunde_a
+(TLA.Fcn (TLA.setminus a_CONSTANTunde_Procsunde_a
+(TLA.set a_CONSTANTunde_Leaderunde_a)) ((a_CONSTANTunde_punde_a) a_CONSTANTunde_NotAnEdgeunde_a)))
+$goal (/\ (= (TLA.cup (TLA.setOfAll (TLA.setminus (TLA.setOfAll (TLA.DOMAIN a_VARIABLEunde_upEdgeunde_a) ((a_CONSTANTunde_punde_a) (TLA.fapply a_VARIABLEunde_upEdgeunde_a a_CONSTANTunde_punde_a)))
+(TLA.set a_CONSTANTunde_NotAnEdgeunde_a)) ((a_CONSTANTunde_eunde_a) (TLA.fapply a_CONSTANTunde_eunde_a (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0)))))
+(TLA.set a_CONSTANTunde_Leaderunde_a)) (TLA.set a_CONSTANTunde_Leaderunde_a))
+(= (TLA.record "edge" (TLA.setOfAll (TLA.fapply (TLA.record "node" (TLA.cup (TLA.setOfAll (TLA.setminus (TLA.setOfAll (TLA.DOMAIN a_VARIABLEunde_upEdgeunde_a) ((a_CONSTANTunde_punde_a) (TLA.fapply a_VARIABLEunde_upEdgeunde_a a_CONSTANTunde_punde_a)))
+(TLA.set a_CONSTANTunde_NotAnEdgeunde_a)) ((a_CONSTANTunde_eunde_a) (TLA.fapply a_CONSTANTunde_eunde_a (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0)))))
+(TLA.set a_CONSTANTunde_Leaderunde_a)) "edge" (TLA.setminus (TLA.setOfAll (TLA.DOMAIN a_VARIABLEunde_upEdgeunde_a) ((a_CONSTANTunde_punde_a) (TLA.fapply a_VARIABLEunde_upEdgeunde_a a_CONSTANTunde_punde_a)))
+(TLA.set a_CONSTANTunde_NotAnEdgeunde_a))) "edge") ((a_CONSTANTunde_eunde_a) (TLA.tuple (TLA.fapply a_CONSTANTunde_eunde_a (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0)))
+(TLA.fapply a_CONSTANTunde_eunde_a (TLA.fapply TLA.Succ 0))))) "node" (TLA.fapply (TLA.record "node" (TLA.cup (TLA.setOfAll (TLA.setminus (TLA.setOfAll (TLA.DOMAIN a_VARIABLEunde_upEdgeunde_a) ((a_CONSTANTunde_punde_a) (TLA.fapply a_VARIABLEunde_upEdgeunde_a a_CONSTANTunde_punde_a)))
+(TLA.set a_CONSTANTunde_NotAnEdgeunde_a)) ((a_CONSTANTunde_eunde_a) (TLA.fapply a_CONSTANTunde_eunde_a (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0)))))
+(TLA.set a_CONSTANTunde_Leaderunde_a)) "edge" (TLA.setminus (TLA.setOfAll (TLA.DOMAIN a_VARIABLEunde_upEdgeunde_a) ((a_CONSTANTunde_punde_a) (TLA.fapply a_VARIABLEunde_upEdgeunde_a a_CONSTANTunde_punde_a)))
+(TLA.set a_CONSTANTunde_NotAnEdgeunde_a))) "node"))
+(TLA.record "edge" TLA.emptyset "node" (TLA.cup (TLA.setOfAll (TLA.setminus (TLA.setOfAll (TLA.DOMAIN a_VARIABLEunde_upEdgeunde_a) ((a_CONSTANTunde_punde_a) (TLA.fapply a_VARIABLEunde_upEdgeunde_a a_CONSTANTunde_punde_a)))
+(TLA.set a_CONSTANTunde_NotAnEdgeunde_a)) ((a_CONSTANTunde_eunde_a) (TLA.fapply a_CONSTANTunde_eunde_a (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0)))))
+(TLA.set a_CONSTANTunde_Leaderunde_a)))))

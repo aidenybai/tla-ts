@@ -19,15 +19,26 @@ interface TrivialObligationRecord {
   status: "trivial";
 }
 
+// tlapm's default SMT method writes .smt inputs, and its Z3 method writes .smt2 inputs.
 interface DecidedObligationRecord {
   id: number;
   loc: string;
-  status: "proved" | "failed";
   prover: string;
   timeUsed?: number;
   smt?: BackendRecord;
+  z3?: BackendRecord;
   zenon?: BackendRecord<"unsat" | "unknown">;
   isabelle?: BackendRecord<"unsat" | "unknown">;
+}
+
+interface ProvedObligationRecord extends DecidedObligationRecord {
+  status: "proved";
+}
+
+// tlapm's reason is "false" when a backend refuted the obligation, "timeout", or its own message.
+interface FailedObligationRecord extends DecidedObligationRecord {
+  status: "failed";
+  reason?: string;
 }
 
 // tlapm stopped before a backend answered.
@@ -39,7 +50,8 @@ interface UnfinishedObligationRecord {
 
 export type ObligationRecord =
   | TrivialObligationRecord
-  | DecidedObligationRecord
+  | ProvedObligationRecord
+  | FailedObligationRecord
   | UnfinishedObligationRecord;
 
 export type ObligationStatus = ObligationRecord["status"];
@@ -67,13 +79,15 @@ const removeComments = (text: string) =>
 // Digests an SMT-LIB or Zenon input.
 export const getInputDigest = (text: string) => getDigest(collapseWhitespace(removeComments(text)));
 
-// Isabelle theories carry the module's path in comments and a hashed theory name.
-export const getIsabelleDigest = (text: string) =>
-  getDigest(
-    collapseWhitespace(
-      text.replace(/\(\*[\s\S]*?\*\)/g, "").replace(/\btlapm_[0-9a-f]+\b/g, "tlapm"),
-    ),
+// An Isabelle theory with its comments removed and its theory name, which tlapm takes from a
+// temporary file, made the same.
+export const normalizeTheory = (text: string) =>
+  collapseWhitespace(
+    text.replace(/\(\*[\s\S]*?\*\)/g, "").replace(/\btlapm_[0-9a-f]+\b/g, "tlapm"),
   );
+
+// Isabelle theories carry the module's path in comments and a hashed theory name.
+export const getIsabelleDigest = (text: string) => getDigest(normalizeTheory(text));
 
 // tlapm names each atom of a PTL formula with a hash, so atoms are renumbered by first appearance.
 export const getLs4Digest = (text: string) => {
@@ -104,16 +118,23 @@ export const getLs4Verdict = (output: string): BackendVerdict => {
   return answer === undefined ? "unknown" : answer.startsWith("UNSAT") ? "unsat" : "sat";
 };
 
-// The records of the modules whose ids contain the --filter argument, or of every module.
+// The records of the modules whose ids contain the --filter argument, or of every module, less
+// those whose ids contain the --skip argument.
 export const readProofRecords = (): ModuleProofRecord[] => {
   if (!existsSync(PROOFS_PATH)) {
     console.error("Run conformance:record-proofs first");
     process.exit(1);
   }
-  const index = process.argv.indexOf("--filter");
-  const filter = index === -1 ? undefined : process.argv[index + 1];
+  const getOption = (name: string) =>
+    process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined;
+  const filter = getOption("--filter");
+  const skip = getOption("--skip");
   const records: ModuleProofRecord[] = JSON.parse(readFileSync(PROOFS_PATH, "utf8"));
-  return records.filter((record) => filter === undefined || record.id.includes(filter));
+  return records.filter(
+    (record) =>
+      (filter === undefined || record.id.includes(filter)) &&
+      (skip === undefined || !record.id.includes(skip)),
+  );
 };
 
 const libraryModules = getLibraryModules();

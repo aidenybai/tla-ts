@@ -1,0 +1,263 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Hb:"bAll(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_Tunde_a. (bAll((SUBSET(a_CONSTANTunde_Tunde_a) \\ {a_CONSTANTunde_Tunde_a}), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(a_CONSTANTunde_Tunde_a))))" (is "?z_hb")
+ using v'187 by blast
+ assume z_Hc:"(~bAll(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_Tunde_a. (bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, a_CONSTANTunde_Tunde_a>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(a_CONSTANTunde_Tunde_a)))))" (is "~?z_hq")
+ have z_Hbk_z_Hb: "(\\A x:((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll((SUBSET(x) \\ {x}), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))) == ?z_hb" (is "?z_hbk == _")
+ by (unfold bAll_def)
+ have z_Hbk: "?z_hbk" (is "\\A x : ?z_hbu(x)")
+ by (unfold z_Hbk_z_Hb, fact z_Hb)
+ have z_Hbv_z_Hc: "(~(\\A x:((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x))))) == (~?z_hq)" (is "?z_hbv == ?z_hc")
+ by (unfold bAll_def)
+ have z_Hbv: "?z_hbv" (is "~(\\A x : ?z_hce(x))")
+ by (unfold z_Hbv_z_Hc, fact z_Hc)
+ have z_Hcf: "(\\E x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))" (is "\\E x : ?z_hch(x)")
+ by (rule zenon_notallex_0 [of "?z_hce", OF z_Hbv])
+ have z_Hci: "?z_hch((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x))))))" (is "~(?z_hck=>?z_hcl)")
+ by (rule zenon_ex_choose_0 [of "?z_hch", OF z_Hcf])
+ have z_Hck: "?z_hck"
+ by (rule zenon_notimply_0 [OF z_Hci])
+ have z_Hcm: "(~?z_hcl)" (is "~(?z_hcn=>?z_hco)")
+ by (rule zenon_notimply_1 [OF z_Hci])
+ have z_Hcn: "?z_hcn"
+ by (rule zenon_notimply_0 [OF z_Hcm])
+ have z_Hcp: "(~?z_hco)"
+ by (rule zenon_notimply_1 [OF z_Hcm])
+ have z_Hcq: "((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x))))) \\subseteq a_CONSTANTunde_Sunde_a)" (is "?z_hcq")
+ by (rule zenon_in_SUBSET_0 [of "(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))" "a_CONSTANTunde_Sunde_a", OF z_Hck])
+ have z_Hcr_z_Hcq: "bAll((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x))))), (\<lambda>x. (x \\in a_CONSTANTunde_Sunde_a))) == ?z_hcq" (is "?z_hcr == _")
+ by (unfold subset_def)
+ have z_Hcr: "?z_hcr"
+ by (unfold z_Hcr_z_Hcq, fact z_Hcq)
+ have z_Hcu_z_Hcr: "(\\A x:((x \\in (CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x))))))=>(x \\in a_CONSTANTunde_Sunde_a))) == ?z_hcr" (is "?z_hcu == _")
+ by (unfold bAll_def)
+ have z_Hcu: "?z_hcu" (is "\\A x : ?z_hcx(x)")
+ by (unfold z_Hcu_z_Hcr, fact z_Hcr)
+ have z_Hcy_z_Hcn: "(\\A x:((x \\in subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, (CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))))=>a_CONSTANTunde_Punde_a(x))) == ?z_hcn" (is "?z_hcy == _")
+ by (unfold bAll_def)
+ have z_Hcy: "?z_hcy" (is "\\A x : ?z_hdf(x)")
+ by (unfold z_Hcy_z_Hcn, fact z_Hcn)
+ have z_Hdg: "?z_hbu((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x))))))" (is "_=>?z_hdh")
+ by (rule zenon_all_0 [of "?z_hbu" "(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))", OF z_Hbk])
+ show FALSE
+ proof (rule zenon_imply [OF z_Hdg])
+  assume z_Hdi:"(~?z_hck)"
+  show FALSE
+  by (rule notE [OF z_Hdi z_Hck])
+ next
+  assume z_Hdh:"?z_hdh" (is "?z_hdj=>_")
+  show FALSE
+  proof (rule zenon_imply [OF z_Hdh])
+   assume z_Hdk:"(~?z_hdj)"
+   have z_Hdl_z_Hdk: "(~(\\A x:((x \\in (SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))) \\ {(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}))=>a_CONSTANTunde_Punde_a(x)))) == (~?z_hdj)" (is "?z_hdl == ?z_hdk")
+   by (unfold bAll_def)
+   have z_Hdl: "?z_hdl" (is "~(\\A x : ?z_hds(x))")
+   by (unfold z_Hdl_z_Hdk, fact z_Hdk)
+   have z_Hdt: "(\\E x:(~((x \\in (SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))) \\ {(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}))=>a_CONSTANTunde_Punde_a(x))))" (is "\\E x : ?z_hdv(x)")
+   by (rule zenon_notallex_0 [of "?z_hds", OF z_Hdl])
+   have z_Hdw: "?z_hdv((CHOOSE x:(~((x \\in (SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))) \\ {(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}))=>a_CONSTANTunde_Punde_a(x)))))" (is "~(?z_hdy=>?z_hdz)")
+   by (rule zenon_ex_choose_0 [of "?z_hdv", OF z_Hdt])
+   have z_Hdy: "?z_hdy"
+   by (rule zenon_notimply_0 [OF z_Hdw])
+   have z_Hea: "(~?z_hdz)"
+   by (rule zenon_notimply_1 [OF z_Hdw])
+   have z_Heb: "((CHOOSE x:(~((x \\in (SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))) \\ {(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}))=>a_CONSTANTunde_Punde_a(x)))) \\in SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))))" (is "?z_heb")
+   by (rule zenon_in_setminus_0 [of "(CHOOSE x:(~((x \\in (SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))) \\ {(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}))=>a_CONSTANTunde_Punde_a(x))))" "SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x))))))" "{(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}", OF z_Hdy])
+   have z_Hec: "(~((CHOOSE x:(~((x \\in (SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))) \\ {(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}))=>a_CONSTANTunde_Punde_a(x)))) \\in {(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}))" (is "~?z_hed")
+   by (rule zenon_in_setminus_1 [of "(CHOOSE x:(~((x \\in (SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))) \\ {(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}))=>a_CONSTANTunde_Punde_a(x))))" "SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x))))))" "{(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}", OF z_Hdy])
+   have z_Hee: "((CHOOSE x:(~((x \\in (SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))) \\ {(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}))=>a_CONSTANTunde_Punde_a(x)))) \\subseteq (CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x))))))" (is "?z_hee")
+   by (rule zenon_in_SUBSET_0 [of "(CHOOSE x:(~((x \\in (SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))) \\ {(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}))=>a_CONSTANTunde_Punde_a(x))))" "(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))", OF z_Heb])
+   have z_Hef_z_Hee: "bAll((CHOOSE x:(~((x \\in (SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))) \\ {(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}))=>a_CONSTANTunde_Punde_a(x)))), (\<lambda>x. (x \\in (CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))))) == ?z_hee" (is "?z_hef == _")
+   by (unfold subset_def)
+   have z_Hef: "?z_hef"
+   by (unfold z_Hef_z_Hee, fact z_Hee)
+   have z_Heh_z_Hef: "(\\A x:((x \\in (CHOOSE x:(~((x \\in (SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))) \\ {(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}))=>a_CONSTANTunde_Punde_a(x)))))=>(x \\in (CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))))) == ?z_hef" (is "?z_heh == _")
+   by (unfold bAll_def)
+   have z_Heh: "?z_heh" (is "\\A x : ?z_hek(x)")
+   by (unfold z_Heh_z_Hef, fact z_Hef)
+   have z_Hel: "((CHOOSE x:(~((x \\in (SUBSET((CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))) \\ {(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x)))))}))=>a_CONSTANTunde_Punde_a(x))))~=(CHOOSE x:(~((x \\in SUBSET(a_CONSTANTunde_Sunde_a))=>(bAll(subsetOf(SUBSET(a_CONSTANTunde_Sunde_a), (\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, x>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))), (\<lambda>a_CONSTANTunde_Uunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_Uunde_a)))=>a_CONSTANTunde_Punde_a(x))))))" (is "?z_hdx~=?z_hcj")
+   by (rule zenon_notin_addElt_0 [of "?z_hdx" "?z_hcj" "{}", OF z_Hec])
+   have z_Hen: "?z_hdf(?z_hdx)" (is "?z_heo=>_")
+   by (rule zenon_all_0 [of "?z_hdf" "?z_hdx", OF z_Hcy])
+   show FALSE
+   proof (rule zenon_imply [OF z_Hen])
+    assume z_Hep:"(~?z_heo)"
+    show FALSE
+    proof (rule zenon_notin_subsetof [of "?z_hdx" "SUBSET(a_CONSTANTunde_Sunde_a)" "(\<lambda>a_CONSTANTunde_yunde_a. (<<a_CONSTANTunde_yunde_a, ?z_hcj>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))", OF z_Hep])
+     assume z_Heq:"(~(?z_hdx \\in SUBSET(a_CONSTANTunde_Sunde_a)))" (is "~?z_her")
+     have z_Hes: "(~(?z_hdx \\subseteq a_CONSTANTunde_Sunde_a))" (is "~?z_het")
+     by (rule zenon_notin_SUBSET_0 [of "?z_hdx" "a_CONSTANTunde_Sunde_a", OF z_Heq])
+     have z_Heu_z_Hes: "(~bAll(?z_hdx, (\<lambda>x. (x \\in a_CONSTANTunde_Sunde_a)))) == (~?z_het)" (is "?z_heu == ?z_hes")
+     by (unfold subset_def)
+     have z_Heu: "?z_heu" (is "~?z_hev")
+     by (unfold z_Heu_z_Hes, fact z_Hes)
+     have z_Hew_z_Heu: "(~(\\A x:((x \\in ?z_hdx)=>(x \\in a_CONSTANTunde_Sunde_a)))) == ?z_heu" (is "?z_hew == _")
+     by (unfold bAll_def)
+     have z_Hew: "?z_hew" (is "~(\\A x : ?z_hez(x))")
+     by (unfold z_Hew_z_Heu, fact z_Heu)
+     have z_Hfa: "(\\E x:(~((x \\in ?z_hdx)=>(x \\in a_CONSTANTunde_Sunde_a))))" (is "\\E x : ?z_hfc(x)")
+     by (rule zenon_notallex_0 [of "?z_hez", OF z_Hew])
+     have z_Hfd: "?z_hfc((CHOOSE x:(~((x \\in ?z_hdx)=>(x \\in a_CONSTANTunde_Sunde_a)))))" (is "~(?z_hff=>?z_hfg)")
+     by (rule zenon_ex_choose_0 [of "?z_hfc", OF z_Hfa])
+     have z_Hff: "?z_hff"
+     by (rule zenon_notimply_0 [OF z_Hfd])
+     have z_Hfh: "(~?z_hfg)"
+     by (rule zenon_notimply_1 [OF z_Hfd])
+     have z_Hfi: "?z_hcx((CHOOSE x:(~((x \\in ?z_hdx)=>(x \\in a_CONSTANTunde_Sunde_a)))))" (is "?z_hfj=>_")
+     by (rule zenon_all_0 [of "?z_hcx" "(CHOOSE x:(~((x \\in ?z_hdx)=>(x \\in a_CONSTANTunde_Sunde_a))))", OF z_Hcu])
+     show FALSE
+     proof (rule zenon_imply [OF z_Hfi])
+      assume z_Hfk:"(~?z_hfj)"
+      have z_Hfl: "?z_hek((CHOOSE x:(~((x \\in ?z_hdx)=>(x \\in a_CONSTANTunde_Sunde_a)))))"
+      by (rule zenon_all_0 [of "?z_hek" "(CHOOSE x:(~((x \\in ?z_hdx)=>(x \\in a_CONSTANTunde_Sunde_a))))", OF z_Heh])
+      show FALSE
+      proof (rule zenon_imply [OF z_Hfl])
+       assume z_Hfm:"(~?z_hff)"
+       show FALSE
+       by (rule notE [OF z_Hfm z_Hff])
+      next
+       assume z_Hfj:"?z_hfj"
+       show FALSE
+       by (rule notE [OF z_Hfk z_Hfj])
+      qed
+     next
+      assume z_Hfg:"?z_hfg"
+      show FALSE
+      by (rule notE [OF z_Hfh z_Hfg])
+     qed
+    next
+     assume z_Hfn:"(~(<<?z_hdx, ?z_hcj>> \\in subsetOf(prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)), (\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2])))))))" (is "~?z_hfo")
+     show FALSE
+     proof (rule zenon_notin_subsetof [of "<<?z_hdx, ?z_hcj>>" "prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a))" "(\<lambda>a_CONSTANTunde_ssunde_a. (((a_CONSTANTunde_ssunde_a[1]) \\subseteq (a_CONSTANTunde_ssunde_a[2]))&((a_CONSTANTunde_ssunde_a[1])~=(a_CONSTANTunde_ssunde_a[2]))))", OF z_Hfn])
+      assume z_Hfq:"(~(<<?z_hdx, ?z_hcj>> \\in prod(SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a))))" (is "~?z_hfr")
+      have z_Hfs_z_Hfq: "(~(<<?z_hdx, ?z_hcj>> \\in Product(<<SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)>>))) == (~?z_hfr)" (is "?z_hfs == ?z_hfq")
+      by (unfold prod_def)
+      have z_Hfs: "?z_hfs" (is "~?z_hft")
+      by (unfold z_Hfs_z_Hfq, fact z_Hfq)
+      let ?z_hfp = "<<?z_hdx, ?z_hcj>>"
+      have z_Hfw: "isASeq(?z_hfp)" (is "?z_hfw")
+      proof (rule zenon_nnpp)
+       assume z_Hfx: "(~?z_hfw)"
+       show FALSE using z_Hfx by auto
+      qed
+      have z_Hfy: "(Len(?z_hfp)=2)" (is "?z_hfz=?z_hbi")
+      proof (rule zenon_nnpp)
+       assume z_Hga: "(?z_hfz~=?z_hbi)"
+       have z_Hfy: "(?z_hfz=?z_hbi)"
+       by auto
+       have z_Hgb: "(?z_hbi~=?z_hbi)"
+       by (rule subst [where P="(\<lambda>zenon_Vlf. (zenon_Vlf~=?z_hbi))", OF z_Hfy z_Hga])
+       show FALSE
+       by (rule zenon_noteq [OF z_Hgb])
+      qed
+      have z_Hgf: "((?z_hfp[1]) \\in SUBSET(a_CONSTANTunde_Sunde_a))" (is "?z_hgf")
+      proof (rule zenon_nnpp)
+       assume z_Hgh: "(~?z_hgf)"
+       have z_Hgi: "(~((?z_hfp[1]) \\subseteq a_CONSTANTunde_Sunde_a))" (is "~?z_hgj")
+       by (rule zenon_notin_SUBSET_0 [of "(?z_hfp[1])" "a_CONSTANTunde_Sunde_a", OF z_Hgh])
+       have z_Hgk_z_Hgi: "(~bAll((?z_hfp[1]), (\<lambda>x. (x \\in a_CONSTANTunde_Sunde_a)))) == (~?z_hgj)" (is "?z_hgk == ?z_hgi")
+       by (unfold subset_def)
+       have z_Hgk: "?z_hgk" (is "~?z_hgl")
+       by (unfold z_Hgk_z_Hgi, fact z_Hgi)
+       have z_Hgm_z_Hgk: "(~(\\A x:((x \\in (?z_hfp[1]))=>(x \\in a_CONSTANTunde_Sunde_a)))) == ?z_hgk" (is "?z_hgm == _")
+       by (unfold bAll_def)
+       have z_Hgm: "?z_hgm" (is "~(\\A x : ?z_hgq(x))")
+       by (unfold z_Hgm_z_Hgk, fact z_Hgk)
+       have z_Hgr: "(\\E x:(~((x \\in (?z_hfp[1]))=>(x \\in a_CONSTANTunde_Sunde_a))))" (is "\\E x : ?z_hgt(x)")
+       by (rule zenon_notallex_0 [of "?z_hgq", OF z_Hgm])
+       have z_Hgu: "?z_hgt((CHOOSE x:(~((x \\in (?z_hfp[1]))=>(x \\in a_CONSTANTunde_Sunde_a)))))" (is "~(?z_hgw=>?z_hgx)")
+       by (rule zenon_ex_choose_0 [of "?z_hgt", OF z_Hgr])
+       have z_Hgw: "?z_hgw"
+       by (rule zenon_notimply_0 [OF z_Hgu])
+       have z_Hgy: "(~?z_hgx)"
+       by (rule zenon_notimply_1 [OF z_Hgu])
+       have z_Hgz: "((?z_hfp[1])=?z_hdx)" (is "?z_hgg=_")
+       by auto
+       have z_Hha: "((CHOOSE x:(~((x \\in ?z_hgg)=>(x \\in a_CONSTANTunde_Sunde_a)))) \\in ?z_hdx)" (is "?z_hha")
+       by (rule subst [where P="(\<lambda>zenon_Vee. ((CHOOSE x:(~((x \\in (?z_hfp[1]))=>(x \\in a_CONSTANTunde_Sunde_a)))) \\in zenon_Vee))", OF z_Hgz z_Hgw])
+       have z_Hhe: "?z_hcx((CHOOSE x:(~((x \\in ?z_hgg)=>(x \\in a_CONSTANTunde_Sunde_a)))))" (is "?z_hhf=>_")
+       by (rule zenon_all_0 [of "?z_hcx" "(CHOOSE x:(~((x \\in ?z_hgg)=>(x \\in a_CONSTANTunde_Sunde_a))))", OF z_Hcu])
+       show FALSE
+       proof (rule zenon_imply [OF z_Hhe])
+        assume z_Hhg:"(~?z_hhf)"
+        have z_Hhh: "?z_hek((CHOOSE x:(~((x \\in ?z_hgg)=>(x \\in a_CONSTANTunde_Sunde_a)))))"
+        by (rule zenon_all_0 [of "?z_hek" "(CHOOSE x:(~((x \\in ?z_hgg)=>(x \\in a_CONSTANTunde_Sunde_a))))", OF z_Heh])
+        show FALSE
+        proof (rule zenon_imply [OF z_Hhh])
+         assume z_Hhi:"(~?z_hha)"
+         show FALSE
+         by (rule notE [OF z_Hhi z_Hha])
+        next
+         assume z_Hhf:"?z_hhf"
+         show FALSE
+         by (rule notE [OF z_Hhg z_Hhf])
+        qed
+       next
+        assume z_Hgx:"?z_hgx"
+        show FALSE
+        by (rule notE [OF z_Hgy z_Hgx])
+       qed
+      qed
+      have z_Hhj: "((?z_hfp[?z_hbi]) \\in SUBSET(a_CONSTANTunde_Sunde_a))" (is "?z_hhj")
+      proof (rule zenon_nnpp)
+       assume z_Hhl: "(~?z_hhj)"
+       have z_Hhm: "(~((?z_hfp[?z_hbi]) \\subseteq a_CONSTANTunde_Sunde_a))" (is "~?z_hhn")
+       by (rule zenon_notin_SUBSET_0 [of "(?z_hfp[?z_hbi])" "a_CONSTANTunde_Sunde_a", OF z_Hhl])
+       have z_Hho_z_Hhm: "(~bAll((?z_hfp[?z_hbi]), (\<lambda>x. (x \\in a_CONSTANTunde_Sunde_a)))) == (~?z_hhn)" (is "?z_hho == ?z_hhm")
+       by (unfold subset_def)
+       have z_Hho: "?z_hho" (is "~?z_hhp")
+       by (unfold z_Hho_z_Hhm, fact z_Hhm)
+       have z_Hhq: "((?z_hfp[?z_hbi])=?z_hcj)" (is "?z_hhk=_")
+       by auto
+       have z_Hhr: "(~?z_hcr)"
+       by (rule subst [where P="(\<lambda>zenon_Vid. (~bAll(zenon_Vid, (\<lambda>x. (x \\in a_CONSTANTunde_Sunde_a)))))", OF z_Hhq z_Hho])
+       show FALSE
+       by (rule notE [OF z_Hhr z_Hcr])
+      qed
+      show FALSE using z_Hfs z_Hfw z_Hfy z_Hgf z_Hhj inProductI[where s="<<SUBSET(a_CONSTANTunde_Sunde_a), SUBSET(a_CONSTANTunde_Sunde_a)>>"] by auto
+     next
+      assume z_Hhw:"(~(((<<?z_hdx, ?z_hcj>>[1]) \\subseteq (<<?z_hdx, ?z_hcj>>[2]))&((<<?z_hdx, ?z_hcj>>[1])~=(<<?z_hdx, ?z_hcj>>[2]))))" (is "~(?z_hhy&?z_hhz)")
+      show FALSE
+      proof (rule zenon_notand [OF z_Hhw])
+       assume z_Hia:"(~?z_hhy)"
+       have z_Hgz: "((<<?z_hdx, ?z_hcj>>[1])=?z_hdx)" (is "?z_hgg=_")
+       by auto
+       have z_Hib: "(~(?z_hdx \\subseteq (<<?z_hdx, ?z_hcj>>[2])))" (is "~?z_hic")
+       by (rule subst [where P="(\<lambda>zenon_Vdc. (~(zenon_Vdc \\subseteq (<<?z_hdx, ?z_hcj>>[2]))))", OF z_Hgz z_Hia])
+       have z_Hhq: "((<<?z_hdx, ?z_hcj>>[2])=?z_hcj)" (is "?z_hhk=_")
+       by auto
+       have z_Hih: "(~?z_hee)"
+       by (rule subst [where P="(\<lambda>zenon_Vad. (~(?z_hdx \\subseteq zenon_Vad)))", OF z_Hhq z_Hib])
+       show FALSE
+       by (rule notE [OF z_Hih z_Hee])
+      next
+       assume z_Him:"(~?z_hhz)" (is "~~?z_hin")
+       have z_Hin: "?z_hin" (is "?z_hgg=?z_hhk")
+       by (rule zenon_notnot_0 [OF z_Him])
+       have z_Hgz: "(?z_hgg=?z_hdx)"
+       by auto
+       have z_Hio: "(?z_hdx=?z_hhk)"
+       by (rule subst [where P="(\<lambda>zenon_Vbc. (zenon_Vbc=?z_hhk))", OF z_Hgz z_Hin])
+       have z_Hhq: "(?z_hhk=?z_hcj)"
+       by auto
+       have z_His: "(?z_hdx=?z_hcj)"
+       by (rule subst [where P="(\<lambda>zenon_Vcc. (?z_hdx=zenon_Vcc))", OF z_Hhq z_Hio])
+       show FALSE
+       by (rule notE [OF z_Hel z_His])
+      qed
+     qed
+    qed
+   next
+    assume z_Hdz:"?z_hdz"
+    show FALSE
+    by (rule notE [OF z_Hea z_Hdz])
+   qed
+  next
+   assume z_Hco:"?z_hco"
+   show FALSE
+   by (rule notE [OF z_Hcp z_Hco])
+  qed
+ qed
+qed
+(* END-PROOF *)

@@ -53,6 +53,7 @@ import {
   type Proof,
   type Usable,
 } from "./obligation-proof";
+import { getScopeTime } from "./obligation-temporal";
 
 export type ModuleUnit = ModuleUnitCore & { location?: Locus };
 
@@ -242,7 +243,15 @@ const getUnitHyps = (unit: ModuleUnit): Hyp[] => {
       ];
     case "Axiom":
       return unit.name === undefined
-        ? [{ kind: "Fact", expression: unit.expression, visibility: "Hidden", location }]
+        ? [
+            {
+              kind: "Fact",
+              expression: unit.expression,
+              visibility: "Hidden",
+              time: "Always",
+              location,
+            },
+          ]
         : getNamedFact(unit.name, unit.expression, location);
     case "Theorem": {
       const sequent = substituteSequent(shift(-unit.axiomCount), {
@@ -251,7 +260,7 @@ const getUnitHyps = (unit: ModuleUnit): Hyp[] => {
       });
       const body = at(exprifySequent(sequent), unit);
       return unit.name === undefined
-        ? [{ kind: "Fact", expression: body, visibility: "Hidden", location }]
+        ? [{ kind: "Fact", expression: body, visibility: "Hidden", time: "Always", location }]
         : getNamedFact(unit.name, body, location);
     }
     case "Mutate":
@@ -260,6 +269,7 @@ const getUnitHyps = (unit: ModuleUnit): Hyp[] => {
             kind: "Fact",
             expression: shiftExpr(index, fact),
             visibility: "Visible",
+            time: "Always",
             location,
           }))
         : [];
@@ -285,7 +295,13 @@ const getNamedFact = (name: string, expression: Expr, location: Locus | undefine
     isLocal: false,
     location,
   },
-  { kind: "Fact", expression: { kind: "Ix", index: 1, location }, visibility: "Hidden", location },
+  {
+    kind: "Fact",
+    expression: { kind: "Ix", index: 1, location },
+    visibility: "Hidden",
+    time: "Always",
+    location,
+  },
 ];
 
 // Module.Flatten.exports: what an extending module sees, with local definitions inlined like
@@ -681,7 +697,7 @@ const localizeAxioms = (units: ModuleUnit[]) => {
       body.push({
         kind: "Definition",
         definition: { kind: "Operator", name: unit.name, body: unit.expression, location },
-        whereDefined: "Proof",
+        whereDefined: { kind: "Proof", time: "Always" },
         visibility: "Visible",
         isLocal: false,
         location,
@@ -694,6 +710,7 @@ const localizeAxioms = (units: ModuleUnit[]) => {
           ? shiftExpr(1, unit.expression)
           : at({ kind: "Ix", index: 2 }, unit),
       visibility: "Visible",
+      time: "Always",
       location,
     };
     let distance = 0;
@@ -808,7 +825,7 @@ const bindTheoremName = (
               body: at(exprifySequent(sequent), { location }),
               location,
             },
-            whereDefined: "Proof",
+            whereDefined: { kind: "Proof", time: "Always" },
             visibility: "Visible",
             isLocal: false,
             location,
@@ -950,13 +967,20 @@ export const normalize = (
         pipeline.latestModules = new Map(modules);
         const sequent = pipeline.anonymizer.sequent(current, unit.sequent);
         const binding = bindTheoremName(name, sequent, unit.location);
-        const proofScope = adjoinAll(adjoinAll(current, binding.hyps), binding.sequent.context);
+        const proofScope = adjoinAll(
+          adjoinAll(
+            current,
+            binding.hyps.map((hyp) => ({ ...hyp, isConstnessUnset: true })),
+          ),
+          binding.sequent.context,
+        );
         const anonymized = pipeline.anonymizer.proof(proofScope, proof);
         const simplified = module.isImportant
           ? pipeline.generator.simplify(
               getScopeHyps(proofScope),
               binding.sequent.active,
               anonymized,
+              getScopeTime(binding.sequent.context, "Always"),
             )
           : anonymized;
         emit({ ...unit, name, sequent, proof: simplified });
@@ -999,9 +1023,11 @@ export const generate = (
       case "Theorem": {
         const binding = bindTheoremName(unit.name, unit.sequent, unit.location);
         const named = [...current, ...binding.hyps];
+        const context = [...named, ...binding.sequent.context];
         const proof = pipeline.generator.generate(
-          { context: [...named, ...binding.sequent.context], active: binding.sequent.active },
+          { context, active: binding.sequent.active },
           unit.proof,
+          getScopeTime(context, "Always"),
         );
         obligations.push(...pipeline.generator.collect(proof));
         const theorem = getProofSummary(proof);
@@ -1013,7 +1039,13 @@ export const generate = (
             : { kind: "Ix", index: 1, location: unit.location };
         current = [
           ...named,
-          { kind: "Fact", expression: fact, visibility: "Hidden", location: unit.location },
+          {
+            kind: "Fact",
+            expression: fact,
+            visibility: "Hidden",
+            time: "Always",
+            location: unit.location,
+          },
         ];
         continue;
       }

@@ -1,0 +1,13 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Hc:"((f[''a''])=x)" (is "?z_he=_")
+ using v by blast
+ have z_Hb:"(DOMAIN(f)={''a''})" (is "?z_hi=?z_hj")
+ using d by blast
+ have z_Ha:"isAFcn(f)" (is "?z_ha")
+ using f by blast
+ assume z_Hd:"((''a'' :> (x))~=f)" (is "?z_hk~=_")
+ sorry
+qed
+(* END-PROOF *)

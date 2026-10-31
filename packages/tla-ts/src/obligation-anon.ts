@@ -37,6 +37,7 @@ import {
   type WhereDefined,
 } from "./obligation-expression";
 import { resolveSubexpression } from "./obligation-deref";
+import { getTime } from "./obligation-temporal";
 import {
   getStepName,
   getUnique,
@@ -52,6 +53,7 @@ const DUMMY_FACT: Hyp = {
   kind: "Fact",
   expression: { kind: "At", isExcept: false },
   visibility: "Visible",
+  time: "Always",
 };
 
 const ANON_SELECTOR_FAILURES = {
@@ -331,6 +333,7 @@ export const createAnonymizer = (
         whereDefined: "User",
         visibility: "Visible",
         isLocal: true,
+        isConstnessUnset: true,
       });
       mapped.push(result);
     }
@@ -346,8 +349,10 @@ export const createAnonymizer = (
           return item;
         case "Defn":
           return { ...item, definition: defn(context, item.definition) };
-        case "Fact":
-          return { ...item, expression: expr(context, item.expression) };
+        case "Fact": {
+          const expression = expr(context, item.expression);
+          return { ...item, expression, time: getTime(context.scope, expression) };
+        }
       }
     })();
     return [adjoinContext(context, mapped), mapped];
@@ -367,9 +372,10 @@ export const createAnonymizer = (
     adjoinContext(context, {
       kind: "Defn",
       definition: { kind: "Operator", name: getStepName(step), body, location: from.location },
-      whereDefined: "Proof",
+      whereDefined: { kind: "Proof", time: "Always" },
       visibility: "Visible",
       isLocal: true,
+      isConstnessUnset: true,
       location: from.location,
     });
 

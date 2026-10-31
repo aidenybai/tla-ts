@@ -79,10 +79,69 @@ export class TlapmBugError extends TlaProofError {
   }
 }
 
+// A backend can't take an obligation, which tlapm reports as not tried.
+export class TlaProverError extends TlaError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = "TlaProverError";
+  }
+}
+
+// Zenon gives up on a .znn file the way the OCaml Zenon raises an exception and prints no proof.
+export class TlaZenonError extends TlaError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = "TlaZenonError";
+  }
+}
+
+// The exceptions Isabelle raises: ERROR for a rejected theory or a failed proof, TERM, TYPE and THM
+// for an ill-formed term, type or theorem, and Interrupt when the time limit runs out.
+export type IsabelleException = "ERROR" | "TERM" | "TYPE" | "THM" | "Interrupt";
+
+// Isabelle's tactics raise and handle these as control flow, often millions of times per proof, and
+// decideIsabelle answers "unknown" for any that escape. So unlike an Error, it skips the stack trace.
+export class TlaIsabelleError {
+  readonly name = "TlaIsabelleError";
+  readonly exception: IsabelleException;
+  readonly message: string;
+
+  constructor(exception: IsabelleException, message: string) {
+    this.exception = exception;
+    this.message = message;
+  }
+}
+
 export class TlaUnsupportedError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
     this.name = "TlaUnsupportedError";
+  }
+}
+
+// The SMT solver met input outside the SMT-LIB subset that tlapm emits, or a numeral too large for
+// its exact arithmetic. The solver answers unknown.
+export class SmtUnsupportedError extends TlaError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = "SmtUnsupportedError";
+  }
+}
+
+// The SMT solver ran past its time limit, or its signal aborted, in the middle of a rewrite. The
+// solver answers unknown.
+export class SmtCanceledError extends TlaError {
+  constructor() {
+    super("the SMT solver was canceled");
+    this.name = "SmtCanceledError";
+  }
+}
+
+// The SMT-LIB input is malformed: a syntax error, an undeclared symbol, or an ill-sorted application.
+export class SmtParseError extends TlaError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = "SmtParseError";
   }
 }
 

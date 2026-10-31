@@ -1,0 +1,5 @@
+$hyp "refl" (A. ((x) (R x x)))
+$hyp "ts" (A. ((x) (A. ((y) (A. ((z) (=> (/\ (R x y) (R x z)) (R y z))))))))
+$hyp "h1" (R a b)
+$hyp "h2" (R b c)
+$goal (R a c)

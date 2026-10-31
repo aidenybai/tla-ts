@@ -1,0 +1,1 @@
+$goal (TLA.in c (TLA.addElt b (TLA.addElt c s)))

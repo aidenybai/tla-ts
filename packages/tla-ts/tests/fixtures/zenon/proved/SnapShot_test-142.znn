@@ -1,0 +1,31 @@
+;; obligation #142
+$hyp "v'51" (= a_VARIABLEunde_resultunde_a
+(TLA.Fcn a_CONSTANTunde_Procunde_a ((a_CONSTANTunde_punde_a) TLA.emptyset)))
+$hyp "v'52" (= a_VARIABLEunde_A2unde_a
+(TLA.Fcn arith.N ((a_CONSTANTunde_iunde_a) TLA.emptyset)))
+$hyp "v'53" (= a_VARIABLEunde_A3unde_a
+(TLA.Fcn arith.N ((a_CONSTANTunde_iunde_a) TLA.emptyset)))
+$hyp "v'54" (= a_VARIABLEunde_myValsunde_a
+(TLA.Fcn a_CONSTANTunde_Procunde_a ((a_CONSTANTunde_selfunde_a) TLA.emptyset)))
+$hyp "v'55" (= a_VARIABLEunde_knownunde_a
+(TLA.Fcn a_CONSTANTunde_Procunde_a ((a_CONSTANTunde_selfunde_a) TLA.emptyset)))
+$hyp "v'56" (= a_VARIABLEunde_notKnownunde_a
+(TLA.Fcn a_CONSTANTunde_Procunde_a ((a_CONSTANTunde_selfunde_a) TLA.emptyset)))
+$hyp "v'57" (= a_VARIABLEunde_lnbpartunde_a
+(TLA.Fcn a_CONSTANTunde_Procunde_a ((a_CONSTANTunde_selfunde_a) 0)))
+$hyp "v'58" (= a_VARIABLEunde_nbpartunde_a
+(TLA.Fcn a_CONSTANTunde_Procunde_a ((a_CONSTANTunde_selfunde_a) 0)))
+$hyp "v'59" (= a_VARIABLEunde_nextoutunde_a
+(TLA.Fcn a_CONSTANTunde_Procunde_a ((a_CONSTANTunde_selfunde_a) TLA.emptyset)))
+$hyp "v'60" (= a_VARIABLEunde_outunde_a
+(TLA.Fcn a_CONSTANTunde_Procunde_a ((a_CONSTANTunde_selfunde_a) TLA.emptyset)))
+$hyp "v'61" (= a_VARIABLEunde_pcunde_a
+(TLA.Fcn a_CONSTANTunde_Procunde_a ((a_CONSTANTunde_selfunde_a) "a")))
+$hyp "a_CONSTANTunde_punde_a_in" (TLA.in a_CONSTANTunde_punde_a a_CONSTANTunde_Procunde_a)
+$hyp "v'81" (TLA.bAll arith.N ((a_CONSTANTunde_iunde_a) (TLA.in (a_CONSTANTunde_Cardinalityunde_a (TLA.fapply a_VARIABLEunde_A2unde_a a_CONSTANTunde_iunde_a))
+(TLA.set 0 (arith.add a_CONSTANTunde_iunde_a
+(TLA.fapply TLA.Succ 0))))))
+$hyp "v'82" (= (a_CONSTANTunde_Cardinalityunde_a TLA.emptyset)
+0)
+$goal (= (a_CONSTANTunde_Cardinalityunde_a (TLA.UNION (TLA.setOfAll arith.N ((a_CONSTANTunde_iunde_a) (TLA.fapply a_VARIABLEunde_A2unde_a a_CONSTANTunde_iunde_a)))))
+0)

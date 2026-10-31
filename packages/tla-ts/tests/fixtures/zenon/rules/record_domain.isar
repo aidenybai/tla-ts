@@ -1,0 +1,12 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ assume z_Ha:"(DOMAIN((''a'' :> (x) @@ ''b'' :> (y)))~={''a'', ''b''})" (is "?z_hb~=?z_hh")
+ have z_Hi: "(?z_hb=?z_hh)"
+ by auto
+ have z_Hj: "(?z_hh~=?z_hh)"
+ by (rule subst [where P="(\<lambda>zenon_Vf. (zenon_Vf~=?z_hh))", OF z_Hi z_Ha])
+ show FALSE
+ by (rule zenon_noteq [OF z_Hj])
+qed
+(* END-PROOF *)

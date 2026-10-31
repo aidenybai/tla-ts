@@ -1,0 +1,184 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ assume z_Hk:"(~((((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a]) \\in {''V0'', ''V1''})&(((a_CONSTANTunde_Nunde_a +  -.((2 * a_CONSTANTunde_Tunde_a))) <= a_CONSTANTunde_Cardinalityunde_a((a_VARIABLEunde_rcvdunde_hash_primea[a_CONSTANTunde_iunde_a])))&((a_CONSTANTunde_Cardinalityunde_a((a_VARIABLEunde_rcvdunde_hash_primea[a_CONSTANTunde_iunde_a])) < (a_CONSTANTunde_Nunde_a +  -.(a_CONSTANTunde_Tunde_a)))&((a_VARIABLEunde_pcunde_hash_primea=except(a_VARIABLEunde_pcunde_a, a_CONSTANTunde_iunde_a, ''SE''))&((a_VARIABLEunde_sentunde_hash_primea=(a_VARIABLEunde_sentunde_a \\cup {<<a_CONSTANTunde_iunde_a, ''ECHO''>>}))&((a_VARIABLEunde_Corrunde_hash_primea=a_VARIABLEunde_Corrunde_a)&(a_VARIABLEunde_Faultyunde_hash_primea=a_VARIABLEunde_Faultyunde_a)))))))~=((~((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a]) \\in {''V0'', ''V1''}))|((~((a_CONSTANTunde_Nunde_a +  -.((2 * a_CONSTANTunde_Tunde_a))) <= a_CONSTANTunde_Cardinalityunde_a((a_VARIABLEunde_rcvdunde_hash_primea[a_CONSTANTunde_iunde_a]))))|((~(a_CONSTANTunde_Cardinalityunde_a((a_VARIABLEunde_rcvdunde_hash_primea[a_CONSTANTunde_iunde_a])) < (a_CONSTANTunde_Nunde_a +  -.(a_CONSTANTunde_Tunde_a))))|((a_VARIABLEunde_pcunde_hash_primea~=except(a_VARIABLEunde_pcunde_a, a_CONSTANTunde_iunde_a, ''SE''))|((a_VARIABLEunde_sentunde_hash_primea~=(a_VARIABLEunde_sentunde_a \\cup {<<a_CONSTANTunde_iunde_a, ''ECHO''>>}))|(~((a_VARIABLEunde_Corrunde_hash_primea=a_VARIABLEunde_Corrunde_a)&(a_VARIABLEunde_Faultyunde_hash_primea=a_VARIABLEunde_Faultyunde_a))))))))))" (is "~~?z_hco")
+ have z_Hco: "?z_hco" (is "?z_hm=?z_hcd")
+ by (rule zenon_notnot_0 [OF z_Hk])
+ show FALSE
+ proof (rule zenon_boolcase_and [of "(\<lambda>zenon_Vt. (zenon_Vt=?z_hcd))" "((a_VARIABLEunde_pcunde_a[a_CONSTANTunde_iunde_a]) \\in {''V0'', ''V1''})" "(((a_CONSTANTunde_Nunde_a +  -.((2 * a_CONSTANTunde_Tunde_a))) <= a_CONSTANTunde_Cardinalityunde_a((a_VARIABLEunde_rcvdunde_hash_primea[a_CONSTANTunde_iunde_a])))&((a_CONSTANTunde_Cardinalityunde_a((a_VARIABLEunde_rcvdunde_hash_primea[a_CONSTANTunde_iunde_a])) < (a_CONSTANTunde_Nunde_a +  -.(a_CONSTANTunde_Tunde_a)))&((a_VARIABLEunde_pcunde_hash_primea=except(a_VARIABLEunde_pcunde_a, a_CONSTANTunde_iunde_a, ''SE''))&((a_VARIABLEunde_sentunde_hash_primea=(a_VARIABLEunde_sentunde_a \\cup {<<a_CONSTANTunde_iunde_a, ''ECHO''>>}))&((a_VARIABLEunde_Corrunde_hash_primea=a_VARIABLEunde_Corrunde_a)&(a_VARIABLEunde_Faultyunde_hash_primea=a_VARIABLEunde_Faultyunde_a))))))", OF z_Hco])
+  assume z_Hcs:"(?z_hm=TRUE)" (is "_=?z_hct")
+  assume z_Hcu:"(?z_hct=?z_hcd)"
+  have z_Hm: "?z_hm" (is "?z_hn&?z_hu")
+  by (rule zenon_eq_x_true_0 [of "?z_hm", OF z_Hcs])
+  have z_Hn: "?z_hn"
+  by (rule zenon_and_0 [OF z_Hm])
+  have z_Hu: "?z_hu" (is "?z_hv&?z_hbf")
+  by (rule zenon_and_1 [OF z_Hm])
+  have z_Hv: "?z_hv"
+  by (rule zenon_and_0 [OF z_Hu])
+  have z_Hbf: "?z_hbf" (is "?z_hbg&?z_hbj")
+  by (rule zenon_and_1 [OF z_Hu])
+  have z_Hbg: "?z_hbg"
+  by (rule zenon_and_0 [OF z_Hbf])
+  have z_Hbj: "?z_hbj" (is "?z_hbk&?z_hbo")
+  by (rule zenon_and_1 [OF z_Hbf])
+  have z_Hbk: "?z_hbk" (is "_=?z_hbm")
+  by (rule zenon_and_0 [OF z_Hbj])
+  have z_Hbo: "?z_hbo" (is "?z_hbp&?z_hbw")
+  by (rule zenon_and_1 [OF z_Hbj])
+  have z_Hbp: "?z_hbp" (is "_=?z_hbr")
+  by (rule zenon_and_0 [OF z_Hbo])
+  have z_Hbw: "?z_hbw" (is "?z_hbx&?z_hca")
+  by (rule zenon_and_1 [OF z_Hbo])
+  have z_Hbx: "?z_hbx"
+  by (rule zenon_and_0 [OF z_Hbw])
+  have z_Hca: "?z_hca"
+  by (rule zenon_and_1 [OF z_Hbw])
+  have z_Hcd: "?z_hcd" (is "?z_hce|?z_hcf")
+  by (rule zenon_eq_true_x_0 [of "?z_hcd", OF z_Hcu])
+  show FALSE
+  proof (rule zenon_or [OF z_Hcd])
+   assume z_Hce:"?z_hce"
+   show FALSE
+   by (rule notE [OF z_Hce z_Hn])
+  next
+   assume z_Hcf:"?z_hcf" (is "?z_hcg|?z_hch")
+   show FALSE
+   proof (rule zenon_or [OF z_Hcf])
+    assume z_Hcg:"?z_hcg"
+    show FALSE
+    by (rule notE [OF z_Hcg z_Hv])
+   next
+    assume z_Hch:"?z_hch" (is "?z_hci|?z_hcj")
+    show FALSE
+    proof (rule zenon_or [OF z_Hch])
+     assume z_Hci:"?z_hci"
+     show FALSE
+     by (rule notE [OF z_Hci z_Hbg])
+    next
+     assume z_Hcj:"?z_hcj" (is "?z_hck|?z_hcl")
+     show FALSE
+     proof (rule zenon_or [OF z_Hcj])
+      assume z_Hck:"?z_hck"
+      show FALSE
+      by (rule notE [OF z_Hck z_Hbk])
+     next
+      assume z_Hcl:"?z_hcl" (is "?z_hcm|?z_hcn")
+      show FALSE
+      proof (rule zenon_or [OF z_Hcl])
+       assume z_Hcm:"?z_hcm"
+       show FALSE
+       by (rule notE [OF z_Hcm z_Hbp])
+      next
+       assume z_Hcn:"?z_hcn"
+       show FALSE
+       proof (rule zenon_notand [OF z_Hcn])
+        assume z_Hcv:"(a_VARIABLEunde_Corrunde_hash_primea~=a_VARIABLEunde_Corrunde_a)"
+        show FALSE
+        by (rule notE [OF z_Hcv z_Hbx])
+       next
+        assume z_Hcw:"(a_VARIABLEunde_Faultyunde_hash_primea~=a_VARIABLEunde_Faultyunde_a)"
+        show FALSE
+        by (rule notE [OF z_Hcw z_Hca])
+       qed
+      qed
+     qed
+    qed
+   qed
+  qed
+ next
+  assume z_Hcx:"(?z_hm=FALSE)" (is "_=?z_hcy")
+  assume z_Hcz:"(?z_hcy=?z_hcd)"
+  have z_Hda: "(~?z_hm)" (is "~(?z_hn&?z_hu)")
+  by (rule zenon_eq_x_false_0 [of "?z_hm", OF z_Hcx])
+  have z_Hdb: "(~?z_hcd)" (is "~(?z_hce|?z_hcf)")
+  by (rule zenon_eq_false_x_0 [of "?z_hcd", OF z_Hcz])
+  have z_Hdc: "(~?z_hce)"
+  by (rule zenon_notor_0 [OF z_Hdb])
+  have z_Hdd: "(~?z_hcf)" (is "~(?z_hcg|?z_hch)")
+  by (rule zenon_notor_1 [OF z_Hdb])
+  have z_Hde: "(~?z_hcg)" (is "~~?z_hv")
+  by (rule zenon_notor_0 [OF z_Hdd])
+  have z_Hdf: "(~?z_hch)" (is "~(?z_hci|?z_hcj)")
+  by (rule zenon_notor_1 [OF z_Hdd])
+  have z_Hdg: "(~?z_hci)" (is "~~?z_hbg")
+  by (rule zenon_notor_0 [OF z_Hdf])
+  have z_Hdh: "(~?z_hcj)" (is "~(?z_hck|?z_hcl)")
+  by (rule zenon_notor_1 [OF z_Hdf])
+  have z_Hdi: "(~?z_hck)" (is "~~?z_hbk")
+  by (rule zenon_notor_0 [OF z_Hdh])
+  have z_Hdj: "(~?z_hcl)" (is "~(?z_hcm|?z_hcn)")
+  by (rule zenon_notor_1 [OF z_Hdh])
+  have z_Hdk: "(~?z_hcm)" (is "~~?z_hbp")
+  by (rule zenon_notor_0 [OF z_Hdj])
+  have z_Hdl: "(~?z_hcn)" (is "~~?z_hbw")
+  by (rule zenon_notor_1 [OF z_Hdj])
+  have z_Hbw: "?z_hbw" (is "?z_hbx&?z_hca")
+  by (rule zenon_notnot_0 [OF z_Hdl])
+  have z_Hbx: "?z_hbx"
+  by (rule zenon_and_0 [OF z_Hbw])
+  have z_Hca: "?z_hca"
+  by (rule zenon_and_1 [OF z_Hbw])
+  have z_Hbp: "?z_hbp" (is "_=?z_hbr")
+  by (rule zenon_notnot_0 [OF z_Hdk])
+  have z_Hbk: "?z_hbk" (is "_=?z_hbm")
+  by (rule zenon_notnot_0 [OF z_Hdi])
+  have z_Hbg: "?z_hbg"
+  by (rule zenon_notnot_0 [OF z_Hdg])
+  have z_Hv: "?z_hv"
+  by (rule zenon_notnot_0 [OF z_Hde])
+  have z_Hn: "?z_hn"
+  by (rule zenon_notnot_0 [OF z_Hdc])
+  show FALSE
+  proof (rule zenon_notand [OF z_Hda])
+   assume z_Hce:"?z_hce"
+   show FALSE
+   by (rule notE [OF z_Hce z_Hn])
+  next
+   assume z_Hdm:"(~?z_hu)" (is "~(_&?z_hbf)")
+   show FALSE
+   proof (rule zenon_notand [OF z_Hdm])
+    assume z_Hcg:"?z_hcg"
+    show FALSE
+    by (rule notE [OF z_Hcg z_Hv])
+   next
+    assume z_Hdn:"(~?z_hbf)" (is "~(_&?z_hbj)")
+    show FALSE
+    proof (rule zenon_notand [OF z_Hdn])
+     assume z_Hci:"?z_hci"
+     show FALSE
+     by (rule notE [OF z_Hci z_Hbg])
+    next
+     assume z_Hdo:"(~?z_hbj)" (is "~(_&?z_hbo)")
+     show FALSE
+     proof (rule zenon_notand [OF z_Hdo])
+      assume z_Hck:"?z_hck"
+      show FALSE
+      by (rule notE [OF z_Hck z_Hbk])
+     next
+      assume z_Hdp:"(~?z_hbo)"
+      show FALSE
+      proof (rule zenon_notand [OF z_Hdp])
+       assume z_Hcm:"?z_hcm"
+       show FALSE
+       by (rule notE [OF z_Hcm z_Hbp])
+      next
+       assume z_Hcn:"?z_hcn"
+       show FALSE
+       proof (rule zenon_notand [OF z_Hcn])
+        assume z_Hcv:"(a_VARIABLEunde_Corrunde_hash_primea~=a_VARIABLEunde_Corrunde_a)"
+        show FALSE
+        by (rule notE [OF z_Hcv z_Hbx])
+       next
+        assume z_Hcw:"(a_VARIABLEunde_Faultyunde_hash_primea~=a_VARIABLEunde_Faultyunde_a)"
+        show FALSE
+        by (rule notE [OF z_Hcw z_Hca])
+       qed
+      qed
+     qed
+    qed
+   qed
+  qed
+ qed
+qed
+(* END-PROOF *)

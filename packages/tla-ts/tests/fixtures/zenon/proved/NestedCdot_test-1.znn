@@ -1,0 +1,15 @@
+;; obligation #1
+$goal (= (E. ((a_CONSTANTunde_xhash_enabledhash_prime1unde_a) (/\ (/\ (= a_VARIABLEunde_xunde_a
+0) (= a_CONSTANTunde_xhash_enabledhash_prime1unde_a (TLA.fapply TLA.Succ 0)))
+(E. ((a_CONSTANTunde_xhash_enabledhash_prime2unde_a) (/\ (/\ (= a_CONSTANTunde_xhash_enabledhash_prime1unde_a
+(TLA.fapply TLA.Succ 0)) (= a_CONSTANTunde_xhash_enabledhash_prime2unde_a
+(TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0))))
+(/\ (= a_CONSTANTunde_xhash_enabledhash_prime2unde_a
+(TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0)))
+(= a_VARIABLEunde_xunde_hash_primea
+(TLA.fapply TLA.Succ (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0)))))))))))
+(/\ (E. ((a_CONSTANTunde_xhash_enabledhash_prime1unde_a) (/\ (/\ (= a_VARIABLEunde_xunde_a
+0) (= a_CONSTANTunde_xhash_enabledhash_prime1unde_a (TLA.fapply TLA.Succ 0)))
+(= a_CONSTANTunde_xhash_enabledhash_prime1unde_a (TLA.fapply TLA.Succ 0)))))
+(= a_VARIABLEunde_xunde_hash_primea
+(TLA.fapply TLA.Succ (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0))))))

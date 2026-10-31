@@ -29,6 +29,7 @@ import {
   type Sequent,
 } from "./obligation-expression";
 import type { ModuleUnit, Mule } from "./obligation-module";
+import { readNewMethod, readOldMethod } from "./obligation-pragma";
 import {
   expandChoose,
   expandFcn,
@@ -231,6 +232,22 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     return locus;
   };
 
+  const getMethod = (range: SourceRange | undefined) =>
+    range && readOldMethod(lines, { line: range.end.line - 1, column: range.end.column });
+
+  // A method pragma belongs to the node it follows, whose locus then takes it in.
+  const withMethod = (range: SourceRange) => {
+    const method = getMethod(range);
+    const location = getRangeLocus(range);
+    return method ? { location: withPragma(location), method } : { location };
+  };
+
+  // Module.Parser's with_meth, which wraps the expression a method follows.
+  const withExpressionMethod = (expression: Expr, range: SourceRange | undefined): Expr => {
+    const method = getMethod(range);
+    return method ? at({ kind: "With", expression, method }, expression) : expression;
+  };
+
   const getNameLocus = (name: string, location: SourceLocation): Locus => ({
     file,
     startLine: location.line,
@@ -376,8 +393,14 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         const [integer, fraction] = expression.text.split(".");
         return at({ kind: "Num", integer, fraction }, { location });
       }
-      case "String":
-        return at({ kind: "String", value: expression.value }, { location });
+      case "String": {
+        // tlapm's lexer keeps a string's escapes as written. The location ends at the closing
+        // quote.
+        const written = /"((?:[^"\\]|\\.)*)"$/.exec(
+          (lines[location.endLine - 1] ?? "").slice(0, location.endColumn - 1),
+        );
+        return at({ kind: "String", value: written?.[1] ?? expression.value }, { location });
+      }
       case "Identifier":
         return getName(expression.name, [], location);
       case "Apply": {
@@ -766,24 +789,26 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         location,
       };
     }
-    if (definition.params.length === 0) return { kind: "Operator", name, body, location };
-    return {
-      kind: "Operator",
-      name,
-      body: at(
-        {
-          kind: "Lambda",
-          params: definition.params.map((param) => ({
-            name: getCanonicalName(param.name),
-            shape: param.arity,
-            ...(param.location && { location: getNameLocus(param.name, param.location) }),
-          })),
-          body,
-        },
-        { location },
-      ),
-      location,
-    };
+    const operatorBody =
+      definition.params.length === 0
+        ? body
+        : at(
+            {
+              kind: "Lambda",
+              params: definition.params.map((param) => ({
+                name: getCanonicalName(param.name),
+                shape: param.arity,
+                ...(param.location && { location: getNameLocus(param.name, param.location) }),
+              })),
+              body,
+            },
+            { location },
+          );
+    const end = definition.location.range?.end;
+    const methods = end && readNewMethod(lines, { line: end.line - 1, column: end.column });
+    return methods
+      ? { kind: "Bpragma", name, body: operatorBody, methods, location }
+      : { kind: "Operator", name, body: operatorBody, location };
   };
 
   const convertNewSymbol = (symbol: NewSymbol): Hyp => {
@@ -800,6 +825,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     };
   };
 
+  // Anonymization judges the time of each assumption once it resolves the names in it.
   const convertSequent = (statement: Expression | AssumeProve): Sequent => {
     if (statement.kind !== "AssumeProve")
       return { context: [], active: convertExpression(statement, false) };
@@ -812,11 +838,18 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
             kind: "Fact",
             expression: at({ kind: "Sequent", sequent: convertSequent(assumption) }, { location }),
             visibility: "Visible",
+            time: "Now",
             location,
           };
         }
         const expression = convertFactLabel(assumption);
-        return { kind: "Fact", expression, visibility: "Visible", location: expression.location };
+        return {
+          kind: "Fact",
+          expression,
+          visibility: "Visible",
+          time: "Now",
+          location: expression.location,
+        };
       }),
       active: convertExpression(statement.conclusion, false),
     };
@@ -878,7 +911,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     if (!proof) return { kind: "Omitted", omission: "Implicit", location: enclosing };
     switch (proof.kind) {
       case "Obvious":
-        return { kind: "Obvious", location: withPragma(getRangeLocus(proof.keyword)) };
+        return { kind: "Obvious", ...withMethod(proof.keyword) };
       case "Omitted":
         return {
           kind: "Omitted",
@@ -892,6 +925,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
           isOnly: proof.isOnly,
           location: getRangeLocus(proof.keyword),
           step: { kind: "Unnamed", level, id: 0 },
+          method: getMethod(proof.location.range),
         };
       case "Steps": {
         // A <*> first step takes the enclosing level only after PROOF, and the top level
@@ -935,6 +969,11 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
       return { ...make(proof), location: mergeLoci(head, proof.location), step: number };
     };
     const plain = (converted: Step): Step => ({ ...converted, location: head, step: number });
+    const withStepMethod = (converted: Step): Step => ({
+      ...converted,
+      ...withMethod(step.head),
+      step: number,
+    });
     switch (body.kind) {
       case "Use":
       case "Hide": {
@@ -944,7 +983,14 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         );
         const usable = convertUsable(body);
         return body.kind === "Use"
-          ? { kind: "Use", usable, isOnly: body.isOnly, location, step: number }
+          ? {
+              kind: "Use",
+              usable,
+              isOnly: body.isOnly,
+              location,
+              step: number,
+              method: getMethod(body.location.range),
+            }
           : { kind: "Hide", usable, location, step: number };
       }
       case "Instance":
@@ -955,15 +1001,18 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
           definitions: body.definitions.map((definition) => convertDefinition(definition)),
         });
       case "Have":
-        return plain({ kind: "Have", expression: convertExpression(body.expression, false) });
+        return withStepMethod({
+          kind: "Have",
+          expression: convertExpression(body.expression, false),
+        });
       case "Take":
-        return plain({
+        return withStepMethod({
           kind: "Take",
           bounds:
             body.names.length > 0 ? getUnbounded(body.names) : convertBounds(body.bounds, false),
         });
       case "Witness":
-        return plain({
+        return withStepMethod({
           kind: "Witness",
           expressions: body.expressions.map((expression) => convertExpression(expression, false)),
         });
@@ -1046,17 +1095,24 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
           return {
             kind: "Axiom",
             name: unit.assumption.name,
-            expression: convertExpression(unit.assumption.expression, false),
+            expression: withExpressionMethod(
+              convertExpression(unit.assumption.expression, false),
+              unit.assumption.location.range,
+            ),
             location: getLocus(unit.assumption.location),
           };
         case "Theorem": {
           const theorem = unit.theorem;
           const location = getLocus(theorem.location);
           const end = withPragma(location);
+          const sequent = convertSequent(theorem.statement);
           return {
             kind: "Theorem",
             name: theorem.name,
-            sequent: convertSequent(theorem.statement),
+            sequent: {
+              ...sequent,
+              active: withExpressionMethod(sequent.active, theorem.statement.location.range),
+            },
             axiomCount: 0,
             proof: convertProof(theorem.proof, 0, {
               ...end,
