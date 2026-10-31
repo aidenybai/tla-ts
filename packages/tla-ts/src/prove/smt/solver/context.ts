@@ -55,6 +55,7 @@ export const CHECK_MODEL_RESTART = 2;
 export const FAILURE_OK = 0;
 export const FAILURE_THEORY = 1;
 export const FAILURE_QUANTIFIERS = 2;
+const FAILURE_CANCELED = 3;
 
 // smt_params: the kernel runs model-based quantifier instantiation with relevancy level 2 and the
 // CS_ACTIVITY_DELAY_NEW case split queue. The model checker's auxiliary context runs neither, as Z3
@@ -140,6 +141,7 @@ export class Context extends Internalizer {
 
   private bcp() {
     while (this.qhead < this.assignedLiterals.length) {
+      if (this.checkCanceled()) return true;
       const literal = this.assignedLiterals[this.qhead];
       this.qhead++;
       const notLiteral = negate(literal);
@@ -210,7 +212,7 @@ export class Context extends Internalizer {
   }
 
   private propagateEqs() {
-    for (let index = 0; index < this.eqPropagationQueue.length; index++) {
+    for (let index = 0; index < this.eqPropagationQueue.length && !this.checkCanceled(); index++) {
       const entry = this.eqPropagationQueue[index];
       this.addEq(entry.lhs, entry.rhs, entry.justification);
       if (this.isInconsistent()) {
@@ -224,7 +226,7 @@ export class Context extends Internalizer {
 
   private propagateAtoms() {
     const queue = this.atomPropagationQueue;
-    for (let index = 0; index < queue.length; index++) {
+    for (let index = 0; index < queue.length && !this.checkCanceled(); index++) {
       const literal = queue[index];
       const boolVar = getVar(literal);
       const value = this.assignment[mkLiteral(boolVar)];
@@ -346,7 +348,7 @@ export class Context extends Internalizer {
       if (this.isInconsistent()) return false;
       if (!this.checkCanceled()) this.qmanager.propagate();
       if (this.isInconsistent()) return false;
-      if (this.checkCanceled()) {
+      if (this.isResourceLimitExceeded()) {
         this.qhead = qhead;
         return true;
       }
@@ -916,10 +918,13 @@ export class Context extends Internalizer {
       }
       const check = isTheory ? this.theory.finalCheckEh(level) : qmanager.finalCheckEh(true);
       if (isTheory) maxLevel = Math.max(maxLevel, NUM_ARITH_FINAL_CHECK_LEVELS);
-      if (isTheory && check === FC_GIVEUP) failure = FAILURE_THEORY;
+      // Z3 reads the cancel flag after each theory's final check, and a canceled check gives up.
+      const isCanceled = isTheory && this.checkCanceled();
+      if (isCanceled) failure = FAILURE_CANCELED;
+      else if (isTheory && check === FC_GIVEUP) failure = FAILURE_THEORY;
       this.finalCheckIndex = (this.finalCheckIndex + 1) % 2;
       if (check === FC_CONTINUE) return FC_CONTINUE;
-      if (check === FC_GIVEUP) result = FC_GIVEUP;
+      if (check === FC_GIVEUP || isCanceled) result = FC_GIVEUP;
       if (this.finalCheckIndex !== oldIndex) continue;
       if (level >= maxLevel || result === FC_DONE || this.canPropagate()) break;
       // A higher level reruns every check with the give-up state of the lower one cleared.
@@ -937,7 +942,7 @@ export class Context extends Internalizer {
       while (!this.propagate()) {
         if (!this.resolveConflict()) return L_FALSE;
         if (!this.isInconsistent()) {
-          if (this.checkCanceled()) return L_UNDEF;
+          if (this.isResourceLimitExceeded() || this.checkCanceled()) return L_UNDEF;
           if (
             this.numConflictsSinceRestart > this.restartThreshold &&
             this.scopeLevel - this.baseLevel > 2
@@ -946,6 +951,7 @@ export class Context extends Internalizer {
         }
         if (this.numConflictsSinceLemmaGc > LEMMA_GC_INITIAL) this.delInactiveLemmas();
       }
+      if (this.isResourceLimitExceeded() && !this.isInconsistent()) return L_UNDEF;
       if (this.checkCanceled()) return L_UNDEF;
       if (!this.decide()) {
         if (this.isInconsistent()) return L_FALSE;
@@ -953,7 +959,16 @@ export class Context extends Internalizer {
         if (status === FC_DONE) return L_TRUE;
         if (status === FC_GIVEUP) return L_UNDEF;
       }
+      if (this.isResourceLimitExceeded() && !this.isInconsistent()) return L_UNDEF;
     }
+  }
+
+  // resource_limits_exceeded: while searching, a failure stops the search, and the cancel flag is
+  // read twice.
+  private isResourceLimitExceeded() {
+    if (this.isSearching && (this.lastSearchFailure !== FAILURE_OK || this.checkCanceled()))
+      return true;
+    return this.checkCanceled();
   }
 
   // reset_model: the model generator still holds the proto model.
