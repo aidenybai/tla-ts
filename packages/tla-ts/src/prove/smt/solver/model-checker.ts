@@ -51,7 +51,9 @@ class AuxContext {
     this.polyQhead = 0;
   }
 
+  // assert_expr_core: outside the search, the scopes of the last search are popped first.
   assert(formula: number) {
+    this.context.popToBaseLevel();
     this.asserted.assertExpr(formula);
   }
 
