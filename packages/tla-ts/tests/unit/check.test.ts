@@ -712,6 +712,21 @@ ASSUME TLCFP(a) = -887695703
     );
   });
 
+  it("rebuilds a step under symmetry from the first action that takes it as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nCONSTANTS p1, p2\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nA1 == y' = 1 /\\ x' = x\nA2 == y' = Head(<<>>) /\\ x' = x\nSpec == Init /\\ [][A1 \\/ A2]_<<x, y>>\nProp == [][x' # x]_<<x, y>>\nSym == Permutations({p1, p2})\n====",
+      config: "CONSTANTS p1 = p1 p2 = p2\nSPECIFICATION Spec\nPROPERTY Prop\nSYMMETRY Sym",
+    });
+    expect(result.status).toBe("liveness-violation");
+    expect(result.violation?.trace.map((step) => [step.action, formatValue(step.state.y)])).toEqual(
+      [
+        [undefined, "0"],
+        ["A1", "1"],
+      ],
+    );
+  });
+
   it("warns about a permuted set with fewer than two elements", async () => {
     const warnings: CheckProgress[] = [];
     const result = await check({

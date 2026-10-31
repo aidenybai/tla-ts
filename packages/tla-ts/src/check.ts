@@ -1821,17 +1821,23 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   const getSpecInitialStates = () =>
     spec.init === undefined ? [] : getInitialStates(spec.init, environment, spec.scope);
-  // A trace keeps what the spec prints as TLC rebuilds it, so finding its states prints nothing.
-  const getTraceSuccessors = (state: Value[]) => {
-    const next = spec.next;
-    return next === undefined
-      ? []
-      : getOutput(() => getSuccessors(next, state, environment, spec.scope)).result;
-  };
+  // TLC's Tool#getState rebuilds a successor action by action, up to the first action that
+  // generates it. A trace keeps what the spec prints as TLC rebuilds it, so finding its states
+  // prints nothing.
+  const findTraceSuccessor = (state: Value[], isMatch: (successor: Successor) => boolean) =>
+    getOutput(() => {
+      for (const action of getSpecNextActions()) {
+        const successor = getSuccessors(action.expression, state, environment, action.scope).find(
+          isMatch,
+        );
+        if (successor) return { ...successor, action: successor.action ?? action.name };
+      }
+      return undefined;
+    }).result;
   const hasFingerprint = (state: Value[], index: number) =>
     isSameState(getFingerprintState(state), fingerprintStates[index]);
   const findSuccessorWithFingerprint = (state: Value[], index: number) =>
-    getTraceSuccessors(state).find((successor) => hasFingerprint(successor.state, index));
+    findTraceSuccessor(state, (successor) => hasFingerprint(successor.state, index));
   const getPathStates = (path: number[], nextFailure: string) => {
     const initial = getOutput(() =>
       isReducing || isImpure(environment)
@@ -1863,9 +1869,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         : path.map((position) => ({ state: states[position], action: actions[position] }));
     if (!last) return toTrace(steps, path);
     const action = isReducing
-      ? getTraceSuccessors(states[index]).find((successor) =>
-          isSameState(successor.state, last.state),
-        )?.action
+      ? findTraceSuccessor(states[index], (successor) => isSameState(successor.state, last.state))
+          ?.action
       : last.action;
     return toTrace([...steps, { state: last.state, action }], path, { known: 2 });
   };
