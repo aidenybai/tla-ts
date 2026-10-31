@@ -186,6 +186,17 @@ const TLC_REPORTS = [
       "The depth of the complete state graph search is 1.",
     ],
   ],
+  [
+    "IllegalInitialState",
+    255,
+    [
+      "Error: current state is not a legal state",
+      "While working on the initial state:",
+      "/\\ x = 1",
+      "/\\ y = null",
+      "",
+    ],
+  ],
 ] as const;
 
 describe("the CLI reports results like TLC", () => {
@@ -241,6 +252,7 @@ describe("the CLI takes several specs and globs", () => {
       "Checking FailedAssert.tla with FailedAssert.cfg",
       "Checking FailedInitialInvariant.tla with FailedInitialInvariant.cfg",
       "Checking FailedInvariant.tla with FailedInvariant.cfg",
+      "Checking IllegalInitialState.tla with IllegalInitialState.cfg",
       "Checking InitialInvariant.tla with InitialInvariant.cfg",
       "Checking Lasso.tla with Lasso.cfg",
       "Checking Lassos.tla with Lassos.cfg",

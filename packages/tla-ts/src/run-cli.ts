@@ -153,6 +153,7 @@ const printResult = (result: CheckResult) => {
         `Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n${frames ? `${frames}\n` : "    The error call stack is empty.\n"}`,
       );
     }
+    if (result.failure.isWithoutStatistics) return;
   } else if (result.violation) {
     const violation = result.violation;
     const name = violation.name;
