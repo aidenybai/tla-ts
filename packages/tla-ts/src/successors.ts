@@ -1,7 +1,6 @@
 import {
   getChildren,
   isLocallyResolved,
-  type Bound,
   type Definition,
   type Expression,
   type QuantifierExpression,
@@ -14,7 +13,7 @@ import {
   describeLocation,
   describeNode,
   describeRange,
-  bindArgument,
+  bindLazyArguments,
   bindDefinitions,
   bindOperatorArguments,
   bindValue,
@@ -22,7 +21,7 @@ import {
   evaluate,
   expectBoolean,
   forEachBinding,
-  getBoundsDomain,
+  getLazyFunction,
   getDefinition,
   getEnumeratedElements,
   getReevaluatedDefinitions,
@@ -38,10 +37,8 @@ import {
 import { mapChildren } from "./instances";
 import { isAssignedShortcut, LITERAL_KINDS, replayEnabled } from "./tlc-replay";
 import {
-  createTuple,
   formatValue,
   getStreamedElements,
-  isElementOf,
   isTlcEnumerable,
   valuesEqual,
   type Value,
@@ -497,36 +494,6 @@ const compileDynamicAssignment = (
   };
 };
 
-interface FunctionAction {
-  bounds: Bound[];
-  body: Expression;
-  scope: Scope | undefined;
-}
-
-const getFunctionAction = (
-  expression: Expression,
-  scope: Scope | undefined,
-  partial: State,
-  run: Run,
-): FunctionAction | undefined => {
-  if (expression.kind === "FunctionConstruction") {
-    return { bounds: expression.bounds, body: expression.body, scope };
-  }
-  if (expression.kind !== "Identifier") return undefined;
-  const binding = lookupScope(scope, expression.name);
-  if (binding?.kind === "Thunk") {
-    return getFunctionAction(binding.expression, binding.scope, partial, run);
-  }
-  const definition = binding ? undefined : getDefinition(expression.name, run.environment);
-  if (definition?.kind !== "Function") return undefined;
-  const self = evaluate(expression, getContext(run, undefined, partial));
-  return {
-    bounds: definition.bounds,
-    body: definition.body,
-    scope: bindValue(undefined, definition.name, self),
-  };
-};
-
 const compileFunctionAction = (
   expression: Expression & { kind: "FunctionApplication" },
   environment: Environment,
@@ -534,23 +501,15 @@ const compileFunctionAction = (
 ): Runner => {
   const guard = compileGuard(expression);
   return (run, scope, partial, action, isFixed, onComplete) => {
-    const lambda = getFunctionAction(expression.function, scope, partial, run);
-    if (!lambda) {
+    const context = getContext(run, scope, partial);
+    const lazy = getLazyFunction(expression.function, context);
+    if (!lazy) {
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
     }
-    const context = getContext(run, scope, partial);
-    const args = expression.args.map((arg) => evaluate(arg, context));
-    const argument = args.length === 1 ? args[0] : createTuple(args);
-    const domain = getBoundsDomain(lambda.bounds, getContext(run, lambda.scope, partial));
-    if (!isElementOf(argument, domain)) {
-      throw new TlaEvaluationError(
-        `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain at ${describeLocation(expression)}`,
-      );
-    }
-    getRunner(lambda.body, environment, isInit)(
+    getRunner(lazy.body, environment, isInit)(
       run,
-      bindArgument(lambda.bounds, lambda.scope, argument),
+      bindLazyArguments(lazy, expression, context),
       partial,
       action,
       isFixed,

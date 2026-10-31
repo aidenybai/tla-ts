@@ -57,6 +57,13 @@ describe("the call stack of a replayed failure matches TLC", () => {
     ).toEqual({ callStack: ["10.9-10.15", "8.12-8.31", "8.17-8.31"], exitCode: 75 });
   });
 
+  it("walks the body of a function that an action applies", async () => {
+    expect(await getFailure("Init == x = 0\nNext == [p \\in {1} |-> 0][1] /\\ x' = x")).toEqual({
+      callStack: ["9.9-9.38", "9.9-9.28", "9.24-9.24"],
+      exitCode: 75,
+    });
+  });
+
   it("keeps the conjuncts of a bulleted list that held", async () => {
     expect(
       await getFailure('Init == x = 0\nNext == /\\ Name[x + 1] # "z"\n        /\\ x\' = x + 1'),

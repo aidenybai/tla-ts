@@ -44,6 +44,7 @@ import {
   getFunctionClass,
   getSequenceElements,
   getValueHash,
+  isElementOf,
   isEnumerable,
   isFunctionValue,
   isOverriddenSet,
@@ -538,6 +539,53 @@ export const bindArgument = (bounds: Bound[], scope: Scope | undefined, argument
     (current, bound, index) => bindPattern(current, bound.pattern, components[index]),
     scope,
   );
+};
+
+// A function that TLC's getInitStates and getNextStates apply by walking its body, as they do a
+// FcnLambdaValue: one constructed, or defined as f[x \in S] == e.
+export interface LazyFunction {
+  bounds: Bound[];
+  body: Expression;
+  scope: Scope | undefined;
+}
+
+export const getLazyFunction = (
+  expression: Expression,
+  context: Context,
+): LazyFunction | undefined => {
+  if (expression.kind === "FunctionConstruction") {
+    return { bounds: expression.bounds, body: expression.body, scope: context.scope };
+  }
+  if (expression.kind !== "Identifier") return undefined;
+  const binding = lookupScope(context.scope, expression.name);
+  if (binding?.kind === "Thunk") {
+    return getLazyFunction(binding.expression, withScope(context, binding.scope));
+  }
+  const definition = binding ? undefined : getDefinition(expression.name, context.environment);
+  if (definition?.kind !== "Function") return undefined;
+  const self = evaluate(expression, withScope(context, undefined));
+  return {
+    bounds: definition.bounds,
+    body: definition.body,
+    scope: bindValue(undefined, definition.name, self),
+  };
+};
+
+// Tool.getFcnContext: the scope of a lazy function's body for the arguments of an application.
+export const bindLazyArguments = (
+  lazy: LazyFunction,
+  expression: Expression & { kind: "FunctionApplication" },
+  context: Context,
+) => {
+  const args = expression.args.map((arg) => evaluate(arg, context));
+  const argument = args.length === 1 ? args[0] : createTuple(args);
+  const domain = getBoundsDomain(lazy.bounds, withScope(context, lazy.scope));
+  if (!isElementOf(argument, domain)) {
+    throw new TlaEvaluationError(
+      `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain at ${describeLocation(expression)}`,
+    );
+  }
+  return bindArgument(lazy.bounds, lazy.scope, argument);
 };
 
 // TLC prints a function it can't enumerate as its parameters and the location of its body. It

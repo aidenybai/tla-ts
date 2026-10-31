@@ -2,10 +2,12 @@ import type { Expression, SourceLocation } from "./ast";
 import { TlaEvaluationError } from "./errors";
 import {
   bindDefinitions,
+  bindLazyArguments,
   bindOperatorArguments,
   evaluate,
   forEachBinding,
   freezeCallStack,
+  getLazyFunction,
   isConstantLevel,
   lookupScope,
   resolveApplyOperator,
@@ -455,6 +457,14 @@ const visitApplication = (
       }
       visit(replay, body, items, scope, partial);
       return;
+    }
+    case "FunctionApplication": {
+      const lazy = getLazyFunction(expression.function, context);
+      if (lazy) {
+        visit(replay, lazy.body, items, bindLazyArguments(lazy, expression, context), partial);
+        return;
+      }
+      break;
     }
     case "Unchanged":
       if (!replay.isInit) {
