@@ -68,6 +68,9 @@ export interface JunctionExpression {
   kind: "And" | "Or";
   operands: Expression[];
   isBulleted?: boolean;
+  // SANY parses an infix chain such as A /\ B /\ C as (A /\ B) /\ C, whose node of each prefix of
+  // two or more operands ends after the parentheses of its last operand.
+  prefixEnds?: SourceLocation[];
   location: SourceLocation;
 }
 

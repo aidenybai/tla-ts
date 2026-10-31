@@ -247,7 +247,7 @@ export const getConjunctError = (
       `A non-boolean expression (${getKindString(value)}) was used as a formula in a conjunction.\n${description}`,
     );
   }
-  const end = expression.operands[Math.max(index, 1)].location.range?.end ?? range.end;
+  const end = expression.prefixEnds?.[Math.max(index, 1) - 1] ?? range.end;
   return new TlaEvaluationError(
     `Attempted to evaluate an expression of form P /\\ Q when ${index === 0 ? "P" : "Q"} was\n${getKindString(value)}.\n${describeRange({ ...expression, location: { ...expression.location, range: { ...range, end } } })}`,
   );

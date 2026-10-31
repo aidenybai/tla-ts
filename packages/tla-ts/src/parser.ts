@@ -1120,10 +1120,15 @@ const parse = (source: string, mode: ParseMode): Module => {
       const left = state.left;
       if (token.text === "/\\" || token.text === "\\/") {
         const kind = token.text === "/\\" ? "And" : "Or";
+        const prefixEnds = [getRange(start).end];
         state.left =
           left.kind === kind && previous?.text === token.text
-            ? { ...left, operands: [...left.operands, right] }
-            : { kind, operands: [left, right], location };
+            ? {
+                ...left,
+                operands: [...left.operands, right],
+                prefixEnds: [...(left.prefixEnds ?? []), ...prefixEnds],
+              }
+            : { kind, operands: [left, right], prefixEnds, location };
       } else if (token.text === "\\X") {
         state.left =
           left.kind === "Product" && previous?.text === "\\X"

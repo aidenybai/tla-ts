@@ -63,6 +63,25 @@ describe("the call stack of a replayed failure matches TLC", () => {
     ).toEqual({ callStack: ["9.9-10.21", "9.12-9.28", "9.12-9.22"], exitCode: 75 });
   });
 
+  it("ends each prefix of an infix conjunction after the parentheses of its last operand", async () => {
+    expect(
+      await getFailure(
+        "Init == x = 0\nNext == (x < 3) /\\ (x' = x + 1) /\\ TRUE /\\ (x' # Name[3])",
+      ),
+    ).toEqual({
+      callStack: [
+        "9.9-9.57",
+        "9.9-9.39",
+        "9.9-9.31",
+        "9.10-9.14",
+        "9.21-9.30",
+        "9.45-9.56",
+        "9.50-9.56",
+      ],
+      exitCode: 75,
+    });
+  });
+
   it("checks an initial state inside the initial predicate", async () => {
     expect(
       await getFailure(

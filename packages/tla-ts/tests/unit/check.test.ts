@@ -1185,6 +1185,10 @@ describe("evaluation errors match TLC", () => {
       ["(-2147483647 - 1) \\div (-1) = 0", "Overflow when computing -2147483648 \\div -1"],
       ['"a" < 1', 'The first argument of < should be an integer, but instead it is:\n"a"'],
       ['1 >= "a"', 'The second argument of >= should be an integer, but instead it is:\n"a"'],
+      [
+        "1 /\\ (TRUE)",
+        "Attempted to evaluate an expression of form P /\\ Q when P was\nan integer.\nline 6, col 8 to line 6, col 18 of module M",
+      ],
       ["Head(<<>>) = 0", "Attempted to apply Head to the empty sequence."],
       ["Tail(<<>>) = 0", "Attempted to apply Tail to the empty sequence."],
       ["Len(1) = 0", "The argument of Len should be a sequence, but instead it is:\n1"],

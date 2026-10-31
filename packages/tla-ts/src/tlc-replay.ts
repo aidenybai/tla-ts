@@ -88,11 +88,10 @@ const assign = (partial: State, index: number, value: Value) => {
 // junction, so the replay recreates the node of each prefix.
 const getPrefix = (expression: Expression & { kind: "And" | "Or" }, count: number): Expression => {
   const first = expression.operands[0].location;
-  const last = expression.operands[count - 1].location;
+  const range = expression.location.range;
+  const end = expression.prefixEnds?.[count - 2];
   const location: SourceLocation =
-    first.range && last.range
-      ? { ...first, range: { ...first.range, end: last.range.end } }
-      : expression.location;
+    range && end ? { ...first, range: { ...range, end } } : expression.location;
   return { ...expression, operands: expression.operands.slice(0, count), location };
 };
 
