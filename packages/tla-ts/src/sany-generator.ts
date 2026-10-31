@@ -2282,7 +2282,7 @@ export const generateSanySpecification = (
       expression: Expression,
       span: TokenSpan,
     ): DefEntryParts | undefined => {
-      const getPart = (operand: Expression, partSpan: TokenSpan) => ({
+      const getPart = (operand: Expression, partSpan = getOperandSpan(operand)) => ({
         last: partSpan,
         lastKind: getSyntaxKind(operand, partSpan),
       });
@@ -2292,15 +2292,11 @@ export const generateSanySpecification = (
       }
       switch (expression.kind) {
         case "If":
-          return {
-            hasChildlessFirstChild: false,
-            ...getPart(expression.condition, getOperandSpan(expression.condition)),
-          };
         case "BoxAction":
         case "AngleAction":
           return {
             hasChildlessFirstChild: false,
-            ...getPart(expression.action, getOperandSpan(expression.action)),
+            ...getPart(expression.kind === "If" ? expression.condition : expression.action),
           };
         case "Tuple":
         case "SetEnumeration": {
@@ -2311,7 +2307,7 @@ export const generateSanySpecification = (
                 last: { start: span.end, end: span.end },
                 lastKind: file.tokens[span.end].text,
               }
-            : { hasChildlessFirstChild: false, ...getPart(first, getOperandSpan(first)) };
+            : { hasChildlessFirstChild: false, ...getPart(first) };
         }
         case "Always":
         case "Eventually":
