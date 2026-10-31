@@ -2,7 +2,15 @@
 // model from the current assignment: every relevant equivalence class gets a value, Booleans from
 // the assignment, integers from the arithmetic theory and other sorts from fresh model values, and
 // each congruence root of an uninterpreted function becomes an entry of its interpretation.
-import { FAMILY_USER, SORT_BOOL, isArithSort } from "./ast";
+import {
+  FAMILY_USER,
+  type FuncDecl,
+  OP_DIV0,
+  OP_IDIV0,
+  OP_MOD0,
+  SORT_BOOL,
+  isArithSort,
+} from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import { FuncInterp, ProtoModel } from "./proto-model";
@@ -11,6 +19,11 @@ export interface GeneratedModel {
   model: ProtoModel;
   root2value: Map<Enode, number>;
 }
+
+// include_func_interp: the model interprets uninterpreted functions, and theory_lra's divisions by
+// zero.
+const isIncludedFuncInterp = (decl: FuncDecl) =>
+  decl.family === FAMILY_USER || decl.op === OP_DIV0 || decl.op === OP_IDIV0 || decl.op === OP_MOD0;
 
 export const mkModel = (context: Context): GeneratedModel => {
   const manager = context.manager;
@@ -60,7 +73,7 @@ export const mkModel = (context: Context): GeneratedModel => {
   // mk_func_interps.
   for (const node of context.enodes) {
     const expr = node.owner;
-    if (!context.isRelevant(expr) || manager.funcDecls[node.decl].family !== FAMILY_USER) continue;
+    if (!context.isRelevant(expr) || !isIncludedFuncInterp(manager.funcDecls[node.decl])) continue;
     if (node.args.length === 0) {
       model.registerConst(node.decl, getValue(node));
       continue;

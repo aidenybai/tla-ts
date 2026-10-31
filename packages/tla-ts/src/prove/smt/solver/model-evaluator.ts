@@ -2,11 +2,33 @@
 // expression in a model: uninterpreted symbols take their interpretations and the rewriter folds
 // the interpreted operators. With model completion, a symbol without an interpretation gets some
 // value, so a ground expression always evaluates to a value.
-import { FAMILY_USER, KIND_QUANTIFIER, KIND_VAR, type AstManager } from "./ast";
+import {
+  FAMILY_ARITH,
+  FAMILY_USER,
+  KIND_QUANTIFIER,
+  KIND_VAR,
+  OP_DIV,
+  OP_DIV0,
+  OP_IDIV,
+  OP_IDIV0,
+  OP_ITE,
+  OP_MOD,
+  OP_MOD0,
+  type AstManager,
+} from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import type { ProtoModel } from "./proto-model";
 import { FuncInterp } from "./proto-model";
+import { Rational } from "./rational";
 import { Rewriter } from "./rewriter";
+import { substitute } from "./var-subst";
+
+// The division by zero that a division stands for when its divisor is zero.
+const BY_ZERO_OPS = new Map([
+  [OP_DIV, OP_DIV0],
+  [OP_IDIV, OP_IDIV0],
+  [OP_MOD, OP_MOD0],
+]);
 
 // An expression whose children visit is evaluating: the cache and bindings it is evaluated with,
 // where its children's results start on the result stack, and the next child to visit.
@@ -109,7 +131,17 @@ export class ModelEvaluator {
     const manager = this.manager;
     const model = this.model;
     const family = manager.funcDecls[decl].family;
-    if (family !== FAMILY_USER) return this.rewriter.mkAppCore(decl, args, sort);
+    if (family !== FAMILY_USER) {
+      const result = this.rewriter.mkAppCore(decl, args, sort);
+      const isFailed =
+        manager.decls[result] === decl &&
+        manager.args[result].every((arg, index) => arg === args[index]);
+      return (
+        (isFailed && family === FAMILY_ARITH
+          ? this.evaluatePartialTheoryFunc(decl, args, sort)
+          : undefined) ?? result
+      );
+    }
     if (args.length === 0) {
       const value = model.constInterps.get(decl);
       if (value !== undefined)
@@ -144,5 +176,40 @@ export class ModelEvaluator {
     created.setElse(some);
     model.registerFunc(decl, created);
     return some;
+  }
+
+  // evaluate_partial_theory_func: div0, idiv0 and mod0 take their interpretations, or 0 without
+  // one, and so does a division by zero. A division by a term is its interpretation when the term
+  // is zero.
+  private evaluatePartialTheoryFunc(decl: number, args: number[], sort: number) {
+    const manager = this.manager;
+    const model = this.model;
+    const op = manager.funcDecls[decl].op;
+    const byZero = BY_ZERO_OPS.get(op);
+    const isByZeroOp = op === OP_DIV0 || op === OP_IDIV0 || op === OP_MOD0;
+    let interp = model.funcInterps.get(decl);
+    if (interp === undefined && byZero !== undefined && !manager.isNumeral(args[1])) {
+      const definition = model.funcInterps.get(byZero)?.getInterp();
+      if (definition === undefined || definition === null) return undefined;
+      const zero = manager.mkNumeralOfSort(Rational.zero, manager.sorts[args[1]]);
+      return manager.mkApp(
+        OP_ITE,
+        [
+          manager.mkEq(zero, args[1]),
+          substitute(manager, definition, [...args].reverse()),
+          manager.mkApp(decl, args, sort),
+        ],
+        sort,
+      );
+    }
+    if (interp === undefined) {
+      const isByZero = byZero !== undefined && manager.getRationalValue(args[1]).isZero();
+      if (!isByZeroOp && !isByZero) return undefined;
+      interp = isByZero ? model.funcInterps.get(byZero) : undefined;
+      if (interp === undefined) return manager.mkNumeralOfSort(Rational.zero, sort);
+    }
+    if (interp.isPartial()) interp.setElse(model.getSomeValue(sort));
+    const definition = interp.getInterp();
+    return definition === null ? undefined : this.visit(definition, new Map(), args);
   }
 }
