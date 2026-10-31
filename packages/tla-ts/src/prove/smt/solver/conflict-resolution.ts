@@ -33,15 +33,18 @@ export class ConflictResolution {
     this.antecedents.push(literal);
   }
 
+  // mark_eq: the pair starts with the node whose owner has the smaller id, which fixes the order in
+  // which eq2literals walks the two branches.
   markEq(first: Enode, second: Enode) {
     if (first === second) return;
-    const key =
-      first.owner < second.owner
-        ? `${first.owner}:${second.owner}`
-        : `${second.owner}:${first.owner}`;
+    const ids = this.context.manager.ids;
+    const isSwapped = ids[first.owner] > ids[second.owner];
+    const lower = isSwapped ? second : first;
+    const upper = isSwapped ? first : second;
+    const key = `${lower.owner}:${upper.owner}`;
     if (this.processedEqs.has(key)) return;
     this.processedEqs.add(key);
-    this.todoEqs.push(first, second);
+    this.todoEqs.push(lower, upper);
   }
 
   markJustification(justification: Justification) {
