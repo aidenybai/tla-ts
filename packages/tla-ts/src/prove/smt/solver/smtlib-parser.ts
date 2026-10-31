@@ -56,6 +56,15 @@ interface SmtProblem {
   hasCheckSat: boolean;
 }
 
+// An application that parseTerm is parsing: its name, its list, where its arguments start on the
+// result stack, and its next argument.
+interface ApplicationFrame {
+  name: string;
+  list: SExpr[];
+  start: number;
+  next: number;
+}
+
 const BUILTIN_OPS = new Map<string, number>([
   ["and", OP_AND],
   ["or", OP_OR],
@@ -453,10 +462,9 @@ export const parseSmtlib = (
   };
 
   // Applications keep their own stack, like Z3's parser, so deeply nested terms do not exhaust the
-  // call stack. Each frame has an application's name, its list, where its arguments start on the
-  // result stack, and its next argument.
+  // call stack.
   const parseTerm = (sexpr: SExpr): number => {
-    const frames: { name: string; list: SExpr[]; start: number; next: number }[] = [];
+    const frames: ApplicationFrame[] = [];
     const results: number[] = [];
     const enter = (current: SExpr) => {
       const head = Array.isArray(current) ? current[0] : undefined;
