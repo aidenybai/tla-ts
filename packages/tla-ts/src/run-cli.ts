@@ -10,7 +10,7 @@ import {
 import { spawnSync } from "node:child_process";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
-import type { CheckResult, CheckStatus, TraceStep } from "./check";
+import type { CheckResult, CheckStatus, Replay, TraceStep } from "./check";
 import { defineCommand, type ParsedArgs } from "./cli-options";
 import { parseConfig } from "./config";
 import {
@@ -137,29 +137,41 @@ const getTemporalHeadline = (names: string[]) =>
     ? `Error: Temporal property ${names[0]} was violated.\n`
     : `Error: Temporal properties ${names.slice(0, -1).join(", ")}${names.length > 2 ? "," : ""} and ${names[names.length - 1]} were violated.\n`;
 
+const getFrames = (callStack: string[]) =>
+  callStack.map((frame, index) => `${index}. ${frame}\n`).join("");
+
+const printCallStack = (frames: string) =>
+  console.log(
+    `Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n${frames ? `${frames}\n` : "    The error call stack is empty.\n"}`,
+  );
+
+const printReplay = (replay: Replay) => {
+  replay.output.forEach((line) => console.log(line));
+  const frames = getFrames(replay.callStack ?? []);
+  const fingerprint = replay.fingerprint;
+  if (replay.isBeforeError) {
+    if (frames) printCallStack(frames);
+  } else if (replay.callStack && fingerprint) {
+    const sources = fingerprint.sources.map((source) => `${source}\n`).join("");
+    console.log(
+      `Error: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n${frames ? `${frames}\n` : sources}\nReason:\n${fingerprint.reason}`,
+    );
+  } else if (replay.callStack) {
+    printCallStack(frames);
+  }
+};
+
 const printResult = (result: CheckResult) => {
   if (result.failure) {
+    const replay = result.failure.replay;
+    if (replay?.isBeforeError) printReplay(replay);
     console.log(`Error: ${result.failure.message}`);
     if (result.failure.initialState) {
       console.log("While working on the initial state:");
       printState(result.failure.initialState);
     }
     printTrace(result.failure.trace);
-    const replay = result.failure.replay;
-    replay?.output.forEach((line) => console.log(line));
-    const fingerprint = replay?.fingerprint;
-    if (replay?.callStack && fingerprint) {
-      const frames = replay.callStack.map((frame, index) => `${index}. ${frame}\n`).join("");
-      const sources = fingerprint.sources.map((source) => `${source}\n`).join("");
-      console.log(
-        `Error: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n${frames ? `${frames}\n` : sources}\nReason:\n${fingerprint.reason}`,
-      );
-    } else if (replay?.callStack) {
-      const frames = replay.callStack.map((frame, index) => `${index}. ${frame}\n`).join("");
-      console.log(
-        `Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n${frames ? `${frames}\n` : "    The error call stack is empty.\n"}`,
-      );
-    }
+    if (replay && !replay.isBeforeError) printReplay(replay);
     if (result.failure.isWithoutStatistics) return;
   } else if (result.violation) {
     const violation = result.violation;

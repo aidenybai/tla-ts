@@ -7,7 +7,12 @@ import {
   type QuantifierExpression,
 } from "./ast";
 import { getReadVariables } from "./dependencies";
-import { TlaEvaluationError, TlaIllegalStateError, TlaIncompleteStateError } from "./errors";
+import {
+  TlaEvaluationError,
+  TlaIllegalStateError,
+  TlaIncompleteStateError,
+  TlaUnassignedError,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
@@ -53,6 +58,7 @@ export interface Successor {
 interface Run {
   environment: Environment;
   isInit: boolean;
+  isEnabled: boolean;
   current: Value[] | undefined;
   isStopped: boolean;
 }
@@ -950,8 +956,17 @@ const compileAction = (
       const unchanged = getUnchangedWrapper(expression.subscript);
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(run, scope, partial, action, isFixed, (nextPartial, nextAction) => {
-          if (!holds(unchanged, getContext(run, scope, nextPartial)))
-            onComplete(nextPartial, nextAction);
+          // ENABLED evaluates the subscript on the successor that the action specifies. TLC names
+          // a variable that the action leaves without a value.
+          try {
+            if (!holds(unchanged, getContext(run, scope, nextPartial)))
+              onComplete(nextPartial, nextAction);
+          } catch (error) {
+            if (!run.isEnabled || !(error instanceof TlaUnassignedError)) throw error;
+            throw new TlaEvaluationError(
+              `The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable ${error.variable} occurring in the state formula v.\n`,
+            );
+          }
         });
     }
     case "BoxAction":
@@ -1028,7 +1043,13 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
     );
   }
   const environment = context.environment;
-  const run: Run = { environment, isInit: false, current: state, isStopped: false };
+  const run: Run = {
+    environment,
+    isInit: false,
+    isEnabled: true,
+    current: state,
+    isStopped: false,
+  };
   // TLC stops computing ENABLED at the first successor, so it skips the rest of the action.
   getRunner(expression, environment, false)(
     run,
@@ -1049,7 +1070,13 @@ export const forEachInitialState = (
   onState: (state: Value[]) => boolean,
   scope?: Scope,
 ) => {
-  const run: Run = { environment, isInit: true, current: undefined, isStopped: false };
+  const run: Run = {
+    environment,
+    isInit: true,
+    isEnabled: false,
+    current: undefined,
+    isStopped: false,
+  };
   getRunner(expression, environment, true)(
     run,
     scope,
@@ -1091,7 +1118,13 @@ export const forEachSuccessor = (
   onSuccessor: (successor: Successor) => boolean,
   scope?: Scope,
 ) => {
-  const run: Run = { environment, isInit: false, current: state, isStopped: false };
+  const run: Run = {
+    environment,
+    isInit: false,
+    isEnabled: false,
+    current: state,
+    isStopped: false,
+  };
   const counter = { successors: 0 };
   getRunner(expression, environment, false)(
     run,

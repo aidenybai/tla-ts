@@ -36,6 +36,7 @@ import {
 import {
   createLivenessChecker,
   type Lasso,
+  type LiveGraph,
   type LivenessChecker,
   type LiveSuccessor,
 } from "./live-check";
@@ -151,6 +152,9 @@ export interface Replay {
   output: string[];
   callStack: string[] | undefined;
   fingerprint?: Fingerprint;
+  // The worker that fails to check liveness replays the step at once, so TLC prints the stack
+  // before the error, and only when it holds a frame.
+  isBeforeError?: boolean;
 }
 
 // TLC reports an error from a method of a value that has a source as one it was unable to
@@ -933,8 +937,8 @@ export const createSearch = (
 const withNextStateExitCode = (error: unknown) =>
   error instanceof TlaModuleError ? setExitCode(error, error.exitCode) : error;
 
-// TLC reports a failure of the next-state relation as an unexpected exception, unless a standard
-// module raised it as an EvalException.
+// TLC reports a failure of the next-state relation, or of the liveness check of a step, as an
+// unexpected exception, unless a standard module raised it as an EvalException.
 const toNextStateError = (error: unknown) =>
   error instanceof TlaEvaluationError &&
   !(error instanceof TlaModuleError) &&
@@ -1108,6 +1112,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const replayFailure = (
     result: CheckResult,
     replay: (tracedSearch: Search, traced: Environment) => void,
+    isBeforeError = false,
   ): CheckResult => {
     if (!result.failure) return result;
     const trace: Expression[] = [];
@@ -1122,7 +1127,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     output.replayed = undefined;
     return {
       ...result,
-      failure: { ...result.failure, replay: { output: replayed, ...replayedStack } },
+      failure: { ...result.failure, replay: { output: replayed, ...replayedStack, isBeforeError } },
     };
   };
   // TLC fingerprints a state outside CallStackTool, so a failure leaves the stack empty.
@@ -1183,35 +1188,34 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     });
   const isReducing = config.view !== undefined || config.symmetry !== undefined;
   const tlcFingerprints: number[] = [];
+  const liveGraph: LiveGraph = {
+    getFingerprint: (index) =>
+      (tlcFingerprints[index] ??= Number(BigInt.asIntN(32, runtime.getFingerprint(states[index])))),
+    getSuccessors: (state) => {
+      const successors: LiveSuccessor[] = [];
+      if (spec.next === undefined) return successors;
+      forEachSuccessor(
+        spec.next,
+        state,
+        environment,
+        (successor) => {
+          canonicalizeState(successor.state);
+          const isInModel =
+            search.satisfiesConstraints(successor.state, state) &&
+            search.satisfiesActionConstraints(state, successor.state);
+          if (!isInModel) return false;
+          const fingerprintState = getFingerprintState(successor.state);
+          const index = findStateIndex(getStateHash(fingerprintState), fingerprintState);
+          successors.push({ index, state: successor.state });
+          return false;
+        },
+        spec.scope,
+      );
+      return successors;
+    },
+  };
   const liveness = withLivenessExitCode(() =>
-    createLivenessChecker(search.properties.liveness, spec.temporals, environment, {
-      getFingerprint: (index) =>
-        (tlcFingerprints[index] ??= Number(
-          BigInt.asIntN(32, runtime.getFingerprint(states[index])),
-        )),
-      getSuccessors: (state) => {
-        const successors: LiveSuccessor[] = [];
-        if (spec.next === undefined) return successors;
-        forEachSuccessor(
-          spec.next,
-          state,
-          environment,
-          (successor) => {
-            canonicalizeState(successor.state);
-            const isInModel =
-              search.satisfiesConstraints(successor.state, state) &&
-              search.satisfiesActionConstraints(state, successor.state);
-            if (!isInModel) return false;
-            const fingerprintState = getFingerprintState(successor.state);
-            const index = findStateIndex(getStateHash(fingerprintState), fingerprintState);
-            successors.push({ index, state: successor.state });
-            return false;
-          },
-          spec.scope,
-        );
-        return successors;
-      },
-    }),
+    createLivenessChecker(search.properties.liveness, spec.temporals, environment, liveGraph),
   );
   const isCanonicalizedFirst = search.isSymmetric || liveness !== undefined;
 
@@ -1705,7 +1709,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         trace: toTrace(steps, accepted),
       });
     } catch (error) {
-      return toFailure(error, getStateTrace(index), undefined, getPartialOutDegrees());
+      return replayFailure(
+        toFailure(toNextStateError(error), getStateTrace(index), undefined, getPartialOutDegrees()),
+        (_, traced) =>
+          createLivenessChecker(
+            search.properties.liveness,
+            spec.temporals,
+            traced,
+            liveGraph,
+          )?.addState(index, state, liveSuccessors),
+        true,
+      );
     }
   };
   // TLC names the action when the next-state relation has more than one, and prints the
