@@ -14,6 +14,7 @@
 //   the gcd is constant.
 // - Polynomial ids count up from zero. Z3 recycles the ids of deleted polynomials, so where nlsat
 //   breaks a tie between two root functions on their ids it may pick the other one.
+import { SmtInvariantError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { UpolynomialManager } from "./upolynomial";
 import {
@@ -674,7 +675,7 @@ export class PolynomialManager {
         return quotient.mk();
       }
       const monomial = this.divMonomials(remainder.ms[remainderPos], divisorMonomial);
-      if (monomial === null) throw new Error("exact_div: the divisor does not divide");
+      if (monomial === null) throw new SmtInvariantError("exact_div: the divisor does not divide");
       const coeff = remainder.as[remainderPos] / divisorCoeff;
       quotient.addTerm(coeff, monomial);
       remainder.addmul(-coeff, monomial, divisor);
@@ -1264,7 +1265,8 @@ export class PolynomialManager {
       let term = Rational.of(polynomial.as[index]);
       for (let power = 0; power < monomial.size; power++) {
         const value = values[monomial.vars[power]];
-        if (value === undefined) throw new Error(`x${monomial.vars[power]} is unassigned`);
+        if (value === undefined)
+          throw new SmtInvariantError(`x${monomial.vars[power]} is unassigned`);
         for (let count = 0; count < monomial.degrees[power]; count++) term = term.mul(value);
       }
       result = result.add(term);

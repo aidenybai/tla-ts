@@ -3,6 +3,7 @@
 // check_assignment needs: its sample points are rational, and in scope every polynomial has
 // degree 1 in the variable whose roots it isolates, so every root is rational too. A polynomial of
 // degree 2 or more in that variable, which may have irrational roots, is out of scope.
+import { SmtInvariantError } from "../../../../errors";
 import { Rational } from "../rational";
 import { NlsatOutOfScope, type Polynomial, type PolynomialManager } from "./polynomial";
 
@@ -39,7 +40,7 @@ export const isolateRootsClosest = (
       const current = monomial.vars[power];
       if (current === variable) continue;
       const assigned = sample[current];
-      if (assigned === undefined) throw new Error(`x${current} is unassigned`);
+      if (assigned === undefined) throw new SmtInvariantError(`x${current} is unassigned`);
       for (let count = 0; count < monomial.degrees[power]; count++) term = term.mul(assigned);
     }
     if (degree === 1) leading = leading.add(term);

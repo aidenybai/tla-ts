@@ -10,6 +10,7 @@
 //   which switches nla to nlsat's model, is left out.
 // - A lemma literal is always linear, because the cell bounds are, so add_mul_def, which defines a
 //   fresh monomial column, is left out. A nonlinear literal would answer unknown.
+import { SmtInvariantError } from "../../../../errors";
 import { L_FALSE, L_UNDEF } from "../lbool";
 import { Rational, getLcm } from "../rational";
 import { NlsatSolver } from "../nlsat/solver";
@@ -189,7 +190,7 @@ export class NraSolver {
         continue;
       }
       const atom = solver.getAtom(literal);
-      if (atom === null) throw new Error(`nlsat literal ${literal} has no atom`);
+      if (atom === null) throw new SmtInvariantError(`nlsat literal ${literal} has no atom`);
       if (pm.totalDegree(atom.polynomial) > 1) {
         core.lemmas.pop();
         return L_UNDEF;
