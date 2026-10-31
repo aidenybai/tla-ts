@@ -68,6 +68,10 @@ export class Mam implements LabelHasher {
   private r1: Enode | null = null;
   private r2: Enode | null = null;
   private labelHashes: number[] = [];
+  // m_trail_stack: the matcher undoes its changes with a trail of its own, which the quantifier
+  // manager pops before the context pops its trail.
+  private trail: (() => void)[] = [];
+  private trailScopes: number[] = [];
   private compiler: Compiler;
   private interpreter: Interpreter;
 
@@ -93,12 +97,28 @@ export class Mam implements LabelHasher {
   }
 
   // enode::set_lbl_hash: a ground term of a pattern hashes its id, and its root's labels take it.
+  // The context's trail undoes both. Z3 pops it after the matcher's trail, so the labels of a root
+  // can keep a hash that a merge undone by the matcher's trail added.
   private setLblHash(node: Enode) {
-    node.lblHash = hashU(this.manager.ids[node.owner]) & 63;
+    const hash = hashU(this.manager.ids[node.owner]) & 63;
+    node.lblHash = hash;
     this.context.pushTrail(() => {
       node.lblHash = -1;
     });
-    this.updateLbls(node, node.lblHash);
+    const root = node.root;
+    if (hasHash(root.lbls, root.lblsHigh, hash)) return;
+    const low = root.lbls;
+    const high = root.lblsHigh;
+    this.context.pushTrail(() => {
+      root.lbls = low;
+      root.lblsHigh = high;
+    });
+    if (hash < 32) root.lbls |= 1 << hash;
+    else root.lblsHigh |= 1 << hash;
+  }
+
+  private pushTrail(undo: () => void) {
+    this.trail.push(undo);
   }
 
   getLblHash(node: Enode) {
@@ -115,7 +135,7 @@ export class Mam implements LabelHasher {
     if (hasHash(root.lbls, root.lblsHigh, hash)) return;
     const low = root.lbls;
     const high = root.lblsHigh;
-    this.context.pushTrail(() => {
+    this.pushTrail(() => {
       root.lbls = low;
       root.lblsHigh = high;
     });
@@ -129,7 +149,7 @@ export class Mam implements LabelHasher {
       if (hasHash(root.plbls, root.plblsHigh, hash)) continue;
       const low = root.plbls;
       const high = root.plblsHigh;
-      this.context.pushTrail(() => {
+      this.pushTrail(() => {
         root.plbls = low;
         root.plblsHigh = high;
       });
@@ -141,7 +161,7 @@ export class Mam implements LabelHasher {
   private updatePlbls(decl: number) {
     if (this.plbls.has(decl)) return;
     this.plbls.add(decl);
-    this.context.pushTrail(() => this.plbls.delete(decl));
+    this.pushTrail(() => this.plbls.delete(decl));
     const hash = this.getLabelHash(decl);
     for (const node of this.context.enodesOf(decl))
       if (this.context.isRelevant(node.owner)) this.updateChildrenPlbls(node, hash);
@@ -150,7 +170,7 @@ export class Mam implements LabelHasher {
   private updateClbls(decl: number) {
     if (this.clbls.has(decl)) return;
     this.clbls.add(decl);
-    this.context.pushTrail(() => this.clbls.delete(decl));
+    this.pushTrail(() => this.clbls.delete(decl));
     const hash = this.getLabelHash(decl);
     for (const node of this.context.enodesOf(decl))
       if (this.context.isRelevant(node.owner)) this.updateLbls(node, hash);
@@ -201,14 +221,14 @@ export class Mam implements LabelHasher {
         this.insertPath(found.firstChild, path.child, mp);
       else if (path.child !== null) {
         found.firstChild = this.mkPathTree(path.child, mp);
-        this.context.pushTrail(() => {
+        this.pushTrail(() => {
           found.firstChild = null;
         });
       } else if (found.code !== null)
         this.compiler.insert(found.code, mp.quantifier, mp.patterns, path.patternIndex, false);
       else {
         found.code = this.mkCode(mp, path.patternIndex);
-        this.context.pushTrail(() => {
+        this.pushTrail(() => {
           found.code = null;
         });
       }
@@ -216,13 +236,13 @@ export class Mam implements LabelHasher {
     }
     const previous = last;
     previous.sibling = this.mkPathTree(path, mp);
-    this.context.pushTrail(() => {
+    this.pushTrail(() => {
       previous.sibling = null;
     });
     if (isLabelFound) return;
     const low = head.filter;
     const high = head.filterHigh;
-    this.context.pushTrail(() => {
+    this.pushTrail(() => {
       head.filter = low;
       head.filterHigh = high;
     });
@@ -239,7 +259,7 @@ export class Mam implements LabelHasher {
       return;
     }
     this.pc.set(key, this.mkPathTree(path, mp));
-    this.context.pushTrail(() => this.pc.delete(key));
+    this.pushTrail(() => this.pc.delete(key));
   }
 
   private insertPpPath(entry: (PathTree | null)[], index: number, path: Path, mp: MultiPattern) {
@@ -249,7 +269,7 @@ export class Mam implements LabelHasher {
       return;
     }
     entry[index] = this.mkPathTree(path, mp);
-    this.context.pushTrail(() => {
+    this.pushTrail(() => {
       entry[index] = null;
     });
   }
@@ -271,7 +291,7 @@ export class Mam implements LabelHasher {
     if (entry === undefined) {
       entry = [null, null];
       this.pp.set(key, entry);
-      this.context.pushTrail(() => this.pp.delete(key));
+      this.pushTrail(() => this.pp.delete(key));
     }
     if (firstHash === secondHash) {
       this.insertPpPath(entry, 0, first, mp);
@@ -364,7 +384,7 @@ export class Mam implements LabelHasher {
         return;
       }
       this.trees.set(label, this.compiler.mkTree(quantifier, patterns, firstIndex, false));
-      this.context.pushTrail(() => this.trees.delete(label));
+      this.pushTrail(() => this.trees.delete(label));
     });
   }
 
@@ -511,6 +531,7 @@ export class Mam implements LabelHasher {
     }
   }
 
+  // add_eq_eh: r2's labels take r1's after the paths are followed.
   addEqEh(r1: Enode, r2: Enode) {
     this.r1 = r1;
     this.r2 = r2;
@@ -519,6 +540,20 @@ export class Mam implements LabelHasher {
     this.processPp(r1, r2);
     this.r1 = null;
     this.r2 = null;
+    const lbls = r2.lbls;
+    const lblsHigh = r2.lblsHigh;
+    const plbls = r2.plbls;
+    const plblsHigh = r2.plblsHigh;
+    this.pushTrail(() => {
+      r2.lbls = lbls;
+      r2.lblsHigh = lblsHigh;
+      r2.plbls = plbls;
+      r2.plblsHigh = plblsHigh;
+    });
+    r2.lbls |= r1.lbls;
+    r2.lblsHigh |= r1.lblsHigh;
+    r2.plbls |= r1.plbls;
+    r2.plblsHigh |= r1.plblsHigh;
   }
 
   match() {
@@ -570,9 +605,17 @@ export class Mam implements LabelHasher {
     }
   }
 
-  popScope() {
+  pushScope() {
+    this.trailScopes.push(this.trail.length);
+  }
+
+  popScope(numScopes: number) {
     for (const tree of this.toMatch) tree.candidates = [];
     this.toMatch = [];
     this.newPatterns = [];
+    const limit = this.trailScopes[this.trailScopes.length - numScopes];
+    for (let index = this.trail.length - 1; index >= limit; index--) this.trail[index]();
+    this.trail.length = limit;
+    this.trailScopes.length -= numScopes;
   }
 }

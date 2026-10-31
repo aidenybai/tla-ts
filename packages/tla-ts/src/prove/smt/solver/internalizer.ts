@@ -75,8 +75,7 @@ const UNDO_CGC_GENERATIONS = 5;
 const UNDO_MERGE_TF = 6;
 const UNDO_ENODE_FLAG = 7;
 export const UNDO_ADD_EQ = 8;
-export const UNDO_LBLS = 9;
-export const UNDO_TH_VAR = 10;
+export const UNDO_TH_VAR = 9;
 
 interface NewEq {
   lhs: Enode;
