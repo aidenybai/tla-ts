@@ -64,19 +64,19 @@ class FlatLiterals {
   private stamp = 0;
   private literalStamps = new Int32Array(1024);
   private negatedAtomStamps = new Int32Array(1024);
+  private manager: AstManager | null = null;
 
-  constructor(private manager: AstManager) {}
-
-  // Starts a new, empty list.
-  clear() {
+  // Starts a new, empty list of the manager's literals.
+  clear(manager: AstManager) {
     this.list = [];
     this.stamp++;
+    this.manager = manager;
   }
 
   // Adds a literal, and returns whether its complement is already there. An expression's arguments
   // are older than it, so their ids are smaller.
   add(literal: number) {
-    const manager = this.manager;
+    const manager = this.manager as AstManager;
     if (literal >= this.literalStamps.length) {
       const size = Math.max(2 * this.literalStamps.length, literal + 1);
       const literalStamps = new Int32Array(size);
@@ -102,6 +102,10 @@ class FlatLiterals {
   }
 }
 
+// One set of marks serves every rewriter: a list is filled and read before any other starts, and
+// marks that grow to the largest manager's ids would cost each rewriter its own copy.
+const flatLiterals = new FlatLiterals();
+
 // A term that reduceTo is rewriting: the depth left for its arguments, its next argument, and where
 // its arguments' results start.
 interface ReduceFrame {
@@ -115,7 +119,6 @@ interface ReduceFrame {
 export class Rewriter extends RewriterTpl {
   private arith: ArithRewriter;
   private substitution = new Map<number, number>();
-  private literals = new FlatLiterals(this.manager);
   private unusedVarsEliminator: UnusedVarsEliminator;
   private der: Der;
   // try_ite_value writes the result of reduce_app, which is the m_r of the rewriter that applies
@@ -469,8 +472,8 @@ export class Rewriter extends RewriterTpl {
     const manager = this.manager;
     const isNested = args.some((arg) => manager.getOp(arg) === OP_OR);
     const flatArgs = isNested ? this.flattenArgs(args, OP_OR) : args;
-    const literals = this.literals;
-    literals.clear();
+    const literals = flatLiterals;
+    literals.clear(manager);
     for (const arg of flatArgs) {
       if (manager.isTrue(arg)) return manager.trueExpr;
       if (manager.isFalse(arg)) continue;
@@ -516,8 +519,8 @@ export class Rewriter extends RewriterTpl {
   // pair.
   private mkNflatAnd(args: number[]) {
     const manager = this.manager;
-    const literals = this.literals;
-    literals.clear();
+    const literals = flatLiterals;
+    literals.clear(manager);
     for (const arg of args) {
       if (manager.isTrue(arg)) continue;
       if (manager.isFalse(arg) || literals.add(arg)) return manager.falseExpr;
