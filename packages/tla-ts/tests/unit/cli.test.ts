@@ -231,6 +231,12 @@ describe("the CLI reports results like TLC", () => {
     expect(getSteadyLines(result.stdout)).toEqual([...lines, ""]);
   });
 
+  it("names no temporal property when the counterexample a VIEW merges satisfies them all", () => {
+    const result = runCli("cli-output", "ViewLasso");
+    expect(result.status).toBe(13);
+    expect(result.stdout).toContain("Error: Temporal properties were violated.\n");
+  });
+
   it("checks liveness on the complete state graph with -lncheck final", () => {
     const [, code, lines] = TLC_REPORTS.find((report) => report[0] === "Lasso") ?? [];
     const result = runCli("cli-output", "Lasso", ["-lncheck", "final"]);
@@ -758,6 +764,7 @@ describe("the CLI takes several specs and globs", () => {
       "Checking NoNext.tla with NoNext.cfg",
       "Checking SafetyProperty.tla with SafetyProperty.cfg",
       "Checking Success.tla with Success.cfg",
+      "Checking ViewLasso.tla with ViewLasso.cfg",
     ]);
   });
 

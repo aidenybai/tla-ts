@@ -276,9 +276,9 @@ const COUNTER_EXAMPLE = {
   text: "The following behavior constitutes a counter-example:\n",
 };
 
-// TLC 1.7.4 doesn't name the properties.
+// TLC 1.7.4 doesn't name the properties, and later versions name none when they can't tell which.
 const getTemporalHeadline = (names: string[], version: TlcVersion) =>
-  version === "1.7.4"
+  version === "1.7.4" || names.length === 0
     ? "Temporal properties were violated.\n"
     : names.length === 1
       ? `Temporal property ${names[0]} was violated.\n`
