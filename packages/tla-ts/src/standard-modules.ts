@@ -299,78 +299,85 @@ const withJavaMethods = (module: string, operators: Builtin[]) => {
   });
 };
 
-const SEQUENCES_OPERATORS = withJavaMethods("Sequences", [
-  defineOperator("Seq", 1, (args) => ({ kind: "SequenceSet", base: getValue(args, 0, "Seq") })),
-  defineOperator(
-    "Len",
-    1,
-    (args) => getSequenceOrString(args, 0, getSequenceMessage("", "Len")).length,
-  ),
-  defineOperator("\\o", 2, (args) => {
-    const left = getSequenceOrString(args, 0, getEvaluatingMessage("s \\o t", "sequence"));
-    if (typeof left !== "string") {
-      const right = getSequenceArgument(args, 1, getEvaluatingMessage("t \\o s", "sequence"));
-      return createTuple([...left, ...right]);
-    }
-    const right = getValue(args, 1, "\\o");
-    if (typeof right !== "string") {
-      throw new TlaModuleError(
-        `${getEvaluatingMessage("t \\o s", "string")}\n${formatValue(right)}`,
+const createSequencesOperators = (version: TlcVersion) =>
+  withJavaMethods("Sequences", [
+    defineOperator("Seq", 1, (args) => ({ kind: "SequenceSet", base: getValue(args, 0, "Seq") })),
+    defineOperator(
+      "Len",
+      1,
+      (args) => getSequenceOrString(args, 0, getSequenceMessage("", "Len")).length,
+    ),
+    defineOperator("\\o", 2, (args) => {
+      const left = getSequenceOrString(args, 0, getEvaluatingMessage("s \\o t", "sequence"));
+      if (typeof left !== "string") {
+        const right = getSequenceArgument(args, 1, getEvaluatingMessage("t \\o s", "sequence"));
+        return createTuple([...left, ...right]);
+      }
+      const right = getValue(args, 1, "\\o");
+      if (typeof right !== "string") {
+        throw new TlaModuleError(
+          `${getEvaluatingMessage("t \\o s", "string")}\n${formatValue(right)}`,
+        );
+      }
+      return rankString(left + right);
+    }),
+    defineOperator("Append", 2, (args) =>
+      createTuple([
+        ...getSequenceArgument(
+          args,
+          0,
+          getEvaluatingMessage(version === "1.7.4" ? "Append(v, s)" : "Append(s, v)", "sequence"),
+        ),
+        getValue(args, 1, "Append"),
+      ]),
+    ),
+    defineOperator("Head", 1, (args) => {
+      const elements = getSequenceArgument(args, 0, getSequenceMessage("", "Head"));
+      if (elements.length === 0)
+        throw new TlaModuleError("Attempted to apply Head to the empty sequence.");
+      return elements[0];
+    }),
+    defineOperator("Tail", 1, (args) => {
+      const sequence = getSequenceOrString(args, 0, getSequenceMessage("", "Tail"));
+      if (sequence.length === 0)
+        throw new TlaModuleError("Attempted to apply Tail to the empty sequence.");
+      return sliceSequence(sequence, 1);
+    }),
+    defineOperator("SubSeq", 3, (args) => {
+      const sequence = getSequenceOrString(args, 0, getSequenceMessage("first ", "SubSeq"));
+      const start = getNumber(args, 1, "SubSeq");
+      const end = getNumber(args, 2, "SubSeq");
+      if (start > end) return sliceSequence(sequence, 0, 0);
+      const outOfDomain =
+        start < 1 || start > sequence.length
+          ? { position: "second", value: start }
+          : end > sequence.length
+            ? { position: "third", value: end }
+            : undefined;
+      if (outOfDomain) {
+        throw new TlaModuleError(
+          `The ${outOfDomain.position} argument of SubSeq must be in the domain of its first argument:\n${formatValue(getValue(args, 0, "SubSeq"))}\n, but instead it is\n${outOfDomain.value}`,
+        );
+      }
+      return sliceSequence(sequence, start - 1, end);
+    }),
+    defineHigherOrderOperator("SelectSeq", 2, (args) => {
+      const test = getOperator(args, 1, "SelectSeq");
+      return createTuple(
+        getSequenceArgument(args, 0, getSequenceMessage("first ", "SelectSeq")).filter(
+          (element) => {
+            const result = test.call([element]);
+            if (typeof result !== "boolean") {
+              throw new TlaModuleError(
+                `The second argument of SelectSeq should be a operator, but instead it is:\n${formatValue(result)}`,
+              );
+            }
+            return result;
+          },
+        ),
       );
-    }
-    return rankString(left + right);
-  }),
-  defineOperator("Append", 2, (args) =>
-    createTuple([
-      ...getSequenceArgument(args, 0, getEvaluatingMessage("Append(s, v)", "sequence")),
-      getValue(args, 1, "Append"),
-    ]),
-  ),
-  defineOperator("Head", 1, (args) => {
-    const elements = getSequenceArgument(args, 0, getSequenceMessage("", "Head"));
-    if (elements.length === 0)
-      throw new TlaModuleError("Attempted to apply Head to the empty sequence.");
-    return elements[0];
-  }),
-  defineOperator("Tail", 1, (args) => {
-    const sequence = getSequenceOrString(args, 0, getSequenceMessage("", "Tail"));
-    if (sequence.length === 0)
-      throw new TlaModuleError("Attempted to apply Tail to the empty sequence.");
-    return sliceSequence(sequence, 1);
-  }),
-  defineOperator("SubSeq", 3, (args) => {
-    const sequence = getSequenceOrString(args, 0, getSequenceMessage("first ", "SubSeq"));
-    const start = getNumber(args, 1, "SubSeq");
-    const end = getNumber(args, 2, "SubSeq");
-    if (start > end) return sliceSequence(sequence, 0, 0);
-    const outOfDomain =
-      start < 1 || start > sequence.length
-        ? { position: "second", value: start }
-        : end > sequence.length
-          ? { position: "third", value: end }
-          : undefined;
-    if (outOfDomain) {
-      throw new TlaModuleError(
-        `The ${outOfDomain.position} argument of SubSeq must be in the domain of its first argument:\n${formatValue(getValue(args, 0, "SubSeq"))}\n, but instead it is\n${outOfDomain.value}`,
-      );
-    }
-    return sliceSequence(sequence, start - 1, end);
-  }),
-  defineHigherOrderOperator("SelectSeq", 2, (args) => {
-    const test = getOperator(args, 1, "SelectSeq");
-    return createTuple(
-      getSequenceArgument(args, 0, getSequenceMessage("first ", "SelectSeq")).filter((element) => {
-        const result = test.call([element]);
-        if (typeof result !== "boolean") {
-          throw new TlaModuleError(
-            `The second argument of SelectSeq should be a operator, but instead it is:\n${formatValue(result)}`,
-          );
-        }
-        return result;
-      }),
-    );
-  }),
-]);
+    }),
+  ]);
 
 const createFiniteSetsOperators = (version: TlcVersion) =>
   withJavaMethods("FiniteSets", [
@@ -424,7 +431,7 @@ export const getStandardModule = (
     case "Integers":
       return { extends: ["Naturals"], operators: INTEGERS_OPERATORS };
     case "Sequences":
-      return { extends: [], operators: SEQUENCES_OPERATORS };
+      return { extends: [], operators: createSequencesOperators(runtime.version) };
     case "FiniteSets":
       return { extends: [], operators: createFiniteSetsOperators(runtime.version) };
     case "TLC":

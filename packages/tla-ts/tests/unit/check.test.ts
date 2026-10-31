@@ -1248,6 +1248,20 @@ describe("evaluation errors match TLC", () => {
     expect(messages).toEqual(cases.map((item) => item[1]));
   });
 
+  it.each([
+    ["1.7.4" as const, "Append(v, s)"],
+    [undefined, "Append(s, v)"],
+  ])("words a failed Append like TLC %s", async (version, form) => {
+    const result = await check({
+      source: "---- MODULE M ----\nEXTENDS Sequences\nASSUME Append(1, 2) = 0\n====",
+      config: "",
+      version,
+    });
+    expect(result.violation?.message).toBe(
+      `Evaluating an expression of the form ${form} when s is not a sequence:\n1`,
+    );
+  });
+
   it("enumerates SUBSET of a function with an empty domain as {{}} like TLC", async () => {
     const result = await checkModule("ASSUME SUBSET <<>> = {{}}");
     expect(result.status).toBe("success");
