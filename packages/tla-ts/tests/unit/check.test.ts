@@ -1312,6 +1312,19 @@ describe("evaluation errors match TLC", () => {
     expect(messages).toEqual(cases.map((item) => item[1]));
   });
 
+  it("quantifies over a power set too large to build in TLC's order, like TLC", async () => {
+    const result = await checkModule(
+      [
+        "ASSUME \\E s \\in SUBSET (1..40) : Cardinality(s) = 2",
+        "ASSUME ~\\A s \\in SUBSET (1..40) : Cardinality(s) < 1",
+        "ASSUME (CHOOSE s \\in SUBSET (1..40) : Cardinality(s) = 1) = {1}",
+        "ASSUME (CHOOSE s \\in SUBSET (1..32) : Cardinality(s) = 2 /\\ 5 \\in s) = {1, 5}",
+      ].join("\n"),
+    );
+    expect(result.failure).toBeUndefined();
+    expect(result.violation).toBeUndefined();
+  });
+
   it("names the Java class of Naturals in an arithmetic error unless the spec loads Integers, like TLC", async () => {
     const cases = [
       ["Naturals", "Naturals"],
