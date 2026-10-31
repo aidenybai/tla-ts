@@ -913,6 +913,28 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.trace.map((step) => step.state.x)).toEqual([0]);
   });
 
+  it("reports a successor the next-state relation leaves incomplete like TLC", async () => {
+    const getResult = (next: string) =>
+      check({
+        source: `---- MODULE M ----\nVARIABLES x, y, z\nInit == x = 0 /\\ y = 0 /\\ z = 0\nA1 == x' = 1\nA2 == x' = 2 /\\ y' = 2 /\\ z' = 2\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+    const single = await getResult("x' = 1 /\\ y' = 1");
+    expect([single.failure?.message, single.failure?.exitCode, single.generatedStates]).toEqual([
+      "Successor state is not completely specified by the next-state action. The following variable is not defined: z.\n",
+      75,
+      2,
+    ]);
+    const several = await getResult("A1 \\/ A2");
+    expect(several.failure?.message).toBe(
+      "Successor state is not completely specified by action A1 of the next-state relation. The following variables are not defined: y, z.\n",
+    );
+    expect(several.failure?.trace.map((step) => [step.label, formatValue(step.state.y)])).toEqual([
+      [undefined, "0"],
+      ["A1 line 4, col 7 to line 4, col 12 of module M", "null"],
+    ]);
+  });
+
   it("reports a CASE with no true guard like TLC", async () => {
     const result = await check({
       source:

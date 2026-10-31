@@ -1,4 +1,5 @@
 import { EXIT_STATUS, getExitCode } from "./exit-codes";
+import type { Value } from "./values";
 
 // How TLC reports a RuntimeException it did not expect, such as one raised while computing next
 // states.
@@ -65,9 +66,18 @@ export class TlaModuleError extends TlaEvaluationError {
 // TLC reports a successor state that the next-state relation leaves incomplete as an error of its
 // own, not as an exception. It keeps the name TlaEvaluationError, and index.ts doesn't export it.
 export class TlaIncompleteStateError extends TlaEvaluationError {
-  constructor(message: string) {
-    super(message);
+  state: (Value | undefined)[];
+  action: string | undefined;
+  missing: string[];
+
+  constructor(state: (Value | undefined)[], action: string | undefined, missing: string[]) {
+    super(
+      `Successor state is not completely specified by the next-state action. The following variable${missing.length > 1 ? "s are" : " is"} not defined: ${missing.join(", ")}.\n`,
+    );
     this.name = "TlaEvaluationError";
+    this.state = state;
+    this.action = action;
+    this.missing = missing;
   }
 }
 
