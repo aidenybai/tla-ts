@@ -1882,8 +1882,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         getExitCode(error) ?? (error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.error)
       );
     }
-    // TLC exits with the code of a failed replay of the initial states regardless of the error.
-    return failureOptions.isInitial ? EXIT_STATUS.specEvaluationFailure : getReplayExitCode(error);
+    // TLC exits with the code of a failed replay of the initial states regardless of the error, as
+    // it does for a replay that fails to fingerprint.
+    return failureOptions.isInitial || failureOptions.fingerprint
+      ? EXIT_STATUS.specEvaluationFailure
+      : getReplayExitCode(error);
   };
   const toFailure = (error: unknown, behavior: Behavior, failureOptions: FailureOptions = {}) => {
     if (!(error instanceof TlaEvaluationError)) throw error;

@@ -1286,6 +1286,19 @@ export const freezeCallStack = (
   callStack.isFrozen = true;
 };
 
+// A FingerprintException that a method of a value with a source raises, or that passes through one,
+// takes the value's source as its new head.
+const headFingerprint = (callStack: CallStack, source: Expression, error: unknown) => {
+  if (!(error instanceof TlaEvaluationError)) return;
+  if (!callStack.isFrozen) callStack.expressions.push(source);
+  callStack.isFrozen = true;
+  const inner = callStack.fingerprint;
+  callStack.fingerprint = {
+    sources: [source, ...(inner?.sources ?? [])],
+    reason: inner?.reason ?? error.message,
+  };
+};
+
 // A copy of the environment that records the call stack of each evaluation, with evaluators of its
 // own since the environment's evaluators record nothing.
 export const createTracingEnvironment = (environment: Environment): Environment => ({
@@ -1712,16 +1725,7 @@ const compileFunctionConstruction = (
   const bound = bounds[0];
   const isSingleName = bounds.length === 1 && bound.pattern.kind === "Name";
   const set = getEvaluator(bound.set, environment);
-  return (context) => {
-    const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
-    if (expression.isRecursive || isKeptLazy || !isEnumerable(domain)) {
-      const functionValue = createLazyFunction(
-        domain,
-        (argument) => body(withScope(context, bindArgument(bounds, context.scope, argument))),
-        getLazyFunctionSource(bounds, expression.body, domain),
-      );
-      return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
-    }
+  const construct = (domain: Value, context: Context) => {
     if (isSingleName && bound.pattern.kind === "Name") {
       const name = bound.pattern.name;
       const keys = getFunctionDomain(domain);
@@ -1744,6 +1748,26 @@ const compileFunctionConstruction = (
       return false;
     });
     return createFunction(pairs);
+  };
+  const callStack = environment.callStack;
+  return (context) => {
+    const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
+    if (expression.isRecursive || isKeptLazy || !isEnumerable(domain)) {
+      const functionValue = createLazyFunction(
+        domain,
+        (argument) => body(withScope(context, bindArgument(bounds, context.scope, argument))),
+        getLazyFunctionSource(bounds, expression.body, domain),
+      );
+      return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
+    }
+    if (!callStack) return construct(domain, context);
+    // TLC builds the function in a method of the FcnLambdaValue that CallStackTool gives a source.
+    try {
+      return construct(domain, context);
+    } catch (error) {
+      headFingerprint(callStack, expression, error);
+      throw error;
+    }
   };
 };
 

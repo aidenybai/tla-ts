@@ -1063,6 +1063,30 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  // TLC builds a function in a method of the FcnLambdaValue that CallStackTool gives a source, so
+  // the replay fails to fingerprint it when its body fails.
+  it.each([
+    ["x = [k \\in {1, 2} |-> k \\div 0]", "x' = x", ["FunctionConstruction"]],
+    ["x = 0", "x' = [k \\in 1..2 |-> k \\div 0]", ["FunctionConstruction"]],
+    ["x = 0", "x' = [k \\in {1, 2} |-> <<1, 2>>[k + 1]]", ["FunctionConstruction", "Tuple"]],
+    [
+      "x = 0",
+      "x' = [j \\in {1} |-> [k \\in {1, 2} |-> k \\div 0]]",
+      ["FunctionConstruction", "FunctionConstruction"],
+    ],
+    ["x = 0", "x' = [k \\in Nat |-> k \\div 0][1]", undefined],
+  ])(
+    "reports a function whose body fails in %s or %s as one TLC can't fingerprint",
+    async (init, next, sources) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == ${init}\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.fingerprint?.sources.map((source) => source.kind)).toEqual(sources);
+      expect(result.failure?.exitCode).toBe(sources ? 75 : 255);
+    },
+  );
+
   it("reports a set TLC can't enumerate in computing next states like TLC", async () => {
     const result = await checkSteps("Step == x' \\in Nat", "INIT Init\nNEXT Step");
     expect(result.failure?.message).toBe(
