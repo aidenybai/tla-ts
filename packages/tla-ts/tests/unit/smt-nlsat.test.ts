@@ -60,6 +60,12 @@ const parsePolynomial = (pm: PolynomialManager, text: string) => {
 };
 
 // Prints the monomials in the polynomial's own order, as the harness does.
+// an_show in the harness: a rational, or the defining polynomial, root index and isolating interval.
+const showAnum = (am: AlgebraicManager, anum: Anum) =>
+  anum.value instanceof Rational
+    ? ` q${anum.value}`
+    : ` r[${anum.value.p.join(" ")}]#${am.getRootIndex(anum)}(${anum.value.lower},${anum.value.upper})`;
+
 const showPolynomial = (polynomial: Polynomial) =>
   `[${polynomial.ms
     .map(
@@ -144,23 +150,18 @@ const runAnumProgram = (program: string) => {
     while (registers.length <= index) registers.push(new Anum(Rational.zero));
     return registers[index];
   };
-  const show = (anum: Anum) => {
-    if (anum.value instanceof Rational) return ` q${anum.value}`;
-    const index = am.getRootIndex(anum);
-    return ` r[${anum.value.p.join(" ")}]#${index}(${anum.value.lower},${anum.value.upper})`;
-  };
   const runCommand = (words: string[]) => {
     const numbers = words.slice(1, 4).map(Number);
     switch (words[0]) {
       case "q":
         registers[numbers[0]] = new Anum(parseRational(words[2]));
-        return show(registers[numbers[0]]);
+        return showAnum(am, registers[numbers[0]]);
       case "root": {
         const roots = am.isolateRoots(pm, pm.fromCoeffs(words.slice(3).map(BigInt), 0), []);
         if (numbers[1] > roots.length) return " error";
         getRegister(numbers[0]);
         registers[numbers[0]] = roots[numbers[1] - 1];
-        return show(registers[numbers[0]]);
+        return showAnum(am, registers[numbers[0]]);
       }
       case "add":
       case "mul":
@@ -179,7 +180,7 @@ const runAnumProgram = (program: string) => {
                 : am.select(first, second);
         getRegister(numbers[0]);
         registers[numbers[0]] = am.copy(result);
-        return show(registers[numbers[0]]);
+        return showAnum(am, registers[numbers[0]]);
       }
       case "pow":
       case "intlt":
@@ -193,27 +194,27 @@ const runAnumProgram = (program: string) => {
               : am.intGt(anum);
         getRegister(numbers[0]);
         registers[numbers[0]] = am.copy(result);
-        return show(registers[numbers[0]]);
+        return showAnum(am, registers[numbers[0]]);
       }
       case "neg":
         am.neg(getRegister(numbers[0]));
-        return show(registers[numbers[0]]);
+        return showAnum(am, registers[numbers[0]]);
       case "inv":
         if (am.isZero(getRegister(numbers[0]))) return " error";
         am.inv(registers[numbers[0]]);
-        return show(registers[numbers[0]]);
+        return showAnum(am, registers[numbers[0]]);
       case "cmp": {
         const first = getRegister(numbers[0]);
         const second = getRegister(numbers[1]);
-        return ` ${am.compare(first, second)}${show(first)}${show(second)}`;
+        return ` ${am.compare(first, second)}${showAnum(am, first)}${showAnum(am, second)}`;
       }
       case "isint":
       case "israt": {
         const anum = getRegister(numbers[0]);
-        return `${showFlag(words[0] === "isint" ? am.isInt(anum) : am.isRational(anum))}${show(anum)}`;
+        return `${showFlag(words[0] === "isint" ? am.isInt(anum) : am.isRational(anum))}${showAnum(am, anum)}`;
       }
       case "show":
-        return show(getRegister(numbers[0]));
+        return showAnum(am, getRegister(numbers[0]));
       default: {
         const rest = words[0] === "closest" ? words.slice(2) : words.slice(1);
         const separator = rest.indexOf(";");
@@ -226,15 +227,15 @@ const runAnumProgram = (program: string) => {
         if (words[0] === "sign") output = ` ${am.evalSignAt(pm, polynomial, values)}`;
         else if (words[0] === "iso") {
           roots = am.isolateRoots(pm, polynomial, values);
-          output = ` roots${roots.map(show).join("")}`;
+          output = ` roots${roots.map((anum) => showAnum(am, anum)).join("")}`;
         } else if (words[0] === "closest") {
           const closest = am.isolateRootsClosest(pm, polynomial, values, parseRational(words[1]));
           roots = closest.roots;
-          output = ` roots${roots.map(show).join("")} idx${closest.indices.map((index) => ` ${index}`).join("")}`;
+          output = ` roots${roots.map((anum) => showAnum(am, anum)).join("")} idx${closest.indices.map((index) => ` ${index}`).join("")}`;
         } else {
           const signed = am.isolateRootsWithSigns(pm, polynomial, values);
           roots = signed.roots;
-          output = ` roots${roots.map(show).join("")} signs${signed.signs.map((sign) => ` ${sign}`).join("")}`;
+          output = ` roots${roots.map((anum) => showAnum(am, anum)).join("")} signs${signed.signs.map((sign) => ` ${sign}`).join("")}`;
         }
         // The roots go to registers 8 and up, for later commands.
         roots.forEach((root, index) => {
@@ -244,7 +245,7 @@ const runAnumProgram = (program: string) => {
         output += " after";
         for (const binding of bindings) {
           registers[binding[1]] = am.copy(values[binding[0]]);
-          output += show(registers[binding[1]]);
+          output += showAnum(am, registers[binding[1]]);
         }
         return output;
       }
@@ -307,17 +308,12 @@ const runEvaluatorProgram = (program: string, expected: string) => {
   const clause = { id: 0, literals: [], isLearned: false };
   const expectedLines = expected.split("\n");
   let variableCount = 0;
-  const show = (anum: Anum) => {
-    if (anum.value instanceof Rational) return ` q${anum.value}`;
-    const index = am.getRootIndex(anum);
-    return ` r[${anum.value.p.join(" ")}]#${index}(${anum.value.lower},${anum.value.upper})`;
-  };
   const showSet = (set: IntervalSet | null | undefined) => {
     if (set === null || set === undefined) return " {}";
     const intervals = set.intervals.map(
       (interval) =>
-        ` ${interval.isLowerOpen ? "(" : "["}${interval.lower === null ? " -oo" : show(interval.lower)} ,` +
-        `${interval.upper === null ? " +oo" : show(interval.upper)} ${interval.isUpperOpen ? ")" : "]"}` +
+        ` ${interval.isLowerOpen ? "(" : "["}${interval.lower === null ? " -oo" : showAnum(am, interval.lower)} ,` +
+        `${interval.upper === null ? " +oo" : showAnum(am, interval.upper)} ${interval.isUpperOpen ? ")" : "]"}` +
         `j${interval.justification}${interval.clause === null ? "" : "c"}`,
     );
     return ` {${set.isFull ? "full" : "part"}${intervals.join("")} }`;
@@ -325,7 +321,7 @@ const runEvaluatorProgram = (program: string, expected: string) => {
   const showAssignment = () =>
     ` after${Array.from({ length: variableCount }, (_, variable) => {
       const value = assignment[variable];
-      return value === undefined ? " _" : show(value);
+      return value === undefined ? " _" : showAnum(am, value);
     }).join("")}`;
   const runCommand = (words: string[], index: number) => {
     const numbers = words.slice(1).map(Number);
@@ -338,12 +334,12 @@ const runEvaluatorProgram = (program: string, expected: string) => {
         return "";
       case "q":
         registers[numbers[0]] = new Anum(parseRational(words[2]));
-        return show(registers[numbers[0]]);
+        return showAnum(am, registers[numbers[0]]);
       case "root": {
         const coeffs = words.slice(3).map(BigInt);
         while (coeffs[coeffs.length - 1] === 0n) coeffs.pop();
         registers[numbers[0]] = am.isolateRoots(pm, pm.fromCoeffs(coeffs, 0), [])[numbers[1] - 1];
-        return show(registers[numbers[0]]);
+        return showAnum(am, registers[numbers[0]]);
       }
       case "set":
         // An unset register, such as 7 when every pick met a full set, is zero.
@@ -386,15 +382,15 @@ const runEvaluatorProgram = (program: string, expected: string) => {
         if (evaluator.ism.isFull(set)) return " fullset";
         // The picked number goes to register 7, for a later set.
         registers[7] = evaluator.ism.pickInComplement(set, numbers[2] === 1);
-        return `${show(registers[7])}${showSet(set)}`;
+        return `${showAnum(am, registers[7])}${showSet(set)}`;
       }
       case "pickmax": {
         const max = evaluator.ism.pickMaxInComplement(sets[numbers[0]] ?? null);
-        return `${max === null ? " 0" : ` 1${show(max)}`}${showSet(sets[numbers[0]])}`;
+        return `${max === null ? " 0" : ` 1${showAnum(am, max)}`}${showSet(sets[numbers[0]])}`;
       }
       default: {
         const max = evaluator.ism.queryMaxInComplement(sets[numbers[0]] ?? null);
-        return `${max === null ? " 0" : ` 1${show(max.sup)}${showFlag(max.isAttained)}`}${showSet(sets[numbers[0]])}`;
+        return `${max === null ? " 0" : ` 1${showAnum(am, max.sup)}${showFlag(max.isAttained)}`}${showSet(sets[numbers[0]])}`;
       }
     }
   };
@@ -413,11 +409,6 @@ const runLevelwiseProgram = (program: string) => {
   const sample: Anum[] = [];
   const registers: Anum[] = [];
   let variableCount = 0;
-  const show = (anum: Anum) => {
-    if (anum.value instanceof Rational) return ` q${anum.value}`;
-    const index = am.getRootIndex(anum);
-    return ` r[${anum.value.p.join(" ")}]#${index}(${anum.value.lower},${anum.value.upper})`;
-  };
   const showBound = (polynomial: Polynomial | null, index: number, infinity: string) =>
     polynomial === null ? infinity : `${showPolynomial(polynomial)}#${index}`;
   const runCommand = (words: string[]) => {
@@ -428,14 +419,14 @@ const runLevelwiseProgram = (program: string) => {
         return "";
       case "q":
         registers[numbers[0]] = new Anum(parseRational(words[2]));
-        return show(registers[numbers[0]]);
+        return showAnum(am, registers[numbers[0]]);
       case "root":
         registers[numbers[0]] = am.isolateRoots(
           pm,
           pm.fromCoeffs(words.slice(3).map(BigInt), 0),
           [],
         )[numbers[1] - 1];
-        return show(registers[numbers[0]]);
+        return showAnum(am, registers[numbers[0]]);
       case "set":
         sample[numbers[0]] = am.copy(registers[numbers[1]]);
         return "";
@@ -460,7 +451,7 @@ const runLevelwiseProgram = (program: string) => {
             : ` (${showBound(interval.lower, interval.lowerIndex, "-oo")},${showBound(interval.upper, interval.upperIndex, "+oo")})`,
         );
         const values = Array.from({ length: variableCount }, (_, variable) =>
-          sample[variable] === undefined ? " _" : show(sample[variable]),
+          sample[variable] === undefined ? " _" : showAnum(am, sample[variable]),
         );
         return `${intervals.join("")} after${values.join("")}`;
       }
@@ -496,11 +487,6 @@ const runExplainProgram = (program: string) => {
   });
   const registers: Anum[] = [];
   const atoms: number[] = [];
-  const show = (anum: Anum) => {
-    if (anum.value instanceof Rational) return ` q${anum.value}`;
-    const index = am.getRootIndex(anum);
-    return ` r[${anum.value.p.join(" ")}]#${index}(${anum.value.lower},${anum.value.upper})`;
-  };
   const showAtom = (boolVar: number) => {
     const atom = table.atoms[boolVar]!;
     const body = isIneqAtom(atom)
@@ -518,14 +504,14 @@ const runExplainProgram = (program: string) => {
     switch (words[0]) {
       case "q":
         registers[numbers[0]] = new Anum(parseRational(words[2]));
-        return show(registers[numbers[0]]);
+        return showAnum(am, registers[numbers[0]]);
       case "root":
         registers[numbers[0]] = am.isolateRoots(
           pm,
           pm.fromCoeffs(words.slice(3).map(BigInt), 0),
           [],
         )[numbers[1] - 1];
-        return show(registers[numbers[0]]);
+        return showAnum(am, registers[numbers[0]]);
       case "set":
         sample[numbers[0]] = am.copy(registers[numbers[1]]);
         return "";
