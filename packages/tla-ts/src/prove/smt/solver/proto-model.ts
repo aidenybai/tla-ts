@@ -310,32 +310,47 @@ export class ProtoModel {
     for (const decl of this.funcInterps.keys()) this.completePartialFunc(decl, isUsingFresh);
   }
 
-  // cleanup_expr: replaces the uninterpreted constants in an else expression with their values.
+  // cleanup_expr: replaces the uninterpreted constants in an else expression with their values. Like
+  // Z3, it walks a todo stack, so it rewrites the last argument of a term first.
   private cleanupExpr(expr: number, foundAuxDecls: Set<number>) {
     const manager = this.manager;
     const cache = new Map<number, number>();
-    const visit = (current: number): number => {
-      const cached = cache.get(current);
-      if (cached !== undefined) return cached;
-      let result = current;
+    const todo = [expr];
+    while (todo.length > 0) {
+      const current = todo[todo.length - 1];
       if (manager.isUninterpretedConst(current)) {
+        todo.pop();
         const decl = manager.decls[current];
         const existing = this.constInterps.get(decl);
-        result = existing ?? this.getSomeValue(manager.sorts[current]);
-        if (existing === undefined) this.constInterps.set(decl, result);
-      } else if (manager.kinds[current] === KIND_APP && manager.args[current].length > 0) {
-        const decl = manager.decls[current];
-        if (this.auxDecls.has(decl)) foundAuxDecls.add(decl);
-        result = this.rewriter.mkApp(
-          decl,
-          manager.args[current].map((arg) => visit(arg)),
-          manager.sorts[current],
-        );
+        const value = existing ?? this.getSomeValue(manager.sorts[current]);
+        if (existing === undefined) this.constInterps.set(decl, value);
+        cache.set(current, value);
+        continue;
       }
-      cache.set(current, result);
-      return result;
-    };
-    return visit(expr);
+      const args = manager.args[current];
+      if (manager.kinds[current] !== KIND_APP || args.length === 0) {
+        todo.pop();
+        cache.set(current, current);
+        continue;
+      }
+      const pendingArgs = args.filter((arg) => !cache.has(arg));
+      if (pendingArgs.length > 0) {
+        todo.push(...pendingArgs);
+        continue;
+      }
+      todo.pop();
+      const decl = manager.decls[current];
+      if (this.auxDecls.has(decl)) foundAuxDecls.add(decl);
+      cache.set(
+        current,
+        this.rewriter.mkApp(
+          decl,
+          args.map((arg) => cache.get(arg) ?? arg),
+          manager.sorts[current],
+        ),
+      );
+    }
+    return cache.get(expr) ?? expr;
   }
 
   // cleanup: also removes the auxiliary declarations that no interpretation uses.
