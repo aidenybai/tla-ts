@@ -1001,6 +1001,10 @@ describe("evaluation errors match TLC", () => {
       "0 \\in SUBSET {1}",
       "Attempted to check if the non-enumerable value\n0\nis element of\n{{}, {1}}",
     ],
+    [
+      "Nat \\in SUBSET {1}",
+      "Attempted to check if the non-enumerable value\nNat\nis element of\n{{}, {1}}",
+    ],
     ["0 \\in Seq({1})", "Attempted to check if the value:\n0\nis an element of Seq({1})."],
   ])("reports a value that can't be an element of %s like TLC", async (expression, message) => {
     const result = await checkModule(`ASSUME ${expression}`);

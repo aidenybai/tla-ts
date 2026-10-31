@@ -1770,8 +1770,9 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       return set.name !== "Nat" || (typeof element === "number" && element >= 0);
     }
     case "Subset":
-      // SubsetValue.member fails on any value that is not Enumerable, model values included.
-      if (!isSetValue(element)) {
+      // SubsetValue.member fails on any value that is not Enumerable, model values and the sets a
+      // Java class overrides included.
+      if (!isSetValue(element) || isOverriddenSet(element)) {
         throw new TlaEvaluationError(
           `Attempted to check if the non-enumerable value\n${prettyPrint(formatValue(element))}\nis element of\n${prettyPrint(formatValue(set))}`,
         );
