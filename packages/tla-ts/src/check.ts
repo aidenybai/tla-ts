@@ -399,14 +399,6 @@ const getConfigOperator = (kind: string, name: string, environment: Environment)
   return definition;
 };
 
-const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
-  const definition = getConfigOperator(kind, name, environment);
-  if (isConstantLevel(definition, environment)) {
-    throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
-  }
-  return definition;
-};
-
 // TLC evaluates every constant definition before it reads the configuration. It keeps a literal
 // number or string, and a definition that fails to evaluate, as an operator.
 const getConstantValue = (name: string, definition: Definition, environment: Environment) => {
@@ -418,6 +410,15 @@ const getConstantValue = (name: string, definition: Definition, environment: Env
     if (error instanceof TlaEvaluationError) return undefined;
     throw error;
   }
+};
+
+// TLC takes for an operator only a definition it hasn't replaced with its value.
+const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
+  const definition = getConfigOperator(kind, name, environment);
+  if (getConstantValue(name, definition, environment) !== undefined) {
+    throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
+  }
+  return definition;
 };
 
 // TLC also takes a constant that the configuration assigns a value, which must be TRUE.
@@ -548,14 +549,8 @@ const getSpecification = (config: ModelConfig, environment: Environment): Specif
   if (config.specification === undefined) {
     const getOperator = (name: string | undefined, description: string) => {
       if (name === undefined) return undefined;
-      const body = getConfigOperator(description, name, environment).body;
-      const identifier = createIdentifier(name);
-      // TLC evaluates a literal body later and reports that it is not a boolean.
-      const isLiteral = body.kind === "Number" || body.kind === "String";
-      if (!isLiteral && getLevel(identifier, undefined, environment) === 0) {
-        throw new TlaConfigError(`The ${description} ${name} cannot be a constant.`);
-      }
-      return identifier;
+      getConfigDefinition(description, name, environment);
+      return createIdentifier(name);
     };
     return {
       init: getOperator(config.init, "initial predicate"),

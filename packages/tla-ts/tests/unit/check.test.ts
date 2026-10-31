@@ -2636,6 +2636,13 @@ describe("initial predicate and next-state relation match TLC", () => {
     ).rejects.toThrow(/The next state action Next cannot be a constant/);
   });
 
+  it("takes a constant next-state action that TLC fails to compute for an operator", async () => {
+    const result = await checkSteps("Step == <<TRUE>>[1] /\\ <<1>>[1]", "INIT Init\nNEXT Step");
+    expect(result.failure?.message).toBe(
+      `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut didn't find one.\nline 6, col 24 to line 6, col 31 of module M`,
+    );
+  });
+
   it("checks the configuration in the order TLC reads it, before any assumption", async () => {
     await expect(
       checkSource(
