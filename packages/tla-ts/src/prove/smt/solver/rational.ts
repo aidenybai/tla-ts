@@ -83,6 +83,10 @@ export class Rational {
     return this.num < 0n ? this.neg() : this;
   }
 
+  pow(exponent: number) {
+    return Rational.of(this.num ** BigInt(exponent), this.den ** BigInt(exponent));
+  }
+
   // is_big: mpz keeps a numerator or denominator outside a 32-bit int as a bignum.
   isBig() {
     return isBigInt(this.num) || isBigInt(this.den);

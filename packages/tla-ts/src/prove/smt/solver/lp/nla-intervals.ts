@@ -9,7 +9,6 @@ import {
   add,
   addScalar,
   checkIntervalForConflictOnZero,
-  getPower,
   intersect,
   isEmpty,
   mkDepInterval,
@@ -252,7 +251,7 @@ export class Intervals {
     report: ReportConflict,
   ): boolean {
     if (expr.kind === "scalar") {
-      setValue(interval, getPower(expr.value, exponent));
+      setValue(interval, expr.value.pow(exponent));
       return true;
     }
     if (expr.kind === "sum") {

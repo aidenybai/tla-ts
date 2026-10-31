@@ -210,11 +210,7 @@ export class PddManager {
   pow(poly: Pdd, exponent: number): Pdd {
     if (exponent === 0) return this.one();
     if (exponent === 1 || poly.isZero() || poly.isOne()) return poly;
-    if (poly.isVal()) {
-      let power = Rational.one;
-      for (let index = 0; index < exponent; index++) power = power.mul(poly.val());
-      return this.mkVal(power);
-    }
+    if (poly.isVal()) return this.mkVal(poly.val().pow(exponent));
     // j even: pow(p,2*j') = pow(p*p,j'); j odd: pow(p,2*j'+1) = p*pow(p*p,j')
     const half = this.pow(this.mul(poly, poly), Math.floor(exponent / 2));
     return exponent % 2 === 1 ? this.mul(half, poly) : half;

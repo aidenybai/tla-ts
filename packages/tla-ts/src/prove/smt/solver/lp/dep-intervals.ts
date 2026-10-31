@@ -47,9 +47,6 @@ export const mkDepInterval = (): DepInterval => ({
   upperDep: null,
 });
 
-export const getPower = (value: Rational, exponent: number) =>
-  Rational.of(value.num ** BigInt(exponent), value.den ** BigInt(exponent));
-
 const MINUS_INF: ExtNumeral = { kind: "minus-inf", value: Rational.zero };
 const PLUS_INF: ExtNumeral = { kind: "plus-inf", value: Rational.zero };
 const mkNumeral = (value: Rational): ExtNumeral => ({ kind: "numeral", value });
@@ -86,7 +83,7 @@ const extDiv = (first: ExtNumeral, second: ExtNumeral) => {
 };
 
 const extPower = (numeral: ExtNumeral, exponent: number) => {
-  if (numeral.kind === "numeral") return mkNumeral(getPower(numeral.value, exponent));
+  if (numeral.kind === "numeral") return mkNumeral(numeral.value.pow(exponent));
   return numeral.kind === "minus-inf" && exponent % 2 === 0 ? PLUS_INF : numeral;
 };
 
