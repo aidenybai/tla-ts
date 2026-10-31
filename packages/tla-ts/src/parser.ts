@@ -479,8 +479,12 @@ const parse = (source: string, mode: ParseMode): Module => {
   const createUnexpected = (message: string, token: Token = peekRaw()) =>
     createError(message, token, token);
 
+  // TLAplusParser.isFieldNameToken: a keyword or an underscore names a field or a module too.
   const isFieldName = (token: Token) =>
-    (token.kind === "Identifier" || token.kind === "Keyword") && !isTlapmKeyword(token);
+    (token.kind === "Identifier" ||
+      token.kind === "Keyword" ||
+      (token.kind === "Operator" && token.text === "_")) &&
+    !isTlapmKeyword(token);
 
   const isAt = (text: string, offset = 0) => {
     const token = peek(offset);
@@ -519,7 +523,7 @@ const parse = (source: string, mode: ParseMode): Module => {
   // SANY takes a keyword for the name of a module, as it does for a field.
   const keywordModuleName = { isUsed: false };
   const expectModuleName = () => {
-    if (peek().kind !== "Keyword" || !isFieldName(peek())) return expectIdentifier();
+    if (peek().kind === "Identifier" || !isFieldName(peek())) return expectIdentifier();
     keywordModuleName.isUsed = true;
     return advance().text;
   };

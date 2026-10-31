@@ -177,7 +177,8 @@ describe("parseModule reads operators like SANY", () => {
     ["EXTENDS BY", ["BY"]],
     ["EXTENDS Naturals, IN", ["Naturals", "IN"]],
     ["EXTENDS SUBSET\nVARIABLE x", ["SUBSET"]],
-  ])("names a module with a keyword in %j as SANY does", (header, extendees) => {
+    ["EXTENDS _", ["_"]],
+  ])("names a module with a keyword or an underscore in %j as SANY does", (header, extendees) => {
     expect(parseModule(`---- MODULE M ----\n${header}\nA == 1\n====`).extends).toEqual(extendees);
   });
 
@@ -191,7 +192,7 @@ describe("parseModule reads operators like SANY", () => {
     },
   );
 
-  it.each(["ASSUME", "WF_", "DEF"])(
+  it.each(["ASSUME", "WF_", "DEF", "_"])(
     "takes %s for the first field of a record as SANY does",
     (name) => {
       const module = parseModule(`---- MODULE M ----\nA == [${name} |-> 1, b |-> 2]\n====`);
@@ -201,6 +202,16 @@ describe("parseModule reads operators like SANY", () => {
       });
     },
   );
+
+  it("selects a field named with an underscore as SANY does", () => {
+    const module = parseModule("---- MODULE M ----\nA(r) == [r EXCEPT !._ = r._]\n====");
+    expect(module.definitions[0].body).toMatchObject({
+      kind: "Except",
+      updates: [
+        { path: [{ kind: "Field", name: "_" }], value: { kind: "FieldAccess", field: "_" } },
+      ],
+    });
+  });
 
   it("rejects a keyword for a later field of a record as SANY does", () => {
     expect(() => parseModule("---- MODULE M ----\nA == [a |-> 1, IN |-> 2]\n====")).toThrow(
