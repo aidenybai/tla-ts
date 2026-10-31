@@ -8,7 +8,7 @@ import {
 } from "./ast";
 import { getKindString } from "./builtins";
 import { getReadVariables } from "./dependencies";
-import { TlaEvaluationError, TlaIncompleteSuccessorError, UNEXPECTED_EXCEPTION } from "./errors";
+import { TlaEvaluationError, TlaIncompleteSuccessorError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
@@ -118,6 +118,16 @@ const getNonBooleanMessage = (
       : `The ${run.isInit ? "init" : "next"} state relation is not a boolean expression.\n${node}`;
   }
   return `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${node}`;
+};
+
+// TLC words an IF whose condition isn't a boolean differently for each computation.
+const getIfConditionMessage = (run: Run, value: Value, expression: Expression) => {
+  const kind = getKindString(value);
+  const range = describeRange(expression);
+  if (run.isEnabled) {
+    return `In computing ENABLED, a non-boolean expression(${kind}) was used as the guard condition of an IF.\n${range}`;
+  }
+  return `In computing ${getComputation(run)}, a non-boolean expression (${kind}) was used as the condition of an IF.${run.isInit ? "\n" : ""}${range}`;
 };
 
 const holds = (run: Run, expression: Expression, context: Context, isWalked = true) => {
@@ -434,9 +444,10 @@ const compileMembership = (
     const value: Value =
       expression.operator === "\\subseteq" ? { kind: "Subset", base: evaluated } : evaluated;
     if (!isTlcEnumerable(value)) {
-      throw new TlaEvaluationError(
-        `${UNEXPECTED_EXCEPTION}In computing next states, the right side of \\IN is not enumerable.\n${describeRange(expression)}`,
-      );
+      const message = run.isEnabled
+        ? "The right side of \\IN is not enumerable."
+        : `In computing ${getComputation(run)}, the right side of \\IN is not enumerable.`;
+      throw createRunError(run, `${message}\n${describeRange(expression)}`);
     }
     const elements = getStreamedElements(value);
     for (let position = 0; position < elements.length && !run.isStopped; position++) {
@@ -869,7 +880,10 @@ const compileAction = (
       const alternative = child(expression.alternative);
       return (run, scope, partial, action, isFixed, onComplete) => {
         const condition = evaluate(expression.condition, getContext(run, scope, partial));
-        const branch = expectBoolean(condition, "an IF condition") ? consequent : alternative;
+        if (typeof condition !== "boolean") {
+          throw createRunError(run, getIfConditionMessage(run, condition, expression));
+        }
+        const branch = condition ? consequent : alternative;
         branch(run, scope, partial, action, isFixed, onComplete);
       };
     }

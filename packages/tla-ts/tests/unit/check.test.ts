@@ -1361,7 +1361,22 @@ describe("evaluation errors match TLC", () => {
       "CASE 1 -> x' = x",
       "In computing next states, a non-boolean expression (an integer) was used as a guard condition of a CASE.\nline 6, col 19 to line 6, col 24 of module M",
     ],
-  ])("words a failed CASE in %s or %s like TLC", async (init, next, message) => {
+    [
+      "IF 1 THEN x = 0 ELSE x = 1",
+      "x' = x",
+      "In computing initial states, a non-boolean expression (an integer) was used as the condition of an IF.\nline 5, col 9 to line 5, col 34 of module M",
+    ],
+    [
+      "x = 0",
+      "IF 1 THEN x' = 0 ELSE x' = 1",
+      "In computing next states, a non-boolean expression (an integer) was used as the condition of an IF.line 6, col 9 to line 6, col 36 of module M",
+    ],
+    [
+      "x \\in Nat",
+      "x' = x",
+      "In computing initial states, the right side of \\IN is not enumerable.\nline 5, col 9 to line 5, col 17 of module M",
+    ],
+  ])("words a failed CASE, IF or \\IN in %s or %s like TLC", async (init, next, message) => {
     const result = await check({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nOp(a) == a + 1\nInit == ${init}\nNext == ${next}\n====`,
       config: "INIT Init\nNEXT Next",
@@ -1369,15 +1384,25 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.message).toContain(message);
   });
 
-  it("words a failed CASE of a fair action like TLC", async () => {
+  it.each([
+    [
+      "CASE x -> x' = x",
+      "In computing ENABLED, a non-boolean expression(an integer) was used as a guard condition of a CASE.\nline 5, col 16 to line 5, col 21 of module M",
+    ],
+    [
+      "IF x THEN x' = x ELSE x' = 1",
+      "In computing ENABLED, a non-boolean expression(an integer) was used as the guard condition of an IF.\nline 5, col 6 to line 5, col 33 of module M",
+    ],
+    [
+      "x' \\in Nat",
+      "The right side of \\IN is not enumerable.\nline 5, col 6 to line 5, col 15 of module M",
+    ],
+  ])("words a failed %s in a fair action like TLC", async (action, message) => {
     const result = await check({
-      source:
-        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nA == CASE x -> x' = x\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)\n====",
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nA == ${action}\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)\n====`,
       config: "SPECIFICATION Spec\nPROPERTY P",
     });
-    expect(result.failure?.message).toContain(
-      "In computing ENABLED, a non-boolean expression(an integer) was used as a guard condition of a CASE.\nline 5, col 16 to line 5, col 21 of module M",
-    );
+    expect(result.failure?.message).toContain(message);
   });
 
   // TLC's enabled walks the action, and words a literal it walks to differently.
