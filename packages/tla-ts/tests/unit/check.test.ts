@@ -1342,6 +1342,16 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.message).toBe(message);
   });
 
+  it("computes a function definition that isn't recursive at once as TLC does", async () => {
+    const result = await checkSteps(
+      "F[k \\in {1}] == x = 0\nStart == F[1]",
+      "INIT Start\nNEXT Next",
+    );
+    expect(result.failure?.message).toBe(
+      "In evaluation, the identifier x is either undefined or not an operator.\nline 6, col 17 to line 6, col 17 of module M",
+    );
+  });
+
   it.each([
     ["Start == x = [k \\in {1, 2} |-> 0]\nStep == x' = x /\\ x[3] = 0", "Start", "<<0, 0>>"],
     ["Step == x' = [k \\in {1, 2} |-> 1] /\\ x'[3] = 0", "Init", "<<1, 1>>"],

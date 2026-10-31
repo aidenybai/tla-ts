@@ -690,6 +690,22 @@ const createLazyFunction = (
   return self;
 };
 
+const definitionSources = new WeakMap<FunctionDefinition, Expression>();
+
+// The function constructor of a definition, which SANY locates at the whole definition.
+const getDefinitionSource = (definition: FunctionDefinition) => {
+  const cached = definitionSources.get(definition);
+  if (cached) return cached;
+  const source: Expression = {
+    kind: "FunctionConstruction",
+    bounds: definition.bounds,
+    body: definition.body,
+    location: definition.location,
+  };
+  definitionSources.set(definition, source);
+  return source;
+};
+
 const createRecursiveFunction = (definition: FunctionDefinition, context: Context) => {
   const domain = getBoundsDomain(definition.bounds, context);
   const functionValue = createLazyFunction(
@@ -735,10 +751,13 @@ const toStartupValue = (definition: Definition, value: Value): Value => {
   }
 };
 
-const evaluateDefinitionBody = (definition: Definition, context: Context) =>
-  definition.kind === "Function"
+// TLC evaluates a function definition that isn't recursive as it does a function constructor.
+const evaluateDefinitionBody = (definition: Definition, context: Context) => {
+  if (definition.kind !== "Function") return evaluate(definition.body, context);
+  return definition.isSelfReferential
     ? createRecursiveFunction(definition, context)
-    : evaluate(definition.body, context);
+    : evaluate(getDefinitionSource(definition), context);
+};
 
 const evaluateDefinitionValue = (definition: Definition, context: Context) => {
   const isConstant = isConstantLevel(definition, context.environment);
