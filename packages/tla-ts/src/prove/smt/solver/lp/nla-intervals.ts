@@ -20,7 +20,7 @@ import {
   setValue,
   setZeroIntervalDepsForMult,
 } from "./dep-intervals";
-import { type Dependency, linearize, mkJoin, mkLeaf } from "./dependency";
+import { type Dependency, mkJoin, mkLeaf } from "./dependency";
 import { Explanation } from "./explanation";
 import { LarTerm } from "./lar-term";
 import { type Nex, type NexMul, type NexSum, isALinearTerm, isElementary } from "./nex";
@@ -205,8 +205,7 @@ export class Intervals {
       const deps = this.conflictUpperLower(interval, fromTerm)
         ? [interval.upperDep, intersection.lowerDep]
         : [intersection.upperDep, interval.lowerDep];
-      for (const dep of deps)
-        for (const constraint of linearize([dep])) explanation.push(constraint);
+      for (const dep of deps) explanation.pushDependency(dep);
       report(explanation);
     } else this.intervalOfSum(sum, mkDepInterval(), "with-deps", report);
     return false;

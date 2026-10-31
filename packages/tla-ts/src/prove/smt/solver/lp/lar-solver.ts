@@ -729,10 +729,6 @@ export class LarSolver {
     }
   }
 
-  pushExplanation(dep: Dependency, explanation: Explanation) {
-    for (const constraint of linearize([dep])) explanation.push(constraint);
-  }
-
   // get_bound_constraint_witnesses_for_column: the witnesses of both bounds.
   getBoundWitnesses(column: number) {
     return mkJoin(this.columns[column].lowerWitness, this.columns[column].upperWitness);

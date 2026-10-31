@@ -3,6 +3,7 @@
 // iteration order is the slot order of Z3's hashtable.
 import { getIdentityHash, ObjMap } from "../hashtable";
 import { Rational } from "../rational";
+import { type Dependency, linearize } from "./dependency";
 
 export class Explanation {
   private pairs: [number, Rational][] = [];
@@ -19,6 +20,11 @@ export class Explanation {
 
   push(constraint: number) {
     this.indices.set(constraint, true);
+  }
+
+  // push_explanation: the constraints behind a dependency.
+  pushDependency(dep: Dependency) {
+    for (const constraint of linearize([dep])) this.push(constraint);
   }
 
   get isEmpty() {

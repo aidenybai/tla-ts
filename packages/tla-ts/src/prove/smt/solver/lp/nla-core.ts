@@ -268,13 +268,13 @@ export class LemmaBuilder {
 
   explainExistingLowerBound(lpVar: number) {
     const explanation = new Explanation();
-    this.core.lra.pushExplanation(this.core.lra.getLowerWitness(lpVar), explanation);
+    explanation.pushDependency(this.core.lra.getLowerWitness(lpVar));
     return this.addExplanation(explanation);
   }
 
   explainExistingUpperBound(lpVar: number) {
     const explanation = new Explanation();
-    this.core.lra.pushExplanation(this.core.lra.getUpperWitness(lpVar), explanation);
+    explanation.pushDependency(this.core.lra.getUpperWitness(lpVar));
     return this.addExplanation(explanation);
   }
 }
@@ -645,7 +645,7 @@ export class NlaCore {
     const dep = useUpper ? this.lra.getUpperWitness(column) : this.lra.getLowerWitness(column);
     if (dep === null) return undefined;
     const bound = useUpper ? this.lra.getUpperBound(column) : this.lra.getLowerBound(column);
-    this.lra.pushExplanation(dep, explanation);
+    explanation.pushDependency(dep);
     return coeff.mul(bound.x);
   }
 

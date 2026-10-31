@@ -5,7 +5,6 @@
 // fractional basic column.
 import { getGcd, getLcm, Rational } from "../rational";
 import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
-import { linearize, mkJoin } from "./dependency";
 import { DiophantineSolver } from "./dioph-eq";
 import { Explanation } from "./explanation";
 import { getGomoryCuts } from "./gomory";
@@ -377,9 +376,7 @@ export class IntSolver {
   }
 
   private addBoundWitnesses(column: number) {
-    const solver = this.solver;
-    const deps = mkJoin(solver.getLowerWitness(column), solver.getUpperWitness(column));
-    for (const constraint of linearize([deps])) this.explanation.push(constraint);
+    this.explanation.pushDependency(this.solver.getBoundWitnesses(column));
   }
 
   private fillExplanationFromFixedColumns(row: RowCell[]) {

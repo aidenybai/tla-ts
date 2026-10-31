@@ -17,7 +17,7 @@ import {
   set,
   setValue,
 } from "./dep-intervals";
-import { type Dependency, linearize, mkJoin } from "./dependency";
+import { type Dependency, mkJoin } from "./dependency";
 import { Explanation } from "./explanation";
 import { IndexedUintSet } from "./containers";
 import { NULL_LPVAR } from "./lar-solver";
@@ -489,7 +489,7 @@ export class Grobner {
 
   private addDependencies(lemma: LemmaBuilder, equation: Equation) {
     const explanation = new Explanation();
-    for (const constraint of linearize([equation.dep])) explanation.push(constraint);
+    explanation.pushDependency(equation.dep);
     return lemma.addExplanation(explanation);
   }
 
