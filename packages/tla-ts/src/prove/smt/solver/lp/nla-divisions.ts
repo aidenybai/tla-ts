@@ -4,11 +4,12 @@
 // skips the check while nra's model is in use, which never happens here since nra is not ported.
 import { getEuclideanDiv, Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
+import { NULL_LPVAR } from "./lar-solver";
 import { LarTerm } from "./lar-term";
 import { KIND_NE, LemmaBuilder, mkIneq, type NlaCore } from "./nla-core";
 
 // A division q = x / y with r its remainder, or a divisibility fact r = mod(x, y), q = div(x, y).
-interface Division {
+export interface Division {
   readonly quotient: number;
   readonly dividend: number;
   readonly divisor: number;
@@ -27,6 +28,12 @@ interface DivisionValues {
 // div on integers: Euclidean division, as mpz_manager::div.
 const getIntDiv = (dividend: Rational, divisor: Rational) =>
   Rational.of(getEuclideanDiv(dividend.num, divisor.num));
+
+const hasNullColumn = (division: Division) =>
+  division.quotient === NULL_LPVAR ||
+  division.dividend === NULL_LPVAR ||
+  division.divisor === NULL_LPVAR ||
+  division.remainder === NULL_LPVAR;
 
 const mkDifference = (first: number, second: number) =>
   new LarTerm([
@@ -47,21 +54,22 @@ export class Divisions {
     this.core.emons.trail.push(() => divisions.pop());
   }
 
-  addIdivision(quotient: number, dividend: number, divisor: number, remainder: number) {
-    if ([quotient, dividend, divisor, remainder].includes(-1)) return;
-    this.pushDivision(this.idivisions, { quotient, dividend, divisor, remainder });
+  addIdivision(division: Division) {
+    if (hasNullColumn(division)) return;
+    this.pushDivision(this.idivisions, division);
   }
 
-  addBoundedDivision(quotient: number, dividend: number, divisor: number, remainder: number) {
-    if ([quotient, dividend, divisor, remainder].includes(-1)) return;
+  addBoundedDivision(division: Division) {
+    if (hasNullColumn(division)) return;
     const lra = this.core.lra;
-    if (lra.hasTerm(dividend) || lra.hasTerm(divisor) || lra.hasTerm(quotient)) return;
-    this.pushDivision(this.boundedDivisions, { quotient, dividend, divisor, remainder });
+    if (lra.hasTerm(division.dividend) || lra.hasTerm(division.divisor)) return;
+    if (lra.hasTerm(division.quotient)) return;
+    this.pushDivision(this.boundedDivisions, division);
   }
 
-  addDivisibility(remainder: number, dividend: number, divisor: number, quotient: number) {
-    if ([quotient, dividend, divisor, remainder].includes(-1)) return;
-    this.pushDivision(this.divisibility, { quotient, dividend, divisor, remainder });
+  addDivisibility(division: Division) {
+    if (hasNullColumn(division)) return;
+    this.pushDivision(this.divisibility, division);
   }
 
   // y1 >= y2 > 0 & 0 <= x1 <= x2 => x1/y1 <= x2/y2

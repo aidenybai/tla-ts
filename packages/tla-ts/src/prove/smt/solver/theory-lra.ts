@@ -57,6 +57,7 @@ import { IntSolver } from "./lp/int-solver";
 import { LarSolver, NULL_LPVAR } from "./lp/lar-solver";
 import type { LarTerm } from "./lp/lar-term";
 import { Ineq, KIND_NE, Lemma, NlaCore } from "./lp/nla-core";
+import type { Division } from "./lp/nla-divisions";
 import { randomUpdate } from "./lp/random-updater";
 import { shrink } from "./array";
 
@@ -86,6 +87,17 @@ interface TermBound {
   value: Rational;
 }
 
+interface AssertedAtom {
+  boolVar: BoolVar;
+  isTrue: boolean;
+}
+
+// The theory variables of a linear sum and their coefficients.
+interface LinearizedSum {
+  vars: number[];
+  coeffs: Rational[];
+}
+
 const getAtomLiteral = (bound: ApiBound) => mkLiteral(bound.boolVar);
 
 export class TheoryLra {
@@ -99,7 +111,7 @@ export class TheoryLra {
   private realZeroVar = NULL_LPVAR;
   // The literal of each inequality constraint, and null for a definition.
   private constraintSources: (Literal | null)[] = [];
-  private assertedAtoms: { boolVar: BoolVar; isTrue: boolean }[] = [];
+  private assertedAtoms: AssertedAtom[] = [];
   private assertedQhead = 0;
   private bounds: ApiBound[][] = [];
   private unassignedBounds: number[] = [];
@@ -196,11 +208,17 @@ export class TheoryLra {
     return node.thVar >= 0 && this.varEnodes[node.thVar] === node;
   }
 
-  private mkVar(expr: number) {
+  // The enode of a term, internalized first if it has none.
+  private getInternalizedEnode(expr: number) {
     const context = this.context;
     if (!context.isEInternalized(expr)) context.internalize(expr, false);
     const node = context.getEnode(expr);
     if (node === undefined) throw new Error("the term was not internalized");
+    return node;
+  }
+
+  private mkVar(expr: number) {
+    const node = this.getInternalizedEnode(expr);
     if (this.isAttachedToVar(node)) return node.thVar;
     const thVar = this.varEnodes.length;
     this.varEnodes.push(node);
@@ -208,7 +226,7 @@ export class TheoryLra {
       this.bounds.push([]);
       this.unassignedBounds.push(0);
     }
-    context.attachThVar(node, thVar);
+    this.context.attachThVar(node, thVar);
     return thVar;
   }
 
@@ -313,13 +331,20 @@ export class TheoryLra {
     return nla;
   }
 
-  // The columns of a quotient, its dividend and divisor, and the remainder, internalized.
-  private registerDivision(quotient: number, remainder: number) {
+  // The columns of a quotient, its dividend and divisor, and the remainder, internalized in that
+  // order.
+  private registerDivision(quotient: number, remainder: number): Division {
     const args = this.manager.args[quotient];
-    return [quotient, args[0], args[1], remainder].map((expr) => {
+    const register = (expr: number) => {
       this.internalizeTermCore(expr);
       return this.registerVar(this.mkVar(expr));
-    }) as [number, number, number, number];
+    };
+    return {
+      quotient: register(quotient),
+      dividend: register(args[0]),
+      divisor: register(args[1]),
+      remainder: register(remainder),
+    };
   }
 
   private isNonzeroNumeral(expr: number) {
@@ -429,10 +454,10 @@ export class TheoryLra {
             context.internalize(remainder, false);
             if (context.relevancy.isEnabled) context.relevancy.addDependency(term, remainder);
             if (this.nla !== undefined && !manager.isNumeral(args[1]))
-              this.nla.divisions.addIdivision(...this.registerDivision(term, remainder));
+              this.nla.divisions.addIdivision(this.registerDivision(term, remainder));
             if (manager.isNumeral(args[1]) && this.isBounded(args[0])) {
               const nla = this.ensureNla();
-              nla.divisions.addBoundedDivision(...this.registerDivision(term, remainder));
+              nla.divisions.addBoundedDivision(this.registerDivision(term, remainder));
             }
           } else if (op === OP_MOD) {
             const isNonzeroDivisor = this.isNonzeroNumeral(args[1]);
@@ -442,14 +467,13 @@ export class TheoryLra {
             if (this.nla !== undefined && isNonzeroDivisor) {
               const quotient = manager.mkApp(OP_IDIV, args, SORT_INT);
               context.internalize(quotient, false);
-              this.nla.divisions.addBoundedDivision(...this.registerDivision(quotient, term));
+              this.nla.divisions.addBoundedDivision(this.registerDivision(quotient, term));
             }
             if (!manager.isNumeral(args[1]) && !this.isZeroNumeral(args[0])) {
               const nla = this.ensureNla();
               const quotient = manager.mkApp(OP_IDIV, args, SORT_INT);
               context.internalize(quotient, false);
-              const columns = this.registerDivision(quotient, term);
-              nla.divisions.addDivisibility(columns[3], columns[1], columns[2], columns[0]);
+              nla.divisions.addDivisibility(this.registerDivision(quotient, term));
             }
           } else if (op === OP_IDIV0 || op === OP_MOD0) {
             for (const arg of args) toEnsureVar.push(arg);
@@ -498,10 +522,7 @@ export class TheoryLra {
   }
 
   // internalize_linearized_def: term - v = 0, unless the term is its own variable.
-  private internalizeLinearizedDef(
-    expr: number,
-    linearized: { vars: number[]; coeffs: Rational[] },
-  ) {
+  private internalizeLinearizedDef(expr: number, linearized: LinearizedSum) {
     const thVar = this.mkVar(expr);
     if (
       linearized.vars.length === 1 &&
@@ -944,7 +965,8 @@ export class TheoryLra {
     if (!value.isZero() || !this.solver.hasTerm(column)) return false;
     const coeffs = this.getTermCoeffs(this.solver.getTerm(column));
     if (coeffs.length !== 2) return false;
-    const [first, second] = coeffs;
+    const first = coeffs[0];
+    const second = coeffs[1];
     if (!first[1].add(second[1]).isZero() || first[0] === second[0]) return false;
     if (this.isEqual(first[0], second[0])) return false;
     if (this.isIntVar(first[0]) !== this.isIntVar(second[0])) return false;
@@ -1612,11 +1634,8 @@ export class TheoryLra {
 
   // ensure_enode: the relevant enode of a term.
   private ensureEnode(expr: number) {
-    const context = this.context;
-    if (!context.isEInternalized(expr)) context.internalize(expr, false);
-    context.markAsRelevant(expr);
-    const node = context.getEnode(expr);
-    if (node === undefined) throw new Error("the term was not internalized");
+    const node = this.getInternalizedEnode(expr);
+    this.context.markAsRelevant(expr);
     return node;
   }
 
@@ -1645,7 +1664,7 @@ export class TheoryLra {
   // mk_div_axiom: q = 0 or q * (p / q) = p.
   private mkDivAxiom(dividend: number, divisor: number) {
     const manager = this.manager;
-    if (manager.isNumeral(divisor) && manager.getRationalValue(divisor).isZero()) return;
+    if (this.isZeroNumeral(divisor)) return;
     const isZero = this.mkEq(divisor, manager.mkRealNumeral(Rational.zero));
     const product = manager.mkApp(
       OP_MUL,
