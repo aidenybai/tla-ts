@@ -268,7 +268,7 @@ export const toLiveExpression = (
       const value = evaluate(expression, getConstantContext(environment, scope));
       if (typeof value !== "boolean") {
         throw new TlaEvaluationError(
-          `TLC expected a boolean value, but did not find one. ${describeRange(expression)}`,
+          `TLC expected a boolean value, but did not find one. ${expression.kind === "Number" ? (expression.text ?? expression.value) : describeRange(expression)}`,
         );
       }
       return createBoolean(value);

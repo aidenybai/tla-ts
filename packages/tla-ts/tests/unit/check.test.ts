@@ -2106,6 +2106,7 @@ describe("check matches TLC 1.7.4", () => {
       "<>(1 + 1)",
       "TLC expected a boolean value, but did not find one. line 6, col 9 to line 6, col 13 of module M",
     ],
+    ["<>(\\b101 /\\ TRUE)", "TLC expected a boolean value, but did not find one. \\b101"],
   ])(
     "reports an error in the constant part of the property %s as TLC does",
     async (property, message) => {
