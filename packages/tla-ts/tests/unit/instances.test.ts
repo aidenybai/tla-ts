@@ -176,7 +176,7 @@ const INNER_MODULES: Record<string, string> = {
   Primed: "EXTENDS Naturals\nCONSTANT c, Op(_)\nUse == Op(c)' + c",
   Vars: "EXTENDS Naturals\nVARIABLE v, w\nUse == v + w",
   Applied: "CONSTANT c, Op(_)\nUse == Op(c)",
-  Assumed: "CONSTANT C, D\nASSUME C = {}",
+  Assumed: "CONSTANT C, D\nASSUME C = {}\nTHEOREM ASSUME D PROVE TRUE",
   Nested: "EXTENDS Naturals\nCONSTANT c, Op(_)\nVARIABLE v\nUse == Op(v') /\\ c = 1",
   Twice: "CONSTANT c, Op(_, _)\nUse == Op(c, c)\nOther(d) == Op(d, c)",
   Outer:
@@ -244,6 +244,7 @@ describe("substitution levels match SANY", () => {
     ],
     ["I == INSTANCE Pure WITH c <- [](x = 1), Op <- LAMBDA a : a", [getLevelError("Pure", "c", 2)]],
     ["I == INSTANCE Assumed WITH C <- [](x = 0), D <- TRUE", [getLevelError("Assumed", "C", 2)]],
+    ["I == INSTANCE Assumed WITH C <- TRUE, D <- [](x = 0)", [getLevelError("Assumed", "D", 2)]],
     ["I == INSTANCE Outer WITH c <- [](x = 1)", [getLevelError("Outer", "c", 2)]],
     ["I == INSTANCE Functions WITH c <- [](x = 1)", [getLevelError("Functions", "c", 2)]],
     [

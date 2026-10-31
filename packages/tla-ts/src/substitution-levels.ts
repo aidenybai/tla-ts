@@ -1,6 +1,8 @@
-import type { Declaration, Definition, Expression, SourceLocation } from "./ast";
+import type { Declaration, Definition, Expression, SourceLocation, Theorem } from "./ast";
 import { createSanyError, formatRange } from "./errors";
 import {
+  ACTION_LEVEL,
+  analyzeAssumeProve,
   createLevelAnalyzer,
   getArgumentKey,
   MAX_LEVEL,
@@ -24,6 +26,7 @@ interface ModuleContext {
   variables: string[];
   definitions: Definition[];
   assumptions: Expression[];
+  theorems: Theorem[];
   getDefinition: (name: string) => Definition | undefined;
 }
 
@@ -101,8 +104,21 @@ export const checkInstances = (
         definition.formals.every((formal) => formal.name !== operator && formal.name !== param),
       ),
     );
+    const addAssumedLevels = (data: ReturnType<typeof analyzeAssumeProve>) => {
+      addLevels(data, () => true);
+      module.constants.forEach((constant) => {
+        if (data.params.has(constant.name)) {
+          putConstraint(levels.constraints, constant.name, ACTION_LEVEL);
+        }
+      });
+    };
     module.assumptions.forEach((assumption) =>
-      addLevels(analyzer.analyze(assumption, new Map()), () => true),
+      addAssumedLevels(analyzer.analyze(assumption, new Map())),
+    );
+    module.theorems.forEach((theorem) =>
+      theorem.statement.kind === "AssumeProve"
+        ? addAssumedLevels(analyzeAssumeProve(theorem.statement, new Map(), analyzer))
+        : addLevels(analyzer.analyze(theorem.statement, new Map()), () => true),
     );
     moduleLevels.set(name, levels);
     return levels;
