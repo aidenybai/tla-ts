@@ -454,18 +454,17 @@ export class Rewriter extends RewriterTpl {
       ? args.flatMap((arg) => (manager.getOp(arg) === OP_OR ? manager.args[arg] : [arg]))
       : args;
     const literals = new FlatLiterals(manager);
-    let numCandidates = 0;
     for (const arg of flatArgs) {
       if (manager.isTrue(arg)) return manager.trueExpr;
       if (manager.isFalse(arg)) continue;
-      numCandidates++;
       if (literals.add(arg)) return manager.trueExpr;
     }
     const result = literals.list;
     const isOutOfOrder = result.some(
       (arg, index) => index > 0 && isAstLess(manager, arg, result[index - 1]),
     );
-    if (isNested || numCandidates !== flatArgs.length || isOutOfOrder)
+    // Dropping false or a duplicate disjunct also sets mk_nflat_or_core's s.
+    if (isNested || result.length !== flatArgs.length || isOutOfOrder)
       sortByKey(result, (arg) => manager.ids[arg]);
     return manager.mkOr(result);
   }
