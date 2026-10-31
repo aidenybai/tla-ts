@@ -596,12 +596,6 @@ export const reset = (interval: DepInterval) => {
   interval.isUpperInf = true;
 };
 
-export const setZeroInterval = (interval: DepInterval, dep: Dependency) => {
-  setValue(interval, Rational.zero);
-  interval.lowerDep = dep;
-  interval.upperDep = dep;
-};
-
 export const setZeroIntervalDepsForMult = (interval: DepInterval) => {
   interval.lowerDep = mkJoin(interval.lowerDep, interval.upperDep);
   interval.upperDep = interval.lowerDep;
@@ -614,8 +608,6 @@ export const isZero = (interval: DepInterval) =>
   !interval.isUpperOpen &&
   interval.lower.isZero() &&
   interval.upper.isZero();
-
-export const isInf = (interval: DepInterval) => interval.isLowerInf && interval.isUpperInf;
 
 export const isEmpty = (interval: DepInterval) => {
   if (interval.isLowerInf || interval.isUpperInf) return false;

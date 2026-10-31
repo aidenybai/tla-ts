@@ -39,7 +39,6 @@ const mkDifference = (first: number, second: number) =>
 
 export class Divisions {
   private idivisions: Division[] = [];
-  private rdivisions: Division[] = [];
   private boundedDivisions: Division[] = [];
   // Divisibility facts, whose quotient is div(x, y) and remainder mod(x, y).
   private divisibility: Division[] = [];
@@ -54,11 +53,6 @@ export class Divisions {
   addIdivision(quotient: number, dividend: number, divisor: number, remainder: number) {
     if ([quotient, dividend, divisor, remainder].includes(-1)) return;
     this.pushDivision(this.idivisions, { quotient, dividend, divisor, remainder });
-  }
-
-  addRdivision(quotient: number, dividend: number, divisor: number, remainder: number) {
-    if ([quotient, dividend, divisor, remainder].includes(-1)) return;
-    this.pushDivision(this.rdivisions, { quotient, dividend, divisor, remainder });
   }
 
   addBoundedDivision(quotient: number, dividend: number, divisor: number, remainder: number) {
@@ -159,8 +153,9 @@ export class Divisions {
     };
   }
 
-  // The monotonicity lemmas of the divisions whose quotients are wrong, against the others.
-  private checkMonotonicity(divisions: Division[], isInt: boolean) {
+  // The monotonicity lemmas of the integer divisions whose quotients are wrong, against the others.
+  // Z3's theory_lra registers no real divisions, so the rdivisions it would also check stay empty.
+  private checkMonotonicity(divisions: Division[]) {
     const core = this.core;
     for (const division of divisions) {
       if (!core.isRelevant(division.quotient)) continue;
@@ -168,10 +163,8 @@ export class Divisions {
       const dividendValue = values.dividendValue;
       const divisorValue = values.divisorValue;
       if (divisorValue.isZero()) continue;
-      if (isInt) {
-        if (!dividendValue.isInt() || !divisorValue.isInt()) continue;
-        if (values.quotientValue.equals(getIntDiv(dividendValue, divisorValue))) continue;
-      } else if (values.quotientValue.equals(dividendValue.div(divisorValue))) continue;
+      if (!dividendValue.isInt() || !divisorValue.isInt()) continue;
+      if (values.quotientValue.equals(getIntDiv(dividendValue, divisorValue))) continue;
       for (const other of divisions) {
         if (other.quotient === division.quotient || !core.isRelevant(other.quotient)) continue;
         if (this.monotonicity(values, this.getValues(other))) return true;
@@ -181,8 +174,7 @@ export class Divisions {
   }
 
   check() {
-    if (this.checkMonotonicity(this.idivisions, true)) return;
-    if (this.checkMonotonicity(this.rdivisions, false)) return;
+    if (this.checkMonotonicity(this.idivisions)) return;
     this.checkModMult();
     this.checkLinearDivisibility();
     this.checkModCongruence();

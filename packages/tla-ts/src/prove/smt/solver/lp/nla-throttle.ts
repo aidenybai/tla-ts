@@ -9,7 +9,6 @@ export const THROTTLE_ORDER_LEMMA = 0;
 export const THROTTLE_BINOMIAL_SIGN_LEMMA = 1;
 export const THROTTLE_MONOTONE_LEMMA = 2;
 export const THROTTLE_TANGENT_LEMMA = 3;
-export const THROTTLE_MONOMIAL_BINOMIAL_SIGN = 4;
 
 const packRationalSign = (value: Rational) =>
   value.isPositive() ? 1 : value.isNegative() ? 255 : 0;

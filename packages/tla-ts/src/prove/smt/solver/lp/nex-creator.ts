@@ -41,10 +41,6 @@ export class NexCreator {
     this.activeVarsWeights.fill(0, previousCount);
   }
 
-  getNumberOfVars() {
-    return this.activeVarsWeights.length;
-  }
-
   setVarWeight(variable: number, weight: number) {
     this.activeVarsWeights[variable] = weight;
   }

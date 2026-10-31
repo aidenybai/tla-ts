@@ -104,8 +104,6 @@ export const negateKind = (kind: number) => {
   }
 };
 
-export const swapSideKind = (kind: number) => (kind === KIND_EQ || kind === KIND_NE ? kind : -kind);
-
 export const getRatSign = (value: Rational) =>
   value.isPositive() ? 1 : value.isNegative() ? -1 : 0;
 
@@ -143,9 +141,6 @@ export const mkFactor = (variable: number, isMon: boolean): Factor => ({
   isMon,
   isNegated: false,
 });
-
-export const factorsEqual = (first: Factor, second: Factor) =>
-  first.variable === second.variable && first.isMon === second.isMon;
 
 export const getFactorSign = (factor: Factor) => signToRat(factor.isNegated);
 
@@ -225,10 +220,6 @@ export class LemmaBuilder {
     return this.lemma.expl;
   }
 
-  get numIneqs() {
-    return this.lemma.ineqs.length;
-  }
-
   // |=: an inequality, unless the bounds already explain its negation away.
   addIneq(ineq: Ineq) {
     if (!this.core.explainIneq(this, ineq.term, ineq.cmp, ineq.rs)) this.lemma.ineqs.push(ineq);
@@ -266,17 +257,6 @@ export class LemmaBuilder {
   explainFixed(lpVar: number) {
     this.explainExistingLowerBound(lpVar);
     this.explainExistingUpperBound(lpVar);
-    return this;
-  }
-
-  explainEquiv(first: number, second: number) {
-    if (this.core.varsAreEquiv(first, second)) {
-      this.explainVar(first);
-      this.explainVar(second);
-    } else {
-      this.explainFixed(first);
-      this.explainFixed(second);
-    }
     return this;
   }
 
@@ -376,19 +356,9 @@ export class NlaCore {
     return product;
   }
 
-  valRooted(monic: Monic) {
-    return monic.rsign ? this.val(monic.variable).neg() : this.val(monic.variable);
-  }
-
   valFactor(factor: Factor) {
     const value = this.val(factor.variable);
     return factor.isNegated ? value.neg() : value;
-  }
-
-  valFactorization(factorization: Factorization) {
-    let product = Rational.one;
-    for (const factor of factorization.factors) product = product.mul(this.valFactor(factor));
-    return product;
   }
 
   compareHolds(left: Rational, cmp: number, right: Rational) {
@@ -417,10 +387,6 @@ export class NlaCore {
 
   ineqHolds(ineq: Ineq) {
     return this.compareHolds(this.value(ineq.term), ineq.cmp, ineq.rs);
-  }
-
-  lemmaHolds(lemma: Lemma) {
-    return lemma.ineqs.some((ineq) => this.ineqHolds(ineq));
   }
 
   hasUpperBound(lpVar: number) {
@@ -456,11 +422,6 @@ export class NlaCore {
     return this.lra.isFixed(lpVar) && this.lra.getLowerBound(lpVar).isZero();
   }
 
-  varIsFixedToVal(lpVar: number, value: Rational) {
-    const lower = this.lra.getLowerBound(lpVar);
-    return this.lra.isFixed(lpVar) && lower.y.isZero() && lower.x.equals(value);
-  }
-
   varIsFixed(lpVar: number) {
     return this.lra.isFixed(lpVar);
   }
@@ -485,10 +446,6 @@ export class NlaCore {
     );
   }
 
-  varIsSeparatedFromZero(lpVar: number) {
-    return this.varHasNegativeUpperBound(lpVar) || this.varHasPositiveLowerBound(lpVar);
-  }
-
   varIsBig(lpVar: number) {
     return !this.varIsInt(lpVar) && this.val(lpVar).isBig();
   }
@@ -503,10 +460,6 @@ export class NlaCore {
 
   hasRealFactorization(factorization: Factorization) {
     return factorization.factors.some((factor) => !this.varIsInt(factor.variable));
-  }
-
-  hasZeroFactor(factorization: Factorization) {
-    return factorization.factors.some((factor) => this.valFactor(factor).isZero());
   }
 
   monHasZero(vars: number[]) {
@@ -525,10 +478,6 @@ export class NlaCore {
 
   mapToRoot(lpVar: number) {
     return getSignedVarVar(this.varEqs.findVar(lpVar));
-  }
-
-  varsAreEquiv(first: number, second: number) {
-    return this.varEqs.areEquiv(first, second);
   }
 
   sortedRvars(factor: Factor) {
@@ -552,38 +501,12 @@ export class NlaCore {
     return sign;
   }
 
-  // reduce_monic_to_rooted: the sorted roots of variables, and the product of their signs.
-  reduceMonicToRooted(vars: number[]) {
-    let isNegated = false;
-    const roots: number[] = [];
-    for (const lpVar of vars) {
-      const root = this.varEqs.findVar(lpVar);
-      isNegated = isNegated !== isSignedVarNegated(root);
-      roots.push(getSignedVarVar(root));
-    }
-    roots.sort((first, second) => first - second);
-    return { vars: roots, sign: signToRat(isNegated) };
-  }
-
   getMonicSign(monic: Monic) {
     let sign = 1;
     for (const lpVar of monic.vars) {
       const value = this.val(lpVar);
       if (value.isNegative()) sign = -sign;
       else if (!value.isPositive()) return 0;
-    }
-    return sign;
-  }
-
-  signContradiction(monic: Monic) {
-    return getRatSign(this.varVal(monic)) !== this.getMonicSign(monic);
-  }
-
-  varsSign(vars: number[]) {
-    let sign = 1;
-    for (const lpVar of vars) {
-      sign *= getRatSign(this.val(lpVar));
-      if (sign === 0) return 0;
     }
     return sign;
   }
@@ -612,22 +535,8 @@ export class NlaCore {
     return this.productValue(monic).equals(value.x);
   }
 
-  rmCheck(monic: Monic) {
-    return this.checkMonic(this.emons.get(monic.variable));
-  }
-
   hasRelevantMonomial() {
     return this.emons.monics.some((monic) => this.isRelevant(monic.variable));
-  }
-
-  isNlVar(lpVar: number) {
-    return this.isMonicVar(lpVar) || this.emons.isUsedInMonic(lpVar);
-  }
-
-  influencesNlVar(lpVar: number) {
-    if (this.isNlVar(lpVar)) return true;
-    const core = this.lra.core;
-    return core.matrix.columns[lpVar].some((cell) => this.isNlVar(core.basis[cell.row]));
   }
 
   getVarWeight(lpVar: number) {
@@ -722,63 +631,6 @@ export class NlaCore {
 
   negateRelation(lemma: LemmaBuilder, lpVar: number, value: Rational) {
     lemma.addIneq(mkIneq(lpVar, this.val(lpVar).compare(value) < 0 ? KIND_GE : KIND_LE, value));
-  }
-
-  negateFactorEquality(lemma: LemmaBuilder, first: Factor, second: Factor) {
-    if (factorsEqual(first, second)) return;
-    const coeff = this.val(first.variable).equals(this.val(second.variable))
-      ? Rational.minusOne
-      : Rational.one;
-    lemma.addIneq(
-      mkIneq(
-        new LarTerm([
-          [first.variable, Rational.one],
-          [second.variable, coeff],
-        ]),
-        KIND_NE,
-        0,
-      ),
-    );
-  }
-
-  negateFactorRelation(
-    lemma: LemmaBuilder,
-    firstSign: Rational,
-    first: Factor,
-    secondSign: Rational,
-    second: Factor,
-  ) {
-    const firstFactorSign = signToRat(this.canonizeSignFactor(first));
-    const secondFactorSign = signToRat(this.canonizeSignFactor(second));
-    const cmp =
-      firstSign.mul(this.valFactor(first)).compare(secondSign.mul(this.valFactor(second))) < 0
-        ? KIND_GE
-        : KIND_LE;
-    lemma.addIneq(
-      mkIneq(
-        new LarTerm([
-          [first.variable, firstFactorSign.mul(firstSign)],
-          [second.variable, secondFactorSign.mul(secondSign).neg()],
-        ]),
-        cmp,
-        0,
-      ),
-    );
-  }
-
-  fillExplanationAndLemmaSign(lemma: LemmaBuilder, first: Monic, second: Monic, sign: Rational) {
-    lemma.explainMonic(first);
-    lemma.explainMonic(second);
-    lemma.addIneq(
-      mkIneq(
-        new LarTerm([
-          [first.variable, Rational.one],
-          [second.variable, sign.neg()],
-        ]),
-        KIND_EQ,
-        0,
-      ),
-    );
   }
 
   // Explanations of inequalities by bounds.

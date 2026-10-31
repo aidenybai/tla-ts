@@ -96,10 +96,6 @@ export class Emonics {
     return index !== undefined && index !== -1;
   }
 
-  isUsedInMonic(lpVar: number) {
-    return lpVar < this.useLists.length && this.useLists[lpVar].head !== null;
-  }
-
   push() {
     this.trail.pushScope();
     this.varEqs.push();
@@ -253,11 +249,6 @@ export class Emonics {
   isCanonicalMonic(lpVar: number) {
     const index = this.var2index[lpVar];
     return index >= this.unionFind.numVars || this.unionFind.find(index) === index;
-  }
-
-  // The representative of a monic's congruence class.
-  getRep(monic: Monic) {
-    return this.get((this.cgTable.get(getKey(monic.rvars)) ?? [monic.variable])[0]);
   }
 
   private removeCg(lpVar: number) {

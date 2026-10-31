@@ -424,7 +424,6 @@ export class LarSolver {
   }
 
   updateColumnTypeAndBound(column: number, inputKind: number, rhs: Impq, dep: Dependency) {
-    const wasFixed = this.isFixed(column);
     const adjusted = this.adjustBoundForInt(column, inputKind, rhs.x);
     const kind = adjusted.kind;
     const core = this.core;
@@ -467,13 +466,9 @@ export class LarSolver {
     }
     if (hasUpper && hasLower && this.getLowerBound(column).equals(this.getUpperBound(column)))
       setType(COLUMN_FIXED);
-    if (!wasFixed && this.isFixed(column)) this.onFixed?.(column);
     if (this.isBase(column) && this.isFixed(column)) this.fixedBaseVarSet.add(column);
     this.onColumnBoundUpdate?.(column);
   }
-
-  // m_fixed_var_eh, which theory_lra leaves unset.
-  onFixed: ((column: number) => void) | undefined;
 
   addTouchedRow(rowIndex: number) {
     this.touchedRows.add(rowIndex);

@@ -737,11 +737,6 @@ export class Pdd {
     return !this.isVal() && this.lo().isZero() && this.hi().isOne();
   }
 
-  // a*x + b for values a and b.
-  isUnilinear() {
-    return !this.isVal() && this.lo().isVal() && this.hi().isVal();
-  }
-
   // a*x for a value a.
   isUnary() {
     return !this.isVal() && this.lo().isZero() && this.hi().isVal();

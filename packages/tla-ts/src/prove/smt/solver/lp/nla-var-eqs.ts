@@ -90,10 +90,6 @@ export class VarEqs {
     return getSignedVarVar(this.findVar(lpVar)) === lpVar;
   }
 
-  areEquiv(first: number, second: number) {
-    return getSignedVarVar(this.findVar(first)) === getSignedVarVar(this.findVar(second));
-  }
-
   // explain_bfs: the justifications along a shortest path from v1 to v2.
   explain(v1: number, v2: number, explanation: Explanation) {
     if (v1 === v2) return;
