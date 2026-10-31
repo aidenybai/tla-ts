@@ -8,6 +8,7 @@
 // counts every node made. The op cache keys on both operands, where Z3's eq_entry compares the
 // first operand of one entry with the second of the other.
 import { getGcd, Rational } from "../rational";
+import { shrink } from "../array";
 
 const ZERO_PDD = 0;
 const ONE_PDD = 1;
@@ -856,8 +857,8 @@ export class Pdd {
           loVars[loKept++] = loVars[loIndex++];
         }
       }
-      loVars.length = loKept;
-      hiVars.length = hiKept;
+      shrink(loVars, loKept);
+      shrink(hiVars, hiKept);
     };
     const multiply = (vars: number[], poly: Pdd) =>
       vars.reduce((product, innerVar) => product.mul(manager.mkVar(innerVar)), poly);

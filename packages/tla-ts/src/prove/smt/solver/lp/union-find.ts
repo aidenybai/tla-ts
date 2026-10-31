@@ -1,6 +1,7 @@
 // Ported from Z3 (src/util/trail.h, src/util/union_find.h), MIT license, see z3-license.txt. A
 // scoped undo trail, and the union-find over it whose merges a pop undoes, which nla's variable
 // equivalences and monomial congruence classes use.
+import { shrink } from "../array";
 
 export class TrailStack {
   private trail: (() => void)[] = [];
@@ -17,7 +18,7 @@ export class TrailStack {
   popScope(count: number) {
     if (count === 0) return;
     const size = this.scopes[this.scopes.length - count];
-    this.scopes.length -= count;
+    shrink(this.scopes, this.scopes.length - count);
     while (this.trail.length > size) this.trail.pop()?.();
   }
 }

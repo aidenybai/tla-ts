@@ -3,6 +3,7 @@
 // binary applications that reuses the pairs it made before.
 import { OP_ADD, OP_OR, type AstManager } from "./ast";
 import { RewriterTpl } from "./rewriter-tpl";
+import { shrink } from "./array";
 
 interface SharingEntry {
   decl: number;
@@ -104,6 +105,6 @@ export class MaxBvSharing extends RewriterTpl {
       this.manager.decRef(entry.first);
       this.manager.decRef(entry.second);
     }
-    this.entries.length = size;
+    shrink(this.entries, size);
   }
 }

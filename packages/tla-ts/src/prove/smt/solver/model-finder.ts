@@ -13,6 +13,7 @@ import { Rewriter } from "./rewriter";
 import { AufSolver } from "./auf-solver";
 import { MBQI_FORCE_TEMPLATE, QuantifierAnalyzer, QuantifierInfo } from "./quantifier-analyzer";
 import { RefVector } from "./ref-vector";
+import { shrink } from "./array";
 
 export class ModelFinder {
   private q2info = new Map<number, QuantifierInfo>();
@@ -56,8 +57,8 @@ export class ModelFinder {
       this.q2info.get(this.quantifiers[index])?.release();
       this.q2info.delete(this.quantifiers[index]);
     }
-    this.quantifiers.length = limit;
-    this.scopes.length -= numScopes;
+    shrink(this.quantifiers, limit);
+    shrink(this.scopes, this.scopes.length - numScopes);
   }
 
   // fix_model: tries to satisfy the relevant quantifiers by changing the model while keeping the

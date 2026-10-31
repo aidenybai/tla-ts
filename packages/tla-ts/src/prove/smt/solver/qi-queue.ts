@@ -7,6 +7,7 @@ import type { Context } from "./context";
 import type { Enode } from "./enode";
 import { RefVector } from "./ref-vector";
 import { VarSubst } from "./var-subst";
+import { shrink } from "./array";
 
 const EAGER_COST_THRESHOLD = 10;
 const LAZY_COST_THRESHOLD = 20;
@@ -303,11 +304,11 @@ export class QiQueue {
     const trailLimit = this.scopes[offset + 1];
     for (let index = trailLimit; index < this.instantiatedTrail.length; index++)
       this.delayedEntries[this.instantiatedTrail[index]].isInstantiated = false;
-    this.instantiatedTrail.length = trailLimit;
-    this.delayedEntries.length = delayedLimit;
+    shrink(this.instantiatedTrail, trailLimit);
+    shrink(this.delayedEntries, delayedLimit);
     this.lemmas.shrink(this.scopes[offset + 2]);
     this.newEntries = [];
-    this.scopes.length = offset;
+    shrink(this.scopes, offset);
   }
 
   initSearchEh() {

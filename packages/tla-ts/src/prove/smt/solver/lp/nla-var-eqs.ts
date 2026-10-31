@@ -4,6 +4,7 @@
 import { Dependency, linearize } from "./dependency";
 import type { Explanation } from "./explanation";
 import { TrailStack, UnionFind, UnionFindHandler } from "./union-find";
+import { shrink } from "../array";
 
 export const mkSignedVar = (lpVar: number, isNegated: boolean) => lpVar * 2 + (isNegated ? 1 : 0);
 export const getSignedVarVar = (signedVar: number) => signedVar >> 1;
@@ -50,8 +51,8 @@ export class VarEqs {
       this.eqs[negateSignedVar(pair[0])].pop();
       this.eqs[negateSignedVar(pair[1])].pop();
     }
-    this.eqTrail.length = size;
-    this.eqTrailScopes.length -= count;
+    shrink(this.eqTrail, size);
+    shrink(this.eqTrailScopes, this.eqTrailScopes.length - count);
     this.trail.popScope(count);
   }
 

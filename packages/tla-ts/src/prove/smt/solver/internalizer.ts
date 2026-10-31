@@ -56,6 +56,7 @@ import { RelevancyPropagator } from "./relevancy";
 import { Rewriter } from "./rewriter";
 import { sortByKey } from "./sort";
 import type { TheoryLra } from "./theory-lra";
+import { shrink } from "./array";
 
 // DEEP_EXPR_THRESHOLD: the depth above which internalize_deep sorts an expression's subterms.
 const DEEP_EXPR_THRESHOLD = 1024;
@@ -214,20 +215,20 @@ export abstract class Internalizer {
   protected popTrail(limit: number) {
     const kinds = this.trailKinds;
     for (let index = kinds.length - 1; index >= limit; index--) this.undoTrailEntry(kinds[index]);
-    kinds.length = limit;
+    shrink(kinds, limit);
   }
 
   protected popTrailNode() {
     const nodes = this.trailNodes;
     const node = nodes[nodes.length - 1];
-    nodes.length--;
+    nodes.pop();
     return node;
   }
 
   protected popTrailInt() {
     const ints = this.trailInts;
     const value = ints[ints.length - 1];
-    ints.length--;
+    ints.pop();
     return value;
   }
 
@@ -963,7 +964,7 @@ export abstract class Internalizer {
         }
       } else return false;
     }
-    literals.length = kept;
+    shrink(literals, kept);
     return true;
   }
 
@@ -1034,7 +1035,7 @@ export abstract class Internalizer {
     const position = list.indexOf(clause);
     if (position === -1) return;
     list.copyWithin(position, position + 1);
-    list.length--;
+    list.pop();
   }
 
   protected getBinJustification(literal: Literal) {
@@ -1147,6 +1148,6 @@ export abstract class Internalizer {
   protected deleteClauses(clauses: Clause[], oldSize: number) {
     for (let index = clauses.length - 1; index >= oldSize; index--)
       this.deleteClause(clauses[index]);
-    clauses.length = oldSize;
+    shrink(clauses, oldSize);
   }
 }

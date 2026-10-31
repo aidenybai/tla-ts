@@ -6,6 +6,7 @@ import type { Context } from "./context";
 import { Enode, EqJustification, Justification } from "./enode";
 import { BoolVar, getVar, Literal, negate } from "./literal";
 import { RefVector } from "./ref-vector";
+import { shrink } from "./array";
 
 export class ConflictResolution {
   private antecedents: Literal[] = [];
@@ -117,7 +118,7 @@ export class ConflictResolution {
   private unmarkJustifications(oldHead: number) {
     for (let index = oldHead; index < this.todoJustifications.length; index++)
       this.todoJustifications[index].isMarked = false;
-    this.todoJustifications.length = oldHead;
+    shrink(this.todoJustifications, oldHead);
     this.todoJustificationsHead = oldHead;
     this.todoEqs.length = 0;
     this.processedEqs.clear();
@@ -275,7 +276,7 @@ export class ConflictResolution {
   private resetUnmark(oldSize: number, oldHead: number) {
     for (let index = oldSize; index < this.unmark.length; index++)
       this.context.marks[this.unmark[index]] = false;
-    this.unmark.length = oldSize;
+    shrink(this.unmark, oldSize);
     this.unmarkJustifications(oldHead);
   }
 
@@ -327,7 +328,7 @@ export class ConflictResolution {
       }
     }
     this.resetUnmark(0, 0);
-    this.lemma.length = kept;
+    shrink(this.lemma, kept);
     this.lemmaAtoms.shrink(kept);
   }
 }

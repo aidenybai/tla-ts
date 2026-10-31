@@ -8,6 +8,7 @@ import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import type { Goal } from "./goal";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
+import { shrink } from "./array";
 
 // The max_depth and max_steps that mk_quant_preprocessor gives ctx-simplify.
 const MAX_DEPTH = 30;
@@ -150,7 +151,7 @@ class CtxSimplifier {
       this.assertions.delete(this.trail.items[this.trail.size - 1]);
       this.trail.pop();
     }
-    this.scopes.length -= numScopes;
+    shrink(this.scopes, this.scopes.length - numScopes);
     for (let index = 0; index < numScopes; index++) this.restoreCache(level--);
   }
 

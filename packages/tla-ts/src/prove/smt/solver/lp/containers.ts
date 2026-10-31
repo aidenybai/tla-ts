@@ -1,5 +1,6 @@
 // Ported from Z3 (src/util/uint_set.h, src/util/heap.h, src/math/lp/stacked_vector.h), MIT
 // license, see z3-license.txt. The containers whose iteration order the lp solver depends on.
+import { shrink } from "../array";
 
 // indexed_uint_set: insertion order, and a removal moves the last element into the gap.
 export class IndexedUintSet {
@@ -142,13 +143,13 @@ export class StackedVector<T> {
 
   popScope(count: number) {
     const scope = this.scopes[this.scopes.length - count];
-    this.scopes.length -= count;
-    this.values.length = scope.size;
+    shrink(this.scopes, this.scopes.length - count);
+    shrink(this.values, scope.size);
     for (let index = this.log.length; index-- > scope.logSize;) {
       const entry = this.log[index];
       if (entry.index < this.values.length) this.values[entry.index] = entry.value;
     }
-    this.log.length = scope.logSize;
+    shrink(this.log, scope.logSize);
   }
 }
 

@@ -7,6 +7,7 @@
 // in pdd-simplifier, run by its caller.
 import { Dependency, mkJoin } from "./dependency";
 import { Pdd, PddManager, PddMemoryOut } from "./pdd";
+import { shrink } from "../array";
 
 export const SOLVED = 0;
 export const PROCESSED = 1;
@@ -84,7 +85,7 @@ export class SetUpdate {
 
   finish() {
     for (; this.i < this.size; this.i++) this.nextj();
-    this.set.length = this.j;
+    shrink(this.set, this.j);
   }
 }
 

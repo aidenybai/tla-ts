@@ -6,6 +6,7 @@
 // neither is ported. No pass makes a value outside an operation, so none can run out of nodes.
 import { mkJoin } from "./dependency";
 import { Equation, PddSolver, SetUpdate, SOLVED, TO_SIMPLIFY } from "./pdd-solver";
+import { shrink } from "../array";
 
 export class PddSimplifier {
   constructor(private solver: PddSolver) {}
@@ -69,7 +70,7 @@ export class PddSimplifier {
       if (isAllReduced) linear[kept++] = source;
     }
     if (!hasConflict) {
-      linear.length = kept;
+      shrink(linear, kept);
       for (const source of linear) {
         solver.popEquation(source);
         solver.pushEquation(SOLVED, source);

@@ -4,6 +4,7 @@
 import type { AstManager } from "./ast";
 import type { Enode } from "./enode";
 import { getCompositeHash } from "./hash";
+import { shrink } from "./array";
 
 export class FingerprintSet {
   // The quantifier, hash and roots of each fingerprint, in the order of insertion.
@@ -75,9 +76,9 @@ export class FingerprintSet {
       while (this.slots[slot] !== index) slot = (slot + 1) & mask;
       this.slots[slot] = -1;
     }
-    this.quantifiers.length = limit;
-    this.hashes.length = limit;
-    this.roots.length = limit;
-    this.scopes.length -= numScopes;
+    shrink(this.quantifiers, limit);
+    shrink(this.hashes, limit);
+    shrink(this.roots, limit);
+    shrink(this.scopes, this.scopes.length - numScopes);
   }
 }

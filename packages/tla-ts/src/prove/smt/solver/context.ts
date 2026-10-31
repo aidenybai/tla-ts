@@ -23,6 +23,7 @@ import type { GeneratedModel } from "./model-generator";
 import type { ProtoModel } from "./proto-model";
 import { DefaultQuantifierManager } from "./quantifier-manager";
 import { TheoryLra } from "./theory-lra";
+import { shrink } from "./array";
 
 export const FC_DONE = 0;
 export const FC_CONTINUE = 1;
@@ -191,13 +192,13 @@ export class Context extends Internalizer {
         list[kept++] = clause;
         if (firstValue === L_FALSE) {
           for (index++; index < list.length; index++) list[kept++] = list[index];
-          list.length = kept;
+          shrink(list, kept);
           this.setConflict(clause, null);
           return false;
         }
         this.assignCore(firstLiteral, clause, false);
       }
-      list.length = kept;
+      shrink(list, kept);
     }
     return true;
   }
@@ -581,7 +582,7 @@ export class Context extends Internalizer {
       current.root = r1;
       current = current.next;
     } while (current !== r1);
-    r2.parents.length = r2NumParents;
+    shrink(r2.parents, r2NumParents);
     for (const parent of r1.parents) {
       if (!parent.isCgcEnabled) continue;
       const cg = parent.cg;
@@ -735,7 +736,7 @@ export class Context extends Internalizer {
       this.justifications[getVar(literal)] = null;
       this.caseSplitQueue.unassignVar(getVar(literal));
     }
-    this.assignedLiterals.length = oldLimit;
+    shrink(this.assignedLiterals, oldLimit);
     this.qhead = oldLimit;
   }
 
@@ -745,7 +746,7 @@ export class Context extends Internalizer {
     this.qmanager.pop(numScopes);
     if (newLevel < this.baseLevel) {
       this.deleteClauses(this.lemmas, this.baseScopeLemmaLimits[newLevel]);
-      this.baseScopeLemmaLimits.length = newLevel;
+      shrink(this.baseScopeLemmaLimits, newLevel);
     }
     this.conflict = undefined;
     this.notLiteral = null;
@@ -758,9 +759,9 @@ export class Context extends Internalizer {
     this.thEqQueue = [];
     this.thDiseqQueue = [];
     this.atomPropagationQueue = [];
-    this.scopeAssignedLimits.length = newLevel;
-    this.scopeAuxClauseLimits.length = newLevel;
-    this.scopeTrailLimits.length = newLevel;
+    shrink(this.scopeAssignedLimits, newLevel);
+    shrink(this.scopeAuxClauseLimits, newLevel);
+    shrink(this.scopeTrailLimits, newLevel);
     this.scopeLevel = newLevel;
     if (newLevel < this.baseLevel) {
       this.baseLevel = newLevel;
@@ -1108,7 +1109,7 @@ export class Context extends Internalizer {
       }
       lemmas[kept++] = clause;
     }
-    lemmas.length = kept;
+    shrink(lemmas, kept);
     this.numConflictsSinceLemmaGc = 0;
   }
 

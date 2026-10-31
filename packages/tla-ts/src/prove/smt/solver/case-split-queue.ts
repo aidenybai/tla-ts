@@ -34,7 +34,7 @@ class ActivityHeap {
   eraseMin() {
     const result = this.values[1];
     const last = this.values[this.values.length - 1];
-    this.values.length--;
+    this.values.pop();
     this.indices[result] = 0;
     if (this.values.length > 1) {
       this.values[1] = last;
@@ -52,7 +52,7 @@ class ActivityHeap {
       return;
     }
     const last = this.values[this.values.length - 1];
-    this.values.length--;
+    this.values.pop();
     this.values[index] = last;
     this.indices[last] = index;
     this.indices[value] = 0;

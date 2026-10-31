@@ -58,6 +58,7 @@ import { LarSolver, NULL_LPVAR } from "./lp/lar-solver";
 import type { LarTerm } from "./lp/lar-term";
 import { Ineq, KIND_NE, Lemma, NlaCore } from "./lp/nla-core";
 import { randomUpdate } from "./lp/random-updater";
+import { shrink } from "./array";
 
 const NULL_THEORY_VAR = -1;
 
@@ -1400,7 +1401,7 @@ export class TheoryLra {
     }
     if (numCandidates > 0)
       context.pushTrail(() => {
-        this.assumeEqCandidates.length = oldSize;
+        shrink(this.assumeEqCandidates, oldSize);
       });
     return this.delayedAssumeEqs();
   }
@@ -1480,17 +1481,17 @@ export class TheoryLra {
     const scope = this.scopes[oldSize];
     for (let index = this.boundsTrail.length; index-- > scope.boundsLimit;)
       this.bounds[this.boundsTrail[index]].pop();
-    this.boundsTrail.length = scope.boundsLimit;
-    this.assertedAtoms.length = scope.assertedAtomsLimit;
+    shrink(this.boundsTrail, scope.boundsLimit);
+    shrink(this.assertedAtoms, scope.assertedAtomsLimit);
     this.assertedQhead = scope.assertedQhead;
-    this.scopes.length = oldSize;
+    shrink(this.scopes, oldSize);
     this.solver.pop(numScopes);
     const numConstraints = this.solver.constraints.constraints.length;
     if (this.constraintSources.length > numConstraints)
-      this.constraintSources.length = numConstraints;
+      shrink(this.constraintSources, numConstraints);
     this.newBounds = [];
     this.nla?.pop(numScopes);
-    this.varEnodes.length = scope.numVars;
+    shrink(this.varEnodes, scope.numVars);
   }
 
   restartEh() {

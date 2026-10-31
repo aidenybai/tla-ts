@@ -8,6 +8,7 @@ import type { Enode } from "./enode";
 import { hashU, mkMix } from "./hash";
 import { type CodeTree, Compiler, hasHash, type LabelHasher } from "./mam-compiler";
 import { Interpreter, type OnMatch } from "./mam-interpreter";
+import { shrink } from "./array";
 
 // A step from a term to its parent: the parent's label, the position of the term in it, and an
 // optional ground argument the parent must also have.
@@ -631,7 +632,7 @@ export class Mam implements LabelHasher {
     this.newPatterns = [];
     const limit = this.trailScopes[this.trailScopes.length - numScopes];
     for (let index = this.trail.length - 1; index >= limit; index--) this.trail[index]();
-    this.trail.length = limit;
-    this.trailScopes.length -= numScopes;
+    shrink(this.trail, limit);
+    shrink(this.trailScopes, this.trailScopes.length - numScopes);
   }
 }

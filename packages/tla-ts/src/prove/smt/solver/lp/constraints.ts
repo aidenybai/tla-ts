@@ -3,6 +3,7 @@
 // active ones, both undone by pop.
 import { Dependency, mkLeaf } from "./dependency";
 import { Impq } from "./numeric-pair";
+import { shrink } from "../array";
 
 // lconstraint_kind: flipping negates the kind, and halving a non-strict kind gives the strict one.
 export const KIND_LE = -2;
@@ -43,10 +44,10 @@ export class ConstraintSet {
 
   popScope(count: number) {
     const scope = this.scopes[this.scopes.length - count];
-    this.scopes.length -= count;
+    shrink(this.scopes, this.scopes.length - count);
     for (let index = this.active.length; index-- > scope.activeSize;)
       this.constraints[this.active[index]].isActive = false;
-    this.active.length = scope.activeSize;
-    this.constraints.length = scope.size;
+    shrink(this.active, scope.activeSize);
+    shrink(this.constraints, scope.size);
   }
 }

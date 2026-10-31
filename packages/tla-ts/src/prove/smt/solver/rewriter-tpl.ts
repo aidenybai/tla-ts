@@ -5,6 +5,7 @@
 import { SmtCanceledError } from "../../../errors";
 import { ActCache } from "./act-cache";
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_ITE, type AstManager } from "./ast";
+import { shrink } from "./array";
 
 // A result that the main loop rewrites again to depth levels, like Z3's BR_REWRITE1 (depth 1) to
 // BR_REWRITE_FULL (depth Infinity).
@@ -78,7 +79,7 @@ class RewriterCore {
     const resultStack = this.resultStack;
     for (let index = size; index < resultStack.length; index++)
       this.manager.decRef(resultStack[index]);
-    resultStack.length = size;
+    shrink(resultStack, size);
   }
 
   protected setNewChildFlag(oldExpr: number, newExpr: number) {
@@ -686,8 +687,8 @@ export class RewriterTpl extends RewriterCore {
   private finishExpandDef(expr: number, frame: Frame) {
     const manager = this.manager;
     const numArgs = manager.args[expr].length;
-    this.bindings.length -= numArgs;
-    this.shifts.length -= numArgs;
+    shrink(this.bindings, this.bindings.length - numArgs);
+    shrink(this.shifts, this.shifts.length - numArgs);
     this.numQvars -= numArgs;
     this.endScope();
     const rewritten = this.resultStack[this.resultStack.length - 1];
@@ -761,8 +762,8 @@ export class RewriterTpl extends RewriterCore {
     const result = this.lastResult;
     this.shrinkResults(frame.spos);
     this.pushResult(result);
-    this.bindings.length -= numDecls;
-    this.shifts.length -= numDecls;
+    shrink(this.bindings, this.bindings.length - numDecls);
+    shrink(this.shifts, this.shifts.length - numDecls);
     this.endScope();
     this.cacheResult(expr, result, frame.isCaching);
     this.setLastResult(-1);

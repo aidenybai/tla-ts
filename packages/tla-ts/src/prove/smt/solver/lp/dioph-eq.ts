@@ -17,6 +17,7 @@ import type { LarSolver } from "./lar-solver";
 import { LarTerm } from "./lar-term";
 import { Impq } from "./numeric-pair";
 import { StaticMatrix } from "./static-matrix";
+import { shrink } from "../array";
 
 type DioMove = "undef" | "conflict" | "continue";
 
@@ -192,7 +193,7 @@ class VarRegister {
   shrink(size: number) {
     for (let local = this.localToExternal.length; local-- > size;)
       this.externalToLocal.delete(this.localToExternal[local]);
-    this.localToExternal.length = size;
+    shrink(this.localToExternal, size);
   }
 
   clear() {

@@ -3,6 +3,7 @@
 // and E-matching and the theories only look at relevant terms.
 import { AstManager, KIND_APP, OP_AND, OP_IMPLIES, OP_ITE, OP_OR } from "./ast";
 import type { Enode } from "./enode";
+import { shrink } from "./array";
 
 export type RelevancyHandler = () => void;
 
@@ -105,9 +106,9 @@ export class RelevancyPropagator {
       }
       manager.decRef(expr);
     }
-    this.trailKinds.length = trailLimit;
-    this.trailExprs.length = trailLimit;
-    this.scopes.length = offset;
+    shrink(this.trailKinds, trailLimit);
+    shrink(this.trailExprs, trailLimit);
+    shrink(this.scopes, offset);
   }
 
   private setRelevant(expr: number) {

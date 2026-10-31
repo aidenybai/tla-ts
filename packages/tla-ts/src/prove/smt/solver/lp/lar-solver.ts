@@ -23,6 +23,7 @@ import type { Explanation } from "./explanation";
 import { LarTerm } from "./lar-term";
 import { LpSettings } from "./lp-settings";
 import { Impq } from "./numeric-pair";
+import { shrink } from "../array";
 
 export const NULL_LPVAR = -1;
 
@@ -777,15 +778,15 @@ export class LarSolver {
     this.crossedBoundsColumn = NULL_LPVAR;
     this.crossedBoundsDeps = null;
     const trailSize = this.trailScopes[this.trailScopes.length - count];
-    this.trailScopes.length -= count;
+    shrink(this.trailScopes, this.trailScopes.length - count);
     while (this.trail.length > trailSize) this.trail.pop()?.();
     const columnCount = this.columns.length;
     for (let column = this.localToExternal.length; column-- > columnCount;) {
       const external = this.localToExternal[column];
       if (external !== NULL_LPVAR) this.externalToLocal.delete(external);
     }
-    this.localToExternal.length = columnCount;
-    this.localIsInt.length = columnCount;
+    shrink(this.localToExternal, columnCount);
+    shrink(this.localIsInt, columnCount);
     this.core.popScope(count);
     for (const table of [this.fixedVarTableInt, this.fixedVarTableReal])
       for (const entry of table)
