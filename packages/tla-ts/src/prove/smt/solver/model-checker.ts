@@ -68,10 +68,7 @@ class AuxContext {
   check() {
     const context = this.context;
     context.popToBaseLevel();
-    for (const formula of this.asserted.reduce()) {
-      if (context.isInconsistent()) break;
-      context.internalizeAssertion(formula, 0);
-    }
+    context.internalizeAssertions(this.asserted);
     const manager = this.manager;
     const numFormulas = this.asserted.getNumFormulas();
     const isAssuming = numFormulas !== this.polyQhead;

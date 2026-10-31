@@ -39,11 +39,7 @@ export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
   const context = new Context(manager, { isMbqi: true, relevancyLevel: 2 });
   for (const assertion of goal) asserted.assertExpr(assertion);
   context.setupContext();
-  const formulas = asserted.reduce();
-  for (const formula of formulas) {
-    if (context.isInconsistent()) break;
-    context.internalizeAssertion(formula, 0);
-  }
+  context.internalizeAssertions(asserted);
   const result = context.search();
   manager.limit.release();
   return {

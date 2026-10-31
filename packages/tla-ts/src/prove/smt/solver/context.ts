@@ -2,6 +2,7 @@
 // search: a CDCL loop over Boolean variables combined with an E-graph for congruence closure,
 // relevancy propagation, the arithmetic theory and quantifier instantiation, with Z3's default
 // parameters for UFNIA.
+import type { AssertedFormulas } from "./asserted-formulas";
 import { AstManager, FAMILY_ARITH, KIND_APP, KIND_QUANTIFIER, KIND_VAR } from "./ast";
 import { getCongruenceJustification } from "./cg-table";
 import { BJustification, Clause, CLS_LEARNED } from "./clause";
@@ -1128,6 +1129,20 @@ export class Context extends Internalizer {
   // pop_to_base_lvl: undoes the decisions of the last search, before new assertions.
   popToBaseLevel() {
     if (this.scopeLevel > this.baseLevel) this.popScope(this.scopeLevel - this.baseLevel);
+  }
+
+  // internalize_assertions: the formulas of the asserted formulas, after preprocessing. When they
+  // are inconsistent, none is internalized and the context has an axiom conflict.
+  internalizeAssertions(asserted: AssertedFormulas) {
+    const formulas = asserted.reduce();
+    if (asserted.isInconsistent) {
+      this.setConflict("axiom", null);
+      return;
+    }
+    for (const formula of formulas) {
+      if (this.isInconsistent()) break;
+      this.internalizeAssertion(formula, 0);
+    }
   }
 
   // init_assumptions: the search runs above a scope where the assumptions hold.

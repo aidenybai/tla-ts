@@ -153,7 +153,7 @@ export class AssertedFormulas {
   private bvSharing: MaxBvSharing;
   private hasQuantifiers = false;
   // m_inconsistent: whether a formula is false, after which no formula is added or preprocessed.
-  private isInconsistent = false;
+  isInconsistent = false;
   // m_inconsistent_old of each pushed scope.
   private inconsistentScopes: boolean[] = [];
   // The scopes that are pushed only when a formula is asserted, and the number of formulas when
@@ -222,10 +222,12 @@ export class AssertedFormulas {
     return this.formulas.size;
   }
 
-  // reduce and commit: the new formulas after preprocessing, which the context internalizes.
+  // reduce and commit: the new formulas after preprocessing, which the context internalizes. Like
+  // internalize_assertions, nothing is committed once the formulas are inconsistent.
   reduce() {
     if (this.qhead === this.formulas.size) return [];
     if (!this.isInconsistent) this.reduceCore();
+    if (this.isInconsistent) return [];
     const result = this.formulas.items.slice(this.qhead);
     for (const formula of result) this.substitution.update(formula);
     this.qhead = this.formulas.size;
