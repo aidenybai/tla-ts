@@ -178,8 +178,17 @@ export class ActCache {
     if (this.freeCell === NO_CELL && this.nextCell >= this.capacity) this.expandTable();
     const slot = this.getHash(key, offset) & (this.slots - 1);
     if (this.nexts[slot] !== FREE_CELL) {
-      for (let cell = slot; cell !== NO_CELL; cell = this.nexts[cell])
-        if (this.keys[cell] === key && this.offsets[cell] === offset) return;
+      for (let cell = slot; cell !== NO_CELL; cell = this.nexts[cell]) {
+        if (this.keys[cell] !== key || this.offsets[cell] !== offset) continue;
+        // A new value replaces the old one and clears the tag, though it is not counted as unused.
+        if (this.values[cell] !== value) {
+          this.manager.incRef(value);
+          this.manager.decRef(this.values[cell]);
+          this.values[cell] = value;
+          this.isUsed[cell] = 0;
+        }
+        return;
+      }
       // The new entry takes the slot, and the old head moves to a free cell after it.
       const moved = this.getFreeCell();
       this.copyCell(moved, slot);
