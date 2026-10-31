@@ -55,12 +55,6 @@ const RATIONAL_OPS: ValueOps<Rational> = {
   power: (base, exponent) => base.pow(exponent),
 };
 
-export class NlsatOutOfScope extends Error {
-  constructor(reason: string) {
-    super(`nlsat input out of scope: ${reason}`);
-  }
-}
-
 export class Monomial {
   readonly totalDegree: number;
 

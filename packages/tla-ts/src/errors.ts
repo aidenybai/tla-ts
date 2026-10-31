@@ -113,6 +113,15 @@ export class SmtInvariantError extends TlaError {
   }
 }
 
+// nlsat reached a case Z3 leaves unimplemented, where Z3 exits the process. nra answers unknown
+// instead. index.ts doesn't export it.
+export class NlsatUnsupportedError extends TlaError {
+  constructor(reason: string) {
+    super(`nlsat does not implement ${reason}`);
+    this.name = "NlsatUnsupportedError";
+  }
+}
+
 // mem_out: the pdd manager needed a node past its limit outside an operation. Grobner catches it
 // and gives up on the round. index.ts doesn't export it.
 export class PddMemoryOutError extends TlaError {

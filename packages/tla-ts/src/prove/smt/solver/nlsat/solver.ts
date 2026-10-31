@@ -8,7 +8,8 @@
 import type { Rational } from "../rational";
 import { AlgebraicManager, Anum } from "./algebraic";
 import { getSingleCell } from "./levelwise";
-import { NlsatOutOfScope, type Polynomial, PolynomialCache, PolynomialManager } from "./polynomial";
+import { NlsatUnsupportedError } from "../../../../errors";
+import { type Polynomial, PolynomialCache, PolynomialManager } from "./polynomial";
 
 export type AtomKind = "EQ" | "LT" | "GT";
 
@@ -116,7 +117,7 @@ export class NlsatSolver {
       const variable = this.pm.maxVar(root);
       const coeff = this.pm.getConstCoeff(root, variable, 1);
       if (this.pm.degree(root, variable) !== 1 || coeff === null)
-        throw new NlsatOutOfScope(`the root atom of ${root} in x${variable}`);
+        throw new NlsatUnsupportedError(`the root atom of ${root} in x${variable}`);
       const literal = 2 * this.mkIneqAtom(kind, coeff < 0n ? this.pm.neg(root) : root) + 1;
       if (!result.includes(literal)) result.push(literal);
     };

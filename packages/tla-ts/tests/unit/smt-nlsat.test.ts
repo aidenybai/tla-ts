@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
+import { NlsatUnsupportedError } from "../../src/errors";
 import { L_FALSE } from "../../src/prove/smt/solver/lbool";
 import {
   type ConstraintKind,
@@ -597,6 +598,20 @@ describe("nlsat explain", () => {
 
   it.each(cases)("%s", (program, expected) => {
     expect(runExplainProgram(program)).toBe(expected);
+  });
+
+  it("throws a named error for a linear cell around an irrational section, where Z3 exits", () => {
+    // x0 is the root sqrt(2) of the equation x0^2 - 2, so the cell at x0 is an irrational section.
+    const program = [
+      "vars 2",
+      "root 0 2 -2 0 1",
+      "set 0 0",
+      "q 1 10/2",
+      "set 1 1",
+      "ineq EQ 1 0 -2: 1:0^2",
+      "explain 1 0 0",
+    ].join("\n");
+    expect(() => runExplainProgram(program)).toThrow(NlsatUnsupportedError);
   });
 });
 
