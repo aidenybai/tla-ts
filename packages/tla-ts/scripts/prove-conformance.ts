@@ -120,14 +120,15 @@ const getVerdict = (expected: ObligationRecord, actual: ProofObligation | undefi
 // Decides the obligation again with the method of the prover tlapm proved it with, and returns the
 // proof if it comes within the method's limit in CPU time. The SMT encoder's CASE numbering only
 // names a symbol, so the input starts it from zero.
-const getCpuProof = (obligation: PrintedObligation, method: Method): CpuProof | undefined => {
+const getCpuProof = async (
+  obligation: PrintedObligation,
+  method: Method,
+): Promise<CpuProof | undefined> => {
   if (!(method.prover in DECIDERS)) return undefined;
   try {
     const text = encodeForBackend(obligation, method.prover, { caseErrors: 0 });
-    const run = runWithCpuLimit(method.timeLimitMs, (options) =>
-      DECIDERS[method.prover](text, options),
-    );
-    return run.result === "unsat" && run.cpuMilliseconds <= method.timeLimitMs
+    const run = await runWithCpuLimit(method.timeLimitMs, method.prover, text);
+    return run.verdict === "unsat" && run.cpuMilliseconds <= method.timeLimitMs
       ? {
           prover: method.prover,
           wallMilliseconds: run.wallMilliseconds,
@@ -203,9 +204,14 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
       .flatMap((result) => result.obligations)
       .map((obligation) => [obligation.id, obligation]),
   );
-  return results.map((result, index) => {
+  // The second runs go one at a time, so they don't share the core they are timed on.
+  const withBackends: Result[] = [];
+  for (const [index, result] of results.entries()) {
     const obligation = printed.get(result.id);
-    if (!isDifference(result.verdict) || !obligation) return result;
+    if (!isDifference(result.verdict) || !obligation) {
+      withBackends.push(result);
+      continue;
+    }
     const expected = record.obligations[index];
     const actual = byId.get(result.id);
     const provers = findMethods(obligation).provers;
@@ -217,14 +223,11 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
       expected.status === "proved" &&
       expected.prover === backend &&
       method
-        ? getCpuProof(obligation, method)
+        ? await getCpuProof(obligation, method)
         : undefined;
-    return {
-      ...result,
-      backend,
-      ...(cpuProof ? { cpuProof } : {}),
-    };
-  });
+    withBackends.push({ ...result, backend, ...(cpuProof ? { cpuProof } : {}) });
+  }
+  return withBackends;
 };
 
 const records = readProofRecords();

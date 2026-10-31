@@ -1,38 +1,48 @@
-// Runs a synchronous backend until it has used its time limit in both wall-clock and CPU time. A
-// loaded machine stretches wall-clock time, so the CPU time of the thread that runs it estimates a
-// run on an idle core.
+// Runs a backend until it has used its time limit in both wall-clock and CPU time. A loaded machine
+// stretches wall-clock time, so the CPU time of the thread that runs it estimates a run on an idle
+// core. The backends run synchronously, so each run gets a worker thread of its own, which this
+// terminates once the limit has passed.
 
-export interface CpuLimitedRun<Result> {
-  result: Result;
+import { once } from "node:events";
+import { scheduler } from "node:timers/promises";
+import { Worker } from "node:worker_threads";
+import type { Verdict } from "../src/prove/verdict";
+
+export interface CpuLimitedRun {
+  verdict: Verdict;
   wallMilliseconds: number;
   cpuMilliseconds: number;
 }
 
-export const runWithCpuLimit = <Result>(
+const POLL_MS = 100;
+
+export const runWithCpuLimit = async (
   limitMs: number,
-  run: (options: { timeLimitMs: number; signal: AbortSignal }) => Result,
-): CpuLimitedRun<Result> => {
+  prover: string,
+  text: string,
+): Promise<CpuLimitedRun> => {
+  // Node keeps 192 KB of a worker's stack in reserve, so this gives the backend the stack it has on
+  // the main thread.
+  const worker = new Worker(new URL("./cpu-limit-worker.ts", import.meta.url), {
+    resourceLimits: { stackSizeMb: 1.15 },
+  });
+  // The thread's CPU time counts from the moment it has loaded the backends.
+  await once(worker, "message");
   const started = performance.now();
-  const startedCpu = process.threadCpuUsage();
-  const getCpuMilliseconds = () => {
-    const cpu = process.threadCpuUsage(startedCpu);
+  const startedCpu = await worker.cpuUsage();
+  const getCpuMilliseconds = async () => {
+    const cpu = await worker.cpuUsage(startedCpu);
     return Math.round((cpu.user + cpu.system) / 1000);
   };
-  // HACK: the backends run synchronously, so no timer can abort one once the CPU time runs out.
-  // Their limit checks read signal.aborted, which this getter answers instead. It reads the CPU
-  // time on every 4096th check only, because each read is a system call.
-  const signal = new AbortController().signal;
-  const state = { checks: 0 };
-  Object.defineProperty(signal, "aborted", {
-    get: () =>
-      performance.now() - started > limitMs &&
-      state.checks++ % 4096 === 0 &&
-      getCpuMilliseconds() > limitMs,
-  });
-  const result = run({ timeLimitMs: 100 * limitMs, signal });
-  return {
-    result,
-    wallMilliseconds: Math.round(performance.now() - started),
-    cpuMilliseconds: getCpuMilliseconds(),
-  };
+  const decided = once(worker, "message").then((message: Verdict[]) => message[0]);
+  worker.postMessage({ prover, text });
+  for (;;) {
+    const verdict = await Promise.race([decided, scheduler.wait(POLL_MS)]);
+    const wallMilliseconds = Math.round(performance.now() - started);
+    const cpuMilliseconds = await getCpuMilliseconds();
+    if (verdict !== undefined || (wallMilliseconds > limitMs && cpuMilliseconds > limitMs)) {
+      await worker.terminate();
+      return { verdict: verdict ?? "unknown", wallMilliseconds, cpuMilliseconds };
+    }
+  }
 };
