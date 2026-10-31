@@ -628,8 +628,14 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const body = parseExpression();
       return withRange({ kind: "Lambda", params, body, location: getLocation(token) }, start);
     }
-    return parseExpression();
+    const argument = parseExpression();
+    // SANY reads an argument that only names an operator of a parameterized instance, such as
+    // I!Op, as that operator, which takes the arguments of the instance too.
+    if (argument.kind === "Identifier") missingArguments.delete(argument);
+    return argument;
   };
+
+  const missingArguments = new Map<Expression, { location: string; message: string }>();
 
   const lastArguments: { range: SourceRange | undefined } = { range: undefined };
 
@@ -830,7 +836,8 @@ const parse = (source: string, isTlapm: boolean): Module => {
   };
 
   const parsePrimary = (): Expression => {
-    const isFactStart = cursor.index === factStart.index;
+    const start = cursor.index;
+    const isFactStart = start === factStart.index;
     const token = advance();
     const location = getLocation(token);
     if (isTlapm && token.kind === "Keyword" && token.text === "LAMBDA") {
@@ -869,7 +876,12 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const instance = openModules
         .flatMap((module) => module.instances)
         .find((candidate) => candidate.name === name);
-      if (instance && !isFactStart && !isTlapm && instance.params.length !== args.length) {
+      const isMissingArguments =
+        instance !== undefined &&
+        !isFactStart &&
+        !isTlapm &&
+        instance.params.length !== args.length;
+      if (isMissingArguments && args.length > 0) {
         throw createError(
           `The operator ${name} requires ${instance.params.length} arguments`,
           token,
@@ -883,19 +895,36 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const names = selectors.flatMap((selector) =>
         selector.kind === "Name" ? [selector.name] : [],
       );
-      if (names.length < selectors.length) return { kind: "Subexpression", selectors, location };
       const operator = names.join("!");
       const qualifiedArgs = selectors.flatMap((selector) =>
         "args" in selector ? selector.args : [],
       );
-      if (qualifiedArgs.length === 0) return { kind: "Identifier", name: operator, location };
       const argumentCounts = selectors.map((selector) =>
         "args" in selector ? selector.args.length : 0,
       );
       const argumentsRange = lastArguments.range;
-      return argumentCounts.slice(0, -1).some((count) => count > 0)
-        ? { kind: "Apply", operator, args: qualifiedArgs, argumentCounts, argumentsRange, location }
-        : { kind: "Apply", operator, args: qualifiedArgs, argumentsRange, location };
+      const reference: Expression =
+        names.length < selectors.length
+          ? { kind: "Subexpression", selectors, location }
+          : qualifiedArgs.length === 0
+            ? { kind: "Identifier", name: operator, location }
+            : argumentCounts.slice(0, -1).some((count) => count > 0)
+              ? {
+                  kind: "Apply",
+                  operator,
+                  args: qualifiedArgs,
+                  argumentCounts,
+                  argumentsRange,
+                  location,
+                }
+              : { kind: "Apply", operator, args: qualifiedArgs, argumentsRange, location };
+      if (isMissingArguments) {
+        missingArguments.set(reference, {
+          location: formatRange(getRange(start)),
+          message: `The operator ${name} requires ${instance.params.length} arguments.`,
+        });
+      }
+      return reference;
     }
     if (token.kind === "Operator" && isOperatorName(token.text) && isAt("("))
       return { kind: "Apply", operator: token.text, args: parseArguments(), location };
@@ -1716,6 +1745,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
             end: { line: token.line, column: token.endColumn },
           };
         }
+        if (missingArguments.size > 0) throw createSanyError([...missingArguments.values()]);
         openModules.pop();
         recursiveScopes.pop();
         return module;
