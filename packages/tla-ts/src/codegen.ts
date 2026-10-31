@@ -17,6 +17,7 @@ import {
   isWorthCaching,
   keepLazy,
   resolveGlobalOperator,
+  expectFunction,
   toKeepLazyContext,
   createPrimeOutsideActionError,
   createUnassignedError,
@@ -78,6 +79,7 @@ const createRuntime = () => ({
     return value;
   },
   apply: applyFunction,
+  expectFunction,
   tuple: createTuple,
   set: createEnumeratedSet,
   record: createSortedRecord,
@@ -285,12 +287,17 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "FunctionApplication": {
       keepLazy(expression.function);
       // The interpreter evaluates a function that may construct one with EvalControl.KeepLazy.
-      const functionCode = isConstructionFree(expression.function, frame, generator.environment)
+      const evaluatedFunction = isConstructionFree(
+        expression.function,
+        frame,
+        generator.environment,
+      )
         ? generate(expression.function)
         : generateDelegate(generator, expression.function, {
             ...frame,
             context: `keepLazyContext(${frame.context})`,
           });
+      const functionCode = `expectFunction(${evaluatedFunction}, ${addReference(generator, expression)})`;
       const describeMissing = getMissingArgumentError(generator.environment.runtime.version);
       const error = describeMissing ? `, ${addReference(generator, describeMissing)}` : "";
       if (expression.args.length === 1)

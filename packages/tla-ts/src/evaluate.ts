@@ -354,6 +354,14 @@ const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Val
   );
 };
 
+// Tool#evalAppl checks that it applies a function before it evaluates the argument.
+export const expectFunction = (value: Value, application: Expression) => {
+  if (isFunctionValue(value)) return value;
+  throw new TlaEvaluationError(
+    `A non-function (${getKindString(value)}) was applied as a function.\n${describeRange(application)}`,
+  );
+};
+
 export const toKeepLazyContext = (context: Context): Context =>
   context.isKeepLazy ? context : { ...context, isKeepLazy: true };
 
@@ -2193,19 +2201,8 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "FunctionApplication": {
       keepLazy(expression.function);
       const evaluated = child(expression.function);
-      // Tool#evalAppl checks that it applies a function before it evaluates the argument.
-      const evaluateFunction = (context: Context) => {
-        const value = evaluated(toKeepLazyContext(context));
-        if (
-          typeof value === "object" &&
-          (value.kind === "Function" || value.kind === "LazyFunction")
-        ) {
-          return value;
-        }
-        throw new TlaEvaluationError(
-          `A non-function (${getKindString(value)}) was applied as a function.\n${describeRange(expression)}`,
-        );
-      };
+      const evaluateFunction = (context: Context) =>
+        expectFunction(evaluated(toKeepLazyContext(context)), expression);
       const args = expression.args.map(child);
       const describeMissing = getMissingArgumentError(environment.runtime.version);
       if (args.length === 1) {

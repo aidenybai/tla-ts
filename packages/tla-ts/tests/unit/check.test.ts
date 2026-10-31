@@ -1188,6 +1188,16 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it("reports a non-function applied as a function in computing next states like TLC", async () => {
+    const result = await checkSteps(
+      "Step == x' = (IF x = 0 THEN [k \\in {1, 2} |-> k] ELSE 0)[1]",
+      "INIT Init\nNEXT Step",
+    );
+    expect(result.failure?.message).toBe(
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: A non-function (an integer) was applied as a function.\nline 6, col 14 to line 6, col 59 of module M",
+    );
+  });
+
   it("reports a set TLC can't enumerate in computing next states like TLC", async () => {
     const result = await checkSteps("Step == x' \\in Nat", "INIT Init\nNEXT Step");
     expect(result.failure?.message).toBe(
