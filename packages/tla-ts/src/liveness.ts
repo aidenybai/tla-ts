@@ -304,12 +304,14 @@ export const toLiveExpression = (
   rootScope: Scope | undefined,
   environment: Environment,
 ): LiveExpression => {
+  const is174 = environment.runtime.version === "1.7.4";
   const toAtom = (
     expression: Expression,
     scope: Scope | undefined,
     level: number,
   ): LiveExpression => {
-    const atomLevel = level === 0 ? getLevel(expression, scope, environment) : level;
+    // TLC after 1.7.4 bounds the level of a formula whose parts are constant by the formula's own.
+    const atomLevel = level === 0 && !is174 ? getLevel(expression, scope, environment) : level;
     if (atomLevel === 0) {
       const value = evaluate(expression, getConstantContext(environment, scope));
       if (typeof value !== "boolean") {
@@ -324,7 +326,6 @@ export const toLiveExpression = (
   };
 
   const expansion = { depth: 0 };
-  const is174 = environment.runtime.version === "1.7.4";
 
   const expand = (
     body: Expression,
@@ -409,10 +410,14 @@ export const toLiveExpression = (
     expression: Expression & { kind: "Forall" | "Exists" },
     scope: Scope | undefined,
   ) => {
+    const level = getLevel(expression, scope, environment);
     const isConstant = expression.bounds.every(
       (bound) => getLevel(bound.set, scope, environment) === 0,
     );
-    if (!isConstant) throw createCannotHandleError(expression);
+    if (!isConstant) {
+      if (level <= ACTION_LEVEL) return toAtom(expression, scope, level);
+      throw createCannotHandleError(expression);
+    }
     const operands: LiveExpression[] = [];
     const isForall = expression.kind === "Forall";
     // TLC takes a quantified formula whose body fails for one it can't handle, and under \A it adds
@@ -426,25 +431,39 @@ export const toLiveExpression = (
       if (!(error instanceof TlaEvaluationError) || error instanceof TlaStackOverflowError) {
         throw error;
       }
+      if (level <= ACTION_LEVEL) return toAtom(expression, scope, level);
       throw createCannotHandleError(
         expression,
         isForall && !isEvalException(error) ? error.message : undefined,
       );
     }
     if (operands.length === 0) return createBoolean(isForall);
-    const result = createJunction(isForall ? "And" : "Or", operands);
-    const level = getLiveLevel(result);
-    return level > ACTION_LEVEL ? result : toAtom(expression, scope, level);
+    return toWhole(expression, scope, createJunction(isForall ? "And" : "Or", operands));
   };
+
+  // TLC takes a formula whose translated parts are below temporal level whole, at their level.
+  const toWhole = (expression: Expression, scope: Scope | undefined, parts: LiveExpression) => {
+    const level = getLiveLevel(parts);
+    return level > ACTION_LEVEL ? parts : toAtom(expression, scope, level);
+  };
+
+  // The formulas below temporal level whose parts TLC's Liveness.astToLive translates, as one
+  // that is constant, such as a quantifier over the empty set, can make the formula constant.
+  const isTranslatedWhole = (expression: Expression) =>
+    expression.kind === "Label" ||
+    expression.kind === "Let" ||
+    expression.kind === "And" ||
+    expression.kind === "Or" ||
+    expression.kind === "Forall" ||
+    expression.kind === "Exists" ||
+    expression.kind === "If" ||
+    (expression.kind === "Apply" &&
+      ((expression.operator === "~" && !isLocallyResolved(expression)) ||
+        expression.operator === "=>"));
 
   const convert = (expression: Expression, scope: Scope | undefined): LiveExpression => {
     const level = getLevel(expression, scope, environment);
-    if (level <= ACTION_LEVEL) {
-      // TLC converts each conjunct or disjunct before it takes the formula whole, so it evaluates
-      // those of constant level.
-      if (expression.kind === "And" || expression.kind === "Or") {
-        expression.operands.forEach((operand) => convert(operand, scope));
-      }
+    if (level <= ACTION_LEVEL && !isTranslatedWhole(expression)) {
       return toAtom(expression, scope, level);
     }
     switch (expression.kind) {
@@ -467,22 +486,26 @@ export const toLiveExpression = (
           );
         }
         if (expression.operator === "~" && !isLocallyResolved(expression)) {
-          return createUnary("Not", convert(args[0], scope));
+          return toWhole(expression, scope, createUnary("Not", convert(args[0], scope)));
         }
         if (expression.operator === "=>") {
-          return createPair(
-            "Or",
-            createUnary("Not", convert(args[0], scope)),
-            convert(args[1], scope),
+          return toWhole(
+            expression,
+            scope,
+            createPair("Or", createUnary("Not", convert(args[0], scope)), convert(args[1], scope)),
           );
         }
         return convertCall(expression, scope);
       }
       case "And":
       case "Or":
-        return createJunction(
-          expression.kind,
-          expression.operands.map((operand) => convert(operand, scope)),
+        return toWhole(
+          expression,
+          scope,
+          createJunction(
+            expression.kind,
+            expression.operands.map((operand) => convert(operand, scope)),
+          ),
         );
       case "Forall":
       case "Exists":
@@ -496,10 +519,18 @@ export const toLiveExpression = (
           }
         }
         const condition = convert(expression.condition, scope);
-        return createPair(
-          "Or",
-          createPair("And", condition, convert(expression.consequent, scope)),
-          createPair("And", createUnary("Not", condition), convert(expression.alternative, scope)),
+        return toWhole(
+          expression,
+          scope,
+          createPair(
+            "Or",
+            createPair("And", condition, convert(expression.consequent, scope)),
+            createPair(
+              "And",
+              createUnary("Not", condition),
+              convert(expression.alternative, scope),
+            ),
+          ),
         );
       }
       case "Always":

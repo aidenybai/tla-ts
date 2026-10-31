@@ -727,6 +727,25 @@ ASSUME TLCFP(a) = -887695703
     );
   });
 
+  it.each([
+    ["<>(\\E k \\in {} : x = 0) /\\ <>(\\E k \\in {} : x = 0)", 1],
+    ["<>(IF TRUE THEN TRUE ELSE x = 0) /\\ <>(IF TRUE THEN TRUE ELSE x = 0)", 1],
+    [
+      "<>(\\E k \\in {1} : \\E j \\in {} : x = k) /\\ <>(\\E k \\in {1} : \\E j \\in {} : x = k)",
+      2,
+    ],
+  ])("finds the branches of %s like TLC", async (property, branches) => {
+    const progress: CheckProgress[] = [];
+    await check({
+      source: `---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nProp == ${property}\n====`,
+      config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+      onProgress: (event) => {
+        if (event.kind === "liveness-prepared") progress.push(event);
+      },
+    });
+    expect(progress).toEqual([{ kind: "liveness-prepared", branches }]);
+  });
+
   it("warns about a permuted set with fewer than two elements", async () => {
     const warnings: CheckProgress[] = [];
     const result = await check({
