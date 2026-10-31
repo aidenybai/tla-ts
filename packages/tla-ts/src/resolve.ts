@@ -822,14 +822,16 @@ export const collectSemanticErrors = (units: { location: SourceLocation; check: 
         unit.check();
       } catch (error) {
         if (!(error instanceof TlaSyntaxError) || !error.sany) throw error;
-        error.sany.errors
-          .filter((item) =>
+        error.sany.errors.forEach((item) => {
+          if (
             errors.every(
               (existing) =>
                 existing.location !== item.location || existing.message !== item.message,
-            ),
-          )
-          .forEach((item) => errors.push(item));
+            )
+          ) {
+            errors.push(item);
+          }
+        });
       }
     });
   if (errors.length > 0) throw createSanyError(errors);

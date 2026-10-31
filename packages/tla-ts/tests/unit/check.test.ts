@@ -2075,6 +2075,21 @@ describe("level checking matches SANY", () => {
         ["line 4, col 18 to line 4, col 18", "Non-unique fields in constructor."],
       ],
     ],
+    [
+      "THEOREM ASSUME NEW y, []y PROVE <>y\n<1>1. TAKE z \\in {x}\n<1>2. CASE []y\n  <2>1. HAVE x = 4\n  <2>2. QED\n<1>3. PICK c \\in {x} : <>(x = c)\n<1>4. QED",
+      [
+        [
+          "line 6, col 9 to line 6, col 18",
+          "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+        ],
+        ["line 8, col 18 to line 8, col 20", "Non-constant bound of temporal PICK."],
+        [
+          "line 4, col 7 to line 4, col 20",
+          "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+        ],
+        ["line 5, col 7 to line 5, col 14", "Non-constant CASE for temporal goal."],
+      ],
+    ],
   ])("reports every error SANY reports in %j", async (definitions, errors) => {
     await expect(
       check({

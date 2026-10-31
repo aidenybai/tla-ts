@@ -445,12 +445,14 @@ export type StepBody =
   | { kind: "Assert"; isSuffices: boolean; statement: Expression | AssumeProve }
   | { kind: "Qed" };
 
-// head is the range of the step number and its statement, without the proof.
+// head is the range of the step number and its statement, without the proof, and statement is the
+// range of the statement alone.
 export interface ProofStep {
   name: string | undefined;
   token: string;
   body: StepBody;
   head: SourceRange;
+  statement: SourceRange;
   proof: Proof | undefined;
   location: SourceLocation;
 }

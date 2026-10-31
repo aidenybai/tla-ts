@@ -5,8 +5,16 @@ import {
   type Expression,
   type Module,
   type OperatorParam,
+  type Proof,
+  type ProofStep,
 } from "./ast";
-import { createSemanticError, TlaSyntaxError } from "./errors";
+import {
+  createSanyError,
+  createSemanticError,
+  formatRange,
+  TlaSyntaxError,
+  type SanyError,
+} from "./errors";
 import { mapChildren } from "./instances";
 import { collectSemanticErrors, getBoundNames, getPatternNames } from "./resolve";
 import { STANDARD_LEVELS } from "./standard-levels";
@@ -874,6 +882,75 @@ export const analyzeAssumeProve = (
 // SANY checks the level of every definition, assumption, and theorem of a module.
 export const checkModuleLevels = (module: Module, context: LevelContext) => {
   const analyzer = createLevelAnalyzer(context);
+  const getLevel = (expressions: Expression[]) =>
+    Math.max(0, ...expressions.map((expression) => analyzer.analyze(expression, new Map()).level));
+  const getStepLevel = (step: ProofStep) => {
+    const body = step.body;
+    if (body.kind === "Have" || body.kind === "Case") return getLevel([body.expression]);
+    if (body.kind === "Witness") return getLevel(body.expressions);
+    if (body.kind === "Take") return getLevel(body.bounds.map((bound) => bound.set));
+    if (body.kind === "Pick") {
+      return getLevel([body.body, ...body.bounds.map((bound) => bound.set)]);
+    }
+    if (body.kind !== "Assert") return 0;
+    return body.statement.kind === "AssumeProve"
+      ? analyzeAssumeProve(body.statement, new Map(), analyzer).level
+      : getLevel([body.statement]);
+  };
+  // SANY's TheoremNode.LevelCheckTemporal: the proof of a temporal goal may only assume constants.
+  const checkTemporalGoal = (proof: Proof | undefined): SanyError[] =>
+    proof?.kind !== "Steps"
+      ? []
+      : proof.steps.flatMap((step) => {
+          const location = formatRange(step.statement);
+          const isConstant = () => getStepLevel(step) === 0;
+          if (
+            step.body.kind === "Have" ||
+            step.body.kind === "Take" ||
+            step.body.kind === "Witness"
+          ) {
+            return isConstant()
+              ? []
+              : [{ location, message: "Non-constant TAKE, WITNESS, or HAVE for temporal goal." }];
+          }
+          if (step.body.kind === "Case") {
+            return [
+              ...(isConstant()
+                ? []
+                : [{ location, message: "Non-constant CASE for temporal goal." }]),
+              ...checkTemporalGoal(step.proof),
+            ];
+          }
+          return step.body.kind === "Qed" ? checkTemporalGoal(step.proof) : [];
+        });
+  // SANY checks each step as a theorem of its own after the steps of its proof.
+  const checkProof = (proof: Proof | undefined): SanyError[] =>
+    proof?.kind !== "Steps"
+      ? []
+      : proof.steps.flatMap((step) => {
+          const body = step.body;
+          const isTemporal = () => getStepLevel(step) === TEMPORAL_LEVEL;
+          const pickErrors =
+            body.kind === "Pick" && body.bounds.length > 0 && isTemporal()
+              ? body.bounds
+                  .filter((bound) => getLevel([bound.set]) !== 0)
+                  .flatMap((bound) =>
+                    bound.set.location.range
+                      ? [
+                          {
+                            location: formatRange(bound.set.location.range),
+                            message: "Non-constant bound of temporal PICK.",
+                          },
+                        ]
+                      : [],
+                  )
+              : [];
+          return [
+            ...checkProof(step.proof),
+            ...pickErrors,
+            ...(step.proof?.kind === "Steps" && isTemporal() ? checkTemporalGoal(step.proof) : []),
+          ];
+        });
   collectSemanticErrors([
     ...module.definitions
       .filter((definition) => !definition.name.includes("!"))
@@ -887,10 +964,17 @@ export const checkModuleLevels = (module: Module, context: LevelContext) => {
     })),
     ...module.theorems.map((theorem) => ({
       location: theorem.location,
-      check: () =>
-        theorem.statement.kind === "AssumeProve"
-          ? analyzeAssumeProve(theorem.statement, new Map(), analyzer)
-          : analyzer.analyze(theorem.statement, new Map()),
+      check: () => {
+        const data =
+          theorem.statement.kind === "AssumeProve"
+            ? analyzeAssumeProve(theorem.statement, new Map(), analyzer)
+            : analyzer.analyze(theorem.statement, new Map());
+        const errors = [
+          ...checkProof(theorem.proof),
+          ...(data.level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
+        ];
+        if (errors.length > 0) throw createSanyError(errors);
+      },
     })),
   ]);
 };
