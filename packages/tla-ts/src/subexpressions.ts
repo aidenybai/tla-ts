@@ -431,7 +431,7 @@ export const resolveInstanceSubexpressions = (instance: Instance, module: Module
   return {
     ...instance,
     substitutions: instance.substitutions.map((substitution) => ({
-      name: substitution.name,
+      ...substitution,
       expression: resolveSubexpressions(substitution.expression, lookup, new Set()),
     })),
   };

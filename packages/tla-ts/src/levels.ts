@@ -957,7 +957,7 @@ export const checkModuleLevels = (
             ...(step.proof?.kind === "Steps" && isTemporal() ? checkTemporalGoal(step.proof) : []),
           ];
         });
-  collectSemanticErrors(
+  const errors = collectSemanticErrors(
     [
       ...module.definitions
         .filter((definition) => !definition.name.includes("!"))
@@ -987,4 +987,5 @@ export const checkModuleLevels = (
     ],
     warnings,
   );
+  if (errors.length > 0) throw createSanyError(errors, false, undefined, warnings);
 };

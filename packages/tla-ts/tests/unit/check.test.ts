@@ -2469,6 +2469,170 @@ describe("name resolution matches SANY", () => {
         },
       ],
     ],
+    [
+      "errors in instance substitutions between definitions",
+      "---- MODULE Inner ----\nCONSTANT a, b\n====\nFoo == U\nI == INSTANCE Inner WITH a <- A, b <- B\nBar == V",
+      [
+        {
+          location: "line 5, col 8 to line 5, col 8 of module M",
+          message: "Unknown operator: `U'.",
+        },
+        {
+          location: "line 6, col 31 to line 6, col 31 of module M",
+          message: "Unknown operator: `A'.",
+        },
+        {
+          location: "line 6, col 39 to line 6, col 39 of module M",
+          message: "Unknown operator: `B'.",
+        },
+        {
+          location: "line 7, col 8 to line 7, col 8 of module M",
+          message: "Unknown operator: `V'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "illegal, repeated, and missing substitutions",
+      "---- MODULE Inner ----\nCONSTANT a, b, c\n====\nFoo == U\nI == INSTANCE Inner WITH a <- A, d <- 1, c <- 2, c <- C\nLOCAL INSTANCE Inner WITH a <- 1, c <- 2\nBar == V",
+      [
+        {
+          location: "line 5, col 8 to line 5, col 8 of module M",
+          message: "Unknown operator: `U'.",
+        },
+        {
+          location: "line 6, col 31 to line 6, col 31 of module M",
+          message: "Unknown operator: `A'.",
+        },
+        {
+          location: "line 6, col 34 to line 6, col 34 of module M",
+          message:
+            "Identifier 'd' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)",
+        },
+        {
+          location: "line 6, col 55 to line 6, col 55 of module M",
+          message: "Unknown operator: `C'.",
+        },
+        {
+          location: "line 6, col 55 to line 6, col 55 of module M",
+          message: "Multiple substitutions for symbol 'c' in substitution.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 55 of module M",
+          message:
+            "Substitution missing for symbol b declared at line 3, col 13 to line 3, col 13 of module M \nand instantiated in module M.",
+        },
+        {
+          location: "line 7, col 1 to line 7, col 40 of module M",
+          message:
+            "Substitution missing for symbol b declared at line 3, col 13 to line 3, col 13 of module M \nand instantiated in module M.",
+        },
+        {
+          location: "line 8, col 8 to line 8, col 8 of module M",
+          message: "Unknown operator: `V'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "errors in modules nested in nested modules",
+      "Foo == U\n---- MODULE Middle ----\nA == V\n---- MODULE Inner ----\nRECURSIVE R(_)\nB == W\n====\nC == X\n====\nBar == Y",
+      [
+        {
+          location: "line 2, col 8 to line 2, col 8 of module M",
+          message: "Unknown operator: `U'.",
+        },
+        {
+          location: "line 4, col 6 to line 4, col 6 of module M",
+          message: "Unknown operator: `V'.",
+        },
+        {
+          location: "line 7, col 6 to line 7, col 6 of module M",
+          message: "Unknown operator: `W'.",
+        },
+        {
+          location: "line 6, col 11 to line 6, col 14 of module M",
+          message: "Symbol R declared in RECURSIVE statement but not defined.",
+        },
+        {
+          location: "line 9, col 6 to line 9, col 6 of module M",
+          message: "Unknown operator: `X'.",
+        },
+        {
+          location: "line 11, col 8 to line 11, col 8 of module M",
+          message: "Unknown operator: `Y'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an error in a nested module before a module defined twice",
+      "Foo == 1\n---- MODULE Inner ----\nCONSTANT Foo\nB == 1\n====\n---- MODULE Inner ----\n====\nB == 2\nH == U",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 8 of module M.",
+        },
+        {
+          location: "line 7, col 1 to line 8, col 4 of module M",
+          message:
+            "Multiply-defined module 'Inner': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 6, col 4 of module M.",
+        },
+        {
+          location: "line 10, col 6 to line 10, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "warnings in nested modules between the enclosing module's",
+      "EXTENDS Naturals\nCONSTANT c\nCONSTANT c\n---- MODULE Inner ----\nEXTENDS Naturals\nPlus(a, b) == a + b\nPlus(a, b) == a - b\n====\n---- MODULE A1 ----\nFoo == 1\n====\n---- MODULE A2 ----\nFoo == 2\n====\n---- MODULE Both ----\nEXTENDS A1, A2\n====\nCONSTANT d\nCONSTANT d\nBar == U",
+      [
+        {
+          location: "line 8, col 1 to line 8, col 19 of module M",
+          message: "Operator Plus already defined or declared.",
+        },
+        {
+          location: "line 21, col 8 to line 21, col 8 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [
+        {
+          location: "line 4, col 10 to line 4, col 10 of module M",
+          message:
+            "Multiple declarations or definitions for symbol c.  \nThis duplicates the one at line 3, col 10 to line 3, col 10 of module M.",
+        },
+        {
+          location: "line 8, col 1 to line 8, col 19 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Plus.  \nThis duplicates the one at line 7, col 1 to line 7, col 19 of module M.",
+        },
+        {
+          location: "line 14, col 1 to line 14, col 8 of module M",
+          message:
+            "Warning: the definition of 'Foo' conflicts with \nits definition at line 11, col 1 to line 11, col 8 of module M.",
+        },
+        {
+          location: "line 20, col 10 to line 20, col 10 of module M",
+          message:
+            "Multiple declarations or definitions for symbol d.  \nThis duplicates the one at line 19, col 10 to line 19, col 10 of module M.",
+        },
+      ],
+    ],
+    [
+      "a semantic error after a nested module with a level error",
+      "---- MODULE Inner ----\nVARIABLE y\nB == ENABLED (y' = y)\nC == []B\nD == C'\n====\nE == U",
+      [
+        {
+          location: "line 8, col 6 to line 8, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_, source, errors, warnings) => {
     await expect(checkSource(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
