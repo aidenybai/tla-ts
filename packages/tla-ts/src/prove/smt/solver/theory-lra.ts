@@ -1687,15 +1687,16 @@ export class TheoryLra {
     const eq = context.getLiteral(eqAtom);
     const divisorValue = manager.getNumeral(divisor);
     if (divisorValue !== undefined) {
+      const upper = manager.mkNumeral((divisorValue < 0n ? -divisorValue : divisorValue) - 1n);
       this.mkAxiom([eq]);
       this.mkEqAxioms(this.ensureEnode(combination), this.ensureEnode(dividend));
       this.mkAxiom([this.mkLiteral(manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL))]);
-      const upper = manager.mkNumeral((divisorValue < 0n ? -divisorValue : divisorValue) - 1n);
       this.mkAxiom([this.mkLiteral(manager.mkApp(OP_LE, [remainder, upper], SORT_BOOL))]);
       return;
     }
     // q = 0 or (mod p q) >= 0, q >= 0 or (mod p q) + q <= -1, and q <= 0 or (mod p q) - q <= -1.
     const minusOne = manager.mkNumeral(-1n);
+    const minusDivisor = manager.mkApp(OP_MUL, [minusOne, divisor], SORT_INT);
     const isZero = this.mkLiteral(manager.mkEq(divisor, zero));
     const isRemainderNonnegative = this.mkLiteral(
       manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL),
@@ -1706,14 +1707,7 @@ export class TheoryLra {
     const isBelowDivisor = this.mkLiteral(
       manager.mkApp(
         OP_LE,
-        [
-          manager.mkApp(
-            OP_ADD,
-            [remainder, manager.mkApp(OP_MUL, [minusOne, divisor], SORT_INT)],
-            SORT_INT,
-          ),
-          minusOne,
-        ],
+        [manager.mkApp(OP_ADD, [remainder, minusDivisor], SORT_INT), minusOne],
         SORT_BOOL,
       ),
     );
