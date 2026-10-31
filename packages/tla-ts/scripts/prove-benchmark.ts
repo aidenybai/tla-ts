@@ -5,9 +5,10 @@
 // stays fair on a busy machine where the wall time doesn't. Each module's times go to
 // .prove-benchmark.json.
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY } from "./corpora";
+import { tlaTs } from "./dist";
 import { runModuleWorkers } from "./module-workers";
 import { getModuleLoader, readProofRecords, type ModuleProofRecord } from "./proof-records";
 
@@ -22,16 +23,7 @@ interface Timing extends ModuleTime {
   tlapm: number;
 }
 
-const DIST_PATH = join(import.meta.dirname, "../dist/index.js");
-
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".prove-benchmark.json");
-
-if (!existsSync(DIST_PATH)) {
-  console.error("Build the package first with pnpm build");
-  process.exit(1);
-}
-
-const tlaTs: typeof import("../src") = await import(DIST_PATH);
 
 const workersIndex = process.argv.indexOf("--workers");
 const workers = workersIndex === -1 ? 1 : Number(process.argv[workersIndex + 1]);

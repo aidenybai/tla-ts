@@ -10,17 +10,19 @@
 // tla-ts misses, or proves with a later prover than tlapm's, goes to tlapm's prover again until it
 // has used the limit in both wall-clock and CPU time. Each result counts twice: by wall-clock time,
 // as prove saw it here, and by CPU time, where a proof within the limit on that second run agrees.
+// Both runs use the built package, as users do, and conformance:prove builds it first.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
-import { prove, type ProofObligation, TlaError } from "../src";
+import { type ProofObligation, TlaError } from "../src";
 import { getObligations, type PrintedObligation } from "../src/obligations";
 import { DECIDERS } from "../src/prove/deciders";
 import { findMethods, type Method } from "../src/prove/prep/pragma";
 import { encodeForBackend } from "../src/prove/prove";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY } from "./corpora";
 import { runWithCpuLimit } from "./cpu-limit";
+import { tlaTs } from "./dist";
 import { runModuleWorkers } from "./module-workers";
 import {
   getModuleLoader,
@@ -165,15 +167,15 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
   const source = readFileSync(path, "utf8");
   const loadModule = getModuleLoader(path);
   // A module tla-ts can't load leaves each of its obligations absent, with the error as reason.
-  const proved = await prove({ source, loadModule }).then(
+  const proved = await tlaTs.prove({ source, loadModule }).then(
     (result) => result.obligations,
     (error: unknown) => {
-      if (!(error instanceof TlaError)) throw error;
+      if (!(error instanceof tlaTs.TlaError)) throw error;
       return error;
     },
   );
   const byId = new Map(
-    proved instanceof TlaError ? [] : proved.map((obligation) => [obligation.id, obligation]),
+    proved instanceof tlaTs.TlaError ? [] : proved.map((obligation) => [obligation.id, obligation]),
   );
   const results = record.obligations.map((expected): Result => {
     const actual = byId.get(expected.id);
@@ -181,7 +183,7 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
     const deviation = verdict === "agree" ? undefined : getDeviation(record.id, expected.id);
     const reason =
       deviation ??
-      (proved instanceof TlaError
+      (proved instanceof tlaTs.TlaError
         ? proved.message
         : actual?.status === "failed" || actual?.status === "unsupported"
           ? actual.reason
