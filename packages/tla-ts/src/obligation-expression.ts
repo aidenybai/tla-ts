@@ -874,7 +874,7 @@ export const mapSelectorArgs = (selector: Selector, map: (arg: Expr) => Expr): S
     ? { ...selector, args: selector.args.map(map) }
     : selector;
 
-export const mapExceptSpecs = (specs: ExceptSpec[], map: (inner: Expr) => Expr): ExceptSpec[] =>
+const mapExceptSpecs = (specs: ExceptSpec[], map: (inner: Expr) => Expr): ExceptSpec[] =>
   specs.map((spec) => {
     const value = map(spec.value);
     const trail = spec.trail.map((point): ExceptPoint =>
@@ -883,7 +883,7 @@ export const mapExceptSpecs = (specs: ExceptSpec[], map: (inner: Expr) => Expr):
     return { trail, value };
   });
 
-export const mapDefnBody = (definition: Defn, map: (body: Expr) => Expr): Defn =>
+const mapDefnBody = (definition: Defn, map: (body: Expr) => Expr): Defn =>
   definition.kind === "Operator" || definition.kind === "Bpragma"
     ? { ...definition, body: map(definition.body) }
     : definition;
