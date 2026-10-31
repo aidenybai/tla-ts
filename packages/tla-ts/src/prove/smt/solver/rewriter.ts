@@ -53,59 +53,6 @@ interface RewriterOptions {
   isPullingCheapIte?: boolean;
 }
 
-// The distinct literals of a flat conjunction or disjunction. It finds a complementary pair through
-// the atoms of the negated literals, without creating each negation. A short list is searched
-// directly, and a long one through sets.
-// The literals of a flattened conjunction or disjunction, without duplicates. Like the
-// expr_fast_mark1 and expr_fast_mark2 of mk_nflat_and_core, it marks the literals and the negated
-// atoms it holds, here with a stamp for each use.
-class FlatLiterals {
-  list: number[] = [];
-  private stamp = 0;
-  private literalStamps = new Int32Array(1024);
-  private negatedAtomStamps = new Int32Array(1024);
-  private manager: AstManager | null = null;
-
-  // Starts a new, empty list of the manager's literals.
-  clear(manager: AstManager) {
-    this.list = [];
-    this.stamp++;
-    this.manager = manager;
-  }
-
-  // Adds a literal, and returns whether its complement is already there. An expression's arguments
-  // are older than it, so their ids are smaller.
-  add(literal: number) {
-    const manager = this.manager as AstManager;
-    if (literal >= this.literalStamps.length) {
-      const size = Math.max(2 * this.literalStamps.length, literal + 1);
-      const literalStamps = new Int32Array(size);
-      literalStamps.set(this.literalStamps);
-      this.literalStamps = literalStamps;
-      const negatedAtomStamps = new Int32Array(size);
-      negatedAtomStamps.set(this.negatedAtomStamps);
-      this.negatedAtomStamps = negatedAtomStamps;
-    }
-    if (this.literalStamps[literal] === this.stamp) return false;
-    const isNegated = manager.isNot(literal);
-    const atom = isNegated ? manager.args[literal][0] : literal;
-    if (
-      isNegated
-        ? this.literalStamps[atom] === this.stamp
-        : this.negatedAtomStamps[atom] === this.stamp
-    )
-      return true;
-    this.list.push(literal);
-    this.literalStamps[literal] = this.stamp;
-    if (isNegated) this.negatedAtomStamps[atom] = this.stamp;
-    return false;
-  }
-}
-
-// One set of marks serves every rewriter: a list is filled and read before any other starts, and
-// marks that grow to the largest manager's ids would cost each rewriter its own copy.
-const flatLiterals = new FlatLiterals();
-
 // A term that reduceTo is rewriting: the depth left for its arguments, its next argument, and where
 // its arguments' results start.
 interface ReduceFrame {
@@ -472,8 +419,8 @@ export class Rewriter extends RewriterTpl {
     const manager = this.manager;
     const isNested = args.some((arg) => manager.getOp(arg) === OP_OR);
     const flatArgs = isNested ? this.flattenArgs(args, OP_OR) : args;
-    const literals = flatLiterals;
-    literals.clear(manager);
+    const literals = manager.flatLiterals;
+    literals.clear();
     for (const arg of flatArgs) {
       if (manager.isTrue(arg)) return manager.trueExpr;
       if (manager.isFalse(arg)) continue;
@@ -519,8 +466,8 @@ export class Rewriter extends RewriterTpl {
   // pair.
   private mkNflatAnd(args: number[]) {
     const manager = this.manager;
-    const literals = flatLiterals;
-    literals.clear(manager);
+    const literals = manager.flatLiterals;
+    literals.clear();
     for (const arg of args) {
       if (manager.isTrue(arg)) continue;
       if (manager.isFalse(arg) || literals.add(arg)) return manager.falseExpr;

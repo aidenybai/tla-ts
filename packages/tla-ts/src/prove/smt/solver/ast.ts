@@ -1,6 +1,7 @@
 // Ported from Z3 (src/ast/ast.h, src/ast/ast.cpp), MIT license, see z3-license.txt.
 // A hash-consed DAG of applications, de Bruijn variables and quantifiers, as in Z3's ast_manager.
 import { SmtInvariantError } from "../../../errors";
+import { FlatLiterals } from "./flat-literals";
 import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
@@ -236,6 +237,8 @@ export class AstManager {
   // Z3's hash of each expression, which orders Z3's hash tables.
   hashes: number[] = [];
   quantifiers = new Map<number, QuantifierData>();
+  // The marks that the rewriters of this manager share to flatten conjunctions and disjunctions.
+  readonly flatLiterals = new FlatLiterals(this);
   funcDecls: FuncDecl[] = [];
   sortNames: string[] = ["Bool", "Int", "Real"];
   private sortHashes = [
