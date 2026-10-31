@@ -194,7 +194,7 @@ export class Rewriter extends RewriterTpl {
     );
   }
 
-  protected reduceQuantifier(expr: number, body: number, patterns: number[]) {
+  reduceQuantifier(expr: number, body: number, patterns: number[]) {
     return this.manager.withTemporaries(() => this.reduceQuantifierCore(expr, body, patterns));
   }
 
@@ -375,7 +375,8 @@ export class Rewriter extends RewriterTpl {
     return true;
   }
 
-  private reduceAppCore(decl: number, args: number[]): number | Rewrite {
+  // The reductions of the Boolean and arithmetic rewriters, which the model evaluator applies too.
+  reduceAppCore(decl: number, args: number[]): number | Rewrite {
     const manager = this.manager;
     const op = manager.funcDecls[decl].op;
     switch (op) {

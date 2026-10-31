@@ -194,6 +194,8 @@ const FIRST_DECLARED_SMALL_ID = 143;
 const FIRST_FREE_ID = 22;
 // MAX_SMALL_NUM_TO_CACHE: arith_decl_plugin holds the numerals below it once it makes them.
 const MAX_SMALL_NUM_TO_CACHE = 16;
+// The sorts that finite_set_decl_plugin::init makes.
+const NUM_FINITE_SET_PLUGIN_SORTS = 7;
 
 // symbol::hash: a numerical symbol hashes to its number.
 const getSymbolHash = (symbol: SmtSymbol) =>
@@ -275,6 +277,7 @@ export class AstManager {
   // m_small_ints and m_small_reals: the numerals below MAX_SMALL_NUM_TO_CACHE, which are held.
   private smallInts: number[] = [];
   private smallReals: number[] = [];
+  private isFiniteSetPluginInitialized = false;
   readonly trueExpr: number;
   readonly falseExpr: number;
 
@@ -308,6 +311,17 @@ export class AstManager {
   private mkSmallId() {
     this.numDecls++;
     return this.freeSmallIds.length > 0 ? (this.freeSmallIds.pop() as number) : this.nextSmallId++;
+  }
+
+  // finite_set_decl_plugin::init, which the first final check of theory_finite_set runs when it
+  // makes a set.range declaration: the plugin makes the sorts A and B, three FiniteSet sorts and two
+  // Array sorts, which the manager keeps. The set.range declaration is released at once.
+  initFiniteSetPlugin() {
+    if (this.isFiniteSetPluginInitialized) return;
+    this.isFiniteSetPluginInitialized = true;
+    for (let index = 0; index < NUM_FINITE_SET_PLUGIN_SORTS; index++) this.mkSmallId();
+    this.freeSmallIds.push(this.mkSmallId());
+    this.numDecls--;
   }
 
   // insert_macro: cmd_context keeps a named expression as a recursive function with one case, whose
