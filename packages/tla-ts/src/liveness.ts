@@ -1,6 +1,6 @@
 import { isLocallyResolved, type Definition, type Expression } from "./ast";
-import { STACK_OVERFLOW, TlaEvaluationError } from "./errors";
-import { EXIT_STATUS, setExitCode } from "./exit-codes";
+import { STACK_OVERFLOW, TlaEvaluationError, TlaModuleError, UNEXPECTED_EXCEPTION } from "./errors";
+import { EXIT_STATUS, getOwnExitCode, setExitCode } from "./exit-codes";
 import {
   describeLocation,
   describeRange,
@@ -60,6 +60,23 @@ const getConstantContext = (environment: Environment, scope: Scope | undefined):
   state: undefined,
   next: undefined,
 });
+
+// TLC evaluates the constant parts of a property while it processes the spec. Its top-level handler
+// prints a failure without a TLC error code of its own as an unexpected exception.
+const evaluateConstant = (expression: Expression, context: Context) => {
+  try {
+    return evaluate(expression, context);
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError) || error instanceof TlaModuleError) throw error;
+    const code = getOwnExitCode(error);
+    throw code === undefined
+      ? setExitCode(
+          new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`, error),
+          EXIT_STATUS.error,
+        )
+      : setExitCode(error, code);
+  }
+};
 
 const createCannotHandleError = (expression: Expression) =>
   new TlaEvaluationError(
@@ -278,7 +295,7 @@ export const toLiveExpression = (
   ): LiveExpression => {
     const atomLevel = level === 0 ? getLevel(expression, scope, environment) : level;
     if (atomLevel === 0) {
-      const value = evaluate(expression, getConstantContext(environment, scope));
+      const value = evaluateConstant(expression, getConstantContext(environment, scope));
       if (typeof value !== "boolean") {
         throw new TlaEvaluationError(
           `TLC expected a boolean in the temporal formula at ${describeLocation(expression)}`,
@@ -354,9 +371,45 @@ export const toLiveExpression = (
     return level > ACTION_LEVEL ? result : toAtom(expression, scope, level);
   };
 
+  // TLC translates the operands of a connective even when the whole formula is a state or action
+  // predicate, so it fails on a constant operand before it checks any state.
+  const convertOperands = (expression: Expression, scope: Scope | undefined) => {
+    switch (expression.kind) {
+      case "Label":
+        convert(expression.body, scope);
+        return;
+      case "Let":
+        convert(expression.body, bindLetDefinitions(expression, scope, environment));
+        return;
+      case "And":
+      case "Or":
+        for (const operand of expression.operands) convert(operand, scope);
+        return;
+      case "Apply":
+        if (
+          expression.operator === "=>" ||
+          (expression.operator === "~" && !isLocallyResolved(expression))
+        ) {
+          for (const operand of expression.args) convert(operand, scope);
+        }
+        return;
+      case "If": {
+        const condition = convert(expression.condition, scope);
+        const branches =
+          condition.kind === "Boolean"
+            ? [condition.value ? expression.consequent : expression.alternative]
+            : [expression.consequent, expression.alternative];
+        for (const branch of branches) convert(branch, scope);
+      }
+    }
+  };
+
   const convert = (expression: Expression, scope: Scope | undefined): LiveExpression => {
     const level = getLevel(expression, scope, environment);
-    if (level <= ACTION_LEVEL) return toAtom(expression, scope, level);
+    if (level <= ACTION_LEVEL) {
+      convertOperands(expression, scope);
+      return toAtom(expression, scope, level);
+    }
     switch (expression.kind) {
       case "Label":
         return convert(expression.body, scope);
@@ -399,7 +452,10 @@ export const toLiveExpression = (
         return convertQuantifier(expression, scope);
       case "If": {
         if (getLevel(expression.condition, scope, environment) === 0) {
-          const condition = evaluate(expression.condition, getConstantContext(environment, scope));
+          const condition = evaluateConstant(
+            expression.condition,
+            getConstantContext(environment, scope),
+          );
           if (typeof condition === "boolean") {
             return convert(condition ? expression.consequent : expression.alternative, scope);
           }
