@@ -103,6 +103,16 @@ describe("decideSmt", () => {
     expect(decideSmt(problem, { timeLimitMs: 5000 })).toBe("unsat");
   });
 
+  // Z3 answers both without the smt tactic, since the preprocessing decides them.
+  it("decides a problem that the preprocessing reduces to false or to nothing", () => {
+    const decideAssertion = (assertion: string) =>
+      decideSmt(`(declare-fun x () Int)\n(assert ${assertion})\n(check-sat)\n`, {
+        timeLimitMs: 5000,
+      });
+    expect(decideAssertion("(> x x)")).toBe("unsat");
+    expect(decideAssertion("(= x x)")).toBe("sat");
+  });
+
   it("rejects an ill-sorted application", () => {
     expect(() =>
       decideSmt("(declare-fun p (Int) Bool)\n(assert (p true))\n(check-sat)\n", {

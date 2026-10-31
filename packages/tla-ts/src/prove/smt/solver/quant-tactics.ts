@@ -105,11 +105,19 @@ export const applyUfniaTactic = (manager: AstManager, assertions: number[]) => {
   const goal = new Goal(manager);
   for (const assertion of assertions) goal.assert(assertion);
   simplify(manager, goal);
-  propagateValues(manager, goal);
-  ctxSimplify(manager, goal);
-  simplify(manager, goal, true);
-  if (!goal.isInconsistent) elimUncnstr(manager, goal);
-  simplify(manager, goal);
-  if (!goal.isInconsistent) applyQeLite(manager, goal);
-  return goal.forms.items;
+  // and_then runs the next tactic only on a goal that is not decided: one that is consistent and
+  // has formulas left.
+  const steps = [
+    () => propagateValues(manager, goal),
+    () => ctxSimplify(manager, goal),
+    () => simplify(manager, goal, true),
+    () => elimUncnstr(manager, goal),
+    () => simplify(manager, goal),
+    () => applyQeLite(manager, goal),
+  ];
+  for (const step of steps) {
+    if (goal.isInconsistent || goal.forms.size === 0) break;
+    step();
+  }
+  return goal;
 };
