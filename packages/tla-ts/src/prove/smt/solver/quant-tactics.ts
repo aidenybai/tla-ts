@@ -1,10 +1,11 @@
 // Ported from Z3 (src/tactic/smtlogics/quant_tactics.cpp, src/tactic/core/simplify_tactic.cpp), MIT
 // license, see z3-license.txt. With (set-logic UFNIA), Z3's strategic solver runs the ufnia tactic:
-// a preprocessor, then qe-lite, then the SMT kernel. Of the preprocessor, ctx-simplify,
-// elim-uncnstr's elimination and the simplifier's pull_cheap_ite and local_ctx options are not
-// ported, as they change almost none of tlapm's obligations.
+// a preprocessor, then qe-lite, then the SMT kernel. Of the preprocessor, elim-uncnstr's
+// elimination and the simplifier's pull_cheap_ite and local_ctx options are not ported, as they
+// change almost none of tlapm's obligations.
 import { type AstManager, KIND_APP, KIND_QUANTIFIER } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
+import { ctxSimplify } from "./ctx-simplify";
 import { Goal } from "./goal";
 import { propagateValues } from "./propagate-values";
 import { applyQeLite } from "./qe-lite";
@@ -66,6 +67,7 @@ export const applyUfniaTactic = (manager: AstManager, assertions: number[]) => {
   for (const assertion of assertions) goal.assert(assertion);
   simplify(manager, goal);
   propagateValues(manager, goal);
+  ctxSimplify(manager, goal);
   simplify(manager, goal);
   if (!goal.isInconsistent) pinQuantifierBodies(manager, goal);
   simplify(manager, goal);
