@@ -13,6 +13,11 @@ export interface Rewrite {
   depth: number;
 }
 
+// The depth to rewrite a Rewrite's result to. A frame keeps its depth in two bits, where 3 is
+// RW_UNBOUNDED_DEPTH, so BR_REWRITE3 rewrites the result without a bound.
+export const getRewriteDepth = (rewrite: Rewrite) =>
+  rewrite.depth >= 3 ? Infinity : rewrite.depth;
+
 // rewriter_tpl's frame states.
 const PROCESS_CHILDREN = 0;
 const REWRITE_BUILTIN = 1;
@@ -535,7 +540,8 @@ export class RewriterTpl extends RewriterCore {
       this.shrinkResults(frame.spos);
       this.pushResult(reduced.expr);
       frame.state = REWRITE_BUILTIN;
-      if (this.visit(reduced.expr, reduced.depth)) this.finishRewriteBuiltin(expr, frame);
+      if (this.visit(reduced.expr, getRewriteDepth(reduced)))
+        this.finishRewriteBuiltin(expr, frame);
       this.setLastResult(-1);
       return;
     }
