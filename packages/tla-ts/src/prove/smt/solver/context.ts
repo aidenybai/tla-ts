@@ -69,6 +69,15 @@ type SearchFailure =
 // smt_params: the kernel runs model-based quantifier instantiation with relevancy level 2 and the
 // CS_ACTIVITY_DELAY_NEW case split queue. The model checker's auxiliary context runs neither, as Z3
 // sets its relevancy level to 0 and its case split strategy to CS_ACTIVITY.
+// m_model_generator's model, m_proto_model and m_model. The model generator holds the last model it
+// made. From mk_proto_model to reset_model the context holds that model too as its proto model, and
+// get_model adds the model the proto model makes.
+type ModelState =
+  | { kind: "none" }
+  | { kind: "generated"; generated: GeneratedModel }
+  | { kind: "proto"; generated: GeneratedModel }
+  | { kind: "final"; generated: GeneratedModel; model: ProtoModel };
+
 interface SmtParams {
   isMbqi: boolean;
   relevancyLevel: 0 | 2;
@@ -103,10 +112,7 @@ export class Context extends Internalizer {
   private r1ParentGenerations = new Map<Enode, number>();
   private erasedGenerations = new Map<Enode, number>();
   private lastSearchFailure: SearchFailure = FAILURE_OK;
-  // m_model_generator's model, m_proto_model and m_model.
-  private generatedModel: GeneratedModel | null = null;
-  private protoModel: ProtoModel | null = null;
-  private model: ProtoModel | null = null;
+  private modelState: ModelState = { kind: "none" };
 
   constructor(manager: AstManager, params: SmtParams) {
     super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
@@ -1015,36 +1021,39 @@ export class Context extends Internalizer {
 
   // reset_model: the model generator still holds the proto model.
   private resetModel() {
-    this.model?.decRef();
-    this.model = null;
-    this.protoModel?.decRef();
-    this.protoModel = null;
+    const state = this.modelState;
+    if (state.kind === "none" || state.kind === "generated") return;
+    if (state.kind === "final") state.model.decRef();
+    state.generated.model.decRef();
+    this.modelState = { kind: "generated", generated: state.generated };
   }
 
   // mk_proto_model: the model of the current assignment, which the quantifier manager adjusts. The
   // model generator releases the last model first.
-  mkProtoModel() {
-    this.generatedModel?.model.decRef();
+  private mkProtoModel() {
+    if (this.modelState.kind !== "none") this.modelState.generated.model.decRef();
     const generated = mkModel(this);
     generated.model.incRef();
-    this.generatedModel = generated;
+    this.modelState = { kind: "generated", generated };
     this.qmanager.adjustModel(generated.model);
     generated.model.completePartialFuncs(false);
     generated.model.cleanup();
     generated.model.incRef();
-    this.protoModel = generated.model;
+    this.modelState = { kind: "proto", generated };
     return generated;
   }
 
   // get_model: the model that the proto model makes, which the caller holds too. add_rec_funs gives
   // each named expression without an interpretation its expression.
   getModel() {
-    if (this.model !== null) return this.model;
-    const model = (this.protoModel ?? this.mkProtoModel().model).mkModel();
+    if (this.modelState.kind === "final") return this.modelState.model;
+    const generated =
+      this.modelState.kind === "proto" ? this.modelState.generated : this.mkProtoModel();
+    const model = generated.model.mkModel();
     for (const entry of this.manager.macros)
       if (!model.constInterps.has(entry[0])) model.registerConst(entry[0], entry[1]);
     model.incRef();
-    this.model = model;
+    this.modelState = { kind: "final", generated, model };
     return model;
   }
 
