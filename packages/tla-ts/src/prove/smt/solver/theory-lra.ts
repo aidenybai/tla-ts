@@ -124,6 +124,8 @@ export class TheoryLra {
   private unsupportedTerms: number[] = [];
   private underspecifiedTerms: number[] = [];
   private processedEqs = new Set<string>();
+  // m_restart_pairs: equalities whose axioms a backjump to the base level drops, remade on restart.
+  private restartPairs: Enode[][] = [];
   private nla: NlaCore | undefined;
 
   constructor(private context: Context) {
@@ -1465,13 +1467,19 @@ export class TheoryLra {
     this.varEnodes.length = scope.numVars;
   }
 
-  restartEh() {}
+  restartEh() {
+    const pairs = this.restartPairs;
+    this.restartPairs = [];
+    for (const pair of pairs) {
+      if (this.context.isInconsistent()) break;
+      this.mkEqAxioms(pair[0], pair[1]);
+    }
+  }
 
   initSearchEh() {
     this.numConflicts = 0;
+    this.restartPairs = [];
   }
-
-  // arith_eq_adapter.
 
   // arith_eq_adapter.
 
@@ -1533,6 +1541,12 @@ export class TheoryLra {
     };
     context.relevancy.addHandler(first.owner, handler);
     context.relevancy.addHandler(second.owner, handler);
+    if (
+      context.scopeLevel !== context.baseLevel &&
+      first.iscopeLevel <= context.baseLevel &&
+      second.iscopeLevel <= context.baseLevel
+    )
+      this.restartPairs.push([first, second]);
   }
 
   internalizeEqEh(expr: number) {
