@@ -1851,9 +1851,39 @@ describe("parseConfig matches TLC", () => {
   it("rejects keywords that appear twice", () => {
     ["CHECK_DEADLOCK", "_PERIODIC", "_RL_REWARD"].forEach((keyword) =>
       expect(() => parseConfig(`${keyword} FALSE\n${keyword} TRUE`)).toThrow(
-        new TlaConfigError(`The keyword ${keyword} appears twice`),
+        new TlaConfigError(
+          `TLC found an error in the configuration file at line 2\nThe keyword ${keyword} appeared twice.`,
+        ),
       ),
     );
+  });
+
+  it("reports a malformed configuration with TLC's messages", () => {
+    const atLine = (line: number, detail: string) =>
+      `TLC found an error in the configuration file at line ${line}\n${detail}`;
+    const lexical = (detail: string) =>
+      `TLC found an error in the configuration file:\nLexical error at ${detail}`;
+    const cases = [
+      ["INIT\n", atLine(1, "The keyword INIT was not followed by an identifier.")],
+      ["CONSTANT N = -1\nINIT Init\n", atLine(2, "It was expecting = or <-, but did not find it.")],
+      ["CHECK_DEADLOCK 3\n", atLine(1, "It was expecting TRUE or FALSE, but did not find it.")],
+      ["CONSTANT N = {1, 2\nINIT Init\n", atLine(2, "It was expecting }, but did not find it.")],
+      ["CONSTANT N =\n", atLine(2, "It was expecting a value, but did not find it.")],
+      ["INIT Init ~\n", atLine(1, "It was expecting a keyword, but did not find it.")],
+      ["(* open\nINIT Init\n", lexical('line 4, column 0.  Encountered: <EOF> after : ""')],
+      ["INIT Init\n`x\n", lexical('line 2, column 1.  Encountered: "`" (96), after : ""')],
+      [
+        'CONSTANT N = "a\nINIT Init\n',
+        lexical('line 1, column 16.  Encountered: "\\n" (10), after : "\\"a"'),
+      ],
+      [
+        "INIT Init\nNEXT Next\nSPECIFICATION Spec\n",
+        "The configuration file cannot specify both INIT/NEXT and SPECIFICATION fields.",
+      ],
+    ];
+    for (const item of cases) {
+      expect(() => parseConfig(item[0])).toThrow(new TlaConfigError(item[1]));
+    }
   });
 
   it("reads values the way TLC does", () => {
