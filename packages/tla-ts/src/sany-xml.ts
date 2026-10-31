@@ -750,9 +750,11 @@ const exportSpecification = (
         [call],
       );
     }
-    const failedFor =
-      node.kind === "OpAppl" && node.isNull ? IN_BUILTINS : formatSanyLocation(node.location);
-    const frames = [call, { at: SEMANTIC_EXPORT, failedFor }, { at: LEVEL_EXPORT }];
+    const frames = [
+      call,
+      { at: SEMANTIC_EXPORT, failedFor: formatSanyLocation(node.location) },
+      { at: LEVEL_EXPORT },
+    ];
     return withFrames(frames, () => exportLevelNode(node));
   };
 

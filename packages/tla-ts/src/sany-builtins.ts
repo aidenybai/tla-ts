@@ -77,7 +77,7 @@ const BUILTIN_OPERATORS: [string, number, number, number[] | undefined, number[]
   ["$Suffices", 1, 0, [3], [1]],
 ];
 
-const BUILTIN_LOCATION: SanyLocation = {
+export const BUILTIN_LOCATION: SanyLocation = {
   file: "--TLA+ BUILTINS--",
   beginLine: 0,
   beginColumn: 0,

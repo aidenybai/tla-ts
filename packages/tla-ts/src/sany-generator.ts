@@ -28,7 +28,7 @@ import {
   TlaUnsupportedError,
 } from "./errors";
 import { parseSanyModule } from "./parser";
-import { createBuiltins, createLevelFields } from "./sany-builtins";
+import { BUILTIN_LOCATION, createBuiltins, createLevelFields } from "./sany-builtins";
 import { getSany174LexicalError } from "./sany-lexer";
 import { getSanyParseError } from "./sany-parse-error";
 import {
@@ -724,9 +724,10 @@ export const generateSanySpecification = (
       location,
     });
 
-    // Generator.nullOAN, which SANY returns where it reported an error and carries on.
-    const createNullNode = (location: SanyLocation): OpApplNode => ({
-      ...createOpAppl(getBuiltin("$Nop"), [], location, {}, nullApplication.id),
+    // Generator.nullOAN, which SANY returns where it reported an error and carries on. It has no
+    // syntax tree node, so its location is that of the builtins.
+    const createNullNode = (): OpApplNode => ({
+      ...createOpAppl(getBuiltin("$Nop"), [], BUILTIN_LOCATION, {}, nullApplication.id),
       isNull: true,
     });
 
@@ -845,7 +846,7 @@ export const generateSanySpecification = (
       getBuiltin,
       addError: (location, text) => {
         addError(location, text);
-        return createNullNode(location);
+        return createNullNode();
       },
       isOutOfLabelScope: (label) => {
         const goal = labelGoals.get(label);
@@ -1027,7 +1028,7 @@ export const generateSanySpecification = (
           getSpanLocation(file, argumentSpan),
           `An expression appears as argument number ${position} to operator '${operator.name}', in a position an operator is required.`,
         );
-        return createNullNode(location);
+        return createNullNode();
       }
       if (argument.kind === "Identifier" || argument.kind === "Subexpression") {
         // The selector names the operator, or reports why not and gives SANY's nullOAN.
@@ -1045,13 +1046,13 @@ export const generateSanySpecification = (
           operatorLocation,
           `Lambda expression with arity ${arity} used as argument ${index + 1} of operator \`${operator.name}', \nbut an operator of arity ${expectedArity} is required.`,
         );
-        return createNullNode(location);
+        return createNullNode();
       }
       const name = getOperatorArgumentName(argument);
       const symbol = resolveSymbol(symbolTable, resolveSynonym(name));
       if (symbol === undefined) {
         addError(location, `Could not find declaration or definition of symbol '${name}'.`);
-        return createNullNode(location);
+        return createNullNode();
       }
       const arity = getSymbolArity(symbol);
       if (arity === expectedArity) return createOpArg(symbol, location);
@@ -1059,7 +1060,7 @@ export const generateSanySpecification = (
         operatorLocation,
         `Operator with incorrect arity passed as argument. \nOperator '${symbol.name}' of arity ${arity} is argument number ${position} to operator \`${formatSanyLocation(operator.location)}', \nbut an operator of arity ${expectedArity} was expected.`,
       );
-      return createNullNode(location);
+      return createNullNode();
     };
 
     // A /\ B /\ C nests as ((A /\ B) /\ C) in SANY; tla-ts flattens it.
@@ -1398,7 +1399,7 @@ export const generateSanySpecification = (
               location,
               `Couldn't resolve ${unresolved.fixity} operator symbol \`${unresolved.name}'.`,
             );
-            return { ...createNullNode(location), isAbsent: true };
+            return { ...createNullNode(), isAbsent: true };
           }
           const node = generateSelectorExpression(expression);
           if (expression.operator.includes("!") || isIdentifier(expression.operator)) {
@@ -1411,7 +1412,7 @@ export const generateSanySpecification = (
             getTokenLocation(file, getExpressionSpan(file, expression).start),
             "Unsupported expression type `['.",
           );
-          return { ...createNullNode(location), isAbsent: true };
+          return { ...createNullNode(), isAbsent: true };
         case "OperatorReference":
         case "Lambda": {
           const text = file.tokens[getExpressionSpan(file, expression).start].text;
@@ -1421,7 +1422,7 @@ export const generateSanySpecification = (
               ? "LAMBDA expression used where an expression is required."
               : `Unsupported expression type \`${getOperatorNodeKind(expression, text)}'.`,
           );
-          return { ...createNullNode(location), isAbsent: true };
+          return { ...createNullNode(), isAbsent: true };
         }
         case "And":
         case "Or":
@@ -1535,7 +1536,7 @@ export const generateSanySpecification = (
           const component = exceptSpecStack[exceptSpecStack.length - 1];
           if (except === undefined || component === undefined) {
             addError(location, "@ used where its meaning is not defined.");
-            return createNullNode(location);
+            return createNullNode();
           }
           return {
             ...createLevelFields(getId()),
@@ -1620,17 +1621,17 @@ export const generateSanySpecification = (
       const scope = labelScopes.at(-1);
       if (scope === undefined) {
         addError(location, "Label not in definition or proof step.");
-        return createNullNode(location);
+        return createNullNode();
       }
       // Generator.noLabelsAllowed: no label lies in the scope of a declaration of a nested
       // ASSUME/PROVE.
       if (assumeProveState.isDeclared.slice(2, assumeProveState.depth + 1).some(Boolean)) {
         addError(location, "Label not allowed within scope of declaration in nested ASSUME/PROVE.");
-        return createNullNode(location);
+        return createNullNode();
       }
       if (exceptStack.length > 0 && exceptSpecStack.length > 0) {
         addError(location, "Labels inside EXCEPT clauses are not yet implemented.");
-        return createNullNode(location);
+        return createNullNode();
       }
       pushLabelScope();
       const body = generateExpression(expression.body);

@@ -510,6 +510,13 @@ Spec == Init /\\ [][Next]_x
     },
   );
 
+  it("locates a HIDE fact SANY fails to resolve at its null node in the builtins", () => {
+    const report = getReport({ Hidden: "---- MODULE Hidden ----\nHIDE bar\n====\n" });
+    expect(report.text).toContain(
+      "In module --TLA+ BUILTINS--\n\nThe only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+    );
+  });
+
   it("locates a substitution for a parameter of the definition at its target", () => {
     const report = getReport({
       Outer: "---- MODULE Outer ----\nM(a) == INSTANCE Inner WITH a <- 1, C <- a\n====\n",
