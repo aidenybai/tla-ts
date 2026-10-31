@@ -666,9 +666,12 @@ const parse = (source: string, isTlapm: boolean): Module => {
       if (peek().kind === "Identifier" && (isAt("|->", 1) || isAt(":", 1))) {
         const kind = isAt("|->", 1) ? "Record" : "RecordSet";
         const fields = parseSeparated(() => {
+          const fieldStart = cursor.index;
+          const fieldLocation = getLocation(peek());
           const name = expectIdentifier();
+          fieldLocation.range = getRange(fieldStart);
           expect(kind === "Record" ? "|->" : ":");
-          return { name, value: parseExpression() };
+          return { name, value: parseExpression(), location: fieldLocation };
         });
         expect("]");
         return { kind, fields, location };

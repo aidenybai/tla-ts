@@ -16,7 +16,13 @@ import {
   type SourceRange,
   type Theorem,
 } from "./ast";
-import { createSanyError, createSemanticError, formatRange, TlaSyntaxError } from "./errors";
+import {
+  createSanyError,
+  createSemanticError,
+  formatRange,
+  TlaSyntaxError,
+  type SanyError,
+} from "./errors";
 
 export interface ModuleSymbol {
   key: string;
@@ -377,14 +383,21 @@ const resolveExpression = (
       resolveAll([expression.domain, expression.range]);
       return;
     case "Record":
-    case "RecordSet":
-      if (new Set(expression.fields.map((field) => field.name)).size < expression.fields.length) {
-        throw new TlaSyntaxError(
-          `Non-unique fields in constructor at line ${expression.location.line}, column ${expression.location.column}`,
+    case "RecordSet": {
+      const repeated = expression.fields.filter((field, index) =>
+        expression.fields.slice(0, index).some((earlier) => earlier.name === field.name),
+      );
+      if (repeated.length > 0) {
+        throw createSanyError(
+          repeated.map((field) => ({
+            location: formatRange(field.location.range ?? getNameRange(field.location, field.name)),
+            message: "Non-unique fields in constructor.",
+          })),
         );
       }
       resolveAll(expression.fields.map((field) => field.value));
       return;
+    }
     case "Except":
       resolveAll([
         expression.function,
@@ -799,6 +812,29 @@ export const resolveSubstitutions = (
   );
 };
 
+// SANY reports the errors of every unit it checks, in the order of the units in the module.
+export const collectSemanticErrors = (units: { location: SourceLocation; check: () => void }[]) => {
+  const errors: SanyError[] = [];
+  units
+    .toSorted((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
+    .forEach((unit) => {
+      try {
+        unit.check();
+      } catch (error) {
+        if (!(error instanceof TlaSyntaxError) || !error.sany) throw error;
+        error.sany.errors
+          .filter((item) =>
+            errors.every(
+              (existing) =>
+                existing.location !== item.location || existing.message !== item.message,
+            ),
+          )
+          .forEach((item) => errors.push(item));
+      }
+    });
+  if (errors.length > 0) throw createSanyError(errors);
+};
+
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const symbols = createSymbols(module, unit.imported);
   const facts = new Set(
@@ -812,13 +848,24 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     self,
     facts,
   });
-  module.definitions.forEach((definition) =>
-    resolveDefinition(definition, undefined, createUnit(definition.location, definition)),
-  );
-  module.assumptions.forEach((assumption) =>
-    resolveExpression(assumption.expression, undefined, createUnit(assumption.location, undefined)),
-  );
-  module.theorems.forEach((theorem) =>
-    resolveTheorem(theorem, createUnit(theorem.location, undefined)),
-  );
+  collectSemanticErrors([
+    ...module.definitions.map((definition) => ({
+      location: definition.location,
+      check: () =>
+        resolveDefinition(definition, undefined, createUnit(definition.location, definition)),
+    })),
+    ...module.assumptions.map((assumption) => ({
+      location: assumption.location,
+      check: () =>
+        resolveExpression(
+          assumption.expression,
+          undefined,
+          createUnit(assumption.location, undefined),
+        ),
+    })),
+    ...module.theorems.map((theorem) => ({
+      location: theorem.location,
+      check: () => resolveTheorem(theorem, createUnit(theorem.location, undefined)),
+    })),
+  ]);
 };

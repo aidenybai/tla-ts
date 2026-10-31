@@ -164,7 +164,7 @@ export const mapChildren = (
     case "RecordSet":
       return {
         ...expression,
-        fields: expression.fields.map((field) => ({ name: field.name, value: plain(field.value) })),
+        fields: expression.fields.map((field) => ({ ...field, value: plain(field.value) })),
       };
     case "Except":
       return {
