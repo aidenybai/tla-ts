@@ -870,8 +870,10 @@ export abstract class Internalizer {
     this.mkEnode(expr, false, false, true);
   }
 
+  // mk_eq_atom: the side with the smaller id goes first.
   mkEqAtom(lhs: number, rhs: number) {
-    return lhs < rhs ? this.manager.mkEq(lhs, rhs) : this.manager.mkEq(rhs, lhs);
+    const ids = this.manager.ids;
+    return ids[lhs] < ids[rhs] ? this.manager.mkEq(lhs, rhs) : this.manager.mkEq(rhs, lhs);
   }
 
   private internalizeIteTerm(expr: number) {

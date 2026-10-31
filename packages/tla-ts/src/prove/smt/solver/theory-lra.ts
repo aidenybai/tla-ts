@@ -1263,7 +1263,7 @@ export class TheoryLra {
     if (inputFirst === inputSecond) return;
     const context = this.context;
     const manager = this.manager;
-    const isSwapped = inputFirst.owner > inputSecond.owner;
+    const isSwapped = manager.ids[inputFirst.owner] > manager.ids[inputSecond.owner];
     const first = isSwapped ? inputSecond : inputFirst;
     const second = isSwapped ? inputFirst : inputSecond;
     let t1 = first.owner;
