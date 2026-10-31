@@ -266,7 +266,11 @@ export const createEnvironment = (
 
   const getStandardSymbols = (name: string) => {
     const symbols = addStandardModule(name);
-    if (symbols) useModule(name, STANDARD_DEPENDENCIES.get(name) ?? []);
+    const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
+    if (symbols) useModule(name, dependencies);
+    // TLC loads the Java class of each module a standard module uses, so one that uses Integers
+    // overrides the arithmetic of Naturals.
+    if (symbols && dependencies.includes("Integers")) addStandardModule("Integers");
     return symbols;
   };
 
