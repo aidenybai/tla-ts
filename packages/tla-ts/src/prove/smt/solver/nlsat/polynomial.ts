@@ -674,6 +674,36 @@ export class PolynomialManager {
     return this.iccp(polynomial, variable)[2];
   }
 
+  // square_free: the integer content times the square-free parts of the content and the primitive
+  // part in the maximal variable, or p itself when it is square-free.
+  squareFree(polynomial: Polynomial): Polynomial {
+    if (this.isConst(polynomial)) return polynomial;
+    const variable = this.maxVar(polynomial);
+    const [integer, content, primitive] = this.iccp(polynomial, variable);
+    const squareFreeContent = this.squareFree(content);
+    const g = this.gcd(primitive, this.derivative(primitive, variable));
+    if (this.isConst(g) && this.eq(squareFreeContent, content)) return polynomial;
+    const squareFreePrimitive = this.isConst(g) ? primitive : this.exactDiv(primitive, g);
+    return this.mul(this.mulConst(integer, squareFreeContent), squareFreePrimitive);
+  }
+
+  // normalize: p divided by the gcd of its coefficients.
+  normalize(polynomial: Polynomial) {
+    if (polynomial.size === 0) return polynomial;
+    let g = 0n;
+    for (const coeff of polynomial.as) g = getGcd(g, coeff);
+    if (g === 1n) return polynomial;
+    for (let index = 0; index < polynomial.size; index++)
+      this.cheap.add(polynomial.as[index] / g, polynomial.ms[index]);
+    return this.cheap.mk();
+  }
+
+  // nonzero_const_coeff: whether the coefficient of x^k is a nonzero number.
+  isNonzeroConstCoeff(polynomial: Polynomial, variable: number, power: number) {
+    const coeff = this.getConstCoeff(polynomial, variable, power);
+    return coeff !== null && coeff !== 0n;
+  }
+
   // exact_div: p/q, where q divides p.
   exactDiv(polynomial: Polynomial, divisor: Polynomial) {
     if (polynomial.size === 0) return polynomial;
@@ -707,11 +737,32 @@ export class PolynomialManager {
     variable: number,
     isQuotient = true,
   ) {
+    return this.pseudoDivisionCore(polynomial, divisor, variable, true, isQuotient);
+  }
+
+  // pseudo_remainder: R with lc(q)^d * p = Q*q + R, where d counts the division steps.
+  pseudoRemainder(polynomial: Polynomial, divisor: Polynomial, variable: number) {
+    return this.pseudoDivisionCore(polynomial, divisor, variable, false, false);
+  }
+
+  private pseudoDivisionCore(
+    polynomial: Polynomial,
+    divisor: Polynomial,
+    variable: number,
+    isExact: boolean,
+    isQuotient: boolean,
+  ) {
     const degA = this.degree(polynomial, variable);
     const degB = this.degree(divisor, variable);
     if (degB === 0) {
-      if (!isQuotient || degA === 0) return { quotient: polynomial, remainder: this.zero };
-      return { quotient: this.mul(polynomial, this.pw(divisor, degA)), remainder: this.zero };
+      const steps = isExact ? degA + 1 : 1;
+      if (!isQuotient || !isExact || degA === 0)
+        return { quotient: polynomial, remainder: this.zero, steps };
+      return {
+        quotient: this.mul(polynomial, this.pw(divisor, degA)),
+        remainder: this.zero,
+        steps,
+      };
     }
     const lcB = this.coeff(divisor, variable, degB);
     const reductB = this.reduct(divisor, variable, degB);
@@ -722,12 +773,12 @@ export class PolynomialManager {
       const degR = this.degree(remainder, variable);
       if (degB > degR) {
         const exactSteps = degA - degB + 1;
-        if (steps < exactSteps) {
+        if (isExact && steps < exactSteps) {
           const power = this.pw(lcB, exactSteps - steps);
           if (isQuotient) quotient = this.mul(power, quotient);
           remainder = this.mul(power, remainder);
         }
-        return { quotient, remainder };
+        return { quotient, remainder, steps };
       }
       this.som.reset();
       this.som2.reset();
@@ -755,7 +806,7 @@ export class PolynomialManager {
   }
 
   // The reduct of coeff(p, x, k, reduct): p without its x^k monomials.
-  private reduct(polynomial: Polynomial, variable: number, power: number) {
+  reduct(polynomial: Polynomial, variable: number, power: number) {
     for (let index = 0; index < polynomial.size; index++)
       if (polynomial.ms[index].degreeOf(variable) !== power)
         this.cheap.add(polynomial.as[index], polynomial.ms[index]);

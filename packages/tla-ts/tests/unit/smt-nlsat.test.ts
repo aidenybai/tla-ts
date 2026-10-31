@@ -12,11 +12,19 @@ import { LarSolver } from "../../src/prove/smt/solver/lp/lar-solver";
 import { NlaCore } from "../../src/prove/smt/solver/lp/nla-core";
 import { NraSolver } from "../../src/prove/smt/solver/lp/nra-solver";
 import { AlgebraicManager, Anum } from "../../src/prove/smt/solver/nlsat/algebraic";
+import { AtomTable, ScopedLiterals } from "../../src/prove/smt/solver/nlsat/atoms";
 import { Evaluator } from "../../src/prove/smt/solver/nlsat/evaluator";
+import { Explain } from "../../src/prove/smt/solver/nlsat/explain";
 import type { IntervalSet } from "../../src/prove/smt/solver/nlsat/interval-set";
 import { getSingleCell } from "../../src/prove/smt/solver/nlsat/levelwise";
 import { Mpbq } from "../../src/prove/smt/solver/nlsat/mpbq";
-import type { Atom, IneqKind, RootKind } from "../../src/prove/smt/solver/nlsat/types";
+import {
+  type Atom,
+  type IneqAtom,
+  type IneqKind,
+  isIneqAtom,
+  type RootKind,
+} from "../../src/prove/smt/solver/nlsat/types";
 import { NlsatSolver } from "../../src/prove/smt/solver/nlsat/solver";
 import { UpolynomialManager } from "../../src/prove/smt/solver/nlsat/upolynomial";
 import {
@@ -463,6 +471,107 @@ const runLevelwiseProgram = (program: string) => {
     .join("\n");
 };
 
+// The harness's explain programs: a sample with the top variable unassigned, or every variable
+// assigned for the linear variant, atoms made by the solver's atom table, the equations Z3's
+// solver keeps for some assigned variables, then the explanations of sets of literals. Each
+// explanation prints its literals with their atoms, numbered as Z3 numbers them.
+const runExplainProgram = (program: string) => {
+  const am = new AlgebraicManager();
+  const pm = new PolynomialManager();
+  const cache = new PolynomialCache(pm);
+  const table = new AtomTable(pm, cache);
+  const sample: Anum[] = [];
+  const var2eq: IneqAtom[] = [];
+  const evaluator = new Evaluator(pm, am, sample);
+  const explain = new Explain(pm, am, cache, {
+    atoms: table,
+    sample,
+    getValue: (literal) => {
+      const atom = table.getAtom(literal);
+      if (atom === null || sample[atom.maxVar] === undefined) return 0;
+      return evaluator.eval(atom, (literal & 1) === 1) ? 1 : -1;
+    },
+    var2eq,
+  });
+  const registers: Anum[] = [];
+  const atoms: number[] = [];
+  const show = (anum: Anum) => {
+    if (anum.value instanceof Rational) return ` q${anum.value}`;
+    const index = am.getRootIndex(anum);
+    return ` r[${anum.value.p.join(" ")}]#${index}(${anum.value.lower},${anum.value.upper})`;
+  };
+  const showAtom = (boolVar: number) => {
+    const atom = table.atoms[boolVar]!;
+    const body = isIneqAtom(atom)
+      ? atom.polynomials
+          .map(
+            (polynomial, index) =>
+              ` ${atom.isEven[index] ? "e" : "o"}${showPolynomial(polynomial)}`,
+          )
+          .join("")
+      : ` i${atom.index} ${showPolynomial(atom.polynomial)}`;
+    return ` b${boolVar} ${atom.kind} ${atom.maxVar}${body}`;
+  };
+  const runCommand = (words: string[]) => {
+    const numbers = words.slice(1).map(Number);
+    switch (words[0]) {
+      case "q":
+        registers[numbers[0]] = new Anum(parseRational(words[2]));
+        return show(registers[numbers[0]]);
+      case "root":
+        registers[numbers[0]] = am.isolateRoots(
+          pm,
+          pm.fromCoeffs(words.slice(3).map(BigInt), 0),
+          [],
+        )[numbers[1] - 1];
+        return show(registers[numbers[0]]);
+      case "set":
+        sample[numbers[0]] = am.copy(registers[numbers[1]]);
+        return "";
+      case "ineq": {
+        const count = numbers[1];
+        const polynomials = words
+          .slice(3 + count)
+          .join(" ")
+          .split(" ; ")
+          .map((text) => parsePolynomial(pm, text));
+        const isEven = numbers.slice(2, 2 + count).map((flag) => flag === 1);
+        atoms.push(table.mkIneqAtom(words[1] as IneqKind, polynomials, isEven));
+        // The harness holds a reference to each atom it makes, as a clause would.
+        table.incRef(2 * atoms[atoms.length - 1]);
+        return showAtom(atoms[atoms.length - 1]);
+      }
+      case "rootatom": {
+        const polynomial = parsePolynomial(pm, words.slice(4).join(" "));
+        atoms.push(table.mkRootAtom(words[1] as RootKind, numbers[1], numbers[2], polynomial));
+        table.incRef(2 * atoms[atoms.length - 1]);
+        return showAtom(atoms[atoms.length - 1]);
+      }
+      case "eq":
+        var2eq[numbers[0]] = table.atoms[atoms[numbers[1]]] as IneqAtom;
+        return "";
+      case "explain": {
+        const literals = Array.from(
+          { length: (numbers.length - 1) / 2 },
+          (_, index) => 2 * atoms[numbers[1 + 2 * index]] + numbers[2 + 2 * index],
+        );
+        const result = new ScopedLiterals(table);
+        if (numbers[0] === 1) explain.computeLinearExplanation(literals, result);
+        else explain.computeConflictExplanation(literals, result);
+        const output = result.literals.map((literal) => ` ${literal}${showAtom(literal >> 1)}`);
+        result.reset();
+        return output.join("");
+      }
+      default:
+        return "";
+    }
+  };
+  return program
+    .split("\n")
+    .map((line) => `${line.split(" ")[0]}${runCommand(line.split(" "))}`)
+    .join("\n");
+};
+
 describe("nlsat levelwise", () => {
   // Random samples and polynomials, around the top variable left unassigned or, in the linear
   // mode of check_assignment, every variable assigned. The last cases have four polynomials with
@@ -474,6 +583,20 @@ describe("nlsat levelwise", () => {
 
   it.each(cases)("%s", (program, expected) => {
     expect(runLevelwiseProgram(program)).toBe(expected);
+  });
+});
+
+describe("nlsat explain", () => {
+  // Random samples, atoms and cores, with lower stage equations, leading coefficients that
+  // vanish at the sample, and factors whose every coefficient does, which restarts the
+  // explanation with all coefficients. Each program explains one or two cores, so the second
+  // reuses the Boolean variables the first freed.
+  const cases: [string, string][] = JSON.parse(
+    readFileSync(join(FIXTURES, "explain.json"), "utf8"),
+  );
+
+  it.each(cases)("%s", (program, expected) => {
+    expect(runExplainProgram(program)).toBe(expected);
   });
 });
 
