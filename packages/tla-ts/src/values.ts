@@ -2490,7 +2490,12 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       if (functionValue.domain.every((key, index) => key === index + 1)) {
         return `<<${functionValue.range.map(format).join(", ")}>>`;
       }
-      if (functionValue.domain.every((key) => typeof key === "string" && isFieldName(key))) {
+      // A RecordValue prints as a record whatever its fields, and a FcnRcdValue only if each key
+      // is a name.
+      if (
+        getFunctionClass(value) === "record" ||
+        functionValue.domain.every((key) => typeof key === "string" && isFieldName(key))
+      ) {
         const isSorted =
           isNormalized || functionValue.hash !== 0 || functionValue.fingerprint !== 0;
         const pairs = isSorted

@@ -942,6 +942,17 @@ describe("formatValue matches TLC", () => {
     expect(printed).toEqual(expected);
   });
 
+  it("prints a record whatever its fields, and a function with a key that isn't a name like TLC", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC\nASSUME PrintT(<<[_ |-> 1], [[_ |-> 1] EXCEPT !._ = 2], "_" :> 1, [_ |-> 1] @@ [b |-> 2]>>)\n====',
+      config: "",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['<<[_ |-> 1], [_ |-> 2], ("_" :> 1), ("_" :> 1 @@ "b" :> 2)>>']);
+  });
+
   it.each(["", "SYMMETRY Sym"])(
     "keeps an empty function apart from an equal tuple in a trace with %j like TLC 1.7.4",
     async (symmetry) => {
