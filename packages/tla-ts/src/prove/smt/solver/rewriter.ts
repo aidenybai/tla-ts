@@ -258,6 +258,12 @@ export class Rewriter extends RewriterTpl {
   }
 
   // th_rewriter's mk_app, with the result of a Rewrite rewritten again.
+  // th_rewriter::mk_app: one reduction, without rewriting what it returns.
+  mkApp(decl: number, args: number[], sort: number) {
+    const reduced = this.reduceAppCore(decl, args, sort);
+    return typeof reduced === "number" ? reduced : reduced.expr;
+  }
+
   mkAppCore(decl: number, args: number[], sort: number): number {
     const reduced = this.reduceAppCore(decl, args, sort);
     return typeof reduced === "number" ? reduced : this.reduceTo(reduced.expr, reduced.depth);

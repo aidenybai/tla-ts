@@ -5,6 +5,7 @@ import { mkNot } from "./ast-util";
 import { DefinedNames, Nnf } from "./nnf";
 import { PatternInference } from "./pattern-inference";
 import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
+import { MaxBvSharing } from "./maximize-ac-sharing";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
@@ -142,6 +143,7 @@ export class AssertedFormulas {
   private isReducePending = true;
   private names: DefinedNames;
   private patternInference: PatternInferenceRw;
+  private bvSharing: MaxBvSharing;
   private hasQuantifiers = false;
   // The scopes that are pushed only when a formula is asserted, and the number of formulas when
   // each pushed scope began.
@@ -158,6 +160,7 @@ export class AssertedFormulas {
     });
     this.names = new DefinedNames(manager);
     this.patternInference = new PatternInferenceRw(manager, new PatternInference(manager));
+    this.bvSharing = new MaxBvSharing(manager);
   }
 
   // push_scope: the scope is pushed when a formula is asserted in it.
@@ -172,6 +175,7 @@ export class AssertedFormulas {
       return;
     }
     const size = this.scopeLims.pop() as number;
+    this.bvSharing.popScope();
     this.names.pop();
     this.substitution.pop();
     this.formulas.shrink(size);
@@ -185,6 +189,7 @@ export class AssertedFormulas {
       this.substitution.push();
       this.scopeLims.push(this.formulas.size);
       this.names.push();
+      this.bvSharing.pushScope();
     }
   }
 
@@ -217,6 +222,9 @@ export class AssertedFormulas {
       this.hasQuantifiers &&
       this.simplifyFormulas((formula) => this.patternInference.rewrite(formula))
     )
+      this.isReducePending = true;
+    // max_bv_sharing, whose post_op reduces the formulas again.
+    if (this.simplifyFormulas((formula) => this.bvSharing.rewrite(formula)))
       this.isReducePending = true;
     this.reduceAsserted();
     this.isReducePending = true;
