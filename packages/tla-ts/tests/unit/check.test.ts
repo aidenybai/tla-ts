@@ -1660,12 +1660,51 @@ describe("name resolution matches SANY", () => {
     await expect(checkSource(source)).rejects.toThrow(TlaSyntaxError);
   });
 
-  it("names an unknown identifier and an unknown operator symbol like SANY", async () => {
-    await expect(checkSource("f == g")).rejects.toThrow(
-      "Unknown operator: `g' at line 2, column 6",
-    );
-    await expect(checkSource("f == 1 + 1")).rejects.toThrow(
-      "Could not find declaration or definition of symbol '+' at line 2, column 8",
+  it.each([
+    ["f == g", [["line 2, col 6 to line 2, col 6", "Unknown operator: `g'."]]],
+    [
+      "f == 1 + 1",
+      [
+        [
+          "line 2, col 8 to line 2, col 8",
+          "Could not find declaration or definition of symbol '+'.",
+        ],
+        ["line 2, col 6 to line 2, col 10", "Couldn't resolve infix operator symbol `+'."],
+      ],
+    ],
+    [
+      "f == -1",
+      [
+        [
+          "line 2, col 6 to line 2, col 6",
+          "Could not find declaration or definition of symbol '-.'.",
+        ],
+        ["line 2, col 6 to line 2, col 7", "Couldn't resolve prefix operator symbol `-.'."],
+      ],
+    ],
+    [
+      "g == 1^+",
+      [
+        [
+          "line 2, col 7 to line 2, col 8",
+          "Could not find declaration or definition of symbol '^+'.",
+        ],
+        ["line 2, col 6 to line 2, col 8", "Couldn't resolve postfix operator symbol `^+'."],
+      ],
+    ],
+    [
+      "Foo(a) == a\ng == Foo(1,  2)",
+      [["line 3, col 9 to line 3, col 15", "The operator Foo requires 1 arguments."]],
+    ],
+    [
+      "Foo(a) == a\ng == Foo",
+      [["line 3, col 6 to line 3, col 8", "The operator Foo requires 1 arguments."]],
+    ],
+  ])("reports %j at the range SANY reports", async (source, errors) => {
+    await expect(checkSource(source)).rejects.toThrow(
+      createSanyError(
+        errors.map(([location, message]) => ({ location: `${location} of module M`, message })),
+      ),
     );
   });
 

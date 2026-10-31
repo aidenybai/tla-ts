@@ -295,7 +295,7 @@ const checkSpec = async (specPath: string, args: ParsedArgs) => {
 };
 
 const formatSanyErrors = (report: SanyReport) =>
-  `*** Errors: ${report.errors.length}\n\n${report.errors.map((error) => `${error.location}\n\n${error.message}\n\n\n`).join("")}`;
+  `*** Errors: ${report.errors.length}\n\n${report.errors.map((error) => `${error.location}\n\n${error.message}\n\n`).join("\n")}`;
 
 // TLC prints the errors it raises itself, and SANY's report of a spec it rejects. tla-ts names the
 // others, such as a module it cannot parse.
@@ -307,7 +307,7 @@ const printError = (error: TlaError, path?: string) => {
   if (!report || path === undefined) return console.error(`${error.name}: ${error.message}`);
   console.log(
     report.isFatal
-      ? `\nFatal errors while parsing TLA+ spec in file ${basename(path, ".tla")}\n\n${report.errors.map((item) => `${item.location}\n\n${item.message}\n`).join("")}${formatSanyErrors(report)}`
+      ? `\nFatal errors while parsing TLA+ spec in file ${basename(path, ".tla")}\n\n${report.errors.map((item) => `${item.location}\n\n${item.message}\n`).join("")}${formatSanyErrors(report)}\n`
       : `Semantic errors:\n\n${formatSanyErrors(report)}`,
   );
   console.log("Error: Parsing or semantic analysis failed.");

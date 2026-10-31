@@ -1,3 +1,4 @@
+import type { SourceRange } from "./ast";
 import { EXIT_STATUS, getExitCode } from "./exit-codes";
 import type { Value } from "./values";
 
@@ -52,10 +53,18 @@ export class TlaSyntaxError extends TlaError {
 }
 
 export const createSanyError = (errors: SanyError[], isFatal = false) =>
-  new TlaSyntaxError(errors.map((error) => error.message).join("\n"), undefined, undefined, {
-    errors,
-    isFatal,
-  });
+  new TlaSyntaxError(
+    errors.map((error) => `${error.location}\n\n${error.message}`).join("\n\n"),
+    undefined,
+    undefined,
+    { errors, isFatal },
+  );
+
+export const formatRange = (range: SourceRange) =>
+  `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
+
+export const createSemanticError = (message: string, range: SourceRange) =>
+  createSanyError([{ location: formatRange(range), message }]);
 
 export class TlaConfigError extends TlaError {
   constructor(message: string, cause?: unknown) {

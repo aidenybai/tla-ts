@@ -47,6 +47,8 @@ export interface ApplyExpression {
   // The number of args each part of a name like F(x)!l(y) takes, when a part before the last takes
   // some.
   argumentCounts?: number[];
+  // The range of the parenthesized arguments of a named operator, where SANY reports their count.
+  argumentsRange?: SourceRange;
   location: SourceLocation;
   resolution?: LocalResolution;
 }

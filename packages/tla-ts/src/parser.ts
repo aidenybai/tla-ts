@@ -631,11 +631,15 @@ const parse = (source: string, isTlapm: boolean): Module => {
     return parseExpression();
   };
 
+  const lastArguments: { range: SourceRange | undefined } = { range: undefined };
+
   const parseArguments = () =>
     withoutOffside(() => {
+      const start = cursor.index;
       expect("(");
       const args = parseSeparated(parseArgument);
       expect(")");
+      lastArguments.range = getRange(start);
       return args;
     });
 
@@ -856,7 +860,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const args = hasArguments ? parseArguments() : [];
       if (!isSelectorAhead()) {
         return hasArguments
-          ? { kind: "Apply", operator: name, args, location }
+          ? { kind: "Apply", operator: name, args, argumentsRange: lastArguments.range, location }
           : { kind: "Identifier", name, location };
       }
       const instance = openModules
@@ -885,9 +889,10 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const argumentCounts = selectors.map((selector) =>
         "args" in selector ? selector.args.length : 0,
       );
+      const argumentsRange = lastArguments.range;
       return argumentCounts.slice(0, -1).some((count) => count > 0)
-        ? { kind: "Apply", operator, args: qualifiedArgs, argumentCounts, location }
-        : { kind: "Apply", operator, args: qualifiedArgs, location };
+        ? { kind: "Apply", operator, args: qualifiedArgs, argumentCounts, argumentsRange, location }
+        : { kind: "Apply", operator, args: qualifiedArgs, argumentsRange, location };
     }
     if (token.kind === "Operator" && isOperatorName(token.text) && isAt("("))
       return { kind: "Apply", operator: token.text, args: parseArguments(), location };
