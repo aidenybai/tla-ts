@@ -13,17 +13,14 @@ interface SharingEntry {
 // MAX_NUM_ARGS_FOR_OPT: pairs are reused only for fewer arguments.
 const MAX_NUM_ARGS_FOR_OPT = 128;
 
-// An entry orders its arguments by id, so a pair matches in either order.
-const getEntryKey = (decl: number, first: number, second: number) =>
-  first < second ? `${decl},${first},${second}` : `${decl},${second},${first}`;
-
 export class MaxBvSharing extends RewriterTpl {
   // Z3 registers the kinds of bvadd, bvmul, bvor and bvand when the first scope is pushed, and
   // compares the kind without the family. bvmul has the kind of or and of +, so those are shared.
   private isInit = false;
-  // m_entries and m_cache: the pairs made, which hold their arguments.
+  // m_entries and m_cache: the pairs made, which hold their arguments. The cache maps a declaration
+  // and the lower of two arguments to the higher ones, so a pair matches in either order.
   private entries: SharingEntry[] = [];
-  private pairCache = new Set<string>();
+  private pairCache = new Map<number, Map<number, Set<number>>>();
   private pairScopes: number[] = [];
 
   constructor(manager: AstManager) {
@@ -44,7 +41,7 @@ export class MaxBvSharing extends RewriterTpl {
         isReused = false;
         for (let first = 0; first + 1 < pending.length && !isReused; first++)
           for (let second = first + 1; second < pending.length && !isReused; second++)
-            if (this.pairCache.has(getEntryKey(decl, pending[first], pending[second]))) {
+            if (this.hasPair(decl, pending[first], pending[second])) {
               pending[first] = manager.mkApp(decl, [pending[first], pending[second]], sort);
               pending.splice(second, 1);
               isReused = true;
@@ -66,11 +63,28 @@ export class MaxBvSharing extends RewriterTpl {
     });
   }
 
+  // entry orders its arguments by id, and pop_scope releases them in that order.
   private insert(decl: number, first: number, second: number) {
-    this.entries.push({ decl, first, second });
-    this.pairCache.add(getEntryKey(decl, first, second));
+    const isOrdered = this.manager.ids[first] <= this.manager.ids[second];
+    this.entries.push({
+      decl,
+      first: isOrdered ? first : second,
+      second: isOrdered ? second : first,
+    });
+    const byDecl = this.pairCache.get(decl) ?? new Map<number, Set<number>>();
+    this.pairCache.set(decl, byDecl);
+    const low = Math.min(first, second);
+    const highs = byDecl.get(low) ?? new Set<number>();
+    byDecl.set(low, highs);
+    highs.add(Math.max(first, second));
     this.manager.incRef(first);
     this.manager.incRef(second);
+  }
+
+  private hasPair(decl: number, first: number, second: number) {
+    return (
+      this.pairCache.get(decl)?.get(Math.min(first, second))?.has(Math.max(first, second)) === true
+    );
   }
 
   pushScope() {
@@ -83,7 +97,10 @@ export class MaxBvSharing extends RewriterTpl {
     const size = this.pairScopes.pop() as number;
     for (let index = this.entries.length - 1; index >= size; index--) {
       const entry = this.entries[index];
-      this.pairCache.delete(getEntryKey(entry.decl, entry.first, entry.second));
+      this.pairCache
+        .get(entry.decl)
+        ?.get(Math.min(entry.first, entry.second))
+        ?.delete(Math.max(entry.first, entry.second));
       this.manager.decRef(entry.first);
       this.manager.decRef(entry.second);
     }
