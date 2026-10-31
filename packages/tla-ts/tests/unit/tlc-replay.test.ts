@@ -136,6 +136,19 @@ describe("the call stack of a replayed failure matches TLC", () => {
     },
   );
 
+  // TLC's enabled walks every conjunct, even once the action has assigned every variable.
+  it("walks the conjuncts of a fair action after it assigns every variable", async () => {
+    expect(
+      await getFailure(
+        "Init == x = 0\nA == x' = x /\\ (IF x = 0 THEN 3 ELSE TRUE)\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)",
+        "SPECIFICATION Spec\nPROPERTY P",
+      ),
+    ).toEqual({
+      callStack: ["10.38-10.38", "9.6-9.42", "9.6-9.11", "9.17-9.41", "9.31-9.31"],
+      exitCode: 255,
+    });
+  });
+
   it.each([
     [undefined, "deadlock", ["12.36-12.39", "9.9-9.27", "9.14-9.27"]],
     [undefined, "invariant-violation", ["12.36-12.39", "9.9-9.27", "9.14-9.27"]],

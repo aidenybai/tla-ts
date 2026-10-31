@@ -35,7 +35,7 @@ import {
   type State,
 } from "./evaluate";
 import { mapChildren } from "./instances";
-import { replayEnabled } from "./tlc-replay";
+import { isAssignedShortcut, replayEnabled } from "./tlc-replay";
 import {
   createTuple,
   formatValue,
@@ -335,10 +335,7 @@ const compileConjunction = (
   ): void => {
     let current = partial;
     let context: Context | undefined;
-    // Once every variable has a value, TLC's getInitStates and getNextStatesAllAssigned evaluate
-    // the conjuncts left instead of walking them, so a disjunction among them takes one step. Its
-    // enabled doesn't, and Tool#getNextStates0 takes this shortcut only with warnings on.
-    const isShortcut = !run.isEnabled && (run.isInit || run.environment.runtime.isWarningEnabled);
+    const isShortcut = isAssignedShortcut(run);
     for (let index = start; index < conjuncts.length; index++) {
       if (index > 0 && isShortcut && isComplete(current)) {
         context ??= getContext(run, scope, current);

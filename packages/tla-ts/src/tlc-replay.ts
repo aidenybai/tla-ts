@@ -146,6 +146,12 @@ const isTrue = (value: Value) => {
   return value;
 };
 
+// Once every variable has a value, TLC's getInitStates and getNextStatesAllAssigned evaluate the
+// conjuncts left instead of walking them, so a disjunction among them takes one step. Its enabled
+// doesn't, and Tool#getNextStates0 takes this shortcut only with warnings on.
+export const isAssignedShortcut = (run: Pick<Replay, "environment" | "isInit" | "isEnabled">) =>
+  !run.isEnabled && (run.isInit || run.environment.runtime.isWarningEnabled);
+
 // TLC's getInitStates(ActionItemList) and getNextStates(ActionItemList): processes the conjuncts
 // left once a conjunct holds.
 const proceed = (replay: Replay, items: Item | undefined, partial: State): void => {
@@ -153,7 +159,7 @@ const proceed = (replay: Replay, items: Item | undefined, partial: State): void 
     if (isComplete(partial)) replay.onState(partial);
     return;
   }
-  if (isComplete(partial)) {
+  if (isComplete(partial) && isAssignedShortcut(replay)) {
     proceedAssigned(replay, items, partial);
     return;
   }
