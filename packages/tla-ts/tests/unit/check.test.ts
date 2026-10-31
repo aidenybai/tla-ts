@@ -364,6 +364,19 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  // A1 reaches a state with the same VIEW as the successor of A2 that violates the property.
+  it("labels the successor that violates an action property by its values under a VIEW", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nA1 == x' = x /\\ y' = y\nA2 == x' = x /\\ y' = 1\nSpec == Init /\\ [][A1 \\/ A2]_<<x, y>>\nP == [][y' = y]_<<x, y>>\nView == x\n====",
+      config: "SPECIFICATION Spec\nPROPERTY P\nVIEW View",
+    });
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([
+      undefined,
+      "A2 line 5, col 7 to line 5, col 22 of module M",
+    ]);
+  });
+
   it("evaluates a VIEW on the symmetry representative TLC picks by its variable order", async () => {
     const result = await checkFixture("view", "ViewSymmetry");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([7, 4, 4]);

@@ -1739,14 +1739,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   // TLC finds the action of a step as the first action that takes it, evaluated as when the search
   // expanded the previous state.
-  const findStepAction = (index: number, previous: Value[], state: Value[]) => {
+  // TLC finds the action of a successor it holds by the successor's values, and of any other state
+  // by its fingerprint.
+  const findStepAction = (index: number, previous: Value[], state: Value[], isHeld: boolean) => {
     const actions = getSpecNextActions();
     const expanding = { ...current };
     Object.assign(current, { index, isExpanding: true, candidate: undefined });
-    const fingerprintState = getFingerprintState(state);
+    const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
+    const key = getKey(state);
     const action = actions.find((item) =>
       getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
-        isSameState(getFingerprintState(successor.state), fingerprintState),
+        isSameState(getKey(successor.state), key),
       ),
     );
     Object.assign(current, expanding);
@@ -1770,7 +1773,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       position === 0 || step.action === "Stuttering"
         ? { result: undefined, lines: [] }
         : getOutput(() =>
-            findStepAction(path[position - 1], steps[position - 1].state, step.state),
+            findStepAction(
+              path[position - 1],
+              steps[position - 1].state,
+              step.state,
+              known === 2 && position === steps.length - 1,
+            ),
           ),
     );
     const outputs = found.map((step) => step.lines);
@@ -2439,7 +2447,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const loop =
       back === last
         ? { result: undefined, lines: [] }
-        : getOutput(() => findStepAction(last, lastState, states[back]));
+        : getOutput(() => findStepAction(last, lastState, states[back], false));
     const isStutteringWarned = back === last && lasso.isCycleConstrained;
     return reportViolation(
       "liveness-violation",
