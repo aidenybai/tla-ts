@@ -301,19 +301,27 @@ export class PolyRewriter {
     }
     const sums = args.map((arg) => (this.isAdd(arg) ? manager.args[arg] : [arg]));
     const positions = sums.map(() => 0);
+    // Like som's expr_ref_buffer, the products are released in order when it returns.
     const products: number[] = [];
-    for (;;) {
-      if (products.length > 10 * sums.length) return undefined;
-      products.push(this.mkMulApp(sums.map((sum, index) => sum[positions[index]])));
-      let index = 0;
-      for (; index < sums.length; index++) {
-        positions[index]++;
-        if (positions[index] < sums[index].length) break;
-        positions[index] = 0;
-      }
-      if (index === sums.length) break;
-    }
-    return this.reduce(this.mkAddApp(products), 2);
+    const isBlownUp = manager.withTemporaries(
+      () => {
+        for (;;) {
+          if (products.length > 10 * sums.length) return true;
+          products.push(this.mkMulApp(sums.map((sum, index) => sum[positions[index]])));
+          let index = 0;
+          for (; index < sums.length; index++) {
+            positions[index]++;
+            if (positions[index] < sums[index].length) break;
+            positions[index] = 0;
+          }
+          if (index === sums.length) return false;
+        }
+      },
+      () => products,
+    );
+    const result = isBlownUp ? undefined : this.reduce(this.mkAddApp(products), 2);
+    for (const product of products) manager.decRef(product);
+    return result;
   }
 
   mkSub(args: number[]) {
