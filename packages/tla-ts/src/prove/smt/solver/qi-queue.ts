@@ -75,6 +75,16 @@ class Checker {
     return value !== 0 && isTrue === value > 0;
   }
 
+  private checkAny(args: number[], depth: number, isTrue: boolean) {
+    for (const arg of args) if (this.check(arg, depth, isTrue)) return true;
+    return false;
+  }
+
+  private checkAll(args: number[], depth: number, isTrue: boolean) {
+    for (const arg of args) if (!this.check(arg, depth, isTrue)) return false;
+    return true;
+  }
+
   private checkCore(expr: number, depth: number, isTrue: boolean): boolean {
     if (depth > 600) return false;
     const context = this.context;
@@ -92,13 +102,9 @@ class Checker {
       case OP_NOT:
         return this.check(args[0], next, !isTrue);
       case OP_OR:
-        return isTrue
-          ? args.some((innerArg) => this.check(innerArg, next, true))
-          : args.every((innerArg) => this.check(innerArg, next, false));
+        return isTrue ? this.checkAny(args, next, true) : this.checkAll(args, next, false);
       case OP_AND:
-        return isTrue
-          ? args.every((innerArg) => this.check(innerArg, next, true))
-          : args.some((innerArg) => this.check(innerArg, next, false));
+        return isTrue ? this.checkAll(args, next, true) : this.checkAny(args, next, false);
       case OP_EQ: {
         if (!manager.isBool(args[0])) {
           const lhs = this.getEnodeEqTo(args[0]);
