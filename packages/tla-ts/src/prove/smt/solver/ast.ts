@@ -352,6 +352,14 @@ export class AstManager {
     return null;
   }
 
+  // The id that Z3 gives the declaration of an application.
+  getDeclId(expr: number) {
+    const signature = this.getSignature(expr);
+    return signature === null
+      ? this.funcDecls[this.decls[expr]].smallId
+      : (this.signatureSmallIds.get(signature[0]) as number);
+  }
+
   // An application holds its declaration, which Z3 makes with its first application.
   private holdDecl(expr: number) {
     const decl = this.decls[expr];

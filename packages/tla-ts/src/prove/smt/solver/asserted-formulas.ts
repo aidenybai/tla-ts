@@ -50,8 +50,9 @@ const isGreater = (manager: AstManager, left: number, right: number): boolean =>
   if (manager.depths[left] !== manager.depths[right])
     return manager.depths[left] > manager.depths[right];
   if (manager.kinds[left] !== KIND_APP || manager.kinds[right] !== KIND_APP) return false;
-  if (manager.decls[left] !== manager.decls[right])
-    return manager.decls[left] > manager.decls[right];
+  const leftDeclId = manager.getDeclId(left);
+  const rightDeclId = manager.getDeclId(right);
+  if (leftDeclId !== rightDeclId) return leftDeclId > rightDeclId;
   const leftArgs = manager.args[left];
   const rightArgs = manager.args[right];
   if (leftArgs.length !== rightArgs.length) return leftArgs.length > rightArgs.length;
