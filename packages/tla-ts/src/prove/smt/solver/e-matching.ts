@@ -414,8 +414,7 @@ export class Mam implements LabelHasher {
       this.context.markAsRelevant(node.owner);
       this.addSharedEnode(node);
     }
-    while (todo.length > 0) {
-      const term = todo.pop() as number;
+    for (let term = todo.pop(); term !== undefined; term = todo.pop()) {
       if (manager.isGround(term)) {
         const node = this.getGroundEnode(term, quantifier);
         if (node !== null) this.addSharedEnode(node);
@@ -625,12 +624,12 @@ export class Mam implements LabelHasher {
   rematch() {
     const context = this.context;
     const funcDecls = this.manager.funcDecls;
-    const labels = [...this.trees.keys()].sort(
-      (left, right) => funcDecls[left].smallId - funcDecls[right].smallId,
+    const entries = [...this.trees].sort(
+      (left, right) => funcDecls[left[0]].smallId - funcDecls[right[0]].smallId,
     );
-    for (const label of labels) {
-      const tree = this.trees.get(label) as CodeTree;
-      const nodes = context.enodesOf(label);
+    for (const entry of entries) {
+      const tree = entry[1];
+      const nodes = context.enodesOf(entry[0]);
       for (let index = 0; index < nodes.length; index++)
         if (context.isRelevant(nodes[index].owner))
           this.interpreter.executeCore(tree, nodes[index]);

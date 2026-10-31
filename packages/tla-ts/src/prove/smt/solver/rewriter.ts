@@ -333,8 +333,7 @@ export class Rewriter extends RewriterTpl {
     const manager = this.manager;
     if (!this.isIte(expr) || manager.getRefCount(expr) !== 1) return false;
     const todo = [expr];
-    while (todo.length > 0) {
-      const ite = todo.pop() as number;
+    for (let ite = todo.pop(); ite !== undefined; ite = todo.pop()) {
       for (const branch of [manager.args[ite][1], manager.args[ite][2]]) {
         if (this.isIte(branch) && manager.getRefCount(branch) === 1) todo.push(branch);
         else if (!manager.isUniqueValue(branch)) return false;

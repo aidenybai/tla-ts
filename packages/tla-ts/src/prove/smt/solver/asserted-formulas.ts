@@ -1,5 +1,6 @@
 // Ported from Z3 (src/solver/assertions/asserted_formulas.cpp), MIT license, see z3-license.txt. The
 // preprocessing that the SMT kernel runs on its assertions before search.
+import { SmtInvariantError } from "../../../errors";
 import { AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
 import { mkNot } from "./ast-util";
 import { DefinedNames, Nnf } from "./nnf";
@@ -108,9 +109,12 @@ class Substitution {
   }
 
   pop() {
-    const size = this.trailLims.pop() as number;
+    const size = this.trailLims[this.trailLims.length - 1];
+    this.trailLims.pop();
     for (const key of this.trail.items.slice(size)) {
-      this.manager.decRef(this.map.get(key) as number);
+      const value = this.map.get(key);
+      if (value === undefined) throw new SmtInvariantError("a trailed key has no substitution");
+      this.manager.decRef(value);
       this.map.delete(key);
       this.manager.decRef(key);
     }
@@ -141,6 +145,12 @@ class Substitution {
 // asserted_formulas: the assertions of a context. Each assertion is rewritten when it is asserted,
 // and reduce preprocesses the new ones. Their units and oriented equalities then rewrite the later
 // assertions. Like Z3, it holds its formulas, so that expressions are deleted in Z3's order.
+// A pushed scope: the number of formulas when it began, and m_inconsistent_old.
+interface AssertedScope {
+  numFormulas: number;
+  isInconsistent: boolean;
+}
+
 export class AssertedFormulas {
   private formulas: RefVector;
   private qhead = 0;
@@ -154,12 +164,9 @@ export class AssertedFormulas {
   private hasQuantifiers = false;
   // m_inconsistent: whether a formula is false, after which no formula is added or preprocessed.
   isInconsistent = false;
-  // m_inconsistent_old of each pushed scope.
-  private inconsistentScopes: boolean[] = [];
-  // The scopes that are pushed only when a formula is asserted, and the number of formulas when
-  // each pushed scope began.
+  // The scopes that are pushed only when a formula is asserted, and the pushed scopes.
   private numLazyScopes = 0;
-  private scopeLims: number[] = [];
+  private scopes: AssertedScope[] = [];
 
   constructor(private manager: AstManager) {
     this.formulas = new RefVector(manager);
@@ -185,13 +192,14 @@ export class AssertedFormulas {
       this.numLazyScopes--;
       return;
     }
-    const size = this.scopeLims.pop() as number;
-    this.isInconsistent = this.inconsistentScopes.pop() as boolean;
+    const scope = this.scopes[this.scopes.length - 1];
+    this.scopes.pop();
+    this.isInconsistent = scope.isInconsistent;
     this.bvSharing.popScope();
     this.names.pop();
     this.substitution.pop();
-    this.formulas.shrink(size);
-    this.qhead = size;
+    this.formulas.shrink(scope.numFormulas);
+    this.qhead = scope.numFormulas;
     this.flushCache();
   }
 
@@ -199,8 +207,7 @@ export class AssertedFormulas {
   private forcePush() {
     for (; this.numLazyScopes > 0; this.numLazyScopes--) {
       this.substitution.push();
-      this.scopeLims.push(this.formulas.size);
-      this.inconsistentScopes.push(this.isInconsistent);
+      this.scopes.push({ numFormulas: this.formulas.size, isInconsistent: this.isInconsistent });
       this.names.push();
       this.bvSharing.pushScope();
     }

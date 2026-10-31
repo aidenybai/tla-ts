@@ -456,7 +456,7 @@ export const parseSmtlib = (
     const nameIndex = sexpr.indexOf(":named");
     if (nameIndex !== -1) {
       manager.incRef(named);
-      manager.mkMacro(sexpr[nameIndex + 1] as string, named);
+      manager.mkMacro(expectSymbol(sexpr[nameIndex + 1]), named);
     }
     return named;
   };

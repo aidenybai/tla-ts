@@ -221,6 +221,13 @@ const getIntegerHash = (value: bigint) => {
 const getInfoHash = (family: number, kind: number, parameterHashes: number[]) =>
   mkMix(family, kind, parameterHashes.length === 0 ? 0 : getCompositeHash(parameterHashes));
 
+// A builtin declaration that Z3 makes once per signature: its small id, and the references that
+// applications and model values hold to it.
+interface SignatureDecl {
+  smallId: number;
+  refCount: number;
+}
+
 export class AstManager {
   kinds: number[] = [];
   // The declaration of an application.
@@ -264,8 +271,7 @@ export class AstManager {
   private numDecls = FIRST_DECLARED_SMALL_ID;
   // The small id and the number of live applications of each builtin declaration that Z3 makes
   // per signature, by its signature.
-  private signatureSmallIds = new Map<string, number>();
-  private signatureRefCounts = new Map<string, number>();
+  private signatureDecls = new Map<string, SignatureDecl>();
   // The references to each user declaration: the script holds the declared ones, and applications
   // and models hold the fresh ones. A deleted declaration keeps its small id here, in case an
   // application of it is created again.
@@ -320,9 +326,17 @@ export class AstManager {
     return this.numLive + FIRST_FREE_ID - 2 + this.numDecls;
   }
 
+  // The declaration that a held signature names.
+  private getSignatureDecl(key: string) {
+    const signatureDecl = this.signatureDecls.get(key);
+    if (signatureDecl === undefined)
+      throw new SmtInvariantError(`the signature ${key} is not held`);
+    return signatureDecl;
+  }
+
   private mkSmallId() {
     this.numDecls++;
-    return this.freeSmallIds.length > 0 ? (this.freeSmallIds.pop() as number) : this.nextSmallId++;
+    return this.freeSmallIds.pop() ?? this.nextSmallId++;
   }
 
   // finite_set_decl_plugin::init, which the first final check of theory_finite_set runs when it
@@ -382,7 +396,7 @@ export class AstManager {
     const signature = this.getSignature(expr);
     return signature === null
       ? this.funcDecls[this.decls[expr]].smallId
-      : (this.signatureSmallIds.get(signature[0]) as number);
+      : this.getSignatureDecl(signature[0]).smallId;
   }
 
   // An application holds its declaration, which Z3 makes with its first application.
@@ -395,14 +409,13 @@ export class AstManager {
     const signature = this.getSignature(expr);
     if (signature === null) return;
     const key = signature[0];
-    const refCount = this.signatureRefCounts.get(key);
-    if (refCount !== undefined) {
-      this.signatureRefCounts.set(key, refCount + 1);
+    const signatureDecl = this.signatureDecls.get(key);
+    if (signatureDecl !== undefined) {
+      signatureDecl.refCount++;
       return;
     }
     const smallId = this.mkSmallId();
-    this.signatureSmallIds.set(key, smallId);
-    this.signatureRefCounts.set(key, signature[1] ? 2 : 1);
+    this.signatureDecls.set(key, { smallId, refCount: signature[1] ? 2 : 1 });
     if (decl !== OP_NUM && this.funcDecls[decl].family === FAMILY_MODEL_VALUE)
       this.funcDecls[decl].smallId = smallId;
   }
@@ -420,15 +433,11 @@ export class AstManager {
     const signature = this.getSignature(expr);
     if (signature === null) return -1;
     const key = signature[0];
-    const refCount = (this.signatureRefCounts.get(key) as number) - 1;
-    if (refCount > 0) {
-      this.signatureRefCounts.set(key, refCount);
-      return -1;
-    }
-    const smallId = this.signatureSmallIds.get(key) as number;
-    this.signatureRefCounts.delete(key);
-    this.signatureSmallIds.delete(key);
-    return smallId;
+    const signatureDecl = this.getSignatureDecl(key);
+    signatureDecl.refCount--;
+    if (signatureDecl.refCount > 0) return -1;
+    this.signatureDecls.delete(key);
+    return signatureDecl.smallId;
   }
 
   incRef(expr: number) {
@@ -439,14 +448,13 @@ export class AstManager {
   incDeclRef(decl: number) {
     if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) {
       const key = `m${decl}`;
-      const refCount = this.signatureRefCounts.get(key);
-      if (refCount !== undefined) {
-        this.signatureRefCounts.set(key, refCount + 1);
+      const signatureDecl = this.signatureDecls.get(key);
+      if (signatureDecl !== undefined) {
+        signatureDecl.refCount++;
         return;
       }
       const smallId = this.mkSmallId();
-      this.signatureSmallIds.set(key, smallId);
-      this.signatureRefCounts.set(key, 1);
+      this.signatureDecls.set(key, { smallId, refCount: 1 });
       this.funcDecls[decl].smallId = smallId;
       return;
     }
@@ -457,14 +465,11 @@ export class AstManager {
   decDeclRef(decl: number) {
     if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) {
       const key = `m${decl}`;
-      const refCount = (this.signatureRefCounts.get(key) as number) - 1;
-      if (refCount > 0) {
-        this.signatureRefCounts.set(key, refCount);
-        return;
-      }
-      this.freeSmallIds.push(this.signatureSmallIds.get(key) as number);
-      this.signatureRefCounts.delete(key);
-      this.signatureSmallIds.delete(key);
+      const signatureDecl = this.getSignatureDecl(key);
+      signatureDecl.refCount--;
+      if (signatureDecl.refCount > 0) return;
+      this.freeSmallIds.push(signatureDecl.smallId);
+      this.signatureDecls.delete(key);
       this.numDecls--;
       return;
     }
@@ -515,8 +520,7 @@ export class AstManager {
     this.refCounts[expr]--;
     if (this.refCounts[expr] > 0) return;
     const worklist = [expr];
-    while (worklist.length > 0) {
-      const node = worklist.pop() as number;
+    for (let node = worklist.pop(); node !== undefined; node = worklist.pop()) {
       if (node < 0) {
         this.freeSmallIds.push(-1 - node);
         this.numDecls--;
@@ -542,7 +546,7 @@ export class AstManager {
 
   // register_node_core: a new expression takes an id and a reference to each child.
   private registerNode(expr: number) {
-    this.ids[expr] = this.freeIds.length > 0 ? (this.freeIds.pop() as number) : this.nextId++;
+    this.ids[expr] = this.freeIds.pop() ?? this.nextId++;
     this.numLive++;
     this.refCounts[expr] = 0;
     for (const child of this.getChildren(expr)) this.incRef(this.revive(child));
@@ -1050,8 +1054,7 @@ export class AstManager {
   private someSubterm(expr: number, predicate: (expr: number) => boolean) {
     const visited = new Set<number>();
     const todo = [expr];
-    while (todo.length > 0) {
-      const current = todo.pop() as number;
+    for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
       if (visited.has(current)) continue;
       visited.add(current);
       const kind = this.kinds[current];

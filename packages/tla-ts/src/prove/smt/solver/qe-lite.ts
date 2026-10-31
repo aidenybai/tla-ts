@@ -877,8 +877,8 @@ class Fm {
   private delConstraint(constraint: Constraint) {
     const position = this.subTodo.indexOf(constraint);
     if (position === -1) return;
-    const last = this.subTodo.pop() as Constraint;
-    if (position < this.subTodo.length) this.subTodo[position] = last;
+    this.subTodo[position] = this.subTodo[this.subTodo.length - 1];
+    this.subTodo.pop();
   }
 
   private resetConstraints() {

@@ -1,6 +1,7 @@
 // Ported from Z3 (src/ast/rewriter/expr_safe_replace.cpp), MIT license, see z3-license.txt.
 // Replaces subterms by terms, under quantifiers too, without rewriting. Like Z3, it visits the
 // arguments of an application from the last one, and holds the expressions it creates.
+import { SmtInvariantError } from "../../../errors";
 import { KIND_APP, KIND_VAR, type AstManager } from "./ast";
 import { RefVector } from "./ref-vector";
 import { VarShifter } from "./rewriter-tpl";
@@ -67,7 +68,8 @@ export class ExprSafeReplace {
         }
       } else this.applyQuantifier(current, todo);
     }
-    const result = this.cache.get(expr) as number;
+    const result = this.cache.get(expr);
+    if (result === undefined) throw new SmtInvariantError("the replaced expression has no result");
     manager.incRef(result);
     if (this.refs.size > 1 << 20) {
       this.cache.clear();

@@ -109,7 +109,8 @@ class RewriterCore {
 
   protected endScope() {
     this.cache.reset();
-    const scope = this.scopes.pop() as Scope;
+    const scope = this.scopes[this.scopes.length - 1];
+    this.scopes.pop();
     this.root = scope.root;
     this.numQvars = scope.numQvars;
   }
@@ -235,7 +236,9 @@ abstract class VarShifterCore extends RewriterCore {
         if (this.manager.kinds[curr] === KIND_APP) this.processApp(curr, frame);
         else this.processQuantifier(curr, frame);
       }
-    return this.resultStack.pop() as number;
+    const result = this.resultStack[this.resultStack.length - 1];
+    this.resultStack.pop();
+    return result;
   }
 
   reset() {
@@ -416,7 +419,9 @@ class RewriterEngine extends RewriterCore {
             this.processVar(curr);
           }
         }
-      return this.resultStack.pop() as number;
+      const result = this.resultStack[this.resultStack.length - 1];
+      this.resultStack.pop();
+      return result;
     });
   }
 

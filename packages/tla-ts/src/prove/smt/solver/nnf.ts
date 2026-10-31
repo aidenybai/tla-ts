@@ -44,7 +44,8 @@ export class DefinedNames {
 
   // pop_scope: forgets the names since the matching push, the last first.
   pop() {
-    const size = this.lims.pop() as number;
+    const size = this.lims[this.lims.length - 1];
+    this.lims.pop();
     while (this.exprs.size > size) {
       this.names.delete(this.exprs.items[this.exprs.size - 1]);
       this.exprs.shrink(this.exprs.size - 1);
@@ -334,7 +335,9 @@ export class Nnf {
           );
         this.popFrames(this.frames.length - 1);
       }
-    return this.results.items.pop() as number;
+    const result = this.results.items[this.results.size - 1];
+    this.results.items.pop();
+    return result;
   }
 
   // Visits the children from frame.index on, each with its polarity, and whether all are done.
