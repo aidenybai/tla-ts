@@ -33,9 +33,12 @@ export interface StringExpression {
   location: SourceLocation;
 }
 
+// selectorRanges holds the range of each part of a name such as foo!lab, where SANY reports an
+// error in selecting that part.
 export interface IdentifierExpression {
   kind: "Identifier";
   name: string;
+  selectorRanges?: SourceRange[];
   location: SourceLocation;
   resolution?: LocalResolution;
 }
@@ -49,6 +52,7 @@ export interface ApplyExpression {
   argumentCounts?: number[];
   // The range of the parenthesized arguments of a named operator, where SANY reports their count.
   argumentsRange?: SourceRange;
+  selectorRanges?: SourceRange[];
   location: SourceLocation;
   resolution?: LocalResolution;
 }
@@ -283,6 +287,7 @@ export type Selector =
 export interface SubexpressionExpression {
   kind: "Subexpression";
   selectors: Selector[];
+  selectorRanges?: SourceRange[];
   location: SourceLocation;
 }
 

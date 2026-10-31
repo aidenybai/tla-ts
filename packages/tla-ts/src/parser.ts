@@ -329,8 +329,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
   const tokenEnds: SourceLocation[] = [];
   const tokenRanges: SourceRange[] = [];
 
-  const getRange = (startIndex: number) => {
-    const endIndex = cursor.index - 1;
+  const getRange = (startIndex: number, endIndex = cursor.index - 1) => {
     const cached = startIndex === endIndex ? tokenRanges[startIndex] : undefined;
     if (cached) return cached;
     const last = tokens[endIndex];
@@ -888,8 +887,10 @@ const parse = (source: string, isTlapm: boolean): Module => {
         );
       }
       const selectors: Selector[] = [{ kind: "Name", name, args }];
+      const selectorRanges = [getRange(start, start)];
       while (isSelectorAhead()) {
         advance();
+        selectorRanges.push(getRange(cursor.index, cursor.index));
         selectors.push(parseSelector());
       }
       const names = selectors.flatMap((selector) =>
@@ -905,9 +906,9 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const argumentsRange = lastArguments.range;
       const reference: Expression =
         names.length < selectors.length
-          ? { kind: "Subexpression", selectors, location }
+          ? { kind: "Subexpression", selectors, selectorRanges, location }
           : qualifiedArgs.length === 0
-            ? { kind: "Identifier", name: operator, location }
+            ? { kind: "Identifier", name: operator, selectorRanges, location }
             : argumentCounts.slice(0, -1).some((count) => count > 0)
               ? {
                   kind: "Apply",
@@ -915,9 +916,17 @@ const parse = (source: string, isTlapm: boolean): Module => {
                   args: qualifiedArgs,
                   argumentCounts,
                   argumentsRange,
+                  selectorRanges,
                   location,
                 }
-              : { kind: "Apply", operator, args: qualifiedArgs, argumentsRange, location };
+              : {
+                  kind: "Apply",
+                  operator,
+                  args: qualifiedArgs,
+                  argumentsRange,
+                  selectorRanges,
+                  location,
+                };
       if (isMissingArguments) {
         missingArguments.set(reference, {
           location: formatRange(getRange(start)),
