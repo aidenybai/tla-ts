@@ -15,9 +15,11 @@ export interface SanyMessage {
   location: SanyLocation | string | undefined;
   text: string;
   isWarning: boolean;
+  // The ErrorCode SANY files a message under, where another check files the same text.
+  code?: string;
 }
 
-// Errors.addMessage: SANY keeps one copy of each message.
+// Errors.addMessage: SANY keeps one copy of each message, and after TLC 1.7.4 one for each code.
 export const addSanyMessage = (messages: SanyMessage[], message: SanyMessage) => {
   const key = JSON.stringify(message);
   if (!messages.some((candidate) => JSON.stringify(candidate) === key)) messages.push(message);

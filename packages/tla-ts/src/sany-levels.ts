@@ -38,8 +38,13 @@ interface LevelCheck {
   isTlc174: boolean;
 }
 
-const addError = (check: LevelCheck, location: SanyLocation, text: string) =>
-  addSanyMessage(check.messages, { location, text, isWarning: false });
+const addError = (check: LevelCheck, location: SanyLocation, text: string, code?: string) =>
+  addSanyMessage(check.messages, {
+    location,
+    text,
+    isWarning: false,
+    ...(code !== undefined && !check.isTlc174 && { code }),
+  });
 
 const addAll = <Item>(target: Set<Item>, source: Iterable<Item>) => {
   for (const item of source) target.add(item);
@@ -365,6 +370,7 @@ const checkArguments = (
             check,
             node.location,
             `Level error in applying operator ${operator.name}:\nThe level of argument ${otherIndex + 1} exceeds the maximum level allowed by the operator.`,
+            "HIGHER_ORDER_OPERATOR_COPARAMETER_LEVEL_CONSTRAINTS_EXCEEDED",
           );
         }
         node.levelCorrect = false;

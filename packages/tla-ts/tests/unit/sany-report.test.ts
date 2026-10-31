@@ -505,6 +505,24 @@ Spec == Init /\\ [][Next]_x
     },
   );
 
+  // The argument exceeds both the operator's level and its operator argument's, which SANY files
+  // under two error codes, and TLC 1.7.4's SANY by their text.
+  it.each([
+    ["1.7.4", 1],
+    ["master", 2],
+  ] as const)(
+    "reports a level error that two checks find with the same text as TLC %s's SANY does",
+    (version, errorCount) => {
+      const report = getReport(
+        {
+          Twice: `---- MODULE Twice ----\nVARIABLE s\nF(q, Op(_)) == {x \\in {1} : Op(q)}\nA == F([]s, LAMBDA e: e = 1)\n====\n`,
+        },
+        { version },
+      );
+      expect(report.text).toContain(`*** Errors: ${errorCount}\n`);
+    },
+  );
+
   it("warns of a theorem named as an earlier one of the module", () => {
     const report = getReport(
       { Twice: "---- MODULE Twice ----\nTHEOREM Thm == TRUE\nTHEOREM Thm == TRUE\n====\n" },
