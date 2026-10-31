@@ -47,14 +47,9 @@ export class StickyGenerations {
     if (2 * group.numHoles > group.nodes.length) compact(group);
   }
 
-  // Calls visit with each update of the declaration, in the order of insertion.
-  forEach(decl: number, visit: (node: Enode, generation: number) => void) {
-    const group = this.groups.get(decl);
-    if (group === undefined) return;
-    for (let index = 0; index < group.nodes.length; index++) {
-      const node = group.nodes[index];
-      if (node !== null) visit(node, group.generations[index]);
-    }
+  // The updates of the declaration in the order of insertion, where a deleted one is null.
+  getGroup(decl: number): Readonly<Pick<Group, "nodes" | "generations">> | undefined {
+    return this.groups.get(decl);
   }
 }
 

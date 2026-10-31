@@ -421,18 +421,37 @@ export abstract class Internalizer {
     this.setGeneration(first, firstGeneration);
     this.setGeneration(second, secondGeneration);
     // apply_sticky_updates: a lowered generation outlives the merge that it was made under. Only the
-    // updates of the two nodes' declarations can be congruent to them.
-    this.stickyGenerations.forEach(first.decl, (node, generation) => {
-      if (generation < firstGeneration && this.isCongruent(node, first))
+    // updates of the two nodes' declarations can be congruent to them, and a node with an update
+    // uses the congruence table, so it has arguments and is no equality.
+    this.applyStickyUpdates(first, firstGeneration, second, secondGeneration);
+    if (second.decl !== first.decl) this.applyStickyUpdates(second, secondGeneration, null, 0);
+  }
+
+  private applyStickyUpdates(
+    first: Enode,
+    firstGeneration: number,
+    second: Enode | null,
+    secondGeneration: number,
+  ) {
+    const group = this.stickyGenerations.getGroup(first.decl);
+    if (group === undefined) return;
+    const firstRoot = first.args[0].root;
+    const secondRoot = second !== null && second.decl === first.decl ? second.args[0].root : null;
+    for (let index = 0; index < group.nodes.length; index++) {
+      const node = group.nodes[index];
+      if (node === null) continue;
+      const generation = group.generations[index];
+      const root = node.args[0].root;
+      if (generation < firstGeneration && root === firstRoot && this.isCongruent(node, first))
         this.setGeneration(first, generation);
-      else if (generation < secondGeneration && this.isCongruent(node, second))
+      else if (
+        second !== null &&
+        generation < secondGeneration &&
+        root === secondRoot &&
+        this.isCongruent(node, second)
+      )
         this.setGeneration(second, generation);
-    });
-    if (second.decl === first.decl) return;
-    this.stickyGenerations.forEach(second.decl, (node, generation) => {
-      if (generation < secondGeneration && this.isCongruent(node, second))
-        this.setGeneration(second, generation);
-    });
+    }
   }
 
   // congruent: only equalities are commutative here.
