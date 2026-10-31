@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
+import { isolateRootsClosest, selectBetween } from "../../src/prove/smt/solver/nlsat/algebraic";
+import { Rational } from "../../src/prove/smt/solver/rational";
 import {
   NlsatOutOfScope,
   type Polynomial,
@@ -81,5 +83,42 @@ describe("nlsat polynomials", () => {
 
   it("refuses the subresultants of a polynomial of degree 2", () => {
     expect(() => runPolynomialCommand("psc 0 1:0^2 -2: ; 1:0^1 -1:")).toThrow(NlsatOutOfScope);
+  });
+});
+
+const parseRational = (text: string) => {
+  const parts = text.split("/");
+  return Rational.of(BigInt(parts[0]), BigInt(parts[1] ?? "1"));
+};
+
+// The harness commands: select a b, and closest x s n v0 ... v(n-1) poly, which leaves x unassigned.
+const runAlgebraicCommand = (input: string) => {
+  const words = input.split(" ");
+  if (words[0] === "select")
+    return `select ${selectBetween(parseRational(words[1]), parseRational(words[2]))}`;
+  const variable = Number(words[1]);
+  const count = Number(words[3]);
+  const sample = words
+    .slice(4, 4 + count)
+    .map((word, index) => (index === variable ? undefined : parseRational(word)));
+  const pm = new PolynomialManager();
+  const polynomial = parsePolynomial(pm, words.slice(4 + count).join(" "));
+  const closest = isolateRootsClosest(pm, polynomial, sample, variable);
+  return `closest${closest.roots.map((root, index) => ` ${closest.indices[index]}@${root}`).join("")}`;
+};
+
+describe("nlsat algebraic numbers", () => {
+  // Random rational intervals and polynomials of degree 1 in the root variable, with the numbers
+  // that Z3's algebraic number manager selects and isolates for them.
+  const cases: [string, string][] = JSON.parse(
+    readFileSync(join(FIXTURES, "algebraic.json"), "utf8"),
+  );
+
+  it.each(cases)("%s", (input, expected) => {
+    expect(runAlgebraicCommand(input)).toBe(expected);
+  });
+
+  it("refuses a root variable of degree 2, whose roots may be irrational", () => {
+    expect(() => runAlgebraicCommand("closest 1 3 2 2 0 1:1^2 -2:")).toThrow(NlsatOutOfScope);
   });
 });
