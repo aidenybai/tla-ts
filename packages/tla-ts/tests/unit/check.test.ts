@@ -1288,6 +1288,23 @@ describe("evaluation errors match TLC", () => {
       ["{{}} \\cup {1} = {}", "Attempted to check equality of the set {} with the value:\n1"],
       ["{1} \\ {{}} = {}", "Attempted to check equality of the set {} with the value:\n1"],
       ["{{}} \\cap {1} = {}", "Attempted to check equality of integer 1 with non-integer:\n{}"],
+      [
+        "0 \\in SUBSET {1}",
+        "Attempted to check if the non-enumerable value\n0\nis element of\n{{}, {1}}",
+      ],
+      [
+        "Nat \\in SUBSET Nat",
+        "Attempted to check if the non-enumerable value\nNat\nis element of\nSUBSET Nat",
+      ],
+      [
+        "{1, 2} \\subseteq 0",
+        "Attempted to check if the value:\n1\nis an element of the integer 0",
+      ],
+      [
+        "{1} \\subseteq [a |-> 1]",
+        "Attempted to check if element:\n1\nis in the record:\n[a |-> 1]",
+      ],
+      ["{} \\subseteq 0", undefined],
     ];
     const messages = await Promise.all(
       cases.map(async (item) => (await checkModule(`ASSUME ${item[0]}`)).violation?.message),

@@ -123,7 +123,7 @@ export const CORE_OPERATORS: Builtin[] = [
   ),
   defineOperator("\\subseteq", 2, (args) => {
     const left = getSet(args, 0, "\\subseteq");
-    const right = getSet(args, 1, "\\subseteq");
+    const right = getValue(args, 1, "\\subseteq");
     const isPowerSets =
       typeof left === "object" &&
       left.kind === "Subset" &&
