@@ -7,6 +7,9 @@ const FREE = 0;
 const DELETED = 1;
 const USED = 2;
 
+// u_hash: an unsigned key is its own hash.
+export const getIdentityHash = (key: number) => key;
+
 export class ObjMap<V> {
   private capacity = INITIAL_CAPACITY;
   private states = new Uint8Array(INITIAL_CAPACITY);

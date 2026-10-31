@@ -33,7 +33,7 @@ import {
 } from "./ast";
 import { FC_CONTINUE, FC_DONE, FC_GIVEUP, type Context } from "./context";
 import { Enode, TheoryJustification } from "./enode";
-import { ObjMap } from "./hashtable";
+import { getIdentityHash, ObjMap } from "./hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import {
   BoolVar,
@@ -87,8 +87,6 @@ interface TermBound {
 }
 
 const getAtomLiteral = (bound: ApiBound) => mkLiteral(bound.boolVar);
-
-const getIdentityHash = (key: number) => key;
 
 export class TheoryLra {
   private solver: LarSolver;
