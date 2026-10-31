@@ -12,7 +12,7 @@ import {
   type RecordField,
 } from "./ast";
 import { getKindString } from "./builtins";
-import { formatRange, TlaEvaluationError } from "./errors";
+import { formatRange, TlaEvaluationError, TlaUnassignedError } from "./errors";
 import { EXIT_STATUS, setExitCode, setOwnExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import type { CheckerRuntime } from "./runtime";
@@ -1699,8 +1699,9 @@ export const hasDuplicateFields = (sortedFields: RecordField[]) =>
 
 export const createUnassignedError = (name: string, expression: Expression) =>
   setOwnExitCode(
-    new TlaEvaluationError(
+    new TlaUnassignedError(
       `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
+      name,
     ),
     EXIT_STATUS.configParseError,
   );

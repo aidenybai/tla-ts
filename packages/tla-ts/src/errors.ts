@@ -92,6 +92,17 @@ export class TlaModuleError extends TlaEvaluationError {
   }
 }
 
+// A variable that a partial state leaves without a value.
+export class TlaUnassignedError extends TlaEvaluationError {
+  variable: string;
+
+  constructor(message: string, variable: string) {
+    super(message);
+    this.name = "TlaEvaluationError";
+    this.variable = variable;
+  }
+}
+
 // TLC reports a successor state that the next-state relation leaves incomplete as an error of its
 // own, not as an exception. It keeps the name TlaEvaluationError, and index.ts doesn't export it.
 export class TlaIncompleteStateError extends TlaEvaluationError {
