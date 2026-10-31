@@ -313,10 +313,16 @@ THEOREM ${statement}
     const xml = exportSanyXml(generate(theorem("T == []ASSUME x = 1 []PROVE x = 1")));
     expect(xml).toContain("<boxed/>");
     expect(xml).toContain("<begin>14</begin>");
-    expect(() => generate(theorem("[]ASSUME x = 1 PROVE x = 1"))).toThrow(TlaSyntaxError);
-    expect(() =>
-      generate(theorem("ASSUME x = 1, []ASSUME x = 2 []PROVE x = 2 PROVE x = 1")),
-    ).toThrow(TlaSyntaxError);
+    const getErrors = (source: string) =>
+      generate(source)
+        .messages.filter((message) => !message.isWarning)
+        .map((message) => message.text);
+    expect(getErrors(theorem("[]ASSUME x = 1 PROVE x = 1"))).toEqual([
+      "[]ASSUME matched by PROVE instead of []PROVE",
+    ]);
+    expect(getErrors(theorem("ASSUME x = 1, []ASSUME x = 2 []PROVE x = 2 PROVE x = 1"))).toEqual([
+      "[]ASSUME used within the scope of an ordinary ASSUME's assumptions",
+    ]);
     expect(() => generate("---- MODULE Boxed ----\nASSUME TRUE\n[]ASSUME TRUE\n====")).toThrow(
       TlaSyntaxError,
     );

@@ -2234,8 +2234,13 @@ export const generateSanySpecification = (
         (token, index) =>
           index < conclusionStart && token.kind === "Keyword" && token.text === "PROVE",
       );
+      const assumeLocation = getSpanLocation(file, {
+        start: isBoxed ? span.start - 1 : span.start,
+        end: span.start,
+      });
       if (isBoxed !== isBoxToken(file, proveIndex - 1)) {
-        throw new TlaSyntaxError(
+        addError(
+          assumeLocation,
           isBoxed
             ? "[]ASSUME matched by PROVE instead of []PROVE"
             : "ASSUME matched by []PROVE instead of PROVE",
@@ -2245,7 +2250,8 @@ export const generateSanySpecification = (
       const id = getId();
       if (depth > 1) symbolTable.contexts.push(createContext());
       if (isBoxed && symbolTable.contexts.some((context) => assumeContexts.has(context))) {
-        throw new TlaSyntaxError(
+        addError(
+          assumeLocation,
           "[]ASSUME used within the scope of an ordinary ASSUME's assumptions",
         );
       }

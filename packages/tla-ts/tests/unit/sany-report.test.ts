@@ -381,6 +381,27 @@ Spec == Init /\\ [][Next]_x
     expect(report.text).toContain(error);
   });
 
+  it("reports a []ASSUME matched by PROVE in an ASSUME's scope with both errors as SANY does", () => {
+    const report = getReport({
+      Box: "---- MODULE Box ----\nTHEOREM T == ASSUME NEW J PROVE TRUE\n<1>1 []ASSUME TRUE PROVE TRUE\n<1> QED\n====\n",
+    });
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(
+      toText([
+        "*** Errors: 2",
+        "",
+        "line 3, col 6 to line 3, col 13 of module Box",
+        "",
+        "[]ASSUME matched by PROVE instead of []PROVE",
+        "",
+        "",
+        "line 3, col 6 to line 3, col 13 of module Box",
+        "",
+        "[]ASSUME used within the scope of an ordinary ASSUME's assumptions",
+      ]),
+    );
+  });
+
   it("reports a file without a module as a parse error", () => {
     const report = getReport({ Headless: "Nothing here\n" });
     expect(report.isFailed).toBe(true);
