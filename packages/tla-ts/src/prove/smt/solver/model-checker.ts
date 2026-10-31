@@ -112,17 +112,30 @@ export class ModelChecker {
     if (this.value2expr !== null) return this.value2expr;
     const value2expr = new Map<number, number>();
     for (const entry of this.root2value) {
-      // get_eq_enode_with_min_gen.
-      let node = entry[0];
-      let current = node.next;
-      while (current !== entry[0] && node.generation > 0) {
-        if (current.generation < node.generation) node = current;
-        current = current.next;
-      }
+      const node = this.getEqEnodeWithMinGen(entry[0]);
       if (!this.manager.isUniqueValue(node.owner)) value2expr.set(entry[1], node.owner);
     }
     this.value2expr = value2expr;
     return value2expr;
+  }
+
+  // enode::get_eq_enode_with_min_gen: the first node of the class with generation 0, or else the
+  // first with the least generation.
+  private getEqEnodeWithMinGen(root: Enode) {
+    const context = this.context;
+    let result = root;
+    let resultGeneration = context.getGeneration(root);
+    let current = root;
+    do {
+      const generation = context.getGeneration(current);
+      if (generation === 0) return current;
+      if (generation < resultGeneration) {
+        result = current;
+        resultGeneration = generation;
+      }
+      current = current.next;
+    } while (current !== root);
+    return result;
   }
 
   // get_type_compatible_term: a term of the context that stands for a value, which may be a fresh

@@ -378,8 +378,10 @@ export abstract class Internalizer {
     return this.conflict !== undefined;
   }
 
+  // get_generation: the generation of the congruence root. Equalities have generation 0, since
+  // patterns have no equalities.
   getGeneration(node: Enode) {
-    return node.cg.generation;
+    return node.isEq ? 0 : node.cg.generation;
   }
 
   // Boolean variables and enodes.
