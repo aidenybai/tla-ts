@@ -62,6 +62,15 @@ describe("parseModule records ranges like SANY", () => {
 });
 
 describe("parseModule reads operators like SANY", () => {
+  it.each(["-.(1)", "+(1, 2)", "+ (1, 2)"])(
+    "reads %s as an argument that applies the operator",
+    (argument) => {
+      const module = parseModule(`---- MODULE M ----\nF(a, b) == a\nX == F(${argument}, 2)\n====`);
+      const body = module.definitions.find((definition) => definition.name === "X")?.body;
+      expect(body?.kind === "Apply" && body.args[0].kind).toBe("Apply");
+    },
+  );
+
   it("reads a backslash word as the longest operator it starts with", () => {
     const module = parseModule(
       "---- MODULE M ----\nF(S, used) == S\\used\nG(S) == 1 \\inS\nH(S, T) == S \\capT\n====",

@@ -587,8 +587,9 @@ const parse = (source: string, mode: ParseMode): Module => {
     );
   };
 
+  // SANY's OpOrExpr reads an operator as an argument only before what ends the argument, and as
+  // the start of an expression, such as -.(1), otherwise.
   const isStandalone = (operator: Token) => {
-    if (!EXPRESSION_PREFIXES.has(operator.text)) return true;
     const token = peek(1);
     return (
       token.kind === "End" ||
