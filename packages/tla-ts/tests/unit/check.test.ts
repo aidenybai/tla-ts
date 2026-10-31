@@ -72,6 +72,21 @@ describe("check matches TLC", () => {
     },
   );
 
+  it.each([
+    ["1.7.4", "[Nat -> {}]", "assumption-violation"],
+    ["1.7.4", "[{} -> Nat]", "assumption-violation"],
+    ["1.7.4", "[a : {}, b : Nat]", "success"],
+    ["master", "[Nat -> {}]", "success"],
+    ["master", "[{} -> Nat]", "success"],
+  ] as const)("enumerates the sets of %s %s in turn as TLC does", async (version, set, status) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nASSUME \\A y \\in ${set} : TRUE\n====`,
+      config: "",
+      version,
+    });
+    expect(result.status).toBe(status);
+  });
+
   it("streams the sets that a set of tuples, records, or functions combines as TLC does", async () => {
     const result = await check({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' \\in [b : UNION {{3, 1}, 0..1}, a : UNION {{2}, 1..2}]\n====`,

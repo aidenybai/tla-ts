@@ -1311,6 +1311,24 @@ const getSortedSubsets = (base: Value[]) => {
   return subsets;
 };
 
+// The Enumerator of a set of records or tuples enumerates its sets in turn and stops at the first
+// empty one, which leaves the product empty. Later versions of TLC decide that the set is empty
+// before they enumerate it.
+const getComponentElements = (
+  sets: Value[],
+  getElements: (set: Value) => Value[],
+  fail: (set: Value, index: number) => never,
+) => {
+  const lists: Value[][] = [];
+  for (const [index, set] of sets.entries()) {
+    if (isOverriddenSet(set)) fail(set, index);
+    const elements = getElements(set);
+    if (elements.length === 0) return [[]];
+    lists.push(elements);
+  }
+  return lists;
+};
+
 // getElements enumerates the sets a set of functions, records, or tuples combines.
 const enumerateSet = (
   value: Value,
@@ -1344,14 +1362,15 @@ const enumerateSet = (
       return getSortedSubsets(base);
     }
     case "FunctionSet": {
-      if (isEmptySet(value)) return [];
+      if (!valueVersion.is174 && isEmptySet(value)) return [];
       if (isOverriddenSet(value.domain)) {
         throw new TlaEvaluationError(
           `Attempted to enumerate a set of the form [D -> R],but the domain D:\n${formatValue(value.domain)}\ncannot be enumerated.`,
         );
       }
       const domain = getFunctionDomain(value.domain);
-      if (domain.length > 0 && isOverriddenSet(value.range)) {
+      // TLC 1.7.4 requires an enumerable range even of an empty domain.
+      if ((domain.length > 0 || valueVersion.is174) && isOverriddenSet(value.range)) {
         throw new TlaEvaluationError(
           `Attempted to enumerate a set of the form [D -> R],but the range R:\n${formatValue(value.range)}\ncannot be enumerated.`,
         );
@@ -1362,28 +1381,22 @@ const enumerateSet = (
       );
     }
     case "RecordSet": {
-      if (isEmptySet(value)) return [];
-      const fields = value.sets.map((set, index) => {
-        if (isOverriddenSet(set)) {
-          throw new TlaEvaluationError(
-            `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${formatValue(set)}`,
-          );
-        }
-        return getElements(set);
+      if (!valueVersion.is174 && isEmptySet(value)) return [];
+      const fields = getComponentElements(value.sets, getElements, (set, index) => {
+        throw new TlaEvaluationError(
+          `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${formatValue(set)}`,
+        );
       });
       return getCartesianProduct(fields).map((combination) =>
         createRecord(value.names.map((name, index): [string, Value] => [name, combination[index]])),
       );
     }
     case "ProductSet": {
-      if (isEmptySet(value)) return [];
-      const factors = value.factors.map((factor, index) => {
-        if (isOverriddenSet(factor)) {
-          throw new TlaEvaluationError(
-            `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${formatValue(factor)}`,
-          );
-        }
-        return getElements(factor);
+      if (!valueVersion.is174 && isEmptySet(value)) return [];
+      const factors = getComponentElements(value.factors, getElements, (factor, index) => {
+        throw new TlaEvaluationError(
+          `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${formatValue(factor)}`,
+        );
       });
       return getCartesianProduct(factors).map(createTuple);
     }
