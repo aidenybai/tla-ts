@@ -924,14 +924,11 @@ export const markNormalized = (value: Value): void => {
   }
 };
 
-export const isEqualLikeTlc = (left: Value, right: Value) => {
-  try {
-    return valuesEqual(left, right);
-  } catch (error) {
-    if (!(error instanceof TlaEvaluationError)) throw error;
-    return equalsLikeTlc(left, right);
-  }
-};
+export const isEqualLikeTlc = (left: Value, right: Value) =>
+  computeLikeTlcOnFailure(
+    () => valuesEqual(left, right),
+    () => equalsLikeTlc(left, right),
+  );
 
 const isStrictlySorted = (elements: Value[]) => {
   for (let index = 1; index < elements.length; index++) {
@@ -952,14 +949,11 @@ export const createSet = (elements: Value[]): SetValue => {
 
 // TLC builds a set enumeration without sorting it, so one whose elements it can't compare still
 // evaluates.
-export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue => {
-  try {
-    return createSet(elements);
-  } catch (error) {
-    if (!(error instanceof TlaEvaluationError)) throw error;
-    return { kind: "MixedSet", elements };
-  }
-};
+export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue =>
+  computeLikeTlcOnFailure<SetValue | MixedSetValue>(
+    () => createSet(elements),
+    () => ({ kind: "MixedSet", elements }),
+  );
 
 export const EMPTY_SET = createSortedSet([]);
 
@@ -1675,10 +1669,42 @@ const describeNonSetMembership = (element: Value, value: Value) => {
   return `${prefix} function ${formatValue(value)}`;
 };
 
+// The call stack of the replay, which a failed fast path leaves frozen.
+interface TracedCallStack {
+  expressions: unknown[];
+  isFrozen: boolean;
+  fingerprint?: unknown;
+}
+
 // The sets whose membership is being checked or whose elements are being enumerated, outermost
 // first, while TLC's CallStackTool replays a computation. A failed check or enumeration leaves the
 // sets it was in, each of which TLC adds to the FingerprintException when it has a source.
-export const setTrace: { sets: Value[] | undefined } = { sets: undefined };
+export const setTrace: { sets: Value[] | undefined; callStack?: TracedCallStack } = {
+  sets: undefined,
+};
+
+// Takes a fast path, and computes as TLC does where it fails. TLC never takes the fast path, so
+// the failure's leftovers in the replay's trace go first.
+const computeLikeTlcOnFailure = <Result>(
+  compute: () => Result,
+  computeLikeTlc: (error: TlaEvaluationError) => Result,
+): Result => {
+  const { sets, callStack } = setTrace;
+  const depth = sets?.length ?? 0;
+  const trace = callStack && { ...callStack, length: callStack.expressions.length };
+  try {
+    return compute();
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    if (sets) sets.length = depth;
+    if (callStack && trace) {
+      callStack.expressions.length = trace.length;
+      callStack.isFrozen = trace.isFrozen;
+      callStack.fingerprint = trace.fingerprint;
+    }
+    return computeLikeTlc(error);
+  }
+};
 
 export const isElementOf = (element: Value, set: Value): boolean => {
   const sets = setTrace.sets;
@@ -1693,14 +1719,13 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":
-      try {
-        return findIndex(set.elements, element) !== -1;
-      } catch (error) {
-        if (!(error instanceof TlaEvaluationError)) throw error;
-        return normalizedSets.has(set)
-          ? searchLikeTlc(element, set.elements).isFound
-          : isElementOfLikeTlc(element, set.elements);
-      }
+      return computeLikeTlcOnFailure(
+        () => findIndex(set.elements, element) !== -1,
+        () =>
+          normalizedSets.has(set)
+            ? searchLikeTlc(element, set.elements).isFound
+            : isElementOfLikeTlc(element, set.elements),
+      );
     case "MixedSet":
       return isElementOfLikeTlc(element, set.elements);
     case "Interval":
@@ -1934,17 +1959,17 @@ const findKeyIndexLikeTlc = (
       throw createNonIntegerKeyError(argument);
     }
   }
-  try {
-    return findKeyIndex(domain, argument);
-  } catch (error) {
-    if (!(error instanceof TlaEvaluationError)) throw error;
-    if (valueVersion.is174 || domain.length < LINEAR_SEARCH_LIMIT) {
-      domain.forEach((key) => equalsLikeTlc(key, argument));
-    } else {
-      findIndex(domain, argument, compareLikeTlc);
-    }
-    throw error;
-  }
+  return computeLikeTlcOnFailure(
+    () => findKeyIndex(domain, argument),
+    (error) => {
+      if (valueVersion.is174 || domain.length < LINEAR_SEARCH_LIMIT) {
+        domain.forEach((key) => equalsLikeTlc(key, argument));
+      } else {
+        findIndex(domain, argument, compareLikeTlc);
+      }
+      throw error;
+    },
+  );
 };
 
 export const applyFunction = (

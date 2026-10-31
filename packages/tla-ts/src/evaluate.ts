@@ -1229,9 +1229,11 @@ const traceEvaluator =
   (context) => {
     callStack.expressions.push(expression);
     const outerSets = setTrace.sets;
+    const outerCallStack = setTrace.callStack;
     const sets = outerSets ?? [];
     const depth = sets.length;
     setTrace.sets = sets;
+    setTrace.callStack = callStack;
     try {
       const computed = evaluator(context);
       const rebind =
@@ -1263,6 +1265,7 @@ const traceEvaluator =
       if (!callStack.isFrozen) callStack.expressions.pop();
       sets.length = depth;
       setTrace.sets = outerSets;
+      setTrace.callStack = outerCallStack;
     }
   };
 

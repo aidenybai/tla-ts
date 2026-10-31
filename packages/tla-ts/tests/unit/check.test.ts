@@ -1087,6 +1087,21 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  // TLC compares the sets as Value#equals does, and never takes tla-ts's faster comparison that
+  // fails first.
+  it("records the replay of a filter that fails to compare once", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = {n \\in SUBSET {1} : 1 \\div 0 = 1} /\\ x' = {}\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    const ranges = result.failure?.callStack?.map(({ location: { range } }) =>
+      range ? `${range.start.column}-${range.end.column}` : "",
+    );
+    expect(new Set(ranges)).toEqual(new Set(["9-57", "9-46", "51-57", "34-45", "34-41"]));
+    expect(ranges?.at(-1)).toBe("34-41");
+  });
+
   it("reports a set TLC can't enumerate in computing next states like TLC", async () => {
     const result = await checkSteps("Step == x' \\in Nat", "INIT Init\nNEXT Step");
     expect(result.failure?.message).toBe(
