@@ -437,6 +437,12 @@ const exportSpecification = (
     );
   };
 
+  const getNullPointerException = (call: JavaExpressionCall) =>
+    getJavaException(
+      `java.lang.NullPointerException: Cannot invoke "tla2sany.semantic.${call.nullType}.export(org.w3c.dom.Document, tla2sany.xml.SymbolContext)" because ${call.nullValue} is null`,
+      [call],
+    );
+
   const getReference = (node: ContextNode, call?: JavaFrame): XmlElement => {
     if (!keys.has(node.id)) {
       keys.add(node.id);
@@ -545,6 +551,8 @@ const exportSpecification = (
         }
         const body = node.body;
         const module = node.module;
+        // SANY leaves the body of an operator a RECURSIVE statement declares but nothing defines null.
+        if (body === undefined && isTlc174) throw getNullPointerException(JAVA_CALLS.body);
         if (body === undefined || module === undefined) {
           throw new Error(`The definition of ${node.name} has no body`);
         }
@@ -745,10 +753,7 @@ const exportSpecification = (
   ): XmlElement => {
     if (!isTlc174) return exportLevelNode(node);
     if (node.kind === "OpAppl" && node.isAbsent && "nullType" in call) {
-      throw getJavaException(
-        `java.lang.NullPointerException: Cannot invoke "tla2sany.semantic.${call.nullType}.export(org.w3c.dom.Document, tla2sany.xml.SymbolContext)" because ${call.nullValue} is null`,
-        [call],
-      );
+      throw getNullPointerException(call);
     }
     const frames = [
       call,

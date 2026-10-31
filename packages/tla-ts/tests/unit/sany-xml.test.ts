@@ -293,6 +293,22 @@ THEOREM TRUE
     );
   });
 
+  it("fails as TLC 1.7.4's XMLExporter does on the null body of an operator RECURSIVE declares but nothing defines", () => {
+    const stackTrace = [
+      'java.lang.NullPointerException: Cannot invoke "tla2sany.semantic.ExprNode.export(org.w3c.dom.Document, tla2sany.xml.SymbolContext)" because "this.body" is null',
+      ...at(DEFINITION_FRAMES),
+    ].join("\n");
+    expect(export174("---- MODULE Undefined ----\nRECURSIVE Op(_)\nNext == Op(1)\n====")).toThrow(
+      expect.objectContaining({
+        message: stackTrace,
+        unwound: getUnwound(stackTrace, [
+          "line 2, col 11 to line 2, col 15 of module Undefined",
+          "line 1, col 1 to line 4, col 4 of module Undefined",
+        ]),
+      }),
+    );
+  });
+
   // SymbolContext's copies share its flags, so the flag a CASE with an OTHER arm sets lasts.
   it("exports the null SANY leaves for an operator after a CASE with OTHER as $Other, as TLC 1.7.4 does", () => {
     const xml = export174(
