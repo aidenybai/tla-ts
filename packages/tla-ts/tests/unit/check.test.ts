@@ -935,6 +935,28 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("reports a value where the initial or next-state relation expects a formula like TLC", async () => {
+    const getFailure = async (init: string, next: string) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == ${init}\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      return [result.failure?.message, result.failure?.exitCode];
+    };
+    expect(await getFailure("x = 0 /\\ x + 3", "x' = x")).toEqual([
+      "In computing initial states, TLC expected a boolean expression,\nbut instead found 3.\nline 4, col 18 to line 4, col 22 of module M",
+      75,
+    ]);
+    expect(await getFailure("x = 0", "x' = 1 /\\ x + 2")).toEqual([
+      `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found 2.\nline 5, col 19 to line 5, col 23 of module M`,
+      75,
+    ]);
+    expect(await getFailure("x = 0", "3")).toEqual([
+      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n3`,
+      255,
+    ]);
+  });
+
   it("reports a CASE with no true guard like TLC", async () => {
     const result = await check({
       source:
