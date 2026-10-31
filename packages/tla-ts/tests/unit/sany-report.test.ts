@@ -90,6 +90,12 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("leaves out the arguments of a function it can't generate as SANY does", () => {
+    const report = getReport({ Apply: "---- MODULE Apply ----\nOp == (1 @@ 2)[y]\n====\n" });
+    expect(report.text).toContain("*** Errors: 2");
+    expect(report.text).not.toContain("symbol 'y'");
+  });
+
   it.each(["\\geq", "=<", "(+)", "\\circ", "!!"])(
     "names the unresolved operator %s as it is spelled",
     (operator) => {

@@ -1551,6 +1551,8 @@ export const generateSanySpecification = (
         }
         case "FunctionApplication": {
           const fn = generateExpression(expression.function);
+          // SANY leaves the whole application null, without generating its arguments.
+          if (isAbsent(fn)) return fn;
           checkRecursion(fn);
           const argument =
             expression.args.length === 1
