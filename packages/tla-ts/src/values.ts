@@ -923,13 +923,23 @@ const sortLikeTlc = (elements: Value[]) => {
   return sorted;
 };
 
+// Calls a method of a value as TLC does, whose failure the value heads when it has a source.
+const callTracedMethod = <Result>(receiver: Value, method: () => Result) => {
+  const sets = setTrace.sets;
+  if (sets === undefined) return method();
+  sets.push(receiver);
+  const result = method();
+  sets.pop();
+  return result;
+};
+
 // ValueVec.search on sorted elements: a binary search with compareTo, which ends where the element
 // is or would go.
 const searchLikeTlc = (element: Value, sorted: Value[]) => {
   const bounds = { low: 0, high: sorted.length };
   while (bounds.low < bounds.high) {
     const middle = bounds.low + ((bounds.high - bounds.low) >> 1);
-    const comparison = compareLikeTlc(element, sorted[middle]);
+    const comparison = callTracedMethod(element, () => compareLikeTlc(element, sorted[middle]));
     if (comparison === 0) return { index: middle, isFound: true };
     if (comparison < 0) bounds.high = middle;
     else bounds.low = middle + 1;
@@ -938,16 +948,9 @@ const searchLikeTlc = (element: Value, sorted: Value[]) => {
 };
 
 // TLC checks membership in a set enumeration it hasn't sorted element by element, with the equals
-// method of each member, which a member with a source heads the failure of.
+// method of each member.
 const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
-  elements.some((member) => {
-    const sets = setTrace.sets;
-    if (sets === undefined) return equalsLikeTlc(member, element);
-    sets.push(member);
-    const isEqual = equalsLikeTlc(member, element);
-    sets.pop();
-    return isEqual;
-  });
+  elements.some((member) => callTracedMethod(member, () => equalsLikeTlc(member, element)));
 
 // The sets TLC has normalized, whose membership ValueVec.search checks by binary search with
 // compareTo instead of element by element.

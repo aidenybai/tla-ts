@@ -1178,14 +1178,16 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.fingerprint?.reason).toBe(reason);
   });
 
-  // The equals method of a member with a source heads the failure of the membership test.
+  // The equals method of a member with a source heads the failure of a membership test, and the
+  // compareTo method of an element with a source the failure to sort a set.
   it.each([
     ["({<<1>>} \\cup {2}) = {}", ["SetEnumeration", "Tuple"]],
     ["({[a |-> 1]} \\cap {{1}}) = {}", ["SetEnumeration", "SetEnumeration", "SetEnumeration"]],
     ["2 \\in {<<1>>}", ["SetEnumeration", "Tuple"]],
-  ])("reports the member that fails to compare in %s like TLC", async (predicate, sources) => {
+    ['{("a" :> 1), <<2>>} = {}', ["SetEnumeration", "Tuple"]],
+  ])("reports the value that fails to compare in %s like TLC", async (predicate, sources) => {
     const result = await check({
-      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ ${predicate}\n====`,
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ ${predicate}\n====`,
       config: "INIT Init\nNEXT Next",
     });
     expect(result.failure?.fingerprint?.sources.map((source) => source.kind)).toEqual(sources);
