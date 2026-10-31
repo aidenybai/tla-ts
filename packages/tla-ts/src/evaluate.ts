@@ -1574,7 +1574,9 @@ export const hasDuplicateFields = (sortedFields: RecordField[]) =>
   sortedFields.some((field, index) => index > 0 && sortedFields[index - 1].name === field.name);
 
 export const createUnassignedError = (name: string, expression: Expression) =>
-  new TlaEvaluationError(`The variable ${name} is not assigned at ${describeLocation(expression)}`);
+  new TlaEvaluationError(
+    `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
+  );
 
 export const createPrimeOutsideActionError = (expression: Expression) =>
   new TlaEvaluationError(
