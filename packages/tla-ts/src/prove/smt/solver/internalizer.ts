@@ -58,6 +58,7 @@ import { Rewriter } from "./rewriter";
 import { sortByKey } from "./sort";
 import type { TheoryLra } from "./theory-lra";
 import { setAt, shrink } from "./array";
+import { StickyGenerations } from "./sticky-generations";
 
 // DEEP_EXPR_THRESHOLD: the depth above which internalize_deep sorts an expression's subterms.
 const DEEP_EXPR_THRESHOLD = 1024;
@@ -92,8 +93,7 @@ export abstract class Internalizer {
   readonly relevancy: RelevancyPropagator;
   readonly caseSplitQueue: CaseSplitQueue;
   readonly cgTable = new CgTable();
-  // m_sticky_generation_updates: the generations that update_generation lowered, by node.
-  private stickyGenerationUpdates = new Map<Enode, number>();
+  private stickyGenerations = new StickyGenerations();
   abstract readonly theory: TheoryLra;
   abstract readonly qmanager: DefaultQuantifierManager;
 
@@ -406,13 +406,19 @@ export abstract class Internalizer {
   ) {
     this.setGeneration(first, firstGeneration);
     this.setGeneration(second, secondGeneration);
-    // apply_sticky_updates: a lowered generation outlives the merge that it was made under.
-    for (const entry of this.stickyGenerationUpdates) {
-      if (entry[1] < firstGeneration && this.isCongruent(entry[0], first))
-        this.setGeneration(first, entry[1]);
-      else if (entry[1] < secondGeneration && this.isCongruent(entry[0], second))
-        this.setGeneration(second, entry[1]);
-    }
+    // apply_sticky_updates: a lowered generation outlives the merge that it was made under. Only the
+    // updates of the two nodes' declarations can be congruent to them.
+    this.stickyGenerations.forEach(first.decl, (node, generation) => {
+      if (generation < firstGeneration && this.isCongruent(node, first))
+        this.setGeneration(first, generation);
+      else if (generation < secondGeneration && this.isCongruent(node, second))
+        this.setGeneration(second, generation);
+    });
+    if (second.decl === first.decl) return;
+    this.stickyGenerations.forEach(second.decl, (node, generation) => {
+      if (generation < secondGeneration && this.isCongruent(node, second))
+        this.setGeneration(second, generation);
+    });
   }
 
   // congruent: only equalities are commutative here.
@@ -570,7 +576,7 @@ export abstract class Internalizer {
     if (node.args.length > 0 && !node.isEq) this.decl2enodes.get(node.decl)?.pop();
     for (const arg of node.args) arg.root.parents.pop();
     this.manager.decRef(node.owner);
-    this.stickyGenerationUpdates.delete(node);
+    this.stickyGenerations.delete(node);
   }
 
   protected mergeCgcGenerations(first: Enode, firstGeneration: number, second: Enode) {
@@ -609,7 +615,7 @@ export abstract class Internalizer {
     if (node.isEq) return;
     if (this.generation > 0 && this.generation < this.getGeneration(node)) {
       this.setGeneration(node, this.generation);
-      if (node.usesCgTable()) this.stickyGenerationUpdates.set(node, this.generation);
+      if (node.usesCgTable()) this.stickyGenerations.set(node, this.generation);
     }
   }
 
