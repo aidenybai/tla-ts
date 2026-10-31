@@ -1,6 +1,7 @@
 // Ported from Z3 (src/math/polynomial/polynomial.{h,cpp}, src/math/polynomial/polynomial_cache.cpp),
-// MIT license, see z3-license.txt. Multivariate polynomials over the integers, as far as nlsat's
-// check_assignment needs them. A polynomial keeps its monomials in the order Z3's som buffers
+// MIT license, see z3-license.txt. Multivariate polynomials over the integers for nlsat, with
+// Z3's factorization: univariate through upolynomial-factorization, quadratics through the square
+// root of the discriminant, and higher degrees through bivariate Hensel lifting. A polynomial keeps its monomials in the order Z3's som buffers
 // produce, with a monomial of maximal degree in the maximal variable first, because factorization
 // breaks ties on the order in which variables occur.
 //
@@ -14,11 +15,30 @@
 // - Polynomial ids count up from zero. Z3 recycles the ids of deleted polynomials, so where nlsat
 //   breaks a tie between two root functions on their ids it may pick the other one.
 import { getGcd, Rational } from "../rational";
+import { UpolynomialManager } from "./upolynomial";
+import {
+  DEFAULT_FACTOR_PARAMS,
+  factorSquareFree,
+  getExactSquareRoot,
+  type UpolynomialFactors,
+} from "./upolynomial-factorization";
 
 export const NULL_VAR = -1;
 
-// Input outside what the port of nlsat supports: a polynomial of degree 2 or more in the variable
-// being projected or factored. The nra solver answers unknown on it, which is always sound.
+// s_factor_eval_values and s_factor_primes: the points multivariate factorization evaluates the
+// other variables at, and the primes it lifts modulo.
+const FACTOR_EVAL_VALUES = [0n, 1n, -1n, 2n, -2n, 3n, -3n];
+const FACTOR_PRIMES = [39103n, 104729n, 1000003n, 100000007n];
+
+// mpz div: rounds toward minus infinity.
+const floorDiv = (dividend: bigint, divisor: bigint) => {
+  const quotient = dividend / divisor;
+  return dividend % divisor !== 0n && dividend < 0n !== divisor < 0n ? quotient - 1n : quotient;
+};
+
+// Input outside what the port of nlsat supports so far: subresultants of polynomials of degree 2
+// or more in the variable being projected. The nra solver answers unknown on it, which is always
+// sound.
 export class NlsatOutOfScope extends Error {
   constructor(reason: string) {
     super(`nlsat input out of scope: ${reason}`);
@@ -222,6 +242,21 @@ class SomBuffer {
     }
   }
 
+  // addmul(a, m, buffer): adds a*m times each entry of another buffer, zero entries included,
+  // which keeps their monomials at new positions as Z3 does.
+  addmulBuffer(coeff: bigint, monomial: Monomial, buffer: SomBuffer) {
+    if (coeff === 0n) return;
+    for (let index = 0; index < buffer.ms.length; index++) {
+      const product = this.manager.mulMonomials(monomial, buffer.ms[index]);
+      const position = this.positions.get(product.id);
+      if (position === undefined) {
+        this.positions.set(product.id, this.ms.length);
+        this.ms.push(product);
+        this.as.push(coeff * buffer.as[index]);
+      } else this.as[position] += coeff * buffer.as[index];
+    }
+  }
+
   getGradedLexMaxPos() {
     let maxPos = -1;
     for (let index = 0; index < this.as.length; index++) {
@@ -285,6 +320,7 @@ export class PolynomialManager {
   readonly unit: Monomial;
   readonly zero: Polynomial;
   readonly one: Polynomial;
+  private um = new UpolynomialManager();
   private som = new SomBuffer(this);
   private som2 = new SomBuffer(this);
   private cheap = new CheapSomBuffer(this);
@@ -304,6 +340,11 @@ export class PolynomialManager {
     const monomial = new Monomial(this.monomials.size, vars, degrees);
     this.monomials.set(key, monomial);
     return monomial;
+  }
+
+  // mk_monomial(x, k): x^k, the unit for k = 0.
+  mkPower(variable: number, power: number) {
+    return power === 0 ? this.unit : this.mkMonomial([variable], [power]);
   }
 
   mulMonomials(first: Monomial, second: Monomial) {
@@ -640,33 +681,59 @@ export class PolynomialManager {
     }
   }
 
-  // exact_pseudo_remainder: R with lc(q)^(deg(p) - deg(q) + 1) * p = Q*q + R.
-  exactPseudoRemainder(polynomial: Polynomial, divisor: Polynomial, variable: number) {
+  // exact_pseudo_division: Q and R with lc(q)^(deg(p) - deg(q) + 1) * p = Q*q + R. The
+  // quotient is only built when asked for, as in pseudo_division_core.
+  exactPseudoDivision(
+    polynomial: Polynomial,
+    divisor: Polynomial,
+    variable: number,
+    isQuotient = true,
+  ) {
     const degA = this.degree(polynomial, variable);
     const degB = this.degree(divisor, variable);
-    if (degB === 0) return this.zero;
+    if (degB === 0) {
+      if (!isQuotient || degA === 0) return { quotient: polynomial, remainder: this.zero };
+      return { quotient: this.mul(polynomial, this.pw(divisor, degA)), remainder: this.zero };
+    }
     const lcB = this.coeff(divisor, variable, degB);
     const reductB = this.reduct(divisor, variable, degB);
     let remainder = polynomial;
+    let quotient = this.zero;
     let steps = 0;
     while (true) {
       const degR = this.degree(remainder, variable);
       if (degB > degR) {
         const exactSteps = degA - degB + 1;
-        if (steps < exactSteps) remainder = this.mul(this.pw(lcB, exactSteps - steps), remainder);
-        return remainder;
+        if (steps < exactSteps) {
+          const power = this.pw(lcB, exactSteps - steps);
+          if (isQuotient) quotient = this.mul(power, quotient);
+          remainder = this.mul(power, remainder);
+        }
+        return { quotient, remainder };
       }
       this.som.reset();
+      this.som2.reset();
       for (let index = 0; index < remainder.size; index++) {
         const monomial = remainder.ms[index];
         const coeff = remainder.as[index];
-        if (monomial.degreeOf(variable) === degR)
-          this.som.addmul(-coeff, this.divXk(monomial, variable, degB), reductB);
-        else this.som.addmul(coeff, monomial, lcB);
+        if (monomial.degreeOf(variable) === degR) {
+          const shifted = this.divXk(monomial, variable, degB);
+          if (isQuotient) this.som2.addTerm(coeff, shifted);
+          this.som.addmul(-coeff, shifted, reductB);
+        } else this.som.addmul(coeff, monomial, lcB);
       }
       remainder = this.som.mk();
+      if (isQuotient) {
+        for (let index = 0; index < quotient.size; index++)
+          this.som2.addmul(quotient.as[index], quotient.ms[index], lcB);
+        quotient = this.som2.mk();
+      }
       steps++;
     }
+  }
+
+  exactPseudoRemainder(polynomial: Polynomial, divisor: Polynomial, variable: number) {
+    return this.exactPseudoDivision(polynomial, divisor, variable, false).remainder;
   }
 
   // The reduct of coeff(p, x, k, reduct): p without its x^k monomials.
@@ -801,16 +868,374 @@ export class PolynomialManager {
     }
   }
 
-  private factorSqfPp(
-    polynomial: Polynomial,
-    variable: number,
-    multiplicity: number,
-    result: Factors,
-  ) {
-    if (this.degree(polynomial, variable) !== 1)
-      throw new NlsatOutOfScope(`factoring ${polynomial} of degree 2 or more in x${variable}`);
+  // factor_sqf_pp: the factors of a primitive square-free p of positive degree in x.
+  private factorSqfPp(polynomial: Polynomial, variable: number, k: number, result: Factors) {
+    const degree = this.degree(polynomial, variable);
+    if (degree === 1) this.pushFactor(result, polynomial, k);
+    else if (this.isUnivariate(polynomial)) this.factorSqfPpUniv(polynomial, k, result);
+    else if (degree === 2) this.factorQuadratic(polynomial, variable, k, result);
+    else if (!this.factorMultivariate(polynomial, variable, k, result))
+      this.pushFactor(result, polynomial, k);
+  }
+
+  private pushFactor(result: Factors, polynomial: Polynomial, k: number) {
     result.factors.push(polynomial);
-    result.degrees.push(multiplicity);
+    result.degrees.push(k);
+  }
+
+  // to_numeral_vector: the coefficients of a univariate p by degree. Z3 normalizes p first but
+  // reads the coefficients of p itself.
+  private toCoeffs(polynomial: Polynomial) {
+    const coeffs = Array.from({ length: this.totalDegree(polynomial) + 1 }, () => 0n);
+    for (let index = 0; index < polynomial.size; index++)
+      coeffs[polynomial.ms[index].totalDegree] = polynomial.as[index];
+    return this.um.set(coeffs);
+  }
+
+  // to_polynomial, mk_univariate: the monomials from the highest degree down.
+  private fromCoeffs(coeffs: readonly bigint[], variable: number) {
+    for (let power = coeffs.length - 1; power >= 0; power--)
+      this.cheap.add(coeffs[power], this.mkPower(variable, power));
+    return this.cheap.mk();
+  }
+
+  // factor_sqf_pp_univ
+  private factorSqfPpUniv(polynomial: Polynomial, k: number, result: Factors) {
+    const variable = this.maxVar(polynomial);
+    const fs: UpolynomialFactors = { constant: 1n, factors: [], degrees: [] };
+    factorSquareFree(this.um, this.toCoeffs(polynomial), fs, 1, DEFAULT_FACTOR_PARAMS);
+    if (fs.factors.length === 1 && fs.degrees[0] === 1) {
+      this.pushFactor(result, polynomial, k);
+      return;
+    }
+    for (let index = 0; index < fs.factors.length; index++)
+      this.pushFactor(result, this.fromCoeffs(fs.factors[index], variable), k * fs.degrees[index]);
+    if (fs.constant === -1n && k % 2 === 1) result.constant = -result.constant;
+  }
+
+  // factor_2_sqf_pp: a*x^2 + b*x + c splits into the primitive parts of 2*a*x + b -/+ sqrt(disc)
+  // when the discriminant b^2 - 4*a*c is a square.
+  private factorQuadratic(polynomial: Polynomial, variable: number, k: number, result: Factors) {
+    let a = this.coeff(polynomial, variable, 2);
+    let b = this.coeff(polynomial, variable, 1);
+    let c = this.coeff(polynomial, variable, 0);
+    const isFlipped = a.as[a.getGradedLexMaxPos()] < 0n;
+    if (isFlipped) {
+      a = this.neg(a);
+      b = this.neg(b);
+      c = this.neg(c);
+    }
+    const root = this.sqrt(this.addmul(1n, this.mul(b, b), -4n, this.mul(a, c)));
+    if (root === null) {
+      this.pushFactor(result, polynomial, k);
+      return;
+    }
+    if (isFlipped && k % 2 === 1) result.constant = -result.constant;
+    const linear = this.add(this.mulTerm(2n, this.mkPower(variable, 1), a), b);
+    this.pushFactor(result, this.pp(this.sub(linear, root), variable), k);
+    this.pushFactor(result, this.pp(this.add(linear, root), variable), k);
+  }
+
+  // is_perfect_square for the monomial at a position: the square root of its coefficient when the
+  // whole term is a square.
+  private getTermSquareRoot(polynomial: Polynomial, position: number) {
+    const monomial = polynomial.ms[position];
+    if (monomial.degrees.some((degree) => degree % 2 === 1)) return null;
+    return getExactSquareRoot(polynomial.as[position]);
+  }
+
+  // sqrt: the square root of p with a positive graded-lex leading coefficient, or null.
+  sqrt(polynomial: Polynomial) {
+    if (polynomial.size === 0) return polynomial;
+    if (this.getTermSquareRoot(polynomial, this.getGradedLexMinPos(polynomial)) === null)
+      return null;
+    const maxPos = polynomial.getGradedLexMaxPos();
+    const a = this.getTermSquareRoot(polynomial, maxPos);
+    if (a === null) return null;
+    const maxMonomial = polynomial.ms[maxPos];
+    const m1 = this.mkMonomial(
+      maxMonomial.vars,
+      maxMonomial.degrees.map((degree) => degree / 2),
+    );
+    const root = this.som;
+    const rest = this.som2;
+    root.reset();
+    rest.reset();
+    const twoA = 2n * a;
+    root.addTerm(a, m1);
+    for (let index = 0; index < polynomial.size; index++)
+      if (index !== maxPos) rest.addTerm(polynomial.as[index], polynomial.ms[index]);
+    while (true) {
+      const restMax = rest.getGradedLexMaxPos();
+      if (restMax === -1) {
+        rest.reset();
+        return root.mk();
+      }
+      const monomial = this.divMonomials(rest.ms[restMax], m1);
+      if (monomial === null || rest.as[restMax] % twoA !== 0n) {
+        root.reset();
+        rest.reset();
+        return null;
+      }
+      const coeff = floorDiv(rest.as[restMax], twoA);
+      const rootSize = root.as.length;
+      for (let index = 0; index < rootSize; index++) {
+        if (root.as[index] === 0n) continue;
+        rest.addTerm(-(root.as[index] * coeff * 2n), this.mulMonomials(root.ms[index], monomial));
+      }
+      rest.addTerm(-(coeff * coeff), this.mulMonomials(monomial, monomial));
+      root.addTerm(coeff, monomial);
+    }
+  }
+
+  // graded_lex_min_pos
+  private getGradedLexMinPos(polynomial: Polynomial) {
+    let minPos = 0;
+    for (let index = 1; index < polynomial.size; index++)
+      if (gradedLexCompare(polynomial.ms[index], polynomial.ms[minPos]) < 0) minPos = index;
+    return minPos;
+  }
+
+  // vars: the variables of p in order of occurrence.
+  private getVars(polynomial: Polynomial) {
+    const vars: number[] = [];
+    for (const monomial of polynomial.ms)
+      for (const variable of monomial.vars) if (!vars.includes(variable)) vars.push(variable);
+    return vars;
+  }
+
+  // substitute: p with each xs[i] replaced by the integer values[i].
+  substitute(polynomial: Polynomial, vars: readonly number[], values: readonly bigint[]) {
+    this.som.reset();
+    for (let index = 0; index < polynomial.size; index++) {
+      const monomial = polynomial.ms[index];
+      let coeff = polynomial.as[index];
+      const keptVars: number[] = [];
+      const keptDegrees: number[] = [];
+      for (let power = 0; power < monomial.size; power++) {
+        const position = vars.indexOf(monomial.vars[power]);
+        if (position === -1) {
+          keptVars.push(monomial.vars[power]);
+          keptDegrees.push(monomial.degrees[power]);
+        } else coeff *= values[position] ** BigInt(monomial.degrees[power]);
+      }
+      this.som.addTerm(coeff, this.mkMonomial(keptVars, keptDegrees));
+    }
+    return this.som.mk();
+  }
+
+  // translate: p(x + v), by Horner on the coefficients of p in x.
+  translate(polynomial: Polynomial, variable: number, value: bigint) {
+    const degree = this.degree(polynomial, variable);
+    if (degree === 0 || value === 0n) return polynomial;
+    const coeffs = Array.from({ length: degree + 1 }, () => new SomBuffer(this));
+    for (let index = 0; index < polynomial.size; index++) {
+      const monomial = polynomial.ms[index];
+      coeffs[monomial.degreeOf(variable)].addTerm(
+        polynomial.as[index],
+        this.divX(monomial, variable),
+      );
+    }
+    for (let step = 1; step <= degree; step++)
+      for (let power = degree - step; power <= degree - 1; power++)
+        coeffs[power].addmulBuffer(value, this.unit, coeffs[power + 1]);
+    this.som.reset();
+    for (let power = 0; power <= degree; power++)
+      this.som.addmulBuffer(1n, this.mkPower(variable, power), coeffs[power]);
+    return this.som.mk();
+  }
+
+  private isSquareFreeIn(polynomial: Polynomial, variable: number) {
+    if (this.isConst(polynomial)) return polynomial.size > 0;
+    return this.isConst(this.gcd(polynomial, this.derivative(polynomial, variable)));
+  }
+
+  private isPrimitive(polynomial: Polynomial, variable: number) {
+    return this.eq(polynomial, this.pp(polynomial, variable));
+  }
+
+  // factor_n_sqf_pp, try_multivar_factor: reduces p to two variables by evaluating the others,
+  // factors it at a point of the lifting variable, lifts a split of the univariate factors with
+  // Hensel's lemma and keeps it when the lifted factors multiply back to p. Returns false when no
+  // split lifts, leaving p unfactored.
+  private factorMultivariate(polynomial: Polynomial, x: number, k: number, result: Factors) {
+    const allVars = this.getVars(polynomial);
+    const mainVars = [
+      x,
+      ...allVars
+        .filter((variable) => variable !== x)
+        .map((variable) => [this.degree(polynomial, variable), variable])
+        .sort((first, second) => second[0] - first[0] || second[1] - first[1])
+        .filter((entry) => entry[0] > 1)
+        .map((entry) => entry[1]),
+    ];
+    for (const mainVar of mainVars) {
+      const degMain = this.degree(polynomial, mainVar);
+      if (degMain <= 1) continue;
+      for (const liftVar of allVars) {
+        if (liftVar === mainVar) continue;
+        const evalVars = allVars.filter((variable) => variable !== mainVar && variable !== liftVar);
+        const maxCombos = evalVars.length === 0 ? 1 : 5;
+        for (let combo = 0; combo < maxCombos; combo++) {
+          const bivariate =
+            evalVars.length === 0
+              ? polynomial
+              : this.substitute(
+                  polynomial,
+                  evalVars,
+                  evalVars.map(
+                    (_variable, index) =>
+                      FACTOR_EVAL_VALUES[
+                        Math.floor(combo / FACTOR_EVAL_VALUES.length ** index) %
+                          FACTOR_EVAL_VALUES.length
+                      ],
+                  ),
+                );
+          if (this.degree(bivariate, mainVar) !== degMain) continue;
+          const degLift = this.degree(bivariate, liftVar);
+          if (degLift === 0) continue;
+          for (const point of FACTOR_EVAL_VALUES) {
+            const univariate = this.substitute(bivariate, [liftVar], [point]);
+            if (!this.isUnivariate(univariate)) continue;
+            if (this.degree(univariate, mainVar) !== degMain) continue;
+            if (!this.isSquareFreeIn(univariate, mainVar)) continue;
+            const univariateFs: UpolynomialFactors = { constant: 1n, factors: [], degrees: [] };
+            factorSquareFree(
+              this.um,
+              this.um.getPrimitive(this.toCoeffs(univariate)),
+              univariateFs,
+              1,
+              DEFAULT_FACTOR_PARAMS,
+            );
+            const factorCount = univariateFs.factors.length;
+            if (factorCount <= 1) continue;
+            const translated = this.translate(bivariate, liftVar, point);
+            const lcPolynomial = this.coeff(translated, mainVar, degMain);
+            const lcAtZero = this.isConst(lcPolynomial)
+              ? (lcPolynomial.as[0] ?? 0n)
+              : this.getConstValue(this.substitute(lcPolynomial, [liftVar], [0n]));
+            if (lcAtZero === null) continue;
+            for (const prime of FACTOR_PRIMES) {
+              if (getGcd(prime, lcAtZero) !== 1n) continue;
+              for (let split = 1; split <= Math.floor(factorCount / 2); split++) {
+                let h1 = univariateFs.factors[0];
+                for (let index = 1; index < split; index++)
+                  h1 = this.um.mul(h1, univariateFs.factors[index]);
+                let h2 = univariateFs.factors[split];
+                for (let index = split + 1; index < factorCount; index++)
+                  h2 = this.um.mul(h2, univariateFs.factors[index]);
+                const lifted = this.liftBivariate(
+                  translated,
+                  mainVar,
+                  liftVar,
+                  degLift,
+                  this.um.flipSignIfLmNeg(h1),
+                  this.um.flipSignIfLmNeg(h2),
+                  lcAtZero,
+                  prime,
+                );
+                if (lifted === null) continue;
+                const candidates = lifted.map((factor) => this.translate(factor, liftVar, -point));
+                if (evalVars.length === 0) {
+                  for (const candidate of candidates) {
+                    if (this.isConst(candidate) || this.degree(candidate, x) === 0) continue;
+                    this.pushSmallFactor(candidate, x, k, result);
+                  }
+                  return true;
+                }
+                for (const candidate of candidates) {
+                  if (this.isConst(candidate)) continue;
+                  const division = this.exactPseudoDivision(
+                    polynomial,
+                    candidate,
+                    this.maxVar(candidate),
+                  );
+                  if (division.remainder.size !== 0) continue;
+                  if (!this.eq(this.mul(candidate, division.quotient), polynomial)) continue;
+                  for (const part of [candidate, division.quotient]) {
+                    if (this.isConst(part)) result.constant *= part.as[0];
+                    else if (this.degree(part, x) !== 0) this.pushSmallFactor(part, x, k, result);
+                  }
+                  return true;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  // The factors of a lifted part, splitting only linear and quadratic ones further.
+  private pushSmallFactor(polynomial: Polynomial, x: number, k: number, result: Factors) {
+    const degree = this.degree(polynomial, x);
+    if (degree === 2 && this.isPrimitive(polynomial, x) && this.isSquareFreeIn(polynomial, x))
+      this.factorQuadratic(polynomial, x, k, result);
+    else this.pushFactor(result, polynomial, k);
+  }
+
+  private getConstValue(polynomial: Polynomial) {
+    if (!this.isConst(polynomial)) return null;
+    return polynomial.as[0] ?? 0n;
+  }
+
+  // try_bivar_hensel_lift: lifts q(x, 0) = lc * h1 * h2 to q = F1 * F2 in Z_p[x][y] by linear
+  // Hensel lifting on the coefficients of y, then reads F1 and F2 back over Z. Null when h1 and h2
+  // are not coprime in Z_p, q is not bivariate, or the product of the lifted factors is not q.
+  private liftBivariate(
+    q: Polynomial,
+    x: number,
+    y: number,
+    degY: number,
+    h1: readonly bigint[],
+    h2: readonly bigint[],
+    lc: bigint,
+    prime: bigint,
+  ) {
+    const zp = new UpolynomialManager(prime);
+    const f1 = zp.mkMonic(zp.set(h1));
+    const f2 = zp.mkMonic(zp.set(h2));
+    const ext = zp.extGcd(f1, f2);
+    if (ext.d.length !== 1 || ext.d[0] !== 1n) return null;
+    const qCoeffs: bigint[][] = [];
+    for (let power = 0; power <= degY; power++) {
+      const coeff = this.coeff(q, y, power);
+      if (coeff.size !== 0 && !this.isUnivariate(coeff) && !this.isConst(coeff)) return null;
+      qCoeffs.push(zp.set(coeff.size === 0 ? [] : this.toCoeffs(coeff)));
+    }
+    const f1Coeffs: bigint[][] = Array.from({ length: degY + 1 }, () => []);
+    const f2Coeffs: bigint[][] = Array.from({ length: degY + 1 }, () => []);
+    f1Coeffs[0] = zp.set(f1);
+    f2Coeffs[0] = zp.mulConst(f2, zp.normalizeNumeral(lc));
+    const lcInv = zp.inv(lc);
+    for (let power = 1; power <= degY; power++) {
+      let error = zp.set(qCoeffs[power]);
+      for (let first = 0; first <= power; first++) {
+        const second = power - first;
+        if (second > degY || second === 0 || first === 0) continue;
+        if (f1Coeffs[first].length === 0 || f2Coeffs[second].length === 0) continue;
+        error = zp.sub(error, zp.mul(f1Coeffs[first], f2Coeffs[second]));
+      }
+      if (error.length === 0) continue;
+      const a = zp.divRem(zp.mul(error, ext.v), f1).remainder;
+      const b = zp.divRem(zp.mul(error, ext.u), f2).remainder;
+      f1Coeffs[power] = zp.mulConst(a, lcInv);
+      f2Coeffs[power] = zp.set(b);
+    }
+    const toPolynomial = (coeffs: readonly bigint[][]) => {
+      let result = this.zero;
+      for (let power = 0; power <= degY; power++) {
+        if (coeffs[power].length === 0) continue;
+        const univariate = this.fromCoeffs(coeffs[power], x);
+        if (univariate.size === 0) continue;
+        result = this.add(result, this.mulTerm(1n, this.mkPower(y, power), univariate));
+      }
+      return result;
+    };
+    const first = toPolynomial(f1Coeffs);
+    const second = toPolynomial(f2Coeffs);
+    return this.eq(this.mul(first, second), q) ? [first, second] : null;
   }
 
   // psc_chain: the principal subresultant coefficients of p and q in x, the resultant first. Only

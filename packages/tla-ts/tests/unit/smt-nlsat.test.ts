@@ -94,10 +94,6 @@ describe("nlsat polynomials", () => {
     expect(runPolynomialCommand("gcd 2:0^1 -3: ; 2:0^1 -1:")).toBe("gcd [1:]");
   });
 
-  it("refuses to factor a polynomial of degree 2 in every variable", () => {
-    expect(() => runPolynomialCommand("factor 1:0^2 -2:")).toThrow(NlsatOutOfScope);
-  });
-
   it("refuses the subresultants of a polynomial of degree 2", () => {
     expect(() => runPolynomialCommand("psc 0 1:0^2 -2: ; 1:0^1 -1:")).toThrow(NlsatOutOfScope);
   });
@@ -123,6 +119,19 @@ const runAlgebraicCommand = (input: string) => {
   const closest = isolateRootsClosest(pm, polynomial, sample, variable);
   return `closest${closest.roots.map((root, index) => ` ${closest.indices[index]}@${root}`).join("")}`;
 };
+
+describe("nlsat polynomial factorization", () => {
+  // Products of random factors in two or three variables, up to degree 2 in each variable per
+  // factor, factored as Z3 does: univariate factorization, the square root of a discriminant, and
+  // bivariate Hensel lifting at evaluation points, monomial order included.
+  const cases: [string, string][] = JSON.parse(
+    readFileSync(join(FIXTURES, "polynomial-factorization.json"), "utf8"),
+  );
+
+  it.each(cases)("%s", (input, expected) => {
+    expect(runPolynomialCommand(input)).toBe(expected);
+  });
+});
 
 describe("nlsat algebraic numbers", () => {
   // Random rational intervals and polynomials of degree 1 in the root variable, with the numbers
@@ -335,8 +344,10 @@ describe("nlsat check_assignment", () => {
     expect(runCheckAssignment("ca 1\nc GT 1:0^1\nv 0 1 1\nend")).toBe("lit 2\nundef");
   });
 
-  it("refuses to explain with a polynomial of degree 2 in its maximal variable", () => {
-    expect(() => runCheckAssignment("ca 1\nc LT 1:0^2 -4:\nv 0 3 1\nend")).toThrow(NlsatOutOfScope);
+  it("explains with a polynomial of degree 2 in its maximal variable by factoring it", () => {
+    expect(runCheckAssignment("ca 1\nint 0\nc LT 1:0^2 -4:\nv 0 3 1\nend")).toBe(
+      "lit 2\nlemma 5 !GT [1:0^1 -2:] 3 !LT [1:0^2 -4:]",
+    );
   });
 
   it("refuses to explain with an irrational root", () => {
@@ -378,10 +389,11 @@ describe("nra check_assignment", () => {
     expect(result.core.isCheckFeasible).toBe(true);
   });
 
-  it("answers unknown, without a lemma, on degree 2 in the root variable", () => {
+  it("refutes x*x <= 1 at x = 2 with a lemma, factoring x^2 - 1", () => {
     const result = getCore((x) => [x, x], KIND_LE, 1n);
-    expect(new NraSolver(result.core).checkAssignment()).toBe(L_UNDEF);
-    expect(result.core.lemmas).toHaveLength(0);
+    expect(new NraSolver(result.core).checkAssignment()).toBe(L_FALSE);
+    expect(result.core.lemmas).toHaveLength(1);
+    expect([...result.core.lemmas[0].expl]).toContain(result.constraints[4]);
   });
 
   it("answers unknown, without a lemma, on an irrational root", () => {
