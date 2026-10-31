@@ -16,7 +16,6 @@ import {
   OP_LE,
   OP_NOT,
   OP_OR,
-  OP_SUB,
   SORT_BOOL,
   type AstManager,
 } from "./ast";
@@ -177,8 +176,7 @@ const collectCandidates = (manager: AstManager, quantifier: number) => {
       : args.length === 1
         ? args[0]
         : rewriter.mkAppCore(OP_AND, args, SORT_BOOL);
-  const mkSub = (first: number, second: number) =>
-    rewriter.mkAppCore(OP_SUB, [first, second], manager.sorts[first]);
+  const mkSub = (first: number, second: number) => rewriter.mkSub(first, second);
   const mkAdd = (args: number[], sort: number) =>
     args.length === 0
       ? manager.mkNumeralOfSort(Rational.zero, sort)

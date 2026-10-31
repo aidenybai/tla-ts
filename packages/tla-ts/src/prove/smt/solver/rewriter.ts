@@ -809,7 +809,14 @@ export class Rewriter extends RewriterTpl {
     return manager.mkApp(OP_ITE, [condition, thenExpr, elseExpr], sort);
   }
 
+  // poly_rewriter::mk_add and mk_sub with a result: arith_rewriter's sum or difference, which is
+  // not rewritten again.
   mkAdd(args: number[]) {
     return this.arith.mkAdd(args) ?? this.arith.mkAddApp(args);
+  }
+
+  mkSub(first: number, second: number) {
+    const result = this.arith.mkSub([first, second]);
+    return typeof result === "number" ? result : result.expr;
   }
 }

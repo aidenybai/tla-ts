@@ -2,16 +2,7 @@
 // sets and the AUF solver of the model finder: the solver groups the argument positions and
 // variables that must share an instantiation set, and each group gets a projection function that
 // maps any value to the value of a term in its set.
-import {
-  OP_ADD,
-  OP_ITE,
-  OP_LT,
-  OP_SUB,
-  SORT_BOOL,
-  SORT_INT,
-  isArithSort,
-  type AstManager,
-} from "./ast";
+import { OP_ITE, OP_LT, SORT_BOOL, SORT_INT, isArithSort, type AstManager } from "./ast";
 import { combineHash } from "./hash";
 import { ObjHashtable, ObjMap } from "./hashtable";
 import { FuncInterp, RandomGen, type ProtoModel } from "./proto-model";
@@ -406,8 +397,8 @@ export class AufSolver {
     const rewriter = this.rewriter;
     const one = this.manager.mkNumeral(1n);
     for (const exception of node.getExceptions()) {
-      const minusOne = rewriter.mkAppCore(OP_SUB, [exception, one], SORT_INT);
-      const plusOne = rewriter.mkAppCore(OP_ADD, [exception, one], SORT_INT);
+      const minusOne = rewriter.mkSub(exception, one);
+      const plusOne = rewriter.mkAdd([exception, one]);
       node.insert(this.manager, plusOne, 0);
       node.insert(this.manager, minusOne, 0);
     }
