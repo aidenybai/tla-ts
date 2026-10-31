@@ -13,7 +13,11 @@
 //   (polynomial.cpp:4815), where this port returns 1. The callers in scope only test whether
 //   the gcd is constant.
 // - Polynomial ids count up from zero. Z3 recycles the ids of deleted polynomials, so where nlsat
-//   breaks a tie between two root functions on their ids it may pick the other one.
+//   breaks a tie between two root functions on their ids it may pick the other one. Matching Z3
+//   would take explicit reference counts at its roughly 490 polynomial_ref sites in polynomial,
+//   algebraic_numbers, explain, levelwise and nra, and every pm routine allocating the same
+//   temporaries as Z3's, not just returning the same result. Random differential tests hit such a
+//   tie in about 1 of 300 levelwise and 1 of 3,000 explain programs, and no corpus trace yet.
 import { SmtInvariantError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { UpolynomialManager } from "./upolynomial";
