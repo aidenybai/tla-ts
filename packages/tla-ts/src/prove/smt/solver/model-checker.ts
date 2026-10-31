@@ -2,7 +2,7 @@
 // the candidate model satisfies each relevant quantifier: the negated body, with the model's
 // interpretations in place of the uninterpreted symbols, goes to an auxiliary context. A model of it
 // is a counterexample that becomes an instance of the quantifier.
-import { KIND_APP, OP_OR, SORT_BOOL, type AstManager } from "./ast";
+import { KIND_APP, OP_NOT, OP_OR, SORT_BOOL, type AstManager } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
 import { Context } from "./context";
 import type { Enode } from "./enode";
@@ -171,7 +171,8 @@ export class ModelChecker {
     }
     const subst = new VarSubst(manager, true);
     const skBody = subst.apply(body, sks.items);
-    const negated = manager.mkNot(skBody);
+    // m.mk_not, which makes (not true) of a true body too.
+    const negated = manager.mkApp(OP_NOT, [skBody], SORT_BOOL);
     manager.incRef(negated);
     aux.assert(negated);
     manager.decRef(negated);
