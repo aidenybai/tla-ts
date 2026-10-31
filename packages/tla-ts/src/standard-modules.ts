@@ -145,7 +145,13 @@ export const CORE_OPERATORS: Builtin[] = [
             : operator === "\\cap"
               ? intersectSorted
               : differenceSorted;
-        return merge(toFiniteSet(left), toFiniteSet(right));
+        // Merging compares elements across the sets. Where that fails, TLC's element-by-element
+        // membership test fails or succeeds on its own.
+        try {
+          return merge(toFiniteSet(left), toFiniteSet(right));
+        } catch (error) {
+          if (!(error instanceof TlaEvaluationError)) throw error;
+        }
       }
       if (isReducible(left)) return combineReducible(operator, left, right);
       if (operator !== "\\" && isReducible(right)) return combineReducible(operator, right, left);
