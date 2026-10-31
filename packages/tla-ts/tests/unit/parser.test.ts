@@ -121,6 +121,15 @@ describe("parseModule reads operators like SANY", () => {
     expect(definition?.body).toMatchObject({ kind: "Apply", operator });
   });
 
+  it.each(["(2\n   + 3)", "[a |->\n   2].a", "{1,\n2}"])(
+    "ends a conjunct at a token left of its bullet inside %j as SANY does",
+    (operand) => {
+      expect(() => parseModule(`---- MODULE M ----\nE == /\\ 1 = ${operand}\n====`)).toThrow(
+        TlaSyntaxError,
+      );
+    },
+  );
+
   it.each([
     ["a \\in L:: b /\\ c", true],
     ["~ L:: a /\\ b", true],

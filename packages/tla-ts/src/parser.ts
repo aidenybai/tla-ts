@@ -524,7 +524,10 @@ const parse = (source: string, mode: ParseMode): Module => {
     return advance().text;
   };
 
-  const withoutOffside = <Result>(parse: () => Result) => {
+  // tlapm reads a bracketed expression apart from the junction list around it, whose alignment
+  // SANY keeps applying.
+  const withBracketLayout = <Result>(parse: () => Result) => {
+    if (!isTlapm) return parse();
     cursor.offsideColumns.push(NO_OFFSIDE);
     const result = parse();
     cursor.offsideColumns.pop();
@@ -686,7 +689,7 @@ const parse = (source: string, mode: ParseMode): Module => {
   };
 
   const parseArguments = () =>
-    withoutOffside(() => {
+    withBracketLayout(() => {
       expect("(");
       const args = parseSeparated(parseArgument);
       expect(")");
@@ -711,7 +714,7 @@ const parse = (source: string, mode: ParseMode): Module => {
   };
 
   const parseBracket = (start: Token): Expression =>
-    withoutOffside(() => {
+    withBracketLayout(() => {
       const location = getLocation(start);
       // SANY takes a keyword for the first field of a record, as it does for a selected field.
       const isIdentifier = peek().kind === "Identifier";
@@ -786,7 +789,7 @@ const parse = (source: string, mode: ParseMode): Module => {
   };
 
   const parseBrace = (start: Token): Expression =>
-    withoutOffside(() => {
+    withBracketLayout(() => {
       const location = getLocation(start);
       if (accept("}")) return { kind: "SetEnumeration", elements: [], location };
       if (isBoundAhead() && (peek(1).text === "\\in" || isAt("<<"))) {
@@ -816,7 +819,7 @@ const parse = (source: string, mode: ParseMode): Module => {
 
   const parseTuple = (start: Token): Expression => {
     const location = getLocation(start);
-    const elements = withoutOffside(() =>
+    const elements = withBracketLayout(() =>
       isAt(">>") || isAt(">>_") ? [] : parseSeparated(() => parseExpression()),
     );
     if (accept(">>_")) {
@@ -983,7 +986,7 @@ const parse = (source: string, mode: ParseMode): Module => {
     }
     switch (token.text) {
       case "(": {
-        const expression = withoutOffside(() => parseExpression());
+        const expression = withBracketLayout(() => parseExpression());
         expect(")");
         return expression;
       }
@@ -1039,7 +1042,7 @@ const parse = (source: string, mode: ParseMode): Module => {
       case "WF_":
       case "SF_": {
         const subscript = parseSubscript();
-        const action = withoutOffside(() => {
+        const action = withBracketLayout(() => {
           expect("(");
           const expression = parseExpression();
           expect(")");
@@ -1154,8 +1157,8 @@ const parse = (source: string, mode: ParseMode): Module => {
       }
       if (token.text === "[") {
         advance();
-        const args = withoutOffside(() => parseSeparated(() => parseExpression()));
-        withoutOffside(() => expect("]"));
+        const args = withBracketLayout(() => parseSeparated(() => parseExpression()));
+        withBracketLayout(() => expect("]"));
         operators.last = FUNCTION_PRECEDENCE;
         state.left = withRange(
           { kind: "FunctionApplication", function: state.left, args, location },
@@ -1276,7 +1279,7 @@ const parse = (source: string, mode: ParseMode): Module => {
     }
     const name = expectIdentifier();
     if (accept("[")) {
-      const bounds = withoutOffside(() => parseBounds());
+      const bounds = withBracketLayout(() => parseBounds());
       expect("]");
       expect("==");
       return {
