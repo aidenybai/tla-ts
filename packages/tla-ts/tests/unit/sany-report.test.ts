@@ -107,6 +107,13 @@ Spec == Init /\\ [][Next]_x
     },
   );
 
+  it("names an operand selector past the last operand after the argument it selects", () => {
+    const report = getReport({
+      Sel: "---- MODULE Sel ----\nT == 1 = 1 /\\ 2 = 2\nP == T!3\n====\n",
+    });
+    expect(report.text).toContain("Nonexistent operand specified by `argument selector 3'.");
+  });
+
   it("reports an action without a subscript as an unsupported expression", () => {
     const report = getReport({
       Box: "---- MODULE Box ----\nVARIABLE x\nSpec == x = 0 /\\ [][x' = x] /\\ [x, x] = 1\n====\n",

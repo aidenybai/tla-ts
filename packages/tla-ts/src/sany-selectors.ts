@@ -133,6 +133,10 @@ export const isGeneralId = (items: SelectorItem[]) => {
   return last.op !== "Name" || last.args === undefined;
 };
 
+// SANY's selectorItemToString, which names an operand selector after the argument it selects.
+const getSelectorItemName = (item: SelectorItem) =>
+  typeof item.op === "number" ? `argument selector ${item.name}` : item.name;
+
 // Subexpression.tla's ArgNum: the human number of the operand that a selector picks out of an
 // expression with arity operands, or -1.
 const getArgNumber = (op: SelectorOp, arity: number) => {
@@ -258,9 +262,10 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
           // selectorItemToString does, which fails on an argument selector that isn't a number.
           if (symbol === undefined && generator.version === "1.7.4") {
             const last = items.length - 1;
-            const item = items[last];
-            const name = typeof item.op === "number" ? `argument selector ${item.name}` : item.name;
-            return generator.addError(getItemLocation(last), `Unknown operator: \`${name}'.`);
+            return generator.addError(
+              getItemLocation(last),
+              `Unknown operator: \`${getSelectorItemName(items[last])}'.`,
+            );
           }
           if (symbol === undefined) {
             return generator.addError(
@@ -391,7 +396,7 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
           const nonexistent = () =>
             generator.addError(
               getItemLocation(walk.index),
-              `Nonexistent operand specified by \`${item.name}'.`,
+              `Nonexistent operand specified by \`${getSelectorItemName(item)}'.`,
             );
           if (item.op === ":") {
             const isAllowed =
