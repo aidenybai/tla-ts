@@ -25,6 +25,8 @@ export interface LarConstraint {
   readonly rhs: Impq;
   readonly dep: Dependency;
   isActive: boolean;
+  // Made for the atom of an nla lemma.
+  readonly isAuxiliary: boolean;
 }
 
 interface ConstraintScope {
@@ -36,10 +38,19 @@ export class ConstraintSet {
   readonly constraints: LarConstraint[] = [];
   private active: number[] = [];
   private scopes: ConstraintScope[] = [];
+  // m_is_auxiliary_mode: whether new constraints are auxiliary.
+  isAuxiliaryMode = false;
 
   add(column: number, kind: ConstraintKind, rhs: Impq) {
     const index = this.constraints.length;
-    this.constraints.push({ column, kind, rhs, dep: mkLeaf(index), isActive: false });
+    this.constraints.push({
+      column,
+      kind,
+      rhs,
+      dep: mkLeaf(index),
+      isActive: false,
+      isAuxiliary: this.isAuxiliaryMode,
+    });
     return index;
   }
 

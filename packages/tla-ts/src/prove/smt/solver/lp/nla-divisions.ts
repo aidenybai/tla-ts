@@ -1,7 +1,7 @@
 // Ported from Z3 (src/math/lp/nla_divisions.h, src/math/lp/nla_divisions.cpp), MIT license, see
 // z3-license.txt. The lemmas of nla on div, mod and /: monotonicity in the dividend and the
-// divisor, bounded divisions by numerals, and divisibility closures over a shared divisor. Z3
-// skips the check while nra's model is in use, which never happens here since nra is not ported.
+// divisor, bounded divisions by numerals, and divisibility closures over a shared divisor. The
+// check is skipped while nla uses nlsat's model.
 import { getEuclideanDiv, Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
 import { NULL_LPVAR } from "./lar-solver";
@@ -179,6 +179,7 @@ export class Divisions {
   }
 
   check() {
+    if (this.core.isUsingNraModel) return;
     if (this.checkMonotonicity(this.idivisions)) return;
     this.checkModMult();
     this.checkLinearDivisibility();

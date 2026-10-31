@@ -1,13 +1,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { NlsatUnsupportedError } from "../../src/errors";
+import { NlsatUnsupportedError, SmtCanceledError } from "../../src/errors";
 import { L_FALSE, L_TRUE } from "../../src/prove/smt/solver/lbool";
 import {
   type ConstraintKind,
   KIND_EQ,
   KIND_GE,
   KIND_LE,
+  KIND_LT,
 } from "../../src/prove/smt/solver/lp/constraints";
 import { LarSolver } from "../../src/prove/smt/solver/lp/lar-solver";
 import { NlaCore } from "../../src/prove/smt/solver/lp/nla-core";
@@ -33,6 +34,7 @@ import {
   factorUpolynomial,
 } from "../../src/prove/smt/solver/nlsat/upolynomial-factorization";
 import { Rational } from "../../src/prove/smt/solver/rational";
+import { ResourceLimit } from "../../src/prove/smt/solver/rlimit";
 import {
   type Polynomial,
   PolynomialCache,
@@ -945,7 +947,7 @@ describe("nra check_assignment", () => {
     const x = lra.addVar(0, false);
     const y = lra.addVar(1, false);
     const m = lra.addVar(2, false);
-    const core = new NlaCore(lra);
+    const core = new NlaCore(lra, new ResourceLimit(Infinity));
     core.addMonic(m, factors(x, y));
     const constraints = [
       lra.mkVarBound(x, KIND_GE, Rational.of(2n)),
@@ -980,5 +982,49 @@ describe("nra check_assignment", () => {
     expect(new NraSolver(result.core).checkAssignment()).toBe(L_FALSE);
     expect(result.core.lemmas).toHaveLength(1);
     expect([...result.core.lemmas[0].expl]).toContain(result.constraints[4]);
+  });
+});
+
+describe("nra check", () => {
+  // The monic m = x*x with the bounds x >= 1 and m kind bound.
+  const getSquare = (kind: ConstraintKind, bound: bigint) => {
+    const lra = new LarSolver(() => false);
+    const x = lra.addVar(0, false);
+    const m = lra.addVar(1, false);
+    const core = new NlaCore(lra, new ResourceLimit(Infinity));
+    core.addMonic(m, [x, x]);
+    const constraints = [
+      lra.mkVarBound(x, KIND_GE, Rational.of(1n)),
+      lra.mkVarBound(m, kind, Rational.of(bound)),
+    ];
+    for (const constraint of constraints) lra.activate(constraint);
+    lra.findFeasibleSolution();
+    core.initToRefine();
+    return { core, x, m, constraints };
+  };
+
+  it("refutes x*x < 1 with a lemma over the constraints of nlsat's core", () => {
+    const result = getSquare(KIND_LT, 1n);
+    expect(result.core.nra.check(Infinity, Infinity)).toBe(L_FALSE);
+    expect(result.core.lemmas).toHaveLength(1);
+    expect(result.core.lemmas[0].ineqs).toHaveLength(0);
+    expect([...result.core.lemmas[0].expl].sort()).toEqual(result.constraints);
+    expect(result.core.isUsingNraModel).toBe(true);
+  });
+
+  it("finds the model x = sqrt(2) of x*x = 2 and makes it nla's", () => {
+    const result = getSquare(KIND_EQ, 2n);
+    const nra = result.core.nra;
+    expect(nra.check(Infinity, Infinity)).toBe(L_TRUE);
+    expect(result.core.isUsingNraModel).toBe(true);
+    const value = nra.value(result.x);
+    expect(nra.am.isRational(value)).toBe(false);
+    expect(nra.am.compare(nra.am.mul(value, value), new Anum(Rational.of(2n)))).toBe(0);
+    expect(nra.value(result.m).value).toEqual(Rational.of(2n));
+  });
+
+  it("throws a named error once the search takes more steps than its budget", () => {
+    const result = getSquare(KIND_EQ, 2n);
+    expect(() => result.core.nra.check(Infinity, 1)).toThrow(SmtCanceledError);
   });
 });

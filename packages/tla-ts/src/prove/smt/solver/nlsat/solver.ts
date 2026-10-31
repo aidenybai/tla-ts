@@ -106,13 +106,22 @@ export class NlsatSolver {
     irrationalAssignments: 0,
   };
 
-  constructor(private limit: ResourceLimit | null = null) {
+  // m_rlimit: the steps of the search count against the limit, and against the budget of this
+  // solver, which Z3 sets with a scoped_rlimit on a child limit.
+  steps = 0;
+
+  constructor(
+    private limit: ResourceLimit | null = null,
+    private budget = Infinity,
+  ) {
     // mk_true_bvar: the clause [true], whose literal the first Boolean stage assigns.
     this.mkClause([TRUE_LITERAL], false, null);
   }
 
   private checkpoint() {
-    if (this.limit !== null && !this.limit.inc()) throw new SmtCanceledError();
+    this.steps++;
+    if ((this.limit !== null && !this.limit.inc()) || this.steps > this.budget)
+      throw new SmtCanceledError();
   }
 
   mkVar(isInt: boolean) {
@@ -885,7 +894,7 @@ export class NlsatSolver {
   }
 
   // restore_order
-  private restoreOrder() {
+  restoreOrder() {
     this.reorder([...this.perm]);
   }
 

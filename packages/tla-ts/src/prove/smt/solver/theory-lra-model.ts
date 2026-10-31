@@ -12,10 +12,13 @@ import {
   OP_MOD,
   OP_MOD0,
 } from "./ast";
+import { SmtUnsupportedError } from "../../../errors";
 import { Enode } from "./enode";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import { NULL_LPVAR } from "./lp/lar-solver";
+import type { NlaCore } from "./lp/nla-core";
+import { Anum } from "./nlsat/algebraic";
 import { randomUpdate } from "./lp/random-updater";
 import { shrink } from "./array";
 import { TheoryLraPropagate } from "./theory-lra-propagate";
@@ -78,14 +81,23 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     let numCandidates = 0;
     const start = context.getRandomValue();
     const byValue = new Map<string, number>();
+    const representatives: number[] = [];
     for (let index = 0; index < numVars; index++) {
       const thVar = (index + start) % numVars;
       if (!this.isRelevantAndShared(this.getEnode(thVar))) continue;
       const column = this.registerVar(thVar);
+      // m_model_eqs: with nlsat's model, the values are compared one by one.
       const key = `${this.isIntVar(thVar)}:${solver.getValue(column)}`;
-      const other = byValue.get(key);
+      const other = this.nla?.isUsingNraModel
+        ? representatives.find(
+            (representative) =>
+              this.isIntVar(representative) === this.isIntVar(thVar) &&
+              this.isEq(representative, thVar),
+          )
+        : byValue.get(key);
       if (other === undefined) {
         byValue.set(key, thVar);
+        representatives.push(thVar);
         continue;
       }
       if (this.isEqual(thVar, other)) continue;
@@ -105,15 +117,11 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     this.context.pushTrail(() => {
       this.assumeEqHead = saved;
     });
-    const solver = this.solver;
     while (this.assumeEqHead < this.assumeEqCandidates.length) {
       const candidate = this.assumeEqCandidates[this.assumeEqHead];
       this.assumeEqHead++;
-      const isEq = solver
-        .getValue(this.registerVar(candidate[0]))
-        .equals(solver.getValue(this.registerVar(candidate[1])));
       if (
-        isEq &&
+        this.isEq(candidate[0], candidate[1]) &&
         !this.isEqual(candidate[0], candidate[1]) &&
         this.context.assumeEq(this.getEnode(candidate[0]), this.getEnode(candidate[1]))
       )
@@ -138,7 +146,50 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
 
   // mk_value: the value of the class of a root, rounded down for an integer.
   mkValue(node: Enode) {
-    return node.thVar < 0 ? undefined : this.getValueExpr(node.thVar);
+    if (node.thVar < 0) return undefined;
+    const nla = this.nla;
+    if (
+      nla === undefined ||
+      !nla.isUsingNraModel ||
+      this.solver.externalToLocalColumn(node.thVar) === NULL_LPVAR
+    )
+      return this.getValueExpr(node.thVar);
+    // nlsat's value, zero for an integer whose value is not one.
+    const value = this.getNlValue(nla, node.thVar).value;
+    if (this.isIntVar(node.thVar))
+      return this.manager.mkNumeral(value instanceof Rational && value.isInt() ? value.num : 0n);
+    if (!(value instanceof Rational)) throw new SmtUnsupportedError("an irrational model value");
+    return this.manager.mkRealNumeral(value);
+  }
+
+  // is_eq: whether two variables have the same value, in nlsat's model when nla uses it.
+  private isEq(first: number, second: number) {
+    const nla = this.nla;
+    if (nla !== undefined && nla.isUsingNraModel)
+      return nla.nra.am.compare(this.getNlValue(nla, first), this.getNlValue(nla, second)) === 0;
+    const solver = this.solver;
+    return solver
+      .getValue(this.registerVar(first))
+      .equals(solver.getValue(this.registerVar(second)));
+  }
+
+  // nl_value: the value of a variable in nlsat's model, a term's the sum over its columns.
+  private getNlValue(nla: NlaCore, thVar: number) {
+    const solver = this.solver;
+    const am = nla.nra.am;
+    const column = solver.externalToLocalColumn(thVar);
+    if (!solver.hasTerm(column)) return nla.nra.value(column);
+    let result = new Anum(Rational.zero);
+    const todo: [number, Rational][] = [[column, Rational.one]];
+    while (todo.length > 0) {
+      const pending = todo.pop()!;
+      for (const entry of solver.getTerm(pending[0]).coeffs) {
+        const coeff = entry[1].mul(pending[1]);
+        if (solver.hasTerm(entry[0])) todo.push([entry[0], coeff]);
+        else result = am.add(am.mul(nla.nra.value(entry[0]), new Anum(coeff)), result);
+      }
+    }
+    return result;
   }
 
   private getValue(thVar: number) {

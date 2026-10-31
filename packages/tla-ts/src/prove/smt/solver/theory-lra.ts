@@ -4,9 +4,8 @@
 // by their sort, atoms become bounds on them, propagation makes the tableau feasible and propagates
 // implied bounds and equalities, and the final check runs the integer solver and assumes equalities
 // between shared terms with equal values. Nonlinear products and divisions go to nla
-// (src/math/lp/nla_core.cpp), which refines the model with lemmas. Z3's nra, which nla calls on
-// what its lemmas leave open, is not ported: there the theory gives up. This class adds the scopes
-// to the chain of classes that theory-lra-state.ts starts.
+// (src/math/lp/nla_core.cpp), which refines the model with lemmas, and runs nlsat on what they
+// leave open. This class adds the scopes to the chain of classes that theory-lra-state.ts starts.
 import { shrink } from "./array";
 import { TheoryLraFinalCheck } from "./theory-lra-final-check";
 

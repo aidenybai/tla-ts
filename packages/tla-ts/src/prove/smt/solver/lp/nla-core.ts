@@ -4,9 +4,9 @@
 // src/math/lp/factorization_factory_imp.cpp, src/math/lp/nla_solver.cpp), MIT license, see
 // z3-license.txt. The nonlinear core over lar_solver: the monomials whose values disagree with the
 // products of their factors' values are refined by lemmas, which the passes below generate, and
-// by literals to split on. Of Z3's nra solver, only check_assignment is ported, see nra-solver.ts:
-// where Z3 runs nlsat's search, it returns unknown, which nla treats as giving no lemma.
+// by literals to split on, and by nlsat's search on what they leave open, see nra-solver.ts.
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
+import type { ResourceLimit } from "../rlimit";
 import { Rational } from "../rational";
 import { IndexedUintSet } from "./containers";
 import {
@@ -347,13 +347,18 @@ export class NlaCore {
   readonly patcher: Patcher;
   readonly horner: Horner;
   readonly grobner: Grobner;
-  private nra = new NraSolver(this);
+  readonly nra = new NraSolver(this);
+  // m_use_nra_model: whether the values of the last nra check stand for lar_solver's.
+  isUsingNraModel = false;
   private nlsatBackoff: Backoff;
   private checkAssignmentFailCount = 0;
   private squeezeSchedule = new SqueezeSchedule();
   isRelevant: (lpVar: number) => boolean = () => true;
 
-  constructor(readonly lra: LarSolver) {
+  constructor(
+    readonly lra: LarSolver,
+    readonly limit: ResourceLimit,
+  ) {
     this.nlsatBackoff = new Backoff(NLA_PARAMS.delay);
     this.throttle = new NlaThrottle(lra, lra.settings.stats);
     this.tangents = new Tangents(this);
@@ -921,6 +926,7 @@ export class NlaCore {
     if (this.lra.status !== LP_OPTIMAL && this.lra.status !== LP_FEASIBLE) return L_UNDEF;
     this.initToRefine();
     this.patcher.patchMonomials();
+    this.setUseNraModel(false);
     if (this.toRefine.size === 0) return this.onToRefineEmpty();
     this.initSearch();
     this.isNlaSatisfied = false;
@@ -998,7 +1004,7 @@ export class NlaCore {
         result = this.boundedNlsat();
     }
     if (hasNoEffect() && NLA_PARAMS.nra && level >= 2) {
-      // nra's full check, which is not ported, returns unknown.
+      result = this.nra.check(Infinity, Infinity);
       stats.nraCalls++;
     }
     if (result === L_UNDEF && !hasNoEffect()) result = L_FALSE;
@@ -1010,12 +1016,24 @@ export class NlaCore {
     return NLA_PARAMS.nra && this.nlsatBackoff.shouldRun();
   }
 
-  // bounded_nlsat: a budgeted run of nlsat, which is not ported and returns unknown at once, so the
-  // backoff counts it as cheap.
+  // bounded_nlsat: a run of nlsat capped at 100 conflicts and 100000 steps. A refutation, or a run
+  // that took less than a tenth of the steps, makes the backoff run it again sooner.
   private boundedNlsat() {
+    const budget = 100000;
+    const result = this.nra.check(100, budget);
     this.stats.nraCalls++;
-    this.nlsatBackoff.update(true);
-    return L_UNDEF;
+    this.nlsatBackoff.update(result === L_FALSE || this.nra.steps < budget / 10);
+    if (result === L_TRUE) this.clear();
+    return result;
+  }
+
+  // set_use_nra_model, undone on pop.
+  setUseNraModel(isUsing: boolean) {
+    if (isUsing === this.isUsingNraModel) return;
+    this.emons.trail.push(() => {
+      this.isUsingNraModel = !isUsing;
+    });
+    this.isUsingNraModel = isUsing;
   }
 
   // Propagation.

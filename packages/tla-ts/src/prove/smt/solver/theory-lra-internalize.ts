@@ -214,7 +214,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
   // ensure_nla: the nonlinear solver, made on the first nonlinear term, in the current scopes.
   private ensureNla() {
     if (this.nla !== undefined) return this.nla;
-    const nla = new NlaCore(this.solver);
+    const nla = new NlaCore(this.solver, this.manager.limit);
     for (let index = 0; index < this.scopes.length; index++) nla.push();
     nla.isRelevant = (lpVar) =>
       this.context.isRelevant(this.getExpr(this.solver.getExternal(lpVar)));

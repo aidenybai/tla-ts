@@ -37,7 +37,8 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     const nlaStatus = this.checkNla(level);
     if (nlaStatus === FC_CONTINUE) return FC_CONTINUE;
     // Nonlinear bound optimization may invalidate integer feasibility.
-    if (nlaStatus === FC_DONE && solver.hasInfInt()) return FC_CONTINUE;
+    if (nlaStatus === FC_DONE && !this.nla?.isUsingNraModel && solver.hasInfInt())
+      return FC_CONTINUE;
     if (nlaStatus === FC_GIVEUP) result = FC_GIVEUP;
     if (this.assumeEqs()) return FC_CONTINUE;
     if (this.unsupportedTerms.length > 0) this.initVariableValues();
@@ -108,6 +109,15 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
 
   // mk_literal: the literal of an inequality of nla, over a bound or equality atom.
   private mkNlaLiteral(ineq: Ineq) {
+    // scoped_auxiliary: the bounds of the atom are auxiliary constraints.
+    const constraints = this.solver.constraints;
+    constraints.isAuxiliaryMode = true;
+    const literal = this.mkNlaLiteralCore(ineq);
+    constraints.isAuxiliaryMode = false;
+    return literal;
+  }
+
+  private mkNlaLiteralCore(ineq: Ineq) {
     const kind = ineq.cmp;
     if (kind === KIND_EQ || kind === KIND_NE) {
       const atom = this.mkTermEq(ineq.term, ineq.rs);
