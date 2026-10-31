@@ -7,6 +7,7 @@ import {
   type OperatorParam,
   type Proof,
   type ProofStep,
+  type SourceLocation,
 } from "./ast";
 import {
   createSanyError,
@@ -879,8 +880,12 @@ export const analyzeAssumeProve = (
   return data;
 };
 
-// SANY checks the level of every definition, assumption, and theorem of a module.
-export const checkModuleLevels = (module: Module, context: LevelContext) => {
+// SANY checks the level of every definition, assumption, theorem, and instance of a module.
+export const checkModuleLevels = (
+  module: Module,
+  context: LevelContext,
+  instances: { location: SourceLocation; check: () => void }[],
+) => {
   const analyzer = createLevelAnalyzer(context);
   const getLevel = (expressions: Expression[]) =>
     Math.max(0, ...expressions.map((expression) => analyzer.analyze(expression, new Map()).level));
@@ -976,5 +981,6 @@ export const checkModuleLevels = (module: Module, context: LevelContext) => {
         if (errors.length > 0) throw createSanyError(errors);
       },
     })),
+    ...instances,
   ]);
 };

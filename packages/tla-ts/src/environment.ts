@@ -52,7 +52,7 @@ import { createRuntime } from "./runtime";
 import { CORE_OPERATORS, getStandardModule, STANDARD_DEPENDENCIES } from "./standard-modules";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
-import { checkInstances, type InstanceCheck } from "./substitution-levels";
+import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
 import { getTlcDeclarationOrder } from "./tlc-order";
 import {
   checkInteger,
@@ -229,6 +229,8 @@ export const createEnvironment = (
   const runtime = createRuntime(config.checkDeadlock, options.seed);
   const linkedModules = new Map<string, LinkedModule>();
   const nestedModules = new Map<string, LinkedModule>();
+  // Each module by name, from the time its level checks run.
+  const checkedModules = new Map<string, LinkedModule>();
   const linkedList: LinkedModule[] = [];
   const dependencies = new Map<string, Set<string>>();
   const loading: Set<string>[] = [];
@@ -243,6 +245,21 @@ export const createEnvironment = (
   const copyCount = { value: 0 };
   const createName = (name: string) => `${name}#${copyCount.value++}`;
   const instanceChecks: InstanceCheck[] = [];
+  const checkInstance = createInstanceChecker((name) => {
+    const linked = checkedModules.get(name) ?? getLinkedModule(name, name);
+    return {
+      constants: linked.constants,
+      variables: linked.variables,
+      definitions: [
+        ...new Set(
+          [...linked.visible.values()].flatMap((symbol) => definitions.get(symbol.key) ?? []),
+        ),
+      ],
+      assumptions: linked.module.assumptions.map((assumption) => assumption.expression),
+      theorems: linked.module.theorems,
+      getDefinition: (symbol) => definitions.get(linked.visible.get(symbol)?.key ?? symbol),
+    };
+  });
   const instanceActions = new Map<string, InstanceAction>();
   const qualifiedNames = new Map<string, string>();
 
@@ -611,6 +628,7 @@ export const createEnvironment = (
 
   const linkModule = (unlinked: Module, scope: ModuleScope): LinkedModule => {
     const parsed = overrideDefinitions(unlinked, options.loadClass?.(unlinked.name));
+    const firstCheck = instanceChecks.length;
     const visible: Symbols = new Map([
       ...CORE_OPERATORS.map((operator): [string, ModuleSymbol] => [
         operator.name,
@@ -753,12 +771,6 @@ export const createEnvironment = (
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });
-    checkModuleLevels(module, {
-      constants: new Set(constants.map((constant) => constant.name)),
-      variables: new Set(variables),
-      getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
-      getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
-    });
     const linked = {
       module,
       constants,
@@ -769,6 +781,21 @@ export const createEnvironment = (
       modules,
       extended,
     };
+    if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
+    // SANY checks the instances of a module with its definitions and theorems, so it reports their
+    // errors together.
+    checkModuleLevels(
+      module,
+      {
+        constants: new Set(constants.map((constant) => constant.name)),
+        variables: new Set(variables),
+        getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
+        getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
+      },
+      instanceChecks
+        .splice(firstCheck)
+        .map((check) => ({ location: check.location, check: () => checkInstance(check) })),
+    );
     linkedList.push(linked);
     return linked;
   };
@@ -963,21 +990,6 @@ export const createEnvironment = (
     constantLevels: new Map(),
     evaluators: new WeakMap(),
   };
-  checkInstances(instanceChecks, (name) => {
-    const linked = linkedModules.get(name) ?? nestedModules.get(name) ?? linkedRoot;
-    return {
-      constants: linked.constants,
-      variables: linked.variables,
-      definitions: [
-        ...new Set(
-          [...linked.visible.values()].flatMap((symbol) => definitions.get(symbol.key) ?? []),
-        ),
-      ],
-      assumptions: linked.module.assumptions.map((assumption) => assumption.expression),
-      theorems: linked.module.theorems,
-      getDefinition: (symbol) => definitions.get(linked.visible.get(symbol)?.key ?? symbol),
-    };
-  });
   // TLC evaluates a substitute at startup and rejects it only when that fails and the level bound it
   // computes is above constant. The bound counts the operators that TLC's Java code overrides with
   // a minimum level as state-level, so the analyzer takes them for variables.
