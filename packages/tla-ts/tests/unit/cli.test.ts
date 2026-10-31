@@ -986,6 +986,26 @@ describe("the CLI prints messages for a program to read like TLC", () => {
     ]);
   });
 
+  it("reports an invariant its replay of the initial states finds violated", () => {
+    const result = runTool("Replayed");
+    expect(result.status).toBe(255);
+    expect(result.stdout).toContain(
+      [
+        "@!@!@STARTMSG 1000:1 @!@!@",
+        "@!@!@STARTMSG 2184:0 @!@!@",
+        "Attempted to apply Head to the empty sequence.",
+        "@!@!@ENDMSG 2184 @!@!@",
+        "@!@!@ENDMSG 1000 @!@!@",
+        "@!@!@STARTMSG 2107:1 @!@!@",
+        "Invariant Small is violated by the initial state:",
+        "x = 1",
+        "",
+        "@!@!@ENDMSG 2107 @!@!@",
+        "@!@!@STARTMSG 2200:0 @!@!@",
+      ].join("\n"),
+    );
+  });
+
   it("reports the temporal properties it checks on the complete state graph", () => {
     const result = runTool("Loop");
     expect(result.status).toBe(13);

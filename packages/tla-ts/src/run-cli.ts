@@ -18,6 +18,7 @@ import type { Expression } from "./ast";
 import { describeRange } from "./evaluate";
 import type {
   CheckProgress,
+  InitialStateViolation,
   OutputLine,
   CheckResult,
   CheckStatus,
@@ -222,10 +223,33 @@ const printInitialStatesProgress = (printer: MessagePrinter, count: number) =>
     `Computed ${count} initial states...`,
   );
 
+const getInitialViolationHeadline = (
+  status: InitialStateViolation["status"],
+  name: string | undefined,
+) =>
+  status === "invariant-violation"
+    ? {
+        code: MESSAGE_CODE.invariantViolatedInitial,
+        text: `Invariant ${name} is violated by the initial state:`,
+      }
+    : {
+        code: MESSAGE_CODE.propertyViolatedInitial,
+        text: `Property ${name} is violated by the initial state:`,
+      };
+
 const printTraceOutput = (printer: MessagePrinter, lines: OutputLine[] | undefined) =>
-  lines?.forEach((line) =>
-    typeof line === "string" ? console.log(line) : printInitialStatesProgress(printer, line.count),
-  );
+  lines?.forEach((line) => {
+    if (typeof line === "string") return console.log(line);
+    if (line.kind === "initial-states-progress") {
+      return printInitialStatesProgress(printer, line.count);
+    }
+    const headline = getInitialViolationHeadline(line.status, line.name);
+    printer.print(
+      headline.code,
+      MESSAGE_LEVEL.error,
+      `${headline.text}\n${formatState(line.state)}`,
+    );
+  });
 
 const printTrace = (
   printer: MessagePrinter,
@@ -473,20 +497,14 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
       : { code: MESSAGE_CODE.assumptionFalse, text: `Assumption ${name} is false.` },
     deadlock: { code: MESSAGE_CODE.deadlockReached, text: "Deadlock reached." },
     "invariant-violation": isInitial
-      ? {
-          code: MESSAGE_CODE.invariantViolatedInitial,
-          text: `Invariant ${name} is violated by the initial state:`,
-        }
+      ? getInitialViolationHeadline("invariant-violation", name)
       : { code: MESSAGE_CODE.invariantViolatedBehavior, text: `Invariant ${name} is violated.` },
     "property-violation": temporal,
     "liveness-violation":
       loopStart !== undefined
         ? temporal
         : isInitial
-          ? {
-              code: MESSAGE_CODE.propertyViolatedInitial,
-              text: `Property ${name} is violated by the initial state:`,
-            }
+          ? getInitialViolationHeadline("liveness-violation", name)
           : {
               code: MESSAGE_CODE.actionPropertyViolatedBehavior,
               text: `Action property ${name} is violated.`,

@@ -134,8 +134,17 @@ export interface InitialStatesProgress {
   count: number;
 }
 
-// A line the spec prints, or the progress TLC reports as it replays the initial states.
-export type OutputLine = string | InitialStatesProgress;
+// A check that TLC's DoInitFunctor reports as violated before it stops its replay of the initial
+// states.
+export interface InitialStateViolation {
+  kind: "initial-state-violation";
+  status: "invariant-violation" | "liveness-violation";
+  name: string;
+  state: Record<string, Value>;
+}
+
+// A line the spec prints, or what TLC reports as it replays the initial states.
+export type OutputLine = string | InitialStatesProgress | InitialStateViolation;
 
 // The spec is parsed, TLC warns about each invariant that is a true constant formula and each
 // property that is a state formula, finds the branches of the temporal properties, computes the
@@ -842,14 +851,14 @@ interface Search {
   isConstrained: boolean;
   findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
   // The checks of a state that TLC evaluates when it replays the computation of the initial states
-  // or of the successors of a state, with an environment that records the call stack. They return
-  // false where TLC stops the replay.
+  // or of the successors of a state, with an environment that records the call stack. The first
+  // returns the check that stops the replay, and the second false where TLC stops it.
   // TLC fingerprints a replayed state that satisfies the constraints before it checks the rest.
   checkReplayedInitialState: (
     state: Value[],
     tracing: Environment,
     addFingerprint: () => void,
-  ) => boolean;
+  ) => Pick<InitialStateViolation, "status" | "name"> | undefined;
   // Adding the fingerprint of a successor tells whether TLC had not seen it yet.
   checkReplayedSuccessor: (
     state: Value[],
@@ -1106,12 +1115,12 @@ export const createSearch = (
       if (constraints.every((constraint) => holdsIn(constraint.predicate, constraint.scope))) {
         addFingerprint();
       }
-      return (
-        invariantPredicates.every((invariant) => holdsIn(invariant.predicate, invariant.scope)) &&
-        properties.initialPredicates.every((predicate) =>
-          holdsIn(predicate.expression, predicate.scope),
-        )
+      const invariant = invariantPredicates.find((check) => !holdsIn(check.predicate, check.scope));
+      if (invariant) return { status: "invariant-violation", name: invariant.name };
+      const predicate = properties.initialPredicates.find(
+        (check) => !holdsIn(check.expression, check.scope),
       );
+      return predicate && { status: "liveness-violation", name: predicate.name };
     },
     checkReplayedSuccessor: (state, next, tracing, addFingerprint) => {
       // TLC evaluates the action constraints only on a state that satisfies the constraints.
@@ -1629,7 +1638,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
               runtime.queueSize++;
               liveness?.addInitialState(states.length, state, tracing);
             };
-            if (!search.checkReplayedInitialState(state, tracing, addFingerprint)) {
+            const violation = search.checkReplayedInitialState(state, tracing, addFingerprint);
+            if (violation) {
+              const traced = toTrace([{ action: undefined, state }], []).trace[0].state;
+              output.lines?.push({ kind: "initial-state-violation", ...violation, state: traced });
               throw STOP_REPLAY;
             }
           } catch (error) {
