@@ -2317,8 +2317,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
       } catch (error) {
         const replay = replayFailedNext(index, liveSuccessors);
-        // TLC 1.7.4 reports the wrapped error without the trace.
-        if (is174 && error instanceof TlaEvaluationError) {
+        // TLC 1.7.4 reports the wrapped error without the trace, except for a failed property,
+        // which it reports with the trace before it rethrows.
+        if (is174 && error instanceof TlaEvaluationError && !headedErrors.has(error)) {
           outcome.result = toFailure(
             new TlaEvaluationError(`${getWrappedException(error)}${error.message}`),
             appendTraceOutput({ trace: [] }, replay.lines),

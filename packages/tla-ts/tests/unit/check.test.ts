@@ -911,10 +911,11 @@ describe("formatValue matches TLC", () => {
   });
 });
 
-const checkSteps = (definitions: string, config: string) =>
+const checkSteps = (definitions: string, config: string, version?: TlcVersion) =>
   check({
     source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\n${definitions}\n====`,
     config,
+    version,
   });
 
 const getFailureSummary = (result: CheckResult) => [
@@ -1110,16 +1111,20 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.traceOutput).toEqual(['<<"c", 2>>']);
   });
 
-  it("names an action property that fails to evaluate", async () => {
-    const result = await checkSteps(
-      "P == [][1 \\div (2 - x) >= 0]_x\nSpec == Init /\\ [][Next]_x",
-      "SPECIFICATION Spec\nPROPERTY P",
-    );
-    expect(result.failure?.message).toBe(
-      "Evaluating action property P failed.\nThe second argument of \\div is 0.",
-    );
-    expect(getFailureSummary(result)).toEqual(["error", ["0", "1", "2", "3"], [4, 4, 0, 4], 255]);
-  });
+  it.each(["1.7.4" as const, undefined])(
+    "names an action property that fails to evaluate in TLC %s",
+    async (version) => {
+      const result = await checkSteps(
+        "P == [][1 \\div (2 - x) >= 0]_x\nSpec == Init /\\ [][Next]_x",
+        "SPECIFICATION Spec\nPROPERTY P",
+        version,
+      );
+      expect(result.failure?.message).toBe(
+        "Evaluating action property P failed.\nThe second argument of \\div is 0.",
+      );
+      expect(getFailureSummary(result)).toEqual(["error", ["0", "1", "2", "3"], [4, 4, 0, 4], 255]);
+    },
+  );
 
   it("reports the behavior up to a state whose successors fail to evaluate", async () => {
     const result = await checkSteps(
