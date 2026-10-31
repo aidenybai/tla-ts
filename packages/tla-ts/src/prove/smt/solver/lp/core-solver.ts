@@ -15,6 +15,14 @@ export const COLUMN_UPPER = 2;
 export const COLUMN_BOXED = 3;
 export const COLUMN_FIXED = 4;
 
+// column_type: which bounds a column has.
+export type ColumnType =
+  | typeof COLUMN_FREE
+  | typeof COLUMN_LOWER
+  | typeof COLUMN_UPPER
+  | typeof COLUMN_BOXED
+  | typeof COLUMN_FIXED;
+
 export const LP_UNKNOWN = 0;
 export const LP_INFEASIBLE = 1;
 export const LP_OPTIMAL = 2;
@@ -26,7 +34,7 @@ const BLAND_MODE_THRESHOLD = 1000;
 
 export class CoreSolver {
   readonly matrix = new StaticMatrix();
-  readonly columnTypes = new StackedVector<number>();
+  readonly columnTypes = new StackedVector<ColumnType>();
   lowerBounds: Impq[] = [];
   upperBounds: Impq[] = [];
   x: Impq[] = [];

@@ -18,6 +18,7 @@ import {
   LP_INFEASIBLE,
   LP_OPTIMAL,
   LP_UNKNOWN,
+  type ColumnType,
 } from "./core-solver";
 import { Dependency, linearize, mkJoin } from "./dependency";
 import type { Explanation } from "./explanation";
@@ -397,7 +398,7 @@ export class LarSolver {
     const core = this.core;
     const hasUpper = core.hasUpperBound(column);
     const hasLower = core.hasLowerBound(column);
-    const setType = (type: number) => core.columnTypes.set(column, type);
+    const setType = (type: ColumnType) => core.columnTypes.set(column, type);
     const isUpperKind = kind === KIND_LE || kind === KIND_LT;
     const isLowerKind = kind === KIND_GE || kind === KIND_GT;
     const y =
