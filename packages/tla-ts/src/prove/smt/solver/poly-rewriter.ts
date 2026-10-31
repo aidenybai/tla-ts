@@ -27,16 +27,16 @@ import type { Rewrite } from "./rewriter-tpl";
 
 export interface ArithRewriterOptions {
   // poly_rewriter's som: distributes products over sums.
-  isSom: boolean;
+  readonly isSom: boolean;
   // arith_rewriter's sort_sums: orders the monomials of a sum.
-  isSortSums: boolean;
+  readonly isSortSums: boolean;
   // arith_rewriter's arith_ineq_lhs: moves the monomials of an inequality to the left-hand side.
-  isArithIneqLhs: boolean;
+  readonly isArithIneqLhs: boolean;
   // arith_rewriter's gcd_rounding: divides integer atoms by the gcd of their coefficients.
-  isGcdRounding: boolean;
+  readonly isGcdRounding: boolean;
 }
 
-const ARITH_OPS = new Set([
+const ARITH_OPS: ReadonlySet<number> = new Set([
   OP_NUM,
   OP_ADD,
   OP_SUB,
