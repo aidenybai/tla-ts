@@ -905,6 +905,10 @@ export class Context extends Internalizer {
     let failure = FAILURE_OK;
     do {
       const isTheory = this.finalCheckIndex === 0;
+      // Z3 registers every theory for UFNIA, and only arithmetic acts on tlapm's obligations. Of
+      // the theories between arithmetic and the quantifiers, theory_finite_set::assume_eqs draws a
+      // random value.
+      if (!isTheory) this.getRandomValue();
       const check = isTheory ? this.theory.finalCheckEh() : qmanager.finalCheckEh(true);
       if (isTheory && check === FC_GIVEUP) failure = FAILURE_THEORY;
       this.finalCheckIndex = (this.finalCheckIndex + 1) % 2;
