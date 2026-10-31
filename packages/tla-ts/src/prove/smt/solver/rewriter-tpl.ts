@@ -324,12 +324,14 @@ class RewriterEngine extends RewriterCore {
   private invShifter: InvVarShifter;
   // m_blocked: the constants that a nested rewriter does not expand.
   blocked = new Set<number>();
+  private isSubstituting: boolean;
 
   constructor(
     manager: AstManager,
     private config: RewriterTpl,
   ) {
     super(manager);
+    this.isSubstituting = config.getSubst !== RewriterTpl.prototype.getSubst;
     this.shifter = new VarShifter(manager);
     this.invShifter = new InvVarShifter(manager);
   }
@@ -567,6 +569,10 @@ class RewriterEngine extends RewriterCore {
       return;
     }
     const args = manager.args[expr];
+    // visit pushes a child at depth 0 as it is when the config substitutes nothing.
+    if (frame.maxDepth === 0 && !this.isSubstituting && manager.getOp(expr) !== OP_ITE)
+      for (; frame.childIndex < args.length; frame.childIndex++)
+        this.pushResult(args[frame.childIndex]);
     while (frame.childIndex < args.length) {
       if (this.isConstantFolded(expr, frame)) return;
       const arg = args[frame.childIndex];
