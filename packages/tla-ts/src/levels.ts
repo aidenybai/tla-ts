@@ -842,22 +842,33 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   return { analyze, analyzeDefinition, toOperand };
 };
 
-const analyzeAssumeProve = (
+export const analyzeAssumeProve = (
   assumeProve: AssumeProve,
   scope: Scope,
   analyzer: ReturnType<typeof createLevelAnalyzer>,
-) => {
+): LevelData => {
   const inner = new Map(scope);
-  assumeProve.assumptions.forEach((assumption) => {
+  const parts = assumeProve.assumptions.flatMap((assumption) => {
     if (assumption.kind === "NewSymbol") {
-      if (assumption.set) analyzer.analyze(assumption.set, inner);
+      const set = assumption.set && analyzer.analyze(assumption.set, inner);
       inner.set(assumption.name, { kind: "Formal", arity: assumption.arity });
-      return;
+      return set ? [set] : [];
     }
-    if (assumption.kind === "AssumeProve") analyzeAssumeProve(assumption, inner, analyzer);
-    else analyzer.analyze(assumption, inner);
+    return [
+      assumption.kind === "AssumeProve"
+        ? analyzeAssumeProve(assumption, inner, analyzer)
+        : analyzer.analyze(assumption, inner),
+    ];
   });
-  analyzer.analyze(assumeProve.conclusion, inner);
+  parts.push(analyzer.analyze(assumeProve.conclusion, inner));
+  const data = createData(Math.max(...parts.map((part) => part.level)));
+  parts.forEach((part) => {
+    part.params.forEach((param) => data.params.add(param));
+    part.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
+    part.argConstraints.forEach((value, key) => putArgConstraint(data.argConstraints, key, value));
+    part.argParams.forEach((key) => data.argParams.add(key));
+  });
+  return data;
 };
 
 // SANY checks the level of every definition, assumption, and theorem of a module.
