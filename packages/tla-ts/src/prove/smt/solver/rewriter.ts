@@ -56,44 +56,55 @@ export interface RewriterOptions {
 // The distinct literals of a flat conjunction or disjunction. It finds a complementary pair through
 // the atoms of the negated literals, without creating each negation. A short list is searched
 // directly, and a long one through sets.
-const MAX_SCANNED_LITERALS = 8;
-
+// The literals of a flattened conjunction or disjunction, without duplicates. Like the
+// expr_fast_mark1 and expr_fast_mark2 of mk_nflat_and_core, it marks the literals and the negated
+// atoms it holds, here with a stamp for each use.
 class FlatLiterals {
-  readonly list: number[] = [];
-  private seen: Set<number> | null = null;
-  private negatedAtoms: Set<number> | null = null;
+  list: number[] = [];
+  private stamp = 0;
+  private literalStamps = new Int32Array(1024);
+  private negatedAtomStamps = new Int32Array(1024);
+  private manager: AstManager | null = null;
 
-  constructor(private manager: AstManager) {}
+  // Starts a new, empty list of the manager's literals.
+  clear(manager: AstManager) {
+    this.list = [];
+    this.stamp++;
+    this.manager = manager;
+  }
 
-  // Adds a literal, and returns whether its complement is already there.
+  // Adds a literal, and returns whether its complement is already there. An expression's arguments
+  // are older than it, so their ids are smaller.
   add(literal: number) {
-    const manager = this.manager;
-    if (this.has(literal)) return false;
-    const isNegated = manager.isNot(literal);
-    if (isNegated ? this.has(manager.args[literal][0]) : this.hasNegationOf(literal)) return true;
-    this.list.push(literal);
-    if (this.seen !== null) {
-      this.seen.add(literal);
-      if (isNegated) this.negatedAtoms?.add(manager.args[literal][0]);
-    } else if (this.list.length > MAX_SCANNED_LITERALS) {
-      this.seen = new Set(this.list);
-      this.negatedAtoms = new Set(
-        this.list.filter((item) => manager.isNot(item)).map((item) => manager.args[item][0]),
-      );
+    const manager = this.manager as AstManager;
+    if (literal >= this.literalStamps.length) {
+      const size = Math.max(2 * this.literalStamps.length, literal + 1);
+      const literalStamps = new Int32Array(size);
+      literalStamps.set(this.literalStamps);
+      this.literalStamps = literalStamps;
+      const negatedAtomStamps = new Int32Array(size);
+      negatedAtomStamps.set(this.negatedAtomStamps);
+      this.negatedAtomStamps = negatedAtomStamps;
     }
+    if (this.literalStamps[literal] === this.stamp) return false;
+    const isNegated = manager.isNot(literal);
+    const atom = isNegated ? manager.args[literal][0] : literal;
+    if (
+      isNegated
+        ? this.literalStamps[atom] === this.stamp
+        : this.negatedAtomStamps[atom] === this.stamp
+    )
+      return true;
+    this.list.push(literal);
+    this.literalStamps[literal] = this.stamp;
+    if (isNegated) this.negatedAtomStamps[atom] = this.stamp;
     return false;
   }
-
-  private has(literal: number) {
-    return this.seen === null ? this.list.includes(literal) : this.seen.has(literal);
-  }
-
-  private hasNegationOf(atom: number) {
-    const manager = this.manager;
-    if (this.negatedAtoms !== null) return this.negatedAtoms.has(atom);
-    return this.list.some((item) => manager.isNot(item) && manager.args[item][0] === atom);
-  }
 }
+
+// One set of marks serves every rewriter: a list is filled and read before any other starts, and
+// marks that grow to the largest manager's ids would cost each rewriter its own copy.
+const flatLiterals = new FlatLiterals();
 
 // A term that reduceTo is rewriting: the depth left for its arguments, its next argument, and where
 // its arguments' results start.
@@ -460,10 +471,9 @@ export class Rewriter extends RewriterTpl {
   mkOr(args: number[]): number {
     const manager = this.manager;
     const isNested = args.some((arg) => manager.getOp(arg) === OP_OR);
-    const flatArgs = isNested
-      ? args.flatMap((arg) => (manager.getOp(arg) === OP_OR ? manager.args[arg] : [arg]))
-      : args;
-    const literals = new FlatLiterals(manager);
+    const flatArgs = isNested ? this.flattenArgs(args, OP_OR) : args;
+    const literals = flatLiterals;
+    literals.clear(manager);
     for (const arg of flatArgs) {
       if (manager.isTrue(arg)) return manager.trueExpr;
       if (manager.isFalse(arg)) continue;
@@ -485,10 +495,18 @@ export class Rewriter extends RewriterTpl {
     const manager = this.manager;
     if (this.options.isEliminatingAnd) return this.mkAndAsOr(args);
     if (!args.some((arg) => manager.getOp(arg) === OP_AND)) return this.mkNflatAnd(args);
-    const flatArgs = args.flatMap((arg) =>
-      manager.getOp(arg) === OP_AND ? manager.args[arg] : [arg],
-    );
-    return { expr: this.mkNflatAnd(flatArgs), depth: 1 };
+    return { expr: this.mkNflatAnd(this.flattenArgs(args, OP_AND)), depth: 1 };
+  }
+
+  // The arguments with those that apply op replaced by their own arguments, one level deep.
+  private flattenArgs(args: number[], op: number) {
+    const manager = this.manager;
+    const flatArgs: number[] = [];
+    for (const arg of args)
+      if (manager.getOp(arg) === op)
+        for (const innerArg of manager.args[arg]) flatArgs.push(innerArg);
+      else flatArgs.push(arg);
+    return flatArgs;
   }
 
   // bool_rewriter::mk_and, which takes the result of mk_and_core as it is.
@@ -501,7 +519,8 @@ export class Rewriter extends RewriterTpl {
   // pair.
   private mkNflatAnd(args: number[]) {
     const manager = this.manager;
-    const literals = new FlatLiterals(manager);
+    const literals = flatLiterals;
+    literals.clear(manager);
     for (const arg of args) {
       if (manager.isTrue(arg)) continue;
       if (manager.isFalse(arg) || literals.add(arg)) return manager.falseExpr;

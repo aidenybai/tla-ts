@@ -123,7 +123,9 @@ export abstract class Internalizer {
   protected binaryWatches: (Literal[] | undefined)[] = [];
   private binJustifications: (BinJustification | undefined)[] = [];
   // Per expression.
-  protected exprToBoolVar: (BoolVar | undefined)[] = [];
+  // The Boolean variable of each expression, or -1. A typed array keeps the element loads of every
+  // context monomorphic, where the holes of a growing array give each its own elements kind.
+  private exprToBoolVar = new Int32Array(1024).fill(-1);
   protected exprToEnode: (Enode | undefined)[] = [];
 
   assignedLiterals: Literal[] = [];
@@ -184,7 +186,7 @@ export abstract class Internalizer {
     this.assignment[1] = L_FALSE;
     this.justifications[0] = "axiom";
     this.trueEnode = this.mkEnode(manager.trueExpr, true, true, false);
-    this.exprToBoolVar[manager.falseExpr] = TRUE_BOOL_VAR;
+    this.setExprBoolVar(manager.falseExpr, TRUE_BOOL_VAR);
     this.falseEnode = this.mkEnode(manager.falseExpr, true, true, false);
   }
 
@@ -283,15 +285,27 @@ export abstract class Internalizer {
   }
 
   isBInternalized(expr: number) {
-    return this.exprToBoolVar[expr] !== undefined;
+    return this.findBoolVar(expr) !== undefined;
   }
 
   findBoolVar(expr: number) {
-    return this.exprToBoolVar[expr];
+    const boolVar = expr < this.exprToBoolVar.length ? this.exprToBoolVar[expr] : -1;
+    return boolVar === -1 ? undefined : toBoolVar(boolVar);
+  }
+
+  private setExprBoolVar(expr: number, boolVar: number) {
+    if (expr >= this.exprToBoolVar.length) {
+      const exprToBoolVar = new Int32Array(Math.max(2 * this.exprToBoolVar.length, expr + 1)).fill(
+        -1,
+      );
+      exprToBoolVar.set(this.exprToBoolVar);
+      this.exprToBoolVar = exprToBoolVar;
+    }
+    this.exprToBoolVar[expr] = boolVar;
   }
 
   getBoolVar(expr: number) {
-    const boolVar = this.exprToBoolVar[expr];
+    const boolVar = this.findBoolVar(expr);
     if (boolVar === undefined) throw new Error("the formula has no Boolean variable");
     return boolVar;
   }
@@ -462,7 +476,7 @@ export abstract class Internalizer {
     const boolVar = toBoolVar(this.numBoolVars++);
     const literal = mkLiteral(boolVar);
     this.manager.incRef(expr);
-    this.exprToBoolVar[expr] = boolVar;
+    this.setExprBoolVar(expr, boolVar);
     this.boolVar2Expr[boolVar] = expr;
     this.levels[boolVar] = 0;
     this.internLevels[boolVar] = this.scopeLevel;
@@ -495,7 +509,7 @@ export abstract class Internalizer {
     const expr = this.boolVar2Expr[boolVar];
     this.caseSplitQueue.delVar(boolVar);
     if (this.isQuantifierFlags[boolVar]) this.qmanager.del(expr);
-    this.exprToBoolVar[expr] = undefined;
+    this.exprToBoolVar[expr] = -1;
     this.justifications[boolVar] = null;
     this.watches[literal] = undefined;
     this.watches[literal + 1] = undefined;
