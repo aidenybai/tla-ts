@@ -1804,6 +1804,26 @@ describe("evaluation errors match TLC", () => {
       version,
     });
 
+  // TLC evaluates each property on the counterexample to name the ones it violates, which TLC 1.7.4
+  // doesn't name.
+  it.each([
+    ["1.7.4", 4],
+    ["master", 5],
+  ] as const)(
+    "evaluates the action of ENABLED on a counterexample as TLC %s does",
+    async (version, count) => {
+      const prints: string[] = [];
+      await check({
+        source:
+          '---- MODULE M ----\nEXTENDS TLC\nVARIABLE y\nInit == y = 0\nA == y\' = 0 /\\ PrintT("A")\nNext == A\nProp == [](ENABLED A => <>FALSE)\n====',
+        config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+        version,
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toHaveLength(count);
+    },
+  );
+
   it("adds a state to the behavior graph after a violation by a successor it never stored", async () => {
     const result = await check({
       source:

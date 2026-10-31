@@ -1462,6 +1462,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const getPartialOutDegrees = () =>
     outDegrees.map((count, degree) => (degree === getOutDegreeBucket() ? count + 1 : count));
   const getFailureOutDegrees = () => (is174 ? [...outDegrees] : getPartialOutDegrees());
+  // TLC 1.7.4 doesn't name the properties a counterexample violates, so it evaluates none of them.
+  const getViolatedProperties = (checker: LivenessChecker, path: Value[][], cycleStart: number) =>
+    is174 ? [] : checker.getViolatedProperties(path, cycleStart);
   // A violation in a successor ends the expansion of a state before TLC counts it.
   const withOutDegrees = (result: CheckResult, degrees = [...outDegrees]): CheckResult => ({
     ...result,
@@ -2417,7 +2420,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const accepted = liveness?.addState(index, state, liveSuccessors);
       if (!liveness || !accepted) return undefined;
       const steps = getPathSteps(accepted);
-      const properties = liveness.getViolatedProperties(
+      const properties = getViolatedProperties(
+        liveness,
         steps.map((step) => step.state),
         steps.length - 1,
       );
@@ -2504,7 +2508,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const loopStart = lasso.prefix.length;
     const steps = getPathSteps(path, loopStart);
     const trace = toTrace(steps, path, { loopStart, known: 0 }).trace;
-    const properties = checker.getViolatedProperties(
+    const properties = getViolatedProperties(
+      checker,
       steps.map((step) => step.state),
       loopStart,
     );
