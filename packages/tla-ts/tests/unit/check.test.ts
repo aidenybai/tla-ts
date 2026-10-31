@@ -1325,6 +1325,34 @@ describe("evaluation errors match TLC", () => {
     expect(result.violation).toBeUndefined();
   });
 
+  it("fails on a state holding a set it can't enumerate to fingerprint, like TLC", async () => {
+    const results = await Promise.all(
+      [
+        ["Nat", "UNCHANGED x"],
+        ["{}", "x' = SUBSET Nat"],
+      ].map((item) =>
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = ${item[0]}\nNext == ${item[1]}\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ),
+    );
+    expect(
+      results.map((result) => [
+        result.failure?.message,
+        result.failure?.exitCode,
+        result.failure?.trace.length,
+      ]),
+    ).toEqual([
+      ["TLC has found a state in which the value of a variable contains Nat", 75, 0],
+      [
+        "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to compute the number of elements in the overridden value Nat.",
+        75,
+        1,
+      ],
+    ]);
+  });
+
   it("names the Java class of Naturals in an arithmetic error unless the spec loads Integers, like TLC", async () => {
     const cases = [
       ["Naturals", "Naturals"],

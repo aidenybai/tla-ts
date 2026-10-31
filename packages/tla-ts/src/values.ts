@@ -1994,10 +1994,15 @@ const getElementContribution = (element: Value) =>
 const getEntryContribution = (key: Value, value: Value) =>
   finalizeHash((Math.imul(getValueHash(key), 0x27d4eb2d) + getValueHash(value)) | 0);
 
+const unenumeratedSets = { isHashed: false };
+
 const computeValueHash = (value: ObjectValue) => {
   if (value.kind === "ModelValue") return finalizeHash(combineHash(hashString(value.name), 0x6d));
   if (isSetValue(value)) {
-    if (!isEnumerable(value)) return hashString(getValueKey(value));
+    if (!isEnumerable(value)) {
+      unenumeratedSets.isHashed = true;
+      return hashString(getValueKey(value));
+    }
     const elements = toFiniteSet(value).elements;
     let hash = SET_HASH_SEED;
     for (let index = 0; index < elements.length; index++) {
@@ -2029,6 +2034,25 @@ export const getValueHash = (value: Value): number => {
   return hash;
 };
 
+const fingerprintLikeTlc = (value: Value): void => {
+  if (typeof value !== "object" || value.kind === "ModelValue") return;
+  if (isOverriddenSet(value)) {
+    throw new TlaEvaluationError(
+      `TLC has found a state in which the value of a variable contains ${formatValue(value)}`,
+    );
+  }
+  if (isSetValue(value)) return toFiniteSet(value).elements.forEach(fingerprintLikeTlc);
+  const functionValue = toFiniteFunction(value);
+  functionValue.domain.forEach(fingerprintLikeTlc);
+  functionValue.range.forEach(fingerprintLikeTlc);
+};
+
+// TLC enumerates every set in a state to fingerprint it, so it fails on a set it can't enumerate.
+// A state holds one only if hashing it met one, so states go unchecked until then.
+export const assertFingerprintable = (state: Value[]) => {
+  if (unenumeratedSets.isHashed) state.forEach(fingerprintLikeTlc);
+};
+
 const valueFingerprints = new WeakMap<ObjectValue, number>();
 
 const finalizeFingerprint = (hash: number) => {
@@ -2055,7 +2079,10 @@ const getEntryFingerprint = (key: Value, value: Value) =>
 const computeValueFingerprint = (value: ObjectValue) => {
   if (value.kind === "ModelValue") return finalizeFingerprint(fingerprintString(value.name) ^ 0x3c);
   if (isSetValue(value)) {
-    if (!isEnumerable(value)) return fingerprintString(getValueKey(value));
+    if (!isEnumerable(value)) {
+      unenumeratedSets.isHashed = true;
+      return fingerprintString(getValueKey(value));
+    }
     const elements = toFiniteSet(value).elements;
     let fingerprint = 0x1b873593;
     for (let index = 0; index < elements.length; index++) {

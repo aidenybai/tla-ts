@@ -72,6 +72,7 @@ import { createCounterExample } from "./tlc-ext";
 import { getFingerprintTrace, valueSources } from "./value-sources";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import {
+  assertFingerprintable,
   combineHash,
   createModelValue,
   formatState,
@@ -1130,12 +1131,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       failure: { ...result.failure, replay: { output: replayed, ...replayedStack, isBeforeError } },
     };
   };
-  // TLC fingerprints a state outside CallStackTool, so a failure leaves the stack empty.
+  // TLC fingerprints a state outside CallStackTool, so a failure of a value with a source leaves
+  // the stack empty. Any other failure keeps the stack of the initial predicate.
   const fingerprintReplayed = (state: Value[], traced: Environment) => {
     try {
       getStateHash(getFingerprintState(state));
     } catch (error) {
-      if (traced.trace) traced.trace.length = 0;
+      if (traced.trace && getFingerprintTrace(error)) traced.trace.length = 0;
       throw error;
     }
   };
@@ -1388,6 +1390,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     let hash = 0x811c9dc5;
     for (let index = 0; index < state.length; index++)
       hash = combineHash(hash, getValueHash(state[index]));
+    assertFingerprintable(state);
     return hash & 0x3fffffff;
   };
   const isSameState = (stored: Value[], state: Value[]) => {
