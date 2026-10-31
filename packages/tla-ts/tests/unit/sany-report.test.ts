@@ -529,6 +529,28 @@ Spec == Init /\\ [][Next]_x
     expect(report).toEqual({ text: "", isFailed: false });
   });
 
+  it("reports a module in a fact that isn't extended or instantiated, and leaves it out", () => {
+    const report = getReport({ Facts: "---- MODULE Facts ----\nUSE DEF MODULE Nope\n====\n" });
+    expect(report.text).toBe(
+      toText([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 2, col 16 to line 2, col 19 of module Facts",
+        "",
+        "Module `Nope' used without being extended or instantiated.",
+        "",
+        "",
+        "line 2, col 1 to line 2, col 19 of module Facts",
+        "",
+        "Empty USE or HIDE statement.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("reads a DEF clause entry that isn't a name as SANY reads its syntax node", () => {
     const report = getReport({
       Defs: "---- MODULE Defs ----\nA == 1\nTHEOREM TRUE BY A DEF UNION A, A + 1, (A), A(1), A\n====\n",

@@ -2227,27 +2227,28 @@ export const generateSanySpecification = (
       return instanceNode;
     };
 
-    const getFactModule = (name: string) => {
+    // SANY leaves out a module it can't resolve, after reporting it at the module's name.
+    const getFactModules = (fact: Fact & { kind: "ModuleFact" }) => {
       const module =
-        resolveModule(name) ?? (name === currentModule.name ? currentModule : undefined);
-      if (module === undefined) {
-        throw new TlaSyntaxError(`Module \`${name}' used without being extended or instantiated.`);
-      }
-      return module;
+        resolveModule(fact.name) ?? (fact.name === currentModule.name ? currentModule : undefined);
+      if (module !== undefined) return [module];
+      addError(
+        getTokenLocation(file, getTokenIndex(file, fact.location) + 1),
+        `Module \`${fact.name}' used without being extended or instantiated.`,
+      );
+      return [];
     };
 
     // A fact is a module, or an expression such as the name of a theorem; a DEF names a defined
     // operator, theorem or assumption, or a module.
     const generateFacts = (facts: Fact[]) =>
-      facts.map((fact): FactNode => {
-        if (fact.kind !== "ModuleFact") {
-          const items = getSelectorItems(fact);
-          if (items === undefined || !isGeneralId(items)) return generateExpression(fact);
-          const node = generateSelector(fact, 0, true, false);
-          if (node.kind === "ThmOrAssumpDef") throw new TlaSyntaxError("Expected a fact");
-          return node;
-        }
-        return getFactModule(fact.name);
+      facts.flatMap((fact): FactNode[] => {
+        if (fact.kind === "ModuleFact") return getFactModules(fact);
+        const items = getSelectorItems(fact);
+        if (items === undefined || !isGeneralId(items)) return [generateExpression(fact)];
+        const node = generateSelector(fact, 0, true, false);
+        if (node.kind === "ThmOrAssumpDef") throw new TlaSyntaxError("Expected a fact");
+        return [node];
       });
 
     const isParenthesized = (span: TokenSpan) =>
@@ -2393,7 +2394,7 @@ export const generateSanySpecification = (
 
     const generateDefs = (defs: Fact[]) =>
       defs.flatMap((fact): UseOrHideNode["defs"] => {
-        if (fact.kind === "ModuleFact") return [getFactModule(fact.name)];
+        if (fact.kind === "ModuleFact") return getFactModules(fact);
         if (reportDefEntry(fact)) return [];
         const symbol = generateSelector(
           fact.kind === "OperatorReference"
