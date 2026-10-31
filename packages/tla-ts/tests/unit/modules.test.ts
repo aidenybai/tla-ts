@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue, TlaConfigError, TlaSyntaxError } from "../../src";
+import { createSanyError } from "../../src/errors";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/modules");
 
@@ -200,8 +201,15 @@ describe("nested module scoping matches SANY", () => {
     await expect(
       checkSource("EXTENDS test", { test: "---- MODULE Foo ----\nA == 1\n====" }),
     ).rejects.toThrow(
-      new TlaSyntaxError(
-        "File name 'test' does not match the name 'Foo' of the top level module it contains.",
+      createSanyError(
+        [
+          {
+            location: "Unknown location",
+            message:
+              "File name 'test' does not match the name 'Foo' of the top level module it contains.",
+          },
+        ],
+        true,
       ),
     );
   });

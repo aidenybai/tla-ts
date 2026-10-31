@@ -12,7 +12,13 @@ import {
 import { BUNDLED_MODULES } from "./bundled-modules";
 import type { ConfigValue, ModelConfig } from "./config";
 import type { FileSystem } from "./json";
-import { TlaConfigError, TlaEvaluationError, TlaModuleError, TlaSyntaxError } from "./errors";
+import {
+  createSanyError,
+  TlaConfigError,
+  TlaEvaluationError,
+  TlaModuleError,
+  TlaSyntaxError,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   createBigNumberError,
@@ -289,13 +295,25 @@ export const createEnvironment = (
       BUNDLED_MODULES.get(name) ??
       extractModule(options.source, name);
     if (source === undefined)
-      throw new TlaSyntaxError(
-        `Cannot find source file for module ${name} imported in module ${importer}.`,
+      throw createSanyError(
+        [
+          {
+            location: `In module ${importer}`,
+            message: `Cannot find source file for module ${name} imported in module ${importer}.`,
+          },
+        ],
+        true,
       );
     const module = parseModule(source);
     if (module.name !== name) {
-      throw new TlaSyntaxError(
-        `File name '${name}' does not match the name '${module.name}' of the top level module it contains.`,
+      throw createSanyError(
+        [
+          {
+            location: "Unknown location",
+            message: `File name '${name}' does not match the name '${module.name}' of the top level module it contains.`,
+          },
+        ],
+        true,
       );
     }
     return rejectModuleLiterals(module);

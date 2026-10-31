@@ -11,7 +11,7 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
-import { STACK_OVERFLOW, UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { createSanyError, STACK_OVERFLOW, UNEXPECTED_EXCEPTION } from "../../src/errors";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -1608,10 +1608,26 @@ describe("name resolution matches SANY", () => {
 
   it("fails to parse a spec that imports a module it cannot find, such as Strings", async () => {
     await expect(checkSource("EXTENDS Strings")).rejects.toThrow(
-      new TlaSyntaxError("Cannot find source file for module Strings imported in module M."),
+      createSanyError(
+        [
+          {
+            location: "In module M",
+            message: "Cannot find source file for module Strings imported in module M.",
+          },
+        ],
+        true,
+      ),
     );
     await expect(checkSource("N == INSTANCE Nowhere")).rejects.toThrow(
-      new TlaSyntaxError("Cannot find source file for module Nowhere imported in module M."),
+      createSanyError(
+        [
+          {
+            location: "In module M",
+            message: "Cannot find source file for module Nowhere imported in module M.",
+          },
+        ],
+        true,
+      ),
     );
   });
 

@@ -27,15 +27,35 @@ export interface SyntaxFailure {
   isEnd: boolean;
 }
 
+// An error SANY reports at a location, such as "In module M" or a range in a module.
+export interface SanyError {
+  location: string;
+  message: string;
+}
+
+// The errors SANY reports for a spec. A fatal error stops it before semantic analysis.
+export interface SanyReport {
+  errors: SanyError[];
+  isFatal: boolean;
+}
+
 export class TlaSyntaxError extends TlaError {
   failure: SyntaxFailure | undefined;
+  sany: SanyReport | undefined;
 
-  constructor(message: string, cause?: unknown, failure?: SyntaxFailure) {
+  constructor(message: string, cause?: unknown, failure?: SyntaxFailure, sany?: SanyReport) {
     super(message, cause);
     this.name = "TlaSyntaxError";
     this.failure = failure;
+    this.sany = sany;
   }
 }
+
+export const createSanyError = (errors: SanyError[], isFatal = false) =>
+  new TlaSyntaxError(errors.map((error) => error.message).join("\n"), undefined, undefined, {
+    errors,
+    isFatal,
+  });
 
 export class TlaConfigError extends TlaError {
   constructor(message: string, cause?: unknown) {
