@@ -2088,6 +2088,32 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  const getParameterizedInstance = (definition: string) =>
+    `---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE y\nOp(a) == <<a, y>>\n====\nI(a) == INSTANCE Inner WITH y <- a\nF(G(_, _)) == G(1, 2)\n${definition}\nInit == x = 0\nNext == x' = x\n====`;
+
+  it("passes an operator of a parameterized instance as an operator argument, like SANY", async () => {
+    const result = await check({
+      source: getParameterizedInstance("X == F(I!Op)"),
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("success");
+  });
+
+  it.each([
+    ["X == I!Op", 9],
+    ["X == I!Op(1)", 12],
+  ])("rejects %s without the arguments of the instance, like SANY", async (definition, end) => {
+    await expect(
+      check({ source: getParameterizedInstance(definition), config: "INIT Init\nNEXT Next" }),
+    ).rejects.toThrow(
+      createSemanticError("The operator I requires 1 arguments.", {
+        module: "M",
+        start: { line: 9, column: 6 },
+        end: { line: 9, column: end },
+      }),
+    );
+  });
+
   // SANY bounds a sequence argument by the level its LAMBDA allows for the elements.
   it.each([
     "SelectSeq(s, LAMBDA a : a' = 1)",
