@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, parseModule, TlaSyntaxError } from "../../src";
+import { createSanyError } from "../../src/errors";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/instances");
 
@@ -192,21 +193,22 @@ const checkSubstitution = (body: string) =>
   });
 
 const getLevelError = (module: string, name: string, level: number) =>
-  `Level error in instantiating module '${module}': the level of the expression or operator substituted for '${name}' must be at most ${level}`;
+  `Level error in instantiating module '${module}':\nThe level of the expression or operator substituted for '${name}' \nmust be at most ${level}.`;
 
 const getLeibnizError = (module: string) =>
-  `Error in instantiating module '${module}': a non-Leibniz operator substituted for 'Op'`;
+  `Error in instantiating module '${module}':\n A non-Leibniz operator substituted for 'Op'.`;
 
 const getArgumentError = (module: string, index: number, maximum: number) =>
-  `Level error when instantiating module '${module}': the level of the argument ${index} of the operator Op' must be at most ${maximum}`;
+  `Level error when instantiating module '${module}':\nThe level of the argument ${index} of the operator Op' \nmust be at most ${maximum}.`;
 
 const getMessagePattern = (messages: string[]) =>
   new RegExp(
     `^${messages
       .map(
-        (message) => `${message.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")} at line \\d+, column \\d+`,
+        (message) =>
+          `line \\d+, col \\d+ to line \\d+, col \\d+ of module Main\\n\\n${message.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}`,
       )
-      .join("\\n")}$`,
+      .join("\\n\\n")}$`,
   );
 
 describe("substitution levels match SANY", () => {
@@ -260,7 +262,7 @@ describe("substitution levels match SANY", () => {
       "F(a) == LET G == a' IN G\nI == INSTANCE Nested WITH c <- 1, Op <- F, v <- x",
       [
         getLevelError("Nested", "Op", 0),
-        "Level error in instantiating module 'Nested': the level of the argument 1 of the operator F must be at least 2",
+        "Level error in instantiating module 'Nested':\nThe level of the argument 1 of the operator F \nmust be at least 2.",
       ],
     ],
     [
@@ -306,6 +308,18 @@ describe("substitution levels match SANY", () => {
   ])("rejects %s", async (body, messages) => {
     await expect(checkSubstitution(body)).rejects.toThrow(TlaSyntaxError);
     await expect(checkSubstitution(body)).rejects.toThrow(getMessagePattern(messages));
+  });
+
+  it("reports an error at the whole instance, like SANY", async () => {
+    const body = "I == INSTANCE Pure WITH c <- 1, Op <- LAMBDA a : ENABLED a";
+    await expect(checkSubstitution(body)).rejects.toThrow(
+      createSanyError([
+        {
+          location: `line 4, col 1 to line 4, col ${body.length} of module Main`,
+          message: getLeibnizError("Pure"),
+        },
+      ]),
+    );
   });
 
   it.each([
