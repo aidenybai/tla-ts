@@ -78,7 +78,7 @@ class TangentImp {
   private generatePlane(plane: Point) {
     const core = this.core;
     if (
-      core.throttle.insertMonomialBinomialSign(
+      core.throttle.insertSimplifiedTangent(
         THROTTLE_TANGENT_LEMMA,
         this.monicVar,
         this.xVar,

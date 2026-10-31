@@ -72,7 +72,8 @@ export class NlaThrottle {
     return this.insertNew([kind, monicVar, xVar, yVar, isBelow ? 1 : 0, planeType]);
   }
 
-  insertMonomialBinomialSign(
+  // The simplified tangent signature, without the plane type.
+  insertSimplifiedTangent(
     kind: number,
     monicVar: number,
     xVar: number,
