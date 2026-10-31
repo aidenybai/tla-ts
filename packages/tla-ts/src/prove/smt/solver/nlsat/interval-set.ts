@@ -2,6 +2,19 @@
 // disjoint infeasible intervals of the values of one variable, each justified by the literal that
 // excludes it. A null set is empty. The bounds are copies of the numbers they were built from, so
 // refining a bound while comparing it narrows only that copy, as in Z3.
+//
+// A union drops the clauses of the intervals it copies, as Z3's push_back does, and this is
+// sound. An interval's clause is read only by get_justifications, for R_propagate's lazy
+// justification (nlsat_solver.cpp). Its literals come from the justifications alone, and the lazy
+// clause they give is valid in the reals by itself. The clauses are used only for three things:
+// - resolve_lazy_justification joins their assumptions into the lemma's. Resolution already
+//   collects these: each core literal's own justification is resolved, or the literal stays in
+//   the lemma.
+// - update_var2eq skips a lazy justification with clauses. It also skips one with literals, and
+//   every interval brings a literal.
+// - Display.
+// So a dropped clause can only shrink an over-approximated assumption set, and never removes a
+// literal from an explanation.
 import { RandomGen } from "../random-gen";
 import { Rational } from "../rational";
 import { Anum, type AlgebraicManager } from "./algebraic";
