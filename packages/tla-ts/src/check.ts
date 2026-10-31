@@ -2448,14 +2448,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const reported = deadlock.violation
         ? { ...deadlock, violation: appendTraceOutput(deadlock.violation, live.lines) }
         : deadlock;
-      const { additional, isFailed, callStack } = live.result;
       // An error in adding the state stops TLC 1.7.4's worker before it counts the state.
       const counted = withOutDegrees(
         reported,
-        isFailed ? getFailureOutDegrees() : getPartialOutDegrees(),
+        live.result.isFailed ? getFailureOutDegrees() : getPartialOutDegrees(),
       );
-      if (additional) return { ...counted, additionalViolation: additional };
-      return callStack ? { ...counted, liveCallStack: callStack } : counted;
+      if (live.result.additional)
+        return { ...counted, additionalViolation: live.result.additional };
+      return live.result.callStack ? { ...counted, liveCallStack: live.result.callStack } : counted;
     }
     try {
       return addLiveState();

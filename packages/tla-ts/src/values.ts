@@ -276,7 +276,10 @@ const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) =>
 
 // TLC orders strings and model value names by when it first interned the text, so every
 // check sets the order of its spec's strings before it builds any value.
-const stringOrder = { ranks: Object.create(null) as Record<string, number>, size: 0 };
+const stringOrder: { ranks: Record<string, number>; size: number } = {
+  ranks: Object.create(null),
+  size: 0,
+};
 
 export const setStringOrder = (texts: Iterable<string>) => {
   stringOrder.ranks = Object.create(null);
@@ -1733,7 +1736,8 @@ export const computeLikeTlcOnFailure = <Result>(
   compute: () => Result,
   computeLikeTlc: (error: TlaEvaluationError) => Result,
 ): Result => {
-  const { sets, callStack } = setTrace;
+  const sets = setTrace.sets;
+  const callStack = setTrace.callStack;
   const depth = sets?.length ?? 0;
   const trace = callStack && { ...callStack, length: callStack.expressions.length };
   try {
