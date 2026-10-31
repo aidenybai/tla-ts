@@ -3,7 +3,7 @@
 import { ArithRewriter } from "./arith-rewriter";
 import type { ArithRewriterOptions } from "./poly-rewriter";
 import { isAstLess } from "./ast-lt";
-import { applyDer } from "./der";
+import { Der } from "./der";
 import {
   AstManager,
   KIND_APP,
@@ -33,7 +33,7 @@ import {
 } from "./ast";
 import { getRewriteDepth, type Rewrite, RewriterTpl } from "./rewriter-tpl";
 import { sortByKey } from "./sort";
-import { elimUnusedVars } from "./var-subst";
+import { UnusedVarsEliminator } from "./var-subst";
 
 export interface RewriterOptions {
   // Replaces (and a b) with (not (or (not a) (not b))), as Z3's asserted_formulas does after NNF.
@@ -99,6 +99,8 @@ interface ReduceFrame {
 export class Rewriter extends RewriterTpl {
   private arith: ArithRewriter;
   private substitution = new Map<number, number>();
+  private unusedVarsEliminator: UnusedVarsEliminator;
+  private der: Der;
 
   constructor(
     manager: AstManager,
@@ -107,6 +109,15 @@ export class Rewriter extends RewriterTpl {
   ) {
     super(manager);
     this.arith = new ArithRewriter(manager, options.arith);
+    this.unusedVarsEliminator = new UnusedVarsEliminator(manager);
+    this.der = new Der(manager);
+  }
+
+  // ~imp: the members of th_rewriter_cfg go before the caches of rewriter_tpl.
+  release() {
+    this.unusedVarsEliminator.release();
+    this.der.release();
+    super.release();
   }
 
   // Rewrites the top depth levels of a term, outside the main loop. Like rewriter_tpl, it keeps its
@@ -215,13 +226,14 @@ export class Rewriter extends RewriterTpl {
             weight: Math.min(data.weight, nested.weight),
           })
         : manager.mkQuantifier({ ...data, body, patterns: this.substitutePatterns(patterns) });
-    const reduced = elimUnusedVars(manager, merged);
+    const reduced = this.unusedVarsEliminator.apply(merged);
+    manager.releaseLater(reduced);
     if (
       manager.kinds[reduced] !== KIND_QUANTIFIER ||
       manager.getQuantifier(reduced).patterns.length > 0
     )
       return reduced;
-    const eliminated = applyDer(manager, reduced);
+    const eliminated = this.der.apply(reduced);
     if (eliminated === reduced || this.isNestedDer) return eliminated;
     const nestedRewriter = new Rewriter(manager, this.options, true);
     const rewritten = nestedRewriter.rewrite(eliminated);

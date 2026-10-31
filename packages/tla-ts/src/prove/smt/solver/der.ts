@@ -4,15 +4,7 @@
 import { KIND_QUANTIFIER, KIND_VAR, OP_EQ, SORT_BOOL, type AstManager } from "./ast";
 import { flattenAndVector, flattenOrVector } from "./ast-util";
 import { RefVector } from "./ref-vector";
-import { collectUsedVars, elimUnusedVars, replaceFreeVars, shiftVars } from "./var-subst";
-
-// Substitutes the variables with de Bruijn index i < map.length that have a definition in map,
-// which may contain variables of the same scope, and keeps every other variable.
-export const substitutePartial = (manager: AstManager, expr: number, map: (number | undefined)[]) =>
-  replaceFreeVars(manager, expr, (variable, index, shift) => {
-    const definition = index < map.length ? map[index] : undefined;
-    return definition === undefined ? variable : shiftVars(manager, definition, 0, shift, 0);
-  });
+import { collectUsedVars, elimUnusedVars, VarSubst } from "./var-subst";
 
 interface VarDefinition {
   index: number;
@@ -109,88 +101,101 @@ export const getEliminationOrder = (manager: AstManager, definitions: (number | 
   return order;
 };
 
-// der::reduce1: destructive equality resolution.
-const reduceDer = (manager: AstManager, expr: number) => {
-  const data = manager.getQuantifier(expr);
-  const count = data.sorts.length;
-  const single = getVarDefinition(manager, data.body, count, data.isForall);
-  if (
-    single !== undefined &&
-    !manager.hasQuantifierFlags[single.definition] &&
-    !isOccurring(manager, single.index, single.definition)
-  )
-    return data.isForall ? manager.falseExpr : manager.trueExpr;
-  // The literals vector holds its expressions until reduce1 returns, and releases them in order.
-  const vector = new RefVector(manager);
-  manager.withoutTemporaries(() => {
-    vector.push(data.body);
-    if (data.isForall) flattenOrVector(manager, vector);
-    else flattenAndVector(manager, vector);
-  });
-  const result = reduceLiterals(manager, expr, vector.items);
-  vector.reset();
-  return result;
-};
+// der: destructive equality resolution. Its var_subst keeps the cache of its last substitution until
+// the next one.
+export class Der {
+  private subst: VarSubst;
 
-// The rest of der::reduce1, on the flattened literals of the body.
-const reduceLiterals = (manager: AstManager, expr: number, literals: number[]) => {
-  const data = manager.getQuantifier(expr);
-  const count = data.sorts.length;
-  const definitions: (number | undefined)[] = [];
-  const positions = literals.map((literal) => {
-    const found = getVarDefinition(manager, literal, count, data.isForall);
-    if (found === undefined || definitions[found.index] !== undefined) return -1;
-    definitions[found.index] = found.definition;
-    return found.index;
-  });
-  if (positions.every((position) => position === -1)) return expr;
-  const order = getEliminationOrder(manager, definitions);
-  if (order.length === 0) return expr;
-  const substitution: (number | undefined)[] = [];
-  for (const index of order) {
-    const definition = definitions[index];
-    if (definition !== undefined)
-      substitution[index] = substitutePartial(manager, definition, substitution);
+  constructor(private manager: AstManager) {
+    this.subst = new VarSubst(manager, true);
   }
-  const kept = literals.filter((_literal, position) => {
-    const index = positions[position];
-    return index === -1 || definitions[index] === undefined;
-  });
-  const empty = data.isForall ? manager.falseExpr : manager.trueExpr;
-  // apply_substitution holds the junction of the kept literals until it returns.
-  const combined = manager.withoutTemporaries(() =>
-    kept.length === 0
-      ? empty
-      : kept.length === 1
-        ? kept[0]
-        : data.isForall
-          ? manager.mkOr(kept)
-          : manager.mkAnd(kept),
-  );
-  manager.incRef(combined);
-  const result = manager.mkQuantifier({
-    ...data,
-    body: substitutePartial(manager, combined, substitution),
-    patterns: data.patterns.map((pattern) =>
-      manager.mkPattern(
-        manager.args[pattern].map((term) => substitutePartial(manager, term, substitution)),
-      ),
-    ),
-  });
-  manager.decRef(combined);
-  return result;
-};
 
-// der::operator(): reduces until nothing changes, then drops the eliminated variables.
-export const applyDer = (manager: AstManager, expr: number) => {
-  let current = expr;
-  for (
-    let next = reduceDer(manager, current);
-    next !== current;
-    next = reduceDer(manager, current)
-  ) {
-    current = next;
-    if (manager.kinds[current] !== KIND_QUANTIFIER) return current;
+  // der::operator(): reduces until nothing changes, then drops the eliminated variables. The result
+  // is a temporary.
+  apply(expr: number) {
+    const manager = this.manager;
+    let current = expr;
+    for (let next = this.reduce(current); next !== current; next = this.reduce(current)) {
+      current = next;
+      if (manager.kinds[current] !== KIND_QUANTIFIER) return current;
+    }
+    return current === expr ? expr : elimUnusedVars(manager, current);
   }
-  return current === expr ? expr : elimUnusedVars(manager, current);
-};
+
+  // ~der.
+  release() {
+    this.subst.release();
+  }
+
+  // der::reduce1.
+  private reduce(expr: number) {
+    const manager = this.manager;
+    const data = manager.getQuantifier(expr);
+    const count = data.sorts.length;
+    const single = getVarDefinition(manager, data.body, count, data.isForall);
+    if (
+      single !== undefined &&
+      !manager.hasQuantifierFlags[single.definition] &&
+      !isOccurring(manager, single.index, single.definition)
+    )
+      return data.isForall ? manager.falseExpr : manager.trueExpr;
+    // The literals vector holds its expressions until reduce1 returns, and releases them in order.
+    const vector = new RefVector(manager);
+    manager.withoutTemporaries(() => {
+      vector.push(data.body);
+      if (data.isForall) flattenOrVector(manager, vector);
+      else flattenAndVector(manager, vector);
+    });
+    const result = this.reduceLiterals(expr, vector.items);
+    vector.reset();
+    return result;
+  }
+
+  // The rest of der::reduce1, on the flattened literals of the body.
+  private reduceLiterals(expr: number, literals: number[]) {
+    const manager = this.manager;
+    const data = manager.getQuantifier(expr);
+    const count = data.sorts.length;
+    const definitions: (number | undefined)[] = [];
+    const positions = literals.map((literal) => {
+      const found = getVarDefinition(manager, literal, count, data.isForall);
+      if (found === undefined || definitions[found.index] !== undefined) return -1;
+      definitions[found.index] = found.definition;
+      return found.index;
+    });
+    if (positions.every((position) => position === -1)) return expr;
+    const order = getEliminationOrder(manager, definitions);
+    if (order.length === 0) return expr;
+    // create_substitution: (:var i) becomes the entry at size - i - 1, with the definitions before it
+    // in the order substituted.
+    const size = definitions.length;
+    const substMap: number[] = Array.from({ length: size }, () => -1);
+    for (const index of order)
+      substMap[size - index - 1] = this.subst.apply(definitions[index] as number, substMap);
+    // apply_substitution holds the junction of the kept literals until it returns.
+    const kept = literals.filter((_literal, position) => {
+      const index = positions[position];
+      return index === -1 || definitions[index] === undefined;
+    });
+    const empty = data.isForall ? manager.falseExpr : manager.trueExpr;
+    const combined = manager.withoutTemporaries(() =>
+      kept.length === 0
+        ? empty
+        : kept.length === 1
+          ? kept[0]
+          : data.isForall
+            ? manager.mkOr(kept)
+            : manager.mkAnd(kept),
+    );
+    manager.incRef(combined);
+    const body = this.subst.apply(combined, substMap);
+    const patterns = data.patterns.map((pattern) => this.subst.apply(pattern, substMap));
+    const result = manager.mkQuantifier({ ...data, body, patterns });
+    for (const pattern of patterns) manager.releaseLater(pattern);
+    manager.releaseLater(body);
+    manager.decRef(combined);
+    // m_subst_map holds the definitions until the next substitution.
+    for (const definition of substMap) if (definition !== -1) manager.releaseLater(definition);
+    return result;
+  }
+}
