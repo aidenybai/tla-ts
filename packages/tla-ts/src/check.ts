@@ -68,6 +68,7 @@ import { createTlcFingerprinter, getTlcFingerprint } from "./tlc-random";
 import { createCanonicalizer } from "./canonical";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createCounterExample } from "./tlc-ext";
+import { getFingerprintTrace, valueSources } from "./value-sources";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import {
   combineHash,
@@ -149,6 +150,14 @@ export interface EvaluationFailure {
 export interface Replay {
   output: string[];
   callStack: string[] | undefined;
+  fingerprint?: Fingerprint;
+}
+
+// TLC reports an error from a method of a value that has a source as one it was unable to
+// fingerprint. With an empty stack, it lists the sources of the values instead.
+export interface Fingerprint {
+  sources: string[];
+  reason: string;
 }
 
 export interface CheckResult {
@@ -936,15 +945,30 @@ const toNextStateError = (error: unknown) =>
       )
     : withNextStateExitCode(error);
 
+const isRepeated = (frame: string, index: number, frames: string[]) =>
+  index > 0 && frames[index - 1] === frame;
+
+// FingerprintException#getTrace numbers the sources from the outermost value and lists the innermost
+// first.
+const getSourceTrace = (sources: Expression[]) =>
+  sources
+    .flatMap((source) => (source.location.range ? [formatRange(source.location.range)] : []))
+    .filter((source, index, all) => !isRepeated(source, index, all))
+    .map((source, index) => `${index}) ${source}`)
+    .reverse();
+
 // TLC keeps the stack only when an evaluation fails, and prints each expression on it once, however
 // many times in a row it pushed it.
-const getReplayedCallStack = (replay: () => void, trace: Expression[]) => {
+const getReplayedCallStack = (
+  replay: () => void,
+  trace: Expression[],
+): Pick<Replay, "callStack" | "fingerprint"> => {
   try {
     replay();
-    return undefined;
+    return { callStack: undefined };
   } catch (error) {
-    if (!(error instanceof TlaEvaluationError)) return [];
-    return trace
+    if (!(error instanceof TlaEvaluationError)) return { callStack: [] };
+    const callStack = trace
       .flatMap((expression) => {
         const range = expression.location.range;
         return range
@@ -953,7 +977,12 @@ const getReplayedCallStack = (replay: () => void, trace: Expression[]) => {
             ]
           : [];
       })
-      .filter((frame, index, frames) => index === 0 || frames[index - 1] !== frame);
+      .filter((frame, index, frames) => !isRepeated(frame, index, frames));
+    const sources = getFingerprintTrace(error);
+    return {
+      callStack,
+      fingerprint: sources && { sources: getSourceTrace(sources), reason: error.message },
+    };
   }
 };
 
@@ -1087,9 +1116,23 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (!tracedSearch) return result;
     const replayed: string[] = [];
     output.replayed = replayed;
-    const callStack = getReplayedCallStack(() => replay(tracedSearch, traced), trace);
+    valueSources.current = new WeakMap();
+    const replayedStack = getReplayedCallStack(() => replay(tracedSearch, traced), trace);
+    valueSources.current = undefined;
     output.replayed = undefined;
-    return { ...result, failure: { ...result.failure, replay: { output: replayed, callStack } } };
+    return {
+      ...result,
+      failure: { ...result.failure, replay: { output: replayed, ...replayedStack } },
+    };
+  };
+  // TLC fingerprints a state outside CallStackTool, so a failure leaves the stack empty.
+  const fingerprintReplayed = (state: Value[], traced: Environment) => {
+    try {
+      getStateHash(getFingerprintState(state));
+    } catch (error) {
+      if (traced.trace) traced.trace.length = 0;
+      throw error;
+    }
   };
   // TLC checks every initial state again, as when it first generated them.
   const replayInitialStates = (result: CheckResult) =>
@@ -1099,7 +1142,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         spec.init,
         traced,
         (state) => {
-          tracedSearch.satisfiesConstraints(state);
+          if (tracedSearch.satisfiesConstraints(state)) fingerprintReplayed(state, traced);
           return (
             tracedSearch.findViolatedInvariant(state) !== undefined ||
             tracedSearch.findFailedInitialPredicate(state) !== undefined
@@ -1130,6 +1173,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           const isInModel =
             tracedSearch.satisfiesConstraints(successor.state) &&
             tracedSearch.satisfiesActionConstraints(state, successor.state);
+          if (isInModel) fingerprintReplayed(successor.state, traced);
           return (
             (!isInModel && tracedSearch.findViolatedInvariant(successor.state) !== undefined) ||
             tracedSearch.findViolatedActionProperty(state, successor.state) !== undefined
