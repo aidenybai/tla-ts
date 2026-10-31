@@ -79,15 +79,42 @@ interface DrsFrame {
 }
 
 export class UpolynomialManager {
-  // Z_p when set, else Z. Coefficients over Z_p lie in the symmetric range around zero.
-  private modulus: bigint | null = null;
+  // Z_p when set, else Z. Coefficients over Z_p lie in the symmetric range around zero. Hensel
+  // lifting also sets a prime power.
+  private isPrimeModulus = true;
+
+  constructor(private modulus: bigint | null = null) {}
+
+  get zp() {
+    return this.modulus;
+  }
+
+  // field: Z_p for a prime p. Over a prime power, division falls back to pseudo-division.
+  private get isField() {
+    return this.modulus !== null && this.isPrimeModulus;
+  }
+
+  // set_zp
+  setZp(prime: bigint) {
+    this.modulus = prime;
+    this.isPrimeModulus = true;
+  }
+
+  // set_p_sq: from Z_m to Z_(m^2).
+  squareModulus() {
+    if (this.modulus === null) throw new Error("squaring the modulus of Z");
+    this.modulus *= this.modulus;
+    this.isPrimeModulus = false;
+  }
 
   // scoped_set_zp
   withZp<T>(prime: bigint, body: () => T) {
-    const saved = this.modulus;
-    this.modulus = prime;
+    const savedModulus = this.modulus;
+    const savedIsPrime = this.isPrimeModulus;
+    this.setZp(prime);
     const result = body();
-    this.modulus = saved;
+    this.modulus = savedModulus;
+    this.isPrimeModulus = savedIsPrime;
     return result;
   }
 
@@ -103,7 +130,7 @@ export class UpolynomialManager {
     return rest > upper ? rest - modulus : rest < lower ? rest + modulus : rest;
   }
 
-  private inv(value: bigint) {
+  inv(value: bigint) {
     const modulus = this.modulus;
     if (modulus === null) throw new Error("inverse over Z");
     return this.normalizeNumeral(getExtendedGcd(this.normalizeNumeral(value), modulus).x);
@@ -117,7 +144,7 @@ export class UpolynomialManager {
   }
 
   private dividesNumeral(divisor: bigint, dividend: bigint) {
-    if (this.modulus !== null && divisor !== 0n) return true;
+    if (this.isField && divisor !== 0n) return true;
     return divisor === 0n ? dividend === 0n : dividend % divisor === 0n;
   }
 
@@ -217,12 +244,12 @@ export class UpolynomialManager {
 
   // div_rem: q and r with lc(p2)^d * p1 = q * p2 + r over Z, or p1 = q * p2 + r over a field.
   divRem(dividend: Upolynomial, divisor: Upolynomial) {
-    const isField = this.modulus !== null;
+    const isField = this.isField;
     if (divisor.length === 1) {
-      const quotient = isField ? this.divConst(dividend, divisor[0]) : [...dividend];
+      const quotient = isField ? this.divConst(dividend, divisor[0]) : this.set(dividend);
       return { quotient, remainder: [] as bigint[], power: 0 };
     }
-    const remainder = [...dividend];
+    const remainder = this.set(dividend);
     if (dividend.length <= 1) return { quotient: [] as bigint[], remainder, power: 0 };
     const quotientSize =
       dividend.length >= divisor.length ? dividend.length - divisor.length + 1 : 0;
@@ -265,9 +292,9 @@ export class UpolynomialManager {
   // rem: the pseudo-remainder, with the number of pseudo-division steps.
   remWithPower(dividend: Upolynomial, divisor: Upolynomial) {
     if (divisor.length === 1) return { remainder: [] as bigint[], power: 0 };
-    const remainder = [...dividend];
+    const remainder = this.set(dividend);
     if (dividend.length <= 1) return { remainder, power: 0 };
-    const isField = this.modulus !== null;
+    const isField = this.isField;
     const leading = divisor[divisor.length - 1];
     let power = 0;
     while (remainder.length >= divisor.length) {
@@ -313,7 +340,7 @@ export class UpolynomialManager {
     if (divisor.length === 0) return false;
     if (dividend.length === 0) return true;
     const leading = divisor[divisor.length - 1];
-    const rest = [...dividend];
+    const rest = this.set(dividend);
     while (rest.length > 0) {
       if (divisor.length > rest.length || !this.dividesNumeral(leading, rest[rest.length - 1]))
         return false;
@@ -335,7 +362,7 @@ export class UpolynomialManager {
     const leading = divisor[divisor.length - 1];
     if (divisor.length > dividend.length) return null;
     const result = Array.from({ length: dividend.length - divisor.length + 1 }, () => 0n);
-    const rest = [...dividend];
+    const rest = this.set(dividend);
     while (rest.length > 0) {
       if (
         divisor.length > rest.length ||
@@ -358,17 +385,17 @@ export class UpolynomialManager {
   // GCD.
 
   private euclidGcd(first: Upolynomial, second: Upolynomial) {
-    if (first.length === 0) return this.flipSignIfLmNeg(second);
-    if (second.length === 0) return this.flipSignIfLmNeg(first);
-    let a = [...first];
-    let b = [...second];
+    if (first.length === 0) return this.flipSignIfLmNeg(this.set(second));
+    if (second.length === 0) return this.flipSignIfLmNeg(this.set(first));
+    let a = this.set(first);
+    let b = this.set(second);
     while (b.length > 0) {
       const remainder = this.normalize(this.rem(a, b));
       a = b;
       b = remainder;
     }
     const normalized = this.normalize(a);
-    return this.modulus !== null ? this.mkMonic(normalized) : this.flipSignIfLmNeg(normalized);
+    return this.isField ? this.mkMonic(normalized) : this.flipSignIfLmNeg(normalized);
   }
 
   // CRA_combine_images: the image modulo bound * prime, in the symmetric range.
@@ -436,16 +463,16 @@ export class UpolynomialManager {
   }
 
   gcd(first: Upolynomial, second: Upolynomial) {
-    if (first.length === 0) return this.flipSignIfLmNeg(second);
-    if (second.length === 0) return this.flipSignIfLmNeg(first);
+    if (first.length === 0) return this.flipSignIfLmNeg(this.set(second));
+    if (second.length === 0) return this.flipSignIfLmNeg(this.set(first));
     return this.modulus === null ? this.modGcd(first, second) : this.euclidGcd(first, second);
   }
 
   // square_free: p divided by gcd(p, p'), normalized.
   squareFree(coeffs: Upolynomial) {
-    if (coeffs.length <= 1) return [...coeffs];
+    if (coeffs.length <= 1) return this.set(coeffs);
     const common = this.gcd(coeffs, this.derivative(coeffs));
-    return common.length <= 1 ? [...coeffs] : this.normalize(this.div(coeffs, common));
+    return common.length <= 1 ? this.set(coeffs) : this.normalize(this.div(coeffs, common));
   }
 
   isSquareFree(coeffs: Upolynomial) {
@@ -454,7 +481,7 @@ export class UpolynomialManager {
 
   pw(coeffs: Upolynomial, exponent: number) {
     if (exponent === 0) return [1n];
-    let result = [...coeffs];
+    let result = this.set(coeffs);
     for (let index = 1; index < exponent; index++) result = this.mul(result, coeffs);
     return result;
   }
@@ -462,9 +489,9 @@ export class UpolynomialManager {
   // ext_gcd over Z_p: u, v and the monic d with a*u + b*v = d.
   extGcd(first: Upolynomial, second: Upolynomial) {
     let u: bigint[] = [1n];
-    let d = this.mkMonic(first);
+    let d = this.mkMonic(this.set(first));
     let v1: bigint[] = [];
-    let v3 = [...second];
+    let v3 = this.set(second);
     while (v3.length > 0) {
       const division = this.divRem(d, v3);
       const t = this.sub(u, this.mul(v1, division.quotient));

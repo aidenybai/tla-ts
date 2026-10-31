@@ -10,6 +10,10 @@ import { isolateRootsClosest, selectBetween } from "../../src/prove/smt/solver/n
 import { Mpbq } from "../../src/prove/smt/solver/nlsat/mpbq";
 import { NlsatSolver } from "../../src/prove/smt/solver/nlsat/solver";
 import { UpolynomialManager } from "../../src/prove/smt/solver/nlsat/upolynomial";
+import {
+  DEFAULT_FACTOR_PARAMS,
+  factorUpolynomial,
+} from "../../src/prove/smt/solver/nlsat/upolynomial-factorization";
 import { Rational } from "../../src/prove/smt/solver/rational";
 import {
   NlsatOutOfScope,
@@ -229,6 +233,35 @@ const runUpolynomialCommand = (input: string) => {
     return `signbq ${um.evalSignAtBq(first, Mpbq.of(BigInt(second[0]), Number(second[1])))}`;
   return `pw${showCoeffs(um.pw(first, Number(second[0])))}`;
 };
+
+// factor <coefficients> with polynomial::factor_params(), afactor with the algebraic number
+// module's limits.
+const runFactorCommand = (input: string) => {
+  const words = input.split(" ");
+  const um = new UpolynomialManager();
+  const params =
+    words[0] === "afactor"
+      ? { maxPrime: 31, primeTrials: 1, maxSearchSize: 5000 }
+      : DEFAULT_FACTOR_PARAMS;
+  const result = factorUpolynomial(um, um.set(words.slice(1).map(BigInt)), params);
+  const factors = result.factors.factors.map(
+    (factor, index) => `${showCoeffs(factor)}^${result.factors.degrees[index]}`,
+  );
+  return `${words[0]} ${result.isComplete ? 1 : 0} ${result.factors.constant}${factors.join("")}`;
+};
+
+describe("nlsat univariate factorization", () => {
+  // Products of random factors up to degree 15, some with Swinnerton-Dyer style polynomials such
+  // as x^4 - 10x^2 + 1 that split modulo every prime, factored as Z3 does: Berlekamp in Z_p,
+  // Hensel lifting and the search over combinations of lifted factors.
+  const cases: [string, string][] = JSON.parse(
+    readFileSync(join(FIXTURES, "upolynomial-factorization.json"), "utf8"),
+  );
+
+  it.each(cases)("%s", (input, expected) => {
+    expect(runFactorCommand(input)).toBe(expected);
+  });
+});
 
 describe("nlsat univariate polynomials", () => {
   // Products of random factors up to degree 3, so with repeated, rational and irrational roots, and
