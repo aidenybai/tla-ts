@@ -1144,8 +1144,32 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.message).toBe(
       `${UNEXPECTED_EXCEPTION}TLC has found a state in which the value of a variable contains Nat`,
     );
-    expect(result.failure?.isTraceFailed).toBe(true);
+    expect(result.failure?.traceFailure?.message).toBe(result.failure?.message);
     expect(getFailureSummary(result)).toEqual(["error", ["0", "1"], [3, 2, 0, 2], 75]);
+  });
+
+  // TLC builds a function over a domain other than a set enumeration or an interval lazily, so its
+  // body fails as TLC fingerprints the successor and again as TLC prints it.
+  it.each([
+    ["master" as const, "tlc2.tool.EvalException\n: The second argument"],
+    ["1.7.4" as const, "java.lang.RuntimeException\n: tlc2.tool.EvalException: The second"],
+  ])("fails to fingerprint a function whose body fails in TLC %s", async (version, wrapped) => {
+    const result = await checkSteps(
+      "Step == x' = [k \\in SUBSET {1} |-> 1 \\div 0]",
+      "INIT Init\nNEXT Step",
+      version,
+    );
+    const failure = result.failure;
+    expect(failure?.traceFailure?.message ?? failure?.message).toContain(wrapped);
+    expect([result.generatedStates, failure?.exitCode]).toEqual([2, 255]);
+  });
+
+  it("doesn't force a function TLC builds lazily in a disabled action", async () => {
+    const result = await checkSteps(
+      "Step == x' = [k \\in SUBSET {1} |-> 1 \\div 0] /\\ FALSE",
+      "INIT Init\nNEXT Step",
+    );
+    expect([result.status, result.failure]).toEqual(["deadlock", undefined]);
   });
 
   // TLC evaluates the whole predicate, not each conjunct on its own.

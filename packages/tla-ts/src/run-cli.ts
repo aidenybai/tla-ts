@@ -593,7 +593,14 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     }
     printTraceOutput(printer, failure.trace[0]?.output);
     printTrace(printer, failure.trace);
-    if (failure.isTraceFailed) print(failure.code, MESSAGE_LEVEL.error, message);
+    const traceFailure = failure.traceFailure;
+    if (traceFailure) {
+      print(
+        traceFailure.code,
+        MESSAGE_LEVEL.error,
+        printer.isTool ? traceFailure.toolMessage : traceFailure.message,
+      );
+    }
     printTraceOutput(printer, failure.traceOutput);
     const postcondition = failure.postcondition;
     if (postcondition?.counts) console.log(postcondition.counts);

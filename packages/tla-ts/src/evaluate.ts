@@ -1749,16 +1749,31 @@ const compileFunctionConstruction = (
     });
     return createFunction(pairs);
   };
+  const createLazy = (domain: Value, context: Context) => {
+    const functionValue = createLazyFunction(
+      domain,
+      (argument) => body(withScope(context, bindArgument(bounds, context.scope, argument))),
+      getLazyFunctionSource(bounds, expression.body, domain),
+    );
+    return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
+  };
   const callStack = environment.callStack;
   return (context) => {
     const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
     if (expression.isRecursive || isKeptLazy || !isEnumerable(domain)) {
-      const functionValue = createLazyFunction(
-        domain,
-        (argument) => body(withScope(context, bindArgument(bounds, context.scope, argument))),
-        getLazyFunctionSource(bounds, expression.body, domain),
-      );
-      return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
+      return createLazy(domain, context);
+    }
+    // TLC builds a function over a domain other than a set enumeration or an interval lazily, so
+    // its body fails only where TLC forces it, as the replay does. Building it at once is faster
+    // otherwise.
+    if (!isReducible(domain)) {
+      if (callStack) return createLazy(domain, context);
+      try {
+        return construct(domain, context);
+      } catch (error) {
+        if (!(error instanceof TlaEvaluationError)) throw error;
+        return createLazy(domain, context);
+      }
     }
     if (!callStack) return construct(domain, context);
     // TLC builds the function in a method of the FcnLambdaValue that CallStackTool gives a source.

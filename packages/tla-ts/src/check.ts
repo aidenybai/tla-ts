@@ -235,9 +235,9 @@ export interface EvaluationFailure {
   isCallStackFirst?: boolean;
   // The FingerprintException the replay raises, which TLC reports in place of the call stack.
   fingerprint?: FingerprintFailure;
-  // Whether TLC fails again as it prints the trace, since it can't fingerprint the state the
+  // How TLC reports failing again as it prints the trace, since it can't fingerprint the state the
   // failure occurred in.
-  isTraceFailed?: boolean;
+  traceFailure?: FailureMessage;
   // A POSTCONDITION that is false or fails after the trace, which TLC checks as it prints one.
   postcondition?: Postcondition;
 }
@@ -298,7 +298,7 @@ interface FailureOptions {
   fingerprint?: FingerprintFailure;
   isNextState?: boolean;
   isCallStackFirst?: boolean;
-  isTraceFailed?: boolean;
+  traceFailure?: FailureMessage;
   // Whether the call stack is of adding the state to the behavior graph, which TLC prints instead
   // of replaying the error.
   isLiveCallStack?: boolean;
@@ -1266,10 +1266,11 @@ const getInitialExitCode = (error: TlaEvaluationError) => {
 };
 
 // When TLC's replay of an error fails again, an EvalException from a standard module's Java code
-// decides the exit status, and any other failure exits as a nested expression failure.
+// decides the exit status, and any other failure exits as a nested expression failure. An error
+// that heads or wraps another exits as the other.
 const getReplayExitCode = (error: TlaEvaluationError): number => {
-  const inner = headedErrors.get(error)?.inner;
-  if (inner) return getReplayExitCode(inner);
+  const inner = error.cause;
+  if (inner instanceof TlaEvaluationError) return getReplayExitCode(inner);
   return error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.specEvaluationFailure;
 };
 
@@ -1341,7 +1342,13 @@ const formatErrorMessage = (error: TlaEvaluationError, isTool: boolean): string 
 // How TLC reports an error: with the code of its own message for an error that it reports with a
 // headline; and, when the error escapes the computation of next states, with the code of an
 // EvalException, or as an unexpected exception for any other error.
-const getFailureMessage = (error: TlaEvaluationError, isNextState: boolean) => {
+interface FailureMessage {
+  code: number;
+  message: string;
+  toolMessage: string;
+}
+
+const getFailureMessage = (error: TlaEvaluationError, isNextState: boolean): FailureMessage => {
   const headed = headedErrors.get(error);
   const message = error.message;
   if (headed) {
@@ -1891,7 +1898,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const toFailure = (error: unknown, behavior: Behavior, failureOptions: FailureOptions = {}) => {
     if (!(error instanceof TlaEvaluationError)) throw error;
     const checked =
-      behavior.trace.length > 0 && !failureOptions.isTraceFailed
+      behavior.trace.length > 0 && !failureOptions.traceFailure
         ? checkTracePostconditions(behavior.trace, undefined)
         : undefined;
     const postcondition = checked?.unwitnessed ?? checked?.postcondition;
@@ -1910,7 +1917,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         callStack: failureOptions.callStack,
         ...(failureOptions.isCallStackFirst && { isCallStackFirst: true }),
         ...(failureOptions.fingerprint && { fingerprint: failureOptions.fingerprint }),
-        ...(failureOptions.isTraceFailed && { isTraceFailed: true }),
+        ...(failureOptions.traceFailure && { traceFailure: failureOptions.traceFailure }),
       }),
       outDegrees: failureOptions.outDegrees,
     };
@@ -2326,23 +2333,33 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         // which it reports with the trace before it rethrows.
         if (is174 && error instanceof TlaEvaluationError && !headedErrors.has(error)) {
           outcome.result = toFailure(
-            new TlaEvaluationError(`${getWrappedException(error)}${error.message}`),
+            new TlaEvaluationError(`${getWrappedException(error)}${error.message}`, error),
             appendTraceOutput({ trace: [] }, replay.lines),
             { isNextState: true, ...replay.result },
           );
           return true;
         }
-        // A successor TLC can't fingerprint fails again as TLC prints it in the trace.
+        // A successor TLC can't fingerprint fails again as TLC prints it in the trace, which TLC
+        // reports as an exception it didn't expect.
         const isTraceFailed = getFingerprintState(successor.state).some(
           (value) => getFingerprintError(value) !== undefined,
         );
+        const traceFailure =
+          isTraceFailed && error instanceof TlaEvaluationError
+            ? getFailureMessage(
+                isEvalException(error)
+                  ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`)
+                  : error,
+                true,
+              )
+            : undefined;
         outcome.result = toFailure(
           error,
           appendTraceOutput(
-            isTraceFailed ? getStateTrace(index) : getTrace(index, successor),
+            traceFailure ? getStateTrace(index) : getTrace(index, successor),
             replay.lines,
           ),
-          { isNextState: true, ...replay.result, isTraceFailed },
+          { isNextState: true, ...replay.result, traceFailure },
         );
       }
       return outcome.result !== undefined;
