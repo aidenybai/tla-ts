@@ -206,7 +206,11 @@ export class ModelEvaluator extends RewriterTpl {
         manager.args[arg][1] === term &&
         manager.isNumeral(manager.args[arg][0]);
       if (!isBound) rest.push(arg);
-      else if (manager.values[manager.args[arg][0]] > manager.values[manager.args[bound][0]])
+      else if (
+        manager
+          .getRationalValue(manager.args[arg][0])
+          .compare(manager.getRationalValue(manager.args[bound][0])) > 0
+      )
         bound = arg;
     }
     if (rest.length === args.length - 1) return undefined;
