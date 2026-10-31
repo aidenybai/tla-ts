@@ -270,6 +270,7 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
             );
           }
           walk.node = symbol;
+          walk.nameLocation = extendLocation(walk.nameLocation, getItemLocation(walk.index));
           walk.name = newName;
           if (isDeclarationLike(symbol) && items.length !== 1) {
             return generator.addError(
@@ -324,6 +325,7 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
             if (walk.index !== items.length - 1 && definition !== undefined) {
               params.push(...(definition.params ?? []));
               walk.name = undefined;
+              walk.nameLocation = undefined;
               walk.mode =
                 items[walk.index + 1].op === "Name" ? "FollowingLabels" : "FindingSubExpr";
               allArgs.push(...walk.definitionArgs);

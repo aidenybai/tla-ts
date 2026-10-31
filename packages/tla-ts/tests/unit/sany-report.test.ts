@@ -160,6 +160,17 @@ Spec == Init /\\ [][Next]_x
     expect(report.text).toContain(`*** Errors: 1\n\n${range} of module M\n\n${message}\n`);
   });
 
+  it.each([
+    ["Z(c) == INSTANCE R\nx == Z(7)!Nope", "line 3, col 6 to line 3, col 14"],
+    ["Z == INSTANCE R WITH c <- 1\nx == Z!Nope", "line 3, col 6 to line 3, col 11"],
+  ])("locates the unknown operator of %j from the instance's name", (body, range) => {
+    const report = getReport({
+      M: `---- MODULE M ----\n${body}\n====\n`,
+      R: "---- MODULE R ----\nCONSTANT c\n====\n",
+    });
+    expect(report.text).toContain(`${range} of module M\n\nUnknown operator: \`Z!Nope'.\n`);
+  });
+
   it("reports a multiply defined operator with a warning and an error", () => {
     const report = getReport({ Twice: "---- MODULE Twice ----\nOp == 1\nOp == 2\n====\n" });
     expect(report.isFailed).toBe(true);
