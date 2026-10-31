@@ -1905,6 +1905,11 @@ const findKeyIndex = (domain: Value[], argument: Value) => {
   return findIndex(domain, argument);
 };
 
+export const createNonIntegerKeyError = (argument: Value) =>
+  new TlaEvaluationError(
+    `Attempted to apply function with integer domain to the non-integer argument ${prettyPrint(formatValue(argument))}`,
+  );
+
 // TLC's FcnRcdValue searches a domain this small linearly with equals, and a larger normalized one by
 // binary search with compareTo.
 const LINEAR_SEARCH_LIMIT = 32;
@@ -1926,9 +1931,7 @@ const findKeyIndexLikeTlc = (
       throw new TlaEvaluationError(describeWrongKey(functionValue, argument));
     }
     if (keyType === undefined && !valueVersion.is174 && isIntervalDomain(domain)) {
-      throw new TlaEvaluationError(
-        `Attempted to apply function with integer domain to the non-integer argument ${prettyPrint(formatValue(argument))}`,
-      );
+      throw createNonIntegerKeyError(argument);
     }
   }
   try {

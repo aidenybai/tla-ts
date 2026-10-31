@@ -1421,22 +1421,25 @@ describe("evaluation errors match TLC", () => {
   });
 
   it.each([
-    [undefined, "[i \\in 1..2 |-> i]", 'y["a"]', 'integer domain to the non-integer argument "a"'],
+    ["master", "[i \\in 1..2 |-> i]", 'y["a"]', 'integer domain to the non-integer argument "a"'],
     [
-      undefined,
+      "master",
       "(1 :> 2 @@ 3 :> 4)",
       'y["a"]',
       'check equality of integer 1 with non-integer:\n"a"',
     ],
     [
-      undefined,
+      "master",
       "[i \\in {2 * k : k \\in 1..40} |-> i]",
       'y["a"]',
       'Attempted to compare integer 40 with non-integer:\n"a"',
     ],
-    [undefined, "<<1, 2>>", 'y["a"]', 'Attempted to access tuple at a non integral index: "a"'],
-    [undefined, "[a |-> 1]", "y[1]", "Attempted to access record by a non-string argument: 1"],
-    [undefined, "<<1, 2>>", "[y EXCEPT ![1][1] = 2]", "apply EXCEPT construct to the value 1."],
+    ["master", "<<1, 2>>", 'y["a"]', 'Attempted to access tuple at a non integral index: "a"'],
+    ["master", "[a |-> 1]", "y[1]", "Attempted to access record by a non-string argument: 1"],
+    ["master", "<<1, 2>>", "[y EXCEPT ![1][1] = 2]", "apply EXCEPT construct to the value 1."],
+    ["master", "{1, 2}", "y.a", 'Attempted to select field "a" from a non-record value {1, 2}'],
+    ["master", "<<1, 2>>", "y.a", 'integer domain to the non-integer argument "a"'],
+    ["1.7.4", "<<1, 2>>", "y.a", 'integer domain to the non-integer argument "a"'],
     [
       "1.7.4",
       "[i \\in 1..2 |-> i]",
@@ -1462,7 +1465,7 @@ describe("evaluation errors match TLC", () => {
       "Attempted to apply record to a non-string argument 1.",
     ],
   ] as const)(
-    "words a key of the wrong type for %s in TLC %s like TLC",
+    "words a key of the wrong type in TLC %s for y = %s and x' = %s like TLC",
     async (version, value, next, message) => {
       const result = await check({
         source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = ${value}\nNext == x' = ${next} /\\ UNCHANGED y\n====`,

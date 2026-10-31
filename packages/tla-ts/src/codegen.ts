@@ -8,7 +8,7 @@ import {
   getDomainOperator,
   getSubsetOperator,
   getEvaluator,
-  getFieldError,
+  getFieldSelector,
   getMissingArgumentError,
   getQuantifierElements,
   isClosedConstant,
@@ -262,7 +262,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
       return `apply(${functionCode}, tuple([${expression.args.map((arg) => generate(arg)).join(", ")}])${error})`;
     }
     case "FieldAccess":
-      return `apply(${generate(expression.record)}, ${JSON.stringify(expression.field)}, ${addReference(generator, getFieldError(expression))})`;
+      return `${addReference(generator, getFieldSelector(expression))}(${generate(expression.record)})`;
     case "Record": {
       const fields = getSortedFields(expression.fields);
       if (hasDuplicateFields(fields)) return generateDelegate(generator, expression, frame);

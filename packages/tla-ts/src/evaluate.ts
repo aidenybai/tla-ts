@@ -20,6 +20,7 @@ import { MESSAGE_CODE } from "./tlc-messages";
 import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
 import { contextualApplications, mapChildren, substitutedExpressions } from "./instances";
+import { prettyPrint } from "./pretty-print";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
@@ -27,6 +28,7 @@ import {
   combineHash,
   compareValues,
   createFunction,
+  createNonIntegerKeyError,
   createRecord,
   createEnumeratedSet,
   createSortedFunction,
@@ -256,9 +258,22 @@ export const getJunctionError = (
   );
 };
 
-export const getFieldError =
-  (expression: Expression & { kind: "FieldAccess" }) => (record: Value) =>
-    `Attempted to select nonexistent field "${expression.field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`;
+// TLC selects a field of a record, and of another function from the function it converts it to,
+// which for a tuple keeps its domain as an interval.
+export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" }) => {
+  const field = expression.field;
+  const describeMissing = (record: Value) =>
+    `Attempted to select nonexistent field "${field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`;
+  return (value: Value) => {
+    if (!isFunctionValue(value)) {
+      throw new TlaEvaluationError(
+        `Attempted to select field "${field}" from a non-record value ${prettyPrint(formatValue(value))}\n${describeRange(expression)}`,
+      );
+    }
+    if (getFunctionClass(value) === "tuple") throw createNonIntegerKeyError(field);
+    return applyFunction(value, field, describeMissing);
+  };
+};
 
 // TLC 1.7.4 words what a tuple or a record lacks differently.
 export const getMissingArgumentError = (version: TlcVersion | undefined) =>
@@ -2126,9 +2141,8 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "FieldAccess": {
       const record = child(expression.record);
-      const field = expression.field;
-      const describeMissing = getFieldError(expression);
-      return (context) => applyFunction(record(context), field, describeMissing);
+      const select = getFieldSelector(expression);
+      return (context) => select(record(context));
     }
     case "Product": {
       const factors = expression.factors.map(child);
