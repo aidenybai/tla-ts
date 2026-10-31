@@ -29,14 +29,13 @@ import {
   type AstManager,
 } from "./ast";
 import { flattenAndVector, flattenOrVector, mkNot, pushNotOwned } from "./ast-util";
-import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { isOccurring } from "./der";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import type { Goal } from "./goal";
 import { ObjHashtable } from "./hashtable";
 import { getGcd } from "./rational";
 import { RefVector } from "./ref-vector";
-import { Rewriter } from "./rewriter";
+import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { BetaReducer, InvVarShifter, RewriterTpl } from "./rewriter-tpl";
 import { collectUsedVars, VarSubst } from "./var-subst";
 
@@ -70,13 +69,6 @@ const checkpoint = (manager: AstManager) => {
   if (!manager.limit.inc()) throw new SmtCanceledError();
 };
 
-const newRewriter = (manager: AstManager) =>
-  new Rewriter(manager, {
-    isEliminatingAnd: false,
-    arith: TACTIC_ARITH_OPTIONS,
-    isRewritingPatterns: false,
-  });
-
 // A summand of a linear equation and whether it is on the left-hand side.
 interface SignedExpr {
   isLeft: boolean;
@@ -107,7 +99,7 @@ class EqDer {
     this.subst = new BetaReducer(manager);
     this.substMap = new RefVector(manager);
     this.newExprs = new RefVector(manager);
-    this.rewriter = newRewriter(manager);
+    this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   }
 
   private isVariable(expr: number) {
@@ -1144,7 +1136,7 @@ class QeLite {
     this.elimStar = new ElimStar(manager, (expr, body, patterns) =>
       this.reduceQuantifier(expr, body, patterns),
     );
-    this.rewriter = newRewriter(manager);
+    this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   }
 
   // operator()(expr_ref&): the result comes with a reference, which the caller releases.

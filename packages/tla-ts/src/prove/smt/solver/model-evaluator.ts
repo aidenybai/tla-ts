@@ -22,10 +22,9 @@ import {
   SORT_BOOL,
 } from "./ast";
 import type { AstManager } from "./ast";
-import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { FuncInterp } from "./proto-model";
 import type { ProtoModel } from "./proto-model";
-import { Rewriter } from "./rewriter";
+import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
 import type { Rewrite } from "./rewriter-tpl";
 import { Rational } from "./rational";
@@ -39,12 +38,6 @@ const BY_ZERO_OPS = new Map([
 ]);
 
 // A th_rewriter with the default parameters.
-const DEFAULT_REWRITER_OPTIONS = {
-  isEliminatingAnd: false,
-  arith: TACTIC_ARITH_OPTIONS,
-  isRewritingPatterns: false,
-};
-
 export class ModelEvaluator extends RewriterTpl {
   // m_b_rw and m_a_rw, whose reductions evaluator_cfg applies.
   private rewriter: Rewriter;
@@ -55,7 +48,7 @@ export class ModelEvaluator extends RewriterTpl {
     private model: ProtoModel,
   ) {
     super(manager);
-    this.rewriter = new Rewriter(manager, DEFAULT_REWRITER_OPTIONS);
+    this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
     this.rewriter.releaseResult = () => this.setLastResult(-1);
   }
 
@@ -247,7 +240,7 @@ export class ModelEvaluator extends RewriterTpl {
 
   // evaluator_cfg::reduce_quantifier: a th_rewriter of its own reduces the quantifier.
   reduceQuantifier(expr: number, body: number, patterns: number[]) {
-    const rewriter = new Rewriter(this.manager, DEFAULT_REWRITER_OPTIONS);
+    const rewriter = new Rewriter(this.manager, TACTIC_REWRITER_OPTIONS);
     const result = rewriter.reduceQuantifier(expr, body, patterns);
     rewriter.release();
     return result;

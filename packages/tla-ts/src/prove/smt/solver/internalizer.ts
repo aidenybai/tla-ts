@@ -19,7 +19,6 @@ import {
   SORT_BOOL,
   isArithSort,
 } from "./ast";
-import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { CaseSplitQueue } from "./case-split-queue";
 import { CgTable, getCongruenceJustification } from "./cg-table";
 import {
@@ -55,7 +54,7 @@ import {
 } from "./literal";
 import type { DefaultQuantifierManager } from "./quantifier-manager";
 import { RelevancyPropagator } from "./relevancy";
-import { Rewriter } from "./rewriter";
+import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { sortByKey } from "./sort";
 import type { TheoryLra } from "./theory-lra";
 import { setAt, shrink } from "./array";
@@ -162,11 +161,7 @@ export abstract class Internalizer {
     isRelevancyEnabled: boolean,
     isDelayingNewCaseSplits: boolean,
   ) {
-    this.rewriter = new Rewriter(manager, {
-      isEliminatingAnd: false,
-      arith: KERNEL_ARITH_OPTIONS,
-      isRewritingPatterns: true,
-    });
+    this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
     this.relevancy = new RelevancyPropagator(
       {
         manager,

@@ -4,23 +4,17 @@
 // elimination and the simplifier's local_ctx option are not ported, as they change almost none of
 // tlapm's obligations.
 import { type AstManager, KIND_APP, KIND_QUANTIFIER } from "./ast";
-import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { ctxSimplify } from "./ctx-simplify";
 import { Goal } from "./goal";
 import { propagateValues } from "./propagate-values";
 import { applyQeLite } from "./qe-lite";
-import { Rewriter } from "./rewriter";
+import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
 
 // The simplify tactic, with pull_cheap_ite where the preprocessor sets it.
 const simplify = (manager: AstManager, goal: Goal, isPullingCheapIte = false) => {
   if (goal.isInconsistent) return;
-  const rewriter = new Rewriter(manager, {
-    isEliminatingAnd: false,
-    arith: TACTIC_ARITH_OPTIONS,
-    isRewritingPatterns: false,
-    isPullingCheapIte,
-  });
+  const rewriter = new Rewriter(manager, { ...TACTIC_REWRITER_OPTIONS, isPullingCheapIte });
   const size = goal.forms.size;
   let rewritten = -1;
   for (let index = 0; index < size && !goal.isInconsistent; index++) {

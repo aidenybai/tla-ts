@@ -4,12 +4,11 @@
 // variables occur, and the AUF solver gives each group of argument positions and variables a
 // projection function onto its instantiation set.
 import { OP_OR, SORT_BOOL, type AstManager } from "./ast";
-import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import type { Context } from "./context";
 import { L_TRUE } from "./lbool";
 import { solveMacros } from "./model-macro-solver";
 import type { ProtoModel } from "./proto-model";
-import { Rewriter } from "./rewriter";
+import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { AufSolver } from "./auf-solver";
 import { MBQI_FORCE_TEMPLATE, QuantifierAnalyzer, QuantifierInfo } from "./quantifier-analyzer";
 import { RefVector } from "./ref-vector";
@@ -27,11 +26,7 @@ export class ModelFinder {
     private manager: AstManager,
     private context: Context,
   ) {
-    this.rewriter = new Rewriter(manager, {
-      isEliminatingAnd: false,
-      arith: TACTIC_ARITH_OPTIONS,
-      isRewritingPatterns: false,
-    });
+    this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
     this.aufSolver = new AufSolver(manager, this.rewriter);
   }
 

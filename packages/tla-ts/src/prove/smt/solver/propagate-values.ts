@@ -3,9 +3,8 @@
 // equality with a value rewrites the other formulas, when its atom or term occurs more than once in
 // the goal.
 import { KIND_APP, KIND_QUANTIFIER, OP_EQ, type AstManager } from "./ast";
-import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import type { Goal } from "./goal";
-import { Rewriter } from "./rewriter";
+import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
 // The max_rounds parameter's default.
 const MAX_ROUNDS = 4;
@@ -30,11 +29,7 @@ const getSharedOccs = (manager: AstManager, forms: number[]) => {
 
 export const propagateValues = (manager: AstManager, goal: Goal) => {
   if (goal.isInconsistent) return;
-  const rewriter = new Rewriter(manager, {
-    isEliminatingAnd: false,
-    arith: TACTIC_ARITH_OPTIONS,
-    isRewritingPatterns: false,
-  });
+  const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   const substitution = new Map<number, number>();
   rewriter.setSubstitution(substitution);
   let occs = getSharedOccs(manager, goal.forms.items);

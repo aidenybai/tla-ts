@@ -15,10 +15,9 @@ import {
 import { RandomGen } from "./random-gen";
 import { Rational } from "./rational";
 import { ObjHashtable, ObjMap } from "./hashtable";
-import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { ModelEvaluator } from "./model-evaluator";
 import { RefVector } from "./ref-vector";
-import { Rewriter } from "./rewriter";
+import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
 interface FuncEntry {
   args: number[];
@@ -249,11 +248,7 @@ export class ProtoModel {
     this.arithValues = new RefVector(manager);
     this.auxDecls = new ObjHashtable((decl) => manager.getDeclHash(decl));
     this.evaluator = new ModelEvaluator(manager, this);
-    this.rewriter = new Rewriter(manager, {
-      isEliminatingAnd: false,
-      arith: TACTIC_ARITH_OPTIONS,
-      isRewritingPatterns: false,
-    });
+    this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   }
 
   // model_core::register_decl: the model holds the declaration and the value.

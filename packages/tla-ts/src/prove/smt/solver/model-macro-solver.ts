@@ -19,10 +19,9 @@ import {
   SORT_BOOL,
   type AstManager,
 } from "./ast";
-import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { FuncInterp, type ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
-import { Rewriter } from "./rewriter";
+import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { replaceFreeVars } from "./var-subst";
 
 // cond_macro: f(x_0, ..., x_n) = def whenever cond holds. A hint has no condition.
@@ -164,11 +163,7 @@ const collectCandidates = (manager: AstManager, quantifier: number) => {
   const candidates: CondMacro[] = [];
   // The expressions of a step without a reference live until the step returns.
   const scope = (step: () => void) => manager.withTemporaries(step, () => []);
-  const rewriter = new Rewriter(manager, {
-    isEliminatingAnd: false,
-    arith: TACTIC_ARITH_OPTIONS,
-    isRewritingPatterns: false,
-  });
+  const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   const mkNot = (expr: number) => rewriter.mkAppCore(OP_NOT, [expr], SORT_BOOL);
   const mkAnd = (args: number[]) =>
     args.length === 0

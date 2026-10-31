@@ -5,11 +5,10 @@ import { AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR, SORT_BOOL }
 import { mkNot } from "./ast-util";
 import { DefinedNames, Nnf } from "./nnf";
 import { PatternInference } from "./pattern-inference";
-import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { MaxBvSharing } from "./maximize-ac-sharing";
 import { PullQuant } from "./pull-quant";
 import { RefVector } from "./ref-vector";
-import { Rewriter } from "./rewriter";
+import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
 
 // pattern_inference_rw: infers the patterns of each universal quantifier without patterns. Its
@@ -171,11 +170,7 @@ export class AssertedFormulas {
   constructor(private manager: AstManager) {
     this.formulas = new RefVector(manager);
     this.substitution = new Substitution(manager);
-    this.rewriter = new Rewriter(manager, {
-      isEliminatingAnd: false,
-      arith: KERNEL_ARITH_OPTIONS,
-      isRewritingPatterns: true,
-    });
+    this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
     this.names = new DefinedNames(manager);
     this.patternInference = new PatternInferenceRw(manager, new PatternInference(manager));
     this.bvSharing = new MaxBvSharing(manager);

@@ -1,6 +1,6 @@
 // Ported from Z3 (src/ast/rewriter/th_rewriter.cpp, bool_rewriter.cpp, arith_rewriter.cpp), MIT
 // license, see z3-license.txt. Only the rewrites that tlapm's encoding exercises are ported.
-import { ArithRewriter } from "./arith-rewriter";
+import { ArithRewriter, KERNEL_ARITH_OPTIONS, TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import type { ArithRewriterOptions } from "./poly-rewriter";
 import { isAstLess } from "./ast-lt";
 import { Der } from "./der";
@@ -42,16 +42,30 @@ import { getRewriteDepth, type Rewrite, RewriterTpl } from "./rewriter-tpl";
 import { sortByKey } from "./sort";
 import { UnusedVarsEliminator } from "./var-subst";
 
-interface RewriterOptions {
+export interface RewriterOptions {
   // Replaces (and a b) with (not (or (not a) (not b))), as Z3's asserted_formulas does after NNF.
-  isEliminatingAnd: boolean;
-  arith: ArithRewriterOptions;
+  readonly isEliminatingAnd: boolean;
+  readonly arith: ArithRewriterOptions;
   // rewrite_patterns: the patterns of a quantifier are rewritten like its body. The kernel's rewriters
   // set it, and the tactics' leave it off.
-  isRewritingPatterns: boolean;
+  readonly isRewritingPatterns: boolean;
   // pull_cheap_ite: a binary predicate or a function of an ite with values distributes over the ite.
-  isPullingCheapIte?: boolean;
+  readonly isPullingCheapIte?: boolean;
 }
+
+// The parameters that asserted_formulas gives the kernel's rewriters.
+export const KERNEL_REWRITER_OPTIONS: RewriterOptions = {
+  isEliminatingAnd: false,
+  arith: KERNEL_ARITH_OPTIONS,
+  isRewritingPatterns: true,
+};
+
+// th_rewriter's defaults, which the tactics and the model use.
+export const TACTIC_REWRITER_OPTIONS: RewriterOptions = {
+  isEliminatingAnd: false,
+  arith: TACTIC_ARITH_OPTIONS,
+  isRewritingPatterns: false,
+};
 
 // A term that reduceTo is rewriting: the depth left for its arguments, its next argument, and where
 // its arguments' results start.
