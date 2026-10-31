@@ -153,6 +153,9 @@ const NEW_SYMBOL_KINDS = {
 // Whether SANY names an operator by an identifier rather than by a symbol.
 const isIdentifier = (name: string) => /^[A-Za-z0-9_]+$/.test(name);
 
+// Whether an operator name selects through an instance, as M!Op does, unlike the infix !!.
+const isSelector = (name: string) => name !== "!!" && name.includes("!");
+
 export interface SanySpecification {
   root: ModuleNode;
   modules: ModuleNode[];
@@ -1330,7 +1333,7 @@ export const generateSanySpecification = (
     const getUnresolvedOperator = (expression: Expression & { kind: "Apply" }) => {
       if (
         isIdentifier(expression.operator) ||
-        expression.operator.includes("!") ||
+        isSelector(expression.operator) ||
         expression.args.length > 2
       ) {
         return undefined;
@@ -1402,7 +1405,7 @@ export const generateSanySpecification = (
             return { ...createNullNode(), isAbsent: true };
           }
           const node = generateSelectorExpression(expression);
-          if (expression.operator.includes("!") || isIdentifier(expression.operator)) {
+          if (isSelector(expression.operator) || isIdentifier(expression.operator)) {
             checkRecursion(node);
           }
           return node;

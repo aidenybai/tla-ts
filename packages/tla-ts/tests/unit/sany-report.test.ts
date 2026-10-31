@@ -90,7 +90,7 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
-  it.each(["\\geq", "=<", "(+)", "\\circ"])(
+  it.each(["\\geq", "=<", "(+)", "\\circ", "!!"])(
     "names the unresolved operator %s as it is spelled",
     (operator) => {
       const report = getReport({ Infix: `---- MODULE Infix ----\nOp == 1 ${operator} 2\n====\n` });
