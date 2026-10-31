@@ -1746,7 +1746,8 @@ export const generateSanySpecification = (
         }
       };
       const span = getDefinitionSpan(instance);
-      const cursor = { value: span.start };
+      // The targets follow WITH, after the parameters of a definition that instantiates.
+      const cursor = { value: findToken(file, span.start, span.end, "WITH") + 1 };
       instance.substitutions.forEach((substitution) => {
         const targetIndex = findToken(file, cursor.value, span.end, substitution.name);
         if (targetIndex !== -1) cursor.value = targetIndex + 1;
