@@ -1867,6 +1867,92 @@ describe("name resolution matches SANY", () => {
       "Foo(a) == a\ng == Foo",
       [["line 3, col 6 to line 3, col 8", "The operator Foo requires 1 arguments."]],
     ],
+    [
+      "f == A /\\ B /\\ C(1)\ng == D",
+      [
+        ["line 2, col 6 to line 2, col 6", "Unknown operator: `A'."],
+        ["line 2, col 11 to line 2, col 11", "Unknown operator: `B'."],
+        ["line 2, col 16 to line 2, col 16", "Unknown operator: `C'."],
+        ["line 3, col 6 to line 3, col 6", "Unknown operator: `D'."],
+      ],
+    ],
+    [
+      "Op(a, b) == a\nf == Op(F) /\\ Op(G, H, I) /\\ Op /\\ J",
+      [
+        ["line 3, col 8 to line 3, col 10", "The operator Op requires 2 arguments."],
+        ["line 3, col 17 to line 3, col 25", "The operator Op requires 2 arguments."],
+        ["line 3, col 30 to line 3, col 31", "The operator Op requires 2 arguments."],
+        ["line 3, col 36 to line 3, col 36", "Unknown operator: `J'."],
+      ],
+    ],
+    [
+      "f == (A + B) /\\ C\ng == -D /\\ E",
+      [
+        [
+          "line 2, col 9 to line 2, col 9",
+          "Could not find declaration or definition of symbol '+'.",
+        ],
+        ["line 2, col 7 to line 2, col 11", "Couldn't resolve infix operator symbol `+'."],
+        ["line 2, col 17 to line 2, col 17", "Unknown operator: `C'."],
+        [
+          "line 3, col 6 to line 3, col 6",
+          "Could not find declaration or definition of symbol '-.'.",
+        ],
+        ["line 3, col 6 to line 3, col 7", "Couldn't resolve prefix operator symbol `-.'."],
+        ["line 3, col 12 to line 3, col 12", "Unknown operator: `E'."],
+      ],
+    ],
+    [
+      "f == [a |-> Q, a |-> R, b |-> S, b |-> T] /\\ [c : U, c : V]",
+      [
+        ["line 2, col 13 to line 2, col 13", "Unknown operator: `Q'."],
+        ["line 2, col 16 to line 2, col 16", "Non-unique fields in constructor."],
+        ["line 2, col 22 to line 2, col 22", "Unknown operator: `R'."],
+        ["line 2, col 31 to line 2, col 31", "Unknown operator: `S'."],
+        ["line 2, col 34 to line 2, col 34", "Non-unique fields in constructor."],
+        ["line 2, col 40 to line 2, col 40", "Unknown operator: `T'."],
+        ["line 2, col 51 to line 2, col 51", "Unknown operator: `U'."],
+        ["line 2, col 54 to line 2, col 54", "Non-unique fields in constructor."],
+        ["line 2, col 58 to line 2, col 58", "Unknown operator: `V'."],
+      ],
+    ],
+    [
+      "F(a) == a\nG(a) == a\nf == F(G) /\\ LET L(y) == y IN F(L) /\\ A",
+      [
+        ["line 4, col 8 to line 4, col 8", "The operator G requires 1 arguments."],
+        ["line 4, col 33 to line 4, col 33", "The operator L requires 1 arguments."],
+        ["line 4, col 39 to line 4, col 39", "Unknown operator: `A'."],
+      ],
+    ],
+    [
+      "f == LET L == K IN L /\\ M\ng == \\A y \\in N : \\E z \\in O : P(y, z)",
+      [
+        ["line 2, col 15 to line 2, col 15", "Unknown operator: `K'."],
+        ["line 2, col 25 to line 2, col 25", "Unknown operator: `M'."],
+        ["line 3, col 15 to line 3, col 15", "Unknown operator: `N'."],
+        ["line 3, col 28 to line 3, col 28", "Unknown operator: `O'."],
+        ["line 3, col 32 to line 3, col 32", "Unknown operator: `P'."],
+      ],
+    ],
+    [
+      "THEOREM ASSUME NEW a \\in A, B PROVE C(a)\n<1>1. D\n<1> DEFINE G == H\n<1>2. QED\nASSUME S",
+      [
+        ["line 2, col 26 to line 2, col 26", "Unknown operator: `A'."],
+        ["line 2, col 29 to line 2, col 29", "Unknown operator: `B'."],
+        ["line 2, col 37 to line 2, col 37", "Unknown operator: `C'."],
+        ["line 3, col 7 to line 3, col 7", "Unknown operator: `D'."],
+        ["line 4, col 17 to line 4, col 17", "Unknown operator: `H'."],
+        ["line 6, col 8 to line 6, col 8", "Unknown operator: `S'."],
+      ],
+    ],
+    [
+      "---- MODULE Inner ----\nCONSTANT a, b\n====\nI == INSTANCE Inner WITH b <- B, a <- [f |-> A, f |-> 1]",
+      [
+        ["line 5, col 31 to line 5, col 31", "Unknown operator: `B'."],
+        ["line 5, col 46 to line 5, col 46", "Unknown operator: `A'."],
+        ["line 5, col 49 to line 5, col 49", "Non-unique fields in constructor."],
+      ],
+    ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
     await expect(checkSource(source)).rejects.toThrow(
       createSanyError(

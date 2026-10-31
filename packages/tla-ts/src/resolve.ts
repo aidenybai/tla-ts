@@ -19,13 +19,7 @@ import {
   type SourceRange,
   type Theorem,
 } from "./ast";
-import {
-  createSanyError,
-  createSemanticError,
-  formatRange,
-  TlaSyntaxError,
-  type SanyError,
-} from "./errors";
+import { createSanyError, formatRange, TlaSyntaxError, type SanyError } from "./errors";
 
 export interface ModuleSymbol {
   key: string;
@@ -340,6 +334,8 @@ const checkReference = (
   return goal !== undefined;
 };
 
+// Generator.selectorToNode reports an unknown operator and goes on without analyzing its arguments,
+// so its arity is undefined. It does the same for an operator given the wrong number of arguments.
 const getSymbolArity = (
   expression: Expression & { kind: "Identifier" | "Apply" | "OperatorReference" },
   name: string,
@@ -374,24 +370,23 @@ const getSymbolArity = (
   if (isSelected) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
-  const range = getNameRange(location, name === "-." ? "-" : name);
-  if (!isOperatorSymbol(name)) throw createSemanticError(`Unknown operator: \`${name}'.`, range);
-  const missing = {
-    location: formatRange(range),
+  const range = formatRange(getNameRange(location, name === "-." ? "-" : name));
+  if (!isOperatorSymbol(name)) {
+    unit.errors.push({ location: range, message: `Unknown operator: \`${name}'.` });
+    return undefined;
+  }
+  unit.errors.push({
+    location: range,
     message: `Could not find declaration or definition of symbol '${name}'.`,
-  };
+  });
   const fixity = getFixity(expression);
-  throw createSanyError(
-    fixity && location.range
-      ? [
-          missing,
-          {
-            location: formatRange(location.range),
-            message: `Couldn't resolve ${fixity} operator symbol \`${name}'.`,
-          },
-        ]
-      : [missing],
-  );
+  if (fixity && location.range) {
+    unit.errors.push({
+      location: formatRange(location.range),
+      message: `Couldn't resolve ${fixity} operator symbol \`${name}'.`,
+    });
+  }
+  return undefined;
 };
 
 const resolveBounds = (bounds: Bound[], scope: LocalName | undefined, unit: Unit) => {
@@ -481,18 +476,34 @@ const resolveApply = (
   const operator = expression.operator;
   const callee = lookupLocal(scope, operator) ? undefined : getVisibleDefinition(operator, unit);
   const arity = getSymbolArity(expression, operator, scope, unit);
+  if (arity === undefined) return;
   if (arity !== expression.args.length) {
-    throw createSemanticError(
-      `The operator ${operator} requires ${arity} arguments.`,
-      expression.argumentsRange ?? getNameRange(expression.location, operator),
-    );
+    unit.errors.push({
+      location: formatRange(
+        expression.argumentsRange ?? getNameRange(expression.location, operator),
+      ),
+      message: `The operator ${operator} requires ${arity} arguments.`,
+    });
+    return;
   }
+  // Generator.generateExprOrOpArg analyzes a name in a position that takes an expression as an
+  // expression.
   expression.args.forEach((arg, index) => {
+    if (
+      arg.kind === "Identifier" &&
+      callee?.kind === "Operator" &&
+      callee.params[index].arity === 0
+    ) {
+      resolveExpression(arg, scope, unit);
+      return;
+    }
     const name = getArgumentName(arg);
     const argDefinition =
       name === undefined || lookupLocal(scope, name) ? undefined : getVisibleDefinition(name, unit);
     const argArity = resolveArgument(arg, scope, unit);
-    if (callee) checkArgument(callee, index, arg, argArity, argDefinition);
+    if (callee && argArity !== undefined) {
+      checkArgument(callee, index, arg, argArity, argDefinition);
+    }
   });
 };
 
@@ -520,11 +531,11 @@ const resolveExpression = (
     case "Identifier": {
       const name = expression.name;
       const arity = getSymbolArity(expression, name, scope, unit);
-      if (arity > 0) {
-        throw createSemanticError(
-          `The operator ${name} requires ${arity} arguments.`,
-          getNameRange(expression.location, name),
-        );
+      if (arity !== undefined && arity > 0) {
+        unit.errors.push({
+          location: formatRange(getNameRange(expression.location, name)),
+          message: `The operator ${name} requires ${arity} arguments.`,
+        });
       }
       return;
     }
@@ -592,21 +603,17 @@ const resolveExpression = (
       resolveAll([expression.domain, expression.range]);
       return;
     case "Record":
-    case "RecordSet": {
-      const repeated = expression.fields.filter((field, index) =>
-        expression.fields.slice(0, index).some((earlier) => earlier.name === field.name),
-      );
-      if (repeated.length > 0) {
-        throw createSanyError(
-          repeated.map((field) => ({
+    case "RecordSet":
+      expression.fields.forEach((field, index) => {
+        if (expression.fields.slice(0, index).some((earlier) => earlier.name === field.name)) {
+          unit.errors.push({
             location: formatRange(field.location.range ?? getNameRange(field.location, field.name)),
             message: "Non-unique fields in constructor.",
-          })),
-        );
-      }
-      resolveAll(expression.fields.map((field) => field.value));
+          });
+        }
+        resolveExpression(field.value, scope, unit);
+      });
       return;
-    }
     case "Except":
       resolveAll([
         expression.function,
@@ -1050,33 +1057,41 @@ export const resolveSubstitutions = (
       );
     }
   });
-  return new Map(
-    declarations.map((declaration): [string, Expression] => {
-      const name = declaration.name;
-      if (!explicit.has(name) && !lookupLocal(scope, name) && !findSymbol(name, context)) {
-        throw new TlaSyntaxError(`Substitution missing for symbol ${name} ${position}`);
-      }
-      const expression: Expression = explicit.get(name) ?? {
-        kind: "Identifier",
-        name,
-        location: instance.location,
-      };
-      if (declaration.arity === 0 || expression.kind !== "Identifier") {
-        resolveExpression(expression, scope, context);
+  // SANY analyzes the explicit substitutions in the order they appear.
+  const order = [...explicit.keys(), ...declarations.map((declaration) => declaration.name)];
+  const substitutions = new Map(
+    declarations
+      .toSorted((left, right) => order.indexOf(left.name) - order.indexOf(right.name))
+      .map((declaration): [string, Expression] => {
+        const name = declaration.name;
+        if (!explicit.has(name) && !lookupLocal(scope, name) && !findSymbol(name, context)) {
+          throw new TlaSyntaxError(`Substitution missing for symbol ${name} ${position}`);
+        }
+        const expression: Expression = explicit.get(name) ?? {
+          kind: "Identifier",
+          name,
+          location: instance.location,
+        };
+        if (declaration.arity === 0 || expression.kind !== "Identifier") {
+          resolveExpression(expression, scope, context);
+          return [name, expression];
+        }
+        const arity = getSymbolArity(expression, expression.name, scope, context);
+        if (arity !== undefined && arity !== declaration.arity) {
+          throw new TlaSyntaxError(
+            `An operator must be substituted for symbol '${name}', and it must have arity ${declaration.arity} ${position}`,
+          );
+        }
         return [name, expression];
-      }
-      if (getSymbolArity(expression, expression.name, scope, context) !== declaration.arity) {
-        throw new TlaSyntaxError(
-          `An operator must be substituted for symbol '${name}', and it must have arity ${declaration.arity} ${position}`,
-        );
-      }
-      return [name, expression];
-    }),
+      }),
   );
+  if (context.errors.length > 0) throw createSanyError(context.errors);
+  return substitutions;
 };
 
 // SANY reports the errors of every unit it checks, in the order of the units in the module. A unit
-// reports to its list the errors after which SANY goes on, and throws the one that stops it.
+// reports to its list the errors after which SANY goes on, and throws the one that stops it. An
+// error tla-ts cannot word as SANY does yields to the errors the unit reported before it.
 export const collectSemanticErrors = (
   units: { location: SourceLocation; check: (reported: SanyError[]) => void }[],
 ) => {
@@ -1088,8 +1103,10 @@ export const collectSemanticErrors = (
       try {
         unit.check(reported);
       } catch (error) {
-        if (!(error instanceof TlaSyntaxError) || !error.sany) throw error;
-        reported.push(...error.sany.errors);
+        if (!(error instanceof TlaSyntaxError) || (!error.sany && reported.length === 0)) {
+          throw error;
+        }
+        reported.push(...(error.sany?.errors ?? []));
       }
       reported.forEach((item) => {
         if (
