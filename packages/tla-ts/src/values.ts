@@ -1701,14 +1701,11 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
 const describeNonSetMembership = (element: Value, value: Value) => {
   const prefix = `Attempted to check if the value:\n${formatValue(element)}\nis an element of the`;
   if (!isFunctionValue(value)) return `${prefix} ${describeKind(value)} ${formatValue(value)}`;
-  const domain =
-    value.kind === "Function" || isEnumerable(value.domain) ? toFiniteFunction(value).domain : [];
-  if (domain.length > 0 && domain.every((key) => typeof key === "string")) {
+  const functionClass = getFunctionClass(value);
+  if (functionClass === "record") {
     return `Attempted to check if element:\n${formatValue(element)}\nis in the record:\n${formatValue(value)}`;
   }
-  if (domain.every((key, index) => key === index + 1)) {
-    return "Attempted to check set membership in a tuple value.";
-  }
+  if (functionClass === "tuple") return "Attempted to check set membership in a tuple value.";
   return `${prefix} function ${formatValue(value)}`;
 };
 

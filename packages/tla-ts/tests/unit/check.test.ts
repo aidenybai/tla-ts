@@ -986,6 +986,33 @@ const getFailureSummary = (result: CheckResult) => [
 ];
 
 describe("evaluation errors match TLC", () => {
+  // TLC words these by the Java class of the function, which follows how the spec built it.
+  it.each([
+    ['IF "a" :> 1 THEN 1 ELSE 2', "(a function  of the form (d1 :> e1 @@ ... @@ dN :> eN))"],
+    [
+      "IF [k \\in 1..2 |-> k] THEN 1 ELSE 2",
+      "(a function  of the form (d1 :> e1 @@ ... @@ dN :> eN))",
+    ],
+    ["IF [a |-> 1] THEN 1 ELSE 2", "(a record)"],
+    ["IF <<1, 2>> THEN 1 ELSE 2", "(a tuple)"],
+    [
+      '1 \\in ("a" :> 1)',
+      "Attempted to check if the value:\n1\nis an element of the function [a |-> 1]",
+    ],
+    [
+      "1 \\in [k \\in {} |-> k]",
+      "Attempted to check if the value:\n1\nis an element of the function <<>>",
+    ],
+    ["1 \\in [a |-> 1]", "Attempted to check if element:\n1\nis in the record:\n[a |-> 1]"],
+    ["1 \\in <<1>>", "Attempted to check set membership in a tuple value."],
+  ])("words the function in %s like TLC", async (expression, message) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ (${expression}) = TRUE\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.message).toContain(message);
+  });
+
   // Only a RecordValue compares itself as a record; a FcnRcdValue with strings for keys is a function.
   it.each([
     ["[a |-> 1]", "Attempted to check equality of record:\n[a |-> 1]\nwith non-record\n{}"],

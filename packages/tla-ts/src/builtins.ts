@@ -2,6 +2,7 @@ import { TlaEvaluationError, TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
 import {
   formatValue,
+  getFunctionClass,
   getSequenceElements,
   isEnumerable,
   isFunctionValue,
@@ -244,17 +245,20 @@ const KIND_STRINGS: Record<string, string> = {
   UnionValue: "a set of the form UNION  S",
 };
 
-// TLC stores a function as a TupleValue or a RecordValue when it has that shape, so the
-// shape stands in for how TLC built the value.
+const FUNCTION_CLASSES = {
+  lambda: "FcnLambdaValue",
+  tuple: "TupleValue",
+  record: "RecordValue",
+};
+
 export const getJavaClassName = (value: Value) => {
   if (typeof value === "number") return "IntValue";
   if (typeof value === "string") return "StringValue";
   if (typeof value === "boolean") return "BoolValue";
   if (value.kind === "SetOperation") return SET_OPERATION_CLASSES[value.operator];
   if (value.kind !== "Function") return JAVA_CLASSES[value.kind];
-  const domain = value.domain;
-  if (domain.every((key, index) => key === index + 1)) return "TupleValue";
-  return domain.every((key) => typeof key === "string") ? "RecordValue" : "FcnRcdValue";
+  const functionClass = getFunctionClass(value);
+  return functionClass === undefined ? "FcnRcdValue" : FUNCTION_CLASSES[functionClass];
 };
 
 export const getKindString = (value: Value) => KIND_STRINGS[getJavaClassName(value)];
