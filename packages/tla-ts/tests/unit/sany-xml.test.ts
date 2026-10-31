@@ -308,6 +308,9 @@ THEOREM ${statement}
     expect(() =>
       generate(theorem("ASSUME x = 1, []ASSUME x = 2 []PROVE x = 2 PROVE x = 1")),
     ).toThrow(TlaSyntaxError);
+    expect(() => generate("---- MODULE Boxed ----\nASSUME TRUE\n[]ASSUME TRUE\n====")).toThrow(
+      TlaSyntaxError,
+    );
   });
 
   it("writes an empty string as an empty element and a character past the BMP as a reference", () => {
