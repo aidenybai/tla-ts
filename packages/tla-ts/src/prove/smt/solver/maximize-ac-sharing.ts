@@ -34,19 +34,27 @@ export class MaxBvSharing extends RewriterTpl {
     if (!this.isInit || (op !== OP_OR && op !== OP_ADD) || args.length <= 2) return -1;
     return manager.withTemporaries(() => {
       const pending = [...args];
-      // Reuses the pairs made before, the first pair found first.
-      for (
-        let isReused = true;
-        isReused && pending.length > 1 && pending.length < MAX_NUM_ARGS_FOR_OPT;
-      ) {
-        isReused = false;
-        for (let first = 0; first + 1 < pending.length && !isReused; first++)
-          for (let second = first + 1; second < pending.length && !isReused; second++)
+      // Reuses the pairs made before, the first pair found first. Z3 scans every pair again after
+      // each reuse, but no pair is made meanwhile, so before the reused pair only the pairs with
+      // the argument it became can match.
+      for (let merged = 0; pending.length > 1 && pending.length < MAX_NUM_ARGS_FOR_OPT;) {
+        let pairFirst = -1;
+        let pairSecond = -1;
+        for (let first = 0; first < merged && pairFirst === -1; first++)
+          if (this.hasPair(decl, pending[first], pending[merged])) {
+            pairFirst = first;
+            pairSecond = merged;
+          }
+        for (let first = merged; first + 1 < pending.length && pairFirst === -1; first++)
+          for (let second = first + 1; second < pending.length && pairFirst === -1; second++)
             if (this.hasPair(decl, pending[first], pending[second])) {
-              pending[first] = manager.mkApp(decl, [pending[first], pending[second]], sort);
-              pending.splice(second, 1);
-              isReused = true;
+              pairFirst = first;
+              pairSecond = second;
             }
+        if (pairFirst === -1) break;
+        pending[pairFirst] = manager.mkApp(decl, [pending[pairFirst], pending[pairSecond]], sort);
+        pending.splice(pairSecond, 1);
+        merged = pairFirst;
       }
       while (pending.length > 1) {
         const next: number[] = [];
