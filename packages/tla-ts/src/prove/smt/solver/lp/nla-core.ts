@@ -1,6 +1,5 @@
-// Ported from Z3 (src/math/lp/nla_core.h, src/math/lp/nla_core.cpp, src/math/lp/nla_types.h,
-// src/math/lp/nla_defs.h, src/math/lp/nla_common.{h,cpp}, src/math/lp/nla_explanations.cpp,
-// src/math/lp/nla_backoff.h, src/math/lp/factorization.{h,cpp},
+// Ported from Z3 (src/math/lp/nla_core.h, src/math/lp/nla_core.cpp, src/math/lp/nla_common.cpp,
+// src/math/lp/nla_explanations.cpp, src/math/lp/factorization.cpp,
 // src/math/lp/factorization_factory_imp.cpp, src/math/lp/nla_solver.cpp), MIT license, see
 // z3-license.txt. The nonlinear core over lar_solver: the monomials whose values disagree with the
 // products of their factors' values are refined by lemmas, which the passes below generate, and
@@ -24,9 +23,11 @@ import { Explanation } from "./explanation";
 import type { LarSolver } from "./lar-solver";
 import { LarTerm } from "./lar-term";
 import { Impq } from "./numeric-pair";
+import { Backoff, SqueezeSchedule } from "./nla-backoff";
 import { Basics } from "./nla-basics";
 import { Divisions } from "./nla-divisions";
 import { Emonics, Monic } from "./nla-emonics";
+import { type Factor, type Factorization, mkFactor, mkMonFactorization } from "./nla-factorization";
 import { Grobner } from "./nla-grobner";
 import { Horner } from "./nla-horner";
 import { Intervals } from "./nla-intervals";
@@ -36,6 +37,14 @@ import { Order } from "./nla-order";
 import { Patcher } from "./nla-patcher";
 import { Tangents } from "./nla-tangents";
 import { NlaThrottle } from "./nla-throttle";
+import {
+  type Ineq,
+  isConflictLemma,
+  type Lemma,
+  LemmaBuilder,
+  mkIneq,
+  negateKind,
+} from "./nla-types";
 import { NraSolver } from "./nra-solver";
 import { getSignedVarVar, isSignedVarNegated, mkSignedVar, VarEqs } from "./nla-var-eqs";
 
@@ -128,74 +137,6 @@ export const NLA_PARAMS: Readonly<NlaParams> = {
   crossNested: true,
 };
 
-export const negateKind = (kind: number) => {
-  switch (kind) {
-    case KIND_LE:
-      return KIND_GT;
-    case KIND_LT:
-      return KIND_GE;
-    case KIND_GE:
-      return KIND_LT;
-    case KIND_GT:
-      return KIND_LE;
-    case KIND_EQ:
-      return KIND_NE;
-    default:
-      return KIND_EQ;
-  }
-};
-
-export const getRatSign = (value: Rational) =>
-  value.isPositive() ? 1 : value.isNegative() ? -1 : 0;
-
-export const signToRat = (isNegated: boolean) => (isNegated ? Rational.minusOne : Rational.one);
-
-// An ineq: term cmp rs.
-export interface Ineq {
-  readonly cmp: number;
-  readonly term: LarTerm;
-  readonly rs: Rational;
-}
-
-export const mkIneq = (term: LarTerm | number, cmp: number, rs: Rational | number): Ineq => ({
-  cmp,
-  term: typeof term === "number" ? new LarTerm([[term, Rational.one]]) : term,
-  rs: typeof rs === "number" ? Rational.fromNumber(rs) : rs,
-});
-
-// A lemma: its explanation implies one of its inequalities, or false when it has none.
-export interface Lemma {
-  readonly ineqs: Ineq[];
-  readonly expl: Explanation;
-}
-
-export const isConflictLemma = (lemma: Lemma) => lemma.ineqs.length === 0 && !lemma.expl.isEmpty;
-
-export interface Factor {
-  variable: number;
-  isMon: boolean;
-  isNegated: boolean;
-}
-
-export const mkFactor = (variable: number, isMon: boolean): Factor => ({
-  variable,
-  isMon,
-  isNegated: false,
-});
-
-export const getFactorSign = (factor: Factor) => signToRat(factor.isNegated);
-
-// A factorization: the factors of a monic, which is set for the factorization into its variables.
-export interface Factorization {
-  readonly factors: Factor[];
-  mon: Monic | null;
-}
-
-const mkMonFactorization = (monic: Monic): Factorization => ({
-  factors: monic.vars.map((lpVar) => mkFactor(lpVar, false)),
-  mon: monic,
-});
-
 interface NlaEquality {
   readonly first: number;
   readonly second: number;
@@ -206,118 +147,6 @@ interface NlaFixedEquality {
   readonly lpVar: number;
   readonly value: Rational;
   readonly explanation: Explanation;
-}
-
-// backoff: how many calls to skip before the next run of an expensive engine.
-class Backoff {
-  private delay = 0;
-
-  constructor(private delayBound: number) {}
-
-  shouldRun() {
-    if (this.delay > 0) this.delay--;
-    return this.delay < 2;
-  }
-
-  update(isSuccess: boolean) {
-    if (isSuccess) this.delayBound = Math.floor(this.delayBound / 2);
-    else if (this.delayBound < 1 << 20) this.delayBound = Math.max(2 * this.delayBound, 1);
-    this.delay = this.delayBound;
-  }
-}
-
-// squeeze_schedule: when to run the bounds optimization of the monomials.
-class SqueezeSchedule {
-  private failStreak = 0;
-  private squeezesSinceSatCheck = 0;
-
-  get isEnabled() {
-    return this.squeezesSinceSatCheck < 50;
-  }
-
-  get isEager() {
-    return this.failStreak < 3;
-  }
-
-  onSqueeze(isImproved: boolean) {
-    this.squeezesSinceSatCheck++;
-    this.failStreak = isImproved ? 0 : this.failStreak + 1;
-  }
-
-  onNothingToRefine() {
-    this.squeezesSinceSatCheck = Math.floor(this.squeezesSinceSatCheck / 2);
-  }
-}
-
-// lemma_builder: adds a lemma to the core and builds it in place.
-export class LemmaBuilder {
-  private readonly lemma: Lemma = { ineqs: [], expl: new Explanation() };
-
-  constructor(private core: NlaCore) {
-    core.lemmas.push(this.lemma);
-  }
-
-  get expl() {
-    return this.lemma.expl;
-  }
-
-  // |=: an inequality, unless the bounds already explain its negation away.
-  addIneq(ineq: Ineq) {
-    if (!this.core.explainIneq(this, ineq.term, ineq.cmp, ineq.rs)) this.lemma.ineqs.push(ineq);
-    return this;
-  }
-
-  addExplanation(explanation: Explanation) {
-    this.lemma.expl.addExplanation(explanation);
-    return this;
-  }
-
-  // &= on a monic: the equivalences of its variables.
-  explainMonic(monic: Monic) {
-    for (const lpVar of monic.vars) this.explainVar(lpVar);
-    return this;
-  }
-
-  explainFactor(factor: Factor) {
-    if (factor.isMon) this.explainMonic(this.core.emons.get(factor.variable));
-    else this.explainVar(factor.variable);
-    return this;
-  }
-
-  explainFactorization(factorization: Factorization) {
-    if (factorization.mon !== null) return this;
-    for (const factor of factorization.factors) this.explainFactor(factor);
-    return this;
-  }
-
-  explainVar(lpVar: number) {
-    this.core.varEqs.explainVar(lpVar, this.lemma.expl);
-    return this;
-  }
-
-  explainFixed(lpVar: number) {
-    this.explainExistingLowerBound(lpVar);
-    this.explainExistingUpperBound(lpVar);
-    return this;
-  }
-
-  explainVarSeparatedFromZero(lpVar: number) {
-    if (this.core.varHasNegativeUpperBound(lpVar)) this.explainExistingUpperBound(lpVar);
-    else this.explainExistingLowerBound(lpVar);
-    return this;
-  }
-
-  explainExistingLowerBound(lpVar: number) {
-    const explanation = new Explanation();
-    explanation.pushDependency(this.core.lra.getLowerWitness(lpVar));
-    return this.addExplanation(explanation);
-  }
-
-  explainExistingUpperBound(lpVar: number) {
-    const explanation = new Explanation();
-    explanation.pushDependency(this.core.lra.getUpperWitness(lpVar));
-    return this.addExplanation(explanation);
-  }
 }
 
 type WeightedCheck = [weight: number, check: () => void];

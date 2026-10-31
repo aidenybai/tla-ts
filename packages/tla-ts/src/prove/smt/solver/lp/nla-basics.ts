@@ -7,14 +7,9 @@
 import { Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { LarTerm } from "./lar-term";
-import {
-  type Factorization,
-  getRatSign,
-  LemmaBuilder,
-  mkIneq,
-  type NlaCore,
-  signToRat,
-} from "./nla-core";
+import { type NlaCore } from "./nla-core";
+import { type Factorization } from "./nla-factorization";
+import { getRatSign, LemmaBuilder, mkIneq, signToRat } from "./nla-types";
 import type { Monic } from "./nla-emonics";
 
 interface FactorValue {

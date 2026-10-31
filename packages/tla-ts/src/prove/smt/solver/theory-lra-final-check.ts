@@ -11,7 +11,8 @@ import { KIND_EQ, KIND_GE, KIND_GT, KIND_LT, KIND_NE } from "./lp/constraints";
 import { Explanation } from "./lp/explanation";
 import { IntSolver } from "./lp/int-solver";
 import type { LarTerm } from "./lp/lar-term";
-import { Ineq, Lemma, NlaCore } from "./lp/nla-core";
+import { NlaCore } from "./lp/nla-core";
+import { Ineq, Lemma } from "./lp/nla-types";
 import { TheoryLraModel } from "./theory-lra-model";
 
 export abstract class TheoryLraFinalCheck extends TheoryLraModel {

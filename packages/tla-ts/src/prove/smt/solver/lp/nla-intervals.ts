@@ -24,7 +24,8 @@ import { type Dependency, mkJoin, mkLeaf } from "./dependency";
 import { Explanation } from "./explanation";
 import { LarTerm } from "./lar-term";
 import { type Nex, type NexMul, type NexSum, isALinearTerm, isElementary } from "./nex";
-import { LemmaBuilder, type NlaCore } from "./nla-core";
+import { type NlaCore } from "./nla-core";
+import { LemmaBuilder } from "./nla-types";
 
 type ReportConflict = (explanation: Explanation) => void;
 

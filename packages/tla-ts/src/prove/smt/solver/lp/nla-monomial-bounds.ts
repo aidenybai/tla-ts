@@ -20,7 +20,8 @@ import { Dependency, linearize, mkJoin } from "./dependency";
 import { Explanation } from "./explanation";
 import { NULL_LPVAR } from "./lar-solver";
 import { Impq } from "./numeric-pair";
-import { LemmaBuilder, NLA_PARAMS, type NlaCore } from "./nla-core";
+import { NLA_PARAMS, type NlaCore } from "./nla-core";
+import { LemmaBuilder } from "./nla-types";
 import type { Monic } from "./nla-emonics";
 
 interface Gain {

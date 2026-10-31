@@ -37,7 +37,8 @@ import {
 import { Explanation } from "./explanation";
 import type { LarSolver } from "./lar-solver";
 import { LarTerm } from "./lar-term";
-import { LemmaBuilder, mkIneq, type NlaCore } from "./nla-core";
+import { type NlaCore } from "./nla-core";
+import { LemmaBuilder, mkIneq } from "./nla-types";
 
 interface Occurrences {
   constraints: number[];

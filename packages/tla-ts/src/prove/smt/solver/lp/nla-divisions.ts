@@ -6,7 +6,8 @@ import { getEuclideanDiv, Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { NULL_LPVAR } from "./lar-solver";
 import { LarTerm } from "./lar-term";
-import { LemmaBuilder, mkIneq, type NlaCore } from "./nla-core";
+import { type NlaCore } from "./nla-core";
+import { LemmaBuilder, mkIneq } from "./nla-types";
 
 // A division q = x / y with r its remainder, or a divisibility fact r = mod(x, y), q = div(x, y).
 export interface Division {
