@@ -2,12 +2,12 @@
 // src/nlsat/nlsat_evaluator.cpp), MIT license, see z3-license.txt. The part of nlsat that
 // check_assignment uses: inequality atoms over single polynomials, unit clauses, and
 // check(assignment, clause), which explains a violated clause with a linear cell around the
-// assignment. Out of scope, which throws NlsatOutOfScope: polynomials of degree 2 or more in the
-// variable being projected, see levelwise.ts. Below that every bound of the cell is linear with a
-// constant coefficient, so the explanation never needs a root atom. Factored atoms, with several
-// polynomials, are left out because check_assignment never makes them.
+// assignment. The cell is linear, so every bound is linear with a constant coefficient and the
+// explanation never needs a root atom. Factored atoms, with several polynomials, are left out
+// because check_assignment never makes them.
 import type { Rational } from "../rational";
-import { getLinearCell } from "./levelwise";
+import { AlgebraicManager, Anum } from "./algebraic";
+import { getSingleCell } from "./levelwise";
 import { NlsatOutOfScope, type Polynomial, PolynomialCache, PolynomialManager } from "./polynomial";
 
 export type AtomKind = "EQ" | "LT" | "GT";
@@ -33,6 +33,7 @@ const FLIPPED_KIND: Record<AtomKind, AtomKind> = { EQ: "EQ", LT: "GT", GT: "LT" 
 export class NlsatSolver {
   readonly pm = new PolynomialManager();
   private cache = new PolynomialCache(this.pm);
+  private am = new AlgebraicManager();
   private atoms: (Atom | null)[] = [null];
   private atomTable = new Map<string, number>();
   private clauses: number[] = [];
@@ -120,12 +121,14 @@ export class NlsatSolver {
       if (!result.includes(literal)) result.push(literal);
     };
     // A section has only a lower bound.
-    const cell = getLinearCell(
+    const cell = getSingleCell(
       this.pm,
+      this.am,
       this.cache,
       [polynomial],
-      values,
       this.pm.maxVar(polynomial) + 1,
+      values.map((value) => new Anum(value)),
+      true,
     );
     for (const interval of cell) {
       if (interval.lower !== null) addRootLiteral(interval.isSection ? "EQ" : "GT", interval.lower);

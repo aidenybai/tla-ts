@@ -674,6 +674,36 @@ export class PolynomialManager {
     return this.iccp(polynomial, variable)[2];
   }
 
+  // square_free: the integer content times the square-free parts of the content and the primitive
+  // part in the maximal variable, or p itself when it is square-free.
+  squareFree(polynomial: Polynomial): Polynomial {
+    if (this.isConst(polynomial)) return polynomial;
+    const variable = this.maxVar(polynomial);
+    const [integer, content, primitive] = this.iccp(polynomial, variable);
+    const squareFreeContent = this.squareFree(content);
+    const g = this.gcd(primitive, this.derivative(primitive, variable));
+    if (this.isConst(g) && this.eq(squareFreeContent, content)) return polynomial;
+    const squareFreePrimitive = this.isConst(g) ? primitive : this.exactDiv(primitive, g);
+    return this.mul(this.mulConst(integer, squareFreeContent), squareFreePrimitive);
+  }
+
+  // normalize: p divided by the gcd of its coefficients.
+  normalize(polynomial: Polynomial) {
+    if (polynomial.size === 0) return polynomial;
+    let g = 0n;
+    for (const coeff of polynomial.as) g = getGcd(g, coeff);
+    if (g === 1n) return polynomial;
+    for (let index = 0; index < polynomial.size; index++)
+      this.cheap.add(polynomial.as[index] / g, polynomial.ms[index]);
+    return this.cheap.mk();
+  }
+
+  // nonzero_const_coeff: whether the coefficient of x^k is a nonzero number.
+  isNonzeroConstCoeff(polynomial: Polynomial, variable: number, power: number) {
+    const coeff = this.getConstCoeff(polynomial, variable, power);
+    return coeff !== null && coeff !== 0n;
+  }
+
   // exact_div: p/q, where q divides p.
   exactDiv(polynomial: Polynomial, divisor: Polynomial) {
     if (polynomial.size === 0) return polynomial;
@@ -707,11 +737,32 @@ export class PolynomialManager {
     variable: number,
     isQuotient = true,
   ) {
+    return this.pseudoDivisionCore(polynomial, divisor, variable, true, isQuotient);
+  }
+
+  // pseudo_remainder: R with lc(q)^d * p = Q*q + R, where d counts the division steps.
+  pseudoRemainder(polynomial: Polynomial, divisor: Polynomial, variable: number) {
+    return this.pseudoDivisionCore(polynomial, divisor, variable, false, false);
+  }
+
+  private pseudoDivisionCore(
+    polynomial: Polynomial,
+    divisor: Polynomial,
+    variable: number,
+    isExact: boolean,
+    isQuotient: boolean,
+  ) {
     const degA = this.degree(polynomial, variable);
     const degB = this.degree(divisor, variable);
     if (degB === 0) {
-      if (!isQuotient || degA === 0) return { quotient: polynomial, remainder: this.zero };
-      return { quotient: this.mul(polynomial, this.pw(divisor, degA)), remainder: this.zero };
+      const steps = isExact ? degA + 1 : 1;
+      if (!isQuotient || !isExact || degA === 0)
+        return { quotient: polynomial, remainder: this.zero, steps };
+      return {
+        quotient: this.mul(polynomial, this.pw(divisor, degA)),
+        remainder: this.zero,
+        steps,
+      };
     }
     const lcB = this.coeff(divisor, variable, degB);
     const reductB = this.reduct(divisor, variable, degB);
@@ -722,12 +773,12 @@ export class PolynomialManager {
       const degR = this.degree(remainder, variable);
       if (degB > degR) {
         const exactSteps = degA - degB + 1;
-        if (steps < exactSteps) {
+        if (isExact && steps < exactSteps) {
           const power = this.pw(lcB, exactSteps - steps);
           if (isQuotient) quotient = this.mul(power, quotient);
           remainder = this.mul(power, remainder);
         }
-        return { quotient, remainder };
+        return { quotient, remainder, steps };
       }
       this.som.reset();
       this.som2.reset();
@@ -755,7 +806,7 @@ export class PolynomialManager {
   }
 
   // The reduct of coeff(p, x, k, reduct): p without its x^k monomials.
-  private reduct(polynomial: Polynomial, variable: number, power: number) {
+  reduct(polynomial: Polynomial, variable: number, power: number) {
     for (let index = 0; index < polynomial.size; index++)
       if (polynomial.ms[index].degreeOf(variable) !== power)
         this.cheap.add(polynomial.as[index], polynomial.ms[index]);
@@ -1405,21 +1456,91 @@ export class PolynomialManager {
     return this.eq(this.mul(first, second), q) ? [first, second] : null;
   }
 
-  // psc_chain: the principal subresultant coefficients of p and q in x, the resultant first. Only
-  // polynomials of degree 1 in x are in scope, whose chain is the resultant alone.
+  // psc_chain: the nonzero principal subresultant coefficients of p and q in x, the resultant
+  // first, or [0] when there are none. psc_chain_optimized: Ducos's subresultant chain with
+  // Lazard's dichotomous S_e.
   pscChain(first: Polynomial, second: Polynomial, variable: number) {
-    const [p, q] =
+    const chain =
       this.degree(first, variable) >= this.degree(second, variable)
-        ? [first, second]
-        : [second, first];
-    if (this.degree(p, variable) > 1 || this.degree(q, variable) === 0)
-      throw new NlsatOutOfScope(
-        `the subresultants of polynomials of degree 2 or more in x${variable}`,
-      );
-    const remainder = this.exactPseudoRemainder(p, this.neg(q), variable);
-    if (remainder.size === 0) return [this.zero];
-    const coeff = this.coeff(remainder, variable, 0);
-    return coeff.size === 0 ? [this.zero] : [coeff];
+        ? this.pscChainCore(first, second, variable)
+        : this.pscChainCore(second, first, variable);
+    return chain.length === 0 ? [this.zero] : chain.reverse();
+  }
+
+  private pscChainCore(p: Polynomial, q: Polynomial, x: number) {
+    const chain: Polynomial[] = [];
+    let s = this.pw(this.lc(q, x), this.degree(p, x) - this.degree(q, x));
+    let a = q;
+    let b = this.exactPseudoRemainder(p, this.neg(q), x);
+    while (b.size > 0) {
+      const d = this.degree(a, x);
+      const e = this.degree(b, x);
+      // b is S_{d-1}.
+      const principal = this.coeff(b, x, d - 1);
+      if (principal.size > 0) chain.push(principal);
+      let c = b;
+      if (d - e > 1) {
+        c = this.getSeLazard(d, s, b, x);
+        const principalE = this.coeff(c, x, e);
+        if (principalE.size > 0) chain.push(principalE);
+      }
+      if (e === 0) break;
+      b = this.getOptimizedSe1(d, e, a, b, c, s, x);
+      a = c;
+      s = this.lc(a, x);
+    }
+    return chain;
+  }
+
+  // Se_Lazard: S_e from S_{d-1} and lc(S_d) by dichotomous Lazard.
+  private getSeLazard(d: number, lcSd: Polynomial, sd1: Polynomial, x: number) {
+    let n = d - this.degree(sd1, x) - 1;
+    if (n === 0) return sd1;
+    const lcSd1 = this.lc(sd1, x);
+    let a = 1 << (31 - Math.clz32(n));
+    let c = lcSd1;
+    n -= a;
+    while (a !== 1) {
+      a /= 2;
+      c = this.exactDiv(this.mul(c, c), lcSd);
+      if (n >= a) {
+        c = this.exactDiv(this.mul(c, lcSd1), lcSd);
+        n -= a;
+      }
+    }
+    return this.exactDiv(this.mul(c, sd1), lcSd);
+  }
+
+  // optimized_S_e_1: S_{e-1} from A = S_{d+1}, S_{d-1}, S_e and s = lc(S_d).
+  private getOptimizedSe1(
+    d: number,
+    e: number,
+    a: Polynomial,
+    sd1: Polynomial,
+    se: Polynomial,
+    s: Polynomial,
+    x: number,
+  ) {
+    const cd1 = this.lc(sd1, x);
+    const lcSe = this.lc(se, x);
+    const getPower = (power: number) => (power === 0 ? this.one : this.mkVar(x, power));
+    const h: Polynomial[] = [];
+    for (let j = 0; j < e; j++) h.push(this.mul(lcSe, getPower(j)));
+    h.push(this.sub(this.mul(lcSe, getPower(e)), se));
+    const xPolynomial = this.mkVar(x);
+    for (let j = e + 1; j < d; j++) {
+      const xh = this.mul(xPolynomial, h[j - 1]);
+      h.push(this.sub(xh, this.exactDiv(this.mul(this.coeff(xh, x, e), sd1), cd1)));
+    }
+    let sum = this.zero;
+    for (let j = 0; j < d; j++) sum = this.add(sum, this.mul(this.coeff(a, x, j), h[j]));
+    const dPolynomial = this.exactDiv(sum, this.lc(a, x));
+    const xh = this.mul(xPolynomial, h[d - 1]);
+    const result = this.exactDiv(
+      this.sub(this.mul(cd1, this.add(xh, dPolynomial)), this.mul(this.coeff(xh, x, e), sd1)),
+      s,
+    );
+    return (d - e + 1) % 2 === 1 ? this.neg(result) : result;
   }
 
   // Evaluation.
