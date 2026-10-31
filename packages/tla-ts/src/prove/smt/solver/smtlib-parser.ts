@@ -50,7 +50,7 @@ interface Binding {
   isBoundVar: boolean;
 }
 
-export interface SmtProblem {
+interface SmtProblem {
   assertions: number[];
   // Z3 prints no answer for a script without check-sat.
   hasCheckSat: boolean;

@@ -53,13 +53,12 @@ export const OP_DIV0 = 27;
 export const OP_IDIV0 = 28;
 export const OP_MOD0 = 29;
 export const OP_UNINTERPRETED = 30;
-export const OP_MODEL_VALUE = 31;
+const OP_MODEL_VALUE = 31;
 
 // A Z3 symbol: a string, or a number for a numerical symbol, which Z3 prints as k!n.
 export type SmtSymbol = string | number;
 
-export const getSymbolName = (symbol: SmtSymbol) =>
-  typeof symbol === "number" ? `k!${symbol}` : symbol;
+const getSymbolName = (symbol: SmtSymbol) => (typeof symbol === "number" ? `k!${symbol}` : symbol);
 
 export interface FuncDecl {
   name: SmtSymbol;
@@ -72,7 +71,7 @@ export interface FuncDecl {
   smallId: number;
 }
 
-export interface QuantifierData {
+interface QuantifierData {
   isForall: boolean;
   sorts: number[];
   // The names of the variables, which tell apart quantifiers that differ only in them, as in Z3.

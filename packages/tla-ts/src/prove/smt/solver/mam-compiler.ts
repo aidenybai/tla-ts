@@ -21,7 +21,7 @@ export const OP_GET_ENODE = 11;
 export const OP_GET_CGR = 12;
 export const OP_IS_CGR = 13;
 
-export const JOINT_NULL = 0;
+const JOINT_NULL = 0;
 export const JOINT_GROUND = 1;
 export const JOINT_VAR = 2;
 export const JOINT_NESTED = 3;

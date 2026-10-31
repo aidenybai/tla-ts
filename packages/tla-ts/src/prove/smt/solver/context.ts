@@ -55,15 +55,15 @@ export const CHECK_MODEL_UNKNOWN = 1;
 export const CHECK_MODEL_RESTART = 2;
 
 // The reasons a search may stop without an answer that MBQI cares about.
-export const FAILURE_OK = 0;
-export const FAILURE_THEORY = 1;
-export const FAILURE_QUANTIFIERS = 2;
+const FAILURE_OK = 0;
+const FAILURE_THEORY = 1;
+const FAILURE_QUANTIFIERS = 2;
 const FAILURE_CANCELED = 3;
 
 // smt_params: the kernel runs model-based quantifier instantiation with relevancy level 2 and the
 // CS_ACTIVITY_DELAY_NEW case split queue. The model checker's auxiliary context runs neither, as Z3
 // sets its relevancy level to 0 and its case split strategy to CS_ACTIVITY.
-export interface SmtParams {
+interface SmtParams {
   isMbqi: boolean;
   relevancyLevel: 0 | 2;
 }

@@ -42,7 +42,7 @@ import { getRewriteDepth, type Rewrite, RewriterTpl } from "./rewriter-tpl";
 import { sortByKey } from "./sort";
 import { UnusedVarsEliminator } from "./var-subst";
 
-export interface RewriterOptions {
+interface RewriterOptions {
   // Replaces (and a b) with (not (or (not a) (not b))), as Z3's asserted_formulas does after NNF.
   isEliminatingAnd: boolean;
   arith: ArithRewriterOptions;
