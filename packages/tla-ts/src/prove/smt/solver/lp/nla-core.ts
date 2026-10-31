@@ -4,8 +4,8 @@
 // src/math/lp/factorization_factory_imp.cpp, src/math/lp/nla_solver.cpp), MIT license, see
 // z3-license.txt. The nonlinear core over lar_solver: the monomials whose values disagree with the
 // products of their factors' values are refined by lemmas, which the passes below generate, and
-// by literals to split on. Z3's nra solver (nlsat) is not ported: where Z3 calls it, it returns
-// unknown, which nla treats as giving no lemma.
+// by literals to split on. Of Z3's nra solver, only check_assignment is ported, see nra-solver.ts:
+// where Z3 runs nlsat's search, it returns unknown, which nla treats as giving no lemma.
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { Rational } from "../rational";
 import { IndexedUintSet } from "./containers";
@@ -36,6 +36,7 @@ import { Order } from "./nla-order";
 import { Patcher } from "./nla-patcher";
 import { Tangents } from "./nla-tangents";
 import { NlaThrottle } from "./nla-throttle";
+import { NraSolver } from "./nra-solver";
 import { getSignedVarVar, isSignedVarNegated, mkSignedVar, VarEqs } from "./nla-var-eqs";
 
 export const KIND_NE = 3;
@@ -323,6 +324,7 @@ export class NlaCore {
   readonly patcher: Patcher;
   readonly horner: Horner;
   readonly grobner: Grobner;
+  private nra = new NraSolver(this);
   private nlsatBackoff: Backoff;
   private checkAssignmentFailCount = 0;
   private squeezeSchedule = new SqueezeSchedule();
@@ -1081,8 +1083,8 @@ export class NlaCore {
       NLA_PARAMS.nraCheckAssignment &&
       this.checkAssignmentFailCount < NLA_PARAMS.nraCheckAssignmentMaxFail
     ) {
-      // nra's check_assignment, which is not ported, returns unknown.
-      this.checkAssignmentFailCount++;
+      result = this.nra.checkAssignment();
+      if (result !== L_TRUE) this.checkAssignmentFailCount++;
     }
     if (hasNoEffect() && this.shouldRunBoundedNlsat()) result = this.boundedNlsat();
     if (hasNoEffect()) this.basics.basicLemma(true);

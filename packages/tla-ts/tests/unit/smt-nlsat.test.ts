@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
+import { L_FALSE, L_UNDEF } from "../../src/prove/smt/solver/lbool";
+import { KIND_EQ, KIND_GE, KIND_LE } from "../../src/prove/smt/solver/lp/constraints";
+import { LarSolver } from "../../src/prove/smt/solver/lp/lar-solver";
+import { NlaCore } from "../../src/prove/smt/solver/lp/nla-core";
+import { NraSolver } from "../../src/prove/smt/solver/lp/nra-solver";
 import { isolateRootsClosest, selectBetween } from "../../src/prove/smt/solver/nlsat/algebraic";
 import { NlsatSolver } from "../../src/prove/smt/solver/nlsat/solver";
 import { Rational } from "../../src/prove/smt/solver/rational";
@@ -176,5 +181,48 @@ describe("nlsat check_assignment", () => {
 
   it("refuses to explain with an irrational root", () => {
     expect(() => runCheckAssignment("ca 1\nc EQ 1:0^2 -2:\nv 0 1 1\nend")).toThrow(NlsatOutOfScope);
+  });
+});
+
+describe("nra check_assignment", () => {
+  // The monic m = x*y with x and y fixed by their bounds, and one more bound on m.
+  const getCore = (factors: (x: number, y: number) => number[], kind: number, bound: bigint) => {
+    const lra = new LarSolver(() => false);
+    const x = lra.addVar(0, false);
+    const y = lra.addVar(1, false);
+    const m = lra.addVar(2, false);
+    const core = new NlaCore(lra);
+    core.addMonic(m, factors(x, y));
+    const constraints = [
+      lra.mkVarBound(x, KIND_GE, Rational.of(2n)),
+      lra.mkVarBound(x, KIND_LE, Rational.of(2n)),
+      lra.mkVarBound(y, KIND_GE, Rational.of(1n)),
+      lra.mkVarBound(y, KIND_LE, Rational.of(1n)),
+      lra.mkVarBound(m, kind, Rational.of(bound)),
+    ];
+    for (const constraint of constraints) lra.activate(constraint);
+    lra.findFeasibleSolution();
+    core.initToRefine();
+    return { core, constraints };
+  };
+
+  it("refutes x*y <= 1 at x = 2 and y = 1 with a lemma", () => {
+    const result = getCore((x, y) => [x, y], KIND_LE, 1n);
+    expect(new NraSolver(result.core).checkAssignment()).toBe(L_FALSE);
+    expect(result.core.lemmas).toHaveLength(1);
+    expect([...result.core.lemmas[0].expl]).toContain(result.constraints[4]);
+    expect(result.core.isCheckFeasible).toBe(true);
+  });
+
+  it("answers unknown, without a lemma, on degree 2 in the root variable", () => {
+    const result = getCore((x) => [x, x], KIND_LE, 1n);
+    expect(new NraSolver(result.core).checkAssignment()).toBe(L_UNDEF);
+    expect(result.core.lemmas).toHaveLength(0);
+  });
+
+  it("answers unknown, without a lemma, on an irrational root", () => {
+    const result = getCore((x) => [x, x], KIND_EQ, 2n);
+    expect(new NraSolver(result.core).checkAssignment()).toBe(L_UNDEF);
+    expect(result.core.lemmas).toHaveLength(0);
   });
 });
