@@ -482,6 +482,12 @@ export const tokenize = (source: string): Token[] => {
         pushToken(number.includes(".") ? "Decimal" : "Number", number, number.length);
         continue;
       }
+      // A word needs a letter to be a name, so SANY reads one without as underscores and numbers.
+      const part = /^(_|\d+)/.exec(word)?.[0];
+      if (part !== undefined && !/[A-Za-z]/.test(word)) {
+        pushToken(part === "_" ? "Operator" : "Number", part, part.length);
+        continue;
+      }
       if (word.startsWith("WF_") || word.startsWith("SF_")) {
         pushToken("Keyword", word.slice(0, 3), 3);
         continue;

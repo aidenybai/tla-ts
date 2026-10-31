@@ -161,6 +161,21 @@ describe("parseModule reads operators like SANY", () => {
     );
   });
 
+  it.each(["_ == 1", "VARIABLE _", "A == \\A _ \\in {} : TRUE", "A == __", "A == 1_2"])(
+    "rejects a name without a letter in %j as SANY does",
+    (unit) => {
+      expect(() => parseModule(`---- MODULE M ----\n${unit}\n====`)).toThrow(TlaSyntaxError);
+    },
+  );
+
+  it("reads underscores as the placeholders of operator parameters", () => {
+    const module = parseModule("---- MODULE M ----\nCONSTANT F(_, _), _ + _\nG(H(_)) == 1\n====");
+    expect(module.constants.map((constant) => [constant.name, constant.arity])).toEqual([
+      ["F", 2],
+      ["+", 2],
+    ]);
+  });
+
   it("rejects an operator of a parameterized instance without the instance's arguments", () => {
     expect(() =>
       parseModule(`---- MODULE M ----\n${INNER}\nTHEOREM M!Foo(TRUE) => M!Foo(TRUE)\n====`),
