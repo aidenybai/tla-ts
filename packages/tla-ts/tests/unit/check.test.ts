@@ -2069,6 +2069,21 @@ describe("initial predicate and next-state relation match TLC", () => {
     ).rejects.toThrow(new TlaConfigError("The constraint of C is equal to FALSE"));
   });
 
+  it("warns about a state-level property before it reads the constraints", async () => {
+    const warned: string[] = [];
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nP == x = 0\nC == FALSE\n====",
+        config: "INIT Init\nNEXT Next\nPROPERTY P\nCONSTRAINT C",
+        onProgress: (progress) => {
+          if (progress.kind === "state-level-property") warned.push(progress.name);
+        },
+      }),
+    ).rejects.toThrow(new TlaConfigError("The constraint of C is equal to FALSE"));
+    expect(warned).toEqual(["P"]);
+  });
+
   it("rejects an invariant that is not a state predicate", async () => {
     await expect(
       checkSource(

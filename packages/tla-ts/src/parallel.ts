@@ -6,7 +6,6 @@ import {
   findAssumptionViolation,
   reportInitialStatesProgress,
   reportStartup,
-  reportStateLevelProperties,
   type CheckOptions,
   type CheckProgress,
   type CheckResult,
@@ -181,10 +180,12 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   });
   reportStartup(specification, config, report);
   const environment = specification.environment;
-  const search = createSearch(config, environment, () =>
-    getTlcVariableOrder(options.source, loadModule),
+  const search = createSearch(
+    config,
+    environment,
+    () => getTlcVariableOrder(options.source, loadModule),
+    report,
   );
-  if (search) reportStateLevelProperties(config, environment, report);
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
   if (
     !search ||

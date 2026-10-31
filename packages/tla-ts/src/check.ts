@@ -465,19 +465,6 @@ export const reportStartup = (
   });
 };
 
-// TLC checks a property that is a state formula only on the initial states, so it warns about one.
-export const reportStateLevelProperties = (
-  config: ModelConfig,
-  environment: Environment,
-  onProgress: CheckOptions["onProgress"],
-) =>
-  config.properties.forEach((name) => {
-    const definition = getConfigPredicate("property", name, environment);
-    if (definition && getLevel(definition.body, undefined, environment) === 1) {
-      onProgress?.({ kind: "state-level-property", name });
-    }
-  });
-
 const getInvariants = (names: string[], environment: Environment) => {
   const analyzer = createLevelAnalyzer({
     constants: new Set(environment.constants.keys()),
@@ -665,7 +652,11 @@ const getSpecification = (config: ModelConfig, environment: Environment): Specif
   };
 };
 
-const getProperties = (config: ModelConfig, environment: Environment): Properties => {
+const getProperties = (
+  config: ModelConfig,
+  environment: Environment,
+  onProgress: CheckOptions["onProgress"],
+): Properties => {
   const properties: Properties = {
     initialPredicates: [],
     invariants: [],
@@ -675,6 +666,11 @@ const getProperties = (config: ModelConfig, environment: Environment): Propertie
   config.properties.forEach((name) => {
     const definition = getConfigPredicate("property", name, environment);
     if (!definition) return;
+    // TLC checks a property that is a state formula only on the initial states, so it warns about
+    // one as it processes the property, before the constraints.
+    if (getLevel(definition.body, undefined, environment) === 1) {
+      onProgress?.({ kind: "state-level-property", name });
+    }
     // TLC 1.7.4 doesn't unroll a property that quantifies over a constant set.
     const isUnrollingForall = environment.runtime.version !== "1.7.4";
     expandTemporal(definition.body, undefined, environment, isUnrollingForall).forEach((item) => {
@@ -951,10 +947,11 @@ export const createSearch = (
   config: ModelConfig,
   environment: Environment,
   getVariableOrder: () => string[],
+  onProgress?: CheckOptions["onProgress"],
 ): Search | undefined => {
   const configInvariants = getInvariants(config.invariants, environment);
   const spec = getSpecification(config, environment);
-  const properties = getProperties(config, environment);
+  const properties = getProperties(config, environment, onProgress);
   const invariants = getStateChecks([...configInvariants, ...properties.invariants], environment);
   // The invariants TLC evaluates, each of which may have several conjuncts among the checks.
   const invariantPredicates = [
@@ -1469,10 +1466,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     ),
   });
 
-  const search = createSearch(config, environment, () =>
-    getTlcVariableOrder(options.source, options.loadModule),
+  const search = createSearch(
+    config,
+    environment,
+    () => getTlcVariableOrder(options.source, options.loadModule),
+    options.onProgress,
   );
-  if (search) reportStateLevelProperties(config, environment, options.onProgress);
   const findViolatedAssumption = () =>
     findAssumptionViolation(specification.assumptions, environment);
   if (!search) {
