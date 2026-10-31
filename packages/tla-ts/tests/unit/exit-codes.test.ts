@@ -64,6 +64,18 @@ describe("CLI exit codes match TLC", () => {
     ).toBe(255);
   });
 
+  it("exits like TLC on a stack overflow in each phase", async () => {
+    const recursion = "RECURSIVE R(_)\nR(n) == R(n + 1)";
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
+    expect(await getFailureExitCode(`${recursion}\nInit == x = R(0)\nNext == x' = x`)).toBe(75);
+    expect(await getFailureExitCode(`${recursion}\nInit == x = 0\nNext == x' = R(0)`)).toBe(255);
+    expect(await getFailureExitCode(`${recursion}\n${STEP}\nInv == R(0) = 0`, config)).toBe(75);
+    expect(
+      await getFailureExitCode(`${recursion}\n${STEP}\nInv == x = 0 \\/ R(0) = 0`, config),
+    ).toBe(255);
+    expect(await getFailureExitCode(`${recursion}\nASSUME R(0) = 0\n${STEP}`)).toBe(255);
+  });
+
   it("exits with 75 when an invariant fails on an initial state and 76 afterwards", async () => {
     const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
     expect(await getFailureExitCode(`${STEP}\nInv == 1 \\div 0 = x`, config)).toBe(75);

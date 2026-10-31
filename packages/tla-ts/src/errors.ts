@@ -5,6 +5,13 @@ import { EXIT_STATUS, getExitCode } from "./exit-codes";
 export const UNEXPECTED_EXCEPTION =
   "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
 
+// How TLC reports a Java StackOverflowError, which V8 raises as this RangeError.
+export const STACK_OVERFLOW =
+  "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.";
+
+export const isStackOverflow = (error: unknown) =>
+  error instanceof RangeError && error.message === "Maximum call stack size exceeded";
+
 export class TlaError extends Error {
   constructor(message: string, cause?: unknown) {
     super(message, { cause });
