@@ -905,10 +905,6 @@ export class AstManager {
     return this.kinds[expr] === KIND_VAR;
   }
 
-  isQuantifier(expr: number) {
-    return this.kinds[expr] === KIND_QUANTIFIER;
-  }
-
   isGround(expr: number) {
     return this.freeVarBounds[expr] === 0;
   }
@@ -1026,11 +1022,6 @@ export class AstManager {
 
   isUninterpreted(expr: number) {
     return this.getFamily(expr) === FAMILY_USER;
-  }
-
-  // An equality between two Boolean expressions, which Z3 calls iff.
-  isIff(expr: number) {
-    return this.getOp(expr) === OP_EQ && this.sorts[this.args[expr][0]] === SORT_BOOL;
   }
 
   // arith_util::is_times_minus_one: the t of (* -1 t).
