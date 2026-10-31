@@ -510,6 +510,8 @@ const getParticleClosure = (terms: LiveExpression[]) => {
 const createTableauNode = (particle: LiveExpression[]): TableauNode => ({
   particle,
   successors: [],
+  // Constant terms count, as after TLC 1.7.4. That version checks only state atoms, so a node with a
+  // FALSE term stays in the graph and yields a bogus counterexample (tlaplus#604).
   statePredicates: particle.filter((term) => getLiveLevel(term) <= STATE_LEVEL),
 });
 
