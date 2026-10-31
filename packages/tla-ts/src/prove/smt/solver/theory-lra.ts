@@ -47,6 +47,7 @@ import {
 } from "./literal";
 import type { ProtoModel } from "./proto-model";
 import { getGcd, getLcm, Rational } from "./rational";
+import { RefVector } from "./ref-vector";
 import { BoundPropagator, getImpliedKind, ImpliedBound } from "./lp/bound-propagator";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./lp/constraints";
 import { LP_INFEASIBLE } from "./lp/core-solver";
@@ -109,6 +110,10 @@ export class TheoryLra {
   private delayIneqs: number[] = [];
   private delayIneqsQhead = 0;
   private isNewDef = false;
+  // m_internalize_states: the terms of each nesting depth of internalize_def and mk_var_bound, which
+  // hold references until the next one at that depth resets them.
+  private internalizeStates: RefVector[] = [];
+  private internalizeHead = 0;
   private scopes: Scope[] = [];
   private explanation = new Explanation();
   private coreLiterals: Literal[] = [];
@@ -340,8 +345,16 @@ export class TheoryLra {
     return node !== undefined && this.isAttachedToVar(node);
   }
 
+  // scoped_internalize_state: the terms of the next depth, reset. The caller decrements the head.
+  private pushInternalizeState() {
+    const terms = (this.internalizeStates[this.internalizeHead] ??= new RefVector(this.manager));
+    this.internalizeHead++;
+    terms.reset();
+    return terms;
+  }
+
   // linearize: the theory variables of a weighted sum of terms, with their coefficients.
-  private linearize(terms: number[], coeffs: Rational[]) {
+  private linearize(terms: RefVector, coeffs: Rational[]) {
     const manager = this.manager;
     const context = this.context;
     const vars: number[] = [];
@@ -356,30 +369,30 @@ export class TheoryLra {
       vars.push(thVar);
     };
     let index = 0;
-    while (index < terms.length) {
-      const term = terms[index];
+    while (index < terms.size) {
+      const term = terms.items[index];
       toEnsureEnode.push(term);
       const op = manager.getOp(term);
       const args = manager.args[term];
       if (op === OP_ADD) {
         for (const arg of args) push(arg, coeffs[index]);
-        if (terms.length !== index + 1) {
-          terms[index] = terms[terms.length - 1];
+        if (terms.size !== index + 1) {
+          terms.set(index, terms.items[terms.size - 1]);
           coeffs[index] = coeffs[coeffs.length - 1];
           terms.pop();
           coeffs.pop();
         }
       } else if (op === OP_SUB) {
-        terms[index] = args[0];
+        terms.set(index, args[0]);
         for (let position = 1; position < args.length; position++)
           push(args[position], coeffs[index].neg());
       } else if (op === OP_MUL && args.length === 2 && manager.isNumeral(args[0])) {
         coeffs[index] = coeffs[index].mul(manager.getRationalValue(args[0]));
-        terms[index] = args[1];
+        terms.set(index, args[1]);
         toEnsureEnode.push(args[0]);
       } else if (op === OP_MUL && args.length === 2 && manager.isNumeral(args[1])) {
         coeffs[index] = coeffs[index].mul(manager.getRationalValue(args[1]));
-        terms[index] = args[0];
+        terms.set(index, args[0]);
         toEnsureEnode.push(args[1]);
       } else if (op === OP_MUL) {
         addVar(index, this.internalizeMul(term));
@@ -389,9 +402,9 @@ export class TheoryLra {
         index++;
       } else if (op === OP_UMINUS) {
         coeffs[index] = coeffs[index].neg();
-        terms[index] = args[0];
+        terms.set(index, args[0]);
       } else if (op === OP_TO_REAL) {
-        terms[index] = args[0];
+        terms.set(index, args[0]);
         if (!context.isEInternalized(term)) {
           this.internalizeTermCore(args[0]);
           this.mkEnode(term);
@@ -476,7 +489,18 @@ export class TheoryLra {
 
   // internalize_def: the variable of a term, with a column for its linear combination.
   private internalizeDef(expr: number) {
-    const linearized = this.linearize([expr], [Rational.one]);
+    const terms = this.pushInternalizeState();
+    terms.push(expr);
+    const thVar = this.internalizeLinearizedDef(expr, this.linearize(terms, [Rational.one]));
+    this.internalizeHead--;
+    return thVar;
+  }
+
+  // internalize_linearized_def: term - v = 0, unless the term is its own variable.
+  private internalizeLinearizedDef(
+    expr: number,
+    linearized: { vars: number[]; coeffs: Rational[] },
+  ) {
     const thVar = this.mkVar(expr);
     if (
       linearized.vars.length === 1 &&
@@ -570,6 +594,8 @@ export class TheoryLra {
   }
 
   private mkVarBound(boolVar: BoolVar, thVar: number, isLower: boolean, value: Rational) {
+    this.pushInternalizeState();
+    this.internalizeHead--;
     const column = this.registerVar(thVar);
     const isInt = this.isIntVar(thVar);
     const partial = { isLower, isInt };
