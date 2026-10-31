@@ -3,9 +3,9 @@
 // Z3's default configuration uses for UFNIA. Terms become columns of the lp solver, integer or not
 // by their sort, atoms become bounds on them, propagation makes the tableau feasible and propagates
 // implied bounds and equalities, and the final check runs the integer solver and assumes
-// equalities between shared terms with equal values. Nonlinear products, and div, mod and / by a
-// term, are opaque. As in nla's init_to_refine (src/math/lp/nla_core.cpp), a model whose values
-// satisfy them needs no refinement, and the theory gives up on any other.
+// equalities between shared terms with equal values. Nonlinear products and divisions go to nla
+// (src/math/lp/nla_core.cpp), which refines the model with lemmas. Z3's nra, which nla calls on
+// what its lemmas leave open, is not ported: there the theory gives up.
 import {
   AstManager,
   FAMILY_ARITH,
@@ -45,13 +45,14 @@ import {
 import type { ProtoModel } from "./proto-model";
 import { getGcd, getLcm, Rational } from "./rational";
 import { BoundPropagator, getImpliedKind, ImpliedBound } from "./lp/bound-propagator";
-import { KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./lp/constraints";
+import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./lp/constraints";
 import { LP_INFEASIBLE } from "./lp/core-solver";
 import { Dependency, linearize, mkJoin, mkLeaf } from "./lp/dependency";
 import { Explanation } from "./lp/explanation";
 import { IntSolver } from "./lp/int-solver";
 import { LarSolver, NULL_LPVAR } from "./lp/lar-solver";
 import type { LarTerm } from "./lp/lar-term";
+import { Ineq, KIND_NE, Lemma, NlaCore } from "./lp/nla-core";
 import { randomUpdate } from "./lp/random-updater";
 
 const NULL_THEORY_VAR = -1;
@@ -119,7 +120,7 @@ export class TheoryLra {
   // Their arguments have variables, as the factors of an nla monomial do.
   private unsupportedTerms: number[] = [];
   private processedEqs = new Set<string>();
-  private processedDivMods = new Set<string>();
+  private nla: NlaCore | undefined;
 
   constructor(private context: Context) {
     this.solver = new LarSolver(() => context.checkCanceled());
@@ -258,13 +259,51 @@ export class TheoryLra {
     this.mkEnode(expr);
     const thVar = this.mkVar(expr);
     if (!hasVar) {
-      this.foundUnsupported(expr);
-      for (const arg of this.manager.args[expr]) {
+      const vars = this.manager.args[expr].map((arg) => {
         this.internalizeTermCore(arg);
-        this.registerVar(this.mkVar(arg));
-      }
+        return this.registerVar(this.mkVar(arg));
+      });
+      this.solver.registerExistingTerms();
+      this.ensureNla().addMonic(this.registerVar(thVar), vars);
     }
     return thVar;
+  }
+
+  // ensure_nla: the nonlinear solver, made on the first nonlinear term, in the current scopes.
+  private ensureNla() {
+    if (this.nla !== undefined) return this.nla;
+    const nla = new NlaCore(this.solver);
+    for (let index = 0; index < this.scopes.length; index++) nla.push();
+    nla.isRelevant = (lpVar) =>
+      this.context.isRelevant(this.getExpr(this.solver.getExternal(lpVar)));
+    this.nla = nla;
+    return nla;
+  }
+
+  // The columns of a quotient, its dividend and divisor, and the remainder, internalized.
+  private registerDivision(quotient: number, remainder: number) {
+    const args = this.manager.args[quotient];
+    return [quotient, args[0], args[1], remainder].map((expr) => {
+      this.internalizeTermCore(expr);
+      return this.registerVar(this.mkVar(expr));
+    }) as [number, number, number, number];
+  }
+
+  private isNonzeroNumeral(expr: number) {
+    return this.manager.isNumeral(expr) && !this.manager.getRationalValue(expr).isZero();
+  }
+
+  private isZeroNumeral(expr: number) {
+    return this.manager.isNumeral(expr) && this.manager.getRationalValue(expr).isZero();
+  }
+
+  // arith_util::is_bounded: a numeral, a mod by a numeral, or a div by a numeral of a bounded term.
+  private isBounded(expr: number): boolean {
+    const manager = this.manager;
+    const op = manager.getOp(expr);
+    const args = manager.args[expr];
+    if (op === OP_IDIV && manager.isNumeral(args[1])) return this.isBounded(args[0]);
+    return (op === OP_MOD && manager.isNumeral(args[1])) || manager.isNumeral(expr);
   }
 
   private isAttachedExpr(expr: number) {
@@ -345,10 +384,31 @@ export class TheoryLra {
             if (!manager.isNumeral(divisor) || manager.getRationalValue(divisor).isZero())
               this.foundUnsupported(term);
             for (const arg of args) toEnsureVar.push(arg);
-          } else if (op === OP_IDIV || op === OP_MOD) {
-            if (!manager.isNumeral(args[1])) {
-              this.foundUnsupported(term);
-              for (const arg of args) toEnsureVar.push(arg);
+          } else if (op === OP_IDIV) {
+            if (!this.isNonzeroNumeral(args[1])) this.foundUnsupported(term);
+            const remainder = manager.mkApp(OP_MOD, args, SORT_INT);
+            context.internalize(remainder, false);
+            if (context.relevancy.isEnabled) context.relevancy.addDependency(term, remainder);
+            if (this.nla !== undefined && !manager.isNumeral(args[1]))
+              this.nla.divisions.addIdivision(...this.registerDivision(term, remainder));
+            if (manager.isNumeral(args[1]) && this.isBounded(args[0])) {
+              const nla = this.ensureNla();
+              nla.divisions.addBoundedDivision(...this.registerDivision(term, remainder));
+            }
+          } else if (op === OP_MOD) {
+            const isNonzeroDivisor = this.isNonzeroNumeral(args[1]);
+            if (!isNonzeroDivisor) this.foundUnsupported(term);
+            if (this.nla !== undefined && isNonzeroDivisor) {
+              const quotient = manager.mkApp(OP_IDIV, args, SORT_INT);
+              context.internalize(quotient, false);
+              this.nla.divisions.addBoundedDivision(...this.registerDivision(quotient, term));
+            }
+            if (!manager.isNumeral(args[1]) && !this.isZeroNumeral(args[0])) {
+              const nla = this.ensureNla();
+              const quotient = manager.mkApp(OP_IDIV, args, SORT_INT);
+              context.internalize(quotient, false);
+              const columns = this.registerDivision(quotient, term);
+              nla.divisions.addDivisibility(columns[3], columns[1], columns[2], columns[0]);
             }
           } else if (op !== OP_TO_INT) {
             this.foundUnsupported(term);
@@ -691,7 +751,10 @@ export class TheoryLra {
     const status = this.makeFeasible();
     if (context.checkCanceled()) return true;
     if (status === L_FALSE) this.setInfeasibilityConflict();
-    else if (status === L_TRUE) this.propagateBoundsWithLpSolver();
+    else if (status === L_TRUE) {
+      this.propagateNla(true);
+      this.propagateBoundsWithLpSolver();
+    }
     return true;
   }
 
@@ -990,11 +1053,12 @@ export class TheoryLra {
 
   // Final check.
 
-  finalCheckEh() {
+  finalCheckEh(level: number) {
     const context = this.context;
     if (this.propagateCore()) return FC_CONTINUE;
     this.isModelInitialized = false;
     const solver = this.solver;
+    this.propagateNla(false);
     const status =
       !solver.isFeasible() || solver.columnsWithChangedBounds.size > 0
         ? this.makeFeasible()
@@ -1004,14 +1068,126 @@ export class TheoryLra {
       return FC_CONTINUE;
     }
     if (status === L_UNDEF) return context.checkCanceled() ? FC_GIVEUP : FC_CONTINUE;
-    if (!this.isLiaSat()) return FC_CONTINUE;
-    if (context.checkCanceled()) return FC_GIVEUP;
-    if (solver.hasInfInt()) return FC_CONTINUE;
+    if (!this.isLiaSat() || !this.checkIdivBounds()) return FC_CONTINUE;
+    let result = FC_DONE;
+    const nlaStatus = this.checkNla(level);
+    if (nlaStatus === FC_CONTINUE) return FC_CONTINUE;
+    // Nonlinear bound optimization may invalidate integer feasibility.
+    if (nlaStatus === FC_DONE && solver.hasInfInt()) return FC_CONTINUE;
+    if (nlaStatus === FC_GIVEUP) result = FC_GIVEUP;
     if (this.assumeEqs()) return FC_CONTINUE;
     if (this.unsupportedTerms.length > 0) this.initVariableValues();
     for (const term of this.unsupportedTerms)
       if (context.isRelevant(term) && !this.isSatisfied(term)) return FC_GIVEUP;
-    return FC_DONE;
+    return result;
+  }
+
+  // check_nla: whether the values of the monomials agree with their factors', or the lemmas that
+  // refine them.
+  private checkNla(level: number) {
+    if (this.context.checkCanceled()) return FC_GIVEUP;
+    const nla = this.nla;
+    if (nla === undefined || !nla.hasRelevantMonomial()) return FC_DONE;
+    const status = nla.check(level);
+    if (status === L_FALSE) {
+      this.addLemmas(nla);
+      return FC_CONTINUE;
+    }
+    return status === L_TRUE ? FC_DONE : FC_GIVEUP;
+  }
+
+  // check_idiv_bounds: the lemmas of the bounded divisions.
+  private checkIdivBounds() {
+    const nla = this.nla;
+    if (nla === undefined) return true;
+    nla.checkBoundedDivisions();
+    this.addLemmas(nla);
+    return nla.lemmas.length === 0;
+  }
+
+  // propagate_nla and incremental_propagate_nla: the bounds nla derives for monomials.
+  private propagateNla(isIncremental: boolean) {
+    const nla = this.nla;
+    if (nla === undefined) return;
+    if (isIncremental) nla.incrementalPropagate();
+    else nla.propagate();
+    this.addLemmas(nla);
+    this.solver.collectMoreRowsForLpPropagation();
+  }
+
+  private addLemmas(nla: NlaCore) {
+    if (nla.isCheckFeasible && this.makeFeasible() === L_FALSE) {
+      this.setInfeasibilityConflict();
+      return;
+    }
+    for (const ineq of nla.literals) {
+      const literal = this.mkNlaLiteral(ineq);
+      this.context.markLiteralAsRelevant(literal);
+      this.context.setTrueFirstFlag(getVar(literal));
+    }
+    for (const lemma of nla.lemmas) this.falseCaseOfCheckNla(lemma);
+    for (const equality of nla.fixedEqualities)
+      this.addEquality(equality.lpVar, equality.value, equality.explanation);
+    for (const equality of nla.equalities)
+      this.addEq(equality.first, equality.second, equality.explanation, false);
+  }
+
+  // add_equality: a column fixed to a value, equal to the variable of the value's numeral.
+  private addEquality(column: number, value: Rational, explanation: Explanation) {
+    const thVar = value.equals(Rational.one)
+      ? this.oneVar
+      : value.isZero()
+        ? this.zeroVar
+        : (this.value2var.get(`true:${value}`) ?? this.value2var.get(`false:${value}`));
+    if (thVar === undefined || this.solver.getExternal(column) < 0) return;
+    this.addEq(this.registerVar(thVar), column, explanation, true);
+  }
+
+  // mk_literal: the literal of an inequality of nla, over a bound or equality atom.
+  private mkNlaLiteral(ineq: Ineq) {
+    const kind = ineq.cmp;
+    if (kind === KIND_EQ || kind === KIND_NE) {
+      const atom = this.mkTermEq(ineq.term, ineq.rs);
+      const literal = this.context.getLiteral(atom);
+      return kind === KIND_NE ? negate(literal) : literal;
+    }
+    const isLower = kind === KIND_LT || kind === KIND_GE;
+    const literal = this.context.getLiteral(this.mkBound(ineq.term, ineq.rs, isLower));
+    return kind === KIND_LT || kind === KIND_GT ? negate(literal) : literal;
+  }
+
+  // mk_eq: the atom term = offset.
+  private mkTermEq(term: LarTerm, offset: Rational) {
+    const manager = this.manager;
+    const coeffs = this.getTermCoeffs(term);
+    const isInt =
+      offset.isInt() && coeffs.every((entry) => this.isIntVar(entry[0]) && entry[1].isInt());
+    const left = this.coeffsToApp(coeffs, isInt);
+    const right = manager.mkNumeralOfSort(offset, isInt ? SORT_INT : SORT_REAL);
+    if (left === right) return manager.trueExpr;
+    const atom = manager.mkEq(left, right);
+    this.context.internalize(atom, true);
+    this.context.markAsRelevant(atom);
+    return atom;
+  }
+
+  // false_case_of_check_nla and set_conflict_or_lemma: the lemma as a theory axiom, unless one of
+  // its literals is already true.
+  private falseCaseOfCheckNla(lemma: Lemma) {
+    const context = this.context;
+    const literals = lemma.ineqs.map((ineq) => negate(this.mkNlaLiteral(ineq)));
+    this.resetEvidence();
+    this.coreLiterals.push(...literals);
+    this.numConflicts++;
+    for (const constraint of lemma.expl) this.setEvidence(constraint);
+    const clause: Literal[] = [];
+    for (const literal of this.coreLiterals) {
+      const negated = negate(literal);
+      clause.push(negated);
+      context.markLiteralAsRelevant(negated);
+      if (context.getAssignment(negated) === L_TRUE) return;
+    }
+    context.mkThAxiom(clause);
   }
 
   // check_lia: whether the integer solver found the integer columns integral.
@@ -1064,7 +1240,22 @@ export class TheoryLra {
       isLower = !isLower;
       coeffs = coeffs.map((entry) => [entry[0], entry[1].neg()]);
     }
-    // coeffs2app: an Int term of a Real bound is coerced to Real.
+    const sort = isInt ? SORT_INT : SORT_REAL;
+    const term = this.coeffsToApp(coeffs, isInt);
+    const atom = manager.mkApp(
+      isLower ? OP_GE : OP_LE,
+      [term, manager.mkNumeralOfSort(offset, sort)],
+      SORT_BOOL,
+    );
+    context.internalize(atom, true);
+    context.markAsRelevant(atom);
+    return atom;
+  }
+
+  // coeffs2app: the sum of the expressions of theory variables times coefficients, with Int
+  // expressions of a Real sum coerced to Real.
+  private coeffsToApp(coeffs: [number, Rational][], isInt: boolean) {
+    const manager = this.manager;
     const sort = isInt ? SORT_INT : SORT_REAL;
     const summands = coeffs
       .filter((entry) => !entry[1].isZero())
@@ -1078,20 +1269,11 @@ export class TheoryLra {
           ? expr
           : manager.mkApp(OP_MUL, [manager.mkNumeralOfSort(entry[1], sort), expr], sort);
       });
-    const term =
-      summands.length === 0
-        ? manager.mkNumeralOfSort(Rational.zero, sort)
-        : summands.length === 1
-          ? summands[0]
-          : manager.mkApp(OP_ADD, summands, sort);
-    const atom = manager.mkApp(
-      isLower ? OP_GE : OP_LE,
-      [term, manager.mkNumeralOfSort(offset, sort)],
-      SORT_BOOL,
-    );
-    context.internalize(atom, true);
-    context.markAsRelevant(atom);
-    return atom;
+    return summands.length === 0
+      ? manager.mkNumeralOfSort(Rational.zero, sort)
+      : summands.length === 1
+        ? summands[0]
+        : manager.mkApp(OP_ADD, summands, sort);
   }
 
   private initVariableValues() {
@@ -1110,6 +1292,7 @@ export class TheoryLra {
 
   // random_update: moves the values of shared variables that collide with others.
   private randomUpdate() {
+    if (this.nla?.hasRelevantMonomial()) return;
     const solver = this.solver;
     const byValue = new Map<string, number>();
     const tmpVarSet = new Set<number>();
@@ -1229,6 +1412,7 @@ export class TheoryLra {
       numVars: this.getNumVars(),
     });
     this.solver.push();
+    this.nla?.push();
   }
 
   popScopeEh(numScopes = 1) {
@@ -1246,6 +1430,7 @@ export class TheoryLra {
     if (this.constraintSources.length > numConstraints)
       this.constraintSources.length = numConstraints;
     this.newBounds = [];
+    this.nla?.pop(numScopes);
     this.varEnodes.length = scope.numVars;
   }
 
@@ -1343,12 +1528,7 @@ export class TheoryLra {
     if (op === OP_DIV) this.mkDivAxiom(args[0], args[1]);
     else if (op === OP_TO_INT) this.mkToIntAxiom(expr);
     else if (op === OP_IS_INT) this.mkIsIntAxiom(expr);
-    if (op !== OP_IDIV && op !== OP_MOD) return;
-    const key = `${args[0]}:${args[1]}`;
-    if (this.processedDivMods.has(key)) return;
-    this.processedDivMods.add(key);
-    this.context.pushTrail(() => this.processedDivMods.delete(key));
-    this.mkIdivModAxioms(args[0], args[1]);
+    else if (op === OP_MOD) this.mkIdivModAxioms(args[0], args[1]);
   }
 
   // mk_literal.

@@ -906,7 +906,7 @@ export class Context extends Internalizer {
       // the theories between arithmetic and the quantifiers, theory_finite_set::assume_eqs draws a
       // random value.
       if (!isTheory) this.getRandomValue();
-      const check = isTheory ? this.theory.finalCheckEh() : qmanager.finalCheckEh(true);
+      const check = isTheory ? this.theory.finalCheckEh(level) : qmanager.finalCheckEh(true);
       if (isTheory) maxLevel = Math.max(maxLevel, NUM_ARITH_FINAL_CHECK_LEVELS);
       if (isTheory && check === FC_GIVEUP) failure = FAILURE_THEORY;
       this.finalCheckIndex = (this.finalCheckIndex + 1) % 2;

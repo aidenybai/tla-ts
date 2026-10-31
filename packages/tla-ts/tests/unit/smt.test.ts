@@ -190,9 +190,25 @@ describe("decideSmt on real arithmetic", () => {
     ).toBe("unsat");
   });
 
-  it("does not answer a nonlinear real problem", () => {
+  it("finds a model of a nonlinear real problem", () => {
     expect(
       decideLines("(declare-fun x () Real)", "(declare-fun y () Real)", "(assert (= (* x y) 2.0))"),
-    ).toBe("unknown");
+    ).toBe("sat");
+  });
+
+  it("refutes a negative square", () => {
+    expect(decideLines("(declare-fun x () Real)", "(assert (< (* x x) 0.0))")).toBe("unsat");
+  });
+
+  it("refutes a factorization of a prime", () => {
+    expect(
+      decideLines(
+        "(declare-fun x () Int)",
+        "(declare-fun y () Int)",
+        "(assert (= (* x y) 7))",
+        "(assert (> x 1))",
+        "(assert (> y 1))",
+      ),
+    ).toBe("unsat");
   });
 });
