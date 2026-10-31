@@ -16,7 +16,7 @@ import {
   OP_TRUE,
 } from "./ast";
 import { RefVector } from "./ref-vector";
-import { shiftVars } from "./var-subst";
+import { InvVarShifter } from "./rewriter-tpl";
 
 interface CandidateInfo {
   freeVars: Set<number>;
@@ -103,9 +103,11 @@ export class PatternInference {
             boundVars.size === 0 &&
             (decl.family !== FAMILY_ARITH || isArithCandidate)
           ) {
-            const candidate = manager.withTemporaries(() => shiftVars(manager, expr, 0, -delta, 0));
+            const shifter = new InvVarShifter(manager);
+            const candidate = manager.withoutTemporaries(() => shifter.shift(expr, delta));
             this.addCandidate(candidate, freeVars, size);
             manager.decRef(candidate);
+            shifter.release();
           }
         }
       } else if (kind === KIND_QUANTIFIER) {

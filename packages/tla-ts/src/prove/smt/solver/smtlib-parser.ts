@@ -39,7 +39,7 @@ import {
   isArithSort,
 } from "./ast";
 import { Rational } from "./rational";
-import { shiftVars } from "./var-subst";
+import { replaceFreeVars } from "./var-subst";
 
 type SExpr = string | SExpr[];
 
@@ -442,10 +442,16 @@ export const parseSmtlib = (
       if (sexpr === "true") return manager.trueExpr;
       if (sexpr === "false") return manager.falseExpr;
       const binding = lookup(sexpr);
+      if (binding?.isBoundVar) return manager.mkVar(depth - 1 - binding.depth, binding.sort);
+      // Z3's var_shifter moves the free variables of a let binding up by the binders since. Its cache
+      // holds the terms it makes, but this parser holds no references, so it rebuilds the binding
+      // with replaceFreeVars.
       if (binding !== undefined)
-        return binding.isBoundVar
-          ? manager.mkVar(depth - 1 - binding.depth, binding.sort)
-          : shiftVars(manager, binding.expr, 0, depth - binding.depth, 0);
+        return depth === binding.depth
+          ? binding.expr
+          : replaceFreeVars(manager, binding.expr, (variable, index, shift) =>
+              manager.mkVar(index + shift + depth - binding.depth, manager.sorts[variable]),
+            );
       return parseApp(sexpr, []);
     }
     const head = sexpr[0];
