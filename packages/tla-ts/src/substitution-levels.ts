@@ -1,5 +1,5 @@
 import type { Declaration, Definition, Expression, SourceLocation } from "./ast";
-import { TlaSyntaxError } from "./errors";
+import { createSanyError, formatRange } from "./errors";
 import {
   createLevelAnalyzer,
   getArgumentKey,
@@ -108,10 +108,18 @@ export const checkInstances = (
     return levels;
   };
 
-  const messages = new Set<string>();
+  const errors = new Map<string, { location: string; message: string }>();
   checks.forEach((check) => {
-    const location = `at line ${check.location.line}, column ${check.location.column}`;
-    const addMessage = (message: string) => messages.add(`${message} ${location}`);
+    // SANY reports each error at the whole instance.
+    const location = formatRange(
+      check.location.range ?? {
+        module: check.instancer,
+        start: check.location,
+        end: check.location,
+      },
+    );
+    const addMessage = (message: string) =>
+      errors.set(`${location}\n${message}`, { location, message });
     const instancee = getModule(check.module);
     const levels = getModuleLevels(check.module);
     const analyzer = getAnalyzer(check.instancer);
@@ -141,14 +149,14 @@ export const checkInstances = (
       ];
     });
     const getLevelMessage = (name: string, level: number) =>
-      `Level error in instantiating module '${check.module}': the level of the expression or operator substituted for '${name}' must be at most ${level}`;
+      `Level error in instantiating module '${check.module}':\nThe level of the expression or operator substituted for '${name}' \nmust be at most ${level}.`;
     substituted.forEach((item) => {
       if (!levels.isConstant && item.level > item.maximumLevel) {
         addMessage(getLevelMessage(item.name, item.maximumLevel));
       }
       if (!item.isLeibniz) {
         addMessage(
-          `Error in instantiating module '${check.module}': a non-Leibniz operator substituted for '${item.name}'`,
+          `Error in instantiating module '${check.module}':\n A non-Leibniz operator substituted for '${item.name}'.`,
         );
       }
     });
@@ -162,7 +170,7 @@ export const checkInstances = (
         const minimum = levels.argConstraints.get(getArgumentKey(item.name, index));
         if (minimum !== undefined && getMaxLevel(operator, index) < minimum) {
           addMessage(
-            `Level error in instantiating module '${check.module}': the level of the argument ${index + 1} of the operator ${operator.name} must be at least ${minimum}`,
+            `Level error in instantiating module '${check.module}':\nThe level of the argument ${index + 1} of the operator ${operator.name} \nmust be at least ${minimum}.`,
           );
         }
       });
@@ -175,10 +183,10 @@ export const checkInstances = (
       const maximum = getMaxLevel(operator, parameter.index);
       if (argument.level > maximum) {
         addMessage(
-          `Level error when instantiating module '${check.module}': the level of the argument ${parameter.index} of the operator ${parameter.operator}' must be at most ${maximum}`,
+          `Level error when instantiating module '${check.module}':\nThe level of the argument ${parameter.index} of the operator ${parameter.operator}' \nmust be at most ${maximum}.`,
         );
       }
     });
   });
-  if (messages.size > 0) throw new TlaSyntaxError([...messages].join("\n"));
+  if (errors.size > 0) throw createSanyError([...errors.values()]);
 };
