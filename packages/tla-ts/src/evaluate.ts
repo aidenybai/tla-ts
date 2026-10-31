@@ -1828,10 +1828,18 @@ const compileSetComprehension = (
     };
   }
   const body = getEvaluator(expression.body, environment);
-  const bound = { pattern: expression.pattern, set };
+  const evaluateSet = getEvaluator(set, environment);
   return (context) => {
+    const base = evaluateSet(context);
+    if (!isSetValue(base) || isOverriddenSet(base)) {
+      throw new TlaEvaluationError(
+        `Attempted to compute the value of an expression of\nform CHOOSE x \\in S: P, but S was not enumerable.\n${describeRange(expression)}`,
+      );
+    }
     const chosen = { value: undefined as Value | undefined };
-    forEachBinding([bound], context, (scope) => {
+    const elements = getQuantifierElements(base, set, context.environment.runtime.version);
+    someElement(elements, (element) => {
+      const scope = bindPattern(context.scope, expression.pattern, element);
       if (!expectBoolean(body(withScope(context, scope)), "the body of CHOOSE")) return false;
       chosen.value = lookupKey(expression.pattern, scope);
       return true;
