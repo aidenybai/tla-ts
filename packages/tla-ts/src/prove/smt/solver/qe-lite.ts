@@ -1223,6 +1223,8 @@ class QeLite {
     this.fm.numVars = numVars;
     this.der.apply(fmls);
     this.fm.apply(fmls);
+    // ar_der checks the limit for each formula. tlapm's formulas have no arrays for it to solve.
+    for (let index = 0; index < fmls.size; index++) checkpoint(manager);
   }
 
   // collect_negative_equalities: whether every occurrence of the variable is in a negative equality
@@ -1430,10 +1432,13 @@ export const applyQeLite = (manager: AstManager, goal: Goal) => {
     for (let index = 0; index < size && !goal.isInconsistent; index++) {
       const form = goal.forms.items[index];
       dep = assign(manager, dep, form);
-      if (!manager.hasQuantifierFlags[form]) continue;
-      formula = assign(manager, formula, form);
-      formula = assignOwned(manager, formula, qe.apply(formula));
-      if (formula !== form) goal.update(index, formula);
+      if (manager.hasQuantifierFlags[form]) {
+        formula = assign(manager, formula, form);
+        formula = assignOwned(manager, formula, qe.apply(formula));
+        if (formula !== form) goal.update(index, formula);
+      }
+      // The iterator of the simplifier's indices counts a step after each formula.
+      checkpoint(manager);
     }
     release(manager, formula);
   }

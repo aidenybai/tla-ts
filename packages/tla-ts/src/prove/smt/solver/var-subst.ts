@@ -148,13 +148,13 @@ export const shiftVars = (
       );
 
 // var_subst with std_order: (:var i) becomes bindings[n - 1 - i]. The bindings may contain
-// variables. A variable beyond the bindings moves down by n - numKept.
-export const substitute = (manager: AstManager, expr: number, bindings: number[], numKept = 0) => {
+// variables. A variable beyond the bindings moves down by n.
+export const substitute = (manager: AstManager, expr: number, bindings: number[]) => {
   const count = bindings.length;
   return replaceFreeVars(manager, expr, (variable, index, shift) =>
     index < count
       ? shiftVars(manager, bindings[count - 1 - index], 0, shift, 0)
-      : manager.mkVar(index + shift - count + numKept, manager.sorts[variable]),
+      : manager.mkVar(index + shift - count, manager.sorts[variable]),
   );
 };
 
@@ -179,40 +179,89 @@ export const getFreeVarSorts = (manager: AstManager, expr: number, count: number
   return sorts;
 };
 
-// unused_vars_eliminator: drops the variables that neither the body nor a pattern uses.
-export const elimUnusedVars = (manager: AstManager, expr: number) => {
-  if (manager.kinds[expr] !== KIND_QUANTIFIER) return expr;
-  const data = manager.getQuantifier(expr);
-  if (manager.isGround(data.body)) return data.body;
-  const count = data.sorts.length;
-  const used = collectUsedVars(manager, data.body, count);
-  for (const pattern of data.patterns)
-    for (const term of manager.args[pattern])
-      collectUsedVars(manager, term, count).forEach((isUsed, index) => {
-        if (isUsed) used[index] = true;
-      });
-  if (used.every((isUsed) => isUsed)) return expr;
-  const numKept = used.filter(Boolean).length;
-  const bindings: number[] = [];
-  const keptSorts: number[] = [];
-  const keptNames: SmtSymbol[] = [];
-  let nextIndex = numKept;
-  for (let declIndex = 0; declIndex < count; declIndex++) {
-    const varIndex = count - 1 - declIndex;
-    if (used[varIndex]) {
-      nextIndex--;
-      bindings[declIndex] = manager.mkVar(nextIndex, data.sorts[declIndex]);
-      keptSorts.push(data.sorts[declIndex]);
-      keptNames.push(data.names[declIndex]);
-    } else bindings[declIndex] = manager.mkVar(0, data.sorts[declIndex]);
+// unused_vars_eliminator: drops the variables that neither the body nor a pattern uses. Its
+// var_subst keeps the cache of its last substitution until the next one.
+export class UnusedVarsEliminator {
+  private subst: VarSubst;
+
+  constructor(private manager: AstManager) {
+    this.subst = new VarSubst(manager, true);
   }
-  const remap = (term: number) => substitute(manager, term, bindings, numKept);
-  if (numKept === 0) return remap(data.body);
-  return manager.mkQuantifier({
-    ...data,
-    sorts: keptSorts,
-    names: keptNames,
-    body: remap(data.body),
-    patterns: data.patterns.map((pattern) => manager.mkPattern(manager.args[pattern].map(remap))),
-  });
+
+  // The result comes with a reference, which the caller releases.
+  apply(expr: number) {
+    const manager = this.manager;
+    return manager.withoutTemporaries(() => {
+      const data = manager.kinds[expr] === KIND_QUANTIFIER ? manager.getQuantifier(expr) : null;
+      // ignore_patterns_on_ground_qbody: a ground body drops the patterns with the variables.
+      const kept = data === null ? expr : manager.isGround(data.body) ? data.body : -1;
+      if (kept !== -1 || data === null) {
+        manager.incRef(kept);
+        return kept;
+      }
+      // used_vars: the sort of each free variable of the body and the patterns.
+      const usedSorts: (number | undefined)[] = [];
+      for (const term of [data.body, ...data.patterns])
+        getFreeVarSorts(manager, term, manager.freeVarBounds[term]).forEach((sort, index) => {
+          if (sort !== undefined) usedSorts[index] = sort;
+        });
+      const numDecls = data.sorts.length;
+      if (usedSorts.slice(0, numDecls).filter((sort) => sort !== undefined).length === numDecls) {
+        manager.incRef(expr);
+        return expr;
+      }
+      const keptSorts: number[] = [];
+      const keptNames: SmtSymbol[] = [];
+      data.sorts.forEach((sort, index) => {
+        if (usedSorts[numDecls - index - 1] === undefined) return;
+        keptSorts.push(sort);
+        keptNames.push(data.names[index]);
+      });
+      // var_mapping: (:var i) becomes the variable it moves to, and an unused variable stays.
+      const mapping: number[] = [];
+      let numRemoved = 0;
+      for (let index = 0; index < Math.max(numDecls, usedSorts.length); index++) {
+        const sort = usedSorts[index];
+        if (sort === undefined) {
+          if (index < numDecls) numRemoved++;
+          mapping.push(-1);
+          continue;
+        }
+        const variable = manager.mkVar(index - numRemoved, sort);
+        manager.incRef(variable);
+        mapping.push(variable);
+      }
+      mapping.reverse();
+      const body = this.subst.apply(data.body, mapping);
+      const patterns =
+        numRemoved === numDecls
+          ? []
+          : data.patterns.map((pattern) => this.subst.apply(pattern, mapping));
+      const result =
+        numRemoved === numDecls
+          ? body
+          : manager.mkQuantifier({ ...data, sorts: keptSorts, names: keptNames, body, patterns });
+      if (result !== body) {
+        manager.incRef(result);
+        for (const pattern of patterns) manager.decRef(pattern);
+        manager.decRef(body);
+      }
+      for (const variable of mapping) if (variable !== -1) manager.decRef(variable);
+      return result;
+    });
+  }
+
+  // ~unused_vars_eliminator.
+  release() {
+    this.subst.release();
+  }
+}
+
+// elim_unused_vars: unused_vars_eliminator with a var_subst of its own. The result is a temporary.
+export const elimUnusedVars = (manager: AstManager, expr: number) => {
+  const eliminator = new UnusedVarsEliminator(manager);
+  const result = eliminator.apply(expr);
+  eliminator.release();
+  manager.releaseLater(result);
+  return result;
 };

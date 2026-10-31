@@ -182,11 +182,15 @@ export class AufSolver {
   private evalCache = [new Map<number, number | null>(), new Map<number, number | null>()];
   private rootNodes: Node[] = [];
   private newConstraints: number[] = [];
-  private random = new RandomGen(0);
+  // m_rand, seeded with the steps the resource limit counted before the solver was made, which
+  // then counts one more.
+  private random: RandomGen;
   constructor(
     private manager: AstManager,
     readonly rewriter: Rewriter,
   ) {
+    this.random = new RandomGen(manager.limit.count >>> 0);
+    manager.limit.inc();
     this.aFIs = new ObjMap((key) =>
       combineHash(manager.getDeclHash(Math.floor(key / ARITY_BOUND)), key % ARITY_BOUND),
     );
