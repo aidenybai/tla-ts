@@ -43,7 +43,8 @@ export const mkModel = (context: Context): GeneratedModel => {
       );
   }
   // mk_values: the values of the arithmetic classes that the theory does not know are fresh, so
-  // they come after all the other values.
+  // they come after all the other values. Like Z3, that includes the class of a numeral without a
+  // theory variable, such as a coefficient.
   const root2value = new Map<Enode, number>();
   const freshRoots: Enode[] = [];
   for (const node of context.enodes) {
@@ -51,9 +52,9 @@ export const mkModel = (context: Context): GeneratedModel => {
     const expr = node.owner;
     if (!context.isRelevant(expr) && !manager.isUniqueValue(expr)) continue;
     const sort = manager.sorts[expr];
-    if (manager.isUniqueValue(expr)) root2value.set(node, expr);
-    else if (sort === SORT_BOOL)
+    if (sort === SORT_BOOL)
       root2value.set(node, context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr);
+    else if (manager.isUniqueValue(expr) && !isArithSort(sort)) root2value.set(node, expr);
     else if (isArithSort(sort)) {
       const value = context.theory?.mkValue(node);
       if (value === undefined) freshRoots.push(node);
