@@ -425,8 +425,8 @@ export const getEnumeratedElements = (set: Value, expression: Expression, versio
     const explanation = version === "1.7.4" ? undefined : getBoundExplanation(set, text);
     throw new TlaEvaluationError(
       explanation === undefined
-        ? `TLC encountered a non-enumerable quantifier bound\n${text}.\n${describeRange(expression)}`
-        : `TLC encountered the non-enumerable quantifier bound\n${text}\n${describeRange(expression)}\n${explanation}`,
+        ? `TLC encountered a non-enumerable quantifier bound\n${text}.\n${describeNode(expression)}`
+        : `TLC encountered the non-enumerable quantifier bound\n${text}\n${describeNode(expression)}\n${explanation}`,
     );
   }
   return typeof set === "object" && set.kind === "Interval"
