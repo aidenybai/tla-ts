@@ -444,6 +444,9 @@ export const createLivenessChecker = (
       const isDone = check.isDone[successor.index] === true;
       for (const next of tableauNode.successors) {
         if (!isConsistent(tableau, next, index, successor.state)) continue;
+        // A successor the search never stored follows a violation or an error, after which nothing
+        // checks the graph. TLC records its node, which it never expands.
+        if (successor.index === -1) continue;
         const existing = getNodeId(check, successor.index, next);
         if (existing !== undefined && successors.includes(existing)) continue;
         const target = existing ?? recordNode(check, successor.index, next);

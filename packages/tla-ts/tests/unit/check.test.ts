@@ -1620,6 +1620,15 @@ describe("evaluation errors match TLC", () => {
       version,
     });
 
+  it("adds a state to the behavior graph after a violation by a successor it never stored", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nA == x' = 0\nNext == A \\/ x' = 1\nSpec == Init /\\ [][Next]_x\nInv == x # 1\nLive == [](ENABLED A => <>FALSE)\n====",
+      config: "SPECIFICATION Spec\nINVARIANT Inv\nPROPERTY Live",
+    });
+    expect([result.status, result.violation?.name]).toEqual(["invariant-violation", "Inv"]);
+  });
+
   // CallStackTool gives a set a source, so TLC's worker fails with a FingerprintException as it adds
   // the state to the behavior graph again, which it doesn't catch, and TLC replays the next states.
   it("replays the next states when adding a state to the behavior graph fails to fingerprint", async () => {
