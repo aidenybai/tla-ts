@@ -206,6 +206,15 @@ THEOREM TRUE
     expect(isRejected(proof("<1>2"))).toBe(true);
   });
 
+  it("lists a module extended twice once as SANY does", () => {
+    const xml = exportSanyXml(
+      generate("---- MODULE Twice ----\nEXTENDS Naturals, Naturals\n====\n"),
+    );
+    expect(xml).toContain(
+      "<uniquename>Twice</uniquename>\n        <extends>\n          <uniquename>Naturals</uniquename>\n        </extends>",
+    );
+  });
+
   const export174 = (source: string) => () =>
     exportSanyXml(generateSanySpecification(source, loadModule, { version: "1.7.4" }), {
       version: "1.7.4",

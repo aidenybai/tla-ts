@@ -641,8 +641,7 @@ const exportSpecification = (
         : [
             createElement(
               "extends",
-              module.extendees
-                .map((extendee) => extendee.name)
+              [...new Set(module.extendees.map((extendee) => extendee.name))]
                 .toSorted()
                 .map((name) => createText("uniquename", name)),
             ),
