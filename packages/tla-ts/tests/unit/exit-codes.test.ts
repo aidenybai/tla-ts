@@ -51,6 +51,12 @@ describe("CLI exit codes match TLC", () => {
     expect(await getFailureExitCode(definitions)).toBe(code);
   });
 
+  it("exits with 255 for a symmetry that isn't a set of permutations", async () => {
+    const config = "INIT Init\nNEXT Next\nSYMMETRY P";
+    expect(await getFailureExitCode(`${STEP}\nP == 1`, config)).toBe(255);
+    expect(await getFailureExitCode(STEP, config)).toBe(151);
+  });
+
   it("exits with 75 when an invariant fails on an initial state and 76 afterwards", async () => {
     const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
     expect(await getFailureExitCode(`${STEP}\nInv == 1 \\div 0 = x`, config)).toBe(75);
