@@ -6,6 +6,8 @@ import { isAstLess } from "./ast-lt";
 import { Der } from "./der";
 import {
   AstManager,
+  FAMILY_ARITH,
+  FAMILY_BASIC,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -42,6 +44,8 @@ export interface RewriterOptions {
   // rewrite_patterns: the patterns of a quantifier are rewritten like its body. The kernel's rewriters
   // set it, and the tactics' leave it off.
   isRewritingPatterns: boolean;
+  // pull_cheap_ite: a binary predicate or a function of an ite with values distributes over the ite.
+  isPullingCheapIte?: boolean;
 }
 
 // The distinct literals of a flat conjunction or disjunction. It finds a complementary pair through
@@ -141,12 +145,11 @@ export class Rewriter extends RewriterTpl {
         continue;
       }
       frames.pop();
-      const reduced = this.reduceAppCore(
-        manager.decls[frame.expr],
-        results.splice(frame.spos),
-        manager.sorts[frame.expr],
-      );
-      if (typeof reduced === "number") results.push(reduced);
+      const decl = manager.decls[frame.expr];
+      const newArgs = results.splice(frame.spos);
+      const reduced = this.reduceAppTop(decl, newArgs, manager.sorts[frame.expr]);
+      if (reduced === -1) results.push(manager.mkApp(decl, newArgs, manager.sorts[frame.expr]));
+      else if (typeof reduced === "number") results.push(reduced);
       else visit(reduced.expr, getRewriteDepth(reduced));
     }
     return results[0];
@@ -182,8 +185,8 @@ export class Rewriter extends RewriterTpl {
 
   protected reduceApp(decl: number, args: number[], sort: number) {
     return this.manager.withTemporaries(
-      () => this.reduceAppCore(decl, args, sort),
-      (result) => [typeof result === "number" ? result : result.expr],
+      () => this.reduceAppTop(decl, args, sort),
+      (result) => (result === -1 ? [] : [typeof result === "number" ? result : result.expr]),
     );
   }
 
@@ -267,19 +270,108 @@ export class Rewriter extends RewriterTpl {
 
   // th_rewriter::mk_app: one reduction, without rewriting what it returns.
   mkApp(decl: number, args: number[], sort: number) {
-    const reduced = this.reduceAppCore(decl, args, sort);
-    return typeof reduced === "number" ? reduced : reduced.expr;
+    const reduced = this.reduceAppTop(decl, args, sort);
+    return reduced === -1
+      ? this.manager.mkApp(decl, args, sort)
+      : typeof reduced === "number"
+        ? reduced
+        : reduced.expr;
   }
 
   // th_rewriter's mk_app, with the result of a Rewrite rewritten again.
   mkAppCore(decl: number, args: number[], sort: number): number {
-    const reduced = this.reduceAppCore(decl, args, sort);
-    return typeof reduced === "number"
-      ? reduced
-      : this.reduceTo(reduced.expr, getRewriteDepth(reduced));
+    const reduced = this.reduceAppTop(decl, args, sort);
+    return reduced === -1
+      ? this.manager.mkApp(decl, args, sort)
+      : typeof reduced === "number"
+        ? reduced
+        : this.reduceTo(reduced.expr, getRewriteDepth(reduced));
   }
 
-  private reduceAppCore(decl: number, args: number[], sort: number): number | Rewrite {
+  // th_rewriter_cfg::reduce_app: reduce_app_core, then pull_ite with pull_cheap_ite. -1 is BR_FAILED.
+  private reduceAppTop(decl: number, args: number[], sort: number) {
+    const manager = this.manager;
+    const reduced = this.reduceAppCore(decl, args);
+    if (typeof reduced !== "number" || this.options.isPullingCheapIte !== true) return reduced;
+    if (reduced === -1) return this.pullIte(decl, args, sort) ?? -1;
+    return manager.kinds[reduced] === KIND_APP
+      ? (this.pullIte(manager.decls[reduced], manager.args[reduced], manager.sorts[reduced]) ??
+          reduced)
+      : reduced;
+  }
+
+  // pull_ite: (p (ite c a b) v) is (ite c (p a v) (p b v)) for a value v, and likewise for
+  // (p (ite c a b) (ite c a' b')) and a value first.
+  private pullIte(decl: number, args: number[], sort: number): Rewrite | undefined {
+    const manager = this.manager;
+    if (args.length !== 2) return undefined;
+    const first = args[0];
+    const second = args[1];
+    if (sort === SORT_BOOL && manager.sorts[first] !== SORT_BOOL) {
+      if (this.isIte(first)) {
+        if (manager.isUniqueValue(second) && manager.getRefCount(first) === 1)
+          return this.pullIteCore(decl, first, second, sort, false);
+        if (this.isIte(second) && manager.args[first][0] === manager.args[second][0]) {
+          const branches = [1, 2].map((index) =>
+            manager.mkApp(decl, [manager.args[first][index], manager.args[second][index]], sort),
+          );
+          return {
+            expr: manager.mkApp(OP_ITE, [manager.args[first][0], ...branches], SORT_BOOL),
+            depth: 2,
+          };
+        }
+      }
+      if (this.isIte(second) && manager.isUniqueValue(first) && manager.getRefCount(second) === 1)
+        return this.pullIteCore(decl, second, first, sort, true);
+    }
+    const family = manager.funcDecls[decl].family;
+    if (family !== FAMILY_BASIC && family !== FAMILY_ARITH) return undefined;
+    if (manager.isUniqueValue(first) && this.isIteValueTree(second))
+      return this.pullIteCore(decl, second, first, sort, true);
+    if (manager.isUniqueValue(second) && this.isIteValueTree(first))
+      return this.pullIteCore(decl, first, second, sort, false);
+    return undefined;
+  }
+
+  // pull_ite_core: the value comes first when isSwapped. An equality of a branch and the value is
+  // decided when the branch is a value.
+  private pullIteCore(
+    decl: number,
+    ite: number,
+    value: number,
+    sort: number,
+    isSwapped: boolean,
+  ): Rewrite {
+    const manager = this.manager;
+    const iteArgs = manager.args[ite];
+    const branches = [iteArgs[1], iteArgs[2]].map((branch) =>
+      manager.funcDecls[decl].op === OP_EQ
+        ? branch === value
+          ? manager.trueExpr
+          : this.areDistinct(branch, value)
+            ? manager.falseExpr
+            : manager.mkEq(branch, value)
+        : manager.mkApp(decl, isSwapped ? [value, branch] : [branch, value], sort),
+    );
+    return { expr: manager.mkApp(OP_ITE, [iteArgs[0], ...branches], sort), depth: 2 };
+  }
+
+  // is_ite_value_tree: an unshared ite whose leaves are values, through unshared ites.
+  private isIteValueTree(expr: number) {
+    const manager = this.manager;
+    if (!this.isIte(expr) || manager.getRefCount(expr) !== 1) return false;
+    const todo = [expr];
+    while (todo.length > 0) {
+      const ite = todo.pop() as number;
+      for (const branch of [manager.args[ite][1], manager.args[ite][2]]) {
+        if (this.isIte(branch) && manager.getRefCount(branch) === 1) todo.push(branch);
+        else if (!manager.isUniqueValue(branch)) return false;
+      }
+    }
+    return true;
+  }
+
+  private reduceAppCore(decl: number, args: number[]): number | Rewrite {
     const manager = this.manager;
     const op = manager.funcDecls[decl].op;
     switch (op) {
@@ -297,36 +389,36 @@ export class Rewriter extends RewriterTpl {
         return (
           (manager.sorts[args[0]] === SORT_INT ? this.arith.mkEq(args[0], args[1]) : undefined) ??
           this.mkEqCore(args[0], args[1]) ??
-          manager.mkEq(args[0], args[1])
+          -1
         );
       case OP_DISTINCT:
         return this.mkDistinct(args);
       case OP_ITE:
         return this.mkIte(args[0], args[1], args[2]);
       case OP_LE:
-        return this.arith.mkLe(args[0], args[1]) ?? manager.mkApp(decl, args, sort);
+        return this.arith.mkLe(args[0], args[1]) ?? -1;
       case OP_GE:
-        return this.arith.mkGe(args[0], args[1]) ?? manager.mkApp(decl, args, sort);
+        return this.arith.mkGe(args[0], args[1]) ?? -1;
       case OP_LT:
         return this.arith.mkLt(args[0], args[1]);
       case OP_GT:
         return this.arith.mkGt(args[0], args[1]);
       case OP_ADD:
-        return this.arith.mkAdd(args) ?? manager.mkApp(decl, args, sort);
+        return this.arith.mkAdd(args) ?? -1;
       case OP_SUB:
         return this.arith.mkSub(args);
       case OP_UMINUS:
         return this.arith.mkUminus(args[0]);
       case OP_MUL:
-        return this.arith.mkMul(args) ?? manager.mkApp(decl, args, sort);
+        return this.arith.mkMul(args) ?? -1;
       case OP_IDIV:
-        return this.arith.mkIdiv(args[0], args[1]) ?? manager.mkApp(decl, args, sort);
+        return this.arith.mkIdiv(args[0], args[1]) ?? -1;
       case OP_MOD:
-        return this.arith.mkMod(args[0], args[1]) ?? manager.mkApp(decl, args, sort);
+        return this.arith.mkMod(args[0], args[1]) ?? -1;
       case OP_ABS:
         return this.arith.mkAbs(args[0]);
       default:
-        return manager.mkApp(decl, args, sort);
+        return -1;
     }
   }
 

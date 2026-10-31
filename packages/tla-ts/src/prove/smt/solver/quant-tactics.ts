@@ -1,8 +1,8 @@
 // Ported from Z3 (src/tactic/smtlogics/quant_tactics.cpp, src/tactic/core/simplify_tactic.cpp), MIT
 // license, see z3-license.txt. With (set-logic UFNIA), Z3's strategic solver runs the ufnia tactic:
 // a preprocessor, then qe-lite, then the SMT kernel. Of the preprocessor, elim-uncnstr's
-// elimination and the simplifier's pull_cheap_ite and local_ctx options are not ported, as they
-// change almost none of tlapm's obligations.
+// elimination and the simplifier's local_ctx option are not ported, as they change almost none of
+// tlapm's obligations.
 import { type AstManager, KIND_APP, KIND_QUANTIFIER } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { ctxSimplify } from "./ctx-simplify";
@@ -12,13 +12,14 @@ import { applyQeLite } from "./qe-lite";
 import { Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
 
-// The simplify tactic.
-const simplify = (manager: AstManager, goal: Goal) => {
+// The simplify tactic, with pull_cheap_ite where the preprocessor sets it.
+const simplify = (manager: AstManager, goal: Goal, isPullingCheapIte = false) => {
   if (goal.isInconsistent) return;
   const rewriter = new Rewriter(manager, {
     isEliminatingAnd: false,
     arith: TACTIC_ARITH_OPTIONS,
     isRewritingPatterns: false,
+    isPullingCheapIte,
   });
   const size = goal.forms.size;
   let rewritten = -1;
@@ -106,7 +107,7 @@ export const applyUfniaTactic = (manager: AstManager, assertions: number[]) => {
   simplify(manager, goal);
   propagateValues(manager, goal);
   ctxSimplify(manager, goal);
-  simplify(manager, goal);
+  simplify(manager, goal, true);
   if (!goal.isInconsistent) elimUncnstr(manager, goal);
   simplify(manager, goal);
   if (!goal.isInconsistent) applyQeLite(manager, goal);
