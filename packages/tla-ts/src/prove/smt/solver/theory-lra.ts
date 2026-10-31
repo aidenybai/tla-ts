@@ -1658,11 +1658,24 @@ export class TheoryLra {
   // mk_idiv_mod_axioms: q * (div p q) + (mod p q) = p and 0 <= (mod p q) < |q| when q is not 0.
   private mkIdivModAxioms(dividend: number, divisor: number) {
     const manager = this.manager;
-    const context = this.context;
     if (manager.getNumeral(divisor) === 0n) return;
-    const quotient = manager.mkApp(OP_IDIV, [dividend, divisor], SORT_INT);
-    const remainder = manager.mkApp(OP_MOD, [dividend, divisor], SORT_INT);
-    const zero = manager.mkNumeral(0n);
+    // The expr_refs of mk_idiv_mod_axioms, released in reverse when it returns.
+    const refs: number[] = [];
+    const hold = (expr: number) => {
+      manager.incRef(expr);
+      refs.push(expr);
+      return expr;
+    };
+    manager.withoutTemporaries(() => this.mkIdivModAxiomsCore(dividend, divisor, hold));
+    for (let index = refs.length - 1; index >= 0; index--) manager.decRef(refs[index]);
+  }
+
+  private mkIdivModAxiomsCore(dividend: number, divisor: number, hold: (expr: number) => number) {
+    const manager = this.manager;
+    const context = this.context;
+    const quotient = hold(manager.mkApp(OP_IDIV, [dividend, divisor], SORT_INT));
+    const remainder = hold(manager.mkApp(OP_MOD, [dividend, divisor], SORT_INT));
+    const zero = hold(manager.mkNumeral(0n));
     if (manager.getNumeral(dividend) === 0n) {
       // q != 0 implies div 0 q = 0 and mod 0 q = 0.
       const isDivisorNonnegative = this.mkLiteral(manager.mkApp(OP_GE, [divisor, zero], SORT_BOOL));
@@ -1677,17 +1690,21 @@ export class TheoryLra {
         for (const consequent of consequents) this.mkAxiom([antecedent, consequent]);
       return;
     }
-    const combination = manager.mkApp(
-      OP_ADD,
-      [manager.mkApp(OP_MUL, [divisor, quotient], SORT_INT), remainder],
-      SORT_INT,
+    const combination = hold(
+      manager.mkApp(
+        OP_ADD,
+        [manager.mkApp(OP_MUL, [divisor, quotient], SORT_INT), remainder],
+        SORT_INT,
+      ),
     );
-    const eqAtom = context.mkEqAtom(combination, dividend);
+    const eqAtom = hold(context.mkEqAtom(combination, dividend));
     context.internalize(eqAtom, false);
     const eq = context.getLiteral(eqAtom);
     const divisorValue = manager.getNumeral(divisor);
     if (divisorValue !== undefined) {
-      const upper = manager.mkNumeral((divisorValue < 0n ? -divisorValue : divisorValue) - 1n);
+      const upper = hold(
+        manager.mkNumeral((divisorValue < 0n ? -divisorValue : divisorValue) - 1n),
+      );
       this.mkAxiom([eq]);
       this.mkEqAxioms(this.ensureEnode(combination), this.ensureEnode(dividend));
       this.mkAxiom([this.mkLiteral(manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL))]);
@@ -1695,8 +1712,8 @@ export class TheoryLra {
       return;
     }
     // q = 0 or (mod p q) >= 0, q >= 0 or (mod p q) + q <= -1, and q <= 0 or (mod p q) - q <= -1.
-    const minusOne = manager.mkNumeral(-1n);
-    const minusDivisor = manager.mkApp(OP_MUL, [minusOne, divisor], SORT_INT);
+    const minusOne = hold(manager.mkNumeral(-1n));
+    const minusDivisor = hold(manager.mkApp(OP_MUL, [minusOne, divisor], SORT_INT));
     const isZero = this.mkLiteral(manager.mkEq(divisor, zero));
     const isRemainderNonnegative = this.mkLiteral(
       manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL),
@@ -1722,22 +1739,25 @@ export class TheoryLra {
     );
     this.mkAxiom([isDivisorNonnegative, isBelowNegatedDivisor]);
     this.mkEqAxioms(this.ensureEnode(combination), this.ensureEnode(dividend));
-    // q = 0 or q * (div p q) <= p.
-    const isProductBelow = context.rewriter.rewrite(
-      manager.mkApp(
-        OP_GE,
-        [
-          manager.mkApp(
-            OP_SUB,
-            [dividend, manager.mkApp(OP_MUL, [divisor, quotient], SORT_INT)],
-            SORT_INT,
-          ),
-          zero,
-        ],
-        SORT_BOOL,
-      ),
+    // q = 0 or q * (div p q) <= p. The rewritten atom replaces the unrewritten one, which Z3
+    // releases at once, and its own expr_ref goes at the end of the block.
+    const unrewritten = manager.mkApp(
+      OP_GE,
+      [
+        manager.mkApp(
+          OP_SUB,
+          [dividend, manager.mkApp(OP_MUL, [divisor, quotient], SORT_INT)],
+          SORT_INT,
+        ),
+        zero,
+      ],
+      SORT_BOOL,
     );
+    manager.incRef(unrewritten);
+    const isProductBelow = context.rewriter.rewrite(unrewritten);
+    manager.decRef(unrewritten);
     this.mkAxiom([isZero, this.mkLiteral(isProductBelow)]);
+    manager.decRef(isProductBelow);
   }
 
   private isShared(node: Enode) {
