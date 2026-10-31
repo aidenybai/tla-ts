@@ -571,7 +571,8 @@ export const getLazyFunction = (
   };
 };
 
-// Tool.getFcnContext: the scope of a lazy function's body for the arguments of an application.
+// Tool.getFcnContext: the scope of a lazy function's body for the arguments of an application. It
+// ignores arguments beyond the parameters.
 export const bindLazyArguments = (
   lazy: LazyFunction,
   expression: Expression & { kind: "FunctionApplication" },
@@ -579,13 +580,43 @@ export const bindLazyArguments = (
 ) => {
   const args = expression.args.map((arg) => evaluate(arg, context));
   const argument = args.length === 1 ? args[0] : createTuple(args);
-  const domain = getBoundsDomain(lazy.bounds, withScope(context, lazy.scope));
-  if (!isElementOf(argument, domain)) {
-    throw new TlaEvaluationError(
-      `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain at ${describeLocation(expression)}`,
+  const domainContext = withScope(context, lazy.scope);
+  const fail = (message: string): never => {
+    throw new TlaEvaluationError(`${message}\n${describeRange(expression.function)}`);
+  };
+  const failFor = (ordinal: string, value: Value, problem: string) =>
+    fail(
+      `In applying the function\n${prettyPrint(formatValue(evaluate(expression.function, toKeepLazyContext(context))))},\nthe ${ordinal} is:\n${prettyPrint(formatValue(value))}${problem}.`,
     );
+  const bounds = lazy.bounds;
+  if (bounds.length === 1) {
+    if (!isElementOf(argument, evaluate(bounds[0].set, domainContext))) {
+      failFor("first argument", argument, "which is not in its domain");
+    }
+    return bindArgument(bounds, lazy.scope, argument);
   }
-  return bindArgument(lazy.bounds, lazy.scope, argument);
+  const elements = getSequenceElements(argument);
+  if (elements === undefined || elements.length < bounds.length) {
+    return fail("Attempted to apply a function to an argument not in its domain.");
+  }
+  bounds.forEach((bound, index) => {
+    const element = elements[index];
+    const ordinal = `argument number ${index + 1}`;
+    if (!isElementOf(element, evaluate(bound.set, domainContext))) {
+      failFor(
+        ordinal,
+        element,
+        `${bound.pattern.kind === "Name" ? "" : "\n"}which is not in its domain`,
+      );
+    }
+    if (
+      bound.pattern.kind === "Tuple" &&
+      getSequenceElements(element)?.length !== bound.pattern.names.length
+    ) {
+      failFor(ordinal, element, "which does not match its formal parameter");
+    }
+  });
+  return bindArgument(bounds, lazy.scope, createTuple(elements.slice(0, bounds.length)));
 };
 
 // TLC prints a function it can't enumerate as its parameters and the location of its body. It

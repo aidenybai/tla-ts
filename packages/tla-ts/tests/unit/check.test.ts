@@ -1303,6 +1303,25 @@ describe("evaluation errors match TLC", () => {
   });
 
   it.each([
+    [
+      "Step == [k \\in {1, 2} |-> x' = k][3]",
+      "[k \\in {1, 2} |-> <expression line 6, col 27 to line 6, col 32 of module M>],\nthe first argument is:\n3which is not in its domain.\nline 6, col 9 to line 6, col 33 of module M",
+    ],
+    [
+      "Step == [k \\in {1}, <<a, b>> \\in {<<1, 2>>} |-> x' = a][1, <<3, 4>>]",
+      "[k \\in {1}, <<a, b>> \\in {<<1, 2>>} |-> <expression line 6, col 49 to line 6, col 54 of module M>],\nthe argument number 2 is:\n<<3, 4>>\nwhich is not in its domain.\nline 6, col 9 to line 6, col 55 of module M",
+    ],
+  ])(
+    "applies a function outside its domain in an action as TLC does in %j",
+    async (step, message) => {
+      const result = await checkSteps(step, "INIT Init\nNEXT Step");
+      expect(result.failure?.message).toBe(
+        `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n${message}`,
+      );
+    },
+  );
+
+  it.each([
     ["Start == x = [k \\in {1, 2} |-> 0]\nStep == x' = x /\\ x[3] = 0", "Start", "<<0, 0>>"],
     ["Step == x' = [k \\in {1, 2} |-> 1] /\\ x'[3] = 0", "Init", "<<1, 1>>"],
   ])(
