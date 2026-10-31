@@ -406,6 +406,9 @@ const exportSpecification = (
   // which can export other definitions, and adds the definition to its entries after them.
   const keys = new Set<number>();
   const entries = new Map<number, XmlElement>();
+  // SymbolContext's OTHER_BUG flag, which every copy of the context shares, so that from the first
+  // CASE with an OTHER arm on, a node missing its first operand exports it as $Other.
+  const otherBug = { isSet: false };
   // The Java stack of TLC 1.7.4's XMLExporter as it exports the current node, outermost first.
   const javaStack: JavaFrame[] = [];
 
@@ -434,7 +437,7 @@ const exportSpecification = (
     );
   };
 
-  const getReference = (node: ContextNode, call?: JavaFrame, isOtherBug = false): XmlElement => {
+  const getReference = (node: ContextNode, call?: JavaFrame): XmlElement => {
     if (!keys.has(node.id)) {
       keys.add(node.id);
       entries.set(
@@ -444,7 +447,7 @@ const exportSpecification = (
             ...(call ? [call] : []),
             ...getDefinitionFrames(node.kind, formatSanyLocation(node.location)),
           ],
-          () => exportDefinition(node, isOtherBug),
+          () => exportDefinition(node),
         ),
       );
     }
@@ -485,7 +488,7 @@ const exportSpecification = (
     return comments.length > 0 ? [{ tag: "pre-comments", cdata, children: [] }] : [];
   };
 
-  const exportDefinition = (node: ContextNode, isOtherBug: boolean): XmlElement => {
+  const exportDefinition = (node: ContextNode): XmlElement => {
     switch (node.kind) {
       case "FormalParam":
         return withLevel(
@@ -550,7 +553,7 @@ const exportSpecification = (
             createElement("UserDefinedOpKind", [
               createText("uniquename", node.name),
               createText("arity", node.arity),
-              createElement("body", [exportExpression(body, JAVA_CALLS.body, isOtherBug)]),
+              createElement("body", [exportExpression(body, JAVA_CALLS.body)]),
               ...(node.params
                 ? [getParamsElement(params, node.isLeibnizArg, JAVA_CALLS.param)]
                 : []),
@@ -566,7 +569,7 @@ const exportSpecification = (
             createText("arity", node.arity),
             createElement("originalOperator", [getReference(node.source ?? node)]),
             createElement("originallyDefinedInModule", [getReference(module)]),
-            createElement("body", [exportExpression(body, JAVA_CALLS.body, isOtherBug)]),
+            createElement("body", [exportExpression(body, JAVA_CALLS.body)]),
             getParamsElement(params, node.isLeibnizArg, JAVA_CALLS.param),
             ...getPreCommentsElement(node.preComments),
             ...(node.inRecursive ? [createElement("recursive")] : []),
@@ -583,7 +586,7 @@ const exportSpecification = (
         return withLevel(
           createElement(node.isTheorem ? "TheoremDefNode" : "AssumeDef", [
             createText("uniquename", node.name),
-            exportExpression(node.body, JAVA_CALLS.theoremDefinitionBody, isOtherBug),
+            exportExpression(node.body, JAVA_CALLS.theoremDefinitionBody),
           ]),
           node,
           node.location,
@@ -603,8 +606,8 @@ const exportSpecification = (
                   ]),
                 ]
               : []),
-            createElement("body", [exportExpression(node.body, JAVA_CALLS.theorem, false)]),
-            ...(node.proof ? [exportExpression(node.proof, JAVA_CALLS.proof, false)] : []),
+            createElement("body", [exportExpression(node.body, JAVA_CALLS.theorem)]),
+            ...(node.proof ? [exportExpression(node.proof, JAVA_CALLS.proof)] : []),
             ...(node.isSuffices ? [createElement("suffices")] : []),
           ]),
           node,
@@ -622,7 +625,7 @@ const exportSpecification = (
                 ]),
               ]
             : []),
-          createElement("body", [exportExpression(node.body, JAVA_CALLS.assume, false)]),
+          createElement("body", [exportExpression(node.body, JAVA_CALLS.assume)]),
         ]);
     }
   };
@@ -656,7 +659,7 @@ const exportSpecification = (
         .map((definition) => getReference(definition, JAVA_CALLS.definition)),
       ...module.topLevel.map((topLevel) =>
         topLevel.kind === "Instance" || topLevel.kind === "UseOrHide"
-          ? exportExpression(topLevel, JAVA_CALLS.topLevel, false)
+          ? exportExpression(topLevel, JAVA_CALLS.topLevel)
           : getReference(topLevel, JAVA_CALLS.topLevel),
       ),
       ...module.definitions
@@ -666,15 +669,15 @@ const exportSpecification = (
   };
 
   // A Subst is no SemanticNode, so it reports no exception that unwinds it.
-  const exportSubst = (subst: Subst, call: JavaFrame, isOtherBug: boolean) =>
+  const exportSubst = (subst: Subst, call: JavaFrame) =>
     withFrames([call], () =>
       createElement("Subst", [
         getReference(subst.op, JAVA_CALLS.substOperator),
-        exportExpression(subst.expr, JAVA_CALLS.substExpression, isOtherBug),
+        exportExpression(subst.expr, JAVA_CALLS.substExpression),
       ]),
     );
 
-  const exportApplication = (node: OpApplNode, isInheritedOtherBug: boolean) => {
+  const exportApplication = (node: OpApplNode) => {
     // TLC 1.7.4's XMLExporter exports a specification with semantic errors, and fails on the
     // operator of the node that SANY puts where it found one.
     if (node.isNull && isTlc174) {
@@ -685,21 +688,22 @@ const exportSpecification = (
       ]);
     }
     const last = node.operands[node.operands.length - 1];
-    const isOtherBug =
-      isInheritedOtherBug ||
-      (node.operator.name === "$Case" &&
-        node.operands.length > 1 &&
-        last?.kind === "OpAppl" &&
-        last.operator.name === "$Pair" &&
-        last.operands[0] === undefined);
-    const operator = getReference(node.operator, JAVA_CALLS.operator, isOtherBug);
-    // Only the pair of a CASE's OTHER arm lacks an operand, its first.
-    const operands = node.operands.map((operand) =>
-      operand === undefined
+    if (
+      node.operator.name === "$Case" &&
+      node.operands.length > 1 &&
+      last?.kind === "OpAppl" &&
+      last.operator.name === "$Pair" &&
+      last.operands[0] === undefined
+    ) {
+      otherBug.isSet = true;
+    }
+    const operator = getReference(node.operator, JAVA_CALLS.operator);
+    const operands = node.operands.map((operand, index) =>
+      operand === undefined || (index === 0 && otherBug.isSet && isAbsent(operand))
         ? isTlc174
           ? createText("StringNode", "$Other")
           : createElement("StringNode", [createText("StringValue", "$Other")])
-        : exportExpression(operand, JAVA_CALLS.operand, isOtherBug),
+        : exportExpression(operand, JAVA_CALLS.operand),
     );
     const tupleOrs = node.tupleOrs;
     const boundSymbols =
@@ -709,15 +713,15 @@ const exportSpecification = (
             createElement("boundSymbols", [
               ...(node.unbounded ?? []).map((symbol, index) =>
                 createElement("unbound", [
-                  getReference(symbol, JAVA_CALLS.unbound, isOtherBug),
+                  getReference(symbol, JAVA_CALLS.unbound),
                   ...(tupleOrs?.[index] ? [createElement("tuple")] : []),
                 ]),
               ),
               ...(node.bounded ?? []).map((symbols, index) =>
                 createElement("bound", [
-                  ...symbols.map((symbol) => getReference(symbol, JAVA_CALLS.bound, isOtherBug)),
+                  ...symbols.map((symbol) => getReference(symbol, JAVA_CALLS.bound)),
                   ...(tupleOrs?.[index] ? [createElement("tuple")] : []),
-                  exportExpression(node.ranges[index], JAVA_CALLS.range, isOtherBug),
+                  exportExpression(node.ranges[index], JAVA_CALLS.range),
                 ]),
               ),
             ]),
@@ -729,18 +733,17 @@ const exportSpecification = (
     ]);
   };
 
-  const exportFact = (fact: FactNode, call: JavaExpressionCall, isOtherBug: boolean) =>
+  const exportFact = (fact: FactNode, call: JavaExpressionCall) =>
     fact.kind === "Module" || fact.kind === "OpDef"
-      ? getReference(fact, call, isOtherBug)
-      : exportExpression(fact, call, isOtherBug);
+      ? getReference(fact, call)
+      : exportExpression(fact, call);
 
   // SemanticNode.export reports an exception that unwinds the export of a node.
   const exportExpression = (
     node: ExportedNode,
     call: JavaFrame | JavaExpressionCall,
-    isOtherBug: boolean,
   ): XmlElement => {
-    if (!isTlc174) return exportLevelNode(node, isOtherBug);
+    if (!isTlc174) return exportLevelNode(node);
     if (node.kind === "OpAppl" && node.isAbsent && "nullType" in call) {
       throw getJavaException(
         `java.lang.NullPointerException: Cannot invoke "tla2sany.semantic.${call.nullType}.export(org.w3c.dom.Document, tla2sany.xml.SymbolContext)" because ${call.nullValue} is null`,
@@ -750,13 +753,13 @@ const exportSpecification = (
     const failedFor =
       node.kind === "OpAppl" && node.isNull ? IN_BUILTINS : formatSanyLocation(node.location);
     const frames = [call, { at: SEMANTIC_EXPORT, failedFor }, { at: LEVEL_EXPORT }];
-    return withFrames(frames, () => exportLevelNode(node, isOtherBug));
+    return withFrames(frames, () => exportLevelNode(node));
   };
 
-  const exportLevelNode = (node: ExportedNode, isOtherBug: boolean): XmlElement => {
+  const exportLevelNode = (node: ExportedNode): XmlElement => {
     switch (node.kind) {
       case "OpAppl":
-        return withLevel(exportApplication(node, isOtherBug), node, node.location);
+        return withLevel(exportApplication(node), node, node.location);
       case "Numeral":
         return withLevel(
           createElement("NumeralNode", [createText("IntValue", node.value)]),
@@ -785,15 +788,13 @@ const exportSpecification = (
           node.location,
         );
       case "LetIn": {
-        const body = exportExpression(node.body, JAVA_CALLS.letBody, isOtherBug);
+        const body = exportExpression(node.body, JAVA_CALLS.letBody);
         return withLevel(
           createElement("LetInNode", [
             createElement("body", [body]),
             createElement(
               "opDefs",
-              node.opDefs.map((definition) =>
-                getReference(definition, JAVA_CALLS.letDefinition, isOtherBug),
-              ),
+              node.opDefs.map((definition) => getReference(definition, JAVA_CALLS.letDefinition)),
             ),
           ]),
           node,
@@ -805,10 +806,10 @@ const exportSpecification = (
           createElement("LabelNode", [
             createText("uniquename", node.name),
             createText("arity", node.params.length),
-            createElement("body", [exportExpression(node.body, JAVA_CALLS.labelBody, isOtherBug)]),
+            createElement("body", [exportExpression(node.body, JAVA_CALLS.labelBody)]),
             createElement(
               "params",
-              node.params.map((param) => getReference(param, JAVA_CALLS.labelParam, isOtherBug)),
+              node.params.map((param) => getReference(param, JAVA_CALLS.labelParam)),
             ),
           ]),
           node,
@@ -817,7 +818,7 @@ const exportSpecification = (
       case "OpArg":
         return withLevel(
           createElement("OpArgNode", [
-            createElement("argument", [getReference(node.op, JAVA_CALLS.argument, isOtherBug)]),
+            createElement("argument", [getReference(node.op, JAVA_CALLS.argument)]),
           ]),
           node,
           node.location,
@@ -830,8 +831,8 @@ const exportSpecification = (
         }
         return withLevel(
           createElement("AtNode", [
-            exportExpression(object, JAVA_CALLS.exceptObject, isOtherBug),
-            exportExpression(components, JAVA_CALLS.exceptComponents, isOtherBug),
+            exportExpression(object, JAVA_CALLS.exceptObject),
+            exportExpression(components, JAVA_CALLS.exceptComponents),
           ]),
           node,
           node.location,
@@ -840,28 +841,22 @@ const exportSpecification = (
       case "SubstIn":
       case "APSubstIn": {
         const calls = SUBST_IN_CALLS[node.kind];
-        const substs = node.substs.map((subst) => exportSubst(subst, calls.subst, isOtherBug));
-        const body = exportExpression(node.body, calls.body, isOtherBug);
+        const substs = node.substs.map((subst) => exportSubst(subst, calls.subst));
+        const body = exportExpression(node.body, calls.body);
         return withLevel(
           createElement(node.kind === "SubstIn" ? "SubstInNode" : "APSubstInNode", [
             createElement("substs", substs),
             createElement("body", [body]),
-            createElement("instFrom", [
-              getReference(node.instantiatingModule, calls.from, isOtherBug),
-            ]),
-            createElement("instTo", [getReference(node.instantiatedModule, calls.to, isOtherBug)]),
+            createElement("instFrom", [getReference(node.instantiatingModule, calls.from)]),
+            createElement("instTo", [getReference(node.instantiatedModule, calls.to)]),
           ]),
           node,
           node.location,
         );
       }
       case "Instance": {
-        const substs = node.substs.map((subst) =>
-          exportSubst(subst, JAVA_CALLS.instanceSubst, isOtherBug),
-        );
-        const params = node.params.map((param) =>
-          getReference(param, JAVA_CALLS.instanceParam, isOtherBug),
-        );
+        const substs = node.substs.map((subst) => exportSubst(subst, JAVA_CALLS.instanceSubst));
+        const params = node.params.map((param) => getReference(param, JAVA_CALLS.instanceParam));
         return createElement("InstanceNode", [
           getLocationElement(node.location),
           createText("level", 0),
@@ -877,13 +872,11 @@ const exportSpecification = (
           createElement("UseOrHideNode", [
             createElement(
               "facts",
-              node.facts.map((fact) => exportFact(fact, JAVA_CALLS.useFact, isOtherBug)),
+              node.facts.map((fact) => exportFact(fact, JAVA_CALLS.useFact)),
             ),
             createElement(
               "defs",
-              node.defs.map((definition) =>
-                getReference(definition, JAVA_CALLS.useDefinition, isOtherBug),
-              ),
+              node.defs.map((definition) => getReference(definition, JAVA_CALLS.useDefinition)),
             ),
             ...(node.isOnly ? [createElement("only")] : []),
             ...(node.isHide ? [createElement("hide")] : []),
@@ -894,10 +887,10 @@ const exportSpecification = (
       case "NewSymb":
         return withLevel(
           createElement("NewSymbNode", [
-            getReference(node.declaration, JAVA_CALLS.newDeclaration, isOtherBug),
+            getReference(node.declaration, JAVA_CALLS.newDeclaration),
             // TLC 1.7.4's NewSymbNode leaves out a set that is null.
             ...(node.set && !(isTlc174 && isAbsent(node.set))
-              ? [exportExpression(node.set, JAVA_CALLS.newSet, isOtherBug)]
+              ? [exportExpression(node.set, JAVA_CALLS.newSet)]
               : []),
           ]),
           node,
@@ -909,10 +902,10 @@ const exportSpecification = (
             createElement(
               "assumes",
               node.assumptions.map((assumption) =>
-                exportExpression(assumption, JAVA_CALLS.assumption, isOtherBug),
+                exportExpression(assumption, JAVA_CALLS.assumption),
               ),
             ),
-            createElement("prove", [exportExpression(node.goal, JAVA_CALLS.goal, isOtherBug)]),
+            createElement("prove", [exportExpression(node.goal, JAVA_CALLS.goal)]),
             ...(node.isSuffices ? [createElement("suffices")] : []),
             ...(node.isBoxed ? [createElement("boxed")] : []),
           ]),
@@ -928,13 +921,11 @@ const exportSpecification = (
             : createElement("by", [
                 createElement(
                   "facts",
-                  node.facts.map((fact) => exportFact(fact, JAVA_CALLS.byFact, isOtherBug)),
+                  node.facts.map((fact) => exportFact(fact, JAVA_CALLS.byFact)),
                 ),
                 createElement(
                   "defs",
-                  node.defs.map((definition) =>
-                    getReference(definition, JAVA_CALLS.byDefinition, isOtherBug),
-                  ),
+                  node.defs.map((definition) => getReference(definition, JAVA_CALLS.byDefinition)),
                 ),
                 ...(node.isOnly ? [createElement("only")] : []),
               ]);
@@ -946,8 +937,8 @@ const exportSpecification = (
             ...(isTlc174 ? [] : [createText("proofLevel", node.proofLevel)]),
             ...node.steps.map((step) =>
               step.kind === "Theorem"
-                ? getReference(step, JAVA_CALLS.step, isOtherBug)
-                : exportExpression(step, JAVA_CALLS.step, isOtherBug),
+                ? getReference(step, JAVA_CALLS.step)
+                : exportExpression(step, JAVA_CALLS.step),
             ),
           ]),
           node,
@@ -957,7 +948,7 @@ const exportSpecification = (
         return withLevel(
           createElement(
             "DefStepNode",
-            node.defs.map((definition) => getReference(definition, JAVA_CALLS.defStep, isOtherBug)),
+            node.defs.map((definition) => getReference(definition, JAVA_CALLS.defStep)),
           ),
           node,
           node.location,

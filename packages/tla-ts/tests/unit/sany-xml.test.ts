@@ -291,6 +291,14 @@ THEOREM TRUE
     );
   });
 
+  // SymbolContext's copies share its flags, so the flag a CASE with an OTHER arm sets lasts.
+  it("exports the null SANY leaves for an operator after a CASE with OTHER as $Other, as TLC 1.7.4 does", () => {
+    const xml = export174(
+      "---- MODULE Other ----\nA == CASE TRUE -> 1 [] OTHER -> 2\nOp == <<{1 + 2}>>\n====",
+    )();
+    expect(xml.match(/<StringNode>\$Other<\/StringNode>/g)).toHaveLength(2);
+  });
+
   it("leaves out a NEW set that SANY left null, as TLC 1.7.4's NewSymbNode does", () => {
     const xml = export174(
       "---- MODULE NewSet ----\nTHEOREM ASSUME NEW i \\in 1 + 2 PROVE TRUE\n====",
