@@ -941,6 +941,23 @@ describe("formatValue matches TLC", () => {
     });
     expect(printed).toEqual(expected);
   });
+
+  it.each(["", "SYMMETRY Sym"])(
+    "keeps an empty function apart from an equal tuple in a trace with %j like TLC 1.7.4",
+    async (symmetry) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT P\nVARIABLES q, x\nSym == Permutations(P)\nInit == q = <<>> /\\ x = 0\nNext == x' = x + 1 /\\ q' = IF x = 0 THEN [k \\in 1..0 |-> k] ELSE q\nInv == x < 2\n====",
+        config: `CONSTANT P = {p1, p2}\nINIT Init\nNEXT Next\nINVARIANT Inv\n${symmetry}`,
+        version: "1.7.4",
+      });
+      expect(result.violation?.trace.map((step) => formatValue(step.state.q))).toEqual([
+        "<<>>",
+        "<< >>",
+        "<< >>",
+      ]);
+    },
+  );
 });
 
 const checkSteps = (definitions: string, config: string, version?: TlcVersion) =>

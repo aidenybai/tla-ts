@@ -556,27 +556,35 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   return compareValues(left, right) === 0;
 };
 
-const areSameValues = (left: Value[], right: Value[]) =>
-  left === right ||
-  (left.length === right.length &&
-    left.every((element, index) => isSameValue(element, right[index])));
-
-export const isSameValue = (left: Value, right: Value): boolean => {
-  if (left === right) return true;
-  if (typeof left !== "object" || typeof right !== "object") return false;
-  if (left.kind === "Set" && right.kind === "Set")
-    return (
-      (left.hash === 0 || right.hash === 0 || left.hash === right.hash) &&
-      areSameValues(left.elements, right.elements)
-    );
-  if (left.kind === "Function" && right.kind === "Function")
-    return (
-      (left.hash === 0 || right.hash === 0 || left.hash === right.hash) &&
-      areSameValues(left.domain, right.domain) &&
-      areSameValues(left.range, right.range)
-    );
-  return getValueKey(left) === getValueKey(right);
+// TLC prints and words errors about an equal function by its Java class, so a value can stand for
+// another in a state only if each function in it has the same class.
+const createSameValueCheck = (isClassSensitive: boolean) => {
+  const areSameValues = (left: Value[], right: Value[]) =>
+    left === right ||
+    (left.length === right.length && left.every((element, index) => isSame(element, right[index])));
+  const isSame = (left: Value, right: Value): boolean => {
+    if (left === right) return true;
+    if (typeof left !== "object" || typeof right !== "object") return false;
+    if (left.kind === "Set" && right.kind === "Set")
+      return (
+        (left.hash === 0 || right.hash === 0 || left.hash === right.hash) &&
+        areSameValues(left.elements, right.elements)
+      );
+    if (left.kind === "Function" && right.kind === "Function")
+      return (
+        (!isClassSensitive || left.functionClass === right.functionClass) &&
+        (left.hash === 0 || right.hash === 0 || left.hash === right.hash) &&
+        areSameValues(left.domain, right.domain) &&
+        areSameValues(left.range, right.range)
+      );
+    return getValueKey(left) === getValueKey(right);
+  };
+  return isSame;
 };
+
+export const isSameValue = createSameValueCheck(false);
+
+export const isInterchangeableValue = createSameValueCheck(true);
 
 // The comparisons above fail with their own messages. These follow the compareTo and equals
 // methods of TLC's Java value classes, which word a failure by the class of the left operand, so a
