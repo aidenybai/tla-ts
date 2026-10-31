@@ -76,6 +76,26 @@ describe("CLI exit codes match TLC", () => {
     expect(await getFailureExitCode(definitions, "SPECIFICATION Spec")).toBe(255);
   });
 
+  it("exits with 77 for a property that is a tautology and 76 for an invariant with a prime", async () => {
+    const definitions = `${STEP}\nSpec == Init /\\ [][Next]_x\nProp == <>[]TRUE => TRUE\nInv == x' = x`;
+    expect(await getFailureExitCode(definitions, "SPECIFICATION Spec\nPROPERTY Prop")).toBe(77);
+    expect(await getFailureExitCode(definitions, "SPECIFICATION Spec\nINVARIANT Inv")).toBe(76);
+  });
+
+  it("rejects a formula too large in disjunctive normal form as TLC does", async () => {
+    const definitions = `Init == x = FALSE\nNext == x' \\in BOOLEAN\nSpec == Init /\\ [][Next]_x /\\ \\A i \\in 1..6 : \\A j \\in 1..6 : SF_x(Next)\nProp == <>[](x \\in BOOLEAN)`;
+    const config = "SPECIFICATION Spec\nPROPERTY Prop";
+    await expect(
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\n====`,
+        config,
+      }),
+    ).rejects.toThrow(
+      "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form.",
+    );
+    expect(await getFailureExitCode(definitions, config)).toBe(255);
+  });
+
   it("exits with 75 when the configuration has no next-state relation", async () => {
     expect(await getFailureExitCode("Init == x = 0", "INIT Init")).toBe(75);
   });
