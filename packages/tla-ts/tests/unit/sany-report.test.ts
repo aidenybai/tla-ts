@@ -497,6 +497,26 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("takes only an identifier or an operator for a substitution target", () => {
+    const report = getReport({
+      Outer: "---- MODULE Outer ----\nINSTANCE Inner WITH VARIABLES <- 1\n====\n",
+      Inner: "---- MODULE Inner ----\nCONSTANT C\n====\n",
+    });
+    expect(report.text).toContain(
+      'Encountered "VARIABLES" at line 2, column 21 and token "WITH" \n\nResidual stack trace follows:\nSubstitution starting at line 2, column 21.',
+    );
+  });
+
+  it("spells an operator that is no legal substitution target as the source does", () => {
+    const report = getReport({
+      Outer: "---- MODULE Outer ----\nINSTANCE Inner WITH \\lnot <- 1\n====\n",
+      Inner: "---- MODULE Inner ----\nCONSTANT C\n====\n",
+    });
+    expect(report.text).toContain(
+      "line 2, col 21 to line 2, col 25 of module Outer\n\nIdentifier '\\lnot' is not a legal target",
+    );
+  });
+
   it("reports a substitution above the level the instantiated module allows", () => {
     const report = getReport({
       Outer: "---- MODULE Outer ----\nVARIABLE x\nI == INSTANCE Inner WITH C <- [](x = 0)\n====\n",

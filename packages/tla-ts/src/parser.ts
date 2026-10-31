@@ -520,6 +520,20 @@ const parse = (source: string, mode: ParseMode): Module => {
     return token.text;
   };
 
+  // TLAplusParser.Substitution: an identifier, or a prefix, infix or postfix operator.
+  const expectSubstitutionTarget = () => {
+    const token = peek();
+    const isOperator =
+      token.kind !== "String" &&
+      (DEFINABLE_PREFIX_OPERATORS.has(token.text) ||
+        INFIX_OPERATORS.has(token.text) ||
+        POSTFIX_OPERATORS.has(token.text) ||
+        token.text === "'");
+    if (!isOperator) return expectIdentifier();
+    cursor.index++;
+    return token.text;
+  };
+
   // SANY takes a keyword for the name of a module, as it does for a field.
   const keywordModuleName = { isUsed: false };
   const expectModuleName = () => {
@@ -1317,7 +1331,7 @@ const parse = (source: string, mode: ParseMode): Module => {
     const module = expectModuleName();
     const substitutions = accept("WITH")
       ? parseSeparated(() => {
-          const target = advance().text;
+          const target = expectSubstitutionTarget();
           expect("<-");
           return { name: target, expression: parseArgument() };
         })

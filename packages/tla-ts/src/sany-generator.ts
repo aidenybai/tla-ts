@@ -1900,7 +1900,7 @@ export const generateSanySpecification = (
         if (target?.kind !== "OpDecl") {
           addError(
             targetIndex === -1 ? location : getTokenLocation(file, targetIndex),
-            `Identifier '${substitution.name}' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)`,
+            `Identifier '${targetIndex === -1 ? substitution.name : getTokenSource(file, targetIndex)}' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)`,
           );
           return;
         }
