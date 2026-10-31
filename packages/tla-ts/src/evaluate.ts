@@ -454,26 +454,36 @@ const someElement = (
   return false;
 };
 
-export const forEachBinding = (
-  bounds: Bound[],
-  context: Context,
-  visit: (scope: Scope | undefined) => boolean,
-): boolean => {
-  const sets = bounds.map((bound) =>
+export const getBoundElements = (bounds: Bound[], context: Context) =>
+  bounds.map((bound) =>
     getQuantifierElements(
       evaluate(bound.set, context),
       bound.set,
       context.environment.runtime.version,
     ),
   );
-  const visitBound = (index: number, scope: Scope | undefined): boolean => {
-    if (index < 0) return visit(scope);
+
+// Visits each binding of the bounds to the elements of their sets, until visit returns true.
+export const forEachBoundElement = (
+  bounds: Bound[],
+  sets: ReturnType<typeof getBoundElements>,
+  scope: Scope | undefined,
+  visit: (scope: Scope | undefined) => boolean,
+): boolean => {
+  const visitBound = (index: number, bound: Scope | undefined): boolean => {
+    if (index < 0) return visit(bound);
     return someElement(sets[index], (element) =>
-      visitBound(index - 1, bindPattern(scope, bounds[index].pattern, element)),
+      visitBound(index - 1, bindPattern(bound, bounds[index].pattern, element)),
     );
   };
-  return visitBound(bounds.length - 1, context.scope);
+  return visitBound(bounds.length - 1, scope);
 };
+
+export const forEachBinding = (
+  bounds: Bound[],
+  context: Context,
+  visit: (scope: Scope | undefined) => boolean,
+) => forEachBoundElement(bounds, getBoundElements(bounds, context), context.scope, visit);
 
 export const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
   const sets = bounds.map((bound) => evaluate(bound.set, context));

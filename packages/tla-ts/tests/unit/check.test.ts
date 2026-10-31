@@ -18,6 +18,7 @@ import {
   TlaStackOverflowError,
   UNEXPECTED_EXCEPTION,
 } from "../../src/errors";
+import { getExitCode } from "../../src/exit-codes";
 import type { TlcVersion } from "../../src/tlc-version";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
@@ -2439,6 +2440,20 @@ describe("check matches TLC 1.7.4", () => {
     );
   });
 
+  it("doesn't expect an EvalException in the values a property quantifies over", async () => {
+    const error = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == \\A k \\in {1 \\div 0} : <>(x = k)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY P",
+    }).catch((caught: unknown) => caught);
+    expect(error).toEqual(
+      new TlaEvaluationError(
+        `${getUnexpectedException("tlc2.tool.EvalException")}The second argument of \\div is 0.`,
+      ),
+    );
+    expect(error instanceof Error && getExitCode(error)).toBe(255);
+  });
+
   // TLC doesn't evaluate a definition with a temporal operator before it checks the property.
   it.each(["1.7.4" as const, "master" as const])(
     "reports a property quantified over no values as a tautology in TLC %s",
@@ -2471,6 +2486,12 @@ describe("check matches TLC 1.7.4", () => {
       "master" as const,
       "\\E k \\in 0..1 : <>(2 \\in 1)",
       "TLC cannot handle the temporal formula line 7, col 6 to line 7, col 32 of module M",
+    ],
+    // TLC checks the formula as a whole when it can't enumerate the values to check it for.
+    [
+      "master" as const,
+      "\\A k \\in 1 : <>(x = k)",
+      "TLC cannot handle the temporal formula line 7, col 6 to line 7, col 27 of module M:\nTLC encountered a non-enumerable quantifier bound\n1.\n1",
     ],
   ])(
     "fails a quantified formula whose body fails in TLC %s as one it can't handle",

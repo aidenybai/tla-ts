@@ -1,5 +1,5 @@
-import { isLocallyResolved, type Definition, type Expression } from "./ast";
-import { TlaEvaluationError, TlaStackOverflowError } from "./errors";
+import { isLocallyResolved, type Bound, type Definition, type Expression } from "./ast";
+import { getUnexpectedException, TlaEvaluationError, TlaStackOverflowError } from "./errors";
 import {
   describeNode,
   describeRange,
@@ -8,6 +8,8 @@ import {
   evaluate,
   expectBoolean,
   forEachBinding,
+  forEachBoundElement,
+  getBoundElements,
   getDefinition,
   lookupScope,
   resolveApplyOperator,
@@ -163,6 +165,22 @@ const getDefinitionLevel = (definition: Definition, environment: Environment) =>
   return level;
 };
 
+// TLC leaves a formula whose sets it fails to enumerate, and doesn't expect an EvalException.
+const getUnrolledElements = (bounds: Bound[], context: Context) => {
+  try {
+    return getBoundElements(bounds, context);
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    if (!isEvalException(error)) return undefined;
+    throw setExitCode(
+      new TlaEvaluationError(
+        `${getUnexpectedException("tlc2.tool.EvalException")}${error.message}`,
+      ),
+      EXIT_STATUS.error,
+    );
+  }
+};
+
 export const expandTemporal = (
   expression: Expression,
   scope: Scope | undefined,
@@ -249,9 +267,10 @@ export const expandTemporal = (
     isUnrollingForall &&
     expression.kind === "Forall" &&
     expression.bounds.every((bound) => getLevel(bound.set, scope, environment) === 0);
-  if (isUnrolled) {
+  const sets = isUnrolled ? getUnrolledElements(expression.bounds, context) : undefined;
+  if (isUnrolled && sets) {
     const expanded: ExpandedExpression[] = [];
-    forEachBinding(expression.bounds, context, (boundScope) => {
+    forEachBoundElement(expression.bounds, sets, scope, (boundScope) => {
       expanded.push(...expand(expression.body, boundScope, describeRange(expression.body)));
       return false;
     });
