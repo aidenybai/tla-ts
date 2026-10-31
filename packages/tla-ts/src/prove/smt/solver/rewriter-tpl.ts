@@ -324,6 +324,7 @@ class RewriterEngine extends RewriterCore {
   private invShifter: InvVarShifter;
   // m_blocked: the constants that a nested rewriter does not expand.
   blocked = new Set<number>();
+  // Whether the config overrides getSubst. Otherwise nothing is substituted and the call is skipped.
   private isSubstituting: boolean;
 
   constructor(
@@ -440,7 +441,7 @@ class RewriterEngine extends RewriterCore {
   // frame for expr.
   private visit(expr: number, maxDepth: number) {
     const manager = this.manager;
-    const replacement = this.config.getSubst(expr);
+    const replacement = this.isSubstituting ? this.config.getSubst(expr) : undefined;
     if (replacement !== undefined) {
       this.pushResult(replacement);
       this.setNewChildFlag(expr, replacement);
