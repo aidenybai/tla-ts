@@ -2,7 +2,6 @@
 // z3-license.txt. The main loop of Z3's rewriters, ported step for step with Z3's references: the
 // result stack, the caches and m_r hold their expressions, so that expressions are created and
 // deleted in Z3's order. A configuration overrides the hooks of default_rewriter_cfg.
-import { SmtCanceledError } from "../../../errors";
 import { ActCache } from "./act-cache";
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_ITE, type AstManager } from "./ast";
 import { shrink } from "./array";
@@ -395,10 +394,10 @@ class RewriterEngine extends RewriterCore {
       this.numQvars = 0;
       // main_loop and each step of resume_core count a step of the resource limit, and throw
       // SmtCanceledError when it cancels the rewrite.
-      if (!manager.limit.inc()) throw new SmtCanceledError();
+      manager.limit.checkpoint();
       if (!this.visit(expr, Infinity))
         while (this.frames.length > 0) {
-          if (!manager.limit.inc()) throw new SmtCanceledError();
+          manager.limit.checkpoint();
           const frame = this.frames[this.frames.length - 1];
           const curr = frame.curr;
           if (frame.childIndex === 0 && frame.state === PROCESS_CHILDREN && frame.isCaching) {

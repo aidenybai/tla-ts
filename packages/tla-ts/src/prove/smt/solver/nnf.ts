@@ -5,7 +5,6 @@
 // fresh predicate over its free variables, with a definition that is normalized too. Like Z3, the
 // frames, the result stack and the caches hold their expressions, so that expressions are created
 // and deleted in Z3's order.
-import { SmtCanceledError } from "../../../errors";
 import { ActCache } from "./act-cache";
 import {
   AstManager,
@@ -311,7 +310,7 @@ export class Nnf {
     const manager = this.manager;
     if (!this.visit(expr, true, false))
       while (this.frames.length > 0) {
-        if (!manager.limit.inc()) throw new SmtCanceledError();
+        manager.limit.checkpoint();
         const frame = this.frames[this.frames.length - 1];
         const curr = frame.curr;
         if (frame.index === 0 && manager.getRefCount(curr) > 1) {

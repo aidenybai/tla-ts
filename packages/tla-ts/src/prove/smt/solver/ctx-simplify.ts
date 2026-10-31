@@ -2,7 +2,6 @@
 // src/tactic/goal_num_occurs.cpp), MIT license, see z3-license.txt. The ctx-simplify tactic with
 // ctx_propagate_assertions: in the context of a formula or a branch, a shared term that the context
 // asserts becomes true, false or the value it equals.
-import { SmtCanceledError } from "../../../errors";
 import { KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_OR, type AstManager } from "./ast";
 import type { Goal } from "./goal";
 import { RefVector } from "./ref-vector";
@@ -195,7 +194,7 @@ class CtxSimplifier {
       return expr;
     }
     // tactic::checkpoint.
-    if (!manager.limit.inc()) throw new SmtCanceledError();
+    manager.limit.checkpoint();
     const known = this.getCached(expr) ?? this.assertions.get(expr);
     if (known !== undefined) {
       manager.incRef(known);

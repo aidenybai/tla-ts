@@ -5,7 +5,6 @@
 // disjunction. Like Z3, the port counts references, so that expressions are created and deleted in
 // Z3's order. Arrays, bit-vectors and datatypes are not ported, as tlapm's encoding does not produce
 // them.
-import { SmtCanceledError } from "../../../errors";
 import {
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -62,11 +61,6 @@ const assignOwned = (manager: AstManager, old: number, value: number) => {
 
 const release = (manager: AstManager, expr: number) => {
   if (expr !== -1) manager.decRef(expr);
-};
-
-// tactic::checkpoint.
-const checkpoint = (manager: AstManager) => {
-  if (!manager.limit.inc()) throw new SmtCanceledError();
 };
 
 // A summand of a linear equation and whether it is on the left-hand side.
@@ -161,7 +155,7 @@ class EqDer {
     this.var2pos = [];
     this.inx2var = [];
     args.forEach((arg, position) => {
-      checkpoint(manager);
+      manager.limit.checkpoint();
       const vars: number[] = [];
       const terms = new RefVector(manager);
       let term = -1;
@@ -620,7 +614,7 @@ class Fm {
     else {
       this.subsume();
       for (const variable of this.sortCandidates()) {
-        checkpoint(manager);
+        manager.limit.checkpoint();
         if (this.counter > FM_LIMIT) break;
         this.counter++;
         this.tryEliminate(variable);
@@ -1225,7 +1219,7 @@ class QeLite {
     this.der.apply(fmls);
     this.fm.apply(fmls);
     // ar_der checks the limit for each formula. tlapm's formulas have no arrays for it to solve.
-    for (let index = 0; index < fmls.size; index++) checkpoint(manager);
+    for (let index = 0; index < fmls.size; index++) manager.limit.checkpoint();
   }
 
   // collect_negative_equalities: whether every occurrence of the variable is in a negative equality
@@ -1439,7 +1433,7 @@ export const applyQeLite = (manager: AstManager, goal: Goal) => {
         if (formula !== form) goal.update(index, formula);
       }
       // The iterator of the simplifier's indices counts a step after each formula.
-      checkpoint(manager);
+      manager.limit.checkpoint();
     }
     release(manager, formula);
   }
