@@ -17,7 +17,10 @@ import {
   isolateRootsClosest,
   selectBetween,
 } from "../../src/prove/smt/solver/nlsat/algebraic";
+import { Evaluator } from "../../src/prove/smt/solver/nlsat/evaluator";
+import type { IntervalSet } from "../../src/prove/smt/solver/nlsat/interval-set";
 import { Mpbq } from "../../src/prove/smt/solver/nlsat/mpbq";
+import type { Atom, IneqKind, RootKind } from "../../src/prove/smt/solver/nlsat/types";
 import { NlsatSolver } from "../../src/prove/smt/solver/nlsat/solver";
 import { UpolynomialManager } from "../../src/prove/smt/solver/nlsat/upolynomial";
 import {
@@ -257,6 +260,153 @@ describe("nlsat real algebraic numbers", () => {
 
   it.each(cases)("%s", (program, expected) => {
     expect(runAnumProgram(program)).toBe(expected);
+  });
+});
+
+// Rebuilds an atom from the harness's print of it: the solver normalizes atoms, which is not
+// the evaluator's job.
+const parseAtom = (pm: PolynomialManager, text: string): Atom => {
+  const words = text.trim().split(" ");
+  const boolVar = Number(words[0].slice(1));
+  const maxVar = Number(words[2]);
+  const factors = [...text.matchAll(/([eoi]\d*) ?\[([^\]]*)\]/g)];
+  if (words[1].startsWith("ROOT"))
+    return {
+      kind: words[1] as RootKind,
+      boolVar,
+      maxVar,
+      index: Number(factors[0][1].slice(1)),
+      polynomial: parsePolynomial(pm, factors[0][2]),
+    };
+  return {
+    kind: words[1] as IneqKind,
+    boolVar,
+    maxVar,
+    polynomials: factors.map((factor) => parsePolynomial(pm, factor[2])),
+    isEven: factors.map((factor) => factor[1] === "e"),
+  };
+};
+
+// The harness's ev programs: an assignment of real algebraic numbers, atoms over it, the
+// infeasible intervals of their literals, unions of those, and samples picked outside them. Each
+// line prints the sets with their exact bounds and the assignment its refinements left behind.
+const runEvaluatorProgram = (program: string, expected: string) => {
+  const am = new AlgebraicManager();
+  const pm = new PolynomialManager();
+  const assignment: (Anum | undefined)[] = [];
+  const evaluator = new Evaluator(pm, am, assignment);
+  const registers: Anum[] = [];
+  const sets: (IntervalSet | null)[] = [];
+  const atoms: Atom[] = [];
+  const clause = { id: 0, literals: [], isLearned: false };
+  const expectedLines = expected.split("\n");
+  let variableCount = 0;
+  const show = (anum: Anum) => {
+    if (anum.value instanceof Rational) return ` q${anum.value}`;
+    const index = am.getRootIndex(anum);
+    return ` r[${anum.value.p.join(" ")}]#${index}(${anum.value.lower},${anum.value.upper})`;
+  };
+  const showSet = (set: IntervalSet | null | undefined) => {
+    if (set === null || set === undefined) return " {}";
+    const intervals = set.intervals.map(
+      (interval) =>
+        ` ${interval.isLowerOpen ? "(" : "["}${interval.lower === null ? " -oo" : show(interval.lower)} ,` +
+        `${interval.upper === null ? " +oo" : show(interval.upper)} ${interval.isUpperOpen ? ")" : "]"}` +
+        `j${interval.justification}${interval.clause === null ? "" : "c"}`,
+    );
+    return ` {${set.isFull ? "full" : "part"}${intervals.join("")} }`;
+  };
+  const showAssignment = () =>
+    ` after${Array.from({ length: variableCount }, (_, variable) => {
+      const value = assignment[variable];
+      return value === undefined ? " _" : show(value);
+    }).join("")}`;
+  const runCommand = (words: string[], index: number) => {
+    const numbers = words.slice(1).map(Number);
+    switch (words[0]) {
+      case "vars":
+        variableCount = numbers[0];
+        return "";
+      case "seed":
+        evaluator.ism.setSeed(numbers[0]);
+        return "";
+      case "q":
+        registers[numbers[0]] = new Anum(parseRational(words[2]));
+        return show(registers[numbers[0]]);
+      case "root": {
+        const coeffs = words.slice(3).map(BigInt);
+        while (coeffs[coeffs.length - 1] === 0n) coeffs.pop();
+        registers[numbers[0]] = am.isolateRoots(pm, pm.fromCoeffs(coeffs, 0), [])[numbers[1] - 1];
+        return show(registers[numbers[0]]);
+      }
+      case "set":
+        // An unset register, such as 7 when every pick met a full set, is zero.
+        assignment[numbers[0]] = am.copy(registers[numbers[1]] ?? new Anum(Rational.zero));
+        return "";
+      case "ineq":
+      case "rootatom": {
+        const printed = expectedLines[index].slice(words[0].length);
+        atoms.push(parseAtom(pm, printed));
+        return printed;
+      }
+      case "eval": {
+        const atom = atoms[numbers[0]];
+        if (assignment[atom.maxVar] === undefined) return " unassigned";
+        return `${showFlag(evaluator.eval(atom, numbers[1] === 1))}${showAssignment()}`;
+      }
+      case "inf":
+        sets[numbers[0]] = evaluator.infeasibleIntervals(
+          atoms[numbers[1]],
+          numbers[2] === 1,
+          numbers[3] === 1 ? clause : null,
+        );
+        return `${showSet(sets[numbers[0]])}${showAssignment()}`;
+      case "union": {
+        const union = evaluator.ism.mkUnion(sets[numbers[1]] ?? null, sets[numbers[2]] ?? null);
+        const output = `${showSet(union)}${showSet(sets[numbers[1]])}${showSet(sets[numbers[2]])}`;
+        sets[numbers[0]] = union;
+        return output;
+      }
+      case "subset":
+        return `${showFlag(evaluator.ism.subset(sets[numbers[0]] ?? null, sets[numbers[1]] ?? null))}${showSet(sets[numbers[0]])}${showSet(sets[numbers[1]])}`;
+      case "full":
+        return showFlag(evaluator.ism.isFull(sets[numbers[0]] ?? null));
+      case "just": {
+        const justifications = evaluator.ism.getJustifications(sets[numbers[0]] ?? null);
+        return `${justifications.literals.map((literal) => ` ${literal}`).join("")} clauses ${justifications.clauses.length}`;
+      }
+      case "pick": {
+        const set = sets[numbers[0]] ?? null;
+        if (evaluator.ism.isFull(set)) return " fullset";
+        // The picked number goes to register 7, for a later set.
+        registers[7] = evaluator.ism.pickInComplement(set, numbers[2] === 1);
+        return `${show(registers[7])}${showSet(set)}`;
+      }
+      case "pickmax": {
+        const max = evaluator.ism.pickMaxInComplement(sets[numbers[0]] ?? null);
+        return `${max === null ? " 0" : ` 1${show(max)}`}${showSet(sets[numbers[0]])}`;
+      }
+      default: {
+        const max = evaluator.ism.queryMaxInComplement(sets[numbers[0]] ?? null);
+        return `${max === null ? " 0" : ` 1${show(max.sup)}${showFlag(max.isAttained)}`}${showSet(sets[numbers[0]])}`;
+      }
+    }
+  };
+  return program
+    .split("\n")
+    .map((line, index) => `${line.split(" ")[0]}${runCommand(line.split(" "), index)}`)
+    .join("\n");
+};
+
+describe("nlsat evaluator", () => {
+  // Random programs with two or three variables, the top one unassigned until the end, as when
+  // nlsat decides it. Unions drop the clauses of the intervals they copy, as Z3's do.
+  const cases: [string, string][] = JSON.parse(
+    readFileSync(join(FIXTURES, "evaluator.json"), "utf8"),
+  );
+
+  it.each(cases)("%s", (program, expected) => {
+    expect(runEvaluatorProgram(program, expected)).toBe(expected);
   });
 });
 
