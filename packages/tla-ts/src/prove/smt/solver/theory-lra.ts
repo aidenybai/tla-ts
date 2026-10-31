@@ -1594,10 +1594,12 @@ export class TheoryLra {
   }
 
   // mk_axiom: a theory axiom whose literals are relevant. Of two literals, the second becomes
-  // relevant only once the first is false.
+  // relevant only once the first is false. A unit axiom is the clause of false and the literal, so
+  // mk_clause drops false and the literal is justified by unit resolution with true, which lemma
+  // minimization can see through, rather than by an axiom.
   private mkAxiom(literals: Literal[]) {
     const context = this.context;
-    context.mkThAxiom(literals);
+    context.mkThAxiom(literals.length === 1 ? [context.falseLiteral, literals[0]] : literals);
     if (!context.relevancy.isEnabled) return;
     if (literals.length !== 2) {
       for (const literal of literals) context.markLiteralAsRelevant(literal);
