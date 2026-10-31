@@ -39,6 +39,7 @@ import { overrideDefinitions, type JavaOverride } from "./java-overrides";
 import { extractModule, parseModule } from "./parser";
 import {
   checkRedefinitions,
+  getFactNames,
   getArity,
   isBefore,
   KEY_SEPARATOR,
@@ -439,7 +440,7 @@ export const createEnvironment = (
         const key = instantiation.getKey(symbol.key);
         if (declarations.length > 0)
           instanceActions.set(key, { name, location: instance.location });
-        symbols.set(name, { key, arity: symbol.arity });
+        symbols.set(name, { key, arity: symbol.arity, declaration: symbol.declaration });
         return;
       }
       const key = instantiation.getQualifiedKey(symbol.key);
@@ -767,11 +768,26 @@ export const createEnvironment = (
       getAvailableDefinitions(visible),
     );
     resolveModule(module, getUnit(module));
+    const facts = getFactNames(module);
     module.definitions.forEach((definition) => {
       const key = getKey(definition);
       definitions.set(key, definition);
       parameterized.set(key, !isParameterFree);
-      const symbol = { key, arity: getArity(definition) };
+      const isFact = facts.has(definition.name);
+      const importedLocation = importedAt.get(definition.name);
+      // SANY binds the name of a fact to a fact the module imports before it.
+      if (
+        isFact &&
+        visible.get(definition.name)?.declaration === "Fact" &&
+        (importedLocation === undefined || isBefore(importedLocation, definition.location))
+      ) {
+        return;
+      }
+      const symbol: ModuleSymbol = {
+        key,
+        arity: getArity(definition),
+        declaration: isFact ? "Fact" : undefined,
+      };
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });

@@ -20,7 +20,7 @@ import { TlaSyntaxError } from "./errors";
 export interface ModuleSymbol {
   key: string;
   arity: number;
-  declaration?: "Constant" | "Variable";
+  declaration?: "Constant" | "Variable" | "Fact";
 }
 
 export type Symbols = Map<string, ModuleSymbol>;
@@ -487,7 +487,7 @@ interface ModuleUnit {
 
 interface ModuleName {
   name: string;
-  kind: "Definition" | "Constant" | "Variable";
+  kind: "Definition" | "Constant" | "Variable" | "Fact";
   location: SourceLocation;
   isRecursive: boolean;
 }
@@ -625,38 +625,44 @@ const checkNames = (
   }
 };
 
-const getModuleNames = (module: Module) => [
-  ...module.definitions.map((definition): ModuleName => ({
-    name: definition.name,
-    kind: "Definition",
-    location: definition.location,
-    isRecursive: definition.isRecursive,
-  })),
-  ...module.instances.flatMap((instance): ModuleName[] =>
-    instance.name === undefined
-      ? []
-      : [
-          {
-            name: instance.name,
-            kind: "Definition",
-            location: instance.location,
-            isRecursive: false,
-          },
-        ],
-  ),
-  ...module.constants.map((constant): ModuleName => ({
-    name: constant.name,
-    kind: "Constant",
-    location: constant.location,
-    isRecursive: false,
-  })),
-  ...module.variables.map((variable): ModuleName => ({
-    name: variable.name,
-    kind: "Variable",
-    location: variable.location,
-    isRecursive: false,
-  })),
-];
+export const getFactNames = (module: Module) =>
+  new Set([...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []));
+
+const getModuleNames = (module: Module) => {
+  const facts = getFactNames(module);
+  return [
+    ...module.definitions.map((definition): ModuleName => ({
+      name: definition.name,
+      kind: facts.has(definition.name) ? "Fact" : "Definition",
+      location: definition.location,
+      isRecursive: definition.isRecursive,
+    })),
+    ...module.instances.flatMap((instance): ModuleName[] =>
+      instance.name === undefined
+        ? []
+        : [
+            {
+              name: instance.name,
+              kind: "Definition",
+              location: instance.location,
+              isRecursive: false,
+            },
+          ],
+    ),
+    ...module.constants.map((constant): ModuleName => ({
+      name: constant.name,
+      kind: "Constant",
+      location: constant.location,
+      isRecursive: false,
+    })),
+    ...module.variables.map((variable): ModuleName => ({
+      name: variable.name,
+      kind: "Variable",
+      location: variable.location,
+      isRecursive: false,
+    })),
+  ];
+};
 
 export const checkRedefinitions = (module: Module, unit: ModuleUnit) => {
   const byName = new Map<string, ModuleName[]>();
@@ -678,7 +684,8 @@ export const checkRedefinitions = (module: Module, unit: ModuleUnit) => {
             entry.kind === "Definition" ||
             earlier.kind !== entry.kind,
         );
-      // A module may declare again a constant or variable that it extends or that encloses it.
+      // A module may declare again a constant or variable that it extends or that encloses it, and
+      // name a fact as one it imports.
       const isRedeclared = unit.imported.get(entry.name)?.declaration === entry.kind;
       if (isDuplicate || (!isRedeclared && isImportedBefore(entry.name, entry.location)))
         throw createRedefinitionError(entry.name, entry.location);
@@ -772,9 +779,7 @@ export const resolveSubstitutions = (
 
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const symbols = createSymbols(module, unit.imported);
-  const facts = new Set(
-    [...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
-  );
+  const facts = getFactNames(module);
   const createUnit = (location: SourceLocation, self: Definition | undefined) => ({
     imported: symbols,
     definitions: unit.definitions,

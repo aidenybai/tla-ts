@@ -50,6 +50,28 @@ describe("check matches TLC", () => {
     expect(result.status).toBe("success");
   });
 
+  it.each([
+    ["extends", "EXTENDS Facts\nVARIABLE x", "THEOREM T == x = 1", "success"],
+    ["instantiates before it", "VARIABLE x\nINSTANCE Facts", "THEOREM T == x = 1", "success"],
+    [
+      "instantiates after it",
+      "VARIABLE x",
+      "THEOREM T == x = 1\nINSTANCE Facts",
+      "invariant-violation",
+    ],
+  ])(
+    "binds a fact named as one of a module it %s to the first as SANY does",
+    async (_, header, facts, status) => {
+      const result = await check({
+        source: `---- MODULE M ----\n${header}\nInit == x = 0\nNext == x' = x\n${facts}\nInv == T\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        loadModule: (name) =>
+          name === "Facts" ? "---- MODULE Facts ----\nTHEOREM T == TRUE\n====" : undefined,
+      });
+      expect(result.status).toBe(status);
+    },
+  );
+
   it("decides sets of functions, records, and tuples from an empty argument", async () => {
     const result = await checkFixture("empty-sets", "EmptySets");
     expect(result.violation?.message).toBeUndefined();
