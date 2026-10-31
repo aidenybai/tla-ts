@@ -1266,6 +1266,9 @@ describe("evaluation errors match TLC", () => {
         "1 \\in [{1} -> {2}]",
         "Attempted to check if \n1\nwhich is not a TLC function value, is in the set of functions:\n{<<2>>}",
       ],
+      ["{{}} \\cup {1} = {}", "Attempted to check equality of the set {} with the value:\n1"],
+      ["{1} \\ {{}} = {}", "Attempted to check equality of the set {} with the value:\n1"],
+      ["{{}} \\cap {1} = {}", "Attempted to check equality of integer 1 with non-integer:\n{}"],
     ];
     const messages = await Promise.all(
       cases.map(async (item) => (await checkModule(`ASSUME ${item[0]}`)).violation?.message),
