@@ -430,6 +430,16 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("locates a substitution target named in an earlier substitution at the target", () => {
+    const report = getReport({
+      Outer: "---- MODULE Outer ----\nVARIABLE z\nI == INSTANCE Inner WITH x <- z, z <- x\n====\n",
+      Inner: "---- MODULE Inner ----\nVARIABLE x\n====\n",
+    });
+    expect(report.text).toContain(
+      "line 3, col 34 to line 3, col 34 of module Outer\n\nIdentifier 'z' is not a legal target",
+    );
+  });
+
   it("reports a substitution above the level the instantiated module allows", () => {
     const report = getReport({
       Outer: "---- MODULE Outer ----\nVARIABLE x\nI == INSTANCE Inner WITH C <- [](x = 0)\n====\n",

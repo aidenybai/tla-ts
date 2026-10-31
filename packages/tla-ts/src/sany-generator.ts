@@ -1833,7 +1833,10 @@ export const generateSanySpecification = (
       const cursor = { value: findToken(file, span.start, span.end, "WITH") + 1 };
       instance.substitutions.forEach((substitution) => {
         const targetIndex = findToken(file, cursor.value, span.end, substitution.name);
-        if (targetIndex !== -1) cursor.value = targetIndex + 1;
+        // The next target follows this substitution's expression, which may name it too.
+        if (targetIndex !== -1) {
+          cursor.value = getExpressionSpan(file, substitution.expression).end + 1;
+        }
         const target = getContextSymbol(instanceeContext, resolveSynonym(substitution.name));
         if (target?.kind !== "OpDecl") {
           addError(
