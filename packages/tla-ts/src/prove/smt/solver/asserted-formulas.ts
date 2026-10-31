@@ -6,6 +6,7 @@ import { DefinedNames, Nnf } from "./nnf";
 import { PatternInference } from "./pattern-inference";
 import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { MaxBvSharing } from "./maximize-ac-sharing";
+import { PullQuant } from "./pull-quant";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
@@ -24,11 +25,11 @@ class PatternInferenceRw extends RewriterTpl {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
     if (!data.isForall || data.patterns.length > 0) return -1;
-    return manager.withTemporaries(() => {
+    const quantifier = manager.withTemporaries(() => {
       const inferred = this.inference.infer(data.sorts.length, body, data.weight);
-      const quantifier = manager.mkQuantifier({ ...data, body, patterns: inferred.patterns });
+      const withPatterns = manager.mkQuantifier({ ...data, body, patterns: inferred.patterns });
       return inferred.weight === data.weight
-        ? quantifier
+        ? withPatterns
         : manager.mkQuantifier({
             ...data,
             body,
@@ -36,6 +37,27 @@ class PatternInferenceRw extends RewriterTpl {
             weight: inferred.weight,
           });
     });
+    if (manager.getQuantifier(quantifier).patterns.length > 0) return quantifier;
+    // pi_pull_quantifiers: pulling the nested quantifiers out may give the body a pattern. The
+    // quantifier with the new patterns replaces new_q at once, and the pulled quantifier and
+    // pull_quant's cache go when reduce_quantifier returns.
+    const pull = new PullQuant(manager);
+    const pulled = pull.rewrite(quantifier);
+    const pulledData = manager.getQuantifier(pulled);
+    const result =
+      pulled === quantifier
+        ? -1
+        : manager.withTemporaries(
+            () => {
+              const patterns = this.inference.inferPulled(pulledData.sorts.length, pulledData.body);
+              return patterns.length === 0 ? -1 : manager.mkQuantifier({ ...pulledData, patterns });
+            },
+            (innerResult) => (innerResult === -1 ? [] : [innerResult]),
+          );
+    if (result !== -1) manager.decRef(quantifier);
+    manager.decRef(pulled);
+    pull.release();
+    return result === -1 ? quantifier : result;
   }
 }
 

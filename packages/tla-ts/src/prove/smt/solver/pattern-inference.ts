@@ -329,6 +329,15 @@ export class PatternInference {
       weight: nonNestedPatterns.length > 0 ? Math.max(weight, PI_NON_NESTED_ARITH_WEIGHT) : weight,
     };
   }
+
+  // The patterns of a quantifier that pull_quant changed, found once with the settings that infer
+  // restores: arithmetic is allowed, but only nested, and looping patterns are blocked.
+  inferPulled(numBindings: number, body: number) {
+    this.isArithForbidden = false;
+    this.isNestedArithOnly = true;
+    this.isBlockingLoopPatterns = true;
+    return this.mkPatterns(numBindings, body);
+  }
 }
 
 export interface InferredPatterns {

@@ -15,7 +15,7 @@ const mkNot = (manager: AstManager, expr: number) =>
         : manager.mkNot(expr);
 
 // rewriter_tpl with pull_quant's rw_cfg.
-class PullQuant extends RewriterTpl {
+export class PullQuant extends RewriterTpl {
   // rw_cfg::m_shift.
   private varShifter: VarShifter;
 
