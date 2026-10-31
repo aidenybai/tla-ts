@@ -2023,7 +2023,8 @@ const getEncountered = (state: ParserState) => {
       break;
     }
     images.push(token.image);
-    token = getNext(state, token);
+    // SANY's message follows the tokens the parser has read, without reading another.
+    if (index < length - 1) token = getNext(state, token);
   }
   return `Encountered "${images.join(" ")}" at line ${next.beginLine}, column ${next.beginColumn} and token "${escapeLexeme(state.token.image)}" `;
 };

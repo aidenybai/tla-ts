@@ -394,6 +394,21 @@ EXTENDS Naturals, Sequences, FiniteSets , TLC
     );
   });
 
+  it("reports the parse error before a lexical error in a token the parser never reads", () => {
+    expect(getSanyParseError("---- MODULE M ----\nOp == LET a == 1\n====\n\\* abc")).toBe(
+      toText([
+        'Encountered "====" at line 3, column 1 and token "1" ',
+        "",
+        "Residual stack trace follows:",
+        "Case Other Arm starting at line 2, column 7.",
+        "Expression starting at line 2, column 7.",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ]),
+    );
+  });
+
   it("reports nothing for a module whose error SANY finds after parsing", () => {
     expect(getSanyParseError("---- MODULE Infix ----\nVARIABLE x\nOp == x @@ x\n====\n")).toBe(
       undefined,
