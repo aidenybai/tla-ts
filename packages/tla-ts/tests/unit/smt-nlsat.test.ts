@@ -102,8 +102,8 @@ describe("nlsat polynomials", () => {
     expect(runPolynomialCommand("gcd 2:0^1 -3: ; 2:0^1 -1:")).toBe("gcd [1:]");
   });
 
-  it("refuses the subresultants of a polynomial of degree 2", () => {
-    expect(() => runPolynomialCommand("psc 0 1:0^2 -2: ; 1:0^1 -1:")).toThrow(NlsatOutOfScope);
+  it("computes the subresultants of a polynomial of degree 2 as Z3 does", () => {
+    expect(runPolynomialCommand("psc 0 1:0^2 -2: ; 1:0^1 -1:")).toBe("psc [-1:]");
   });
 });
 
