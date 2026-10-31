@@ -42,6 +42,12 @@ interface AdjustedBound {
   bound: Rational;
 }
 
+// The column of a term, under its normalized term, with the first coefficient it was divided by.
+interface NormalizedTermColumn {
+  coeff: Rational;
+  column: number;
+}
+
 interface Column {
   lowerWitness: Dependency;
   upperWitness: Dependency;
@@ -75,7 +81,7 @@ export class LarSolver {
   private fixedVarTableInt = new Map<string, number>();
   private fixedVarTableReal = new Map<string, number>();
   private fixedBaseVarSet = new IndexedUintSet();
-  private normalizedTermsToColumns = new Map<string, { coeff: Rational; column: number }>();
+  private normalizedTermsToColumns = new Map<string, NormalizedTermColumn>();
   private isRegisteringTerms = false;
   // m_delta: zero until init_model sets it.
   private delta = Rational.zero;

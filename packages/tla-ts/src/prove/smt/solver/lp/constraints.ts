@@ -27,10 +27,15 @@ export interface LarConstraint {
   isActive: boolean;
 }
 
+interface ConstraintScope {
+  size: number;
+  activeSize: number;
+}
+
 export class ConstraintSet {
   readonly constraints: LarConstraint[] = [];
   private active: number[] = [];
-  private scopes: { size: number; activeSize: number }[] = [];
+  private scopes: ConstraintScope[] = [];
 
   add(column: number, kind: ConstraintKind, rhs: Impq) {
     const index = this.constraints.length;

@@ -47,6 +47,13 @@ const getSymmetricMod = (value: bigint, modulus: bigint) => {
   return 2n * remainder > modulus ? remainder - modulus : remainder;
 };
 
+// The running gcd of the coefficients of an atom's sides, and the number of their constants.
+interface GcdState {
+  gcd: bigint;
+  isFirst: boolean;
+  numConsts: number;
+}
+
 const KIND_LE = 0;
 const KIND_GE = 1;
 const KIND_EQ = 2;
@@ -418,8 +425,9 @@ export class ArithRewriter extends PolyRewriter {
     const todo = [arg];
     const visited = new Set<number>();
     let isIntegral = true;
-    while (todo.length > 0 && isIntegral) {
-      const current = todo.pop() as number;
+    while (isIntegral) {
+      const current = todo.pop();
+      if (current === undefined) break;
       if (visited.has(current)) continue;
       visited.add(current);
       const op = manager.getOp(current);
@@ -656,7 +664,7 @@ export class ArithRewriter extends PolyRewriter {
 
   // get_coeffs_gcd: the gcd of the coefficients, or 0 when there is no monomial, and the number of
   // non-zero constants.
-  private getCoeffsGcd(expr: number, state: { gcd: bigint; isFirst: boolean; numConsts: number }) {
+  private getCoeffsGcd(expr: number, state: GcdState) {
     for (const arg of this.getMonomials(expr)) {
       if (this.manager.isNumeral(arg)) {
         if (this.manager.getNumeralValue(arg) !== 0n) state.numConsts++;

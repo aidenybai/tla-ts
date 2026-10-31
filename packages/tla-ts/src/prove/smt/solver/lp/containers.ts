@@ -117,11 +117,21 @@ export class VarHeap {
   }
 }
 
+interface StackedLogEntry<T> {
+  index: number;
+  value: T;
+}
+
+interface StackedScope {
+  size: number;
+  logSize: number;
+}
+
 // stacked_vector: a vector whose size and values a pop restores to the matching push.
 export class StackedVector<T> {
   values: T[] = [];
-  private log: { index: number; value: T }[] = [];
-  private scopes: { size: number; logSize: number }[] = [];
+  private log: StackedLogEntry<T>[] = [];
+  private scopes: StackedScope[] = [];
 
   get(index: number) {
     return this.values[index];
