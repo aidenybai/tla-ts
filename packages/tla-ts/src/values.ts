@@ -1642,7 +1642,11 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       return set.name !== "Nat" || (typeof element === "number" && element >= 0);
     }
     case "Subset":
-      if (!isSetValue(element)) throw new TlaEvaluationError(describeMembership(element, set));
+      if (!isTlcEnumerable(element)) {
+        throw new TlaEvaluationError(
+          `Attempted to check if the non-enumerable value\n${prettyPrint(formatValue(element))}\nis element of\n${prettyPrint(formatValue(set))}`,
+        );
+      }
       return toFiniteSet(element).elements.every((item) => isElementOfSet(item, set.base));
     case "FunctionSet": {
       if (!isFunctionValue(element)) {
