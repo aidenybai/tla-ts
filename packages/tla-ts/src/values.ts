@@ -1,5 +1,6 @@
 import { TlaEvaluationError, TlaModuleError } from "./errors";
 import { prettyPrint } from "./pretty-print";
+import { valueSources, withSource } from "./value-sources";
 
 export interface ModelValue {
   kind: "ModelValue";
@@ -733,16 +734,17 @@ const compareSetLikeTlc = (left: ObjectValue, right: Value): number => {
   );
 };
 
-const compareLikeTlc = (left: Value, right: Value): number => {
-  if (typeof left !== "object") {
-    if (typeof right === typeof left) return compareValues(left, right);
-    if (isModelValue(right)) return compareModelValueWith(right, left);
-    throw new TlaEvaluationError(describeScalarMismatch(left, right, false));
-  }
-  if (left.kind === "ModelValue") return compareModelValue(left, right);
-  if (isFunctionValue(left)) return compareFunctionLikeTlc(left, right);
-  return compareSetLikeTlc(left, right);
-};
+const compareLikeTlc = (left: Value, right: Value): number =>
+  withSource(left, () => {
+    if (typeof left !== "object") {
+      if (typeof right === typeof left) return compareValues(left, right);
+      if (isModelValue(right)) return compareModelValueWith(right, left);
+      throw new TlaEvaluationError(describeScalarMismatch(left, right, false));
+    }
+    if (left.kind === "ModelValue") return compareModelValue(left, right);
+    if (isFunctionValue(left)) return compareFunctionLikeTlc(left, right);
+    return compareSetLikeTlc(left, right);
+  });
 
 const equalsElementsLikeTlc = (left: Value[], right: Value[]) =>
   left.every((element, index) => equalsLikeTlc(element, right[index]));
@@ -830,16 +832,17 @@ const equalsSetLikeTlc = (left: ObjectValue, right: Value): boolean => {
   );
 };
 
-const equalsLikeTlc = (left: Value, right: Value): boolean => {
-  if (typeof left !== "object") {
-    if (typeof right === typeof left) return left === right;
-    if (isModelValue(right)) return equalsModelValueWith(right, left);
-    throw new TlaEvaluationError(describeScalarMismatch(left, right, true));
-  }
-  if (left.kind === "ModelValue") return equalsModelValue(left, right);
-  if (isFunctionValue(left)) return equalsFunctionLikeTlc(left, right);
-  return equalsSetLikeTlc(left, right);
-};
+const equalsLikeTlc = (left: Value, right: Value): boolean =>
+  withSource(left, () => {
+    if (typeof left !== "object") {
+      if (typeof right === typeof left) return left === right;
+      if (isModelValue(right)) return equalsModelValueWith(right, left);
+      throw new TlaEvaluationError(describeScalarMismatch(left, right, true));
+    }
+    if (left.kind === "ModelValue") return equalsModelValue(left, right);
+    if (isFunctionValue(left)) return equalsFunctionLikeTlc(left, right);
+    return equalsSetLikeTlc(left, right);
+  });
 
 // TLC's ValueVec.sort, which inserts each element into the sorted prefix by binary search.
 const sortLikeTlc = (elements: Value[]) => {
@@ -1338,7 +1341,10 @@ export const toFiniteSet = (value: Value): SetValue => {
   const cached = typeof value === "object" ? finiteSets.get(value) : undefined;
   if (cached) return cached;
   const set =
-    (typeof value === "object" ? comparedSets.get(value) : undefined) ?? enumerateFiniteSet(value);
+    (typeof value === "object" ? comparedSets.get(value) : undefined) ??
+    (valueSources.current
+      ? withSource(value, () => enumerateFiniteSet(value))
+      : enumerateFiniteSet(value));
   if (typeof value === "object") finiteSets.set(value, set);
   return set;
 };
@@ -1597,6 +1603,12 @@ const describeNonSetMembership = (element: Value, value: Value) => {
   return `${prefix} function ${formatValue(value)}`;
 };
 
+// TLC checks membership in a set that another set holds through the inner set's own method.
+const isElementOfSet = (element: Value, set: Value) =>
+  valueSources.current
+    ? withSource(set, () => isElementOf(element, set))
+    : isElementOf(element, set);
+
 export const isElementOf = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
@@ -1605,10 +1617,10 @@ export const isElementOf = (element: Value, set: Value): boolean => {
         return findIndex(set.elements, element) !== -1;
       } catch (error) {
         if (!(error instanceof TlaEvaluationError)) throw error;
-        return isElementOfLikeTlc(element, set.elements);
+        return withSource(set, () => isElementOfLikeTlc(element, set.elements));
       }
     case "MixedSet":
-      return isElementOfLikeTlc(element, set.elements);
+      return withSource(set, () => isElementOfLikeTlc(element, set.elements));
     case "Interval":
       if (typeof element === "number") return element >= set.low && element <= set.high;
       if (set.low <= set.high && !isModelValue(element)) {
@@ -1631,7 +1643,7 @@ export const isElementOf = (element: Value, set: Value): boolean => {
     }
     case "Subset":
       if (!isSetValue(element)) throw new TlaEvaluationError(describeMembership(element, set));
-      return toFiniteSet(element).elements.every((item) => isElementOf(item, set.base));
+      return toFiniteSet(element).elements.every((item) => isElementOfSet(item, set.base));
     case "FunctionSet": {
       if (!isFunctionValue(element)) {
         if (isModelValue(element)) return false;
@@ -1648,7 +1660,7 @@ export const isElementOf = (element: Value, set: Value): boolean => {
               { kind: "Interval", low, high: low + functionValue.domain.length - 1 },
               set.domain,
             );
-      return isDomain && functionValue.range.every((item) => isElementOf(item, set.range));
+      return isDomain && functionValue.range.every((item) => isElementOfSet(item, set.range));
     }
     case "RecordSet": {
       const functionValue = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
@@ -1662,7 +1674,7 @@ export const isElementOf = (element: Value, set: Value): boolean => {
         functionValue.domain.length === set.names.length &&
         set.names.every((name, index) => {
           const position = findIndex(functionValue.domain, name);
-          return position !== -1 && isElementOf(functionValue.range[position], set.sets[index]);
+          return position !== -1 && isElementOfSet(functionValue.range[position], set.sets[index]);
         })
       );
     }
@@ -1679,24 +1691,24 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       }
       return (
         elements.length === set.factors.length &&
-        elements.every((item, index) => isElementOf(item, set.factors[index]))
+        elements.every((item, index) => isElementOfSet(item, set.factors[index]))
       );
     }
     case "FilteredSet":
-      return isElementOf(element, set.base) && set.test(element);
+      return isElementOfSet(element, set.base) && set.test(element);
     case "Union":
       if (!isTlcEnumerable(set.base)) {
         throw new TlaEvaluationError(
           `Attempted to check if:\n ${formatValue(element)}\nis an element of the non-enumerable set:\n ${formatUnion(set)}`,
         );
       }
-      return toFiniteSet(set.base).elements.some((inner) => isElementOf(element, inner));
+      return toFiniteSet(set.base).elements.some((inner) => isElementOfSet(element, inner));
     case "SetOperation":
       if (set.operator === "\\cup")
-        return isElementOf(element, set.left) || isElementOf(element, set.right);
+        return isElementOfSet(element, set.left) || isElementOfSet(element, set.right);
       return (
-        isElementOf(element, set.left) &&
-        isElementOf(element, set.right) === (set.operator === "\\cap")
+        isElementOfSet(element, set.left) &&
+        isElementOfSet(element, set.right) === (set.operator === "\\cap")
       );
     case "SequenceSet": {
       const elements = getSequenceElements(element);

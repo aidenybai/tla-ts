@@ -39,6 +39,25 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([2, 1, 1]);
   });
 
+  it("names the source of each set whose method failed when it replays a step", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = IF {x} \\subseteq {{}} THEN 1 ELSE 2\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.replay?.callStack).toEqual([
+      "Line 4, column 9 to line 4, column 48 in M",
+      "Line 4, column 14 to line 4, column 48 in M",
+      "Line 4, column 17 to line 4, column 34 in M",
+      "Line 4, column 17 to line 4, column 19 in M",
+      "Line 4, column 31 to line 4, column 34 in M",
+      "Line 4, column 32 to line 4, column 33 in M",
+    ]);
+    expect(result.failure?.replay?.fingerprint?.reason).toBe(
+      "Attempted to check equality of the set {} with the value:\n0",
+    );
+  });
+
   it("decides sets of functions, records, and tuples from an empty argument", async () => {
     const result = await checkFixture("empty-sets", "EmptySets");
     expect(result.violation?.message).toBeUndefined();

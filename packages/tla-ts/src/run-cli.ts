@@ -147,7 +147,14 @@ const printResult = (result: CheckResult) => {
     printTrace(result.failure.trace);
     const replay = result.failure.replay;
     replay?.output.forEach((line) => console.log(line));
-    if (replay?.callStack) {
+    const fingerprint = replay?.fingerprint;
+    if (replay?.callStack && fingerprint) {
+      const frames = replay.callStack.map((frame, index) => `${index}. ${frame}\n`).join("");
+      const sources = fingerprint.sources.map((source) => `${source}\n`).join("");
+      console.log(
+        `Error: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n${frames ? `${frames}\n` : sources}\nReason:\n${fingerprint.reason}`,
+      );
+    } else if (replay?.callStack) {
       const frames = replay.callStack.map((frame, index) => `${index}. ${frame}\n`).join("");
       console.log(
         `Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n${frames ? `${frames}\n` : "    The error call stack is empty.\n"}`,

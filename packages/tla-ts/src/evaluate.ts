@@ -19,6 +19,7 @@ import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
 import { contextualApplications, mapChildren, substitutedExpressions } from "./instances";
 import { isEnabled } from "./successors";
+import { getFingerprintTrace, valueSources, withSource } from "./value-sources";
 import {
   applyFunction,
   combineHash,
@@ -1028,6 +1029,44 @@ const filteredSetRetracers = new WeakMap<
   (environment: Environment) => FilteredSetValue
 >();
 
+const SOURCED_KINDS = new Set<Expression["kind"]>([
+  "SetEnumeration",
+  "SetMap",
+  "SetFilter",
+  "Tuple",
+  "Record",
+  "RecordSet",
+  "FunctionSet",
+  "Product",
+]);
+
+const SOURCED_OPERATORS = new Set(["SUBSET", "UNION", "DOMAIN", "\\cup", "\\cap", "\\"]);
+
+// CallStackTool gives a set, tuple or record it builds the expression as its source, but not a lazy
+// set filter, which it returns as a copy.
+const isSourced = (expression: Expression, environment: Environment) =>
+  SOURCED_KINDS.has(expression.kind) ||
+  (expression.kind === "Apply" &&
+    SOURCED_OPERATORS.has(expression.operator) &&
+    !isLocallyResolved(expression) &&
+    resolveGlobalOperator(expression.operator, environment)?.kind === "Builtin");
+
+// When an evaluation fails, CallStackTool freezes the stack at the innermost expression and pushes
+// the source of each value whose method failed.
+const evaluateTraced = (
+  evaluator: Evaluator,
+  context: Context,
+  trace: Expression[],
+  depth: number,
+) => {
+  try {
+    return evaluator(context);
+  } catch (error) {
+    if (trace.length === depth + 1) trace.push(...(getFingerprintTrace(error) ?? []));
+    throw error;
+  }
+};
+
 export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
   const cached = environment.evaluators.get(expression);
   if (cached) return cached;
@@ -1039,13 +1078,17 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
         ? cacheStateValue(compiled)
         : compiled;
   const trace = environment.trace;
+  const isSourcedExpression = trace !== undefined && isSourced(expression, environment);
   // TLC's CallStackTool pushes each expression it evaluates and keeps the stack when one fails.
   const evaluator: Evaluator = trace
     ? (context) => {
         const depth = trace.length;
         trace.push(expression);
-        const value = cachedEvaluator(context);
+        const value = evaluateTraced(cachedEvaluator, context, trace, depth);
         trace.length = depth;
+        if (isSourcedExpression && typeof value === "object" && value.kind !== "FilteredSet") {
+          valueSources.current?.set(value, expression);
+        }
         const retrace =
           typeof value === "object" && value.kind === "FilteredSet"
             ? filteredSetRetracers.get(value)
@@ -1169,11 +1212,32 @@ const getLazyArguments = (args: Expression[], context: Context): OperatorValue[]
     expression: arg,
   }));
 
+const RECEIVING_OPERATORS = new Set(["=", "#", "\\in", "\\notin", "\\cup", "\\cap", "\\"]);
+
+// The argument whose method TLC calls to apply a built-in operator.
+const getReceiver = (name: string, left: Value, right: Value) =>
+  name === "\\in" ||
+  name === "\\notin" ||
+  ((name === "\\cup" || name === "\\cap") && !isReducible(left))
+    ? right
+    : left;
+
 const compileBuiltinCall = (
   builtin: Builtin,
   args: Expression[],
   environment: Environment,
 ): Evaluator => {
+  if (environment.trace && RECEIVING_OPERATORS.has(builtin.name) && args.length === 2) {
+    const evaluateLeft = getEvaluator(args[0], environment);
+    const evaluateRight = getEvaluator(args[1], environment);
+    return (context) => {
+      const left = evaluateLeft(context);
+      const right = evaluateRight(context);
+      return withSource(getReceiver(builtin.name, left, right), () =>
+        builtin.evaluate([left, right], context),
+      );
+    };
+  }
   if (builtin.isLazy) {
     return (context) => builtin.evaluate(getLazyArguments(args, context), context);
   }
@@ -1333,6 +1397,13 @@ const compileApply = (
   if (global?.kind === "Builtin" && global.name === "DOMAIN") {
     const operand = getEvaluator(args[0], environment);
     const domain = getDomainOperator(expression);
+    // TLC builds a new interval for the domain of a tuple, so the source it gives one stays its own.
+    if (environment.trace) {
+      return (context) => {
+        const value = domain(operand(context));
+        return typeof value === "object" && value.kind === "Interval" ? { ...value } : value;
+      };
+    }
     return (context) => domain(operand(context));
   }
   // TLC sorts the value of a constant TLCEval argument only where no context binds a name.
@@ -1348,6 +1419,13 @@ const compileApply = (
     const left = getEvaluator(args[0], environment);
     const right = getEvaluator(args[1], environment);
     const subset = getSubsetOperator(expression, global);
+    if (environment.trace) {
+      return (context) => {
+        const subsetValue = left(context);
+        const superset = right(context);
+        return withSource(subsetValue, () => subset(subsetValue, superset));
+      };
+    }
     return (context) => subset(left(context), right(context));
   }
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
@@ -1814,6 +1892,16 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const evaluateFunction = child(expression.function);
       const args = expression.args.map(child);
       const describeNonFunction = getNonFunctionError(expression);
+      if (args.length === 1 && environment.trace) {
+        const argument = args[0];
+        return (context) => {
+          const functionValue = evaluateFunction(context);
+          const argumentValue = argument(context);
+          const apply = () =>
+            applyFunction(functionValue, argumentValue, undefined, describeNonFunction);
+          return isFunctionValue(functionValue) ? withSource(functionValue, apply) : apply();
+        };
+      }
       if (args.length === 1) {
         const argument = args[0];
         return (context) =>
