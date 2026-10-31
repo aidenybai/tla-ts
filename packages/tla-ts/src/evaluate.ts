@@ -149,6 +149,9 @@ export interface CallStack {
   sources: WeakMap<ObjectValue, Expression>;
   // The value each expression of the replay last evaluated to.
   values: WeakMap<Expression, Value>;
+  // The expression each failure last left, which tells a failure of an operand from one of the
+  // method that computes the operator.
+  failures: WeakMap<Error, Expression>;
   // The failure of a value with a source, which TLC raises as a FingerprintException.
   fingerprint?: FingerprintFailure;
 }
@@ -187,7 +190,7 @@ const getReceiver = (expression: Expression) => {
     return expression.function;
   }
   if (expression.kind !== "Apply" || expression.args.length !== 2) return undefined;
-  if (expression.operator === "\\subseteq") return expression.args[0];
+  if (["\\subseteq", "=", "#"].includes(expression.operator)) return expression.args[0];
   return expression.operator === "\\in" || expression.operator === "\\notin"
     ? expression.args[1]
     : undefined;
@@ -1247,8 +1250,13 @@ const traceEvaluator =
       }
       return value;
     } catch (error) {
+      const failed = error instanceof Error ? callStack.failures.get(error) : undefined;
+      if (error instanceof Error) callStack.failures.set(error, expression);
       const receiver = getReceiver(expression);
-      const received = receiver && callStack.values.get(receiver);
+      const received =
+        receiver && !getChildren(expression).some((child) => child === failed)
+          ? callStack.values.get(receiver)
+          : undefined;
       const value =
         expression.kind === "FunctionApplication" &&
         received !== undefined &&
@@ -1282,9 +1290,14 @@ export const freezeCallStack = (
     const source = typeof item === "object" ? callStack.sources.get(item) : undefined;
     return source ? [source] : [];
   });
-  if (!callStack.isFrozen && sources.length > 0 && error instanceof TlaEvaluationError) {
-    callStack.expressions.push(...sources);
-    callStack.fingerprint = { sources, reason: error.message };
+  // A value with a source raises a FingerprintException even when the stack is frozen already.
+  if (sources.length > 0 && error instanceof TlaEvaluationError) {
+    if (!callStack.isFrozen) callStack.expressions.push(...sources);
+    const inner = callStack.fingerprint;
+    callStack.fingerprint = {
+      sources: [...sources, ...(inner?.sources ?? [])],
+      reason: inner?.reason ?? error.message,
+    };
   }
   callStack.isFrozen = true;
 };
@@ -1307,7 +1320,13 @@ const headFingerprint = (callStack: CallStack, source: Expression, error: unknow
 export const createTracingEnvironment = (environment: Environment): Environment => ({
   ...environment,
   evaluators: new WeakMap(),
-  callStack: { expressions: [], isFrozen: false, sources: new WeakMap(), values: new WeakMap() },
+  callStack: {
+    expressions: [],
+    isFrozen: false,
+    sources: new WeakMap(),
+    values: new WeakMap(),
+    failures: new WeakMap(),
+  },
 });
 
 export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {

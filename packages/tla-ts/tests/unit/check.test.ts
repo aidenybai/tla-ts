@@ -1087,6 +1087,21 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  // Value#equals of a value with a source raises a FingerprintException even when the stack froze
+  // where the filter failed, but an operand that fails fails before TLC compares.
+  it.each([
+    ["x' = Filter /\\ {} = x'", ["SetEnumeration"]],
+    ["x' = 1 /\\ {1} # Filter", ["SetEnumeration"]],
+    ["x' = Filter /\\ x' = {}", undefined],
+    ["x' = 1 /\\ {} = (1 \\div 0)", undefined],
+  ])("reports the left side of %s that fails to compare like TLC", async (next, sources) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nFilter == {n \\in SUBSET {1} : 1 \\div 0 = 1}\nNext == ${next}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.fingerprint?.sources.map((source) => source.kind)).toEqual(sources);
+  });
+
   // TLC compares the sets as Value#equals does, and never takes tla-ts's faster comparison that
   // fails first.
   it("records the replay of a filter that fails to compare once", async () => {
