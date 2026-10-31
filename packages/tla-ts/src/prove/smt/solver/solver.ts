@@ -33,11 +33,16 @@ export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
   });
   if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
   const goal = applyUfniaTactic(manager, problem.assertions);
+  // and_then runs smt_tactic only on a goal that the preprocessing left undecided.
+  if (goal.isInconsistent || goal.forms.size === 0) {
+    manager.limit.release();
+    return { verdict: goal.isInconsistent ? "unsat" : "sat", numInstances: 0 };
+  }
   // smt_tactic makes the context, which makes its asserted formulas first, and asserts the goal.
   // setup_context then makes the theories, before the formulas are reduced.
   const asserted = new AssertedFormulas(manager);
   const context = new Context(manager, { isMbqi: true, relevancyLevel: 2 });
-  for (const assertion of goal) asserted.assertExpr(assertion);
+  for (const assertion of goal.forms.items) asserted.assertExpr(assertion);
   context.setupContext();
   context.internalizeAssertions(asserted);
   const result = context.search();

@@ -56,6 +56,7 @@ export class ModelEvaluator extends RewriterTpl {
   ) {
     super(manager);
     this.rewriter = new Rewriter(manager, DEFAULT_REWRITER_OPTIONS);
+    this.rewriter.releaseResult = () => this.setLastResult(-1);
   }
 
   // set_model_completion: the cache is reset when the flag changes.

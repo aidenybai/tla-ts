@@ -13,7 +13,6 @@ import {
   OP_LE,
   OP_NOT,
   OP_OR,
-  OP_SUB,
   OP_XOR,
   FAMILY_BASIC,
   FAMILY_USER,
@@ -147,11 +146,7 @@ export class QuantifierInfo {
                 const arg = enode.args[info.argIndex];
                 sJ.insert(
                   manager,
-                  solver.rewriter.mkAppCore(
-                    OP_SUB,
-                    [arg.owner, info.offset],
-                    manager.sorts[arg.owner],
-                  ),
+                  solver.rewriter.mkSub(arg.owner, info.offset),
                   context.getGeneration(arg),
                 );
               }
@@ -196,11 +191,7 @@ export class QuantifierInfo {
     for (const entry of from.getInstantiationSet().elems)
       to.insert(
         this.manager,
-        rewriter.mkAppCore(
-          isPlus ? OP_ADD : OP_SUB,
-          [entry[0], offset],
-          this.manager.sorts[entry[0]],
-        ),
+        isPlus ? rewriter.mkAdd([entry[0], offset]) : rewriter.mkSub(entry[0], offset),
         entry[1],
       );
   }
@@ -286,19 +277,16 @@ export class QuantifierAnalyzer {
       } else return undefined;
     }
     if (variable === undefined) return undefined;
-    const term =
-      args.length === 1
-        ? args[0]
-        : this.rewriter.mkAppCore(OP_ADD, args, this.manager.sorts[args[0]]);
+    const term = args.length === 1 ? args[0] : this.rewriter.mkAdd(args);
     return { variable, term, isInverted };
   }
 
   private mkSub(first: number, second: number) {
-    return this.rewriter.mkAppCore(OP_SUB, [first, second], this.manager.sorts[first]);
+    return this.rewriter.mkSub(first, second);
   }
 
   private mkAdd(first: number, second: number) {
-    return this.rewriter.mkAppCore(OP_ADD, [first, second], this.manager.sorts[first]);
+    return this.rewriter.mkAdd([first, second]);
   }
 
   private isVarAndGround(lhs: number, rhs: number) {

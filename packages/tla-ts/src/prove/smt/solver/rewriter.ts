@@ -109,6 +109,9 @@ export class Rewriter extends RewriterTpl {
   private substitution = new Map<number, number>();
   private unusedVarsEliminator: UnusedVarsEliminator;
   private der: Der;
+  // try_ite_value writes the result of reduce_app, which is the m_r of the rewriter that applies
+  // this one, as it goes: the first write releases what m_r held.
+  releaseResult = () => this.setLastResult(-1);
 
   constructor(
     manager: AstManager,
@@ -568,9 +571,14 @@ export class Rewriter extends RewriterTpl {
     const condition = args[0];
     const thenExpr = args[1];
     const elseExpr = args[2];
+    // An equality of a branch is the first write to the result.
+    const write = (result: number) => {
+      this.releaseResult();
+      return result;
+    };
     // Z3 rewrites the equality of a branch only below depth 500.
     const mkBranchEq = (branch: number) =>
-      manager.depths[branch] < 500 ? this.mkEq(branch, value) : manager.mkEq(branch, value);
+      write(manager.depths[branch] < 500 ? this.mkEq(branch, value) : manager.mkEq(branch, value));
     // mk_eq_plain.
     const mkPlainEq = (branch: number) =>
       branch === value
@@ -589,9 +597,9 @@ export class Rewriter extends RewriterTpl {
     if (value === thenExpr)
       return value === elseExpr
         ? manager.trueExpr
-        : { expr: mkOr(this.mkEq(elseExpr, value), condition), depth: 2 };
+        : { expr: mkOr(write(this.mkEq(elseExpr, value)), condition), depth: 2 };
     if (value === elseExpr)
-      return { expr: mkOr(this.mkEq(thenExpr, value), manager.mkNot(condition)), depth: 2 };
+      return { expr: mkOr(write(this.mkEq(thenExpr, value)), manager.mkNot(condition)), depth: 2 };
     const isValueIte = (expr: number) =>
       this.isIte(expr) &&
       manager.isUniqueValue(manager.args[expr][1]) &&
@@ -608,6 +616,8 @@ export class Rewriter extends RewriterTpl {
       const branches = [mkPlainEq(thenExpr), getExpr(elseEq)];
       return { expr: manager.mkApp(OP_ITE, [condition, ...branches], SORT_BOOL), depth: 2 };
     }
+    // simplify_eq_ite's result is written even when it is null.
+    this.releaseResult();
     return this.isDisjointFrom(ite, value) ? manager.falseExpr : undefined;
   }
 
@@ -799,7 +809,14 @@ export class Rewriter extends RewriterTpl {
     return manager.mkApp(OP_ITE, [condition, thenExpr, elseExpr], sort);
   }
 
+  // poly_rewriter::mk_add and mk_sub with a result: arith_rewriter's sum or difference, which is
+  // not rewritten again.
   mkAdd(args: number[]) {
     return this.arith.mkAdd(args) ?? this.arith.mkAddApp(args);
+  }
+
+  mkSub(first: number, second: number) {
+    const result = this.arith.mkSub([first, second]);
+    return typeof result === "number" ? result : result.expr;
   }
 }
