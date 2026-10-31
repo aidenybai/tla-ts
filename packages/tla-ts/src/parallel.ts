@@ -28,7 +28,7 @@ import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
 import type { TlcVersion } from "./tlc-version";
-import { getRankedStringCount, setStringOrder, setValueFormat, type Value } from "./values";
+import { getRankedStringCount, setStringOrder, setValueVersion, type Value } from "./values";
 
 const WORKER_THREADS_MODULE = "node:worker_threads";
 
@@ -166,7 +166,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     return bytes;
   };
   setStringOrder(getTlcStringOrder(options.source, config, loadModule));
-  setValueFormat(options.version);
+  setValueVersion(options.version);
   const startupStrings = getRankedStringCount();
   const specification = createEnvironment(config, {
     source: options.source,

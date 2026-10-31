@@ -1420,6 +1420,59 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.message).toContain(message);
   });
 
+  it.each([
+    [undefined, "[i \\in 1..2 |-> i]", 'y["a"]', 'integer domain to the non-integer argument "a"'],
+    [
+      undefined,
+      "(1 :> 2 @@ 3 :> 4)",
+      'y["a"]',
+      'check equality of integer 1 with non-integer:\n"a"',
+    ],
+    [
+      undefined,
+      "[i \\in {2 * k : k \\in 1..40} |-> i]",
+      'y["a"]',
+      'Attempted to compare integer 40 with non-integer:\n"a"',
+    ],
+    [undefined, "<<1, 2>>", 'y["a"]', 'Attempted to access tuple at a non integral index: "a"'],
+    [undefined, "[a |-> 1]", "y[1]", "Attempted to access record by a non-string argument: 1"],
+    [undefined, "<<1, 2>>", "[y EXCEPT ![1][1] = 2]", "apply EXCEPT construct to the value 1."],
+    [
+      "1.7.4",
+      "[i \\in 1..2 |-> i]",
+      'y["a"]',
+      'check equality of integer 1 with non-integer:\n"a"',
+    ],
+    [
+      "1.7.4",
+      "[i \\in {2 * k : k \\in 1..40} |-> i]",
+      'y["a"]',
+      'check equality of integer 2 with non-integer:\n"a"',
+    ],
+    [
+      "1.7.4",
+      "<<1, 2>>",
+      '[y EXCEPT !["a"] = 1]',
+      'Attempted to apply tuple to a non-integer argument "a".',
+    ],
+    [
+      "1.7.4",
+      "[a |-> 1]",
+      "[y EXCEPT ![1] = 1]",
+      "Attempted to apply record to a non-string argument 1.",
+    ],
+  ] as const)(
+    "words a key of the wrong type for %s in TLC %s like TLC",
+    async (version, value, next, message) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = ${value}\nNext == x' = ${next} /\\ UNCHANGED y\n====`,
+        config: "INIT Init\nNEXT Next",
+        version,
+      });
+      expect(result.failure?.message).toContain(message);
+    },
+  );
+
   it("enumerates SUBSET of a function with an empty domain as {{}} like TLC", async () => {
     const result = await checkModule("ASSUME SUBSET <<>> = {{}}");
     expect(result.status).toBe("success");

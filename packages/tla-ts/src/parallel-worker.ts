@@ -18,7 +18,7 @@ import { getSuccessors, type Successor } from "./successors";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
-import { getRankedStringCount, setStringOrder, setValueFormat, type Value } from "./values";
+import { getRankedStringCount, setStringOrder, setValueVersion, type Value } from "./values";
 
 const WORKER_THREADS_MODULE = "node:worker_threads";
 const LOCKED = -1;
@@ -51,7 +51,7 @@ const run = (start: StartMessage, parent: Port) => {
   const loadModule = (name: string) => modules.get(name);
   const classes = new Map(start.classes);
   setStringOrder(getTlcStringOrder(start.source, start.config, loadModule));
-  setValueFormat(start.version);
+  setValueVersion(start.version);
   const startupStrings = getRankedStringCount();
   const specification = createEnvironment(start.config, {
     source: start.source,

@@ -279,12 +279,12 @@ export const setStringOrder = (texts: Iterable<string>) => {
   for (const text of texts) rankString(text);
 };
 
-// TLC 1.7.4 prints an empty function that isn't a tuple with a space between its brackets, so
-// every check also sets the version whose format it prints.
-const valueFormat = { isEmptyFunctionSpaced: false };
+// TLC 1.7.4 prints an empty function that isn't a tuple with a space between its brackets, and
+// looks a key up in a function differently, so every check also sets the version its values follow.
+const valueVersion = { is174: false };
 
-export const setValueFormat = (version: TlcVersion | undefined) => {
-  valueFormat.isEmptyFunctionSpaced = version === "1.7.4";
+export const setValueVersion = (version: TlcVersion | undefined) => {
+  valueVersion.is174 = version === "1.7.4";
 };
 
 export const rankString = (text: string) => {
@@ -1641,11 +1641,11 @@ export const isFiniteSet = (value: Value): boolean => {
   }
 };
 
-const findIndex = (sortedValues: Value[], target: Value) => {
+const findIndex = (sortedValues: Value[], target: Value, compare = compareValues) => {
   const bounds = { low: 0, high: sortedValues.length - 1 };
   while (bounds.low <= bounds.high) {
     const middle = (bounds.low + bounds.high) >> 1;
-    const comparison = compareValues(sortedValues[middle], target);
+    const comparison = compare(sortedValues[middle], target);
     if (comparison === 0) return middle;
     if (comparison < 0) bounds.low = middle + 1;
     else bounds.high = middle - 1;
@@ -1883,6 +1883,15 @@ export const describeMissingArgument = (
   }
 };
 
+// TLC 1.7.4 words a key of the wrong type in an EXCEPT, which selects rather than applies, apart.
+const describeExceptKey = (functionValue: FunctionValue, argument: Value) => {
+  if (!valueVersion.is174) return describeMissingArgument(functionValue, argument);
+  const shown = prettyPrint(formatValue(argument));
+  return getFunctionClass(functionValue) === "tuple"
+    ? `Attempted to apply tuple to a non-integer argument ${shown}.`
+    : `Attempted to apply record to a non-string argument ${shown}.`;
+};
+
 const findKeyIndex = (domain: Value[], argument: Value) => {
   const first = domain[0];
   if (typeof argument === "number" && typeof first === "number") {
@@ -1894,6 +1903,45 @@ const findKeyIndex = (domain: Value[], argument: Value) => {
       if (domain[index] === argument) return index;
   }
   return findIndex(domain, argument);
+};
+
+// TLC's FcnRcdValue searches a domain this small linearly with equals, and a larger normalized one by
+// binary search with compareTo.
+const LINEAR_SEARCH_LIMIT = 32;
+
+// TLC looks a key up by the Java class of the function: a tuple or a record rejects a key of the
+// wrong type, and another function rejects a non-integer for a domain it keeps as an interval, which
+// TLC 1.7.4 doesn't. A key of another type than the domain's keys otherwise fails TLC's comparison.
+const findKeyIndexLikeTlc = (
+  functionValue: FunctionValue,
+  argument: Value,
+  describeWrongKey: (functionValue: FunctionValue, argument: Value) => string,
+) => {
+  const domain = functionValue.domain;
+  if (typeof argument !== typeof domain[0]) {
+    const functionClass = getFunctionClass(functionValue);
+    const keyType =
+      functionClass === "tuple" ? "number" : functionClass === "record" ? "string" : undefined;
+    if (keyType !== undefined && typeof argument !== keyType) {
+      throw new TlaEvaluationError(describeWrongKey(functionValue, argument));
+    }
+    if (keyType === undefined && !valueVersion.is174 && isIntervalDomain(domain)) {
+      throw new TlaEvaluationError(
+        `Attempted to apply function with integer domain to the non-integer argument ${prettyPrint(formatValue(argument))}`,
+      );
+    }
+  }
+  try {
+    return findKeyIndex(domain, argument);
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    if (valueVersion.is174 || domain.length < LINEAR_SEARCH_LIMIT) {
+      domain.forEach((key) => equalsLikeTlc(key, argument));
+    } else {
+      findIndex(domain, argument, compareLikeTlc);
+    }
+    throw error;
+  }
 };
 
 export const applyFunction = (
@@ -1916,13 +1964,9 @@ export const applyFunction = (
       `Attempted to apply ${formatValue(functionValue)}, which is not a function`,
     );
   }
-  const position = findKeyIndex(functionValue.domain, argument);
-  if (position === -1) {
-    throw new TlaEvaluationError(
-      describeMissing?.(functionValue, argument) ??
-        describeMissingArgument(functionValue, argument),
-    );
-  }
+  const describe = describeMissing ?? describeMissingArgument;
+  const position = findKeyIndexLikeTlc(functionValue, argument, describe);
+  if (position === -1) throw new TlaEvaluationError(describe(functionValue, argument));
   return functionValue.range[position];
 };
 
@@ -1961,8 +2005,13 @@ export const updateFunction = (
       getFunctionClass(functionValue),
     );
   }
+  if (!isFunctionValue(functionValue)) {
+    throw new TlaEvaluationError(
+      `Attempted to apply EXCEPT construct to the value ${prettyPrint(formatValue(functionValue))}.`,
+    );
+  }
   const finite = toFiniteFunction(functionValue);
-  const position = findKeyIndex(finite.domain, argument);
+  const position = findKeyIndexLikeTlc(finite, argument, describeExceptKey);
   if (position === -1) return finite;
   const range = [...finite.range];
   const previous = finite.range[position];
@@ -2349,7 +2398,7 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       const functionValue = toFiniteFunction(value);
       if (
         functionValue.domain.length === 0 &&
-        valueFormat.isEmptyFunctionSpaced &&
+        valueVersion.is174 &&
         getFunctionClass(value) !== "tuple"
       ) {
         return "<< >>";
