@@ -24,6 +24,7 @@ import type {
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import { getNumeralValue, tokenize, type Token } from "./lexer";
+import { getSanyParseError } from "./sany-parse-error";
 
 interface InfixOperator {
   low: number;
@@ -488,6 +489,14 @@ const parse = (source: string, mode: ParseMode): Module => {
     if (isTlapmKeyword(token)) throw createUnexpected(`Unexpected keyword ${token.text}`);
     cursor.index++;
     return token.text;
+  };
+
+  // SANY takes a keyword for the name of a module, as it does for a field.
+  const keywordModuleName = { isUsed: false };
+  const expectModuleName = () => {
+    if (peek().kind !== "Keyword" || !isFieldName(peek())) return expectIdentifier();
+    keywordModuleName.isUsed = true;
+    return advance().text;
   };
 
   const withoutOffside = <Result>(parse: () => Result) => {
@@ -1235,7 +1244,7 @@ const parse = (source: string, mode: ParseMode): Module => {
   ): Instance => {
     const start = cursor.index;
     expect("INSTANCE");
-    const module = expectIdentifier();
+    const module = expectModuleName();
     const substitutions = accept("WITH")
       ? parseSeparated(() => {
           const target = advance().text;
@@ -1734,7 +1743,7 @@ const parse = (source: string, mode: ParseMode): Module => {
   const parseModuleBody = (): Module => {
     const location = getLocation(expect("----"));
     expect("MODULE");
-    const name = expectIdentifier();
+    const name = expectModuleName();
     expect("----");
     const module: Module = {
       name,
@@ -1756,7 +1765,7 @@ const parse = (source: string, mode: ParseMode): Module => {
     if (accept("EXTENDS")) {
       parseSeparated(() => {
         const start = cursor.index;
-        module.extends.push(expectIdentifier());
+        module.extends.push(expectModuleName());
         module.extendsRanges.push(getRange(start));
       });
     }
@@ -1873,7 +1882,12 @@ const parse = (source: string, mode: ParseMode): Module => {
     module.units.push({ kind: "Definition", definition: unit });
   };
 
-  return parseModuleBody();
+  const module = parseModuleBody();
+  // SANY's lexer marks where each definition begins before its parser runs, which can split a
+  // module's name from a keyword that the parser would take for one.
+  const sanyError = keywordModuleName.isUsed ? getSanyParseError(source) : undefined;
+  if (sanyError !== undefined) throw new TlaSyntaxError(sanyError);
+  return module;
 };
 
 export const parseModule = (source: string) => parse(source, "tlc");

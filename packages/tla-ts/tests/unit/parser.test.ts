@@ -126,6 +126,24 @@ describe("parseModule reads operators like SANY", () => {
     expect(() => parseModule(source)).toThrow(TlaSyntaxError);
   });
 
+  it.each([
+    ["EXTENDS BY", ["BY"]],
+    ["EXTENDS Naturals, IN", ["Naturals", "IN"]],
+    ["EXTENDS SUBSET\nVARIABLE x", ["SUBSET"]],
+  ])("names a module with a keyword in %j as SANY does", (header, extendees) => {
+    expect(parseModule(`---- MODULE M ----\n${header}\nA == 1\n====`).extends).toEqual(extendees);
+  });
+
+  // SANY's lexer marks the definition A as beginning at SUBSET, and doesn't mark one after THEOREM.
+  it.each(["EXTENDS SUBSET", "EXTENDS THEOREM", "EXTENDS AXIOM"])(
+    "rejects %j before a definition as SANY does",
+    (header) => {
+      expect(() => parseModule(`---- MODULE M ----\n${header}\nA == 1\n====`)).toThrow(
+        TlaSyntaxError,
+      );
+    },
+  );
+
   it("rejects an operator of a parameterized instance without the instance's arguments", () => {
     expect(() =>
       parseModule(`---- MODULE M ----\n${INNER}\nTHEOREM M!Foo(TRUE) => M!Foo(TRUE)\n====`),
