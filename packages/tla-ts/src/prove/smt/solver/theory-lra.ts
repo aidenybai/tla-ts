@@ -1589,7 +1589,8 @@ export class TheoryLra {
     context.relevancy.addWatch(
       context.boolVar2Expr[getVar(literals[0])],
       isNegated(literals[0]),
-      () => context.markAsRelevant(consequent),
+      // simple_relevancy_eh marks the consequent without propagating.
+      () => context.relevancy.markAsRelevant(consequent),
     );
   }
 
