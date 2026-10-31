@@ -77,6 +77,8 @@ const UNDO_TRUE_FIRST = 4;
 const UNDO_CGC_GENERATIONS = 5;
 const UNDO_MERGE_TF = 6;
 const UNDO_ENODE_FLAG = 7;
+
+const getLiteralKey = (literal: number) => literal;
 export const UNDO_ADD_EQ = 8;
 export const UNDO_TH_VAR = 9;
 
@@ -118,6 +120,8 @@ export abstract class Internalizer {
   protected assignment: number[] = [];
   // Like Z3's watch lists, a literal's lists are created when the first clause is added.
   protected watches: (Clause[] | undefined)[] = [];
+  // The false literals that simplify_aux_clause_literals removes from the clause mkClause makes.
+  private removedLiterals: Literal[] = [];
   // The binary clauses of the binary clause optimization: the literals each literal propagates when it
   // becomes true, which Z3 visits newest first and before the clauses.
   protected binaryWatches: (Literal[] | undefined)[] = [];
@@ -1034,7 +1038,7 @@ export abstract class Internalizer {
   }
 
   private simplifyAuxClauseLiterals(literals: Literal[], removed: Literal[]) {
-    sortByKey(literals, (literal) => literal);
+    sortByKey(literals, getLiteralKey);
     let previous: Literal | null = null;
     let kept = 0;
     for (const literal of literals) {
@@ -1059,7 +1063,7 @@ export abstract class Internalizer {
   // simplify_aux_lemma_literals: unlike an aux clause, a theory lemma keeps its false literals, so it
   // needs no unit resolution justification.
   private simplifyAuxLemmaLiterals(literals: Literal[]) {
-    sortByKey(literals, (literal) => literal);
+    sortByKey(literals, getLiteralKey);
     let previous: Literal | null = null;
     let kept = 0;
     for (const literal of literals) {
@@ -1186,14 +1190,15 @@ export abstract class Internalizer {
     let literals = input;
     let justification = inputJustification;
     if (kind === CLS_TH_LEMMA) {
-      literals = [...input];
+      literals = input.slice();
       if (!this.simplifyAuxLemmaLiterals(literals)) return null;
     } else if (kind !== CLS_LEARNED) {
-      literals = [...input];
-      const removed: Literal[] = [];
+      literals = input.slice();
+      const removed = this.removedLiterals;
+      shrink(removed, 0);
       if (!this.simplifyAuxClauseLiterals(literals, removed)) return null;
       if (removed.length > 0)
-        justification = new UnitResolutionJustification(justification, [...removed]);
+        justification = new UnitResolutionJustification(justification, removed.slice());
     }
     if (literals.length === 0) {
       this.setConflict(justification ?? "axiom", null);
