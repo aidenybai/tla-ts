@@ -168,11 +168,6 @@ export class Context extends Internalizer {
         if (literals[0] === notLiteral) {
           literals[0] = literals[1];
           literals[1] = notLiteral;
-          if (clause.atoms !== null) {
-            const savedAtom = clause.atoms[0];
-            clause.atoms[0] = clause.atoms[1];
-            clause.atoms[1] = savedAtom;
-          }
         }
         const firstLiteral = literals[0];
         const firstValue = this.assignment[firstLiteral];
@@ -187,11 +182,6 @@ export class Context extends Internalizer {
             this.addWatch(negate(candidate), clause);
             literals[1] = candidate;
             literals[position] = notLiteral;
-            if (clause.atoms !== null) {
-              const savedAtom = clause.atoms[1];
-              clause.atoms[1] = clause.atoms[position];
-              clause.atoms[position] = savedAtom;
-            }
             isFound = true;
             break;
           }
@@ -798,15 +788,15 @@ export class Context extends Internalizer {
         }
         let isKept = false;
         const atoms = clause.atoms;
-        if (clause.isReinternalizeAtoms && atoms !== null) {
+        const atomSigns = clause.atomSigns;
+        if (clause.isReinternalizeAtoms && atoms !== null && atomSigns !== null) {
           for (let index = 0; index < 2; index++)
             if (getVar(clause.literals[index]) < numBoolVars)
               this.removeWatchLiteral(clause, index);
           for (let index = 0; index < clause.literals.length; index++) {
             const atom = atoms[index];
-            const isNegatedLiteral = isNegated(clause.literals[index]);
             this.internalize(atom, !this.manager.isNot(atom));
-            clause.literals[index] = mkLiteral(this.getBoolVar(atom), isNegatedLiteral);
+            clause.literals[index] = mkLiteral(this.getBoolVar(atom), atomSigns[index]);
           }
           this.swapLiterals(clause, 0, this.selectWatchLiteral(clause, 0));
           this.swapLiterals(clause, 1, this.selectWatchLiteral(clause, 1));

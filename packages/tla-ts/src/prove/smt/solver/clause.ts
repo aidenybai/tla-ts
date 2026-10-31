@@ -25,8 +25,10 @@ export class Clause {
     public literals: Literal[],
     readonly kind: number,
     readonly justification: Justification | null,
-    // The atoms of the literals, kept so the clause survives backtracking past their creation.
+    // The atoms and signs of the literals in the order the clause was made, kept so the clause
+    // survives backtracking past their creation. Like Z3, moving a literal leaves its atom in place.
     public atoms: number[] | null,
+    public atomSigns: boolean[] | null,
   ) {}
 
   isLemma() {

@@ -1012,11 +1012,6 @@ export abstract class Internalizer {
     const saved = literals[first];
     literals[first] = literals[second];
     literals[second] = saved;
-    if (clause.atoms !== null) {
-      const savedAtom = clause.atoms[first];
-      clause.atoms[first] = clause.atoms[second];
-      clause.atoms[second] = savedAtom;
-    }
   }
 
   protected addWatchLiteral(clause: Clause, index: number) {
@@ -1107,7 +1102,13 @@ export abstract class Internalizer {
       ? literals.map((literal) => this.boolVar2Expr[getVar(literal)])
       : null;
     for (const atom of atoms ?? []) this.manager.incRef(atom);
-    const clause = new Clause(literals, kind, justification, atoms);
+    const clause = new Clause(
+      literals,
+      kind,
+      justification,
+      atoms,
+      isSavingAtoms ? literals.map(isNegated) : null,
+    );
     if (isLemma) {
       this.swapLiterals(clause, 1, this.selectLearnedWatchLiteral(clause));
       this.lemmas.push(clause);
@@ -1138,6 +1139,7 @@ export abstract class Internalizer {
   protected releaseAtoms(clause: Clause) {
     for (const atom of clause.atoms ?? []) this.manager.decRef(atom);
     clause.atoms = null;
+    clause.atomSigns = null;
   }
 
   protected deleteClauses(clauses: Clause[], oldSize: number) {
