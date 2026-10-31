@@ -104,7 +104,6 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
     : unit.imported.get(name);
 };
 
-// SANY names an undefined operator symbol such as + differently from an undefined identifier.
 // SANY reports a name at the range of its text.
 const getNameRange = (location: SourceLocation, name: string): SourceRange => ({
   module: location.range?.module ?? "",
@@ -120,6 +119,7 @@ const getFixity = (expression: Expression) => {
   return isBefore(expression.location, expression.args[0].location) ? "prefix" : "postfix";
 };
 
+// SANY names an undefined operator symbol such as + differently from an undefined identifier.
 const isOperatorSymbol = (name: string) =>
   name[0].toLowerCase() === name[0].toUpperCase() &&
   name[0] !== "_" &&
