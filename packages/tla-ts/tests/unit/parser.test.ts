@@ -144,6 +144,23 @@ describe("parseModule reads operators like SANY", () => {
     },
   );
 
+  it.each(["ASSUME", "WF_", "DEF"])(
+    "takes %s for the first field of a record as SANY does",
+    (name) => {
+      const module = parseModule(`---- MODULE M ----\nA == [${name} |-> 1, b |-> 2]\n====`);
+      expect(module.definitions[0].body).toMatchObject({
+        kind: "Record",
+        fields: [{ name }, { name: "b" }],
+      });
+    },
+  );
+
+  it("rejects a keyword for a later field of a record as SANY does", () => {
+    expect(() => parseModule("---- MODULE M ----\nA == [a |-> 1, IN |-> 2]\n====")).toThrow(
+      TlaSyntaxError,
+    );
+  });
+
   it("rejects an operator of a parameterized instance without the instance's arguments", () => {
     expect(() =>
       parseModule(`---- MODULE M ----\n${INNER}\nTHEOREM M!Foo(TRUE) => M!Foo(TRUE)\n====`),

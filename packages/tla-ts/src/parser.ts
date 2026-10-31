@@ -687,13 +687,20 @@ const parse = (source: string, mode: ParseMode): Module => {
   const parseBracket = (start: Token): Expression =>
     withoutOffside(() => {
       const location = getLocation(start);
-      if (peek().kind === "Identifier" && (isAt("|->", 1) || isAt(":", 1))) {
-        const kind = isAt("|->", 1) ? "Record" : "RecordSet";
-        const fields = parseSeparated(() => {
-          const name = expectIdentifier();
-          expect(kind === "Record" ? "|->" : ":");
+      // SANY takes a keyword for the first field of a record, as it does for a selected field.
+      const isIdentifier = peek().kind === "Identifier";
+      const isRecord = isAt("|->", 1) && (isIdentifier || isFieldName(peek()));
+      if (isRecord || (isIdentifier && isAt(":", 1))) {
+        const kind = isRecord ? "Record" : "RecordSet";
+        const parseField = (name: string) => {
+          expect(isRecord ? "|->" : ":");
           return { name, value: parseExpression() };
-        });
+        };
+        const first = parseField(isIdentifier ? expectIdentifier() : advance().text);
+        const fields = [
+          first,
+          ...(accept(",") ? parseSeparated(() => parseField(expectIdentifier())) : []),
+        ];
         expect("]");
         return { kind, fields, location };
       }
