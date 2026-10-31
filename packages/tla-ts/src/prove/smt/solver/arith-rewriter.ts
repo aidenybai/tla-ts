@@ -526,7 +526,7 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
-  // is_separated.
+  // is_separated. Like narg, the last negated polynomial lives until is_separated returns.
   private getSeparated(left: number, right: number, kind: number) {
     const manager = this.manager;
     if (kind === KIND_EQ || !this.manager.isNumeral(right)) return undefined;
@@ -535,15 +535,29 @@ export class ArithRewriter extends PolyRewriter {
       return manager.trueExpr;
     let bound = Rational.zero;
     let hasBound = true;
+    let lastNegated: number | undefined;
     for (const arg of this.getMonomials(left)) {
       if (this.manager.isNumeral(arg)) bound = bound.add(this.getValue(arg));
       else if (kind === KIND_LE && this.isNonNegative(arg)) continue;
       else if (kind === KIND_GE) {
-        const negated = this.getNegatedPolynomial(arg);
+        const negated = manager.withTemporaries(
+          () => this.getNegatedPolynomial(arg),
+          (result) => (result === undefined ? [] : [result]),
+        );
+        if (negated !== undefined) {
+          if (lastNegated !== undefined) manager.decRef(lastNegated);
+          lastNegated = negated;
+        }
         if (negated === undefined || !this.isNonNegative(negated)) hasBound = false;
       } else hasBound = false;
     }
-    if (!hasBound) return undefined;
+    const result = hasBound ? this.mkSeparated(left, kind, bound, rightValue) : undefined;
+    if (lastNegated !== undefined) manager.decRef(lastNegated);
+    return result;
+  }
+
+  private mkSeparated(left: number, kind: number, bound: Rational, rightValue: Rational) {
+    const manager = this.manager;
     const comparison = bound.compare(rightValue);
     if (kind === KIND_LE && comparison < 0) return undefined;
     if (kind === KIND_GE && comparison > 0) return undefined;
