@@ -1044,6 +1044,25 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  // A tuple, record or set with a source raises a FingerprintException when the replay fails to
+  // apply it, but TLC fails before it applies a value that isn't a function.
+  it.each([
+    ["<<1, 2>>[3]", ["Tuple"]],
+    ["[a |-> 1][1]", ["Record"]],
+    ['[<<1, 2>> EXCEPT !["a"] = 1]', ["Tuple"]],
+    ["[{1} EXCEPT ![1] = 1]", ["SetEnumeration"]],
+    ["{1, 2}[1]", undefined],
+  ])(
+    "reports the source of a value the replay of x' = %s fails to apply like TLC",
+    async (value, sources) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = ${value}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.fingerprint?.sources.map((source) => source.kind)).toEqual(sources);
+    },
+  );
+
   it("reports a set TLC can't enumerate in computing next states like TLC", async () => {
     const result = await checkSteps("Step == x' \\in Nat", "INIT Init\nNEXT Step");
     expect(result.failure?.message).toBe(

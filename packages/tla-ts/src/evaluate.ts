@@ -181,8 +181,11 @@ const isSourced = (expression: Expression) =>
   (expression.kind === "Apply" && SOURCED_OPERATORS.has(expression.operator));
 
 // The argument whose method Tool#evalAppl calls to compute an operator, as with S.member(e) for
-// e \in S.
+// e \in S, or f.apply(e) for f[e] when f is a function.
 const getReceiver = (expression: Expression) => {
+  if (expression.kind === "FunctionApplication" || expression.kind === "Except") {
+    return expression.function;
+  }
   if (expression.kind !== "Apply" || expression.args.length !== 2) return undefined;
   if (expression.operator === "\\subseteq") return expression.args[0];
   return expression.operator === "\\in" || expression.operator === "\\notin"
@@ -1243,7 +1246,13 @@ const traceEvaluator =
       return value;
     } catch (error) {
       const receiver = getReceiver(expression);
-      const value = receiver && callStack.values.get(receiver);
+      const received = receiver && callStack.values.get(receiver);
+      const value =
+        expression.kind === "FunctionApplication" &&
+        received !== undefined &&
+        !isFunctionValue(received)
+          ? undefined
+          : received;
       freezeCallStack(
         callStack,
         [value, ...sets.slice(depth).filter((set) => set !== value)],
