@@ -738,24 +738,25 @@ export class ArithRewriter extends PolyRewriter {
       const condition = iteArgs[0];
       const rightValue = this.getValue(right);
       const holds = (value: Rational) => this.isHolding(value, rightValue, kind);
-      // Z3 makes the negated condition before it knows whether the result uses it.
+      // Z3 makes the negated condition before it knows whether the result uses it, and its
+      // conjunctions build an equality with arith_util::mk_eq but its disjunctions with m.mk_eq.
+      const mkConjunct = (other: number) =>
+        kind === KIND_EQ ? this.mkArithEq(other, right) : this.mkAtom(other, right, kind);
       if (this.manager.isNumeral(iteArgs[1])) {
         const negated = manager.mkNot(condition);
-        const rest = this.mkAtom(iteArgs[2], right, kind);
         return this.reduce(
           holds(this.getValue(iteArgs[1]))
-            ? manager.mkOr([condition, rest])
-            : manager.mkAnd([negated, rest]),
+            ? manager.mkOr([condition, this.mkAtom(iteArgs[2], right, kind)])
+            : manager.mkAnd([negated, mkConjunct(iteArgs[2])]),
           2,
         );
       }
       if (this.manager.isNumeral(iteArgs[2])) {
         const negated = manager.mkNot(condition);
-        const rest = this.mkAtom(iteArgs[1], right, kind);
         return this.reduce(
           holds(this.getValue(iteArgs[2]))
-            ? manager.mkOr([negated, rest])
-            : manager.mkAnd([condition, rest]),
+            ? manager.mkOr([negated, this.mkAtom(iteArgs[1], right, kind)])
+            : manager.mkAnd([condition, mkConjunct(iteArgs[1])]),
           2,
         );
       }
