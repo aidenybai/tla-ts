@@ -267,7 +267,6 @@ export class Rewriter extends RewriterTpl {
 
   private reduceAppCore(decl: number, args: number[], sort: number): number | Rewrite {
     const manager = this.manager;
-    this.checkLimit();
     const op = manager.funcDecls[decl].op;
     switch (op) {
       case OP_AND:

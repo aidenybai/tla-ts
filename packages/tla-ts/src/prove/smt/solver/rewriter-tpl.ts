@@ -314,7 +314,6 @@ export class RewriterTpl extends RewriterCore {
   private bindings: number[] = [];
   private shifts: number[] = [];
   private shifter: VarShifter;
-  private numSteps = 0;
 
   constructor(manager: AstManager) {
     super(manager);
@@ -343,12 +342,6 @@ export class RewriterTpl extends RewriterCore {
 
   protected reduceQuantifier(_expr: number, _body: number, _patterns: number[]) {
     return -1;
-  }
-
-  // Throws SmtCanceledError when the resource limit cancels the rewrite. The check runs every 256
-  // steps rather than on each step.
-  protected checkLimit() {
-    if ((++this.numSteps & 255) === 0 && !this.manager.limit.inc()) throw new SmtCanceledError();
   }
 
   // set_inv_bindings: (:var i) becomes bindings[n - 1 - i], and -1 keeps it.
@@ -400,9 +393,12 @@ export class RewriterTpl extends RewriterCore {
       }
       this.root = expr;
       this.numQvars = 0;
+      // main_loop and each step of resume_core count a step of the resource limit, and throw
+      // SmtCanceledError when it cancels the rewrite.
+      if (!manager.limit.inc()) throw new SmtCanceledError();
       if (!this.visit(expr, Infinity))
         while (this.frames.length > 0) {
-          this.checkLimit();
+          if (!manager.limit.inc()) throw new SmtCanceledError();
           const frame = this.frames[this.frames.length - 1];
           const curr = frame.curr;
           if (frame.childIndex === 0 && frame.state === PROCESS_CHILDREN && frame.isCaching) {

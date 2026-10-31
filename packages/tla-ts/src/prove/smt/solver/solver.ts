@@ -22,9 +22,15 @@ export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
     new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
   );
   // combined_solver gives each assertion to the incremental smt kernel as well, which rewrites it
-  // when it is asserted and keeps it, though check-sat then runs the tactic on the assertions.
+  // when it is asserted and keeps it, though check-sat then runs the tactic on the assertions. The
+  // kernel's model finder counts a step of the resource limit when it is made, and
+  // solver::assert_expr counts one for each assertion.
   const incremental = new AssertedFormulas(manager);
-  const problem = parseSmtlib(text, manager, (assertion) => incremental.assertExpr(assertion));
+  manager.limit.inc();
+  const problem = parseSmtlib(text, manager, (assertion) => {
+    manager.limit.inc();
+    incremental.assertExpr(assertion);
+  });
   if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
   const goal = applyUfniaTactic(manager, problem.assertions);
   // smt_tactic makes the context, which makes its asserted formulas first, and asserts the goal.
