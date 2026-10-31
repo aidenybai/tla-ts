@@ -509,7 +509,7 @@ const visitUnchanged = (
         proceed(replay, items, partial);
         return;
       }
-      const rest = others.reduce<Item | undefined>(
+      const rest = others.reduceRight<Item | undefined>(
         (tail, element) => cons("Unchanged", element, scope, tail),
         items,
       );

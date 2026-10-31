@@ -1117,6 +1117,20 @@ describe("evaluation errors match TLC", () => {
     expect(ranges?.at(-1)).toBe("34-41");
   });
 
+  // Tool.processUnchangedImplTuple puts the elements after the first in front of the conjuncts left,
+  // in order.
+  it("records the variables of an UNCHANGED tuple in order", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES a, b, c\nInit == a = 0 /\\ b = 0 /\\ c = 0\nNext == UNCHANGED <<a, b, c>> /\\ 1 \\div 0 = 1\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    const names = result.failure?.callStack?.flatMap((expression) =>
+      expression.kind === "Identifier" ? [expression.name] : [],
+    );
+    expect(names).toEqual(["a", "b", "c"]);
+  });
+
   it("reports a set TLC can't enumerate in computing next states like TLC", async () => {
     const result = await checkSteps("Step == x' \\in Nat", "INIT Init\nNEXT Step");
     expect(result.failure?.message).toBe(
