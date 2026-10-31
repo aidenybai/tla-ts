@@ -8,7 +8,7 @@ import type { Enode } from "./enode";
 import { hashU, mkMix } from "./hash";
 import { type CodeTree, Compiler, hasHash, type LabelHasher } from "./mam-compiler";
 import { Interpreter, type OnMatch } from "./mam-interpreter";
-import { shrink } from "./array";
+import { setAt, shrink } from "./array";
 
 // A step from a term to its parent: the parent's label, the position of the term in it, and an
 // optional ground argument the parent must also have.
@@ -75,7 +75,7 @@ export class Mam implements LabelHasher {
   // The nodes that collect_parents marks, to unmark at the end of each level.
   private visitedParents: Enode[] = [];
   private queuedRoots: Enode[] = [];
-  private labelHashes: number[] = [];
+  private labelHashes: (number | undefined)[] = [];
   // m_trail_stack: the matcher undoes its changes with a trail of its own, which the quantifier
   // manager pops before the context pops its trail.
   private trail: (() => void)[] = [];
@@ -100,7 +100,7 @@ export class Mam implements LabelHasher {
     const cached = this.labelHashes[decl];
     if (cached !== undefined) return cached;
     const hash = mkMix(17, 3, this.manager.funcDecls[decl].smallId) & 63;
-    this.labelHashes[decl] = hash;
+    setAt(this.labelHashes, decl, hash);
     return hash;
   }
 
