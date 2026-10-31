@@ -14,7 +14,7 @@ import {
   EqRootPropagationJustification,
   MpIffJustification,
 } from "./enode";
-import { Internalizer, UNDO_ADD_EQ, UNDO_LBLS, UNDO_TH_VAR } from "./internalizer";
+import { Internalizer, UNDO_ADD_EQ, UNDO_TH_VAR } from "./internalizer";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate } from "./literal";
 import { mkModel } from "./model-generator";
@@ -62,7 +62,8 @@ export interface SmtParams {
 }
 
 export class Context extends Internalizer {
-  readonly theory: TheoryLra = new TheoryLra(this);
+  // setup_context makes the theories after the first formulas are asserted.
+  theory!: TheoryLra;
   readonly qmanager: DefaultQuantifierManager;
   readonly conflictResolution: ConflictResolution = new ConflictResolution(this);
   private qhead = 0;
@@ -91,6 +92,11 @@ export class Context extends Internalizer {
   constructor(manager: AstManager, params: SmtParams) {
     super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
     this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
+  }
+
+  // register_plugin initializes each theory it registers.
+  setupContext() {
+    this.theory = new TheoryLra(this);
     this.theory.init();
   }
 
@@ -476,24 +482,6 @@ export class Context extends Internalizer {
     r1.next = r2.next;
     r2.next = savedNext;
     r2.classSize += r1.classSize;
-    const r2Lbls = r2.lbls;
-    const r2LblsHigh = r2.lblsHigh;
-    const r2Plbls = r2.plbls;
-    const r2PlblsHigh = r2.plblsHigh;
-    if (
-      (r2Lbls | r1.lbls) !== r2Lbls ||
-      (r2LblsHigh | r1.lblsHigh) !== r2LblsHigh ||
-      (r2Plbls | r1.plbls) !== r2Plbls ||
-      (r2PlblsHigh | r1.plblsHigh) !== r2PlblsHigh
-    ) {
-      this.trailInts.push(r2Lbls, r2LblsHigh, r2Plbls, r2PlblsHigh);
-      this.trailNodes.push(r2);
-      this.trailKinds.push(UNDO_LBLS);
-      r2.lbls |= r1.lbls;
-      r2.lblsHigh |= r1.lblsHigh;
-      r2.plbls |= r1.plbls;
-      r2.plblsHigh |= r1.plblsHigh;
-    }
   }
 
   private removeParentsFromCgTable(r1: Enode) {
@@ -549,14 +537,6 @@ export class Context extends Internalizer {
       case UNDO_ADD_EQ: {
         const n1 = this.popTrailNode();
         this.undoAddEq(this.popTrailNode(), n1, this.popTrailInt());
-        return;
-      }
-      case UNDO_LBLS: {
-        const node = this.popTrailNode();
-        node.plblsHigh = this.popTrailInt();
-        node.plbls = this.popTrailInt();
-        node.lblsHigh = this.popTrailInt();
-        node.lbls = this.popTrailInt();
         return;
       }
       case UNDO_TH_VAR: {
@@ -906,6 +886,10 @@ export class Context extends Internalizer {
     let failure = FAILURE_OK;
     do {
       const isTheory = this.finalCheckIndex === 0;
+      // Z3 registers every theory for UFNIA, and only arithmetic acts on tlapm's obligations. Of
+      // the theories between arithmetic and the quantifiers, theory_finite_set::assume_eqs draws a
+      // random value.
+      if (!isTheory) this.getRandomValue();
       const check = isTheory ? this.theory.finalCheckEh() : qmanager.finalCheckEh(true);
       if (isTheory && check === FC_GIVEUP) failure = FAILURE_THEORY;
       this.finalCheckIndex = (this.finalCheckIndex + 1) % 2;

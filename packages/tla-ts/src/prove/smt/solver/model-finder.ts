@@ -3,7 +3,7 @@
 // "Complete instantiation for quantified SMT formulas": the quantifier analyzer collects how the
 // variables occur, and the AUF solver gives each group of argument positions and variables a
 // projection function onto its instantiation set.
-import type { AstManager } from "./ast";
+import { OP_OR, SORT_BOOL, type AstManager } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import type { Context } from "./context";
 import { L_TRUE } from "./lbool";
@@ -12,6 +12,7 @@ import type { ProtoModel } from "./proto-model";
 import { Rewriter } from "./rewriter";
 import { AufSolver } from "./auf-solver";
 import { MBQI_FORCE_TEMPLATE, QuantifierAnalyzer, QuantifierInfo } from "./quantifier-analyzer";
+import { RefVector } from "./ref-vector";
 
 export class ModelFinder {
   private q2info = new Map<number, QuantifierInfo>();
@@ -123,12 +124,19 @@ export class ModelFinder {
       const sk = sks[sks.length - index - 1];
       const set = this.getUvarInstSet(quantifier, index);
       if (set === null || set.inv.size === 0) continue;
-      const eqs: number[] = [];
+      // eqs and new_cnstr hold their terms until the restriction is asserted. ast_manager::mk_or keeps
+      // a single disjunct in an or.
+      const eqs = new RefVector(manager);
       for (const value of set.inv.keys())
         if (manager.sorts[value] === manager.sorts[sk]) eqs.push(manager.mkEq(sk, value));
-      if (eqs.length === 0) continue;
-      assert(manager.mkOr(eqs));
-      isAsserted = true;
+      if (eqs.size > 0) {
+        const constraint = manager.mkApp(OP_OR, eqs.items, SORT_BOOL);
+        manager.incRef(constraint);
+        assert(constraint);
+        manager.decRef(constraint);
+        isAsserted = true;
+      }
+      eqs.reset();
     }
     return isAsserted;
   }

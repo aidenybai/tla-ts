@@ -112,14 +112,16 @@ export class DefaultQuantifierManager {
   }
 
   push() {
+    this.mam.pushScope();
+    this.lazyMam.pushScope();
     this.mbqi?.finder.pushScope();
     this.qiQueue.push();
     this.fingerprints.push();
   }
 
   pop(numScopes: number) {
-    this.mam.popScope();
-    this.lazyMam.popScope();
+    this.mam.popScope(numScopes);
+    this.lazyMam.popScope(numScopes);
     this.mbqi?.finder.popScope(numScopes);
     this.qiQueue.pop(numScopes);
     this.fingerprints.pop(numScopes);
