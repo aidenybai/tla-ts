@@ -253,49 +253,59 @@ const isInternalInstance = (module: Module, name: string) => {
 // the file that names each one. SANY looks at a module's own EXTENDS and INSTANCEs before those of
 // its inner modules.
 const getDependencies = (module: Module) => {
-  const innerNames = new Set<string>();
   const extendees: string[] = [];
-  const instancees: { name: string; isRoot: boolean }[] = [];
+  const instancees: string[] = [];
   const importers = new Map<string, string>();
-  const visit = (current: Module) => {
-    innerNames.add(current.name);
+  // ParseUnit.calculateContextWithinParseUnit: a module knows the inner modules defined before it in
+  // the modules enclosing it and the inner modules of the modules it extends, but not itself.
+  const visit = (current: Module, context: Map<string, Module>) => {
     const isRoot = current === module;
-    const addImporters = (names: string[]) =>
+    const addImports = (names: string[], imports: string[]) =>
       names.forEach((name) => {
+        imports.push(name);
         if (!importers.has(name)) importers.set(name, current.name);
       });
-    extendees.push(...current.extends);
-    addImporters(current.extends);
-    const addInstances = (instances: Instance[]) => {
-      instancees.push(...instances.map((instance) => ({ name: instance.module, isRoot })));
-      addImporters(instances.map((instance) => instance.module));
-    };
-    current.units.forEach((unit) => {
-      if (unit.kind === "Instance") addInstances([unit.instance]);
-      if (unit.kind === "Definition") addInstances(getLetInstances(unit.definition.body));
-      if (unit.kind === "Theorem" && isRoot) {
-        addInstances(getStatementInstances(unit.theorem.statement));
-      }
-      if (unit.kind === "Assumption" && isRoot) {
-        addInstances(getLetInstances(unit.assumption.expression));
-      }
+    const isExternal = (name: string) => !context.has(name);
+    addImports(current.extends.filter(isExternal), extendees);
+    const instances = current.units.flatMap((unit) => {
+      if (unit.kind === "Instance") return [unit.instance];
+      if (unit.kind === "Definition") return getLetInstances(unit.definition.body);
+      if (unit.kind === "Theorem" && isRoot) return getStatementInstances(unit.theorem.statement);
+      if (unit.kind === "Assumption" && isRoot) return getLetInstances(unit.assumption.expression);
+      return [];
     });
-    current.units.forEach((unit) => {
-      if (unit.kind === "Module") visit(unit.module);
+    addImports(
+      instances
+        .map((instance) => instance.module)
+        .filter((name) => isExternal(name) && !isInternalInstance(current, name)),
+      instancees,
+    );
+    const peers = new Map(context);
+    current.modules.forEach((inner) => {
+      const innerContext = new Map(peers);
+      // ParseUnit.handleExtensions.
+      const extenders = new Set<Module>();
+      const addExtendedInnerModules = (extender: Module) => {
+        if (extenders.has(extender)) return;
+        extenders.add(extender);
+        extender.extends.forEach((name) => {
+          const extendee = innerContext.get(name);
+          if (extendee === undefined) return;
+          extendee.modules.forEach((extendeeInner) => {
+            if (!innerContext.has(extendeeInner.name)) {
+              innerContext.set(extendeeInner.name, extendeeInner);
+            }
+          });
+          addExtendedInnerModules(extendee);
+        });
+      };
+      addExtendedInnerModules(inner);
+      visit(inner, innerContext);
+      peers.set(inner.name, inner);
     });
   };
-  visit(module);
-  return {
-    extendees: extendees.filter((name) => !innerNames.has(name)),
-    instancees: instancees
-      .filter((instancee) =>
-        instancee.isRoot
-          ? instancee.name !== module.name && !isInternalInstance(module, instancee.name)
-          : !innerNames.has(instancee.name),
-      )
-      .map((instancee) => instancee.name),
-    importers,
-  };
+  visit(module, new Map());
+  return { extendees, instancees, importers };
 };
 
 // The expressions that can name an operator, as Generator.generateExprOrOpArg tells them apart.

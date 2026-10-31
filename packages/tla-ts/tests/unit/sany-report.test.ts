@@ -364,6 +364,23 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it.each([
+    [
+      "the module itself",
+      "---- MODULE Self ----\nVARIABLE y\nI == INSTANCE Self\n====\n",
+      "  Self.tla --> Self.tla",
+    ],
+    [
+      "an inner module",
+      "---- MODULE Self ----\n  ---- MODULE A ----\n  VARIABLE y\n  I == INSTANCE A\n  ====\n====\n",
+      "Cannot find source file for module A imported in module A.",
+    ],
+  ])("looks for a file for an instance of %s that it is in, as SANY does", (_, source, error) => {
+    const report = getReport({ Self: source });
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(error);
+  });
+
   it("reports a file without a module as a parse error", () => {
     const report = getReport({ Headless: "Nothing here\n" });
     expect(report.isFailed).toBe(true);
