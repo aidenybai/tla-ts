@@ -36,10 +36,11 @@ class AuxContext {
   private polyAssumption = -1;
 
   // The context makes its asserted formulas first. Its theories hold only constants that exist by
-  // now, so setup_context can run at once.
+  // now, so setup_context can run at once. init_aux_context copies the kernel's smt_params, so the
+  // context has a model finder too, though it never sees a quantifier.
   constructor(private manager: AstManager) {
     this.asserted = new AssertedFormulas(manager);
-    this.context = new Context(manager, { isMbqi: false, relevancyLevel: 0 });
+    this.context = new Context(manager, { isMbqi: true, relevancyLevel: 0 });
     this.context.setupContext();
   }
 
