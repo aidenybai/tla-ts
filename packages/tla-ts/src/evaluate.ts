@@ -201,6 +201,9 @@ export interface Context {
   scope: Scope | undefined;
   state: State | undefined;
   next: State | undefined;
+  // EvalControl.KeepLazy, which Tool#evalAppl sets to evaluate the function it applies and which
+  // the evaluation passes on, so that a function constructor within builds a FcnLambdaValue.
+  isKeepLazy?: boolean;
 }
 
 export type Evaluator = (context: Context) => Value;
@@ -351,11 +354,15 @@ const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Val
   );
 };
 
+export const toKeepLazyContext = (context: Context): Context =>
+  context.isKeepLazy ? context : { ...context, isKeepLazy: true };
+
 const withScope = (context: Context, scope: Scope | undefined): Context => ({
   environment: context.environment,
   scope,
   state: context.state,
   next: context.next,
+  isKeepLazy: context.isKeepLazy,
 });
 
 export const expectBoolean = (value: Value, description: string) => {
@@ -615,10 +622,6 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
   return definition.bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
 };
 
-// The functions that a constructor builds over an interval or an enumerated set, which TLC builds
-// as a FcnRcdValue unless it keeps the constructor lazy.
-const reducibleFunctions = new WeakSet<object>();
-
 const isReducible = (domain: Value) =>
   typeof domain === "object" &&
   (domain.kind === "Interval" || domain.kind === "Set" || domain.kind === "MixedSet");
@@ -627,12 +630,12 @@ const isReducible = (domain: Value) =>
 // lazy, so a function over an interval or an enumerated set is a FcnRcdValue.
 const toStartupValue = (definition: Definition, value: Value): Value => {
   if (typeof value !== "object" || getFunctionClass(value) !== "lambda") return value;
-  if (definition.kind === "Operator") {
-    return reducibleFunctions.has(value) && value.kind === "Function"
-      ? createSortedFunction(value.domain, value.range)
-      : value;
-  }
-  if (definition.isSelfReferential || value.kind !== "LazyFunction" || !isReducible(value.domain)) {
+  if (
+    definition.kind === "Operator" ||
+    definition.isSelfReferential ||
+    value.kind !== "LazyFunction" ||
+    !isReducible(value.domain)
+  ) {
     return value;
   }
   try {
@@ -1572,14 +1575,21 @@ const compileClosureCall = (
   const compiled = { body: undefined as Evaluator | undefined };
   const evaluateBody = (scope: Scope | undefined, context: Context) => {
     compiled.body ??= getEntryEvaluator(closure.body, environment);
-    return compiled.body({ environment, scope, state: context.state, next: context.next });
+    return compiled.body({
+      environment,
+      scope,
+      state: context.state,
+      next: context.next,
+      isKeepLazy: context.isKeepLazy,
+    });
   };
   if (!isMemoized) return (context) => evaluateBody(bindArguments(context), context);
   const memo = getCallMemo(closure);
   return (context) => {
     const scope = bindArguments(context);
     const values = getArgumentValues(scope, args.length);
-    if (!values) return evaluateBody(scope, context);
+    // A call TLC evaluates with EvalControl.KeepLazy builds what a memoized one wouldn't.
+    if (!values || context.isKeepLazy) return evaluateBody(scope, context);
     let hash = values.length;
     for (const value of values) hash = combineHash(hash, getValueHash(value));
     const bucket = memo.calls.get(hash);
@@ -1616,7 +1626,9 @@ const compileApply = (
     ? undefined
     : resolveGlobalOperator(expression.operator, environment);
   if (global?.kind === "Closure") {
-    return compileClosureCall(global, args, environment, isMemoizable(expression, environment));
+    // The replay records the evaluation of each call, which TLC repeats.
+    const isMemoized = !environment.callStack && isMemoizable(expression, environment);
+    return compileClosureCall(global, args, environment, isMemoized);
   }
   if (global?.kind === "Builtin" && global.name === "DOMAIN") {
     const operand = getEvaluator(args[0], environment);
@@ -1751,14 +1763,12 @@ const compileFunctionConstruction = (
     if (isSingleName && bound.pattern.kind === "Name") {
       const name = bound.pattern.name;
       const keys = getFunctionDomain(domain);
-      const functionValue = markLambdaFunction(
-        createSortedFunction(
-          keys,
-          keys.map((key) => body(withScope(context, bindValue(context.scope, name, key)))),
-        ),
+      const functionValue = createSortedFunction(
+        keys,
+        keys.map((key) => body(withScope(context, bindValue(context.scope, name, key)))),
       );
-      if (isReducible(domain)) reducibleFunctions.add(functionValue);
-      return functionValue;
+      // FcnLambdaValue#toFcnRcd builds a FcnRcdValue over an interval or an enumerated set.
+      return isReducible(domain) ? functionValue : markLambdaFunction(functionValue);
     }
     const pairs: [Value, Value][] = [];
     forEachBinding(bounds, context, (scope) => {
@@ -1782,7 +1792,7 @@ const compileFunctionConstruction = (
   const callStack = environment.callStack;
   return (context) => {
     const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
-    if (expression.isRecursive || isKeptLazy || !isEnumerable(domain)) {
+    if (expression.isRecursive || isKeptLazy || context.isKeepLazy || !isEnumerable(domain)) {
       return createLazy(domain, context);
     }
     // TLC builds a function over a domain other than a set enumeration or an interval lazily, so
@@ -2081,6 +2091,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
           scope: context.scope,
           state: context.next,
           next: undefined,
+          isKeepLazy: context.isKeepLazy,
         });
       };
     }
@@ -2184,7 +2195,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const evaluated = child(expression.function);
       // Tool#evalAppl checks that it applies a function before it evaluates the argument.
       const evaluateFunction = (context: Context) => {
-        const value = evaluated(context);
+        const value = evaluated(toKeepLazyContext(context));
         if (
           typeof value === "object" &&
           (value.kind === "Function" || value.kind === "LazyFunction")

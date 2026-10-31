@@ -1131,6 +1131,41 @@ describe("evaluation errors match TLC", () => {
     expect(names).toEqual(["a", "b", "c"]);
   });
 
+  it("applies a function without computing the values it isn't applied to as TLC does", async () => {
+    const result = await checkSteps(
+      "G(n) == [k \\in {1, 2} |-> 10 \\div (k - n)]\nStep == x' = G(2)[1]",
+      "INIT Init\nNEXT Step",
+    );
+    expect([result.failure, result.generatedStates, result.distinctStates]).toEqual([
+      undefined,
+      3,
+      2,
+    ]);
+  });
+
+  it("prints a function it can't compute in applying it outside its domain like TLC", async () => {
+    const result = await checkSteps(
+      "G(n) == [k \\in {1, 2} |-> 10 \\div (k - n)]\nStep == x' = G(1)[3]",
+      "INIT Init\nNEXT Step",
+    );
+    expect(result.failure?.message).toBe(
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n[k \\in {1, 2} |-> <expression line 6, col 27 to line 6, col 41 of module M>],\nthe first argument is:\n3\nwhich is not in its domain.\n",
+    );
+  });
+
+  it.each([
+    ["Start == x = [k \\in {1, 2} |-> 0]\nStep == x' = x /\\ x[3] = 0", "Start", "<<0, 0>>"],
+    ["Step == x' = [k \\in {1, 2} |-> 1] /\\ x'[3] = 0", "Init", "<<1, 1>>"],
+  ])(
+    "applies a function built over a set enumeration as the record TLC builds for %j",
+    async (definitions, init, value) => {
+      const result = await checkSteps(definitions, `INIT ${init}\nNEXT Step`);
+      expect(result.failure?.message).toBe(
+        `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply function:\n${value}\nto argument 3, which is not in the domain of the function.`,
+      );
+    },
+  );
+
   it("reports a set TLC can't enumerate in computing next states like TLC", async () => {
     const result = await checkSteps("Step == x' \\in Nat", "INIT Init\nNEXT Step");
     expect(result.failure?.message).toBe(

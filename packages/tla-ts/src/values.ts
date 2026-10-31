@@ -2384,6 +2384,17 @@ const isFieldName = (name: string) =>
   /\p{L}/u.test(name) &&
   (name.length < 4 || !/^[WS]F_/.test(name));
 
+// FcnLambdaValue#toString prints a function it fails to enumerate as its parameters and body.
+const toPrintedFunction = (value: LazyFunctionValue) => {
+  if (!isEnumerable(value.domain)) return undefined;
+  try {
+    return toFiniteFunction(value);
+  } catch (error) {
+    if (error instanceof TlaEvaluationError) return undefined;
+    throw error;
+  }
+};
+
 export const formatValue = (value: Value, isStrict = false, isNormalized = false): string => {
   const format = (inner: Value) => formatValue(inner, isStrict, isNormalized);
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
@@ -2415,15 +2426,15 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       return `Seq(${format(value.base)})`;
     case "Function":
     case "LazyFunction": {
-      if (value.kind === "LazyFunction" && !isEnumerable(value.domain)) {
-        const source = value.source;
+      const functionValue = value.kind === "LazyFunction" ? toPrintedFunction(value) : value;
+      if (functionValue === undefined) {
+        const source = value.kind === "LazyFunction" ? value.source : undefined;
         if (!source) return "<function>";
         const parameters = source.parameters
           .map((parameter) => `${parameter.name} \\in ${formatValue(parameter.domain)}`)
           .join(", ");
         return `[${parameters} |-> <expression ${source.body}>]`;
       }
-      const functionValue = toFiniteFunction(value);
       if (
         functionValue.domain.length === 0 &&
         valueVersion.is174 &&

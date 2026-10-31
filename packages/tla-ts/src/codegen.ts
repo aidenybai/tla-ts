@@ -17,6 +17,7 @@ import {
   isWorthCaching,
   keepLazy,
   resolveGlobalOperator,
+  toKeepLazyContext,
   createPrimeOutsideActionError,
   createUnassignedError,
   getSortedFields,
@@ -94,7 +95,9 @@ const createRuntime = () => ({
     scope: context.scope,
     state: context.next,
     next: undefined,
+    isKeepLazy: context.isKeepLazy,
   }),
+  keepLazyContext: toKeepLazyContext,
   extend: (context: Context, names: string[], values: Value[]): Context => ({
     environment: context.environment,
     scope: names.reduce(
@@ -103,6 +106,7 @@ const createRuntime = () => ({
     ),
     state: context.state,
     next: context.next,
+    isKeepLazy: context.isKeepLazy,
   }),
 });
 
@@ -215,6 +219,32 @@ const generateApply = (
   return generateDelegate(generator, expression, frame);
 };
 
+// Whether an expression only reads values, so that it constructs no function whatever the control.
+const isConstructionFree = (
+  expression: Expression,
+  frame: Frame,
+  environment: Environment,
+): boolean => {
+  switch (expression.kind) {
+    case "Identifier": {
+      if (frame.locals.has(expression.name)) return true;
+      if (isLocallyResolved(expression)) return false;
+      const global = findGlobalName(expression.name, environment);
+      return global?.kind === "Variable" || global?.kind === "Value";
+    }
+    case "Prime":
+      return isConstructionFree(expression.expression, frame, environment);
+    case "FieldAccess":
+      return isConstructionFree(expression.record, frame, environment);
+    case "FunctionApplication":
+      return [expression.function, ...expression.args].every((child) =>
+        isConstructionFree(child, frame, environment),
+      );
+    default:
+      return false;
+  }
+};
+
 const generateExpression = (generator: Generator, expression: Expression, frame: Frame): string => {
   const generate = (node: Expression, nodeFrame = frame) =>
     generateExpression(generator, node, nodeFrame);
@@ -254,7 +284,13 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
       return `(condition(${generate(expression.condition)}, ${addReference(generator, expression)}) ? ${generate(expression.consequent)} : ${generate(expression.alternative)})`;
     case "FunctionApplication": {
       keepLazy(expression.function);
-      const functionCode = generate(expression.function);
+      // The interpreter evaluates a function that may construct one with EvalControl.KeepLazy.
+      const functionCode = isConstructionFree(expression.function, frame, generator.environment)
+        ? generate(expression.function)
+        : generateDelegate(generator, expression.function, {
+            ...frame,
+            context: `keepLazyContext(${frame.context})`,
+          });
       const describeMissing = getMissingArgumentError(generator.environment.runtime.version);
       const error = describeMissing ? `, ${addReference(generator, describeMissing)}` : "";
       if (expression.args.length === 1)
