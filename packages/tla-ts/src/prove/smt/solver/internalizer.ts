@@ -88,6 +88,12 @@ interface NewEq {
   justification: EqJustification;
 }
 
+// m_conflict and m_not_l: the justification of the conflict, and the literal it falsifies, if any.
+interface Conflict {
+  justification: BJustification;
+  notLiteral: Literal | null;
+}
+
 export abstract class Internalizer {
   readonly trueLiteral = TRUE_LITERAL;
   readonly falseLiteral = FALSE_LITERAL;
@@ -143,8 +149,7 @@ export abstract class Internalizer {
   protected auxClauses: Clause[] = [];
   protected lemmas: Clause[] = [];
   protected clausesToReinit: Clause[][] = [];
-  protected conflict: BJustification | undefined = undefined;
-  protected notLiteral: Literal | null = null;
+  protected conflict: Conflict | null = null;
   protected eqPropagationQueue: NewEq[] = [];
   enodes: Enode[] = [];
   protected decl2enodes = new Map<number, Enode[]>();
@@ -197,9 +202,8 @@ export abstract class Internalizer {
   protected abstract propagateBoolVarEnode(boolVar: BoolVar): void;
 
   setConflict(justification: BJustification, notLiteral: Literal | null) {
-    if (this.conflict !== undefined) return;
-    this.conflict = justification;
-    this.notLiteral = notLiteral;
+    if (this.conflict !== null) return;
+    this.conflict = { justification, notLiteral };
   }
 
   pushEq(lhs: Enode, rhs: Enode, justification: EqJustification) {
@@ -393,7 +397,7 @@ export abstract class Internalizer {
   }
 
   isInconsistent() {
-    return this.conflict !== undefined;
+    return this.conflict !== null;
   }
 
   // get_generation: the generation of the congruence root. Equalities have generation 0, since

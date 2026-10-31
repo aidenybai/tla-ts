@@ -766,8 +766,7 @@ export class Context extends Internalizer {
       this.deleteClauses(this.lemmas, this.baseScopeLemmaLimits[newLevel]);
       shrink(this.baseScopeLemmaLimits, newLevel);
     }
-    this.conflict = undefined;
-    this.notLiteral = null;
+    this.conflict = null;
     this.deleteClauses(this.auxClauses, this.scopeAuxClauseLimits[newLevel]);
     this.relevancy.pop(numScopes);
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
@@ -912,7 +911,10 @@ export class Context extends Internalizer {
     for (let index = head; index < this.assignedLiterals.length; index++)
       this.phaseAvailable[getVar(this.assignedLiterals[index])] = false;
     const resolution = this.conflictResolution;
-    if (this.conflict === undefined || !resolution.resolve(this.conflict, this.notLiteral))
+    if (
+      this.conflict === null ||
+      !resolution.resolve(this.conflict.justification, this.conflict.notLiteral)
+    )
       return false;
     const newLevel = resolution.newScopeLevel;
     const literals = resolution.lemma;
