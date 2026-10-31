@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
-import { getSanyReport, type SanyReportOptions } from "../../src/sany-report";
+import { getSanyModuleName, getSanyReport, type SanyReportOptions } from "../../src/sany-report";
 
 const directories: string[] = [];
 
@@ -524,6 +524,11 @@ Spec == Init /\\ [][Next]_x
       'Was expecting "==== or more Module body"\nEncountered "USE" at line 2, column 1',
     );
     expect(getText("THEOREM TRUE\n<1> USE ONLY TRUE\n<1> QED")).not.toContain("Parse Error");
+  });
+
+  it("names the specification by a root module that parses but has semantic errors", () => {
+    const text = "---- MODULE Named ----\nCONSTANT C\nTHEOREM TRUE BY DEF C\n====\n";
+    expect(getSanyModuleName(text, "1.7.4")).toBe("Named");
   });
 
   it("locates a substitution for a parameter of the definition at its target", () => {

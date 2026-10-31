@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { Module } from "./ast";
 import { TlaSyntaxError, PcalRuntimeError, TlaSanyFatalError } from "./errors";
-import { extractModule, parseModule } from "./parser";
+import { extractModule, parseSanyModule } from "./parser";
 import { createPcalParams } from "./pcal-ast";
 import { createPcalSession } from "./pcal-parse";
 import { validatePcalModule } from "./pcal-validate";
@@ -89,7 +89,7 @@ const getExtendees = (module: Module) => {
 // a module that doesn't parse is one SANY stops at before validating it.
 const parseValidatedModule = (text: string) => {
   try {
-    return parseModule(getUnboxedSource(text));
+    return parseSanyModule(getUnboxedSource(text));
   } catch (error) {
     if (error instanceof TlaSyntaxError) return undefined;
     throw error;
