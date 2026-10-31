@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { L_FALSE, L_UNDEF } from "../../src/prove/smt/solver/lbool";
+import { L_FALSE } from "../../src/prove/smt/solver/lbool";
 import {
   type ConstraintKind,
   KIND_EQ,
@@ -11,14 +11,10 @@ import {
 import { LarSolver } from "../../src/prove/smt/solver/lp/lar-solver";
 import { NlaCore } from "../../src/prove/smt/solver/lp/nla-core";
 import { NraSolver } from "../../src/prove/smt/solver/lp/nra-solver";
-import {
-  AlgebraicManager,
-  Anum,
-  isolateRootsClosest,
-  selectBetween,
-} from "../../src/prove/smt/solver/nlsat/algebraic";
+import { AlgebraicManager, Anum } from "../../src/prove/smt/solver/nlsat/algebraic";
 import { Evaluator } from "../../src/prove/smt/solver/nlsat/evaluator";
 import type { IntervalSet } from "../../src/prove/smt/solver/nlsat/interval-set";
+import { getSingleCell } from "../../src/prove/smt/solver/nlsat/levelwise";
 import { Mpbq } from "../../src/prove/smt/solver/nlsat/mpbq";
 import type { Atom, IneqKind, RootKind } from "../../src/prove/smt/solver/nlsat/types";
 import { NlsatSolver } from "../../src/prove/smt/solver/nlsat/solver";
@@ -29,7 +25,6 @@ import {
 } from "../../src/prove/smt/solver/nlsat/upolynomial-factorization";
 import { Rational } from "../../src/prove/smt/solver/rational";
 import {
-  NlsatOutOfScope,
   type Polynomial,
   PolynomialCache,
   PolynomialManager,
@@ -115,17 +110,19 @@ const parseRational = (text: string) => {
 // The harness commands: select a b, and closest x s n v0 ... v(n-1) poly, which leaves x unassigned.
 const runAlgebraicCommand = (input: string) => {
   const words = input.split(" ");
+  const am = new AlgebraicManager();
   if (words[0] === "select")
-    return `select ${selectBetween(parseRational(words[1]), parseRational(words[2]))}`;
+    return `select ${am.select(new Anum(parseRational(words[1])), new Anum(parseRational(words[2]))).value}`;
   const variable = Number(words[1]);
   const count = Number(words[3]);
   const sample = words
     .slice(4, 4 + count)
-    .map((word, index) => (index === variable ? undefined : parseRational(word)));
+    .map((word, index) => (index === variable ? undefined : new Anum(parseRational(word))));
   const pm = new PolynomialManager();
   const polynomial = parsePolynomial(pm, words.slice(4 + count).join(" "));
-  const closest = isolateRootsClosest(pm, polynomial, sample, variable);
-  return `closest${closest.roots.map((root, index) => ` ${closest.indices[index]}@${root}`).join("")}`;
+  const closest = am.isolateRootsClosest(pm, polynomial, sample, parseRational(words[2]));
+  const show = (root: Anum) => (root.value instanceof Rational ? `${root.value}` : "irrational");
+  return `closest${closest.roots.map((root, index) => ` ${closest.indices[index]}@${show(root)}`).join("")}`;
 };
 
 // The harness's an programs: registers of real algebraic numbers, one command per line, each
@@ -398,6 +395,88 @@ const runEvaluatorProgram = (program: string, expected: string) => {
     .join("\n");
 };
 
+// The harness's lw programs: a sample of rationals and roots, then the cell intervals of the
+// levelwise single cell construction around it, and the sample its refinements left behind.
+const runLevelwiseProgram = (program: string) => {
+  const am = new AlgebraicManager();
+  const pm = new PolynomialManager();
+  const cache = new PolynomialCache(pm);
+  const sample: Anum[] = [];
+  const registers: Anum[] = [];
+  let variableCount = 0;
+  const show = (anum: Anum) => {
+    if (anum.value instanceof Rational) return ` q${anum.value}`;
+    const index = am.getRootIndex(anum);
+    return ` r[${anum.value.p.join(" ")}]#${index}(${anum.value.lower},${anum.value.upper})`;
+  };
+  const showBound = (polynomial: Polynomial | null, index: number, infinity: string) =>
+    polynomial === null ? infinity : `${showPolynomial(polynomial)}#${index}`;
+  const runCommand = (words: string[]) => {
+    const numbers = words.slice(1).map(Number);
+    switch (words[0]) {
+      case "vars":
+        variableCount = numbers[0];
+        return "";
+      case "q":
+        registers[numbers[0]] = new Anum(parseRational(words[2]));
+        return show(registers[numbers[0]]);
+      case "root":
+        registers[numbers[0]] = am.isolateRoots(
+          pm,
+          pm.fromCoeffs(words.slice(3).map(BigInt), 0),
+          [],
+        )[numbers[1] - 1];
+        return show(registers[numbers[0]]);
+      case "set":
+        sample[numbers[0]] = am.copy(registers[numbers[1]]);
+        return "";
+      default: {
+        const polynomials = words
+          .slice(3)
+          .join(" ")
+          .split(" ; ")
+          .map((text) => parsePolynomial(pm, text));
+        const cell = getSingleCell(
+          pm,
+          am,
+          cache,
+          polynomials,
+          numbers[0],
+          sample,
+          numbers[1] === 1,
+        );
+        const intervals = cell.map((interval) =>
+          interval.isSection
+            ? ` S${showBound(interval.lower, interval.lowerIndex, "")}`
+            : ` (${showBound(interval.lower, interval.lowerIndex, "-oo")},${showBound(interval.upper, interval.upperIndex, "+oo")})`,
+        );
+        const values = Array.from({ length: variableCount }, (_, variable) =>
+          sample[variable] === undefined ? " _" : show(sample[variable]),
+        );
+        return `${intervals.join("")} after${values.join("")}`;
+      }
+    }
+  };
+  return program
+    .split("\n")
+    .map((line) => `${line.split(" ")[0]}${runCommand(line.split(" "))}`)
+    .join("\n");
+};
+
+describe("nlsat levelwise", () => {
+  // Random samples and polynomials, around the top variable left unassigned or, in the linear
+  // mode of check_assignment, every variable assigned. The last cases have four polynomials with
+  // roots on both sides of the sample, which take the spanning tree heuristic. Cases where Z3
+  // breaks a tie between equal roots by its recycled polynomial ids are left out, see levelwise.ts.
+  const cases: [string, string][] = JSON.parse(
+    readFileSync(join(FIXTURES, "levelwise.json"), "utf8"),
+  );
+
+  it.each(cases)("%s", (program, expected) => {
+    expect(runLevelwiseProgram(program)).toBe(expected);
+  });
+});
+
 describe("nlsat evaluator", () => {
   // Random programs with two or three variables, the top one unassigned until the end, as when
   // nlsat decides it. Unions drop the clauses of the intervals they copy, as Z3's do.
@@ -434,8 +513,8 @@ describe("nlsat algebraic numbers", () => {
     expect(runAlgebraicCommand(input)).toBe(expected);
   });
 
-  it("refuses a root variable of degree 2, whose roots may be irrational", () => {
-    expect(() => runAlgebraicCommand("closest 1 3 2 2 0 1:1^2 -2:")).toThrow(NlsatOutOfScope);
+  it("isolates the irrational roots closest to the sample", () => {
+    expect(runAlgebraicCommand("closest 1 3 2 2 0 1:1^2 -2:")).toBe("closest 2@irrational");
   });
 });
 const showCoeffs = (coeffs: readonly bigint[]) => ` [${coeffs.join(" ")}]`;
@@ -640,8 +719,10 @@ describe("nlsat check_assignment", () => {
     );
   });
 
-  it("refuses to explain with an irrational root", () => {
-    expect(() => runCheckAssignment("ca 1\nc EQ 1:0^2 -2:\nv 0 1 1\nend")).toThrow(NlsatOutOfScope);
+  it("bounds an irrational root by linear polynomials, as Z3 does", () => {
+    expect(runCheckAssignment("ca 1\nc EQ 1:0^2 -2:\nv 0 1 1\nend")).toBe(
+      "lit 2\nlemma 5 !GT [1:0^1 1:] 7 !LT [4:0^1 -5:] 3 !EQ [1:0^2 -2:]",
+    );
   });
 });
 
@@ -686,9 +767,10 @@ describe("nra check_assignment", () => {
     expect([...result.core.lemmas[0].expl]).toContain(result.constraints[4]);
   });
 
-  it("answers unknown, without a lemma, on an irrational root", () => {
+  it("refutes x*x = 2 at x = 2 with a lemma, bounding the irrational root linearly", () => {
     const result = getCore((x) => [x, x], KIND_EQ, 2n);
-    expect(new NraSolver(result.core).checkAssignment()).toBe(L_UNDEF);
-    expect(result.core.lemmas).toHaveLength(0);
+    expect(new NraSolver(result.core).checkAssignment()).toBe(L_FALSE);
+    expect(result.core.lemmas).toHaveLength(1);
+    expect([...result.core.lemmas[0].expl]).toContain(result.constraints[4]);
   });
 });

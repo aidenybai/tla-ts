@@ -3,14 +3,10 @@
 // root of a square-free integer polynomial in an open isolating interval of binary rationals whose
 // ends the polynomial has opposite signs at. Comparing and evaluating refine these intervals in
 // place, and may find a number rational, as Z3 does, so later operations see Z3's intervals.
-//
-// isolateRootsClosest and selectBetween below are the rational fragment stage A's levelwise
-// projection still uses: there every polynomial has degree 1 in the variable whose roots it
-// isolates, and a higher degree is out of scope.
 import { SmtInvariantError } from "../../../../errors";
 import { Rational } from "../rational";
 import { getLog2, Mpbq } from "./mpbq";
-import { NlsatOutOfScope, PolynomialManager, type Polynomial, type ValueOps } from "./polynomial";
+import { PolynomialManager, type Polynomial, type ValueOps } from "./polynomial";
 import { UpolynomialManager, type Upolynomial } from "./upolynomial";
 import { factorUpolynomial, type FactorParams } from "./upolynomial-factorization";
 
@@ -1163,52 +1159,3 @@ export class AlgebraicManager {
     return new Anum(selectSmall(lower, upper).toRational());
   }
 }
-
-export interface ClosestRoots {
-  roots: Rational[];
-  indices: number[];
-}
-
-const NO_ROOTS: ClosestRoots = { roots: [], indices: [] };
-
-// isolate_roots_closest: the roots of p, as a polynomial in x after substituting the sample for the
-// other variables, that lie closest to the sample of x on either side, with their 1-based indices
-// among all the real roots. In scope p has at most one root, which is always the closest.
-export const isolateRootsClosest = (
-  pm: PolynomialManager,
-  polynomial: Polynomial,
-  sample: readonly (Rational | undefined)[],
-  rootVariable: number,
-): ClosestRoots => {
-  if (pm.isConst(polynomial)) return NO_ROOTS;
-  // Z3 isolates the roots of a univariate polynomial in its own variable, whichever it is.
-  const variable = pm.isUnivariate(polynomial) ? pm.maxVar(polynomial) : rootVariable;
-  let leading = Rational.zero;
-  let constant = Rational.zero;
-  for (let index = 0; index < polynomial.size; index++) {
-    const monomial = polynomial.ms[index];
-    const degree = monomial.degreeOf(variable);
-    if (degree > 1)
-      throw new NlsatOutOfScope(
-        `isolating the roots of ${polynomial} of degree 2 or more in x${variable}`,
-      );
-    let term = Rational.of(polynomial.as[index]);
-    for (let power = 0; power < monomial.size; power++) {
-      const current = monomial.vars[power];
-      if (current === variable) continue;
-      const assigned = sample[current];
-      if (assigned === undefined) throw new SmtInvariantError(`x${current} is unassigned`);
-      for (let count = 0; count < monomial.degrees[power]; count++) term = term.mul(assigned);
-    }
-    if (degree === 1) leading = leading.add(term);
-    else constant = constant.add(term);
-  }
-  // A vanishing leading coefficient leaves a constant, which has no roots.
-  if (leading.isZero()) return NO_ROOTS;
-  return { roots: [constant.neg().div(leading)], indices: [1] };
-};
-
-// select: a rational strictly between a and b, with the smallest power of two as denominator, and the
-// smallest such numerator (mpbq_manager::select_small_core).
-export const selectBetween = (lower: Rational, upper: Rational) =>
-  selectSmall({ value: lower, isOpen: true }, { value: upper, isOpen: true }).toRational();
