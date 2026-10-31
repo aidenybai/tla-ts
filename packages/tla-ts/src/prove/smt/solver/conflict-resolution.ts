@@ -139,18 +139,6 @@ export class ConflictResolution {
     return result;
   }
 
-  // Explains why two nodes are in one class, for theories that need the literals.
-  eqToLiterals(first: Enode, second: Enode) {
-    const saved = this.antecedents;
-    this.antecedents = [];
-    this.markEq(first, second);
-    this.processJustifications();
-    const result = this.antecedents;
-    this.antecedents = saved;
-    this.unmarkJustifications(0);
-    return result;
-  }
-
   private getJustificationMaxLevel(justification: Justification) {
     let result = 0;
     for (const literal of this.justificationToLiterals(justification))
