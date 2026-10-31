@@ -35,6 +35,9 @@ export const setOwnExitCode = <Thrown extends Error>(error: Thrown, code: number
   return error;
 };
 
+export const getOwnExitCode = (error: unknown) =>
+  error instanceof Error ? ownExitCodes.get(error) : undefined;
+
 // TLC exits with 255 when it fails to process or evaluate a liveness property.
 const withErrorExitCode = <Result>(run: () => Result) => {
   try {
@@ -56,10 +59,7 @@ export const withLivenessExitCode = (
         try {
           checker.addInitialState(index, state);
         } catch (error) {
-          throw setExitCode(
-            error,
-            (error instanceof Error && ownExitCodes.get(error)) || EXIT_STATUS.error,
-          );
+          throw setExitCode(error, getOwnExitCode(error) ?? EXIT_STATUS.error);
         }
       },
       addState: (index, state, successors) =>

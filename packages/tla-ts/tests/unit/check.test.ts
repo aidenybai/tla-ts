@@ -633,6 +633,26 @@ ASSUME TLCFP(a) = -887695703
     }
   });
 
+  it("reports a failing constant part of a property while processing the spec like TLC", async () => {
+    const properties = [
+      "<>(1 = {})",
+      "<>[](x = 2 => 1 = {})",
+      "<>[](IF x = 1 THEN x = 2 ELSE 1 = {})",
+    ];
+    for (const property of properties) {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x\nProp == ${property}\n====`,
+          config: "SPECIFICATION Spec\nPROPERTY Prop",
+        }),
+      ).rejects.toThrow(
+        new TlaEvaluationError(
+          `${UNEXPECTED_EXCEPTION}Attempted to check equality of integer 1 with non-integer:\n{}`,
+        ),
+      );
+    }
+  });
+
   it("reports the unassigned constant TLC finds first", async () => {
     const cases = [
       [
