@@ -441,10 +441,14 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
 // [a |-> e], and FcnRcdValue for any other function.
 export type FunctionClass = "lambda" | "tuple" | "record";
 
+// Whether a lambda exists for markFingerprinted to find, so that a spec without one skips the walk.
+const lambdaPresence = { isPresent: false };
+
 export const setFunctionClass = <FunctionLike extends FunctionValue | LazyFunctionValue>(
   functionValue: FunctionLike,
   functionClass: FunctionClass | undefined,
 ) => {
+  if (functionClass === "lambda") lambdaPresence.isPresent = true;
   if (functionClass !== undefined) functionValue.functionClass = functionClass;
   return functionValue;
 };
@@ -457,6 +461,23 @@ export const getFunctionClass = (value: Value) =>
 export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunctionValue>(
   functionValue: FunctionLike,
 ) => setFunctionClass(functionValue, "lambda");
+
+const fingerprintedValues = new WeakSet<ObjectValue>();
+
+// FcnLambdaValue#fingerPrint caches the FcnRcdValue the function enumerates to, which applies it
+// from then on, so a function TLC has fingerprinted is no longer a lambda.
+export const markFingerprinted = (value: Value): void => {
+  if (!lambdaPresence.isPresent || typeof value !== "object" || fingerprintedValues.has(value)) {
+    return;
+  }
+  fingerprintedValues.add(value);
+  if (value.kind === "Function") {
+    if (value.functionClass === "lambda") value.functionClass = undefined;
+    value.domain.forEach(markFingerprinted);
+    value.range.forEach(markFingerprinted);
+  }
+  if (value.kind === "Set" || value.kind === "MixedSet") value.elements.forEach(markFingerprinted);
+};
 
 export const createSortedRecord = (names: Value[], range: Value[]) =>
   setFunctionClass(createSortedFunction(names, range), "record");

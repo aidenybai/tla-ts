@@ -91,6 +91,7 @@ import {
   formatValue,
   getHeldValues,
   getFingerprintError,
+  markFingerprinted,
   getValueHash,
   isFunctionValue,
   isSameValue,
@@ -1588,6 +1589,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       }
       throw error;
     }
+    state.forEach(markFingerprinted);
   };
   // The replay adds the states it hasn't seen to TLC's set of states, which already holds the state
   // that failed after TLC added it.
@@ -2082,6 +2084,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (isInModel) {
       search.trackStatePossible(state);
       fingerprintModelState(fingerprintState);
+      state.forEach(markFingerprinted);
     }
     const isSeen = isInModel && findStateIndex(hash, fingerprintState) !== -1;
     if (isSeen) return undefined;
@@ -2132,6 +2135,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (isInModel) {
       search.trackActionPossible(state, successor.state);
       fingerprintModelState(fingerprintState);
+      successor.state.forEach(markFingerprinted);
     }
     const existing = isInModel ? found : -1;
     if (source && isInModel) {

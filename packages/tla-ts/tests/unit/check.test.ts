@@ -1166,6 +1166,28 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  // FcnLambdaValue#fingerPrint caches the FcnRcdValue that applies the function from then on.
+  it.each([
+    [
+      "Start == x = [k \\in SUBSET {1} |-> 0]\nStep == x' = x /\\ x[{2}] = 0",
+      "Start",
+      ": Attempted to apply function:\n({} :> 0 @@ {1} :> 0)\nto argument {2}, which is not in the domain of the function.",
+    ],
+    [
+      "Step == x' = [k \\in SUBSET {1} |-> 1] /\\ x'[{2}] = 0",
+      "Init",
+      ": In applying the function\n({} :> 1 @@ {1} :> 1),\nthe first argument is:\n{2}\nwhich is not in its domain.\n",
+    ],
+  ])(
+    "applies a function as TLC does once it fingerprints it in %j",
+    async (definitions, init, message) => {
+      const result = await checkSteps(definitions, `INIT ${init}\nNEXT Step`);
+      expect(result.failure?.message).toBe(
+        `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n${message}`,
+      );
+    },
+  );
+
   it("reports a set TLC can't enumerate in computing next states like TLC", async () => {
     const result = await checkSteps("Step == x' \\in Nat", "INIT Init\nNEXT Step");
     expect(result.failure?.message).toBe(
