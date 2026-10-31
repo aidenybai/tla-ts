@@ -34,10 +34,12 @@ export interface SanyError {
   message: string;
 }
 
-// The errors SANY reports for a spec. A fatal error stops it before semantic analysis. SANY's
-// parser prints its message for a module it rejects before the report.
+// The errors SANY reports for a spec, and the warnings it prints before them. A fatal error stops it
+// before semantic analysis. SANY's parser prints its message for a module it rejects before the
+// report.
 export interface SanyReport {
   errors: SanyError[];
+  warnings: SanyError[];
   isFatal: boolean;
   parseError?: string;
 }
@@ -54,13 +56,22 @@ export class TlaSyntaxError extends TlaError {
   }
 }
 
-export const createSanyError = (errors: SanyError[], isFatal = false, parseError?: string) =>
+export const createSanyError = (
+  errors: SanyError[],
+  isFatal = false,
+  parseError?: string,
+  warnings: SanyError[] = [],
+) =>
   new TlaSyntaxError(
     errors.map((error) => `${error.location}\n\n${error.message}`).join("\n\n"),
     undefined,
     undefined,
-    { errors, isFatal, parseError },
+    { errors, warnings, isFatal, parseError },
   );
+
+// How SANY prints the warnings it reports, which do not stop TLC.
+export const formatSanyWarnings = (warnings: SanyError[]) =>
+  `*** Warnings: ${warnings.length}\n\n${warnings.map((warning) => `${warning.location}\n\n${warning.message}\n\n\n`).join("\n")}`;
 
 // SANY's message for a module its parser rejects, such as a "***Parse Error***" with the
 // productions it was in.

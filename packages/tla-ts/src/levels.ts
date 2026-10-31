@@ -885,6 +885,7 @@ export const checkModuleLevels = (
   module: Module,
   context: LevelContext,
   instances: { location: SourceLocation; check: () => void }[],
+  warnings: SanyError[],
 ) => {
   const analyzer = createLevelAnalyzer(context);
   const getLevel = (expressions: Expression[]) =>
@@ -956,31 +957,34 @@ export const checkModuleLevels = (
             ...(step.proof?.kind === "Steps" && isTemporal() ? checkTemporalGoal(step.proof) : []),
           ];
         });
-  collectSemanticErrors([
-    ...module.definitions
-      .filter((definition) => !definition.name.includes("!"))
-      .map((definition) => ({
-        location: definition.location,
-        check: () => analyzer.analyzeDefinition(definition, new Map()),
+  collectSemanticErrors(
+    [
+      ...module.definitions
+        .filter((definition) => !definition.name.includes("!"))
+        .map((definition) => ({
+          location: definition.location,
+          check: () => analyzer.analyzeDefinition(definition, new Map()),
+        })),
+      ...module.assumptions.map((assumption) => ({
+        location: assumption.location,
+        check: () => analyzer.analyze(assumption.expression, new Map()),
       })),
-    ...module.assumptions.map((assumption) => ({
-      location: assumption.location,
-      check: () => analyzer.analyze(assumption.expression, new Map()),
-    })),
-    ...module.theorems.map((theorem) => ({
-      location: theorem.location,
-      check: () => {
-        const data =
-          theorem.statement.kind === "AssumeProve"
-            ? analyzeAssumeProve(theorem.statement, new Map(), analyzer)
-            : analyzer.analyze(theorem.statement, new Map());
-        const errors = [
-          ...checkProof(theorem.proof),
-          ...(data.level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
-        ];
-        if (errors.length > 0) throw createSanyError(errors);
-      },
-    })),
-    ...instances,
-  ]);
+      ...module.theorems.map((theorem) => ({
+        location: theorem.location,
+        check: () => {
+          const data =
+            theorem.statement.kind === "AssumeProve"
+              ? analyzeAssumeProve(theorem.statement, new Map(), analyzer)
+              : analyzer.analyze(theorem.statement, new Map());
+          const errors = [
+            ...checkProof(theorem.proof),
+            ...(data.level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
+          ];
+          if (errors.length > 0) throw createSanyError(errors);
+        },
+      })),
+      ...instances,
+    ],
+    warnings,
+  );
 };

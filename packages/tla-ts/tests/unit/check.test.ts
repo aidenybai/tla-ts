@@ -1999,44 +1999,557 @@ describe("name resolution matches SANY", () => {
   });
 
   it.each([
-    ["a definition defined twice", "B == 1\nB == 2"],
-    ["a definition of a declared constant", "CONSTANT B\nB == 1"],
-    ["a constant declared after a definition", "B == 1\nCONSTANT B"],
-    ["a constant and a variable with one name", "CONSTANT y\nVARIABLE y"],
-    ["an operator parameter named after a definition", "B == 1\nF(B) == B"],
-    ["a LET definition named after a definition", "B == 1\nF == LET B == 2 IN B"],
-    ["a bound variable named after a variable", "VARIABLE y\nF == \\E y \\in {1} : TRUE"],
-    ["nested bound variables with one name", "F == \\E y \\in {1} : \\E y \\in {2} : TRUE"],
-    ["an operator of an extended module", "EXTENDS Naturals\na + b == a"],
-    ["a built-in operator", "BOOLEAN == 1"],
-    ["a constant named after a built-in operator", "CONSTANT BOOLEAN"],
-    ["a variable named after a built-in operator", "VARIABLE TRUE"],
-    ["a constant named after an operator of an extended module", "EXTENDS Naturals\nCONSTANT Nat"],
+    [
+      "a definition defined twice",
+      "B == 1\nB == 2",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "Operator B already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message:
+            "Multiple declarations or definitions for symbol B.  \nThis duplicates the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+    ],
+    [
+      "a definition of a declared constant",
+      "CONSTANT B\nB == 1",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "Operator B already defined or declared.",
+        },
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a constant declared after a definition",
+      "B == 1\nCONSTANT B",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a constant and a variable with one name",
+      "CONSTANT y\nVARIABLE y",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'y': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an operator parameter named after a definition",
+      "B == 1\nF(B) == B",
+      [
+        {
+          location: "line 3, col 3 to line 3, col 3 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a LET definition named after a definition",
+      "B == 1\nF == LET B == 2 IN B",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 15 of module M",
+          message: "Operator B already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 10 to line 3, col 15 of module M",
+          message:
+            "Multiple declarations or definitions for symbol B.  \nThis duplicates the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+    ],
+    [
+      "a bound variable named after a variable",
+      "VARIABLE y\nF == \\E y \\in {1} : TRUE",
+      [
+        {
+          location: "line 3, col 9 to line 3, col 9 of module M",
+          message:
+            "Multiply-defined symbol 'y': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "nested bound variables with one name",
+      "F == \\E y \\in {1} : \\E y \\in {2} : TRUE",
+      [
+        {
+          location: "line 2, col 24 to line 2, col 24 of module M",
+          message:
+            "Multiply-defined symbol 'y': this definition or declaration conflicts \nwith the one at line 2, col 9 to line 2, col 9 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an operator of an extended module",
+      "EXTENDS Naturals\na + b == a",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 10 of module M",
+          message: "Operator + already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 10 of module M",
+          message:
+            "Multiple declarations or definitions for symbol +.  \nThis duplicates the one at line 15, col 1 to line 15, col 19 of module Naturals.",
+        },
+      ],
+    ],
+    [
+      "a built-in operator",
+      "BOOLEAN == 1",
+      [
+        {
+          location: "line 2, col 1 to line 2, col 12 of module M",
+          message: "Operator BOOLEAN already defined or declared.",
+        },
+        {
+          location: "line 2, col 1 to line 2, col 12 of module M",
+          message: "Symbol BOOLEAN is a built-in operator, and cannot be redefined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a constant named after a built-in operator",
+      "CONSTANT BOOLEAN",
+      [
+        {
+          location: "line 2, col 10 to line 2, col 16 of module M",
+          message: "Symbol BOOLEAN is a built-in operator, and cannot be redefined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a variable named after a built-in operator",
+      "VARIABLE TRUE",
+      [
+        {
+          location: "line 2, col 10 to line 2, col 13 of module M",
+          message: "Symbol TRUE is a built-in operator, and cannot be redefined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a constant named after an operator of an extended module",
+      "EXTENDS Naturals\nCONSTANT Nat",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Nat': this definition or declaration conflicts \nwith the one at line 14, col 1 to line 14, col 16 of module Naturals.",
+        },
+      ],
+      [],
+    ],
     [
       "a nested module constant named after an enclosing variable",
       "VARIABLE y\n---- MODULE Inner ----\nCONSTANT y\n====",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'y': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+      ],
+      [],
     ],
-    ["a definition after an instance that imports it", "INSTANCE Naturals\nNat == 1"],
-    ["a named instance and a definition with one name", "I == 1\nI == INSTANCE Naturals"],
-    ["duplicate operator parameters", "F(a, a) == a"],
+    [
+      "a definition after an instance that imports it",
+      "INSTANCE Naturals\nNat == 1",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 8 of module M",
+          message: "Operator Nat already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 8 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Nat.  \nThis duplicates the one at line 14, col 1 to line 14, col 16 of module Naturals.",
+        },
+      ],
+    ],
+    [
+      "a named instance and a definition with one name",
+      "I == 1\nI == INSTANCE Naturals",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 22 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "duplicate operator parameters",
+      "F(a, a) == a",
+      [
+        {
+          location: "line 2, col 6 to line 2, col 6 of module M",
+          message:
+            "Multiply-defined symbol 'a': this definition or declaration conflicts \nwith the one at line 2, col 3 to line 2, col 3 of module M.",
+        },
+      ],
+      [],
+    ],
     [
       "a LAMBDA parameter named after a definition",
       "B == 1\nG(Op(_)) == Op(1)\nF == G(LAMBDA B : B)",
+      [
+        {
+          location: "line 4, col 15 to line 4, col 15 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
     ],
-    ["a function bound named after a definition", "y == 1\nf[y \\in {1}] == y"],
-    ["duplicate names in a tuple pattern", "F == \\E <<a, a>> \\in {<<1, 2>>} : TRUE"],
-    ["a LET definition named after an enclosing one", "F == LET A == 1 IN LET A == 2 IN A"],
-    ["a LOCAL definition of an extended operator", "EXTENDS FiniteSets\nLOCAL Cardinality(S) == 0"],
+    [
+      "a function bound named after a definition",
+      "y == 1\nf[y \\in {1}] == y",
+      [
+        {
+          location: "line 3, col 3 to line 3, col 3 of module M",
+          message:
+            "Multiply-defined symbol 'y': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "duplicate names in a tuple pattern",
+      "F == \\E <<a, a>> \\in {<<1, 2>>} : TRUE",
+      [
+        {
+          location: "line 2, col 14 to line 2, col 14 of module M",
+          message:
+            "Multiply-defined symbol 'a': this definition or declaration conflicts \nwith the one at line 2, col 11 to line 2, col 11 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a LET definition named after an enclosing one",
+      "F == LET A == 1 IN LET A == 2 IN A",
+      [
+        {
+          location: "line 2, col 24 to line 2, col 29 of module M",
+          message: "Operator A already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 2, col 24 to line 2, col 29 of module M",
+          message:
+            "Multiple declarations or definitions for symbol A.  \nThis duplicates the one at line 2, col 10 to line 2, col 15 of module M.",
+        },
+      ],
+    ],
+    [
+      "a LOCAL definition of an extended operator",
+      "EXTENDS FiniteSets\nLOCAL Cardinality(S) == 0",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 25 of module M",
+          message: "Operator Cardinality already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 25 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Cardinality.  \nThis duplicates the one at line 21, col 1 to line 27, col 11 of module FiniteSets.",
+        },
+      ],
+    ],
     [
       "a nested module definition named after an outer one",
       "B == 1\n---- MODULE Inner ----\nB == 2\n====\nI == INSTANCE Inner",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 6 of module M",
+          message: "Operator B already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 4, col 1 to line 4, col 6 of module M",
+          message:
+            "Multiple declarations or definitions for symbol B.  \nThis duplicates the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
     ],
-  ])("rejects %s as multiply defined", async (_, source) => {
-    await expect(checkSource(source)).rejects.toThrow(/Multiply-defined symbol/);
+    [
+      "a definition of another arity",
+      "B == 1\nB(a) == a",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 9 of module M",
+          message: "Operator B already defined or declared.",
+        },
+        {
+          location: "line 3, col 1 to line 3, col 9 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a function defined twice",
+      "f[n \\in {1}] == n\nf[n \\in {1}] == n",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 17 of module M",
+          message: "Function name `f' already defined or declared.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an operator named after a function",
+      "f[n \\in {1}] == n\nf == 1",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "Operator f already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message:
+            "Multiple declarations or definitions for symbol f.  \nThis duplicates the one at line 2, col 1 to line 2, col 17 of module M.",
+        },
+      ],
+    ],
+    [
+      "a parameter named after a built-in operator",
+      "F(TRUE) == 1",
+      [
+        {
+          location: "line 2, col 3 to line 2, col 6 of module M",
+          message: "Symbol TRUE is a built-in operator, and cannot be redefined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a recursive operator defined twice",
+      "RECURSIVE F(_)\nF(n) == n\nF(n) == n\nG == 1",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message: "Operator F already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message:
+            "Multiple declarations or definitions for symbol F.  \nThis duplicates the one at line 3, col 1 to line 3, col 9 of module M.",
+        },
+      ],
+    ],
+    [
+      "a theorem named after a definition",
+      "B == 1\nTHEOREM B == TRUE",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 17 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a definition named after a theorem",
+      "THEOREM B == TRUE\nB == 1",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "Operator B already defined or declared.",
+        },
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 17 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a NEW symbol named after a definition",
+      "B == 1\nTHEOREM ASSUME NEW B PROVE TRUE",
+      [
+        {
+          location: "line 3, col 20 to line 3, col 20 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a module defined twice",
+      "---- MODULE Inner ----\n====\n---- MODULE Inner ----\n====",
+      [
+        {
+          location: "line 4, col 1 to line 5, col 4 of module M",
+          message:
+            "Multiply-defined module 'Inner': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 3, col 4 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "duplicate instance parameters",
+      "---- MODULE Inner ----\nCONSTANT c\n====\nI(c, c) == INSTANCE Inner",
+      [
+        {
+          location: "line 5, col 6 to line 5, col 6 of module M",
+          message:
+            "Multiply-defined symbol 'c': this definition or declaration conflicts \nwith the one at line 5, col 3 to line 5, col 3 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a definition and a declaration of two extended modules",
+      "---- MODULE A ----\nFoo == 1\nBaz == 1\n====\n---- MODULE B ----\nFoo(a) == 2\nCONSTANT Baz\n====\n---- MODULE C ----\nEXTENDS A, B\n====",
+      [
+        {
+          location: "line 8, col 10 to line 8, col 12 of module M",
+          message:
+            "The declaration of 'Baz' conflicts with \nits definition at line 4, col 1 to line 4, col 8 of module M.",
+        },
+      ],
+      [
+        {
+          location: "line 7, col 1 to line 7, col 11 of module M",
+          message:
+            "Warning: the definition of 'Foo' conflicts with \nits definition at line 3, col 1 to line 3, col 8 of module M.",
+        },
+      ],
+    ],
+  ])("rejects %s like SANY", async (_, source, errors, warnings) => {
+    await expect(checkSource(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
 
   it.each([
-    ["a definition before an instance that imports it", "Nat == 1\nINSTANCE Naturals"],
+    [
+      "a definition before an instance that imports it",
+      "Nat == 1\nINSTANCE Naturals",
+      "*** Warnings: 1\n\nline 14, col 1 to line 14, col 16 of module Naturals\n\nMultiple declarations or definitions for symbol Nat.  \nThis duplicates the one at line 2, col 1 to line 2, col 8 of module M.\n\n\n",
+    ],
+    [
+      "a named instance defined twice",
+      "J == INSTANCE Naturals\nJ == INSTANCE Naturals",
+      "*** Warnings: 1\n\nline 3, col 1 to line 3, col 22 of module M\n\nMultiple declarations or definitions for symbol J.  \nThis duplicates the one at line 2, col 1 to line 2, col 22 of module M.\n\n\n",
+    ],
+    [
+      "an assumption named twice",
+      "ASSUME A == TRUE\nASSUME A == TRUE",
+      "*** Warnings: 1\n\nline 3, col 1 to line 3, col 16 of module M\n\nMultiple declarations or definitions for symbol A.  \nThis duplicates the one at line 2, col 1 to line 2, col 16 of module M.\n\n\n",
+    ],
+    [
+      "a definition of two extended modules",
+      "---- MODULE A ----\nFoo == 1\n====\n---- MODULE B ----\nFoo(a) == 2\n====\n---- MODULE C ----\nEXTENDS A, B\nF == Foo\n====\nI == INSTANCE C",
+      "*** Warnings: 1\n\nline 6, col 1 to line 6, col 11 of module M\n\nWarning: the definition of 'Foo' conflicts with \nits definition at line 3, col 1 to line 3, col 8 of module M.\n\n\n",
+    ],
+    [
+      "a definition an instance copies from an extended module with parameters",
+      "---- MODULE P ----\nVARIABLE sv\nShared == 0\n====\n---- MODULE In1 ----\nEXTENDS P\n====\n---- MODULE Q ----\nEXTENDS P\nINSTANCE In1\n====",
+      "*** Warnings: 1\n\nline 11, col 1 to line 11, col 12 of module M\n\nMultiple declarations or definitions for symbol Shared.  \nThis duplicates the one at line 4, col 1 to line 4, col 11 of module M.\n\n\n",
+    ],
+    [
+      "two NEW symbols with one name",
+      "THEOREM ASSUME NEW a, NEW a PROVE TRUE",
+      "*** Warnings: 1\n\nline 2, col 27 to line 2, col 27 of module M\n\nMultiple declarations or definitions for symbol a.  \nThis duplicates the one at line 2, col 20 to line 2, col 20 of module M.\n\n\n",
+    ],
+    [
+      "a variable and a constant of two extended modules",
+      "---- MODULE A ----\nVARIABLE Baz\n====\n---- MODULE B ----\nCONSTANT Baz\n====\n---- MODULE C ----\nEXTENDS A, B\nF == Baz\n====",
+      "*** Warnings: 1\n\nline 6, col 10 to line 6, col 12 of module M\n\nWarning: the declaration of 'Baz' conflicts with \nits declaration at line 3, col 10 to line 3, col 12 of module M.\n\n\n",
+    ],
+  ])("warns of %s like SANY", async (_, source, warnings) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\n${source}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([result.status, printed[0]]).toEqual(["success", warnings]);
+  });
+
+  it("reports RECURSIVE declarations it never defines like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nRECURSIVE F(_), F(_)\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: [
+          {
+            location: "line 5, col 11 to line 5, col 14 of module M",
+            message: "Symbol F declared in RECURSIVE statement but not defined.",
+          },
+          {
+            location: "line 5, col 17 to line 5, col 20 of module M",
+            message: "Symbol F declared in RECURSIVE statement but not defined.",
+          },
+        ],
+        warnings: [
+          {
+            location: "line 5, col 17 to line 5, col 20 of module M",
+            message:
+              "Multiple declarations or definitions for symbol F.  \nThis duplicates the one at line 5, col 11 to line 5, col 14 of module M.",
+          },
+        ],
+      },
+    });
+  });
+
+  it.each([
     ["a bound variable before a definition of that name", "F == \\E B \\in {1} : TRUE\nB == 1"],
     [
       "sibling quantifiers with one name",
