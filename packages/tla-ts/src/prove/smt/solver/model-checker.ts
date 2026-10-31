@@ -17,9 +17,10 @@ import { VarSubst } from "./var-subst";
 const MBQI_MAX_CEXS = 1;
 const MBQI_MAX_ITERATIONS = 1000;
 
+// An instance whose bindings start at offset in m_pinned_exprs.
 interface Instance {
   quantifier: number;
-  bindings: number[];
+  offset: number;
   generation: number;
 }
 
@@ -91,6 +92,8 @@ export class ModelChecker {
   private maxCexs = MBQI_MAX_CEXS;
   private iterationIndex = 0;
   private newInstances: Instance[] = [];
+  // m_pinned_exprs: the bindings and quantifier of each new instance, held until they are asserted.
+  private pinnedExprs: RefVector;
   private root2value = new Map<Enode, number>();
   private value2expr: Map<number, number> | null = null;
   private freshExprs: number[] = [];
@@ -100,7 +103,9 @@ export class ModelChecker {
     private context: Context,
     private modelFinder: ModelFinder,
     private qmanager: DefaultQuantifierManager,
-  ) {}
+  ) {
+    this.pinnedExprs = new RefVector(context.manager);
+  }
 
   private get manager() {
     return this.context.manager;
@@ -199,9 +204,12 @@ export class ModelChecker {
       if (manager.containsModelValue(skValue)) skValue = this.getTypeCompatibleTerm(skValue);
       bindings[numDecls - index - 1] = skValue;
     }
+    const offset = this.pinnedExprs.size;
+    for (const binding of bindings) this.pinnedExprs.push(binding);
+    this.pinnedExprs.push(quantifier);
     this.newInstances.push({
       quantifier,
-      bindings,
+      offset,
       generation: Math.max(this.qmanager.getGeneration(quantifier), maxGeneration),
     });
     return true;
@@ -310,15 +318,19 @@ export class ModelChecker {
     const context = this.context;
     for (const instance of this.newInstances) {
       if (!context.isBInternalized(instance.quantifier)) continue;
-      const bindings = instance.bindings.map((binding) => {
+      const numDecls = this.manager.getQuantifier(instance.quantifier).sorts.length;
+      const bindings = this.pinnedExprs.items.slice(instance.offset, instance.offset + numDecls);
+      const nodes = bindings.map((binding) => {
         if (!context.isEInternalized(binding))
           context.internalize(binding, false, instance.generation);
         const node = context.getEnode(binding);
         if (node === undefined) throw new Error("the binding was not internalized");
         return node;
       });
-      this.qmanager.addInstance(instance.quantifier, bindings, instance.generation);
+      this.qmanager.addInstance(instance.quantifier, nodes, instance.generation);
     }
+    // reset_new_instances.
+    this.pinnedExprs.reset();
     this.newInstances = [];
   }
 }
