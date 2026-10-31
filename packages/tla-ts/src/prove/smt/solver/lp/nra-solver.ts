@@ -3,18 +3,19 @@
 // refine, with every monomial and term column replaced by its polynomial, go to nlsat with the
 // current values. When the values violate one, nlsat's linear cell around them becomes a lemma.
 // Deviations from Z3:
-// - nlsat input out of scope (NlsatOutOfScope) answers unknown, as Z3 does for its own unsupported
-//   cases. That is a polynomial of degree 2 or more in the variable nlsat projects.
+// - nlsat input it does not implement (NlsatUnsupportedError) answers unknown. That is a root atom
+//   of a polynomial of degree 2 or more in its variable, or a linear cell around an irrational
+//   section, where Z3 exits the process (levelwise.cpp, add_linear_approximations).
 // - nlsat's check never answers satisfied, because its solver starts with the clause [true],
 //   whose literal is unassigned outside search. So the satisfied branch of check_assignment,
 //   which switches nla to nlsat's model, is left out.
 // - A lemma literal is always linear, because the cell bounds are, so add_mul_def, which defines a
 //   fresh monomial column, is left out. A nonlinear literal would answer unknown.
-import { SmtInvariantError } from "../../../../errors";
+import { NlsatUnsupportedError, SmtInvariantError } from "../../../../errors";
 import { L_FALSE, L_UNDEF } from "../lbool";
 import { Rational, getLcm } from "../rational";
 import { NlsatSolver } from "../nlsat/solver";
-import { NlsatOutOfScope, type Polynomial } from "../nlsat/polynomial";
+import type { Polynomial } from "../nlsat/polynomial";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, type LarConstraint } from "./constraints";
 import { Explanation } from "./explanation";
 import type { LarSolver } from "./lar-solver";
@@ -162,7 +163,7 @@ export class NraSolver {
       try {
         return this.getClause();
       } catch (error) {
-        if (error instanceof NlsatOutOfScope) return null;
+        if (error instanceof NlsatUnsupportedError) return null;
         throw error;
       }
     })();

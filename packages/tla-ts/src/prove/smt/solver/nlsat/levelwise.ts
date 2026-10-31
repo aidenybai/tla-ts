@@ -8,11 +8,11 @@
 // polynomials (id_gen in polynomial.cpp), so its ids depend on its reference counting. Here ids
 // follow creation order. Either choice bounds a valid cell, but the bounding polynomial can be a
 // different one with the same root, such as x0 for -x0. Differential tests count these as ties.
+import { NlsatUnsupportedError } from "../../../../errors";
 import { Rational } from "../rational";
 import type { AlgebraicManager, Anum } from "./algebraic";
 import {
   NULL_VAR,
-  NlsatOutOfScope,
   type Polynomial,
   type PolynomialCache,
   type PolynomialManager,
@@ -527,9 +527,8 @@ class Levelwise {
     });
     if (interval.isSection) {
       if (!this.am.isRational(value))
-        throw new NlsatOutOfScope(
-          "a linear cell around an irrational section, which Z3 leaves unimplemented",
-        );
+        // Z3's NOT_IMPLEMENTED_YET exits the process here.
+        throw new NlsatUnsupportedError("a linear cell around an irrational section");
       if (this.pm.totalDegree(interval.lower!) > 1) {
         const polynomial = this.addLinearPolyFromRoot(value, true);
         this.rootFunctions.splice(this.lowerRf, 0, mkRootFunction(polynomial, value));
