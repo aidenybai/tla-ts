@@ -1,6 +1,7 @@
 // Ported from Z3 (src/smt/smt_context.h, src/smt/smt_internalizer.cpp), MIT license, see
 // z3-license.txt. The state of the SMT kernel and the translation of formulas into it: Boolean
 // variables, enodes, clauses and relevancy watches. The search lives in context.ts.
+import { SmtInvariantError } from "../../../errors";
 import {
   AstManager,
   FAMILY_ARITH,
@@ -18,7 +19,6 @@ import {
   SORT_BOOL,
   isArithSort,
 } from "./ast";
-import { KERNEL_ARITH_OPTIONS } from "./arith-rewriter";
 import { CaseSplitQueue } from "./case-split-queue";
 import { CgTable, getCongruenceJustification } from "./cg-table";
 import {
@@ -54,10 +54,11 @@ import {
 } from "./literal";
 import type { DefaultQuantifierManager } from "./quantifier-manager";
 import { RelevancyPropagator } from "./relevancy";
-import { Rewriter } from "./rewriter";
+import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { sortByKey } from "./sort";
 import type { TheoryLra } from "./theory-lra";
-import { shrink } from "./array";
+import { setAt, shrink } from "./array";
+import { StickyGenerations } from "./sticky-generations";
 
 // DEEP_EXPR_THRESHOLD: the depth above which internalize_deep sorts an expression's subterms.
 const DEEP_EXPR_THRESHOLD = 1024;
@@ -76,6 +77,8 @@ const UNDO_TRUE_FIRST = 4;
 const UNDO_CGC_GENERATIONS = 5;
 const UNDO_MERGE_TF = 6;
 const UNDO_ENODE_FLAG = 7;
+
+const getLiteralKey = (literal: number) => literal;
 export const UNDO_ADD_EQ = 8;
 export const UNDO_TH_VAR = 9;
 
@@ -85,6 +88,12 @@ interface NewEq {
   justification: EqJustification;
 }
 
+// m_conflict and m_not_l: the justification of the conflict, and the literal it falsifies, if any.
+interface Conflict {
+  justification: BJustification;
+  notLiteral: Literal | null;
+}
+
 export abstract class Internalizer {
   readonly trueLiteral = TRUE_LITERAL;
   readonly falseLiteral = FALSE_LITERAL;
@@ -92,8 +101,7 @@ export abstract class Internalizer {
   readonly relevancy: RelevancyPropagator;
   readonly caseSplitQueue: CaseSplitQueue;
   readonly cgTable = new CgTable();
-  // m_sticky_generation_updates: the generations that update_generation lowered, by node.
-  private stickyGenerationUpdates = new Map<Enode, number>();
+  private stickyGenerations = new StickyGenerations();
   abstract readonly theory: TheoryLra;
   abstract readonly qmanager: DefaultQuantifierManager;
 
@@ -118,12 +126,16 @@ export abstract class Internalizer {
   protected assignment: number[] = [];
   // Like Z3's watch lists, a literal's lists are created when the first clause is added.
   protected watches: (Clause[] | undefined)[] = [];
+  // The false literals that simplify_aux_clause_literals removes from the clause mkClause makes.
+  private removedLiterals: Literal[] = [];
   // The binary clauses of the binary clause optimization: the literals each literal propagates when it
   // becomes true, which Z3 visits newest first and before the clauses.
   protected binaryWatches: (Literal[] | undefined)[] = [];
   private binJustifications: (BinJustification | undefined)[] = [];
   // Per expression.
-  protected exprToBoolVar: (BoolVar | undefined)[] = [];
+  // The Boolean variable of each expression, or -1. A typed array keeps the element loads of every
+  // context monomorphic, where the holes of a growing array give each its own elements kind.
+  private exprToBoolVar = new Int32Array(1024).fill(-1);
   protected exprToEnode: (Enode | undefined)[] = [];
 
   assignedLiterals: Literal[] = [];
@@ -137,8 +149,7 @@ export abstract class Internalizer {
   protected auxClauses: Clause[] = [];
   protected lemmas: Clause[] = [];
   protected clausesToReinit: Clause[][] = [];
-  protected conflict: BJustification | undefined = undefined;
-  protected notLiteral: Literal | null = null;
+  protected conflict: Conflict | null = null;
   protected eqPropagationQueue: NewEq[] = [];
   enodes: Enode[] = [];
   protected decl2enodes = new Map<number, Enode[]>();
@@ -155,11 +166,7 @@ export abstract class Internalizer {
     isRelevancyEnabled: boolean,
     isDelayingNewCaseSplits: boolean,
   ) {
-    this.rewriter = new Rewriter(manager, {
-      isEliminatingAnd: false,
-      arith: KERNEL_ARITH_OPTIONS,
-      isRewritingPatterns: true,
-    });
+    this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
     this.relevancy = new RelevancyPropagator(
       {
         manager,
@@ -184,7 +191,7 @@ export abstract class Internalizer {
     this.assignment[1] = L_FALSE;
     this.justifications[0] = "axiom";
     this.trueEnode = this.mkEnode(manager.trueExpr, true, true, false);
-    this.exprToBoolVar[manager.falseExpr] = TRUE_BOOL_VAR;
+    this.setExprBoolVar(manager.falseExpr, TRUE_BOOL_VAR);
     this.falseEnode = this.mkEnode(manager.falseExpr, true, true, false);
   }
 
@@ -195,9 +202,8 @@ export abstract class Internalizer {
   protected abstract propagateBoolVarEnode(boolVar: BoolVar): void;
 
   setConflict(justification: BJustification, notLiteral: Literal | null) {
-    if (this.conflict !== undefined) return;
-    this.conflict = justification;
-    this.notLiteral = notLiteral;
+    if (this.conflict !== null) return;
+    this.conflict = { justification, notLiteral };
   }
 
   pushEq(lhs: Enode, rhs: Enode, justification: EqJustification) {
@@ -283,16 +289,28 @@ export abstract class Internalizer {
   }
 
   isBInternalized(expr: number) {
-    return this.exprToBoolVar[expr] !== undefined;
+    return this.findBoolVar(expr) !== undefined;
   }
 
   findBoolVar(expr: number) {
-    return this.exprToBoolVar[expr];
+    const boolVar = expr < this.exprToBoolVar.length ? this.exprToBoolVar[expr] : -1;
+    return boolVar === -1 ? undefined : toBoolVar(boolVar);
+  }
+
+  private setExprBoolVar(expr: number, boolVar: number) {
+    if (expr >= this.exprToBoolVar.length) {
+      const exprToBoolVar = new Int32Array(Math.max(2 * this.exprToBoolVar.length, expr + 1)).fill(
+        -1,
+      );
+      exprToBoolVar.set(this.exprToBoolVar);
+      this.exprToBoolVar = exprToBoolVar;
+    }
+    this.exprToBoolVar[expr] = boolVar;
   }
 
   getBoolVar(expr: number) {
-    const boolVar = this.exprToBoolVar[expr];
-    if (boolVar === undefined) throw new Error("the formula has no Boolean variable");
+    const boolVar = this.findBoolVar(expr);
+    if (boolVar === undefined) throw new SmtInvariantError("the formula has no Boolean variable");
     return boolVar;
   }
 
@@ -379,7 +397,7 @@ export abstract class Internalizer {
   }
 
   isInconsistent() {
-    return this.conflict !== undefined;
+    return this.conflict !== null;
   }
 
   // get_generation: the generation of the congruence root. Equalities have generation 0, since
@@ -406,12 +424,37 @@ export abstract class Internalizer {
   ) {
     this.setGeneration(first, firstGeneration);
     this.setGeneration(second, secondGeneration);
-    // apply_sticky_updates: a lowered generation outlives the merge that it was made under.
-    for (const entry of this.stickyGenerationUpdates) {
-      if (entry[1] < firstGeneration && this.isCongruent(entry[0], first))
-        this.setGeneration(first, entry[1]);
-      else if (entry[1] < secondGeneration && this.isCongruent(entry[0], second))
-        this.setGeneration(second, entry[1]);
+    // apply_sticky_updates: a lowered generation outlives the merge that it was made under. Only the
+    // updates of the two nodes' declarations can be congruent to them, and a node with an update
+    // uses the congruence table, so it has arguments and is no equality.
+    this.applyStickyUpdates(first, firstGeneration, second, secondGeneration);
+    if (second.decl !== first.decl) this.applyStickyUpdates(second, secondGeneration, null, 0);
+  }
+
+  private applyStickyUpdates(
+    first: Enode,
+    firstGeneration: number,
+    second: Enode | null,
+    secondGeneration: number,
+  ) {
+    const group = this.stickyGenerations.getGroup(first.decl);
+    if (group === undefined) return;
+    const firstRoot = first.args[0].root;
+    const secondRoot = second !== null && second.decl === first.decl ? second.args[0].root : null;
+    for (let index = 0; index < group.nodes.length; index++) {
+      const node = group.nodes[index];
+      if (node === null) continue;
+      const generation = group.generations[index];
+      const root = node.args[0].root;
+      if (generation < firstGeneration && root === firstRoot && this.isCongruent(node, first))
+        this.setGeneration(first, generation);
+      else if (
+        second !== null &&
+        generation < secondGeneration &&
+        root === secondRoot &&
+        this.isCongruent(node, second)
+      )
+        this.setGeneration(second, generation);
     }
   }
 
@@ -437,7 +480,7 @@ export abstract class Internalizer {
     const boolVar = toBoolVar(this.numBoolVars++);
     const literal = mkLiteral(boolVar);
     this.manager.incRef(expr);
-    this.exprToBoolVar[expr] = boolVar;
+    this.setExprBoolVar(expr, boolVar);
     this.boolVar2Expr[boolVar] = expr;
     this.levels[boolVar] = 0;
     this.internLevels[boolVar] = this.scopeLevel;
@@ -470,7 +513,7 @@ export abstract class Internalizer {
     const expr = this.boolVar2Expr[boolVar];
     this.caseSplitQueue.delVar(boolVar);
     if (this.isQuantifierFlags[boolVar]) this.qmanager.del(expr);
-    this.exprToBoolVar[expr] = undefined;
+    this.exprToBoolVar[expr] = -1;
     this.justifications[boolVar] = null;
     this.watches[literal] = undefined;
     this.watches[literal + 1] = undefined;
@@ -516,7 +559,8 @@ export abstract class Internalizer {
         ? NO_ENODES
         : manager.args[expr].map((arg) => {
             const argNode = this.exprToEnode[arg];
-            if (argNode === undefined) throw new Error("an argument was not internalized");
+            if (argNode === undefined)
+              throw new SmtInvariantError("an argument was not internalized");
             return argNode;
           });
     const isEq = !isSuppressingArgs && manager.getOp(expr) === OP_EQ;
@@ -533,7 +577,7 @@ export abstract class Internalizer {
     );
     for (const arg of args) arg.root.addParent(node);
     if (manager.isUniqueValue(expr)) node.isInterpreted = true;
-    this.exprToEnode[expr] = node;
+    setAt(this.exprToEnode, expr, node);
     // m_e_internalized_stack holds a reference to the expression until the enode is deleted.
     manager.incRef(expr);
     this.trailKinds.push(UNDO_MK_ENODE);
@@ -570,7 +614,7 @@ export abstract class Internalizer {
     if (node.args.length > 0 && !node.isEq) this.decl2enodes.get(node.decl)?.pop();
     for (const arg of node.args) arg.root.parents.pop();
     this.manager.decRef(node.owner);
-    this.stickyGenerationUpdates.delete(node);
+    this.stickyGenerations.delete(node);
   }
 
   protected mergeCgcGenerations(first: Enode, firstGeneration: number, second: Enode) {
@@ -609,7 +653,7 @@ export abstract class Internalizer {
     if (node.isEq) return;
     if (this.generation > 0 && this.generation < this.getGeneration(node)) {
       this.setGeneration(node, this.generation);
-      if (node.usesCgTable()) this.stickyGenerationUpdates.set(node, this.generation);
+      if (node.usesCgTable()) this.stickyGenerations.set(node, this.generation);
     }
   }
 
@@ -995,7 +1039,7 @@ export abstract class Internalizer {
   }
 
   private simplifyAuxClauseLiterals(literals: Literal[], removed: Literal[]) {
-    sortByKey(literals, (literal) => literal);
+    sortByKey(literals, getLiteralKey);
     let previous: Literal | null = null;
     let kept = 0;
     for (const literal of literals) {
@@ -1020,7 +1064,7 @@ export abstract class Internalizer {
   // simplify_aux_lemma_literals: unlike an aux clause, a theory lemma keeps its false literals, so it
   // needs no unit resolution justification.
   private simplifyAuxLemmaLiterals(literals: Literal[]) {
-    sortByKey(literals, (literal) => literal);
+    sortByKey(literals, getLiteralKey);
     let previous: Literal | null = null;
     let kept = 0;
     for (const literal of literals) {
@@ -1147,14 +1191,15 @@ export abstract class Internalizer {
     let literals = input;
     let justification = inputJustification;
     if (kind === CLS_TH_LEMMA) {
-      literals = [...input];
+      literals = input.slice();
       if (!this.simplifyAuxLemmaLiterals(literals)) return null;
     } else if (kind !== CLS_LEARNED) {
-      literals = [...input];
-      const removed: Literal[] = [];
+      literals = input.slice();
+      const removed = this.removedLiterals;
+      shrink(removed, 0);
       if (!this.simplifyAuxClauseLiterals(literals, removed)) return null;
       if (removed.length > 0)
-        justification = new UnitResolutionJustification(justification, [...removed]);
+        justification = new UnitResolutionJustification(justification, removed.slice());
     }
     if (literals.length === 0) {
       this.setConflict(justification ?? "axiom", null);

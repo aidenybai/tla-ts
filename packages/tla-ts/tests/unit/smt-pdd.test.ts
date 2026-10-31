@@ -2,11 +2,14 @@ import { describe, expect, it } from "vite-plus/test";
 import { KIND_EQ, KIND_GE, KIND_LE } from "../../src/prove/smt/solver/lp/constraints";
 import { mkLeaf, linearize } from "../../src/prove/smt/solver/lp/dependency";
 import { LarSolver } from "../../src/prove/smt/solver/lp/lar-solver";
-import { isConflictLemma, NlaCore } from "../../src/prove/smt/solver/lp/nla-core";
-import { evaluatePdd, Pdd, PddManager, PddMemoryOut } from "../../src/prove/smt/solver/lp/pdd";
+import { NlaCore } from "../../src/prove/smt/solver/lp/nla-core";
+import { isConflictLemma } from "../../src/prove/smt/solver/lp/nla-types";
+import { PddMemoryOutError } from "../../src/errors";
+import { evaluatePdd, Pdd, PddManager } from "../../src/prove/smt/solver/lp/pdd";
 import { PddSimplifier } from "../../src/prove/smt/solver/lp/pdd-simplifier";
 import { PddSolver, SOLVED } from "../../src/prove/smt/solver/lp/pdd-solver";
 import { Rational } from "../../src/prove/smt/solver/rational";
+import { ResourceLimit } from "../../src/prove/smt/solver/rlimit";
 
 const rational = (value: number) => Rational.fromNumber(value);
 
@@ -248,7 +251,7 @@ describe("pdd", () => {
     manager.setMaxNumNodes(0);
     let value = 2;
     while (manager.numNodes() < 1036) manager.mkVal(rational(value++));
-    expect(() => manager.mkVal(rational(value))).toThrow(PddMemoryOut);
+    expect(() => manager.mkVal(rational(value))).toThrow(PddMemoryOutError);
     expect(`${a.mul(b)}`).toBe("v1*v0");
     expect(manager.mkVal(rational(value)).val()).toEqual(rational(value));
   });
@@ -327,7 +330,7 @@ describe("nla grobner", () => {
     const lra = new LarSolver(() => false);
     const x = lra.addVar(0, isXInt);
     const m = lra.addVar(1, true);
-    const core = new NlaCore(lra);
+    const core = new NlaCore(lra, new ResourceLimit(Infinity));
     core.addMonic(m, [x, x]);
     const constraints = addBounds(lra, m, x);
     for (const constraint of constraints) lra.activate(constraint);

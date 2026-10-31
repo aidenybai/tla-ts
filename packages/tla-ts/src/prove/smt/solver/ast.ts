@@ -1,5 +1,7 @@
 // Ported from Z3 (src/ast/ast.h, src/ast/ast.cpp), MIT license, see z3-license.txt.
 // A hash-consed DAG of applications, de Bruijn variables and quantifiers, as in Z3's ast_manager.
+import { SmtInvariantError } from "../../../errors";
+import { FlatLiterals } from "./flat-literals";
 import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
@@ -52,13 +54,12 @@ export const OP_DIV0 = 27;
 export const OP_IDIV0 = 28;
 export const OP_MOD0 = 29;
 export const OP_UNINTERPRETED = 30;
-export const OP_MODEL_VALUE = 31;
+const OP_MODEL_VALUE = 31;
 
 // A Z3 symbol: a string, or a number for a numerical symbol, which Z3 prints as k!n.
 export type SmtSymbol = string | number;
 
-export const getSymbolName = (symbol: SmtSymbol) =>
-  typeof symbol === "number" ? `k!${symbol}` : symbol;
+const getSymbolName = (symbol: SmtSymbol) => (typeof symbol === "number" ? `k!${symbol}` : symbol);
 
 export interface FuncDecl {
   name: SmtSymbol;
@@ -71,7 +72,7 @@ export interface FuncDecl {
   smallId: number;
 }
 
-export interface QuantifierData {
+interface QuantifierData {
   isForall: boolean;
   sorts: number[];
   // The names of the variables, which tell apart quantifiers that differ only in them, as in Z3.
@@ -220,6 +221,13 @@ const getIntegerHash = (value: bigint) => {
 const getInfoHash = (family: number, kind: number, parameterHashes: number[]) =>
   mkMix(family, kind, parameterHashes.length === 0 ? 0 : getCompositeHash(parameterHashes));
 
+// A builtin declaration that Z3 makes once per signature: its small id, and the references that
+// applications and model values hold to it.
+interface SignatureDecl {
+  smallId: number;
+  refCount: number;
+}
+
 export class AstManager {
   kinds: number[] = [];
   // The declaration of an application.
@@ -236,6 +244,8 @@ export class AstManager {
   // Z3's hash of each expression, which orders Z3's hash tables.
   hashes: number[] = [];
   quantifiers = new Map<number, QuantifierData>();
+  // The marks that the rewriters of this manager share to flatten conjunctions and disjunctions.
+  readonly flatLiterals = new FlatLiterals(this);
   funcDecls: FuncDecl[] = [];
   sortNames: string[] = ["Bool", "Int", "Real"];
   private sortHashes = [
@@ -261,8 +271,7 @@ export class AstManager {
   private numDecls = FIRST_DECLARED_SMALL_ID;
   // The small id and the number of live applications of each builtin declaration that Z3 makes
   // per signature, by its signature.
-  private signatureSmallIds = new Map<string, number>();
-  private signatureRefCounts = new Map<string, number>();
+  private signatureDecls = new Map<string, SignatureDecl>();
   // The references to each user declaration: the script holds the declared ones, and applications
   // and models hold the fresh ones. A deleted declaration keeps its small id here, in case an
   // application of it is created again.
@@ -317,9 +326,17 @@ export class AstManager {
     return this.numLive + FIRST_FREE_ID - 2 + this.numDecls;
   }
 
+  // The declaration that a held signature names.
+  private getSignatureDecl(key: string) {
+    const signatureDecl = this.signatureDecls.get(key);
+    if (signatureDecl === undefined)
+      throw new SmtInvariantError(`the signature ${key} is not held`);
+    return signatureDecl;
+  }
+
   private mkSmallId() {
     this.numDecls++;
-    return this.freeSmallIds.length > 0 ? (this.freeSmallIds.pop() as number) : this.nextSmallId++;
+    return this.freeSmallIds.pop() ?? this.nextSmallId++;
   }
 
   // finite_set_decl_plugin::init, which the first final check of theory_finite_set runs when it
@@ -379,7 +396,7 @@ export class AstManager {
     const signature = this.getSignature(expr);
     return signature === null
       ? this.funcDecls[this.decls[expr]].smallId
-      : (this.signatureSmallIds.get(signature[0]) as number);
+      : this.getSignatureDecl(signature[0]).smallId;
   }
 
   // An application holds its declaration, which Z3 makes with its first application.
@@ -392,14 +409,13 @@ export class AstManager {
     const signature = this.getSignature(expr);
     if (signature === null) return;
     const key = signature[0];
-    const refCount = this.signatureRefCounts.get(key);
-    if (refCount !== undefined) {
-      this.signatureRefCounts.set(key, refCount + 1);
+    const signatureDecl = this.signatureDecls.get(key);
+    if (signatureDecl !== undefined) {
+      signatureDecl.refCount++;
       return;
     }
     const smallId = this.mkSmallId();
-    this.signatureSmallIds.set(key, smallId);
-    this.signatureRefCounts.set(key, signature[1] ? 2 : 1);
+    this.signatureDecls.set(key, { smallId, refCount: signature[1] ? 2 : 1 });
     if (decl !== OP_NUM && this.funcDecls[decl].family === FAMILY_MODEL_VALUE)
       this.funcDecls[decl].smallId = smallId;
   }
@@ -417,15 +433,11 @@ export class AstManager {
     const signature = this.getSignature(expr);
     if (signature === null) return -1;
     const key = signature[0];
-    const refCount = (this.signatureRefCounts.get(key) as number) - 1;
-    if (refCount > 0) {
-      this.signatureRefCounts.set(key, refCount);
-      return -1;
-    }
-    const smallId = this.signatureSmallIds.get(key) as number;
-    this.signatureRefCounts.delete(key);
-    this.signatureSmallIds.delete(key);
-    return smallId;
+    const signatureDecl = this.getSignatureDecl(key);
+    signatureDecl.refCount--;
+    if (signatureDecl.refCount > 0) return -1;
+    this.signatureDecls.delete(key);
+    return signatureDecl.smallId;
   }
 
   incRef(expr: number) {
@@ -436,14 +448,13 @@ export class AstManager {
   incDeclRef(decl: number) {
     if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) {
       const key = `m${decl}`;
-      const refCount = this.signatureRefCounts.get(key);
-      if (refCount !== undefined) {
-        this.signatureRefCounts.set(key, refCount + 1);
+      const signatureDecl = this.signatureDecls.get(key);
+      if (signatureDecl !== undefined) {
+        signatureDecl.refCount++;
         return;
       }
       const smallId = this.mkSmallId();
-      this.signatureSmallIds.set(key, smallId);
-      this.signatureRefCounts.set(key, 1);
+      this.signatureDecls.set(key, { smallId, refCount: 1 });
       this.funcDecls[decl].smallId = smallId;
       return;
     }
@@ -454,14 +465,11 @@ export class AstManager {
   decDeclRef(decl: number) {
     if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) {
       const key = `m${decl}`;
-      const refCount = (this.signatureRefCounts.get(key) as number) - 1;
-      if (refCount > 0) {
-        this.signatureRefCounts.set(key, refCount);
-        return;
-      }
-      this.freeSmallIds.push(this.signatureSmallIds.get(key) as number);
-      this.signatureRefCounts.delete(key);
-      this.signatureSmallIds.delete(key);
+      const signatureDecl = this.getSignatureDecl(key);
+      signatureDecl.refCount--;
+      if (signatureDecl.refCount > 0) return;
+      this.freeSmallIds.push(signatureDecl.smallId);
+      this.signatureDecls.delete(key);
       this.numDecls--;
       return;
     }
@@ -512,8 +520,7 @@ export class AstManager {
     this.refCounts[expr]--;
     if (this.refCounts[expr] > 0) return;
     const worklist = [expr];
-    while (worklist.length > 0) {
-      const node = worklist.pop() as number;
+    for (let node = worklist.pop(); node !== undefined; node = worklist.pop()) {
       if (node < 0) {
         this.freeSmallIds.push(-1 - node);
         this.numDecls--;
@@ -539,7 +546,7 @@ export class AstManager {
 
   // register_node_core: a new expression takes an id and a reference to each child.
   private registerNode(expr: number) {
-    this.ids[expr] = this.freeIds.length > 0 ? (this.freeIds.pop() as number) : this.nextId++;
+    this.ids[expr] = this.freeIds.pop() ?? this.nextId++;
     this.numLive++;
     this.refCounts[expr] = 0;
     for (const child of this.getChildren(expr)) this.incRef(this.revive(child));
@@ -585,7 +592,8 @@ export class AstManager {
   // The name, Z3 decl kind and domain of the Z3 declaration of a builtin application.
   getBuiltinSignature(op: number, args: number[]) {
     const builtin = Z3_BUILTINS.get(op);
-    if (builtin === undefined) throw new Error(`the operator ${op} has no Z3 declaration`);
+    if (builtin === undefined)
+      throw new SmtInvariantError(`the operator ${op} has no Z3 declaration`);
     const argSort = op === OP_ITE ? this.sorts[args[1]] : this.sorts[args[0]];
     const arity = builtin[2] === -1 ? args.length : builtin[2];
     const domain = Array.from({ length: arity }, (_, index) =>
@@ -714,7 +722,7 @@ export class AstManager {
   mkApp(decl: number, args: number[], sort: number) {
     // Numerals and model values carry their value, so only mkNumeral and mkModelValue create them.
     if (decl === OP_NUM || this.funcDecls[decl].family === FAMILY_MODEL_VALUE)
-      throw new Error(`${this.funcDecls[decl].name} needs a value`);
+      throw new SmtInvariantError(`${this.funcDecls[decl].name} needs a value`);
     let hash = decl;
     for (let index = 0; index < args.length; index++)
       hash = (Math.imul(hash, 0x9e3779b1) + args[index]) | 0;
@@ -850,7 +858,7 @@ export class AstManager {
 
   mkQuantifier(data: QuantifierData) {
     if (data.names.length !== data.sorts.length)
-      throw new Error("a quantifier needs a name for each variable");
+      throw new SmtInvariantError("a quantifier needs a name for each variable");
     const key = `q${data.isForall ? 1 : 0}:${data.sorts.join(",")}:${JSON.stringify(data.names)}:${
       data.body
     }:${data.patterns.join(",")}:${data.weight}`;
@@ -891,7 +899,7 @@ export class AstManager {
 
   getQuantifier(expr: number) {
     const data = this.quantifiers.get(expr);
-    if (data === undefined) throw new Error("the expression is not a quantifier");
+    if (data === undefined) throw new SmtInvariantError("the expression is not a quantifier");
     return data;
   }
 
@@ -901,10 +909,6 @@ export class AstManager {
 
   isVar(expr: number) {
     return this.kinds[expr] === KIND_VAR;
-  }
-
-  isQuantifier(expr: number) {
-    return this.kinds[expr] === KIND_QUANTIFIER;
   }
 
   isGround(expr: number) {
@@ -1026,11 +1030,6 @@ export class AstManager {
     return this.getFamily(expr) === FAMILY_USER;
   }
 
-  // An equality between two Boolean expressions, which Z3 calls iff.
-  isIff(expr: number) {
-    return this.getOp(expr) === OP_EQ && this.sorts[this.args[expr][0]] === SORT_BOOL;
-  }
-
   // arith_util::is_times_minus_one: the t of (* -1 t).
   getTimesMinusOneArg(expr: number) {
     if (this.getOp(expr) !== OP_MUL || this.args[expr].length !== 2) return undefined;
@@ -1055,8 +1054,7 @@ export class AstManager {
   private someSubterm(expr: number, predicate: (expr: number) => boolean) {
     const visited = new Set<number>();
     const todo = [expr];
-    while (todo.length > 0) {
-      const current = todo.pop() as number;
+    for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
       if (visited.has(current)) continue;
       visited.add(current);
       const kind = this.kinds[current];

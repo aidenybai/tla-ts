@@ -1,6 +1,6 @@
 // Ported from Z3 (src/ast/rewriter/th_rewriter.cpp, bool_rewriter.cpp, arith_rewriter.cpp), MIT
 // license, see z3-license.txt. Only the rewrites that tlapm's encoding exercises are ported.
-import { ArithRewriter } from "./arith-rewriter";
+import { ArithRewriter, KERNEL_ARITH_OPTIONS, TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import type { ArithRewriterOptions } from "./poly-rewriter";
 import { isAstLess } from "./ast-lt";
 import { Der } from "./der";
@@ -44,56 +44,28 @@ import { UnusedVarsEliminator } from "./var-subst";
 
 export interface RewriterOptions {
   // Replaces (and a b) with (not (or (not a) (not b))), as Z3's asserted_formulas does after NNF.
-  isEliminatingAnd: boolean;
-  arith: ArithRewriterOptions;
+  readonly isEliminatingAnd: boolean;
+  readonly arith: ArithRewriterOptions;
   // rewrite_patterns: the patterns of a quantifier are rewritten like its body. The kernel's rewriters
   // set it, and the tactics' leave it off.
-  isRewritingPatterns: boolean;
+  readonly isRewritingPatterns: boolean;
   // pull_cheap_ite: a binary predicate or a function of an ite with values distributes over the ite.
-  isPullingCheapIte?: boolean;
+  readonly isPullingCheapIte?: boolean;
 }
 
-// The distinct literals of a flat conjunction or disjunction. It finds a complementary pair through
-// the atoms of the negated literals, without creating each negation. A short list is searched
-// directly, and a long one through sets.
-const MAX_SCANNED_LITERALS = 8;
+// The parameters that asserted_formulas gives the kernel's rewriters.
+export const KERNEL_REWRITER_OPTIONS: RewriterOptions = {
+  isEliminatingAnd: false,
+  arith: KERNEL_ARITH_OPTIONS,
+  isRewritingPatterns: true,
+};
 
-class FlatLiterals {
-  readonly list: number[] = [];
-  private seen: Set<number> | null = null;
-  private negatedAtoms: Set<number> | null = null;
-
-  constructor(private manager: AstManager) {}
-
-  // Adds a literal, and returns whether its complement is already there.
-  add(literal: number) {
-    const manager = this.manager;
-    if (this.has(literal)) return false;
-    const isNegated = manager.isNot(literal);
-    if (isNegated ? this.has(manager.args[literal][0]) : this.hasNegationOf(literal)) return true;
-    this.list.push(literal);
-    if (this.seen !== null) {
-      this.seen.add(literal);
-      if (isNegated) this.negatedAtoms?.add(manager.args[literal][0]);
-    } else if (this.list.length > MAX_SCANNED_LITERALS) {
-      this.seen = new Set(this.list);
-      this.negatedAtoms = new Set(
-        this.list.filter((item) => manager.isNot(item)).map((item) => manager.args[item][0]),
-      );
-    }
-    return false;
-  }
-
-  private has(literal: number) {
-    return this.seen === null ? this.list.includes(literal) : this.seen.has(literal);
-  }
-
-  private hasNegationOf(atom: number) {
-    const manager = this.manager;
-    if (this.negatedAtoms !== null) return this.negatedAtoms.has(atom);
-    return this.list.some((item) => manager.isNot(item) && manager.args[item][0] === atom);
-  }
-}
+// th_rewriter's defaults, which the tactics and the model use.
+export const TACTIC_REWRITER_OPTIONS: RewriterOptions = {
+  isEliminatingAnd: false,
+  arith: TACTIC_ARITH_OPTIONS,
+  isRewritingPatterns: false,
+};
 
 // A term that reduceTo is rewriting: the depth left for its arguments, its next argument, and where
 // its arguments' results start.
@@ -176,22 +148,22 @@ export class Rewriter extends RewriterTpl {
     this.reset();
   }
 
-  protected getSubst(expr: number) {
+  getSubst(expr: number) {
     return this.substitution.size === 0 ? undefined : this.substitution.get(expr);
   }
 
   // flat_assoc: th_rewriter flattens and, or and + into an enclosing application of the same
   // operator.
-  protected isFlatAssoc(decl: number) {
+  isFlatAssoc(decl: number) {
     const op = this.manager.funcDecls[decl].op;
     return op === OP_AND || op === OP_OR || op === OP_ADD;
   }
 
-  protected isRewritingPatterns() {
+  isRewritingPatterns() {
     return this.options.isRewritingPatterns;
   }
 
-  protected reduceApp(decl: number, args: number[], sort: number) {
+  reduceApp(decl: number, args: number[], sort: number) {
     // An uninterpreted application only reduces by pull_ite, which needs two arguments.
     if (
       this.manager.funcDecls[decl].op === OP_UNINTERPRETED &&
@@ -375,8 +347,7 @@ export class Rewriter extends RewriterTpl {
     const manager = this.manager;
     if (!this.isIte(expr) || manager.getRefCount(expr) !== 1) return false;
     const todo = [expr];
-    while (todo.length > 0) {
-      const ite = todo.pop() as number;
+    for (let ite = todo.pop(); ite !== undefined; ite = todo.pop()) {
       for (const branch of [manager.args[ite][1], manager.args[ite][2]]) {
         if (this.isIte(branch) && manager.getRefCount(branch) === 1) todo.push(branch);
         else if (!manager.isUniqueValue(branch)) return false;
@@ -460,10 +431,9 @@ export class Rewriter extends RewriterTpl {
   mkOr(args: number[]): number {
     const manager = this.manager;
     const isNested = args.some((arg) => manager.getOp(arg) === OP_OR);
-    const flatArgs = isNested
-      ? args.flatMap((arg) => (manager.getOp(arg) === OP_OR ? manager.args[arg] : [arg]))
-      : args;
-    const literals = new FlatLiterals(manager);
+    const flatArgs = isNested ? this.flattenArgs(args, OP_OR) : args;
+    const literals = manager.flatLiterals;
+    literals.clear();
     for (const arg of flatArgs) {
       if (manager.isTrue(arg)) return manager.trueExpr;
       if (manager.isFalse(arg)) continue;
@@ -485,10 +455,18 @@ export class Rewriter extends RewriterTpl {
     const manager = this.manager;
     if (this.options.isEliminatingAnd) return this.mkAndAsOr(args);
     if (!args.some((arg) => manager.getOp(arg) === OP_AND)) return this.mkNflatAnd(args);
-    const flatArgs = args.flatMap((arg) =>
-      manager.getOp(arg) === OP_AND ? manager.args[arg] : [arg],
-    );
-    return { expr: this.mkNflatAnd(flatArgs), depth: 1 };
+    return { expr: this.mkNflatAnd(this.flattenArgs(args, OP_AND)), depth: 1 };
+  }
+
+  // The arguments with those that apply op replaced by their own arguments, one level deep.
+  private flattenArgs(args: number[], op: number) {
+    const manager = this.manager;
+    const flatArgs: number[] = [];
+    for (const arg of args)
+      if (manager.getOp(arg) === op)
+        for (const innerArg of manager.args[arg]) flatArgs.push(innerArg);
+      else flatArgs.push(arg);
+    return flatArgs;
   }
 
   // bool_rewriter::mk_and, which takes the result of mk_and_core as it is.
@@ -501,7 +479,8 @@ export class Rewriter extends RewriterTpl {
   // pair.
   private mkNflatAnd(args: number[]) {
     const manager = this.manager;
-    const literals = new FlatLiterals(manager);
+    const literals = manager.flatLiterals;
+    literals.clear();
     for (const arg of args) {
       if (manager.isTrue(arg)) continue;
       if (manager.isFalse(arg) || literals.add(arg)) return manager.falseExpr;

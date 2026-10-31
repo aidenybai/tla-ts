@@ -3,18 +3,11 @@
 // wrong, the lines through the point of its factors' values and two planes tangent to z = xy that
 // cut the point off.
 import { Rational } from "../rational";
-import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
+import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { LarTerm } from "./lar-term";
-import {
-  type Factor,
-  type Factorization,
-  getFactorSign,
-  KIND_NE,
-  LemmaBuilder,
-  mkIneq,
-  NLA_PARAMS,
-  type NlaCore,
-} from "./nla-core";
+import { NLA_PARAMS, type NlaCore } from "./nla-core";
+import { type Factor, type Factorization, getFactorSign } from "./nla-factorization";
+import { LemmaBuilder, mkIneq } from "./nla-types";
 import type { Monic } from "./nla-emonics";
 import { THROTTLE_TANGENT_LEMMA } from "./nla-throttle";
 
@@ -78,7 +71,7 @@ class TangentImp {
   private generatePlane(plane: Point) {
     const core = this.core;
     if (
-      core.throttle.insertMonomialBinomialSign(
+      core.throttle.insertSimplifiedTangent(
         THROTTLE_TANGENT_LEMMA,
         this.monicVar,
         this.xVar,

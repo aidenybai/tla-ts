@@ -9,7 +9,9 @@ import { BoolVar, toBoolVar } from "./literal";
 class ActivityHeap {
   // The heap is 1-based, so the first slot is unused.
   private values: BoolVar[] = [toBoolVar(-1)];
-  private indices: number[] = [];
+  // The position of each variable, or 0. A typed array keeps the loads of variables that were never
+  // inserted in bounds.
+  private indices = new Int32Array(1024);
 
   constructor(private activity: number[]) {}
 
@@ -18,7 +20,7 @@ class ActivityHeap {
   }
 
   contains(value: BoolVar) {
-    return (this.indices[value] ?? 0) !== 0;
+    return value < this.indices.length && this.indices[value] !== 0;
   }
 
   isEmpty() {
@@ -26,6 +28,11 @@ class ActivityHeap {
   }
 
   insert(value: BoolVar) {
+    if (value >= this.indices.length) {
+      const indices = new Int32Array(Math.max(2 * this.indices.length, value + 1));
+      indices.set(this.indices);
+      this.indices = indices;
+    }
     this.values.push(value);
     this.indices[value] = this.values.length - 1;
     this.moveUp(this.values.length - 1);

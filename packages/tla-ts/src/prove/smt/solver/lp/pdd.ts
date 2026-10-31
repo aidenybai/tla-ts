@@ -7,6 +7,7 @@
 // no garbage collection: node indices match Z3's until its first collection, and the node limit
 // counts every node made. The op cache keys on both operands, where Z3's eq_entry compares the
 // first operand of one entry with the second of the other.
+import { PddMemoryOutError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { shrink } from "../array";
 
@@ -21,34 +22,27 @@ const REDUCE_OP = 6;
 const NO_OP = 10;
 const INITIAL_FREE_NODES = 1024;
 
-// mem_out: a node past the limit was needed outside an operation, which grows the limit instead.
-export class PddMemoryOut extends Error {
-  constructor() {
-    super("the pdd manager ran out of nodes");
-  }
-}
-
-export interface PddMonomial {
+interface PddMonomial {
   coeff: Rational;
   vars: number[];
 }
 
-export interface PddCoefficient {
+interface PddCoefficient {
   coeff: Rational;
   isConstant: boolean;
 }
 
-export interface PddPower {
+interface PddPower {
   var: number;
   degree: number;
 }
 
-export interface PddFactor {
+interface PddFactor {
   lc: Pdd;
   rest: Pdd;
 }
 
-export interface PddVarFactors {
+interface PddVarFactors {
   vars: number[];
   poly: Pdd;
 }
@@ -210,11 +204,7 @@ export class PddManager {
   pow(poly: Pdd, exponent: number): Pdd {
     if (exponent === 0) return this.one();
     if (exponent === 1 || poly.isZero() || poly.isOne()) return poly;
-    if (poly.isVal()) {
-      let power = Rational.one;
-      for (let index = 0; index < exponent; index++) power = power.mul(poly.val());
-      return this.mkVal(power);
-    }
+    if (poly.isVal()) return this.mkVal(poly.val().pow(exponent));
     // j even: pow(p,2*j') = pow(p*p,j'); j odd: pow(p,2*j'+1) = p*pow(p*p,j')
     const half = this.pow(this.mul(poly, poly), Math.floor(exponent / 2));
     return exponent % 2 === 1 ? this.mul(half, poly) : half;
@@ -678,7 +668,7 @@ export class PddManager {
     const existing = this.nodeTable.get(key);
     if (existing !== undefined) return existing;
     if (this.levels.length === this.numAllocated) {
-      if (this.numAllocated > this.maxNumNodes && !this.isApplying) throw new PddMemoryOut();
+      if (this.numAllocated > this.maxNumNodes && !this.isApplying) throw new PddMemoryOutError();
       while (this.numAllocated > this.maxNumNodes) this.maxNumNodes *= 2;
       this.numAllocated += Math.floor(this.numAllocated / 2);
     }
@@ -735,11 +725,6 @@ export class Pdd {
 
   isVar() {
     return !this.isVal() && this.lo().isZero() && this.hi().isOne();
-  }
-
-  // a*x + b for values a and b.
-  isUnilinear() {
-    return !this.isVal() && this.lo().isVal() && this.hi().isVal();
   }
 
   // a*x for a value a.

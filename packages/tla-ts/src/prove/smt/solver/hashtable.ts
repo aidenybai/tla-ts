@@ -1,11 +1,16 @@
 // Ported from Z3 (src/util/hashtable.h, src/util/obj_hashtable.h), MIT license, see
 // z3-license.txt. Z3's open-addressing table with linear probing. Its iteration order is the slot
 // order, which the model finder depends on, so the AST maps that Z3 iterates use this table.
+import { SmtInvariantError } from "../../../errors";
+
 const INITIAL_CAPACITY = 8;
 const SMALL_TABLE_CAPACITY = 64;
 const FREE = 0;
 const DELETED = 1;
 const USED = 2;
+
+// u_hash: an unsigned key is its own hash.
+export const getIdentityHash = (key: number) => key;
 
 export class ObjMap<V> {
   private capacity = INITIAL_CAPACITY;
@@ -86,7 +91,7 @@ export class ObjMap<V> {
         return;
       } else deletedSlot = slot;
     }
-    throw new Error("the hash table is full");
+    throw new SmtInvariantError("the hash table is full");
   }
 
   delete(key: number) {

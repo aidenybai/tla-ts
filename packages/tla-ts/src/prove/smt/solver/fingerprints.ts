@@ -16,6 +16,8 @@ export class FingerprintSet {
   // emptying the slot of a removed fingerprint never cuts the probe of one that remains.
   private slots = new Int32Array(1024).fill(-1);
   private scopes: number[] = [];
+  // The hashes of the bindings of the instance being inserted.
+  private bindingHashes: number[] = [];
 
   constructor(private manager: AstManager) {}
 
@@ -24,10 +26,10 @@ export class FingerprintSet {
   // roots, which a new fingerprint keeps.
   insert(quantifier: number, bindings: Enode[]) {
     const manager = this.manager;
-    const hash = getCompositeHash(
-      bindings.map((binding) => manager.hashes[binding.owner]),
-      manager.ids[quantifier],
-    );
+    const bindingHashes = this.bindingHashes;
+    shrink(bindingHashes, 0);
+    for (const binding of bindings) bindingHashes.push(manager.hashes[binding.owner]);
+    const hash = getCompositeHash(bindingHashes, manager.ids[quantifier]);
     if (this.find(quantifier, hash, bindings) === -1) return false;
     const roots = bindings.map((binding) => binding.root);
     const slot = this.find(quantifier, hash, roots);

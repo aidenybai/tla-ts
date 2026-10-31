@@ -5,7 +5,6 @@
 // fresh predicate over its free variables, with a definition that is normalized too. Like Z3, the
 // frames, the result stack and the caches hold their expressions, so that expressions are created
 // and deleted in Z3's order.
-import { SmtCanceledError } from "../../../errors";
 import { ActCache } from "./act-cache";
 import {
   AstManager,
@@ -44,7 +43,8 @@ export class DefinedNames {
 
   // pop_scope: forgets the names since the matching push, the last first.
   pop() {
-    const size = this.lims.pop() as number;
+    const size = this.lims[this.lims.length - 1];
+    this.lims.pop();
     while (this.exprs.size > size) {
       this.names.delete(this.exprs.items[this.exprs.size - 1]);
       this.exprs.shrink(this.exprs.size - 1);
@@ -109,7 +109,7 @@ class QuantifierNamer extends RewriterTpl {
     super(manager);
   }
 
-  protected getSubst(expr: number) {
+  getSubst(expr: number) {
     if (this.manager.kinds[expr] !== KIND_QUANTIFIER) return undefined;
     const named = this.names.mkName(expr);
     if (named.definition !== -1) {
@@ -310,7 +310,7 @@ export class Nnf {
     const manager = this.manager;
     if (!this.visit(expr, true, false))
       while (this.frames.length > 0) {
-        if (!manager.limit.inc()) throw new SmtCanceledError();
+        manager.limit.checkpoint();
         const frame = this.frames[this.frames.length - 1];
         const curr = frame.curr;
         if (frame.index === 0 && manager.getRefCount(curr) > 1) {
@@ -334,7 +334,9 @@ export class Nnf {
           );
         this.popFrames(this.frames.length - 1);
       }
-    return this.results.items.pop() as number;
+    const result = this.results.items[this.results.size - 1];
+    this.results.items.pop();
+    return result;
   }
 
   // Visits the children from frame.index on, each with its polarity, and whether all are done.

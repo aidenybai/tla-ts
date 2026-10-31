@@ -3,6 +3,7 @@
 // rewriter that uses the manager. It cancels the work at the deadline, in milliseconds since the
 // epoch, when the signal aborts, or when the heap is nearly full.
 import type { GCProfiler } from "node:v8";
+import { SmtCanceledError } from "../../../errors";
 
 export class ResourceLimit {
   // m_count: the steps taken, which MBQI also uses as a random seed.
@@ -30,6 +31,11 @@ export class ResourceLimit {
       this.release();
     }
     return !this.isCanceled;
+  }
+
+  // tactic::checkpoint: counts a step, and throws once the work is canceled.
+  checkpoint() {
+    if (!this.inc()) throw new SmtCanceledError();
   }
 
   // The used size counts garbage, such as what earlier work left, until the collector runs. So once

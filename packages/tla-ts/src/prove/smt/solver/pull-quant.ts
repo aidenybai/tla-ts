@@ -2,17 +2,8 @@
 // the universal quantifiers nested in a formula in Skolem normal form to the top, so the model
 // finder sees one flat quantifier.
 import { KIND_QUANTIFIER, OP_AND, OP_NOT, OP_OR, type AstManager, type SmtSymbol } from "./ast";
+import { mkNot } from "./ast-util";
 import { type Rewrite, RewriterTpl, VarShifter } from "./rewriter-tpl";
-
-// mk_not of ast_util.
-const mkNot = (manager: AstManager, expr: number) =>
-  manager.isNot(expr)
-    ? manager.args[expr][0]
-    : manager.isTrue(expr)
-      ? manager.falseExpr
-      : manager.isFalse(expr)
-        ? manager.trueExpr
-        : manager.mkNot(expr);
 
 // rewriter_tpl with pull_quant's rw_cfg.
 export class PullQuant extends RewriterTpl {
@@ -94,7 +85,7 @@ export class PullQuant extends RewriterTpl {
     return result;
   }
 
-  protected reduceApp(decl: number, args: number[], sort: number): number | Rewrite {
+  reduceApp(decl: number, args: number[], sort: number): number | Rewrite {
     const manager = this.manager;
     const op = manager.funcDecls[decl].op;
     if (op === OP_NOT && manager.isNot(args[0])) {
@@ -106,7 +97,7 @@ export class PullQuant extends RewriterTpl {
     return this.pullFromApp(decl, args, sort);
   }
 
-  protected reduceQuantifier(expr: number, body: number) {
+  reduceQuantifier(expr: number, body: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
     if (!data.isForall) {

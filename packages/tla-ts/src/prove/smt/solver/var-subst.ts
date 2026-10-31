@@ -129,35 +129,6 @@ export const replaceFreeVars = (
   return results[0];
 };
 
-// var_shifter: a free variable with index at least bound moves by aboveShift, any other by
-// belowShift.
-export const shiftVars = (
-  manager: AstManager,
-  expr: number,
-  bound: number,
-  aboveShift: number,
-  belowShift: number,
-) =>
-  aboveShift === 0 && belowShift === 0
-    ? expr
-    : replaceFreeVars(manager, expr, (variable, index, shift) =>
-        manager.mkVar(
-          index + shift + (index >= bound ? aboveShift : belowShift),
-          manager.sorts[variable],
-        ),
-      );
-
-// var_subst with std_order: (:var i) becomes bindings[n - 1 - i]. The bindings may contain
-// variables. A variable beyond the bindings moves down by n.
-export const substitute = (manager: AstManager, expr: number, bindings: number[]) => {
-  const count = bindings.length;
-  return replaceFreeVars(manager, expr, (variable, index, shift) =>
-    index < count
-      ? shiftVars(manager, bindings[count - 1 - index], 0, shift, 0)
-      : manager.mkVar(index + shift - count, manager.sorts[variable]),
-  );
-};
-
 // Which variables of a quantifier body occur, indexed by de Bruijn index.
 export const collectUsedVars = (manager: AstManager, expr: number, count: number) => {
   const used = Array.from({ length: count }, () => false);

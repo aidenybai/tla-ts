@@ -4,7 +4,7 @@
 import { Rational } from "../rational";
 import { KIND_GE, KIND_LE } from "./constraints";
 import { LP_CANCELLED } from "./core-solver";
-import { type Dependency, linearize, mkJoin, mkLeaf } from "./dependency";
+import { type Dependency, mkJoin, mkLeaf } from "./dependency";
 import type { IntSolver, LiaMove } from "./int-solver";
 import { Impq } from "./numeric-pair";
 import type { RowCell } from "./static-matrix";
@@ -43,10 +43,6 @@ class CutBuilder {
     this.oneMinusF = Rational.one.sub(this.f);
   }
 
-  private pushExplanation(dep: Dependency) {
-    for (const constraint of linearize([dep])) this.lia.explanation.push(constraint);
-  }
-
   private setPolarity(polarity: number) {
     if (this.polarity === POLARITY_MIXED) return;
     if (this.polarity === POLARITY_UNDEF) this.polarity = polarity;
@@ -74,13 +70,13 @@ class CutBuilder {
       const newA =
         fj.compare(this.oneMinusF) <= 0 ? fj.div(this.oneMinusF) : oneMinusFj.div(this.f);
       this.offset = this.offset.add(newA.mul(solver.getLowerBound(column).x));
-      this.pushExplanation(solver.getLowerWitness(column));
+      this.lia.explanation.pushDependency(solver.getLowerWitness(column));
       this.addMonomial(newA, column);
       return;
     }
     const newA = (fj.compare(this.f) <= 0 ? fj.div(this.f) : oneMinusFj.div(this.oneMinusF)).neg();
     this.offset = this.offset.add(newA.mul(solver.getUpperBound(column).x));
-    this.pushExplanation(solver.getUpperWitness(column));
+    this.lia.explanation.pushDependency(solver.getUpperWitness(column));
     this.addMonomial(newA, column);
   }
 
@@ -93,7 +89,9 @@ class CutBuilder {
     this.setPolarity(isGrowing ? POLARITY_MIN : POLARITY_MAX);
     const bound = isLower ? solver.getLowerBound(column) : solver.getUpperBound(column);
     this.offset = this.offset.add(newA.mul(bound.x));
-    this.pushExplanation(isLower ? solver.getLowerWitness(column) : solver.getUpperWitness(column));
+    this.lia.explanation.pushDependency(
+      isLower ? solver.getLowerWitness(column) : solver.getUpperWitness(column),
+    );
     this.addMonomial(newA, column);
   }
 
@@ -112,8 +110,8 @@ class CutBuilder {
       const column = cell.column;
       if (column === this.infColumn) continue;
       if (solver.isFixed(column)) {
-        this.pushExplanation(solver.getLowerWitness(column));
-        this.pushExplanation(solver.getUpperWitness(column));
+        this.lia.explanation.pushDependency(solver.getLowerWitness(column));
+        this.lia.explanation.pushDependency(solver.getUpperWitness(column));
         continue;
       }
       if (!solver.isInt(column)) this.addRealCase(cell.coeff.neg(), column);

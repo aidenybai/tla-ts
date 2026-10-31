@@ -61,7 +61,7 @@ export const isOccurring = (manager: AstManager, index: number, expr: number) =>
 
 // der_sort_vars: the definitions in an order where each only uses the ones before it, dropping the
 // definitions on a cycle.
-export const getEliminationOrder = (manager: AstManager, definitions: (number | undefined)[]) => {
+const getEliminationOrder = (manager: AstManager, definitions: (number | undefined)[]) => {
   for (let index = 0; index < definitions.length; index++) {
     const definition = definitions[index];
     if (

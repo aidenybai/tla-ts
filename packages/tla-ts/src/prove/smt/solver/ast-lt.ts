@@ -7,7 +7,9 @@ import {
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
+  OP_ITE,
   OP_NUM,
+  OP_PATTERN,
   SORT_INT,
   type AstManager,
   type SmtSymbol,
@@ -70,7 +72,24 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
 const compareSorts = (manager: AstManager, first: number, second: number) =>
   first === second ? 0 : compareNames(manager.sortNames[first], manager.sortNames[second]);
 
+// Whether two applications of the same declaration have the same key: a user declaration's is its
+// own, and a builtin's other than a numeral, model value or pattern follows from the sort of the
+// argument that getBuiltinSignature reads and the range.
+const isSameDeclKey = (manager: AstManager, first: number, second: number) => {
+  const decl = manager.funcDecls[manager.decls[first]];
+  if (decl.family === FAMILY_USER) return true;
+  if (decl.op === OP_NUM || decl.op === OP_PATTERN || decl.family === FAMILY_MODEL_VALUE)
+    return false;
+  const index = decl.op === OP_ITE ? 1 : 0;
+  return (
+    manager.sorts[first] === manager.sorts[second] &&
+    manager.sorts[manager.args[first][index]] === manager.sorts[manager.args[second][index]]
+  );
+};
+
 const compareDecls = (manager: AstManager, first: number, second: number) => {
+  if (manager.decls[first] === manager.decls[second] && isSameDeclKey(manager, first, second))
+    return 0;
   const firstKey = getDeclKey(manager, first);
   const secondKey = getDeclKey(manager, second);
   const byName = compareNames(firstKey.name, secondKey.name);

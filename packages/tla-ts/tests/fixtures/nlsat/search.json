@@ -1,0 +1,122 @@
+[
+  [
+    "search 4 0\nint 1 1 0 0\na LT -1:0^1,2^1\ncl 0 1 -1\ncl 1 -1\ncl 2 -1\nend",
+    "clause 2 3\nclause 3\nclause 3\nsat\nstats propagations=2 restarts=1 stages=5\nmodel q0 q0 q0 q0"
+  ],
+  [
+    "search 3 0\nint 0 0 1\na GT -2:0^1 3: -3:0^1 -1:1^1,2^1\na EQ -1: 1: -2:1^1,2^1\na GT 1:2^1\na LT 3:1^1 -3:2^1 -3:0^1,2^1\na EQ -2:0^1,1^1\na LE -2:2^1 -1: 3: -2:1^1\na LT -3:0^1\na LT 2:1^1,2^1 -1:0^1,1^1,2^1 1:1^1,2^1\ncl 0 8 -6 5\ncl 1 -7 1 -5\ncl 2 8 7\ncl 3 -1\ncl 4 5\ncl -1 1\ncl -1 -2 -1 -4\ncl 7 5\nend",
+    "clause 16 12 10\nclause 15 2 11\nclause 16 14\nclause 3\nclause 10\nclause 2\nclause 5 3 9\nclause 10\nunsat\nstats conflicts=12 propagations=26 decisions=1 stages=11\ncore 2 4 1 3"
+  ],
+  [
+    "search 3 0\nint 1 1 0\na LT 2:1^1,2^2\na GE 2:1^1,2^1 -1: 3:\na LT 2:\na GE -3:0^1,2^1 -2:\na EQ 1:0^1,1^1 2:1^1 -3:0^2,1^1 -1:\ncl -1 -1 -1 -2\ncl -1 3 -5\ncl 2 3 -3 2\ncl 3 -1 -1\ncl -1 5\ncl 5 -3 -2\ncl -1 5\ncl 7 -5\nend",
+    "clause 3 3 4\nclause 1 9\nclause 1 0 5\nclause 3 3\nclause 8\nclause 0 4\nclause 8\nclause 9\nunsat\nstats conflicts=2 propagations=4 stages=3\ncore"
+  ],
+  [
+    "search 4 0\nint 1 1 1 1\na EQ -1:0^1,1^1,3^1\na LT -2:0^1,2^1,3^1 -3:3^1 -1:0^1\na LT -1:1^1,2^2 -3:3^1 3:2^1 1:0^1,1^1\na EQ 1:0^1 1:0^2,1^1\na LT 2:0^2,2^1\na GE 1:0^1,1^1,2^1 3:2^1 -2:0^1\na LT -1:3^1\ncl 0 5 -3\nend",
+    "clause 10 7\nsat\nstats propagations=2 restarts=1 stages=5\nmodel q0 q0 q0 q0"
+  ],
+  [
+    "search 4 0\nint 1 0 0 0\na LE 1:0^1,1^1 -2:0^1,1^1\na GE 1:1^1 -3: 1:0^1,1^2\na EQ -1:1^1 1:0^1\na GT -3:2^2\ncl 0 1\ncl -1 -2 -2 3\ncl 2 -1 -4 1\ncl 3 4 -1 -3\ncl -1 1 -3\ncl 5 -1\ncl 6 -4 3 2\nend",
+    "clause 3\nclause 4 4 6\nclause 2 9 3\nclause 8 2 7\nclause 3 7\nclause 2\nclause 9 6 5\nunsat\nstats conflicts=2 propagations=6 stages=5\ncore 0 5"
+  ],
+  [
+    "search 1 0\nint 1\na GE 1:0^1\na LE 1: 2:0^1\ncl 0 -1\ncl 1 -1\ncl 2 -2 1 -2\ncl 3 -1 2\ncl -1 2\ncl -1 -2 2\nend",
+    "clause 2\nclause 2\nclause 4 3 4\nclause 2 5\nclause 5\nclause 4 5\nunsat\nstats conflicts=2 propagations=3 decisions=1 stages=1\ncore 0 2"
+  ],
+  [
+    "search 1 0\nint 0\na LE -3: 1: -1: -1:0^1\na LT 3: 1: 3: 3:\na LE 2:0^1 1:0^1 1: 2:0^2\na LE -2: -2: -1: 1:0^1\ncl 0 -4\nend",
+    "clause 6\nsat\nstats propagations=2 restarts=1 stages=2\nmodel q6"
+  ],
+  [
+    "search 1 0\nint 1\na GE -3:0^2 1: 2:0^1 1:\na LE -3:\na GE 2: 3:0^2\na LE -3: 1: 2:0^2 1:0^2\ncl -1 -2\ncl -1 4\ncl 2 -3\ncl 3 -3 -3\ncl -1 -2 1 2\nend",
+    "clause 1\nclause 7\nclause 4\nclause 4 4\nclause 1 3 0\nunsat\nstats conflicts=1 propagations=1\ncore"
+  ],
+  [
+    "search 2 0\nint 1 0\na LE 3:0^2,1^1 -2:0^1\na EQ 1: -3:1^1 1:\ncl 0 2\ncl -1 -1 1 1\ncl 2 -2 -1\ncl 3 -1 -1\ncl -1 2 -2\nend",
+    "clause 4\nclause 2 3 3\nclause 5 2\nclause 2 2\nclause 4 5\nsat\nstats conflicts=1 propagations=5 decisions=1 restarts=1 stages=4\nmodel q-1 q2/3"
+  ],
+  [
+    "search 4 0\nint 0 0 1 1\na LT -2:1^1,3^1 2: 3:1^1\na GE 1:1^1,2^1,3^1 1:\na GT -1:\na EQ 1:1^2 -3:1^1\na GE 3:2^1 -2:2^1,3^2\na GE 1:1^1,2^1,3^1 1:2^1\na EQ 1: 1:0^1 1:1^1,2^1 -2:1^1\ncl -1 -1 -5 7\ncl 1 -2 7\ncl 2 -6 5 7\ncl -1 4 3\ncl 4 -2 -2 -2\ncl 5 -4\ncl 6 -6 7 6\nend",
+    "clause 3 8 12\nclause 4 12\nclause 10 9 12\nclause 6 1\nclause 4 4 4\nclause 7\nclause 10 12 11\nunsat\nstats conflicts=2 propagations=2 stages=1\ncore 5"
+  ],
+  [
+    "search 1 0\nint 0\na GE -3:0^1 2:\na LT -3:\na GT 2:0^1 -1: -1: -3:\na GT -2:0^1 2: -2:0^1\na EQ -2: 3:\na GT 2: -3: -2:0^1\ncl -1 1 -1 6\ncl 1 -6 3 3\ncl -1 4\ncl 3 -2\ncl 4 1\nend",
+    "clause 3 2 8\nclause 9 4 4\nclause 6\nclause 1\nclause 3\nunsat\nstats conflicts=1 propagations=1\ncore 3"
+  ],
+  [
+    "search 1 0\nint 1\na LT 3:0^1 1: -3:0^1\na GE 1:0^1\na GE 1: -3: 3:\na EQ -3: 3:0^2\na LT 3:\ncl 0 -1\ncl 1 -1 -3 4\ncl -1 -4 -1\ncl 3 -1\ncl 4 -4 -3\ncl 5 3 4\nend",
+    "clause 0\nclause 0 1 4\nclause 5 0\nclause 0\nclause 5 1\nclause 0 4\nsat\nstats propagations=2 restarts=1 stages=2\nmodel q0"
+  ],
+  [
+    "search 3 0\nint 0 1 1\na LE -1:0^1,1^2\ncl 0 1 1\ncl 1 -1 -1\ncl -1 -1 1\ncl 3 -1\ncl 4 1 -1 -1\ncl 5 -1 -1\ncl -1 -1\ncl 7 1 1 -1\ncl -1 -1 -1\nend",
+    "clause 3 3\nclause 2 2\nclause 2 3\nclause 2\nclause 3 2 2\nclause 2 2\nclause 2\nclause 3 3 2\nclause 2 2\nunsat\nstats conflicts=3 propagations=4 decisions=1 stages=3\ncore 1 0"
+  ],
+  [
+    "search 1 0\nint 1\na GE 2: -3:0^1\na GE -3:0^1\ncl 0 -2 -1\ncl -1 1 -1\ncl 2 -2\ncl 3 -2 2 -2\nend",
+    "clause 4 2\nclause 3 2\nclause 4\nclause 4 5 4\nsat\nstats propagations=2 decisions=1 restarts=1 stages=2\nmodel q2"
+  ],
+  [
+    "search 2 2\nint 0 0\na LT -2:\na GE -2: 3: 2:0^1,1^1 -2:\na GE -2:0^1\na GT 1:1^1 -2:\na EQ 1:1^1\na LE 1:0^1,1^1 -3:1^1 3: 2:0^1\ncl 0 3 -5\ncl 1 1 -2\ncl 2 3\ncl 3 3 -1 -3\ncl 4 3 -4 4\ncl -1 -4\ncl 6 -4 -5 2\nend",
+    "clause 5 9\nclause 0 2\nclause 5\nclause 5 1 4\nclause 5 7 6\nclause 7\nclause 7 9 3\nsat\nstats propagations=3 restarts=1 stages=3\nmodel q0 q0"
+  ],
+  [
+    "search 3 0\nint 0 0 1\na GT 2:2^1\na LE -1:2^1 3:1^2,2^1\na LE 3:0^1,1^1 -2:2^1 3:\na EQ 3:0^1,2^1 1:\na LE -2: -2:\na LT 2:1^2 2: 2:1^1 1:0^2\na GT -2:0^1,1^1 1:0^1 1:1^1\ncl 0 3 5 1\ncl -1 -6 4\ncl 2 5 -7\ncl -1 -3 -5\ncl 4 5\ncl 5 -1 -5 2\ncl -1 6\nend",
+    "clause 7 0 2\nclause 11 8\nclause 0 13\nclause 6 1\nclause 0\nclause 3 1 5\nclause 10\nunsat\nstats conflicts=1 propagations=2 stages=2\ncore"
+  ],
+  [
+    "search 3 0\nint 0 0 1\na GT 3:1^1\na LT -2:0^1\na EQ -2:1^2 -2:0^1,1^2 -2:\na LE 1: 1:\na LE -2:0^1\ncl 0 2\ncl 1 -5 -4\ncl 2 2 -4 -3\ncl -1 2\ncl 4 2\ncl 5 3\nend",
+    "clause 4\nclause 8 0\nclause 4 0 7\nclause 4\nclause 4\nclause 6\nunsat\nstats conflicts=4 propagations=13 stages=4\ncore 5 0"
+  ],
+  [
+    "search 1 10\nint 1\na GE 2:\na LT -1: 3:\na EQ 3: -2:0^1 2:\ncl -1 -1 -2\ncl 1 3 -2 3\nend",
+    "clause 1 0\nclause 2 0 2\nsat\nstats propagations=1 restarts=1 stages=2\nmodel q0"
+  ],
+  [
+    "search 3 0\nint 1 0 1\na LT 1:1^1 1:1^1 -3:1^2 -3:1^1,2^1\na EQ -2:2^1 -2:2^1 -1:\na EQ 1:0^1,1^1 -2:1^1,2^1 3:0^1 -3:0^2,1^1\na LT -2:0^1 2:0^1,1^1 1: -1:\ncl 0 4 3\ncl 1 4\ncl 2 -4 -3\ncl 3 1 4 1\ncl 4 -4\ncl 5 4\ncl 6 -3 1 -4\nend",
+    "clause 8 6\nclause 8\nclause 9 7\nclause 2 8 2\nclause 9\nclause 8\nclause 7 2 9\nunsat\nstats conflicts=1 propagations=2 stages=2\ncore 1 4"
+  ],
+  [
+    "search 2 0\nint 1 1\na GE -3:0^1 3:0^1 2:\na LT -2:1^1\na EQ 2:0^1 -3: -3:1^1 3:\na LE 1:\ncl 0 2 -1 2\ncl 1 1 -2 3\ncl -1 -3\ncl 3 4 -2 3\ncl -1 1 1 -2\ncl 5 -1\ncl 6 -3 3 -4\nend",
+    "clause 2 1 2\nclause 0 3 4\nclause 5\nclause 1 3 4\nclause 0 0 3\nclause 1\nclause 5 4 0\nunsat\nstats conflicts=1 propagations=1\ncore 5"
+  ],
+  [
+    "search 3 0\nint 0 0 0\na LE -1: -2:0^1,1^1 1:\na GE 2:0^1,2^2 -3: -1:0^1 3:2^1\na GT -2:0^1,1^1 1:0^1,2^1 -3: -2:\na GT 1:2^1 -1:1^1 -3:1^1\na LT -2:0^1,2^2 -3:0^1,1^1 3:1^1,2^1 2:\na GT -1:0^1,2^1 3:1^1,2^1 -1:0^1,1^1\na LE -1: 1:0^1,2^2 1:\na LT -2: 3: -3:0^1,1^1,2^1 -3:\ncl 0 5 -8\ncl 1 7 4\ncl -1 -3 -6 -4\ncl 3 -7 8\ncl 4 8\ncl 5 7\nend",
+    "clause 10 17\nclause 15 8\nclause 7 13 9\nclause 14 16\nclause 16\nclause 15\nsat\nstats conflicts=1 propagations=8 restarts=1 stages=5\nmodel q-1 q-2 q0"
+  ],
+  [
+    "search 1 0\nint 1\na GT 2: -2:\na EQ 3: 1:\na LE -1: -3: 1:0^1 -3:\na LE 1: -2:\na EQ 1: 1: 3:\na EQ -3:0^1\ncl -1 -5 -5 -2\ncl -1 6\nend",
+    "clause 0 0 0\nclause 4\nsat\nstats propagations=2 restarts=1 stages=2\nmodel q0"
+  ],
+  [
+    "search 3 0\nint 1 0 1\na EQ -2: -3:2^1 -2:0^1,2^2\na EQ 2:2^1 1: 1:0^1,2^1\na GT -2:2^1 -1:1^1 -3:\na GE 3:1^1 2:1^2 -3:1^2 -3:0^1,2^1\na LT -1:1^2 2:0^2,1^1\na LE -3:0^1 -1:1^1,2^1 1:1^1\ncl -1 -5 -4\ncl -1 -3 -4 5\ncl 2 5 -4 5\ncl 3 2 -4\ncl -1 3 2\ncl 5 -5 5 -3\ncl 6 1 -2 -4\ncl 7 1\ncl 8 -1 -5\nend",
+    "clause 11 8\nclause 7 8 10\nclause 10 8 10\nclause 4 8\nclause 6 4\nclause 11 10 7\nclause 2 5 8\nclause 2\nclause 3 11\nunsat\nstats conflicts=37 propagations=152 decisions=30 restarts=2 stages=26 irrational_assignments=4\ncore 2 7 8"
+  ],
+  [
+    "search 1 5\nint 1\na GE 1:\na GT 3:0^1 -3: 1:0^2\ncl 0 1 1 1\ncl -1 2 -1 -1\ncl 2 2 1 -2\ncl -1 2 -1 1\ncl 4 2\ncl -1 1 2 1\ncl -1 -2 1 1\ncl -1 -2 -2\ncl 8 -1\nend",
+    "clause 0 0 0\nclause 2 1 1\nclause 2 0 3\nclause 2 1 0\nclause 2\nclause 0 2 0\nclause 3 0 0\nclause 3 3\nclause 1\nunsat\nstats conflicts=1 propagations=1\ncore 8"
+  ],
+  [
+    "search 2 60\nint 1 1\na EQ 2:0^1 -2:1^1 -1:\ncl -1 1\nend",
+    "clause 2\nundef\nstats conflicts=60 propagations=790 decisions=294 restarts=61 stages=244"
+  ],
+  [
+    "search 2 200\nint 1 1\na EQ 1:0^2 -2:1^2 -1:\na GT 1:0^1 -1:\ncl 0 1\ncl 1 2\nend",
+    "clause 2\nclause 4\nsat\nstats conflicts=4 propagations=51 decisions=8 restarts=5 stages=17 irrational_assignments=4\nmodel q3 q-2"
+  ],
+  [
+    "search 3 300\nint 1 1 0\na EQ 3:0^1 2:1^1 -2:2^1 -1:\na EQ 1:0^1,1^1 -1:2^2\na LT 1:2^1 -5:\na GT 1:2^1 1:\ncl 0 1\ncl 1 2\ncl 2 3\ncl 3 4\nend",
+    "clause 2\nclause 4\nclause 6\nclause 8\nunsat\nstats conflicts=19 propagations=66 decisions=11 restarts=2 stages=18 irrational_assignments=2\ncore 0 1"
+  ],
+  [
+    "search 2 0\nint 1 1\na EQ 1:0^2 1:1^2 -3:\ncl -1 1\nend",
+    "clause 2\nunsat\nstats conflicts=13 propagations=80 decisions=10 restarts=4 stages=20 irrational_assignments=4\ncore"
+  ],
+  [
+    "search 2 0\nint 1 0\na EQ 1:0^2 -2:\ncl 0 1\nend",
+    "clause 2\nunsat\nstats conflicts=1 propagations=12 restarts=2 stages=7 irrational_assignments=2\ncore 0"
+  ],
+  [
+    "search 3 400\nint 1 1 1\na EQ 2:0^1 2:1^1 2:2^1 -3:\na GT 1:0^1,1^1 1:2^2\ncl 0 1\ncl 1 2\nend",
+    "clause 2\nclause 4\nundef\nstats conflicts=400 propagations=8554 decisions=934 restarts=226 stages=1061"
+  ]
+]

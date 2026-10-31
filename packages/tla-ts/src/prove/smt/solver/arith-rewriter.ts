@@ -18,7 +18,7 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
-import { getGcd, Rational } from "./rational";
+import { getEuclideanDiv, getEuclideanMod, getGcd, Rational } from "./rational";
 import { type ArithRewriterOptions, PolyRewriter } from "./poly-rewriter";
 import type { Rewrite } from "./rewriter-tpl";
 
@@ -38,20 +38,6 @@ export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
   isGcdRounding: false,
 };
 
-// mpz_manager's div and mod: SMT-LIB's, whose remainder is never negative. By a positive divisor,
-// div is the floor of the quotient.
-const getEuclideanDiv = (dividend: bigint, divisor: bigint) => {
-  const quotient = dividend / divisor;
-  if (dividend >= 0n || quotient * divisor === dividend) return quotient;
-  return divisor < 0n ? quotient + 1n : quotient - 1n;
-};
-
-const getEuclideanMod = (dividend: bigint, divisor: bigint) => {
-  const remainder = dividend % divisor;
-  if (remainder >= 0n) return remainder;
-  return divisor > 0n ? remainder + divisor : remainder - divisor;
-};
-
 // The ceiling of the quotient by a positive divisor.
 const getCeilDiv = (dividend: bigint, divisor: bigint) => -getEuclideanDiv(-dividend, divisor);
 
@@ -60,6 +46,13 @@ const getSymmetricMod = (value: bigint, modulus: bigint) => {
   const remainder = getEuclideanMod(value, modulus);
   return 2n * remainder > modulus ? remainder - modulus : remainder;
 };
+
+// The running gcd of the coefficients of an atom's sides, and the number of their constants.
+interface GcdState {
+  gcd: bigint;
+  isFirst: boolean;
+  numConsts: number;
+}
 
 const KIND_LE = 0;
 const KIND_GE = 1;
@@ -432,8 +425,9 @@ export class ArithRewriter extends PolyRewriter {
     const todo = [arg];
     const visited = new Set<number>();
     let isIntegral = true;
-    while (todo.length > 0 && isIntegral) {
-      const current = todo.pop() as number;
+    while (isIntegral) {
+      const current = todo.pop();
+      if (current === undefined) break;
       if (visited.has(current)) continue;
       visited.add(current);
       const op = manager.getOp(current);
@@ -632,35 +626,45 @@ export class ArithRewriter extends PolyRewriter {
     return undefined;
   }
 
-  // div_polynomial: undefined when a constant is not divisible and the atom is an equality.
+  // div_polynomial: the quotient, with a reference the caller owns, or undefined when a constant is
+  // not divisible and the atom is an equality. new_args is an expr_ref_buffer, which Z3 releases
+  // first to last as it returns.
   private dividePolynomial(expr: number, divisor: bigint, rounding: "floor" | "ceil" | "none") {
+    const manager = this.manager;
     const newArgs: number[] = [];
-    for (const arg of this.getMonomials(expr)) {
-      if (this.manager.isNumeral(arg)) {
-        const value = this.manager.getNumeralValue(arg);
-        const isDivisible = value % divisor === 0n;
-        if (!isDivisible && rounding === "none") return undefined;
-        const rounded =
-          isDivisible || rounding === "floor"
-            ? getEuclideanDiv(value, divisor)
-            : getCeilDiv(value, divisor);
-        if (rounded !== 0n) newArgs.push(this.manager.mkNumeral(rounded));
-        continue;
+    const pushArg = (arg: number) => {
+      manager.incRef(arg);
+      newArgs.push(arg);
+    };
+    const quotient = manager.withoutTemporaries(() => {
+      for (const arg of this.getMonomials(expr)) {
+        if (manager.isNumeral(arg)) {
+          const value = manager.getNumeralValue(arg);
+          const isDivisible = value % divisor === 0n;
+          if (!isDivisible && rounding === "none") return undefined;
+          const rounded =
+            isDivisible || rounding === "floor"
+              ? getEuclideanDiv(value, divisor)
+              : getCeilDiv(value, divisor);
+          if (rounded !== 0n) pushArg(manager.mkNumeral(rounded));
+          continue;
+        }
+        const coefficient = this.getCoefficient(arg).num / divisor;
+        const product = this.getPowerProduct(arg);
+        if (coefficient === 1n) pushArg(product);
+        else if (coefficient !== 0n)
+          pushArg(manager.mkApp(OP_MUL, [manager.mkNumeral(coefficient), product], SORT_INT));
       }
-      const coefficient = this.getCoefficient(arg).num / divisor;
-      const product = this.getPowerProduct(arg);
-      if (coefficient === 1n) newArgs.push(product);
-      else if (coefficient !== 0n)
-        newArgs.push(
-          this.manager.mkApp(OP_MUL, [this.manager.mkNumeral(coefficient), product], SORT_INT),
-        );
-    }
-    return this.mkAddApp(newArgs);
+      return this.mkAddApp(newArgs);
+    });
+    if (quotient !== undefined) manager.incRef(quotient);
+    for (const arg of newArgs) manager.decRef(arg);
+    return quotient;
   }
 
   // get_coeffs_gcd: the gcd of the coefficients, or 0 when there is no monomial, and the number of
   // non-zero constants.
-  private getCoeffsGcd(expr: number, state: { gcd: bigint; isFirst: boolean; numConsts: number }) {
+  private getCoeffsGcd(expr: number, state: GcdState) {
     for (const arg of this.getMonomials(expr)) {
       if (this.manager.isNumeral(arg)) {
         if (this.manager.getNumeralValue(arg) !== 0n) state.numConsts++;
@@ -735,6 +739,7 @@ export class ArithRewriter extends PolyRewriter {
         );
         if (newLeft === undefined) return manager.falseExpr;
         setSide(0, newLeft);
+        manager.decRef(newLeft);
         const newRight = this.dividePolynomial(
           right,
           divisor,
@@ -742,6 +747,7 @@ export class ArithRewriter extends PolyRewriter {
         );
         if (newRight === undefined) return manager.falseExpr;
         setSide(1, newRight);
+        manager.decRef(newRight);
         left = newLeft;
         right = newRight;
         isChanged = true;

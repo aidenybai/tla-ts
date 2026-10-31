@@ -2,12 +2,10 @@
 // src/tactic/goal_num_occurs.cpp), MIT license, see z3-license.txt. The ctx-simplify tactic with
 // ctx_propagate_assertions: in the context of a formula or a branch, a shared term that the context
 // asserts becomes true, false or the value it equals.
-import { SmtCanceledError } from "../../../errors";
 import { KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_OR, type AstManager } from "./ast";
-import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import type { Goal } from "./goal";
 import { RefVector } from "./ref-vector";
-import { Rewriter } from "./rewriter";
+import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { shrink } from "./array";
 
 // The max_depth and max_steps that mk_quant_preprocessor gives ctx-simplify.
@@ -41,11 +39,7 @@ class CtxSimplifier {
   constructor(private manager: AstManager) {
     this.pinned = new RefVector(manager);
     this.trail = new RefVector(manager);
-    this.rewriter = new Rewriter(manager, {
-      isEliminatingAnd: false,
-      arith: TACTIC_ARITH_OPTIONS,
-      isRewritingPatterns: false,
-    });
+    this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   }
 
   // operator(): a forward pass over the formulas, then a backward pass that also counts the
@@ -200,7 +194,7 @@ class CtxSimplifier {
       return expr;
     }
     // tactic::checkpoint.
-    if (!manager.limit.inc()) throw new SmtCanceledError();
+    manager.limit.checkpoint();
     const known = this.getCached(expr) ?? this.assertions.get(expr);
     if (known !== undefined) {
       manager.incRef(known);

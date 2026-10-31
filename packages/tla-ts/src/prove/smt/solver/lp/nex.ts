@@ -3,9 +3,8 @@
 // coefficient, and sums. Products and sums are mutable, since nex_creator simplifies them in place
 // and cross_nested rewrites their children.
 import { Rational } from "../rational";
-import { getPower } from "./dep-intervals";
 
-export interface NexScalar {
+interface NexScalar {
   readonly kind: "scalar";
   readonly value: Rational;
 }
@@ -85,7 +84,7 @@ export const getNexVal = (expr: Nex, getVarVal: (variable: number) => Rational):
       Rational.zero,
     );
   return expr.children.reduce(
-    (value, child) => value.mul(getPower(getNexVal(child.expr, getVarVal), child.power)),
+    (value, child) => value.mul(getNexVal(child.expr, getVarVal).pow(child.power)),
     expr.coeff,
   );
 };

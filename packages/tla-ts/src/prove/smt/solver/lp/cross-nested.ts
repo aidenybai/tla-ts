@@ -132,12 +132,12 @@ export class CrossNested {
     for (const child of sum.children) {
       if (child.kind === "mul") {
         getPowersFromMul(child, this.nexCreator.powers);
-        for (const [variable, power] of this.nexCreator.powers) {
-          const occ = occurences.get(variable);
-          if (occ === undefined) occurences.set(variable, { occs: 1, power });
+        for (const entry of this.nexCreator.powers) {
+          const occ = occurences.get(entry[0]);
+          if (occ === undefined) occurences.set(entry[0], { occs: 1, power: entry[1] });
           else {
             occ.occs++;
-            occ.power = Math.min(occ.power, power);
+            occ.power = Math.min(occ.power, entry[1]);
           }
         }
       } else if (child.kind === "var") {
@@ -149,7 +149,7 @@ export class CrossNested {
         }
       }
     }
-    for (const [variable, occ] of occurences) if (occ.occs <= 1) occurences.delete(variable);
+    for (const entry of occurences) if (entry[1].occs <= 1) occurences.delete(entry[0]);
   }
 
   // The variables to factor out, by occurrences, then by power, then by index in the direction

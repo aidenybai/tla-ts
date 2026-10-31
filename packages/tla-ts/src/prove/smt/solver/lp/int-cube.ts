@@ -5,7 +5,7 @@
 // the edge of that cube instead, and when the edge is below 1 it rounds the center and flips
 // rounded columns to repair the bounds the rounding broke.
 import { Rational } from "../rational";
-import { KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
+import { type ConstraintKind, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
 import { LP_FEASIBLE, LP_OPTIMAL } from "./core-solver";
 import { type LarSolver, NULL_LPVAR } from "./lar-solver";
 import type { LarTerm } from "./lar-term";
@@ -36,7 +36,7 @@ const getCubeDelta = (solver: LarSolver, term: LarTerm) => {
   return new Impq(delta.mul(HALF));
 };
 
-const addVarBound = (solver: LarSolver, column: number, kind: number, rhs: Rational) =>
+const addVarBound = (solver: LarSolver, column: number, kind: ConstraintKind, rhs: Rational) =>
   solver.activate(solver.mkVarBound(column, kind, rhs));
 
 // tighten_term_bounds_by_delta: whether the bounds of the column stay apart when each moves inward

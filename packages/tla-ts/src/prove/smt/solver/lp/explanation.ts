@@ -1,10 +1,9 @@
 // Ported from Z3 (src/math/lp/explanation.h), MIT license, see z3-license.txt. The constraints
 // behind a conflict or a propagation: weighted pairs, or a set of constraint indices whose
 // iteration order is the slot order of Z3's hashtable.
-import { ObjMap } from "../hashtable";
+import { getIdentityHash, ObjMap } from "../hashtable";
 import { Rational } from "../rational";
-
-const getIdentityHash = (key: number) => key;
+import { type Dependency, linearize } from "./dependency";
 
 export class Explanation {
   private pairs: [number, Rational][] = [];
@@ -21,6 +20,11 @@ export class Explanation {
 
   push(constraint: number) {
     this.indices.set(constraint, true);
+  }
+
+  // push_explanation: the constraints behind a dependency.
+  pushDependency(dep: Dependency) {
+    for (const constraint of linearize([dep])) this.push(constraint);
   }
 
   get isEmpty() {

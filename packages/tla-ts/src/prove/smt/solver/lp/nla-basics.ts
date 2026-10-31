@@ -5,18 +5,17 @@
 // derived = true, basic_lemma returns after the sign lemma, so Z3 never reaches its derived
 // zero and neutral lemmas.
 import { Rational } from "../rational";
-import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
+import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { LarTerm } from "./lar-term";
-import {
-  type Factorization,
-  getRatSign,
-  KIND_NE,
-  LemmaBuilder,
-  mkIneq,
-  type NlaCore,
-  signToRat,
-} from "./nla-core";
+import { type NlaCore } from "./nla-core";
+import { type Factorization } from "./nla-factorization";
+import { getRatSign, LemmaBuilder, mkIneq, signToRat } from "./nla-types";
 import type { Monic } from "./nla-emonics";
+
+interface FactorValue {
+  variable: number;
+  value: Rational;
+}
 
 export class Basics {
   constructor(private core: NlaCore) {}
@@ -339,7 +338,7 @@ export class Basics {
   // can_create_lemma_for_mon_neutral_from_factors_to_monic_model_based: the one factor whose
   // value is not +-1, or -1 when there is none, and the product of the other values, when the
   // monic's value disagrees with them.
-  private getNeutralNotOne(monic: Monic, factors: { variable: number; value: Rational }[]) {
+  private getNeutralNotOne(monic: Monic, factors: FactorValue[]) {
     let sign = Rational.one;
     let notOne = -1;
     for (const factor of factors) {

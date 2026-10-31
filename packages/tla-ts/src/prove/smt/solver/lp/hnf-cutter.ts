@@ -3,7 +3,7 @@
 // terms tight at the current solution form A x = b; with A in Hermite normal form H, a row of
 // H^-1 b that is fractional gives a cut that every integer solution meets.
 import { Rational } from "../rational";
-import { type Dependency, linearize } from "./dependency";
+import type { Dependency } from "./dependency";
 import { GeneralMatrix, getDeterminantOfRectangularMatrix, getHermiteNormalForm } from "./hnf";
 import type { IntSolver, LiaMove } from "./int-solver";
 import type { LarTerm } from "./lar-term";
@@ -120,7 +120,6 @@ export const makeHnfCut = (lia: IntSolver): LiaMove => {
     if (!coeff.isZero()) lia.term.addMonomial(coeff, columns[column]);
   }
   lia.explanation.clear();
-  for (const dep of deps)
-    for (const constraint of linearize([dep])) lia.explanation.push(constraint);
+  for (const dep of deps) lia.explanation.pushDependency(dep);
   return { kind: "cut", offset: b[cutRow].floor(), isUpper: true };
 };

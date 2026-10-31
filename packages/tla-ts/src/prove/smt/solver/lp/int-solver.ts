@@ -5,7 +5,6 @@
 // fractional basic column.
 import { getGcd, getLcm, Rational } from "../rational";
 import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
-import { linearize, mkJoin } from "./dependency";
 import { DiophantineSolver } from "./dioph-eq";
 import { Explanation } from "./explanation";
 import { getGomoryCuts } from "./gomory";
@@ -126,12 +125,7 @@ export class IntSolver {
     this.explanation.clear();
     // lp.dio_run_gcd is off, so the GCD test runs only when the Diophantine solver ignores terms.
     const move: LiaMove = this.dio.hasIgnoredTerms ? this.gcdTest() : { kind: "undef" };
-    const core = solver.core;
-    const savedTouchedRows = core.touchedRows;
-    core.touchedRows = null;
-    const result = this.checkAfterGcd(move);
-    core.touchedRows = savedTouchedRows;
-    return result;
+    return solver.core.withoutTouchedRows(() => this.checkAfterGcd(move));
   }
 
   private checkAfterGcd(gcdMove: LiaMove): LiaMove {
@@ -377,9 +371,7 @@ export class IntSolver {
   }
 
   private addBoundWitnesses(column: number) {
-    const solver = this.solver;
-    const deps = mkJoin(solver.getLowerWitness(column), solver.getUpperWitness(column));
-    for (const constraint of linearize([deps])) this.explanation.push(constraint);
+    this.explanation.pushDependency(this.solver.getBoundWitnesses(column));
   }
 
   private fillExplanationFromFixedColumns(row: RowCell[]) {

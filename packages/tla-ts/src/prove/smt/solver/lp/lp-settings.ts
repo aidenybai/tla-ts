@@ -1,7 +1,7 @@
 // Ported from Z3 (src/math/lp/lp_settings.h, src/math/lp/lp_settings.cpp), MIT license, see
 // z3-license.txt. The settings that theory_lra's UFNIA configuration gives the lp solver, its
 // random generator and its statistics.
-import { RandomGen } from "../proto-model";
+import { RandomGen } from "../random-gen";
 
 export interface LpStats {
   makeFeasible: number;

@@ -2,6 +2,7 @@
 // the candidate model satisfies each relevant quantifier: the negated body, with the model's
 // interpretations in place of the uninterpreted symbols, goes to an auxiliary context. A model of it
 // is a counterexample that becomes an instance of the quantifier.
+import { SmtInvariantError } from "../../../errors";
 import { KIND_APP, OP_NOT, OP_OR, SORT_BOOL, type AstManager } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
 import { Context } from "./context";
@@ -334,7 +335,7 @@ export class ModelChecker {
         if (!context.isEInternalized(binding))
           context.internalize(binding, false, instance.generation);
         const node = context.getEnode(binding);
-        if (node === undefined) throw new Error("the binding was not internalized");
+        if (node === undefined) throw new SmtInvariantError("the binding was not internalized");
         return node;
       });
       this.qmanager.addInstance(instance.quantifier, nodes, instance.generation);

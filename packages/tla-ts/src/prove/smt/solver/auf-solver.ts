@@ -2,10 +2,12 @@
 // sets and the AUF solver of the model finder: the solver groups the argument positions and
 // variables that must share an instantiation set, and each group gets a projection function that
 // maps any value to the value of a term in its set.
+import { SmtInvariantError } from "../../../errors";
 import { OP_ITE, OP_LT, SORT_BOOL, SORT_INT, isArithSort, type AstManager } from "./ast";
 import { combineHash } from "./hash";
 import { ObjHashtable, ObjMap } from "./hashtable";
-import { FuncInterp, RandomGen, type ProtoModel } from "./proto-model";
+import { FuncInterp, type ProtoModel } from "./proto-model";
+import { RandomGen } from "./random-gen";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 
@@ -130,7 +132,7 @@ export class Node {
 
   getInstantiationSet() {
     const set = this.getRoot().set;
-    if (set === null) throw new Error("the instantiation set was not created");
+    if (set === null) throw new SmtInvariantError("the instantiation set was not created");
     return set;
   }
 
@@ -223,7 +225,7 @@ export class AufSolver {
   }
 
   private getModel() {
-    if (this.model === null) throw new Error("the model finder has no model");
+    if (this.model === null) throw new SmtInvariantError("the model finder has no model");
     return this.model;
   }
 

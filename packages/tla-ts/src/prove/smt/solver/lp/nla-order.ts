@@ -2,22 +2,11 @@
 // license, see z3-license.txt. The order lemmas of nla: a > b and c > 0 imply ac > bc, over the
 // binary factorizations of the monomials to refine, and the sign lemmas of binomials.
 import { Rational } from "../rational";
-import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
+import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { LarTerm } from "./lar-term";
-import {
-  type Factor,
-  type Factorization,
-  getFactorSign,
-  getRatSign,
-  KIND_NE,
-  LemmaBuilder,
-  mkFactor,
-  mkIneq,
-  negateKind,
-  NLA_PARAMS,
-  type NlaCore,
-  signToRat,
-} from "./nla-core";
+import { NLA_PARAMS, type NlaCore } from "./nla-core";
+import { type Factor, type Factorization, getFactorSign, mkFactor } from "./nla-factorization";
+import { getRatSign, LemmaBuilder, mkIneq, negateKind, signToRat } from "./nla-types";
 import type { Monic } from "./nla-emonics";
 import { getSignedVarVar } from "./nla-var-eqs";
 import { THROTTLE_BINOMIAL_SIGN_LEMMA, THROTTLE_ORDER_LEMMA } from "./nla-throttle";

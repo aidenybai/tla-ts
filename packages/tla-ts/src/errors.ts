@@ -137,6 +137,33 @@ export class SmtCanceledError extends TlaError {
   }
 }
 
+// The SMT solver broke one of its own invariants, a bug in the port rather than in the input. It
+// keeps its name, and index.ts doesn't export it.
+export class SmtInvariantError extends TlaError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SmtInvariantError";
+  }
+}
+
+// nlsat reached a case Z3 leaves unimplemented, where Z3 exits the process. nra answers unknown
+// instead. index.ts doesn't export it.
+export class NlsatUnsupportedError extends TlaError {
+  constructor(reason: string) {
+    super(`nlsat does not implement ${reason}`);
+    this.name = "NlsatUnsupportedError";
+  }
+}
+
+// mem_out: the pdd manager needed a node past its limit outside an operation. Grobner catches it
+// and gives up on the round. index.ts doesn't export it.
+export class PddMemoryOutError extends TlaError {
+  constructor() {
+    super("the pdd manager ran out of nodes");
+    this.name = "PddMemoryOutError";
+  }
+}
+
 // The SMT-LIB input is malformed: a syntax error, an undeclared symbol, or an ill-sorted application.
 export class SmtParseError extends TlaError {
   constructor(message: string, cause?: unknown) {

@@ -11,23 +11,48 @@ export const KIND_LT = -1;
 export const KIND_EQ = 0;
 export const KIND_GT = 1;
 export const KIND_GE = 2;
+// NE: a kind of nla's inequalities, never of a bound the theory asserts.
+export const KIND_NE = 3;
+
+export type ConstraintKind =
+  | typeof KIND_LE
+  | typeof KIND_LT
+  | typeof KIND_EQ
+  | typeof KIND_GT
+  | typeof KIND_GE;
 
 export interface LarConstraint {
   readonly column: number;
-  readonly kind: number;
+  readonly kind: ConstraintKind;
   readonly rhs: Impq;
   readonly dep: Dependency;
   isActive: boolean;
+  // Made for the atom of an nla lemma.
+  readonly isAuxiliary: boolean;
+}
+
+interface ConstraintScope {
+  size: number;
+  activeSize: number;
 }
 
 export class ConstraintSet {
   readonly constraints: LarConstraint[] = [];
   private active: number[] = [];
-  private scopes: { size: number; activeSize: number }[] = [];
+  private scopes: ConstraintScope[] = [];
+  // m_is_auxiliary_mode: whether new constraints are auxiliary.
+  isAuxiliaryMode = false;
 
-  add(column: number, kind: number, rhs: Impq) {
+  add(column: number, kind: ConstraintKind, rhs: Impq) {
     const index = this.constraints.length;
-    this.constraints.push({ column, kind, rhs, dep: mkLeaf(index), isActive: false });
+    this.constraints.push({
+      column,
+      kind,
+      rhs,
+      dep: mkLeaf(index),
+      isActive: false,
+      isAuxiliary: this.isAuxiliaryMode,
+    });
     return index;
   }
 

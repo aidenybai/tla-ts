@@ -5,12 +5,12 @@
 // coefficients, which finds a conflict when the gcd does not divide the constant, and solved for a
 // column with a unit coefficient, or rewritten with a fresh column until one appears. The bounds of
 // the term columns are then tightened modulo the gcd of their terms after the substitutions.
-import { SmtUnsupportedError } from "../../../../errors";
+import { SmtInvariantError } from "../../../../errors";
 import { getGcd, getLcm, Rational } from "../rational";
 import { IndexedUintSet, UnorderedUintMap } from "./containers";
 import { KIND_GE, KIND_LE } from "./constraints";
 import { LP_CANCELLED, LP_FEASIBLE, LP_OPTIMAL } from "./core-solver";
-import { type Dependency, linearize, mkJoin } from "./dependency";
+import { type Dependency, mkJoin } from "./dependency";
 import { Explanation } from "./explanation";
 import type { IntSolver } from "./int-solver";
 import type { LarSolver } from "./lar-solver";
@@ -186,7 +186,7 @@ class VarRegister {
   getLocal(external: number) {
     const local = this.externalToLocal.get(external);
     if (local === undefined)
-      throw new SmtUnsupportedError(`the Diophantine solver has no column for ${external}`);
+      throw new SmtInvariantError(`the Diophantine solver has no column for ${external}`);
     return local;
   }
 
@@ -230,7 +230,7 @@ class FreshDefinitions {
   getByFresh(fresh: number) {
     const definition = this.definitions.get(fresh);
     if (definition === undefined)
-      throw new SmtUnsupportedError(`the Diophantine solver has no definition for ${fresh}`);
+      throw new SmtInvariantError(`the Diophantine solver has no definition for ${fresh}`);
     return definition;
   }
 
@@ -308,7 +308,7 @@ export class DiophantineSolver {
       this.getRowMonomials(this.lMatrix, this.conflictRow),
       this.conflictGcd,
     );
-    for (const constraint of linearize([dep])) explanation.push(constraint);
+    explanation.pushDependency(dep);
   }
 
   // Callbacks of lar_solver.
@@ -1086,9 +1086,9 @@ export class DiophantineSolver {
         this.explainFixed(getTermMonomials(solver.getTerm(column)), Rational.zero),
         this.explainFixedInMetaTerm(this.lspace.data, Rational.zero),
       ),
-      this.getBoundWitnesses(column),
+      this.solver.getBoundWitnesses(column),
     );
-    for (const constraint of linearize([dep])) this.infeasExplanation.push(constraint);
+    this.infeasExplanation.pushDependency(dep);
   }
 
   // tighten_bounds_for_non_trivial_gcd: whether tightening the bound found a conflict.
@@ -1118,7 +1118,7 @@ export class DiophantineSolver {
     if (solver.isFixed(column)) fixedPart.add(Rational.one, column);
     for (const monomial of fixedPart.data) {
       if (monomial.coeff.isInt() && getRemainder(monomial.coeff, gcd).isZero()) continue;
-      dep = mkJoin(dep, this.getBoundWitnesses(monomial.column));
+      dep = mkJoin(dep, this.solver.getBoundWitnesses(monomial.column));
     }
     if (solver.settings.isCanceled()) return false;
     solver.updateColumnTypeAndBound(column, isUpper ? KIND_LE : KIND_GE, new Impq(bound), dep);
@@ -1126,10 +1126,6 @@ export class DiophantineSolver {
     if (status === LP_FEASIBLE || status === LP_OPTIMAL || status === LP_CANCELLED) return false;
     solver.getInfeasibilityExplanation(this.infeasExplanation);
     return true;
-  }
-
-  private getBoundWitnesses(column: number) {
-    return mkJoin(this.solver.getLowerWitness(column), this.solver.getUpperWitness(column));
   }
 
   // open_fixed_from_ml: the fixed columns of a combination of term definitions.
@@ -1154,7 +1150,7 @@ export class DiophantineSolver {
     for (const monomial of monomials) {
       if (!this.solver.isFixed(monomial.column)) continue;
       if (!gcd.isZero() && monomial.coeff.div(gcd).isInt()) continue;
-      dep = mkJoin(dep, this.getBoundWitnesses(monomial.column));
+      dep = mkJoin(dep, this.solver.getBoundWitnesses(monomial.column));
     }
     return dep;
   }

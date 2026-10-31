@@ -2,9 +2,18 @@
 // src/math/lp/var_register.h), MIT license, see z3-license.txt. Columns for theory variables and
 // for terms, whose rows the tableau keeps, bounds with dependencies on the constraints that set
 // them, and the push and pop of all of it.
+import { SmtInvariantError } from "../../../../errors";
 import { Rational } from "../rational";
 import { IndexedUintSet, StackedVector } from "./containers";
-import { ConstraintSet, KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
+import {
+  type ConstraintKind,
+  ConstraintSet,
+  KIND_EQ,
+  KIND_GE,
+  KIND_GT,
+  KIND_LE,
+  KIND_LT,
+} from "./constraints";
 import {
   COLUMN_BOXED,
   COLUMN_FIXED,
@@ -17,6 +26,7 @@ import {
   LP_INFEASIBLE,
   LP_OPTIMAL,
   LP_UNKNOWN,
+  type ColumnType,
 } from "./core-solver";
 import { Dependency, linearize, mkJoin } from "./dependency";
 import type { Explanation } from "./explanation";
@@ -26,6 +36,17 @@ import { Impq } from "./numeric-pair";
 import { shrink } from "../array";
 
 export const NULL_LPVAR = -1;
+
+interface AdjustedBound {
+  kind: ConstraintKind;
+  bound: Rational;
+}
+
+// The column of a term, under its normalized term, with the first coefficient it was divided by.
+interface NormalizedTermColumn {
+  coeff: Rational;
+  column: number;
+}
 
 interface Column {
   lowerWitness: Dependency;
@@ -60,7 +81,7 @@ export class LarSolver {
   private fixedVarTableInt = new Map<string, number>();
   private fixedVarTableReal = new Map<string, number>();
   private fixedBaseVarSet = new IndexedUintSet();
-  private normalizedTermsToColumns = new Map<string, { coeff: Rational; column: number }>();
+  private normalizedTermsToColumns = new Map<string, NormalizedTermColumn>();
   private isRegisteringTerms = false;
   // m_delta: zero until init_model sets it.
   private delta = Rational.zero;
@@ -118,7 +139,7 @@ export class LarSolver {
 
   getTerm(column: number) {
     const term = this.columns[column].term;
-    if (term === null) throw new Error(`column ${column} has no term`);
+    if (term === null) throw new SmtInvariantError(`column ${column} has no term`);
     return term;
   }
 
@@ -152,21 +173,8 @@ export class LarSolver {
   }
 
   private addNewVarToCoreFields(isBasic: boolean) {
-    const core = this.core;
-    const column = this.getColumnCount();
-    core.matrix.addColumn();
-    core.x.push(Impq.zero);
-    core.lowerBounds[column] = Impq.zero;
-    core.upperBounds[column] = Impq.zero;
-    if (isBasic) {
-      core.matrix.addRow();
-      core.heading.push(core.basis.length);
-      core.basis.push(column);
-      this.addTouchedRow(this.getRowCount() - 1);
-      return;
-    }
-    core.heading.push(-core.nbasis.length - 1);
-    core.nbasis.push(column);
+    this.core.addColumn(isBasic);
+    if (isBasic) this.addTouchedRow(this.getRowCount() - 1);
   }
 
   private pushUndoAddColumn() {
@@ -295,27 +303,7 @@ export class LarSolver {
       if (core.heading[column] < 0)
         core.changeBasisUnconditionally(column, core.basis[matrix.getRowCount()]);
     } else matrix.popColumn();
-    core.x.length = matrix.getColumnCount();
-    const position = core.heading[column];
-    if (position >= 0) {
-      const lastPosition = core.basis.length - 1;
-      if (position !== lastPosition) {
-        const moved = core.basis[lastPosition];
-        core.basis[position] = moved;
-        core.heading[moved] = position;
-      }
-      core.basis.pop();
-    } else {
-      const index = -1 - position;
-      const lastPosition = core.nbasis.length - 1;
-      if (index !== lastPosition) {
-        const moved = core.nbasis[lastPosition];
-        core.nbasis[index] = moved;
-        core.heading[moved] = -index - 1;
-      }
-      core.nbasis.pop();
-    }
-    core.heading.pop();
+    core.removeLastColumn(column);
   }
 
   // Bounds.
@@ -355,14 +343,14 @@ export class LarSolver {
   }
 
   // adjust_bound_for_int: a strict or fractional bound on an integer column, rounded.
-  private adjustBoundForInt(column: number, kind: number, bound: Rational) {
+  private adjustBoundForInt(column: number, kind: ConstraintKind, bound: Rational): AdjustedBound {
     if (!this.isInt(column) || bound.isInt()) return { kind, bound };
     if (kind === KIND_LT || kind === KIND_LE) return { kind: KIND_LE, bound: bound.floor() };
     if (kind === KIND_GT || kind === KIND_GE) return { kind: KIND_GE, bound: bound.ceil() };
     return { kind, bound };
   }
 
-  mkVarBound(column: number, kind: number, rhs: Rational) {
+  mkVarBound(column: number, kind: ConstraintKind, rhs: Rational) {
     const adjusted = this.adjustBoundForInt(column, kind, rhs);
     return this.constraints.add(column, adjusted.kind, new Impq(adjusted.bound));
   }
@@ -423,14 +411,13 @@ export class LarSolver {
     return (isInt ? this.fixedVarTableInt : this.fixedVarTableReal).get(value.toString());
   }
 
-  updateColumnTypeAndBound(column: number, inputKind: number, rhs: Impq, dep: Dependency) {
-    const wasFixed = this.isFixed(column);
+  updateColumnTypeAndBound(column: number, inputKind: ConstraintKind, rhs: Impq, dep: Dependency) {
     const adjusted = this.adjustBoundForInt(column, inputKind, rhs.x);
     const kind = adjusted.kind;
     const core = this.core;
     const hasUpper = core.hasUpperBound(column);
     const hasLower = core.hasLowerBound(column);
-    const setType = (type: number) => core.columnTypes.set(column, type);
+    const setType = (type: ColumnType) => core.columnTypes.set(column, type);
     const isUpperKind = kind === KIND_LE || kind === KIND_LT;
     const isLowerKind = kind === KIND_GE || kind === KIND_GT;
     const y =
@@ -467,13 +454,9 @@ export class LarSolver {
     }
     if (hasUpper && hasLower && this.getLowerBound(column).equals(this.getUpperBound(column)))
       setType(COLUMN_FIXED);
-    if (!wasFixed && this.isFixed(column)) this.onFixed?.(column);
     if (this.isBase(column) && this.isFixed(column)) this.fixedBaseVarSet.add(column);
     this.onColumnBoundUpdate?.(column);
   }
-
-  // m_fixed_var_eh, which theory_lra leaves unset.
-  onFixed: ((column: number) => void) | undefined;
 
   addTouchedRow(rowIndex: number) {
     this.touchedRows.add(rowIndex);
@@ -543,24 +526,23 @@ export class LarSolver {
   // remove_fixed_vars_from_base: pivots fixed basic columns out of the basis.
   removeFixedVarsFromBase() {
     const core = this.core;
-    const savedTouchedRows = core.touchedRows;
-    core.touchedRows = null;
     const columnCount = this.getColumnCount();
     const toRemove: number[] = [];
-    for (const column of this.fixedBaseVarSet.elems) {
-      if (column >= columnCount || !this.isBase(column) || !this.isFixed(column)) {
-        toRemove.push(column);
-        continue;
+    core.withoutTouchedRows(() => {
+      for (const column of this.fixedBaseVarSet.elems) {
+        if (column >= columnCount || !this.isBase(column) || !this.isFixed(column)) {
+          toRemove.push(column);
+          continue;
+        }
+        for (const cell of core.matrix.rows[core.heading[column]]) {
+          if (this.isFixed(cell.column)) continue;
+          core.pivot(cell.column, column);
+          toRemove.push(column);
+          break;
+        }
       }
-      for (const cell of core.matrix.rows[core.heading[column]]) {
-        if (this.isFixed(cell.column)) continue;
-        core.pivot(cell.column, column);
-        toRemove.push(column);
-        break;
-      }
-    }
+    });
     for (const column of toRemove) this.fixedBaseVarSet.delete(column);
-    core.touchedRows = savedTouchedRows;
   }
 
   // remove_from_basis: pivots a basic column with the first non-fixed column of its row.
@@ -732,10 +714,6 @@ export class LarSolver {
       const value = core.x[column];
       if (!value.y.isZero()) core.x[column] = new Impq(value.x.add(delta.mul(value.y)));
     }
-  }
-
-  pushExplanation(dep: Dependency, explanation: Explanation) {
-    for (const constraint of linearize([dep])) explanation.push(constraint);
   }
 
   // get_bound_constraint_witnesses_for_column: the witnesses of both bounds.

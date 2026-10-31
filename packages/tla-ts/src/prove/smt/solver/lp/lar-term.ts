@@ -1,10 +1,8 @@
 // Ported from Z3 (src/math/lp/lar_term.h), MIT license, see z3-license.txt. A linear combination of
 // columns, kept in a u_map so that its iteration order is Z3's.
-import { ObjMap } from "../hashtable";
+import { getIdentityHash, ObjMap } from "../hashtable";
 import { Rational } from "../rational";
 import { Impq } from "./numeric-pair";
-
-const getIdentityHash = (key: number) => key;
 
 export class LarTerm {
   readonly coeffs = new ObjMap<Rational>(getIdentityHash);

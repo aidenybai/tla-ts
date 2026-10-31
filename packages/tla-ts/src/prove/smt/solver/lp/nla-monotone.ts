@@ -3,7 +3,8 @@
 // at most, or at least, the product of its factors' absolute values when they are.
 import { Rational } from "../rational";
 import { KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
-import { LemmaBuilder, mkIneq, type NlaCore } from "./nla-core";
+import { type NlaCore } from "./nla-core";
+import { LemmaBuilder, mkIneq } from "./nla-types";
 import type { Monic } from "./nla-emonics";
 import { THROTTLE_MONOTONE_LEMMA } from "./nla-throttle";
 

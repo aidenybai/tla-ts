@@ -7,7 +7,7 @@ import type { Context } from "./context";
 import type { Enode } from "./enode";
 import { RefVector } from "./ref-vector";
 import { VarSubst } from "./var-subst";
-import { shrink } from "./array";
+import { setAt, shrink } from "./array";
 
 const EAGER_COST_THRESHOLD = 10;
 const LAZY_COST_THRESHOLD = 20;
@@ -36,7 +36,7 @@ class Checker {
   private checkStamps = new Int32Array(1024);
   private checkResults = new Int32Array(1024);
   private enodeStamps = new Int32Array(1024);
-  private enodeResults: (Enode | null)[] = [];
+  private enodeResults: (Enode | null | undefined)[] = [];
 
   constructor(private context: Context) {}
 
@@ -75,6 +75,16 @@ class Checker {
     return value !== 0 && isTrue === value > 0;
   }
 
+  private checkAny(args: number[], depth: number, isTrue: boolean) {
+    for (const arg of args) if (this.check(arg, depth, isTrue)) return true;
+    return false;
+  }
+
+  private checkAll(args: number[], depth: number, isTrue: boolean) {
+    for (const arg of args) if (!this.check(arg, depth, isTrue)) return false;
+    return true;
+  }
+
   private checkCore(expr: number, depth: number, isTrue: boolean): boolean {
     if (depth > 600) return false;
     const context = this.context;
@@ -92,13 +102,9 @@ class Checker {
       case OP_NOT:
         return this.check(args[0], next, !isTrue);
       case OP_OR:
-        return isTrue
-          ? args.some((innerArg) => this.check(innerArg, next, true))
-          : args.every((innerArg) => this.check(innerArg, next, false));
+        return isTrue ? this.checkAny(args, next, true) : this.checkAll(args, next, false);
       case OP_AND:
-        return isTrue
-          ? args.every((innerArg) => this.check(innerArg, next, true))
-          : args.some((innerArg) => this.check(innerArg, next, false));
+        return isTrue ? this.checkAll(args, next, true) : this.checkAny(args, next, false);
       case OP_EQ: {
         if (!manager.isBool(args[0])) {
           const lhs = this.getEnodeEqTo(args[0]);
@@ -150,13 +156,13 @@ class Checker {
     if (existing !== undefined && context.isRelevant(expr)) return existing;
     if (manager.kinds[expr] !== KIND_APP || manager.args[expr].length === 0) return null;
     if (expr >= this.enodeStamps.length) this.enodeStamps = grow(this.enodeStamps, expr);
-    if (this.enodeStamps[expr] === this.stamp) return this.enodeResults[expr];
+    if (this.enodeStamps[expr] === this.stamp) return this.enodeResults[expr] ?? null;
     const argNodes: Enode[] = [];
     for (const arg of manager.args[expr]) {
       const node = this.getEnodeEqTo(arg);
       if (node === null) {
         this.enodeStamps[expr] = this.stamp;
-        this.enodeResults[expr] = null;
+        setAt(this.enodeResults, expr, null);
         return null;
       }
       argNodes.push(node);
@@ -164,7 +170,7 @@ class Checker {
     const found = context.findCongruent(manager.decls[expr], argNodes);
     const result = found !== undefined && context.isRelevant(found.owner) ? found : null;
     this.enodeStamps[expr] = this.stamp;
-    this.enodeResults[expr] = result;
+    setAt(this.enodeResults, expr, result);
     return result;
   }
 }

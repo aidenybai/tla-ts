@@ -55,21 +55,37 @@ export const CHECK_MODEL_UNKNOWN = 1;
 export const CHECK_MODEL_RESTART = 2;
 
 // The reasons a search may stop without an answer that MBQI cares about.
-export const FAILURE_OK = 0;
-export const FAILURE_THEORY = 1;
-export const FAILURE_QUANTIFIERS = 2;
+const FAILURE_OK = 0;
+const FAILURE_THEORY = 1;
+const FAILURE_QUANTIFIERS = 2;
 const FAILURE_CANCELED = 3;
+
+type SearchFailure =
+  | typeof FAILURE_OK
+  | typeof FAILURE_THEORY
+  | typeof FAILURE_QUANTIFIERS
+  | typeof FAILURE_CANCELED;
 
 // smt_params: the kernel runs model-based quantifier instantiation with relevancy level 2 and the
 // CS_ACTIVITY_DELAY_NEW case split queue. The model checker's auxiliary context runs neither, as Z3
 // sets its relevancy level to 0 and its case split strategy to CS_ACTIVITY.
-export interface SmtParams {
+// m_model_generator's model, m_proto_model and m_model. The model generator holds the last model it
+// made. From mk_proto_model to reset_model the context holds that model too as its proto model, and
+// get_model adds the model the proto model makes.
+type ModelState =
+  | { kind: "none" }
+  | { kind: "generated"; generated: GeneratedModel }
+  | { kind: "proto"; generated: GeneratedModel }
+  | { kind: "final"; generated: GeneratedModel; model: ProtoModel };
+
+interface SmtParams {
   isMbqi: boolean;
   relevancyLevel: 0 | 2;
 }
 
 export class Context extends Internalizer {
-  // setup_context makes the theories after the first formulas are asserted.
+  // setup_context makes the theories after the first formulas are asserted, so the field starts
+  // unassigned.
   theory!: TheoryLra;
   readonly qmanager: DefaultQuantifierManager;
   readonly conflictResolution: ConflictResolution = new ConflictResolution(this);
@@ -95,11 +111,8 @@ export class Context extends Internalizer {
   private finalCheckIndex = 0;
   private r1ParentGenerations = new Map<Enode, number>();
   private erasedGenerations = new Map<Enode, number>();
-  private lastSearchFailure = FAILURE_OK;
-  // m_model_generator's model, m_proto_model and m_model.
-  private generatedModel: GeneratedModel | null = null;
-  private protoModel: ProtoModel | null = null;
-  private model: ProtoModel | null = null;
+  private lastSearchFailure: SearchFailure = FAILURE_OK;
+  private modelState: ModelState = { kind: "none" };
 
   constructor(manager: AstManager, params: SmtParams) {
     super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
@@ -753,8 +766,7 @@ export class Context extends Internalizer {
       this.deleteClauses(this.lemmas, this.baseScopeLemmaLimits[newLevel]);
       shrink(this.baseScopeLemmaLimits, newLevel);
     }
-    this.conflict = undefined;
-    this.notLiteral = null;
+    this.conflict = null;
     this.deleteClauses(this.auxClauses, this.scopeAuxClauseLimits[newLevel]);
     this.relevancy.pop(numScopes);
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
@@ -899,7 +911,10 @@ export class Context extends Internalizer {
     for (let index = head; index < this.assignedLiterals.length; index++)
       this.phaseAvailable[getVar(this.assignedLiterals[index])] = false;
     const resolution = this.conflictResolution;
-    if (this.conflict === undefined || !resolution.resolve(this.conflict, this.notLiteral))
+    if (
+      this.conflict === null ||
+      !resolution.resolve(this.conflict.justification, this.conflict.notLiteral)
+    )
       return false;
     const newLevel = resolution.newScopeLevel;
     const literals = resolution.lemma;
@@ -938,7 +953,7 @@ export class Context extends Internalizer {
     if (status !== FC_DONE) return status;
     const oldIndex = this.finalCheckIndex;
     let result = FC_DONE;
-    let failure = FAILURE_OK;
+    let failure: SearchFailure = FAILURE_OK;
     let level = 1;
     let maxLevel = 1;
     for (;;) {
@@ -1008,36 +1023,39 @@ export class Context extends Internalizer {
 
   // reset_model: the model generator still holds the proto model.
   private resetModel() {
-    this.model?.decRef();
-    this.model = null;
-    this.protoModel?.decRef();
-    this.protoModel = null;
+    const state = this.modelState;
+    if (state.kind === "none" || state.kind === "generated") return;
+    if (state.kind === "final") state.model.decRef();
+    state.generated.model.decRef();
+    this.modelState = { kind: "generated", generated: state.generated };
   }
 
   // mk_proto_model: the model of the current assignment, which the quantifier manager adjusts. The
   // model generator releases the last model first.
-  mkProtoModel() {
-    this.generatedModel?.model.decRef();
+  private mkProtoModel() {
+    if (this.modelState.kind !== "none") this.modelState.generated.model.decRef();
     const generated = mkModel(this);
     generated.model.incRef();
-    this.generatedModel = generated;
+    this.modelState = { kind: "generated", generated };
     this.qmanager.adjustModel(generated.model);
     generated.model.completePartialFuncs(false);
     generated.model.cleanup();
     generated.model.incRef();
-    this.protoModel = generated.model;
+    this.modelState = { kind: "proto", generated };
     return generated;
   }
 
   // get_model: the model that the proto model makes, which the caller holds too. add_rec_funs gives
   // each named expression without an interpretation its expression.
   getModel() {
-    if (this.model !== null) return this.model;
-    const model = (this.protoModel ?? this.mkProtoModel().model).mkModel();
+    if (this.modelState.kind === "final") return this.modelState.model;
+    const generated =
+      this.modelState.kind === "proto" ? this.modelState.generated : this.mkProtoModel();
+    const model = generated.model.mkModel();
     for (const entry of this.manager.macros)
       if (!model.constInterps.has(entry[0])) model.registerConst(entry[0], entry[1]);
     model.incRef();
-    this.model = model;
+    this.modelState = { kind: "final", generated, model };
     return model;
   }
 

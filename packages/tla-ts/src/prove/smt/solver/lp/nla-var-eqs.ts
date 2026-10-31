@@ -1,7 +1,7 @@
 // Ported from Z3 (src/math/lp/var_eqs.h, src/math/lp/nla_defs.h), MIT license, see z3-license.txt.
 // Equivalences between signed lp variables, x = y or x = -y, with the bounds that justify them. A
 // signed variable is the index 2 * var + sign.
-import { Dependency, linearize } from "./dependency";
+import { Dependency } from "./dependency";
 import type { Explanation } from "./explanation";
 import { TrailStack, UnionFind, UnionFindHandler } from "./union-find";
 import { shrink } from "../array";
@@ -90,10 +90,6 @@ export class VarEqs {
     return getSignedVarVar(this.findVar(lpVar)) === lpVar;
   }
 
-  areEquiv(first: number, second: number) {
-    return getSignedVarVar(this.findVar(first)) === getSignedVarVar(this.findVar(second));
-  }
-
   // explain_bfs: the justifications along a shortest path from v1 to v2.
   explain(v1: number, v2: number, explanation: Explanation) {
     if (v1 === v2) return;
@@ -118,7 +114,7 @@ export class VarEqs {
     while (head !== 0) {
       for (const dep of justifications[head]) {
         if (dep === null) break;
-        for (const constraint of linearize([dep])) explanation.push(constraint);
+        explanation.pushDependency(dep);
       }
       head = todo[head].index;
     }

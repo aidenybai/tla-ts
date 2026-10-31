@@ -3,7 +3,6 @@
 // weight, then by index, and simplification sorts products and sums by it and merges like terms.
 // Z3 keeps every expression it allocates so that it can free them; here the collector does.
 import { Rational } from "../rational";
-import { getPower } from "./dep-intervals";
 import {
   type Nex,
   type NexMul,
@@ -19,7 +18,7 @@ import {
 } from "./nex";
 
 // occ: how many summands a variable divides, and its smallest power among them.
-export interface Occ {
+interface Occ {
   occs: number;
   power: number;
 }
@@ -39,10 +38,6 @@ export class NexCreator {
     const previousCount = this.activeVarsWeights.length;
     this.activeVarsWeights.length = count;
     this.activeVarsWeights.fill(0, previousCount);
-  }
-
-  getNumberOfVars() {
-    return this.activeVarsWeights.length;
   }
 
   setVarWeight(variable: number, weight: number) {
@@ -181,11 +176,11 @@ export class NexCreator {
     if (child.expr.kind === "mul" && child.expr.children.length === 0)
       return child.expr.coeff.equals(Rational.one)
         ? coeff
-        : coeff.mul(getPower(child.expr.coeff, child.power * power));
+        : coeff.mul(child.expr.coeff.pow(child.power * power));
     if (child.expr.kind !== "scalar") return null;
     return child.expr.value.equals(Rational.one)
       ? coeff
-      : coeff.mul(getPower(child.expr.value, child.power * power));
+      : coeff.mul(child.expr.value.pow(child.power * power));
   }
 
   // simplify_mul with simplify_children_of_mul: folds the constant factors into the coefficient,
@@ -210,7 +205,7 @@ export class NexCreator {
         if (eaten !== null) mul.coeff = eaten;
         else children.push({ expr: grandchild.expr, power: grandchild.power * child.power });
       }
-      mul.coeff = mul.coeff.mul(getPower(child.expr.coeff, child.power));
+      mul.coeff = mul.coeff.mul(child.expr.coeff.pow(child.power));
     }
     mul.children = this.mulToPowers(children);
     if (mul.children.length === 1 && mul.children[0].power === 1 && mul.coeff.equals(Rational.one))

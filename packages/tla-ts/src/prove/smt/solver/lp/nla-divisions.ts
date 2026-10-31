@@ -1,14 +1,16 @@
 // Ported from Z3 (src/math/lp/nla_divisions.h, src/math/lp/nla_divisions.cpp), MIT license, see
 // z3-license.txt. The lemmas of nla on div, mod and /: monotonicity in the dividend and the
-// divisor, bounded divisions by numerals, and divisibility closures over a shared divisor. Z3
-// skips the check while nra's model is in use, which never happens here since nra is not ported.
-import { Rational } from "../rational";
-import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
+// divisor, bounded divisions by numerals, and divisibility closures over a shared divisor. The
+// check is skipped while nla uses nlsat's model.
+import { getEuclideanDiv, Rational } from "../rational";
+import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
+import { NULL_LPVAR } from "./lar-solver";
 import { LarTerm } from "./lar-term";
-import { KIND_NE, LemmaBuilder, mkIneq, type NlaCore } from "./nla-core";
+import { type NlaCore } from "./nla-core";
+import { LemmaBuilder, mkIneq } from "./nla-types";
 
 // A division q = x / y with r its remainder, or a divisibility fact r = mod(x, y), q = div(x, y).
-interface Division {
+export interface Division {
   readonly quotient: number;
   readonly dividend: number;
   readonly divisor: number;
@@ -25,11 +27,14 @@ interface DivisionValues {
 }
 
 // div on integers: Euclidean division, as mpz_manager::div.
-const getIntDiv = (dividend: Rational, divisor: Rational) => {
-  const quotient = dividend.num / divisor.num;
-  if (dividend.num >= 0n || quotient * divisor.num === dividend.num) return Rational.of(quotient);
-  return Rational.of(divisor.num < 0n ? quotient + 1n : quotient - 1n);
-};
+const getIntDiv = (dividend: Rational, divisor: Rational) =>
+  Rational.of(getEuclideanDiv(dividend.num, divisor.num));
+
+const hasNullColumn = (division: Division) =>
+  division.quotient === NULL_LPVAR ||
+  division.dividend === NULL_LPVAR ||
+  division.divisor === NULL_LPVAR ||
+  division.remainder === NULL_LPVAR;
 
 const mkDifference = (first: number, second: number) =>
   new LarTerm([
@@ -39,7 +44,6 @@ const mkDifference = (first: number, second: number) =>
 
 export class Divisions {
   private idivisions: Division[] = [];
-  private rdivisions: Division[] = [];
   private boundedDivisions: Division[] = [];
   // Divisibility facts, whose quotient is div(x, y) and remainder mod(x, y).
   private divisibility: Division[] = [];
@@ -51,26 +55,22 @@ export class Divisions {
     this.core.emons.trail.push(() => divisions.pop());
   }
 
-  addIdivision(quotient: number, dividend: number, divisor: number, remainder: number) {
-    if ([quotient, dividend, divisor, remainder].includes(-1)) return;
-    this.pushDivision(this.idivisions, { quotient, dividend, divisor, remainder });
+  addIdivision(division: Division) {
+    if (hasNullColumn(division)) return;
+    this.pushDivision(this.idivisions, division);
   }
 
-  addRdivision(quotient: number, dividend: number, divisor: number, remainder: number) {
-    if ([quotient, dividend, divisor, remainder].includes(-1)) return;
-    this.pushDivision(this.rdivisions, { quotient, dividend, divisor, remainder });
-  }
-
-  addBoundedDivision(quotient: number, dividend: number, divisor: number, remainder: number) {
-    if ([quotient, dividend, divisor, remainder].includes(-1)) return;
+  addBoundedDivision(division: Division) {
+    if (hasNullColumn(division)) return;
     const lra = this.core.lra;
-    if (lra.hasTerm(dividend) || lra.hasTerm(divisor) || lra.hasTerm(quotient)) return;
-    this.pushDivision(this.boundedDivisions, { quotient, dividend, divisor, remainder });
+    if (lra.hasTerm(division.dividend) || lra.hasTerm(division.divisor)) return;
+    if (lra.hasTerm(division.quotient)) return;
+    this.pushDivision(this.boundedDivisions, division);
   }
 
-  addDivisibility(remainder: number, dividend: number, divisor: number, quotient: number) {
-    if ([quotient, dividend, divisor, remainder].includes(-1)) return;
-    this.pushDivision(this.divisibility, { quotient, dividend, divisor, remainder });
+  addDivisibility(division: Division) {
+    if (hasNullColumn(division)) return;
+    this.pushDivision(this.divisibility, division);
   }
 
   // y1 >= y2 > 0 & 0 <= x1 <= x2 => x1/y1 <= x2/y2
@@ -159,8 +159,9 @@ export class Divisions {
     };
   }
 
-  // The monotonicity lemmas of the divisions whose quotients are wrong, against the others.
-  private checkMonotonicity(divisions: Division[], isInt: boolean) {
+  // The monotonicity lemmas of the integer divisions whose quotients are wrong, against the others.
+  // Z3's theory_lra registers no real divisions, so the rdivisions it would also check stay empty.
+  private checkMonotonicity(divisions: Division[]) {
     const core = this.core;
     for (const division of divisions) {
       if (!core.isRelevant(division.quotient)) continue;
@@ -168,10 +169,8 @@ export class Divisions {
       const dividendValue = values.dividendValue;
       const divisorValue = values.divisorValue;
       if (divisorValue.isZero()) continue;
-      if (isInt) {
-        if (!dividendValue.isInt() || !divisorValue.isInt()) continue;
-        if (values.quotientValue.equals(getIntDiv(dividendValue, divisorValue))) continue;
-      } else if (values.quotientValue.equals(dividendValue.div(divisorValue))) continue;
+      if (!dividendValue.isInt() || !divisorValue.isInt()) continue;
+      if (values.quotientValue.equals(getIntDiv(dividendValue, divisorValue))) continue;
       for (const other of divisions) {
         if (other.quotient === division.quotient || !core.isRelevant(other.quotient)) continue;
         if (this.monotonicity(values, this.getValues(other))) return true;
@@ -181,8 +180,8 @@ export class Divisions {
   }
 
   check() {
-    if (this.checkMonotonicity(this.idivisions, true)) return;
-    if (this.checkMonotonicity(this.rdivisions, false)) return;
+    if (this.core.isUsingNraModel) return;
+    if (this.checkMonotonicity(this.idivisions)) return;
     this.checkModMult();
     this.checkLinearDivisibility();
     this.checkModCongruence();
