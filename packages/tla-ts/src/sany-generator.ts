@@ -1832,33 +1832,40 @@ export const generateSanySpecification = (
         addError(location, `Function name \`${definition.name}' already defined or declared.`);
       }
       const preComments = getPreComments(file, span.start);
-      const definitionNode = isRecursive
-        ? existing
-        : createOpDef({
-            name: definition.name,
-            params: [],
-            body: node,
-            isLocal: definition.isLocal,
-            location,
-            preComments,
-          });
+      // Generator.processFunction's OpDefNode: a new one, or the one the name already has, though
+      // defined, unless that is declared RECURSIVE at another level.
+      const definitionNode =
+        existing === undefined
+          ? createOpDef({
+              name: definition.name,
+              params: [],
+              body: node,
+              isLocal: definition.isLocal,
+              location,
+              preComments,
+            })
+          : existing.kind === "OpDef" && (isRecursive || !isPendingRecursive)
+            ? existing
+            : undefined;
       // A function whose RECURSIVE declaration has parameters stays undefined.
       if (isRecursive) {
         if (existing.arity === 0) endOpDefNode(existing, node, location, preComments);
-      } else if (existing === undefined) {
+      } else if (existing === undefined && definitionNode !== undefined) {
         addSymbol(symbolTable, definitionNode);
         setRecursionFields(definitionNode);
       }
-      currentModule.definitions.push(definitionNode);
-      definitions?.push(definitionNode);
+      if (definitionNode !== undefined) {
+        currentModule.definitions.push(definitionNode);
+        definitions?.push(definitionNode);
+      }
       functions.unshift({ name: definition.name, node });
       pushLabelScope();
-      // Generator.processFunction binds the bound identifiers in the body only of a function it
-      // defines, whose name is new or declared RECURSIVE at this level.
+      // The bound identifiers are bound in the body only of a function with an OpDefNode.
       const generateBody = () => generateWithParams(bounds.bounded.flat(), definition.body);
       const body =
-        isRecursive || existing === undefined ? withContext(context, generateBody) : generateBody();
-      definitionNode.labels = popLabels();
+        definitionNode === undefined ? generateBody() : withContext(context, generateBody);
+      const labels = popLabels();
+      if (definitionNode !== undefined) definitionNode.labels = labels;
       functions.shift();
       node.operands = [body];
       if (node.operator.name === "$NonRecursiveFcnSpec") node.unbounded = undefined;

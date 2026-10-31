@@ -497,7 +497,7 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
-  it("binds no bound identifier in the body of a function whose name is already declared", () => {
+  it("binds no bound identifier in the body of a function named by a parameter", () => {
     const report = getReport({
       Fold: "---- MODULE Fold ----\nF(it, S) == LET it[s \\in S] == s IN it\n====\n",
     });
@@ -515,6 +515,25 @@ Spec == Init /\\ [][Next]_x
         "line 2, col 32 to line 2, col 32 of module Fold",
         "",
         "Unknown operator: `s'.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("binds the bound identifiers in the body of a function whose name is already defined", () => {
+    const report = getReport({
+      Twice: "---- MODULE Twice ----\nf[x \\in {1}] == x\nf[x \\in {1}] == x\n====\n",
+    });
+    expect(report.text).toBe(
+      toText([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 3, col 1 to line 3, col 17 of module Twice",
+        "",
+        "Function name `f' already defined or declared.",
         "",
         "",
       ]),
