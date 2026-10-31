@@ -43,12 +43,11 @@ import { replaceFreeVars } from "./var-subst";
 
 type SExpr = string | SExpr[];
 
-interface Binding {
-  depth: number;
-  sort: number;
-  expr: number;
-  isBoundVar: boolean;
-}
+// A name in scope: a variable bound by a quantifier, or a let binding's term. depth is the number of
+// binders above it.
+type Binding =
+  | { kind: "var"; depth: number; sort: number }
+  | { kind: "let"; depth: number; expr: number };
 
 interface SmtProblem {
   assertions: number[];
@@ -338,7 +337,7 @@ export const parseSmtlib = (
     const names = declarations.map((declaration) => expectSymbol(expectList(declaration)[0]));
     const varSorts = declarations.map((declaration, index) => {
       const sort = parseSort(expectList(declaration)[1]);
-      scope.set(names[index], { depth: depth + index, sort, expr: -1, isBoundVar: true });
+      scope.set(names[index], { kind: "var", depth: depth + index, sort });
       return sort;
     });
     scopes.push(scope);
@@ -400,12 +399,7 @@ export const parseSmtlib = (
     for (const binding of expectList(list[1])) {
       const pair = expectList(binding);
       const expr = parseTerm(pair[1]);
-      scope.set(expectSymbol(pair[0]), {
-        depth,
-        sort: manager.sorts[expr],
-        expr,
-        isBoundVar: false,
-      });
+      scope.set(expectSymbol(pair[0]), { kind: "let", depth, expr });
     }
     scopes.push(scope);
     const body = parseTerm(list[2]);
@@ -442,7 +436,7 @@ export const parseSmtlib = (
       if (sexpr === "true") return manager.trueExpr;
       if (sexpr === "false") return manager.falseExpr;
       const binding = lookup(sexpr);
-      if (binding?.isBoundVar) return manager.mkVar(depth - 1 - binding.depth, binding.sort);
+      if (binding?.kind === "var") return manager.mkVar(depth - 1 - binding.depth, binding.sort);
       // Z3's var_shifter moves the free variables of a let binding up by the binders since. Its cache
       // holds the terms it makes, but this parser holds no references, so it rebuilds the binding
       // with replaceFreeVars.
