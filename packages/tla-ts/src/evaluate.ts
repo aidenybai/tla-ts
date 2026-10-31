@@ -541,68 +541,61 @@ export const bindArgument = (bounds: Bound[], scope: Scope | undefined, argument
   );
 };
 
-// A function that TLC's getInitStates and getNextStates apply by walking its body, as they do a
-// FcnLambdaValue: one constructed, or defined as f[x \in S] == e.
-export interface LazyFunction {
+// The parameters, body and scope of each function a constructor or a definition keeps lazy, whose
+// body TLC's getInitStates and getNextStates walk for an argument, as they do a FcnLambdaValue's.
+interface LazyFunction {
+  value: LazyFunctionValue;
   bounds: Bound[];
   body: Expression;
   scope: Scope | undefined;
 }
 
-export const getLazyFunction = (
-  expression: Expression,
-  context: Context,
-): LazyFunction | undefined => {
-  if (expression.kind === "FunctionConstruction") {
-    return { bounds: expression.bounds, body: expression.body, scope: context.scope };
-  }
-  if (expression.kind !== "Identifier") return undefined;
-  const binding = lookupScope(context.scope, expression.name);
-  if (binding?.kind === "Thunk") {
-    return getLazyFunction(binding.expression, withScope(context, binding.scope));
-  }
-  const definition = binding ? undefined : getDefinition(expression.name, context.environment);
-  if (definition?.kind !== "Function") return undefined;
-  const self = evaluate(expression, withScope(context, undefined));
-  return {
-    bounds: definition.bounds,
-    body: definition.body,
-    scope: bindValue(undefined, definition.name, self),
-  };
+const lazyFunctions = new WeakMap<LazyFunctionValue, LazyFunction>();
+
+const keepLambda = (lambda: LazyFunction) => {
+  lazyFunctions.set(lambda.value, lambda);
+  return lambda.value;
 };
+
+export const getLazyFunction = (value: Value) =>
+  typeof value === "object" && value.kind === "LazyFunction" ? lazyFunctions.get(value) : undefined;
 
 // Tool.getFcnContext: the scope of a lazy function's body for the arguments of an application. It
 // ignores arguments beyond the parameters.
 export const bindLazyArguments = (
-  lazy: LazyFunction,
+  lambda: LazyFunction,
   expression: Expression & { kind: "FunctionApplication" },
   context: Context,
 ) => {
+  const value = lambda.value;
   const args = expression.args.map((arg) => evaluate(arg, context));
   const argument = args.length === 1 ? args[0] : createTuple(args);
-  const domainContext = withScope(context, lazy.scope);
   const fail = (message: string): never => {
     throw new TlaEvaluationError(`${message}\n${describeRange(expression.function)}`);
   };
-  const failFor = (ordinal: string, value: Value, problem: string) =>
+  const failFor = (ordinal: string, element: Value, problem: string) =>
     fail(
-      `In applying the function\n${prettyPrint(formatValue(evaluate(expression.function, toKeepLazyContext(context))))},\nthe ${ordinal} is:\n${prettyPrint(formatValue(value))}${problem}.`,
+      `In applying the function\n${prettyPrint(formatValue(value))},\nthe ${ordinal} is:\n${prettyPrint(formatValue(element))}${problem}.`,
     );
-  const bounds = lazy.bounds;
+  const bounds = lambda.bounds;
   if (bounds.length === 1) {
-    if (!isElementOf(argument, evaluate(bounds[0].set, domainContext))) {
+    if (!isElementOf(argument, value.domain)) {
       failFor("first argument", argument, "which is not in its domain");
     }
-    return bindArgument(bounds, lazy.scope, argument);
+    return bindArgument(bounds, lambda.scope, argument);
   }
   const elements = getSequenceElements(argument);
+  const domains =
+    typeof value.domain === "object" && value.domain.kind === "ProductSet"
+      ? value.domain.factors
+      : [];
   if (elements === undefined || elements.length < bounds.length) {
     return fail("Attempted to apply a function to an argument not in its domain.");
   }
   bounds.forEach((bound, index) => {
     const element = elements[index];
     const ordinal = `argument number ${index + 1}`;
-    if (!isElementOf(element, evaluate(bound.set, domainContext))) {
+    if (!isElementOf(element, domains[index])) {
       failFor(
         ordinal,
         element,
@@ -616,7 +609,7 @@ export const bindLazyArguments = (
       failFor(ordinal, element, "which does not match its formal parameter");
     }
   });
-  return bindArgument(bounds, lazy.scope, createTuple(elements.slice(0, bounds.length)));
+  return bindArgument(bounds, lambda.scope, createTuple(elements.slice(0, bounds.length)));
 };
 
 // TLC prints a function it can't enumerate as its parameters and the location of its body. It
@@ -711,6 +704,12 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
       ),
     getLazyFunctionSource(definition.bounds, definition.body, domain),
   );
+  keepLambda({
+    value: functionValue,
+    bounds: definition.bounds,
+    body: definition.body,
+    scope: bindValue(undefined, definition.name, functionValue),
+  });
   return definition.bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
 };
 
@@ -1870,11 +1869,16 @@ const compileFunctionConstruction = (
     return createFunction(pairs);
   };
   const createLazy = (domain: Value, context: Context) => {
-    const functionValue = createLazyFunction(
-      domain,
-      (argument) => body(withScope(context, bindArgument(bounds, context.scope, argument))),
-      getLazyFunctionSource(bounds, expression.body, domain),
-    );
+    const functionValue = keepLambda({
+      value: createLazyFunction(
+        domain,
+        (argument) => body(withScope(context, bindArgument(bounds, context.scope, argument))),
+        getLazyFunctionSource(bounds, expression.body, domain),
+      ),
+      bounds,
+      body: expression.body,
+      scope: context.scope,
+    });
     return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
   };
   const callStack = environment.callStack;

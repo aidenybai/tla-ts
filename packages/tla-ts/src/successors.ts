@@ -22,6 +22,7 @@ import {
   expectBoolean,
   forEachBinding,
   getLazyFunction,
+  toKeepLazyContext,
   getDefinition,
   getEnumeratedElements,
   getReevaluatedDefinitions,
@@ -39,6 +40,7 @@ import { isAssignedShortcut, LITERAL_KINDS, replayEnabled } from "./tlc-replay";
 import {
   formatValue,
   getStreamedElements,
+  isFunctionValue,
   isTlcEnumerable,
   valuesEqual,
   type Value,
@@ -494,27 +496,43 @@ const compileDynamicAssignment = (
   };
 };
 
+// Tool.getInitStates and Tool.getNextStates walk the body of a function they apply that is still
+// lazy, which they evaluate as TLC computes the initial states eagerly, and otherwise apply it.
 const compileFunctionAction = (
   expression: Expression & { kind: "FunctionApplication" },
   environment: Environment,
   isInit: boolean,
 ): Runner => {
-  const guard = compileGuard(expression);
+  const node = describeRange(expression);
   return (run, scope, partial, action, isFixed, onComplete) => {
     const context = getContext(run, scope, partial);
-    const lazy = getLazyFunction(expression.function, context);
-    if (!lazy) {
-      guard(run, scope, partial, action, isFixed, onComplete);
+    const value = evaluate(expression.function, isInit ? context : toKeepLazyContext(context));
+    const lambda = getLazyFunction(value);
+    if (lambda !== undefined) {
+      getRunner(lambda.body, environment, isInit)(
+        run,
+        bindLazyArguments(lambda, expression, context),
+        partial,
+        action,
+        isFixed,
+        onComplete,
+      );
       return;
     }
-    getRunner(lazy.body, environment, isInit)(
-      run,
-      bindLazyArguments(lazy, expression, context),
-      partial,
-      action,
-      isFixed,
-      onComplete,
-    );
+    if (!isFunctionValue(value)) {
+      throw createRunError(
+        run,
+        `In computing ${getComputation(run)}, a non-function (${getKindString(value)}) was applied as a function.\n${node}`,
+      );
+    }
+    const result = evaluate(expression, context);
+    if (typeof result !== "boolean") {
+      throw createRunError(
+        run,
+        `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut didn't find one.\n${node}`,
+      );
+    }
+    if (result) onComplete(partial, action);
   };
 };
 

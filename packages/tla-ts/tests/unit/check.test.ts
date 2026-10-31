@@ -1322,6 +1322,27 @@ describe("evaluation errors match TLC", () => {
   );
 
   it.each([
+    [
+      "Step == <<1>>[1] /\\ UNCHANGED x",
+      "INIT Init\nNEXT Step",
+      `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut didn't find one.\nline 6, col 9 to line 6, col 16 of module M`,
+    ],
+    [
+      "Step == 1[1] /\\ UNCHANGED x",
+      "INIT Init\nNEXT Step",
+      `${UNEXPECTED_EXCEPTION}In computing next states, a non-function (an integer) was applied as a function.\nline 6, col 9 to line 6, col 12 of module M`,
+    ],
+    [
+      "Start == [k \\in {1} |-> x = 0][1]",
+      "INIT Start\nNEXT Next",
+      "In evaluation, the identifier x is either undefined or not an operator.\nline 6, col 25 to line 6, col 25 of module M",
+    ],
+  ])("applies the value of a function in %j as TLC does", async (definitions, config, message) => {
+    const result = await checkSteps(definitions, config);
+    expect(result.failure?.message).toBe(message);
+  });
+
+  it.each([
     ["Start == x = [k \\in {1, 2} |-> 0]\nStep == x' = x /\\ x[3] = 0", "Start", "<<0, 0>>"],
     ["Step == x' = [k \\in {1, 2} |-> 1] /\\ x'[3] = 0", "Init", "<<1, 1>>"],
   ])(

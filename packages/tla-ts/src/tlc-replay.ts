@@ -8,6 +8,7 @@ import {
   forEachBinding,
   freezeCallStack,
   getLazyFunction,
+  toKeepLazyContext,
   isConstantLevel,
   lookupScope,
   resolveApplyOperator,
@@ -459,9 +460,11 @@ const visitApplication = (
       return;
     }
     case "FunctionApplication": {
-      const lazy = getLazyFunction(expression.function, context);
-      if (lazy) {
-        visit(replay, lazy.body, items, bindLazyArguments(lazy, expression, context), partial);
+      const lambda = getLazyFunction(
+        evaluate(expression.function, replay.isInit ? context : toKeepLazyContext(context)),
+      );
+      if (lambda) {
+        visit(replay, lambda.body, items, bindLazyArguments(lambda, expression, context), partial);
         return;
       }
       break;
