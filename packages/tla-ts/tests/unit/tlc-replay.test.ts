@@ -148,3 +148,29 @@ describe("the call stack of a replayed failure matches TLC", () => {
     },
   );
 });
+
+describe("the replay of a failed initial state matches TLC", () => {
+  const replayInit = async (init: string, inv: string) => {
+    const result = await checkSpec(
+      `Init == ${init}\nNext == x' = x\nInv == ${inv}`,
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    return [result.generatedStates, result.failure?.traceOutput];
+  };
+
+  const progress = (count: number) => ({ kind: "initial-states-progress", count });
+
+  it("reports its progress again as it generates the initial states", async () => {
+    expect(await replayInit("x \\in 1..6", "x < 5 \\/ (CHOOSE y \\in {} : TRUE)")).toEqual([
+      5,
+      [progress(2), progress(4)],
+    ]);
+  });
+
+  it("counts every initial state after it fails to fingerprint one", async () => {
+    expect(await replayInit("x \\in [a : 0..1, b : BOOLEAN]", "3 \\notin (1 \\cup {1})")).toEqual([
+      4,
+      [progress(2)],
+    ]);
+  });
+});

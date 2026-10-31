@@ -18,6 +18,7 @@ import type { Expression } from "./ast";
 import { describeRange } from "./evaluate";
 import type {
   CheckProgress,
+  OutputLine,
   CheckResult,
   CheckStatus,
   InitialStates,
@@ -214,8 +215,17 @@ const getDump = (values: string[]): StateDump => {
 };
 
 // What the spec prints as TLC rebuilds a trace, before it prints the states or after.
-const printTraceOutput = (lines: string[] | undefined) =>
-  lines?.forEach((line) => console.log(line));
+const printInitialStatesProgress = (printer: MessagePrinter, count: number) =>
+  printer.print(
+    MESSAGE_CODE.computingInitProgress,
+    MESSAGE_LEVEL.none,
+    `Computed ${count} initial states...`,
+  );
+
+const printTraceOutput = (printer: MessagePrinter, lines: OutputLine[] | undefined) =>
+  lines?.forEach((line) =>
+    typeof line === "string" ? console.log(line) : printInitialStatesProgress(printer, line.count),
+  );
 
 const printTrace = (
   printer: MessagePrinter,
@@ -227,7 +237,7 @@ const printTrace = (
 ) => {
   if (trace.length > 0) printer.print(heading.code, MESSAGE_LEVEL.error, heading.text);
   trace.forEach((step, index) => {
-    if (index > 0) printTraceOutput(step.output);
+    if (index > 0) printTraceOutput(printer, step.output);
     printer.print(
       MESSAGE_CODE.statePrint2,
       MESSAGE_LEVEL.state,
@@ -394,11 +404,7 @@ const printCheckProgress = (
       print(MESSAGE_CODE.computingInit, MESSAGE_LEVEL.none, "Computing initial states...");
       return;
     case "initial-states-progress":
-      print(
-        MESSAGE_CODE.computingInitProgress,
-        MESSAGE_LEVEL.none,
-        `Computed ${progress.count} initial states...`,
-      );
+      printInitialStatesProgress(printer, progress.count);
       return;
     case "initial-states-computed":
       printInitialStates(printer, progress.initialStates);
@@ -494,7 +500,7 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
   const isProperty = status === "property-violation";
   const isLasso = loopStart !== undefined && !isProperty;
   // TLC rebuilds a liveness counterexample before it reports the violation.
-  if (isProperty || isLasso) printTraceOutput(violation.trace[0]?.output);
+  if (isProperty || isLasso) printTraceOutput(printer, violation.trace[0]?.output);
   if (violation.counts) console.log(violation.counts);
   if (headline) {
     // TLC prints the initial state that violates a property in the same message.
@@ -504,9 +510,9 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
     print(headline.code, MESSAGE_LEVEL.error, text);
   }
   if (!isInitial) {
-    if (!isProperty && !isLasso) printTraceOutput(violation.trace[0]?.output);
+    if (!isProperty && !isLasso) printTraceOutput(printer, violation.trace[0]?.output);
     printTrace(printer, violation.trace, isProperty || isLasso ? COUNTER_EXAMPLE : undefined);
-    printTraceOutput(violation.traceOutput);
+    printTraceOutput(printer, violation.traceOutput);
   }
   if (isLasso) {
     const label = violation.loopLabel;
@@ -585,10 +591,10 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     } else {
       print(failure.code, MESSAGE_LEVEL.error, message);
     }
-    printTraceOutput(failure.trace[0]?.output);
+    printTraceOutput(printer, failure.trace[0]?.output);
     printTrace(printer, failure.trace);
     if (failure.isTraceFailed) print(failure.code, MESSAGE_LEVEL.error, message);
-    printTraceOutput(failure.traceOutput);
+    printTraceOutput(printer, failure.traceOutput);
     const postcondition = failure.postcondition;
     if (postcondition?.counts) console.log(postcondition.counts);
     if (postcondition) print(postcondition.code, MESSAGE_LEVEL.error, postcondition.message);

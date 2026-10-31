@@ -126,6 +126,14 @@ export interface CheckOptions {
   onProgress?: (progress: CheckProgress) => void;
 }
 
+export interface InitialStatesProgress {
+  kind: "initial-states-progress";
+  count: number;
+}
+
+// A line the spec prints, or the progress TLC reports as it replays the initial states.
+export type OutputLine = string | InitialStatesProgress;
+
 // The spec is parsed, TLC warns about each invariant that is a true constant formula and each
 // property that is a state formula, finds the branches of the temporal properties, computes the
 // initial states, reporting each time their count reaches a power of two, reports how far the
@@ -138,7 +146,7 @@ export type CheckProgress =
   | { kind: "liveness-initializing"; isSymmetric: boolean; isConstrained: boolean }
   | { kind: "liveness-prepared"; branches: number }
   | { kind: "initial-states-started" }
-  | { kind: "initial-states-progress"; count: number }
+  | InitialStatesProgress
   | { kind: "initial-states-computed"; initialStates: InitialStates }
   | { kind: "progress"; statistics: SearchStatistics }
   | {
@@ -177,7 +185,7 @@ export interface TraceStep {
   state: Record<string, Value>;
   // What the spec prints, before TLC prints this step, as TLC evaluates it again to rebuild the
   // trace. The first step has what TLC prints before the trace.
-  output?: string[];
+  output?: OutputLine[];
 }
 
 export interface Violation {
@@ -187,7 +195,7 @@ export interface Violation {
   trace: TraceStep[];
   // What the spec prints after TLC prints the states of the trace, as TLC finds the step back into
   // the cycle of a lasso or rebuilds the trace once more.
-  traceOutput?: string[];
+  traceOutput?: OutputLine[];
   loopStart: number | undefined;
   loopLabel?: string;
   message?: string;
@@ -215,7 +223,7 @@ export interface EvaluationFailure {
   message: string;
   toolMessage: string;
   trace: TraceStep[];
-  traceOutput?: string[];
+  traceOutput?: OutputLine[];
   initialState: Record<string, Value> | undefined;
   exitCode: number;
   // The expressions TLC was evaluating when the failure occurred, outermost first, when TLC finds
@@ -272,7 +280,7 @@ export interface CheckResult {
 
 interface Behavior {
   trace: TraceStep[];
-  traceOutput?: string[];
+  traceOutput?: OutputLine[];
 }
 
 interface TraceOptions {
@@ -295,7 +303,7 @@ interface FailureOptions {
 }
 
 // TLC prints what the spec prints as it replays a failure after the trace.
-const appendTraceOutput = (behavior: Behavior, lines: string[]) => ({
+const appendTraceOutput = (behavior: Behavior, lines: OutputLine[]) => ({
   ...behavior,
   traceOutput: [...(behavior.traceOutput ?? []), ...lines],
 });
@@ -417,7 +425,7 @@ const getConfigPredicate = (kind: string, name: string, environment: Environment
 // TLC reports how many initial states it has computed each time the count is a power of two.
 export const reportInitialStatesProgress = (
   count: number,
-  onProgress: CheckOptions["onProgress"],
+  onProgress: ((progress: InitialStatesProgress) => void) | undefined,
 ) => {
   if (count > 1 && (count & (count - 1)) === 0) {
     onProgress?.({ kind: "initial-states-progress", count });
@@ -1375,14 +1383,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const onPrint = options.onPrint ?? console.log;
   // TLC prints again while it rebuilds a trace, between the states it prints, so rebuilding a trace
   // keeps what it prints for the trace.
-  const output = { lines: undefined as string[] | undefined };
+  const output = { lines: undefined as OutputLine[] | undefined };
   const print = (text: string) => {
     if (output.lines) output.lines.push(text);
     else onPrint(text);
   };
   const getOutput = <Result>(rebuild: () => Result) => {
     const outer = output.lines;
-    const lines: string[] = [];
+    const lines: OutputLine[] = [];
     output.lines = lines;
     try {
       return { result: rebuild(), lines };
@@ -1570,17 +1578,37 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       throw error;
     }
   };
-  const replayInit = () =>
-    getReplayFailure((tracing) =>
+  // TLC's DoInitFunctor reports its progress again as it replays the initial states. After a
+  // FingerprintException, it only counts the states left, then throws the exception.
+  const replayInit = () => {
+    const replayed = { count: 0 };
+    const deferred: TlaEvaluationError[] = [];
+    return getReplayFailure((tracing) => {
       replayInitialStates(
         getInitActions(config, environment, specification.instanceActions),
         tracing,
         (state) => {
-          const addFingerprint = () => fingerprintReplayed(state, tracing.callStack);
-          if (!search.checkReplayedInitialState(state, tracing, addFingerprint)) throw STOP_REPLAY;
+          reportInitialStatesProgress(replayed.count, (progress) => output.lines?.push(progress));
+          replayed.count++;
+          if (deferred.length > 0) return;
+          try {
+            const addFingerprint = () => fingerprintReplayed(state, tracing.callStack);
+            if (!search.checkReplayedInitialState(state, tracing, addFingerprint)) {
+              throw STOP_REPLAY;
+            }
+          } catch (error) {
+            if (!(error instanceof TlaEvaluationError) || !tracing.callStack?.fingerprint) {
+              throw error;
+            }
+            deferred.push(error);
+          }
         },
-      ),
-    );
+      );
+      if (deferred.length === 0) return;
+      runtime.generatedStates = replayed.count;
+      throw deferred[0];
+    });
+  };
   // The replay adds the states it hasn't seen to TLC's set of states, which already holds the
   // successor that failed after TLC added it.
   const replayNext = (state: Value[]) =>
