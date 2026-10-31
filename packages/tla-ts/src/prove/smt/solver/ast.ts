@@ -954,7 +954,8 @@ export class AstManager {
     const isOffsetOf = (sum: number, term: number) => {
       if (this.getOp(sum) !== OP_ADD || this.args[sum].length !== 2) return false;
       const args = this.args[sum];
-      const isNonZero = (expr: number) => this.isNumeral(expr) && this.values[expr] !== 0;
+      const isNonZero = (expr: number) =>
+        this.isNumeral(expr) && !this.getRationalValue(expr).isZero();
       return (args[0] === term && isNonZero(args[1])) || (args[1] === term && isNonZero(args[0]));
     };
     return isOffsetOf(first, second) || isOffsetOf(second, first);
