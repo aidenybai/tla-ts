@@ -1,6 +1,7 @@
 // Ported from Z3 (src/ast/ast.h, src/ast/ast.cpp), MIT license, see z3-license.txt.
 // A hash-consed DAG of applications, de Bruijn variables and quantifiers, as in Z3's ast_manager.
 import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
+import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
 import type { ResourceLimit } from "./rlimit";
 
@@ -121,6 +122,7 @@ const Z3_PATTERN_FAMILY = 2;
 const Z3_MODEL_VALUE_FAMILY = 3;
 const Z3_USER_SORT_FAMILY = 4;
 const Z3_ARITH_FAMILY = 5;
+const Z3_RECFUN_FAMILY = 10;
 const Z3_NULL = 0xffffffff;
 // The name, Z3 decl kind and arity of each builtin, whose Z3 declaration has this many arguments
 // whatever the number of arguments of the application (-1 for the arguments' own number).
@@ -265,6 +267,8 @@ export class AstManager {
   // and models hold the fresh ones. A deleted declaration keeps its small id here, in case an
   // application of it is created again.
   private declRefCounts: number[] = [];
+  // The named expressions of the recfun plugin, by declaration.
+  readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
   private deletedDecls = new Set<number>();
   // ast_manager::m_fresh_id, which numbers fresh declarations and variable names.
   private freshId = 0;
@@ -330,10 +334,28 @@ export class AstManager {
   }
 
   // insert_macro: cmd_context keeps a named expression as a recursive function with one case, whose
-  // declaration and case predicate it holds.
-  mkMacroDecls() {
+  // declaration and case predicate it holds. The recfun plugin maps the declaration to the
+  // expression, which a model of the context takes as the declaration's interpretation.
+  mkMacro(name: string, expr: number) {
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      [],
+      this.sorts[expr],
+      getInfoHash(Z3_RECFUN_FAMILY, 0, [0]),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_USER,
+      op: OP_UNINTERPRETED,
+      domain: [],
+      range: this.sorts[expr],
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+    });
+    this.declRefCounts[decl] = 1;
     this.mkSmallId();
-    this.mkSmallId();
+    this.macros.set(decl, expr);
   }
 
   // The signature of a builtin declaration that Z3 makes on first use, and whether Z3 keeps it once
