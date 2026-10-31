@@ -128,6 +128,7 @@ export interface ThmOrAssumpDefNode extends LevelFields {
   isLocal: boolean;
   location: SanyLocation;
   module: ModuleNode;
+  source: ThmOrAssumpDefNode | undefined;
   labels: Map<string, LabelNode>;
   isLeibnizArg: boolean[];
   isLeibniz: boolean;

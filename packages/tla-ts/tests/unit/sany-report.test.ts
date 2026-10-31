@@ -492,6 +492,16 @@ Spec == Init /\\ [][Next]_x
     },
   );
 
+  it("warns of a theorem named as an earlier one of the module", () => {
+    const report = getReport(
+      { Twice: "---- MODULE Twice ----\nTHEOREM Thm == TRUE\nTHEOREM Thm == TRUE\n====\n" },
+      { version: "1.7.4" },
+    );
+    expect(report.text).toContain(
+      "line 3, col 1 to line 3, col 19 of module Twice\n\nMultiple declarations or definitions for symbol Thm.  \nThis duplicates the one at line 2, col 1 to line 2, col 19 of module Twice.",
+    );
+  });
+
   it("locates a substitution for a parameter of the definition at its target", () => {
     const report = getReport({
       Outer: "---- MODULE Outer ----\nM(a) == INSTANCE Inner WITH a <- 1, C <- a\n====\n",

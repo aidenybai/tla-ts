@@ -220,7 +220,8 @@ const isSameOrigin = (symbol: SymbolNode, other: SymbolNode) => {
     return source.module === undefined || isParameterFree(source.module);
   }
   if (symbol.kind === "ThmOrAssumpDef" && other.kind === "ThmOrAssumpDef") {
-    return symbol.module === other.module && isParameterFree(symbol.module);
+    const source = symbol.source ?? symbol;
+    return source === (other.source ?? other) && isParameterFree(source.module);
   }
   return false;
 };
@@ -2099,6 +2100,7 @@ export const generateSanySpecification = (
           isLocal: instance.isLocal,
           location,
           module: currentModule,
+          source: symbol.source ?? symbol,
           labels: symbol.labels,
           isLeibnizArg: [],
           isLeibniz: false,
@@ -2198,6 +2200,7 @@ export const generateSanySpecification = (
             isLocal,
             location,
             module,
+            source: symbol.source ?? symbol,
           };
           addSymbol(symbolTable, node);
           return node;
@@ -2577,6 +2580,7 @@ export const generateSanySpecification = (
       isLocal: false,
       location,
       module: currentModule,
+      source: undefined,
       labels,
       isLeibnizArg: [],
       isLeibniz: false,
