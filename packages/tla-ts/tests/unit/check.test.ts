@@ -909,6 +909,22 @@ describe("formatValue matches TLC", () => {
         .split("\n"),
     );
   });
+
+  // TLC 1.7.4 prints an empty FcnRcdValue with a space, but an empty TupleValue without one.
+  it.each([
+    ["1.7.4" as const, ["<< >>", "<< >>", "<<>>", "<<>>", "<<<< >>>>"]],
+    [undefined, ["<<>>", "<<>>", "<<>>", "<<>>", "<<<<>>>>"]],
+  ])("prints an empty function that isn't a tuple like TLC %s", async (version, expected) => {
+    const printed: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nE == [k \\in {} |-> k]\nASSUME \\A i \\in 1..5 : PrintT(<<[k \\in 1..0 |-> k], E @@ E, Tail(<<1>>), E \\o E, <<E>>>>[i])\n====",
+      config: "",
+      version,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(expected);
+  });
 });
 
 const checkSteps = (definitions: string, config: string, version?: TlcVersion) =>

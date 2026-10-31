@@ -96,6 +96,7 @@ import {
   isSameValue,
   isUpdatedElementOf,
   setStringOrder,
+  setValueFormat,
   toFiniteFunction,
   type Value,
 } from "./values";
@@ -1399,6 +1400,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
   };
   setStringOrder(getTlcStringOrder(options.source, config, options.loadModule));
+  setValueFormat(options.version);
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule: options.loadModule,

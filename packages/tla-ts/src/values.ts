@@ -279,6 +279,14 @@ export const setStringOrder = (texts: Iterable<string>) => {
   for (const text of texts) rankString(text);
 };
 
+// TLC 1.7.4 prints an empty function that isn't a tuple with a space between its brackets, so
+// every check also sets the version whose format it prints.
+const valueFormat = { isEmptyFunctionSpaced: false };
+
+export const setValueFormat = (version: TlcVersion | undefined) => {
+  valueFormat.isEmptyFunctionSpaced = version === "1.7.4";
+};
+
 export const rankString = (text: string) => {
   if (stringOrder.ranks[text] === undefined) stringOrder.ranks[text] = stringOrder.size++;
   return text;
@@ -2339,6 +2347,13 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
         return `[${parameters} |-> <expression ${source.body}>]`;
       }
       const functionValue = toFiniteFunction(value);
+      if (
+        functionValue.domain.length === 0 &&
+        valueFormat.isEmptyFunctionSpaced &&
+        getFunctionClass(value) !== "tuple"
+      ) {
+        return "<< >>";
+      }
       if (functionValue.domain.every((key, index) => key === index + 1)) {
         return `<<${functionValue.range.map(format).join(", ")}>>`;
       }
