@@ -49,10 +49,7 @@ interface Substituted {
 const getMaxLevel = (operator: OperatorLevels, index: number) =>
   operator.maxLevels[index] ?? MAX_LEVEL;
 
-export const checkInstances = (
-  checks: InstanceCheck[],
-  getModule: (name: string) => ModuleContext,
-) => {
+export const createInstanceChecker = (getModule: (name: string) => ModuleContext) => {
   const analyzers = new Map<string, ReturnType<typeof createLevelAnalyzer>>();
   const getAnalyzer = (name: string) => {
     const cached = analyzers.get(name);
@@ -124,8 +121,8 @@ export const checkInstances = (
     return levels;
   };
 
-  const errors = new Map<string, { location: string; message: string }>();
-  checks.forEach((check) => {
+  return (check: InstanceCheck) => {
+    const errors = new Map<string, { location: string; message: string }>();
     // SANY reports each error at the whole instance.
     const location = formatRange(
       check.location.range ?? {
@@ -203,6 +200,6 @@ export const checkInstances = (
         );
       }
     });
-  });
-  if (errors.size > 0) throw createSanyError([...errors.values()]);
+    if (errors.size > 0) throw createSanyError([...errors.values()]);
+  };
 };

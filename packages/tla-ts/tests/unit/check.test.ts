@@ -2090,6 +2090,19 @@ describe("level checking matches SANY", () => {
         ["line 5, col 7 to line 5, col 14", "Non-constant CASE for temporal goal."],
       ],
     ],
+    [
+      "THEOREM [](x = 0)\n<1>1. HAVE x = 1\n<1>2. QED\n---- MODULE Inner ----\nCONSTANT c\nASSUME c = {}\n====\nI == INSTANCE Inner WITH c <- [](x = 0)",
+      [
+        [
+          "line 4, col 7 to line 4, col 16",
+          "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+        ],
+        [
+          "line 10, col 1 to line 10, col 39",
+          "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'c' \nmust be at most 2.",
+        ],
+      ],
+    ],
   ])("reports every error SANY reports in %j", async (definitions, errors) => {
     await expect(
       check({
@@ -2101,6 +2114,16 @@ describe("level checking matches SANY", () => {
         errors.map(([location, message]) => ({ location: `${location} of module M`, message })),
       ),
     );
+  });
+
+  it("reports an error in instantiating a module before a constant the configuration leaves out, like TLC", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nCONSTANT K\n---- MODULE Inner ----\nCONSTANT c\nASSUME c = {}\n====\nI == INSTANCE Inner WITH c <- [](x = 0)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow("Level error in instantiating module 'Inner':");
   });
 
   const getParameterizedInstance = (definition: string) =>
