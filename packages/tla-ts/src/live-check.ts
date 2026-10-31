@@ -35,9 +35,9 @@ export interface Lasso {
 export interface LivenessChecker {
   // How many solutions of the negated properties TLC checks, which it calls branches.
   branches: number;
-  addInitialState: (index: number, state: Value[]) => void;
   // With a tracing environment, the checks record their call stack as TLC's replay of a failed
   // check does.
+  addInitialState: (index: number, state: Value[], tracing?: Environment) => void;
   addState: (
     index: number,
     state: Value[],
@@ -778,19 +778,24 @@ export const createLivenessChecker = (
 
   return {
     branches: checks.length,
-    addInitialState: (index, state) => {
+    addInitialState: (index, state, tracing) => {
+      evaluation.environment = tracing ?? environment;
       shared.states.clear();
       shared.actions.clear();
-      for (const check of checks) {
-        const tableau = check.solution.tableau;
-        if (!tableau) {
-          check.initial.push(index);
-          continue;
+      try {
+        for (const check of checks) {
+          const tableau = check.solution.tableau;
+          if (!tableau) {
+            check.initial.push(index);
+            continue;
+          }
+          for (let node = 0; node < tableau.initialCount; node++) {
+            if (!isConsistent(tableau, node, undefined, state)) continue;
+            check.initial.push(getNodeId(check, index, node) ?? recordNode(check, index, node));
+          }
         }
-        for (let node = 0; node < tableau.initialCount; node++) {
-          if (!isConsistent(tableau, node, undefined, state)) continue;
-          check.initial.push(getNodeId(check, index, node) ?? recordNode(check, index, node));
-        }
+      } finally {
+        evaluation.environment = environment;
       }
     },
     addState: (index, state, successors, tracing) => {

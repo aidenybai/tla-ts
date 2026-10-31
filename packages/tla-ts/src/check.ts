@@ -1586,11 +1586,29 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       throw error;
     }
   };
-  // TLC's DoInitFunctor reports its progress again as it replays the initial states. After a
-  // FingerprintException, it only counts the states left, then throws the exception.
+  // The replay adds the states it hasn't seen to TLC's set of states, which already holds the state
+  // that failed after TLC added it.
+  const createReplayedStates = () => {
+    const replayed = unstoredState.fingerprint ? [unstoredState.fingerprint] : [];
+    return (state: Value[], callStack: CallStack | undefined) => {
+      fingerprintReplayed(state, callStack);
+      const fingerprintState = getFingerprintState(state);
+      const isSeen =
+        findStateIndex(getStateHash(fingerprintState), fingerprintState) !== -1 ||
+        replayed.some((seen) => isSameState(seen, fingerprintState));
+      if (isSeen) return false;
+      replayed.push(fingerprintState);
+      runtime.distinctStates++;
+      return true;
+    };
+  };
+  // TLC's DoInitFunctor reports its progress again as it replays the initial states, and adds each
+  // one it hasn't seen to the behavior graph. After a FingerprintException, it only counts the
+  // states left, then throws the exception.
   const replayInit = () => {
     const replayed = { count: 0 };
     const deferred: TlaEvaluationError[] = [];
+    const addReplayed = createReplayedStates();
     return getReplayFailure((tracing) => {
       replayInitialStates(
         getInitActions(config, environment, specification.instanceActions),
@@ -1598,9 +1616,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         (state) => {
           reportInitialStatesProgress(replayed.count, (progress) => output.lines?.push(progress));
           replayed.count++;
+          runtime.generatedStates = replayed.count;
           if (deferred.length > 0) return;
           try {
-            const addFingerprint = () => fingerprintReplayed(state, tracing.callStack);
+            const addFingerprint = () => {
+              if (!addReplayed(state, tracing.callStack)) return;
+              runtime.queueSize++;
+              liveness?.addInitialState(states.length, state, tracing);
+            };
             if (!search.checkReplayedInitialState(state, tracing, addFingerprint)) {
               throw STOP_REPLAY;
             }
@@ -1612,28 +1635,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           }
         },
       );
-      if (deferred.length === 0) return;
-      runtime.generatedStates = replayed.count;
-      throw deferred[0];
+      if (deferred.length > 0) throw deferred[0];
     });
   };
-  // The replay adds the states it hasn't seen to TLC's set of states, which already holds the
-  // successor that failed after TLC added it.
   const replayNext = (state: Value[]) =>
     getReplayFailure((tracing) => {
-      const replayed = unstoredState.fingerprint ? [unstoredState.fingerprint] : [];
+      const addReplayed = createReplayedStates();
       replaySuccessors(getSpecNextActions(), state, tracing, (next) => {
-        const addFingerprint = () => {
-          fingerprintReplayed(next, tracing.callStack);
-          const fingerprintState = getFingerprintState(next);
-          const isSeen =
-            findStateIndex(getStateHash(fingerprintState), fingerprintState) !== -1 ||
-            replayed.some((seen) => isSameState(seen, fingerprintState));
-          if (isSeen) return false;
-          replayed.push(fingerprintState);
-          runtime.distinctStates++;
-          return true;
-        };
+        const addFingerprint = () => addReplayed(next, tracing.callStack);
         if (!search.checkReplayedSuccessor(state, next, tracing, addFingerprint)) {
           throw STOP_REPLAY;
         }
@@ -2064,6 +2073,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     const isSeen = isInModel && findStateIndex(hash, fingerprintState) !== -1;
     if (isSeen) return undefined;
+    unstoredState.fingerprint = isInModel ? fingerprintState : undefined;
     if (isInModel) {
       countDistinctState(1);
       runtime.queueSize++;

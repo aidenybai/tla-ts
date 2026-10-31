@@ -193,3 +193,24 @@ describe("the replay of a failed initial state matches TLC", () => {
     ]);
   });
 });
+
+describe("the replay of an initial state that fails to join the behavior graph matches TLC", () => {
+  // The replay skips the state that failed, which TLC has already added to its set of states, and
+  // fails on the next one.
+  it.each([undefined, "1.7.4" as const])(
+    "adds a new state to the graph (TLC %s)",
+    async (version) => {
+      const result = await checkSpec(
+        "Init == x \\in {0, 1}\nA == x' = Name[x + 3]\nSpec == Init /\\ [][A]_x\nP == [](ENABLED A => <>(x = 0))",
+        "SPECIFICATION Spec\nPROPERTY P",
+        version,
+      );
+      expect([
+        formatCallStack(result.failure?.callStack),
+        result.generatedStates,
+        result.distinctStates,
+        result.queuedStates,
+      ]).toEqual([["8.9-8.20", "11.9-11.17", "11.17-11.17", "9.6-9.21", "9.11-9.21"], 2, 2, 2]);
+    },
+  );
+});
