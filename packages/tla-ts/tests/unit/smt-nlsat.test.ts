@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { isolateRootsClosest, selectBetween } from "../../src/prove/smt/solver/nlsat/algebraic";
+import { NlsatSolver } from "../../src/prove/smt/solver/nlsat/solver";
 import { Rational } from "../../src/prove/smt/solver/rational";
 import {
   NlsatOutOfScope,
@@ -120,5 +121,60 @@ describe("nlsat algebraic numbers", () => {
 
   it("refuses a root variable of degree 2, whose roots may be irrational", () => {
     expect(() => runAlgebraicCommand("closest 1 3 2 2 0 1:1^2 -2:")).toThrow(NlsatOutOfScope);
+  });
+});
+
+// The harness command: ca n, then int flags, one c KIND poly line per constraint, v x num den per
+// variable, and end. It prints each constraint's literal, then undef or the lemma.
+const runCheckAssignment = (input: string) => {
+  const solver = new NlsatSolver();
+  const values: Rational[] = [];
+  const output: string[] = [];
+  for (const line of input.split("\n")) {
+    const words = line.split(" ");
+    if (words[0] === "v") values[Number(words[1])] = parseRational(`${words[2]}/${words[3]}`);
+    if (words[0] !== "c") continue;
+    const polynomial = parsePolynomial(solver.pm, words.slice(2).join(" "));
+    const kind = words[1];
+    const literal =
+      kind === "LE"
+        ? solver.mkIneqLiteral("GT", polynomial) ^ 1
+        : kind === "GE"
+          ? solver.mkIneqLiteral("LT", polynomial) ^ 1
+          : solver.mkIneqLiteral(kind === "EQ" ? "EQ" : kind === "LT" ? "LT" : "GT", polynomial);
+    solver.addUnitClause(literal);
+    output.push(`lit ${literal}`);
+  }
+  const result = solver.check(values);
+  const literals = result.clause.map((literal) => {
+    const atom = solver.getAtom(literal);
+    const sign = (literal & 1) === 1 ? "!" : "+";
+    return ` ${literal} ${sign}${atom?.kind} ${atom === null ? "" : showPolynomial(atom.polynomial)}`;
+  });
+  output.push(result.status === "undef" ? "undef" : `lemma${literals.join("")}`);
+  return output.join("\n");
+};
+
+describe("nlsat check_assignment", () => {
+  // Random constraints of degree 2 or less, with the lemmas that Z3's nlsat solver returns for an
+  // assignment that violates them, literal numbering and monomial order included.
+  const cases: [string, string][] = JSON.parse(
+    readFileSync(join(FIXTURES, "check-assignment.json"), "utf8"),
+  );
+
+  it.each(cases)("%s", (input, expected) => {
+    expect(runCheckAssignment(input)).toBe(expected);
+  });
+
+  it("answers undef when every constraint holds, because of the clause [true]", () => {
+    expect(runCheckAssignment("ca 1\nc GT 1:0^1\nv 0 1 1\nend")).toBe("lit 2\nundef");
+  });
+
+  it("refuses to explain with a polynomial of degree 2 in its maximal variable", () => {
+    expect(() => runCheckAssignment("ca 1\nc LT 1:0^2 -4:\nv 0 3 1\nend")).toThrow(NlsatOutOfScope);
+  });
+
+  it("refuses to explain with an irrational root", () => {
+    expect(() => runCheckAssignment("ca 1\nc EQ 1:0^2 -2:\nv 0 1 1\nend")).toThrow(NlsatOutOfScope);
   });
 });
