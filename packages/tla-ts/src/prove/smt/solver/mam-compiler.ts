@@ -72,8 +72,8 @@ export interface CodeTree {
 export interface LabelHasher {
   // label_hasher.
   getLabelHash(decl: number): number;
-  // mk_enode: the enode of a ground term, internalized if needed.
-  getGroundEnode(expr: number): Enode | null;
+  // mk_enode: the enode of a ground term, internalized at the quantifier's generation if needed.
+  getGroundEnode(expr: number, quantifier: number): Enode | null;
   // The label hash of a ground term's enode, which set_lbl_hash gives it if it has none.
   getLblHash(node: Enode): number;
 }
@@ -274,7 +274,7 @@ export class Compiler {
         continue;
       }
       if (manager.isGround(pattern)) {
-        this.seq.push(mkCheck(reg, hasher.getGroundEnode(pattern)));
+        this.seq.push(mkCheck(reg, hasher.getGroundEnode(pattern, this.quantifier)));
         this.setMark(reg, NOT_CHECKED);
         continue;
       }
@@ -371,7 +371,7 @@ export class Compiler {
       this.tree.numRegs += 1;
       const instr = mkInstruction(OP_GET_ENODE);
       instr.oreg = oreg;
-      instr.enode = this.hasher.getGroundEnode(expr);
+      instr.enode = this.hasher.getGroundEnode(expr, this.quantifier);
       this.seq.push(instr);
       return oreg;
     }
@@ -449,7 +449,11 @@ export class Compiler {
             return reg >= 0 ? { ...nullJoint(), kind: JOINT_VAR, reg } : nullJoint();
           }
           if (manager.isGround(arg))
-            return { ...nullJoint(), kind: JOINT_GROUND, enode: this.hasher.getGroundEnode(arg) };
+            return {
+              ...nullJoint(),
+              kind: JOINT_GROUND,
+              enode: this.hasher.getGroundEnode(arg, this.quantifier),
+            };
           return nullJoint();
         }
         if (manager.kinds[arg] === KIND_VAR) return nullJoint();
@@ -548,7 +552,7 @@ export class Compiler {
   private isCheckCompatible(instr: Instruction) {
     const expr = this.getRegister(instr.reg);
     if (!this.isApp(expr) || !this.manager.isGround(expr)) return false;
-    const node = this.hasher.getGroundEnode(expr);
+    const node = this.hasher.getGroundEnode(expr, this.quantifier);
     return instr.enode !== null && node !== null && instr.enode.root === node.root;
   }
 
@@ -556,7 +560,7 @@ export class Compiler {
   private getPatLblHash(reg: number) {
     const expr = this.registers[reg];
     if (this.manager.isGround(expr)) {
-      const node = this.hasher.getGroundEnode(expr);
+      const node = this.hasher.getGroundEnode(expr, this.quantifier);
       return node === null ? -1 : this.hasher.getLblHash(node);
     }
     return this.hasher.getLabelHash(this.manager.decls[expr]);

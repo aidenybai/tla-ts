@@ -305,9 +305,10 @@ export class Mam implements LabelHasher {
     this.insertPpPath(entry, 1, second, mp);
   }
 
-  getGroundEnode(expr: number) {
+  getGroundEnode(expr: number, quantifier: number) {
     const context = this.context;
-    if (!context.isEInternalized(expr)) context.internalize(expr, false);
+    if (!context.isEInternalized(expr))
+      context.internalize(expr, false, context.qmanager.getGeneration(quantifier));
     return context.getEnode(expr) ?? null;
   }
 
@@ -321,7 +322,8 @@ export class Mam implements LabelHasher {
     const manager = this.manager;
     const args = manager.args[pattern];
     const groundArgIndex = args.findIndex((arg) => manager.isGround(arg));
-    const groundArg = groundArgIndex === -1 ? null : this.getGroundEnode(args[groundArgIndex]);
+    const groundArg =
+      groundArgIndex === -1 ? null : this.getGroundEnode(args[groundArgIndex], mp.quantifier);
     const label = manager.decls[pattern];
     for (let index = 0; index < args.length; index++) {
       const child = args[index];
@@ -352,7 +354,7 @@ export class Mam implements LabelHasher {
         continue;
       }
       if (manager.isGround(child)) {
-        const node = this.getGroundEnode(child);
+        const node = this.getGroundEnode(child, mp.quantifier);
         if (node === null) continue;
         this.updatePlbls(label);
         this.updatePc(this.getLabelHash(label), this.getLblHash(node), path, mp);
@@ -374,7 +376,7 @@ export class Mam implements LabelHasher {
     const numDecls = manager.getQuantifier(quantifier).sorts.length;
     const varPaths: Path[][] = Array.from({ length: numDecls }, () => []);
     patterns.forEach((pattern, index) => this.updateFilters(pattern, null, index, varPaths, mp));
-    this.collectGroundExprs(patterns);
+    this.collectGroundExprs(quantifier, patterns);
     this.newPatterns.push(mp);
     // code_tree_map::add_pattern for each pattern as the first one.
     patterns.forEach((pattern, firstIndex) => {
@@ -393,7 +395,7 @@ export class Mam implements LabelHasher {
 
   // collect_ground_exprs: the ground patterns become relevant enodes, and the ground subterms of the
   // other patterns become enodes that theory combination treats as shared.
-  private collectGroundExprs(patterns: number[]) {
+  private collectGroundExprs(quantifier: number, patterns: number[]) {
     const manager = this.manager;
     const todo: number[] = [];
     for (const pattern of patterns) {
@@ -401,7 +403,7 @@ export class Mam implements LabelHasher {
         todo.push(pattern);
         continue;
       }
-      const node = this.getGroundEnode(pattern);
+      const node = this.getGroundEnode(pattern, quantifier);
       if (node === null) continue;
       this.context.markAsRelevant(node.owner);
       this.addSharedEnode(node);
@@ -409,7 +411,7 @@ export class Mam implements LabelHasher {
     while (todo.length > 0) {
       const term = todo.pop() as number;
       if (manager.isGround(term)) {
-        const node = this.getGroundEnode(term);
+        const node = this.getGroundEnode(term, quantifier);
         if (node !== null) this.addSharedEnode(node);
       } else
         for (const arg of manager.args[term]) if (manager.kinds[arg] !== KIND_VAR) todo.push(arg);
