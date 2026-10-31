@@ -45,7 +45,7 @@ const DELETED = 2;
 // Open addressing with linear probing. An erased node leaves a deleted slot, which probes pass over,
 // until the table is rebuilt.
 export class CgTable {
-  private nodes: (Enode | null)[] = Array.from({ length: 1024 }, () => null);
+  private nodes = Array<Enode | null>(1024).fill(null);
   private hashes = new Int32Array(1024);
   private states = new Uint8Array(1024);
   private numFull = 0;
@@ -93,7 +93,7 @@ export class CgTable {
     const hashes = this.hashes;
     const states = this.states;
     const size = 4 * this.numFull > states.length ? 2 * states.length : states.length;
-    this.nodes = Array.from({ length: size }, () => null);
+    this.nodes = Array<Enode | null>(size).fill(null);
     this.hashes = new Int32Array(size);
     this.states = new Uint8Array(size);
     this.numFull = 0;

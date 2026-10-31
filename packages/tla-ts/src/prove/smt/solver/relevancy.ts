@@ -92,7 +92,9 @@ export class RelevancyPropagator {
     const manager = this.context.manager;
     for (let index = this.relevantExprs.length - 1; index >= relevantLimit; index--)
       this.isRelevantFlags[this.relevantExprs[index]] = 0;
-    for (const expr of this.relevantExprs.splice(relevantLimit)) manager.decRef(expr);
+    for (let index = relevantLimit; index < this.relevantExprs.length; index++)
+      manager.decRef(this.relevantExprs[index]);
+    shrink(this.relevantExprs, relevantLimit);
     this.qhead = relevantLimit;
     for (let index = this.trailKinds.length - 1; index >= trailLimit; index--) {
       const kind = this.trailKinds[index];

@@ -33,6 +33,7 @@ import {
   OP_TO_INT,
   OP_TO_REAL,
   OP_UMINUS,
+  OP_UNINTERPRETED,
   OP_XOR,
   SORT_BOOL,
   isArithSort,
@@ -176,7 +177,7 @@ export class Rewriter extends RewriterTpl {
   }
 
   protected getSubst(expr: number) {
-    return this.substitution.get(expr);
+    return this.substitution.size === 0 ? undefined : this.substitution.get(expr);
   }
 
   // flat_assoc: th_rewriter flattens and, or and + into an enclosing application of the same
@@ -191,6 +192,12 @@ export class Rewriter extends RewriterTpl {
   }
 
   protected reduceApp(decl: number, args: number[], sort: number) {
+    // An uninterpreted application only reduces by pull_ite, which needs two arguments.
+    if (
+      this.manager.funcDecls[decl].op === OP_UNINTERPRETED &&
+      (args.length !== 2 || this.options.isPullingCheapIte !== true)
+    )
+      return -1;
     return this.manager.withTemporaries(
       () => this.reduceAppTop(decl, args, sort),
       (result) => (result === -1 ? [] : [typeof result === "number" ? result : result.expr]),

@@ -1052,7 +1052,8 @@ export abstract class Internalizer {
   protected removeWatchLiteral(clause: Clause, index: number) {
     const list = this.watches[negate(clause.literals[index])];
     if (list === undefined) return;
-    const position = list.indexOf(clause);
+    // A clause is deleted when its scope is popped, so it is most often near the end.
+    const position = list.lastIndexOf(clause);
     if (position === -1) return;
     list.copyWithin(position, position + 1);
     list.pop();

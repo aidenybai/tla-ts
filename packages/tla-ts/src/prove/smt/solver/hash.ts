@@ -30,8 +30,16 @@ const mix = (state: Uint32Array) => {
   state[2] = c;
 };
 
-// The a, b and c of Z3's mix, which wrap like its unsigned integers.
-const mkState = (a: number, b: number, c: number) => Uint32Array.of(a, b, c);
+// The a, b and c of Z3's mix, which wrap like its unsigned integers. No hash function calls another
+// while it uses the state, so they share one rather than allocating one per hash.
+const sharedState = new Uint32Array(3);
+
+const mkState = (a: number, b: number, c: number) => {
+  sharedState[0] = a;
+  sharedState[1] = b;
+  sharedState[2] = c;
+  return sharedState;
+};
 
 export const mkMix = (a: number, b: number, c: number) => {
   const state = mkState(a, b, c);
