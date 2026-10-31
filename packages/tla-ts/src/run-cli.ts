@@ -15,6 +15,7 @@ import { defineCommand, type ParsedArgs } from "./cli-options";
 import { parseConfig } from "./config";
 import {
   createSanyError,
+  formatSanyWarnings,
   getErrorExitCode,
   TlaConfigError,
   TlaError,
@@ -334,6 +335,7 @@ const printError = (error: TlaError, path?: string) => {
   const report = error instanceof TlaSyntaxError ? error.sany : undefined;
   if (!report || path === undefined) return console.error(`${error.name}: ${error.message}`);
   if (report.parseError !== undefined) console.log(report.parseError);
+  if (report.warnings.length > 0) console.log(formatSanyWarnings(report.warnings));
   console.log(
     report.isFatal
       ? `\nFatal errors while parsing TLA+ spec in file ${basename(path, ".tla")}\n\n${report.errors.map((item) => `${item.location}\n\n${item.message}\n`).join("")}${formatSanyErrors(report)}\n`

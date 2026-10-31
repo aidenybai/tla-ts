@@ -66,6 +66,7 @@ export interface OperatorReferenceExpression {
 export interface LambdaExpression {
   kind: "Lambda";
   params: string[];
+  paramRanges?: SourceRange[];
   body: Expression;
   location: SourceLocation;
 }
@@ -123,7 +124,10 @@ export interface LetExpression {
   location: SourceLocation;
 }
 
-export type BoundPattern = { kind: "Name"; name: string } | { kind: "Tuple"; names: string[] };
+// ranges holds the range of each name the pattern binds.
+export type BoundPattern =
+  | { kind: "Name"; name: string; ranges?: SourceRange[] }
+  | { kind: "Tuple"; names: string[]; ranges?: SourceRange[] };
 
 export interface Bound {
   pattern: BoundPattern;
@@ -141,6 +145,7 @@ export interface UnboundedQuantifierExpression {
   kind: "UnboundedQuantifier";
   quantifier: "Forall" | "Exists";
   names: string[];
+  nameRanges?: SourceRange[];
   isTemporal?: boolean;
   body: Expression;
   location: SourceLocation;
@@ -392,6 +397,7 @@ export interface NewSymbol {
   arity: number;
   level: "Constant" | "Variable" | "State" | "Action" | "Temporal";
   set: Expression | undefined;
+  nameRange?: SourceRange;
   location: SourceLocation;
 }
 
@@ -443,9 +449,15 @@ export type StepBody =
   | Instance
   | DefineStep
   | { kind: "Have"; expression: Expression }
-  | { kind: "Take"; names: string[]; bounds: Bound[] }
+  | { kind: "Take"; names: string[]; nameRanges?: SourceRange[]; bounds: Bound[] }
   | { kind: "Witness"; expressions: Expression[] }
-  | { kind: "Pick"; names: string[]; bounds: Bound[]; body: Expression }
+  | {
+      kind: "Pick";
+      names: string[];
+      nameRanges?: SourceRange[];
+      bounds: Bound[];
+      body: Expression;
+    }
   | { kind: "Case"; expression: Expression }
   | { kind: "Assert"; isSuffices: boolean; statement: Expression | AssumeProve }
   | { kind: "Qed" };
