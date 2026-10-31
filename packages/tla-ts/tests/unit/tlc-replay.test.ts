@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
 import type { Expression } from "../../src/ast";
+import type { TlcVersion } from "../../src/tlc-version";
 
 const HEADER = [
   "EXTENDS Naturals, Sequences, TLC, FiniteSets",
@@ -22,12 +23,20 @@ const formatCallStack = (expressions: Expression[] | undefined) =>
         : "?";
     });
 
-const getFailure = async (definitions: string, config = "INIT Init\nNEXT Next") => {
-  const result = await check({
+const checkSpec = (definitions: string, config: string, version?: TlcVersion) =>
+  check({
     source: `---- MODULE M ----\n${HEADER}\n${definitions}\n====`,
     config,
+    version,
     onPrint: () => {},
   });
+
+const getFailure = async (
+  definitions: string,
+  config = "INIT Init\nNEXT Next",
+  version?: TlcVersion,
+) => {
+  const result = await checkSpec(definitions, config, version);
   return {
     callStack: formatCallStack(result.failure?.callStack),
     exitCode: result.failure?.exitCode,
@@ -82,4 +91,60 @@ describe("the call stack of a replayed failure matches TLC", () => {
       exitCode: 255,
     });
   });
+
+  // TLC's worker adds a state to the behavior graph even after its next states fail or violate a
+  // property, which evaluates ENABLED for the fairness of the spec.
+  const FAIRNESS = "Spec == Init /\\ [][Next]_x /\\ WF_x(Fair)\nLive == []<>(x = 0)";
+
+  const LIVE_STACK = ["13.36-13.39", "12.9-12.12", "11.9-11.14", "11.9-11.9"];
+
+  // Without a replay, TLC exits with the code of the error rather than of a failed replay.
+  it.each([
+    [undefined, "1 \\div x", [...LIVE_STACK, "9.6-9.18", "9.11-9.18"], 255],
+    ["1.7.4" as const, "1 \\div x", ["9.6-9.18", "9.11-9.18"], 255],
+    [undefined, "CHOOSE y \\in {} : TRUE", [...LIVE_STACK, "9.6-9.32", "9.11-9.32"], 255],
+    ["1.7.4" as const, "CHOOSE y \\in {} : TRUE", ["9.6-9.32", "9.11-9.32"], 75],
+  ])(
+    "prints where adding a state whose next states fail to the behavior graph fails (TLC %s, %s)",
+    async (version, value, callStack, exitCode) => {
+      expect(
+        await getFailure(
+          `Init == x = 0\nA == x' = ${value}\nB == x' = x\nNext == A \\/ B\nFair == Next\n${FAIRNESS}`,
+          "SPECIFICATION Spec\nPROPERTY Live",
+          version,
+        ),
+      ).toEqual({ callStack, exitCode });
+    },
+  );
+
+  it.each([
+    [undefined, "deadlock", ["12.36-12.39", "9.9-9.27", "9.14-9.27"]],
+    [undefined, "invariant-violation", ["12.36-12.39", "9.9-9.27", "9.14-9.27"]],
+    ["1.7.4" as const, "invariant-violation", undefined],
+  ])(
+    "prints where adding a state to the behavior graph fails after a violation (TLC %s, %s)",
+    async (version, status, callStack) => {
+      const result = await checkSpec(
+        `Init == x = 0\nFair == x' = 1 \\div (x - 1)\nNext == x < ${status === "deadlock" ? 1 : 3} /\\ x' = x + 1\nInv == x < 2\n${FAIRNESS}`,
+        "SPECIFICATION Spec\nPROPERTY Live\nINVARIANT Inv",
+        version,
+      );
+      expect([result.status, formatCallStack(result.liveCallStack)]).toEqual([status, callStack]);
+    },
+  );
+
+  it.each([
+    [undefined, [1, 1]],
+    ["1.7.4" as const, [0, 1]],
+  ])(
+    "counts a deadlocked state it fails to add to the behavior graph as expanded (TLC %s)",
+    async (version, outDegrees) => {
+      const result = await checkSpec(
+        `Init == x = 0\nFair == x' = 1 \\div (x - 1)\nNext == x < 1 /\\ x' = x + 1\n${FAIRNESS}`,
+        "SPECIFICATION Spec\nPROPERTY Live",
+        version,
+      );
+      expect(result.violationOutDegrees?.slice(0, 2)).toEqual(outDegrees);
+    },
+  );
 });

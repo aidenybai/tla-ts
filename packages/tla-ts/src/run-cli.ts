@@ -533,6 +533,13 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
   return !isInitial && status !== "assumption-violation";
 };
 
+const printNestedExpressions = (printer: MessagePrinter, callStack: Expression[]) =>
+  printer.print(
+    MESSAGE_CODE.nestedExpression,
+    MESSAGE_LEVEL.error,
+    `The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n${formatCallStack(callStack)}`,
+  );
+
 const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timing) => {
   const print = printer.print;
   if (result.failure) {
@@ -554,12 +561,7 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
         );
         return;
       }
-      if (!failure.callStack) return;
-      print(
-        MESSAGE_CODE.nestedExpression,
-        MESSAGE_LEVEL.error,
-        `The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n${formatCallStack(failure.callStack)}`,
-      );
+      if (failure.callStack) printNestedExpressions(printer, failure.callStack);
     };
     if (failure.isCallStackFirst) printCallStack();
     // TLC prints the state as it reports the error, so a state it can't print fails outside the
@@ -597,6 +599,7 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     // violate a temporal property too.
     const additional = result.additionalViolation;
     if (additional) printViolation("property-violation", additional, printer);
+    if (result.liveCallStack) printNestedExpressions(printer, result.liveCallStack);
   } else {
     printLivenessEnd(printer, timing);
     const optimistic = getOptimisticProbability(result.distinctStates, result.generatedStates);

@@ -19,7 +19,7 @@ import {
   UNEXPECTED_EXCEPTION,
 } from "./errors";
 import type { JavaOverride } from "./java-overrides";
-import { EXIT_STATUS, setExitCode, withLivenessExitCode } from "./exit-codes";
+import { EXIT_STATUS, getExitCode, setExitCode, withLivenessExitCode } from "./exit-codes";
 import {
   describeRange,
   createTracingEnvironment,
@@ -263,6 +263,8 @@ export interface CheckResult {
   // A temporal property TLC finds violated as it adds a deadlocked state to the behavior graph,
   // which it reports after the deadlock.
   additionalViolation?: Violation;
+  // Where TLC's worker fails to add the state to the behavior graph after it reports a violation.
+  liveCallStack?: Expression[];
   // How many states that TLC counts as expanded found each number of new states, when its workers
   // stop on a violation without an error code, which TLC 1.7.4 reports as a successful search.
   violationOutDegrees?: number[];
@@ -287,6 +289,9 @@ interface FailureOptions {
   isNextState?: boolean;
   isCallStackFirst?: boolean;
   isTraceFailed?: boolean;
+  // Whether the call stack is of adding the state to the behavior graph, which TLC prints instead
+  // of replaying the error.
+  isLiveCallStack?: boolean;
 }
 
 // TLC prints what the spec prints as it replays a failure after the trace.
@@ -1814,6 +1819,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return failureOptions.isInitial ? getInitialExitCode(error) : getErrorExitCode(error);
     }
     if (failureOptions.isCallStackFirst) return getErrorExitCode(error);
+    // Without a replay, TLC exits with the code of the error, as for any error it didn't expect.
+    if (failureOptions.isLiveCallStack) {
+      return (
+        getExitCode(error) ?? (error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.error)
+      );
+    }
     // TLC exits with the code of a failed replay of the initial states regardless of the error.
     return failureOptions.isInitial ? EXIT_STATUS.specEvaluationFailure : getReplayExitCode(error);
   };
@@ -2212,24 +2223,44 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       );
     }, 0);
   };
+  // TLC's worker adds a state to the behavior graph even after its next states fail or violate a
+  // property, and prints the call stack of an error in that. TLC 1.7.4 prints none.
+  const getLiveCallStack = (index: number, liveSuccessors: LiveSuccessor[]) => {
+    if (!liveness || is174) return undefined;
+    const replay = getReplayFailure((tracing) =>
+      liveness.addState(index, states[index], liveSuccessors, tracing),
+    );
+    return replay?.callStack.length ? replay.callStack : undefined;
+  };
+  // TLC prints the call stack of adding the state to the behavior graph instead of replaying the
+  // next-state relation.
+  const replayFailedNext = (index: number, liveSuccessors: LiveSuccessor[]) => {
+    const callStack = getLiveCallStack(index, liveSuccessors);
+    return callStack
+      ? { result: { callStack, fingerprint: undefined, isLiveCallStack: true }, lines: [] }
+      : getOutput(() => replayNext(states[index]));
+  };
   // After the trace, TLC replays the next-state relation with its call stack, printing again.
-  const reportNextStateFailure = (error: unknown, index: number) => {
-    const replay = getOutput(() => replayNext(states[index]));
+  const reportNextStateFailure = (
+    error: unknown,
+    index: number,
+    liveSuccessors: LiveSuccessor[],
+  ) => {
+    const replay = replayFailedNext(index, liveSuccessors);
     return toFailure(
       withNextStateExitCode(error),
       appendTraceOutput(getStateTrace(index), replay.lines),
       { isNextState: true, ...replay.result },
     );
   };
-  const expandState = (index: number) => {
+  const expandState = (index: number, liveSuccessors: LiveSuccessor[]) => {
     const state = states[index];
-    const liveSuccessors: LiveSuccessor[] = [];
     const source = stateWriter && getGraphState(state, depths[index]);
     const successorCount = forEachActionSuccessor(state, (successor, action) => {
       try {
         outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
       } catch (error) {
-        const replay = getOutput(() => replayNext(state));
+        const replay = replayFailedNext(index, liveSuccessors);
         // TLC 1.7.4 reports the wrapped error without the trace.
         if (is174 && error instanceof TlaEvaluationError) {
           outcome.result = toFailure(
@@ -2255,6 +2286,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return outcome.result !== undefined;
     });
     current.isExpanding = false;
+    if (outcome.result?.violation) {
+      const callStack = getLiveCallStack(index, liveSuccessors);
+      return callStack ? { ...outcome.result, liveCallStack: callStack } : outcome.result;
+    }
     if (outcome.result) return outcome.result;
     const addLiveState = () => {
       if (liveness && source && is174) stateWriter?.writeStuttering(source);
@@ -2272,22 +2307,21 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       });
     };
     if (successorCount === 0 && config.checkDeadlock) {
-      // TLC counts a deadlocked state as expanded.
-      const deadlock = withOutDegrees(
-        reportViolation("deadlock", { name: "deadlock", ...getStateTrace(index) }),
-        getPartialOutDegrees(),
-      );
+      const deadlock = reportViolation("deadlock", { name: "deadlock", ...getStateTrace(index) });
       // TLC's worker still adds the deadlocked state to the behavior graph after it reports the
-      // deadlock, and reports a temporal property that this violates.
-      const additional = (() => {
-        try {
-          return addLiveState()?.violation;
-        } catch (error) {
-          if (!(error instanceof TlaEvaluationError)) throw error;
-          return undefined;
-        }
-      })();
-      return additional ? { ...deadlock, additionalViolation: additional } : deadlock;
+      // deadlock, and reports a temporal property that this violates. Then it counts the state as
+      // expanded.
+      try {
+        const additional = addLiveState()?.violation;
+        const counted = withOutDegrees(deadlock, getPartialOutDegrees());
+        return additional ? { ...counted, additionalViolation: additional } : counted;
+      } catch (error) {
+        if (!(error instanceof TlaEvaluationError)) throw error;
+        // An error in adding the state stops TLC 1.7.4's worker before it counts the state.
+        const counted = withOutDegrees(deadlock, getFailureOutDegrees());
+        const callStack = getLiveCallStack(index, liveSuccessors);
+        return callStack ? { ...counted, liveCallStack: callStack } : counted;
+      }
     }
     try {
       return addLiveState();
@@ -2398,13 +2432,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     current.candidate = undefined;
     runtime.queueSize = states.length - index - 1;
     current.isExpanding = true;
+    const liveSuccessors: LiveSuccessor[] = [];
     try {
-      outcome.result = expandState(index);
+      outcome.result = expandState(index, liveSuccessors);
     } catch (error) {
       outcome.result =
         error instanceof TlaIncompleteSuccessorError
           ? reportIncompleteSuccessor(index, error)
-          : reportNextStateFailure(error, index);
+          : reportNextStateFailure(error, index, liveSuccessors);
     }
     if (outcome.result) return outcome.result;
     outDegrees[getOutDegreeBucket()]++;
