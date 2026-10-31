@@ -2,7 +2,7 @@
 // the candidate model satisfies each relevant quantifier: the negated body, with the model's
 // interpretations in place of the uninterpreted symbols, goes to an auxiliary context. A model of it
 // is a counterexample that becomes an instance of the quantifier.
-import { KIND_APP, SORT_BOOL, type AstManager } from "./ast";
+import { KIND_APP, OP_OR, SORT_BOOL, type AstManager } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
 import { Context } from "./context";
 import type { Enode } from "./enode";
@@ -10,6 +10,7 @@ import { L_FALSE, L_TRUE } from "./lbool";
 import type { ModelFinder } from "./model-finder";
 import type { ProtoModel } from "./proto-model";
 import type { DefaultQuantifierManager } from "./quantifier-manager";
+import { RefVector } from "./ref-vector";
 import { substitute } from "./var-subst";
 
 // qi_params' mbqi_max_cexs and mbqi_max_iterations.
@@ -31,6 +32,8 @@ class AuxContext {
   // theory_polymorphism's m_qhead: the number of formulas when it last added an assumption. Its
   // trail restores it when the scope is popped, and no formula is asserted outside the scopes.
   private polyQhead = 0;
+  // theory_polymorphism's m_assumption, which holds its last assumption.
+  private polyAssumption = -1;
 
   constructor(private manager: AstManager) {
     this.context = new Context(manager, { isMbqi: false, relevancyLevel: 0 });
@@ -62,10 +65,17 @@ class AuxContext {
       if (context.isInconsistent()) break;
       context.internalizeAssertion(formula, 0);
     }
+    const manager = this.manager;
     const numFormulas = this.asserted.getNumFormulas();
     const isAssuming = numFormulas !== this.polyQhead;
     this.polyQhead = numFormulas;
-    context.initAssumptions(isAssuming ? [this.manager.mkFreshConst("poly", SORT_BOOL)] : []);
+    if (isAssuming) {
+      const assumption = manager.mkFreshConst("poly", SORT_BOOL);
+      manager.incRef(assumption);
+      if (this.polyAssumption !== -1) manager.decRef(this.polyAssumption);
+      this.polyAssumption = assumption;
+    }
+    context.initAssumptions(isAssuming ? [this.polyAssumption] : []);
     const result = context.search();
     return result === L_TRUE
       ? context.mkProtoModel().model
@@ -148,10 +158,14 @@ export class ModelChecker {
       const sort = data.sorts[numDecls - index - 1];
       const sk = manager.mkFreshConst(null, sort);
       sks[numDecls - index - 1] = sk;
-      if (model.isFinite(sort))
-        aux.assert(
-          manager.mkOr(model.getKnownUniverse(sort).map((value) => manager.mkEq(sk, value))),
-        );
+      if (model.isFinite(sort)) {
+        // restrict_to_universe: ast_manager::mk_or, which keeps a single disjunct in an or.
+        const universe = model.getKnownUniverse(sort).map((value) => manager.mkEq(sk, value));
+        const constraint = manager.mkApp(OP_OR, universe, SORT_BOOL);
+        manager.incRef(constraint);
+        aux.assert(constraint);
+        manager.decRef(constraint);
+      }
     }
     aux.assert(manager.mkNot(substitute(manager, body, sks)));
     return sks;
@@ -209,14 +223,15 @@ export class ModelChecker {
       if (typeof cex === "string" || !this.addInstance(quantifier, cex, sks, true)) break;
       numNewInstances++;
       if (numNewInstances >= this.maxCexs) break;
-      // add_blocking_clause.
-      aux.assert(
-        manager.mkOr(
-          sks.map((sk) =>
-            manager.mkNot(manager.mkEq(sk, cex.getSomeConstInterp(manager.decls[sk]))),
-          ),
-        ),
-      );
+      // add_blocking_clause: diseqs and blocking_clause hold their terms until it is asserted.
+      const diseqs = new RefVector(manager);
+      for (const sk of sks)
+        diseqs.push(manager.mkNot(manager.mkEq(sk, cex.getSomeConstInterp(manager.decls[sk]))));
+      const blockingClause = manager.mkApp(OP_OR, diseqs.items, SORT_BOOL);
+      manager.incRef(blockingClause);
+      aux.assert(blockingClause);
+      manager.decRef(blockingClause);
+      diseqs.reset();
     }
     if (numNewInstances === 0) this.addInstance(quantifier, completeCex, sks, false);
     return false;
