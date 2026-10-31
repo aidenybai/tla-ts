@@ -147,6 +147,12 @@ export const isSetValue = (value: Value) =>
   value.kind !== "Function" &&
   value.kind !== "LazyFunction";
 
+// TLC's Reducible values, SetEnumValue and IntervalValue, which combine with another set element by
+// element.
+export const isReducibleSet = (value: Value): value is SetValue | MixedSetValue | IntervalValue =>
+  typeof value === "object" &&
+  (value.kind === "Set" || value.kind === "MixedSet" || value.kind === "Interval");
+
 export const isFunctionValue = (value: Value): value is FunctionValue | LazyFunctionValue =>
   typeof value === "object" && (value.kind === "Function" || value.kind === "LazyFunction");
 

@@ -49,6 +49,7 @@ import {
   isOverriddenSet,
   isSameValue,
   markLambdaFunction,
+  isReducibleSet,
   isSetValue,
   MAXIMUM_INTEGER,
   MINIMUM_INTEGER,
@@ -630,10 +631,6 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
   return definition.bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
 };
 
-const isReducible = (domain: Value) =>
-  typeof domain === "object" &&
-  (domain.kind === "Interval" || domain.kind === "Set" || domain.kind === "MixedSet");
-
 // TLC computes a constant definition when it starts, without keeping a function it constructs
 // lazy, so a function over an interval or an enumerated set is a FcnRcdValue.
 const toStartupValue = (definition: Definition, value: Value): Value => {
@@ -642,7 +639,7 @@ const toStartupValue = (definition: Definition, value: Value): Value => {
     definition.kind === "Operator" ||
     definition.isSelfReferential ||
     value.kind !== "LazyFunction" ||
-    !isReducible(value.domain)
+    !isReducibleSet(value.domain)
   ) {
     return value;
   }
@@ -1776,7 +1773,7 @@ const compileFunctionConstruction = (
         keys.map((key) => body(withScope(context, bindValue(context.scope, name, key)))),
       );
       // FcnLambdaValue#toFcnRcd builds a FcnRcdValue over an interval or an enumerated set.
-      return isReducible(domain) ? functionValue : markLambdaFunction(functionValue);
+      return isReducibleSet(domain) ? functionValue : markLambdaFunction(functionValue);
     }
     const pairs: [Value, Value][] = [];
     forEachBinding(bounds, context, (scope) => {
@@ -1806,7 +1803,7 @@ const compileFunctionConstruction = (
     // TLC builds a function over a domain other than a set enumeration or an interval lazily, so
     // its body fails only where TLC forces it, as the replay does. Building it at once is faster
     // otherwise.
-    if (!isReducible(domain)) {
+    if (!isReducibleSet(domain)) {
       if (callStack) return createLazy(domain, context);
       try {
         return construct(domain, context);
@@ -1928,7 +1925,7 @@ const compileSetComprehension = (
     return (context) => {
       const base = set(context);
       // TLC filters any value it can't enumerate lazily, and fails only when it uses the result.
-      if (!isReducible(base)) return createFiltered(base, context, predicate);
+      if (!isReducibleSet(base)) return createFiltered(base, context, predicate);
       return createSortedSet(toFiniteSet(base).elements.filter(createTest(predicate, context)));
     };
   }

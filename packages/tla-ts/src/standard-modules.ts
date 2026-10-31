@@ -40,6 +40,7 @@ import {
   isEnumerable,
   isFiniteSet,
   isFunctionValue,
+  isReducibleSet,
   isSetValue,
   toFiniteSet,
   unionSorted,
@@ -78,10 +79,6 @@ const SET_OPERATORS: SetOperationValue["operator"][] = ["\\cup", "\\cap", "\\"];
 
 type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
 
-const isReducible = (value: Value): value is ReducibleSet =>
-  typeof value === "object" &&
-  (value.kind === "Set" || value.kind === "MixedSet" || value.kind === "Interval");
-
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
 
 const getReducibleElements = (set: ReducibleSet) =>
@@ -102,7 +99,7 @@ const combineReducible = (
     );
   }
   if (elements.length === 0) return other;
-  if (!isReducible(other)) return { kind: "SetOperation", operator, left: set, right: other };
+  if (!isReducibleSet(other)) return { kind: "SetOperation", operator, left: set, right: other };
   const added = toFiniteSet(other).elements.filter((element) => !isElementOf(element, set));
   return createEnumeratedSet([...elements, ...added]);
 };
@@ -145,7 +142,12 @@ export const CORE_OPERATORS: Builtin[] = [
     defineOperator(operator, 2, (args) => {
       const left = getValue(args, 0, operator);
       const right = getValue(args, 1, operator);
-      if (isReducible(left) && isReducible(right) && !isMixedSet(left) && !isMixedSet(right)) {
+      if (
+        isReducibleSet(left) &&
+        isReducibleSet(right) &&
+        !isMixedSet(left) &&
+        !isMixedSet(right)
+      ) {
         if (operator === "\\cup" && isEmptySet(left)) return right;
         const merge =
           operator === "\\cup"
@@ -155,8 +157,9 @@ export const CORE_OPERATORS: Builtin[] = [
               : differenceSorted;
         return merge(toFiniteSet(left), toFiniteSet(right));
       }
-      if (isReducible(left)) return combineReducible(operator, left, right);
-      if (operator !== "\\" && isReducible(right)) return combineReducible(operator, right, left);
+      if (isReducibleSet(left)) return combineReducible(operator, left, right);
+      if (operator !== "\\" && isReducibleSet(right))
+        return combineReducible(operator, right, left);
       return { kind: "SetOperation", operator, left, right };
     }),
   ),
