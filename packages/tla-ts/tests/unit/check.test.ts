@@ -1697,6 +1697,13 @@ describe("name resolution matches SANY", () => {
       [["line 3, col 9 to line 3, col 15", "The operator Foo requires 1 arguments."]],
     ],
     [
+      "THEOREM T == TRUE\nHIDE T, TRUE, {}",
+      ["line 3, col 9 to line 3, col 12", "line 3, col 15 to line 3, col 16"].map((location) => [
+        location,
+        "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+      ]),
+    ],
+    [
       "Foo(a) == a\ng == Foo",
       [["line 3, col 6 to line 3, col 8", "The operator Foo requires 1 arguments."]],
     ],

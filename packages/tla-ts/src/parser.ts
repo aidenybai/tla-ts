@@ -22,7 +22,7 @@ import type {
   StepBody,
   UseOrHide,
 } from "./ast";
-import { TlaSyntaxError } from "./errors";
+import { createSanyError, formatRange, TlaSyntaxError } from "./errors";
 import { getNumeralValue, tokenize, type Token } from "./lexer";
 
 interface InfixOperator {
@@ -1428,11 +1428,14 @@ const parse = (source: string, isTlapm: boolean): Module => {
       location: getLocation(keyword),
     };
     const invalid =
-      use.kind === "Hide" && !isTlapm ? use.facts.find((fact) => !isHideFact(fact)) : undefined;
-    if (invalid) {
-      throw createError(
-        "The only expression allowed as a fact in a HIDE is the name of a theorem, assumption, or step",
-        invalid.location,
+      use.kind === "Hide" && !isTlapm ? use.facts.filter((fact) => !isHideFact(fact)) : [];
+    if (invalid.length > 0) {
+      throw createSanyError(
+        invalid.map((fact) => ({
+          location: formatRange(fact.location.range ?? getRange(start)),
+          message:
+            "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        })),
       );
     }
     return withRange(use, start);
