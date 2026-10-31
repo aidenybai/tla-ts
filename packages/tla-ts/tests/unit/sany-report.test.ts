@@ -402,6 +402,25 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it.each([
+    ["E == \\A y \\in S : L:: y = 1", "Label L must contain formal parameter `y'."],
+    ["E == \\A y \\in S : L(y, y):: y = 1", "Repeated formal parameter y \nin label `L'."],
+    ["E == L(z):: 1 = 1", "Illegal parameter z of label `L'."],
+    ["E == L(z):: 1 = 1", "Label L declares extra parameter(s)  z  "],
+    ["E == [y \\in S |-> L:: y]", "Label L must contain formal parameter `y'."],
+    ["f[y \\in S] == L:: y", "Label L must contain formal parameter `y'."],
+    ["E == (L:: 1 = 1) /\\ (L:: 2 = 2)", "Duplicate label `L'."],
+    ["ASSUME L:: TRUE", "Label not in definition or proof step."],
+    [
+      "VARIABLE x\nE == [x EXCEPT ![1] = L:: 2]",
+      "Labels inside EXCEPT clauses are not yet implemented.",
+    ],
+  ])("checks the label in %j as SANY does", (unit, error) => {
+    const report = getReport({ M: `---- MODULE M ----\nCONSTANT S\n${unit}\n====\n` });
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(`\n\n${error}\n`);
+  });
+
   it("reports a file without a module as a parse error", () => {
     const report = getReport({ Headless: "Nothing here\n" });
     expect(report.isFailed).toBe(true);

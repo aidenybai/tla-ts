@@ -249,6 +249,13 @@ const isInternalInstance = (module: Module, name: string) => {
   return false;
 };
 
+// An entry of SANY's LS stack: the labels of a definition, theorem or label and the parameters
+// bound within it around the expression being generated.
+interface LabelScope {
+  labels: Map<string, LabelNode>;
+  params: FormalParamNode[][];
+}
+
 // The modules a file extends and instantiates, as SANY's ParseUnit collects them, and the module of
 // the file that names each one. SANY looks at a module's own EXTENDS and INSTANCEs before those of
 // its inner modules.
@@ -519,11 +526,11 @@ export const generateSanySpecification = (
     const functions: { name: string; node: OpApplNode }[] = [];
     const exceptStack: OpApplNode[] = [];
     const exceptSpecStack: OpApplNode[] = [];
-    // SANY's stack of the labels of the definitions, theorems and labels being generated.
-    const labelSets: Map<string, LabelNode>[] = [];
+    const labelScopes: LabelScope[] = [];
     // The contexts in which SANY's $$InAssume marks the scope of an ordinary ASSUME's assumptions.
     const assumeContexts = new WeakSet<Context>();
-    const popLabels = () => labelSets.pop() ?? new Map<string, LabelNode>();
+    const pushLabelScope = () => labelScopes.push({ labels: new Map(), params: [] });
+    const popLabels = () => labelScopes.pop()?.labels ?? new Map<string, LabelNode>();
     // Generator.assumeProveDepth, inScopeOfAPDecl, currentGoal and currentGoalClause: where the
     // node being generated lies among the ASSUME/PROVEs of a theorem or step.
     const assumeProveState: AssumeProveState = {
@@ -881,6 +888,15 @@ export const generateSanySpecification = (
         getBoundGroups(bounds).map((group) => generateExpression(group[0].set)),
       );
 
+    // Generator.pushFormalParams: a label in the expression has to name the parameters it binds.
+    const generateWithParams = (params: FormalParamNode[], expression: Expression) => {
+      const scope = labelScopes.at(-1);
+      scope?.params.push(params);
+      const node = generateExpression(expression);
+      scope?.params.pop();
+      return node;
+    };
+
     const generateLambda = (expression: Expression & { kind: "Lambda" }): OpDefNode => {
       const span = getExpressionSpan(file, expression);
       const nameIndexes = findNameTokens(file, span.start, span.end, expression.params);
@@ -888,7 +904,7 @@ export const generateSanySpecification = (
         const params = expression.params.map((name, index) =>
           createFormalParam(name, 0, getTokenLocation(file, nameIndexes[index]), true),
         );
-        const body = generateExpression(expression.body);
+        const body = generateWithParams(params, expression.body);
         return createOpDef({
           name: "LAMBDA",
           params,
@@ -1234,7 +1250,7 @@ export const generateSanySpecification = (
               true,
             ),
           );
-          const body = generateExpression(expression.body);
+          const body = generateWithParams(params, expression.body);
           return applyBuiltin("$UnboundedChoose", [body], location, { unbounded: params });
         }
         const range = generateExpression(expression.set);
@@ -1243,7 +1259,7 @@ export const generateSanySpecification = (
         const params = names.map((name, index) =>
           createFormalParam(name, 0, getTokenLocation(file, indexes[index]), true),
         );
-        const body = generateExpression(expression.body);
+        const body = generateWithParams(params, expression.body);
         return applyBuiltin("$BoundedChoose", [body], location, {
           bounded: [params],
           tupleOrs: [pattern.kind === "Tuple"],
@@ -1382,7 +1398,7 @@ export const generateSanySpecification = (
           const span = getExpressionSpan(file, expression);
           return withContext(createContext(), () => {
             const bounds = generateBounds(expression.bounds, span.start);
-            const body = generateExpression(expression.body);
+            const body = generateWithParams(bounds.bounded.flat(), expression.body);
             return applyBuiltin(
               expression.kind === "Forall" ? "$BoundedForall" : "$BoundedExists",
               [body],
@@ -1406,7 +1422,7 @@ export const generateSanySpecification = (
             const params = expression.names.map((paramName, index) =>
               createFormalParam(paramName, 0, getTokenLocation(file, indexes[index]), true),
             );
-            const body = generateExpression(expression.body);
+            const body = generateWithParams(params, expression.body);
             return applyBuiltin(name, [body], location, { unbounded: params });
           });
         }
@@ -1425,7 +1441,7 @@ export const generateSanySpecification = (
           const span = getExpressionSpan(file, expression);
           return withContext(createContext(), () => {
             const bounds = generateBoundsWithRanges([expression.bound], span.start, [range]);
-            const body = generateExpression(expression.predicate);
+            const body = generateWithParams(bounds.bounded.flat(), expression.predicate);
             return applyBuiltin("$SubsetOf", [body], location, bounds);
           });
         }
@@ -1433,7 +1449,7 @@ export const generateSanySpecification = (
           const expressionSpan = getExpressionSpan(file, expression.expression);
           return withContext(createContext(), () => {
             const bounds = generateBounds(expression.bounds, expressionSpan.end + 1);
-            const body = generateExpression(expression.expression);
+            const body = generateWithParams(bounds.bounded.flat(), expression.expression);
             return applyBuiltin("$SetOfAll", [body], location, bounds);
           });
         }
@@ -1441,7 +1457,7 @@ export const generateSanySpecification = (
           const span = getExpressionSpan(file, expression);
           return withContext(createContext(), () => {
             const bounds = generateBounds(expression.bounds, span.start);
-            const body = generateExpression(expression.body);
+            const body = generateWithParams(bounds.bounded.flat(), expression.body);
             return applyBuiltin("$FcnConstructor", [body], location, bounds);
           });
         }
@@ -1545,20 +1561,36 @@ export const generateSanySpecification = (
 
     const generateLabel = (expression: Expression & { kind: "Label" }): LabelNode | OpApplNode => {
       const location = getLocation(expression);
+      const scope = labelScopes.at(-1);
+      if (scope === undefined) {
+        addError(location, "Label not in definition or proof step.");
+        return createNullNode(location);
+      }
       // Generator.noLabelsAllowed: no label lies in the scope of a declaration of a nested
       // ASSUME/PROVE.
       if (assumeProveState.isDeclared.slice(2, assumeProveState.depth + 1).some(Boolean)) {
         addError(location, "Label not allowed within scope of declaration in nested ASSUME/PROVE.");
         return createNullNode(location);
       }
-      labelSets.push(new Map());
+      if (exceptStack.length > 0 && exceptSpecStack.length > 0) {
+        addError(location, "Labels inside EXCEPT clauses are not yet implemented.");
+        return createNullNode(location);
+      }
+      pushLabelScope();
       const body = generateExpression(expression.body);
       const labels = popLabels();
-      const params = expression.params.map((name) => {
+      const paramIndexes = findNameTokens(
+        file,
+        getExpressionSpan(file, expression).start,
+        getExpressionSpan(file, expression.body).start,
+        expression.params,
+      );
+      const params = expression.params.map((name, index) => {
         const symbol = resolveSymbol(symbolTable, name);
-        return symbol?.kind === "FormalParam"
-          ? symbol
-          : createFormalParam(name, 0, location, false);
+        if (symbol?.kind === "FormalParam") return symbol;
+        const paramLocation = getTokenLocation(file, paramIndexes[index]);
+        addError(paramLocation, `Illegal parameter ${name} of label \`${expression.name}'.`);
+        return createFormalParam(name, 0, paramLocation, false);
       });
       const label: LabelNode = {
         ...createLevelFields(getId()),
@@ -1570,8 +1602,28 @@ export const generateSanySpecification = (
         isAssumeProve: false,
         location,
       };
-      const labelSet = labelSets[labelSets.length - 1];
-      if (labelSet !== undefined && !labelSet.has(label.name)) labelSet.set(label.name, label);
+      // Generator.formalParamsEqual: a label names each parameter bound around it once.
+      const named = new Set<FormalParamNode>();
+      params.forEach((param) => {
+        if (named.has(param)) {
+          addError(
+            location,
+            `Repeated formal parameter ${param.name} \nin label \`${label.name}'.`,
+          );
+        }
+        named.add(param);
+      });
+      scope.params.flat().forEach((param) => {
+        if (!named.delete(param)) {
+          addError(location, `Label ${label.name} must contain formal parameter \`${param.name}'.`);
+        }
+      });
+      if (named.size > 0) {
+        const extras = [...named].map((param) => `${param.name}  `).join("");
+        addError(location, `Label ${label.name} declares extra parameter(s)  ${extras}`);
+      }
+      if (scope.labels.has(label.name)) addError(location, `Duplicate label \`${label.name}'.`);
+      else scope.labels.set(label.name, label);
       const goal = assumeProveState.goal;
       if (goal) labelGoals.set(label, { scope: goal, clause: assumeProveState.goalClause });
       return label;
@@ -1637,7 +1689,7 @@ export const generateSanySpecification = (
         } else if (existing !== undefined) {
           addError(location, `Operator ${name} already defined or declared.`);
         }
-        labelSets.push(new Map());
+        pushLabelScope();
         return { params, body: generateExpression(definition.body), existing };
       });
       const labels = popLabels();
@@ -1745,8 +1797,10 @@ export const generateSanySpecification = (
       currentModule.definitions.push(definitionNode);
       definitions?.push(definitionNode);
       functions.unshift({ name: definition.name, node });
-      labelSets.push(new Map());
-      const body = withContext(context, () => generateExpression(definition.body));
+      pushLabelScope();
+      const body = withContext(context, () =>
+        generateWithParams(bounds.bounded.flat(), definition.body),
+      );
       definitionNode.labels = popLabels();
       functions.shift();
       node.operands = [body];
@@ -2368,17 +2422,18 @@ export const generateSanySpecification = (
           const isPick = body.kind === "Pick";
           const name = isPick ? "$Pick" : "$Take";
           if (isPick) symbolTable.contexts.push(createContext());
-          const getOperands = () => (body.kind === "Pick" ? [generateExpression(body.body)] : []);
+          const getOperands = (params: FormalParamNode[]) =>
+            body.kind === "Pick" ? [generateWithParams(params, body.body)] : [];
           if (body.bounds.length > 0) {
             const bounds = generateBounds(body.bounds, bodySpan.start);
-            const operands = getOperands();
+            const operands = getOperands(bounds.bounded.flat());
             return { node: applyBuiltin(name, operands, bodyLocation, bounds), isPick };
           }
           const indexes = findNameTokens(file, bodySpan.start, bodySpan.end + 1, body.names);
           const unbounded = body.names.map((paramName, index) =>
             createFormalParam(paramName, 0, getTokenLocation(file, indexes[index]), true),
           );
-          const operands = getOperands();
+          const operands = getOperands(unbounded);
           return { node: applyBuiltin(name, operands, bodyLocation, { unbounded }), isPick };
         }
       }
@@ -2446,7 +2501,7 @@ export const generateSanySpecification = (
         const headSpan = getRangeSpan(file, step.head);
         const bodySpan = { start: headSpan.start + 1, end: headSpan.end };
         const body = step.body;
-        if (step.name !== undefined) labelSets.push(new Map());
+        if (step.name !== undefined) pushLabelScope();
         const definitionId = step.name === undefined ? undefined : getId();
         if (body.kind !== "Assert") infixStep.previousRight = undefined;
         const otherStep = generateOtherStep(body, stepSpan, bodySpan);
@@ -2563,7 +2618,7 @@ export const generateSanySpecification = (
       const location = getSpanLocation(file, getUnitSpan(theorem.location));
       const statement = theorem.statement;
       const assumeContext = createContext();
-      if (theorem.name !== undefined) labelSets.push(new Map());
+      if (theorem.name !== undefined) pushLabelScope();
       const definitionId = theorem.name === undefined ? undefined : getId();
       if (statement.kind === "AssumeProve") symbolTable.contexts.push(assumeContext);
       const body =
@@ -2602,7 +2657,7 @@ export const generateSanySpecification = (
     const processAssumption = (assumption: Assumption) => {
       const span = getUnitSpan(assumption.location);
       const location = getSpanLocation(file, span);
-      if (assumption.name !== undefined) labelSets.push(new Map());
+      if (assumption.name !== undefined) pushLabelScope();
       const body = generateExpression(assumption.expression);
       const definition =
         assumption.name === undefined
