@@ -342,6 +342,40 @@ describe("the CLI reports results like TLC", () => {
     );
   });
 
+  it("prints SANY's message for an extended module it cannot parse like TLC", () => {
+    const result = runCli("cli-parse-error", "Root");
+    expect(result.status).toBe(150);
+    expect(result.stdout).toContain(
+      [
+        "***Parse Error***",
+        'Encountered "]" at line 2, column 24 and token "|->" ',
+        "",
+        "Residual stack trace follows:",
+        "ExtendableExpr starting at line 2, column 24.",
+        "Expression starting at line 2, column 24.",
+        "Field Value starting at line 2, column 18.",
+        "Some [] Form starting at line 2, column 8.",
+        "ExtendableExpr starting at line 2, column 8.",
+        "",
+        "",
+        "Fatal errors while parsing TLA+ spec in file Root",
+        "",
+        "In module Base",
+        "",
+        "Could not parse module Base from file Base.tla",
+        "*** Errors: 1",
+        "",
+        "In module Base",
+        "",
+        "Could not parse module Base from file Base.tla",
+        "",
+        "",
+        "",
+        "Error: Parsing or semantic analysis failed.",
+      ].join("\n"),
+    );
+  });
+
   it("rejects -lncheck without a strategy like TLC", () => {
     const result = runCli("cli-output", "Lasso", ["-lncheck"]);
     expect(result.status).toBe(1);

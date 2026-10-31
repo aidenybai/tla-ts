@@ -34,10 +34,12 @@ export interface SanyError {
   message: string;
 }
 
-// The errors SANY reports for a spec. A fatal error stops it before semantic analysis.
+// The errors SANY reports for a spec. A fatal error stops it before semantic analysis. SANY's
+// parser prints its message for a module it rejects before the report.
 export interface SanyReport {
   errors: SanyError[];
   isFatal: boolean;
+  parseError?: string;
 }
 
 export class TlaSyntaxError extends TlaError {
@@ -52,13 +54,22 @@ export class TlaSyntaxError extends TlaError {
   }
 }
 
-export const createSanyError = (errors: SanyError[], isFatal = false) =>
+export const createSanyError = (errors: SanyError[], isFatal = false, parseError?: string) =>
   new TlaSyntaxError(
     errors.map((error) => `${error.location}\n\n${error.message}`).join("\n\n"),
     undefined,
     undefined,
-    { errors, isFatal },
+    { errors, isFatal, parseError },
   );
+
+// SANY's message for a module its parser rejects, such as a "***Parse Error***" with the
+// productions it was in.
+export class TlaParseError extends TlaError {
+  constructor(message: string) {
+    super(message);
+    this.name = "TlaParseError";
+  }
+}
 
 export const formatRange = (range: SourceRange) =>
   `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;

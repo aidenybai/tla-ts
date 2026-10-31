@@ -28,7 +28,7 @@ import type { LineRange } from "./obligation-generate";
 import { getAtPrefix, getLocusText } from "./obligation-expression";
 import { formatSummary, getObligations, WHOLE_MODULE, type ModuleObligations } from "./obligations";
 import { check } from "./parallel";
-import { parseModule } from "./parser";
+import { parseModuleFile } from "./sany-parse-error";
 import type { StateDump } from "./state-graph";
 import {
   formatProbability,
@@ -247,7 +247,7 @@ const checkSpec = async (specPath: string, args: ParsedArgs) => {
   }
   const source = readFileSync(specPath, "utf8");
   const fileName = basename(specPath, ".tla");
-  const moduleName = parseModule(source).name;
+  const moduleName = parseModuleFile(source, fileName).name;
   if (moduleName !== fileName) {
     throw createSanyError(
       [
@@ -333,6 +333,7 @@ const printError = (error: TlaError, path?: string) => {
   }
   const report = error instanceof TlaSyntaxError ? error.sany : undefined;
   if (!report || path === undefined) return console.error(`${error.name}: ${error.message}`);
+  if (report.parseError !== undefined) console.log(report.parseError);
   console.log(
     report.isFatal
       ? `\nFatal errors while parsing TLA+ spec in file ${basename(path, ".tla")}\n\n${report.errors.map((item) => `${item.location}\n\n${item.message}\n`).join("")}${formatSanyErrors(report)}\n`
