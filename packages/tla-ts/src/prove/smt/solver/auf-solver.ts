@@ -5,7 +5,8 @@
 import { OP_ITE, OP_LT, SORT_BOOL, SORT_INT, isArithSort, type AstManager } from "./ast";
 import { combineHash } from "./hash";
 import { ObjHashtable, ObjMap } from "./hashtable";
-import { FuncInterp, RandomGen, type ProtoModel } from "./proto-model";
+import { FuncInterp, type ProtoModel } from "./proto-model";
+import { RandomGen } from "./random-gen";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 

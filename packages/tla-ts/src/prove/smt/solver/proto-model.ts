@@ -12,6 +12,7 @@ import {
   SORT_BOOL,
   isArithSort,
 } from "./ast";
+import { RandomGen } from "./random-gen";
 import { Rational } from "./rational";
 import { ObjHashtable, ObjMap } from "./hashtable";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
@@ -22,16 +23,6 @@ import { Rewriter } from "./rewriter";
 interface FuncEntry {
   args: number[];
   result: number;
-}
-
-// random_gen from Z3's util/util.h.
-export class RandomGen {
-  constructor(private seed: number) {}
-
-  next() {
-    this.seed = (Math.imul(this.seed, 214013) + 2531011) >>> 0;
-    return (this.seed >>> 16) & 0x7fff;
-  }
 }
 
 // func_interp: a finite table of entries and an else expression over the variables (:var i) for
