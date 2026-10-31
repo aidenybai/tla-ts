@@ -1,3 +1,4 @@
+import type { SourceRange } from "./ast";
 import { EXIT_STATUS, getExitCode } from "./exit-codes";
 import type { Value } from "./values";
 
@@ -27,15 +28,43 @@ export interface SyntaxFailure {
   isEnd: boolean;
 }
 
+// An error SANY reports at a location, such as "In module M" or a range in a module.
+export interface SanyError {
+  location: string;
+  message: string;
+}
+
+// The errors SANY reports for a spec. A fatal error stops it before semantic analysis.
+export interface SanyReport {
+  errors: SanyError[];
+  isFatal: boolean;
+}
+
 export class TlaSyntaxError extends TlaError {
   failure: SyntaxFailure | undefined;
+  sany: SanyReport | undefined;
 
-  constructor(message: string, cause?: unknown, failure?: SyntaxFailure) {
+  constructor(message: string, cause?: unknown, failure?: SyntaxFailure, sany?: SanyReport) {
     super(message, cause);
     this.name = "TlaSyntaxError";
     this.failure = failure;
+    this.sany = sany;
   }
 }
+
+export const createSanyError = (errors: SanyError[], isFatal = false) =>
+  new TlaSyntaxError(
+    errors.map((error) => `${error.location}\n\n${error.message}`).join("\n\n"),
+    undefined,
+    undefined,
+    { errors, isFatal },
+  );
+
+export const formatRange = (range: SourceRange) =>
+  `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
+
+export const createSemanticError = (message: string, range: SourceRange) =>
+  createSanyError([{ location: formatRange(range), message }]);
 
 export class TlaConfigError extends TlaError {
   constructor(message: string, cause?: unknown) {

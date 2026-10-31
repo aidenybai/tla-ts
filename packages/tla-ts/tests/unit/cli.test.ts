@@ -163,8 +163,23 @@ describe("the CLI reports results like TLC", () => {
   it("rejects a spec whose file name differs from its module name like TLC", () => {
     const result = runCli("cli-module-name", "Renamed");
     expect(result.status).toBe(150);
-    expect(result.stderr).toBe(
-      "TlaSyntaxError: File name 'Renamed' does not match the name 'Other' of the top level module it contains.\n",
+    expect(result.stdout).toContain(
+      [
+        "Fatal errors while parsing TLA+ spec in file Renamed",
+        "",
+        "Unknown location",
+        "",
+        "File name 'Renamed' does not match the name 'Other' of the top level module it contains.",
+        "*** Errors: 1",
+        "",
+        "Unknown location",
+        "",
+        "File name 'Renamed' does not match the name 'Other' of the top level module it contains.",
+        "",
+        "",
+        "",
+        "Error: Parsing or semantic analysis failed.",
+      ].join("\n"),
     );
   });
 

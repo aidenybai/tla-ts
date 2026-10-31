@@ -12,6 +12,7 @@ import { createEnvironment } from "./environment";
 import {
   getErrorExitCode,
   isStackOverflow,
+  formatRange,
   STACK_OVERFLOW,
   TlaConfigError,
   TlaEvaluationError,
@@ -24,7 +25,6 @@ import {
   describeRange,
   evaluate,
   expectBoolean,
-  formatRange,
   getDefinition,
   isConstantLevel,
   isImpure,

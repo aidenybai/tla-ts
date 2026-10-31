@@ -10,10 +10,9 @@ import {
   type NumberExpression,
   type OperatorParam,
   type RecordField,
-  type SourceRange,
 } from "./ast";
 import { getKindString } from "./builtins";
-import { TlaEvaluationError } from "./errors";
+import { formatRange, TlaEvaluationError } from "./errors";
 import { EXIT_STATUS, setExitCode, setOwnExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import type { CheckerRuntime } from "./runtime";
@@ -145,9 +144,6 @@ const EXCEPT_AT = "@";
 
 export const describeLocation = (expression: Expression) =>
   `line ${expression.location.line}, column ${expression.location.column}`;
-
-export const formatRange = (range: SourceRange) =>
-  `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
 
 export const describeRange = (expression: Expression) => {
   const range = expression.location.range;

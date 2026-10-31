@@ -14,12 +14,14 @@ import type { CheckResult, CheckStatus, TraceStep } from "./check";
 import { defineCommand, type ParsedArgs } from "./cli-options";
 import { parseConfig } from "./config";
 import {
+  createSanyError,
   getErrorExitCode,
   TlaConfigError,
   TlaError,
   TlaEvaluationError,
   TlaProofError,
   TlaSyntaxError,
+  type SanyReport,
 } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
 import type { LineRange } from "./obligation-generate";
@@ -219,8 +221,14 @@ const checkSpec = async (specPath: string, args: ParsedArgs) => {
   const fileName = basename(specPath, ".tla");
   const moduleName = parseModule(source).name;
   if (moduleName !== fileName) {
-    throw new TlaSyntaxError(
-      `File name '${fileName}' does not match the name '${moduleName}' of the top level module it contains.`,
+    throw createSanyError(
+      [
+        {
+          location: "Unknown location",
+          message: `File name '${fileName}' does not match the name '${moduleName}' of the top level module it contains.`,
+        },
+      ],
+      true,
     );
   }
   const configPath =
@@ -286,21 +294,32 @@ const checkSpec = async (specPath: string, args: ParsedArgs) => {
   return result.failure?.exitCode ?? EXIT_CODES[result.status];
 };
 
-// TLC prints the errors it raises itself. tla-ts names the others, such as a module SANY rejects.
-const printError = (error: TlaError) => {
+const formatSanyErrors = (report: SanyReport) =>
+  `*** Errors: ${report.errors.length}\n\n${report.errors.map((error) => `${error.location}\n\n${error.message}\n\n`).join("\n")}`;
+
+// TLC prints the errors it raises itself, and SANY's report of a spec it rejects. tla-ts names the
+// others, such as a module it cannot parse.
+const printError = (error: TlaError, path?: string) => {
   if (error instanceof TlaConfigError || error instanceof TlaEvaluationError) {
     return console.log(`Error: ${error.message}`);
   }
-  console.error(`${error.name}: ${error.message}`);
+  const report = error instanceof TlaSyntaxError ? error.sany : undefined;
+  if (!report || path === undefined) return console.error(`${error.name}: ${error.message}`);
+  console.log(
+    report.isFatal
+      ? `\nFatal errors while parsing TLA+ spec in file ${basename(path, ".tla")}\n\n${report.errors.map((item) => `${item.location}\n\n${item.message}\n`).join("")}${formatSanyErrors(report)}\n`
+      : `Semantic errors:\n\n${formatSanyErrors(report)}`,
+  );
+  console.log("Error: Parsing or semantic analysis failed.");
 };
 
 // Prints a TlaError and returns its exit code.
-const reportErrors = async (run: () => number | Promise<number>) => {
+const reportErrors = async (run: () => number | Promise<number>, path?: string) => {
   try {
     return await run();
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
-    printError(error);
+    printError(error, path);
     return getErrorExitCode(error);
   }
 };
@@ -311,7 +330,7 @@ const runEach = async (paths: string[], runPath: (path: string) => number | Prom
   const exitCodes: number[] = [];
   for (const [index, path] of paths.entries()) {
     if (index > 0) console.log("");
-    exitCodes.push(await reportErrors(() => runPath(path)));
+    exitCodes.push(await reportErrors(() => runPath(path), path));
   }
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
 };

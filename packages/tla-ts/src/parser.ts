@@ -22,7 +22,7 @@ import type {
   StepBody,
   UseOrHide,
 } from "./ast";
-import { TlaSyntaxError } from "./errors";
+import { createSanyError, formatRange, TlaSyntaxError } from "./errors";
 import { getNumeralValue, tokenize, type Token } from "./lexer";
 
 interface InfixOperator {
@@ -631,11 +631,15 @@ const parse = (source: string, isTlapm: boolean): Module => {
     return parseExpression();
   };
 
+  const lastArguments: { range: SourceRange | undefined } = { range: undefined };
+
   const parseArguments = () =>
     withoutOffside(() => {
+      const start = cursor.index;
       expect("(");
       const args = parseSeparated(parseArgument);
       expect(")");
+      lastArguments.range = getRange(start);
       return args;
     });
 
@@ -856,7 +860,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const args = hasArguments ? parseArguments() : [];
       if (!isSelectorAhead()) {
         return hasArguments
-          ? { kind: "Apply", operator: name, args, location }
+          ? { kind: "Apply", operator: name, args, argumentsRange: lastArguments.range, location }
           : { kind: "Identifier", name, location };
       }
       const instance = openModules
@@ -885,9 +889,10 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const argumentCounts = selectors.map((selector) =>
         "args" in selector ? selector.args.length : 0,
       );
+      const argumentsRange = lastArguments.range;
       return argumentCounts.slice(0, -1).some((count) => count > 0)
-        ? { kind: "Apply", operator, args: qualifiedArgs, argumentCounts, location }
-        : { kind: "Apply", operator, args: qualifiedArgs, location };
+        ? { kind: "Apply", operator, args: qualifiedArgs, argumentCounts, argumentsRange, location }
+        : { kind: "Apply", operator, args: qualifiedArgs, argumentsRange, location };
     }
     if (token.kind === "Operator" && isOperatorName(token.text) && isAt("("))
       return { kind: "Apply", operator: token.text, args: parseArguments(), location };
@@ -1423,11 +1428,14 @@ const parse = (source: string, isTlapm: boolean): Module => {
       location: getLocation(keyword),
     };
     const invalid =
-      use.kind === "Hide" && !isTlapm ? use.facts.find((fact) => !isHideFact(fact)) : undefined;
-    if (invalid) {
-      throw createError(
-        "The only expression allowed as a fact in a HIDE is the name of a theorem, assumption, or step",
-        invalid.location,
+      use.kind === "Hide" && !isTlapm ? use.facts.filter((fact) => !isHideFact(fact)) : [];
+    if (invalid.length > 0) {
+      throw createSanyError(
+        invalid.map((fact) => ({
+          location: formatRange(fact.location.range ?? getRange(start)),
+          message:
+            "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        })),
       );
     }
     return withRange(use, start);

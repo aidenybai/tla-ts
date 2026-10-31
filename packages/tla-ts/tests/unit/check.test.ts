@@ -11,7 +11,7 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
-import { STACK_OVERFLOW, UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { createSanyError, STACK_OVERFLOW, UNEXPECTED_EXCEPTION } from "../../src/errors";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -1608,10 +1608,26 @@ describe("name resolution matches SANY", () => {
 
   it("fails to parse a spec that imports a module it cannot find, such as Strings", async () => {
     await expect(checkSource("EXTENDS Strings")).rejects.toThrow(
-      new TlaSyntaxError("Cannot find source file for module Strings imported in module M."),
+      createSanyError(
+        [
+          {
+            location: "In module M",
+            message: "Cannot find source file for module Strings imported in module M.",
+          },
+        ],
+        true,
+      ),
     );
     await expect(checkSource("N == INSTANCE Nowhere")).rejects.toThrow(
-      new TlaSyntaxError("Cannot find source file for module Nowhere imported in module M."),
+      createSanyError(
+        [
+          {
+            location: "In module M",
+            message: "Cannot find source file for module Nowhere imported in module M.",
+          },
+        ],
+        true,
+      ),
     );
   });
 
@@ -1644,12 +1660,58 @@ describe("name resolution matches SANY", () => {
     await expect(checkSource(source)).rejects.toThrow(TlaSyntaxError);
   });
 
-  it("names an unknown identifier and an unknown operator symbol like SANY", async () => {
-    await expect(checkSource("f == g")).rejects.toThrow(
-      "Unknown operator: `g' at line 2, column 6",
-    );
-    await expect(checkSource("f == 1 + 1")).rejects.toThrow(
-      "Could not find declaration or definition of symbol '+' at line 2, column 8",
+  it.each([
+    ["f == g", [["line 2, col 6 to line 2, col 6", "Unknown operator: `g'."]]],
+    [
+      "f == 1 + 1",
+      [
+        [
+          "line 2, col 8 to line 2, col 8",
+          "Could not find declaration or definition of symbol '+'.",
+        ],
+        ["line 2, col 6 to line 2, col 10", "Couldn't resolve infix operator symbol `+'."],
+      ],
+    ],
+    [
+      "f == -1",
+      [
+        [
+          "line 2, col 6 to line 2, col 6",
+          "Could not find declaration or definition of symbol '-.'.",
+        ],
+        ["line 2, col 6 to line 2, col 7", "Couldn't resolve prefix operator symbol `-.'."],
+      ],
+    ],
+    [
+      "g == 1^+",
+      [
+        [
+          "line 2, col 7 to line 2, col 8",
+          "Could not find declaration or definition of symbol '^+'.",
+        ],
+        ["line 2, col 6 to line 2, col 8", "Couldn't resolve postfix operator symbol `^+'."],
+      ],
+    ],
+    [
+      "Foo(a) == a\ng == Foo(1,  2)",
+      [["line 3, col 9 to line 3, col 15", "The operator Foo requires 1 arguments."]],
+    ],
+    [
+      "THEOREM T == TRUE\nHIDE T, TRUE, {}",
+      ["line 3, col 9 to line 3, col 12", "line 3, col 15 to line 3, col 16"].map((location) => [
+        location,
+        "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+      ]),
+    ],
+    [
+      "Foo(a) == a\ng == Foo",
+      [["line 3, col 6 to line 3, col 8", "The operator Foo requires 1 arguments."]],
+    ],
+  ])("reports %j at the range SANY reports", async (source, errors) => {
+    await expect(checkSource(source)).rejects.toThrow(
+      createSanyError(
+        errors.map(([location, message]) => ({ location: `${location} of module M`, message })),
+      ),
     );
   });
 

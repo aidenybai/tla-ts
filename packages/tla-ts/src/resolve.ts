@@ -13,9 +13,10 @@ import {
   type Proof,
   type ProofStep,
   type SourceLocation,
+  type SourceRange,
   type Theorem,
 } from "./ast";
-import { TlaSyntaxError } from "./errors";
+import { createSanyError, createSemanticError, formatRange, TlaSyntaxError } from "./errors";
 
 export interface ModuleSymbol {
   key: string;
@@ -103,6 +104,21 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
     : unit.imported.get(name);
 };
 
+// SANY reports a name at the range of its text.
+const getNameRange = (location: SourceLocation, name: string): SourceRange => ({
+  module: location.range?.module ?? "",
+  start: location,
+  end: { line: location.line, column: location.column + name.length - 1 },
+});
+
+// SANY reports an operator symbol applied to operands as one it cannot resolve.
+const getFixity = (expression: Expression) => {
+  if (expression.kind !== "Apply") return undefined;
+  if (expression.args.length === 2) return "infix";
+  if (expression.args.length !== 1) return undefined;
+  return isBefore(expression.location, expression.args[0].location) ? "prefix" : "postfix";
+};
+
 // SANY names an undefined operator symbol such as + differently from an undefined identifier.
 const isOperatorSymbol = (name: string) =>
   name[0].toLowerCase() === name[0].toUpperCase() &&
@@ -144,11 +160,23 @@ const getSymbolArity = (
   if (isSelected) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
-  const position = `at line ${location.line}, column ${location.column}`;
-  throw new TlaSyntaxError(
-    isOperatorSymbol(name)
-      ? `Could not find declaration or definition of symbol '${name}' ${position}`
-      : `Unknown operator: \`${name}' ${position}`,
+  const range = getNameRange(location, name === "-." ? "-" : name);
+  if (!isOperatorSymbol(name)) throw createSemanticError(`Unknown operator: \`${name}'.`, range);
+  const missing = {
+    location: formatRange(range),
+    message: `Could not find declaration or definition of symbol '${name}'.`,
+  };
+  const fixity = getFixity(expression);
+  throw createSanyError(
+    fixity && location.range
+      ? [
+          missing,
+          {
+            location: formatRange(location.range),
+            message: `Couldn't resolve ${fixity} operator symbol \`${name}'.`,
+          },
+        ]
+      : [missing],
   );
 };
 
@@ -235,13 +263,13 @@ const resolveApply = (
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  const callee = lookupLocal(scope, expression.operator)
-    ? undefined
-    : getVisibleDefinition(expression.operator, unit);
-  const arity = getSymbolArity(expression, expression.operator, scope, unit);
+  const operator = expression.operator;
+  const callee = lookupLocal(scope, operator) ? undefined : getVisibleDefinition(operator, unit);
+  const arity = getSymbolArity(expression, operator, scope, unit);
   if (arity !== expression.args.length) {
-    throw new TlaSyntaxError(
-      `The operator ${expression.operator} requires ${arity} arguments at line ${expression.location.line}, column ${expression.location.column}`,
+    throw createSemanticError(
+      `The operator ${operator} requires ${arity} arguments.`,
+      expression.argumentsRange ?? getNameRange(expression.location, operator),
     );
   }
   expression.args.forEach((arg, index) => {
@@ -275,10 +303,12 @@ const resolveExpression = (
     case "ExceptAt":
       return;
     case "Identifier": {
-      const arity = getSymbolArity(expression, expression.name, scope, unit);
+      const name = expression.name;
+      const arity = getSymbolArity(expression, name, scope, unit);
       if (arity > 0) {
-        throw new TlaSyntaxError(
-          `The operator ${expression.name} requires ${arity} arguments at line ${expression.location.line}, column ${expression.location.column}`,
+        throw createSemanticError(
+          `The operator ${name} requires ${arity} arguments.`,
+          getNameRange(expression.location, name),
         );
       }
       return;
