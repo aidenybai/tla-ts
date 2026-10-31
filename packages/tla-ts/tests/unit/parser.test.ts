@@ -121,6 +121,19 @@ describe("parseModule reads operators like SANY", () => {
     expect(definition?.body).toMatchObject({ kind: "Apply", operator });
   });
 
+  it.each(["{a \\in b # TRUE}", "{a \\in b = b}"])(
+    "reads the whole expression after the \\in of %s as its set as SANY does",
+    (expression) => {
+      const definition = parseModule(
+        `---- MODULE M ----\nCONSTANTS a, b\nA == ${expression}\n====`,
+      ).definitions.find((item) => item.name === "A");
+      expect(definition?.body).toMatchObject({
+        kind: "SetEnumeration",
+        elements: [{ kind: "Apply", operator: "\\in", args: [{ name: "a" }, { kind: "Apply" }] }],
+      });
+    },
+  );
+
   it.each(['"a\\qb"', '"a\\ b"', '"a\rb"'])(
     "rejects the string %j that SANY's lexer stops in",
     (string) => {

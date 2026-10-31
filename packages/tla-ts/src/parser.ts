@@ -749,6 +749,17 @@ const parse = (source: string, mode: ParseMode): Module => {
       return { kind: "BoxAction", action: expression, subscript: parseSubscript(), location };
     });
 
+  // SANY reads the set after the \in of {x \in S} as a whole expression, whatever operators it has.
+  const parseSetMembership = (): Expression => {
+    const start = cursor.index;
+    const element = withRange(parsePrefix(), start);
+    const location = getLocation(advance());
+    return withRange(
+      { kind: "Apply", operator: "\\in", args: [element, parseExpression()], location },
+      start,
+    );
+  };
+
   const parseBrace = (start: Token): Expression =>
     withoutOffside(() => {
       const location = getLocation(start);
@@ -765,7 +776,8 @@ const parse = (source: string, mode: ParseMode): Module => {
         }
         cursor.index = checkpoint;
       }
-      const first = parseExpression();
+      const first =
+        peek().kind === "Identifier" && isAt("\\in", 1) ? parseSetMembership() : parseExpression();
       if (accept(":")) {
         const bounds = parseBounds();
         expect("}");
