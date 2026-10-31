@@ -26,11 +26,18 @@ import { TlaSyntaxError } from "./errors";
 import { getNumeralValue, tokenize, type Token } from "./lexer";
 import { getSanyParseError } from "./sany-parse-error";
 
-interface InfixOperator {
+interface Precedence {
   low: number;
   high: number;
+}
+
+interface InfixOperator extends Precedence {
   isAssociative: boolean;
 }
+
+// SANY's precedences of a postfix operator and of the "[" of a function application.
+const POSTFIX_PRECEDENCE: Precedence = { low: 15, high: 15 };
+const FUNCTION_PRECEDENCE: Precedence = { low: 16, high: 16 };
 
 const createInfix = (low: number, high: number, isAssociative: boolean) => ({
   low,
@@ -183,6 +190,16 @@ const OPERATOR_ARGUMENTS = new Set([
   ...POSTFIX_OPERATORS,
 ]);
 
+// A SANY InfixExpr or PostfixExpr.
+const isOperatorExpression = (expression: Expression) =>
+  expression.kind === "Prime" ||
+  expression.kind === "Product" ||
+  ((expression.kind === "And" || expression.kind === "Or") && !expression.isBulleted) ||
+  (expression.kind === "Apply" &&
+    (expression.args.length === 2
+      ? INFIX_OPERATORS.has(expression.operator)
+      : POSTFIX_OPERATORS.has(expression.operator)));
+
 const isOperatorName = (text: string) =>
   INFIX_OPERATORS.has(text) || POSTFIX_OPERATORS.has(text) || text === "-.";
 
@@ -325,6 +342,9 @@ const parse = (source: string, mode: ParseMode): Module => {
   const isTlapm = mode === "tlapm";
   const tokens = tokenize(source);
   const cursor = { index: 0, offsideColumns: [] as number[] };
+  // TLAplusParser.lastOp, the operator parsed last, and the operator an operand being parsed
+  // follows in its expression.
+  const operators: { last?: Precedence; preceding?: Precedence } = {};
   // A RECURSIVE declaration covers the definitions of its own LET or module.
   const recursiveScopes: Set<string>[] = [];
   const factNames = new Set<string>();
@@ -871,7 +891,7 @@ const parse = (source: string, mode: ParseMode): Module => {
     return { kind: "Name", name: token.text, args: isAt("(") ? parseArguments() : [] };
   };
 
-  const parsePrimary = (): Expression => {
+  const parsePrimary = (preceding?: Precedence): Expression => {
     const isArityExempt = cursor.index === factStart.index || cursor.index === argumentStart.index;
     const token = advance();
     const location = getLocation(token);
@@ -899,7 +919,18 @@ const parse = (source: string, mode: ParseMode): Module => {
         const params = accept("(") ? parseSeparated(expectIdentifier) : [];
         if (params.length > 0) expect(")");
         expect("::");
-        return { kind: "Label", name, params, body: parseExpression(), location };
+        const body = parseExpression();
+        // TLAplusParser.labelDoesNotChangeParse.
+        if (
+          !isTlapm &&
+          preceding !== undefined &&
+          operators.last !== undefined &&
+          isOperatorExpression(body) &&
+          preceding.high >= operators.last.low
+        ) {
+          throw createError("Removing the label would change expression parsing", token);
+        }
+        return { kind: "Label", name, params, body, location };
       }
       const hasArguments = isAt("(");
       const args = hasArguments ? parseArguments() : [];
@@ -1023,6 +1054,7 @@ const parse = (source: string, mode: ParseMode): Module => {
   // SANY rejects the operator after a prefix operator's operand unless it binds looser than the
   // prefix operator.
   const parsePrefixOperand = (operator: Token, low: number, high: number) => {
+    operators.last = operators.preceding = { low, high };
     const operand = parseExpression(high + 1);
     const next = peek();
     const nextHigh =
@@ -1036,6 +1068,8 @@ const parse = (source: string, mode: ParseMode): Module => {
   };
 
   const parsePrefix = (): Expression => {
+    const preceding = operators.preceding;
+    operators.preceding = undefined;
     const token = peek();
     const location = getLocation(token);
     if (token.kind === "Operator" && (token.text === "/\\" || token.text === "\\/")) {
@@ -1084,7 +1118,7 @@ const parse = (source: string, mode: ParseMode): Module => {
           };
       }
     }
-    return parsePrimary();
+    return parsePrimary(preceding);
   };
 
   const parseExpression = (minimumPrecedence = 0): Expression => {
@@ -1100,11 +1134,13 @@ const parse = (source: string, mode: ParseMode): Module => {
       const location = getLocation(token);
       if (token.text === "'" && minimumPrecedence <= 15) {
         advance();
+        operators.last = POSTFIX_PRECEDENCE;
         state.left = withRange({ kind: "Prime", expression: state.left, location }, start);
         continue;
       }
       if (POSTFIX_OPERATORS.has(token.text) && minimumPrecedence <= 15) {
         advance();
+        operators.last = POSTFIX_PRECEDENCE;
         state.left = withRange(
           { kind: "Apply", operator: token.text, args: [state.left], location },
           start,
@@ -1115,6 +1151,7 @@ const parse = (source: string, mode: ParseMode): Module => {
         advance();
         const args = withoutOffside(() => parseSeparated(() => parseExpression()));
         withoutOffside(() => expect("]"));
+        operators.last = FUNCTION_PRECEDENCE;
         state.left = withRange(
           { kind: "FunctionApplication", function: state.left, args, location },
           start,
@@ -1145,6 +1182,7 @@ const parse = (source: string, mode: ParseMode): Module => {
       if (infix.low > NEGATION_PRECEDENCE && isAt("-")) {
         throw createError(`Precedence conflict between ${token.text} and -`, peek());
       }
+      operators.last = operators.preceding = infix;
       const right = parseExpression(infix.high + 1);
       const left = state.left;
       if (token.text === "/\\" || token.text === "\\/") {

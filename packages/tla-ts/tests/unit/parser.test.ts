@@ -121,6 +121,22 @@ describe("parseModule reads operators like SANY", () => {
     expect(definition?.body).toMatchObject({ kind: "Apply", operator });
   });
 
+  it.each([
+    ["a \\in L:: b /\\ c", true],
+    ["~ L:: a /\\ b", true],
+    ["a * L:: b + (c * d)", true],
+    ["a /\\ L:: b \\in c", false],
+    ["a = L:: b /\\ (c * d)", false],
+  ])(
+    "rejects a label in %s only if removing it would change the parse, as SANY does",
+    (expression, isRejected) => {
+      const parse = () =>
+        parseModule(`---- MODULE M ----\nCONSTANTS a, b, c, d\nA == ${expression}\n====`);
+      if (isRejected) expect(parse).toThrow(TlaSyntaxError);
+      else expect(parse).not.toThrow();
+    },
+  );
+
   it.each(["{a \\in b # TRUE}", "{a \\in b = b}"])(
     "reads the whole expression after the \\in of %s as its set as SANY does",
     (expression) => {
