@@ -88,6 +88,20 @@ describe("check with workers matches TLC", () => {
     expect(printed).toEqual(['"start"']);
   });
 
+  it("prints values as the version of TLC it matches does", async () => {
+    const tlaTs = await loadPackage();
+    const printed: string[] = [];
+    await tlaTs.check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nASSUME PrintT([k \\in 1..0 |-> k])\nInit == x = 0\nNext == x' = (x + 1) % 3\n====",
+      config: "INIT Init\nNEXT Next",
+      workers: 2,
+      version: "1.7.4",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["<< >>"]);
+  });
+
   it("grows the fingerprint table that workers share while they expand a level", async () => {
     const tlaTs = await loadPackage();
     const result = await tlaTs.check({

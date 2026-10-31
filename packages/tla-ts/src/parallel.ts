@@ -27,7 +27,8 @@ import { getInitialStates } from "./successors";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
-import { getRankedStringCount, setStringOrder, type Value } from "./values";
+import type { TlcVersion } from "./tlc-version";
+import { getRankedStringCount, setStringOrder, setValueFormat, type Value } from "./values";
 
 const WORKER_THREADS_MODULE = "node:worker_threads";
 
@@ -50,6 +51,7 @@ export interface StartMessage {
   isTool: boolean | undefined;
   isTraceRecorded: boolean | undefined;
   isWarningEnabled: boolean | undefined;
+  version: TlcVersion | undefined;
   fingerprints: SharedFingerprints;
   requests: Int32Array;
   remaining: Int32Array;
@@ -164,6 +166,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     return bytes;
   };
   setStringOrder(getTlcStringOrder(options.source, config, loadModule));
+  setValueFormat(options.version);
   const startupStrings = getRankedStringCount();
   const specification = createEnvironment(config, {
     source: options.source,
@@ -177,6 +180,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     isTool: options.isTool,
     isTraceRecorded: options.isTraceRecorded,
     isWarningEnabled: options.isWarningEnabled,
+    version: options.version,
   });
   reportStartup(specification, config, report);
   const environment = specification.environment;
@@ -311,6 +315,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       isTool: options.isTool,
       isTraceRecorded: options.isTraceRecorded,
       isWarningEnabled: options.isWarningEnabled,
+      version: options.version,
       fingerprints: shared.fingerprints,
       requests,
       remaining,
