@@ -162,15 +162,16 @@ export const getSanyReport = (
     );
     const isTlaChanged = results.has("TLA_DIVERGENCE_EXISTS");
     const isPcalChanged = results.has("PCAL_DIVERGENCE_EXISTS");
+    // Both versions word a change to just one of the algorithm and its translation alike.
+    const oneChange =
+      isTlaChanged === isPcalChanged
+        ? undefined
+        : `The ${isTlaChanged ? "TLA+ translation" : "PlusCal algorithm"} in module ${moduleName} has changed since its last translation.`;
     if (isTlc174) {
       const warning =
         isTlaChanged && isPcalChanged
           ? `The PlusCal algorithm and its TLA+ translation in module ${moduleName} filename since the last translation.`
-          : isTlaChanged
-            ? `The TLA+ translation in module ${moduleName} has changed since its last translation.`
-            : isPcalChanged
-              ? `The PlusCal algorithm in module ${moduleName} has changed since its last translation.`
-              : undefined;
+          : oneChange;
       if (warning !== undefined)
         validations.push({ text: `!! WARNING: ${warning}`, isError: false });
       else if (results.has("ERROR_ENCOUNTERED")) {
@@ -184,13 +185,10 @@ export const getSanyReport = (
     const text =
       isTlaChanged && isPcalChanged
         ? `Both the PlusCal algorithm and its TLA+ translation in module ${moduleName} have changed since the last translation.`
-        : isTlaChanged
-          ? `The TLA+ translation in module ${moduleName} has changed since its last translation.`
-          : isPcalChanged
-            ? `The PlusCal algorithm in module ${moduleName} has changed since its last translation.`
-            : results.has("ERROR_ENCOUNTERED")
-              ? `An unexpected problem was encountered attempting to validate the specification for ${moduleName}`
-              : undefined;
+        : (oneChange ??
+          (results.has("ERROR_ENCOUNTERED")
+            ? `An unexpected problem was encountered attempting to validate the specification for ${moduleName}`
+            : undefined));
     if (text === undefined) return;
     const isWarning = !results.has("ERROR_ENCOUNTERED") || isTlaChanged || isPcalChanged;
     if (parseMessages.some((message) => message.text === text)) return;
