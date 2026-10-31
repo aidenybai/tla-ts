@@ -12,7 +12,7 @@ import {
 import { BUNDLED_MODULES } from "./bundled-modules";
 import type { ConfigValue, ModelConfig } from "./config";
 import type { FileSystem } from "./json";
-import { TlaConfigError, TlaEvaluationError, TlaSyntaxError } from "./errors";
+import { TlaConfigError, TlaEvaluationError, TlaModuleError, TlaSyntaxError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   createBigNumberError,
@@ -963,26 +963,28 @@ export const createEnvironment = (
     ]),
     getDefinition: (name) => getDefinition(name, environment),
   });
-  const isEvaluable = (body: Expression) => {
+  const getEvaluationError = (body: Expression) => {
     try {
       evaluate(body, { environment, scope: undefined, state: undefined, next: undefined });
-      return true;
+      return undefined;
     } catch (error) {
-      if (error instanceof TlaEvaluationError) return false;
+      if (error instanceof TlaEvaluationError) return error;
       throw error;
     }
   };
   substitutions.forEach((target, name) => {
     const definition = definitions.get(target);
-    if (
+    const error =
       declaredConstants.includes(name) &&
       definition?.kind === "Operator" &&
       definition.params.length === 0 &&
-      analyzer.analyzeDefinition(definition, new Map()).level > 0 &&
-      !isEvaluable(definition.body)
-    ) {
+      analyzer.analyzeDefinition(definition, new Map()).level > 0
+        ? getEvaluationError(definition.body)
+        : undefined;
+    // TLC adds the reason unless a standard module's Java code failed.
+    if (error) {
       throw new TlaConfigError(
-        `The configuration file substitutes constant ${name} with non-constant ${target}`,
+        `The configuration file substitutes constant ${name} with non-constant ${target}${error instanceof TlaModuleError ? "" : ` - specifically: ${error.message}`}`,
       );
     }
   });
