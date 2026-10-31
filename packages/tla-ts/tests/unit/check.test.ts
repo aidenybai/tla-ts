@@ -1576,6 +1576,18 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.traceOutput).toEqual(['<<"c", 2>>']);
   });
 
+  // TLC rebuilds the trace for the postcondition only after a violation.
+  it.each([
+    ["INVARIANT", "P == x < 2 \\/ 1 \\div 0 = 0"],
+    ["PROPERTY", "P == [][x' < 2 \\/ 1 \\div 0 = 0]_x"],
+  ])("prints only the replay after the trace when %s P fails to evaluate", async (kind, check) => {
+    const result = await checkSteps(
+      `Step == Next /\\ PrintT(<<"s", x>>)\nSpec == Init /\\ [][Step]_x\n${check}`,
+      `SPECIFICATION Spec\n${kind} P`,
+    );
+    expect(result.failure?.traceOutput).toEqual(['<<"s", 1>>']);
+  });
+
   it.each(["1.7.4" as const, undefined])(
     "names an action property that fails to evaluate in TLC %s",
     async (version) => {

@@ -1888,6 +1888,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           traceOutput: is174 ? [] : getOutput(getSpecInitialStates).lines,
         }
       : getTrace(index);
+  // TLC rebuilds the trace again for the postcondition after it prints a violation, but not after
+  // an evaluation fails.
+  const getFailedTrace = (index: number, successor: Successor): Behavior => ({
+    trace: getTrace(index, successor).trace,
+  });
   // TLC names the initial state it was checking unless a standard module's Java code failed.
   const getFailureExitCode = (error: TlaEvaluationError, failureOptions: FailureOptions) => {
     // TLC 1.7.4 exits with the result of its replay of the initial states, which only fails again
@@ -2198,7 +2203,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         const replay = getOutput(() => replayNext(state));
         return toFailure(
           error,
-          appendTraceOutput(getTrace(index, successor), replay.lines),
+          appendTraceOutput(getFailedTrace(index, successor), replay.lines),
           replay.result ?? { outDegrees: getFailureOutDegrees() },
         );
       }
@@ -2395,7 +2400,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         outcome.result = toFailure(
           error,
           appendTraceOutput(
-            traceFailure ? getStateTrace(index) : getTrace(index, successor),
+            traceFailure ? getStateTrace(index) : getFailedTrace(index, successor),
             replay.lines,
           ),
           { isNextState: true, ...replay.result, traceFailure },
