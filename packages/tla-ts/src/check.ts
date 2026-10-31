@@ -835,11 +835,17 @@ export const createSearch = (
         }
       }),
     satisfiesConstraints: (state, parent) =>
-      constraints.every(
-        (constraint) =>
-          isUnchangedFor(constraint, state, parent) ||
-          holdsLikeTlc(constraint.expression, getContext(environment, state, undefined)),
-      ),
+      constraints.every((constraint) => {
+        try {
+          return (
+            isUnchangedFor(constraint, state, parent) ||
+            holdsLikeTlc(constraint.expression, getContext(environment, state, undefined))
+          );
+        } catch (error) {
+          // TLC reports a failing constraint on a successor like a failure of the next-state relation.
+          throw parent ? toNextStateError(error) : error;
+        }
+      }),
     findFailedInitialPredicate: (state) =>
       properties.initialPredicates.find(
         (predicate) =>
@@ -872,13 +878,13 @@ export const createSearch = (
         }
       }),
     satisfiesActionConstraints: (state, next) =>
-      actionConstraints.every((constraint) =>
-        holdsLikeTlc(
-          constraint.expression,
-          getContext(environment, state, next),
-          (expression) => `${UNEXPECTED_EXCEPTION}${getExpectedBoolean(expression, environment)}`,
-        ),
-      ),
+      actionConstraints.every((constraint) => {
+        try {
+          return holdsLikeTlc(constraint.expression, getContext(environment, state, next));
+        } catch (error) {
+          throw toNextStateError(error);
+        }
+      }),
     trackStatePossible:
       statePossible.length === 0
         ? ignorePossible
@@ -1304,6 +1310,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     isExpanding: false,
     candidate: undefined as Value[] | undefined,
     candidateLevel: 0,
+    isFingerprinting: false,
     livenessSource: -1,
   };
   const getPath = (index: number): Value[][] =>
@@ -1390,8 +1397,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     current.candidate = successor.state;
     current.candidateLevel = depths[index] + 1;
     if (isCanonicalizedFirst) canonicalizeState(successor.state);
+    current.isFingerprinting = true;
     const fingerprintState = getFingerprintState(successor.state);
     const hash = getStateHash(fingerprintState);
+    current.isFingerprinting = false;
     const found = findStateIndex(hash, fingerprintState);
     const isStateInModel = search.satisfiesConstraints(successor.state, state);
     if (isStateInModel) search.trackStatePossible(successor.state);
@@ -1522,6 +1531,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       try {
         outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
       } catch (error) {
+        // TLC reports a successor it cannot fingerprint as a failure of the state it expands.
+        if (current.isFingerprinting) throw error;
         outcome.result = toFailure(error, getTrace(index, successor));
       }
       return outcome.result !== undefined;

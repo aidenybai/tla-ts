@@ -977,6 +977,43 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("reports a failing constraint on a successor like a failure of the next-state relation", async () => {
+    const getFailure = async (constraint: string, config: string) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nC == ${constraint}\n====`,
+        config: `INIT Init\nNEXT Next\n${config} C`,
+      });
+      return [result.failure?.message, result.failure?.exitCode, result.failure?.trace.length];
+    };
+    expect(await getFailure("x < 1 \\/ x[1] = 0", "CONSTRAINT")).toEqual([
+      `${UNEXPECTED_EXCEPTION}A non-function (an integer) was applied as a function.\nline 6, col 15 to line 6, col 18 of module M`,
+      75,
+      2,
+    ]);
+    expect(await getFailure("x' < 1 \\/ x[1] = 0", "ACTION_CONSTRAINT")).toEqual([
+      `${UNEXPECTED_EXCEPTION}A non-function (an integer) was applied as a function.\nline 6, col 16 to line 6, col 19 of module M`,
+      75,
+      2,
+    ]);
+  });
+
+  it("reports a successor it cannot fingerprint as a failure of the state it expands", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = SUBSET (SUBSET (1..32))\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([
+      result.failure?.message,
+      result.failure?.exitCode,
+      result.failure?.trace.length,
+    ]).toEqual([
+      `${UNEXPECTED_EXCEPTION}Overflow when computing the number of elements in:\nSUBSET (1..32)`,
+      75,
+      1,
+    ]);
+  });
+
   it("reports a CASE with no true guard like TLC", async () => {
     const result = await check({
       source:
