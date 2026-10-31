@@ -410,12 +410,39 @@ export class AstManager {
     this.refCounts[expr]++;
   }
 
+  // A model value's declaration is counted under its signature, like the applications that hold it.
   incDeclRef(decl: number) {
+    if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) {
+      const key = `m${decl}`;
+      const refCount = this.signatureRefCounts.get(key);
+      if (refCount !== undefined) {
+        this.signatureRefCounts.set(key, refCount + 1);
+        return;
+      }
+      const smallId = this.mkSmallId();
+      this.signatureSmallIds.set(key, smallId);
+      this.signatureRefCounts.set(key, 1);
+      this.funcDecls[decl].smallId = smallId;
+      return;
+    }
     if (this.deletedDecls.delete(decl)) this.funcDecls[decl].smallId = this.mkSmallId();
     this.declRefCounts[decl]++;
   }
 
   decDeclRef(decl: number) {
+    if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) {
+      const key = `m${decl}`;
+      const refCount = (this.signatureRefCounts.get(key) as number) - 1;
+      if (refCount > 0) {
+        this.signatureRefCounts.set(key, refCount);
+        return;
+      }
+      this.freeSmallIds.push(this.signatureSmallIds.get(key) as number);
+      this.signatureRefCounts.delete(key);
+      this.signatureSmallIds.delete(key);
+      this.numDecls--;
+      return;
+    }
     this.declRefCounts[decl]--;
     if (this.declRefCounts[decl] > 0) return;
     this.deletedDecls.add(decl);
@@ -779,15 +806,14 @@ export class AstManager {
       isSkolem: false,
       smallId: -1,
     });
-    const sortHash = this.sortHashes[sort];
-    return this.intern(key, KIND_APP, this.funcDecls.length - 1, [], sort, index, () =>
-      this.getFuncDeclHash(
-        this.funcDecls[this.funcDecls.length - 1].name,
-        [],
-        sort,
-        getInfoHash(Z3_MODEL_VALUE_FAMILY, 0, [index, sortHash]),
-      ),
+    const decl = this.funcDecls.length - 1;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      this.funcDecls[decl].name,
+      [],
+      sort,
+      getInfoHash(Z3_MODEL_VALUE_FAMILY, 0, [index, this.sortHashes[sort]]),
     );
+    return this.intern(key, KIND_APP, decl, [], sort, index, () => this.declHashes[decl]);
   }
 
   mkFreshConst(prefix: SmtSymbol | null, sort: number) {

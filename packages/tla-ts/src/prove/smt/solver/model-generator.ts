@@ -3,6 +3,7 @@
 // the assignment, integers from the arithmetic theory and other sorts from fresh model values, and
 // each congruence root of an uninterpreted function becomes an entry of its interpretation.
 import {
+  FAMILY_MODEL_VALUE,
   FAMILY_USER,
   type FuncDecl,
   OP_DIV0,
@@ -20,10 +21,14 @@ export interface GeneratedModel {
   root2value: Map<Enode, number>;
 }
 
-// include_func_interp: the model interprets uninterpreted functions, and theory_lra's divisions by
-// zero.
+// include_func_interp: the model interprets uninterpreted functions, theory_lra's divisions by zero,
+// and the decls of a family without a theory, such as model values, which stand for themselves.
 const isIncludedFuncInterp = (decl: FuncDecl) =>
-  decl.family === FAMILY_USER || decl.op === OP_DIV0 || decl.op === OP_IDIV0 || decl.op === OP_MOD0;
+  decl.family === FAMILY_USER ||
+  decl.family === FAMILY_MODEL_VALUE ||
+  decl.op === OP_DIV0 ||
+  decl.op === OP_IDIV0 ||
+  decl.op === OP_MOD0;
 
 export const mkModel = (context: Context): GeneratedModel => {
   const manager = context.manager;
