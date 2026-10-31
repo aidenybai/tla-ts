@@ -747,7 +747,7 @@ const compareFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: 
       compareElementsLikeTlc(functionValue.range, tuple)
     );
   }
-  if (left.kind === "Function" && functionValue.domain.every((key) => typeof key === "string")) {
+  if (getFunctionClass(left) === "record") {
     const record = toTlcRecord(right);
     if (!record) {
       if (isModelValue(right)) return compareModelValueWith(right, left);
@@ -865,7 +865,7 @@ const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: V
       equalsElementsLikeTlc(functionValue.range, tuple)
     );
   }
-  if (left.kind === "Function" && functionValue.domain.every((key) => typeof key === "string")) {
+  if (getFunctionClass(left) === "record") {
     const record = toTlcRecord(right);
     if (!record) {
       if (isModelValue(right)) return equalsModelValueWith(right, left);

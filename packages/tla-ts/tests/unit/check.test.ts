@@ -986,6 +986,19 @@ const getFailureSummary = (result: CheckResult) => [
 ];
 
 describe("evaluation errors match TLC", () => {
+  // Only a RecordValue compares itself as a record; a FcnRcdValue with strings for keys is a function.
+  it.each([
+    ["[a |-> 1]", "Attempted to check equality of record:\n[a |-> 1]\nwith non-record\n{}"],
+    ['"a" :> 1', "Attempted to check equality of the function [a |-> 1] with the value:\n{}"],
+    ['"a b" :> 1', 'Attempted to check equality of the function ("a b" :> 1) with the value:\n{}'],
+  ])("words a failed comparison of %s with a set like TLC", async (value, message) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = ${value}\nNext == UNCHANGED x\nInv == x = {}\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.failure?.message).toContain(message);
+  });
+
   it("reports a CASE with no true guard like TLC", async () => {
     const result = await check({
       source:
