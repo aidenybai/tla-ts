@@ -20,7 +20,8 @@ import { Rewriter } from "./rewriter";
 
 export type Evaluate = (expr: number) => number | null;
 
-// instantiation_set: the S_{k,j} sets of the paper, with the generation of each term.
+// instantiation_set: the S_{k,j} sets of the paper, with the generation of each term. The set holds
+// its terms.
 export class InstantiationSet {
   readonly elems: ObjMap<number>;
   readonly inv: ObjMap<number>;
@@ -33,11 +34,18 @@ export class InstantiationSet {
 
   insert(expr: number, generation: number) {
     if (this.elems.has(expr) || this.manager.containsModelValue(expr)) return;
+    this.manager.incRef(expr);
     this.elems.set(expr, generation);
   }
 
   remove(expr: number) {
     this.elems.delete(expr);
+    this.manager.decRef(expr);
+  }
+
+  // ~instantiation_set.
+  release() {
+    for (const entry of this.elems) this.manager.decRef(entry[0]);
   }
 
   getInv(value: number, model: ProtoModel) {
@@ -119,6 +127,11 @@ export class Node {
     this.set = new InstantiationSet(manager);
   }
 
+  // ~node.
+  release() {
+    this.set?.release();
+  }
+
   // Only closed terms join the set.
   insert(manager: AstManager, expr: number, generation: number) {
     if (manager.isGround(expr)) this.getRoot().set?.insert(expr, generation);
@@ -179,6 +192,8 @@ export class AufSolver {
   // m_A_f_is, a table in Z3's slot order, hashed like pair_hash of the declaration and position.
   private aFIs: ObjMap<AFINode>;
   private sort2k = new Map<number, number>();
+  // m_ks, the range of m_sort2k.
+  private ks: RefVector;
   private model: ProtoModel | null = null;
   // m_eval_cache for each model completion flag, and m_eval_cache_range, which holds the results.
   private evalCache = [new Map<number, number>(), new Map<number, number>()];
@@ -193,6 +208,7 @@ export class AufSolver {
     readonly rewriter: Rewriter,
   ) {
     this.evalCacheRange = new RefVector(manager);
+    this.ks = new RefVector(manager);
     this.random = new RandomGen(manager.limit.count >>> 0);
     manager.limit.inc();
     this.aFIs = new ObjMap((key) =>
@@ -201,11 +217,13 @@ export class AufSolver {
   }
 
   reset() {
+    for (const node of this.nodes) node.release();
     this.nodes = [];
     this.uvars.clear();
     this.aFIs.clear();
     this.rootNodes = [];
     this.sort2k.clear();
+    this.ks.reset();
   }
 
   setModel(model: ProtoModel) {
@@ -332,6 +350,7 @@ export class AufSolver {
     const created = this.manager.mkFreshConst("k", sort);
     this.getModel().registerAuxDecl(this.manager.decls[created]);
     this.sort2k.set(sort, created);
+    this.ks.push(created);
     return created;
   }
 
