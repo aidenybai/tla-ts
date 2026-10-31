@@ -35,6 +35,7 @@ import {
   getDomain,
   getFunctionDomain,
   getIntervalElements,
+  getLazySubsets,
   getSequenceElements,
   getValueHash,
   isFunctionValue,
@@ -342,9 +343,8 @@ export const getEnumeratedElements = (set: Value, expression: Expression) => {
         : `TLC encountered the non-enumerable quantifier bound\n${text}\n${describeRange(expression)}\n${explanation}`,
     );
   }
-  return typeof set === "object" && set.kind === "Interval"
-    ? getIntervalElements(set)
-    : toFiniteSet(set).elements;
+  if (typeof set === "object" && set.kind === "Interval") return getIntervalElements(set);
+  return getLazySubsets(set) ?? toFiniteSet(set).elements;
 };
 
 export const forEachBinding = (

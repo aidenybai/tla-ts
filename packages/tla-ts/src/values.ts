@@ -1199,6 +1199,41 @@ const advanceCombination = (indices: number[], length: number) => {
   return false;
 };
 
+// TLC enumerates SUBSET S lazily, by size and then in the order of S, so a quantifier that finds
+// its witness early never builds the rest. For a power set too large to build, the elements are
+// computed in that order as a loop reads them.
+export const getLazySubsets = (value: Value): Value[] | undefined => {
+  if (typeof value !== "object" || value.kind !== "Subset" || isOverriddenSet(value.base)) {
+    return undefined;
+  }
+  const base = toFiniteSet(value.base).elements;
+  if (base.length <= MAXIMUM_ENUMERATED_SUBSET_BASE) return undefined;
+  const cursor = { index: -1, indices: [0] };
+  const getSubset = (index: number) => {
+    if (index <= cursor.index) cursor.index = -1;
+    while (cursor.index < index) {
+      if (cursor.index === -1) cursor.indices = [];
+      else if (!advanceCombination(cursor.indices, base.length)) {
+        cursor.indices = Array.from({ length: cursor.indices.length + 1 }, (_, item) => item);
+      }
+      cursor.index++;
+    }
+    return createSortedSet(cursor.indices.map((item) => base[item]));
+  };
+  const length = 2 ** base.length;
+  const isIndex = (property: string | symbol) =>
+    typeof property === "string" && /^\d+$/.test(property) && Number(property) < length;
+  return new Proxy<Value[]>([], {
+    get: (target, property, receiver) => {
+      if (property === "length") return length;
+      return isIndex(property)
+        ? getSubset(Number(property))
+        : Reflect.get(target, property, receiver);
+    },
+    has: (target, property) => isIndex(property) || Reflect.has(target, property),
+  });
+};
+
 const getSortedSubsets = (base: Value[]) => {
   const subsets: Value[] = [];
   for (let size = 0; size <= base.length; size++) {
