@@ -877,8 +877,10 @@ export class Context extends Internalizer {
           ? negate(this.getLiteral(atoms[index]))
           : this.getLiteral(atoms[index]);
       }
+    // restore_relevancy: marking propagates, so it only marks the literals that lost relevancy.
     for (let index = 0; index < literals.length; index++)
-      if (wasRelevant[index]) this.markLiteralAsRelevant(literals[index]);
+      if (wasRelevant[index] && !this.isRelevant(this.boolVar2Expr[getVar(literals[index])]))
+        this.markLiteralAsRelevant(literals[index]);
     this.cachedGeneration.clear();
     this.mkClause([...literals], null, CLS_LEARNED);
     resolution.lemmaAtoms.reset();
