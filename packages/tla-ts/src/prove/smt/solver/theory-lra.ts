@@ -181,7 +181,7 @@ export class TheoryLra {
 
   // Variables.
 
-  private isAttached(node: Enode) {
+  isAttachedToVar(node: Enode) {
     return node.thVar >= 0 && this.varEnodes[node.thVar] === node;
   }
 
@@ -190,7 +190,7 @@ export class TheoryLra {
     if (!context.isEInternalized(expr)) context.internalize(expr, false);
     const node = context.getEnode(expr);
     if (node === undefined) throw new Error("the term was not internalized");
-    if (this.isAttached(node)) return node.thVar;
+    if (this.isAttachedToVar(node)) return node.thVar;
     const thVar = this.varEnodes.length;
     this.varEnodes.push(node);
     while (this.bounds.length <= thVar) {
@@ -269,7 +269,7 @@ export class TheoryLra {
 
   private isAttachedExpr(expr: number) {
     const node = this.context.getEnode(expr);
-    return node !== undefined && this.isAttached(node);
+    return node !== undefined && this.isAttachedToVar(node);
   }
 
   // linearize: the theory variables of a weighted sum of terms, with their coefficients.

@@ -856,7 +856,9 @@ export abstract class Internalizer {
       this.updateGeneration(existing);
       // The theory may have made a nested term, such as the 2 of (* 2 x), without a variable, which
       // it needs once the term occurs elsewhere.
-      if (manager.getFamily(expr) === FAMILY_ARITH) this.theory.internalizeTerm(expr);
+      if (manager.getFamily(expr) === FAMILY_ARITH && !this.theory.isAttachedToVar(existing)) {
+        this.theory.internalizeTerm(expr);
+      }
       return;
     }
     if (manager.getOp(expr) === OP_ITE) {
