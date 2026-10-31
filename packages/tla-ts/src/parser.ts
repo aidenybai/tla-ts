@@ -1603,10 +1603,12 @@ const parse = (source: string, isTlapm: boolean): Module => {
   const parseStep = (): ProofStep => {
     const start = cursor.index;
     const step = parseStepStart(isAt("QED", 1));
+    const statementStart = cursor.index;
     const scope = new Set<string>();
     proofScopes.push(scope);
     const body: StepBody = accept("QED") ? { kind: "Qed" } : parseStepBody();
     const head = getRange(start);
+    const statement = getRange(statementStart);
     const hasProof = isProofStart(peek());
     if (hasProof && !PROVABLE_STEPS.has(body.kind)) {
       throw createError("Proof of a step that does not take a proof");
@@ -1614,7 +1616,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
     const proof = hasProof ? parseProof() : undefined;
     proofScopes.pop();
     if (body.kind !== "Assert" || body.isSuffices) scope.forEach(declareProofSymbol);
-    return withRange({ ...step, body, head, proof }, start);
+    return withRange({ ...step, body, head, statement, proof }, start);
   };
 
   const parseProofBody = (): Proof => {
