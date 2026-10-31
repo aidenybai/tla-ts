@@ -33,6 +33,14 @@ export const CONGRUENCE_JUSTIFICATIONS: readonly EqJustification[] = [
 // node its own list, so that a node with one parent holds one entry instead of V8's sixteen.
 export const NO_ENODES: Enode[] = [];
 
+const IS_EQ = 1;
+const IS_BOOL = 2;
+const IS_MERGE_TF = 4;
+const IS_CGC_ENABLED = 8;
+const IS_MARKED = 16;
+const IS_MARKED2 = 32;
+const IS_INTERPRETED = 64;
+
 export class Enode {
   root: Enode = this;
   next: Enode = this;
@@ -50,21 +58,74 @@ export class Enode {
   plbls = 0;
   plblsHigh = 0;
   lblHash = -1;
-  isMarked = false;
-  isMarked2 = false;
-  isInterpreted = false;
+  // The Boolean fields, one bit each, so a node takes 48 bytes less.
+  private flags: number;
 
   constructor(
     readonly owner: number,
     readonly decl: number,
     readonly args: Enode[],
     public generation: number,
-    readonly isEq: boolean,
-    readonly isBool: boolean,
-    public isMergeTf: boolean,
-    readonly isCgcEnabled: boolean,
+    isEq: boolean,
+    isBool: boolean,
+    isMergeTf: boolean,
+    isCgcEnabled: boolean,
     readonly iscopeLevel: number,
-  ) {}
+  ) {
+    this.flags =
+      (isEq ? IS_EQ : 0) |
+      (isBool ? IS_BOOL : 0) |
+      (isMergeTf ? IS_MERGE_TF : 0) |
+      (isCgcEnabled ? IS_CGC_ENABLED : 0);
+  }
+
+  private setFlag(flag: number, value: boolean) {
+    this.flags = value ? this.flags | flag : this.flags & ~flag;
+  }
+
+  get isEq() {
+    return (this.flags & IS_EQ) !== 0;
+  }
+
+  get isBool() {
+    return (this.flags & IS_BOOL) !== 0;
+  }
+
+  get isCgcEnabled() {
+    return (this.flags & IS_CGC_ENABLED) !== 0;
+  }
+
+  get isMergeTf() {
+    return (this.flags & IS_MERGE_TF) !== 0;
+  }
+
+  set isMergeTf(value: boolean) {
+    this.setFlag(IS_MERGE_TF, value);
+  }
+
+  get isMarked() {
+    return (this.flags & IS_MARKED) !== 0;
+  }
+
+  set isMarked(value: boolean) {
+    this.setFlag(IS_MARKED, value);
+  }
+
+  get isMarked2() {
+    return (this.flags & IS_MARKED2) !== 0;
+  }
+
+  set isMarked2(value: boolean) {
+    this.setFlag(IS_MARKED2, value);
+  }
+
+  get isInterpreted() {
+    return (this.flags & IS_INTERPRETED) !== 0;
+  }
+
+  set isInterpreted(value: boolean) {
+    this.setFlag(IS_INTERPRETED, value);
+  }
 
   addParent(parent: Enode) {
     if (this.parents.length === 0) this.parents = [parent];
