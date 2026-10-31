@@ -1311,7 +1311,11 @@ const getSortedSubsets = (base: Value[]) => {
   return subsets;
 };
 
-const enumerateSet = (value: Value): Value[] => {
+// getElements enumerates the sets a set of functions, records, or tuples combines.
+const enumerateSet = (
+  value: Value,
+  getElements = (set: Value) => toFiniteSet(set).elements,
+): Value[] => {
   if (typeof value !== "object")
     throw new TlaEvaluationError(`Expected a set but found ${formatValue(value)}`);
   switch (value.kind) {
@@ -1352,7 +1356,7 @@ const enumerateSet = (value: Value): Value[] => {
           `Attempted to enumerate a set of the form [D -> R],but the range R:\n${formatValue(value.range)}\ncannot be enumerated.`,
         );
       }
-      const range = domain.length === 0 ? [] : toFiniteSet(value.range).elements;
+      const range = domain.length === 0 ? [] : getElements(value.range);
       return getCartesianProduct(domain.map(() => range)).map((combination): Value =>
         createSortedFunction(domain, combination),
       );
@@ -1365,7 +1369,7 @@ const enumerateSet = (value: Value): Value[] => {
             `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${formatValue(set)}`,
           );
         }
-        return toFiniteSet(set).elements;
+        return getElements(set);
       });
       return getCartesianProduct(fields).map((combination) =>
         createRecord(value.names.map((name, index): [string, Value] => [name, combination[index]])),
@@ -1379,7 +1383,7 @@ const enumerateSet = (value: Value): Value[] => {
             `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${formatValue(factor)}`,
           );
         }
-        return toFiniteSet(factor).elements;
+        return getElements(factor);
       });
       return getCartesianProduct(factors).map(createTuple);
     }
@@ -1476,6 +1480,29 @@ export const getStreamedElements = (value: Value): Value[] => {
   return elements;
 };
 
+const getCombinedSets = (value: ObjectValue) =>
+  value.kind === "ProductSet"
+    ? value.factors
+    : value.kind === "RecordSet"
+      ? value.sets
+      : value.kind === "FunctionSet"
+        ? [value.range]
+        : undefined;
+
+// Whether a set streams its elements in another order than the normalized set, so that a set of
+// tuples, records, or functions it is a component of has to stream too.
+const isStreamedApart = (value: Value): boolean => {
+  if (typeof value !== "object" || finiteSets.has(value)) return false;
+  if (value.kind === "Union") return true;
+  if (value.kind === "FilteredSet") return isStreamedApart(value.base);
+  if (value.kind === "SetOperation") {
+    return (
+      value.operator === "\\cup" || isStreamedApart(value.left) || isStreamedApart(value.right)
+    );
+  }
+  return getCombinedSets(value)?.some(isStreamedApart) ?? false;
+};
+
 const streamElements = (value: ObjectValue): Value[] => {
   if (value.kind === "Union") {
     return getUnionSets(value).flatMap((set, index) =>
@@ -1485,6 +1512,8 @@ const streamElements = (value: ObjectValue): Value[] => {
   if (value.kind === "FilteredSet" && !isOverriddenSet(value.base)) {
     return getStreamedElements(value.base).filter(value.test);
   }
+  const components = getCombinedSets(value);
+  if (components?.some(isStreamedApart)) return enumerateSet(value, getStreamedElements);
   if (value.kind !== "SetOperation") return toFiniteSet(value).elements;
   if (value.operator === "\\cup") {
     return !isTlcEnumerable(value.left) || !isTlcEnumerable(value.right)

@@ -72,6 +72,14 @@ describe("check matches TLC", () => {
     },
   );
 
+  it("streams the sets that a set of tuples, records, or functions combines as TLC does", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' \\in [b : UNION {{3, 1}, 0..1}, a : UNION {{2}, 1..2}]\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.generatedStates).toBe(85);
+  });
+
   it("decides sets of functions, records, and tuples from an empty argument", async () => {
     const result = await checkFixture("empty-sets", "EmptySets");
     expect(result.violation?.message).toBeUndefined();
