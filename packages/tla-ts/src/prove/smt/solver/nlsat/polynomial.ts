@@ -14,6 +14,7 @@
 //   the gcd is constant.
 // - Polynomial ids count up from zero. Z3 recycles the ids of deleted polynomials, so where nlsat
 //   breaks a tie between two root functions on their ids it may pick the other one.
+import { SmtInvariantError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { UpolynomialManager } from "./upolynomial";
 import {
@@ -39,6 +40,21 @@ const floorDiv = (dividend: bigint, divisor: bigint) => {
 // Input outside what the port of nlsat supports so far: subresultants of polynomials of degree 2
 // or more in the variable being projected. The nra solver answers unknown on it, which is always
 // sound.
+// The arithmetic t_eval evaluates in: rationals, intervals or algebraic numbers.
+export interface ValueOps<T> {
+  fromInteger(value: bigint): T;
+  add(first: T, second: T): T;
+  mul(first: T, second: T): T;
+  power(base: T, exponent: number): T;
+}
+
+const RATIONAL_OPS: ValueOps<Rational> = {
+  fromInteger: (value) => Rational.of(value),
+  add: (first, second) => first.add(second),
+  mul: (first, second) => first.mul(second),
+  power: (base, exponent) => base.pow(exponent),
+};
+
 export class NlsatOutOfScope extends Error {
   constructor(reason: string) {
     super(`nlsat input out of scope: ${reason}`);
@@ -266,7 +282,8 @@ class SomBuffer {
     return maxPos;
   }
 
-  mk() {
+  // mk(normalize): the nonzero entries, divided by the gcd of their coefficients when normalizing.
+  mk(isNormalized = false) {
     const as: bigint[] = [];
     const ms: Monomial[] = [];
     for (let index = 0; index < this.as.length; index++) {
@@ -275,7 +292,8 @@ class SomBuffer {
       ms.push(this.ms[index]);
     }
     this.reset();
-    return this.manager.mkPolynomialCore(as, ms);
+    const gcd = isNormalized ? as.reduce((current, coeff) => getGcd(current, coeff), 0n) : 1n;
+    return this.manager.mkPolynomialCore(gcd > 1n ? as.map((coeff) => coeff / gcd) : as, ms);
   }
 }
 
@@ -674,7 +692,7 @@ export class PolynomialManager {
         return quotient.mk();
       }
       const monomial = this.divMonomials(remainder.ms[remainderPos], divisorMonomial);
-      if (monomial === null) throw new Error("exact_div: the divisor does not divide");
+      if (monomial === null) throw new SmtInvariantError("exact_div: the divisor does not divide");
       const coeff = remainder.as[remainderPos] / divisorCoeff;
       quotient.addTerm(coeff, monomial);
       remainder.addmul(-coeff, monomial, divisor);
@@ -885,7 +903,8 @@ export class PolynomialManager {
 
   // to_numeral_vector: the coefficients of a univariate p by degree. Z3 normalizes p first but
   // reads the coefficients of p itself.
-  private toCoeffs(polynomial: Polynomial) {
+  // to_numeral_vector: a univariate p as its coefficients, low to high.
+  toCoeffs(polynomial: Polynomial) {
     const coeffs = Array.from({ length: this.totalDegree(polynomial) + 1 }, () => 0n);
     for (let index = 0; index < polynomial.size; index++)
       coeffs[polynomial.ms[index].totalDegree] = polynomial.as[index];
@@ -893,7 +912,7 @@ export class PolynomialManager {
   }
 
   // to_polynomial, mk_univariate: the monomials from the highest degree down.
-  private fromCoeffs(coeffs: readonly bigint[], variable: number) {
+  fromCoeffs(coeffs: readonly bigint[], variable: number) {
     for (let power = coeffs.length - 1; power >= 0; power--)
       this.cheap.add(coeffs[power], this.mkPower(variable, power));
     return this.cheap.mk();
@@ -997,7 +1016,8 @@ export class PolynomialManager {
   }
 
   // vars: the variables of p in order of occurrence.
-  private getVars(polynomial: Polynomial) {
+  // vars: the variables of p in the order they first occur.
+  getVars(polynomial: Polynomial) {
     const vars: number[] = [];
     for (const monomial of polynomial.ms)
       for (const variable of monomial.vars) if (!vars.includes(variable)) vars.push(variable);
@@ -1043,6 +1063,153 @@ export class PolynomialManager {
     for (let power = 0; power <= degree; power++)
       this.som.addmulBuffer(1n, this.mkPower(variable, power), coeffs[power]);
     return this.som.mk();
+  }
+
+  // substitute(p, x2v): p with the rational values of its assigned variables, each term scaled by
+  // the denominators to the maximal degree of their variable, and the content divided out. p itself
+  // when it has no assigned variable.
+  substituteRational(polynomial: Polynomial, values: readonly (Rational | undefined)[]) {
+    // Map keeps the order in which the variables first occur, as var_max_degree does.
+    const maxDegrees = new Map<number, number>();
+    for (const monomial of polynomial.ms)
+      for (let index = 0; index < monomial.size; index++) {
+        const variable = monomial.vars[index];
+        if (monomial.degrees[index] > (maxDegrees.get(variable) ?? 0))
+          maxDegrees.set(variable, monomial.degrees[index]);
+      }
+    if (![...maxDegrees.keys()].some((variable) => values[variable] !== undefined))
+      return polynomial;
+    this.som.reset();
+    for (let index = 0; index < polynomial.size; index++) {
+      const monomial = polynomial.ms[index];
+      let coeff = polynomial.as[index];
+      const keptVars: number[] = [];
+      const keptDegrees: number[] = [];
+      for (let power = 0; power < monomial.size; power++) {
+        const variable = monomial.vars[power];
+        const degree = monomial.degrees[power];
+        const value = values[variable];
+        if (value === undefined) {
+          keptVars.push(variable);
+          keptDegrees.push(degree);
+          continue;
+        }
+        coeff *= value.num ** BigInt(degree);
+        const maxDegree = maxDegrees.get(variable) ?? 0;
+        if (degree < maxDegree) coeff *= value.den ** BigInt(maxDegree - degree);
+      }
+      for (const [variable, maxDegree] of maxDegrees) {
+        const value = values[variable];
+        if (value !== undefined && monomial.degreeOf(variable) === 0)
+          coeff *= value.den ** BigInt(maxDegree);
+      }
+      this.som.addTerm(coeff, this.mkMonomial(keptVars, keptDegrees));
+    }
+    return this.som.mk(true);
+  }
+
+  // muladd: p*q + a.
+  private muladd(first: Polynomial, second: Polynomial, constant: bigint) {
+    if (first.size === 0 || second.size === 0) return this.mkConst(constant);
+    this.som.reset();
+    for (let index = 0; index < first.size; index++)
+      this.som.addmul(first.as[index], first.ms[index], second);
+    this.som.addTerm(constant, this.unit);
+    return this.som.mk();
+  }
+
+  // compose: p(q) for a univariate p, by Horner.
+  private compose(polynomial: Polynomial, inner: Polynomial) {
+    if (this.isConst(polynomial)) return polynomial;
+    const variable = this.maxVar(polynomial);
+    const degree = this.degree(polynomial, variable);
+    const coeffs = Array.from({ length: degree + 1 }, () => 0n);
+    for (let index = 0; index < polynomial.size; index++)
+      coeffs[polynomial.ms[index].degreeOf(variable)] = polynomial.as[index];
+    let result = this.mkConst(coeffs[degree]);
+    for (let power = degree - 1; power >= 0; power--)
+      result = this.muladd(inner, result, coeffs[power]);
+    return result;
+  }
+
+  // compose_x_minus_y: p(x - y) for a univariate p in x.
+  composeXMinusY(polynomial: Polynomial, variable: number) {
+    const x = this.maxVar(polynomial);
+    if (variable === x) return this.coeff(polynomial, x, 0);
+    return this.compose(polynomial, this.mkLinear([1n, -1n], [x, variable], 0n));
+  }
+
+  // compose_x_div_y: y^n * p(x/y) for a univariate p in x of degree n.
+  composeXDivY(polynomial: Polynomial, variable: number) {
+    if (this.isConst(polynomial)) return polynomial;
+    const x = this.maxVar(polynomial);
+    const degree = this.degree(polynomial, x);
+    for (let index = 0; index < polynomial.size; index++) {
+      const power = polynomial.ms[index].degreeOf(x);
+      const powers: [number, number][] =
+        x < variable
+          ? [
+              [x, power],
+              [variable, degree - power],
+            ]
+          : [
+              [variable, degree - power],
+              [x, power],
+            ];
+      const kept = powers.filter((entry) => entry[1] > 0);
+      this.cheap.add(
+        polynomial.as[index],
+        this.mkMonomial(
+          kept.map((entry) => entry[0]),
+          kept.map((entry) => entry[1]),
+        ),
+      );
+    }
+    return this.cheap.mk();
+  }
+
+  // resultant: Res(p, q) in x, by the subresultant PRS on the primitive parts, times the contents.
+  resultant(first: Polynomial, second: Polynomial, variable: number) {
+    if (first.size === 0 || second.size === 0) return this.zero;
+    if (this.isConst(first))
+      return this.isConst(second) ? this.one : this.pw(first, this.degree(second, variable));
+    if (this.isConst(second)) return this.pw(second, this.degree(first, variable));
+    const [integerA, contentA, ppA] = this.iccp(first, variable);
+    const [integerB, contentB, ppB] = this.iccp(second, variable);
+    const scale = this.mul(
+      this.pw(this.mulConst(integerA, contentA), this.degree(second, variable)),
+      this.pw(this.mulConst(integerB, contentB), this.degree(first, variable)),
+    );
+    let a = ppA;
+    let b = ppB;
+    let sign = 1;
+    if (this.degree(a, variable) < this.degree(b, variable)) {
+      if (this.degree(a, variable) % 2 === 1 && this.degree(b, variable) % 2 === 1) sign = -1;
+      [a, b] = [b, a];
+    }
+    let g = this.one;
+    let h = this.one;
+    while (true) {
+      const degreeA = this.degree(a, variable);
+      const degreeB = this.degree(b, variable);
+      const delta = degreeA - degreeB;
+      if (degreeA % 2 === 1 && degreeB % 2 === 1) sign = -sign;
+      const remainder = this.exactPseudoRemainder(a, b, variable);
+      a = b;
+      b = this.exactDiv(remainder, g);
+      for (let index = 0; index < delta; index++) b = this.exactDiv(b, h);
+      g = this.lc(a, variable);
+      let nextH = this.pw(g, delta);
+      for (let index = 1; index < delta; index++) nextH = this.exactDiv(nextH, h);
+      h = nextH;
+      if (this.degree(b, variable) === 0) {
+        const degree = this.degree(a, variable);
+        let lastH = this.pw(this.lc(b, variable), degree);
+        for (let index = 1; index < degree; index++) lastH = this.exactDiv(lastH, h);
+        const result = this.mul(scale, lastH);
+        return sign < 0 ? this.neg(result) : result;
+      }
+    }
   }
 
   private isSquareFreeIn(polynomial: Polynomial, variable: number) {
@@ -1255,21 +1422,94 @@ export class PolynomialManager {
     return coeff.size === 0 ? [this.zero] : [coeff];
   }
 
-  // Evaluation at a rational point.
+  // Evaluation.
 
-  evaluate(polynomial: Polynomial, values: readonly (Rational | undefined)[]) {
-    let result = Rational.zero;
-    for (let index = 0; index < polynomial.size; index++) {
-      const monomial = polynomial.ms[index];
-      let term = Rational.of(polynomial.as[index]);
-      for (let power = 0; power < monomial.size; power++) {
-        const value = values[monomial.vars[power]];
-        if (value === undefined) throw new Error(`x${monomial.vars[power]} is unassigned`);
-        for (let count = 0; count < monomial.degrees[power]; count++) term = term.mul(value);
+  // t_eval: p at the values of its variables, by Horner on the lexicographically sorted monomials,
+  // which sorts p in place as Z3 does.
+  evaluateWith<T>(polynomial: Polynomial, ops: ValueOps<T>, getValue: (variable: number) => T) {
+    if (polynomial.size === 0) return ops.fromInteger(0n);
+    if (this.isConst(polynomial)) return ops.fromInteger(polynomial.as[0]);
+    polynomial.lexSort();
+    return this.evaluateCore(
+      polynomial,
+      ops,
+      getValue,
+      0,
+      polynomial.size,
+      this.maxVar(polynomial),
+    );
+  }
+
+  // t_eval_core: the monomials in [start, end), ignoring the variables above x.
+  private evaluateCore<T>(
+    polynomial: Polynomial,
+    ops: ValueOps<T>,
+    getValue: (variable: number) => T,
+    start: number,
+    end: number,
+    x: number,
+  ): T {
+    if (end === start + 1) {
+      let result = ops.fromInteger(polynomial.as[start]);
+      const monomial = polynomial.ms[start];
+      for (let index = 0; index < monomial.size; index++) {
+        const variable = monomial.vars[index];
+        if (variable > x) break;
+        result = ops.mul(result, ops.power(getValue(variable), monomial.degrees[index]));
       }
-      result = result.add(term);
+      return result;
+    }
+    const value = getValue(x);
+    let result = ops.fromInteger(0n);
+    let index = start;
+    while (index < end) {
+      const degree = polynomial.ms[index].degreeOf(x);
+      if (degree === 0) {
+        const below = this.maxSmallerThan(polynomial, index, end, x);
+        result = ops.add(
+          result,
+          below === NULL_VAR
+            ? ops.fromInteger(polynomial.as[index])
+            : this.evaluateCore(polynomial, ops, getValue, index, end, below),
+        );
+        break;
+      }
+      let next = index + 1;
+      let nextDegree = 0;
+      for (; next < end; next++) {
+        const current = polynomial.ms[next].degreeOf(x);
+        if (current < degree) {
+          nextDegree = current;
+          break;
+        }
+      }
+      const below = this.maxSmallerThan(polynomial, index, next, x);
+      result = ops.add(
+        result,
+        below === NULL_VAR
+          ? ops.fromInteger(polynomial.as[index])
+          : this.evaluateCore(polynomial, ops, getValue, index, next, below),
+      );
+      result = ops.mul(result, ops.power(value, degree - nextDegree));
+      index = next;
     }
     return result;
+  }
+
+  // max_smaller_than: the largest variable below x in the monomials in [start, end).
+  private maxSmallerThan(polynomial: Polynomial, start: number, end: number, x: number) {
+    let max = NULL_VAR;
+    for (let index = start; index < end; index++)
+      max = Math.max(max, polynomial.ms[index].maxSmallerThan(x));
+    return max;
+  }
+
+  evaluate(polynomial: Polynomial, values: readonly (Rational | undefined)[]) {
+    return this.evaluateWith(polynomial, RATIONAL_OPS, (variable) => {
+      const value = values[variable];
+      if (value === undefined) throw new SmtInvariantError(`x${variable} is unassigned`);
+      return value;
+    });
   }
 
   getSign(polynomial: Polynomial, values: readonly (Rational | undefined)[]) {

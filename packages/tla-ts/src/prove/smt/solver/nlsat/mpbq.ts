@@ -1,6 +1,7 @@
 // Ported from Z3 (src/util/mpbq.{h,cpp}), MIT license, see z3-license.txt. Binary rationals
-// num/2^k, normalized so that k is 0 or num is odd. A value has a single representation, so
-// the operations below compute exact values and normalize.
+// num/2^k, normalized so that k is 0 or num is odd. Like Z3, mul, div2 and power skip normalizing
+// when a normalized input cannot need it, so an unnormalized input stays unnormalized. That
+// matters because magnitudes and is_int read k.
 import { Rational } from "../rational";
 
 const getPowerOfTwoMultiple = (value: bigint) => {
@@ -76,8 +77,17 @@ export class Mpbq {
     return Mpbq.of(aligned[0] - aligned[1], aligned[2]);
   }
 
+  // mul: normalized only when a factor is an integer.
   mul(other: Mpbq) {
-    return Mpbq.of(this.num * other.num, this.k + other.k);
+    const product = new Mpbq(this.num * other.num, this.k + other.k);
+    return this.k === 0 || other.k === 0 ? Mpbq.of(product.num, product.k) : product;
+  }
+
+  // mul(a, b, b): Z3 reads b's k after writing the product's, so it normalizes only when a is an
+  // integer.
+  mulIntoOther(other: Mpbq) {
+    const product = new Mpbq(this.num * other.num, this.k + other.k);
+    return this.k === 0 ? Mpbq.of(product.num, product.k) : product;
   }
 
   neg() {
@@ -85,7 +95,7 @@ export class Mpbq {
   }
 
   div2() {
-    return Mpbq.of(this.num, this.k + 1);
+    return this.k === 0 ? Mpbq.of(this.num, 1) : new Mpbq(this.num, this.k + 1);
   }
 
   mul2k(k: number) {
@@ -93,7 +103,7 @@ export class Mpbq {
   }
 
   power(exponent: number) {
-    return Mpbq.of(this.num ** BigInt(exponent), this.k * exponent);
+    return new Mpbq(this.num ** BigInt(exponent), this.k * exponent);
   }
 
   compare(other: Mpbq) {

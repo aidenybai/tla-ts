@@ -3,6 +3,7 @@
 // polynomials with integer coefficients, as coefficient arrays from the constant term up with no
 // leading zeros, over Z or over Z_p. Root isolation by Descartes' rule of signs, Sturm sequences
 // and refinement of isolating intervals with binary rational endpoints.
+import { SmtInvariantError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { getLog2, Mpbq, refineLower, refineUpper } from "./mpbq";
 
@@ -102,7 +103,7 @@ export class UpolynomialManager {
 
   // set_p_sq: from Z_m to Z_(m^2).
   squareModulus() {
-    if (this.modulus === null) throw new Error("squaring the modulus of Z");
+    if (this.modulus === null) throw new SmtInvariantError("squaring the modulus of Z");
     this.modulus *= this.modulus;
     this.isPrimeModulus = false;
   }
@@ -132,7 +133,7 @@ export class UpolynomialManager {
 
   inv(value: bigint) {
     const modulus = this.modulus;
-    if (modulus === null) throw new Error("inverse over Z");
+    if (modulus === null) throw new SmtInvariantError("inverse over Z");
     return this.normalizeNumeral(getExtendedGcd(this.normalizeNumeral(value), modulus).x);
   }
 
