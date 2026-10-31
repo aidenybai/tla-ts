@@ -18,7 +18,7 @@ import {
   LP_FEASIBLE,
   LP_OPTIMAL,
 } from "./core-solver";
-import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
+import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import type { Dependency } from "./dependency";
 import { Explanation } from "./explanation";
 import type { LarSolver } from "./lar-solver";
@@ -38,8 +38,6 @@ import { Tangents } from "./nla-tangents";
 import { NlaThrottle } from "./nla-throttle";
 import { NraSolver } from "./nra-solver";
 import { getSignedVarVar, isSignedVarNegated, mkSignedVar, VarEqs } from "./nla-var-eqs";
-
-export const KIND_NE = 3;
 
 const SMALL_RANGE = new Impq(Rational.of(4n));
 

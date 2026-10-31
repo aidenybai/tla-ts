@@ -5,7 +5,7 @@
 // rows. Z3's nlsat conflict check (is_nla_conflict) is not ported, nor are the statistics.
 import { PddMemoryOutError } from "../../../../errors";
 import { getEuclideanMod, getGcd, getLcm, Rational } from "../rational";
-import { KIND_EQ, KIND_GE, KIND_LE, KIND_LT } from "./constraints";
+import { KIND_EQ, KIND_GE, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
 import {
   add,
@@ -28,7 +28,7 @@ import { type Nex, getDegree } from "./nex";
 import { NexCreator } from "./nex-creator";
 import { Impq } from "./numeric-pair";
 import type { RowCell } from "./static-matrix";
-import { type Ineq, KIND_NE, LemmaBuilder, mkIneq, NLA_PARAMS, type NlaCore } from "./nla-core";
+import { type Ineq, LemmaBuilder, mkIneq, NLA_PARAMS, type NlaCore } from "./nla-core";
 import { evaluatePdd, type Pdd, PddManager } from "./pdd";
 import { getPddInterval } from "./pdd-interval";
 import { type Equation, getDefaultPddSolverConfig, PddSolver } from "./pdd-solver";

@@ -7,11 +7,11 @@ import { TheoryJustification } from "./enode";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { getVar, Literal, negate } from "./literal";
 import { getGcd, getLcm, Rational } from "./rational";
-import { KIND_EQ, KIND_GE, KIND_GT, KIND_LT } from "./lp/constraints";
+import { KIND_EQ, KIND_GE, KIND_GT, KIND_LT, KIND_NE } from "./lp/constraints";
 import { Explanation } from "./lp/explanation";
 import { IntSolver } from "./lp/int-solver";
 import type { LarTerm } from "./lp/lar-term";
-import { Ineq, KIND_NE, Lemma, NlaCore } from "./lp/nla-core";
+import { Ineq, Lemma, NlaCore } from "./lp/nla-core";
 import { TheoryLraModel } from "./theory-lra-model";
 
 export abstract class TheoryLraFinalCheck extends TheoryLraModel {

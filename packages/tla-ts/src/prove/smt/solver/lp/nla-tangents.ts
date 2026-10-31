@@ -3,13 +3,12 @@
 // wrong, the lines through the point of its factors' values and two planes tangent to z = xy that
 // cut the point off.
 import { Rational } from "../rational";
-import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
+import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { LarTerm } from "./lar-term";
 import {
   type Factor,
   type Factorization,
   getFactorSign,
-  KIND_NE,
   LemmaBuilder,
   mkIneq,
   NLA_PARAMS,

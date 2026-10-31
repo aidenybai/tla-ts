@@ -11,6 +11,8 @@ export const KIND_LT = -1;
 export const KIND_EQ = 0;
 export const KIND_GT = 1;
 export const KIND_GE = 2;
+// NE: a kind of nla's inequalities, never of a bound the theory asserts.
+export const KIND_NE = 3;
 
 export type ConstraintKind =
   | typeof KIND_LE

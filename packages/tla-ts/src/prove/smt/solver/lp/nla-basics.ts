@@ -5,12 +5,11 @@
 // derived = true, basic_lemma returns after the sign lemma, so Z3 never reaches its derived
 // zero and neutral lemmas.
 import { Rational } from "../rational";
-import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
+import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { LarTerm } from "./lar-term";
 import {
   type Factorization,
   getRatSign,
-  KIND_NE,
   LemmaBuilder,
   mkIneq,
   type NlaCore,

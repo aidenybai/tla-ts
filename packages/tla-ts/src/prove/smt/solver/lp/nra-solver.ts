@@ -25,11 +25,19 @@ import { Anum } from "../nlsat/algebraic";
 import { NlsatSolver } from "../nlsat/solver";
 import type { Polynomial } from "../nlsat/polynomial";
 import { isIneqAtom } from "../nlsat/types";
-import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, type LarConstraint } from "./constraints";
+import {
+  KIND_EQ,
+  KIND_GE,
+  KIND_GT,
+  KIND_LE,
+  KIND_LT,
+  KIND_NE,
+  type LarConstraint,
+} from "./constraints";
 import { Explanation } from "./explanation";
 import type { LarSolver } from "./lar-solver";
 import { LarTerm } from "./lar-term";
-import { KIND_NE, LemmaBuilder, mkIneq, type NlaCore } from "./nla-core";
+import { LemmaBuilder, mkIneq, type NlaCore } from "./nla-core";
 
 interface Occurrences {
   constraints: number[];
