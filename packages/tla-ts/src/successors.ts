@@ -6,6 +6,7 @@ import {
   type Expression,
   type QuantifierExpression,
 } from "./ast";
+import { getKindString } from "./builtins";
 import { getReadVariables } from "./dependencies";
 import { TlaEvaluationError, TlaIncompleteSuccessorError, UNEXPECTED_EXCEPTION } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
@@ -92,6 +93,16 @@ const assign = (partial: State, index: number, value: Value) => {
   return copy;
 };
 
+// What TLC says it was computing when it fails.
+const getComputation = (run: Run) =>
+  run.isInit ? "initial states" : run.isEnabled ? "ENABLED" : "next states";
+
+// TLC fails with an unexpected exception when it fails to compute the next states or ENABLED.
+const createRunError = (run: Run, message: string) => {
+  const error = new TlaEvaluationError(message);
+  return run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
+};
+
 // TLC's message for a conjunct that isn't a boolean, which differs for a literal it walks to rather
 // than evaluates.
 const getNonBooleanMessage = (
@@ -106,16 +117,13 @@ const getNonBooleanMessage = (
       ? `Attempted to compute ENABLED on a non-boolean expression.\n${node}`
       : `The ${run.isInit ? "init" : "next"} state relation is not a boolean expression.\n${node}`;
   }
-  const computing = run.isInit ? "initial states" : run.isEnabled ? "ENABLED" : "next states";
-  return `In computing ${computing}, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${node}`;
+  return `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${node}`;
 };
 
 const holds = (run: Run, expression: Expression, context: Context, isWalked = true) => {
   const value = evaluate(expression, context);
   if (typeof value === "boolean") return value;
-  const error = new TlaEvaluationError(getNonBooleanMessage(run, value, expression, isWalked));
-  // TLC fails with an unexpected exception when the next-state relation isn't a boolean.
-  throw run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
+  throw createRunError(run, getNonBooleanMessage(run, value, expression, isWalked));
 };
 
 const isAssignmentOperator = (operator: string) =>
@@ -868,19 +876,28 @@ const compileAction = (
     case "Case": {
       const arms = expression.arms.map((arm) => ({
         condition: arm.condition,
+        source: arm.body,
         body: child(arm.body),
       }));
       const other = expression.other ? child(expression.other) : undefined;
       return (run, scope, partial, action, isFixed, onComplete) => {
         const context = getContext(run, scope, partial);
-        const arm = arms.find((candidate) =>
-          expectBoolean(evaluate(candidate.condition, context), "a CASE guard"),
-        );
-        const body = arm?.body ?? other;
-        if (!body)
-          throw new TlaEvaluationError(
-            `${UNEXPECTED_EXCEPTION}In computing next states, TLC encountered a CASE with no conditions true.\n${describeRange(expression)}`,
+        const arm = arms.find((candidate) => {
+          const value = evaluate(candidate.condition, context);
+          if (typeof value === "boolean") return value;
+          // TLC leaves out the space before the kind under ENABLED.
+          throw createRunError(
+            run,
+            `In computing ${getComputation(run)}, a non-boolean expression${run.isEnabled ? "" : " "}(${getKindString(value)}) was used as a guard condition of a CASE.\n${describeNode(candidate.source)}`,
           );
+        });
+        const body = arm?.body ?? other;
+        if (!body) {
+          throw createRunError(
+            run,
+            `In computing ${getComputation(run)}, TLC encountered a CASE with no conditions true.\n${describeRange(expression)}`,
+          );
+        }
         body(run, scope, partial, action, isFixed, onComplete);
       };
     }

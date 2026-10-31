@@ -1345,6 +1345,41 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.message).toContain(message);
   });
 
+  it.each([
+    [
+      "CASE 1 -> x = 0",
+      "x' = x",
+      "In computing initial states, a non-boolean expression (an integer) was used as a guard condition of a CASE.\nline 5, col 19 to line 5, col 23 of module M",
+    ],
+    [
+      "CASE FALSE -> x = 0",
+      "x' = x",
+      "In computing initial states, TLC encountered a CASE with no conditions true.\nline 5, col 9 to line 5, col 27 of module M",
+    ],
+    [
+      "x = 0",
+      "CASE 1 -> x' = x",
+      "In computing next states, a non-boolean expression (an integer) was used as a guard condition of a CASE.\nline 6, col 19 to line 6, col 24 of module M",
+    ],
+  ])("words a failed CASE in %s or %s like TLC", async (init, next, message) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nOp(a) == a + 1\nInit == ${init}\nNext == ${next}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.message).toContain(message);
+  });
+
+  it("words a failed CASE of a fair action like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nA == CASE x -> x' = x\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY P",
+    });
+    expect(result.failure?.message).toContain(
+      "In computing ENABLED, a non-boolean expression(an integer) was used as a guard condition of a CASE.\nline 5, col 16 to line 5, col 21 of module M",
+    );
+  });
+
   // TLC's enabled walks the action, and words a literal it walks to differently.
   it.each([
     ["3", "Attempted to compute ENABLED on a non-boolean expression.\n3"],
@@ -1418,6 +1453,10 @@ describe("evaluation errors match TLC", () => {
       [
         "ASSUME {e \\in 1 : TRUE} = {}",
         "Attempted to enumerate { x \\in S : p(x) } when S:\n1\nis not enumerable",
+      ],
+      [
+        "ASSUME CASE 1 -> TRUE",
+        "A non-boolean expression (an integer) was used as a condition of a CASE. 1",
       ],
       [
         "ASSUME CHOOSE e \\in 3 : TRUE",

@@ -2020,13 +2020,20 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Case": {
       const arms = expression.arms.map((arm) => ({
+        source: arm.condition,
         condition: child(arm.condition),
         body: child(arm.body),
       }));
       const other = expression.other ? child(expression.other) : undefined;
       return (context) => {
         for (const arm of arms) {
-          if (expectBoolean(arm.condition(context), "a CASE guard")) return arm.body(context);
+          const value = arm.condition(context);
+          if (typeof value !== "boolean") {
+            throw new TlaEvaluationError(
+              `A non-boolean expression (${getKindString(value)}) was used as a condition of a CASE. ${describeNode(arm.source)}`,
+            );
+          }
+          if (value) return arm.body(context);
         }
         if (other) return other(context);
         throw new TlaEvaluationError(
