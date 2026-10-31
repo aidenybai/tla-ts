@@ -123,16 +123,25 @@ interface LinkedModule {
   extended: LinkedModule[];
 }
 
+// errors and warnings collect what SANY reports for the module, and levelChecks the level checks of
+// the modules in its file, which SANY runs only when it reports no error.
 interface ModuleScope {
   id: string;
   symbols: Symbols;
   modules: Map<string, LinkedModule>;
   nested: Module[];
+  errors: SanyError[];
+  warnings: SanyError[];
+  levelChecks: (() => void)[];
 }
 
-const getDeclarations = (linked: LinkedModule) => [
+const getDeclarations = (linked: LinkedModule): Declaration[] => [
   ...linked.constants,
-  ...linked.variables.map((variable) => ({ name: variable, arity: 0 })),
+  ...linked.variables.map((variable, index) => ({
+    name: variable,
+    arity: 0,
+    location: linked.variableLocations[index],
+  })),
 ];
 
 const createModuleRedefinedError = (module: Module) =>
@@ -383,6 +392,8 @@ export const createEnvironment = (
     }
     const closure = new Set<string>();
     const nested: Module[] = [];
+    const errors: SanyError[] = [];
+    const levelChecks: (() => void)[] = [];
     linking.push(parsed.name);
     loading.push(closure);
     const linked = linkModule(parsed, {
@@ -390,14 +401,19 @@ export const createEnvironment = (
       symbols: new Map(),
       modules: new Map(),
       nested,
+      errors,
+      warnings,
+      levelChecks,
     });
     loading.pop();
     linking.pop();
+    if (errors.length > 0) throw createSanyError(errors, false, undefined, warnings);
     const duplicate = nested.find((module) => closure.has(module.name));
     const loaded = duplicate && linkedModules.get(duplicate.name);
     const redefinition = loaded && getModuleRedefinition(duplicate, loaded.module);
     if (redefinition) throw createSanyError([redefinition], false, undefined, warnings);
     if (duplicate) throw createModuleRedefinedError(duplicate);
+    levelChecks.forEach((check) => check());
     return { linked, closure };
   };
 
@@ -771,7 +787,7 @@ export const createEnvironment = (
       getKey,
       instanced,
       reports,
-      warnings,
+      warnings: scope.warnings,
     });
     const getVisibleModules = () => new Map([...scope.modules, ...modules]);
     const getSymbolsBefore = (location: SourceLocation): Symbols =>
@@ -790,22 +806,26 @@ export const createEnvironment = (
             getDefinitionSymbol(definition),
           ]),
       ]);
+    // Generator.generateModule reports the errors of a nested module and goes on, and then
+    // SymbolTable.addModule reports a module already defined.
     const linkNested = (nested: Module) => {
       const visibleModules = getVisibleModules();
       const existing = visibleModules.get(nested.name);
       const redefinition = existing && getModuleRedefinition(nested, existing.module);
-      if (redefinition) {
-        reports.push({ location: nested.location, errors: [redefinition], warnings: [] });
-      } else if (existing) {
-        throw createModuleRedefinedError(nested);
-      }
+      if (existing && !redefinition) throw createModuleRedefinedError(nested);
       scope.nested.push(nested);
+      const report: ModuleReport = { location: nested.location, errors: [], warnings: [] };
+      reports.push(report);
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
         symbols: getSymbolsBefore(nested.location),
         modules: visibleModules,
         nested: scope.nested,
+        errors: report.errors,
+        warnings: report.warnings,
+        levelChecks: scope.levelChecks,
       });
+      if (redefinition) report.errors.push(redefinition);
       if (!existing) modules.set(nested.name, linked);
       if (!nestedModules.has(nested.name)) nestedModules.set(nested.name, linked);
     };
@@ -850,7 +870,7 @@ export const createEnvironment = (
       ),
       getAvailableDefinitions(visible),
     );
-    resolveModule(module, getUnit(module));
+    scope.errors.push(...resolveModule(module, getUnit(module)));
     module.definitions.forEach((definition) => {
       const key = getKey(definition);
       definitions.set(key, definition);
@@ -872,18 +892,21 @@ export const createEnvironment = (
     if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
     // SANY checks the instances of a module with its definitions and theorems, so it reports their
     // errors together.
-    checkModuleLevels(
-      module,
-      {
-        constants: new Set(constants.map((constant) => constant.name)),
-        variables: new Set(variables),
-        getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
-        getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
-      },
-      instanceChecks
-        .splice(firstCheck)
-        .map((check) => ({ location: check.location, check: () => checkInstance(check) })),
-      warnings,
+    const checks = instanceChecks
+      .splice(firstCheck)
+      .map((check) => ({ location: check.location, check: () => checkInstance(check) }));
+    scope.levelChecks.push(() =>
+      checkModuleLevels(
+        module,
+        {
+          constants: new Set(constants.map((constant) => constant.name)),
+          variables: new Set(variables),
+          getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
+          getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
+        },
+        checks,
+        warnings,
+      ),
     );
     linkedList.push(linked);
     return linked;

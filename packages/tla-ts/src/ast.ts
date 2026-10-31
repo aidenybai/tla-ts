@@ -376,6 +376,7 @@ export interface Assumption {
 
 export interface InstanceSubstitution {
   name: string;
+  nameRange: SourceRange;
   expression: Expression;
 }
 

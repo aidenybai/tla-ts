@@ -20,7 +20,7 @@ import {
   type SourceRange,
   type Theorem,
 } from "./ast";
-import { createSanyError, formatRange, TlaSyntaxError, type SanyError } from "./errors";
+import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
 
 // The kinds of symbol SANY tells apart when it binds a name twice. A parameter is also a bound name,
 // and a NEW symbol has a kind for each level.
@@ -1049,9 +1049,12 @@ const createSymbols = (module: Module, imported: Symbols) => {
   return symbols;
 };
 
+// Generator.processSubst analyzes the explicit substitutions in the order they appear, then the
+// implicit ones, and then reports each declaration left without one. tla-ts reports what SANY goes on
+// after with the INSTANCE.
 export const resolveSubstitutions = (
   instance: Instance,
-  declarations: OperatorParam[],
+  declarations: Declaration[],
   module: Module,
   unit: ModuleUnit,
 ) => {
@@ -1060,6 +1063,8 @@ export const resolveSubstitutions = (
     undefined,
   );
   const imported = createSymbols(module, unit.imported);
+  const report: ModuleReport = { location: instance.location, errors: [], warnings: [] };
+  unit.reports.push(report);
   const context: Unit = {
     imported,
     definitions: unit.definitions,
@@ -1071,59 +1076,77 @@ export const resolveSubstitutions = (
     bindings: new Map(
       [...imported].map(([name, symbol]) => [name, { ...symbol, position: MODULE_START }]),
     ),
-    errors: [],
-    warnings: unit.warnings,
+    errors: report.errors,
+    warnings: report.warnings,
     hasLabelScope: true,
     isLabelForbidden: false,
     isGenerated: false,
   };
-  const explicit = new Map(instance.substitutions.map((item) => [item.name, item.expression]));
-  const position = `in the instance of ${instance.module} at line ${instance.location.line}, column ${instance.location.column}`;
-  explicit.forEach((_, name) => {
-    if (declarations.every((declaration) => declaration.name !== name)) {
+  const resolveSubstitute = (declaration: Declaration, expression: Expression) => {
+    if (declaration.arity === 0 || expression.kind !== "Identifier") {
+      resolveExpression(expression, scope, context);
+      return;
+    }
+    const arity = getSymbolArity(expression, expression.name, scope, context);
+    if (arity !== undefined && arity !== declaration.arity) {
       throw new TlaSyntaxError(
-        `Identifier '${name}' is not a legal target of a substitution ${position}`,
+        `An operator must be substituted for symbol '${declaration.name}', and it must have arity ${declaration.arity} in the instance of ${instance.module} at line ${instance.location.line}, column ${instance.location.column}`,
       );
     }
+  };
+  const substitutions = new Map<string, Expression>();
+  instance.substitutions.forEach((substitution) => {
+    const name = substitution.name;
+    const declaration = declarations.find((item) => item.name === name);
+    if (!declaration) {
+      report.errors.push({
+        location: formatRange(substitution.nameRange),
+        message: `Identifier '${name}' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)`,
+      });
+      return;
+    }
+    const expression = substitution.expression;
+    resolveSubstitute(declaration, expression);
+    const range = expression.location.range;
+    if (!substitutions.has(name)) substitutions.set(name, expression);
+    else if (range) {
+      report.errors.push({
+        location: formatRange(range),
+        message: `Multiple substitutions for symbol '${name}' in substitution.`,
+      });
+    }
   });
-  // SANY analyzes the explicit substitutions in the order they appear.
-  const order = [...explicit.keys(), ...declarations.map((declaration) => declaration.name)];
-  const substitutions = new Map(
-    declarations
-      .toSorted((left, right) => order.indexOf(left.name) - order.indexOf(right.name))
-      .map((declaration): [string, Expression] => {
-        const name = declaration.name;
-        if (!explicit.has(name) && !lookupLocal(scope, name) && !findSymbol(name, context)) {
-          throw new TlaSyntaxError(`Substitution missing for symbol ${name} ${position}`);
-        }
-        const expression: Expression = explicit.get(name) ?? {
-          kind: "Identifier",
-          name,
-          location: instance.location,
-        };
-        if (declaration.arity === 0 || expression.kind !== "Identifier") {
-          resolveExpression(expression, scope, context);
-          return [name, expression];
-        }
-        const arity = getSymbolArity(expression, expression.name, scope, context);
-        if (arity !== undefined && arity !== declaration.arity) {
-          throw new TlaSyntaxError(
-            `An operator must be substituted for symbol '${name}', and it must have arity ${declaration.arity} ${position}`,
-          );
-        }
-        return [name, expression];
-      }),
-  );
-  if (context.errors.length > 0) {
-    throw createSanyError(context.errors, false, undefined, unit.warnings);
-  }
+  const implicit = declarations.filter((declaration) => !substitutions.has(declaration.name));
+  const isMissing = (declaration: Declaration) =>
+    !lookupLocal(scope, declaration.name) && !findSymbol(declaration.name, context);
+  implicit
+    .filter((declaration) => !isMissing(declaration))
+    .forEach((declaration) => {
+      const expression: Expression = {
+        kind: "Identifier",
+        name: declaration.name,
+        location: instance.location,
+      };
+      resolveSubstitute(declaration, expression);
+      substitutions.set(declaration.name, expression);
+    });
+  implicit.filter(isMissing).forEach((declaration) => {
+    const range = instance.location.range;
+    const declared = declaration.location.range;
+    if (range && declared) {
+      report.errors.push({
+        location: formatRange(range),
+        message: `Substitution missing for symbol ${declaration.name} declared at ${formatRange(declared)} \nand instantiated in module ${module.name}.`,
+      });
+    }
+  });
   return substitutions;
 };
 
 // SANY reports the errors of every unit it checks, in the order of the units in the module, after
 // the warnings it reports for the spec. A unit reports to its lists what SANY goes on after, and
 // throws the error that stops it. An error tla-ts cannot word as SANY does yields to the errors the
-// unit reported before it.
+// unit reported before it. Returns the errors.
 export const collectSemanticErrors = (
   units: {
     location: SourceLocation;
@@ -1142,7 +1165,13 @@ export const collectSemanticErrors = (
     }
   };
   units
-    .toSorted((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
+    .toSorted((left, right) =>
+      isBefore(left.location, right.location)
+        ? -1
+        : isBefore(right.location, left.location)
+          ? 1
+          : 0,
+    )
     .forEach((unit) => {
       const reported: SanyError[] = [];
       const warned: SanyError[] = [];
@@ -1157,11 +1186,11 @@ export const collectSemanticErrors = (
       reported.forEach((item) => add(errors, item));
       warned.forEach((item) => add(warnings, item));
     });
-  if (errors.length > 0) throw createSanyError(errors, false, undefined, warnings);
+  return errors;
 };
 
 // SANY binds the names of a module in the order of its units, and reports a RECURSIVE declaration
-// that no definition follows at the end.
+// that no definition follows at the end. Returns the errors.
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const symbols = createSymbols(module, unit.imported);
   const facts = new Set(
@@ -1213,7 +1242,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
           createUnit(declaration.location, undefined, errors, warnings, false),
         ),
     }));
-  collectSemanticErrors(
+  return collectSemanticErrors(
     [
       ...unit.reports.map((report) => ({
         location: report.location,

@@ -1259,9 +1259,11 @@ const parse = (source: string, isTlapm: boolean): Module => {
     const module = expectIdentifier();
     const substitutions = accept("WITH")
       ? parseSeparated(() => {
+          const targetStart = cursor.index;
           const target = advance().text;
+          const nameRange = getRange(targetStart);
           expect("<-");
-          return { name: target, expression: parseArgument() };
+          return { name: target, nameRange, expression: parseArgument() };
         })
       : [];
     return {
