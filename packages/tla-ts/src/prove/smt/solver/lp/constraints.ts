@@ -12,9 +12,16 @@ export const KIND_EQ = 0;
 export const KIND_GT = 1;
 export const KIND_GE = 2;
 
+export type ConstraintKind =
+  | typeof KIND_LE
+  | typeof KIND_LT
+  | typeof KIND_EQ
+  | typeof KIND_GT
+  | typeof KIND_GE;
+
 export interface LarConstraint {
   readonly column: number;
-  readonly kind: number;
+  readonly kind: ConstraintKind;
   readonly rhs: Impq;
   readonly dep: Dependency;
   isActive: boolean;
@@ -25,7 +32,7 @@ export class ConstraintSet {
   private active: number[] = [];
   private scopes: { size: number; activeSize: number }[] = [];
 
-  add(column: number, kind: number, rhs: Impq) {
+  add(column: number, kind: ConstraintKind, rhs: Impq) {
     const index = this.constraints.length;
     this.constraints.push({ column, kind, rhs, dep: mkLeaf(index), isActive: false });
     return index;

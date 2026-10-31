@@ -50,7 +50,7 @@ import type { ProtoModel } from "./proto-model";
 import { getGcd, getLcm, Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { BoundPropagator, getImpliedKind, ImpliedBound } from "./lp/bound-propagator";
-import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./lp/constraints";
+import { type ConstraintKind, KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./lp/constraints";
 import { LP_INFEASIBLE } from "./lp/core-solver";
 import { Dependency, linearize, mkJoin, mkLeaf } from "./lp/dependency";
 import { Explanation } from "./lp/explanation";
@@ -554,7 +554,7 @@ export class TheoryLra {
 
   // Constraints.
 
-  private addDefConstraintAndEquality(column: number, kind: number, bound: Rational) {
+  private addDefConstraintAndEquality(column: number, kind: ConstraintKind, bound: Rational) {
     const index = this.solver.mkVarBound(column, kind, bound);
     const equal = this.solver.activateCheckOnEqual(index);
     this.constraintSources[index] = null;
@@ -862,7 +862,7 @@ export class TheoryLra {
   private propagateEqs(
     column: number,
     constraint: number,
-    kind: number,
+    kind: ConstraintKind,
     bound: ApiBound,
     value: Rational,
   ) {
@@ -1038,7 +1038,7 @@ export class TheoryLra {
     );
   }
 
-  private boundIsInteresting(column: number, kind: number, value: Rational) {
+  private boundIsInteresting(column: number, kind: ConstraintKind, value: Rational) {
     const thVar = this.solver.getExternal(column);
     if (thVar === NULL_THEORY_VAR || thVar >= this.bounds.length) return false;
     if (this.unassignedBounds[thVar] === 0) return false;
@@ -1089,7 +1089,7 @@ export class TheoryLra {
   }
 
   // is_bound_implied: the literal of the bound that the implied bound makes true or false.
-  private isBoundImplied(kind: number, value: Rational, bound: ApiBound) {
+  private isBoundImplied(kind: ConstraintKind, value: Rational, bound: ApiBound) {
     const literal = getAtomLiteral(bound);
     const comparison = value.compare(bound.value);
     const isUpperKind = kind === KIND_LE || kind === KIND_LT;

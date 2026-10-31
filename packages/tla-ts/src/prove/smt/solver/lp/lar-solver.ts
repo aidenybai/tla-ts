@@ -5,7 +5,15 @@
 import { SmtInvariantError } from "../../../../errors";
 import { Rational } from "../rational";
 import { IndexedUintSet, StackedVector } from "./containers";
-import { ConstraintSet, KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
+import {
+  type ConstraintKind,
+  ConstraintSet,
+  KIND_EQ,
+  KIND_GE,
+  KIND_GT,
+  KIND_LE,
+  KIND_LT,
+} from "./constraints";
 import {
   COLUMN_BOXED,
   COLUMN_FIXED,
@@ -28,6 +36,11 @@ import { Impq } from "./numeric-pair";
 import { shrink } from "../array";
 
 export const NULL_LPVAR = -1;
+
+interface AdjustedBound {
+  kind: ConstraintKind;
+  bound: Rational;
+}
 
 interface Column {
   lowerWitness: Dependency;
@@ -324,14 +337,14 @@ export class LarSolver {
   }
 
   // adjust_bound_for_int: a strict or fractional bound on an integer column, rounded.
-  private adjustBoundForInt(column: number, kind: number, bound: Rational) {
+  private adjustBoundForInt(column: number, kind: ConstraintKind, bound: Rational): AdjustedBound {
     if (!this.isInt(column) || bound.isInt()) return { kind, bound };
     if (kind === KIND_LT || kind === KIND_LE) return { kind: KIND_LE, bound: bound.floor() };
     if (kind === KIND_GT || kind === KIND_GE) return { kind: KIND_GE, bound: bound.ceil() };
     return { kind, bound };
   }
 
-  mkVarBound(column: number, kind: number, rhs: Rational) {
+  mkVarBound(column: number, kind: ConstraintKind, rhs: Rational) {
     const adjusted = this.adjustBoundForInt(column, kind, rhs);
     return this.constraints.add(column, adjusted.kind, new Impq(adjusted.bound));
   }
@@ -392,7 +405,7 @@ export class LarSolver {
     return (isInt ? this.fixedVarTableInt : this.fixedVarTableReal).get(value.toString());
   }
 
-  updateColumnTypeAndBound(column: number, inputKind: number, rhs: Impq, dep: Dependency) {
+  updateColumnTypeAndBound(column: number, inputKind: ConstraintKind, rhs: Impq, dep: Dependency) {
     const adjusted = this.adjustBoundForInt(column, inputKind, rhs.x);
     const kind = adjusted.kind;
     const core = this.core;

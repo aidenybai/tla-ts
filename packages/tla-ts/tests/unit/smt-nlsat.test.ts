@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { L_FALSE, L_UNDEF } from "../../src/prove/smt/solver/lbool";
-import { KIND_EQ, KIND_GE, KIND_LE } from "../../src/prove/smt/solver/lp/constraints";
+import {
+  type ConstraintKind,
+  KIND_EQ,
+  KIND_GE,
+  KIND_LE,
+} from "../../src/prove/smt/solver/lp/constraints";
 import { LarSolver } from "../../src/prove/smt/solver/lp/lar-solver";
 import { NlaCore } from "../../src/prove/smt/solver/lp/nla-core";
 import { NraSolver } from "../../src/prove/smt/solver/lp/nra-solver";
@@ -186,7 +191,11 @@ describe("nlsat check_assignment", () => {
 
 describe("nra check_assignment", () => {
   // The monic m = x*y with x and y fixed by their bounds, and one more bound on m.
-  const getCore = (factors: (x: number, y: number) => number[], kind: number, bound: bigint) => {
+  const getCore = (
+    factors: (x: number, y: number) => number[],
+    kind: ConstraintKind,
+    bound: bigint,
+  ) => {
     const lra = new LarSolver(() => false);
     const x = lra.addVar(0, false);
     const y = lra.addVar(1, false);

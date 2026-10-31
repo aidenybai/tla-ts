@@ -4,7 +4,7 @@
 // of nonlinear variables over the tableau. The shared-factor and binomial-sign lemmas, off by
 // default (arith.nl.monomial_sandwich, arith.nl.monomial_binomial_sign), are not ported.
 import { getLcm, Rational } from "../rational";
-import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
+import { type ConstraintKind, KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
 import {
   DepInterval,
   div,
@@ -31,7 +31,7 @@ interface Gain {
 
 interface ImprovedBound {
   readonly column: number;
-  readonly kind: number;
+  readonly kind: ConstraintKind;
   readonly bound: Rational;
   readonly dep: Dependency;
 }
@@ -392,9 +392,9 @@ export class MonomialBounds {
   }
 
   // propagate_lp_bound: a bound on v, integral when v is.
-  private propagateLpBound(lpVar: number, kind: number, value: Rational, dep: Dependency) {
+  private propagateLpBound(lpVar: number, kind: ConstraintKind, value: Rational, dep: Dependency) {
     const lra = this.core.lra;
-    const update = (updateKind: number, bound: Rational) =>
+    const update = (updateKind: ConstraintKind, bound: Rational) =>
       lra.updateColumnTypeAndBound(lpVar, updateKind, new Impq(bound), dep);
     if (!this.core.varIsInt(lpVar)) update(kind, value);
     else if (value.isInt()) {

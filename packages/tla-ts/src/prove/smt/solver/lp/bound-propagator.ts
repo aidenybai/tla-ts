@@ -4,7 +4,7 @@
 // others, and equalities between columns that rows with fixed columns imply.
 import { Rational } from "../rational";
 import { COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
-import { KIND_GE, KIND_LE } from "./constraints";
+import { type ConstraintKind, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
 import { Dependency, linearize } from "./dependency";
 import { Explanation } from "./explanation";
 import type { LarSolver } from "./lar-solver";
@@ -13,12 +13,17 @@ import type { RowCell } from "./static-matrix";
 // The theory side of lp_bound_propagator.
 interface BoundPropagatorHost {
   columnIsInteresting(column: number): boolean;
-  boundIsInteresting(column: number, kind: number, value: Rational): boolean;
+  boundIsInteresting(column: number, kind: ConstraintKind, value: Rational): boolean;
   isEqual(first: number, second: number): boolean;
   addEq(first: number, second: number, explanation: Explanation, isFixed: boolean): boolean;
 }
 
 // implied_bound: the explanation is a weighted list of the witnesses of the other columns.
+const getBoundKind = (isLower: boolean, isStrict: boolean) => {
+  if (isLower) return isStrict ? KIND_GT : KIND_GE;
+  return isStrict ? KIND_LT : KIND_LE;
+};
+
 export interface ImpliedBound {
   column: number;
   bound: Rational;
@@ -27,11 +32,8 @@ export interface ImpliedBound {
   explain: () => [Rational, Dependency][];
 }
 
-// bound_kind: the kind of a lower or upper bound, halved when strict.
-export const getImpliedKind = (bound: ImpliedBound) => {
-  const kind = bound.isLower ? KIND_GE : KIND_LE;
-  return bound.isStrict ? kind / 2 : kind;
-};
+// bound_kind: the kind of a lower or upper bound, strict or not.
+export const getImpliedKind = (bound: ImpliedBound) => getBoundKind(bound.isLower, bound.isStrict);
 
 export class BoundPropagator {
   ibounds: ImpliedBound[] = [];
@@ -175,8 +177,7 @@ export class BoundPropagator {
     isLower: boolean,
     isStrict: boolean,
   ) {
-    const baseKind = isLower ? KIND_GE : KIND_LE;
-    if (!this.host.boundIsInteresting(column, isStrict ? baseKind / 2 : baseKind, value)) return;
+    if (!this.host.boundIsInteresting(column, getBoundKind(isLower, isStrict), value)) return;
     const solver = this.solver;
     const explain = () => {
       const jSign = (isCoeffPositive ? 1 : -1) * (isLower ? 1 : -1);
