@@ -6,12 +6,15 @@ import {
   type BoundPattern,
   type Definition,
   type Expression,
+  type Fact,
   type Instance,
+  type LabelExpression,
   type Module,
   type NewSymbol,
   type OperatorParam,
   type Proof,
   type ProofStep,
+  type Selector,
   type SourceLocation,
   type SourceRange,
   type Theorem,
@@ -32,12 +35,24 @@ export interface ModuleSymbol {
 
 export type Symbols = Map<string, ModuleSymbol>;
 
+// A named theorem or proof step whose parts a name such as foo!lab or <1>2!1 selects. isInProof
+// holds while SANY analyzes the proof of the theorem or step.
+interface Goal {
+  statement: Expression | AssumeProve;
+  isSuffices: boolean;
+  isInProof: boolean;
+}
+
 interface LocalName {
   name: string;
   arity: number;
   parent: LocalName | undefined;
+  goal?: Goal;
 }
 
+// errors collects the errors SANY reports while it goes on analyzing the unit. A label may appear
+// where hasLabelScope holds, in a definition, a named theorem, or a numbered step,
+// except where isLabelForbidden holds, in the scope of a NEW in a nested ASSUME.
 interface Unit {
   imported: Symbols;
   definitions: Map<string, Definition>;
@@ -45,7 +60,19 @@ interface Unit {
   location: SourceLocation;
   self: Definition | undefined;
   facts: Set<string>;
+  goals: Map<string, Goal>;
+  errors: SanyError[];
+  hasLabelScope: boolean;
+  isLabelForbidden: boolean;
 }
+
+interface SelectionState {
+  node: Expression | NewSymbol | AssumeProve;
+  isGoal: boolean;
+  isSufficesOpen: boolean;
+}
+
+type Reference = Expression & { kind: "Identifier" | "Apply" | "Subexpression" };
 
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
@@ -134,6 +161,185 @@ const isOperatorSymbol = (name: string) =>
 const isStepName = (name: string) =>
   name.startsWith("<") && ((name[1] >= "0" && name[1] <= "9") || name[1] === "*");
 
+export const getOperandIndex = (operand: number | "<<" | ">>", count: number) => {
+  if (typeof operand === "number") return operand >= 1 && operand <= count ? operand - 1 : -1;
+  if (operand === "<<") return count > 0 ? 0 : -1;
+  return count === 2 ? 1 : -1;
+};
+
+const getSelectors = (reference: Reference): Selector[] =>
+  reference.kind === "Subexpression"
+    ? reference.selectors
+    : (reference.kind === "Identifier" ? reference.name : reference.operator)
+        .split("!")
+        .map((name) => ({ kind: "Name", name, args: [] }));
+
+const isReference = (expression: Expression): expression is Reference =>
+  expression.kind === "Identifier" ||
+  expression.kind === "Apply" ||
+  expression.kind === "Subexpression";
+
+const isInScopeOfDeclaration = (assumeProve: AssumeProve, clause: number) =>
+  assumeProve.assumptions.slice(0, clause).some((assumption) => assumption.kind === "NewSymbol");
+
+const findLabel = (expression: Expression, name: string): LabelExpression | undefined => {
+  if (expression.kind === "Label") return expression.name === name ? expression : undefined;
+  if (expression.kind === "Lambda") return undefined;
+  if (expression.kind === "Let") return findLabel(expression.body, name);
+  return getChildren(expression).reduce<LabelExpression | undefined>(
+    (found, child) => found ?? findLabel(child, name),
+    undefined,
+  );
+};
+
+// SANY drops a label in the scope of a NEW in a nested ASSUME, after it reports the label.
+const findClauseLabel = (
+  clause: Expression | NewSymbol | AssumeProve,
+  name: string,
+  isForbidden: boolean,
+): LabelExpression | undefined => {
+  if (clause.kind === "AssumeProve") {
+    return [...clause.assumptions, clause.conclusion].reduce<LabelExpression | undefined>(
+      (found, inner, index) =>
+        found ?? findClauseLabel(inner, name, isForbidden || isInScopeOfDeclaration(clause, index)),
+      undefined,
+    );
+  }
+  if (isForbidden) return undefined;
+  if (clause.kind === "NewSymbol") return clause.set && findLabel(clause.set, name);
+  return findLabel(clause, name);
+};
+
+const getOperandName = (operand: number | "<<" | ">>") =>
+  typeof operand === "number" ? `argument selector ${operand}` : operand;
+
+const SCOPE_MESSAGE = "within the scope of a declaration\n from outside that declaration's scope.";
+
+// Generator.selectorToNode for a name that selects part of a theorem or step. A part in the scope of
+// a NEW in its ASSUME may be selected only within the proof of the theorem, or only after the proof
+// of a SUFFICES step. A fact may select an ASSUME/PROVE or a NEW clause.
+const checkSelection = (
+  reference: Reference,
+  selectors: Selector[],
+  goal: Goal,
+  unit: Unit,
+  isFact: boolean,
+) => {
+  const report = (index: number | undefined, message: string) => {
+    const range =
+      (index === undefined ? undefined : reference.selectorRanges?.[index]) ??
+      reference.location.range;
+    if (range) unit.errors.push({ location: formatRange(range), message });
+  };
+  const isOutOfScope = goal.isSuffices === goal.isInProof;
+  const statement = goal.statement;
+  const second = selectors[1];
+  if (second.kind === "Name") {
+    const clauses =
+      statement.kind === "AssumeProve"
+        ? [...statement.assumptions, statement.conclusion]
+        : [statement];
+    const found = clauses
+      .map((clause, index) => ({ index, label: findClauseLabel(clause, second.name, false) }))
+      .find((item) => item.label !== undefined);
+    if (!found) return report(1, `Cannot find label \`${second.name}'.`);
+    if (
+      statement.kind === "AssumeProve" &&
+      isInScopeOfDeclaration(statement, found.index) &&
+      isOutOfScope
+    ) {
+      return report(
+        1,
+        `Accessing subexpression labeled \`${second.name}' of ASSUME/PROVE clause ${SCOPE_MESSAGE}`,
+      );
+    }
+    selectors.slice(2).reduce((label, selector, offset) => {
+      if (!label || selector.kind !== "Name") return undefined;
+      const inner = findLabel(label.body, selector.name);
+      if (!inner) report(offset + 2, `Cannot find label \`${selector.name}'.`);
+      return inner;
+    }, found.label);
+    return;
+  }
+  const state: SelectionState = {
+    node: statement,
+    isGoal: true,
+    isSufficesOpen: goal.isSuffices,
+  };
+  for (const [offset, selector] of selectors.slice(1).entries()) {
+    const index = offset + 1;
+    const node = state.node;
+    if (selector.kind !== "Operand") return;
+    if (state.isSufficesOpen) {
+      if (getOperandIndex(selector.operand, 1) !== 0) {
+        return report(
+          index,
+          node.kind === "AssumeProve"
+            ? "Accessing non-existent subexpression of a SUFFICES"
+            : `Nonexistent operand specified by \`${getOperandName(selector.operand)}'.`,
+        );
+      }
+      state.isSufficesOpen = false;
+      continue;
+    }
+    if (node.kind !== "AssumeProve") return;
+    const clauses = [...node.assumptions, node.conclusion];
+    const position = getOperandIndex(selector.operand, clauses.length);
+    if (position === -1) {
+      return report(
+        index,
+        `Nonexistent operand specified by \`${getOperandName(selector.operand)}'.`,
+      );
+    }
+    if (isInScopeOfDeclaration(node, position) && (!state.isGoal || isOutOfScope)) {
+      return report(index, `Accessing ASSUME/PROVE clause ${SCOPE_MESSAGE}`);
+    }
+    const clause = clauses[position];
+    if (clause.kind === "NewSymbol" && index !== selectors.length - 1) {
+      return report(index, "Selected a subexpression of a NEW clause of an ASSUME.");
+    }
+    state.node = clause;
+    state.isGoal = false;
+  }
+  if (isFact) return;
+  if (state.node.kind === "AssumeProve") {
+    report(undefined, "Selected ASSUME/PROVE instead of expression.");
+  }
+  if (state.node.kind === "NewSymbol") {
+    report(undefined, "Selected a NEW declaration as an expression or operator.");
+  }
+};
+
+// Generator.generateLabel reports a label where it may not appear, and skips the label's body.
+const isLabelReported = (label: LabelExpression, unit: Unit) => {
+  const message = !unit.hasLabelScope
+    ? "Label not in definition or proof step."
+    : unit.isLabelForbidden
+      ? "Label not allowed within scope of declaration in nested ASSUME/PROVE."
+      : undefined;
+  if (message === undefined || !label.location.range) return false;
+  unit.errors.push({ location: formatRange(label.location.range), message });
+  return true;
+};
+
+// Checks a name that selects part of a theorem or step, and tells whether it is one.
+const checkReference = (
+  expression: Expression,
+  scope: LocalName | undefined,
+  unit: Unit,
+  isFact: boolean,
+) => {
+  if (!isReference(expression)) return false;
+  const selectors = getSelectors(expression);
+  const first = selectors[0];
+  const goal =
+    selectors.length > 1 && first.kind === "Name"
+      ? (lookupLocal(scope, first.name)?.goal ?? unit.goals.get(first.name))
+      : undefined;
+  if (goal) checkSelection(expression, selectors, goal, unit, isFact);
+  return goal !== undefined;
+};
+
 const getSymbolArity = (
   expression: Expression & { kind: "Identifier" | "Apply" | "OperatorReference" },
   name: string,
@@ -144,7 +350,9 @@ const getSymbolArity = (
   const renamed = renamedArities.get(expression);
   if (renamed !== undefined) return renamed;
   if (isKey(name)) return expression.kind === "Apply" ? expression.args.length : 0;
-  if (isStepName(name)) return 0;
+  if (checkReference(expression, scope, unit, false) || isStepName(name)) {
+    return expression.kind === "Apply" ? expression.args.length : 0;
+  }
   const local = lookupLocal(scope, name);
   if (local && expression.kind !== "OperatorReference") expression.resolution = LOCAL_RESOLUTION;
   if (local) return local.arity;
@@ -205,7 +413,8 @@ const markRecursiveConstructions = (expression: Expression, name: string): void 
   getChildren(expression).forEach((child) => markRecursiveConstructions(child, name));
 };
 
-const resolveDefinition = (definition: Definition, scope: LocalName | undefined, unit: Unit) => {
+const resolveDefinition = (definition: Definition, scope: LocalName | undefined, outer: Unit) => {
+  const unit = outer.hasLabelScope ? outer : { ...outer, hasLabelScope: true };
   const self = bindNames(scope, definition.kind === "Function" ? [definition.name] : []);
   if (definition.kind === "Function") {
     resolveExpression(definition.body, resolveBounds(definition.bounds, self, unit), unit);
@@ -425,13 +634,35 @@ const resolveExpression = (
       resolveAll([expression.subscript, expression.action]);
       return;
     case "Label":
-      resolveExpression(expression.body, scope, unit);
+      if (!isLabelReported(expression, unit)) resolveExpression(expression.body, scope, unit);
       return;
-    case "Subexpression":
+    case "Subexpression": {
       expression.selectors
         .flatMap((selector) => ("args" in selector ? selector.args : []))
         .forEach((arg) => resolveArgument(arg, scope, unit));
+      checkReference(expression, scope, unit, false);
+    }
   }
+};
+
+// SANY analyzes the facts of a proof apart from their names, which may name theorems and modules.
+const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) => {
+  const check = (expression: Expression, isFact: boolean, inner: Unit): void => {
+    if (expression.kind === "Label" && isLabelReported(expression, inner)) return;
+    checkReference(expression, scope, inner, isFact);
+    getChildren(expression).forEach((child) =>
+      check(
+        child,
+        false,
+        expression.kind === "Let" && child !== expression.body
+          ? { ...inner, hasLabelScope: true }
+          : inner,
+      ),
+    );
+  };
+  facts.forEach((fact) => {
+    if (fact.kind !== "ModuleFact") check(fact, true, { ...unit, hasLabelScope: false });
+  });
 };
 
 const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit: Unit) => {
@@ -439,20 +670,31 @@ const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit:
   return { name: symbol.name, arity: symbol.arity, parent: scope };
 };
 
-// The NEW symbols of an ASSUME stay in scope for its conclusion and the proof that follows.
+// The NEW symbols of an ASSUME stay in scope for its conclusion and the proof that follows. SANY
+// forbids a label in the scope of a NEW in a nested ASSUME.
 const resolveAssumeProve = (
   assumeProve: AssumeProve,
   scope: LocalName | undefined,
   unit: Unit,
+  isNested = false,
 ): LocalName | undefined => {
-  const assumed = assumeProve.assumptions.reduce((current, assumption) => {
-    if (assumption.kind === "NewSymbol") return resolveNewSymbol(assumption, current, unit);
-    if (assumption.kind === "AssumeProve") resolveAssumeProve(assumption, current, unit);
-    else resolveExpression(assumption, current, unit);
-    return current;
-  }, scope);
-  resolveExpression(assumeProve.conclusion, assumed, unit);
-  return assumed;
+  const assumed = assumeProve.assumptions.reduce(
+    (current, assumption) => {
+      if (assumption.kind === "NewSymbol") {
+        return {
+          scope: resolveNewSymbol(assumption, current.scope, current.unit),
+          unit: isNested ? { ...current.unit, isLabelForbidden: true } : current.unit,
+        };
+      }
+      if (assumption.kind === "AssumeProve") {
+        resolveAssumeProve(assumption, current.scope, current.unit, true);
+      } else resolveExpression(assumption, current.scope, current.unit);
+      return current;
+    },
+    { scope, unit },
+  );
+  resolveExpression(assumeProve.conclusion, assumed.scope, assumed.unit);
+  return assumed.scope;
 };
 
 const resolveStatement = (
@@ -467,7 +709,9 @@ const resolveStatement = (
 
 // SANY resolves the expressions of a proof, while its facts and DEF clauses may also name
 // theorems, assumptions, and modules.
-const resolveProof = (proof: Proof | undefined, scope: LocalName | undefined, unit: Unit) => {
+const resolveProof = (proof: Proof | undefined, scope: LocalName | undefined, outer: Unit) => {
+  const unit = outer.hasLabelScope ? { ...outer, hasLabelScope: false } : outer;
+  if (proof?.kind === "By") checkFacts(proof.facts, scope, unit);
   if (proof?.kind !== "Steps") return;
   proof.steps.reduce((current, step) => resolveStep(step, current, unit), scope);
 };
@@ -478,12 +722,24 @@ const resolveStep = (
   unit: Unit,
 ): LocalName | undefined => {
   const body = step.body;
+  const stepUnit = step.name === undefined ? unit : { ...unit, hasLabelScope: true };
   switch (body.kind) {
     case "Assert": {
-      const assumed = resolveStatement(body.statement, scope, unit);
-      resolveProof(step.proof, assumed, unit);
-      return body.isSuffices ? assumed : scope;
+      const assumed = resolveStatement(body.statement, scope, stepUnit);
+      const name = step.name;
+      if (name === undefined) {
+        resolveProof(step.proof, assumed, unit);
+        return body.isSuffices ? assumed : scope;
+      }
+      const goal = { statement: body.statement, isSuffices: body.isSuffices, isInProof: true };
+      resolveProof(step.proof, { name, arity: 0, parent: assumed, goal }, unit);
+      goal.isInProof = false;
+      return { name, arity: 0, parent: body.isSuffices ? assumed : scope, goal };
     }
+    case "Use":
+    case "Hide":
+      checkFacts(body.facts, scope, unit);
+      return scope;
     case "Define":
       return resolveDefinitions(
         body.definitions.flatMap((definition) =>
@@ -494,17 +750,17 @@ const resolveStep = (
       );
     case "Have":
     case "Case":
-      resolveExpression(body.expression, scope, unit);
+      resolveExpression(body.expression, scope, stepUnit);
       resolveProof(step.proof, scope, unit);
       return scope;
     case "Witness":
-      body.expressions.forEach((expression) => resolveExpression(expression, scope, unit));
+      body.expressions.forEach((expression) => resolveExpression(expression, scope, stepUnit));
       return scope;
     case "Take":
-      return bindNames(resolveBounds(body.bounds, scope, unit), body.names);
+      return bindNames(resolveBounds(body.bounds, scope, stepUnit), body.names);
     case "Pick": {
-      const picked = bindNames(resolveBounds(body.bounds, scope, unit), body.names);
-      resolveExpression(body.body, picked, unit);
+      const picked = bindNames(resolveBounds(body.bounds, scope, stepUnit), body.names);
+      resolveExpression(body.body, picked, stepUnit);
       resolveProof(step.proof, scope, unit);
       return picked;
     }
@@ -517,7 +773,10 @@ const resolveStep = (
 const resolveTheorem = (theorem: Theorem, unit: Unit) => {
   const isDefinition = theorem.name !== undefined && theorem.statement.kind !== "AssumeProve";
   const scope = isDefinition ? undefined : resolveStatement(theorem.statement, undefined, unit);
+  const goal = unit.goals.get(theorem.name ?? "");
+  if (goal) goal.isInProof = true;
   resolveProof(theorem.proof, scope, unit);
+  if (goal) goal.isInProof = false;
 };
 
 interface ModuleUnit {
@@ -777,6 +1036,10 @@ export const resolveSubstitutions = (
     location: instance.location,
     self: undefined,
     facts: new Set(),
+    goals: new Map(),
+    errors: [],
+    hasLabelScope: true,
+    isLabelForbidden: false,
   };
   const explicit = new Map(instance.substitutions.map((item) => [item.name, item.expression]));
   const position = `in the instance of ${instance.module} at line ${instance.location.line}, column ${instance.location.column}`;
@@ -812,27 +1075,31 @@ export const resolveSubstitutions = (
   );
 };
 
-// SANY reports the errors of every unit it checks, in the order of the units in the module.
-export const collectSemanticErrors = (units: { location: SourceLocation; check: () => void }[]) => {
+// SANY reports the errors of every unit it checks, in the order of the units in the module. A unit
+// reports to its list the errors after which SANY goes on, and throws the one that stops it.
+export const collectSemanticErrors = (
+  units: { location: SourceLocation; check: (reported: SanyError[]) => void }[],
+) => {
   const errors: SanyError[] = [];
   units
     .toSorted((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
     .forEach((unit) => {
+      const reported: SanyError[] = [];
       try {
-        unit.check();
+        unit.check(reported);
       } catch (error) {
         if (!(error instanceof TlaSyntaxError) || !error.sany) throw error;
-        error.sany.errors.forEach((item) => {
-          if (
-            errors.every(
-              (existing) =>
-                existing.location !== item.location || existing.message !== item.message,
-            )
-          ) {
-            errors.push(item);
-          }
-        });
+        reported.push(...error.sany.errors);
       }
+      reported.forEach((item) => {
+        if (
+          errors.every(
+            (existing) => existing.location !== item.location || existing.message !== item.message,
+          )
+        ) {
+          errors.push(item);
+        }
+      });
     });
   if (errors.length > 0) throw createSanyError(errors);
 };
@@ -842,32 +1109,63 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const facts = new Set(
     [...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
   );
-  const createUnit = (location: SourceLocation, self: Definition | undefined) => ({
+  const goals = new Map(
+    module.theorems.flatMap((theorem): [string, Goal][] =>
+      theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
+        ? [[theorem.name, { statement: theorem.statement, isSuffices: false, isInProof: false }]]
+        : [],
+    ),
+  );
+  const createUnit = (
+    location: SourceLocation,
+    self: Definition | undefined,
+    errors: SanyError[],
+    hasLabelScope: boolean,
+  ): Unit => ({
     imported: symbols,
     definitions: unit.definitions,
     getKey: unit.getKey,
     location,
     self,
     facts,
+    goals,
+    errors,
+    hasLabelScope,
+    isLabelForbidden: false,
   });
   collectSemanticErrors([
     ...module.definitions.map((definition) => ({
       location: definition.location,
-      check: () =>
-        resolveDefinition(definition, undefined, createUnit(definition.location, definition)),
+      check: (errors: SanyError[]) =>
+        resolveDefinition(
+          definition,
+          undefined,
+          createUnit(definition.location, definition, errors, true),
+        ),
     })),
+    // An assumption holds the subexpressions its references select, labels and all, so its own
+    // labels go unchecked.
     ...module.assumptions.map((assumption) => ({
       location: assumption.location,
-      check: () =>
+      check: (errors: SanyError[]) =>
         resolveExpression(
           assumption.expression,
           undefined,
-          createUnit(assumption.location, undefined),
+          createUnit(assumption.location, undefined, errors, true),
         ),
     })),
     ...module.theorems.map((theorem) => ({
       location: theorem.location,
-      check: () => resolveTheorem(theorem, createUnit(theorem.location, undefined)),
+      check: (errors: SanyError[]) =>
+        resolveTheorem(
+          theorem,
+          createUnit(theorem.location, undefined, errors, theorem.name !== undefined),
+        ),
+    })),
+    ...module.uses.map((use) => ({
+      location: use.location,
+      check: (errors: SanyError[]) =>
+        checkFacts(use.facts, undefined, createUnit(use.location, undefined, errors, false)),
     })),
   ]);
 };
