@@ -1635,7 +1635,9 @@ export const isElementOf = (element: Value, set: Value): boolean => {
     case "FunctionSet": {
       if (!isFunctionValue(element)) {
         if (isModelValue(element)) return false;
-        throw new TlaEvaluationError(describeMembership(element, set));
+        throw new TlaEvaluationError(
+          `Attempted to check if \n${formatValue(element)}\nwhich is not a TLC function value, is in the set of functions:\n${prettyPrint(formatValue(set))}`,
+        );
       }
       const functionValue = toFiniteFunction(element);
       const low = getIntervalLow(functionValue.domain);
