@@ -216,6 +216,19 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it.each([
+    ["RECURSIVE F(_)", "F", "line 3, col 11 to line 3, col 14", 1],
+    ["RECURSIVE F(_)\nF(x) == 1\nRECURSIVE F(_)", "F", "line 5, col 11 to line 5, col 14", 1],
+    ["RECURSIVE F(_)\nF[x \\in Nat] == 1", "F", "line 3, col 11 to line 3, col 14", 2],
+    ["A == LET RECURSIVE G(_) IN 1", "G", "line 3, col 20 to line 3, col 23", 1],
+  ])("reports what %j declares RECURSIVE but leaves undefined", (body, name, range, count) => {
+    const report = getReport({ M: `---- MODULE M ----\nEXTENDS Naturals\n${body}\n====\n` });
+    expect(report.text).toContain(`*** Errors: ${count}\n`);
+    expect(report.text).toContain(
+      `${range} of module M\n\nSymbol ${name} declared in RECURSIVE statement but not defined.\n`,
+    );
+  });
+
   it("takes an instance between a RECURSIVE declaration and its definition", () => {
     const report = getReport({
       M: "---- MODULE M ----\nEXTENDS Naturals\nRECURSIVE F(_)\nI == INSTANCE Naturals\nF(n) == IF n = 0 THEN 0 ELSE F(n-1)\n====\n",

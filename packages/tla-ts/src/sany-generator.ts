@@ -1718,8 +1718,10 @@ export const generateSanySpecification = (
             location,
             preComments,
           });
-      if (isRecursive) endOpDefNode(existing, node, location, preComments);
-      else if (existing === undefined) {
+      // A function whose RECURSIVE declaration has parameters stays undefined.
+      if (isRecursive) {
+        if (existing.arity === 0) endOpDefNode(existing, node, location, preComments);
+      } else if (existing === undefined) {
         addSymbol(symbolTable, definitionNode);
         setRecursionFields(definitionNode);
       }
@@ -1734,6 +1736,8 @@ export const generateSanySpecification = (
       if (node.operator.name === "$NonRecursiveFcnSpec") node.unbounded = undefined;
     };
 
+    // The module's operators declared in RECURSIVE statements.
+    const recursiveDeclarations: OpDefNode[] = [];
     const processRecursive = (declarations: Declaration[]) => {
       if (state.unresolvedSum === 0) state.recursiveSectionCount++;
       state.unresolvedCount[state.curLevel] += declarations.length;
@@ -1756,14 +1760,22 @@ export const generateSanySpecification = (
           letInLevel: state.curLevel,
         });
         addSymbol(symbolTable, node);
+        recursiveDeclarations.push(node);
         currentModule.opDefsInRecursiveSection.push(node);
       });
     };
 
     const checkForUndefinedRecursiveOps = () => {
-      if (state.unresolvedCount[state.curLevel] > 0) {
-        state.unresolvedSum -= state.unresolvedCount[state.curLevel];
-      }
+      if (state.unresolvedCount[state.curLevel] === 0) return;
+      recursiveDeclarations
+        .filter((node) => node.letInLevel === state.curLevel && !node.isDefined)
+        .forEach((node) =>
+          addError(
+            node.location,
+            `Symbol ${node.name} declared in RECURSIVE statement but not defined.`,
+          ),
+        );
+      state.unresolvedSum -= state.unresolvedCount[state.curLevel];
     };
 
     // SubstInNode's constructor and processSubst: an implicit substitution for each declaration of
