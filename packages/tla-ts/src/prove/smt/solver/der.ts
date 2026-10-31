@@ -101,13 +101,19 @@ export const getEliminationOrder = (manager: AstManager, definitions: (number | 
   return order;
 };
 
-// der: destructive equality resolution. Its var_subst keeps the cache of its last substitution until
-// the next one.
+// der: destructive equality resolution. Its var_subst keeps the cache of its last substitution, and
+// m_map, m_subst_map and m_new_args keep their expressions, until der next fills them.
 export class Der {
   private subst: VarSubst;
+  private map: RefVector;
+  private substMap: RefVector;
+  private newArgs: RefVector;
 
   constructor(private manager: AstManager) {
     this.subst = new VarSubst(manager, true);
+    this.map = new RefVector(manager);
+    this.substMap = new RefVector(manager);
+    this.newArgs = new RefVector(manager);
   }
 
   // der::operator(): reduces until nothing changes, then drops the eliminated variables. The result
@@ -124,6 +130,9 @@ export class Der {
 
   // ~der.
   release() {
+    this.newArgs.reset();
+    this.substMap.reset();
+    this.map.reset();
     this.subst.release();
   }
 
@@ -156,27 +165,39 @@ export class Der {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
     const count = data.sorts.length;
-    const definitions: (number | undefined)[] = [];
+    const map = this.map;
+    map.reset();
     const positions = literals.map((literal) => {
       const found = getVarDefinition(manager, literal, count, data.isForall);
-      if (found === undefined || definitions[found.index] !== undefined) return -1;
-      definitions[found.index] = found.definition;
+      if (found === undefined || (map.items[found.index] ?? -1) !== -1) return -1;
+      if (map.size <= found.index) map.resize(found.index + 1);
+      map.set(found.index, found.definition);
       return found.index;
     });
     if (positions.every((position) => position === -1)) return expr;
+    // der_sort_vars drops the definitions on a cycle from m_map.
+    const definitions = map.items.map((definition) => (definition === -1 ? undefined : definition));
     const order = getEliminationOrder(manager, definitions);
+    definitions.forEach((definition, index) => {
+      if (definition === undefined && map.items[index] !== -1) map.set(index, -1);
+    });
     if (order.length === 0) return expr;
     // create_substitution: (:var i) becomes the entry at size - i - 1, with the definitions before it
     // in the order substituted.
-    const size = definitions.length;
-    const substMap: number[] = Array.from({ length: size }, () => -1);
+    const size = map.size;
+    const substMap = this.substMap;
+    substMap.reset();
+    substMap.resize(size);
     for (const index of order)
-      substMap[size - index - 1] = this.subst.apply(definitions[index] as number, substMap);
-    // apply_substitution holds the junction of the kept literals until it returns.
-    const kept = literals.filter((_literal, position) => {
+      substMap.setOwned(size - index - 1, this.subst.apply(map.items[index], substMap.items));
+    // apply_substitution: m_new_args holds the kept literals, and the junction of them is held
+    // until it returns.
+    this.newArgs.reset();
+    literals.forEach((literal, position) => {
       const index = positions[position];
-      return index === -1 || definitions[index] === undefined;
+      if (index === -1 || map.items[index] === -1) this.newArgs.push(literal);
     });
+    const kept = this.newArgs.items;
     const empty = data.isForall ? manager.falseExpr : manager.trueExpr;
     const combined = manager.withoutTemporaries(() =>
       kept.length === 0
@@ -188,14 +209,12 @@ export class Der {
             : manager.mkAnd(kept),
     );
     manager.incRef(combined);
-    const body = this.subst.apply(combined, substMap);
-    const patterns = data.patterns.map((pattern) => this.subst.apply(pattern, substMap));
+    const body = this.subst.apply(combined, substMap.items);
+    const patterns = data.patterns.map((pattern) => this.subst.apply(pattern, substMap.items));
     const result = manager.mkQuantifier({ ...data, body, patterns });
     for (const pattern of patterns) manager.releaseLater(pattern);
     manager.releaseLater(body);
     manager.decRef(combined);
-    // m_subst_map holds the definitions until the next substitution.
-    for (const definition of substMap) if (definition !== -1) manager.releaseLater(definition);
     return result;
   }
 }
