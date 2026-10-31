@@ -16,6 +16,7 @@ import {
   STACK_OVERFLOW,
   TlaConfigError,
   TlaEvaluationError,
+  TlaIllegalStateError,
   TlaIncompleteStateError,
   TlaModuleError,
   UNEXPECTED_EXCEPTION,
@@ -141,6 +142,7 @@ export interface EvaluationFailure {
   initialState: Record<string, Value> | undefined;
   exitCode: number;
   replay?: Replay;
+  isWithoutStatistics?: boolean;
 }
 
 // TLC replays a failed step to print the expressions it was evaluating when the replay failed.
@@ -1562,7 +1564,19 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         spec.scope,
       );
     } catch (error) {
-      return replayInitialStates(toFailure(error, []));
+      if (!(error instanceof TlaIllegalStateError))
+        return replayInitialStates(toFailure(error, []));
+      // TLC prints an illegal initial state with null for each variable it leaves undefined, and
+      // stops before it prints the statistics.
+      const illegal = toFailure(
+        error,
+        [],
+        error.state.map((value) => value ?? createModelValue("null")),
+      );
+      return {
+        ...illegal,
+        failure: illegal.failure && { ...illegal.failure, isWithoutStatistics: true },
+      };
     }
   }
   if (outcome.result) return replayInitialStates(outcome.result);

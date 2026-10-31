@@ -110,6 +110,17 @@ export class TlaIncompleteStateError extends TlaEvaluationError {
   }
 }
 
+// TLC reports an initial state that the initial predicate leaves incomplete as an illegal state.
+export class TlaIllegalStateError extends TlaEvaluationError {
+  state: (Value | undefined)[];
+
+  constructor(state: (Value | undefined)[]) {
+    super("current state is not a legal state");
+    this.name = "TlaEvaluationError";
+    this.state = state;
+  }
+}
+
 export interface TlapmReport {
   failure?: string;
   exception?: string;
