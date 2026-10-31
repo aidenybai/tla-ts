@@ -265,19 +265,24 @@ export class ProtoModel {
     });
   }
 
-  // model_core::register_decl: the model holds the value.
+  // model_core::register_decl: the model holds the declaration and the value.
   registerConst(decl: number, value: number) {
     const old = this.constInterps.get(decl);
+    if (old === undefined) this.manager.incDeclRef(decl);
     this.manager.incRef(value);
     if (old === undefined) this.constDecls.push(decl);
     else this.manager.decRef(old);
     this.constInterps.set(decl, value);
   }
 
-  // model_core::register_decl: the interpretation replaces the old one, which is released.
+  // model_core::register_decl: the interpretation replaces the old one, which is released. The model
+  // holds the declaration.
   registerFunc(decl: number, interp: FuncInterp) {
     const old = this.funcInterps.get(decl);
-    if (old === undefined) this.funcDecls.push(decl);
+    if (old === undefined) {
+      this.funcDecls.push(decl);
+      this.manager.incDeclRef(decl);
+    }
     this.funcInterps.set(decl, interp);
     old?.release();
   }
@@ -492,6 +497,7 @@ export class ProtoModel {
       this.constDecls[index] = this.constDecls[this.constDecls.length - 1];
       this.constDecls.pop();
       this.constInterps.delete(decl);
+      this.manager.decDeclRef(decl);
       this.manager.decRef(value);
       return;
     }
@@ -500,6 +506,7 @@ export class ProtoModel {
     this.funcInterps.delete(decl);
     const index = this.funcDecls.indexOf(decl);
     if (index !== -1) this.funcDecls.splice(index, 1);
+    this.manager.decDeclRef(decl);
     interp.release();
   }
 
@@ -519,8 +526,14 @@ export class ProtoModel {
     this.evaluator.release();
     this.userSortValues.reset();
     this.arithValues.reset();
-    for (const entry of this.constInterps) this.manager.decRef(entry[1]);
-    for (const entry of this.funcInterps) entry[1].release();
+    for (const entry of this.constInterps) {
+      this.manager.decDeclRef(entry[0]);
+      this.manager.decRef(entry[1]);
+    }
+    for (const entry of this.funcInterps) {
+      this.manager.decDeclRef(entry[0]);
+      entry[1].release();
+    }
   }
 
   // mk_model: the model holds the values of the constants and the universes of the uninterpreted
@@ -528,7 +541,10 @@ export class ProtoModel {
   mkModel() {
     const model = new ProtoModel(this.manager);
     for (const entry of this.constInterps) model.registerConst(entry[0], entry[1]);
-    for (const entry of this.funcInterps) model.registerFunc(entry[0], entry[1]);
+    for (const entry of this.funcInterps) {
+      model.registerFunc(entry[0], entry[1]);
+      this.manager.decDeclRef(entry[0]);
+    }
     this.funcInterps.clear();
     this.funcDecls = [];
     for (const entry of this.values)
