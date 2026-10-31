@@ -1193,10 +1193,24 @@ const isImpureDefinition = (
   return isImpure;
 };
 
+// UNION and \cup build sets that stream the sets they combine until TLC caches them, and TLC
+// builds a new one at each evaluation.
+const STREAMED_SET: Impurity = {
+  builtins: new Set(["UNION", "\\cup"]),
+  definitions: new WeakMap(),
+};
+
 // TLC's next-state generator does not bind LET definitions to values, so each reference to one
-// that calls an impure builtin evaluates it again.
+// evaluates it again: one that calls an impure builtin repeats its effects, and a set one builds
+// with UNION or \cup starts out uncached.
 export const getReevaluatedDefinitions = (definitions: Definition[], environment: Environment) =>
-  new Set(definitions.filter((definition) => isImpureDefinition(definition, environment)));
+  new Set(
+    definitions.filter(
+      (definition) =>
+        isImpureDefinition(definition, environment) ||
+        isImpureDefinition(definition, environment, STREAMED_SET),
+    ),
+  );
 
 export const isImpure = (environment: Environment) =>
   [...environment.definitions.values()].some((definition) =>
@@ -1272,7 +1286,11 @@ const computeIsClosedConstant = (
     return global?.kind === "Definition" && isEvaluatedOnce(global.definition, environment);
   }
   if (expression.kind === "Apply") {
-    if (isImpureBuiltin(expression.operator, environment) || expression.operator === "~>") {
+    if (
+      isImpureBuiltin(expression.operator, environment) ||
+      STREAMED_SET.builtins.has(expression.operator) ||
+      expression.operator === "~>"
+    ) {
       return false;
     }
     const operator = resolveGlobalOperator(expression.operator, environment);

@@ -2858,6 +2858,14 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect(results.map((result) => result.generatedStates)).toEqual(expected);
   });
 
+  it("evaluates a LET definition's UNION again at each reference in an action", async () => {
+    const result = await checkSource(
+      "EXTENDS Naturals, FiniteSets\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == LET u == UNION {UNION {0..2, {1}}, {7}} IN Cardinality(u) > 0 /\\ y' \\in u /\\ UNCHANGED x",
+      "INIT Init\nNEXT Next",
+    );
+    expect(result.generatedStates).toBe(21);
+  });
+
   it("reports initial states without a next-state action", async () => {
     await expect(checkSource("VARIABLE x\nInit == x \\in {1, 2}", "INIT Init")).rejects.toThrow(
       /No next state actions defined to generate successor states from/,
