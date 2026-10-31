@@ -122,13 +122,20 @@ export class Interpreter {
   }
 
   // mk_depth1_vector: the relevant decl-parents of the class of node where it is argument argIndex.
-  private getDepth1Vector(node: Enode, decl: number, argIndex: number) {
+  // init_continue drops a vector of limit terms or more, so this stops at limit and returns null.
+  private getDepth1Vector(node: Enode, decl: number, argIndex: number, limit: number) {
     const root = node.root;
-    return root.parents.filter((parent) => this.isRelevantParent(parent, decl, argIndex, root));
+    const result: Enode[] = [];
+    for (const parent of root.parents) {
+      if (!this.isRelevantParent(parent, decl, argIndex, root)) continue;
+      if (result.length + 1 >= limit) return null;
+      result.push(parent);
+    }
+    return result;
   }
 
-  // mk_depth2_vector.
-  private getDepth2Vector(joint: Joint, decl: number, argIndex: number) {
+  // mk_depth2_vector, which stops at limit like getDepth1Vector.
+  private getDepth2Vector(joint: Joint, decl: number, argIndex: number, limit: number) {
     const node = this.registers[joint.reg];
     if (node === null || node === undefined) return null;
     const root = node.root;
@@ -137,9 +144,11 @@ export class Interpreter {
     for (const parent of root.parents) {
       if (!this.isRelevantParent(parent, joint.decl, joint.argPos, root)) continue;
       const parentRoot = parent.root;
-      for (const grandparent of parentRoot.parents)
-        if (this.isRelevantParent(grandparent, decl, argIndex, parentRoot))
-          result.push(grandparent);
+      for (const grandparent of parentRoot.parents) {
+        if (!this.isRelevantParent(grandparent, decl, argIndex, parentRoot)) continue;
+        if (result.length + 1 >= limit) return null;
+        result.push(grandparent);
+      }
     }
     return result;
   }
@@ -166,11 +175,12 @@ export class Interpreter {
     for (let argIndex = 0; argIndex < instr.joints.length; argIndex++) {
       const joint = instr.joints[argIndex];
       const node = this.getJointNode(joint);
+      const limit: number = best === null ? all.length : Math.min(all.length, best.length);
       const current =
         node !== null
-          ? this.getDepth1Vector(node, label, argIndex)
+          ? this.getDepth1Vector(node, label, argIndex, limit)
           : joint.kind === JOINT_NESTED
-            ? this.getDepth2Vector(joint, label, argIndex)
+            ? this.getDepth2Vector(joint, label, argIndex, limit)
             : null;
       if (
         current === null ||
