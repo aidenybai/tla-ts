@@ -310,10 +310,10 @@ export class InvVarShifter extends VarShifterCore {
   }
 }
 
-// rewriter_tpl with default_rewriter_cfg. A configuration overrides the hooks. The results of
-// reduceApp and reduceQuantifier come with a reference, and -1 is Z3's BR_FAILED or false. A
-// Rewrite from reduceApp is rewritten again.
-export class RewriterTpl extends RewriterCore {
+// rewriter_tpl's main loop, which calls the hooks of its configuration. It is a class of its own,
+// rather than the base of the configurations, so that V8 sees one shape of it and keeps its property
+// accesses and calls monomorphic.
+class RewriterEngine extends RewriterCore {
   // m_r: the last result, which Z3 holds until it assigns the next one.
   private lastResult = -1;
   // m_bindings and m_shifts: the binding of each variable of the substitution, innermost last, and
@@ -323,51 +323,15 @@ export class RewriterTpl extends RewriterCore {
   private shifter: VarShifter;
   private invShifter: InvVarShifter;
   // m_blocked: the constants that a nested rewriter does not expand.
-  private blocked = new Set<number>();
+  blocked = new Set<number>();
 
-  constructor(manager: AstManager) {
+  constructor(
+    manager: AstManager,
+    private config: RewriterTpl,
+  ) {
     super(manager);
     this.shifter = new VarShifter(manager);
     this.invShifter = new InvVarShifter(manager);
-  }
-
-  protected isFlatAssoc(_decl: number) {
-    return false;
-  }
-
-  protected isRewritingPatterns() {
-    return true;
-  }
-
-  protected preVisit(_expr: number) {
-    return true;
-  }
-
-  protected getSubst(_expr: number): number | undefined {
-    return undefined;
-  }
-
-  protected reduceApp(_decl: number, _args: number[], _sort: number): number | Rewrite {
-    return -1;
-  }
-
-  // get_macro: the definition of decl over (:var i) for argument i, or -1.
-  protected getMacro(_decl: number) {
-    return -1;
-  }
-
-  // reduce_macro: whether a ground definition is rewritten rather than taken as it is.
-  protected isReducingMacro() {
-    return false;
-  }
-
-  protected reduceQuantifier(_expr: number, _body: number, _patterns: number[]) {
-    return -1;
-  }
-
-  // A rewriter with the same configuration, for a constant that rewrites to a term with arguments.
-  protected mkNested(): RewriterTpl {
-    return new RewriterTpl(this.manager);
   }
 
   // set_inv_bindings: (:var i) becomes bindings[n - 1 - i], and -1 keeps it.
@@ -460,7 +424,7 @@ export class RewriterTpl extends RewriterCore {
     return this.rewrite(expr);
   }
 
-  protected setLastResult(expr: number) {
+  setLastResult(expr: number) {
     if (expr !== -1) this.manager.incRef(expr);
     if (this.lastResult !== -1) this.manager.decRef(this.lastResult);
     this.lastResult = expr;
@@ -474,7 +438,7 @@ export class RewriterTpl extends RewriterCore {
   // frame for expr.
   private visit(expr: number, maxDepth: number) {
     const manager = this.manager;
-    const replacement = this.getSubst(expr);
+    const replacement = this.config.getSubst(expr);
     if (replacement !== undefined) {
       this.pushResult(replacement);
       this.setNewChildFlag(expr, replacement);
@@ -493,7 +457,7 @@ export class RewriterTpl extends RewriterCore {
         return true;
       }
     }
-    if (!this.preVisit(expr)) {
+    if (!this.config.preVisit(expr)) {
       this.pushResult(expr);
       return true;
     }
@@ -518,7 +482,7 @@ export class RewriterTpl extends RewriterCore {
     let current = expr;
     manager.incRef(current);
     for (let isRetried = false; ; isRetried = true) {
-      const reduced = this.reduceApp(manager.decls[current], [], manager.sorts[current]);
+      const reduced = this.config.reduceApp(manager.decls[current], [], manager.sorts[current]);
       if (reduced !== -1) {
         const result = typeof reduced === "number" ? reduced : reduced.expr;
         this.setLastResult(result);
@@ -554,9 +518,9 @@ export class RewriterTpl extends RewriterCore {
   private rewriteConstResult(expr: number) {
     const manager = this.manager;
     if (!this.blocked.has(expr)) {
-      const nested = this.mkNested();
-      for (const blocked of this.blocked) nested.blocked.add(blocked);
-      nested.blocked.add(expr);
+      const nested = this.config.mkNested();
+      for (const blocked of this.blocked) nested.engine.blocked.add(blocked);
+      nested.engine.blocked.add(expr);
       const result = nested.rewrite(this.lastResult);
       this.setLastResult(result);
       manager.decRef(result);
@@ -610,7 +574,7 @@ export class RewriterTpl extends RewriterCore {
       if (!this.visit(arg, frame.maxDepth)) return;
     }
     const decl = manager.decls[expr];
-    if (this.isFlatAssoc(decl) && manager.getRefCount(expr) <= 1 && this.frames.length > 1) {
+    if (this.config.isFlatAssoc(decl) && manager.getRefCount(expr) <= 1 && this.frames.length > 1) {
       const previous = this.frames[this.frames.length - 2];
       if (
         manager.kinds[previous.curr] === KIND_APP &&
@@ -623,7 +587,7 @@ export class RewriterTpl extends RewriterCore {
       }
     }
     const newArgs = this.resultStack.slice(frame.spos);
-    const reduced = this.reduceApp(decl, newArgs, manager.sorts[expr]);
+    const reduced = this.config.reduceApp(decl, newArgs, manager.sorts[expr]);
     if (typeof reduced !== "number") {
       // BR_REWRITE: the result replaces the arguments and is rewritten to the depth it asks for.
       this.setLastResult(reduced.expr);
@@ -636,8 +600,8 @@ export class RewriterTpl extends RewriterCore {
       this.setLastResult(-1);
       return;
     }
-    const definition = reduced === -1 ? this.getMacro(decl) : -1;
-    if (definition !== -1 && (!manager.isGroundApp(definition) || this.isReducingMacro())) {
+    const definition = reduced === -1 ? this.config.getMacro(decl) : -1;
+    if (definition !== -1 && (!manager.isGroundApp(definition) || this.config.isReducingMacro())) {
       // The definition is rewritten with the arguments bound to its variables.
       frame.state = EXPAND_DEF;
       const size = this.bindings.length;
@@ -739,7 +703,7 @@ export class RewriterTpl extends RewriterCore {
       }
       this.numQvars += numDecls;
     }
-    const isRewritingPatterns = this.isRewritingPatterns();
+    const isRewritingPatterns = this.config.isRewritingPatterns();
     const children = isRewritingPatterns ? [data.body, ...data.patterns] : [data.body];
     while (frame.childIndex < children.length) {
       const child = children[frame.childIndex];
@@ -750,7 +714,7 @@ export class RewriterTpl extends RewriterCore {
     // new_pats: the patterns, which Z3 holds until the quantifier is done.
     const patterns = isRewritingPatterns ? this.resultStack.slice(frame.spos + 1) : data.patterns;
     for (const pattern of patterns) manager.incRef(pattern);
-    const reduced = this.reduceQuantifier(expr, body, patterns);
+    const reduced = this.config.reduceQuantifier(expr, body, patterns);
     if (reduced === -1)
       this.setLastResult(
         frame.hasNewChild ? manager.mkQuantifier({ ...data, body, patterns }) : expr,
@@ -773,9 +737,95 @@ export class RewriterTpl extends RewriterCore {
   }
 }
 
+// rewriter_tpl with default_rewriter_cfg. A configuration overrides the hooks. The results of
+// reduceApp and reduceQuantifier come with a reference, and -1 is Z3's BR_FAILED or false. A
+// Rewrite from reduceApp is rewritten again.
+export class RewriterTpl {
+  readonly engine: RewriterEngine;
+
+  constructor(protected manager: AstManager) {
+    this.engine = new RewriterEngine(manager, this);
+  }
+
+  isFlatAssoc(_decl: number) {
+    return false;
+  }
+
+  isRewritingPatterns() {
+    return true;
+  }
+
+  preVisit(_expr: number) {
+    return true;
+  }
+
+  getSubst(_expr: number): number | undefined {
+    return undefined;
+  }
+
+  reduceApp(_decl: number, _args: number[], _sort: number): number | Rewrite {
+    return -1;
+  }
+
+  // get_macro: the definition of decl over (:var i) for argument i, or -1.
+  getMacro(_decl: number) {
+    return -1;
+  }
+
+  // reduce_macro: whether a ground definition is rewritten rather than taken as it is.
+  isReducingMacro() {
+    return false;
+  }
+
+  reduceQuantifier(_expr: number, _body: number, _patterns: number[]) {
+    return -1;
+  }
+
+  // A rewriter with the same configuration, for a constant that rewrites to a term with arguments.
+  mkNested(): RewriterTpl {
+    return new RewriterTpl(this.manager);
+  }
+
+  setInvBindings(bindings: number[]) {
+    this.engine.setInvBindings(bindings);
+  }
+
+  setBindings(bindings: number[]) {
+    this.engine.setBindings(bindings);
+  }
+
+  updateInvBindingAt(index: number, binding: number) {
+    this.engine.updateInvBindingAt(index, binding);
+  }
+
+  reset() {
+    this.engine.reset();
+  }
+
+  cleanup() {
+    this.engine.cleanup();
+  }
+
+  release() {
+    this.engine.release();
+  }
+
+  rewrite(expr: number) {
+    return this.engine.rewrite(expr);
+  }
+
+  rewriteWithBindings(expr: number, bindings: number[]) {
+    return this.engine.rewriteWithBindings(expr, bindings);
+  }
+
+  protected setLastResult(expr: number) {
+    this.engine.setLastResult(expr);
+  }
+}
+
 // beta_reducer: substitutes bindings for variables without rewriting.
 export class BetaReducer extends RewriterTpl {
-  protected preVisit(expr: number) {
+  preVisit(expr: number) {
     return !this.manager.isGroundApp(expr);
   }
 }

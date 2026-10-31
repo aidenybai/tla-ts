@@ -176,22 +176,22 @@ export class Rewriter extends RewriterTpl {
     this.reset();
   }
 
-  protected getSubst(expr: number) {
+  getSubst(expr: number) {
     return this.substitution.size === 0 ? undefined : this.substitution.get(expr);
   }
 
   // flat_assoc: th_rewriter flattens and, or and + into an enclosing application of the same
   // operator.
-  protected isFlatAssoc(decl: number) {
+  isFlatAssoc(decl: number) {
     const op = this.manager.funcDecls[decl].op;
     return op === OP_AND || op === OP_OR || op === OP_ADD;
   }
 
-  protected isRewritingPatterns() {
+  isRewritingPatterns() {
     return this.options.isRewritingPatterns;
   }
 
-  protected reduceApp(decl: number, args: number[], sort: number) {
+  reduceApp(decl: number, args: number[], sort: number) {
     // An uninterpreted application only reduces by pull_ite, which needs two arguments.
     if (
       this.manager.funcDecls[decl].op === OP_UNINTERPRETED &&

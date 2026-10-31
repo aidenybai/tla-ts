@@ -21,7 +21,7 @@ class PatternInferenceRw extends RewriterTpl {
     super(manager);
   }
 
-  protected reduceQuantifier(expr: number, body: number) {
+  reduceQuantifier(expr: number, body: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
     if (!data.isForall || data.patterns.length > 0) return -1;

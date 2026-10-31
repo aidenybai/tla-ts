@@ -1117,7 +1117,7 @@ class ElimStar extends RewriterTpl {
     super(manager);
   }
 
-  protected reduceQuantifier(expr: number, body: number, patterns: number[]) {
+  reduceQuantifier(expr: number, body: number, patterns: number[]) {
     return this.reduce(expr, body, patterns);
   }
 }

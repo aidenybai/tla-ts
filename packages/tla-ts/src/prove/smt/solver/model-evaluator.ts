@@ -66,13 +66,13 @@ export class ModelEvaluator extends RewriterTpl {
     this.isModelCompletion = isModelCompletion;
   }
 
-  protected mkNested() {
+  mkNested() {
     const nested = new ModelEvaluator(this.manager, this.model);
     nested.isModelCompletion = this.isModelCompletion;
     return nested;
   }
 
-  protected reduceApp(decl: number, args: number[], sort: number) {
+  reduceApp(decl: number, args: number[], sort: number) {
     return this.manager.withTemporaries(
       () => this.reduceAppCore(decl, args, sort),
       (result) => (result === -1 ? [] : [typeof result === "number" ? result : result.expr]),
@@ -221,7 +221,7 @@ export class ModelEvaluator extends RewriterTpl {
 
   // get_macro: the interpretation of an uninterpreted function. With model completion, a partial
   // interpretation gets an else value, and a function without one gets a constant interpretation.
-  protected getMacro(decl: number) {
+  getMacro(decl: number) {
     const manager = this.manager;
     const model = this.model;
     const info = manager.funcDecls[decl];
@@ -241,12 +241,12 @@ export class ModelEvaluator extends RewriterTpl {
     return some;
   }
 
-  protected isReducingMacro() {
+  isReducingMacro() {
     return true;
   }
 
   // evaluator_cfg::reduce_quantifier: a th_rewriter of its own reduces the quantifier.
-  protected reduceQuantifier(expr: number, body: number, patterns: number[]) {
+  reduceQuantifier(expr: number, body: number, patterns: number[]) {
     const rewriter = new Rewriter(this.manager, DEFAULT_REWRITER_OPTIONS);
     const result = rewriter.reduceQuantifier(expr, body, patterns);
     rewriter.release();

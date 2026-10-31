@@ -28,7 +28,7 @@ export class MaxBvSharing extends RewriterTpl {
     super(manager);
   }
 
-  protected reduceApp(decl: number, args: number[], sort: number) {
+  reduceApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
     const op = manager.funcDecls[decl].op;
     if (!this.isInit || (op !== OP_OR && op !== OP_ADD) || args.length <= 2) return -1;

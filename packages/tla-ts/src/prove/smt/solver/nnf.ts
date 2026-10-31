@@ -109,7 +109,7 @@ class QuantifierNamer extends RewriterTpl {
     super(manager);
   }
 
-  protected getSubst(expr: number) {
+  getSubst(expr: number) {
     if (this.manager.kinds[expr] !== KIND_QUANTIFIER) return undefined;
     const named = this.names.mkName(expr);
     if (named.definition !== -1) {

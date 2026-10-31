@@ -94,7 +94,7 @@ export class PullQuant extends RewriterTpl {
     return result;
   }
 
-  protected reduceApp(decl: number, args: number[], sort: number): number | Rewrite {
+  reduceApp(decl: number, args: number[], sort: number): number | Rewrite {
     const manager = this.manager;
     const op = manager.funcDecls[decl].op;
     if (op === OP_NOT && manager.isNot(args[0])) {
@@ -106,7 +106,7 @@ export class PullQuant extends RewriterTpl {
     return this.pullFromApp(decl, args, sort);
   }
 
-  protected reduceQuantifier(expr: number, body: number) {
+  reduceQuantifier(expr: number, body: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
     if (!data.isForall) {
