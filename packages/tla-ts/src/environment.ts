@@ -49,6 +49,7 @@ import {
   type Symbols,
 } from "./resolve";
 import { createRuntime } from "./runtime";
+import { parseModuleFile } from "./sany-parse-error";
 import { CORE_OPERATORS, getStandardModule, STANDARD_DEPENDENCIES } from "./standard-modules";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
@@ -326,7 +327,7 @@ export const createEnvironment = (
         ],
         true,
       );
-    const module = parseModule(source);
+    const module = parseModuleFile(source, name);
     if (module.name !== name) {
       throw createSanyError(
         [
