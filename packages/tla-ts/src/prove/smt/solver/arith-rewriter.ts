@@ -106,8 +106,7 @@ export class ArithRewriter extends PolyRewriter {
     const args = [expr];
     for (let index = 0; index < args.length; index++) {
       if (!this.isMul(args[index])) continue;
-      const nested = this.manager.args[args[index]];
-      args.push(...nested);
+      this.manager.pushArgs(args[index], args);
       args[index] = args[args.length - 1];
       args.pop();
       index--;
@@ -206,7 +205,7 @@ export class ArithRewriter extends PolyRewriter {
     if (divisor !== undefined && divisor > 0n && this.isAdd(left)) {
       let isChanged = false;
       let added = 0n;
-      const args = manager.args[left].map((arg) => {
+      const args = manager.mapArgs(left, (arg) => {
         const value = manager.getNumeral(arg);
         if (value === undefined || value <= 0n || getEuclideanMod(value, divisor) === value)
           return arg;
@@ -244,13 +243,13 @@ export class ArithRewriter extends PolyRewriter {
     if (left === right && divisor === undefined)
       return this.mkIntIte(manager.mkEq(right, zero), this.mkModApp(zero, zero), zero);
     // mod is idempotent on a nonzero modulus.
-    if (manager.getOp(left) === OP_MOD && manager.args[left][1] === right) {
+    if (manager.getOp(left) === OP_MOD && manager.getArg(left, 1) === right) {
       if (divisor !== undefined && divisor !== 0n) return left;
       if (divisor === undefined)
         return this.reduce(
           this.mkIntIte(
             manager.mkEq(right, zero),
-            this.mkModApp(this.mkModApp(manager.args[left][0], zero), zero),
+            this.mkModApp(this.mkModApp(manager.getArg(left, 0), zero), zero),
             left,
           ),
           2,
@@ -259,24 +258,25 @@ export class ArithRewriter extends PolyRewriter {
     // Propagates mod inside a sum or product only if there is something to reduce.
     if (divisor !== undefined && divisor > 0n && (this.isAdd(left) || this.isMul(left))) {
       let isChanged = false;
-      const args = manager.args[left].map((arg) => {
+      const args = manager.mapArgs(left, (arg) => {
         const value = manager.getNumeral(arg);
         if (value !== undefined && getEuclideanMod(value, divisor) !== value) {
           isChanged = true;
           return manager.mkNumeral(getEuclideanMod(value, divisor));
         }
-        if (manager.getOp(arg) === OP_MOD && manager.args[arg][1] === right) {
+        if (manager.getOp(arg) === OP_MOD && manager.getArg(arg, 1) === right) {
           isChanged = true;
-          return manager.args[arg][0];
+          return manager.getArg(arg, 0);
         }
-        const factors = manager.args[arg];
         const coefficient =
-          this.isMul(arg) && factors.length === 2 ? manager.getNumeral(factors[0]) : undefined;
+          this.isMul(arg) && manager.getNumArgs(arg) === 2
+            ? manager.getNumeral(manager.getArg(arg, 0))
+            : undefined;
         if (coefficient !== undefined && getSymmetricMod(coefficient, divisor) !== coefficient) {
           isChanged = true;
           return manager.mkApp(
             OP_MUL,
-            [manager.mkNumeral(getSymmetricMod(coefficient, divisor)), factors[1]],
+            [manager.mkNumeral(getSymmetricMod(coefficient, divisor)), manager.getArg(arg, 1)],
             SORT_INT,
           );
         }
@@ -290,22 +290,27 @@ export class ArithRewriter extends PolyRewriter {
     }
     // For a symbolic modulus, the summands that are multiples of it go: mod (a + k*y) y = mod a y.
     if (divisor === undefined && this.isAdd(left)) {
-      const args = manager.args[left].filter(
-        (arg) =>
+      const args: number[] = [];
+      for (let index = 0; index < manager.getNumArgs(left); index++) {
+        const arg = manager.getArg(left, index);
+        if (
           arg !== right &&
           !(
             this.isMul(arg) &&
-            manager.args[arg].length === 2 &&
-            ((manager.isNumeral(manager.args[arg][0]) && manager.args[arg][1] === right) ||
-              (manager.isNumeral(manager.args[arg][1]) && manager.args[arg][0] === right))
-          ),
-      );
-      if (args.length < manager.args[left].length)
+            manager.getNumArgs(arg) === 2 &&
+            ((manager.isNumeral(manager.getArg(arg, 0)) && manager.getArg(arg, 1) === right) ||
+              (manager.isNumeral(manager.getArg(arg, 1)) && manager.getArg(arg, 0) === right))
+          )
+        )
+          args.push(arg);
+      }
+      if (args.length < manager.getNumArgs(left))
         return this.reduce(this.mkModApp(args.length === 0 ? zero : this.mkAddApp(args), right), 3);
     }
-    const leftArgs = manager.args[left];
     const factor =
-      this.isMul(left) && leftArgs.length === 2 ? manager.getNumeral(leftArgs[0]) : undefined;
+      this.isMul(left) && manager.getNumArgs(left) === 2
+        ? manager.getNumeral(manager.getArg(left, 0))
+        : undefined;
     if (
       divisor !== undefined &&
       divisor > 0n &&
@@ -318,22 +323,25 @@ export class ArithRewriter extends PolyRewriter {
           OP_MUL,
           [
             manager.mkNumeral(factor),
-            this.mkModApp(leftArgs[1], manager.mkNumeral(divisor / factor)),
+            this.mkModApp(manager.getArg(left, 1), manager.mkNumeral(divisor / factor)),
           ],
           SORT_INT,
         ),
         1,
       );
     // mod x -y = mod x y.
-    const rightArgs = manager.args[right];
-    if (this.isMul(right) && rightArgs.length === 2 && manager.getNumeral(rightArgs[0]) === -1n)
-      return this.reduce(this.mkModApp(left, rightArgs[1]), 1);
+    if (
+      this.isMul(right) &&
+      manager.getNumArgs(right) === 2 &&
+      manager.getNumeral(manager.getArg(right, 0)) === -1n
+    )
+      return this.reduce(this.mkModApp(left, manager.getArg(right, 1)), 1);
     if (manager.getOp(right) === OP_ITE)
       return this.reduce(
         this.mkIntIte(
-          rightArgs[0],
-          this.mkModApp(left, rightArgs[1]),
-          this.mkModApp(left, rightArgs[2]),
+          manager.getArg(right, 0),
+          this.mkModApp(left, manager.getArg(right, 1)),
+          this.mkModApp(left, manager.getArg(right, 2)),
         ),
         3,
       );
@@ -376,14 +384,15 @@ export class ArithRewriter extends PolyRewriter {
     if (manager.isInt(arg)) return arg;
     if (manager.isNumeral(arg)) return manager.mkNumeral(this.getValue(arg).floor().num);
     const op = manager.getOp(arg);
-    if (op === OP_TO_REAL && manager.isInt(manager.args[arg][0])) return manager.args[arg][0];
+    if (op === OP_TO_REAL && manager.isInt(manager.getArg(arg, 0))) return manager.getArg(arg, 0);
     if (op !== OP_ADD && op !== OP_MUL) return undefined;
     const intArgs: number[] = [];
     const realArgs: number[] = [];
-    for (const child of manager.args[arg]) {
+    for (let index = 0; index < manager.getNumArgs(arg); index++) {
+      const child = manager.getArg(arg, index);
       if (manager.isNumeral(child) && this.getValue(child).isInt())
         intArgs.push(manager.mkNumeral(this.getValue(child).num));
-      else if (manager.getOp(child) === OP_TO_REAL) intArgs.push(manager.args[child][0]);
+      else if (manager.getOp(child) === OP_TO_REAL) intArgs.push(manager.getArg(child, 0));
       else realArgs.push(child);
     }
     // Z3 makes a sum of one argument, which the manager leaves out.
@@ -409,7 +418,7 @@ export class ArithRewriter extends PolyRewriter {
     return this.reduce(
       manager.mkApp(
         op,
-        manager.args[arg].map((child) => manager.mkApp(OP_TO_REAL, [child], SORT_REAL)),
+        manager.mapArgs(arg, (child) => manager.mkApp(OP_TO_REAL, [child], SORT_REAL)),
         SORT_REAL,
       ),
       2,
@@ -434,7 +443,7 @@ export class ArithRewriter extends PolyRewriter {
       if (op === OP_TO_REAL) continue;
       if (manager.isNumeral(current)) isIntegral = this.getValue(current).isInt();
       else if (op === OP_MUL || op === OP_ADD || op === OP_SUB || op === OP_UMINUS)
-        todo.push(...manager.args[current]);
+        manager.pushArgs(current, todo);
       else isIntegral = false;
     }
     if (isIntegral) return manager.trueExpr;
@@ -454,7 +463,9 @@ export class ArithRewriter extends PolyRewriter {
   }
 
   private flattenMul(expr: number, result: number[]) {
-    if (this.isMul(expr)) for (const arg of this.manager.args[expr]) this.flattenMul(arg, result);
+    if (this.isMul(expr))
+      for (let index = 0; index < this.manager.getNumArgs(expr); index++)
+        this.flattenMul(this.manager.getArg(expr, index), result);
     else result.push(expr);
   }
 
@@ -478,7 +489,8 @@ export class ArithRewriter extends PolyRewriter {
       if (!this.isAdd(sum)) return false;
       let offset = Rational.zero;
       let numBase = 0;
-      for (const arg of this.manager.args[sum]) {
+      for (let index = 0; index < this.manager.getNumArgs(sum); index++) {
+        const arg = this.manager.getArg(sum, index);
         if (this.manager.isNumeral(arg)) offset = offset.add(this.getValue(arg));
         else if (arg === base) numBase++;
         else return false;
@@ -492,14 +504,13 @@ export class ArithRewriter extends PolyRewriter {
     const manager = this.manager;
     if (this.manager.isNumeral(expr)) return this.mkNumeral(this.getValue(expr).neg());
     if (this.isMul(expr)) {
-      const args = manager.args[expr];
-      if (!this.manager.isNumeral(args[0]))
+      const coefficient = manager.getArg(expr, 0);
+      if (!this.manager.isNumeral(coefficient))
         return this.mkMulApp([this.mkNumeral(Rational.minusOne), expr]);
-      const value = this.getValue(args[0]);
-      const rest = args.slice(1);
-      const factors = value.equals(Rational.minusOne)
-        ? rest
-        : [this.mkNumeral(value.neg()), ...rest];
+      const value = this.getValue(coefficient);
+      const factors = value.equals(Rational.minusOne) ? [] : [this.mkNumeral(value.neg())];
+      for (let index = 1; index < manager.getNumArgs(expr); index++)
+        factors.push(manager.getArg(expr, index));
       return factors.length === 1 ? factors[0] : manager.mkApp(OP_MUL, factors, this.currSort);
     }
     return manager.mkApp(OP_MUL, [this.mkNumeral(Rational.minusOne), expr], this.currSort);
@@ -509,13 +520,13 @@ export class ArithRewriter extends PolyRewriter {
     const manager = this.manager;
     const isNegativeMonomial = (term: number) =>
       this.isMul(term) &&
-      this.manager.isNumeral(manager.args[term][0]) &&
-      this.getValue(manager.args[term][0]).isNegative();
+      this.manager.isNumeral(manager.getArg(term, 0)) &&
+      this.getValue(manager.getArg(term, 0)).isNegative();
     if (isNegativeMonomial(expr)) return this.negateMonomial(expr);
-    if (!this.isAdd(expr) || !isNegativeMonomial(manager.args[expr][0])) return undefined;
+    if (!this.isAdd(expr) || !isNegativeMonomial(manager.getArg(expr, 0))) return undefined;
     return manager.mkApp(
       OP_ADD,
-      manager.args[expr].map((arg) => this.negateMonomial(arg)),
+      manager.mapArgs(expr, (arg) => this.negateMonomial(arg)),
       this.currSort,
     );
   }
@@ -530,7 +541,8 @@ export class ArithRewriter extends PolyRewriter {
     let bound = Rational.zero;
     let hasBound = true;
     let lastNegated: number | undefined;
-    for (const arg of this.getMonomials(left)) {
+    for (let index = 0; index < this.getNumMonomials(left); index++) {
+      const arg = this.getMonomial(left, index);
       if (this.manager.isNumeral(arg)) bound = bound.add(this.getValue(arg));
       else if (kind === KIND_LE && this.isNonNegative(arg)) continue;
       else if (kind === KIND_GE) {
@@ -571,14 +583,12 @@ export class ArithRewriter extends PolyRewriter {
       );
     }
     if (!this.isAdd(left)) return undefined;
-    return this.reduce(
-      manager.mkAnd(
-        manager.args[left]
-          .filter((arg) => !this.manager.isNumeral(arg))
-          .map((arg) => this.mkAtom(arg, zero, kind)),
-      ),
-      2,
-    );
+    const atoms: number[] = [];
+    for (let index = 0; index < manager.getNumArgs(left); index++) {
+      const arg = manager.getArg(left, index);
+      if (!manager.isNumeral(arg)) atoms.push(this.mkAtom(arg, zero, kind));
+    }
+    return this.reduce(manager.mkAnd(atoms), 2);
   }
 
   // is_bound.
@@ -612,7 +622,7 @@ export class ArithRewriter extends PolyRewriter {
     const right = isSwapped ? inputLeft : inputRight;
     const kind = isSwapped ? getInverse(inputKind) : inputKind;
     if (manager.getNumeral(right) === undefined || manager.getOp(left) !== OP_MOD) return undefined;
-    const divisor = manager.args[left][1];
+    const divisor = manager.getArg(left, 1);
     if (!this.manager.isNumeral(divisor) || this.manager.getNumeralValue(divisor) === 0n)
       return undefined;
     const value = this.manager.getNumeralValue(right);
@@ -637,7 +647,8 @@ export class ArithRewriter extends PolyRewriter {
       newArgs.push(arg);
     };
     const quotient = manager.withoutTemporaries(() => {
-      for (const arg of this.getMonomials(expr)) {
+      for (let index = 0; index < this.getNumMonomials(expr); index++) {
+        const arg = this.getMonomial(expr, index);
         if (manager.isNumeral(arg)) {
           const value = manager.getNumeralValue(arg);
           const isDivisible = value % divisor === 0n;
@@ -665,7 +676,8 @@ export class ArithRewriter extends PolyRewriter {
   // get_coeffs_gcd: the gcd of the coefficients, or 0 when there is no monomial, and the number of
   // non-zero constants.
   private getCoeffsGcd(expr: number, state: GcdState) {
-    for (const arg of this.getMonomials(expr)) {
+    for (let index = 0; index < this.getNumMonomials(expr); index++) {
+      const arg = this.getMonomial(expr, index);
       if (this.manager.isNumeral(arg)) {
         if (this.manager.getNumeralValue(arg) !== 0n) state.numConsts++;
         continue;
@@ -754,29 +766,28 @@ export class ArithRewriter extends PolyRewriter {
       }
     }
     if (manager.getOp(left) === OP_ITE && this.manager.isNumeral(right)) {
-      const iteArgs = manager.args[left];
-      const condition = iteArgs[0];
+      const condition = manager.getArg(left, 0);
       const rightValue = this.getValue(right);
       const holds = (value: Rational) => this.isHolding(value, rightValue, kind);
       // Z3 makes the negated condition before it knows whether the result uses it, and its
       // conjunctions build an equality with arith_util::mk_eq but its disjunctions with m.mk_eq.
       const mkConjunct = (other: number) =>
         kind === KIND_EQ ? this.mkArithEq(other, right) : this.mkAtom(other, right, kind);
-      if (this.manager.isNumeral(iteArgs[1])) {
+      if (this.manager.isNumeral(manager.getArg(left, 1))) {
         const negated = manager.mkNot(condition);
         return this.reduce(
-          holds(this.getValue(iteArgs[1]))
-            ? manager.mkOr([condition, this.mkAtom(iteArgs[2], right, kind)])
-            : manager.mkAnd([negated, mkConjunct(iteArgs[2])]),
+          holds(this.getValue(manager.getArg(left, 1)))
+            ? manager.mkOr([condition, this.mkAtom(manager.getArg(left, 2), right, kind)])
+            : manager.mkAnd([negated, mkConjunct(manager.getArg(left, 2))]),
           2,
         );
       }
-      if (this.manager.isNumeral(iteArgs[2])) {
+      if (this.manager.isNumeral(manager.getArg(left, 2))) {
         const negated = manager.mkNot(condition);
         return this.reduce(
-          holds(this.getValue(iteArgs[2]))
-            ? manager.mkOr([negated, this.mkAtom(iteArgs[1], right, kind)])
-            : manager.mkAnd([condition, mkConjunct(iteArgs[1])]),
+          holds(this.getValue(manager.getArg(left, 2)))
+            ? manager.mkOr([negated, this.mkAtom(manager.getArg(left, 1), right, kind)])
+            : manager.mkAnd([condition, mkConjunct(manager.getArg(left, 1))]),
           2,
         );
       }
@@ -784,7 +795,7 @@ export class ArithRewriter extends PolyRewriter {
     const isToIntRight = manager.getOp(right) === OP_TO_INT && manager.isNumeral(left);
     const toIntArg =
       manager.getOp(isToIntRight ? right : left) === OP_TO_INT
-        ? manager.args[isToIntRight ? right : left][0]
+        ? manager.getArg(isToIntRight ? right : left, 0)
         : undefined;
     const toIntBound = isToIntRight ? left : right;
     if (toIntArg !== undefined && manager.isNumeral(toIntBound)) {
@@ -854,7 +865,7 @@ export class ArithRewriter extends PolyRewriter {
     for (let index = 0; index < sum.length; index++) {
       const arg = sum[index];
       if (this.isAdd(arg)) {
-        sum.push(...this.manager.args[arg]);
+        this.manager.pushArgs(arg, sum);
         continue;
       }
       if (!this.isMul(arg)) continue;
@@ -868,19 +879,20 @@ export class ArithRewriter extends PolyRewriter {
 
   // get_nl_muls: the factors of a product that are not numerals.
   private getNlMuls(expr: number, muls: number[]) {
-    if (this.isMul(expr)) for (const arg of this.manager.args[expr]) this.getNlMuls(arg, muls);
+    if (this.isMul(expr))
+      for (let index = 0; index < this.manager.getNumArgs(expr); index++)
+        this.getNlMuls(this.manager.getArg(expr, index), muls);
     else if (!this.manager.isNumeral(expr)) muls.push(expr);
   }
 
   private isMulFactor(factor: number, expr: number): boolean {
-    if (this.isMul(expr))
-      return this.manager.args[expr].some((arg) => this.isMulFactor(factor, arg));
+    if (this.isMul(expr)) return this.manager.someArg(expr, (arg) => this.isMulFactor(factor, arg));
     return factor === expr;
   }
 
   private isAddFactor(factor: number, expr: number): boolean {
     if (this.isAdd(expr))
-      return this.manager.args[expr].every((arg) => this.isAddFactor(factor, arg));
+      return this.manager.everyArg(expr, (arg) => this.isAddFactor(factor, arg));
     return this.isMulFactor(factor, expr);
   }
 
@@ -893,7 +905,7 @@ export class ArithRewriter extends PolyRewriter {
       for (let index = 0; index < rest.length; index++) {
         const arg = rest[index];
         if (this.isMul(arg)) {
-          rest.push(...manager.args[arg]);
+          manager.pushArgs(arg, rest);
           rest[index] = rest[rest.length - 1];
           rest.pop();
           index--;
@@ -913,7 +925,7 @@ export class ArithRewriter extends PolyRewriter {
       for (let index = 0; index < sum.length; index++) {
         const arg = sum[index];
         if (this.isAdd(arg)) {
-          sum.push(...manager.args[arg]);
+          manager.pushArgs(arg, sum);
           sum[index] = sum[sum.length - 1];
           sum.pop();
           index--;

@@ -36,7 +36,7 @@ export class FlatLiterals {
     }
     if (this.literalStamps[literal] === this.stamp) return false;
     const isNegated = manager.isNot(literal);
-    const atom = isNegated ? manager.args[literal][0] : literal;
+    const atom = isNegated ? manager.getArg(literal, 0) : literal;
     if (
       isNegated
         ? this.literalStamps[atom] === this.stamp

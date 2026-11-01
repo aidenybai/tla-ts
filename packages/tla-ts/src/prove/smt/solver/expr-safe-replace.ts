@@ -48,7 +48,8 @@ export class ExprSafeReplace {
         const args: number[] = [];
         let isDifferent = false;
         let hasAllArgs = true;
-        for (const arg of manager.args[current]) {
+        for (let index = 0; index < manager.getNumArgs(current); index++) {
+          const arg = manager.getArg(current, index);
           const replaced = hasAllArgs ? this.cache.get(arg) : undefined;
           if (replaced !== undefined) {
             args.push(replaced);

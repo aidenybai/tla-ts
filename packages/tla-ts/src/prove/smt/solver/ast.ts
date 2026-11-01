@@ -580,6 +580,38 @@ export class AstManager {
     return data === undefined ? this.args[expr] : [data.body, ...data.patterns];
   }
 
+  // The arguments of an application; quantifiers, variables and constants have none.
+  getNumArgs(expr: number) {
+    return this.args[expr].length;
+  }
+
+  getArg(expr: number, index: number) {
+    return this.args[expr][index];
+  }
+
+  // Appends the arguments to target, for a caller that needs them as an array.
+  pushArgs(expr: number, target: number[]) {
+    const args = this.args[expr];
+    for (let index = 0; index < args.length; index++) target.push(args[index]);
+  }
+
+  // A new array of the arguments.
+  getArgs(expr: number) {
+    return [...this.args[expr]];
+  }
+
+  mapArgs<T>(expr: number, map: (arg: number, index: number) => T) {
+    return this.args[expr].map(map);
+  }
+
+  someArg(expr: number, predicate: (arg: number, index: number) => boolean) {
+    return this.args[expr].some(predicate);
+  }
+
+  everyArg(expr: number, predicate: (arg: number, index: number) => boolean) {
+    return this.args[expr].every(predicate);
+  }
+
   // A lookup that finds a deleted expression creates it again.
   private revive(expr: number) {
     if (this.ids[expr] === -1) this.registerNode(expr);

@@ -6,7 +6,7 @@ import { RefVector } from "./ref-vector";
 // mk_not.
 export const mkNot = (manager: AstManager, expr: number) =>
   manager.isNot(expr)
-    ? manager.args[expr][0]
+    ? manager.getArg(expr, 0)
     : manager.isTrue(expr)
       ? manager.falseExpr
       : manager.isFalse(expr)
@@ -16,8 +16,8 @@ export const mkNot = (manager: AstManager, expr: number) =>
 // push_not: moves the negation through conjunctions and disjunctions.
 export const pushNot = (manager: AstManager, expr: number): number => {
   const op = manager.getOp(expr);
-  if (op === OP_AND) return manager.mkOr(manager.args[expr].map((arg) => pushNot(manager, arg)));
-  if (op === OP_OR) return manager.mkAnd(manager.args[expr].map((arg) => pushNot(manager, arg)));
+  if (op === OP_AND) return manager.mkOr(manager.mapArgs(expr, (arg) => pushNot(manager, arg)));
+  if (op === OP_OR) return manager.mkAnd(manager.mapArgs(expr, (arg) => pushNot(manager, arg)));
   return mkNot(manager, expr);
 };
 
@@ -41,21 +41,24 @@ const flatten = (manager: AstManager, input: number[], isAnd: boolean) => {
       continue;
     }
     seen.add(expr);
-    const inner = manager.isNot(expr) ? manager.args[expr][0] : -1;
+    const inner = manager.isNot(expr) ? manager.getArg(expr, 0) : -1;
     const innerOp = inner === -1 ? -1 : manager.getOp(inner);
     if (manager.getOp(expr) === junction) {
-      result.push(...manager.args[expr]);
+      manager.pushArgs(expr, result);
       replaceByLast(index--);
-    } else if (innerOp === OP_NOT) result[index--] = manager.args[inner][0];
+    } else if (innerOp === OP_NOT) result[index--] = manager.getArg(inner, 0);
     else if (innerOp === dual) {
-      for (const arg of manager.args[inner]) result.push(mkNot(manager, arg));
+      for (let argIndex = 0; argIndex < manager.getNumArgs(inner); argIndex++) {
+        const arg = manager.getArg(inner, argIndex);
+        result.push(mkNot(manager, arg));
+      }
       replaceByLast(index--);
     } else if (isAnd && innerOp === OP_IMPLIES) {
-      result.push(manager.args[inner][0]);
-      result[index--] = mkNot(manager, manager.args[inner][1]);
+      result.push(manager.getArg(inner, 0));
+      result[index--] = mkNot(manager, manager.getArg(inner, 1));
     } else if (!isAnd && manager.getOp(expr) === OP_IMPLIES) {
-      result.push(manager.args[expr][1]);
-      result[index--] = mkNot(manager, manager.args[expr][0]);
+      result.push(manager.getArg(expr, 1));
+      result[index--] = mkNot(manager, manager.getArg(expr, 0));
     } else if (expr === unit || inner === zero) replaceByLast(index--);
     else if (expr === zero || inner === unit) return [zero];
   }
@@ -87,21 +90,27 @@ const flattenVector = (manager: AstManager, result: RefVector, isAnd: boolean) =
     }
     seen.add(expr);
     pin.push(expr);
-    const inner = manager.isNot(expr) ? manager.args[expr][0] : -1;
+    const inner = manager.isNot(expr) ? manager.getArg(expr, 0) : -1;
     const innerOp = inner === -1 ? -1 : manager.getOp(inner);
     if (manager.getOp(expr) === junction) {
-      for (const arg of manager.args[expr]) result.push(arg);
+      for (let argIndex = 0; argIndex < manager.getNumArgs(expr); argIndex++) {
+        const arg = manager.getArg(expr, argIndex);
+        result.push(arg);
+      }
       replaceByLast(index--);
-    } else if (innerOp === OP_NOT) result.set(index--, manager.args[inner][0]);
+    } else if (innerOp === OP_NOT) result.set(index--, manager.getArg(inner, 0));
     else if (innerOp === dual) {
-      for (const arg of manager.args[inner]) result.push(mkNot(manager, arg));
+      for (let argIndex = 0; argIndex < manager.getNumArgs(inner); argIndex++) {
+        const arg = manager.getArg(inner, argIndex);
+        result.push(mkNot(manager, arg));
+      }
       replaceByLast(index--);
     } else if (isAnd && innerOp === OP_IMPLIES) {
-      result.push(manager.args[inner][0]);
-      result.set(index--, mkNot(manager, manager.args[inner][1]));
+      result.push(manager.getArg(inner, 0));
+      result.set(index--, mkNot(manager, manager.getArg(inner, 1)));
     } else if (!isAnd && manager.getOp(expr) === OP_IMPLIES) {
-      result.push(manager.args[expr][1]);
-      result.set(index--, mkNot(manager, manager.args[expr][0]));
+      result.push(manager.getArg(expr, 1));
+      result.set(index--, mkNot(manager, manager.getArg(expr, 0)));
     } else if (expr === unit || inner === zero) replaceByLast(index--);
     else if (expr === zero || inner === unit) {
       result.reset();
@@ -127,7 +136,10 @@ export const pushNotOwned = (manager: AstManager, expr: number): number => {
     return result;
   }
   const args = new RefVector(manager);
-  for (const arg of manager.args[expr]) args.pushOwned(pushNotOwned(manager, arg));
+  for (let index = 0; index < manager.getNumArgs(expr); index++) {
+    const arg = manager.getArg(expr, index);
+    args.pushOwned(pushNotOwned(manager, arg));
+  }
   const result = op === OP_AND ? manager.mkOr(args.items) : manager.mkAnd(args.items);
   manager.incRef(result);
   args.reset();
