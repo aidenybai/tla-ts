@@ -1533,7 +1533,7 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
 
 const entryEvaluators = new WeakMap<Expression, Evaluator>();
 
-const getEntryEvaluator = (expression: Expression, environment: Environment) => {
+export const getEntryEvaluator = (expression: Expression, environment: Environment) => {
   if (environment.callStack) return getEvaluator(expression, environment);
   const cached = entryEvaluators.get(expression);
   if (cached) return cached;
