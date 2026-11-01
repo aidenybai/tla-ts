@@ -4,7 +4,7 @@
 // deleted in Z3's order. A configuration overrides the hooks of default_rewriter_cfg.
 import { ActCache } from "./act-cache";
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_ITE, type AstManager } from "./ast";
-import { shrink } from "./array";
+import { grow, shrink } from "./array";
 
 // A result that the main loop rewrites again to depth levels, like Z3's BR_REWRITE1 (depth 1) to
 // BR_REWRITE_FULL (depth Infinity).
@@ -328,16 +328,44 @@ export class InvVarShifter extends VarShifterCore {
   }
 }
 
+// The bindings of rewriter_tpl's substitution.
+class SubstCore extends RewriterCore {
+  // m_bindings and m_shifts: the binding of each variable of the substitution, innermost last, and
+  // the number of bindings when it was bound.
+  protected bindings: number[] = [];
+  protected shifts: number[] = [];
+
+  // set_inv_bindings: (:var i) becomes bindings[n - 1 - i], and -1 keeps it.
+  setInvBindings(bindings: number[]) {
+    shrink(this.bindings, 0);
+    shrink(this.shifts, 0);
+    for (const binding of bindings) {
+      this.bindings.push(binding);
+      this.shifts.push(bindings.length);
+    }
+  }
+
+  // set_bindings: (:var i) becomes bindings[i].
+  setBindings(bindings: number[]) {
+    shrink(this.bindings, 0);
+    shrink(this.shifts, 0);
+    for (let index = bindings.length - 1; index >= 0; index--) {
+      this.bindings.push(bindings[index]);
+      this.shifts.push(bindings.length);
+    }
+  }
+
+  updateInvBindingAt(index: number, binding: number) {
+    this.bindings[index] = binding;
+  }
+}
+
 // rewriter_tpl's main loop, which calls the hooks of its configuration. It is a class of its own,
 // rather than the base of the configurations, so that V8 sees one shape of it and keeps its property
 // accesses and calls monomorphic.
-class RewriterEngine extends RewriterCore {
+class RewriterEngine extends SubstCore {
   // m_r: the last result, which Z3 holds until it assigns the next one.
   private lastResult = -1;
-  // m_bindings and m_shifts: the binding of each variable of the substitution, innermost last, and
-  // the number of bindings when it was bound.
-  private bindings: number[] = [];
-  private shifts: number[] = [];
   private newArgs: number[] = [];
   private shifter: VarShifter;
   private invShifter: InvVarShifter;
@@ -366,30 +394,6 @@ class RewriterEngine extends RewriterCore {
     this.getSubstHook = config.getSubst;
     this.shifter = new VarShifter(manager);
     this.invShifter = new InvVarShifter(manager);
-  }
-
-  // set_inv_bindings: (:var i) becomes bindings[n - 1 - i], and -1 keeps it.
-  setInvBindings(bindings: number[]) {
-    shrink(this.bindings, 0);
-    shrink(this.shifts, 0);
-    for (const binding of bindings) {
-      this.bindings.push(binding);
-      this.shifts.push(bindings.length);
-    }
-  }
-
-  // set_bindings: (:var i) becomes bindings[i].
-  setBindings(bindings: number[]) {
-    shrink(this.bindings, 0);
-    shrink(this.shifts, 0);
-    for (let index = bindings.length - 1; index >= 0; index--) {
-      this.bindings.push(bindings[index]);
-      this.shifts.push(bindings.length);
-    }
-  }
-
-  updateInvBindingAt(index: number, binding: number) {
-    this.bindings[index] = binding;
   }
 
   // reset: releases the outermost cache and the bindings.
@@ -887,9 +891,275 @@ export class RewriterTpl {
   }
 }
 
-// beta_reducer: substitutes bindings for variables without rewriting.
-export class BetaReducer extends RewriterTpl {
-  preVisit(expr: number) {
-    return !this.manager.isGroundApp(expr);
+// The flags of a BetaReducer frame: whether to cache its result, whether a child changed, and
+// whether it waits for the branch that an ite folded to, REWRITE_BUILTIN.
+const FRAME_CACHING = 1;
+const FRAME_NEW_CHILD = 2;
+const FRAME_FOLDED = 4;
+
+// beta_reducer: rewriter_tpl with beta_reducer_cfg, which substitutes bindings for variables and
+// rewrites nothing else. Its main loop is RewriterEngine's with the config's hooks folded in:
+// pre_visit skips a ground term, and nothing reduces, expands or rewrites to a depth. So a frame
+// needs no depth and only the ite folding's state, and its fields are typed arrays.
+export class BetaReducer extends SubstCore {
+  // m_r: the last result, which Z3 holds until it assigns the next one.
+  private lastResult = -1;
+  private shifter: VarShifter;
+  // Whether the shifter's cache has entries, which reset releases.
+  private isShifted = false;
+  private frameExprs = new Int32Array(16);
+  private frameChildIndexes = new Int32Array(16);
+  private frameStarts = new Int32Array(16);
+  private frameFlags = new Uint8Array(16);
+
+  constructor(manager: AstManager) {
+    super(manager);
+    this.shifter = new VarShifter(manager);
+  }
+
+  // reset: releases the outermost cache and the bindings. The inverse shifter of rewriter_tpl only
+  // shifts an expanded definition, so it is always empty and left out.
+  reset() {
+    this.resetCore();
+    shrink(this.bindings, 0);
+    shrink(this.shifts, 0);
+    if (!this.isShifted) return;
+    this.shifter.reset();
+    this.isShifted = false;
+  }
+
+  // ~rewriter_tpl: the shifter's cache goes first, then the rewriter's.
+  release() {
+    this.shifter.release();
+    this.releaseCaches();
+  }
+
+  // operator(): the result comes with a reference, which the caller releases.
+  rewrite(expr: number): number {
+    const manager = this.manager;
+    return manager.withoutTemporaries(() => {
+      if (this.numFrames > 0 || this.scopes.length > 0) {
+        this.numFrames = 0;
+        this.shrinkResults(0);
+        this.scopes = [];
+        this.caches[0].reset();
+      }
+      this.root = expr;
+      this.numQvars = 0;
+      // main_loop and each step of resume_core count a step of the resource limit, and throw
+      // SmtCanceledError when it cancels the rewrite.
+      manager.limit.checkpoint();
+      if (!this.visit(expr))
+        while (this.numFrames > 0) {
+          manager.limit.checkpoint();
+          const top = this.numFrames - 1;
+          const curr = this.frameExprs[top];
+          if (
+            this.frameChildIndexes[top] === 0 &&
+            (this.frameFlags[top] & (FRAME_CACHING | FRAME_FOLDED)) === FRAME_CACHING
+          ) {
+            const cached = this.cache.find(curr, 0);
+            if (cached !== undefined) {
+              this.pushResult(cached);
+              this.numFrames--;
+              this.markNewChild(curr, cached);
+              continue;
+            }
+          }
+          if (manager.kinds[curr] === KIND_APP) this.processApp(curr, top);
+          else this.processQuantifier(curr, top);
+        }
+      const result = this.resultStack[this.resultStack.length - 1];
+      this.resultStack.pop();
+      return result;
+    });
+  }
+
+  // operator() with bindings: resets the rewriter and substitutes bindings[n - 1 - i] for (:var i).
+  rewriteWithBindings(expr: number, bindings: number[]) {
+    this.reset();
+    this.setInvBindings(bindings);
+    return this.rewrite(expr);
+  }
+
+  private setLastResult(expr: number) {
+    if (expr !== -1) this.manager.incRef(expr);
+    if (this.lastResult !== -1) this.manager.decRef(this.lastResult);
+    this.lastResult = expr;
+  }
+
+  private markNewChild(oldExpr: number, newExpr: number) {
+    if (oldExpr !== newExpr && this.numFrames > 0)
+      this.frameFlags[this.numFrames - 1] |= FRAME_NEW_CHILD;
+  }
+
+  private openFrame(expr: number, isCaching: boolean) {
+    const index = this.numFrames;
+    if (index === this.frameExprs.length) {
+      this.frameExprs = grow(this.frameExprs);
+      this.frameChildIndexes = grow(this.frameChildIndexes);
+      this.frameStarts = grow(this.frameStarts);
+      this.frameFlags = grow(this.frameFlags);
+    }
+    this.frameExprs[index] = expr;
+    this.frameChildIndexes[index] = 0;
+    this.frameStarts[index] = this.resultStack.length;
+    this.frameFlags[index] = isCaching ? FRAME_CACHING : 0;
+    this.numFrames++;
+  }
+
+  // visit: whether expr is rewritten and its result is on the result stack. Otherwise it opens a
+  // frame for expr. pre_visit's test for a ground term comes before the cache's, which holds no
+  // ground term.
+  private visit(expr: number) {
+    const manager = this.manager;
+    if (manager.isGroundApp(expr)) {
+      this.pushResult(expr);
+      return true;
+    }
+    const isCaching = this.isCaching(expr);
+    if (isCaching) {
+      const cached = this.cache.find(expr, 0);
+      if (cached !== undefined) {
+        this.pushResult(cached);
+        this.markNewChild(expr, cached);
+        return true;
+      }
+    }
+    if (manager.kinds[expr] === KIND_VAR) {
+      this.processVar(expr);
+      return true;
+    }
+    this.openFrame(expr, isCaching);
+    return false;
+  }
+
+  // process_var: a bound variable becomes its binding, shifted over the quantifiers entered since
+  // it was bound.
+  private processVar(variable: number) {
+    const manager = this.manager;
+    const index = manager.values[variable];
+    const position = this.bindings.length - index - 1;
+    const binding = index < this.bindings.length ? this.bindings[position] : -1;
+    if (binding === -1) {
+      this.pushResult(variable);
+      return;
+    }
+    const amount = this.bindings.length - this.shifts[position];
+    if (manager.isGroundApp(binding) || amount === 0) this.pushResult(binding);
+    else {
+      const cached = this.cache.find(binding, amount);
+      if (cached !== undefined) this.pushResult(cached);
+      else {
+        this.isShifted = true;
+        const shifted = this.shifter.shift(binding, 0, amount, 0);
+        this.pushResult(shifted);
+        this.cache.insert(binding, amount, shifted);
+        manager.decRef(shifted);
+      }
+    }
+    this.markNewChild(variable, -1);
+  }
+
+  private processApp(expr: number, top: number) {
+    const manager = this.manager;
+    if (this.frameFlags[top] & FRAME_FOLDED) {
+      this.finishFolded(expr, top);
+      return;
+    }
+    const numArgs = manager.getNumArgs(expr);
+    while (this.frameChildIndexes[top] < numArgs) {
+      const childIndex = this.frameChildIndexes[top];
+      if (childIndex === 1 && this.isConstantFolded(expr, top)) return;
+      this.frameChildIndexes[top] = childIndex + 1;
+      if (!this.visit(manager.getArg(expr, childIndex))) return;
+    }
+    const spos = this.frameStarts[top];
+    this.setLastResult(
+      this.frameFlags[top] & FRAME_NEW_CHILD
+        ? manager.mkApp(manager.decls[expr], this.resultStack, manager.sorts[expr], spos)
+        : expr,
+    );
+    const result = this.lastResult;
+    this.shrinkResults(spos);
+    this.pushResult(result);
+    if (this.frameFlags[top] & FRAME_CACHING) this.cache.insert(expr, 0, result);
+    this.numFrames--;
+    this.markNewChild(expr, result);
+    this.setLastResult(-1);
+  }
+
+  // REWRITE_BUILTIN: the result of the folded branch replaces the ite on the result stack.
+  private finishFolded(expr: number, top: number) {
+    const result = this.resultStack[this.resultStack.length - 1];
+    this.setLastResult(result);
+    this.shrinkResults(this.resultStack.length - 1);
+    this.shrinkResults(this.resultStack.length - 1);
+    this.pushResult(result);
+    if (this.frameFlags[top] & FRAME_CACHING) this.cache.insert(expr, 0, result);
+    this.numFrames--;
+    this.markNewChild(expr, -1);
+  }
+
+  // constant_fold: an ite whose condition rewrote to true or false becomes the chosen branch.
+  private isConstantFolded(expr: number, top: number) {
+    const manager = this.manager;
+    if (manager.getOp(expr) !== OP_ITE) return false;
+    const spos = this.frameStarts[top];
+    const condition = this.resultStack[spos];
+    const arg = manager.isTrue(condition)
+      ? manager.getArg(expr, 1)
+      : manager.isFalse(condition)
+        ? manager.getArg(expr, 2)
+        : -1;
+    if (arg === -1) return false;
+    this.shrinkResults(spos);
+    this.pushResult(arg);
+    this.frameFlags[top] |= FRAME_FOLDED;
+    if (this.visit(arg)) this.finishFolded(expr, top);
+    this.setLastResult(-1);
+    return true;
+  }
+
+  private processQuantifier(expr: number, top: number) {
+    const manager = this.manager;
+    const data = manager.getQuantifier(expr);
+    const numDecls = data.sorts.length;
+    if (this.frameChildIndexes[top] === 0) {
+      this.beginScope();
+      this.root = data.body;
+      const size = this.bindings.length;
+      for (let index = 0; index < numDecls; index++) {
+        this.bindings.push(-1);
+        this.shifts.push(size);
+      }
+      this.numQvars += numDecls;
+    }
+    while (this.frameChildIndexes[top] <= data.patterns.length) {
+      const childIndex = this.frameChildIndexes[top];
+      this.frameChildIndexes[top] = childIndex + 1;
+      if (!this.visit(childIndex === 0 ? data.body : data.patterns[childIndex - 1])) return;
+    }
+    const spos = this.frameStarts[top];
+    const body = this.resultStack[spos];
+    // new_pats: the patterns, which Z3 holds until the quantifier is done.
+    const patterns = this.resultStack.slice(spos + 1);
+    for (const pattern of patterns) manager.incRef(pattern);
+    this.setLastResult(
+      this.frameFlags[top] & FRAME_NEW_CHILD
+        ? manager.mkQuantifier({ ...data, body, patterns })
+        : expr,
+    );
+    const result = this.lastResult;
+    this.shrinkResults(spos);
+    this.pushResult(result);
+    shrink(this.bindings, this.bindings.length - numDecls);
+    shrink(this.shifts, this.shifts.length - numDecls);
+    this.endScope();
+    if (this.frameFlags[top] & FRAME_CACHING) this.cache.insert(expr, 0, result);
+    this.setLastResult(-1);
+    this.numFrames--;
+    this.markNewChild(expr, result);
+    for (const pattern of patterns) manager.decRef(pattern);
   }
 }

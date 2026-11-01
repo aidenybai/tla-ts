@@ -9,3 +9,14 @@ export const setAt = <T>(values: (T | undefined)[], index: number, value: T | un
   while (values.length < index) values.push(undefined);
   values[index] = value;
 };
+
+// A typed array of twice the length with the same contents.
+export const grow = <
+  T extends Uint8Array<ArrayBuffer> | Int32Array<ArrayBuffer> | Uint32Array<ArrayBuffer>,
+>(
+  array: T,
+): T => {
+  const grown = new (array.constructor as new (length: number) => T)(2 * array.length);
+  grown.set(array);
+  return grown;
+};

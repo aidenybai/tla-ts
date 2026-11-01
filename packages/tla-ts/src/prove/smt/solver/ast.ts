@@ -5,7 +5,7 @@ import { FlatLiterals } from "./flat-literals";
 import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
-import { shrink } from "./array";
+import { grow, shrink } from "./array";
 import type { ResourceLimit } from "./rlimit";
 
 export const KIND_APP = 0;
@@ -229,17 +229,6 @@ interface SignatureDecl {
   refCount: number;
 }
 
-// A typed array of twice the length with the same contents.
-const grow = <
-  T extends Uint8Array<ArrayBuffer> | Int32Array<ArrayBuffer> | Uint32Array<ArrayBuffer>,
->(
-  array: T,
-): T => {
-  const grown = new (array.constructor as new (length: number) => T)(2 * array.length);
-  grown.set(array);
-  return grown;
-};
-
 export class AstManager {
   // The tables of the expressions are typed arrays indexed by expression, which the collector does
   // not scan. They have room for more expressions than numNodes and double when full, which
@@ -314,6 +303,8 @@ export class AstManager {
   // no temporaries are held.
   private temporaries: number[] = [];
   private temporariesMark = -1;
+  // The arguments mkApp copies out of a caller's array that starts past index 0.
+  private argBuffer: number[] = [];
   // m_small_ints and m_small_reals: the numerals below MAX_SMALL_NUM_TO_CACHE, which are held.
   private smallInts: number[] = [];
   private smallReals: number[] = [];
@@ -836,36 +827,43 @@ export class AstManager {
     return id;
   }
 
-  // The op of a builtin declaration doubles as its index in funcDecls.
-  mkApp(decl: number, args: number[], sort: number) {
+  // The op of a builtin declaration doubles as its index in funcDecls. The arguments are those of
+  // args from start on, so that a rewriter passes its result stack without copying it.
+  mkApp(decl: number, args: number[], sort: number, start = 0) {
     // Numerals and model values carry their value, so only mkNumeral and mkModelValue create them.
     if (decl === OP_NUM || this.funcDecls[decl].family === FAMILY_MODEL_VALUE)
       throw new SmtInvariantError(`${this.funcDecls[decl].name} needs a value`);
     let hash = decl;
-    for (let index = 0; index < args.length; index++)
+    for (let index = start; index < args.length; index++)
       hash = (Math.imul(hash, 0x9e3779b1) + args[index]) | 0;
+    const count = args.length - start;
     const mask = this.appHandles.length - 1;
     for (let slot = hash & mask; this.appHandles[slot] !== -1; slot = (slot + 1) & mask) {
       const candidate = this.appHandles[slot];
       if (this.appHashes[slot] !== hash || this.decls[candidate] !== decl) continue;
-      const start = this.argStarts[candidate];
-      if (this.argStarts[candidate + 1] - start !== args.length) continue;
+      const poolStart = this.argStarts[candidate];
+      if (this.argStarts[candidate + 1] - poolStart !== count) continue;
       let isSame = true;
-      for (let index = 0; index < args.length && isSame; index++)
-        isSame = this.argPool[start + index] === args[index];
+      for (let index = 0; index < count && isSame; index++)
+        isSame = this.argPool[poolStart + index] === args[start + index];
       if (isSame) return this.revive(candidate);
     }
+    if (start > 0) {
+      shrink(this.argBuffer, 0);
+      for (let index = start; index < args.length; index++) this.argBuffer.push(args[index]);
+    }
+    const nodeArgs = start > 0 ? this.argBuffer : args;
     const declHash =
       this.funcDecls[decl].family === FAMILY_USER
         ? this.declHashes[decl]
-        : this.getBuiltinHash(this.funcDecls[decl].op, args, sort);
+        : this.getBuiltinHash(this.funcDecls[decl].op, nodeArgs, sort);
     const id = this.create(
       KIND_APP,
       decl,
-      args,
+      nodeArgs,
       sort,
       0,
-      astArrayHash(args, this.hashes, declHash),
+      astArrayHash(nodeArgs, this.hashes, declHash),
     );
     this.insertApp(hash, id);
     this.registerNode(id);
