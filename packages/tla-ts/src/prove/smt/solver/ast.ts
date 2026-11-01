@@ -253,6 +253,8 @@ export class AstManager {
   // The index of a variable or model value, or of a numeral's value in numeralValues.
   values = new Int32Array(1024);
   private numeralValues: Rational[] = [];
+  // The integer numerals by value, which finds one without building its key in the table.
+  private intNumerals = new Map<bigint, number>();
   // One more than the largest free de Bruijn index, so 0 means the expression is ground.
   freeVarBounds = new Int32Array(1024);
   hasQuantifierFlags = new Uint8Array(1024);
@@ -1002,11 +1004,12 @@ export class AstManager {
   }
 
   mkNumeral(value: bigint) {
-    return this.holdSmallNumeral(
-      this.internNumeral(`n${value}`, Rational.of(value), SORT_INT),
-      value,
-      this.smallInts,
-    );
+    const existing = this.intNumerals.get(value);
+    if (existing !== undefined)
+      return this.holdSmallNumeral(this.revive(existing), value, this.smallInts);
+    const numeral = this.internNumeral(`n${value}`, Rational.of(value), SORT_INT);
+    this.intNumerals.set(value, numeral);
+    return this.holdSmallNumeral(numeral, value, this.smallInts);
   }
 
   private holdSmallNumeral(numeral: number, value: bigint, cache: number[]) {

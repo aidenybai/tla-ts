@@ -90,12 +90,16 @@ export class Rational {
     return this.num < 0n;
   }
 
+  // A sum with zero is the other operand, so a sum that starts at zero allocates nothing.
   add(other: Rational) {
+    if (this.num === 0n) return other;
+    if (other.num === 0n) return this;
     if (this.den === 1n && other.den === 1n) return new Rational(this.num + other.num, 1n);
     return Rational.of(this.num * other.den + other.num * this.den, this.den * other.den);
   }
 
   sub(other: Rational) {
+    if (other.num === 0n) return this;
     if (this.den === 1n && other.den === 1n) return new Rational(this.num - other.num, 1n);
     return Rational.of(this.num * other.den - other.num * this.den, this.den * other.den);
   }

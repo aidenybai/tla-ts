@@ -206,11 +206,14 @@ export class QiQueue {
   private scopes: number[] = [];
   private checker: Checker;
   // cached_var_subst: each instance by its quantifier and bindings, which the queue holds with them
-  // until the next search. instanceRefs lists the quantifier, the bindings and the instance of each,
-  // and instances maps a hash of the key to where its entries start there.
+  // until the next search. instanceRefs lists the quantifier, the bindings and the instance of each.
+  // instanceStarts holds where each instance starts there, and instanceNext the earlier instance of
+  // the same hash, or -1. instances maps a hash of the key to its last instance.
   private subst: VarSubst;
-  private instances = new Map<number, number[]>();
+  private instances = new Map<number, number>();
   private instanceRefs: number[] = [];
+  private instanceStarts: number[] = [];
+  private instanceNext: number[] = [];
   private bindingOwners: number[] = [];
   // m_instances: the lemmas, which the queue holds until their scope is popped.
   private lemmas: RefVector;
@@ -227,19 +230,25 @@ export class QiQueue {
     const refs = this.instanceRefs;
     let hash = quantifier;
     for (const binding of bindings) hash = (Math.imul(hash, 0x9e3779b1) + binding) | 0;
-    const bucket = this.instances.get(hash);
-    for (const start of bucket ?? []) {
+    const last = this.instances.get(hash) ?? -1;
+    for (let entry = last; entry !== -1; entry = this.instanceNext[entry]) {
+      const start = this.instanceStarts[entry];
       let isSame = refs[start] === quantifier;
       for (let index = 0; index < bindings.length && isSame; index++)
         isSame = refs[start + 1 + index] === bindings[index];
       if (isSame) return refs[start + 1 + bindings.length];
     }
     const instance = this.subst.apply(manager.getQuantifier(quantifier).body, bindings);
-    if (bucket === undefined) this.instances.set(hash, [refs.length]);
-    else bucket.push(refs.length);
+    this.instances.set(hash, this.instanceStarts.length);
+    this.instanceStarts.push(refs.length);
+    this.instanceNext.push(last);
     manager.incRef(quantifier);
-    for (const binding of bindings) manager.incRef(binding);
-    refs.push(quantifier, ...bindings, instance);
+    refs.push(quantifier);
+    for (const binding of bindings) {
+      manager.incRef(binding);
+      refs.push(binding);
+    }
+    refs.push(instance);
     return instance;
   }
 
@@ -345,6 +354,8 @@ export class QiQueue {
     const manager = this.context.manager;
     for (const expr of this.instanceRefs) manager.decRef(expr);
     this.instanceRefs = [];
+    this.instanceStarts = [];
+    this.instanceNext = [];
     this.instances.clear();
     this.newEntries = [];
   }

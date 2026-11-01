@@ -206,6 +206,18 @@ describe("decideSmt on real arithmetic", () => {
     ).toBe("sat");
   });
 
+  it("finds no integer x with x * (x + 1) < 0", () => {
+    expect(decideLines("(declare-fun x () Int)", "(assert (not (>= (* x (+ x 1)) 0)))")).toBe(
+      "unsat",
+    );
+  });
+
+  it("finds a real x with x * (x + 1) < 0", () => {
+    expect(decideLines("(declare-fun x () Real)", "(assert (not (>= (* x (+ x 1.0)) 0.0)))")).toBe(
+      "sat",
+    );
+  });
+
   it("refutes a negative square", () => {
     expect(decideLines("(declare-fun x () Real)", "(assert (< (* x x) 0.0))")).toBe("unsat");
   });
