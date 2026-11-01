@@ -21,7 +21,7 @@ import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
 import { contextualApplications, mapChildren, substitutedExpressions } from "./instances";
 import { prettyPrint } from "./pretty-print";
-import { isEnabled } from "./successors";
+import { getReadLocals, isEnabled } from "./successors";
 import {
   applyFunction,
   describeMissingArgument,
@@ -1685,52 +1685,180 @@ export const compileArgumentScope = (
 };
 
 interface MemoizedCall {
+  sources: (Expression | undefined)[];
   args: Value[];
   value: Value;
 }
 
 const MEMOIZED_CALL_LIMIT = 1 << 16;
 
-const callMemos = new WeakMap<Closure, { calls: Map<number, MemoizedCall[]>; size: number }>();
+// A call site that finds fewer than half its calls in a state's memo after this many new ones
+// stops paying for the lookups.
+const MEMOIZED_TRIAL_CALLS = 1 << 10;
 
-const getCallMemo = (closure: Closure) => {
+interface CallMemo {
+  calls: Map<number, MemoizedCall[]>;
+  size: number;
+  state: Context["state"];
+}
+
+interface CallMemos {
+  constant: CallMemo;
+  state: CallMemo;
+}
+
+const createCallMemo = (): CallMemo => ({ calls: new Map(), size: 0, state: undefined });
+
+const callMemos = new WeakMap<Closure, CallMemos>();
+
+const getCallMemos = (closure: Closure) => {
   const cached = callMemos.get(closure);
   if (cached) return cached;
-  const memo = { calls: new Map<number, MemoizedCall[]>(), size: 0 };
-  callMemos.set(closure, memo);
-  return memo;
+  const memos = { constant: createCallMemo(), state: createCallMemo() };
+  callMemos.set(closure, memos);
+  return memos;
 };
 
-const getArgumentValues = (scope: Scope | undefined, arity: number) => {
-  const values: Value[] = [];
-  for (let current = scope; values.length < arity; current = current?.parent) {
-    if (current?.binding.kind !== "Value") return undefined;
-    values.push(current.binding.value);
+const readsExceptAt = (expression: Expression): boolean =>
+  expression.kind === "ExceptAt" || getChildren(expression).some(readsExceptAt);
+
+// The locals an argument expression reads, when the state and their values decide its value. An @
+// reads the value its EXCEPT binds.
+const argumentLocals = new WeakMap<Expression, string[] | false>();
+
+const getArgumentLocals = (expression: Expression, environment: Environment) => {
+  const cached = argumentLocals.get(expression);
+  if (cached !== undefined) return cached;
+  const locals =
+    getReadVariables(expression, environment) !== undefined &&
+    getReadLocals(expression, NO_BOUND_NAMES);
+  const unique = locals && [
+    ...new Set(readsExceptAt(expression) ? [...locals, EXCEPT_AT] : locals),
+  ];
+  argumentLocals.set(expression, unique ?? false);
+  return unique ?? false;
+};
+
+// Hashing a lazy set or function would enumerate it, which TLC does only when it has to.
+const isEagerValue = (value: Value) =>
+  typeof value !== "object" ||
+  value.kind === "ModelValue" ||
+  value.kind === "Set" ||
+  value.kind === "Function" ||
+  value.kind === "Interval";
+
+// The key of the call being looked up, copied into the memo only when the call is new. Counts
+// mark its ends, since shortening an array is slow.
+const callKey = {
+  sources: [] as (Expression | undefined)[],
+  sourceCount: 0,
+  args: [] as Value[],
+  argCount: 0,
+  hash: 0,
+  isStateKeyed: false,
+};
+
+// A model value's rank tells it apart without hashing its name.
+const getKeyHash = (value: Value) =>
+  typeof value === "object" && value.kind === "ModelValue" ? value.rank : getValueHash(value);
+
+const pushKeyValue = (value: Value) => {
+  if (!isEagerValue(value)) return false;
+  callKey.sources[callKey.sourceCount++] = undefined;
+  callKey.args[callKey.argCount++] = value;
+  callKey.hash = combineHash(callKey.hash, getKeyHash(value));
+  return true;
+};
+
+// An argument TLC has not evaluated yet stands for its expression and the values of the locals it
+// reads, so a call keeps the laziness of its arguments.
+const pushKeyExpression = (
+  expression: Expression,
+  locals: string[] | false,
+  scope: Scope | undefined,
+) => {
+  if (!locals) return false;
+  callKey.sources[callKey.sourceCount++] = expression;
+  callKey.isStateKeyed = true;
+  for (let index = 0; index < locals.length; index++) {
+    const local = lookupScope(scope, locals[index]);
+    if (local?.kind !== "Value" || !isEagerValue(local.value)) return false;
+    callKey.args[callKey.argCount++] = local.value;
+    callKey.hash = combineHash(callKey.hash, getKeyHash(local.value));
   }
-  return values;
+  return true;
 };
 
-const isSameArguments = (left: Value[], right: Value[]) =>
-  left.every((value, index) => isSameValue(value, right[index]));
+// Each argument adds to the key what compileArgumentBinder would bind its parameter to.
+const compileArgumentKey = (
+  argument: Expression,
+  environment: Environment,
+): ((context: Context) => boolean) => {
+  const isLiteral =
+    argument.kind === "String" || (argument.kind === "Number" && isTlcInteger(argument.value));
+  if (isLiteral) return () => pushKeyValue(argument.value);
+  if (argument.kind === "Identifier") {
+    const global = isLocallyResolved(argument)
+      ? undefined
+      : findGlobalName(argument.name, environment);
+    if (global?.kind === "Value") return () => pushKeyValue(global.value);
+    if (global === undefined) {
+      return (context) => {
+        const binding = lookupScope(context.scope, argument.name);
+        if (binding?.kind === "Value") return pushKeyValue(binding.value);
+        if (binding?.kind !== "Thunk" || binding.state !== context.state) return false;
+        return pushKeyExpression(
+          binding.expression,
+          getArgumentLocals(binding.expression, environment),
+          binding.scope,
+        );
+      };
+    }
+  }
+  const locals = getArgumentLocals(argument, environment);
+  return (context) => pushKeyExpression(argument, locals, context.scope);
+};
 
-// A constant-level operator without side effects yields the same value for the same arguments,
-// so its calls with evaluated arguments share one result.
-const isMemoizable = (expression: Expression & { kind: "Apply" }, environment: Environment) => {
+const isKnownCall = (call: MemoizedCall) => {
+  if (call.args.length !== callKey.argCount || call.sources.length !== callKey.sourceCount) {
+    return false;
+  }
+  for (let index = 0; index < callKey.sourceCount; index++) {
+    if (call.sources[index] !== callKey.sources[index]) return false;
+  }
+  for (let index = 0; index < callKey.argCount; index++) {
+    if (!isSameValue(call.args[index], callKey.args[index])) return false;
+  }
+  return true;
+};
+
+const findCall = (bucket: MemoizedCall[] | undefined) => {
+  if (bucket === undefined) return undefined;
+  for (let index = 0; index < bucket.length; index++) {
+    if (isKnownCall(bucket[index])) return bucket[index];
+  }
+  return undefined;
+};
+
+// An operator without side effects yields the same value for the same arguments, a state-level one
+// in the same state, so its calls share one result.
+const getMemoizedLevel = (expression: Expression & { kind: "Apply" }, environment: Environment) => {
   const definition = getDefinition(expression.operator, environment);
-  return (
+  const isMemoizable =
     definition?.kind === "Operator" &&
     definition.params.length > 0 &&
     definition.params.every((param) => param.arity === 0) &&
-    isConstantLevel(definition, environment) &&
-    !isImpureDefinition(definition, environment)
-  );
+    !isImpureDefinition(definition, environment);
+  if (!isMemoizable) return undefined;
+  if (isConstantLevel(definition, environment)) return "constant";
+  return isStatePure(definition, environment) ? "state" : undefined;
 };
 
 const compileClosureCall = (
   closure: Closure,
   args: Expression[],
   environment: Environment,
-  isMemoized: boolean,
+  memoizedLevel: "constant" | "state" | undefined,
 ): Evaluator => {
   const bindArguments = compileArgumentScope(closure, args, environment);
   const compiled = { body: undefined as Evaluator | undefined };
@@ -1744,23 +1872,49 @@ const compileClosureCall = (
       isKeepLazy: context.isKeepLazy,
     });
   };
-  if (!isMemoized) return (context) => evaluateBody(bindArguments(context), context);
-  const memo = getCallMemo(closure);
+  if (!memoizedLevel || args.length !== closure.params.length) {
+    return (context) => evaluateBody(bindArguments(context), context);
+  }
+  const memos = getCallMemos(closure);
+  const keys = args.map((arg) => compileArgumentKey(arg, environment));
+  const usage = { hits: 0, misses: 0 };
   return (context) => {
-    const scope = bindArguments(context);
-    const values = getArgumentValues(scope, args.length);
     // A call TLC evaluates with EvalControl.KeepLazy builds what a memoized one wouldn't.
-    if (!values || context.isKeepLazy) return evaluateBody(scope, context);
-    let hash = values.length;
-    for (const value of values) hash = combineHash(hash, getValueHash(value));
+    if (context.isKeepLazy) return evaluateBody(bindArguments(context), context);
+    callKey.sourceCount = 0;
+    callKey.argCount = 0;
+    callKey.hash = args.length;
+    callKey.isStateKeyed = false;
+    for (let index = 0; index < keys.length; index++) {
+      if (!keys[index](context)) return evaluateBody(bindArguments(context), context);
+    }
+    const isStateKeyed = memoizedLevel === "state" || callKey.isStateKeyed;
+    if (isStateKeyed && usage.misses > MEMOIZED_TRIAL_CALLS && usage.hits < usage.misses) {
+      return evaluateBody(bindArguments(context), context);
+    }
+    const memo = isStateKeyed ? memos.state : memos.constant;
+    if (isStateKeyed && memo.state !== context.state) {
+      memo.state = context.state;
+      memo.calls.clear();
+      memo.size = 0;
+    }
+    // A small integer key keeps the Map from boxing it.
+    const hash = callKey.hash & 0x3fffffff;
     const bucket = memo.calls.get(hash);
-    const known = bucket?.find((call) => isSameArguments(call.args, values));
-    if (known) return known.value;
-    const value = evaluateBody(scope, context);
+    const known = findCall(bucket);
+    if (known) {
+      if (isStateKeyed) usage.hits++;
+      return known.value;
+    }
+    if (isStateKeyed) usage.misses++;
+    const sources = callKey.sources.slice(0, callKey.sourceCount);
+    const keyArgs = callKey.args.slice(0, callKey.argCount);
+    const value = evaluateBody(bindArguments(context), context);
     if (memo.size < MEMOIZED_CALL_LIMIT) {
       memo.size++;
-      if (bucket) bucket.push({ args: values, value });
-      else memo.calls.set(hash, [{ args: values, value }]);
+      const call = { sources, args: keyArgs, value };
+      if (bucket) bucket.push(call);
+      else memo.calls.set(hash, [call]);
     }
     return value;
   };
@@ -1788,8 +1942,10 @@ const compileApply = (
     : resolveGlobalOperator(expression.operator, environment);
   if (global?.kind === "Closure") {
     // The replay records the evaluation of each call, which TLC repeats.
-    const isMemoized = !environment.callStack && isMemoizable(expression, environment);
-    return compileClosureCall(global, args, environment, isMemoized);
+    const memoizedLevel = environment.callStack
+      ? undefined
+      : getMemoizedLevel(expression, environment);
+    return compileClosureCall(global, args, environment, memoizedLevel);
   }
   if (global?.kind === "Builtin" && global.name === "DOMAIN") {
     const operand = getEvaluator(args[0], environment);
