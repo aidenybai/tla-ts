@@ -566,13 +566,13 @@ export class AstManager {
       }
       // The children: the arguments of an application, and the body and then the patterns of a
       // quantifier.
-      const data = this.quantifiers.get(node);
-      if (data === undefined) {
+      if (this.kinds[node] !== KIND_QUANTIFIER) {
         const end = this.argStarts[node + 1];
         for (let index = this.argStarts[node]; index < end; index++)
           this.releaseChild(this.argPool[index], worklist);
         continue;
       }
+      const data = this.getQuantifier(node);
       this.releaseChild(data.body, worklist);
       for (const pattern of data.patterns) this.releaseChild(pattern, worklist);
     }
@@ -596,12 +596,12 @@ export class AstManager {
     this.refCounts[expr] = 0;
     // The children: the arguments of an application, and the body and then the patterns of a
     // quantifier.
-    const data = this.quantifiers.get(expr);
-    if (data === undefined) {
+    if (this.kinds[expr] !== KIND_QUANTIFIER) {
       const end = this.argStarts[expr + 1];
       for (let index = this.argStarts[expr]; index < end; index++)
         this.incRef(this.revive(this.argPool[index]));
     } else {
+      const data = this.getQuantifier(expr);
       this.incRef(this.revive(data.body));
       for (const pattern of data.patterns) this.incRef(this.revive(pattern));
     }
