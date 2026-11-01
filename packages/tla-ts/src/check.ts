@@ -1680,11 +1680,28 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       if (deferred.length > 0) throw deferred[0];
     });
   };
-  const replayNext = (state: Value[]) =>
+  // TLC replays the expansion of a state with ModelChecker.doNext, which writes each successor in
+  // the model to the -dump state graph again.
+  const replayNext = (index: number) =>
     getReplayFailure((tracing) => {
+      const state = states[index];
+      const source = stateWriter && getGraphState(state, depths[index]);
       const addReplayed = createReplayedStates();
-      replaySuccessors(getSpecNextActions(), state, tracing, (next) => {
-        const addFingerprint = () => addReplayed(next, tracing.callStack);
+      replaySuccessors(getSpecNextActions(), state, tracing, (next, action) => {
+        const addFingerprint = () => {
+          const isUnseen = addReplayed(next, tracing.callStack);
+          if (source) {
+            stateWriter?.writeSuccessor(
+              source,
+              getGraphState(next, depths[index] + 1),
+              !isUnseen,
+              isNamingEdges
+                ? { name: action.name, signature: getActionSignature(action) }
+                : undefined,
+            );
+          }
+          return isUnseen;
+        };
         if (!search.checkReplayedSuccessor(state, next, tracing, addFingerprint)) {
           throw STOP_REPLAY;
         }
@@ -2247,7 +2264,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         // TLC replays the expansion and skips the invariants of a state it has seen, the failed one
         // included unless the constraints exclude it. When the replay fails, TLC reports where and
         // leaves out the outdegree.
-        const replay = getOutput(() => replayNext(state));
+        const replay = getOutput(() => replayNext(index));
         return toFailure(
           error,
           appendTraceOutput(getFailedTrace(index, successor), replay.lines),
@@ -2408,7 +2425,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const result = { callStack: live.result, fingerprint: undefined, isLiveCallStack: true };
       return { result, lines: live.lines };
     }
-    const replay = getOutput(() => replayNext(states[index]));
+    const replay = getOutput(() => replayNext(index));
     return { result: replay.result, lines: [...live.lines, ...replay.lines] };
   };
   // TLC reports a stack overflow while it computes next states without replaying it, with the
@@ -2444,7 +2461,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         // which it reports with the trace before it rethrows. The error stops its worker before it
         // adds the state to the behavior graph.
         const replay = is174
-          ? getOutput(() => replayNext(state))
+          ? getOutput(() => replayNext(index))
           : replayFailedNext(index, liveSuccessors);
         if (is174 && error instanceof TlaEvaluationError && !headedErrors.has(error)) {
           outcome.result = toFailure(
