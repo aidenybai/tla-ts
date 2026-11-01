@@ -578,15 +578,19 @@ interface LazyFunction {
   scope: Scope | undefined;
 }
 
-const lazyFunctions = new WeakMap<LazyFunctionValue, LazyFunction>();
+// The function keeps its parameters, body and scope itself, since a WeakMap entry for each
+// short-lived function makes every garbage collection slower.
+interface KeptLazyFunctionValue extends LazyFunctionValue {
+  lambda: LazyFunction;
+}
 
-const keepLambda = (lambda: LazyFunction) => {
-  lazyFunctions.set(lambda.value, lambda);
-  return lambda.value;
-};
+const isKeptLazyFunction = (value: Value): value is KeptLazyFunctionValue =>
+  typeof value === "object" && value.kind === "LazyFunction" && "lambda" in value;
+
+const keepLambda = (lambda: LazyFunction) => Object.assign(lambda.value, { lambda });
 
 export const getLazyFunction = (value: Value) =>
-  typeof value === "object" && value.kind === "LazyFunction" ? lazyFunctions.get(value) : undefined;
+  isKeptLazyFunction(value) ? value.lambda : undefined;
 
 // Tool.getFcnContext: the scope of a lazy function's body for the arguments of an application. It
 // ignores arguments beyond the parameters.
@@ -1375,9 +1379,14 @@ const isStateCached = (expression: Expression, environment: Environment) =>
   getReadVariables(expression, environment) !== undefined &&
   !hasFreeLocals(expression, NO_BOUND_NAMES);
 
-// How to rebuild a set filter TLC evaluates lazily so that its predicate runs in another
+// A set filter TLC evaluates lazily, with how to rebuild it so that its predicate runs in another
 // environment.
-const filteredSetRebinders = new WeakMap<FilteredSetValue, (environment: Environment) => Value>();
+interface RebindableFilteredSet extends FilteredSetValue {
+  rebind: (environment: Environment) => Value;
+}
+
+const isRebindableFilteredSet = (value: Value): value is RebindableFilteredSet =>
+  typeof value === "object" && value.kind === "FilteredSet" && "rebind" in value;
 
 // TLC's CallStackTool rebinds the lazy values its evaluations return, so their later evaluation
 // records its call stack too.
@@ -1398,11 +1407,7 @@ const traceEvaluator =
     setTrace.callStack = callStack;
     try {
       const computed = evaluator(context);
-      const rebind =
-        typeof computed === "object" && computed.kind === "FilteredSet"
-          ? filteredSetRebinders.get(computed)
-          : undefined;
-      const value = rebind ? rebind(environment) : computed;
+      const value = isRebindableFilteredSet(computed) ? computed.rebind(environment) : computed;
       callStack.values.set(expression, value);
       if (typeof value === "object" && value.kind !== "FilteredSet" && isSourced(expression)) {
         callStack.sources.set(value, expression);
@@ -2069,22 +2074,18 @@ const compileSetComprehension = (
       base: Value,
       context: Context,
       evaluator: Evaluator,
-    ): FilteredSetValue => {
-      const filtered: FilteredSetValue = {
-        kind: "FilteredSet",
-        base,
-        test: createTest(evaluator, context),
-        source,
-      };
-      filteredSetRebinders.set(filtered, (tracing) =>
+    ): RebindableFilteredSet => ({
+      kind: "FilteredSet",
+      base,
+      test: createTest(evaluator, context),
+      source,
+      rebind: (tracing) =>
         createFiltered(
           base,
           { ...context, environment: tracing },
           getEvaluator(expression.predicate, tracing),
         ),
-      );
-      return filtered;
-    };
+    });
     return (context) => {
       const base = set(context);
       // TLC filters any value it can't enumerate lazily, and fails only when it uses the result.
