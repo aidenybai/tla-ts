@@ -2107,17 +2107,14 @@ const describeExceptKey = (functionValue: FunctionValue, argument: Value) => {
     : `Attempted to apply record to a non-string argument ${shown}.`;
 };
 
-const findKeyIndex = (domain: Value[], argument: Value) => {
+// A key the domain holds itself, which TLC finds without a comparison that can fail.
+const findIdenticalKey = (domain: Value[], argument: Value) => {
   const first = domain[0];
   if (typeof argument === "number" && typeof first === "number") {
     const offset = argument - first;
     if (domain[offset] === argument) return offset;
   }
-  if (domain.length <= 8) {
-    for (let index = 0; index < domain.length; index++)
-      if (domain[index] === argument) return index;
-  }
-  return findIndex(domain, argument);
+  return domain.length <= 8 ? domain.indexOf(argument) : -1;
 };
 
 export const createNonIntegerKeyError = (argument: Value) =>
@@ -2149,8 +2146,10 @@ const findKeyIndexLikeTlc = (
       throw createNonIntegerKeyError(argument);
     }
   }
+  const identical = findIdenticalKey(domain, argument);
+  if (identical !== -1) return identical;
   return computeLikeTlcOnFailure(
-    () => findKeyIndex(domain, argument),
+    () => findIndex(domain, argument),
     (error) => {
       if (valueVersion.is174 || domain.length < LINEAR_SEARCH_LIMIT) {
         domain.forEach((key) => equalsLikeTlc(key, argument));
