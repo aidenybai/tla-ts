@@ -504,10 +504,8 @@ export abstract class Internalizer {
     this.activity[boolVar] = this.isSearching ? -((this.getRandomValue() % 1000) / 1000) : 0;
     this.assignment[literal] = L_UNDEF;
     this.assignment[literal + 1] = L_UNDEF;
-    this.watches[literal] = undefined;
-    this.watches[literal + 1] = undefined;
-    this.binaryWatches[literal] = undefined;
-    this.binaryWatches[literal + 1] = undefined;
+    this.resetWatches(literal);
+    this.resetWatches(literal + 1);
     this.caseSplitQueue.mkVar(boolVar);
     this.trailKinds.push(UNDO_MK_BOOL_VAR);
     return boolVar;
@@ -523,10 +521,6 @@ export abstract class Internalizer {
     if (this.hasBoolVarFlag(boolVar, BV_QUANTIFIER)) this.qmanager.del(expr);
     this.exprToBoolVar[expr] = -1;
     this.justifications[boolVar] = null;
-    this.watches[literal] = undefined;
-    this.watches[literal + 1] = undefined;
-    this.binaryWatches[literal] = undefined;
-    this.binaryWatches[literal + 1] = undefined;
     this.binJustifications[literal] = undefined;
     this.binJustifications[literal + 1] = undefined;
     this.manager.decRef(expr);
@@ -564,6 +558,17 @@ export abstract class Internalizer {
 
   setMark(boolVar: number, value: boolean) {
     this.setBoolVarFlag(boolVar, BV_MARK, value);
+  }
+
+  // watch_list::reset: a new variable's lists keep the room of a deleted one's. Assigning undefined to
+  // a literal past the end keeps the arrays without holes.
+  private resetWatches(literal: number) {
+    const list = this.watches[literal];
+    if (list === undefined) this.watches[literal] = undefined;
+    else shrink(list, 0);
+    const binary = this.binaryWatches[literal];
+    if (binary === undefined) this.binaryWatches[literal] = undefined;
+    else shrink(binary, 0);
   }
 
   protected isAtom(boolVar: BoolVar) {
