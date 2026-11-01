@@ -315,18 +315,41 @@ describe("the CLI reports results like TLC", () => {
       /^Running breadth-first search Model-Checking with fp 0 and seed 7 with 2 workers on \d+ cores with \d+MB heap and 0MB offheap memory \[pid: \d+\] \(.+, Node\.js .+, MemFPSet, MemStateQueue\)\.$/,
     );
     expect(lines[2]).toBe(`Parsing file ${realpathSync(join(directory, "Success.tla"))}`);
-    expect(lines[3]).toMatch(
-      new RegExp(
-        `^Parsing file ${realpathSync("/tmp")}/tlc-\\d+/Naturals\\.tla \\(jar:file:/lib/tla2tools\\.jar!/tla2sany/StandardModules/Naturals\\.tla\\)$`,
+    // TLC's trace exploration spec adds _TLCTrace to the modules the spec extends.
+    const standardModules = ["Naturals", "_TLCTrace", "TLC", "TLCExt", "Sequences", "FiniteSets"];
+    expect(lines.slice(3, 10)).toEqual(
+      [...standardModules, "Integers"].map((name) =>
+        expect.stringMatching(
+          new RegExp(
+            `^Parsing file ${realpathSync("/tmp")}/tlc-\\d+/${name}\\.tla \\(jar:file:/lib/tla2tools\\.jar!/tla2sany/StandardModules/${name}\\.tla\\)$`,
+          ),
+        ),
       ),
     );
-    expect(lines.slice(4, 7)).toEqual([
+    expect(lines.slice(10, 21)).toEqual([
       "Semantic processing of module Naturals",
+      "Semantic processing of module Sequences",
+      "Semantic processing of module FiniteSets",
+      "Semantic processing of module TLC",
+      "Semantic processing of module Integers",
+      "Semantic processing of module TLCExt",
+      "Semantic processing of module _TLCTrace",
       "Semantic processing of module Success",
+      "Linting of module TLCExt",
+      "Linting of module _TLCTrace",
       "Linting of module Success",
     ]);
     // TLC names its copies of the standard modules at random, and tla-ts the same way each run.
     expect(runCliWith("cli-output", args).stdout.split("\n")[3]).toBe(lines[3]);
+    expect(
+      runCliWith("cli-output", [...args, "-noTE"])
+        .stdout.split("\n")
+        .slice(4, 7),
+    ).toEqual([
+      "Semantic processing of module Naturals",
+      "Semantic processing of module Success",
+      "Linting of module Success",
+    ]);
   });
 });
 

@@ -881,6 +881,7 @@ const checkSpec = async (
   const directory = dirname(specPath);
   const directories = [directory, ...java.libraries];
   const loadModule = createModuleLoader(directories);
+  const isRecorded = isTraceRecorded(args, version);
   const run = async () => {
     const source = readFileSync(specPath, "utf8");
     const moduleName = parseModule(source).name;
@@ -896,7 +897,7 @@ const checkSpec = async (
       seed: BigInt(seed),
       dump: dumpValues && getDump(dumpValues),
       isTool: printer.isTool,
-      isTraceRecorded: isTraceRecorded(args, version),
+      isTraceRecorded: isRecorded,
       isWarningEnabled: !args.has("-nowarning"),
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
@@ -956,6 +957,8 @@ const checkSpec = async (
         version,
       ),
       version,
+      // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
+      rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
       onPrint: (text) => process.stdout.write(text),
       onPrintError: (text) => process.stderr.write(text),
     },

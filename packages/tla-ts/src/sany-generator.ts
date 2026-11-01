@@ -173,6 +173,9 @@ export interface SanyGenerationOptions {
   onModule?: (module: ModuleNode, messages: SanyMessage[]) => void;
   // The TLC whose SANY to reproduce, which decides how SANY numbers the nodes it creates.
   version?: TlcVersion;
+  // The modules TLC adds to the root module's EXTENDS for its post conditions, which SANY loads
+  // after the ones the root module itself extends.
+  rootExtendees?: string[];
 }
 
 interface SymbolTable {
@@ -519,7 +522,7 @@ export const generateSanySpecification = (
     if (visiting.has(name)) return;
     visiting.add(name);
     path.push(name);
-    const dependencies = getDependencies(getSource(name, text, importer).module);
+    const dependencies = getModuleDependencies(name, getSource(name, text, importer).module);
     [...dependencies.extendees, ...dependencies.instancees].forEach((dependency) =>
       calculateDependencies(dependency, loadModule(dependency), name),
     );
@@ -541,7 +544,7 @@ export const generateSanySpecification = (
     const entry = sources.get(name);
     if (!entry || visited.has(name)) return undefined;
     visited.add(name);
-    const dependencies = getDependencies(entry.module);
+    const dependencies = getModuleDependencies(name, entry.module);
     const unresolved = dependencies[kind].find((dependency) => !isResolved(name, dependency));
     if (unresolved !== undefined) {
       const namingModule = dependencies.importers.get(unresolved) ?? name;
@@ -568,6 +571,17 @@ export const generateSanySpecification = (
     }
   };
   const rootName = options.rootFileName ?? parseSource("", rootSource).name;
+  // ParameterizedSpecObj.findOrCreateParsedUnit adds the post conditions' modules to the root
+  // module's own extendees, before those of its inner modules.
+  const getModuleDependencies = (name: string, module: Module) => {
+    const dependencies = getDependencies(module);
+    if (name !== rootName || options.rootExtendees === undefined) return dependencies;
+    dependencies.extendees.splice(module.extends.length, 0, ...options.rootExtendees);
+    options.rootExtendees.forEach((extendee) => {
+      if (!dependencies.importers.has(extendee)) dependencies.importers.set(extendee, name);
+    });
+    return dependencies;
+  };
   loadSpecification(rootName);
   calculateDependencies(rootName, rootSource);
 
