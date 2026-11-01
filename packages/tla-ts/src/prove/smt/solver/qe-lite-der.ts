@@ -163,8 +163,8 @@ export class EqDer {
     const manager = this.manager;
     const isEq = manager.getOp(expr) === OP_EQ;
     if (isEq) {
-      const lhs = manager.args[expr][0];
-      const rhs = manager.args[expr][1];
+      const lhs = manager.getArg(expr, 0);
+      const rhs = manager.getArg(expr, 1);
       const isSwapped = !this.isVariable(lhs);
       if (this.isVariable(isSwapped ? rhs : lhs)) {
         vars.push(isSwapped ? rhs : lhs);
@@ -172,21 +172,21 @@ export class EqDer {
         return true;
       }
     }
-    const sort = isEq ? manager.sorts[manager.args[expr][0]] : manager.sorts[expr];
+    const sort = isEq ? manager.sorts[manager.getArg(expr, 0)] : manager.sorts[expr];
     if (sort !== SORT_BOOL && sort !== SORT_INT) return false;
     // solve_plugin::operator(): the arithmetic plugin only sees positive equalities.
     const isNegated = manager.isNot(expr);
     const solved =
       sort === SORT_INT
         ? this.solveArithEq(expr)
-        : this.solveBasic(isNegated ? manager.args[expr][0] : expr, !isNegated);
+        : this.solveBasic(isNegated ? manager.getArg(expr, 0) : expr, !isNegated);
     const isFound =
       solved !== expr &&
       manager.getOp(solved) === OP_EQ &&
-      this.isVariable(manager.args[solved][0]);
+      this.isVariable(manager.getArg(solved, 0));
     if (isFound) {
-      vars.push(manager.args[solved][0]);
-      terms.push(manager.args[solved][1]);
+      vars.push(manager.getArg(solved, 0));
+      terms.push(manager.getArg(solved, 1));
     }
     manager.decRef(solved);
     return isFound;
@@ -196,7 +196,7 @@ export class EqDer {
   private getInvertibleConst(expr: number): bigint | undefined {
     const manager = this.manager;
     if (manager.getOp(expr) === OP_UMINUS) {
-      const inner = this.getInvertibleConst(manager.args[expr][0]);
+      const inner = this.getInvertibleConst(manager.getArg(expr, 0));
       return inner === undefined ? undefined : -inner;
     }
     const value = manager.getNumeral(expr);
@@ -207,9 +207,9 @@ export class EqDer {
   private getInvertibleMul(expr: number) {
     const manager = this.manager;
     if (this.isVariable(expr)) return { variable: expr, coefficient: 1n };
-    if (manager.getOp(expr) !== OP_MUL || manager.args[expr].length !== 2) return undefined;
-    const first = manager.args[expr][0];
-    const second = manager.args[expr][1];
+    if (manager.getOp(expr) !== OP_MUL || manager.getNumArgs(expr) !== 2) return undefined;
+    const first = manager.getArg(expr, 0);
+    const second = manager.getArg(expr, 1);
     const secondValue = this.getInvertibleConst(second);
     if (this.isVariable(first) && secondValue !== undefined)
       return { variable: first, coefficient: secondValue };
@@ -230,12 +230,15 @@ export class EqDer {
     const done: SignedExpr[] = [];
     for (let item = todo.pop(); item !== undefined; item = todo.pop()) {
       const op = manager.getOp(item.expr);
-      const args = manager.args[item.expr];
-      if (op === OP_ADD) for (const arg of args) todo.push({ isLeft: item.isLeft, expr: arg });
+      if (op === OP_ADD)
+        for (let index = 0; index < manager.getNumArgs(item.expr); index++)
+          todo.push({ isLeft: item.isLeft, expr: manager.getArg(item.expr, index) });
       else if (op === OP_SUB) {
-        todo.push({ isLeft: item.isLeft, expr: args[0] });
-        for (const arg of args.slice(1)) todo.push({ isLeft: !item.isLeft, expr: arg });
-      } else if (op === OP_UMINUS) todo.push({ isLeft: !item.isLeft, expr: args[0] });
+        todo.push({ isLeft: item.isLeft, expr: manager.getArg(item.expr, 0) });
+        for (let index = 1; index < manager.getNumArgs(item.expr); index++)
+          todo.push({ isLeft: !item.isLeft, expr: manager.getArg(item.expr, index) });
+      } else if (op === OP_UMINUS)
+        todo.push({ isLeft: !item.isLeft, expr: manager.getArg(item.expr, 0) });
       else {
         const mul = this.getInvertibleMul(item.expr);
         if (mul === undefined) {
@@ -283,16 +286,21 @@ export class EqDer {
     const isLeftZero = manager.getNumeral(inputLeft) === 0n;
     const left = isLeftZero ? inputRight : inputLeft;
     const right = isLeftZero ? inputLeft : inputRight;
-    const leftArgs = manager.args[left];
     const isBinarySum =
-      manager.getNumeral(right) === 0n && manager.getOp(left) === OP_ADD && leftArgs.length === 2;
-    const negatedSecond = isBinarySum ? manager.getTimesMinusOneArg(leftArgs[1]) : undefined;
-    const negatedFirst = isBinarySum ? manager.getTimesMinusOneArg(leftArgs[0]) : undefined;
+      manager.getNumeral(right) === 0n &&
+      manager.getOp(left) === OP_ADD &&
+      manager.getNumArgs(left) === 2;
+    const negatedSecond = isBinarySum
+      ? manager.getTimesMinusOneArg(manager.getArg(left, 1))
+      : undefined;
+    const negatedFirst = isBinarySum
+      ? manager.getTimesMinusOneArg(manager.getArg(left, 0))
+      : undefined;
     const result =
       negatedSecond !== undefined
-        ? manager.mkEq(leftArgs[0], negatedSecond)
+        ? manager.mkEq(manager.getArg(left, 0), negatedSecond)
         : negatedFirst !== undefined
-          ? manager.mkEq(leftArgs[1], negatedFirst)
+          ? manager.mkEq(manager.getArg(left, 1), negatedFirst)
           : manager.mkEq(left, right);
     manager.incRef(result);
     return result;
@@ -302,17 +310,16 @@ export class EqDer {
   // when k is zero.
   private tryIntMulSolve(atom: number) {
     const manager = this.manager;
-    const atomArgs = manager.args[atom];
-    if (manager.sorts[atomArgs[0]] !== SORT_INT) return -1;
-    const isMulOnLeft = manager.getOp(atomArgs[1]) !== OP_MUL;
-    if (isMulOnLeft && manager.getOp(atomArgs[0]) !== OP_MUL) return -1;
-    const lhs = atomArgs[isMulOnLeft ? 1 : 0];
-    const factors = manager.args[atomArgs[isMulOnLeft ? 0 : 1]];
-    if (factors.length !== 2) return -1;
-    const isNumeralSecond = !manager.isNumeral(factors[0]);
-    if (isNumeralSecond && !manager.isNumeral(factors[1])) return -1;
-    const first = factors[isNumeralSecond ? 1 : 0];
-    const second = factors[isNumeralSecond ? 0 : 1];
+    if (manager.sorts[manager.getArg(atom, 0)] !== SORT_INT) return -1;
+    const isMulOnLeft = manager.getOp(manager.getArg(atom, 1)) !== OP_MUL;
+    if (isMulOnLeft && manager.getOp(manager.getArg(atom, 0)) !== OP_MUL) return -1;
+    const lhs = manager.getArg(atom, isMulOnLeft ? 1 : 0);
+    const product = manager.getArg(atom, isMulOnLeft ? 0 : 1);
+    if (manager.getNumArgs(product) !== 2) return -1;
+    const isNumeralSecond = !manager.isNumeral(manager.getArg(product, 0));
+    if (isNumeralSecond && !manager.isNumeral(manager.getArg(product, 1))) return -1;
+    const first = manager.getArg(product, isNumeralSecond ? 1 : 0);
+    const second = manager.getArg(product, isNumeralSecond ? 0 : 1);
     if (manager.getNumeralValue(first) === 0n) {
       const result = manager.mkEq(lhs, manager.mkNumeral(0n));
       manager.incRef(result);
@@ -339,8 +346,8 @@ export class EqDer {
     const manager = this.manager;
     const mulSolved = this.tryIntMulSolve(atom);
     if (mulSolved !== -1) return mulSolved;
-    const lhs = manager.args[atom][0];
-    const rhs = manager.args[atom][1];
+    const lhs = manager.getArg(atom, 0);
+    const rhs = manager.getArg(atom, 1);
     let variable = assign(manager, -1, lhs);
     let term = assign(manager, -1, rhs);
     const solved = this.solveLinear(lhs, rhs);
@@ -359,33 +366,33 @@ export class EqDer {
     const manager = this.manager;
     let result = assign(manager, -1, atom);
     if (manager.getOp(atom) === OP_EQ) {
-      const lhs = manager.args[atom][0];
-      const rhs = manager.args[atom][1];
-      if (manager.isNot(lhs) && this.isVariable(manager.args[lhs][0]))
-        result = assign(manager, result, manager.mkEq(manager.args[lhs][0], mkNot(manager, rhs)));
-      else if (manager.isNot(rhs) && this.isVariable(manager.args[rhs][0]))
-        result = assign(manager, result, manager.mkEq(manager.args[rhs][0], mkNot(manager, lhs)));
+      const lhs = manager.getArg(atom, 0);
+      const rhs = manager.getArg(atom, 1);
+      if (manager.isNot(lhs) && this.isVariable(manager.getArg(lhs, 0)))
+        result = assign(manager, result, manager.mkEq(manager.getArg(lhs, 0), mkNot(manager, rhs)));
+      else if (manager.isNot(rhs) && this.isVariable(manager.getArg(rhs, 0)))
+        result = assign(manager, result, manager.mkEq(manager.getArg(rhs, 0), mkNot(manager, lhs)));
       else if (this.isVariable(rhs) && !this.isVariable(lhs))
         result = assign(manager, result, manager.mkEq(rhs, lhs));
     }
     if (manager.getOp(atom) === OP_ITE) {
-      const condition = manager.args[atom][0];
-      const thenExpr = manager.args[atom][1];
-      const elseExpr = manager.args[atom][2];
+      const condition = manager.getArg(atom, 0);
+      const thenExpr = manager.getArg(atom, 1);
+      const elseExpr = manager.getArg(atom, 2);
       const thenSolved = this.solveBasic(thenExpr, true);
       const elseSolved = this.solveBasic(elseExpr, true);
       if (
         manager.getOp(thenSolved) === OP_EQ &&
         manager.getOp(elseSolved) === OP_EQ &&
-        manager.args[thenSolved][0] === manager.args[elseSolved][0]
+        manager.getArg(thenSolved, 0) === manager.getArg(elseSolved, 0)
       ) {
-        const thenTerm = manager.args[thenSolved][1];
+        const thenTerm = manager.getArg(thenSolved, 1);
         const ite = manager.mkApp(
           OP_ITE,
-          [condition, thenTerm, manager.args[elseSolved][1]],
+          [condition, thenTerm, manager.getArg(elseSolved, 1)],
           manager.sorts[thenTerm],
         );
-        result = assign(manager, result, manager.mkEq(manager.args[thenSolved][0], ite));
+        result = assign(manager, result, manager.mkEq(manager.getArg(thenSolved, 0), ite));
       }
       manager.decRef(elseSolved);
       manager.decRef(thenSolved);
@@ -449,10 +456,9 @@ export class EqDer {
             if (getDefinition(varIndex) !== -1) this.order.push(varIndex);
           }
         } else {
-          const args = manager.args[expr];
           let isPushed = false;
-          while (frame[1] < args.length && !isPushed) {
-            const arg = args[frame[1]++];
+          while (frame[1] < manager.getNumArgs(expr) && !isPushed) {
+            const arg = manager.getArg(expr, frame[1]++);
             if (!done.has(arg)) {
               todo.push([arg, 0]);
               isPushed = true;
@@ -502,9 +508,9 @@ export class EqDer {
       isChanged = false;
       for (let position = 0; position < conjs.size; position++) {
         const conj = conjs.items[position];
-        if (!manager.isNot(conj) || manager.getOp(manager.args[conj][0]) !== OP_EQ) continue;
-        const lhs = manager.args[manager.args[conj][0]][0];
-        const rhs = manager.args[manager.args[conj][0]][1];
+        if (!manager.isNot(conj) || manager.getOp(manager.getArg(conj, 0)) !== OP_EQ) continue;
+        const lhs = manager.getArg(manager.getArg(conj, 0), 0);
+        const rhs = manager.getArg(manager.getArg(conj, 0), 1);
         if (
           (this.isVariable(lhs) && this.isUnconstrained(lhs, rhs, position, conjs.items)) ||
           (this.isVariable(rhs) && this.isUnconstrained(rhs, lhs, position, conjs.items))

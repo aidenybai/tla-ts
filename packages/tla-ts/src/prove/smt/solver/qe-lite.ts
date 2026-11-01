@@ -172,19 +172,23 @@ class QeLite {
       return !isOccurring(manager, index + data.sorts.length, data.body);
     }
     const op = manager.getOp(expr);
-    const args = manager.args[expr];
     if (manager.isNot(expr))
-      return this.collectNegativeEqualities(args[0], index, !isPositive, equalities);
+      return this.collectNegativeEqualities(
+        manager.getArg(expr, 0),
+        index,
+        !isPositive,
+        equalities,
+      );
     if (op === OP_AND || op === OP_OR)
-      return args.every((arg) =>
+      return manager.everyArg(expr, (arg) =>
         this.collectNegativeEqualities(arg, index, isPositive, equalities),
       );
     if (op === OP_EQ) {
       const isVarAt = (term: number) =>
         manager.kinds[term] === KIND_VAR && manager.values[term] === index;
-      const isLeftVar = isVarAt(args[0]);
-      if (isLeftVar !== isVarAt(args[1])) {
-        const value = isLeftVar ? args[1] : args[0];
+      const isLeftVar = isVarAt(manager.getArg(expr, 0));
+      if (isLeftVar !== isVarAt(manager.getArg(expr, 1))) {
+        const value = isLeftVar ? manager.getArg(expr, 1) : manager.getArg(expr, 0);
         if (!isPositive && !isOccurring(manager, index, value)) {
           equalities.add(expr);
           return true;
@@ -227,13 +231,13 @@ class QeLite {
   private getBound(expr: number, index: number) {
     const manager = this.manager;
     const isNegated = manager.isNot(expr);
-    const atom = isNegated ? manager.args[expr][0] : expr;
+    const atom = isNegated ? manager.getArg(expr, 0) : expr;
     const op = manager.getOp(atom);
     if (op !== OP_LE && op !== OP_GE && op !== OP_LT && op !== OP_GT) return undefined;
     const isSwapped = op === OP_GE || op === OP_GT;
     const isStrict = op === OP_LT || op === OP_GT;
-    const lhs = manager.args[atom][isSwapped ? 1 : 0];
-    const rhs = manager.args[atom][isSwapped ? 0 : 1];
+    const lhs = manager.getArg(atom, isSwapped ? 1 : 0);
+    const rhs = manager.getArg(atom, isSwapped ? 0 : 1);
     if (manager.sorts[lhs] !== SORT_INT) return undefined;
     const isIndex = (term: number) =>
       manager.kinds[term] === KIND_VAR && manager.values[term] === index;

@@ -297,7 +297,7 @@ export class Nnf {
       }
     }
     const kind = manager.kinds[expr];
-    if (kind === KIND_VAR || (kind === KIND_APP && manager.args[expr].length === 0)) {
+    if (kind === KIND_VAR || (kind === KIND_APP && manager.getNumArgs(expr) === 0)) {
       this.skip(expr, isPositive);
       return true;
     }
@@ -357,16 +357,15 @@ export class Nnf {
 
   private processApp(expr: number, frame: Frame) {
     const manager = this.manager;
-    const args = manager.args[expr];
     const isPositive = frame.isPositive;
     const op = manager.getOp(expr);
-    switch (op === OP_EQ && !manager.isBool(args[0]) ? -1 : op) {
+    switch (op === OP_EQ && !manager.isBool(manager.getArg(expr, 0)) ? -1 : op) {
       case OP_AND:
       case OP_OR: {
         if (
           !this.visitChildren(
             frame,
-            args.map((arg) => [arg, isPositive]),
+            manager.mapArgs(expr, (arg) => [arg, isPositive]),
           )
         )
           return false;
@@ -378,12 +377,12 @@ export class Nnf {
         return true;
       }
       case OP_NOT:
-        return this.visitChildren(frame, [[args[0], !isPositive]]);
+        return this.visitChildren(frame, [[manager.getArg(expr, 0), !isPositive]]);
       case OP_IMPLIES: {
         if (
           !this.visitChildren(frame, [
-            [args[0], !isPositive],
-            [args[1], isPositive],
+            [manager.getArg(expr, 0), !isPositive],
+            [manager.getArg(expr, 1), isPositive],
           ])
         )
           return false;
@@ -394,10 +393,10 @@ export class Nnf {
       case OP_ITE: {
         if (
           !this.visitChildren(frame, [
-            [args[0], true],
-            [args[0], false],
-            [args[1], isPositive],
-            [args[2], isPositive],
+            [manager.getArg(expr, 0), true],
+            [manager.getArg(expr, 0), false],
+            [manager.getArg(expr, 1), isPositive],
+            [manager.getArg(expr, 2), isPositive],
           ])
         )
           return false;
@@ -411,10 +410,10 @@ export class Nnf {
       case OP_XOR: {
         if (
           !this.visitChildren(frame, [
-            [args[0], true],
-            [args[0], false],
-            [args[1], true],
-            [args[1], false],
+            [manager.getArg(expr, 0), true],
+            [manager.getArg(expr, 0), false],
+            [manager.getArg(expr, 1), true],
+            [manager.getArg(expr, 1), false],
           ])
         )
           return false;

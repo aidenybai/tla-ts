@@ -75,12 +75,11 @@ const isGreater = (manager: AstManager, left: number, right: number): boolean =>
   const leftDeclId = manager.getDeclId(left);
   const rightDeclId = manager.getDeclId(right);
   if (leftDeclId !== rightDeclId) return leftDeclId > rightDeclId;
-  const leftArgs = manager.args[left];
-  const rightArgs = manager.args[right];
-  if (leftArgs.length !== rightArgs.length) return leftArgs.length > rightArgs.length;
-  for (let index = 0; index < leftArgs.length; index++)
-    if (leftArgs[index] !== rightArgs[index])
-      return isGreater(manager, leftArgs[index], rightArgs[index]);
+  if (manager.getNumArgs(left) !== manager.getNumArgs(right))
+    return manager.getNumArgs(left) > manager.getNumArgs(right);
+  for (let index = 0; index < manager.getNumArgs(left); index++)
+    if (manager.getArg(left, index) !== manager.getArg(right, index))
+      return isGreater(manager, manager.getArg(left, index), manager.getArg(right, index));
   return false;
 };
 
@@ -125,8 +124,8 @@ class Substitution {
   update(expr: number) {
     const manager = this.manager;
     if (manager.isGround(expr) && manager.getOp(expr) === OP_EQ) {
-      const left = manager.args[expr][0];
-      const right = manager.args[expr][1];
+      const left = manager.getArg(expr, 0);
+      const right = manager.getArg(expr, 1);
       if (isGreater(manager, left, right)) {
         this.insert(left, right);
         return;
@@ -136,7 +135,7 @@ class Substitution {
         return;
       }
     }
-    if (manager.isNot(expr)) this.insert(manager.args[expr][0], manager.falseExpr);
+    if (manager.isNot(expr)) this.insert(manager.getArg(expr, 0), manager.falseExpr);
     else this.insert(expr, manager.trueExpr);
   }
 }
@@ -278,13 +277,17 @@ export class AssertedFormulas {
     }
     const op = manager.getOp(expr);
     if (op === OP_AND) {
-      for (const arg of manager.args[expr]) this.pushAssertion(arg, result);
+      for (let index = 0; index < manager.getNumArgs(expr); index++) {
+        const arg = manager.getArg(expr, index);
+        this.pushAssertion(arg, result);
+      }
       return;
     }
-    if (op === OP_NOT && manager.getOp(manager.args[expr][0]) === OP_OR) {
-      for (const arg of manager.args[manager.args[expr][0]]) {
+    if (op === OP_NOT && manager.getOp(manager.getArg(expr, 0)) === OP_OR) {
+      const disjunction = manager.getArg(expr, 0);
+      for (let index = 0; index < manager.getNumArgs(disjunction); index++) {
         // narg holds the negation while it is pushed.
-        const negation = mkNot(manager, arg);
+        const negation = mkNot(manager, manager.getArg(disjunction, index));
         manager.incRef(negation);
         this.pushAssertion(negation, result);
         manager.decRef(negation);
@@ -402,38 +405,59 @@ export class AssertedFormulas {
   private flattenClauses() {
     const manager = this.manager;
     const mkNegation = (expr: number) =>
-      manager.isNot(expr) ? manager.args[expr][0] : manager.mkApp(OP_NOT, [expr], SORT_BOOL);
+      manager.isNot(expr) ? manager.getArg(expr, 0) : manager.mkApp(OP_NOT, [expr], SORT_BOOL);
     const isConjunction = (expr: number) =>
-      manager.isNot(expr) && manager.getOp(manager.args[expr][0]) === OP_OR;
+      manager.isNot(expr) && manager.getOp(manager.getArg(expr, 0)) === OP_OR;
     for (let isChanged = true; isChanged;) {
       isChanged = false;
       const formulas = new RefVector(manager);
       const occurrences = new Map<number, number>();
       for (let index = this.qhead; index < this.formulas.size; index++) {
         const formula = this.formulas.items[index];
-        if (manager.getOp(formula) !== OP_OR || manager.args[formula].length !== 2) continue;
-        for (const arg of manager.args[formula])
+        if (manager.getOp(formula) !== OP_OR || manager.getNumArgs(formula) !== 2) continue;
+        for (let argIndex = 0; argIndex < 2; argIndex++) {
+          const arg = manager.getArg(formula, argIndex);
           if (isConjunction(arg)) occurrences.set(arg, (occurrences.get(arg) ?? 0) + 1);
+        }
       }
       for (let index = this.qhead; index < this.formulas.size; index++) {
         const formula = this.formulas.items[index];
-        if (manager.getOp(formula) === OP_OR && manager.args[formula].length === 2) {
-          const args = manager.args[formula];
+        if (manager.getOp(formula) === OP_OR && manager.getNumArgs(formula) === 2) {
           const conjunctionIndex = [1, 0].find(
-            (position) => isConjunction(args[position]) && occurrences.get(args[position]) === 1,
+            (position) =>
+              isConjunction(manager.getArg(formula, position)) &&
+              occurrences.get(manager.getArg(formula, position)) === 1,
           );
           if (conjunctionIndex !== undefined) {
-            const other = args[1 - conjunctionIndex];
-            for (const arg of manager.args[manager.args[args[conjunctionIndex]][0]])
-              formulas.push(manager.mkApp(OP_OR, [other, mkNegation(arg)], SORT_BOOL));
+            const other = manager.getArg(formula, 1 - conjunctionIndex);
+            const disjunction = manager.getArg(manager.getArg(formula, conjunctionIndex), 0);
+            for (let argIndex = 0; argIndex < manager.getNumArgs(disjunction); argIndex++)
+              formulas.push(
+                manager.mkApp(
+                  OP_OR,
+                  [other, mkNegation(manager.getArg(disjunction, argIndex))],
+                  SORT_BOOL,
+                ),
+              );
             isChanged = true;
             continue;
           }
         }
         if (manager.getOp(formula) === OP_ITE) {
-          const args = manager.args[formula];
-          formulas.push(manager.mkApp(OP_OR, [mkNegation(args[0]), args[1]], SORT_BOOL));
-          formulas.push(manager.mkApp(OP_OR, [args[0], args[2]], SORT_BOOL));
+          formulas.push(
+            manager.mkApp(
+              OP_OR,
+              [mkNegation(manager.getArg(formula, 0)), manager.getArg(formula, 1)],
+              SORT_BOOL,
+            ),
+          );
+          formulas.push(
+            manager.mkApp(
+              OP_OR,
+              [manager.getArg(formula, 0), manager.getArg(formula, 2)],
+              SORT_BOOL,
+            ),
+          );
           isChanged = true;
           continue;
         }
