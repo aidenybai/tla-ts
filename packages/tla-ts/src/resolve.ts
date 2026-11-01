@@ -285,6 +285,18 @@ const getNameRange = (location: SourceLocation, name: string): SourceRange => ({
   end: { line: location.line, column: location.column + name.length - 1 },
 });
 
+// SANY reports a name at its tokens, such as M ! ⊕ for M!\oplus.
+const getSpelledNameRange = (
+  expression: Expression & { kind: "Identifier" | "Apply" | "OperatorReference" },
+  name: string,
+): SourceRange => {
+  const selectorRange =
+    expression.kind === "OperatorReference" ? undefined : expression.selectorRanges?.at(-1);
+  return selectorRange
+    ? { module: selectorRange.module, start: expression.location, end: selectorRange.end }
+    : getNameRange(expression.location, expression.spelling ?? name);
+};
+
 // SANY reports an operator symbol applied to operands as one it cannot resolve.
 const getFixity = (expression: Expression) => {
   if (expression.kind !== "Apply") return undefined;
@@ -294,10 +306,7 @@ const getFixity = (expression: Expression) => {
 };
 
 // SANY names an undefined operator symbol such as + differently from an undefined identifier.
-const isOperatorSymbol = (name: string) =>
-  name[0].toLowerCase() === name[0].toUpperCase() &&
-  name[0] !== "_" &&
-  (name[0] < "0" || name[0] > "9");
+const isOperatorSymbol = (name: string) => !/^[\p{L}\d_]/u.test(name);
 
 const isStepName = (name: string) =>
   name.startsWith("<") && ((name[1] >= "0" && name[1] <= "9") || name[1] === "*");
@@ -743,7 +752,9 @@ const getSymbolArity = (
   }
   const spelling = (expression.kind === "Identifier" ? undefined : expression.spelling) ?? name;
   const range = formatRange(
-    getNameRange(location, expression.kind === "Apply" && spelling === "-." ? "-" : spelling),
+    expression.kind === "Apply" && spelling === "-."
+      ? getNameRange(location, "-")
+      : getSpelledNameRange(expression, name),
   );
   if (!isOperatorSymbol(name) || isStepName(name)) {
     unit.errors.push({ location: range, message: `Unknown operator: \`${name}'.` });
@@ -959,9 +970,7 @@ const resolveApply = (
   if (arity === undefined) return;
   if (arity !== expression.args.length) {
     unit.errors.push({
-      location: formatRange(
-        expression.argumentsRange ?? getNameRange(expression.location, operator),
-      ),
+      location: formatRange(expression.argumentsRange ?? getSpelledNameRange(expression, operator)),
       message: `The operator ${operator} requires ${arity - (findInstance(operator, scope, unit)?.arity ?? 0)} arguments.`,
     });
     return;
@@ -1004,7 +1013,7 @@ const resolveApply = (
           );
         } else if (!isMatched && range && arg.operator === undefined) {
           report(
-            expression.selectorRanges?.at(-1) ?? getNameRange(expression.location, operator),
+            expression.selectorRanges?.at(-1) ?? getSpelledNameRange(expression, operator),
             `Lambda expression with arity ${arg.params.length} used as argument ${index + 1} of operator \`${operator}', \nbut an operator of arity ${expected} is required.`,
           );
         }
@@ -1026,7 +1035,7 @@ const resolveApply = (
       const argArity = getSymbolArity(arg, name, scope, unit);
       if (arg.kind === "Identifier" && argArity !== undefined && argArity !== expected) {
         report(
-          getNameRange(arg.location, name),
+          getSpelledNameRange(arg, name),
           `Expected arity ${expected} but found operator of arity ${argArity}.`,
         );
       }
@@ -1084,7 +1093,7 @@ const resolveExpression = (
       const arity = getSymbolArity(expression, name, scope, unit);
       if (arity !== undefined && arity > 0) {
         unit.errors.push({
-          location: formatRange(getNameRange(expression.location, name)),
+          location: formatRange(getSpelledNameRange(expression, name)),
           message: `The operator ${name} requires ${arity} arguments.`,
         });
       }

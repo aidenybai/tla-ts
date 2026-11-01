@@ -34,10 +34,11 @@ export interface StringExpression {
 }
 
 // selectorRanges holds the range of each part of a name such as foo!lab, where SANY reports an
-// error in selecting that part.
+// error in selecting that part. spelling holds the text of an operator written as a synonym.
 export interface IdentifierExpression {
   kind: "Identifier";
   name: string;
+  spelling?: string;
   selectorRanges?: SourceRange[];
   location: SourceLocation;
   resolution?: LocalResolution;
