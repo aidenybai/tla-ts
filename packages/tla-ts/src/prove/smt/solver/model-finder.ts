@@ -19,6 +19,9 @@ export class ModelFinder {
   private quantifiers: number[] = [];
   private scopes: number[] = [];
   private rewriter: Rewriter;
+  // m_mutil of quantifier_analyzer: macro_util's rewriting, kept apart from the rewriter above so that
+  // its last result is never released early.
+  private macroRewriter: Rewriter;
   readonly aufSolver: AufSolver;
   private newConstraints: number[] = [];
 
@@ -27,6 +30,7 @@ export class ModelFinder {
     private context: Context,
   ) {
     this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
+    this.macroRewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
     this.aufSolver = new AufSolver(manager, this.rewriter);
   }
 
@@ -35,7 +39,7 @@ export class ModelFinder {
   }
 
   registerQuantifier(quantifier: number) {
-    const info = new QuantifierInfo(this.manager, this.context, quantifier);
+    const info = new QuantifierInfo(this.manager, this.context, quantifier, this.macroRewriter);
     this.q2info.set(quantifier, info);
     this.quantifiers.push(quantifier);
     new QuantifierAnalyzer(this.manager, this.rewriter, info).analyze();

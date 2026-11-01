@@ -57,12 +57,13 @@ export class QuantifierInfo {
     private manager: AstManager,
     private context: Context,
     readonly quantifier: number,
+    macroRewriter: Rewriter,
   ) {
     // m_flat_q, which holds a reference.
     const isNested = manager.hasQuantifierFlags[manager.getQuantifier(quantifier).body];
     this.flatQ = isNested ? pullQuant(manager, quantifier) : quantifier;
     if (!isNested) manager.incRef(quantifier);
-    this.condMacros = collectMacroCandidates(manager, this.flatQ);
+    this.condMacros = collectMacroCandidates(manager, macroRewriter, this.flatQ);
   }
 
   // ~quantifier_info: the conditional macros go before the flat quantifier.
