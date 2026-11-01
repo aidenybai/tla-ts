@@ -168,6 +168,7 @@ const USAGE = [
   `       ${PROVE_COMMAND.usage}`,
   "       tla-ts prove [<tlapm option>]... <Module.tla|glob>...",
   "       tla-ts [<JVM option>]... tlc2.TLC <TLC option>... <Spec>",
+  "       (-cp tla2tools.jar or -Dtla-ts.tlc=1.7.4 picks the TLC to reproduce)",
   "       tla-ts [<JVM option>]... tla2sany.xml.XMLExporter [-I <directory>]... [-o] [-t] [-r] [-u] <Module.tla>",
 ].join("\n");
 
@@ -931,9 +932,7 @@ const checkSpec = async (
   const specName = isAbsoluteSpec ? fileName : specPath.replace(/\.tla$/, "");
   const jar = getJar(java);
   const reportMissingFile =
-    version === "1.7.4" && jar !== undefined
-      ? createMissingFilePrinter174(specPath, java, jar)
-      : undefined;
+    version === "1.7.4" ? createMissingFilePrinter174(specPath, java, jar) : undefined;
   if (reportMissingFile) {
     if (!existsSync(specPath) && !SANY_174_STANDARD_MODULES.has(fileName)) {
       reportMissingFile(`${fileName}.tla`);
@@ -1248,7 +1247,7 @@ const checkSpecs = async (args: string[], java: JavaProperties) => {
       ? path
       : (java.libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
   const paths = [...new Set(specPaths.map(findSpec))];
-  const tlcVersion = getTlcVersion(getJar(java));
+  const tlcVersion = getJavaTlcVersion(java);
   return runEach(
     paths,
     (path, printer) => {
@@ -1354,10 +1353,11 @@ const exportXml = (args: string[]) => {
 };
 
 // TLC 1.7.4's FileUtil.createNamedInputStream names the last file that SimpleFilenameToStream
-// looked for a module in, and the directories it looks in, the standard modules in the jar last.
-const printMissingFile174 = (path: string, libraries: string[], jar: string) =>
+// looked for a module in, and the directories it looks in, the standard modules in the jar last,
+// which tla-ts leaves out without a jar.
+const printMissingFile174 = (path: string, libraries: string[], jar: string | undefined) =>
   console.error(
-    `File does not exist: ${isAbsolute(path) ? path : `${process.cwd()}/${path}`} while looking in these directories: ${[...libraries, getStandardModulesUrl(jar)].join(", ")}`,
+    `File does not exist: ${isAbsolute(path) ? path : `${process.cwd()}/${path}`} while looking in these directories: ${[...libraries, ...(jar === undefined ? [] : [getStandardModulesUrl(jar)])].join(", ")}`,
   );
 
 // SimpleFilenameToStream ends a library directory with a separator.
@@ -1367,7 +1367,11 @@ const toLibraryPath = (directory: string) =>
 // TLC 1.7.4's SimpleFilenameToStream looks for a module in the directory of a spec that TLC is
 // given by an absolute path, then in the directory that a relative path names, or else in the
 // TLA-Library directories.
-const createMissingFilePrinter174 = (specPath: string, java: JavaProperties, jar: string) => {
+const createMissingFilePrinter174 = (
+  specPath: string,
+  java: JavaProperties,
+  jar: string | undefined,
+) => {
   const specDirectory = specPath.slice(0, specPath.lastIndexOf("/") + 1);
   const isRelativeToDirectory = !isAbsolute(specPath) && specDirectory !== "";
   const libraries = (isRelativeToDirectory ? [specDirectory] : java.libraries).map(toLibraryPath);
@@ -1400,7 +1404,7 @@ const printXmlExporterException = (exception: string, line: number) => {
 
 // TLC 1.7.4's XMLExporter.main, which takes only -o, as it can't validate the XML without
 // fetching its schema, and -I, and exports a specification that SANY finds errors in.
-const exportXml174 = (args: string[], jar: string) => {
+const exportXml174 = (args: string[], jar: string | undefined) => {
   if (args.length === 0) {
     return printXmlExporterException(
       "java.lang.IllegalArgumentException: at least one .tla file must be given",
@@ -1461,12 +1465,15 @@ const exportXml174 = (args: string[], jar: string) => {
 // java, as in `tla-ts -DTLA-Library=lib -cp tla2tools.jar tlc2.TLC Spec`. tla-ts searches the
 // TLA-Library directories for modules as TLC does, though not as XMLExporter, which ignores them,
 // names the files in java.io.tmpdir and the jar on the class path that TLC would copy and read
-// modules from, and ignores the other options.
+// modules from, and ignores the other options. It reproduces the TLC of that jar, or the one that
+// -Dtla-ts.tlc names without a jar, as in `tla-ts -Dtla-ts.tlc=1.7.4 tlc2.TLC Spec`.
 const JAVA_MAIN_CLASSES = ["tlc2.TLC", "tla2sany.xml.XMLExporter"];
 
 const TLA_LIBRARY_PROPERTY = "-DTLA-Library=";
 
 const TEMPORARY_DIRECTORY_PROPERTY = "-Djava.io.tmpdir=";
+
+const TLC_VERSION_PROPERTY = "-Dtla-ts.tlc=";
 
 // What the java command sets for TLC: the TLA-Library directories it searches for modules, the
 // class path it finds its standard modules on, and java.io.tmpdir, where it copies them.
@@ -1474,11 +1481,15 @@ interface JavaProperties {
   libraries: string[];
   classPath?: string;
   temporaryDirectory?: string;
+  tlcVersion?: TlcVersion;
 }
 
 // The tla2tools.jar on the class path.
 const getJar = (java: JavaProperties) =>
   java.classPath?.split(delimiter).find((entry) => entry.endsWith(".jar"));
+
+// The TLC that -Dtla-ts.tlc names, or else the one of the jar on the class path.
+const getJavaTlcVersion = (java: JavaProperties) => java.tlcVersion ?? getTlcVersion(getJar(java));
 
 interface JavaLaunch {
   mainClass: string;
@@ -1500,6 +1511,8 @@ const getJavaLaunch = (args: string[]): JavaLaunch | undefined => {
       java.libraries.push(...arg.slice(TLA_LIBRARY_PROPERTY.length).split(delimiter));
     } else if (arg.startsWith(TEMPORARY_DIRECTORY_PROPERTY)) {
       java.temporaryDirectory = arg.slice(TEMPORARY_DIRECTORY_PROPERTY.length);
+    } else if (arg.startsWith(TLC_VERSION_PROPERTY)) {
+      java.tlcVersion = arg.slice(TLC_VERSION_PROPERTY.length) === "1.7.4" ? "1.7.4" : "master";
     } else if (!arg.startsWith("-D") && !arg.startsWith("-X")) {
       const isLaunch = index > 0 || JAVA_MAIN_CLASSES.includes(arg);
       return isLaunch ? { mainClass: arg, args: args.slice(index + 1), java } : undefined;
@@ -1511,10 +1524,9 @@ const getJavaLaunch = (args: string[]): JavaLaunch | undefined => {
 const runJavaClass = (launch: JavaLaunch) => {
   if (launch.mainClass === "tlc2.TLC") return checkSpecs(launch.args, launch.java);
   if (launch.mainClass === "tla2sany.xml.XMLExporter") {
-    const jar = getJar(launch.java);
     return reportErrors(() =>
-      jar !== undefined && getTlcVersion(jar) === "1.7.4"
-        ? exportXml174(launch.args, jar)
+      getJavaTlcVersion(launch.java) === "1.7.4"
+        ? exportXml174(launch.args, getJar(launch.java))
         : exportXml(launch.args),
     );
   }

@@ -1083,6 +1083,50 @@ describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path
   });
 });
 
+describe("the CLI reproduces the TLC that -Dtla-ts.tlc names without a jar", () => {
+  const tlcArgs = ["tlc2.TLC", "-tool", "-workers", "1", "-fp", "0"];
+
+  it.each(["Climb", "Cycle", "Aliased"])(
+    "checks %s like TLC 1.7.4 with its jar on the class path",
+    (name) => {
+      const withJar = runCliWith("tlc-174", ["-cp", JAR_174, ...tlcArgs, `${name}.tla`]);
+      const withProperty = runCliWith("tlc-174", ["-Dtla-ts.tlc=1.7.4", ...tlcArgs, `${name}.tla`]);
+      expect(withProperty.status).toBe(withJar.status);
+      expect(getToolSequence(withProperty.stdout)).toEqual(getToolSequence(withJar.stdout));
+    },
+  );
+
+  it("leaves the jar out of the directories it looked for a missing module in", () => {
+    const result = runCliWith("tlc-174", ["-Dtla-ts.tlc=1.7.4", ...tlcArgs, "Lost.tla"]);
+    expect(result.status).toBe(150);
+    expect(result.stderr).toBe(
+      `File does not exist: ${join(FIXTURES, "tlc-174", "Gone.tla")} while looking in these directories: \n`,
+    );
+  });
+
+  it("exports XML like TLC 1.7.4's XMLExporter", () => {
+    const result = runCliWith("xml-export", [
+      "-Dtla-ts.tlc=1.7.4",
+      "tla2sany.xml.XMLExporter",
+      "-o",
+      "Counted.tla",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(
+      readFileSync(join(FIXTURES, "xml-export", "Counted.1.7.4.xml"), "utf8"),
+    );
+  });
+
+  it("takes the TLC it names over that of the jar", () => {
+    const run = (args: string[]) => runCliWith("tlc-174", [...args, ...tlcArgs, "Cycle.tla"]);
+    const master = run(["-cp", JAR_174, "-Dtla-ts.tlc=master"]);
+    expect(getToolSequence(master.stdout)).toEqual(getToolSequence(run([]).stdout));
+    expect(getToolSequence(master.stdout)).not.toEqual(
+      getToolSequence(run(["-cp", JAR_174]).stdout),
+    );
+  });
+});
+
 describe("the CLI takes several specs and globs", () => {
   it("checks each spec a glob matches and exits with the first failure", () => {
     const result = runCliWith("cli-output", ["*.tla"]);
