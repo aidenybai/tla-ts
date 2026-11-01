@@ -714,7 +714,10 @@ const getSymbolArity = (
   const renamed = renamedArities.get(expression);
   if (renamed !== undefined) return renamed;
   if (isKey(name)) return expression.kind === "Apply" ? expression.args.length : 0;
-  if (checkReference(expression, scope, unit, false) || isStepName(name)) {
+  if (
+    checkReference(expression, scope, unit, false) ||
+    (isStepName(name) && lookupLocal(scope, name))
+  ) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
   const local = lookupLocal(scope, name);
@@ -742,7 +745,7 @@ const getSymbolArity = (
   const range = formatRange(
     getNameRange(location, expression.kind === "Apply" && spelling === "-." ? "-" : spelling),
   );
-  if (!isOperatorSymbol(name)) {
+  if (!isOperatorSymbol(name) || isStepName(name)) {
     unit.errors.push({ location: range, message: `Unknown operator: \`${name}'.` });
     return undefined;
   }
@@ -1307,6 +1310,8 @@ const resolveLocalInstance = (instance: Instance, scope: LocalName | undefined, 
       );
 };
 
+// Generator.generateProof binds the name of a step after its statement and before its proof, or
+// after the step where it takes no proof.
 const resolveStep = (
   step: ProofStep,
   scope: LocalName | undefined,
@@ -1317,6 +1322,8 @@ const resolveStep = (
     step.name === undefined
       ? unit
       : { ...unit, hasLabelScope: true, labelParams: [], labels: new Set<string>() };
+  const bindStep = (parent: LocalName | undefined): LocalName | undefined =>
+    step.name === undefined ? parent : { name: step.name, arity: 0, kind: "Theorem", parent };
   switch (body.kind) {
     // The NEW symbols of a SUFFICES ASSUME are in scope after its proof, and those of any other
     // ASSUME in its proof.
@@ -1336,31 +1343,35 @@ const resolveStep = (
     case "Use":
     case "Hide":
       checkFacts(body.facts, scope, unit);
-      return scope;
+      return bindStep(scope);
     case "Instance":
-      return resolveLocalInstance(body, scope, stepUnit);
+      return bindStep(resolveLocalInstance(body, scope, stepUnit));
     case "Define":
-      return body.definitions.reduce(
-        (current, definition) =>
-          definition.kind === "Instance"
-            ? resolveLocalInstance(definition, current, stepUnit)
-            : resolveDefinitions([definition], current, unit),
-        scope,
+      return bindStep(
+        body.definitions.reduce(
+          (current, definition) =>
+            definition.kind === "Instance"
+              ? resolveLocalInstance(definition, current, stepUnit)
+              : resolveDefinitions([definition], current, unit),
+          scope,
+        ),
       );
     case "Have":
     case "Case":
       resolveExpression(body.expression, scope, stepUnit);
-      resolveProof(step.proof, scope, unit);
-      return scope;
+      resolveProof(step.proof, bindStep(scope), unit);
+      return bindStep(scope);
     case "Witness":
       body.expressions.forEach((expression) => resolveExpression(expression, scope, stepUnit));
-      return scope;
+      return bindStep(scope);
     case "Take":
-      return bindNames(
-        resolveBounds(body.bounds, scope, stepUnit),
-        body.names,
-        body.nameRanges,
-        stepUnit,
+      return bindStep(
+        bindNames(
+          resolveBounds(body.bounds, scope, stepUnit),
+          body.names,
+          body.nameRanges,
+          stepUnit,
+        ),
       );
     case "Pick": {
       const picked = bindNames(
@@ -1373,12 +1384,12 @@ const resolveStep = (
         ...stepUnit,
         labelParams: [...stepUnit.labelParams, ...getBoundNames(body.bounds), ...body.names],
       });
-      resolveProof(step.proof, scope, unit);
-      return picked;
+      resolveProof(step.proof, bindStep(scope), unit);
+      return bindStep(picked);
     }
     default:
-      resolveProof(step.proof, scope, unit);
-      return scope;
+      resolveProof(step.proof, bindStep(scope), unit);
+      return bindStep(scope);
   }
 };
 
