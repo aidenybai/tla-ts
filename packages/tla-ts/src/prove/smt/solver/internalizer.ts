@@ -597,15 +597,15 @@ export abstract class Internalizer {
   mkEnode(expr: number, isSuppressingArgs: boolean, isMergeTf: boolean, isCgcEnabled: boolean) {
     const manager = this.manager;
     const generation = this.cachedGeneration.get(expr) ?? this.generation;
+    const numArgs = isSuppressingArgs ? 0 : manager.getNumArgs(expr);
+    // An array that push grows from empty takes room for 17 elements, so the common one of two
+    // arguments is made whole, at its size.
     const args =
-      isSuppressingArgs || manager.getNumArgs(expr) === 0
+      numArgs === 0
         ? NO_ENODES
-        : manager.mapArgs(expr, (arg) => {
-            const argNode = this.exprToEnode[arg];
-            if (argNode === undefined)
-              throw new SmtInvariantError("an argument was not internalized");
-            return argNode;
-          });
+        : numArgs === 2
+          ? [this.getArgEnode(expr, 0), this.getArgEnode(expr, 1)]
+          : manager.mapArgs(expr, (_, index) => this.getArgEnode(expr, index));
     const isEq = !isSuppressingArgs && manager.getOp(expr) === OP_EQ;
     const node = new Enode(
       expr,
@@ -646,6 +646,13 @@ export abstract class Internalizer {
         else list.push(node);
       }
     }
+    return node;
+  }
+
+  // The enode of an argument of expr, which is internalized before expr.
+  private getArgEnode(expr: number, index: number) {
+    const node = this.exprToEnode[this.manager.getArg(expr, index)];
+    if (node === undefined) throw new SmtInvariantError("an argument was not internalized");
     return node;
   }
 
