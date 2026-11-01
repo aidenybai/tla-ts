@@ -50,6 +50,7 @@ The options are:
 
 - `-config <Spec.cfg>`: read the configuration from this file. You can use it only when you check one spec.
 - `-deadlock`: don't report deadlocks.
+- `-dump [dot[,colorize][,actionlabels][,snapshot]] <file>`: write every reachable state to `<file>.dump`, or with `dot`, the state graph to `<file>.dot`. The output matches TLC run with `-fp 0`. tla-ts doesn't support the `constrained`, `stuttering`, or `strict` formats.
 - `-lncheck final`: check liveness once, after the search ends.
 - `-seed <num>`: seed `RandomElement` and the `Randomization` module. The default is 0.
 - `-workers <count|auto>`: search with this number of worker threads. `auto` uses one thread per core. The default is 1.
@@ -129,9 +130,12 @@ const result = await check({
 | `loadClass`             | Returns a compiled Java class that overrides a module's operators with constants         |
 | `onPrint`               | Receives the output of `Print` and `PrintT`. Defaults to `console.log`                   |
 | `onPause`               | Runs when `TLCSet("pause", TRUE)` pauses checking, which resumes when it returns         |
-| `readFile`, `writeFile` | Read and write files for the Json module                                                 |
+| `readFile`, `writeFile` | Read and write files for the Json module and `dump`                                      |
 | `seed`                  | A `bigint` seed. Defaults to `0n`, and matches TLC run with the same `-seed` and `-fp 0` |
 | `workers`               | The number of worker threads. Defaults to 1                                              |
+| `dump`                  | Writes the reachable states or the state graph, as TLC's `-dump` does                    |
+
+`dump` takes the `path` that `check` passes to `writeFile` before it returns. Set `dot` to write the state graph in the DOT language of Graphviz, and `colorize`, `actionLabels`, or `snapshot` for TLC's formats of the same names. A dump checks the spec on the calling thread, as one TLC worker does.
 
 The result has these fields:
 

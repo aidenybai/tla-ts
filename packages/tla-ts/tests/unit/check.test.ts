@@ -11,6 +11,12 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
+import {
+  createSanyError,
+  createSemanticError,
+  STACK_OVERFLOW,
+  UNEXPECTED_EXCEPTION,
+} from "../../src/errors";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -31,6 +37,25 @@ describe("check matches TLC", () => {
     const result = await checkFixture("semantics", "Semantics");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([2, 1, 1]);
+  });
+
+  it("names the source of each set whose method failed when it replays a step", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = IF {x} \\subseteq {{}} THEN 1 ELSE 2\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.replay?.callStack).toEqual([
+      "Line 4, column 9 to line 4, column 48 in M",
+      "Line 4, column 14 to line 4, column 48 in M",
+      "Line 4, column 17 to line 4, column 34 in M",
+      "Line 4, column 17 to line 4, column 19 in M",
+      "Line 4, column 31 to line 4, column 34 in M",
+      "Line 4, column 32 to line 4, column 33 in M",
+    ]);
+    expect(result.failure?.replay?.fingerprint?.reason).toBe(
+      "Attempted to check equality of the set {} with the value:\n0",
+    );
   });
 
   it("decides sets of functions, records, and tuples from an empty argument", async () => {
@@ -206,7 +231,7 @@ describe("check matches TLC", () => {
     });
     expect([result.status, result.failure?.message]).toEqual([
       "error",
-      'Attempted to check equality of integer 2 with non-integer:\n"a"',
+      `${UNEXPECTED_EXCEPTION}Attempted to check equality of integer 2 with non-integer:\n"a"`,
     ]);
   });
 
@@ -610,10 +635,65 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
-  it("rejects a symmetry that names a constant", async () => {
-    await expect(checkModule("CONSTANT P", "CONSTANT P = {p1, p2}\nSYMMETRY P")).rejects.toThrow(
-      TlaConfigError,
+  it("reports a symmetry that isn't a set of permutations like TLC", async () => {
+    await expect(checkModule("", "SYMMETRY P")).rejects.toThrow(
+      new TlaConfigError(
+        "The symmetry function P specified in the configuration file\nis not defined in the specification.",
+      ),
     );
+    const cases = [
+      [
+        "CONSTANT P",
+        "CONSTANT P = {p1, p2}\nSYMMETRY P",
+        "The symmetry function P must specify a set of permutations.",
+      ],
+      ["P == 1", "SYMMETRY P", "The symmetry operator must specify a set of functions."],
+      ["P == {1}", "SYMMETRY P", "The symmetry values must be function records."],
+    ];
+    for (const item of cases) {
+      await expect(checkModule(item[0], item[1])).rejects.toThrow(
+        new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${item[2]}`),
+      );
+    }
+  });
+
+  it("reports a failing constant part of a property while processing the spec like TLC", async () => {
+    const properties = [
+      "<>(1 = {})",
+      "<>[](x = 2 => 1 = {})",
+      "<>[](IF x = 1 THEN x = 2 ELSE 1 = {})",
+    ];
+    for (const property of properties) {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x\nProp == ${property}\n====`,
+          config: "SPECIFICATION Spec\nPROPERTY Prop",
+        }),
+      ).rejects.toThrow(
+        new TlaEvaluationError(
+          `${UNEXPECTED_EXCEPTION}Attempted to check equality of integer 1 with non-integer:\n{}`,
+        ),
+      );
+    }
+  });
+
+  it("reports the unassigned constant TLC finds first", async () => {
+    const cases = [
+      [
+        "CONSTANT TableId\nCONSTANT Snapshot\nCONSTANT BranchId",
+        "CONSTANT TableId = 1",
+        "BranchId",
+      ],
+      ["CONSTANTS Zeta, Alpha, Mid, N", "CONSTANT Mid = 1", "Zeta"],
+      ["CONSTANTS N, Procs, Values, Acceptors, Quorums", "CONSTANT Procs = 1", "Quorums"],
+    ];
+    for (const [body, config, name] of cases) {
+      await expect(checkModule(body, config)).rejects.toThrow(
+        new TlaConfigError(
+          `The constant parameter ${name} is not assigned a value by the configuration file.`,
+        ),
+      );
+    }
   });
 
   it("rejects substituting a constant with a state-level definition", async () => {
@@ -621,9 +701,47 @@ ASSUME TLCFP(a) = -887695703
       TlaConfigError,
     );
     expect((await checkModule("CONSTANT C\nFoo == 1", "CONSTANT C <- Foo")).status).toBe("success");
+    // TLC rejects a state-level substitute only when evaluating it at startup fails.
+    expect(
+      (await checkModule('CONSTANT C\nFoo == TLCGet("level")', "CONSTANT C <- Foo")).status,
+    ).toBe("success");
     await expect(
-      checkModule('CONSTANT C\nFoo == TLCGet("level")', "CONSTANT C <- Foo"),
+      checkModule('CONSTANT C\nFoo == TLCGet("diameter")', "CONSTANT C <- Foo"),
     ).rejects.toThrow(TlaConfigError);
+    expect(
+      (await checkModule("CONSTANT C\nFoo == RandomElement({1})", "CONSTANT C <- Foo")).status,
+    ).toBe("success");
+  });
+
+  it("names why a state-level substitute failed like TLC", async () => {
+    await expect(
+      checkModule(
+        "CONSTANT C\nFoo == IF CHOOSE n \\in {} : TRUE THEN x ELSE x",
+        "CONSTANT C <- Foo",
+      ),
+    ).rejects.toThrow(
+      new TlaConfigError(
+        "The configuration file substitutes constant C with non-constant Foo - specifically: Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 7, col 11 to line 7, col 32 of module M",
+      ),
+    );
+    await expect(
+      checkModule("CONSTANT C\nFoo == (1 \\div 0) + x", "CONSTANT C <- Foo"),
+    ).rejects.toThrow(
+      new TlaConfigError("The configuration file substitutes constant C with non-constant Foo"),
+    );
+  });
+
+  it("accepts a substitute that a constant-level standard operator defines", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Json\nCONSTANT C\nVARIABLE x\nTrace == JsonDeserialize("missing.json")\nInit == x = 0\nNext == x\' = x\n====',
+      config: "CONSTANT C <- Trace\nINIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
   });
 
   it("overrides definitions and ignores undeclared names assigned by the configuration", async () => {
@@ -714,6 +832,49 @@ ASSUME TLCFP(a) = -887695703
       new TlaConfigError("The operator Five, which equals 5,\ncannot be used as a property"),
     );
   });
+
+  it.each([
+    "Prop == LET E == {x} IN [](\\A e \\in E : e < 1)",
+    "Holds(S) == [](\\A e \\in S : e < 1)\nProp == Holds({x})",
+  ])("checks a []P property whose LET or argument reads a variable: %s", async (property) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\n${property}\n====`,
+      config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "invariant-violation",
+      2,
+      2,
+    ]);
+  });
+
+  it.each([
+    [
+      "Bad(r) == r \\div 0 = 1\nNext == \\E m \\in {}, r \\in {1} : Bad(r) /\\ x' = m",
+      "deadlock",
+      1,
+      1,
+    ],
+    [
+      "Ok(r) == r # x\nNext == \\E m \\in 1..2, r \\in 0..2 : Ok(r) /\\ x < 3 /\\ x' = (m + r) % 4",
+      "success",
+      13,
+      4,
+    ],
+  ])(
+    "checks the guards of a multi-bound \\E that read only the outer bound: %s",
+    async (next, status, generatedStates, distinctStates) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\n${next}\n====`,
+        config: `INIT Init\nNEXT Next${status === "success" ? "\nCHECK_DEADLOCK FALSE" : ""}`,
+      });
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        status,
+        generatedStates,
+        distinctStates,
+      ]);
+    },
+  );
 });
 
 describe("formatValue matches TLC", () => {
@@ -747,6 +908,136 @@ const getFailureSummary = (result: CheckResult) => [
 ];
 
 describe("evaluation errors match TLC", () => {
+  it("reports a failing TLCGet as a failure of its Java method like TLC", async () => {
+    const signature =
+      "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
+    const cases = [
+      ["TLCGet(42)", "TLCGet(42) was undefined."],
+      ['TLCGet("nope")', "TLCGet(nope) was undefined."],
+      [
+        "TLCGet(<<1>>)",
+        "The argument of TLCGet should be a nonnegative integer, but instead it is:\n<<1>>",
+      ],
+    ];
+    const results = await Promise.all(
+      cases.map((item) =>
+        check({
+          source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = ${item[0]}\nNext == UNCHANGED x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ),
+    );
+    expect(results.map((result) => [result.failure?.message, result.failure?.exitCode])).toEqual(
+      cases.map((item) => [
+        `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${item[1]}`,
+        75,
+      ]),
+    );
+  });
+
+  it("reports action composition as unsupported like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = 1\nInv == ENABLED (Next \\cdot Next)\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+      "The current version of TLC does not support action composition.  An incomplete implementation can be enabled via the tlc2.tool.impl.Tool.cdot=true java property.",
+      75,
+    ]);
+  });
+
+  it("reports a stack overflow in the next-state relation like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nRECURSIVE R(_)\nR(n) == R(n + 1)\nInit == x = 0\nNext == x' = R(0)\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.message).toBe(STACK_OVERFLOW);
+    expect(result.failure?.trace.map((step) => step.state.x)).toEqual([0]);
+  });
+
+  it("reports a successor the next-state relation leaves incomplete like TLC", async () => {
+    const getResult = (next: string) =>
+      check({
+        source: `---- MODULE M ----\nVARIABLES x, y, z\nInit == x = 0 /\\ y = 0 /\\ z = 0\nA1 == x' = 1\nA2 == x' = 2 /\\ y' = 2 /\\ z' = 2\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+    const single = await getResult("x' = 1 /\\ y' = 1");
+    expect([single.failure?.message, single.failure?.exitCode, single.generatedStates]).toEqual([
+      "Successor state is not completely specified by the next-state action. The following variable is not defined: z.\n",
+      75,
+      2,
+    ]);
+    const several = await getResult("A1 \\/ A2");
+    expect(several.failure?.message).toBe(
+      "Successor state is not completely specified by action A1 of the next-state relation. The following variables are not defined: y, z.\n",
+    );
+    expect(several.failure?.trace.map((step) => [step.label, formatValue(step.state.y)])).toEqual([
+      [undefined, "0"],
+      ["A1 line 4, col 7 to line 4, col 12 of module M", "null"],
+    ]);
+  });
+
+  it("reports a value where the initial or next-state relation expects a formula like TLC", async () => {
+    const getFailure = async (init: string, next: string) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == ${init}\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      return [result.failure?.message, result.failure?.exitCode];
+    };
+    expect(await getFailure("x = 0 /\\ x + 3", "x' = x")).toEqual([
+      "In computing initial states, TLC expected a boolean expression,\nbut instead found 3.\nline 4, col 18 to line 4, col 22 of module M",
+      75,
+    ]);
+    expect(await getFailure("x = 0", "x' = 1 /\\ x + 2")).toEqual([
+      `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found 2.\nline 5, col 19 to line 5, col 23 of module M`,
+      75,
+    ]);
+    expect(await getFailure("x = 0", "3")).toEqual([
+      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n3`,
+      255,
+    ]);
+  });
+
+  it("reports a failing constraint on a successor like a failure of the next-state relation", async () => {
+    const getFailure = async (constraint: string, config: string) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nC == ${constraint}\n====`,
+        config: `INIT Init\nNEXT Next\n${config} C`,
+      });
+      return [result.failure?.message, result.failure?.exitCode, result.failure?.trace.length];
+    };
+    expect(await getFailure("x < 1 \\/ x[1] = 0", "CONSTRAINT")).toEqual([
+      `${UNEXPECTED_EXCEPTION}A non-function (an integer) was applied as a function.\nline 6, col 15 to line 6, col 18 of module M`,
+      75,
+      2,
+    ]);
+    expect(await getFailure("x' < 1 \\/ x[1] = 0", "ACTION_CONSTRAINT")).toEqual([
+      `${UNEXPECTED_EXCEPTION}A non-function (an integer) was applied as a function.\nline 6, col 16 to line 6, col 19 of module M`,
+      75,
+      2,
+    ]);
+  });
+
+  it("reports a successor it cannot fingerprint as a failure of the state it expands", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = SUBSET (SUBSET (1..32))\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([
+      result.failure?.message,
+      result.failure?.exitCode,
+      result.failure?.trace.length,
+    ]).toEqual([
+      `${UNEXPECTED_EXCEPTION}Overflow when computing the number of elements in:\nSUBSET (1..32)`,
+      75,
+      1,
+    ]);
+  });
+
   it("reports a CASE with no true guard like TLC", async () => {
     const result = await check({
       source:
@@ -756,6 +1047,42 @@ describe("evaluation errors match TLC", () => {
     expect(result.violation?.message).toBe(
       "Attempted to evaluate a CASE with no conditions true.\nline 3, col 8 to line 3, col 22 of module M",
     );
+  });
+
+  it("reports a SUBSET too large to enumerate like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = SUBSET (SUBSET (1..36))\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+      "Overflow when computing the number of elements in:\nSUBSET (1..36)",
+      75,
+    ]);
+  });
+
+  it("reports a variable read before the initial predicate assigns it like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLES x, y\nInit == y = x /\\ x = 0\nNext == UNCHANGED <<x, y>>\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+      "In evaluation, the identifier x is either undefined or not an operator.\nline 3, col 13 to line 3, col 13 of module M",
+      75,
+    ]);
+  });
+
+  it("reports a variable drawn from a set it can't enumerate like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in Nat\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.message).toBe(
+      "In computing initial states, the right side of \\IN is not enumerable.\nline 4, col 9 to line 4, col 17 of module M",
+    );
+    expect(result.failure?.exitCode).toBe(75);
   });
 
   it("reports a CASE with no true guard in the next-state relation like TLC", async () => {
@@ -768,6 +1095,35 @@ describe("evaluation errors match TLC", () => {
       "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, TLC encountered a CASE with no conditions true.\nline 4, col 9 to line 5, col 20 of module M",
     );
     expect(result.failure?.exitCode).toBe(75);
+  });
+
+  it("reports a CASE with no true guard in the initial predicate like TLC", async () => {
+    const result = await check({
+      source: "---- MODULE M ----\nVARIABLE x\nInit == CASE FALSE -> x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+      "In computing initial states, TLC encountered a CASE with no conditions true.\nline 3, col 9 to line 3, col 27 of module M",
+      75,
+    ]);
+  });
+
+  it("reports a failure of the next-state relation as an unexpected exception like TLC", async () => {
+    const results = await Promise.all(
+      ["x' = CHOOSE n \\in {} : TRUE", "x' = 1 \\div 0"].map((next) =>
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ),
+    );
+    expect(results.map((result) => [result.failure?.message, result.failure?.exitCode])).toEqual([
+      [
+        `${UNEXPECTED_EXCEPTION}Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 5, col 14 to line 5, col 35 of module M`,
+        75,
+      ],
+      ["The second argument of \\div is 0.", 255],
+    ]);
   });
 
   it("reports the behavior up to a state whose invariant fails to evaluate", async () => {
@@ -925,6 +1281,30 @@ describe("evaluation errors match TLC", () => {
       ["1 \\in TRUE", "Attempted to check if the value:\n1\nis an element of the boolean TRUE"],
       ["1 \\in [a |-> 1]", "Attempted to check if element:\n1\nis in the record:\n[a |-> 1]"],
       ["1 \\in <<1>>", "Attempted to check set membership in a tuple value."],
+      [
+        "1 \\in [{1} -> {2}]",
+        "Attempted to check if \n1\nwhich is not a TLC function value, is in the set of functions:\n{<<2>>}",
+      ],
+      ["{{}} \\cup {1} = {}", "Attempted to check equality of the set {} with the value:\n1"],
+      ["{1} \\ {{}} = {}", "Attempted to check equality of the set {} with the value:\n1"],
+      ["{{}} \\cap {1} = {}", "Attempted to check equality of integer 1 with non-integer:\n{}"],
+      [
+        "0 \\in SUBSET {1}",
+        "Attempted to check if the non-enumerable value\n0\nis element of\n{{}, {1}}",
+      ],
+      [
+        "Nat \\in SUBSET Nat",
+        "Attempted to check if the non-enumerable value\nNat\nis element of\nSUBSET Nat",
+      ],
+      [
+        "{1, 2} \\subseteq 0",
+        "Attempted to check if the value:\n1\nis an element of the integer 0",
+      ],
+      [
+        "{1} \\subseteq [a |-> 1]",
+        "Attempted to check if element:\n1\nis in the record:\n[a |-> 1]",
+      ],
+      ["{} \\subseteq 0", undefined],
     ];
     const messages = await Promise.all(
       cases.map(async (item) => (await checkModule(`ASSUME ${item[0]}`)).violation?.message),
@@ -932,7 +1312,98 @@ describe("evaluation errors match TLC", () => {
     expect(messages).toEqual(cases.map((item) => item[1]));
   });
 
-  it("locates IF, CHOOSE, conjunction, DOMAIN, and field errors like TLC", async () => {
+  it("quantifies over a power set too large to build in TLC's order, like TLC", async () => {
+    const result = await checkModule(
+      [
+        "ASSUME \\E s \\in SUBSET (1..40) : Cardinality(s) = 2",
+        "ASSUME ~\\A s \\in SUBSET (1..40) : Cardinality(s) < 1",
+        "ASSUME (CHOOSE s \\in SUBSET (1..40) : Cardinality(s) = 1) = {1}",
+        "ASSUME (CHOOSE s \\in SUBSET (1..32) : Cardinality(s) = 2 /\\ 5 \\in s) = {1, 5}",
+      ].join("\n"),
+    );
+    expect(result.failure).toBeUndefined();
+    expect(result.violation).toBeUndefined();
+  });
+
+  it("fails on a state holding a set it can't enumerate to fingerprint, like TLC", async () => {
+    const results = await Promise.all(
+      [
+        ["Nat", "UNCHANGED x"],
+        ["{}", "x' = SUBSET Nat"],
+      ].map((item) =>
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = ${item[0]}\nNext == ${item[1]}\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ),
+    );
+    expect(
+      results.map((result) => [
+        result.failure?.message,
+        result.failure?.exitCode,
+        result.failure?.trace.length,
+      ]),
+    ).toEqual([
+      ["TLC has found a state in which the value of a variable contains Nat", 75, 0],
+      [
+        "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to compute the number of elements in the overridden value Nat.",
+        75,
+        1,
+      ],
+    ]);
+  });
+
+  it("applies a set operator to a value that isn't a set until it needs its elements, like TLC", async () => {
+    const result = await checkModule(
+      [
+        "ASSUME 1 \\in ({1} \\cup 0)",
+        "ASSUME 1 \\in (0 \\cup {1})",
+        'ASSUME 1 \\in ((1..2) \\cup "a")',
+        "ASSUME ({} \\cup 0) = 0",
+        "ASSUME ({} \\cap 0) = {}",
+      ].join("\n"),
+    );
+    expect(result.failure).toBeUndefined();
+    expect(result.violation).toBeUndefined();
+    const messages = await Promise.all(
+      ["2 \\in ({1} \\cup 0)", "1 \\in (0 \\ {1})", "Cardinality({1} \\cup 0) = 1"].map(
+        async (expression) => (await checkModule(`ASSUME ${expression}`)).violation?.message,
+      ),
+    );
+    expect(messages).toEqual([
+      "Attempted to check if the value:\n2\nis an element of the integer 0",
+      "Attempted to check if the value:\n1\nis an element of the integer 0",
+      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to enumerate S \\cup T when S:\n{1}\nand T:\n0\nare not both enumerable",
+    ]);
+  });
+
+  it("names the Java class of Naturals in an arithmetic error unless the spec loads Integers, like TLC", async () => {
+    const cases = [
+      ["Naturals", "Naturals"],
+      ["Naturals, Sequences", "Naturals"],
+      ["Naturals, Integers", "Integers"],
+      ["Naturals, TLCExt", "Integers"],
+    ];
+    const messages = await Promise.all(
+      cases.map(
+        async (item) =>
+          (
+            await check({
+              source: `---- MODULE M ----\nEXTENDS ${item[0]}\nASSUME 1 + "a" = 1\n====`,
+              config: "",
+            })
+          ).violation?.message,
+      ),
+    );
+    expect(messages).toEqual(
+      cases.map(
+        (item) =>
+          `Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.${item[1]}.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue`,
+      ),
+    );
+  });
+
+  it("locates IF, CHOOSE, conjunction, DOMAIN, application, and field errors like TLC", async () => {
     const cases = [
       [
         "ASSUME IF 1 THEN TRUE ELSE FALSE",
@@ -966,6 +1437,18 @@ describe("evaluation errors match TLC", () => {
         "ASSUME [a |-> 1].b = 0",
         'Attempted to select nonexistent field "b" from the record\n[a |-> 1]\nline 6, col 8 to line 6, col 18 of module M',
       ],
+      [
+        "ASSUME 3[1] = 0",
+        "A non-function (an integer) was applied as a function.\nline 6, col 8 to line 6, col 11 of module M",
+      ],
+      [
+        'ASSUME "ab"[1, 2] = 0',
+        "A non-function (a string) was applied as a function.\nline 6, col 8 to line 6, col 17 of module M",
+      ],
+      [
+        "ASSUME {1}.b = 0",
+        'Attempted to select field "b" from a non-record value {1}\nline 6, col 8 to line 6, col 12 of module M',
+      ],
     ];
     const messages = await Promise.all(
       cases.map(async (item) => (await checkModule(item[0])).violation?.message),
@@ -991,6 +1474,32 @@ describe("evaluation errors match TLC", () => {
     expect((await checkModule('ASSUME [n \\in {"a"} |-> n]["b"] = 0')).violation?.message).toBe(
       'In applying the function\n[a |-> "a"],\nthe first argument is:\n"b"\nwhich is not in its domain.\n',
     );
+  });
+
+  it("reports an argument outside the domain of a tuple, record, or function like TLC", async () => {
+    const cases = [
+      ["<<1, 2>>[3]", "Attempted to access index 3 of tuple\n<<1, 2>>\nwhich is out of bounds."],
+      ['<<1, 2>>["a"]', 'Attempted to access tuple at a non integral index: "a"'],
+      ["[a |-> 1][2]", "Attempted to access record by a non-string argument: 2"],
+      ['[a |-> 1]["b"]', "Attempted to access nonexistent field 'b' of record\n[a |-> 1]"],
+      [
+        "(1 :> 2)[3]",
+        "Attempted to apply function:\n<<2>>\nto argument 3, which is not in the domain of the function.",
+      ],
+      ["<<>>.b", 'Attempted to apply function with integer domain to the non-integer argument "b"'],
+      [
+        "[n \\in 0..2 |-> n].b",
+        'Attempted to apply function with integer domain to the non-integer argument "b"',
+      ],
+      [
+        "[n \\in {} |-> n].b",
+        'Attempted to apply function:\n<<>>\nto argument "b", which is not in the domain of the function.',
+      ],
+    ];
+    const messages = await Promise.all(
+      cases.map(async (item) => (await checkModule(`ASSUME ${item[0]} = 0`)).violation?.message),
+    );
+    expect(messages).toEqual(cases.map((item) => item[1]));
   });
 
   it("reports an overflowing cardinality without enumerating the set", async () => {
@@ -1030,6 +1539,23 @@ describe("evaluation errors match TLC", () => {
       '"[fld1 |-> 1, fld2 |-> 2]"',
       '"[fld1 |-> 1, fld3 |-> 3, fld2 |-> 2]"',
       "[fld2 |-> 2, fld1 |-> 1]",
+    ]);
+  });
+
+  it("evaluates a function over a domain TLC keeps lazy only where it is applied", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nASSUME PrintT([b |-> 0])\nASSUME PrintT([s \\in SUBSET {1} |-> 1 \\div Cardinality(s)][{1}])\nASSUME PrintT([v \\in {0} |-> [a |-> 1, b |-> 2]])\nASSUME PrintT([v \\in SUBSET {0} |-> [a |-> 1, b |-> 2]])\nASSUME PrintT([v \\in {0} \\X {1} |-> [a |-> 1, b |-> 2]])\n====",
+      config: "",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(prints.slice(1)).toEqual([
+      "1",
+      "(0 :> [b |-> 2, a |-> 1])",
+      "({} :> [a |-> 1, b |-> 2] @@ {0} :> [a |-> 1, b |-> 2])",
+      "(<<0, 1>> :> [a |-> 1, b |-> 2])",
     ]);
   });
 
@@ -1221,10 +1747,26 @@ describe("name resolution matches SANY", () => {
 
   it("fails to parse a spec that imports a module it cannot find, such as Strings", async () => {
     await expect(checkSource("EXTENDS Strings")).rejects.toThrow(
-      new TlaSyntaxError("Cannot find source file for module Strings imported in module M."),
+      createSanyError(
+        [
+          {
+            location: "In module M",
+            message: "Cannot find source file for module Strings imported in module M.",
+          },
+        ],
+        true,
+      ),
     );
     await expect(checkSource("N == INSTANCE Nowhere")).rejects.toThrow(
-      new TlaSyntaxError("Cannot find source file for module Nowhere imported in module M."),
+      createSanyError(
+        [
+          {
+            location: "In module M",
+            message: "Cannot find source file for module Nowhere imported in module M.",
+          },
+        ],
+        true,
+      ),
     );
   });
 
@@ -1257,12 +1799,247 @@ describe("name resolution matches SANY", () => {
     await expect(checkSource(source)).rejects.toThrow(TlaSyntaxError);
   });
 
-  it("names an unknown identifier and an unknown operator symbol like SANY", async () => {
-    await expect(checkSource("f == g")).rejects.toThrow(
-      "Unknown operator: `g' at line 2, column 6",
-    );
-    await expect(checkSource("f == 1 + 1")).rejects.toThrow(
-      "Could not find declaration or definition of symbol '+' at line 2, column 8",
+  it.each([
+    ["f == g", [["line 2, col 6 to line 2, col 6", "Unknown operator: `g'."]]],
+    [
+      "f == 1 + 1",
+      [
+        [
+          "line 2, col 8 to line 2, col 8",
+          "Could not find declaration or definition of symbol '+'.",
+        ],
+        ["line 2, col 6 to line 2, col 10", "Couldn't resolve infix operator symbol `+'."],
+      ],
+    ],
+    [
+      "f == -1",
+      [
+        [
+          "line 2, col 6 to line 2, col 6",
+          "Could not find declaration or definition of symbol '-.'.",
+        ],
+        ["line 2, col 6 to line 2, col 7", "Couldn't resolve prefix operator symbol `-.'."],
+      ],
+    ],
+    [
+      "g == 1^+",
+      [
+        [
+          "line 2, col 7 to line 2, col 8",
+          "Could not find declaration or definition of symbol '^+'.",
+        ],
+        ["line 2, col 6 to line 2, col 8", "Couldn't resolve postfix operator symbol `^+'."],
+      ],
+    ],
+    ["Ab == 1\nf == Abc", [["line 3, col 6 to line 3, col 8", "Unknown operator: `Abc'."]]],
+    [
+      "EXTENDS Naturals\nf == -1",
+      [
+        [
+          "line 3, col 6 to line 3, col 6",
+          "Could not find declaration or definition of symbol '-.'.",
+        ],
+        ["line 3, col 6 to line 3, col 7", "Couldn't resolve prefix operator symbol `-.'."],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\ng == 1^+",
+      [
+        [
+          "line 3, col 7 to line 3, col 8",
+          "Could not find declaration or definition of symbol '^+'.",
+        ],
+        ["line 3, col 6 to line 3, col 8", "Couldn't resolve postfix operator symbol `^+'."],
+      ],
+    ],
+    [
+      "Foo(a) == a\ng == Foo(1,  2)",
+      [["line 3, col 9 to line 3, col 15", "The operator Foo requires 1 arguments."]],
+    ],
+    [
+      "THEOREM T == TRUE\nHIDE T, TRUE, {}",
+      ["line 3, col 9 to line 3, col 12", "line 3, col 15 to line 3, col 16"].map((location) => [
+        location,
+        "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+      ]),
+    ],
+    [
+      "Foo(a) == a\ng == Foo",
+      [["line 3, col 6 to line 3, col 8", "The operator Foo requires 1 arguments."]],
+    ],
+    [
+      "f == A /\\ B /\\ C(1)\ng == D",
+      [
+        ["line 2, col 6 to line 2, col 6", "Unknown operator: `A'."],
+        ["line 2, col 11 to line 2, col 11", "Unknown operator: `B'."],
+        ["line 2, col 16 to line 2, col 16", "Unknown operator: `C'."],
+        ["line 3, col 6 to line 3, col 6", "Unknown operator: `D'."],
+      ],
+    ],
+    [
+      "Op(a, b) == a\nf == Op(F) /\\ Op(G, H, I) /\\ Op /\\ J",
+      [
+        ["line 3, col 8 to line 3, col 10", "The operator Op requires 2 arguments."],
+        ["line 3, col 17 to line 3, col 25", "The operator Op requires 2 arguments."],
+        ["line 3, col 30 to line 3, col 31", "The operator Op requires 2 arguments."],
+        ["line 3, col 36 to line 3, col 36", "Unknown operator: `J'."],
+      ],
+    ],
+    [
+      "f == (A + B) /\\ C\ng == -D /\\ E",
+      [
+        [
+          "line 2, col 9 to line 2, col 9",
+          "Could not find declaration or definition of symbol '+'.",
+        ],
+        ["line 2, col 7 to line 2, col 11", "Couldn't resolve infix operator symbol `+'."],
+        ["line 2, col 17 to line 2, col 17", "Unknown operator: `C'."],
+        [
+          "line 3, col 6 to line 3, col 6",
+          "Could not find declaration or definition of symbol '-.'.",
+        ],
+        ["line 3, col 6 to line 3, col 7", "Couldn't resolve prefix operator symbol `-.'."],
+        ["line 3, col 12 to line 3, col 12", "Unknown operator: `E'."],
+      ],
+    ],
+    [
+      "f == [a |-> Q, a |-> R, b |-> S, b |-> T] /\\ [c : U, c : V]",
+      [
+        ["line 2, col 13 to line 2, col 13", "Unknown operator: `Q'."],
+        ["line 2, col 16 to line 2, col 16", "Non-unique fields in constructor."],
+        ["line 2, col 22 to line 2, col 22", "Unknown operator: `R'."],
+        ["line 2, col 31 to line 2, col 31", "Unknown operator: `S'."],
+        ["line 2, col 34 to line 2, col 34", "Non-unique fields in constructor."],
+        ["line 2, col 40 to line 2, col 40", "Unknown operator: `T'."],
+        ["line 2, col 51 to line 2, col 51", "Unknown operator: `U'."],
+        ["line 2, col 54 to line 2, col 54", "Non-unique fields in constructor."],
+        ["line 2, col 58 to line 2, col 58", "Unknown operator: `V'."],
+      ],
+    ],
+    [
+      "F(a) == a\nG(a) == a\nf == F(G) /\\ LET L(y) == y IN F(L) /\\ A",
+      [
+        ["line 4, col 8 to line 4, col 8", "The operator G requires 1 arguments."],
+        ["line 4, col 33 to line 4, col 33", "The operator L requires 1 arguments."],
+        ["line 4, col 39 to line 4, col 39", "Unknown operator: `A'."],
+      ],
+    ],
+    [
+      "f == LET L == K IN L /\\ M\ng == \\A y \\in N : \\E z \\in O : P(y, z)",
+      [
+        ["line 2, col 15 to line 2, col 15", "Unknown operator: `K'."],
+        ["line 2, col 25 to line 2, col 25", "Unknown operator: `M'."],
+        ["line 3, col 15 to line 3, col 15", "Unknown operator: `N'."],
+        ["line 3, col 28 to line 3, col 28", "Unknown operator: `O'."],
+        ["line 3, col 32 to line 3, col 32", "Unknown operator: `P'."],
+      ],
+    ],
+    [
+      "THEOREM ASSUME NEW a \\in A, B PROVE C(a)\n<1>1. D\n<1> DEFINE G == H\n<1>2. QED\nASSUME S",
+      [
+        ["line 2, col 26 to line 2, col 26", "Unknown operator: `A'."],
+        ["line 2, col 29 to line 2, col 29", "Unknown operator: `B'."],
+        ["line 2, col 37 to line 2, col 37", "Unknown operator: `C'."],
+        ["line 3, col 7 to line 3, col 7", "Unknown operator: `D'."],
+        ["line 4, col 17 to line 4, col 17", "Unknown operator: `H'."],
+        ["line 6, col 8 to line 6, col 8", "Unknown operator: `S'."],
+      ],
+    ],
+    [
+      "---- MODULE Inner ----\nCONSTANT a, b\n====\nI == INSTANCE Inner WITH b <- B, a <- [f |-> A, f |-> 1]",
+      [
+        ["line 5, col 31 to line 5, col 31", "Unknown operator: `B'."],
+        ["line 5, col 46 to line 5, col 46", "Unknown operator: `A'."],
+        ["line 5, col 49 to line 5, col 49", "Non-unique fields in constructor."],
+      ],
+    ],
+    [
+      "High(Op(_)) == Op(1)\nF(a) == a\nG(a, b) == a\nf == High(A) /\\ High(G) /\\ F(LAMBDA y : y) /\\ High(1) /\\ High(High)",
+      [
+        ["line 5, col 11 to line 5, col 11", "Unknown operator: `A'."],
+        [
+          "line 5, col 6 to line 5, col 12",
+          "Argument number 1 to operator 'High' \nshould be a 1-parameter operator.",
+        ],
+        ["line 5, col 22 to line 5, col 22", "Expected arity 1 but found operator of arity 2."],
+        [
+          "line 5, col 17 to line 5, col 23",
+          "Argument number 1 to operator 'High' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 5, col 30 to line 5, col 41",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 5, col 52 to line 5, col 52",
+          "An expression appears as argument number 1 (counting from 1) to operator 'High', in a position an operator is required.",
+        ],
+        [
+          "line 5, col 47 to line 5, col 53",
+          "Argument number 1 to operator 'High' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 5, col 58 to line 5, col 67",
+          "Argument number 1 to operator 'High' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "EXTENDS Naturals, Sequences\nTwo(a, b) == a\nf == LET G(y) == y IN G(1) + G\nP(Op(_)) == Op(Op) /\\ Op + 1\ng == SelectSeq(<<>>, Two) /\\ SelectSeq(<<>>, LAMBDA a, b : a)",
+      [
+        ["line 4, col 30 to line 4, col 30", "The operator G requires 1 arguments."],
+        ["line 5, col 16 to line 5, col 17", "The operator Op requires 1 arguments."],
+        ["line 5, col 23 to line 5, col 24", "The operator Op requires 1 arguments."],
+        ["line 6, col 22 to line 6, col 24", "Expected arity 1 but found operator of arity 2."],
+        [
+          "line 6, col 6 to line 6, col 25",
+          "Argument number 2 to operator 'SelectSeq' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 6, col 30 to line 6, col 38",
+          "Lambda expression with arity 2 used as argument 2 of operator `SelectSeq', \nbut an operator of arity 1 is required.",
+        ],
+        [
+          "line 6, col 30 to line 6, col 61",
+          "Argument number 2 to operator 'SelectSeq' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "---- MODULE Inner ----\nH(Op(_)) == Op(1)\nOne(a) == a\n====\nI == INSTANCE Inner\nINSTANCE Inner\nf == I!H(I!One) /\\ I!One(I!One) /\\ I!H(LAMBDA a, b : a) /\\ H(I!H) /\\ One(One)",
+      [
+        ["line 8, col 26 to line 8, col 30", "The operator I!One requires 1 arguments."],
+        [
+          "line 8, col 38 to line 8, col 38",
+          "Lambda expression with arity 2 used as argument 1 of operator `I!H', \nbut an operator of arity 1 is required.",
+        ],
+        [
+          "line 8, col 36 to line 8, col 55",
+          "Argument number 1 to operator 'I!H' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 8, col 60 to line 8, col 65",
+          "Argument number 1 to operator 'H' \nshould be a 1-parameter operator.",
+        ],
+        ["line 8, col 74 to line 8, col 76", "The operator One requires 1 arguments."],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nOne(a) == a\nf == One(\\cup) /\\ One(-.) /\\ One(1) + One",
+      [
+        ["line 4, col 10 to line 4, col 13", "The operator \\cup requires 2 arguments."],
+        [
+          "line 4, col 23 to line 4, col 23",
+          "Could not find declaration or definition of symbol '-.'.",
+        ],
+        ["line 4, col 39 to line 4, col 41", "The operator One requires 1 arguments."],
+      ],
+    ],
+  ])("reports %j at the range SANY reports", async (source, errors) => {
+    await expect(checkSource(source)).rejects.toThrow(
+      createSanyError(
+        errors.map(([location, message]) => ({ location: `${location} of module M`, message })),
+      ),
     );
   });
 
@@ -1304,44 +2081,721 @@ describe("name resolution matches SANY", () => {
   });
 
   it.each([
-    ["a definition defined twice", "B == 1\nB == 2"],
-    ["a definition of a declared constant", "CONSTANT B\nB == 1"],
-    ["a constant declared after a definition", "B == 1\nCONSTANT B"],
-    ["a constant and a variable with one name", "CONSTANT y\nVARIABLE y"],
-    ["an operator parameter named after a definition", "B == 1\nF(B) == B"],
-    ["a LET definition named after a definition", "B == 1\nF == LET B == 2 IN B"],
-    ["a bound variable named after a variable", "VARIABLE y\nF == \\E y \\in {1} : TRUE"],
-    ["nested bound variables with one name", "F == \\E y \\in {1} : \\E y \\in {2} : TRUE"],
-    ["an operator of an extended module", "EXTENDS Naturals\na + b == a"],
-    ["a built-in operator", "BOOLEAN == 1"],
-    ["a constant named after a built-in operator", "CONSTANT BOOLEAN"],
-    ["a variable named after a built-in operator", "VARIABLE TRUE"],
-    ["a constant named after an operator of an extended module", "EXTENDS Naturals\nCONSTANT Nat"],
+    [
+      "a definition defined twice",
+      "B == 1\nB == 2",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "Operator B already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message:
+            "Multiple declarations or definitions for symbol B.  \nThis duplicates the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+    ],
+    [
+      "a definition of a declared constant",
+      "CONSTANT B\nB == 1",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "Operator B already defined or declared.",
+        },
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a constant declared after a definition",
+      "B == 1\nCONSTANT B",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a constant and a variable with one name",
+      "CONSTANT y\nVARIABLE y",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'y': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an operator parameter named after a definition",
+      "B == 1\nF(B) == B",
+      [
+        {
+          location: "line 3, col 3 to line 3, col 3 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a LET definition named after a definition",
+      "B == 1\nF == LET B == 2 IN B",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 15 of module M",
+          message: "Operator B already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 10 to line 3, col 15 of module M",
+          message:
+            "Multiple declarations or definitions for symbol B.  \nThis duplicates the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+    ],
+    [
+      "a bound variable named after a variable",
+      "VARIABLE y\nF == \\E y \\in {1} : TRUE",
+      [
+        {
+          location: "line 3, col 9 to line 3, col 9 of module M",
+          message:
+            "Multiply-defined symbol 'y': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "nested bound variables with one name",
+      "F == \\E y \\in {1} : \\E y \\in {2} : TRUE",
+      [
+        {
+          location: "line 2, col 24 to line 2, col 24 of module M",
+          message:
+            "Multiply-defined symbol 'y': this definition or declaration conflicts \nwith the one at line 2, col 9 to line 2, col 9 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an operator of an extended module",
+      "EXTENDS Naturals\na + b == a",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 10 of module M",
+          message: "Operator + already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 10 of module M",
+          message:
+            "Multiple declarations or definitions for symbol +.  \nThis duplicates the one at line 15, col 1 to line 15, col 19 of module Naturals.",
+        },
+      ],
+    ],
+    [
+      "a built-in operator",
+      "BOOLEAN == 1",
+      [
+        {
+          location: "line 2, col 1 to line 2, col 12 of module M",
+          message: "Operator BOOLEAN already defined or declared.",
+        },
+        {
+          location: "line 2, col 1 to line 2, col 12 of module M",
+          message: "Symbol BOOLEAN is a built-in operator, and cannot be redefined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a constant named after a built-in operator",
+      "CONSTANT BOOLEAN",
+      [
+        {
+          location: "line 2, col 10 to line 2, col 16 of module M",
+          message: "Symbol BOOLEAN is a built-in operator, and cannot be redefined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a variable named after a built-in operator",
+      "VARIABLE TRUE",
+      [
+        {
+          location: "line 2, col 10 to line 2, col 13 of module M",
+          message: "Symbol TRUE is a built-in operator, and cannot be redefined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a constant named after an operator of an extended module",
+      "EXTENDS Naturals\nCONSTANT Nat",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Nat': this definition or declaration conflicts \nwith the one at line 14, col 1 to line 14, col 16 of module Naturals.",
+        },
+      ],
+      [],
+    ],
     [
       "a nested module constant named after an enclosing variable",
       "VARIABLE y\n---- MODULE Inner ----\nCONSTANT y\n====",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'y': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+      ],
+      [],
     ],
-    ["a definition after an instance that imports it", "INSTANCE Naturals\nNat == 1"],
-    ["a named instance and a definition with one name", "I == 1\nI == INSTANCE Naturals"],
-    ["duplicate operator parameters", "F(a, a) == a"],
+    [
+      "a definition after an instance that imports it",
+      "INSTANCE Naturals\nNat == 1",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 8 of module M",
+          message: "Operator Nat already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 8 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Nat.  \nThis duplicates the one at line 14, col 1 to line 14, col 16 of module Naturals.",
+        },
+      ],
+    ],
+    [
+      "a named instance and a definition with one name",
+      "I == 1\nI == INSTANCE Naturals",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 22 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "duplicate operator parameters",
+      "F(a, a) == a",
+      [
+        {
+          location: "line 2, col 6 to line 2, col 6 of module M",
+          message:
+            "Multiply-defined symbol 'a': this definition or declaration conflicts \nwith the one at line 2, col 3 to line 2, col 3 of module M.",
+        },
+      ],
+      [],
+    ],
     [
       "a LAMBDA parameter named after a definition",
       "B == 1\nG(Op(_)) == Op(1)\nF == G(LAMBDA B : B)",
+      [
+        {
+          location: "line 4, col 15 to line 4, col 15 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
     ],
-    ["a function bound named after a definition", "y == 1\nf[y \\in {1}] == y"],
-    ["duplicate names in a tuple pattern", "F == \\E <<a, a>> \\in {<<1, 2>>} : TRUE"],
-    ["a LET definition named after an enclosing one", "F == LET A == 1 IN LET A == 2 IN A"],
-    ["a LOCAL definition of an extended operator", "EXTENDS FiniteSets\nLOCAL Cardinality(S) == 0"],
+    [
+      "a function bound named after a definition",
+      "y == 1\nf[y \\in {1}] == y",
+      [
+        {
+          location: "line 3, col 3 to line 3, col 3 of module M",
+          message:
+            "Multiply-defined symbol 'y': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "duplicate names in a tuple pattern",
+      "F == \\E <<a, a>> \\in {<<1, 2>>} : TRUE",
+      [
+        {
+          location: "line 2, col 14 to line 2, col 14 of module M",
+          message:
+            "Multiply-defined symbol 'a': this definition or declaration conflicts \nwith the one at line 2, col 11 to line 2, col 11 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a LET definition named after an enclosing one",
+      "F == LET A == 1 IN LET A == 2 IN A",
+      [
+        {
+          location: "line 2, col 24 to line 2, col 29 of module M",
+          message: "Operator A already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 2, col 24 to line 2, col 29 of module M",
+          message:
+            "Multiple declarations or definitions for symbol A.  \nThis duplicates the one at line 2, col 10 to line 2, col 15 of module M.",
+        },
+      ],
+    ],
+    [
+      "a LOCAL definition of an extended operator",
+      "EXTENDS FiniteSets\nLOCAL Cardinality(S) == 0",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 25 of module M",
+          message: "Operator Cardinality already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 25 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Cardinality.  \nThis duplicates the one at line 21, col 1 to line 27, col 11 of module FiniteSets.",
+        },
+      ],
+    ],
     [
       "a nested module definition named after an outer one",
       "B == 1\n---- MODULE Inner ----\nB == 2\n====\nI == INSTANCE Inner",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 6 of module M",
+          message: "Operator B already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 4, col 1 to line 4, col 6 of module M",
+          message:
+            "Multiple declarations or definitions for symbol B.  \nThis duplicates the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
     ],
-  ])("rejects %s as multiply defined", async (_, source) => {
-    await expect(checkSource(source)).rejects.toThrow(/Multiply-defined symbol/);
+    [
+      "a definition of another arity",
+      "B == 1\nB(a) == a",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 9 of module M",
+          message: "Operator B already defined or declared.",
+        },
+        {
+          location: "line 3, col 1 to line 3, col 9 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a function defined twice",
+      "f[n \\in {1}] == n\nf[n \\in {1}] == n",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 17 of module M",
+          message: "Function name `f' already defined or declared.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an operator named after a function",
+      "f[n \\in {1}] == n\nf == 1",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "Operator f already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message:
+            "Multiple declarations or definitions for symbol f.  \nThis duplicates the one at line 2, col 1 to line 2, col 17 of module M.",
+        },
+      ],
+    ],
+    [
+      "a parameter named after a built-in operator",
+      "F(TRUE) == 1",
+      [
+        {
+          location: "line 2, col 3 to line 2, col 6 of module M",
+          message: "Symbol TRUE is a built-in operator, and cannot be redefined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a recursive operator defined twice",
+      "RECURSIVE F(_)\nF(n) == n\nF(n) == n\nG == 1",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message: "Operator F already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message:
+            "Multiple declarations or definitions for symbol F.  \nThis duplicates the one at line 3, col 1 to line 3, col 9 of module M.",
+        },
+      ],
+    ],
+    [
+      "a theorem named after a definition",
+      "B == 1\nTHEOREM B == TRUE",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 17 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a definition named after a theorem",
+      "THEOREM B == TRUE\nB == 1",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "Operator B already defined or declared.",
+        },
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 17 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a NEW symbol named after a definition",
+      "B == 1\nTHEOREM ASSUME NEW B PROVE TRUE",
+      [
+        {
+          location: "line 3, col 20 to line 3, col 20 of module M",
+          message:
+            "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 6 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a module defined twice",
+      "---- MODULE Inner ----\n====\n---- MODULE Inner ----\n====",
+      [
+        {
+          location: "line 4, col 1 to line 5, col 4 of module M",
+          message:
+            "Multiply-defined module 'Inner': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 3, col 4 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "duplicate instance parameters",
+      "---- MODULE Inner ----\nCONSTANT c\n====\nI(c, c) == INSTANCE Inner",
+      [
+        {
+          location: "line 5, col 6 to line 5, col 6 of module M",
+          message:
+            "Multiply-defined symbol 'c': this definition or declaration conflicts \nwith the one at line 5, col 3 to line 5, col 3 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a definition and a declaration of two extended modules",
+      "---- MODULE A ----\nFoo == 1\nBaz == 1\n====\n---- MODULE B ----\nFoo(a) == 2\nCONSTANT Baz\n====\n---- MODULE C ----\nEXTENDS A, B\n====",
+      [
+        {
+          location: "line 8, col 10 to line 8, col 12 of module M",
+          message:
+            "The declaration of 'Baz' conflicts with \nits definition at line 4, col 1 to line 4, col 8 of module M.",
+        },
+      ],
+      [
+        {
+          location: "line 7, col 1 to line 7, col 11 of module M",
+          message:
+            "Warning: the definition of 'Foo' conflicts with \nits definition at line 3, col 1 to line 3, col 8 of module M.",
+        },
+      ],
+    ],
+    [
+      "errors in instance substitutions between definitions",
+      "---- MODULE Inner ----\nCONSTANT a, b\n====\nFoo == U\nI == INSTANCE Inner WITH a <- A, b <- B\nBar == V",
+      [
+        {
+          location: "line 5, col 8 to line 5, col 8 of module M",
+          message: "Unknown operator: `U'.",
+        },
+        {
+          location: "line 6, col 31 to line 6, col 31 of module M",
+          message: "Unknown operator: `A'.",
+        },
+        {
+          location: "line 6, col 39 to line 6, col 39 of module M",
+          message: "Unknown operator: `B'.",
+        },
+        {
+          location: "line 7, col 8 to line 7, col 8 of module M",
+          message: "Unknown operator: `V'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "illegal, repeated, and missing substitutions",
+      "---- MODULE Inner ----\nCONSTANT a, b, c\n====\nFoo == U\nI == INSTANCE Inner WITH a <- A, d <- 1, c <- 2, c <- C\nLOCAL INSTANCE Inner WITH a <- 1, c <- 2\nBar == V",
+      [
+        {
+          location: "line 5, col 8 to line 5, col 8 of module M",
+          message: "Unknown operator: `U'.",
+        },
+        {
+          location: "line 6, col 31 to line 6, col 31 of module M",
+          message: "Unknown operator: `A'.",
+        },
+        {
+          location: "line 6, col 34 to line 6, col 34 of module M",
+          message:
+            "Identifier 'd' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)",
+        },
+        {
+          location: "line 6, col 55 to line 6, col 55 of module M",
+          message: "Unknown operator: `C'.",
+        },
+        {
+          location: "line 6, col 55 to line 6, col 55 of module M",
+          message: "Multiple substitutions for symbol 'c' in substitution.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 55 of module M",
+          message:
+            "Substitution missing for symbol b declared at line 3, col 13 to line 3, col 13 of module M \nand instantiated in module M.",
+        },
+        {
+          location: "line 7, col 1 to line 7, col 40 of module M",
+          message:
+            "Substitution missing for symbol b declared at line 3, col 13 to line 3, col 13 of module M \nand instantiated in module M.",
+        },
+        {
+          location: "line 8, col 8 to line 8, col 8 of module M",
+          message: "Unknown operator: `V'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "errors in modules nested in nested modules",
+      "Foo == U\n---- MODULE Middle ----\nA == V\n---- MODULE Inner ----\nRECURSIVE R(_)\nB == W\n====\nC == X\n====\nBar == Y",
+      [
+        {
+          location: "line 2, col 8 to line 2, col 8 of module M",
+          message: "Unknown operator: `U'.",
+        },
+        {
+          location: "line 4, col 6 to line 4, col 6 of module M",
+          message: "Unknown operator: `V'.",
+        },
+        {
+          location: "line 7, col 6 to line 7, col 6 of module M",
+          message: "Unknown operator: `W'.",
+        },
+        {
+          location: "line 6, col 11 to line 6, col 14 of module M",
+          message: "Symbol R declared in RECURSIVE statement but not defined.",
+        },
+        {
+          location: "line 9, col 6 to line 9, col 6 of module M",
+          message: "Unknown operator: `X'.",
+        },
+        {
+          location: "line 11, col 8 to line 11, col 8 of module M",
+          message: "Unknown operator: `Y'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an error in a nested module before a module defined twice",
+      "Foo == 1\n---- MODULE Inner ----\nCONSTANT Foo\nB == 1\n====\n---- MODULE Inner ----\n====\nB == 2\nH == U",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 8 of module M.",
+        },
+        {
+          location: "line 7, col 1 to line 8, col 4 of module M",
+          message:
+            "Multiply-defined module 'Inner': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 6, col 4 of module M.",
+        },
+        {
+          location: "line 10, col 6 to line 10, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "warnings in nested modules between the enclosing module's",
+      "EXTENDS Naturals\nCONSTANT c\nCONSTANT c\n---- MODULE Inner ----\nEXTENDS Naturals\nPlus(a, b) == a + b\nPlus(a, b) == a - b\n====\n---- MODULE A1 ----\nFoo == 1\n====\n---- MODULE A2 ----\nFoo == 2\n====\n---- MODULE Both ----\nEXTENDS A1, A2\n====\nCONSTANT d\nCONSTANT d\nBar == U",
+      [
+        {
+          location: "line 8, col 1 to line 8, col 19 of module M",
+          message: "Operator Plus already defined or declared.",
+        },
+        {
+          location: "line 21, col 8 to line 21, col 8 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [
+        {
+          location: "line 4, col 10 to line 4, col 10 of module M",
+          message:
+            "Multiple declarations or definitions for symbol c.  \nThis duplicates the one at line 3, col 10 to line 3, col 10 of module M.",
+        },
+        {
+          location: "line 8, col 1 to line 8, col 19 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Plus.  \nThis duplicates the one at line 7, col 1 to line 7, col 19 of module M.",
+        },
+        {
+          location: "line 14, col 1 to line 14, col 8 of module M",
+          message:
+            "Warning: the definition of 'Foo' conflicts with \nits definition at line 11, col 1 to line 11, col 8 of module M.",
+        },
+        {
+          location: "line 20, col 10 to line 20, col 10 of module M",
+          message:
+            "Multiple declarations or definitions for symbol d.  \nThis duplicates the one at line 19, col 10 to line 19, col 10 of module M.",
+        },
+      ],
+    ],
+    [
+      "a semantic error after a nested module with a level error",
+      "---- MODULE Inner ----\nVARIABLE y\nB == ENABLED (y' = y)\nC == []B\nD == C'\n====\nE == U",
+      [
+        {
+          location: "line 8, col 6 to line 8, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [],
+    ],
+  ])("rejects %s like SANY", async (_, source, errors, warnings) => {
+    await expect(checkSource(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
 
   it.each([
-    ["a definition before an instance that imports it", "Nat == 1\nINSTANCE Naturals"],
+    [
+      "a definition before an instance that imports it",
+      "Nat == 1\nINSTANCE Naturals",
+      "*** Warnings: 1\n\nline 14, col 1 to line 14, col 16 of module Naturals\n\nMultiple declarations or definitions for symbol Nat.  \nThis duplicates the one at line 2, col 1 to line 2, col 8 of module M.\n\n\n",
+    ],
+    [
+      "a named instance defined twice",
+      "J == INSTANCE Naturals\nJ == INSTANCE Naturals",
+      "*** Warnings: 1\n\nline 3, col 1 to line 3, col 22 of module M\n\nMultiple declarations or definitions for symbol J.  \nThis duplicates the one at line 2, col 1 to line 2, col 22 of module M.\n\n\n",
+    ],
+    [
+      "an assumption named twice",
+      "ASSUME A == TRUE\nASSUME A == TRUE",
+      "*** Warnings: 1\n\nline 3, col 1 to line 3, col 16 of module M\n\nMultiple declarations or definitions for symbol A.  \nThis duplicates the one at line 2, col 1 to line 2, col 16 of module M.\n\n\n",
+    ],
+    [
+      "a definition of two extended modules",
+      "---- MODULE A ----\nFoo == 1\n====\n---- MODULE B ----\nFoo(a) == 2\n====\n---- MODULE C ----\nEXTENDS A, B\nF == Foo\n====\nI == INSTANCE C",
+      "*** Warnings: 1\n\nline 6, col 1 to line 6, col 11 of module M\n\nWarning: the definition of 'Foo' conflicts with \nits definition at line 3, col 1 to line 3, col 8 of module M.\n\n\n",
+    ],
+    [
+      "a definition an instance copies from an extended module with parameters",
+      "---- MODULE P ----\nVARIABLE sv\nShared == 0\n====\n---- MODULE In1 ----\nEXTENDS P\n====\n---- MODULE Q ----\nEXTENDS P\nINSTANCE In1\n====",
+      "*** Warnings: 1\n\nline 11, col 1 to line 11, col 12 of module M\n\nMultiple declarations or definitions for symbol Shared.  \nThis duplicates the one at line 4, col 1 to line 4, col 11 of module M.\n\n\n",
+    ],
+    [
+      "two NEW symbols with one name",
+      "THEOREM ASSUME NEW a, NEW a PROVE TRUE",
+      "*** Warnings: 1\n\nline 2, col 27 to line 2, col 27 of module M\n\nMultiple declarations or definitions for symbol a.  \nThis duplicates the one at line 2, col 20 to line 2, col 20 of module M.\n\n\n",
+    ],
+    [
+      "a variable and a constant of two extended modules",
+      "---- MODULE A ----\nVARIABLE Baz\n====\n---- MODULE B ----\nCONSTANT Baz\n====\n---- MODULE C ----\nEXTENDS A, B\nF == Baz\n====",
+      "*** Warnings: 1\n\nline 6, col 10 to line 6, col 12 of module M\n\nWarning: the declaration of 'Baz' conflicts with \nits declaration at line 3, col 10 to line 3, col 12 of module M.\n\n\n",
+    ],
+  ])("warns of %s like SANY", async (_, source, warnings) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\n${source}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([result.status, printed[0]]).toEqual(["success", warnings]);
+  });
+
+  it("reports RECURSIVE declarations it never defines like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nRECURSIVE F(_), F(_)\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: [
+          {
+            location: "line 5, col 11 to line 5, col 14 of module M",
+            message: "Symbol F declared in RECURSIVE statement but not defined.",
+          },
+          {
+            location: "line 5, col 17 to line 5, col 20 of module M",
+            message: "Symbol F declared in RECURSIVE statement but not defined.",
+          },
+        ],
+        warnings: [
+          {
+            location: "line 5, col 17 to line 5, col 20 of module M",
+            message:
+              "Multiple declarations or definitions for symbol F.  \nThis duplicates the one at line 5, col 11 to line 5, col 14 of module M.",
+          },
+        ],
+      },
+    });
+  });
+
+  it.each([
     ["a bound variable before a definition of that name", "F == \\E B \\in {1} : TRUE\nB == 1"],
     [
       "sibling quantifiers with one name",
@@ -1435,14 +2889,112 @@ describe("level checking matches SANY", () => {
     },
   );
 
-  it("rejects an argument above the level an instantiated operator allows", async () => {
+  it("rejects an argument above the level an instantiated operator allows, naming it like SANY", async () => {
     await expect(
       check({
         source:
           "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE y\nFoo == y' = 0\n====\nI(z) == INSTANCE Inner WITH y <- z\nFooBar == I(x')!Foo\nInit == x = 0\nNext == x' = x\n====",
         config: "INIT Init\nNEXT Next",
       }),
-    ).rejects.toThrow("Level error in applying operator Foo");
+    ).rejects.toThrow("Level error in applying operator I!Foo:");
+  });
+
+  it.each([
+    [
+      "b == x' ~> []x\nh == <>(x')\nbar == [](x')\nn == \\A i \\in {}, j \\in x' : []x",
+      [
+        [
+          "line 3, col 6 to line 3, col 14",
+          "Action used where only temporal formula or state predicate allowed.",
+        ],
+        ["line 4, col 6 to line 4, col 11", "<> followed by action not of form <<A>>_v."],
+        ["line 5, col 8 to line 5, col 13", "[] followed by action not of form [A]_v."],
+        ["line 6, col 25 to line 6, col 26", "Action-level bound of quantified temporal formula."],
+      ],
+    ],
+    [
+      "Foo == [ab |-> 1, c |-> 2, ab |-> 3, c |-> 4]\nBar == [a : {1}, a : {2}]",
+      [
+        ["line 3, col 28 to line 3, col 29", "Non-unique fields in constructor."],
+        ["line 3, col 38 to line 3, col 38", "Non-unique fields in constructor."],
+        ["line 4, col 18 to line 4, col 18", "Non-unique fields in constructor."],
+      ],
+    ],
+    [
+      "THEOREM ASSUME NEW y, []y PROVE <>y\n<1>1. TAKE z \\in {x}\n<1>2. CASE []y\n  <2>1. HAVE x = 4\n  <2>2. QED\n<1>3. PICK c \\in {x} : <>(x = c)\n<1>4. QED",
+      [
+        [
+          "line 6, col 9 to line 6, col 18",
+          "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+        ],
+        ["line 8, col 18 to line 8, col 20", "Non-constant bound of temporal PICK."],
+        [
+          "line 4, col 7 to line 4, col 20",
+          "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+        ],
+        ["line 5, col 7 to line 5, col 14", "Non-constant CASE for temporal goal."],
+      ],
+    ],
+    [
+      "THEOREM [](x = 0)\n<1>1. HAVE x = 1\n<1>2. QED\n---- MODULE Inner ----\nCONSTANT c\nASSUME c = {}\n====\nI == INSTANCE Inner WITH c <- [](x = 0)",
+      [
+        [
+          "line 4, col 7 to line 4, col 16",
+          "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+        ],
+        [
+          "line 10, col 1 to line 10, col 39",
+          "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'c' \nmust be at most 2.",
+        ],
+      ],
+    ],
+  ])("reports every error SANY reports in %j", async (definitions, errors) => {
+    await expect(
+      check({
+        source: `---- MODULE M ----\nVARIABLE x\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        errors.map(([location, message]) => ({ location: `${location} of module M`, message })),
+      ),
+    );
+  });
+
+  it("reports an error in instantiating a module before a constant the configuration leaves out, like TLC", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nCONSTANT K\n---- MODULE Inner ----\nCONSTANT c\nASSUME c = {}\n====\nI == INSTANCE Inner WITH c <- [](x = 0)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow("Level error in instantiating module 'Inner':");
+  });
+
+  const getParameterizedInstance = (definition: string) =>
+    `---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE y\nOp(a) == <<a, y>>\n====\nI(a) == INSTANCE Inner WITH y <- a\nF(G(_, _)) == G(1, 2)\n${definition}\nInit == x = 0\nNext == x' = x\n====`;
+
+  it("passes an operator of a parameterized instance as an operator argument, like SANY", async () => {
+    const result = await check({
+      source: getParameterizedInstance("X == F(I!Op)"),
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("success");
+  });
+
+  it.each([
+    ["X == I!Op", 9],
+    ["X == I!Op(1)", 12],
+  ])("rejects %s without the arguments of the instance, like SANY", async (definition, end) => {
+    await expect(
+      check({ source: getParameterizedInstance(definition), config: "INIT Init\nNEXT Next" }),
+    ).rejects.toThrow(
+      createSemanticError("The operator I requires 1 arguments.", {
+        module: "M",
+        start: { line: 9, column: 6 },
+        end: { line: 9, column: end },
+      }),
+    );
   });
 
   // SANY bounds a sequence argument by the level its LAMBDA allows for the elements.
@@ -1457,7 +3009,14 @@ describe("level checking matches SANY", () => {
         config: "INIT Init\nNEXT Next",
       }),
     ).rejects.toThrow(
-      "Level error in applying operator F: The level of argument 1 exceeds the maximum level allowed by the operator.",
+      createSemanticError(
+        "Level error in applying operator F:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        {
+          module: "M",
+          start: { line: 5, column: 6 },
+          end: { line: 5, column: 10 },
+        },
+      ),
     );
   });
 });
@@ -1501,9 +3060,39 @@ describe("parseConfig matches TLC", () => {
   it("rejects keywords that appear twice", () => {
     ["CHECK_DEADLOCK", "_PERIODIC", "_RL_REWARD"].forEach((keyword) =>
       expect(() => parseConfig(`${keyword} FALSE\n${keyword} TRUE`)).toThrow(
-        new TlaConfigError(`The keyword ${keyword} appears twice`),
+        new TlaConfigError(
+          `TLC found an error in the configuration file at line 2\nThe keyword ${keyword} appeared twice.`,
+        ),
       ),
     );
+  });
+
+  it("reports a malformed configuration with TLC's messages", () => {
+    const atLine = (line: number, detail: string) =>
+      `TLC found an error in the configuration file at line ${line}\n${detail}`;
+    const lexical = (detail: string) =>
+      `TLC found an error in the configuration file:\nLexical error at ${detail}`;
+    const cases = [
+      ["INIT\n", atLine(1, "The keyword INIT was not followed by an identifier.")],
+      ["CONSTANT N = -1\nINIT Init\n", atLine(2, "It was expecting = or <-, but did not find it.")],
+      ["CHECK_DEADLOCK 3\n", atLine(1, "It was expecting TRUE or FALSE, but did not find it.")],
+      ["CONSTANT N = {1, 2\nINIT Init\n", atLine(2, "It was expecting }, but did not find it.")],
+      ["CONSTANT N =\n", atLine(2, "It was expecting a value, but did not find it.")],
+      ["INIT Init ~\n", atLine(1, "It was expecting a keyword, but did not find it.")],
+      ["(* open\nINIT Init\n", lexical('line 4, column 0.  Encountered: <EOF> after : ""')],
+      ["INIT Init\n`x\n", lexical('line 2, column 1.  Encountered: "`" (96), after : ""')],
+      [
+        'CONSTANT N = "a\nINIT Init\n',
+        lexical('line 1, column 16.  Encountered: "\\n" (10), after : "\\"a"'),
+      ],
+      [
+        "INIT Init\nNEXT Next\nSPECIFICATION Spec\n",
+        "The configuration file cannot specify both INIT/NEXT and SPECIFICATION fields.",
+      ],
+    ];
+    for (const item of cases) {
+      expect(() => parseConfig(item[0])).toThrow(new TlaConfigError(item[1]));
+    }
   });
 
   it("reads values the way TLC does", () => {
@@ -1520,6 +3109,33 @@ describe("parseConfig matches TLC", () => {
 describe("initial predicate and next-state relation match TLC", () => {
   const checkSource = (body: string, config: string) =>
     check({ source: `---- MODULE M ----\n${body}\n====`, config });
+
+  it.each([
+    ["[](FALSE)", "FALSE"],
+    ["[]Bad", "Bad"],
+    ["[](Op(1))", "Property"],
+    ["Op(1)", "Op"],
+    ["Two(0)", "line 6, col 11 to line 6, col 15 of module M"],
+    ["[](x = 0) /\\ [](x = 1)", "line 8, col 26 to line 8, col 34 of module M"],
+    ["[](x = 0) /\\ (x = 1)", "line 8, col 27 to line 8, col 31 of module M"],
+    ["\\A n \\in {0, 1} : x # n", "line 8, col 31 to line 8, col 35 of module M"],
+    ["[](x < 9) /\\ [][x = 7]_x", "line 8, col 26 to line 8, col 36 of module M"],
+  ])("names the part of property %s that fails as TLC does", async (property, name) => {
+    const result = await checkSource(
+      `EXTENDS Integers\nVARIABLE x\nBad == x = 1\nOp(n) == x = n\nTwo(n) == x # n /\\ x # n + 1\nSpec == x = 0 /\\ [][x' = x + 1 /\\ x < 3]_x\nProperty == ${property}`,
+      "SPECIFICATION Spec\nPROPERTY Property\nCHECK_DEADLOCK FALSE",
+    );
+    expect(result.violation?.name).toBe(name);
+  });
+
+  it("rejects a property that quantifies over no elements as a tautology", async () => {
+    await expect(
+      checkSource(
+        "VARIABLE x\nSpec == x = 0 /\\ [][x' = x]_x\nProperty == \\A n \\in {} : x # n",
+        "SPECIFICATION Spec\nPROPERTY Property",
+      ),
+    ).rejects.toThrow("Temporal formula is a tautology (its negation is unsatisfiable).");
+  });
 
   it("explores no states when a spec without variables has no initial predicate", async () => {
     const result = await checkSource("ASSUME TRUE\nSpec == [][TRUE]_<<>>", "SPECIFICATION Spec");
@@ -1597,6 +3213,29 @@ describe("initial predicate and next-state relation match TLC", () => {
       "INIT Init\nNEXT Next",
     );
     expect([result.generatedStates, result.distinctStates]).toEqual([9, 2]);
+  });
+
+  it.each([
+    ["x \\in UNION UNION (SUBSET {{}, {{}}})", "UNCHANGED x", [3, 1]],
+    ["x \\in UNION UNION {SUBSET {1}, {{1}}}", "UNCHANGED x", [3, 1]],
+    ["x = 0", "x = 0 /\\ x' \\in UNION UNION (SUBSET {{1}, {1, 2}})", [7, 3]],
+  ])("streams a lazy UNION of a lazy UNION with Init %s", async (init, next, counts) => {
+    const result = await checkSource(
+      `VARIABLE x\nInit == ${init}\nNext == ${next}`,
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect([result.generatedStates, result.distinctStates]).toEqual(counts);
+  });
+
+  it.each([
+    ["UNION {UNION (SUBSET {{1}, {1, 2}}), {1}}", [8, 3]],
+    ["UNION {{1}, UNION (SUBSET {{1}, {1, 2}})}", [6, 3]],
+  ])("streams a lazy UNION in %s until a sort compares it as TLC does", async (set, counts) => {
+    const result = await checkSource(
+      `VARIABLE x\nInit == x \\in ${set}\nNext == UNCHANGED x`,
+      "INIT Init\nNEXT Next",
+    );
+    expect([result.generatedStates, result.distinctStates]).toEqual(counts);
   });
 
   it("keeps a set operation lazy unless TLC can reduce both sets", async () => {

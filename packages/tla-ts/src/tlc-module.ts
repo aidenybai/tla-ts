@@ -1,4 +1,4 @@
-import { TlaModuleError } from "./errors";
+import { TlaEvaluationError, TlaModuleError } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
 import type { Builtin } from "./evaluate";
 import { prettyPrint } from "./pretty-print";
@@ -15,7 +15,7 @@ import {
   getValue,
 } from "./builtins";
 import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "./runtime";
-import { createActionRecord } from "./tlc-ext";
+import { createActionRecord, setTlcValue } from "./tlc-ext";
 import { getRandomElement } from "./tlc-random";
 import {
   ANY_SET,
@@ -39,11 +39,17 @@ const formatCalendarVersion = (date: Date) =>
 const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
   createFunction([...registers].map(([key, value]): [Value, Value] => [key, createTuple([value])]));
 
+// TLC creates its model checker after it processes the spec, so these are undefined before then.
+const CHECKER_KEYS = new Set(["diameter", "generated", "distinct", "queue", "stats", "config"]);
+
 const getRuntimeValue = (
   runtime: CheckerRuntime,
   key: string,
   state: (Value | undefined)[] | undefined,
 ) => {
+  if (!runtime.isStarted && CHECKER_KEYS.has(key)) {
+    throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
+  }
   const duration = Math.floor((Date.now() - runtime.startedAt) / 1000);
   switch (key) {
     case "level":
@@ -98,11 +104,11 @@ const getRuntimeValue = (
   }
   if (key.startsWith(NAMED_REGISTER_PREFIX)) {
     const value = getNamedRegisters(runtime).get(key);
-    if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
+    if (value === undefined) throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
     return value;
   }
   if (key.startsWith("-D")) return rankString(runtime.properties.get(key.slice(2)) ?? key);
-  throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
+  throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
 };
 
 const getPermutations = (elements: Value[]): Value[][] =>
@@ -191,11 +197,11 @@ export const createTlcOperators = (
     const key = getValue(args, 0, "TLCGet");
     if (typeof key === "number" && key >= 0) {
       const value = runtime.registers.get(key);
-      if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
+      if (value === undefined) throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
       return value;
     }
     if (typeof key !== "string") {
-      throw new TlaModuleError(
+      throw new TlaEvaluationError(
         `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
       );
     }
@@ -203,33 +209,8 @@ export const createTlcOperators = (
   }),
   defineStateOperator("TLCSet", 2, (args) => {
     const key = getValue(args, 0, "TLCSet");
-    const value = getValue(args, 1, "TLCSet");
-    if (typeof key === "number" && key >= 0) {
-      runtime.registers.set(key, value);
-      return true;
-    }
-    if (key === "exit") {
-      if (value === true) runtime.isStopped = true;
-      return true;
-    }
-    if (key === "pause") {
-      if (value === true) {
-        print("Press enter to resume model checking.");
-        runtime.pause();
-      }
-      return true;
-    }
-    if (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)) {
-      runtime.namedRegisters.set(key, value);
-      return true;
-    }
-    if (typeof key === "string" && key.startsWith("-D")) {
-      runtime.properties.set(key.slice(2), formatValue(value));
-      return true;
-    }
-    throw new TlaModuleError(
-      `The first argument of TLCSet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
-    );
+    setTlcValue(runtime, print, key, getValue(args, 1, "TLCSet"));
+    return true;
   }),
   defineConstant("Any", ANY_SET),
   defineOperator("RandomElement", 1, (args) =>

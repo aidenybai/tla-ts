@@ -1,4 +1,12 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { getObligations } from "../src/obligations";
 
@@ -91,6 +99,15 @@ export const getLibraryModules = () =>
       .map((path): [string, string] => [basename(path, ".tla"), path])
       .reverse(),
   );
+
+// One directory of library modules, so SANY and TLC find them after their standard modules.
+export const LIBRARY_PATH = join(CONFORMANCE_DIRECTORY, ".library");
+
+export const linkLibraryModules = () => {
+  rmSync(LIBRARY_PATH, { recursive: true, force: true });
+  mkdirSync(LIBRARY_PATH);
+  getLibraryModules().forEach((path, name) => symlinkSync(path, join(LIBRARY_PATH, `${name}.tla`)));
+};
 
 export const getModuleName = (specPath: string) => basename(specPath, ".tla");
 

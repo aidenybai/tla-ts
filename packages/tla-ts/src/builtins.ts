@@ -297,15 +297,21 @@ export const getJavaInteger = (value: Value, signature: string) => {
   return value;
 };
 
-export const getIntegersSignature = (method: string, result: string, arity: number) =>
-  `public static tlc2.value.impl.${result} tlc2.module.Integers.${method}(${Array.from({ length: arity }, () => "tlc2.value.impl.IntValue").join(",")})`;
+export const getArithmeticSignature = (
+  javaClass: "Naturals" | "Integers",
+  method: string,
+  result: string,
+  arity: number,
+) =>
+  `public static tlc2.value.impl.${result} tlc2.module.${javaClass}.${method}(${Array.from({ length: arity }, () => "tlc2.value.impl.IntValue").join(",")})`;
 
 export const defineArithmetic = (
+  javaClass: "Naturals" | "Integers",
   name: string,
   method: string,
   compute: (left: number, right: number) => number,
 ) => {
-  const signature = getIntegersSignature(method, "IntValue", 2);
+  const signature = getArithmeticSignature(javaClass, method, "IntValue", 2);
   return defineBinary(name, (left, right) => {
     const leftNumber = getJavaInteger(left, signature);
     const rightNumber = getJavaInteger(right, signature);

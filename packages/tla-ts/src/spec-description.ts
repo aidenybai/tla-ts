@@ -1,16 +1,20 @@
-import type { Definition, Expression, SourceLocation, SourceRange } from "./ast";
+import {
+  isLocallyResolved,
+  type Definition,
+  type Expression,
+  type SourceLocation,
+  type SourceRange,
+} from "./ast";
 import type { ModelConfig } from "./config";
 import type { InstanceAction } from "./environment";
-import { TlaError } from "./errors";
+import { formatRange, TlaError } from "./errors";
 import {
   bindDefinitions,
   bindOperatorArguments,
   evaluate,
   forEachBinding,
-  formatRange,
   getDefinition,
   isConstantLevel,
-  isLocallyResolved,
   lookupScope,
   resolveGlobalOperator,
   type Closure,
@@ -464,10 +468,17 @@ export const getNextActions = (
   instanceActions: Map<string, InstanceAction>,
 ) => describe(config, environment, instanceActions).actions;
 
-export const getActionLabel = (action: SpecAction) => {
-  const parameters = action.parameters.map((parameter) => formatValue(parameter[1]));
-  return `${action.name === UNNAMED_ACTION ? "Action" : action.name}${parameters.length === 0 ? "" : `(${parameters.join(",")})`} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
-};
+const formatParameters = (action: SpecAction) =>
+  action.parameters.length === 0
+    ? ""
+    : `(${action.parameters.map((parameter) => formatValue(parameter[1])).join(",")})`;
+
+export const getActionLabel = (action: SpecAction) =>
+  `${action.name === UNNAMED_ACTION ? "Action" : action.name}${formatParameters(action)} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
+
+// TLC's Action.getInvocationSignature, which names the action and the values of its parameters.
+export const getActionSignature = (action: SpecAction) =>
+  `${action.name}${formatParameters(action)}`;
 
 export const getSpecificationValue = (
   config: ModelConfig,

@@ -2,6 +2,8 @@ export interface OptionSpec {
   flag: string;
   isRequired?: boolean;
   isRepeatable?: boolean;
+  // How many of the arguments after the flag the option takes, when that depends on them.
+  getArity?: (rest: string[]) => number;
 }
 
 export interface ParsedOption {
@@ -29,27 +31,31 @@ export const defineCommand = (usage: string, specs: OptionSpec[]) => {
   const arities = new Map(
     specs.map((spec) => {
       const [name, ...values] = spec.flag.split(" ");
-      return [name, values.length];
+      return [name, spec.getArity ?? (() => values.length)];
     }),
   );
   const parse = (args: string[]): ParsedArgs => {
     const options: ParsedOption[] = [];
     const positionals: string[] = [];
     const unknown: string[] = [];
+    const incomplete: ParsedOption[] = [];
     for (let index = 0; index < args.length; index++) {
-      const arity = arities.get(args[index]);
-      if (arity === undefined) {
+      const getArity = arities.get(args[index]);
+      if (getArity === undefined) {
         (args[index].startsWith("-") ? unknown : positionals).push(args[index]);
         continue;
       }
-      options.push({ name: args[index], values: args.slice(index + 1, index + 1 + arity) });
+      const arity = getArity(args.slice(index + 1));
+      const option = { name: args[index], values: args.slice(index + 1, index + 1 + arity) };
+      options.push(option);
+      if (option.values.length < arity) incomplete.push(option);
       index += arity;
     }
     return {
       options,
       positionals,
       unknown,
-      incomplete: options.find((option) => option.values.length < (arities.get(option.name) ?? 0)),
+      incomplete: incomplete[0],
       has: (name) => options.some((option) => option.name === name),
       get: (name) => options.findLast((option) => option.name === name)?.values,
     };

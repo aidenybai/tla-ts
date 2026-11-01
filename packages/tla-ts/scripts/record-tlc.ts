@@ -6,6 +6,8 @@ import {
   CORPORA_DIRECTORY,
   EXPECTED_PATH,
   findModels,
+  LIBRARY_PATH,
+  linkLibraryModules,
   TLC_SEED,
   type CorpusModel,
 } from "./corpora";
@@ -83,6 +85,7 @@ const runTlc = (model: CorpusModel) =>
       [
         "-XX:+UseParallelGC",
         "-Xmx768m",
+        `-DTLA-Library=${LIBRARY_PATH}`,
         "-cp",
         jarPath,
         "tlc2.TLC",
@@ -136,6 +139,7 @@ const runTlc = (model: CorpusModel) =>
     });
   });
 
+linkLibraryModules();
 const models = findModels().filter(isRecordable);
 const results: ExpectedResult[] = [];
 const queue = { next: 0 };

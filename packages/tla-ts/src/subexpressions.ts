@@ -1,17 +1,23 @@
-import type {
-  Bound,
-  Definition,
-  Expression,
-  Instance,
-  Module,
-  OperatorParam,
-  Selector,
-  SourceLocation,
+import {
+  getChildren,
+  type Bound,
+  type Definition,
+  type Expression,
+  type Instance,
+  type Module,
+  type OperatorParam,
+  type Selector,
+  type SourceLocation,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { getChildren } from "./evaluate";
 import { getSourceName, mapChildren, mapDefinition } from "./instances";
-import { getArity, getBoundNames, getPatternNames, LOCAL_RESOLUTION } from "./resolve";
+import {
+  getArity,
+  getBoundNames,
+  getOperandIndex,
+  getPatternNames,
+  LOCAL_RESOLUTION,
+} from "./resolve";
 
 type Lookup = (name: string) => Definition | undefined;
 
@@ -36,12 +42,6 @@ const getBoundSets = (bounds: Bound[]) =>
   bounds
     .filter((bound, index) => index === 0 || bounds[index - 1].set !== bound.set)
     .map((bound) => bound.set);
-
-const getOperandIndex = (operand: number | "<<" | ">>", count: number) => {
-  if (typeof operand === "number") return operand >= 1 && operand <= count ? operand - 1 : -1;
-  if (operand === "<<") return count > 0 ? 0 : -1;
-  return count === 2 ? 1 : -1;
-};
 
 const getOperands = (expression: Expression): Expression[] | undefined => {
   switch (expression.kind) {
@@ -393,15 +393,22 @@ const containsReference = (expression: Expression): boolean =>
   (expression.kind === "Apply" && expression.operator.includes("!")) ||
   getChildren(expression).some(containsReference);
 
-const resolveSubexpressions = (expression: Expression, lookup: Lookup): Expression => {
+// A reference into a theorem whose statement is an ASSUME/PROVE stays for name resolution to check.
+const resolveSubexpressions = (
+  expression: Expression,
+  lookup: Lookup,
+  goals: ReadonlySet<string>,
+): Expression => {
   if (!containsReference(expression)) return expression;
   if (expression.kind === "Let") {
     const local: Lookup = (name) =>
       expression.definitions.find((definition) => definition.name === name) ?? lookup(name);
-    return mapChildren(expression, (child) => resolveSubexpressions(child, local));
+    return mapChildren(expression, (child) => resolveSubexpressions(child, local, goals));
   }
-  const mapped = mapChildren(expression, (child) => resolveSubexpressions(child, lookup));
+  const mapped = mapChildren(expression, (child) => resolveSubexpressions(child, lookup, goals));
   if (mapped.kind === "Subexpression") {
+    const first = mapped.selectors[0];
+    if (first.kind === "Name" && goals.has(first.name)) return mapped;
     return selectSubexpression(mapped.selectors, lookup, mapped.location, []);
   }
   const name =
@@ -424,8 +431,8 @@ export const resolveInstanceSubexpressions = (instance: Instance, module: Module
   return {
     ...instance,
     substitutions: instance.substitutions.map((substitution) => ({
-      name: substitution.name,
-      expression: resolveSubexpressions(substitution.expression, lookup),
+      ...substitution,
+      expression: resolveSubexpressions(substitution.expression, lookup, new Set()),
     })),
   };
 };
@@ -436,14 +443,19 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
     module.definitions.some((definition) => containsReference(definition.body)) ||
     module.assumptions.some((assumption) => containsReference(assumption.expression));
   if (!hasReferences) return module;
+  const goals = new Set(
+    module.theorems.flatMap((theorem) =>
+      theorem.name !== undefined && theorem.statement.kind === "AssumeProve" ? [theorem.name] : [],
+    ),
+  );
   return {
     ...module,
     definitions: module.definitions.map((definition) =>
-      mapDefinition(definition, (child) => resolveSubexpressions(child, lookup)),
+      mapDefinition(definition, (child) => resolveSubexpressions(child, lookup, goals)),
     ),
     assumptions: module.assumptions.map((assumption) => ({
       ...assumption,
-      expression: resolveSubexpressions(assumption.expression, lookup),
+      expression: resolveSubexpressions(assumption.expression, lookup, goals),
     })),
   };
 };

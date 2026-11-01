@@ -20,7 +20,7 @@ import {
   type SharedFingerprints,
 } from "./fingerprints";
 import { getInitialStates } from "./successors";
-import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
+import { getTlcStringOrder, getTlcDeclarationOrder } from "./tlc-order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
 import { getRankedStringCount, setStringOrder, type Value } from "./values";
@@ -73,9 +73,12 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     });
   };
   const count = options.workers ?? 1;
+  // TLC's workers write the -dump state graph in whichever order they find it, so one worker
+  // writes the graph a single TLC worker does.
   const isSequential =
     count < 2 ||
     typeof SharedArrayBuffer !== "function" ||
+    options.dump !== undefined ||
     config.view !== undefined ||
     config.postconditions.length > 0 ||
     config.possible.length > 0;
@@ -106,7 +109,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   });
   const environment = specification.environment;
   const search = createSearch(config, environment, () =>
-    getTlcVariableOrder(options.source, loadModule),
+    getTlcDeclarationOrder(options.source, loadModule, "variable"),
   );
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
   if (

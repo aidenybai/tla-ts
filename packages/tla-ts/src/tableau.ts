@@ -162,22 +162,39 @@ const containsAction = (expression: LiveExpression): boolean => {
   }
 };
 
-const isEqual = (left: LiveExpression, right: LiveExpression): boolean => {
-  if (left.kind !== right.kind) return false;
-  if (left.kind === "Boolean" && right.kind === "Boolean") return left.value === right.value;
-  if (isAtom(left)) return left === right;
-  if ("body" in left && "body" in right) return isEqual(left.body, right.body);
-  if ("operands" in left && "operands" in right) {
-    return (
-      left.operands.length === right.operands.length &&
-      left.operands.every((operand, index) => isEqual(operand, right.operands[index]))
-    );
-  }
-  return false;
+const termKeys = new WeakMap<LiveExpression, string>();
+const atoms = { count: 0 };
+
+// A term's structure as a string in which each atom stands for itself, so equal terms share a key.
+export const getTermKey = (expression: LiveExpression): string => {
+  const cached = termKeys.get(expression);
+  if (cached !== undefined) return cached;
+  const key = (() => {
+    switch (expression.kind) {
+      case "Boolean":
+        return String(expression.value);
+      case "State":
+      case "Enabled":
+      case "Action":
+        return `#${atoms.count++}`;
+      case "And":
+      case "Or":
+        return `${expression.kind}(${expression.operands.map(getTermKey).join(",")})`;
+      default:
+        return `${expression.kind}(${getTermKey(expression.body)})`;
+    }
+  })();
+  termKeys.set(expression, key);
+  return key;
 };
 
-const isMember = (items: LiveExpression[], expression: LiveExpression) =>
-  items.some((item) => isEqual(item, expression));
+const isEqual = (left: LiveExpression, right: LiveExpression) =>
+  left === right || getTermKey(left) === getTermKey(right);
+
+const isMember = (items: LiveExpression[], expression: LiveExpression) => {
+  const key = getTermKey(expression);
+  return items.some((item) => item === expression || getTermKey(item) === key);
+};
 
 const getDual = (kind: LiveJunction["kind"]) => (kind === "And" ? "Or" : "And");
 
@@ -272,7 +289,7 @@ const toDisjunctiveNormalForm = (expression: LiveExpression): LiveExpression => 
           total.value *= normal.operands.length;
           if (total.value > MAXIMUM_DISJUNCTS) {
             throw new TlaEvaluationError(
-              "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form",
+              "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form.",
             );
           }
         }
@@ -446,13 +463,14 @@ const getTriples = (
     return parts ? [{ whole: term, first: parts.first, second: parts.second }] : [];
   });
 
-const isSameParticle = (left: LiveExpression[], right: LiveExpression[]) =>
-  left.every((term) => isMember(right, term)) && right.every((term) => isMember(left, term));
+// A particle is a set of terms, so its key ignores order and repeats.
+const getParticleKey = (particle: LiveExpression[]) =>
+  [...new Set(particle.map(getTermKey))].sort().join("|");
 
-const unionParticles = (left: LiveExpression[][], right: LiveExpression[][]) => [
-  ...left.filter((particle) => !right.some((other) => isSameParticle(particle, other))),
-  ...right,
-];
+const unionParticles = (left: LiveExpression[][], right: LiveExpression[][]) => {
+  const rightKeys = new Set(right.map(getParticleKey));
+  return [...left.filter((particle) => !rightKeys.has(getParticleKey(particle))), ...right];
+};
 
 const getParticleClosure = (terms: LiveExpression[]) => {
   const closure = getPositiveClosure(terms);
@@ -516,14 +534,23 @@ const createTableauNode = (particle: LiveExpression[]): TableauNode => ({
 const createTableau = (formula: LiveExpression) => {
   const nodes = getParticleClosure([formula]).map(createTableauNode);
   const initialCount = nodes.length;
+  const indices = new Map<string, number>();
+  nodes.forEach((node, index) => {
+    const key = getParticleKey(node.particle);
+    if (!indices.has(key)) indices.set(key, index);
+  });
   for (let index = 0; index < nodes.length; index++) {
     const implied = nodes[index].particle.flatMap((term) =>
       term.kind === "Next" ? [term.body] : [],
     );
     for (const particle of getParticleClosure(implied)) {
-      const existing = nodes.findIndex((node) => isSameParticle(node.particle, particle));
-      if (existing === -1) nodes.push(createTableauNode(particle));
-      nodes[index].successors.push(existing === -1 ? nodes.length - 1 : existing);
+      const key = getParticleKey(particle);
+      const existing = indices.get(key);
+      if (existing === undefined) {
+        indices.set(key, nodes.length);
+        nodes.push(createTableauNode(particle));
+      }
+      nodes[index].successors.push(existing ?? nodes.length - 1);
     }
   }
   return { nodes, initialCount };

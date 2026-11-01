@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, parseModule, TlaSyntaxError } from "../../src";
+import { createSanyError } from "../../src/errors";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/instances");
 
@@ -41,6 +42,22 @@ describe("INSTANCE matches TLC", () => {
     const result = await checkInstances("Scoping.cfg", "Scoping");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
+  });
+
+  it("overrides a definition scoped to a module in every instance of the module", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT Acc\nVARIABLE x\nMCBallot == 0..2\nV == INSTANCE Inner\nP(A) == INSTANCE Inner WITH Acc <- A\nInit == x = 0\nNext == UNCHANGED x\nInv == V!Safe /\\ P({3})!Safe /\\ V!Ballot = 0..2 /\\ x = 0\n====",
+      config:
+        "INIT Init\nNEXT Next\nCONSTANT Acc = {1, 2}\nBallot <-[Inner] MCBallot\nINVARIANT Inv",
+      loadModule: () =>
+        "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT Acc\nBallot == Nat\nSafe == \\A a \\in Acc, b \\in Ballot : b >= 0\n====",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
   });
 
   it("substitutes operator parameters with LAMBDA expressions without capturing bound names", async () => {
@@ -159,7 +176,7 @@ const INNER_MODULES: Record<string, string> = {
   Primed: "EXTENDS Naturals\nCONSTANT c, Op(_)\nUse == Op(c)' + c",
   Vars: "EXTENDS Naturals\nVARIABLE v, w\nUse == v + w",
   Applied: "CONSTANT c, Op(_)\nUse == Op(c)",
-  Assumed: "CONSTANT C, D\nASSUME C = {}",
+  Assumed: "CONSTANT C, D\nASSUME C = {}\nTHEOREM ASSUME D PROVE TRUE",
   Nested: "EXTENDS Naturals\nCONSTANT c, Op(_)\nVARIABLE v\nUse == Op(v') /\\ c = 1",
   Twice: "CONSTANT c, Op(_, _)\nUse == Op(c, c)\nOther(d) == Op(d, c)",
   Outer:
@@ -176,21 +193,22 @@ const checkSubstitution = (body: string) =>
   });
 
 const getLevelError = (module: string, name: string, level: number) =>
-  `Level error in instantiating module '${module}': the level of the expression or operator substituted for '${name}' must be at most ${level}`;
+  `Level error in instantiating module '${module}':\nThe level of the expression or operator substituted for '${name}' \nmust be at most ${level}.`;
 
 const getLeibnizError = (module: string) =>
-  `Error in instantiating module '${module}': a non-Leibniz operator substituted for 'Op'`;
+  `Error in instantiating module '${module}':\n A non-Leibniz operator substituted for 'Op'.`;
 
 const getArgumentError = (module: string, index: number, maximum: number) =>
-  `Level error when instantiating module '${module}': the level of the argument ${index} of the operator Op' must be at most ${maximum}`;
+  `Level error when instantiating module '${module}':\nThe level of the argument ${index} of the operator Op' \nmust be at most ${maximum}.`;
 
 const getMessagePattern = (messages: string[]) =>
   new RegExp(
     `^${messages
       .map(
-        (message) => `${message.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")} at line \\d+, column \\d+`,
+        (message) =>
+          `line \\d+, col \\d+ to line \\d+, col \\d+ of module Main\\n\\n${message.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}`,
       )
-      .join("\\n")}$`,
+      .join("\\n\\n")}$`,
   );
 
 describe("substitution levels match SANY", () => {
@@ -226,6 +244,7 @@ describe("substitution levels match SANY", () => {
     ],
     ["I == INSTANCE Pure WITH c <- [](x = 1), Op <- LAMBDA a : a", [getLevelError("Pure", "c", 2)]],
     ["I == INSTANCE Assumed WITH C <- [](x = 0), D <- TRUE", [getLevelError("Assumed", "C", 2)]],
+    ["I == INSTANCE Assumed WITH C <- TRUE, D <- [](x = 0)", [getLevelError("Assumed", "D", 2)]],
     ["I == INSTANCE Outer WITH c <- [](x = 1)", [getLevelError("Outer", "c", 2)]],
     ["I == INSTANCE Functions WITH c <- [](x = 1)", [getLevelError("Functions", "c", 2)]],
     [
@@ -244,7 +263,7 @@ describe("substitution levels match SANY", () => {
       "F(a) == LET G == a' IN G\nI == INSTANCE Nested WITH c <- 1, Op <- F, v <- x",
       [
         getLevelError("Nested", "Op", 0),
-        "Level error in instantiating module 'Nested': the level of the argument 1 of the operator F must be at least 2",
+        "Level error in instantiating module 'Nested':\nThe level of the argument 1 of the operator F \nmust be at least 2.",
       ],
     ],
     [
@@ -290,6 +309,18 @@ describe("substitution levels match SANY", () => {
   ])("rejects %s", async (body, messages) => {
     await expect(checkSubstitution(body)).rejects.toThrow(TlaSyntaxError);
     await expect(checkSubstitution(body)).rejects.toThrow(getMessagePattern(messages));
+  });
+
+  it("reports an error at the whole instance, like SANY", async () => {
+    const body = "I == INSTANCE Pure WITH c <- 1, Op <- LAMBDA a : ENABLED a";
+    await expect(checkSubstitution(body)).rejects.toThrow(
+      createSanyError([
+        {
+          location: `line 4, col 1 to line 4, col ${body.length} of module Main`,
+          message: getLeibnizError("Pure"),
+        },
+      ]),
+    );
   });
 
   it.each([

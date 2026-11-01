@@ -87,11 +87,26 @@ export const getFingerprintDistance = (
   const probability = getOptimisticProbability(distinctStates, generatedStates);
   if (probability < ACTUAL_PROBABILITY_THRESHOLD) return undefined;
   const fingerprints = getFingerprints().sort();
-  return fingerprints.reduce((distance, fingerprint, index) => {
-    const previous = fingerprints[index - 1];
-    const isSameSet = index > 0 && previous < 0n === fingerprint < 0n;
-    return isSameSet && fingerprint - previous < distance ? fingerprint - previous : distance;
-  }, 0x7fff_ffff_ffff_ffffn);
+  // The low and high words of each fingerprint. A gap whose high words differ by at most 2^20 is
+  // below 2^53, so a number holds it exactly and only wider gaps need a BigInt.
+  const words = new Int32Array(fingerprints.buffer);
+  const nearest = { narrow: Number.POSITIVE_INFINITY, wide: 0x7fff_ffff_ffff_ffffn };
+  for (let index = 1; index < fingerprints.length; index++) {
+    const high = words[2 * index + 1];
+    const previousHigh = words[2 * index - 1];
+    if (high < 0 !== previousHigh < 0) continue;
+    const highGap = high - previousHigh;
+    if (highGap <= 0x10_0000) {
+      const gap = highGap * 0x1_0000_0000 + (words[2 * index] >>> 0) - (words[2 * index - 2] >>> 0);
+      nearest.narrow = Math.min(nearest.narrow, gap);
+    } else {
+      const gap = fingerprints[index] - fingerprints[index - 1];
+      if (gap < nearest.wide) nearest.wide = gap;
+    }
+  }
+  if (nearest.narrow === Number.POSITIVE_INFINITY) return nearest.wide;
+  const narrow = BigInt(nearest.narrow);
+  return narrow < nearest.wide ? narrow : nearest.wide;
 };
 
 export const getOutDegreeSummary = (buckets: number[]) => {

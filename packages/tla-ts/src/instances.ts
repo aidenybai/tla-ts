@@ -1,16 +1,17 @@
-import type {
-  Bound,
-  BoundPattern,
-  Definition,
-  Expression,
-  Instance,
-  Module,
-  OperatorParam,
-  SourceLocation,
-  Theorem,
+import {
+  getChildren,
+  isLocallyResolved,
+  type Bound,
+  type BoundPattern,
+  type Definition,
+  type Expression,
+  type Instance,
+  type Module,
+  type OperatorParam,
+  type SourceLocation,
+  type Theorem,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { getChildren, isLocallyResolved } from "./evaluate";
 import { getArity, getBoundNames, getPatternNames, isBefore } from "./resolve";
 
 export const substitutedExpressions = new WeakSet<Expression>();
@@ -163,7 +164,7 @@ export const mapChildren = (
     case "RecordSet":
       return {
         ...expression,
-        fields: expression.fields.map((field) => ({ name: field.name, value: plain(field.value) })),
+        fields: expression.fields.map((field) => ({ ...field, value: plain(field.value) })),
       };
     case "Except":
       return {
@@ -218,7 +219,7 @@ interface Instantiation {
   variables: Set<string>;
   getDefinition: (key: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
-  addDefinition: (name: string, create: (key: string) => Definition) => string;
+  addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
   createName: (name: string) => string;
 }
 
@@ -639,7 +640,7 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
   const instantiation = rewrite.instantiation;
   const definition = instantiation.getDefinition(key);
   if (!definition) return key;
-  return instantiation.addDefinition(definition.name, (copyKey) => {
+  return instantiation.addDefinition(key, definition.name, (copyKey) => {
     rewrite.copies.set(key, copyKey);
     const rename = createRenamer(rewrite);
     const mapped = renameParams(
@@ -678,7 +679,7 @@ export const createInstantiation = (instantiation: Instantiation) => {
       if (copy !== undefined) return copy;
       const definition = instantiation.getDefinition(key);
       if (!definition) return key;
-      return instantiation.addDefinition(definition.name, () =>
+      return instantiation.addDefinition(key, definition.name, () =>
         withInstanceParams(definition, instantiation.params, definition.location),
       );
     },

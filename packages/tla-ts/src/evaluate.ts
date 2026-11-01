@@ -1,23 +1,25 @@
-import type {
-  Bound,
-  BoundPattern,
-  DecimalExpression,
-  Definition,
-  Expression,
-  FunctionDefinition,
-  NumberExpression,
-  OperatorParam,
-  RecordField,
-  SourceRange,
+import {
+  getChildren,
+  isLocallyResolved,
+  type Bound,
+  type BoundPattern,
+  type DecimalExpression,
+  type Definition,
+  type Expression,
+  type FunctionDefinition,
+  type NumberExpression,
+  type OperatorParam,
+  type RecordField,
 } from "./ast";
 import { getKindString } from "./builtins";
-import { TlaEvaluationError } from "./errors";
-import { EXIT_STATUS, setExitCode } from "./exit-codes";
+import { formatRange, TlaEvaluationError, TlaUnassignedError } from "./errors";
+import { EXIT_STATUS, setExitCode, setOwnExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
 import { contextualApplications, mapChildren, substitutedExpressions } from "./instances";
 import { isEnabled } from "./successors";
+import { getFingerprintTrace, valueSources, withSource } from "./value-sources";
 import {
   applyFunction,
   combineHash,
@@ -28,23 +30,28 @@ import {
   createSortedSet,
   createWrittenRecord,
   createTuple,
+  describeMissingField,
   formatValue,
   getDomain,
   getFunctionDomain,
   getIntervalElements,
+  getLazySubsets,
   getSequenceElements,
   getValueHash,
-  isEnumerable,
   isFunctionValue,
   isOverriddenSet,
+  isRecordValue,
   isSameValue,
   markLambdaFunction,
+  isReducible,
   isSetValue,
   MAXIMUM_INTEGER,
   MINIMUM_INTEGER,
   toFiniteSet,
   updateFunction,
   valuesEqual,
+  type FilteredSetValue,
+  type FunctionValue,
   type LazyFunctionSource,
   type LazyFunctionValue,
   type Value,
@@ -112,6 +119,7 @@ export interface Environment {
   definitionValues: Map<Definition, Value>;
   constantLevels: Map<Definition, boolean>;
   evaluators: WeakMap<Expression, Evaluator>;
+  trace?: Expression[];
 }
 
 export interface Context {
@@ -140,9 +148,6 @@ const EXCEPT_AT = "@";
 
 export const describeLocation = (expression: Expression) =>
   `line ${expression.location.line}, column ${expression.location.column}`;
-
-export const formatRange = (range: SourceRange) =>
-  `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
 
 export const describeRange = (expression: Expression) => {
   const range = expression.location.range;
@@ -180,8 +185,17 @@ export const getConjunctError = (
 };
 
 export const getFieldError =
-  (expression: Expression & { kind: "FieldAccess" }) => (record: Value) =>
-    `Attempted to select nonexistent field "${expression.field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`;
+  (expression: Expression & { kind: "FieldAccess" }) => (record: FunctionValue) =>
+    isRecordValue(record)
+      ? `Attempted to select nonexistent field "${expression.field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`
+      : describeMissingField(record, expression.field);
+
+export const getNonFunctionError = (expression: Expression) => (value: Value) =>
+  `A non-function (${getKindString(value)}) was applied as a function.\n${describeRange(expression)}`;
+
+export const getNonRecordError =
+  (expression: Expression & { kind: "FieldAccess" }) => (value: Value) =>
+    `Attempted to select field "${expression.field}" from a non-record value ${formatValue(value)}\n${describeRange(expression)}`;
 
 export const getDomainOperator = (expression: Expression) => (value: Value) => {
   if (!isFunctionValue(value)) {
@@ -262,96 +276,6 @@ export const expectBoolean = (value: Value, description: string) => {
   return value;
 };
 
-export const getChildren = (expression: Expression): Expression[] => {
-  switch (expression.kind) {
-    case "Number":
-    case "Decimal":
-    case "String":
-    case "Identifier":
-    case "OperatorReference":
-    case "ExceptAt":
-      return [];
-    case "Apply":
-      return expression.args;
-    case "Lambda":
-      return [expression.body];
-    case "And":
-    case "Or":
-      return expression.operands;
-    case "Prime":
-    case "Unchanged":
-    case "Enabled":
-    case "Always":
-    case "Eventually":
-      return [expression.expression];
-    case "If":
-      return [expression.condition, expression.consequent, expression.alternative];
-    case "Case":
-      return [
-        ...expression.arms.flatMap((arm) => [arm.condition, arm.body]),
-        ...(expression.other ? [expression.other] : []),
-      ];
-    case "Let":
-      return [
-        ...expression.definitions.flatMap((definition) =>
-          definition.kind === "Function"
-            ? [...definition.bounds.map((bound) => bound.set), definition.body]
-            : [definition.body],
-        ),
-        expression.body,
-      ];
-    case "Forall":
-    case "Exists":
-      return [...expression.bounds.map((bound) => bound.set), expression.body];
-    case "UnboundedQuantifier":
-      return [expression.body];
-    case "Choose":
-      return [...(expression.set ? [expression.set] : []), expression.body];
-    case "SetEnumeration":
-    case "Tuple":
-      return expression.elements;
-    case "SetFilter":
-      return [expression.bound.set, expression.predicate];
-    case "SetMap":
-      return [expression.expression, ...expression.bounds.map((bound) => bound.set)];
-    case "FunctionConstruction":
-      return [...expression.bounds.map((bound) => bound.set), expression.body];
-    case "FunctionSet":
-      return [expression.domain, expression.range];
-    case "Record":
-    case "RecordSet":
-      return expression.fields.map((field) => field.value);
-    case "Except":
-      return [
-        expression.function,
-        ...expression.updates.flatMap((update) => [
-          ...update.path.flatMap((step) => (step.kind === "Index" ? step.args : [])),
-          update.value,
-        ]),
-      ];
-    case "FunctionApplication":
-      return [expression.function, ...expression.args];
-    case "FieldAccess":
-      return [expression.record];
-    case "Product":
-      return expression.factors;
-    case "BoxAction":
-    case "AngleAction":
-      return [expression.action, expression.subscript];
-    case "WeakFairness":
-    case "StrongFairness":
-      return [expression.subscript, expression.action];
-    case "Label":
-      return [expression.body];
-    case "Subexpression":
-      return expression.selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
-  }
-};
-
-export const isLocallyResolved = (expression: Expression) =>
-  (expression.kind === "Identifier" || expression.kind === "Apply") &&
-  expression.resolution?.kind === "Local";
-
 export const getDefinition = (name: string, environment: Environment) =>
   environment.definitions.get(environment.substitutions.get(name) ?? name);
 
@@ -419,9 +343,8 @@ export const getEnumeratedElements = (set: Value, expression: Expression) => {
         : `TLC encountered the non-enumerable quantifier bound\n${text}\n${describeRange(expression)}\n${explanation}`,
     );
   }
-  return typeof set === "object" && set.kind === "Interval"
-    ? getIntervalElements(set)
-    : toFiniteSet(set).elements;
+  if (typeof set === "object" && set.kind === "Interval") return getIntervalElements(set);
+  return getLazySubsets(set) ?? toFiniteSet(set).elements;
 };
 
 export const forEachBinding = (
@@ -859,11 +782,7 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
   const global = findGlobalName(name, context.environment);
   if (global?.kind === "Variable") {
     const value = context.state?.[global.index];
-    if (value === undefined) {
-      throw new TlaEvaluationError(
-        `The variable ${name} is not assigned at ${describeLocation(expression)}`,
-      );
-    }
+    if (value === undefined) throw createUnassignedError(name, expression);
     return value;
   }
   if (global?.kind === "Value") return global.value;
@@ -889,14 +808,29 @@ const IMPURE_BUILTINS = new Set([
 export const isImpureBuiltin = (name: string, environment: Environment) =>
   IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;
 
-const impureDefinitions = new WeakMap<Definition, boolean>();
+interface Impurity {
+  builtins: Set<string>;
+  definitions: WeakMap<Definition, boolean>;
+}
+
+const ANY_EFFECT: Impurity = { builtins: IMPURE_BUILTINS, definitions: new WeakMap() };
+
+// An Assert that held holds again, so evaluating it twice looks the same as evaluating it once.
+const REPEATED_EFFECT: Impurity = {
+  builtins: new Set([...IMPURE_BUILTINS].filter((name) => name !== "Assert")),
+  definitions: new WeakMap(),
+};
 
 const isEvaluatedOnce = (definition: Definition, environment: Environment) =>
   definition.kind === "Operator" &&
   definition.params.length === 0 &&
   isConstantLevel(definition, environment);
 
-const callsImpureBuiltin = (expression: Expression, environment: Environment): boolean => {
+const callsImpureBuiltin = (
+  expression: Expression,
+  environment: Environment,
+  impurity: Impurity,
+): boolean => {
   const name =
     expression.kind === "Identifier"
       ? expression.name
@@ -905,29 +839,35 @@ const callsImpureBuiltin = (expression: Expression, environment: Environment): b
         : undefined;
   if (name !== undefined && !isLocallyResolved(expression)) {
     const definition = getDefinition(name, environment);
-    if (!definition && isImpureBuiltin(name, environment)) return true;
+    const isImpureCall =
+      impurity.builtins.has(name) || environment.builtins.get(name)?.isStateLevel === true;
+    if (!definition && isImpureCall) return true;
     if (
       definition &&
       !isEvaluatedOnce(definition, environment) &&
-      isImpureDefinition(definition, environment)
+      isImpureDefinition(definition, environment, impurity)
     ) {
       return true;
     }
   }
-  return getChildren(expression).some((child) => callsImpureBuiltin(child, environment));
+  return getChildren(expression).some((child) => callsImpureBuiltin(child, environment, impurity));
 };
 
 // TLC evaluates a constant definition without parameters once, so only other definitions pass
 // on the side effects and random choices of the builtins they call.
-const isImpureDefinition = (definition: Definition, environment: Environment): boolean => {
-  const cached = impureDefinitions.get(definition);
+const isImpureDefinition = (
+  definition: Definition,
+  environment: Environment,
+  impurity = ANY_EFFECT,
+): boolean => {
+  const cached = impurity.definitions.get(definition);
   if (cached !== undefined) return cached;
-  impureDefinitions.set(definition, false);
+  impurity.definitions.set(definition, false);
   const isImpure =
-    callsImpureBuiltin(definition.body, environment) ||
+    callsImpureBuiltin(definition.body, environment, impurity) ||
     (definition.kind === "Function" &&
-      definition.bounds.some((bound) => callsImpureBuiltin(bound.set, environment)));
-  impureDefinitions.set(definition, isImpure);
+      definition.bounds.some((bound) => callsImpureBuiltin(bound.set, environment, impurity)));
+  impurity.definitions.set(definition, isImpure);
   return isImpure;
 };
 
@@ -939,6 +879,12 @@ export const getReevaluatedDefinitions = (definitions: Definition[], environment
 export const isImpure = (environment: Environment) =>
   [...environment.definitions.values()].some((definition) =>
     isImpureDefinition(definition, environment),
+  );
+
+// Whether evaluating a definition again can show, such as by printing twice.
+export const hasRepeatedEffects = (environment: Environment) =>
+  [...environment.definitions.values()].some((definition) =>
+    isImpureDefinition(definition, environment, REPEATED_EFFECT),
   );
 
 const closedConstants = new WeakMap<Expression, boolean>();
@@ -1076,23 +1022,88 @@ const isStateCached = (expression: Expression, environment: Environment) =>
   getReadVariables(expression, environment) !== undefined &&
   !hasFreeLocals(expression, NO_BOUND_NAMES);
 
+// CallStackTool also evaluates the predicate of a lazy set filter it returns, even one that TLC
+// made before the replay.
+const filteredSetRetracers = new WeakMap<
+  FilteredSetValue,
+  (environment: Environment) => FilteredSetValue
+>();
+
+const SOURCED_KINDS = new Set<Expression["kind"]>([
+  "SetEnumeration",
+  "SetMap",
+  "SetFilter",
+  "Tuple",
+  "Record",
+  "RecordSet",
+  "FunctionSet",
+  "Product",
+]);
+
+const SOURCED_OPERATORS = new Set(["SUBSET", "UNION", "DOMAIN", "\\cup", "\\cap", "\\"]);
+
+// CallStackTool gives a set, tuple or record it builds the expression as its source, but not a lazy
+// set filter, which it returns as a copy.
+const isSourced = (expression: Expression, environment: Environment) =>
+  SOURCED_KINDS.has(expression.kind) ||
+  (expression.kind === "Apply" &&
+    SOURCED_OPERATORS.has(expression.operator) &&
+    !isLocallyResolved(expression) &&
+    resolveGlobalOperator(expression.operator, environment)?.kind === "Builtin");
+
+// When an evaluation fails, CallStackTool freezes the stack at the innermost expression and pushes
+// the source of each value whose method failed.
+const evaluateTraced = (
+  evaluator: Evaluator,
+  context: Context,
+  trace: Expression[],
+  depth: number,
+) => {
+  try {
+    return evaluator(context);
+  } catch (error) {
+    if (trace.length === depth + 1) trace.push(...(getFingerprintTrace(error) ?? []));
+    throw error;
+  }
+};
+
 export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
   const cached = environment.evaluators.get(expression);
   if (cached) return cached;
   const compiled = compile(expression, environment);
-  const evaluator =
+  const cachedEvaluator =
     isWorthCaching(expression) && isClosedConstant(expression, environment)
       ? cacheFirstValue(compiled)
       : isStateCached(expression, environment)
         ? cacheStateValue(compiled)
         : compiled;
+  const trace = environment.trace;
+  const isSourcedExpression = trace !== undefined && isSourced(expression, environment);
+  // TLC's CallStackTool pushes each expression it evaluates and keeps the stack when one fails.
+  const evaluator: Evaluator = trace
+    ? (context) => {
+        const depth = trace.length;
+        trace.push(expression);
+        const value = evaluateTraced(cachedEvaluator, context, trace, depth);
+        trace.length = depth;
+        if (isSourcedExpression && typeof value === "object" && value.kind !== "FilteredSet") {
+          valueSources.current?.set(value, expression);
+        }
+        const retrace =
+          typeof value === "object" && value.kind === "FilteredSet"
+            ? filteredSetRetracers.get(value)
+            : undefined;
+        return retrace ? retrace(environment) : value;
+      }
+    : cachedEvaluator;
   environment.evaluators.set(expression, evaluator);
   return evaluator;
 };
 
 const entryEvaluators = new WeakMap<Expression, Evaluator>();
 
-const getEntryEvaluator = (expression: Expression, environment: Environment) => {
+export const getEntryEvaluator = (expression: Expression, environment: Environment) => {
+  if (environment.trace) return getEvaluator(expression, environment);
   const cached = entryEvaluators.get(expression);
   if (cached) return cached;
   const evaluator =
@@ -1116,11 +1127,7 @@ const compileIdentifier = (
     const index = global.index;
     return (context) => {
       const value = context.state?.[index];
-      if (value === undefined) {
-        throw new TlaEvaluationError(
-          `The variable ${name} is not assigned at ${describeLocation(expression)}`,
-        );
-      }
+      if (value === undefined) throw createUnassignedError(name, expression);
       return value;
     };
   }
@@ -1205,11 +1212,32 @@ const getLazyArguments = (args: Expression[], context: Context): OperatorValue[]
     expression: arg,
   }));
 
+const RECEIVING_OPERATORS = new Set(["=", "#", "\\in", "\\notin", "\\cup", "\\cap", "\\"]);
+
+// The argument whose method TLC calls to apply a built-in operator.
+const getReceiver = (name: string, left: Value, right: Value) =>
+  name === "\\in" ||
+  name === "\\notin" ||
+  ((name === "\\cup" || name === "\\cap") && !isReducible(left))
+    ? right
+    : left;
+
 const compileBuiltinCall = (
   builtin: Builtin,
   args: Expression[],
   environment: Environment,
 ): Evaluator => {
+  if (environment.trace && RECEIVING_OPERATORS.has(builtin.name) && args.length === 2) {
+    const evaluateLeft = getEvaluator(args[0], environment);
+    const evaluateRight = getEvaluator(args[1], environment);
+    return (context) => {
+      const left = evaluateLeft(context);
+      const right = evaluateRight(context);
+      return withSource(getReceiver(builtin.name, left, right), () =>
+        builtin.evaluate([left, right], context),
+      );
+    };
+  }
   if (builtin.isLazy) {
     return (context) => builtin.evaluate(getLazyArguments(args, context), context);
   }
@@ -1369,6 +1397,13 @@ const compileApply = (
   if (global?.kind === "Builtin" && global.name === "DOMAIN") {
     const operand = getEvaluator(args[0], environment);
     const domain = getDomainOperator(expression);
+    // TLC builds a new interval for the domain of a tuple, so the source it gives one stays its own.
+    if (environment.trace) {
+      return (context) => {
+        const value = domain(operand(context));
+        return typeof value === "object" && value.kind === "Interval" ? { ...value } : value;
+      };
+    }
     return (context) => domain(operand(context));
   }
   // TLC sorts the value of a constant TLCEval argument only where no context binds a name.
@@ -1384,6 +1419,13 @@ const compileApply = (
     const left = getEvaluator(args[0], environment);
     const right = getEvaluator(args[1], environment);
     const subset = getSubsetOperator(expression, global);
+    if (environment.trace) {
+      return (context) => {
+        const subsetValue = left(context);
+        const superset = right(context);
+        return withSource(subsetValue, () => subset(subsetValue, superset));
+      };
+    }
     return (context) => subset(left(context), right(context));
   }
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
@@ -1393,6 +1435,11 @@ const compileApply = (
     const definition = environment.definitions.get(expression.operator);
     if (definition?.kind === "Function") {
       throw new TlaEvaluationError(`${expression.operator} is a function; apply it with brackets`);
+    }
+    if (expression.operator === "\\cdot") {
+      throw new TlaEvaluationError(
+        "The current version of TLC does not support action composition.  An incomplete implementation can be enabled via the tlc2.tool.impl.Tool.cdot=true java property.",
+      );
     }
     throw new TlaEvaluationError(
       `Unknown operator ${expression.operator} at ${describeLocation(expression)}`,
@@ -1489,7 +1536,13 @@ const compileFunctionConstruction = (
   const set = getEvaluator(bound.set, environment);
   return (context) => {
     const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
-    if (expression.isRecursive || isKeptLazy || !isEnumerable(domain)) {
+    // TLC builds the function only when it reduces every domain, and evaluates the body lazily
+    // otherwise.
+    const domains =
+      typeof domain === "object" && domain.kind === "ProductSet" && bounds.length > 1
+        ? domain.factors
+        : [domain];
+    if (expression.isRecursive || isKeptLazy || !domains.every(isReducible)) {
       const functionValue = createLazyFunction(
         domain,
         (argument) => body(withScope(context, bindArgument(bounds, context.scope, argument))),
@@ -1578,16 +1631,21 @@ const compileSetComprehension = (
     const pattern = expression.bound.pattern;
     return (context) => {
       const base = set(context);
-      const test = (element: Value) =>
+      const getTest = (evaluatePredicate: Evaluator) => (element: Value) =>
         expectBoolean(
-          predicate(withScope(context, bindPattern(context.scope, pattern, element))),
+          evaluatePredicate(withScope(context, bindPattern(context.scope, pattern, element))),
           "a set filter predicate",
         );
-      const isReducible =
-        typeof base === "object" &&
-        (base.kind === "Set" || base.kind === "MixedSet" || base.kind === "Interval");
-      if (!isReducible) {
-        if (isSetValue(base)) return { kind: "FilteredSet", base, test };
+      const test = getTest(predicate);
+      if (!isReducible(base)) {
+        if (isSetValue(base)) {
+          const filtered: FilteredSetValue = { kind: "FilteredSet", base, test };
+          filteredSetRetracers.set(filtered, (traced) => ({
+            ...filtered,
+            test: getTest(getEvaluator(expression.predicate, traced)),
+          }));
+          return filtered;
+        }
         throw new TlaEvaluationError(
           `TLC encountered a non-enumerable quantifier bound ${formatValue(base)} at ${describeLocation(expression.bound.set)}`,
         );
@@ -1632,11 +1690,30 @@ const compileSetComprehension = (
   };
 };
 
-const compileRecord = (recordFields: RecordField[], environment: Environment): Evaluator => {
-  const fields = [...recordFields].sort((left, right) => compareValues(left.name, right.name));
-  const hasDuplicates = fields.some(
-    (field, index) => index > 0 && fields[index - 1].name === field.name,
+// TLC orders a record's fields by name.
+export const getSortedFields = (fields: RecordField[]) =>
+  [...fields].sort((left, right) => compareValues(left.name, right.name));
+
+export const hasDuplicateFields = (sortedFields: RecordField[]) =>
+  sortedFields.some((field, index) => index > 0 && sortedFields[index - 1].name === field.name);
+
+export const createUnassignedError = (name: string, expression: Expression) =>
+  setOwnExitCode(
+    new TlaUnassignedError(
+      `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
+      name,
+    ),
+    EXIT_STATUS.configParseError,
   );
+
+export const createPrimeOutsideActionError = (expression: Expression) =>
+  new TlaEvaluationError(
+    `A primed expression appears outside an action at ${describeLocation(expression)}`,
+  );
+
+const compileRecord = (recordFields: RecordField[], environment: Environment): Evaluator => {
+  const fields = getSortedFields(recordFields);
+  const hasDuplicates = hasDuplicateFields(fields);
   const values = fields.map((field) => getEvaluator(field.value, environment));
   if (hasDuplicates) {
     return (context) =>
@@ -1714,11 +1791,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "Prime": {
       const inner = child(expression.expression);
       return (context) => {
-        if (!context.next) {
-          throw new TlaEvaluationError(
-            `A primed expression appears outside an action at ${describeLocation(expression)}`,
-          );
-        }
+        if (!context.next) throw createPrimeOutsideActionError(expression);
         return inner({
           environment: context.environment,
           scope: context.scope,
@@ -1798,9 +1871,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "Record":
       return compileRecord(expression.fields, environment);
     case "RecordSet": {
-      const fields = [...expression.fields].sort((left, right) =>
-        compareValues(left.name, right.name),
-      );
+      const fields = getSortedFields(expression.fields);
       const names = fields.map((field) => field.name);
       const sets = fields.map((field) => child(field.value));
       return (context) => ({ kind: "RecordSet", names, sets: sets.map((set) => set(context)) });
@@ -1821,18 +1892,41 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       keepLazy(expression.function);
       const evaluateFunction = child(expression.function);
       const args = expression.args.map(child);
+      const describeNonFunction = getNonFunctionError(expression);
+      if (args.length === 1 && environment.trace) {
+        const argument = args[0];
+        return (context) => {
+          const functionValue = evaluateFunction(context);
+          const argumentValue = argument(context);
+          const apply = () =>
+            applyFunction(functionValue, argumentValue, undefined, describeNonFunction);
+          return isFunctionValue(functionValue) ? withSource(functionValue, apply) : apply();
+        };
+      }
       if (args.length === 1) {
         const argument = args[0];
-        return (context) => applyFunction(evaluateFunction(context), argument(context));
+        return (context) =>
+          applyFunction(
+            evaluateFunction(context),
+            argument(context),
+            undefined,
+            describeNonFunction,
+          );
       }
       return (context) =>
-        applyFunction(evaluateFunction(context), createTuple(args.map((arg) => arg(context))));
+        applyFunction(
+          evaluateFunction(context),
+          createTuple(args.map((arg) => arg(context))),
+          undefined,
+          describeNonFunction,
+        );
     }
     case "FieldAccess": {
       const record = child(expression.record);
       const field = expression.field;
       const describeMissing = getFieldError(expression);
-      return (context) => applyFunction(record(context), field, describeMissing);
+      const describeNonRecord = getNonRecordError(expression);
+      return (context) => applyFunction(record(context), field, describeMissing, describeNonRecord);
     }
     case "Product": {
       const factors = expression.factors.map(child);

@@ -9,7 +9,7 @@ import {
 } from "./fingerprints";
 import type { CoordinatorMessage, LevelMessage, StartMessage, WorkerMessage } from "./parallel";
 import { getSuccessors, type Successor } from "./successors";
-import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
+import { getTlcStringOrder, getTlcDeclarationOrder } from "./tlc-order";
 import { OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
 import { getRankedStringCount, setStringOrder, type Value } from "./values";
@@ -45,7 +45,7 @@ const run = (start: StartMessage, parent: Port) => {
   });
   const environment = specification.environment;
   const search = createSearch(start.config, environment, () =>
-    getTlcVariableOrder(start.source, loadModule),
+    getTlcDeclarationOrder(start.source, loadModule, "variable"),
   );
   const nextAction = search?.spec.next;
   if (!search || nextAction === undefined)

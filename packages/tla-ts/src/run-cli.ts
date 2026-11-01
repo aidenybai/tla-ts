@@ -10,23 +10,28 @@ import {
 import { spawnSync } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import { availableParallelism } from "node:os";
-import type { CheckResult, CheckStatus, TraceStep } from "./check";
+import type { CheckResult, CheckStatus, Replay, TraceStep } from "./check";
 import { defineCommand, type ParsedArgs } from "./cli-options";
 import { parseConfig } from "./config";
 import {
+  createSanyError,
+  formatSanyWarnings,
   getErrorExitCode,
   TlaConfigError,
   TlaError,
   TlaEvaluationError,
   TlaProofError,
+  TlaSyntaxError,
+  type SanyReport,
 } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
 import type { LineRange } from "./obligations/generate";
 import { getAtPrefix, getLocusText } from "./obligations/expression";
 import { formatSummary, getObligations, WHOLE_MODULE, type ModuleObligations } from "./obligations";
 import { check } from "./parallel";
-import { prettyPrint } from "./pretty-print";
 import { isProveBackend, prove, PROVE_BACKENDS, type ProofStatus } from "./prove/prove";
+import { parseModuleFile } from "./sany-parse-error";
+import type { StateDump } from "./state-graph";
 import {
   formatProbability,
   getActualProbability,
@@ -34,7 +39,7 @@ import {
   getOutDegreeSummary,
 } from "./tlc-summary";
 import { getTlapmPaths } from "./prove/tlapm/tlapm";
-import { formatValue, type Value } from "./values";
+import { formatState, type Value } from "./values";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: EXIT_STATUS.success,
@@ -50,6 +55,11 @@ const EXIT_CODES: Record<CheckStatus, number> = {
 const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {options}", [
   { flag: "-config <Spec.cfg>" },
   { flag: "-deadlock" },
+  // Like TLC, -dump takes a format only when the next argument starts with dot and a file follows.
+  {
+    flag: "-dump [<format>] <file>",
+    getArity: (rest) => (rest.length > 1 && rest[0].startsWith("dot") ? 2 : 1),
+  },
   { flag: "-lncheck <final|default>" },
   { flag: "-seed <num>" },
   { flag: "-workers <count|auto>" },
@@ -107,14 +117,24 @@ const getWorkerCount = (values: string[] | undefined) => {
     : Math.max(1, Number.parseInt(values[0], 10) || 1);
 };
 
-const printState = (state: Record<string, Value>) => {
-  const entries = Object.entries(state);
-  entries.forEach(([name, value]) =>
-    console.log(
-      `${entries.length === 1 ? "" : "/\\ "}${name} = ${prettyPrint(formatValue(value))}`,
-    ),
-  );
-  console.log("");
+const printState = (state: Record<string, Value>) => console.log(formatState(state));
+
+const UNSUPPORTED_DUMP_FORMATS = ["constrained", "stuttering", "strict"];
+
+// TLC names the file of a -dump by its format unless the name already ends that way.
+const getDumpPath = (path: string, extension: string) =>
+  path.endsWith(extension) ? path : `${path}${extension}`;
+
+const getDump = (values: string[]): StateDump => {
+  if (values.length === 1) return { path: getDumpPath(values[0], ".dump") };
+  const format = values[0].toLowerCase();
+  return {
+    path: getDumpPath(values[1], ".dot"),
+    dot: true,
+    colorize: format.includes("colorize"),
+    actionLabels: format.includes("actionlabels"),
+    snapshot: format.includes("snapshot"),
+  };
 };
 
 const printTrace = (trace: TraceStep[], heading = "Error: The behavior up to this point is:") => {
@@ -125,14 +145,47 @@ const printTrace = (trace: TraceStep[], heading = "Error: The behavior up to thi
   });
 };
 
+const getTemporalHeadline = (names: string[]) =>
+  names.length === 1
+    ? `Error: Temporal property ${names[0]} was violated.\n`
+    : `Error: Temporal properties ${names.slice(0, -1).join(", ")}${names.length > 2 ? "," : ""} and ${names[names.length - 1]} were violated.\n`;
+
+const getFrames = (callStack: string[]) =>
+  callStack.map((frame, index) => `${index}. ${frame}\n`).join("");
+
+const printCallStack = (frames: string) =>
+  console.log(
+    `Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n${frames ? `${frames}\n` : "    The error call stack is empty.\n"}`,
+  );
+
+const printReplay = (replay: Replay) => {
+  replay.output.forEach((line) => console.log(line));
+  const frames = getFrames(replay.callStack ?? []);
+  const fingerprint = replay.fingerprint;
+  if (replay.isBeforeError) {
+    if (frames) printCallStack(frames);
+  } else if (replay.callStack && fingerprint) {
+    const sources = fingerprint.sources.map((source) => `${source}\n`).join("");
+    console.log(
+      `Error: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n${frames ? `${frames}\n` : sources}\nReason:\n${fingerprint.reason}`,
+    );
+  } else if (replay.callStack) {
+    printCallStack(frames);
+  }
+};
+
 const printResult = (result: CheckResult) => {
   if (result.failure) {
+    const replay = result.failure.replay;
+    if (replay?.isBeforeError) printReplay(replay);
     console.log(`Error: ${result.failure.message}`);
     if (result.failure.initialState) {
       console.log("While working on the initial state:");
       printState(result.failure.initialState);
     }
     printTrace(result.failure.trace);
+    if (replay && !replay.isBeforeError) printReplay(replay);
+    if (result.failure.isWithoutStatistics) return;
   } else if (result.violation) {
     const violation = result.violation;
     const name = violation.name;
@@ -152,10 +205,10 @@ const printResult = (result: CheckResult) => {
       "invariant-violation": isInitial
         ? `Error: Invariant ${name} is violated by the initial state:`
         : `Error: Invariant ${name} is violated.`,
-      "property-violation": `Error: Property ${name} is violated.`,
+      "property-violation": getTemporalHeadline(violation.properties ?? [name]),
       "liveness-violation":
         loopStart !== undefined
-          ? `Error: Temporal property ${name} was violated.\n`
+          ? getTemporalHeadline(violation.properties ?? [name])
           : isInitial
             ? `Error: Property ${name} is violated by the initial state:`
             : `Error: Action property ${name} is violated.`,
@@ -164,6 +217,8 @@ const printResult = (result: CheckResult) => {
     if (violation.counts) console.log(violation.counts);
     console.log(headline);
     if (isInitial) printState(violation.trace[0].state);
+    else if (result.status === "property-violation")
+      printTrace(violation.trace, "Error: The following behavior constitutes a counter-example:\n");
     else if (loopStart === undefined) printTrace(violation.trace);
     else {
       printTrace(violation.trace, "Error: The following behavior constitutes a counter-example:\n");
@@ -203,6 +258,20 @@ const checkSpec = async (specPath: string, args: ParsedArgs) => {
     console.error(`Cannot find the specification file ${specPath}`);
     return EXIT_STATUS.configParseError;
   }
+  const source = readFileSync(specPath, "utf8");
+  const fileName = basename(specPath, ".tla");
+  const moduleName = parseModuleFile(source, fileName).name;
+  if (moduleName !== fileName) {
+    throw createSanyError(
+      [
+        {
+          location: "Unknown location",
+          message: `File name '${fileName}' does not match the name '${moduleName}' of the top level module it contains.`,
+        },
+      ],
+      true,
+    );
+  }
   const configPath =
     args.get("-config")?.[0] ??
     (args.has("-config") ? undefined : specPath.replace(/\.tla$/, ".cfg"));
@@ -226,13 +295,26 @@ const checkSpec = async (specPath: string, args: ParsedArgs) => {
     console.error("Error: expect a strategy such as final for -lncheck option.");
     return 1;
   }
+  const dumpValues = args.get("-dump");
+  if (dumpValues?.length === 0) {
+    console.error("Error: A file name for dumping states required.");
+    return 1;
+  }
+  const unsupportedFormat =
+    dumpValues?.length === 2 &&
+    UNSUPPORTED_DUMP_FORMATS.find((format) => dumpValues[0].toLowerCase().includes(format));
+  if (unsupportedFormat) {
+    console.error(`Error: tla-ts does not support the -dump format ${unsupportedFormat}.`);
+    return 1;
+  }
   const directory = dirname(specPath);
   console.log(`Checking ${basename(specPath)} with ${basename(configPath)}`);
   const result = await check({
     workers: getWorkerCount(args.get("-workers")),
     livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
     seed: BigInt(seed),
-    source: readFileSync(specPath, "utf8"),
+    dump: dumpValues && getDump(dumpValues),
+    source,
     config,
     onPause: () => readSync(0, Buffer.alloc(1)),
     loadModule: (name) => {
@@ -253,21 +335,34 @@ const checkSpec = async (specPath: string, args: ParsedArgs) => {
   return result.failure?.exitCode ?? EXIT_CODES[result.status];
 };
 
-// TLC prints the errors it raises itself. tla-ts names the others, such as a module SANY rejects.
-const printError = (error: TlaError) => {
+const formatSanyErrors = (report: SanyReport) =>
+  `*** Errors: ${report.errors.length}\n\n${report.errors.map((error) => `${error.location}\n\n${error.message}\n\n`).join("\n")}`;
+
+// TLC prints the errors it raises itself, and SANY's report of a spec it rejects. tla-ts names the
+// others, such as a module it cannot parse.
+const printError = (error: TlaError, path?: string) => {
   if (error instanceof TlaConfigError || error instanceof TlaEvaluationError) {
     return console.log(`Error: ${error.message}`);
   }
-  console.error(`${error.name}: ${error.message}`);
+  const report = error instanceof TlaSyntaxError ? error.sany : undefined;
+  if (!report || path === undefined) return console.error(`${error.name}: ${error.message}`);
+  if (report.parseError !== undefined) console.log(report.parseError);
+  if (report.warnings.length > 0) console.log(formatSanyWarnings(report.warnings));
+  console.log(
+    report.isFatal
+      ? `\nFatal errors while parsing TLA+ spec in file ${basename(path, ".tla")}\n\n${report.errors.map((item) => `${item.location}\n\n${item.message}\n`).join("")}${formatSanyErrors(report)}\n`
+      : `Semantic errors:\n\n${formatSanyErrors(report)}`,
+  );
+  console.log("Error: Parsing or semantic analysis failed.");
 };
 
 // Prints a TlaError and returns its exit code.
-const reportErrors = async (run: () => number | Promise<number>) => {
+const reportErrors = async (run: () => number | Promise<number>, path?: string) => {
   try {
     return await run();
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
-    printError(error);
+    printError(error, path);
     return getErrorExitCode(error);
   }
 };
@@ -278,7 +373,7 @@ const runEach = async (paths: string[], runPath: (path: string) => number | Prom
   const exitCodes: number[] = [];
   for (const [index, path] of paths.entries()) {
     if (index > 0) console.log("");
-    exitCodes.push(await reportErrors(() => runPath(path)));
+    exitCodes.push(await reportErrors(() => runPath(path), path));
   }
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
 };

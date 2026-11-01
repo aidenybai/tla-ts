@@ -6,7 +6,7 @@ export interface CheckerRuntime {
   getBehavior: (state: Value[]) => Value[][];
   getSpecification: () => Value;
   counterExample: Value | undefined;
-  setLivenessSource: (index: number) => void;
+  setLivenessSource: (index: number | undefined) => void;
   getCurrentState: () => Value[] | undefined;
   getFingerprint: (state: Value[]) => bigint;
   getRandom: () => JavaRandom;
@@ -24,6 +24,7 @@ export interface CheckerRuntime {
   properties: Map<string, string>;
   possibleCounts: Map<string, number>;
   isStopped: boolean;
+  isStarted: boolean;
   checkDeadlock: boolean;
   startedAt: number;
 }
@@ -75,6 +76,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     properties: new Map(),
     possibleCounts: new Map(),
     isStopped: false,
+    isStarted: false,
     checkDeadlock,
     startedAt: Date.now(),
   };

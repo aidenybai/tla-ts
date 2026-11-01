@@ -1,14 +1,15 @@
-import type { Definition, Expression } from "./ast";
-import { TlaConfigError, TlaEvaluationError } from "./errors";
+import { isLocallyResolved, type Definition, type Expression } from "./ast";
+import { STACK_OVERFLOW, TlaEvaluationError, TlaModuleError, UNEXPECTED_EXCEPTION } from "./errors";
+import { EXIT_STATUS, getOwnExitCode, setExitCode } from "./exit-codes";
 import {
   describeLocation,
+  describeRange,
   bindDefinitions,
   bindOperatorArguments,
   evaluate,
   expectBoolean,
   forEachBinding,
   getDefinition,
-  isLocallyResolved,
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,
@@ -27,66 +28,22 @@ import {
   createPair,
   createUnary,
   getLiveLevel,
-  getSolutions,
-  isFulfilling,
   type LiveEnabled,
   type LiveExpression,
-  type Solution,
-  type Tableau,
 } from "./tableau";
-import { isSameValue, type Value } from "./values";
+import type { Value } from "./values";
 
 export interface ScopedExpression {
   expression: Expression;
   scope: Scope | undefined;
 }
 
+export interface NamedExpression extends ScopedExpression {
+  name: string;
+}
+
 export interface TemporalProperty extends ScopedExpression {
   name: string;
-}
-
-export interface LiveSuccessor {
-  index: number;
-  state: Value[];
-}
-
-export interface Lasso {
-  name: string;
-  prefix: number[];
-  cycle: number[];
-}
-
-interface SafetyViolation {
-  name: string;
-  path: number[];
-}
-
-export interface LivenessChecker {
-  addInitialState: (index: number, state: Value[]) => void;
-  addState: (
-    index: number,
-    state: Value[],
-    successors: LiveSuccessor[],
-  ) => SafetyViolation | undefined;
-  findViolation: () => Lasso | undefined;
-}
-
-interface Check {
-  solution: Solution;
-  stateResults: Uint8Array[];
-  actionResults: Uint8Array[];
-  consistency: Uint8Array[];
-  product: BehaviorGraph | undefined;
-  productNodes: Map<number, number>;
-  nodesByState: Map<number, number[]>;
-}
-
-interface BehaviorGraph {
-  states: number[];
-  tableauNodes: number[];
-  edges: number[][];
-  initial: number[];
-  parents: number[];
 }
 
 const MAXIMUM_EXPANSION_DEPTH = 100;
@@ -103,6 +60,23 @@ const getConstantContext = (environment: Environment, scope: Scope | undefined):
   state: undefined,
   next: undefined,
 });
+
+// TLC evaluates the constant parts of a property while it processes the spec. Its top-level handler
+// prints a failure without a TLC error code of its own as an unexpected exception.
+const evaluateConstant = (expression: Expression, context: Context) => {
+  try {
+    return evaluate(expression, context);
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError) || error instanceof TlaModuleError) throw error;
+    const code = getOwnExitCode(error);
+    throw code === undefined
+      ? setExitCode(
+          new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`, error),
+          EXIT_STATUS.error,
+        )
+      : setExitCode(error, code);
+  }
+};
 
 const createCannotHandleError = (expression: Expression) =>
   new TlaEvaluationError(
@@ -193,21 +167,27 @@ const getDefinitionLevel = (definition: Definition, environment: Environment) =>
   return level;
 };
 
+export const TAUTOLOGY_MESSAGE = "Temporal formula is a tautology (its negation is unsatisfiable).";
+
+// TLC names each part of a property after the operator it expands, or after the location of the
+// conjunct or quantifier body it splits off.
 export const expandTemporal = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
-  isUnrollingForall: boolean,
+  isProperty: boolean,
+  name = "",
   expanding = new Set<Definition>(),
-): ScopedExpression[] => {
+): NamedExpression[] => {
   const expand = (
     child: Expression,
     childScope: Scope | undefined,
+    childName = name,
     childExpanding = expanding,
-  ): ScopedExpression[] =>
-    expandTemporal(child, childScope, environment, isUnrollingForall, childExpanding);
+  ): NamedExpression[] =>
+    expandTemporal(child, childScope, environment, isProperty, childName, childExpanding);
   if (expression.kind === "And") {
-    return expression.operands.flatMap((operand) => expand(operand, scope));
+    return expression.operands.flatMap((operand) => expand(operand, scope, describeRange(operand)));
   }
   if (expression.kind === "Label") return expand(expression.body, scope);
   if (expression.kind === "Let") {
@@ -228,35 +208,64 @@ export const expandTemporal = (
       getDefinitionLevel(definition, environment) > 0
     ) {
       if (expanding.has(definition)) {
-        throw new TlaConfigError(`The definition of ${expression.name} refers to itself`);
+        throw setExitCode(new TlaEvaluationError(STACK_OVERFLOW), EXIT_STATUS.error);
       }
-      return expand(definition.body, undefined, new Set([...expanding, definition]));
+      const expanded = expand(
+        definition.body,
+        undefined,
+        expression.name,
+        new Set([...expanding, definition]),
+      );
+      // TLC takes the body of a state-level definition in a specification as one initial predicate.
+      return !isProperty && getDefinitionLevel(definition, environment) < ACTION_LEVEL
+        ? [{ expression: definition.body, scope: undefined, name: expression.name }]
+        : expanded;
     }
   }
   const context = getConstantContext(environment, scope);
-  if (expression.kind === "Apply" && getLevel(expression, scope, environment) === TEMPORAL_LEVEL) {
+  // A property expands every operator it applies and unrolls every \A over constant sets, but a
+  // specification only expands the temporal ones.
+  const isExpanded = (child: Expression) =>
+    isProperty || getLevel(child, scope, environment) === TEMPORAL_LEVEL;
+  if (expression.kind === "Apply" && isExpanded(expression)) {
     const operator = resolveApplyOperator(expression, context);
     const definition = isLocallyResolved(expression)
       ? undefined
       : getDefinition(expression.operator, environment);
-    if (operator?.kind === "Closure" && !definition?.isRecursive) {
-      return expand(operator.body, bindOperatorArguments(operator, expression.args, context));
+    const isExpandable =
+      operator?.kind === "Closure" &&
+      operator.params.length === expression.args.length &&
+      !definition?.isRecursive;
+    if (isExpandable) {
+      return expand(
+        operator.body,
+        bindOperatorArguments(operator, expression.args, context),
+        expression.operator,
+      );
     }
   }
   const isUnrolled =
-    isUnrollingForall &&
+    isProperty &&
     expression.kind === "Forall" &&
-    getLevel(expression.body, scope, environment) === TEMPORAL_LEVEL &&
     expression.bounds.every((bound) => getLevel(bound.set, scope, environment) === 0);
   if (isUnrolled) {
-    const expanded: ScopedExpression[] = [];
+    const expanded: NamedExpression[] = [];
+    const bindings = { count: 0 };
     forEachBinding(expression.bounds, context, (boundScope) => {
-      expanded.push(...expand(expression.body, boundScope));
+      bindings.count++;
+      expanded.push(...expand(expression.body, boundScope, describeRange(expression.body)));
       return false;
     });
+    // TLC rejects a property that quantifies over no elements before it checks anything.
+    if (bindings.count === 0) {
+      throw setExitCode(
+        new TlaEvaluationError(TAUTOLOGY_MESSAGE),
+        EXIT_STATUS.livenessEvaluationFailure,
+      );
+    }
     return expanded;
   }
-  return [{ expression, scope }];
+  return [{ expression, scope, name }];
 };
 
 const bindLetDefinitions = (
@@ -278,7 +287,7 @@ const createAngleAction = (action: Expression, subscript: Expression): Expressio
   location: action.location,
 });
 
-const toLiveExpression = (
+export const toLiveExpression = (
   root: Expression,
   rootScope: Scope | undefined,
   environment: Environment,
@@ -290,7 +299,7 @@ const toLiveExpression = (
   ): LiveExpression => {
     const atomLevel = level === 0 ? getLevel(expression, scope, environment) : level;
     if (atomLevel === 0) {
-      const value = evaluate(expression, getConstantContext(environment, scope));
+      const value = evaluateConstant(expression, getConstantContext(environment, scope));
       if (typeof value !== "boolean") {
         throw new TlaEvaluationError(
           `TLC expected a boolean in the temporal formula at ${describeLocation(expression)}`,
@@ -311,9 +320,7 @@ const toLiveExpression = (
     scope: Scope | undefined,
   ) => {
     if (expansion.depth >= MAXIMUM_EXPANSION_DEPTH) {
-      throw new TlaEvaluationError(
-        `TLC overflowed the stack while expanding the temporal formula at ${describeLocation(expression)}`,
-      );
+      throw setExitCode(new TlaEvaluationError(STACK_OVERFLOW), EXIT_STATUS.error);
     }
     expansion.depth++;
     const result = convert(body, bodyScope);
@@ -368,9 +375,45 @@ const toLiveExpression = (
     return level > ACTION_LEVEL ? result : toAtom(expression, scope, level);
   };
 
+  // TLC translates the operands of a connective even when the whole formula is a state or action
+  // predicate, so it fails on a constant operand before it checks any state.
+  const convertOperands = (expression: Expression, scope: Scope | undefined) => {
+    switch (expression.kind) {
+      case "Label":
+        convert(expression.body, scope);
+        return;
+      case "Let":
+        convert(expression.body, bindLetDefinitions(expression, scope, environment));
+        return;
+      case "And":
+      case "Or":
+        for (const operand of expression.operands) convert(operand, scope);
+        return;
+      case "Apply":
+        if (
+          expression.operator === "=>" ||
+          (expression.operator === "~" && !isLocallyResolved(expression))
+        ) {
+          for (const operand of expression.args) convert(operand, scope);
+        }
+        return;
+      case "If": {
+        const condition = convert(expression.condition, scope);
+        const branches =
+          condition.kind === "Boolean"
+            ? [condition.value ? expression.consequent : expression.alternative]
+            : [expression.consequent, expression.alternative];
+        for (const branch of branches) convert(branch, scope);
+      }
+    }
+  };
+
   const convert = (expression: Expression, scope: Scope | undefined): LiveExpression => {
     const level = getLevel(expression, scope, environment);
-    if (level <= ACTION_LEVEL) return toAtom(expression, scope, level);
+    if (level <= ACTION_LEVEL) {
+      convertOperands(expression, scope);
+      return toAtom(expression, scope, level);
+    }
     switch (expression.kind) {
       case "Label":
         return convert(expression.body, scope);
@@ -413,7 +456,10 @@ const toLiveExpression = (
         return convertQuantifier(expression, scope);
       case "If": {
         if (getLevel(expression.condition, scope, environment) === 0) {
-          const condition = evaluate(expression.condition, getConstantContext(environment, scope));
+          const condition = evaluateConstant(
+            expression.condition,
+            getConstantContext(environment, scope),
+          );
           if (typeof condition === "boolean") {
             return convert(condition ? expression.consequent : expression.alternative, scope);
           }
@@ -464,7 +510,7 @@ const toLiveExpression = (
   return convert(root, rootScope);
 };
 
-const evaluateLive = (
+export const evaluateLive = (
   expression: LiveExpression,
   state: Value[],
   next: Value[] | undefined,
@@ -512,7 +558,7 @@ const evaluateLive = (
   }
 };
 
-const evaluateOnLasso = (
+export const evaluateOnLasso = (
   expression: LiveExpression,
   path: Value[][],
   cycleStart: number,
@@ -546,473 +592,4 @@ const evaluateOnLasso = (
         new Map(),
       );
   }
-};
-
-const liveKeys = new WeakMap<LiveExpression, string>();
-
-const atomCount = { value: 0 };
-
-const getLiveKey = (expression: LiveExpression): string => {
-  const cached = liveKeys.get(expression);
-  if (cached !== undefined) return cached;
-  const key =
-    expression.kind === "Boolean"
-      ? String(expression.value)
-      : "body" in expression
-        ? `${expression.kind}(${getLiveKey(expression.body)})`
-        : "operands" in expression
-          ? `${expression.kind}(${expression.operands.map(getLiveKey).join(",")})`
-          : `${expression.kind}#${atomCount.value++}`;
-  liveKeys.set(expression, key);
-  return key;
-};
-
-const isSameState = (left: Value[], right: Value[]) =>
-  left.every((value, position) => isSameValue(value, right[position]));
-
-const getStronglyConnectedComponents = (
-  nodeCount: number,
-  getSuccessors: (node: number) => number[],
-  visit: (component: number[], successors: (node: number) => number[]) => boolean,
-) => {
-  const order = new Int32Array(nodeCount).fill(-1);
-  const lowLink = new Int32Array(nodeCount);
-  const onStack = new Uint8Array(nodeCount);
-  const stack: number[] = [];
-  const counter = { value: 0 };
-  const successorCache = new Map<number, number[]>();
-  const getCachedSuccessors = (node: number) => {
-    const cached = successorCache.get(node);
-    if (cached) return cached;
-    const successors = getSuccessors(node);
-    successorCache.set(node, successors);
-    return successors;
-  };
-  for (let root = 0; root < nodeCount; root++) {
-    if (order[root] !== -1) continue;
-    const frames: { node: number; position: number }[] = [];
-    const open = (node: number) => {
-      order[node] = counter.value;
-      lowLink[node] = counter.value++;
-      stack.push(node);
-      onStack[node] = 1;
-      frames.push({ node, position: 0 });
-    };
-    open(root);
-    while (frames.length > 0) {
-      const frame = frames[frames.length - 1];
-      const successors = getCachedSuccessors(frame.node);
-      if (frame.position < successors.length) {
-        const target = successors[frame.position++];
-        if (order[target] === -1) open(target);
-        else if (onStack[target])
-          lowLink[frame.node] = Math.min(lowLink[frame.node], order[target]);
-        continue;
-      }
-      frames.pop();
-      const parent = frames[frames.length - 1];
-      if (parent) lowLink[parent.node] = Math.min(lowLink[parent.node], lowLink[frame.node]);
-      if (lowLink[frame.node] !== order[frame.node]) continue;
-      const component: number[] = [];
-      while (true) {
-        const member = stack.pop();
-        if (member === undefined) break;
-        onStack[member] = 0;
-        component.push(member);
-        if (member === frame.node) break;
-      }
-      const isFound = visit(component, getCachedSuccessors);
-      component.forEach((member) => successorCache.delete(member));
-      if (isFound) return;
-    }
-  }
-};
-
-const getShortestPath = (
-  from: number,
-  to: number,
-  members: Set<number>,
-  getSuccessors: (node: number) => number[],
-) => {
-  if (from === to) return [from];
-  const parents = new Map<number, number>([[from, -1]]);
-  const queue = [from];
-  for (let position = 0; position < queue.length; position++) {
-    for (const target of getSuccessors(queue[position])) {
-      if (parents.has(target) || !members.has(target)) continue;
-      parents.set(target, queue[position]);
-      if (target === to) {
-        const path: number[] = [];
-        for (let node = to; node !== -1; node = parents.get(node) ?? -1) path.push(node);
-        return path.reverse();
-      }
-      queue.push(target);
-    }
-  }
-  return [from];
-};
-
-const removeRepeats = (path: number[]) =>
-  path.filter((node, position) => position === 0 || path[position - 1] !== node);
-
-export const createLivenessChecker = (
-  properties: TemporalProperty[],
-  temporals: ScopedExpression[],
-  environment: Environment,
-): LivenessChecker | undefined => {
-  if (properties.length === 0) return undefined;
-  const fairness = temporals.map((item) =>
-    toLiveExpression(item.expression, item.scope, environment),
-  );
-  const negations = properties.map((property) =>
-    createUnary("Not", toLiveExpression(property.expression, property.scope, environment)),
-  );
-  const violation = negations.length === 1 ? negations[0] : createJunction("Or", negations);
-  const formula =
-    fairness.length === 0 ? violation : createJunction("And", [...fairness, violation]);
-  const solutions = getSolutions(formula);
-  if (solutions.length === 0) {
-    throw new TlaEvaluationError("Temporal formula is a tautology (its negation is unsatisfiable)");
-  }
-  const checks = solutions.map((solution): Check => ({
-    solution,
-    stateResults: [],
-    actionResults: [],
-    consistency: [],
-    product: solution.tableau && {
-      states: [],
-      tableauNodes: [],
-      edges: [],
-      initial: [],
-      parents: [],
-    },
-    productNodes: new Map(),
-    nodesByState: new Map(),
-  }));
-  const actionKeys = new Map<string, number>();
-  const actionIds = checks.map((check) =>
-    check.solution.actionChecks.map((predicate) => {
-      const key = getLiveKey(predicate);
-      const known = actionKeys.get(key);
-      if (known !== undefined) return known;
-      actionKeys.set(key, actionKeys.size);
-      return actionKeys.size - 1;
-    }),
-  );
-  const states: Value[][] = [];
-  const targets: number[][] = [];
-  const edgeStates: Value[][][] = [];
-  const initial: number[] = [];
-
-  const isConsistent = (
-    predicates: LiveExpression[],
-    state: Value[],
-    cache: Map<LiveExpression, boolean>,
-  ) =>
-    predicates.every((predicate) => evaluateLive(predicate, state, undefined, environment, cache));
-
-  const getProductNode = (
-    check: Check,
-    product: BehaviorGraph,
-    state: number,
-    tableauNode: number,
-    parent: number,
-  ) => {
-    const key = state * (check.solution.tableau?.nodes.length ?? 1) + tableauNode;
-    const existing = check.productNodes.get(key);
-    if (existing !== undefined) return { node: existing, isNew: false };
-    const node = product.states.length;
-    check.productNodes.set(key, node);
-    product.states.push(state);
-    product.tableauNodes.push(tableauNode);
-    product.edges.push([]);
-    product.parents.push(parent);
-    const siblings = check.nodesByState.get(state);
-    if (siblings) siblings.push(node);
-    else check.nodesByState.set(state, [node]);
-    return { node, isNew: true };
-  };
-
-  const getAttribution = (path: number[], cycleStart: number) => {
-    const lasso = path.map((state) => states[state]);
-    return (
-      properties.find(
-        (_, position) =>
-          !evaluateOnLasso(negations[position].body, lasso, cycleStart, 0, environment),
-      ) ?? properties[0]
-    ).name;
-  };
-
-  const expandProduct = (check: Check, product: BehaviorGraph, tableau: Tableau, state: number) => {
-    const hasEmptyModel = check.solution.models.some(
-      (model) =>
-        model.eventuallyAlways.length === 0 &&
-        model.infinitelyOftenStates.length === 0 &&
-        model.infinitelyOftenActions.length === 0,
-    );
-    const nodeCount = tableau.nodes.length;
-    const pending = (check.nodesByState.get(state) ?? []).map((node) => ({ node, isDone: false }));
-    while (pending.length > 0) {
-      const item = pending.pop();
-      if (!item) break;
-      const source = product.states[item.node];
-      const successors = tableau.nodes[product.tableauNodes[item.node]].successors;
-      const isAccepted =
-        item.isDone &&
-        hasEmptyModel &&
-        successors.some((successor) => {
-          const node = tableau.nodes[successor];
-          return node.particle.length === 0 && node.successors.every((next) => next === successor);
-        });
-      if (isAccepted) {
-        const path = removeRepeats(
-          getPrefix(product, item.node).map((node) => product.states[node]),
-        );
-        return { name: getAttribution(path, path.length - 1), path };
-      }
-      const consistency = check.consistency[source];
-      targets[source].forEach((target, edgeIndex) => {
-        for (const successor of successors) {
-          if (!consistency[edgeIndex * nodeCount + successor]) continue;
-          const created = getProductNode(check, product, target, successor, item.node);
-          product.edges[item.node].push(created.node, edgeIndex);
-          if (created.isNew && targets[target] !== undefined) {
-            pending.push({ node: created.node, isDone: true });
-          }
-        }
-      });
-    }
-    return undefined;
-  };
-
-  const addInitialState = (index: number, state: Value[]) => {
-    initial.push(index);
-    states[index] = state;
-    for (const check of checks) {
-      const tableau = check.solution.tableau;
-      const product = check.product;
-      if (!tableau || !product) continue;
-      const cache = new Map<LiveExpression, boolean>();
-      for (let node = 0; node < tableau.initialCount; node++) {
-        if (!isConsistent(tableau.nodes[node].statePredicates, state, cache)) continue;
-        product.initial.push(getProductNode(check, product, index, node, -1).node);
-      }
-    }
-  };
-
-  const addState = (index: number, state: Value[], successors: LiveSuccessor[]) => {
-    environment.runtime.setLivenessSource(index);
-    states[index] = state;
-    const edges: LiveSuccessor[] = [];
-    const edgesByTarget = new Map<number, LiveSuccessor[]>();
-    for (const successor of [...successors, { index, state }]) {
-      const sameTarget = edgesByTarget.get(successor.index);
-      const isDuplicate =
-        sameTarget !== undefined &&
-        (successor.index < index ||
-          sameTarget.some((edge) => isSameState(edge.state, successor.state)));
-      if (isDuplicate) continue;
-      edges.push(successor);
-      if (sameTarget) sameTarget.push(successor);
-      else edgesByTarget.set(successor.index, [successor]);
-    }
-    targets[index] = edges.map((edge) => edge.index);
-    edgeStates[index] = edges.map((edge) => edge.state);
-    const stateCache = new Map<LiveExpression, boolean>();
-    const successorCaches = edges.map(() => new Map<LiveExpression, boolean>());
-    for (const check of checks) {
-      const solution = check.solution;
-      check.stateResults[index] = Uint8Array.from(solution.stateChecks, (predicate) =>
-        evaluateLive(predicate, state, undefined, environment, stateCache) ? 1 : 0,
-      );
-      const tableau = solution.tableau;
-      const product = check.product;
-      if (!tableau || !product) continue;
-      const nodeCount = tableau.nodes.length;
-      const consistency = new Uint8Array(edges.length * nodeCount);
-      edges.forEach((edge, edgeIndex) => {
-        tableau.nodes.forEach((node, nodeIndex) => {
-          const isTrue = isConsistent(node.statePredicates, edge.state, successorCaches[edgeIndex]);
-          consistency[edgeIndex * nodeCount + nodeIndex] = isTrue ? 1 : 0;
-        });
-      });
-      check.consistency[index] = consistency;
-      const accepted = expandProduct(check, product, tableau, index);
-      if (accepted) return accepted;
-    }
-    return undefined;
-  };
-
-  const computeActionResults = (source: number) => {
-    environment.runtime.setLivenessSource(source);
-    const state = states[source];
-    const successors = edgeStates[source];
-    const values = successors.map(() => new Int8Array(actionKeys.size).fill(-1));
-    checks.forEach((check, checkIndex) => {
-      const solution = check.solution;
-      const ids = actionIds[checkIndex];
-      const stateResults = check.stateResults[source];
-      const stateCache = new Map(
-        solution.stateChecks.map((predicate, position) => [
-          predicate,
-          stateResults[position] === 1,
-        ]),
-      );
-      const actionCount = solution.actionChecks.length;
-      const actions = new Uint8Array(successors.length * actionCount);
-      successors.forEach((successor, edgeIndex) => {
-        const known = values[edgeIndex];
-        for (let position = 0; position < actionCount; position++) {
-          const actionId = ids[position];
-          if (known[actionId] === -1) {
-            const predicate = solution.actionChecks[position];
-            known[actionId] = evaluateLive(predicate, state, successor, environment, stateCache)
-              ? 1
-              : 0;
-          }
-          actions[edgeIndex * actionCount + position] = known[actionId];
-        }
-      });
-      check.actionResults[source] = actions;
-    });
-  };
-
-  const getActionResults = (check: Check, source: number) => {
-    if (check.actionResults[source] === undefined) computeActionResults(source);
-    return check.actionResults[source];
-  };
-
-  const getGraph = (check: Check): BehaviorGraph =>
-    check.product ?? {
-      states: states.map((_, index) => index),
-      tableauNodes: states.map(() => -1),
-      edges: Array.from({ length: states.length }, (_, index) =>
-        (targets[index] ?? []).flatMap((target, edgeIndex) => [target, edgeIndex]),
-      ),
-      initial,
-      parents: [],
-    };
-
-  const getPrefix = (graph: BehaviorGraph, entry: number) => {
-    if (graph.parents.length > 0) {
-      const path: number[] = [];
-      for (let node = entry; node !== -1; node = graph.parents[node]) path.push(node);
-      return path.reverse();
-    }
-    const parents = new Map<number, number>(graph.initial.map((node) => [node, -1]));
-    const queue = [...graph.initial];
-    for (let position = 0; position < queue.length && !parents.has(entry); position++) {
-      const edges = graph.edges[queue[position]];
-      for (let offset = 0; offset < edges.length; offset += 2) {
-        if (parents.has(edges[offset])) continue;
-        parents.set(edges[offset], queue[position]);
-        queue.push(edges[offset]);
-      }
-    }
-    const path: number[] = [];
-    for (let node = entry; node !== -1; node = parents.get(node) ?? -1) path.push(node);
-    return path.reverse();
-  };
-
-  const findInCheck = (check: Check): Lasso | undefined => {
-    const solution = check.solution;
-    const tableau = solution.tableau;
-    const graph = getGraph(check);
-    const actionCount = solution.actionChecks.length;
-    const getAction = (node: number, edgeIndex: number, position: number) =>
-      getActionResults(check, graph.states[node])[edgeIndex * actionCount + position] === 1;
-    for (const model of solution.models) {
-      const isAllowed = (node: number, edgeIndex: number) =>
-        model.eventuallyAlways.every((position) => getAction(node, edgeIndex, position));
-      const getSuccessors = (node: number) => {
-        const edges = graph.edges[node];
-        const successors: number[] = [];
-        for (let offset = 0; offset < edges.length; offset += 2) {
-          if (isAllowed(node, edges[offset + 1])) successors.push(edges[offset]);
-        }
-        return successors;
-      };
-      const lasso = { value: undefined as Lasso | undefined };
-      getStronglyConnectedComponents(
-        graph.states.length,
-        getSuccessors,
-        (component, successors) => {
-          const members = new Set(component);
-          if (component.length === 1 && !successors(component[0]).includes(component[0]))
-            return false;
-          const stateWitnesses = model.infinitelyOftenStates.map((position) =>
-            component.find((node) => check.stateResults[graph.states[node]][position] === 1),
-          );
-          const actionWitnesses = model.infinitelyOftenActions.map((position) => {
-            for (const node of component) {
-              const edges = graph.edges[node];
-              for (let offset = 0; offset < edges.length; offset += 2) {
-                const isWitness =
-                  members.has(edges[offset]) &&
-                  isAllowed(node, edges[offset + 1]) &&
-                  getAction(node, edges[offset + 1], position);
-                if (isWitness) return [node, edges[offset]];
-              }
-            }
-            return undefined;
-          });
-          const promiseWitnesses = solution.promises.map((promise) =>
-            component.find(
-              (node) =>
-                tableau !== undefined &&
-                isFulfilling(tableau.nodes[graph.tableauNodes[node]].particle, promise),
-            ),
-          );
-          const isViolation =
-            stateWitnesses.every((witness) => witness !== undefined) &&
-            actionWitnesses.every((witness) => witness !== undefined) &&
-            promiseWitnesses.every((witness) => witness !== undefined);
-          if (!isViolation) return false;
-          const entry = component[component.length - 1];
-          const waypoints = [
-            ...stateWitnesses.flatMap((witness) => witness ?? []),
-            ...actionWitnesses.flatMap((witness) => witness ?? []),
-            ...promiseWitnesses.flatMap((witness) => witness ?? []),
-          ];
-          const cycle = [entry];
-          for (const waypoint of waypoints) {
-            cycle.push(
-              ...getShortestPath(cycle[cycle.length - 1], waypoint, members, successors).slice(1),
-            );
-          }
-          if (cycle.length === 1 && !successors(entry).includes(entry)) {
-            cycle.push(successors(entry).find((node) => members.has(node)) ?? entry);
-          }
-          const closing = getShortestPath(cycle[cycle.length - 1], entry, members, successors);
-          cycle.push(...closing.slice(1, -1));
-          const prefix = removeRepeats(getPrefix(graph, entry).map((node) => graph.states[node]));
-          const cycleStates = removeRepeats(cycle.map((node) => graph.states[node]));
-          if (cycleStates.length > 1 && cycleStates[cycleStates.length - 1] === cycleStates[0]) {
-            cycleStates.pop();
-          }
-          prefix.pop();
-          lasso.value = {
-            name: getAttribution([...prefix, ...cycleStates], prefix.length),
-            prefix,
-            cycle: cycleStates,
-          };
-          return true;
-        },
-      );
-      if (lasso.value) return lasso.value;
-    }
-    return undefined;
-  };
-
-  return {
-    addInitialState,
-    addState,
-    findViolation: () => {
-      for (const check of checks) {
-        const lasso = findInCheck(check);
-        if (lasso) return lasso;
-      }
-      return undefined;
-    },
-  };
 };

@@ -1,11 +1,8 @@
-import type { Expression } from "./ast";
-import { TlaEvaluationError } from "./errors";
+import { getChildren, isLocallyResolved, type Expression } from "./ast";
 import {
-  describeLocation,
   bindValue,
   expectBoolean,
   findGlobalName,
-  getChildren,
   getEnumeratedElements,
   getConditionError,
   getConjunctError,
@@ -13,20 +10,24 @@ import {
   getSubsetOperator,
   getEvaluator,
   getFieldError,
+  getNonFunctionError,
+  getNonRecordError,
   isClosedConstant,
-  isLocallyResolved,
   isTlcInteger,
   isValueArgument,
   isWorthCaching,
   keepLazy,
   resolveGlobalOperator,
+  createPrimeOutsideActionError,
+  createUnassignedError,
+  getSortedFields,
+  hasDuplicateFields,
   type Context,
   type Environment,
   type Evaluator,
 } from "./evaluate";
 import {
   applyFunction,
-  compareValues,
   createEnumeratedSet,
   createSortedFunction,
   createTuple,
@@ -84,14 +85,10 @@ const createRuntime = () => ({
   equal: valuesEqual,
   enumerate: getEnumeratedElements,
   unassigned: (name: string, expression: Expression): never => {
-    throw new TlaEvaluationError(
-      `The variable ${name} is not assigned at ${describeLocation(expression)}`,
-    );
+    throw createUnassignedError(name, expression);
   },
   primeOutsideAction: (expression: Expression): never => {
-    throw new TlaEvaluationError(
-      `A primed expression appears outside an action at ${describeLocation(expression)}`,
-    );
+    throw createPrimeOutsideActionError(expression);
   },
   prime: (context: Context): Context => ({
     environment: context.environment,
@@ -255,20 +252,16 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "FunctionApplication": {
       keepLazy(expression.function);
       const functionCode = generate(expression.function);
+      const describeNonFunction = addReference(generator, getNonFunctionError(expression));
       if (expression.args.length === 1)
-        return `apply(${functionCode}, ${generate(expression.args[0])})`;
-      return `apply(${functionCode}, tuple([${expression.args.map((arg) => generate(arg)).join(", ")}]))`;
+        return `apply(${functionCode}, ${generate(expression.args[0])}, undefined, ${describeNonFunction})`;
+      return `apply(${functionCode}, tuple([${expression.args.map((arg) => generate(arg)).join(", ")}]), undefined, ${describeNonFunction})`;
     }
     case "FieldAccess":
-      return `apply(${generate(expression.record)}, ${JSON.stringify(expression.field)}, ${addReference(generator, getFieldError(expression))})`;
+      return `apply(${generate(expression.record)}, ${JSON.stringify(expression.field)}, ${addReference(generator, getFieldError(expression))}, ${addReference(generator, getNonRecordError(expression))})`;
     case "Record": {
-      const fields = [...expression.fields].sort((left, right) =>
-        compareValues(left.name, right.name),
-      );
-      const hasDuplicates = fields.some(
-        (field, index) => index > 0 && fields[index - 1].name === field.name,
-      );
-      if (hasDuplicates) return generateDelegate(generator, expression, frame);
+      const fields = getSortedFields(expression.fields);
+      if (hasDuplicateFields(fields)) return generateDelegate(generator, expression, frame);
       const names = addReference(
         generator,
         fields.map((field) => field.name),

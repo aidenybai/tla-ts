@@ -11,7 +11,7 @@ import {
   getNumber,
   getOperator,
   getSet,
-  getIntegersSignature,
+  getArithmeticSignature,
   getJavaInteger,
   getValue,
   isOutOfRange,
@@ -40,6 +40,7 @@ import {
   isEnumerable,
   isFiniteSet,
   isFunctionValue,
+  isReducible,
   isSetValue,
   toFiniteSet,
   unionSorted,
@@ -47,7 +48,7 @@ import {
   createEnumeratedSet,
   EMPTY_SET,
   isEnumeratedSet,
-  type IntervalValue,
+  type ReducibleSet,
   type MixedSetValue,
   type SetOperationValue,
   type SetValue,
@@ -74,12 +75,6 @@ const unionInTree = (sets: SetValue[], start: number, end: number): SetValue => 
 };
 
 const SET_OPERATORS: SetOperationValue["operator"][] = ["\\cup", "\\cap", "\\"];
-
-type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
-
-const isReducible = (value: Value): value is ReducibleSet =>
-  typeof value === "object" &&
-  (value.kind === "Set" || value.kind === "MixedSet" || value.kind === "Interval");
 
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
 
@@ -128,7 +123,7 @@ export const CORE_OPERATORS: Builtin[] = [
   ),
   defineOperator("\\subseteq", 2, (args) => {
     const left = getSet(args, 0, "\\subseteq");
-    const right = getSet(args, 1, "\\subseteq");
+    const right = getValue(args, 1, "\\subseteq");
     const isPowerSets =
       typeof left === "object" &&
       left.kind === "Subset" &&
@@ -140,8 +135,8 @@ export const CORE_OPERATORS: Builtin[] = [
   }),
   ...SET_OPERATORS.map((operator) =>
     defineOperator(operator, 2, (args) => {
-      const left = getSet(args, 0, operator);
-      const right = getSet(args, 1, operator);
+      const left = getValue(args, 0, operator);
+      const right = getValue(args, 1, operator);
       if (isReducible(left) && isReducible(right) && !isMixedSet(left) && !isMixedSet(right)) {
         if (operator === "\\cup" && isEmptySet(left)) return right;
         const merge =
@@ -150,7 +145,13 @@ export const CORE_OPERATORS: Builtin[] = [
             : operator === "\\cap"
               ? intersectSorted
               : differenceSorted;
-        return merge(toFiniteSet(left), toFiniteSet(right));
+        // Merging compares elements across the sets. Where that fails, TLC's element-by-element
+        // membership test fails or succeeds on its own.
+        try {
+          return merge(toFiniteSet(left), toFiniteSet(right));
+        } catch (error) {
+          if (!(error instanceof TlaEvaluationError)) throw error;
+        }
       }
       if (isReducible(left)) return combineReducible(operator, left, right);
       if (operator !== "\\" && isReducible(right)) return combineReducible(operator, right, left);
@@ -184,51 +185,59 @@ export const CORE_OPERATORS: Builtin[] = [
   }),
 ];
 
-const DOT_DOT_SIGNATURE = getIntegersSignature("DotDot", "IntervalValue", 2);
+const NEG_SIGNATURE = getArithmeticSignature("Integers", "Neg", "IntValue", 1);
 
-const NEG_SIGNATURE = getIntegersSignature("Neg", "IntValue", 1);
+// TLC overrides the operators of Naturals with the Java class of Integers when a spec loads
+// Integers, which names it in their errors.
+const getArithmeticOperators = (javaClass: "Naturals" | "Integers") => {
+  const dotDotSignature = getArithmeticSignature(javaClass, "DotDot", "IntervalValue", 2);
+  return [
+    defineArithmetic(javaClass, "+", "Plus", (left, right) => left + right),
+    defineArithmetic(javaClass, "-", "Minus", (left, right) => left - right),
+    defineArithmetic(javaClass, "*", "Times", (left, right) => left * right),
+    defineArithmetic(javaClass, "^", "Expt", (base, exponent) => {
+      if (exponent < 0) {
+        throw new TlaModuleError(
+          `The second argument of ^ should be a natural number, but instead it is:\n${exponent}`,
+        );
+      }
+      if (base === 0 && exponent === 0) throw new TlaModuleError("0^0 is undefined.");
+      return base ** exponent;
+    }),
+    defineArithmetic(javaClass, "\\div", "Divide", (left, right) => {
+      if (right === 0) throw new TlaModuleError("The second argument of \\div is 0.");
+      const quotient = Math.floor(left / right);
+      if (isOutOfRange(quotient)) throw createOverflowError(`${left} \\div ${right}`);
+      return quotient;
+    }),
+    defineArithmetic(javaClass, "%", "Mod", (left, right) => {
+      if (right <= 0) {
+        throw new TlaModuleError(
+          `The second argument of % should be a positive number, but instead it is:\n${right}`,
+        );
+      }
+      return ((left % right) + right) % right;
+    }),
+    defineOperator("..", 2, (args) => ({
+      kind: "Interval",
+      low: getJavaInteger(getValue(args, 0, ".."), dotDotSignature),
+      high: getJavaInteger(getValue(args, 1, ".."), dotDotSignature),
+    })),
+  ];
+};
 
 const NATURALS_OPERATORS = [
   defineConstant("Nat", { kind: "InfiniteSet", name: "Nat" }),
-  defineArithmetic("+", "Plus", (left, right) => left + right),
-  defineArithmetic("-", "Minus", (left, right) => left - right),
-  defineArithmetic("*", "Times", (left, right) => left * right),
-  defineArithmetic("^", "Expt", (base, exponent) => {
-    if (exponent < 0) {
-      throw new TlaModuleError(
-        `The second argument of ^ should be a natural number, but instead it is:\n${exponent}`,
-      );
-    }
-    if (base === 0 && exponent === 0) throw new TlaModuleError("0^0 is undefined.");
-    return base ** exponent;
-  }),
-  defineArithmetic("\\div", "Divide", (left, right) => {
-    if (right === 0) throw new TlaModuleError("The second argument of \\div is 0.");
-    const quotient = Math.floor(left / right);
-    if (isOutOfRange(quotient)) throw createOverflowError(`${left} \\div ${right}`);
-    return quotient;
-  }),
-  defineArithmetic("%", "Mod", (left, right) => {
-    if (right <= 0) {
-      throw new TlaModuleError(
-        `The second argument of % should be a positive number, but instead it is:\n${right}`,
-      );
-    }
-    return ((left % right) + right) % right;
-  }),
+  ...getArithmeticOperators("Naturals"),
   defineComparison("<", (left, right) => left < right),
   defineComparison(">", (left, right) => left > right),
   defineComparison("<=", (left, right) => left <= right),
   defineComparison(">=", (left, right) => left >= right),
-  defineOperator("..", 2, (args) => ({
-    kind: "Interval",
-    low: getJavaInteger(getValue(args, 0, ".."), DOT_DOT_SIGNATURE),
-    high: getJavaInteger(getValue(args, 1, ".."), DOT_DOT_SIGNATURE),
-  })),
 ];
 
 const INTEGERS_OPERATORS = [
   defineConstant("Int", { kind: "InfiniteSet", name: "Int" }),
+  ...getArithmeticOperators("Integers"),
   defineOperator("-.", 1, (args) => {
     const value = getJavaInteger(getValue(args, 0, "-"), NEG_SIGNATURE);
     if (isOutOfRange(-value)) throw createOverflowError(`-${value}`);

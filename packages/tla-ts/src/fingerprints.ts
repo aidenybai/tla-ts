@@ -1,4 +1,4 @@
-import { getValueFingerprint, getValueHash, type Value } from "./values";
+import { assertFingerprintable, getValueFingerprint, getValueHash, type Value } from "./values";
 
 const EMPTY = 0;
 const INITIAL_CAPACITY = 1 << 12;
@@ -20,6 +20,7 @@ export const writeStateFingerprint = (state: Value[], fingerprint: Int32Array) =
     first = Math.imul(first ^ getValueHash(state[index]), 0x01000193);
     second = Math.imul(second ^ getValueFingerprint(state[index]), 0x5bd1e995);
   }
+  assertFingerprintable(state);
   fingerprint[0] = mix(first) || 1;
   fingerprint[1] = mix(second);
 };
