@@ -502,7 +502,9 @@ export class ArithRewriter extends PolyRewriter {
       else return false;
     }
     if (numOdd === 0) return true;
-    if (numOdd !== 2) return false;
+    // x * (x + 1) >= 0 holds for an integer x, as no integer lies strictly between -1 and 0, but
+    // not for a real one.
+    if (numOdd !== 2 || !this.manager.isInt(expr)) return false;
     return this.isSuccessor(firstOdd, secondOdd) || this.isSuccessor(secondOdd, firstOdd);
   }
 
