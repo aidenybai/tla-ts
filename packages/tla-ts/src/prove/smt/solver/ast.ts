@@ -5,7 +5,7 @@ import { FlatLiterals } from "./flat-literals";
 import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
-import { shrink } from "./array";
+import { grow, shrink } from "./array";
 import type { ResourceLimit } from "./rlimit";
 
 export const KIND_APP = 0;
@@ -229,17 +229,6 @@ interface SignatureDecl {
   refCount: number;
 }
 
-// A typed array of twice the length with the same contents.
-const grow = <
-  T extends Uint8Array<ArrayBuffer> | Int32Array<ArrayBuffer> | Uint32Array<ArrayBuffer>,
->(
-  array: T,
-): T => {
-  const grown = new (array.constructor as new (length: number) => T)(2 * array.length);
-  grown.set(array);
-  return grown;
-};
-
 export class AstManager {
   // The tables of the expressions are typed arrays indexed by expression, which the collector does
   // not scan. They have room for more expressions than numNodes and double when full, which
@@ -275,7 +264,14 @@ export class AstManager {
   ];
   // The hash of each uninterpreted declaration, and of each builtin by its Z3 declaration.
   private declHashes: number[] = [];
-  private builtinHashes = new Map<string | number, number>();
+  // The hash of each builtin declaration other than pattern by op, argument sort, range and number
+  // of arguments: open addressing with linear probing, with the four keys of slot i at 4 i in
+  // builtinKeys and -1 for an empty slot.
+  private builtinKeys = new Int32Array(4 * 256).fill(-1);
+  private builtinHashes = new Uint32Array(256);
+  private numBuiltinHashes = 0;
+  // The hash of each pattern declaration by its domain and range.
+  private patternHashes = new Map<string, number>();
   private table = new Map<string, number>();
   // The hash-consing table of applications: open addressing with linear probing over the handles,
   // -1 for an empty slot, which takes a few bytes per application where a map of buckets takes
@@ -314,6 +310,8 @@ export class AstManager {
   // no temporaries are held.
   private temporaries: number[] = [];
   private temporariesMark = -1;
+  // The arguments mkApp copies out of a caller's array that starts past index 0.
+  private argBuffer: number[] = [];
   // m_small_ints and m_small_reals: the numerals below MAX_SMALL_NUM_TO_CACHE, which are held.
   private smallInts: number[] = [];
   private smallReals: number[] = [];
@@ -699,27 +697,85 @@ export class AstManager {
     return { name: builtin[0], kind: builtin[1], domain };
   }
 
-  // The domain of a builtin other than pattern depends only on the sort of an argument and the
-  // number of arguments, which key the cache without a string.
+  // The hash of a builtin's Z3 declaration. The domain of a builtin other than pattern depends only
+  // on the sort of an argument and the number of arguments, which key the cache with the op and
+  // range.
   private getBuiltinHash(op: number, args: number[], range: number) {
-    const argSort = (op === OP_ITE ? this.sorts[args[1]] : this.sorts[args[0]]) ?? 0;
-    const key =
-      op === OP_PATTERN
-        ? `${args.map((arg) => this.sorts[arg]).join(",")}:${range}`
-        : op + 32 * (argSort + 65536 * (range + 65536 * args.length));
-    const existing = this.builtinHashes.get(key);
-    if (existing !== undefined) return existing;
+    if (op === OP_PATTERN) {
+      const key = `${args.map((arg) => this.sorts[arg]).join(",")}:${range}`;
+      const existing = this.patternHashes.get(key);
+      if (existing !== undefined) return existing;
+      const hash = this.mkBuiltinHash(op, args, range);
+      this.patternHashes.set(key, hash);
+      return hash;
+    }
+    const argSort = args.length === 0 ? 0 : this.sorts[op === OP_ITE ? args[1] : args[0]];
+    const count = args.length;
+    const slot = this.findBuiltinSlot(op, argSort, range, count);
+    if (this.builtinKeys[4 * slot] !== -1) return this.builtinHashes[slot];
+    const hash = this.mkBuiltinHash(op, args, range);
+    if (2 * (this.numBuiltinHashes + 1) > this.builtinHashes.length) {
+      const keys = this.builtinKeys;
+      const hashes = this.builtinHashes;
+      this.builtinKeys = new Int32Array(2 * keys.length).fill(-1);
+      this.builtinHashes = new Uint32Array(2 * hashes.length);
+      this.numBuiltinHashes = 0;
+      for (let index = 0; index < 4 * hashes.length; index += 4)
+        if (keys[index] !== -1)
+          this.insertBuiltinHash(
+            keys[index],
+            keys[index + 1],
+            keys[index + 2],
+            keys[index + 3],
+            hashes[index / 4],
+          );
+    }
+    this.insertBuiltinHash(op, argSort, range, count, hash);
+    return hash;
+  }
+
+  // The slot of the builtin hash with these keys, or the free slot where it goes.
+  private findBuiltinSlot(op: number, argSort: number, range: number, count: number) {
+    const keys = this.builtinKeys;
+    const mask = this.builtinHashes.length - 1;
+    let slot =
+      (Math.imul(Math.imul(Math.imul(op, 0x9e3779b1) + argSort, 0x9e3779b1) + range, 0x9e3779b1) +
+        count) &
+      mask;
+    while (
+      keys[4 * slot] !== -1 &&
+      (keys[4 * slot] !== op ||
+        keys[4 * slot + 1] !== argSort ||
+        keys[4 * slot + 2] !== range ||
+        keys[4 * slot + 3] !== count)
+    )
+      slot = (slot + 1) & mask;
+    return slot;
+  }
+
+  private insertBuiltinHash(
+    op: number,
+    argSort: number,
+    range: number,
+    count: number,
+    hash: number,
+  ) {
+    const slot = this.findBuiltinSlot(op, argSort, range, count);
+    this.builtinKeys.set([op, argSort, range, count], 4 * slot);
+    this.builtinHashes[slot] = hash;
+    this.numBuiltinHashes++;
+  }
+
+  private mkBuiltinHash(op: number, args: number[], range: number) {
     const signature = this.getBuiltinSignature(op, args);
     const family =
       op === OP_PATTERN ? Z3_PATTERN_FAMILY : op < OP_NUM ? Z3_BASIC_FAMILY : Z3_ARITH_FAMILY;
-    const hash = this.getFuncDeclHash(
+    return this.getFuncDeclHash(
       signature.name,
       signature.domain,
       range,
       getInfoHash(family, signature.kind, []),
     );
-    this.builtinHashes.set(key, hash);
-    return hash;
   }
 
   // The hash of a user declaration, which Z3's tables of declarations hash.
@@ -836,52 +892,66 @@ export class AstManager {
     return id;
   }
 
-  // The op of a builtin declaration doubles as its index in funcDecls.
-  mkApp(decl: number, args: number[], sort: number) {
+  // The op of a builtin declaration doubles as its index in funcDecls. The arguments are those of
+  // args from start on, so that a rewriter passes its result stack without copying it.
+  mkApp(decl: number, args: number[], sort: number, start = 0) {
+    const funcDecl = this.funcDecls[decl];
     // Numerals and model values carry their value, so only mkNumeral and mkModelValue create them.
-    if (decl === OP_NUM || this.funcDecls[decl].family === FAMILY_MODEL_VALUE)
-      throw new SmtInvariantError(`${this.funcDecls[decl].name} needs a value`);
+    if (decl === OP_NUM || funcDecl.family === FAMILY_MODEL_VALUE)
+      throw new SmtInvariantError(`${funcDecl.name} needs a value`);
     let hash = decl;
-    for (let index = 0; index < args.length; index++)
+    for (let index = start; index < args.length; index++)
       hash = (Math.imul(hash, 0x9e3779b1) + args[index]) | 0;
+    const count = args.length - start;
     const mask = this.appHandles.length - 1;
-    for (let slot = hash & mask; this.appHandles[slot] !== -1; slot = (slot + 1) & mask) {
+    let slot = hash & mask;
+    for (; this.appHandles[slot] !== -1; slot = (slot + 1) & mask) {
       const candidate = this.appHandles[slot];
       if (this.appHashes[slot] !== hash || this.decls[candidate] !== decl) continue;
-      const start = this.argStarts[candidate];
-      if (this.argStarts[candidate + 1] - start !== args.length) continue;
+      const poolStart = this.argStarts[candidate];
+      if (this.argStarts[candidate + 1] - poolStart !== count) continue;
       let isSame = true;
-      for (let index = 0; index < args.length && isSame; index++)
-        isSame = this.argPool[start + index] === args[index];
+      for (let index = 0; index < count && isSame; index++)
+        isSame = this.argPool[poolStart + index] === args[start + index];
       if (isSame) return this.revive(candidate);
     }
+    if (start > 0) {
+      shrink(this.argBuffer, 0);
+      for (let index = start; index < args.length; index++) this.argBuffer.push(args[index]);
+    }
+    const nodeArgs = start > 0 ? this.argBuffer : args;
     const declHash =
-      this.funcDecls[decl].family === FAMILY_USER
+      funcDecl.family === FAMILY_USER
         ? this.declHashes[decl]
-        : this.getBuiltinHash(this.funcDecls[decl].op, args, sort);
+        : this.getBuiltinHash(funcDecl.op, nodeArgs, sort);
     const id = this.create(
       KIND_APP,
       decl,
-      args,
+      nodeArgs,
       sort,
       0,
-      astArrayHash(args, this.hashes, declHash),
+      astArrayHash(nodeArgs, this.hashes, declHash),
     );
-    this.insertApp(hash, id);
-    this.registerNode(id);
-    return id;
-  }
-
-  private insertApp(hash: number, id: number) {
+    // The lookup ended at a free slot, which the application takes unless the table doubles.
     if (2 * (this.numApps + 1) > this.appHandles.length) {
       const handles = this.appHandles;
       const hashes = this.appHashes;
       this.appHandles = new Int32Array(2 * handles.length).fill(-1);
       this.appHashes = new Int32Array(2 * handles.length);
       this.numApps = 0;
-      for (let slot = 0; slot < handles.length; slot++)
-        if (handles[slot] !== -1) this.insertApp(hashes[slot], handles[slot]);
+      for (let index = 0; index < handles.length; index++)
+        if (handles[index] !== -1) this.insertApp(hashes[index], handles[index]);
+      this.insertApp(hash, id);
+    } else {
+      this.appHandles[slot] = id;
+      this.appHashes[slot] = hash;
+      this.numApps++;
     }
+    this.registerNode(id);
+    return id;
+  }
+
+  private insertApp(hash: number, id: number) {
     const mask = this.appHandles.length - 1;
     let slot = hash & mask;
     while (this.appHandles[slot] !== -1) slot = (slot + 1) & mask;
