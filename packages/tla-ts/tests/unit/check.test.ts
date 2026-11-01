@@ -3342,6 +3342,15 @@ describe("name resolution matches SANY", () => {
         ["line 11, col 18 to line 11, col 19", "Unknown operator: `U7'."],
       ],
     ],
+    [
+      "THEOREM TRUE\n<1>1. CASE TRUE\n  <2>1. TRUE BY <1>1, <1>2\n  <2>2. QED BY <2>1\n<1>2. TRUE BY <2>1, <1>3\n<1>3. QED BY <1>1, <1>2, <1>3, <1>9",
+      [
+        ["line 4, col 23 to line 4, col 26", "Unknown operator: `<1>2'."],
+        ["line 6, col 15 to line 6, col 18", "Unknown operator: `<2>1'."],
+        ["line 6, col 21 to line 6, col 24", "Unknown operator: `<1>3'."],
+        ["line 7, col 32 to line 7, col 35", "Unknown operator: `<1>9'."],
+      ],
+    ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
     await expect(checkSource(source)).rejects.toThrow(
       createSanyError(
