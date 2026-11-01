@@ -1,0 +1,17 @@
+[
+  {
+    "args": [
+      "-Djava.io.tmpdir={work}/tmp-sany",
+      "-DTLA-Library={spec}",
+      "-XX:TieredStopAtLevel=1",
+      "-cp",
+      "{jar}",
+      "tla2sany.xml.XMLExporter",
+      "-o",
+      "-I",
+      "{spec}",
+      "{spec}/PickWorker.tla"
+    ],
+    "status": 0
+  }
+]

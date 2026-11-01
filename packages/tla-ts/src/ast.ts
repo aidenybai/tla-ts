@@ -34,25 +34,32 @@ export interface StringExpression {
 }
 
 // selectorRanges holds the range of each part of a name such as foo!lab, where SANY reports an
-// error in selecting that part.
+// error in selecting that part. spelling holds the text of an operator written as a synonym.
 export interface IdentifierExpression {
   kind: "Identifier";
   name: string;
+  spelling?: string;
   selectorRanges?: SourceRange[];
   location: SourceLocation;
   resolution?: LocalResolution;
 }
 
+// spelling holds the text of an operator written as a synonym, such as (+) for \oplus, which SANY
+// reports as written.
 export interface ApplyExpression {
   kind: "Apply";
   operator: string;
+  spelling?: string;
   args: Expression[];
   // The number of args each part of a name like F(x)!l(y) takes, when a part before the last takes
   // some.
   argumentCounts?: number[];
-  // The range of the parenthesized arguments of a named operator, where SANY reports their count.
+  // The range of the parenthesized arguments of a named operator, or of the whole name when its
+  // last part takes none, where SANY reports their count.
   argumentsRange?: SourceRange;
   selectorRanges?: SourceRange[];
+  // The range of the arguments of each part of a name like F(x)!l(y), for a part that takes some.
+  argumentRanges?: (SourceRange | undefined)[];
   location: SourceLocation;
   resolution?: LocalResolution;
 }
@@ -60,14 +67,18 @@ export interface ApplyExpression {
 export interface OperatorReferenceExpression {
   kind: "OperatorReference";
   operator: string;
+  spelling?: string;
   location: SourceLocation;
 }
 
+// operator holds the operator, such as SUBSET, that an argument names, which tla-ts reads as a
+// LAMBDA.
 export interface LambdaExpression {
   kind: "Lambda";
   params: string[];
   paramRanges?: SourceRange[];
   body: Expression;
+  operator?: string;
   location: SourceLocation;
 }
 
@@ -75,6 +86,9 @@ export interface JunctionExpression {
   kind: "And" | "Or";
   operands: Expression[];
   isBulleted?: boolean;
+  // SANY parses an infix chain such as A /\ B /\ C as (A /\ B) /\ C, whose node of each prefix of
+  // two or more operands ends after the parentheses of its last operand.
+  prefixEnds?: SourceLocation[];
   location: SourceLocation;
 }
 
@@ -240,6 +254,14 @@ export interface FunctionApplicationExpression {
   location: SourceLocation;
 }
 
+// SANY parses [e1, ..., en] as a function application without the function, and its semantic
+// checker rejects it.
+export interface BracketExpression {
+  kind: "Bracket";
+  args: Expression[];
+  location: SourceLocation;
+}
+
 export interface FieldAccessExpression {
   kind: "FieldAccess";
   record: Expression;
@@ -278,6 +300,7 @@ export interface LabelExpression {
   kind: "Label";
   name: string;
   params: string[];
+  paramRanges?: SourceRange[];
   body: Expression;
   location: SourceLocation;
 }
@@ -293,6 +316,7 @@ export interface SubexpressionExpression {
   kind: "Subexpression";
   selectors: Selector[];
   selectorRanges?: SourceRange[];
+  argumentRanges?: (SourceRange | undefined)[];
   location: SourceLocation;
 }
 
@@ -324,6 +348,7 @@ export type Expression =
   | ExceptExpression
   | ExceptAtExpression
   | FunctionApplicationExpression
+  | BracketExpression
   | FieldAccessExpression
   | ProductExpression
   | TemporalExpression
@@ -356,6 +381,8 @@ export interface FunctionDefinition {
   body: Expression;
   isLocal: boolean;
   isRecursive: boolean;
+  // Whether the body applies the function, which SANY makes a recursive function definition.
+  isSelfReferential?: boolean;
   location: SourceLocation;
 }
 
@@ -484,8 +511,7 @@ export interface Theorem {
 
 // The units of a module in source order, for consumers that need the order across kinds.
 export type ModuleUnit =
-  | { kind: "Constants"; declarations: Declaration[] }
-  | { kind: "Variables"; declarations: Declaration[] }
+  | { kind: "Constants" | "Variables"; declarations: Declaration[]; location: SourceLocation }
   | { kind: "Recursive"; declarations: Declaration[] }
   | { kind: "Definition"; definition: Definition }
   | { kind: "Instance"; instance: Instance }
@@ -579,6 +605,8 @@ export const getChildren = (expression: Expression): Expression[] => {
       ];
     case "FunctionApplication":
       return [expression.function, ...expression.args];
+    case "Bracket":
+      return expression.args;
     case "FieldAccess":
       return [expression.record];
     case "Product":

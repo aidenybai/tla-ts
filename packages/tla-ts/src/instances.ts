@@ -183,6 +183,8 @@ export const mapChildren = (
         function: plain(expression.function),
         args: expression.args.map(plain),
       };
+    case "Bracket":
+      return { ...expression, args: expression.args.map(plain) };
     case "FieldAccess":
       return { ...expression, record: plain(expression.record) };
     case "Product":
@@ -705,7 +707,7 @@ const expandLetInstances = (
     const index = position === -1 ? current.length : position;
     return [...current.slice(0, index), ...instantiate(instance, inner), ...current.slice(index)];
   }, mapped.definitions);
-  return { kind: "Let", definitions, body: mapped.body, location: mapped.location };
+  return { ...mapped, definitions };
 };
 
 // A named theorem's statement is linked as its definition.

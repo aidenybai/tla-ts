@@ -181,8 +181,10 @@ const bindFormals = (scope: Scope, formals: OperatorParam[]) =>
 
 const toFormals = (names: string[]) => names.map((name) => ({ name, arity: 0 }));
 
+// The levels of tla2sany.semantic.LevelConstants.
+export const CONSTANT_LEVEL = 0;
+export const VARIABLE_LEVEL = 1;
 export const ACTION_LEVEL = 2;
-
 export const TEMPORAL_LEVEL = 3;
 
 // SANY reports a level error at the range of the expression it rejects.
@@ -690,6 +692,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
             ? toOperand(expression.args[0], scope)
             : { data: applyBuiltin(SET_LEVELS, expression.args, scope) },
         ]);
+      // SANY's semantic checker rejects the expression without computing its level.
+      case "Bracket":
+        return createData();
       case "FieldAccess":
         return applyDefined(SELECT_LEVELS, [
           toOperand(expression.record, scope),

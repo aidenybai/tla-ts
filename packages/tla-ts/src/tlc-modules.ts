@@ -550,6 +550,10 @@ export const SANY_NODE_NAMES = [
   "N_AssertStep",
 ];
 
+// The standard modules that a spec may ship its own file of, such as CommunityModules' Json.tla,
+// which SANY reads in place of its own.
+export const USER_STANDARD_MODULES = new Set(["Bags", "Json", "Randomization", "TLCExt"]);
+
 export const TLC_MODULE_SOURCES = new Map([
   [
     "Naturals",
@@ -1012,10 +1016,6 @@ export const TLC_JAVA_METHODS = new Map([
       [
         "RandomElement",
         "public static tlc2.value.impl.Value tlc2.module.TLC.RandomElement(tlc2.value.impl.Value)",
-      ],
-      [
-        "TLCGet",
-        "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
       ],
       [
         "TLCEval",

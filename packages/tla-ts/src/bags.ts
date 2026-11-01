@@ -123,7 +123,8 @@ const mergeBags = (bags: FunctionValue[], method: string) =>
 
 const EMPTY_BAG = createSortedFunction([], []);
 
-export const BAGS_OPERATORS: Builtin[] = [
+// SubBag compares the counts with the >= of Naturals, which Integers replaces when TLC loads it.
+export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Builtin[] => [
   defineConstant("EmptyBag", EMPTY_BAG),
   defineOperator("IsABag", 1, (args) => {
     const functionValue = toFunction(getValue(args, 0, "IsABag"));
@@ -228,12 +229,8 @@ export const BAGS_OPERATORS: Builtin[] = [
     const functionValue = toFiniteFunction(value);
     const range = createSet(functionValue.range).elements;
     const invalid = range.find((count) => typeof count !== "number");
-    if (invalid !== undefined) {
-      const isFirst = typeof range[0] !== "number";
-      throw new TlaEvaluationError(
-        `The ${isFirst ? "first" : "second"} argument of >= should be an integer, but instead it is:\n${formatValue(isFirst ? range[0] : invalid)}`,
-      );
-    }
+    // A count that isn't an integer fails the comparison.
+    if (invalid !== undefined) builtins.get(">=")?.evaluateBinary?.(range[0], invalid);
     const counts = functionValue.range.filter((count) => typeof count === "number");
     if (counts.some((count) => count < 1)) {
       throw new TlaEvaluationError(

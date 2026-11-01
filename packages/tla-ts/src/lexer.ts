@@ -12,9 +12,11 @@ type TokenKind =
   | "ModuleEnd"
   | "End";
 
+// spelling holds the text of an operator written as a synonym, such as (+) for \oplus.
 export interface Token {
   kind: TokenKind;
   text: string;
+  spelling?: string;
   line: number;
   column: number;
   endColumn: number;
@@ -232,38 +234,84 @@ const SYMBOL_OPERATORS = [
   "?",
 ];
 
+// The Unicode forms of the operators SANY's grammar, javacc/tla+.jj, reads, as their ASCII forms.
 const UNICODE_OPERATORS = new Map([
-  ["∧", "/\\"],
-  ["∨", "\\/"],
-  ["¬", "~"],
-  ["⇒", "=>"],
-  ["⟹", "=>"],
-  ["≡", "<=>"],
-  ["⇔", "<=>"],
-  ["∈", "\\in"],
-  ["∉", "\\notin"],
-  ["⊆", "\\subseteq"],
-  ["⊂", "\\subset"],
-  ["⊇", "\\supseteq"],
-  ["⊃", "\\supset"],
-  ["∪", "\\cup"],
-  ["∩", "\\cap"],
-  ["×", "\\X"],
-  ["∀", "\\A"],
   ["∃", "\\E"],
-  ["≠", "#"],
-  ["≤", "<="],
-  ["≥", ">="],
-  ["↦", "|->"],
-  ["→", "->"],
+  ["∀", "\\A"],
+  ["∷", "::"],
+  ["≜", "=="],
   ["⟨", "<<"],
+  ["⟩_", ">>_"],
   ["⟩", ">>"],
+  ["→", "->"],
+  ["←", "<-"],
+  ["↦", "|->"],
+  ["⁺", "^+"],
+  ["¬", "~"],
   ["□", "[]"],
   ["◇", "<>"],
-  ["≜", "=="],
-  ["′", "'"],
-  ["∘", "\\o"],
+  ["∧", "/\\"],
+  ["∨", "\\/"],
+  ["∈", "\\in"],
+  ["≈", "\\approx"],
+  ["≔", ":="],
+  ["≍", "\\asymp"],
+  ["◯", "\\bigcirc"],
+  ["⩴", "::="],
+  ["●", "\\bullet"],
+  ["∩", "\\cap"],
   ["⋅", "\\cdot"],
+  ["∘", "\\o"],
+  ["≅", "\\cong"],
+  ["∪", "\\cup"],
+  ["÷", "\\div"],
+  ["≐", "\\doteq"],
+  ["‥", ".."],
+  ["…", "..."],
+  ["≡", "<=>"],
+  ["‼", "!!"],
+  ["≥", ">="],
+  ["≫", "\\gg"],
+  ["⇔", "<=>"],
+  ["⇒", "=>"],
+  ["⫤", "=|"],
+  ["↝", "~>"],
+  ["≤", "<="],
+  ["≪", "\\ll"],
+  ["⊣", "-|"],
+  ["≠", "#"],
+  ["∉", "\\notin"],
+  ["⊙", "\\odot"],
+  ["⊖", "\\ominus"],
+  ["⊕", "\\oplus"],
+  ["⊘", "\\oslash"],
+  ["⊗", "\\otimes"],
+  ["⇸", "-+->"],
+  ["≺", "\\prec"],
+  ["⪯", "\\preceq"],
+  ["∝", "\\propto"],
+  ["⁇", "??"],
+  ["⊨", "|="],
+  ["⊢", "|-"],
+  ["∼", "\\sim"],
+  ["≃", "\\simeq"],
+  ["⊓", "\\sqcap"],
+  ["⊔", "\\sqcup"],
+  ["⊏", "\\sqsubset"],
+  ["⊑", "\\sqsubseteq"],
+  ["⊐", "\\sqsupset"],
+  ["⊒", "\\sqsupseteq"],
+  ["⋆", "\\star"],
+  ["⊂", "\\subset"],
+  ["⊆", "\\subseteq"],
+  ["≻", "\\succ"],
+  ["⪰", "\\succeq"],
+  ["⊃", "\\supset"],
+  ["⊇", "\\supseteq"],
+  ["×", "\\X"],
+  ["⊎", "\\uplus"],
+  ["‖", "||"],
+  ["≀", "\\wr"],
 ]);
 
 const BASED_NUMBER = /^\\([bB][01]+|[oO][0-7]+|[hH][0-9a-fA-F]+)/;
@@ -301,11 +349,25 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
     const operator = BACKSLASH_OPERATORS.get(word.slice(0, length.value));
     return { text: operator ?? "\\", length: operator === undefined ? 1 : length.value + 1 };
   }
-  const unicodeOperator = UNICODE_OPERATORS.get(character);
-  if (unicodeOperator) return { text: unicodeOperator, length: character.length };
+  const unicodeSymbol = [source.slice(index, index + 2), character].find((candidate) =>
+    UNICODE_OPERATORS.has(candidate),
+  );
+  if (unicodeSymbol !== undefined) {
+    return { text: UNICODE_OPERATORS.get(unicodeSymbol) ?? "", length: unicodeSymbol.length };
+  }
   const symbol = SYMBOL_OPERATORS.find((candidate) => source.startsWith(candidate, index));
   if (symbol) return { text: SYMBOL_ALIASES.get(symbol) ?? symbol, length: symbol.length };
   return character === "\\" ? { text: "\\", length: 1 } : undefined;
+};
+
+// TLC's configuration parser reads its tokens with SANY's lexer, so it reads a Unicode operator, or
+// ℕ, ℤ, or ℝ, as one token, which it compares as written with the words it expects.
+const UNICODE_NAMES = new Set(["ℕ", "ℤ", "ℝ"]);
+export const matchUnicodeToken = (source: string, index: number): OperatorMatch | undefined => {
+  const token = [source.slice(index, index + 2), source[index]].find(
+    (candidate) => UNICODE_OPERATORS.has(candidate) || UNICODE_NAMES.has(candidate),
+  );
+  return token === undefined ? undefined : { text: token, length: token.length };
 };
 
 const isDigit = (character: string | undefined) =>
@@ -334,6 +396,10 @@ const matchStep = (source: string, index: number) => {
     skipWhile(source, isDash ? nameEnd + 1 : nameEnd, (character) => character === ".") - index
   );
 };
+
+// SANY's lexer reads @ as an identifier, which stands for the value an EXCEPT changes only alone.
+export const readAtAsIdentifier = (token: Token): Token =>
+  token.kind === "Operator" && token.text === "@" ? { ...token, kind: "Identifier" } : token;
 
 const TAB_SIZE = 8;
 
@@ -367,9 +433,16 @@ export const tokenize = (source: string): Token[] => {
     }
     return getWidthAfter(scan.width, source[cursor.index]);
   };
-  const pushToken = (kind: TokenKind, text: string, length: number) => {
+  const pushToken = (kind: TokenKind, text: string, length: number, spelling?: string) => {
     const column = getColumn();
-    tokens.push({ kind, text, line: cursor.line, column, endColumn: column + length - 1 });
+    tokens.push({
+      kind,
+      text,
+      spelling,
+      line: cursor.line,
+      column,
+      endColumn: column + length - 1,
+    });
     cursor.index += length;
   };
   const advanceOver = (length: number) => {
@@ -442,11 +515,14 @@ export const tokenize = (source: string): Token[] => {
       const characters: string[] = [];
       advanceOver(1);
       while (source[cursor.index] !== '"') {
-        if (cursor.index >= source.length || source[cursor.index] === "\n") {
+        if (cursor.index >= source.length || "\n\r".includes(source[cursor.index])) {
           throw createError("Unterminated string");
         }
         if (source[cursor.index] === "\\") {
           const escaped = source[cursor.index + 1];
+          if (escaped === undefined || !'ntrf\\"'.includes(escaped)) {
+            throw createError("Invalid escape in string");
+          }
           characters.push({ n: "\n", t: "\t", r: "\r", f: "\f" }[escaped] ?? escaped);
           advanceOver(2);
           continue;
@@ -479,6 +555,12 @@ export const tokenize = (source: string): Token[] => {
         pushToken(number.includes(".") ? "Decimal" : "Number", number, number.length);
         continue;
       }
+      // A word needs a letter to be a name, so SANY reads one without as underscores and numbers.
+      const part = /^(_|\d+)/.exec(word)?.[0];
+      if (part !== undefined && !/[A-Za-z]/.test(word)) {
+        pushToken(part === "_" ? "Operator" : "Number", part, part.length);
+        continue;
+      }
       if (word.startsWith("WF_") || word.startsWith("SF_")) {
         pushToken("Keyword", word.slice(0, 3), 3);
         continue;
@@ -488,6 +570,11 @@ export const tokenize = (source: string): Token[] => {
       pushToken(KEYWORDS.has(word) ? "Keyword" : "Identifier", name, word.length);
       continue;
     }
+    if ("ℕℤℝ".includes(character)) {
+      pushToken("Identifier", names.get(character) ?? character, 1);
+      names.set(character, character);
+      continue;
+    }
     const stepLength = matchStep(source, cursor.index);
     if (stepLength > 0) {
       pushToken("Step", source.slice(cursor.index, cursor.index + stepLength), stepLength);
@@ -495,7 +582,13 @@ export const tokenize = (source: string): Token[] => {
     }
     const operator = matchOperator(source, cursor.index);
     if (operator) {
-      pushToken("Operator", operator.text, operator.length);
+      const spelling = source.slice(cursor.index, cursor.index + operator.length);
+      pushToken(
+        "Operator",
+        operator.text,
+        operator.length,
+        spelling === operator.text ? undefined : spelling,
+      );
       continue;
     }
     throw createError(`Unexpected character ${JSON.stringify(character)}`);

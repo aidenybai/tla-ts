@@ -1,0 +1,73 @@
+@!@!@STARTMSG 2220:0 @!@!@
+Starting SANY...
+@!@!@ENDMSG 2220 @!@!@
+Parsing file {work}/ChartBound.tla
+Parsing file {spec}/CounterGuard.tla
+Parsing file {work}/tmp-verdict-2/tlc-N/Naturals.tla (jar:file:{jar}!/tla2sany/StandardModules/Naturals.tla)
+Parsing file {work}/tmp-verdict-2/tlc-N/TLC.tla (jar:file:{jar}!/tla2sany/StandardModules/TLC.tla)
+Parsing file {work}/tmp-verdict-2/tlc-N/Sequences.tla (jar:file:{jar}!/tla2sany/StandardModules/Sequences.tla)
+Parsing file {work}/tmp-verdict-2/tlc-N/FiniteSets.tla (jar:file:{jar}!/tla2sany/StandardModules/FiniteSets.tla)
+Semantic processing of module Naturals
+Semantic processing of module CounterGuard
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module ChartBound
+Linting of module CounterGuard
+Linting of module ChartBound
+@!@!@STARTMSG 2219:0 @!@!@
+SANY finished.
+@!@!@ENDMSG 2219 @!@!@
+@!@!@STARTMSG 2185:0 @!@!@
+Starting... (DATE)
+@!@!@ENDMSG 2185 @!@!@
+@!@!@STARTMSG 2189:0 @!@!@
+Computing initial states...
+@!@!@ENDMSG 2189 @!@!@
+@!@!@STARTMSG 2190:0 @!@!@
+Finished computing initial states: 1 distinct state generated at DATE.
+@!@!@ENDMSG 2190 @!@!@
+@!@!@STARTMSG 2111:1 @!@!@
+Evaluating invariant Lookup failed.
+Attempted to access index 3 of tuple
+<<"zero", "one">>
+which is out of bounds.
+@!@!@ENDMSG 2111 @!@!@
+@!@!@STARTMSG 2121:1 @!@!@
+The behavior up to this point is:
+@!@!@ENDMSG 2121 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+1: <Initial predicate>
+x = 0
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+2: <Next line 6, col 9 to line 6, col 18 of module CounterGuard>
+x = 1
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+3: <Next line 6, col 9 to line 6, col 18 of module CounterGuard>
+x = 2
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2103:1 @!@!@
+The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 12, column 11 to line 12, column 30 in CounterGuard
+1. Line 12, column 11 to line 12, column 21 in CounterGuard
+
+
+@!@!@ENDMSG 2103 @!@!@
+@!@!@STARTMSG 2200:0 @!@!@
+Progress(2) at DATE: 3 states generated (N s/min), 2 distinct states found (N ds/min), 0 states left on queue.
+@!@!@ENDMSG 2200 @!@!@
+@!@!@STARTMSG 2199:0 @!@!@
+3 states generated, 2 distinct states found, 0 states left on queue.
+@!@!@ENDMSG 2199 @!@!@
+@!@!@STARTMSG 2194:0 @!@!@
+The depth of the complete state graph search is 2.
+@!@!@ENDMSG 2194 @!@!@
+@!@!@STARTMSG 2186:0 @!@!@
+Finished in T at (DATE)
+@!@!@ENDMSG 2186 @!@!@

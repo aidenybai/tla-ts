@@ -12,7 +12,18 @@ interface PoolEntry {
 interface JavaMethod {
   name: string;
   arity: number;
+  // Method#toString, which TLC prints as the signature of an override.
+  signature: string;
   code: Uint8Array | undefined;
+}
+
+// A public static method of the class named after a module, which TLC reports as it loads the
+// class, with whether it overrides an operator.
+export interface JavaOverride {
+  module: string;
+  operator: string;
+  signature: string;
+  isMatched: boolean;
 }
 
 interface ObjectReference {
@@ -44,12 +55,44 @@ const createReader = (bytes: Uint8Array) => {
   };
 };
 
-const getParameterCount = (descriptor: string) => {
-  const parameters = descriptor.slice(1, descriptor.indexOf(")"));
-  return [...parameters.matchAll(/\[*(?:L[^;]*;|[BCDFIJSZ])/g)].length;
-};
+const PRIMITIVE_TYPES = new Map([
+  ["B", "byte"],
+  ["C", "char"],
+  ["D", "double"],
+  ["F", "float"],
+  ["I", "int"],
+  ["J", "long"],
+  ["S", "short"],
+  ["Z", "boolean"],
+  ["V", "void"],
+]);
 
-// The public static methods of a class file and their bytecode, as java.lang.Class lists them.
+// The modifiers Method#toString prints, in the order of Modifier#toString.
+const METHOD_MODIFIERS: [number, string][] = [
+  [0x0001, "public"],
+  [0x0004, "protected"],
+  [0x0002, "private"],
+  [0x0400, "abstract"],
+  [0x0008, "static"],
+  [0x0010, "final"],
+  [0x0020, "synchronized"],
+  [0x0100, "native"],
+  [0x0800, "strictfp"],
+];
+
+const getTypeNames = (descriptor: string) =>
+  [...descriptor.matchAll(/(\[*)(?:L([^;]*);|([BCDFIJSZV]))/g)].map(
+    (match) =>
+      `${match[2]?.replaceAll("/", ".") ?? PRIMITIVE_TYPES.get(match[3])}${"[]".repeat(match[1].length)}`,
+  );
+
+const getClassName = (pool: PoolEntry[], index: number) => pool[pool[index].first].text;
+
+const getJavaClassName = (pool: PoolEntry[], index: number) =>
+  getClassName(pool, index).replaceAll("/", ".");
+
+// The public static methods of a class file and their bytecode, in the order of the class file.
+// Class#getDeclaredMethods orders them by where HotSpot allocated the symbols of their names.
 const readMethods = (bytes: Uint8Array) => {
   const reader = createReader(bytes);
   if (reader.readUint32() !== CLASS_MAGIC)
@@ -80,7 +123,7 @@ const readMethods = (bytes: Uint8Array) => {
     }
   }
   reader.readUint16();
-  reader.readUint16();
+  const className = getJavaClassName(pool, reader.readUint16());
   reader.readUint16();
   reader.readBytes(reader.readUint16() * 2);
   for (let fields = reader.readUint16(); fields > 0; fields--) {
@@ -95,22 +138,37 @@ const readMethods = (bytes: Uint8Array) => {
     const access = reader.readUint16();
     const name = pool[reader.readUint16()].text;
     const descriptor = pool[reader.readUint16()].text;
-    const method: JavaMethod = { name, arity: getParameterCount(descriptor), code: undefined };
-    for (let attributes = reader.readUint16(); attributes > 0; attributes--) {
-      const attributeName = pool[reader.readUint16()].text;
-      const attribute = reader.readBytes(reader.readUint32());
-      if (attributeName === "Code") {
-        const length = new DataView(attribute.buffer, attribute.byteOffset + 4, 4).getUint32(0);
-        method.code = attribute.subarray(8, 8 + length);
-      }
-    }
+    const parametersEnd = descriptor.indexOf(")");
+    const parameters = getTypeNames(descriptor.slice(1, parametersEnd));
+    const attributes = Array.from({ length: reader.readUint16() }, () => ({
+      name: pool[reader.readUint16()].text,
+      reader: createReader(reader.readBytes(reader.readUint32())),
+    }));
     const isOverride = (access & ACCESS_PUBLIC) !== 0 && (access & ACCESS_STATIC) !== 0;
-    if (isOverride) methods.push(method);
+    if (!isOverride) continue;
+    const code = attributes.find((attribute) => attribute.name === "Code")?.reader;
+    // A Code attribute holds max_stack and max_locals before the length of the bytecode.
+    code?.readBytes(4);
+    const thrown = attributes.find((attribute) => attribute.name === "Exceptions")?.reader;
+    const exceptions = thrown
+      ? Array.from({ length: thrown.readUint16() }, () =>
+          getJavaClassName(pool, thrown.readUint16()),
+        )
+      : [];
+    const modifiers = METHOD_MODIFIERS.filter(([flag]) => (access & flag) !== 0).map(
+      ([, modifier]) => modifier,
+    );
+    const returnType = getTypeNames(descriptor.slice(parametersEnd + 1))[0];
+    const throwsClause = exceptions.length === 0 ? "" : ` throws ${exceptions.join(",")}`;
+    methods.push({
+      name,
+      arity: parameters.length,
+      code: code?.readBytes(code.readUint32()),
+      signature: `${modifiers.join(" ")} ${returnType} ${className}.${name}(${parameters.join(",")})${throwsClause}`,
+    });
   }
   return { pool, methods };
 };
-
-const getClassName = (pool: PoolEntry[], index: number) => pool[pool[index].first].text;
 
 const getMember = (pool: PoolEntry[], index: number) => {
   const reference = pool[index];
@@ -220,16 +278,29 @@ const getReturnedLiteral = (
   throw unsupported();
 };
 
-// TLC loads a class named after each module and replaces every operator the module defines
-// with the public static method of the same name and arity.
-export const overrideDefinitions = (module: Module, bytes: Uint8Array | undefined): Module => {
-  if (!bytes) return module;
+// TLC loads a class named after each module and replaces each operator of the module that the
+// root module sees with the public static method of the same name and arity. It reports whether
+// each method matched an operator.
+export const overrideDefinitions = (
+  module: Module,
+  bytes: Uint8Array | undefined,
+  isRoot: boolean,
+): { module: Module; overrides: JavaOverride[] } => {
+  if (!bytes) return { module, overrides: [] };
   const classFile = readMethods(bytes);
+  const arities = new Map(
+    module.definitions
+      .filter((definition) => isRoot || !definition.isLocal)
+      .map((definition) => [
+        definition.name,
+        definition.kind === "Operator" ? definition.params.length : 0,
+      ]),
+  );
+  const isMatched = (method: JavaMethod) => arities.get(method.name) === method.arity;
   const definitions = module.definitions.map((definition): Definition => {
     if (definition.kind !== "Operator") return definition;
     const method = classFile.methods.find(
-      (candidate) =>
-        candidate.name === definition.name && candidate.arity === definition.params.length,
+      (candidate) => candidate.name === definition.name && isMatched(candidate),
     );
     if (!method) return definition;
     return {
@@ -237,5 +308,13 @@ export const overrideDefinitions = (module: Module, bytes: Uint8Array | undefine
       body: getReturnedLiteral(method, classFile.pool, module.name, definition.location),
     };
   });
-  return { ...module, definitions };
+  return {
+    module: { ...module, definitions },
+    overrides: classFile.methods.map((method) => ({
+      module: module.name,
+      operator: method.name,
+      signature: method.signature,
+      isMatched: isMatched(method),
+    })),
+  };
 };

@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import { getUnexpectedException } from "../../src/errors";
+import type { TlcVersion } from "../../src/tlc-version";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/liveness");
 
@@ -76,4 +78,33 @@ describe("liveness matches TLC", () => {
       [0, 1, 2, 3],
     ]);
   });
+
+  it("finds a violation of a safety-like property early unless TLC is 1.7.4", async () => {
+    const directory = join(import.meta.dirname, "../fixtures/github710");
+    const getAdditionalViolation = async (version: TlcVersion) => {
+      const result = await check({
+        source: readFileSync(join(directory, "Github710d.tla"), "utf8"),
+        config: readFileSync(join(directory, "Github710d.cfg"), "utf8"),
+        version,
+      });
+      return result.additionalViolation?.name;
+    };
+    expect(await getAdditionalViolation("master")).toBe("NeverThree");
+    expect(await getAdditionalViolation("1.7.4")).toBeUndefined();
+  });
+
+  it.each(["master", "1.7.4"] satisfies TlcVersion[])(
+    "evaluates a constant conjunct of a temporal property in TLC %s",
+    async (version) => {
+      const result = check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == <>[](x = 1 /\\ (1 \\div 0) > 0)\n====",
+        config: "SPECIFICATION Spec\nPROPERTY P",
+        version,
+      });
+      await expect(result).rejects.toThrow(
+        `${getUnexpectedException("tlc2.tool.EvalException")}The second argument of \\div is 0.`,
+      );
+    },
+  );
 });

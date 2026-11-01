@@ -1,6 +1,9 @@
+import type { Expression } from "./ast";
+import type { Substitution } from "./config";
 import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
-import { evaluate, type Environment } from "./evaluate";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
+import { MESSAGE_CODE } from "./tlc-messages";
+import { evaluate, type Environment } from "./evaluate";
 import {
   compareValues,
   createFunction,
@@ -31,6 +34,20 @@ interface Permutation {
   cacheLimit: number;
 }
 
+// The images of one value under every permutation, the identity first, and how each image compares
+// with the image of each permutation the search has held as the smallest.
+interface Orbit {
+  images: Value[];
+  comparisons: (Int8Array | undefined)[];
+}
+
+interface SymmetryGroup {
+  permutations: Permutation[];
+  orbits: WeakMap<ObjectValue, Orbit>;
+  orbitCount: number;
+  orbitLimit: number;
+}
+
 const getPermutationKey = (permutation: Images) =>
   [...permutation]
     .map(([name, image]) => `${name}>${image.name}`)
@@ -48,27 +65,46 @@ const composePermutations = (first: Images, second: Images) => {
   return composed;
 };
 
-// TLC checks the symmetry set outside any phase that reports an error itself.
+// Tool#getSymmetryPerms fails with a RuntimeException as TLC starts, which TLC reports as one it
+// did not expect.
 const createSymmetryError = (message: string) =>
   setExitCode(new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${message}`), EXIT_STATUS.error);
 
 const toImages = (value: Value) => {
-  if (!isFunctionValue(value)) {
-    throw createSymmetryError("The symmetry values must be function records.");
-  }
   const functionValue = toFiniteFunction(value);
   const permutation: Images = new Map();
   functionValue.domain.forEach((key, index) => {
     const image = functionValue.range[index];
     if (!isModelValue(key) || !isModelValue(image)) {
-      throw new TlaConfigError("Symmetry function must have model values as domain and range");
+      throw createSymmetryError("Symmetry function must have model values as domain and range.");
     }
     if (key.name !== image.name) permutation.set(key.name, image);
   });
   return permutation;
 };
 
-export const getSymmetryGroup = (name: string, environment: Environment): Permutation[] => {
+// SyntaxTreeNode.getHumanReadableImage, which joins the tokens of an expression without spaces.
+const getExpressionImage = (expression: Expression): string => {
+  if (expression.kind === "Identifier") return expression.name;
+  if (expression.kind !== "Apply") return "";
+  const args = expression.args.map(getExpressionImage);
+  return /^[A-Za-z_]/.test(expression.operator)
+    ? `${expression.operator}(${args.join(",")})`
+    : args.join(expression.operator);
+};
+
+const isPermutations = (
+  expression: Expression,
+): expression is Expression & { kind: "Apply"; args: [Expression] } =>
+  expression.kind === "Apply" &&
+  expression.operator === "Permutations" &&
+  expression.args.length === 1;
+
+export const getSymmetryGroup = (
+  name: string,
+  environment: Environment,
+  substitutions: Substitution[],
+): SymmetryGroup | undefined => {
   const definition = environment.definitions.get(name);
   if (definition === undefined && !environment.constants.has(name)) {
     throw new TlaConfigError(
@@ -78,19 +114,41 @@ export const getSymmetryGroup = (name: string, environment: Environment): Permut
   if (definition?.kind !== "Operator" || definition.params.length > 0) {
     throw createSymmetryError(`The symmetry function ${name} must specify a set of permutations.`);
   }
-  const value = evaluate(definition.body, {
-    environment,
-    scope: undefined,
-    state: undefined,
-    next: undefined,
-  });
+  const evaluateConstant = (expression: Expression) =>
+    evaluate(expression, { environment, scope: undefined, state: undefined, next: undefined });
+  const value = evaluateConstant(definition.body);
   if (!isSetValue(value) || !isEnumerable(value)) {
     throw createSymmetryError("The symmetry operator must specify a set of functions.");
   }
-  const permutations = toFiniteSet(value).elements.map(toImages);
-  const isDisabled =
-    definition.body.kind === "Apply" && definition.body.args.length >= permutations.length;
-  if (isDisabled) return [];
+  const elements = toFiniteSet(value).elements;
+  if (!elements.every(isFunctionValue)) {
+    throw createSymmetryError("The symmetry values must be function records.");
+  }
+  const permutations = elements.map(toImages);
+  // Tool#getSymmetryPerms warns about each permuted set with fewer than two elements, by the name
+  // the config substitutes for it. As many permuted sets as permutations means none has two.
+  const permutedSets = definition.body.kind === "Apply" ? definition.body.args : [];
+  const configNames = new Map(
+    substitutions
+      .filter((substitution) => substitution.module === undefined)
+      .map((substitution) => [substitution.target, substitution.name]),
+  );
+  const warnSmallSets = (offenders: Expression[]) => {
+    if (offenders.length === 0) return;
+    const names = offenders.map((offender) => {
+      const image = getExpressionImage(isPermutations(offender) ? offender.args[0] : offender);
+      return configNames.get(image) ?? image;
+    });
+    const isPlural = offenders.length > 1;
+    environment.runtime.warn(
+      MESSAGE_CODE.symmetrySetTooSmall,
+      `The set${isPlural ? "s" : ""} ${names.join(", and ")} ${isPlural ? "have" : "has"} been defined to be a symmetry set but contain${isPlural ? "" : "s"} less than two elements.`,
+    );
+  };
+  if (permutedSets.length >= elements.length) {
+    warnSmallSets(permutedSets);
+    return undefined;
+  }
   const group = new Map<string, Images>();
   permutations.forEach((permutation) => {
     if (permutation.size > 0) group.set(getPermutationKey(permutation), permutation);
@@ -109,13 +167,38 @@ export const getSymmetryGroup = (name: string, environment: Environment): Permut
     );
     frontier.start = end;
   }
+  const movedNames = new Set(
+    [...group.values()].flatMap((images) => [...images.values()].map((image) => image.name)),
+  );
+  // Only a permutation of a constant that TLC holds as an enumerated set is checked. TLC binds a
+  // constant the config substitutes with <- to the definition, which it skips.
+  const substitutedNames = new Set(substitutions.map((substitution) => substitution.name));
+  warnSmallSets(
+    permutedSets.filter((node) => {
+      if (!isPermutations(node)) return false;
+      const operand = node.args[0];
+      if (operand.kind !== "Identifier" || substitutedNames.has(operand.name)) return false;
+      const set = evaluateConstant(operand);
+      return (
+        typeof set === "object" &&
+        set.kind === "Set" &&
+        !set.elements.some((element) => isModelValue(element) && movedNames.has(element.name))
+      );
+    }),
+  );
+  if (group.size === 0) return undefined;
   const cacheLimit = Math.max(256, Math.floor(CACHE_LIMIT / group.size));
-  return [...group.values()].map((images) => ({
-    images,
-    cache: new WeakMap<ObjectValue, Value>(),
-    cacheSize: 0,
-    cacheLimit,
-  }));
+  return {
+    permutations: [...group.values()].map((images) => ({
+      images,
+      cache: new WeakMap<ObjectValue, Value>(),
+      cacheSize: 0,
+      cacheLimit,
+    })),
+    orbits: new WeakMap(),
+    orbitCount: 0,
+    orbitLimit: cacheLimit,
+  };
 };
 
 const permuteElements = (elements: Value[], permutation: Permutation) => {
@@ -218,41 +301,76 @@ const computePermutedValue = (value: ObjectValue, permutation: Permutation) => {
   return elements ? createSet(elements) : set;
 };
 
-const permuteRemaining = (state: Value[], permuted: Value[], permutation: Permutation) => {
-  for (let index = permuted.length; index < state.length; index++) {
-    permuted.push(permuteValue(state[index], permutation));
+const getOrbit = (value: ObjectValue, group: SymmetryGroup) => {
+  const cached = group.orbits.get(value);
+  if (cached !== undefined) return cached;
+  if (group.orbitCount >= group.orbitLimit) {
+    group.orbits = new WeakMap();
+    group.orbitCount = 0;
   }
-  return permuted;
+  const orbit: Orbit = { images: [value], comparisons: [] };
+  group.orbits.set(value, orbit);
+  group.orbitCount++;
+  return orbit;
 };
 
-const getSmallerPermutation = (
-  state: Value[],
-  minimum: Value[],
-  permutation: Permutation,
-  order: number[] | undefined,
+const getImage = (orbit: Orbit, permutation: number, group: SymmetryGroup) =>
+  (orbit.images[permutation] ??= permuteValue(
+    orbit.images[0],
+    group.permutations[permutation - 1],
+  ));
+
+// Two images of a value compare the same way every time, and comparing them again changes nothing,
+// so an orbit compares each pair once.
+const compareImages = (
+  value: ObjectValue,
+  permutation: number,
+  minimum: number,
+  group: SymmetryGroup,
 ) => {
-  const permuted: Value[] = [];
-  for (let position = 0; position < state.length; position++) {
-    const index = order ? order[position] : position;
-    const value = permuteValue(state[index], permutation);
-    const comparison = compareValues(value, minimum[index]);
-    if (comparison > 0) return undefined;
-    if (!order) permuted.push(value);
-    if (comparison < 0) {
-      return order
-        ? state.map((item) => permuteValue(item, permutation))
-        : permuteRemaining(state, permuted, permutation);
-    }
+  const orbit = getOrbit(value, group);
+  const comparisons = (orbit.comparisons[minimum] ??= new Int8Array(group.permutations.length + 1));
+  if (comparisons[permutation] === 0) {
+    const comparison = compareValues(
+      getImage(orbit, permutation, group),
+      getImage(orbit, minimum, group),
+    );
+    comparisons[permutation] = Math.sign(comparison) + 2;
   }
-  return undefined;
+  return comparisons[permutation] - 2;
 };
 
+const isSmallerImage = (
+  state: Value[],
+  permutation: number,
+  minimum: number,
+  group: SymmetryGroup,
+  order: number[],
+) => {
+  for (const index of order) {
+    const value = state[index];
+    const comparison =
+      typeof value === "object" ? compareImages(value, permutation, minimum, group) : 0;
+    if (comparison !== 0) return comparison < 0;
+  }
+  return false;
+};
+
+// TLC keeps the smallest image of the state in its variable order, replacing it only with a
+// strictly smaller one.
 export const getRepresentative = (
   state: Value[],
-  group: Permutation[],
-  order?: number[],
-): Value[] =>
-  group.reduce(
-    (minimum, permutation) => getSmallerPermutation(state, minimum, permutation, order) ?? minimum,
-    state,
+  group: SymmetryGroup,
+  order: number[],
+): Value[] => {
+  const minimum = group.permutations.reduce(
+    (smallest, _, index) =>
+      isSmallerImage(state, index + 1, smallest, group, order) ? index + 1 : smallest,
+    0,
   );
+  return minimum === 0
+    ? state
+    : state.map((value) =>
+        typeof value === "object" ? getImage(getOrbit(value, group), minimum, group) : value,
+      );
+};

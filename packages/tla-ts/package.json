@@ -1,6 +1,6 @@
 {
   "name": "tla-ts",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "A TLA+ interpreter and model checker in TypeScript, 2× faster than TLC",
   "keywords": [
     "formal verification",
@@ -72,6 +72,7 @@
     "conformance:smt": "bun scripts/run.ts smt-conformance",
     "conformance:record": "bun scripts/run.ts record-tlc",
     "conformance:record-sany": "bun scripts/run.ts record-sany",
+    "conformance:record-statechart": "bun scripts/run.ts record-statechart",
     "conformance:record-proofs": "bun scripts/run.ts record-proofs",
     "conformance:record-tlapm": "bun scripts/run.ts record-tlapm",
     "conformance:smt-encode": "bun scripts/run.ts smt-encode-conformance",
@@ -81,6 +82,9 @@
     "publint": "publint",
     "test": "vp test",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3"
   },
   "devDependencies": {
     "@types/node": "^22",

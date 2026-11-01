@@ -10,9 +10,9 @@ import {
 } from "./builtins";
 import { TlaEvaluationError, TlaModuleError, TlaUnsupportedError } from "./errors";
 import { getTlcFingerprint } from "./tlc-random";
+import { formatNestedMessage } from "./tlc-messages";
 import { evaluate, expectBoolean, getDefinition, type Builtin, type Environment } from "./evaluate";
 import { getChildren, isLocallyResolved, type Definition, type Expression } from "./ast";
-import type { TraceStep } from "./check";
 import {
   getNamedRegisters,
   getPossibleCounts,
@@ -67,27 +67,21 @@ export const createActionRecord = (action: string | undefined) =>
   ]);
 
 // TLC's CounterExample is a graph of the violating behavior: the states numbered from 1, an edge
-// for each step, and for a lasso an edge from the last state back to where the loop starts.
+// for each step, and for a lasso an edge from the last state back to where the loop starts. Each
+// edge holds the record of the action TLC found for the step.
 export const createCounterExample = (
-  trace: TraceStep[],
-  loop: { start: number; action: string | undefined } | undefined,
+  stateRecords: Record<string, Value>[],
+  actions: Value[],
+  loop: { start: number; action: Value } | undefined,
 ) => {
-  const states = trace.map((step, index) =>
-    createTuple([index + 1, createRecord(Object.entries(step.state))]),
+  const states = stateRecords.map((state, index) =>
+    createTuple([index + 1, createRecord(Object.entries(state))]),
   );
   const steps = states
     .slice(1)
-    .map((state, index) =>
-      createTuple([states[index], createActionRecord(trace[index + 1].action), state]),
-    );
+    .map((state, index) => createTuple([states[index], actions[index], state]));
   const closing = loop
-    ? [
-        createTuple([
-          states[states.length - 1],
-          createActionRecord(loop.action),
-          states[loop.start],
-        ]),
-      ]
+    ? [createTuple([states[states.length - 1], loop.action, states[loop.start]])]
     : [];
   return createRecord([
     ["action", createSet([...steps, ...closing])],
@@ -201,7 +195,9 @@ export const createTlcExtOperators = (
       try {
         getThunk(args, 1, "AssertError")();
       } catch (error) {
-        if (error instanceof TlaEvaluationError) return error.message === expected;
+        if (error instanceof TlaEvaluationError) {
+          return formatNestedMessage(error.message, runtime.isTool) === expected;
+        }
         throw error;
       }
       return false;

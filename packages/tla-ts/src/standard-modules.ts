@@ -11,7 +11,7 @@ import {
   getNumber,
   getOperator,
   getSet,
-  getArithmeticSignature,
+  getJavaSignature,
   getJavaInteger,
   getValue,
   isOutOfRange,
@@ -19,7 +19,7 @@ import {
 } from "./builtins";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
-import { BAGS_OPERATORS } from "./bags";
+import { createBagsOperators } from "./bags";
 import { createJsonOperators, type FileSystem } from "./json";
 import { createRandomizationOperators } from "./randomization";
 import { createPossibleOperators, createTlcExtOperators } from "./tlc-ext";
@@ -40,7 +40,9 @@ import {
   isEnumerable,
   isFiniteSet,
   isFunctionValue,
-  isReducible,
+  computeLikeTlcOnFailure,
+  isReducibleSet,
+  markStreamedSet,
   isSetValue,
   toFiniteSet,
   unionSorted,
@@ -48,13 +50,14 @@ import {
   createEnumeratedSet,
   EMPTY_SET,
   isEnumeratedSet,
-  type ReducibleSet,
+  type IntervalValue,
   type MixedSetValue,
   type SetOperationValue,
   type SetValue,
   type Value,
   rankString,
 } from "./values";
+import type { TlcVersion } from "./tlc-version";
 
 interface StandardModule {
   extends: string[];
@@ -76,6 +79,8 @@ const unionInTree = (sets: SetValue[], start: number, end: number): SetValue => 
 
 const SET_OPERATORS: SetOperationValue["operator"][] = ["\\cup", "\\cap", "\\"];
 
+type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
+
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
 
 const getReducibleElements = (set: ReducibleSet) =>
@@ -96,7 +101,9 @@ const combineReducible = (
     );
   }
   if (elements.length === 0) return other;
-  if (!isReducible(other)) return { kind: "SetOperation", operator, left: set, right: other };
+  if (!isReducibleSet(other)) {
+    return markStreamedSet({ kind: "SetOperation", operator, left: set, right: other });
+  }
   const added = toFiniteSet(other).elements.filter((element) => !isElementOf(element, set));
   return createEnumeratedSet([...elements, ...added]);
 };
@@ -123,6 +130,7 @@ export const CORE_OPERATORS: Builtin[] = [
   ),
   defineOperator("\\subseteq", 2, (args) => {
     const left = getSet(args, 0, "\\subseteq");
+    // TLC tests each element of the left set for membership in the right value.
     const right = getValue(args, 1, "\\subseteq");
     const isPowerSets =
       typeof left === "object" &&
@@ -133,11 +141,18 @@ export const CORE_OPERATORS: Builtin[] = [
     if (isPowerSets) return isSubsetOf(toFiniteSet(left.base).elements, right.base);
     return isSubsetOf(toFiniteSet(left).elements, right);
   }),
+  // TLC defers the set operations of values that aren't sets to the enumeration or the membership
+  // tests of the result.
   ...SET_OPERATORS.map((operator) =>
     defineOperator(operator, 2, (args) => {
       const left = getValue(args, 0, operator);
       const right = getValue(args, 1, operator);
-      if (isReducible(left) && isReducible(right) && !isMixedSet(left) && !isMixedSet(right)) {
+      if (
+        isReducibleSet(left) &&
+        isReducibleSet(right) &&
+        !isMixedSet(left) &&
+        !isMixedSet(right)
+      ) {
         if (operator === "\\cup" && isEmptySet(left)) return right;
         const merge =
           operator === "\\cup"
@@ -145,25 +160,24 @@ export const CORE_OPERATORS: Builtin[] = [
             : operator === "\\cap"
               ? intersectSorted
               : differenceSorted;
-        // Merging compares elements across the sets. Where that fails, TLC's element-by-element
-        // membership test fails or succeeds on its own.
-        try {
-          return merge(toFiniteSet(left), toFiniteSet(right));
-        } catch (error) {
-          if (!(error instanceof TlaEvaluationError)) throw error;
-        }
+        // The merge compares the elements, which TLC tests for membership one by one instead.
+        return computeLikeTlcOnFailure(
+          () => merge(toFiniteSet(left), toFiniteSet(right)),
+          () => combineReducible(operator, left, right),
+        );
       }
-      if (isReducible(left)) return combineReducible(operator, left, right);
-      if (operator !== "\\" && isReducible(right)) return combineReducible(operator, right, left);
-      return { kind: "SetOperation", operator, left, right };
+      if (isReducibleSet(left)) return combineReducible(operator, left, right);
+      if (operator !== "\\" && isReducibleSet(right))
+        return combineReducible(operator, right, left);
+      return markStreamedSet({ kind: "SetOperation", operator, left, right });
     }),
   ),
-  defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getSet(args, 0, "SUBSET") })),
+  defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getValue(args, 0, "SUBSET") })),
   defineOperator("UNION", 1, (args) => {
     const outer = getSet(args, 0, "UNION");
     const sets = isEnumeratedSet(outer) ? outer.elements.filter(isEnumeratedSet) : [];
     if (!isEnumeratedSet(outer) || sets.length !== outer.elements.length) {
-      return { kind: "Union", base: outer };
+      return markStreamedSet({ kind: "Union", base: outer });
     }
     if (isMixedSet(outer) || sets.some(isMixedSet)) {
       const union: MixedSetValue = { kind: "MixedSet", elements: [] };
@@ -185,17 +199,17 @@ export const CORE_OPERATORS: Builtin[] = [
   }),
 ];
 
-const NEG_SIGNATURE = getArithmeticSignature("Integers", "Neg", "IntValue", 1);
+const NEG_SIGNATURE = getJavaSignature("Integers", "Neg", "IntValue", 1);
 
-// TLC overrides the operators of Naturals with the Java class of Integers when a spec loads
-// Integers, which names it in their errors.
-const getArithmeticOperators = (javaClass: "Naturals" | "Integers") => {
-  const dotDotSignature = getArithmeticSignature(javaClass, "DotDot", "IntervalValue", 2);
+// TLC overrides the arithmetic of Naturals with the Java methods of tlc2.module.Naturals, or with
+// those of tlc2.module.Integers when the spec loads Integers, and names the method in an error.
+const createArithmeticOperators = (module: string) => {
+  const dotDotSignature = getJavaSignature(module, "DotDot", "IntervalValue", 2);
   return [
-    defineArithmetic(javaClass, "+", "Plus", (left, right) => left + right),
-    defineArithmetic(javaClass, "-", "Minus", (left, right) => left - right),
-    defineArithmetic(javaClass, "*", "Times", (left, right) => left * right),
-    defineArithmetic(javaClass, "^", "Expt", (base, exponent) => {
+    defineArithmetic(module, "+", "Plus", (left, right) => left + right),
+    defineArithmetic(module, "-", "Minus", (left, right) => left - right),
+    defineArithmetic(module, "*", "Times", (left, right) => left * right),
+    defineArithmetic(module, "^", "Expt", (base, exponent) => {
       if (exponent < 0) {
         throw new TlaModuleError(
           `The second argument of ^ should be a natural number, but instead it is:\n${exponent}`,
@@ -204,13 +218,19 @@ const getArithmeticOperators = (javaClass: "Naturals" | "Integers") => {
       if (base === 0 && exponent === 0) throw new TlaModuleError("0^0 is undefined.");
       return base ** exponent;
     }),
-    defineArithmetic(javaClass, "\\div", "Divide", (left, right) => {
+    defineArithmetic(module, "\\div", "Divide", (left, right) => {
       if (right === 0) throw new TlaModuleError("The second argument of \\div is 0.");
+      // tlc2.module.Naturals#Divide floors only a quotient Java truncates below 0, and lets
+      // -2147483648 \div -1 overflow.
+      if (module === "Naturals") {
+        const truncated = Math.trunc(left / right) | 0;
+        return truncated < 0 && Math.imul(truncated, right) !== left ? truncated - 1 : truncated;
+      }
       const quotient = Math.floor(left / right);
       if (isOutOfRange(quotient)) throw createOverflowError(`${left} \\div ${right}`);
       return quotient;
     }),
-    defineArithmetic(javaClass, "%", "Mod", (left, right) => {
+    defineArithmetic(module, "%", "Mod", (left, right) => {
       if (right <= 0) {
         throw new TlaModuleError(
           `The second argument of % should be a positive number, but instead it is:\n${right}`,
@@ -226,18 +246,32 @@ const getArithmeticOperators = (javaClass: "Naturals" | "Integers") => {
   ];
 };
 
+const NATURALS_ARITHMETIC = createArithmeticOperators("Naturals");
+
+const INTEGERS_ARITHMETIC = createArithmeticOperators("Integers");
+
+// The operators of Naturals that TLC overrides with the methods of tlc2.module.Integers when it
+// loads Integers for its trace exploration spec, by the operator each replaces.
+export const getTraceSpecArithmetic = (builtin: Builtin) => {
+  const index = NATURALS_ARITHMETIC.indexOf(builtin);
+  return index === -1 ? undefined : INTEGERS_ARITHMETIC[index];
+};
+
 const NATURALS_OPERATORS = [
   defineConstant("Nat", { kind: "InfiniteSet", name: "Nat" }),
-  ...getArithmeticOperators("Naturals"),
+  ...NATURALS_ARITHMETIC,
   defineComparison("<", (left, right) => left < right),
   defineComparison(">", (left, right) => left > right),
   defineComparison("<=", (left, right) => left <= right),
-  defineComparison(">=", (left, right) => left >= right),
+  // tlc2.module.Naturals#GEQ names itself > in its errors. Only a spec that extends Integers gets
+  // the GEQ of tlc2.module.Integers, not one that loads Integers for its trace exploration spec.
+  defineComparison(">=", (left, right) => left >= right, ">"),
 ];
 
 const INTEGERS_OPERATORS = [
   defineConstant("Int", { kind: "InfiniteSet", name: "Int" }),
-  ...getArithmeticOperators("Integers"),
+  ...INTEGERS_ARITHMETIC,
+  defineComparison(">=", (left, right) => left >= right),
   defineOperator("-.", 1, (args) => {
     const value = getJavaInteger(getValue(args, 0, "-"), NEG_SIGNATURE);
     if (isOutOfRange(-value)) throw createOverflowError(`-${value}`);
@@ -277,103 +311,111 @@ const withJavaMethods = (module: string, operators: Builtin[]) => {
   });
 };
 
-const SEQUENCES_OPERATORS = withJavaMethods("Sequences", [
-  defineOperator("Seq", 1, (args) => ({ kind: "SequenceSet", base: getValue(args, 0, "Seq") })),
-  defineOperator(
-    "Len",
-    1,
-    (args) => getSequenceOrString(args, 0, getSequenceMessage("", "Len")).length,
-  ),
-  defineOperator("\\o", 2, (args) => {
-    const left = getSequenceOrString(args, 0, getEvaluatingMessage("s \\o t", "sequence"));
-    if (typeof left !== "string") {
-      const right = getSequenceArgument(args, 1, getEvaluatingMessage("t \\o s", "sequence"));
-      return createTuple([...left, ...right]);
-    }
-    const right = getValue(args, 1, "\\o");
-    if (typeof right !== "string") {
-      throw new TlaModuleError(
-        `${getEvaluatingMessage("t \\o s", "string")}\n${formatValue(right)}`,
+const createSequencesOperators = (version: TlcVersion) =>
+  withJavaMethods("Sequences", [
+    defineOperator("Seq", 1, (args) => ({ kind: "SequenceSet", base: getValue(args, 0, "Seq") })),
+    defineOperator(
+      "Len",
+      1,
+      (args) => getSequenceOrString(args, 0, getSequenceMessage("", "Len")).length,
+    ),
+    defineOperator("\\o", 2, (args) => {
+      const left = getSequenceOrString(args, 0, getEvaluatingMessage("s \\o t", "sequence"));
+      if (typeof left !== "string") {
+        const right = getSequenceArgument(args, 1, getEvaluatingMessage("t \\o s", "sequence"));
+        return createTuple([...left, ...right]);
+      }
+      const right = getValue(args, 1, "\\o");
+      if (typeof right !== "string") {
+        throw new TlaModuleError(
+          `${getEvaluatingMessage("t \\o s", "string")}\n${formatValue(right)}`,
+        );
+      }
+      return rankString(left + right);
+    }),
+    defineOperator("Append", 2, (args) =>
+      createTuple([
+        ...getSequenceArgument(
+          args,
+          0,
+          getEvaluatingMessage(version === "1.7.4" ? "Append(v, s)" : "Append(s, v)", "sequence"),
+        ),
+        getValue(args, 1, "Append"),
+      ]),
+    ),
+    defineOperator("Head", 1, (args) => {
+      const elements = getSequenceArgument(args, 0, getSequenceMessage("", "Head"));
+      if (elements.length === 0)
+        throw new TlaModuleError("Attempted to apply Head to the empty sequence.");
+      return elements[0];
+    }),
+    defineOperator("Tail", 1, (args) => {
+      const sequence = getSequenceOrString(args, 0, getSequenceMessage("", "Tail"));
+      if (sequence.length === 0)
+        throw new TlaModuleError("Attempted to apply Tail to the empty sequence.");
+      return sliceSequence(sequence, 1);
+    }),
+    defineOperator("SubSeq", 3, (args) => {
+      const sequence = getSequenceOrString(args, 0, getSequenceMessage("first ", "SubSeq"));
+      const start = getNumber(args, 1, "SubSeq");
+      const end = getNumber(args, 2, "SubSeq");
+      if (start > end) return sliceSequence(sequence, 0, 0);
+      const outOfDomain =
+        start < 1 || start > sequence.length
+          ? { position: "second", value: start }
+          : end > sequence.length
+            ? { position: "third", value: end }
+            : undefined;
+      if (outOfDomain) {
+        throw new TlaModuleError(
+          `The ${outOfDomain.position} argument of SubSeq must be in the domain of its first argument:\n${formatValue(getValue(args, 0, "SubSeq"))}\n, but instead it is\n${outOfDomain.value}`,
+        );
+      }
+      return sliceSequence(sequence, start - 1, end);
+    }),
+    defineHigherOrderOperator("SelectSeq", 2, (args) => {
+      const test = getOperator(args, 1, "SelectSeq");
+      return createTuple(
+        getSequenceArgument(args, 0, getSequenceMessage("first ", "SelectSeq")).filter(
+          (element) => {
+            const result = test.call([element]);
+            if (typeof result !== "boolean") {
+              throw new TlaModuleError(
+                `The second argument of SelectSeq should be a operator, but instead it is:\n${formatValue(result)}`,
+              );
+            }
+            return result;
+          },
+        ),
       );
-    }
-    return rankString(left + right);
-  }),
-  defineOperator("Append", 2, (args) =>
-    createTuple([
-      ...getSequenceArgument(args, 0, getEvaluatingMessage("Append(s, v)", "sequence")),
-      getValue(args, 1, "Append"),
-    ]),
-  ),
-  defineOperator("Head", 1, (args) => {
-    const elements = getSequenceArgument(args, 0, getSequenceMessage("", "Head"));
-    if (elements.length === 0)
-      throw new TlaModuleError("Attempted to apply Head to the empty sequence.");
-    return elements[0];
-  }),
-  defineOperator("Tail", 1, (args) => {
-    const sequence = getSequenceOrString(args, 0, getSequenceMessage("", "Tail"));
-    if (sequence.length === 0)
-      throw new TlaModuleError("Attempted to apply Tail to the empty sequence.");
-    return sliceSequence(sequence, 1);
-  }),
-  defineOperator("SubSeq", 3, (args) => {
-    const sequence = getSequenceOrString(args, 0, getSequenceMessage("first ", "SubSeq"));
-    const start = getNumber(args, 1, "SubSeq");
-    const end = getNumber(args, 2, "SubSeq");
-    if (start > end) return sliceSequence(sequence, 0, 0);
-    const outOfDomain =
-      start < 1
-        ? { position: "second", value: start }
-        : end > sequence.length
-          ? { position: "third", value: end }
-          : undefined;
-    if (outOfDomain) {
-      throw new TlaModuleError(
-        `The ${outOfDomain.position} argument of SubSeq must be in the domain of its first argument:\n${formatValue(getValue(args, 0, "SubSeq"))}\n, but instead it is\n${outOfDomain.value}`,
-      );
-    }
-    return sliceSequence(sequence, start - 1, end);
-  }),
-  defineHigherOrderOperator("SelectSeq", 2, (args) => {
-    const test = getOperator(args, 1, "SelectSeq");
-    return createTuple(
-      getSequenceArgument(args, 0, getSequenceMessage("first ", "SelectSeq")).filter((element) => {
-        const result = test.call([element]);
-        if (typeof result !== "boolean") {
-          throw new TlaModuleError(
-            `The second argument of SelectSeq should be a operator, but instead it is:\n${formatValue(result)}`,
-          );
-        }
-        return result;
-      }),
-    );
-  }),
-]);
+    }),
+  ]);
 
-const FINITE_SETS_OPERATORS = withJavaMethods("FiniteSets", [
-  defineOperator("IsFiniteSet", 1, (args) => {
-    const value = getValue(args, 0, "IsFiniteSet");
-    if (isSetValue(value)) return isFiniteSet(value);
-    if (typeof value === "object" && value.kind === "Function") return true;
-    throw new TlaEvaluationError(
-      typeof value === "object" && value.kind === "LazyFunction"
-        ? `Attempted to check if the function:\n${formatValue(value)}\nis a finite set.`
-        : `Attempted to check if the ${describeKind(value)} ${formatValue(value)} is a finite set.`,
-    );
-  }),
-  defineOperator("Cardinality", 1, (args) => {
-    const set = getValue(args, 0, "Cardinality");
-    if (
-      !isSetValue(set) ||
-      (typeof set === "object" && (set.kind === "InfiniteSet" || set.kind === "SequenceSet"))
-    ) {
-      throw new TlaModuleError(
-        `Attempted to compute cardinality of the value\n${formatValue(set)}`,
+const createFiniteSetsOperators = (version: TlcVersion) =>
+  withJavaMethods("FiniteSets", [
+    defineOperator("IsFiniteSet", 1, (args) => {
+      const value = getValue(args, 0, "IsFiniteSet");
+      if (isSetValue(value)) return isFiniteSet(value);
+      if (typeof value === "object" && value.kind === "Function") return true;
+      throw new TlaEvaluationError(
+        typeof value === "object" && value.kind === "LazyFunction"
+          ? `Attempted to check if the function:\n${formatValue(value)}\nis a finite set.`
+          : `Attempted to check if the ${describeKind(value)} ${formatValue(value)} is a finite set.`,
       );
-    }
-    return getCardinality(set);
-  }),
-]);
+    }),
+    defineOperator("Cardinality", 1, (args) => {
+      const set = getValue(args, 0, "Cardinality");
+      if (
+        !isSetValue(set) ||
+        (typeof set === "object" && (set.kind === "InfiniteSet" || set.kind === "SequenceSet"))
+      ) {
+        throw new TlaModuleError(
+          `Attempted to compute cardinality of the value\n${formatValue(set)}`,
+        );
+      }
+      return getCardinality(set, version);
+    }),
+  ]);
 
 // The modules that each standard module loads through EXTENDS and LOCAL INSTANCE in TLC.
 export const STANDARD_DEPENDENCIES = new Map([
@@ -393,6 +435,7 @@ export const getStandardModule = (
   print: (text: string) => void,
   runtime: CheckerRuntime,
   files: FileSystem,
+  builtins: ReadonlyMap<string, Builtin>,
 ): StandardModule | undefined => {
   switch (name) {
     case "Naturals":
@@ -400,9 +443,9 @@ export const getStandardModule = (
     case "Integers":
       return { extends: ["Naturals"], operators: INTEGERS_OPERATORS };
     case "Sequences":
-      return { extends: [], operators: SEQUENCES_OPERATORS };
+      return { extends: [], operators: createSequencesOperators(runtime.version) };
     case "FiniteSets":
-      return { extends: [], operators: FINITE_SETS_OPERATORS };
+      return { extends: [], operators: createFiniteSetsOperators(runtime.version) };
     case "TLC":
       return { extends: [], operators: withJavaMethods("TLC", createTlcOperators(print, runtime)) };
     case "Randomization":
@@ -412,7 +455,7 @@ export const getStandardModule = (
     case "Json":
       return { extends: [], operators: createJsonOperators(files) };
     case "Bags":
-      return { extends: [], operators: BAGS_OPERATORS };
+      return { extends: [], operators: createBagsOperators(builtins) };
     case "TLCExt":
       return { extends: [], operators: createTlcExtOperators(print, runtime) };
     default:

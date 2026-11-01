@@ -1,10 +1,11 @@
-import { TlaEvaluationError, TlaModuleError } from "./errors";
+import { TlaModuleError } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
-import type { Builtin } from "./evaluate";
+import type { Builtin, Context } from "./evaluate";
 import { prettyPrint } from "./pretty-print";
 import {
   defineConstant,
   defineHigherOrderOperator,
+  defineLazyOperator,
   defineOperator,
   defineStateOperator,
   getElements,
@@ -12,7 +13,9 @@ import {
   getFunction,
   getOperator,
   getSequence,
+  getThunk,
   getValue,
+  overrideWithJava,
 } from "./builtins";
 import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "./runtime";
 import { createActionRecord, setTlcValue } from "./tlc-ext";
@@ -41,15 +44,20 @@ const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
 
 // TLC creates its model checker after it processes the spec, so these are undefined before then.
 const CHECKER_KEYS = new Set(["diameter", "generated", "distinct", "queue", "stats", "config"]);
+// The keys of TLC 1.7.4's TLCGet, and those it can't read before it creates its model checker.
+const TLC_174_KEYS = new Set(["diameter", "distinct", "queue", "duration", "level"]);
+const CHECKER_KEYS_174 = new Set(["diameter", "distinct", "queue", "level"]);
 
 const getRuntimeValue = (
   runtime: CheckerRuntime,
   key: string,
   state: (Value | undefined)[] | undefined,
 ) => {
-  if (!runtime.isStarted && CHECKER_KEYS.has(key)) {
-    throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
-  }
+  const isUndefined =
+    runtime.version === "1.7.4"
+      ? !TLC_174_KEYS.has(key) || (!runtime.isStarted && CHECKER_KEYS_174.has(key))
+      : !runtime.isStarted && CHECKER_KEYS.has(key);
+  if (isUndefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
   const duration = Math.floor((Date.now() - runtime.startedAt) / 1000);
   switch (key) {
     case "level":
@@ -104,11 +112,25 @@ const getRuntimeValue = (
   }
   if (key.startsWith(NAMED_REGISTER_PREFIX)) {
     const value = getNamedRegisters(runtime).get(key);
-    if (value === undefined) throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
+    if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
     return value;
   }
   if (key.startsWith("-D")) return rankString(runtime.properties.get(key.slice(2)) ?? key);
-  throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
+  throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
+};
+
+const getTlcValue = (runtime: CheckerRuntime, key: Value, context: Context | undefined) => {
+  if (typeof key === "number" && key >= 0) {
+    const value = runtime.registers.get(key);
+    if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
+    return value;
+  }
+  if (typeof key !== "string") {
+    throw new TlaModuleError(
+      `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
+    );
+  }
+  return getRuntimeValue(runtime, key, context?.state);
 };
 
 const getPermutations = (elements: Value[]): Value[][] =>
@@ -193,20 +215,26 @@ export const createTlcOperators = (
       }, []),
     );
   }),
-  defineStateOperator("TLCGet", 1, (args, context) => {
-    const key = getValue(args, 0, "TLCGet");
-    if (typeof key === "number" && key >= 0) {
-      const value = runtime.registers.get(key);
-      if (value === undefined) throw new TlaEvaluationError(`TLCGet(${key}) was undefined.`);
-      return value;
-    }
-    if (typeof key !== "string") {
-      throw new TlaEvaluationError(
-        `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
-      );
-    }
-    return getRuntimeValue(runtime, key, context?.state);
-  }),
+  // TLC evaluates TLCGet with its argument in TLCGetSet.TLCGetEval, so it reports any failure,
+  // the argument's too, as a failure of that method. TLC 1.7.4 calls TLC.TLCGet with the value of
+  // its argument.
+  runtime.version === "1.7.4"
+    ? overrideWithJava(
+        {
+          ...defineStateOperator("TLCGet", 1, (args, context) =>
+            getTlcValue(runtime, getValue(args, 0, "TLCGet"), context),
+          ),
+          // Unlike TLCGetSet.TLCGetEval, TLC.TLCGet declares no minimum level.
+          isLevelConstant: true,
+        },
+        "public static tlc2.value.impl.Value tlc2.module.TLC.TLCGet(tlc2.value.impl.Value)",
+      )
+    : overrideWithJava(
+        defineLazyOperator("TLCGet", 1, (args, context) =>
+          getTlcValue(runtime, getThunk(args, 0, "TLCGet")(), context),
+        ),
+        "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+      ),
   defineStateOperator("TLCSet", 2, (args) => {
     const key = getValue(args, 0, "TLCSet");
     setTlcValue(runtime, print, key, getValue(args, 1, "TLCSet"));

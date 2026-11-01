@@ -1,6 +1,6 @@
 import { TlaEvaluationError, TlaModuleError } from "./errors";
 import { prettyPrint } from "./pretty-print";
-import { valueSources, withSource } from "./value-sources";
+import type { TlcVersion } from "./tlc-version";
 
 export interface ModelValue {
   kind: "ModelValue";
@@ -14,6 +14,7 @@ export interface SetValue {
   elements: Value[];
   hash: number;
   fingerprint: number;
+  isFingerprinted: boolean;
 }
 
 // A set enumeration whose elements TLC can't sort, such as {1, "a"}. TLC sorts a set enumeration
@@ -30,6 +31,8 @@ export interface FunctionValue {
   hash: number;
   fingerprint: number;
   writtenKeys: Value[] | undefined;
+  functionClass: FunctionClass | undefined;
+  isFingerprinted: boolean;
 }
 
 export interface IntervalValue {
@@ -77,10 +80,17 @@ export interface SetOperationValue {
   right: Value;
 }
 
+// TLC prints a set filter as its bound names and the location of its predicate.
+interface FilteredSetSource {
+  names: string;
+  predicate: string;
+}
+
 export interface FilteredSetValue {
   kind: "FilteredSet";
   base: Value;
   test: (element: Value) => boolean;
+  source?: FilteredSetSource;
 }
 
 // UNION S when some element of S isn't a set enumeration. TLC enumerates it only when it has to.
@@ -104,6 +114,7 @@ export interface LazyFunctionValue {
   domain: Value;
   apply: (argument: Value) => Value;
   source?: LazyFunctionSource;
+  functionClass?: FunctionClass;
 }
 
 export type Value =
@@ -138,10 +149,9 @@ export const isSetValue = (value: Value) =>
   value.kind !== "Function" &&
   value.kind !== "LazyFunction";
 
-export type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
-
-// TLC reduces a set enumeration or an interval eagerly, and keeps every other set lazy.
-export const isReducible = (value: Value): value is ReducibleSet =>
+// TLC's Reducible values, SetEnumValue and IntervalValue, which combine with another set element by
+// element.
+export const isReducibleSet = (value: Value): value is SetValue | MixedSetValue | IntervalValue =>
   typeof value === "object" &&
   (value.kind === "Set" || value.kind === "MixedSet" || value.kind === "Interval");
 
@@ -183,7 +193,7 @@ export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] 
 };
 
 export const createWrittenRecord = (names: Value[], range: Value[], writtenNames: Value[]) =>
-  setWrittenOrder(createSortedFunction(names, range), writtenNames);
+  setWrittenOrder(createSortedRecord(names, range), writtenNames);
 
 // TLC sorts a value it compares even with itself, and every value inside it, so a value it has
 // hashed or fingerprinted is already sorted.
@@ -268,13 +278,24 @@ const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) =>
 
 // TLC orders strings and model value names by when it first interned the text, so every
 // check sets the order of its spec's strings before it builds any value.
-const stringOrder = { ranks: Object.create(null) as Record<string, number>, size: 0 };
+const stringOrder: { ranks: Record<string, number>; size: number } = {
+  ranks: Object.create(null),
+  size: 0,
+};
 
 export const setStringOrder = (texts: Iterable<string>) => {
   stringOrder.ranks = Object.create(null);
   stringOrder.size = 0;
   modelValues.clear();
   for (const text of texts) rankString(text);
+};
+
+// TLC 1.7.4 prints an empty function that isn't a tuple with a space between its brackets, and
+// looks a key up in a function differently, so every check also sets the version its values follow.
+const valueVersion = { is174: false };
+
+export const setValueVersion = (version: TlcVersion | undefined) => {
+  valueVersion.is174 = version === "1.7.4";
 };
 
 export const rankString = (text: string) => {
@@ -379,7 +400,7 @@ export const compareValues = (left: Value, right: Value): number => {
         `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
       );
     }
-    if (isLeftSet) return compareSets(toFiniteSet(left), toComparedSet(right));
+    if (isLeftSet) return compareSets(toFiniteSet(left), toFiniteSet(right));
     return compareFunctions(toFiniteFunction(left), toFiniteFunction(right));
   }
   if (typeof left === "number" && typeof right === "number") return left - right;
@@ -414,6 +435,7 @@ export const createSortedSet = (elements: Value[]): SetValue => ({
   elements,
   hash: 0,
   fingerprint: 0,
+  isFingerprinted: false,
 });
 
 export const createSortedFunction = (domain: Value[], range: Value[]): FunctionValue => ({
@@ -423,9 +445,104 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   hash: 0,
   fingerprint: 0,
   writtenKeys: undefined,
+  functionClass: undefined,
+  isFingerprinted: false,
 });
 
+// TLC words a failed function application by the Java class of the function: FcnLambdaValue for
+// [x \in S |-> e], TupleValue for <<...>> and what the sequence operators build, RecordValue for
+// [a |-> e], and FcnRcdValue for any other function.
+export type FunctionClass = "lambda" | "tuple" | "record";
+
+// Whether a lambda exists for markFingerprinted to find, so that a spec without one skips the walk.
+const lambdaPresence = { isPresent: false };
+
+export const setFunctionClass = <FunctionLike extends FunctionValue | LazyFunctionValue>(
+  functionValue: FunctionLike,
+  functionClass: FunctionClass | undefined,
+) => {
+  if (functionClass === "lambda") lambdaPresence.isPresent = true;
+  if (functionClass !== undefined) functionValue.functionClass = functionClass;
+  return functionValue;
+};
+
+export const getFunctionClass = (value: Value) =>
+  typeof value === "object" && (value.kind === "Function" || value.kind === "LazyFunction")
+    ? value.functionClass
+    : undefined;
+
+export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunctionValue>(
+  functionValue: FunctionLike,
+) => setFunctionClass(functionValue, "lambda");
+
+const fingerprintedValues = new WeakSet<ObjectValue>();
+
+// The lazy sets TLC has cached the elements of. TLC caches a set as the receiver of compareTo,
+// equals, size, and fingerPrint, not as their argument, and enumerates the sets an uncached one
+// combines, duplicates and all.
+const cachedSets = new WeakSet<ObjectValue>();
+
+// Whether the spec has built a UNION or \cup set, the sets that stream duplicates, so that a spec
+// without one skips tracking what TLC caches.
+const streamedSetPresence = { isPresent: false };
+
+export const markStreamedSet = <Streamed extends UnionValue | SetOperationValue>(
+  value: Streamed,
+) => {
+  streamedSetPresence.isPresent = true;
+  return value;
+};
+
+// The sets that stream their elements apart from the normalized set until TLC caches them.
+const STREAMING_KINDS = new Set<ObjectValue["kind"]>([
+  "Union",
+  "SetOperation",
+  "FilteredSet",
+  "ProductSet",
+  "RecordSet",
+  "FunctionSet",
+]);
+
+const cacheSet = (value: Value) => {
+  if (
+    streamedSetPresence.isPresent &&
+    typeof value === "object" &&
+    STREAMING_KINDS.has(value.kind)
+  ) {
+    cachedSets.add(value);
+  }
+};
+
+// FcnLambdaValue#fingerPrint caches the FcnRcdValue the function enumerates to, which applies it
+// from then on, so a function TLC has fingerprinted is no longer a lambda.
+export const markFingerprinted = (value: Value): void => {
+  if ((!lambdaPresence.isPresent && !streamedSetPresence.isPresent) || typeof value !== "object") {
+    return;
+  }
+  if (value.kind === "Function" || value.kind === "Set") {
+    if (value.isFingerprinted) return;
+    value.isFingerprinted = true;
+  } else {
+    if (fingerprintedValues.has(value)) return;
+    fingerprintedValues.add(value);
+  }
+  if (value.kind === "Function") {
+    if (value.functionClass === "lambda") value.functionClass = undefined;
+    value.domain.forEach(markFingerprinted);
+    value.range.forEach(markFingerprinted);
+  } else if (value.kind === "Set" || value.kind === "MixedSet") {
+    value.elements.forEach(markFingerprinted);
+  } else if (isSetValue(value) && isEnumerable(value)) {
+    cacheSet(value);
+    toFiniteSet(value).elements.forEach(markFingerprinted);
+  }
+};
+
+export const createSortedRecord = (names: Value[], range: Value[]) =>
+  setFunctionClass(createSortedFunction(names, range), "record");
+
 export const valuesEqual = (left: Value, right: Value): boolean => {
+  cacheSet(left);
   if (left === right) {
     if (writtenOrderUse.isUsed) forgetWrittenOrder(left);
     return left !== ANY_SET || compareAny(left);
@@ -499,27 +616,35 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   return compareValues(left, right) === 0;
 };
 
-const areSameValues = (left: Value[], right: Value[]) =>
-  left === right ||
-  (left.length === right.length &&
-    left.every((element, index) => isSameValue(element, right[index])));
-
-export const isSameValue = (left: Value, right: Value): boolean => {
-  if (left === right) return true;
-  if (typeof left !== "object" || typeof right !== "object") return false;
-  if (left.kind === "Set" && right.kind === "Set")
-    return (
-      (left.hash === 0 || right.hash === 0 || left.hash === right.hash) &&
-      areSameValues(left.elements, right.elements)
-    );
-  if (left.kind === "Function" && right.kind === "Function")
-    return (
-      (left.hash === 0 || right.hash === 0 || left.hash === right.hash) &&
-      areSameValues(left.domain, right.domain) &&
-      areSameValues(left.range, right.range)
-    );
-  return getValueKey(left) === getValueKey(right);
+// TLC prints and words errors about an equal function by its Java class, so a value can stand for
+// another in a state only if each function in it has the same class.
+const createSameValueCheck = (isClassSensitive: boolean) => {
+  const areSameValues = (left: Value[], right: Value[]) =>
+    left === right ||
+    (left.length === right.length && left.every((element, index) => isSame(element, right[index])));
+  const isSame = (left: Value, right: Value): boolean => {
+    if (left === right) return true;
+    if (typeof left !== "object" || typeof right !== "object") return false;
+    if (left.kind === "Set" && right.kind === "Set")
+      return (
+        (left.hash === 0 || right.hash === 0 || left.hash === right.hash) &&
+        areSameValues(left.elements, right.elements)
+      );
+    if (left.kind === "Function" && right.kind === "Function")
+      return (
+        (!isClassSensitive || left.functionClass === right.functionClass) &&
+        (left.hash === 0 || right.hash === 0 || left.hash === right.hash) &&
+        areSameValues(left.domain, right.domain) &&
+        areSameValues(left.range, right.range)
+      );
+    return getValueKey(left) === getValueKey(right);
+  };
+  return isSame;
 };
+
+export const isSameValue = createSameValueCheck(false);
+
+export const isInterchangeableValue = createSameValueCheck(true);
 
 // The comparisons above fail with their own messages. These follow the compareTo and equals
 // methods of TLC's Java value classes, which word a failure by the class of the left operand, so a
@@ -676,7 +801,7 @@ const compareFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: 
       compareElementsLikeTlc(functionValue.range, tuple)
     );
   }
-  if (left.kind === "Function" && functionValue.domain.every((key) => typeof key === "string")) {
+  if (getFunctionClass(left) === "record") {
     const record = toTlcRecord(right);
     if (!record) {
       if (isModelValue(right)) return compareModelValueWith(right, left);
@@ -734,17 +859,16 @@ const compareSetLikeTlc = (left: ObjectValue, right: Value): number => {
   );
 };
 
-const compareLikeTlc = (left: Value, right: Value): number =>
-  withSource(left, () => {
-    if (typeof left !== "object") {
-      if (typeof right === typeof left) return compareValues(left, right);
-      if (isModelValue(right)) return compareModelValueWith(right, left);
-      throw new TlaEvaluationError(describeScalarMismatch(left, right, false));
-    }
-    if (left.kind === "ModelValue") return compareModelValue(left, right);
-    if (isFunctionValue(left)) return compareFunctionLikeTlc(left, right);
-    return compareSetLikeTlc(left, right);
-  });
+const compareLikeTlc = (left: Value, right: Value): number => {
+  if (typeof left !== "object") {
+    if (typeof right === typeof left) return compareValues(left, right);
+    if (isModelValue(right)) return compareModelValueWith(right, left);
+    throw new TlaEvaluationError(describeScalarMismatch(left, right, false));
+  }
+  if (left.kind === "ModelValue") return compareModelValue(left, right);
+  if (isFunctionValue(left)) return compareFunctionLikeTlc(left, right);
+  return compareSetLikeTlc(left, right);
+};
 
 const equalsElementsLikeTlc = (left: Value[], right: Value[]) =>
   left.every((element, index) => equalsLikeTlc(element, right[index]));
@@ -795,7 +919,7 @@ const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: V
       equalsElementsLikeTlc(functionValue.range, tuple)
     );
   }
-  if (left.kind === "Function" && functionValue.domain.every((key) => typeof key === "string")) {
+  if (getFunctionClass(left) === "record") {
     const record = toTlcRecord(right);
     if (!record) {
       if (isModelValue(right)) return equalsModelValueWith(right, left);
@@ -832,58 +956,90 @@ const equalsSetLikeTlc = (left: ObjectValue, right: Value): boolean => {
   );
 };
 
-const equalsLikeTlc = (left: Value, right: Value): boolean =>
-  withSource(left, () => {
-    if (typeof left !== "object") {
-      if (typeof right === typeof left) return left === right;
-      if (isModelValue(right)) return equalsModelValueWith(right, left);
-      throw new TlaEvaluationError(describeScalarMismatch(left, right, true));
-    }
-    if (left.kind === "ModelValue") return equalsModelValue(left, right);
-    if (isFunctionValue(left)) return equalsFunctionLikeTlc(left, right);
-    return equalsSetLikeTlc(left, right);
-  });
+const equalsLikeTlc = (left: Value, right: Value): boolean => {
+  if (typeof left !== "object") {
+    if (typeof right === typeof left) return left === right;
+    if (isModelValue(right)) return equalsModelValueWith(right, left);
+    throw new TlaEvaluationError(describeScalarMismatch(left, right, true));
+  }
+  if (left.kind === "ModelValue") return equalsModelValue(left, right);
+  if (isFunctionValue(left)) return equalsFunctionLikeTlc(left, right);
+  return equalsSetLikeTlc(left, right);
+};
 
 // TLC's ValueVec.sort, which inserts each element into the sorted prefix by binary search.
 const sortLikeTlc = (elements: Value[]) => {
   const sorted: Value[] = [];
   for (const element of elements) {
-    const bounds = { low: 0, high: sorted.length, comparison: 1 };
-    while (bounds.low < bounds.high) {
-      const middle = bounds.low + ((bounds.high - bounds.low) >> 1);
-      bounds.comparison = compareLikeTlc(element, sorted[middle]);
-      if (bounds.comparison === 0) break;
-      if (bounds.comparison < 0) bounds.high = middle;
-      else bounds.low = middle + 1;
-    }
-    if (bounds.comparison !== 0) sorted.splice(bounds.low, 0, element);
+    const found = searchLikeTlc(element, sorted);
+    if (!found.isFound) sorted.splice(found.index, 0, element);
   }
   return sorted;
 };
 
-// TLC checks membership in a set enumeration it hasn't sorted element by element.
-const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
-  elements.some((member) => equalsLikeTlc(member, element));
+// Calls a method of a value as TLC does, whose failure the value heads when it has a source.
+const callTracedMethod = <Result>(receiver: Value, method: () => Result) => {
+  const sets = setTrace.sets;
+  if (sets === undefined) return method();
+  sets.push(receiver);
+  const result = method();
+  sets.pop();
+  return result;
+};
 
-export const isEqualLikeTlc = (left: Value, right: Value) => {
-  try {
-    return valuesEqual(left, right);
-  } catch (error) {
-    if (!(error instanceof TlaEvaluationError)) throw error;
-    return equalsLikeTlc(left, right);
+// ValueVec.search on sorted elements: a binary search with compareTo, which ends where the element
+// is or would go.
+const searchLikeTlc = (element: Value, sorted: Value[]) => {
+  const bounds = { low: 0, high: sorted.length };
+  while (bounds.low < bounds.high) {
+    const middle = bounds.low + ((bounds.high - bounds.low) >> 1);
+    const comparison = callTracedMethod(element, () => compareLikeTlc(element, sorted[middle]));
+    if (comparison === 0) return { index: middle, isFound: true };
+    if (comparison < 0) bounds.high = middle;
+    else bounds.low = middle + 1;
+  }
+  return { index: bounds.low, isFound: false };
+};
+
+// TLC checks membership in a set enumeration it hasn't sorted element by element, with the equals
+// method of each member.
+const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
+  elements.some((member) => callTracedMethod(member, () => equalsLikeTlc(member, element)));
+
+// The sets TLC has normalized, whose membership ValueVec.search checks by binary search with
+// compareTo instead of element by element.
+const normalizedSets = new WeakSet<SetValue>();
+
+// IValue.deepNormalize, which TLC applies to the constants of the config and the constant
+// definitions it computes as it starts.
+export const markNormalized = (value: Value): void => {
+  if (typeof value !== "object") return;
+  if (value.kind === "Set") {
+    normalizedSets.add(value);
+    value.elements.forEach(markNormalized);
+  }
+  if (value.kind === "Function") {
+    value.domain.forEach(markNormalized);
+    value.range.forEach(markNormalized);
   }
 };
 
-// TLC sorts a set by comparing each element with the ones before it, so the later element converts
-// a lazy set it compares and caches it.
+export const isEqualLikeTlc = (left: Value, right: Value) =>
+  computeLikeTlcOnFailure(
+    () => valuesEqual(left, right),
+    () => equalsLikeTlc(left, right),
+  );
+
 const isStrictlySorted = (elements: Value[]) => {
   for (let index = 1; index < elements.length; index++) {
-    if (compareValues(elements[index], elements[index - 1]) <= 0) return false;
+    if (compareValues(elements[index - 1], elements[index]) >= 0) return false;
   }
   return true;
 };
 
 export const createSet = (elements: Value[]): SetValue => {
+  // ValueVec.sort compares each element after the first with those before it.
+  for (let index = 1; index < elements.length; index++) cacheSet(elements[index]);
   if (elements.length < 2 || isStrictlySorted(elements)) return createSortedSet(elements);
   const sorted = [...elements].sort(compareValues);
   const unique = [sorted[0]];
@@ -895,14 +1051,11 @@ export const createSet = (elements: Value[]): SetValue => {
 
 // TLC builds a set enumeration without sorting it, so one whose elements it can't compare still
 // evaluates.
-export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue => {
-  try {
-    return createSet(elements);
-  } catch (error) {
-    if (!(error instanceof TlaEvaluationError)) throw error;
-    return { kind: "MixedSet", elements };
-  }
-};
+export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue =>
+  computeLikeTlcOnFailure<SetValue | MixedSetValue>(
+    () => createSet(elements),
+    () => ({ kind: "MixedSet", elements }),
+  );
 
 export const EMPTY_SET = createSortedSet([]);
 
@@ -981,12 +1134,15 @@ export const unionSorted = (left: SetValue, right: SetValue): SetValue => {
   }
   if (added.length === 0) return left;
   const union = createSortedSet(merged);
-  if (left.hash !== 0) {
+  if (left.hash !== 0 && left.hash !== UNFINGERPRINTABLE_HASH) {
     let hash = left.hash;
-    for (let index = 0; index < added.length; index++) {
-      hash = (hash + getElementContribution(added[index])) | 0;
+    let index = 0;
+    for (; index < added.length; index++) {
+      const elementHash = getValueHash(added[index]);
+      if (elementHash === UNFINGERPRINTABLE_HASH) break;
+      hash = (hash + getElementContribution(elementHash)) | 0;
     }
-    union.hash = hash;
+    if (index === added.length) union.hash = hash;
   }
   if (left.fingerprint !== 0) {
     let fingerprint = left.fingerprint;
@@ -1071,12 +1227,13 @@ const getIntervalValue = (high: number): IntervalValue => {
 };
 
 export const createTuple = (elements: Value[]): FunctionValue =>
-  createSortedFunction(getIntervalDomain(elements.length), elements);
+  setFunctionClass(createSortedFunction(getIntervalDomain(elements.length), elements), "tuple");
 
-export const createRecord = (fields: [string, Value][]): FunctionValue => createFunction(fields);
+export const createRecord = (fields: [string, Value][]): FunctionValue =>
+  setFunctionClass(createFunction(fields), "record");
 
 // TLC's Enumerable classes: every set except the ones it implements in Java.
-const isTlcEnumerable = (value: Value) => isSetValue(value) && !isOverriddenSet(value);
+export const isTlcEnumerable = (value: Value) => isSetValue(value) && !isOverriddenSet(value);
 
 const formatUnion = (value: UnionValue, isStrict = false) =>
   `UNION(${formatValue(value.base, isStrict)})`;
@@ -1245,7 +1402,30 @@ const getSortedSubsets = (base: Value[]) => {
   return subsets;
 };
 
-const enumerateSet = (value: Value): Value[] => {
+// The Enumerator of a set of records or tuples enumerates its sets in turn and stops at the first
+// empty one, which leaves the product empty. Later versions of TLC decide that the set is empty
+// before they enumerate it.
+const getComponentElements = (
+  sets: Value[],
+  getElements: (set: Value) => Value[],
+  describeUnenumerable: (set: Value, index: number) => string,
+) => {
+  const lists: Value[][] = [];
+  for (let index = 0; index < sets.length; index++) {
+    const set = sets[index];
+    if (isOverriddenSet(set)) throw new TlaEvaluationError(describeUnenumerable(set, index));
+    const elements = getElements(set);
+    if (elements.length === 0) return [[]];
+    lists.push(elements);
+  }
+  return lists;
+};
+
+// getElements enumerates the sets a set of functions, records, or tuples combines.
+const enumerateSet = (
+  value: Value,
+  getElements = (set: Value) => toFiniteSet(set).elements,
+): Value[] => {
   if (typeof value !== "object")
     throw new TlaEvaluationError(`Expected a set but found ${formatValue(value)}`);
   switch (value.kind) {
@@ -1259,7 +1439,14 @@ const enumerateSet = (value: Value): Value[] => {
       return elements;
     }
     case "Subset": {
-      if (isOverriddenSet(value.base)) getCardinality(value.base);
+      // SubsetValue.toSetEnum sizes the set before it enumerates it, and enumerates only the empty
+      // set of a value of size 0, a function with an empty domain among them.
+      if (getCardinality(value.base) === 0) return getSortedSubsets([]);
+      if (!isSetValue(value.base)) {
+        throw new TlaEvaluationError(
+          `Attempted to compute the value of an expression of form\nSUBSET S, but S is a non-enumerable value:\n${prettyPrint(formatValue(value.base))}`,
+        );
+      }
       const base = toFiniteSet(value.base).elements;
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
         throw new TlaEvaluationError(describeOverflow(value));
@@ -1267,51 +1454,48 @@ const enumerateSet = (value: Value): Value[] => {
       return getSortedSubsets(base);
     }
     case "FunctionSet": {
-      if (isEmptySet(value)) return [];
+      if (!valueVersion.is174 && isEmptySet(value)) return [];
       if (isOverriddenSet(value.domain)) {
         throw new TlaEvaluationError(
           `Attempted to enumerate a set of the form [D -> R],but the domain D:\n${formatValue(value.domain)}\ncannot be enumerated.`,
         );
       }
       const domain = getFunctionDomain(value.domain);
-      if (domain.length > 0 && isOverriddenSet(value.range)) {
+      // TLC 1.7.4 requires an enumerable range even of an empty domain.
+      if ((domain.length > 0 || valueVersion.is174) && isOverriddenSet(value.range)) {
         throw new TlaEvaluationError(
           `Attempted to enumerate a set of the form [D -> R],but the range R:\n${formatValue(value.range)}\ncannot be enumerated.`,
         );
       }
-      const range = domain.length === 0 ? [] : toFiniteSet(value.range).elements;
+      const range = domain.length === 0 ? [] : getElements(value.range);
       return getCartesianProduct(domain.map(() => range)).map((combination): Value =>
         createSortedFunction(domain, combination),
       );
     }
     case "RecordSet": {
-      if (isEmptySet(value)) return [];
-      const fields = value.sets.map((set, index) => {
-        if (isOverriddenSet(set)) {
-          throw new TlaEvaluationError(
-            `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${formatValue(set)}`,
-          );
-        }
-        return toFiniteSet(set).elements;
-      });
+      if (!valueVersion.is174 && isEmptySet(value)) return [];
+      const fields = getComponentElements(
+        value.sets,
+        getElements,
+        (set, index) =>
+          `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${formatValue(set)}`,
+      );
       return getCartesianProduct(fields).map((combination) =>
         createRecord(value.names.map((name, index): [string, Value] => [name, combination[index]])),
       );
     }
     case "ProductSet": {
-      if (isEmptySet(value)) return [];
-      const factors = value.factors.map((factor, index) => {
-        if (isOverriddenSet(factor)) {
-          throw new TlaEvaluationError(
-            `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${formatValue(factor)}`,
-          );
-        }
-        return toFiniteSet(factor).elements;
-      });
+      if (!valueVersion.is174 && isEmptySet(value)) return [];
+      const factors = getComponentElements(
+        value.factors,
+        getElements,
+        (factor, index) =>
+          `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${formatValue(factor)}`,
+      );
       return getCartesianProduct(factors).map(createTuple);
     }
     case "FilteredSet":
-      if (isOverriddenSet(value.base)) {
+      if (!isSetValue(value.base) || isOverriddenSet(value.base)) {
         throw new TlaEvaluationError(
           `Attempted to enumerate { x \\in S : p(x) } when S:\n${formatValue(value.base)}\nis not enumerable`,
         );
@@ -1348,7 +1532,7 @@ const enumerateSet = (value: Value): Value[] => {
       }
       if (value.operator === "\\cup")
         return unionSorted(toFiniteSet(value.left), toFiniteSet(value.right)).elements;
-      const isLeftEnumerated = value.operator === "\\" || isEnumerable(value.left);
+      const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
       const enumerated = isLeftEnumerated ? value.left : value.right;
       const other = isLeftEnumerated ? value.right : value.left;
       return toFiniteSet(enumerated).elements.filter(
@@ -1366,7 +1550,6 @@ const enumerateSet = (value: Value): Value[] => {
 };
 
 const finiteSets = new WeakMap<ObjectValue, SetValue>();
-const comparedSets = new WeakMap<ObjectValue, SetValue>();
 
 export const toFiniteSet = (value: Value): SetValue => {
   if (typeof value === "object" && value.kind === "Set") return value;
@@ -1375,17 +1558,10 @@ export const toFiniteSet = (value: Value): SetValue => {
   }
   const cached = typeof value === "object" ? finiteSets.get(value) : undefined;
   if (cached) return cached;
-  const set =
-    (typeof value === "object" ? comparedSets.get(value) : undefined) ??
-    (valueSources.current
-      ? withSource(value, () => enumerateFiniteSet(value))
-      : enumerateFiniteSet(value));
-  if (typeof value === "object") finiteSets.set(value, set);
-  return set;
-};
-
-const enumerateFiniteSet = (value: Value) => {
+  const sets = setTrace.sets;
+  sets?.push(value);
   const elements = enumerateSet(value);
+  sets?.pop();
   const isSorted =
     typeof value === "object" &&
     (value.kind === "MixedSet" ||
@@ -1395,27 +1571,46 @@ const enumerateFiniteSet = (value: Value) => {
       value.kind === "ProductSet" ||
       value.kind === "FunctionSet" ||
       value.kind === "Subset");
-  return isSorted ? createSortedSet(elements) : createSet(elements);
-};
-
-// TLC converts the set a comparison receives as its argument without caching it, so a lazy set
-// compared that way still streams the sets it combines.
-const toComparedSet = (value: Value) => {
-  const isStreamed =
-    typeof value === "object" &&
-    (value.kind === "Union" || value.kind === "SetOperation" || value.kind === "FilteredSet");
-  if (!isStreamed || finiteSets.has(value)) return toFiniteSet(value);
-  const compared = comparedSets.get(value);
-  if (compared) return compared;
-  const set = enumerateFiniteSet(value);
-  comparedSets.set(value, set);
+  const set = isSorted ? createSortedSet(elements) : createSet(elements);
+  if (typeof value === "object") finiteSets.set(value, set);
   return set;
 };
 
 // TLC's Enumerator for a lazy set streams the sets it combines until the set caches its elements,
 // so an element that two of them share comes up once for each.
 export const getStreamedElements = (value: Value): Value[] => {
-  if (typeof value !== "object" || finiteSets.has(value)) return toFiniteSet(value).elements;
+  if (typeof value !== "object" || cachedSets.has(value)) return toFiniteSet(value).elements;
+  const sets = setTrace.sets;
+  sets?.push(value);
+  const elements = streamElements(value);
+  sets?.pop();
+  return elements;
+};
+
+const getCombinedSets = (value: ObjectValue) =>
+  value.kind === "ProductSet"
+    ? value.factors
+    : value.kind === "RecordSet"
+      ? value.sets
+      : value.kind === "FunctionSet"
+        ? [value.range]
+        : undefined;
+
+// Whether a set streams its elements in another order than the normalized set, so that a set of
+// tuples, records, or functions it is a component of has to stream too.
+const isStreamedApart = (value: Value): boolean => {
+  if (typeof value !== "object" || cachedSets.has(value)) return false;
+  if (value.kind === "Union") return true;
+  if (value.kind === "FilteredSet") return isStreamedApart(value.base);
+  if (value.kind === "SetOperation") {
+    return (
+      value.operator === "\\cup" || isStreamedApart(value.left) || isStreamedApart(value.right)
+    );
+  }
+  return getCombinedSets(value)?.some(isStreamedApart) ?? false;
+};
+
+const streamElements = (value: ObjectValue): Value[] => {
   // TLC streams the sets of a UNION it hasn't enumerated, so a set that appears twice there yields
   // its elements twice.
   if (value.kind === "Union") {
@@ -1426,13 +1621,15 @@ export const getStreamedElements = (value: Value): Value[] => {
   if (value.kind === "FilteredSet" && !isOverriddenSet(value.base)) {
     return getStreamedElements(value.base).filter(value.test);
   }
+  const components = getCombinedSets(value);
+  if (components?.some(isStreamedApart)) return enumerateSet(value, getStreamedElements);
   if (value.kind !== "SetOperation") return toFiniteSet(value).elements;
   if (value.operator === "\\cup") {
     return !isTlcEnumerable(value.left) || !isTlcEnumerable(value.right)
       ? toFiniteSet(value).elements
       : [...getStreamedElements(value.left), ...getStreamedElements(value.right)];
   }
-  const isLeftEnumerated = value.operator === "\\" || isEnumerable(value.left);
+  const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
   const enumerated = isLeftEnumerated ? value.left : value.right;
   const other = isLeftEnumerated ? value.right : value.left;
   if (!isTlcEnumerable(enumerated)) return toFiniteSet(value).elements;
@@ -1472,9 +1669,13 @@ export const isEmptySet = (value: Value): boolean => {
   }
 };
 
-const getProductCardinality = (sets: Value[], describe: () => string) =>
+const getProductCardinality = (
+  sets: Value[],
+  version: TlcVersion | undefined,
+  describe: () => string,
+) =>
   sets.reduce<number>((product, set) => {
-    const size = product * getCardinality(set);
+    const size = product * getCardinality(set, version);
     if (size > MAXIMUM_INTEGER) throw new TlaEvaluationError(describe());
     return size;
   }, 1);
@@ -1482,9 +1683,25 @@ const getProductCardinality = (sets: Value[], describe: () => string) =>
 const describeOverflow = (value: Value) =>
   `Overflow when computing the number of elements in:\n${formatValue(value)}`;
 
-export const getCardinality = (value: Value): number => {
-  if (typeof value !== "object") return toFiniteSet(value).elements.length;
+// TLC 1.7.4 sizes every component of a set of functions, records, or tuples without first
+// checking whether one is empty, so an infinite component fails even beside an empty one.
+export const getCardinality = (value: Value, version?: TlcVersion): number => {
+  if (typeof value !== "object") {
+    const kind =
+      typeof value === "number" ? "integer" : typeof value === "string" ? "string" : "boolean";
+    throw new TlaEvaluationError(
+      `Attempted to compute the number of elements in the ${kind} ${formatValue(value)}.`,
+    );
+  }
   switch (value.kind) {
+    case "ModelValue":
+      throw new TlaEvaluationError(
+        `Attempted to compute the number of elements in the model value ${formatValue(value)}.`,
+      );
+    case "Function":
+      return value.domain.length;
+    case "LazyFunction":
+      return getCardinality(value.domain, version);
     case "Interval": {
       const size = Math.max(0, value.high - value.low + 1);
       if (size > MAXIMUM_INTEGER) {
@@ -1500,16 +1717,19 @@ export const getCardinality = (value: Value): number => {
         `Attempted to compute the number of elements in the overridden value ${formatValue(value)}.`,
       );
     case "Subset": {
-      const size = getCardinality(value.base);
+      const size = getCardinality(value.base, version);
       if (size >= 31) throw new TlaEvaluationError(describeOverflow(value));
       return 2 ** size;
     }
     case "FunctionSet": {
-      if (isEmptySet(value.domain)) return 1;
-      if (isEmptySet(value.range)) return 0;
-      const rangeSize = getCardinality(value.range);
-      if (rangeSize === 1) return 1;
-      const domainSize = getCardinality(value.domain);
+      if (version !== "1.7.4") {
+        if (isEmptySet(value.domain)) return 1;
+        if (isEmptySet(value.range)) return 0;
+        if (getCardinality(value.range, version) === 1) return 1;
+      }
+      const domainSize = getCardinality(value.domain, version);
+      const rangeSize = getCardinality(value.range, version);
+      if (rangeSize <= 1) return domainSize === 0 ? 1 : rangeSize;
       const size = { value: 1 };
       for (let index = 0; index < domainSize; index++) {
         size.value *= rangeSize;
@@ -1518,15 +1738,17 @@ export const getCardinality = (value: Value): number => {
       return size.value;
     }
     case "RecordSet":
-      if (isEmptySet(value)) return 0;
-      return getProductCardinality(value.sets, () => describeOverflow(value));
+      if (version !== "1.7.4" && isEmptySet(value)) return 0;
+      return getProductCardinality(value.sets, version, () => describeOverflow(value));
     case "ProductSet":
-      if (isEmptySet(value)) return 0;
+      if (version !== "1.7.4" && isEmptySet(value)) return 0;
       return getProductCardinality(
         value.factors,
+        version,
         () => `Overflow when computing the number of elements in ${formatValue(value)}`,
       );
     default:
+      cacheSet(value);
       return toFiniteSet(value).elements.length;
   }
 };
@@ -1601,11 +1823,11 @@ export const isFiniteSet = (value: Value): boolean => {
   }
 };
 
-const findIndex = (sortedValues: Value[], target: Value) => {
+const findIndex = (sortedValues: Value[], target: Value, compare = compareValues) => {
   const bounds = { low: 0, high: sortedValues.length - 1 };
   while (bounds.low <= bounds.high) {
     const middle = (bounds.low + bounds.high) >> 1;
-    const comparison = compareValues(sortedValues[middle], target);
+    const comparison = compare(sortedValues[middle], target);
     if (comparison === 0) return middle;
     if (comparison < 0) bounds.low = middle + 1;
     else bounds.high = middle - 1;
@@ -1621,41 +1843,80 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
     : undefined;
 };
 
-const describeMembership = (element: Value, set: Value) =>
-  `Attempted to check if the value ${formatValue(element)} is an element of ${formatValue(set)}`;
-
 const describeNonSetMembership = (element: Value, value: Value) => {
   const prefix = `Attempted to check if the value:\n${formatValue(element)}\nis an element of the`;
   if (!isFunctionValue(value)) return `${prefix} ${describeKind(value)} ${formatValue(value)}`;
-  const domain =
-    value.kind === "Function" || isEnumerable(value.domain) ? toFiniteFunction(value).domain : [];
-  if (domain.length > 0 && domain.every((key) => typeof key === "string")) {
+  const functionClass = getFunctionClass(value);
+  if (functionClass === "record") {
     return `Attempted to check if element:\n${formatValue(element)}\nis in the record:\n${formatValue(value)}`;
   }
-  if (domain.every((key, index) => key === index + 1)) {
-    return "Attempted to check set membership in a tuple value.";
-  }
+  if (functionClass === "tuple") return "Attempted to check set membership in a tuple value.";
   return `${prefix} function ${formatValue(value)}`;
 };
 
-// TLC checks membership in a set that another set holds through the inner set's own method.
-const isElementOfSet = (element: Value, set: Value) =>
-  valueSources.current
-    ? withSource(set, () => isElementOf(element, set))
-    : isElementOf(element, set);
+// The call stack of the replay, which a failed fast path leaves frozen.
+interface TracedCallStack {
+  expressions: unknown[];
+  isFrozen: boolean;
+  fingerprint?: unknown;
+}
+
+// The sets whose membership is being checked or whose elements are being enumerated, and the
+// members being compared, outermost first, while TLC's CallStackTool replays a computation. A failed
+// check or enumeration leaves the values it was in, each of which TLC adds to the
+// FingerprintException when it has a source.
+export const setTrace: { sets: Value[] | undefined; callStack?: TracedCallStack } = {
+  sets: undefined,
+};
+
+// Takes a fast path, and computes as TLC does where it fails. TLC never takes the fast path, so
+// the failure's leftovers in the replay's trace go first.
+export const computeLikeTlcOnFailure = <Result>(
+  compute: () => Result,
+  computeLikeTlc: (error: TlaEvaluationError) => Result,
+): Result => {
+  const sets = setTrace.sets;
+  const callStack = setTrace.callStack;
+  const depth = sets?.length ?? 0;
+  const trace = callStack && { ...callStack, length: callStack.expressions.length };
+  try {
+    return compute();
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    if (sets) sets.length = depth;
+    if (callStack && trace) {
+      callStack.expressions.length = trace.length;
+      callStack.isFrozen = trace.isFrozen;
+      callStack.fingerprint = trace.fingerprint;
+    }
+    return computeLikeTlc(error);
+  }
+};
 
 export const isElementOf = (element: Value, set: Value): boolean => {
+  const sets = setTrace.sets;
+  if (sets === undefined) return isElementOfSet(element, set);
+  sets.push(set);
+  const isElement = isElementOfSet(element, set);
+  sets.pop();
+  return isElement;
+};
+
+const isElementOfSet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":
-      try {
-        return findIndex(set.elements, element) !== -1;
-      } catch (error) {
-        if (!(error instanceof TlaEvaluationError)) throw error;
-        return withSource(set, () => isElementOfLikeTlc(element, set.elements));
-      }
+      // SetEnumValue.member compares the element with the set's.
+      cacheSet(element);
+      return computeLikeTlcOnFailure(
+        () => findIndex(set.elements, element) !== -1,
+        () =>
+          normalizedSets.has(set)
+            ? searchLikeTlc(element, set.elements).isFound
+            : isElementOfLikeTlc(element, set.elements),
+      );
     case "MixedSet":
-      return withSource(set, () => isElementOfLikeTlc(element, set.elements));
+      return isElementOfLikeTlc(element, set.elements);
     case "Interval":
       if (typeof element === "number") return element >= set.low && element <= set.high;
       if (set.low <= set.high && !isModelValue(element)) {
@@ -1677,15 +1938,18 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       return set.name !== "Nat" || (typeof element === "number" && element >= 0);
     }
     case "Subset":
-      if (!isTlcEnumerable(element)) {
+      // SubsetValue.member fails on any value that is not Enumerable, model values and the sets a
+      // Java class overrides included.
+      if (!isSetValue(element) || isOverriddenSet(element)) {
         throw new TlaEvaluationError(
           `Attempted to check if the non-enumerable value\n${prettyPrint(formatValue(element))}\nis element of\n${prettyPrint(formatValue(set))}`,
         );
       }
-      return toFiniteSet(element).elements.every((item) => isElementOfSet(item, set.base));
+      return toFiniteSet(element).elements.every((item) => isElementOf(item, set.base));
     case "FunctionSet": {
       if (!isFunctionValue(element)) {
         if (isModelValue(element)) return false;
+        // SetOfFcnsValue.member prints the element without Values.ppr.
         throw new TlaEvaluationError(
           `Attempted to check if \n${formatValue(element)}\nwhich is not a TLC function value, is in the set of functions:\n${prettyPrint(formatValue(set))}`,
         );
@@ -1699,7 +1963,7 @@ export const isElementOf = (element: Value, set: Value): boolean => {
               { kind: "Interval", low, high: low + functionValue.domain.length - 1 },
               set.domain,
             );
-      return isDomain && functionValue.range.every((item) => isElementOfSet(item, set.range));
+      return isDomain && functionValue.range.every((item) => isElementOf(item, set.range));
     }
     case "RecordSet": {
       const functionValue = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
@@ -1713,7 +1977,7 @@ export const isElementOf = (element: Value, set: Value): boolean => {
         functionValue.domain.length === set.names.length &&
         set.names.every((name, index) => {
           const position = findIndex(functionValue.domain, name);
-          return position !== -1 && isElementOfSet(functionValue.range[position], set.sets[index]);
+          return position !== -1 && isElementOf(functionValue.range[position], set.sets[index]);
         })
       );
     }
@@ -1730,30 +1994,33 @@ export const isElementOf = (element: Value, set: Value): boolean => {
       }
       return (
         elements.length === set.factors.length &&
-        elements.every((item, index) => isElementOfSet(item, set.factors[index]))
+        elements.every((item, index) => isElementOf(item, set.factors[index]))
       );
     }
     case "FilteredSet":
-      return isElementOfSet(element, set.base) && set.test(element);
+      return isElementOf(element, set.base) && set.test(element);
     case "Union":
       if (!isTlcEnumerable(set.base)) {
         throw new TlaEvaluationError(
           `Attempted to check if:\n ${formatValue(element)}\nis an element of the non-enumerable set:\n ${formatUnion(set)}`,
         );
       }
-      return toFiniteSet(set.base).elements.some((inner) => isElementOfSet(element, inner));
+      return toFiniteSet(set.base).elements.some((inner) => isElementOf(element, inner));
     case "SetOperation":
       if (set.operator === "\\cup")
-        return isElementOfSet(element, set.left) || isElementOfSet(element, set.right);
+        return isElementOf(element, set.left) || isElementOf(element, set.right);
       return (
-        isElementOfSet(element, set.left) &&
-        isElementOfSet(element, set.right) === (set.operator === "\\cap")
+        isElementOf(element, set.left) &&
+        isElementOf(element, set.right) === (set.operator === "\\cap")
       );
     case "SequenceSet": {
       const elements = getSequenceElements(element);
       if (elements === undefined) {
         if (isModelValue(element)) return false;
-        throw new TlaEvaluationError(describeMembership(element, set));
+        // Sequences.member raises TLC_MODULE_CHECK_MEMBER_OF.
+        throw new TlaEvaluationError(
+          `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of ${prettyPrint(formatValue(set))}.`,
+        );
       }
       return elements.every((item) => isElementOf(item, set.base));
     }
@@ -1786,102 +2053,123 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "LazyFunction") {
     if (!isEnumerable(value.domain)) getCardinality(value.domain);
     const domain = getFunctionDomain(value.domain);
-    return createSortedFunction(
-      domain,
-      domain.map((key) => value.apply(key)),
+    return setFunctionClass(
+      createSortedFunction(
+        domain,
+        domain.map((key) => value.apply(key)),
+      ),
+      getFunctionClass(value),
     );
   }
   throw new TlaEvaluationError(`Expected a function but found ${formatValue(value)}`);
 };
 
-const lambdaFunctions = new WeakSet<ObjectValue>();
-
-export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunctionValue>(
-  functionValue: FunctionLike,
-) => {
-  lambdaFunctions.add(functionValue);
-  return functionValue;
-};
-
-// TLC applies a tuple, a record and a function over an interval with their own classes, and each
-// reports a missing argument in its own words.
-const getFunctionClass = (functionValue: FunctionValue) => {
-  const domain = functionValue.domain;
-  if (domain.length === 0) return lambdaFunctions.has(functionValue) ? "FcnRcdValue" : "TupleValue";
-  if (domain === intervalDomains[domain.length]) return "TupleValue";
-  if (intervalArrays.has(domain)) return "IntervalFcnRcdValue";
-  return domain.every((key) => typeof key === "string") ? "RecordValue" : "FcnRcdValue";
-};
-
-const describeNotInDomain = (functionValue: FunctionValue, argument: Value) =>
-  `Attempted to apply function:\n${prettyPrint(formatValue(functionValue))}\nto argument ${prettyPrint(formatValue(argument))}, which is not in the domain of the function.`;
-
-const describeNonIntegerArgument = (argument: Value) =>
-  `Attempted to apply function with integer domain to the non-integer argument ${prettyPrint(formatValue(argument))}`;
-
-const describeMissingArgument = (
-  functionValue: FunctionValue | LazyFunctionValue,
+export const describeMissingArgument = (
+  functionValue: Value,
   argument: Value,
+  version?: TlcVersion,
 ) => {
-  if (lambdaFunctions.has(functionValue) || functionValue.kind === "LazyFunction")
-    return `In applying the function\n${prettyPrint(formatValue(functionValue))},\nthe first argument is:\n${prettyPrint(formatValue(argument))}\nwhich is not in its domain.\n`;
-  const functionClass = getFunctionClass(functionValue);
-  if (functionClass === "TupleValue")
-    return typeof argument === "number"
-      ? `Attempted to access index ${argument} of tuple\n${prettyPrint(formatValue(functionValue))}\nwhich is out of bounds.`
-      : `Attempted to access tuple at a non integral index: ${prettyPrint(formatValue(argument))}`;
-  if (functionClass === "RecordValue")
-    return typeof argument === "string"
-      ? `Attempted to access nonexistent field '${argument}' of record\n${prettyPrint(formatValue(functionValue))}`
-      : `Attempted to access record by a non-string argument: ${prettyPrint(formatValue(argument))}`;
-  return functionClass === "IntervalFcnRcdValue" && typeof argument !== "number"
-    ? describeNonIntegerArgument(argument)
-    : describeNotInDomain(functionValue, argument);
+  const shown = prettyPrint(formatValue(functionValue));
+  const shownArgument = prettyPrint(formatValue(argument));
+  const is174 = version === "1.7.4";
+  switch (getFunctionClass(functionValue)) {
+    case "lambda":
+      return `In applying the function\n${shown},\nthe first argument is:\n${shownArgument}\nwhich is not in its domain.\n`;
+    case "tuple":
+      if (typeof argument !== "number") {
+        return is174
+          ? "Attempted to apply tuple to a non-integer argument."
+          : `Attempted to access tuple at a non integral index: ${shownArgument}`;
+      }
+      return is174
+        ? `Attempted to apply tuple\n${shown}\nto integer ${argument} which is out of domain.`
+        : `Attempted to access index ${argument} of tuple\n${shown}\nwhich is out of bounds.`;
+    case "record":
+      if (typeof argument !== "string") {
+        return is174
+          ? `Attempted to apply record to a non-string value ${shownArgument}.`
+          : `Attempted to access record by a non-string argument: ${shownArgument}`;
+      }
+      return is174
+        ? `Attempted to apply the record\n${shown}\nto nonexistent record field ${argument}.`
+        : `Attempted to access nonexistent field '${argument}' of record\n${shown}`;
+    default:
+      return `Attempted to apply function:\n${shown}\nto argument ${shownArgument}, which is not in the domain of the function.`;
+  }
 };
 
-// TLC selects a field of a value that isn't a record from the function the value converts to,
-// which keeps a tuple's domain as an interval.
-export const describeMissingField = (functionValue: FunctionValue, field: string) =>
-  getFunctionClass(functionValue) === "FcnRcdValue"
-    ? describeNotInDomain(functionValue, field)
-    : describeNonIntegerArgument(field);
-
-export const isRecordValue = (functionValue: FunctionValue) =>
-  getFunctionClass(functionValue) === "RecordValue";
-
-// TLC checks the type of an argument to a tuple or a record before it looks the argument up, so
-// it never compares the argument with a key of another type.
-const isForeignKey = (domain: Value[], argument: Value) => {
-  const first = domain[0];
-  return typeof first === "number"
-    ? typeof argument !== "number" &&
-        (domain === intervalDomains[domain.length] || intervalArrays.has(domain))
-    : typeof first === "string" && typeof argument !== "string";
+// TLC 1.7.4 words a key of the wrong type in an EXCEPT, which selects rather than applies, apart.
+const describeExceptKey = (functionValue: FunctionValue, argument: Value) => {
+  if (!valueVersion.is174) return describeMissingArgument(functionValue, argument);
+  const shown = prettyPrint(formatValue(argument));
+  return getFunctionClass(functionValue) === "tuple"
+    ? `Attempted to apply tuple to a non-integer argument ${shown}.`
+    : `Attempted to apply record to a non-string argument ${shown}.`;
 };
 
-const findKeyIndex = (domain: Value[], argument: Value) => {
+// A key the domain holds itself, which TLC finds without a comparison that can fail.
+const findIdenticalKey = (domain: Value[], argument: Value) => {
   const first = domain[0];
   if (typeof argument === "number" && typeof first === "number") {
     const offset = argument - first;
     if (domain[offset] === argument) return offset;
   }
-  if (domain.length <= 8) {
-    for (let index = 0; index < domain.length; index++)
-      if (domain[index] === argument) return index;
+  return domain.length <= 8 ? domain.indexOf(argument) : -1;
+};
+
+export const createNonIntegerKeyError = (argument: Value) =>
+  new TlaEvaluationError(
+    `Attempted to apply function with integer domain to the non-integer argument ${prettyPrint(formatValue(argument))}`,
+  );
+
+// TLC's FcnRcdValue searches a domain this small linearly with equals, and a larger normalized one by
+// binary search with compareTo.
+const LINEAR_SEARCH_LIMIT = 32;
+
+// TLC looks a key up by the Java class of the function: a tuple or a record rejects a key of the
+// wrong type, and another function rejects a non-integer for a domain it keeps as an interval, which
+// TLC 1.7.4 doesn't. A key of another type than the domain's keys otherwise fails TLC's comparison.
+const findKeyIndexLikeTlc = (
+  functionValue: FunctionValue,
+  argument: Value,
+  describeWrongKey: (functionValue: FunctionValue, argument: Value) => string,
+) => {
+  const domain = functionValue.domain;
+  if (typeof argument !== typeof domain[0]) {
+    const functionClass = getFunctionClass(functionValue);
+    const keyType =
+      functionClass === "tuple" ? "number" : functionClass === "record" ? "string" : undefined;
+    if (keyType !== undefined && typeof argument !== keyType) {
+      throw new TlaEvaluationError(describeWrongKey(functionValue, argument));
+    }
+    if (keyType === undefined && !valueVersion.is174 && isIntervalDomain(domain)) {
+      throw createNonIntegerKeyError(argument);
+    }
   }
-  return findIndex(domain, argument);
+  const identical = findIdenticalKey(domain, argument);
+  if (identical !== -1) return identical;
+  return computeLikeTlcOnFailure(
+    () => findIndex(domain, argument),
+    (error) => {
+      if (valueVersion.is174 || domain.length < LINEAR_SEARCH_LIMIT) {
+        domain.forEach((key) => equalsLikeTlc(key, argument));
+      } else {
+        findIndex(domain, argument, compareLikeTlc);
+      }
+      throw error;
+    },
+  );
 };
 
 export const applyFunction = (
   functionValue: Value,
   argument: Value,
-  describeMissing?: (functionValue: FunctionValue) => string,
-  describeNonFunction?: (value: Value) => string,
+  describeMissing?: (functionValue: FunctionValue, argument: Value) => string,
 ): Value => {
   if (typeof functionValue === "object" && functionValue.kind === "LazyFunction") {
     if (!isElementOf(argument, functionValue.domain)) {
       throw new TlaEvaluationError(
-        lambdaFunctions.has(functionValue)
+        getFunctionClass(functionValue) === "lambda"
           ? describeMissingArgument(functionValue, argument)
           : `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
       );
@@ -1890,18 +2178,12 @@ export const applyFunction = (
   }
   if (typeof functionValue !== "object" || functionValue.kind !== "Function") {
     throw new TlaEvaluationError(
-      describeNonFunction?.(functionValue) ??
-        `Attempted to apply ${formatValue(functionValue)}, which is not a function`,
+      `Attempted to apply ${formatValue(functionValue)}, which is not a function`,
     );
   }
-  const position = isForeignKey(functionValue.domain, argument)
-    ? -1
-    : findKeyIndex(functionValue.domain, argument);
-  if (position === -1) {
-    throw new TlaEvaluationError(
-      describeMissing?.(functionValue) ?? describeMissingArgument(functionValue, argument),
-    );
-  }
+  const describe = describeMissing ?? describeMissingArgument;
+  const position = findKeyIndexLikeTlc(functionValue, argument, describe);
+  if (position === -1) throw new TlaEvaluationError(describe(functionValue, argument));
   return functionValue.range[position];
 };
 
@@ -1930,28 +2212,45 @@ export const updateFunction = (
   if (isLazy) {
     if (!isElementOf(argument, functionValue.domain)) return functionValue;
     const updated = update(functionValue.apply(argument));
-    return {
-      kind: "LazyFunction",
-      domain: functionValue.domain,
-      apply: (key) => (isEqualLikeTlc(argument, key) ? updated : functionValue.apply(key)),
-      source: functionValue.source,
-    };
+    return setFunctionClass<LazyFunctionValue>(
+      {
+        kind: "LazyFunction",
+        domain: functionValue.domain,
+        apply: (key) => (isEqualLikeTlc(argument, key) ? updated : functionValue.apply(key)),
+        source: functionValue.source,
+      },
+      getFunctionClass(functionValue),
+    );
+  }
+  if (!isFunctionValue(functionValue)) {
+    throw new TlaEvaluationError(
+      `Attempted to apply EXCEPT construct to the value ${prettyPrint(formatValue(functionValue))}.`,
+    );
   }
   const finite = toFiniteFunction(functionValue);
-  const position = findKeyIndex(finite.domain, argument);
+  const position = findKeyIndexLikeTlc(finite, argument, describeExceptKey);
   if (position === -1) return finite;
   const range = [...finite.range];
   const previous = finite.range[position];
   const next = update(previous);
   range[position] = next;
-  const updated = createSortedFunction(finite.domain, range);
+  const updated = setFunctionClass(
+    createSortedFunction(finite.domain, range),
+    getFunctionClass(finite),
+  );
   updated.writtenKeys = finite.writtenKeys;
-  if (finite.hash !== 0) {
-    const key = finite.domain[position];
-    updated.hash =
-      previous === next
-        ? finite.hash
-        : (finite.hash - getEntryContribution(key, previous) + getEntryContribution(key, next)) | 0;
+  if (finite.hash !== 0 && finite.hash !== UNFINGERPRINTABLE_HASH) {
+    const nextHash = getValueHash(next);
+    if (nextHash !== UNFINGERPRINTABLE_HASH) {
+      const keyHash = getValueHash(finite.domain[position]);
+      updated.hash =
+        previous === next
+          ? finite.hash
+          : (finite.hash -
+              getEntryContribution(keyHash, getValueHash(previous)) +
+              getEntryContribution(keyHash, nextHash)) |
+            0;
+    }
   }
   if (finite.fingerprint !== 0) {
     const key = finite.domain[position];
@@ -1988,35 +2287,101 @@ const hashString = (value: string) => {
 const SET_HASH_SEED = 0x73a5c3e1;
 const FUNCTION_HASH_SEED = 0x66d1b4f7;
 
-const getElementContribution = (element: Value) =>
-  finalizeHash((getValueHash(element) + 0x9e3779b9) | 0);
+const getElementContribution = (elementHash: number) =>
+  finalizeHash((elementHash + 0x9e3779b9) | 0);
 
-const getEntryContribution = (key: Value, value: Value) =>
-  finalizeHash((Math.imul(getValueHash(key), 0x27d4eb2d) + getValueHash(value)) | 0);
+const getEntryContribution = (keyHash: number, valueHash: number) =>
+  finalizeHash((Math.imul(keyHash, 0x27d4eb2d) + valueHash) | 0);
 
-const unenumeratedSets = { isHashed: false };
+// The hash of each value that TLC fails to fingerprint, such as Nat or a set that holds it. Calls
+// with such a value as an argument still share their result, and a state that holds one fails
+// when TLC fingerprints it.
+const UNFINGERPRINTABLE_HASH = 0x2f6b1c4d;
 
 const computeValueHash = (value: ObjectValue) => {
   if (value.kind === "ModelValue") return finalizeHash(combineHash(hashString(value.name), 0x6d));
   if (isSetValue(value)) {
-    if (!isEnumerable(value)) {
-      unenumeratedSets.isHashed = true;
-      return hashString(getValueKey(value));
-    }
+    if (!isEnumerable(value)) return UNFINGERPRINTABLE_HASH;
     const elements = toFiniteSet(value).elements;
     let hash = SET_HASH_SEED;
     for (let index = 0; index < elements.length; index++) {
-      hash = (hash + getElementContribution(elements[index])) | 0;
+      const elementHash = getValueHash(elements[index]);
+      if (elementHash === UNFINGERPRINTABLE_HASH) return UNFINGERPRINTABLE_HASH;
+      hash = (hash + getElementContribution(elementHash)) | 0;
     }
     return hash;
   }
+  if (value.kind === "LazyFunction" && !isEnumerable(value.domain)) return UNFINGERPRINTABLE_HASH;
   const functionValue = toFiniteFunction(value);
   let hash = FUNCTION_HASH_SEED;
   for (let index = 0; index < functionValue.domain.length; index++) {
-    hash =
-      (hash + getEntryContribution(functionValue.domain[index], functionValue.range[index])) | 0;
+    const keyHash = getValueHash(functionValue.domain[index]);
+    const itemHash = getValueHash(functionValue.range[index]);
+    if (keyHash === UNFINGERPRINTABLE_HASH || itemHash === UNFINGERPRINTABLE_HASH) {
+      return UNFINGERPRINTABLE_HASH;
+    }
+    hash = (hash + getEntryContribution(keyHash, itemHash)) | 0;
   }
   return hash;
+};
+
+// TLC's fingerPrint enumerates each set and function a value holds, and fails on Nat, Seq(S) and
+// the like, which it never enumerates.
+const fingerprintValue = (value: Value): void => {
+  if (typeof value !== "object" || value.kind === "ModelValue") return;
+  if (value.kind === "InfiniteSet" || value.kind === "SequenceSet") {
+    throw new TlaEvaluationError(
+      `TLC has found a state in which the value of a variable contains ${formatValue(value)}`,
+    );
+  }
+  if (isSetValue(value)) {
+    toFiniteSet(value).elements.forEach(fingerprintValue);
+    return;
+  }
+  const functionValue = toFiniteFunction(value);
+  functionValue.domain.forEach(fingerprintValue);
+  functionValue.range.forEach(fingerprintValue);
+};
+
+// The error TLC raises as it fingerprints a value: one that hashing the value raises, as for a set
+// too large to enumerate, or one of a value with the hash of the values TLC fails on.
+export const getFingerprintError = (value: Value) => {
+  if (typeof value !== "object" || value.kind === "ModelValue") return undefined;
+  try {
+    if (getValueHash(value) === UNFINGERPRINTABLE_HASH) fingerprintValue(value);
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    return error;
+  }
+};
+
+// The values a value holds, which TLC fingerprints as it fingerprints the value.
+export const getHeldValues = (value: ObjectValue): Value[] => {
+  switch (value.kind) {
+    case "Set":
+    case "MixedSet":
+      return value.elements;
+    case "Function":
+      return [...value.domain, ...value.range];
+    case "Subset":
+    case "SequenceSet":
+    case "FilteredSet":
+    case "Union":
+      return [value.base];
+    case "FunctionSet":
+      return [value.domain, value.range];
+    case "RecordSet":
+      return value.sets;
+    case "ProductSet":
+      return value.factors;
+    case "SetOperation":
+      return [value.left, value.right];
+    case "LazyFunction":
+      return [value.domain];
+    default:
+      return [];
+  }
 };
 
 export const getValueHash = (value: Value): number => {
@@ -2032,25 +2397,6 @@ export const getValueHash = (value: Value): number => {
   const hash = computeValueHash(value);
   valueHashes.set(value, hash);
   return hash;
-};
-
-const fingerprintLikeTlc = (value: Value): void => {
-  if (typeof value !== "object" || value.kind === "ModelValue") return;
-  if (isOverriddenSet(value)) {
-    throw new TlaEvaluationError(
-      `TLC has found a state in which the value of a variable contains ${formatValue(value)}`,
-    );
-  }
-  if (isSetValue(value)) return toFiniteSet(value).elements.forEach(fingerprintLikeTlc);
-  const functionValue = toFiniteFunction(value);
-  functionValue.domain.forEach(fingerprintLikeTlc);
-  functionValue.range.forEach(fingerprintLikeTlc);
-};
-
-// TLC enumerates every set in a state to fingerprint it, so it fails on a set it can't enumerate.
-// A state holds one only if hashing it met one, so states go unchecked until then.
-export const assertFingerprintable = (state: Value[]) => {
-  if (unenumeratedSets.isHashed) state.forEach(fingerprintLikeTlc);
 };
 
 const valueFingerprints = new WeakMap<ObjectValue, number>();
@@ -2079,10 +2425,7 @@ const getEntryFingerprint = (key: Value, value: Value) =>
 const computeValueFingerprint = (value: ObjectValue) => {
   if (value.kind === "ModelValue") return finalizeFingerprint(fingerprintString(value.name) ^ 0x3c);
   if (isSetValue(value)) {
-    if (!isEnumerable(value)) {
-      unenumeratedSets.isHashed = true;
-      return fingerprintString(getValueKey(value));
-    }
+    if (!isEnumerable(value)) return fingerprintString(getValueKey(value));
     const elements = toFiniteSet(value).elements;
     let fingerprint = 0x1b873593;
     for (let index = 0; index < elements.length; index++) {
@@ -2215,7 +2558,9 @@ const formatLazySet = (value: LazySetValue, isStrict: boolean): string => {
     case "SetOperation":
       return `${format(value.left)} ${value.operator} ${format(value.right)}`;
     case "FilteredSet":
-      return `{x \\in ${format(value.base)} : ...}`;
+      return value.source
+        ? `{${value.source.names} \\in ${format(value.base)} : <expression ${value.source.predicate}> }`
+        : `{x \\in ${format(value.base)} : ...}`;
     case "Union":
       return formatUnion(value, isStrict);
   }
@@ -2227,6 +2572,17 @@ const isFieldName = (name: string) =>
   /^[\p{L}\p{Nd}_]*$/u.test(name) &&
   /\p{L}/u.test(name) &&
   (name.length < 4 || !/^[WS]F_/.test(name));
+
+// FcnLambdaValue#toString prints a function it fails to enumerate as its parameters and body.
+const toPrintedFunction = (value: LazyFunctionValue) => {
+  if (!isEnumerable(value.domain)) return undefined;
+  try {
+    return toFiniteFunction(value);
+  } catch (error) {
+    if (error instanceof TlaEvaluationError) return undefined;
+    throw error;
+  }
+};
 
 export const formatValue = (value: Value, isStrict = false, isNormalized = false): string => {
   const format = (inner: Value) => formatValue(inner, isStrict, isNormalized);
@@ -2259,22 +2615,34 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       return `Seq(${format(value.base)})`;
     case "Function":
     case "LazyFunction": {
-      if (value.kind === "LazyFunction" && !isEnumerable(value.domain)) {
-        const source = value.source;
+      const functionValue = value.kind === "LazyFunction" ? toPrintedFunction(value) : value;
+      if (functionValue === undefined) {
+        const source = value.kind === "LazyFunction" ? value.source : undefined;
         if (!source) return "<function>";
         const parameters = source.parameters
           .map((parameter) => `${parameter.name} \\in ${formatValue(parameter.domain)}`)
           .join(", ");
         return `[${parameters} |-> <expression ${source.body}>]`;
       }
-      const functionValue = toFiniteFunction(value);
+      if (
+        functionValue.domain.length === 0 &&
+        valueVersion.is174 &&
+        getFunctionClass(value) !== "tuple"
+      ) {
+        return "<< >>";
+      }
       // TLC normalizes a lambda's domain to print it, but evaluates its body afterward.
       const formatRange = (inner: Value) =>
-        formatValue(inner, isStrict, isNormalized && value.kind === "Function");
+        formatValue(inner, isStrict, isNormalized && getFunctionClass(value) !== "lambda");
       if (functionValue.domain.every((key, index) => key === index + 1)) {
         return `<<${functionValue.range.map(formatRange).join(", ")}>>`;
       }
-      if (functionValue.domain.every((key) => typeof key === "string" && isFieldName(key))) {
+      // A RecordValue prints as a record whatever its fields, and a FcnRcdValue only if each key
+      // is a name.
+      if (
+        getFunctionClass(value) === "record" ||
+        functionValue.domain.every((key) => typeof key === "string" && isFieldName(key))
+      ) {
         const isSorted =
           isNormalized || functionValue.hash !== 0 || functionValue.fingerprint !== 0;
         const pairs = isSorted

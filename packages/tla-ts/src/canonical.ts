@@ -1,4 +1,4 @@
-import { getValueHash, isSameValue, type Value } from "./values";
+import { getValueHash, isInterchangeableValue, type Value } from "./values";
 
 const canonicalizeElements = (elements: Value[], canonicalize: (value: Value) => Value) => {
   for (let index = 0; index < elements.length; index++) {
@@ -15,11 +15,12 @@ export const createCanonicalizer = () => {
     const hash = getValueHash(value);
     const bucket = canonicalValues.get(hash);
     if (bucket !== undefined && !Array.isArray(bucket)) {
-      if (bucket === value || isSameValue(bucket, value)) return bucket;
+      if (bucket === value || isInterchangeableValue(bucket, value)) return bucket;
     }
     if (Array.isArray(bucket)) {
       for (let index = 0; index < bucket.length; index++) {
-        if (bucket[index] === value || isSameValue(bucket[index], value)) return bucket[index];
+        if (bucket[index] === value || isInterchangeableValue(bucket[index], value))
+          return bucket[index];
       }
     }
     if (value.kind === "Set") canonicalizeElements(value.elements, canonicalize);

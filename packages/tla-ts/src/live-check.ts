@@ -1,9 +1,8 @@
 import { TlaEvaluationError } from "./errors";
-import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { hasRepeatedEffects, type Environment } from "./evaluate";
 import {
+  createTautologyError,
   evaluateLive,
-  TAUTOLOGY_MESSAGE,
   evaluateOnLasso,
   toLiveExpression,
   type ScopedExpression,
@@ -29,18 +28,38 @@ export interface LiveSuccessor {
 export interface Lasso {
   prefix: number[];
   cycle: number[];
+  // Whether the solution that the lasso violates constrains the cycle, as a liveness property does.
+  // TLC warns that a stuttering counterexample to one may come from a missing fairness constraint.
+  isCycleConstrained: boolean;
 }
 
 export interface LivenessChecker {
-  addInitialState: (index: number, state: Value[]) => void;
-  addState: (index: number, state: Value[], successors: LiveSuccessor[]) => number[] | undefined;
+  // How many solutions of the negated properties TLC checks, which it calls branches.
+  branches: number;
+  // With a tracing environment, the checks record their call stack as TLC's replay of a failed
+  // check does.
+  addInitialState: (index: number, state: Value[], tracing?: Environment) => void;
+  addState: (
+    index: number,
+    state: Value[],
+    successors: LiveSuccessor[],
+    tracing?: Environment,
+  ) => number[] | undefined;
   findViolation: () => Lasso | undefined;
   getViolatedProperties: (path: Value[][], cycleStart: number) => string[];
 }
 
 export interface LiveGraph {
-  getFingerprint: (index: number) => number;
-  getSuccessors: (state: Value[]) => LiveSuccessor[];
+  getFingerprint: (successor: LiveSuccessor) => number;
+  getSuccessors: (index: number, state: Value[]) => LiveSuccessor[];
+}
+
+// Numbers in a typed array that doubles as it fills, so a graph of millions of nodes takes a few
+// bytes for each.
+interface Pool<Data extends Int32Array | Uint8Array> {
+  data: Data;
+  length: number;
+  create: (length: number) => Data;
 }
 
 // TLC's behavior graph for one solution: a node per state, or per state and tableau node.
@@ -50,20 +69,50 @@ interface Check {
   actionIds: Int32Array;
   nodeStates: number[];
   nodeTableaux: number[];
-  // The successors a node gathers until it is written.
-  pending: (number[] | undefined)[];
-  // Each written node's state results, then its action results edge by edge, from the node's
-  // offset in one buffer, so a node costs no objects of its own. An unwritten node has offset -1.
-  offsets: number[];
-  results: { bytes: Uint8Array; length: number };
-  // Each written node's successor count, then its successors, from the node's edge offset.
-  edgeOffsets: number[];
-  edges: { ids: Int32Array; length: number };
+  // Where a node's edges start in edgeTargets, or UNWRITTEN until TLC writes the node with its
+  // successors, and how many it has.
+  edgeStarts: number[];
+  edgeCounts: number[];
+  edgeTargets: Pool<Int32Array>;
+  // The results of the action checks on each edge, and of the state checks on each state, which
+  // are the same for every node of the state.
+  edgeActions: Pool<Uint8Array>;
+  stateResults: Pool<Uint8Array>;
   initial: number[];
+  // The nodes of each state in the order the check records them, a list through nextSiblings.
+  firstNodes: Pool<Int32Array>;
+  lastNodes: Pool<Int32Array>;
+  nextSiblings: number[];
   nodeIds: NodeTable;
   isDone: boolean[];
   errorNode: number | undefined;
 }
+
+const containsAlways = (expression: LiveExpression): boolean => {
+  switch (expression.kind) {
+    case "Always":
+      return true;
+    case "Eventually":
+    case "Not":
+    case "Next":
+      return containsAlways(expression.body);
+    case "And":
+    case "Or":
+      return expression.operands.some(containsAlways);
+    default:
+      return false;
+  }
+};
+
+// TLC's OrderOfSolution#hasEmptyPEMAndBoxFreePromises, negated.
+const isCycleConstrained = (solution: Solution) =>
+  solution.promises.some((promise) => containsAlways(promise.body)) ||
+  solution.models.some(
+    (model) =>
+      model.eventuallyAlways.length > 0 ||
+      model.infinitelyOftenStates.length > 0 ||
+      model.infinitelyOftenActions.length > 0,
+  );
 
 const isSameState = (left: Value[], right: Value[]) =>
   left.every((value, position) => isSameValue(value, right[position]));
@@ -71,15 +120,26 @@ const isSameState = (left: Value[], right: Value[]) =>
 const removeRepeats = (path: number[]) =>
   path.filter((node, position) => position === 0 || path[position - 1] !== node);
 
-// A node owns one entry in each of its check's per-node arrays.
-const pushNode = (check: Check, state: number, tableauNode: number) => {
-  check.nodeStates.push(state);
-  check.nodeTableaux.push(tableauNode);
-  check.pending.push(undefined);
-  check.offsets.push(-1);
-  check.edgeOffsets.push(-1);
-  return check.nodeStates.length - 1;
+const createPool = <Data extends Int32Array | Uint8Array>(
+  create: (length: number) => Data,
+): Pool<Data> => ({ data: create(1024), length: 0, create });
+
+const writeToPool = <Data extends Int32Array | Uint8Array>(
+  pool: Pool<Data>,
+  offset: number,
+  values: ArrayLike<number>,
+) => {
+  const end = offset + values.length;
+  if (end > pool.data.length) {
+    const data = pool.create(Math.max(2 * pool.data.length, end));
+    data.set(pool.data);
+    pool.data = data;
+  }
+  pool.data.set(values, offset);
+  pool.length = Math.max(pool.length, end);
 };
+
+const NO_NODE = -1;
 
 // A Map holds at most 2^24 entries, so each tableau node of a state finds its node in an
 // open-addressing table of (state plus one, tableau node, node) triples.
@@ -95,24 +155,50 @@ const getNodeSlot = (table: NodeTable, state: number, tableauNode: number) => {
   for (let index = hash; ; index = (index + 1) & mask) {
     const slot = index * 3;
     const stored = table.slots[slot];
-    if (stored === 0 || (stored === state + 1 && table.slots[slot + 1] === tableauNode))
+    if (stored === 0 || (stored === state + 1 && table.slots[slot + 1] === tableauNode)) {
       return slot;
+    }
   }
 };
 
-// Without a tableau a node is a state, so a successor the search hasn't expanded yet may lie past
-// the per-node arrays.
-const isWritten = (check: Check, node: number) => (check.offsets[node] ?? -1) !== -1;
+const createNodes = (length: number) => new Int32Array(length).fill(NO_NODE);
 
-const getPending = (check: Check, node: number) => (check.pending[node] ??= []);
+const UNWRITTEN = -1;
+
+const isWritten = (check: Check, node: number) =>
+  (check.edgeStarts[node] ?? UNWRITTEN) !== UNWRITTEN;
 
 const getSuccessors = (check: Check, node: number) => {
-  const offset = check.edgeOffsets[node];
-  return check.edges.ids.subarray(offset + 1, offset + 1 + check.edges.ids[offset]);
+  const start = check.edgeStarts[node];
+  return check.edgeTargets.data.subarray(start, start + check.edgeCounts[node]);
 };
 
 const getStateResult = (check: Check, node: number, position: number) =>
-  check.results.bytes[check.offsets[node] + position] === 1;
+  check.stateResults.data[check.nodeStates[node] * check.solution.stateChecks.length + position] ===
+  1;
+
+// A node owns one entry in each of its check's per-node arrays.
+const pushNode = (check: Check, state: number, tableauNode: number) => {
+  check.nodeStates.push(state);
+  check.nodeTableaux.push(tableauNode);
+  check.edgeStarts.push(UNWRITTEN);
+  check.edgeCounts.push(0);
+  check.nextSiblings.push(NO_NODE);
+  return check.nodeStates.length - 1;
+};
+
+// The nodes of the state, in the order the check recorded them.
+const getStateNodes = (check: Check, state: number) => {
+  const nodes: number[] = [];
+  for (
+    let node = check.firstNodes.data[state] ?? NO_NODE;
+    node !== NO_NODE;
+    node = check.nextSiblings[node]
+  ) {
+    nodes.push(node);
+  }
+  return nodes;
+};
 
 const SUCCESSOR_CAPACITY = 16;
 
@@ -140,10 +226,7 @@ export const createLivenessChecker = (
     fairness.length === 0 ? violation : createJunction("And", [...fairness, violation]);
   const solutions = getSolutions(formula);
   if (solutions.length === 0) {
-    throw setExitCode(
-      new TlaEvaluationError(TAUTOLOGY_MESSAGE),
-      EXIT_STATUS.livenessEvaluationFailure,
-    );
+    throw createTautologyError();
   }
   const actionIds = new Map<string, number>();
   const checks = solutions.map((solution): Check => ({
@@ -156,12 +239,15 @@ export const createLivenessChecker = (
     }),
     nodeStates: [],
     nodeTableaux: [],
-    pending: [],
-    offsets: [],
-    results: { bytes: new Uint8Array(1024), length: 0 },
-    edgeOffsets: [],
-    edges: { ids: new Int32Array(1024), length: 0 },
+    edgeStarts: [],
+    edgeCounts: [],
+    edgeTargets: createPool((length) => new Int32Array(length)),
+    edgeActions: createPool((length) => new Uint8Array(length)),
+    stateResults: createPool((length) => new Uint8Array(length)),
     initial: [],
+    firstNodes: createPool(createNodes),
+    lastNodes: createPool(createNodes),
+    nextSiblings: [],
     nodeIds: { slots: new Int32Array(3 << 10), size: 0, shift: 22 },
     isDone: [],
     errorNode: undefined,
@@ -171,6 +257,7 @@ export const createLivenessChecker = (
   // TLC evaluates every check on its own. Without side effects the order can't show, so the
   // checks of one state share their results.
   const isShared = !hasRepeatedEffects(environment);
+  const evaluation = { environment };
   const shared = {
     states: new Map<Value[], Map<LiveExpression, boolean>>(),
     actions: new Map<Value[], Map<Value[], Int8Array>>(),
@@ -192,7 +279,7 @@ export const createLivenessChecker = (
       predicate,
       state,
       undefined,
-      environment,
+      evaluation.environment,
       isShared ? getStateCache(state) : new Map(),
     );
   const checkState = (check: Check, source: number, state: Value[]) =>
@@ -206,7 +293,7 @@ export const createLivenessChecker = (
       const predicates = check.solution.actionChecks;
       if (!isShared) {
         return Uint8Array.from(predicates, (predicate) =>
-          evaluateLive(predicate, state, successor, environment, new Map()) ? 1 : 0,
+          evaluateLive(predicate, state, successor, evaluation.environment, new Map()) ? 1 : 0,
         );
       }
       const stateCache = getStateCache(state);
@@ -216,7 +303,13 @@ export const createLivenessChecker = (
       results.set(successor, known);
       return Uint8Array.from(check.actionIds, (id, position) => {
         if (known[id] === -1) {
-          known[id] = evaluateLive(predicates[position], state, successor, environment, stateCache)
+          known[id] = evaluateLive(
+            predicates[position],
+            state,
+            successor,
+            evaluation.environment,
+            stateCache,
+          )
             ? 1
             : 0;
         }
@@ -232,7 +325,10 @@ export const createLivenessChecker = (
     evaluateFrom(source, () =>
       tableau.nodes[node].statePredicates.every((predicate) => evaluateState(predicate, state)),
     );
+  // TLC 1.7.4 doesn't stop at a tableau node that accepts every behavior, so it finds a violation
+  // of a property like a safety property only in its liveness checks.
   const isAccepting = (tableau: Tableau, node: number) => {
+    if (environment.runtime.version === "1.7.4") return false;
     const tableauNode = tableau.nodes[node];
     return (
       tableauNode.particle.length === 0 &&
@@ -262,54 +358,37 @@ export const createLivenessChecker = (
       table.slots = new Int32Array(old.length * 2);
       table.shift--;
       for (let slot = 0; slot < old.length; slot += 3) {
-        if (old[slot] !== 0)
+        if (old[slot] !== 0) {
           table.slots.set(
             old.subarray(slot, slot + 3),
             getNodeSlot(table, old[slot] - 1, old[slot + 1]),
           );
+        }
       }
     }
     table.slots.set([state + 1, tableauNode, node], getNodeSlot(table, state, tableauNode));
+    const last = check.lastNodes.data[state] ?? NO_NODE;
+    if (last === NO_NODE) writeToPool(check.firstNodes, state, [node]);
+    else check.nextSiblings[last] = node;
+    writeToPool(check.lastNodes, state, [node]);
     return node;
   };
-  // A state's nodes in the order they were recorded, which is the order of their ids.
-  const getStateNodes = (check: Check, tableau: Tableau, state: number) =>
-    tableau.nodes
-      .flatMap((_, tableauNode) => getNodeId(check, state, tableauNode) ?? [])
-      .sort((left, right) => left - right);
   const writeNode = (
     check: Check,
     node: number,
+    targets: number[],
     actions: Uint8Array[],
     stateResults: Uint8Array,
   ) => {
+    const start = check.edgeTargets.length;
     const actionCount = check.solution.actionChecks.length;
-    const results = check.results;
-    const offset = results.length;
-    results.length += stateResults.length + actions.length * actionCount;
-    if (results.length > results.bytes.length) {
-      const grown = new Uint8Array(Math.max(2 * results.bytes.length, results.length));
-      grown.set(results.bytes);
-      results.bytes = grown;
-    }
-    results.bytes.set(stateResults, offset);
-    actions.forEach((edge, position) =>
-      results.bytes.set(edge, offset + stateResults.length + position * actionCount),
+    writeToPool(check.edgeTargets, start, targets);
+    actions.forEach((results, position) =>
+      writeToPool(check.edgeActions, (start + position) * actionCount, results),
     );
-    check.offsets[node] = offset;
-    const successors = check.pending[node] ?? [];
-    const edges = check.edges;
-    const edgeOffset = edges.length;
-    edges.length += successors.length + 1;
-    if (edges.length > edges.ids.length) {
-      const grown = new Int32Array(Math.max(2 * edges.ids.length, edges.length));
-      grown.set(edges.ids);
-      edges.ids = grown;
-    }
-    edges.ids[edgeOffset] = successors.length;
-    edges.ids.set(successors, edgeOffset + 1);
-    check.edgeOffsets[node] = edgeOffset;
-    check.pending[node] = undefined;
+    writeToPool(check.stateResults, check.nodeStates[node] * stateResults.length, stateResults);
+    check.edgeStarts[node] = start;
+    check.edgeCounts[node] = targets.length;
   };
 
   // TLC collects a state's successors and the state itself in a SetOfStates, a hash set it
@@ -324,7 +403,7 @@ export const createLivenessChecker = (
     };
     const insert = (slots: (LiveSuccessor | undefined)[], successor: LiveSuccessor) => {
       for (
-        let slot = (graph.getFingerprint(successor.index) & 0x7fffffff) % slots.length;
+        let slot = (graph.getFingerprint(successor) & 0x7fffffff) % slots.length;
         ;
         slot = (slot + 1) % slots.length
       ) {
@@ -362,7 +441,7 @@ export const createLivenessChecker = (
     const stateResults = checkState(check, index, state);
     const tableauNode = tableau.nodes[check.nodeTableaux[node]];
     const actions: Uint8Array[] = [];
-    const successors = getPending(check, node);
+    const successors: number[] = [];
     const selfActions =
       tableauNode.successors.length > 0
         ? checkAction(check, index, state, state)
@@ -380,11 +459,14 @@ export const createLivenessChecker = (
       actions.push(selfActions);
       if (existing === undefined) expandLate(check, tableau, state, index, target);
     }
-    for (const successor of graph.getSuccessors(state)) {
+    for (const successor of graph.getSuccessors(index, state)) {
       const successorActions = checkAction(check, index, state, successor.state);
       const isDone = check.isDone[successor.index] === true;
       for (const next of tableauNode.successors) {
         if (!isConsistent(tableau, next, index, successor.state)) continue;
+        // A successor the search never stored follows a violation or an error, after which nothing
+        // checks the graph. TLC records its node, which it never expands.
+        if (successor.index === -1) continue;
         const existing = getNodeId(check, successor.index, next);
         if (existing !== undefined && successors.includes(existing)) continue;
         const target = existing ?? recordNode(check, successor.index, next);
@@ -395,7 +477,7 @@ export const createLivenessChecker = (
         }
       }
     }
-    if (successors.length > 0) writeNode(check, node, actions, stateResults);
+    if (successors.length > 0) writeNode(check, node, successors, actions, stateResults);
   };
 
   const addTableauState = (
@@ -411,8 +493,8 @@ export const createLivenessChecker = (
     );
     check.isDone[index] = true;
     // TLC expands the nodes recorded before the loop, not the ones the loop records.
-    for (const node of getStateNodes(check, tableau, index)) {
-      const successors = getPending(check, node);
+    for (const node of getStateNodes(check, index)) {
+      const successors: number[] = [];
       const actions: Uint8Array[] = [];
       set.forEach((successor, position) => {
         const isDone = check.isDone[successor.index] === true;
@@ -428,7 +510,7 @@ export const createLivenessChecker = (
           }
         }
       });
-      writeNode(check, node, actions, stateResults);
+      writeNode(check, node, successors, actions, stateResults);
     }
     if (check.errorNode === undefined) return undefined;
     return removeRepeats(
@@ -446,14 +528,14 @@ export const createLivenessChecker = (
     index: number,
   ) => {
     while (check.nodeStates.length <= index) pushNode(check, check.nodeStates.length, -1);
-    const successors = getPending(check, index);
+    const successors: number[] = [];
     const actions: Uint8Array[] = [];
     set.forEach((successor, position) => {
       if (isWritten(check, successor.index) && successors.includes(successor.index)) return;
       successors.push(successor.index);
       actions.push(actionResults[position]);
     });
-    writeNode(check, index, actions, stateResults);
+    writeNode(check, index, successors, actions, stateResults);
     return undefined;
   };
 
@@ -488,9 +570,8 @@ export const createLivenessChecker = (
   const findInModel = (check: Check, model: Solution["models"][number]): Lasso | undefined => {
     const solution = check.solution;
     const actionCount = solution.actionChecks.length;
-    const stateCount = solution.stateChecks.length;
     const getAction = (node: number, edge: number, position: number) =>
-      check.results.bytes[check.offsets[node] + stateCount + edge * actionCount + position] === 1;
+      check.edgeActions.data[(check.edgeStarts[node] + edge) * actionCount + position] === 1;
     const isAllowed = (node: number, edge: number) =>
       model.eventuallyAlways.every((position) => getAction(node, edge, position));
     const links = new Float64Array(check.nodeStates.length).fill(UNVISITED);
@@ -581,8 +662,7 @@ export const createLivenessChecker = (
           if (remaining.count <= 0) break;
           const step = { last: -1, unvisited: -1 };
           const countBeforeActions = remaining.count;
-          const successors = getSuccessors(check, current.node);
-          const taken = successors.some((next, edge) => {
+          const taken = getSuccessors(check, current.node).some((next, edge) => {
             if (membersByState.has(check.nodeStates[next])) {
               if (!isMember(next) || !isAllowed(current.node, edge)) return false;
               step.last = next;
@@ -630,7 +710,11 @@ export const createLivenessChecker = (
       }
       const cycleState = prefix[prefix.length - 1];
       if (postfix[postfix.length - 1] === cycleState) postfix.pop();
-      return { prefix: prefix.slice(0, -1), cycle: [cycleState, ...postfix.reverse()] };
+      return {
+        prefix: prefix.slice(0, -1),
+        cycle: [cycleState, ...postfix.reverse()],
+        isCycleConstrained: isCycleConstrained(solution),
+      };
     };
 
     // TLC's LiveWorker#bfsPostFix, the states from the walk's end back to the root, last first.
@@ -716,37 +800,48 @@ export const createLivenessChecker = (
   };
 
   return {
-    addInitialState: (index, state) => {
+    branches: checks.length,
+    addInitialState: (index, state, tracing) => {
+      evaluation.environment = tracing ?? environment;
       shared.states.clear();
       shared.actions.clear();
-      for (const check of checks) {
-        const tableau = check.solution.tableau;
-        if (!tableau) {
-          check.initial.push(index);
-          continue;
+      try {
+        for (const check of checks) {
+          const tableau = check.solution.tableau;
+          if (!tableau) {
+            check.initial.push(index);
+            continue;
+          }
+          for (let node = 0; node < tableau.initialCount; node++) {
+            if (!isConsistent(tableau, node, undefined, state)) continue;
+            check.initial.push(getNodeId(check, index, node) ?? recordNode(check, index, node));
+          }
         }
-        for (let node = 0; node < tableau.initialCount; node++) {
-          if (!isConsistent(tableau, node, undefined, state)) continue;
-          check.initial.push(getNodeId(check, index, node) ?? recordNode(check, index, node));
-        }
+      } finally {
+        evaluation.environment = environment;
       }
     },
-    addState: (index, state, successors) => {
+    addState: (index, state, successors, tracing) => {
+      evaluation.environment = tracing ?? environment;
       shared.states.clear();
       shared.actions.clear();
-      const set = getSuccessorSet(index, state, successors);
-      for (const check of checks) {
-        const actionResults = set.map((successor) =>
-          checkAction(check, index, state, successor.state),
-        );
-        const stateResults = checkState(check, index, state);
-        const tableau = check.solution.tableau;
-        const accepted = tableau
-          ? addTableauState(check, tableau, set, actionResults, stateResults, index)
-          : addPlainState(check, set, actionResults, stateResults, index);
-        if (accepted) return accepted;
+      try {
+        const set = getSuccessorSet(index, state, successors);
+        for (const check of checks) {
+          const actionResults = set.map((successor) =>
+            checkAction(check, index, state, successor.state),
+          );
+          const stateResults = checkState(check, index, state);
+          const tableau = check.solution.tableau;
+          const accepted = tableau
+            ? addTableauState(check, tableau, set, actionResults, stateResults, index)
+            : addPlainState(check, set, actionResults, stateResults, index);
+          if (accepted) return accepted;
+        }
+        return undefined;
+      } finally {
+        evaluation.environment = environment;
       }
-      return undefined;
     },
     findViolation: () => {
       for (const check of checks) {

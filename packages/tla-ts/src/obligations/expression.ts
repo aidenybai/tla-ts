@@ -929,7 +929,7 @@ export const mapExceptSpecs = (specs: ExceptSpec[], map: (inner: Expr) => Expr):
     return { trail, value };
   });
 
-export const mapDefnBody = (definition: Defn, map: (body: Expr) => Expr): Defn =>
+const mapDefnBody = (definition: Defn, map: (body: Expr) => Expr): Defn =>
   definition.kind === "Operator" || definition.kind === "Bpragma"
     ? { ...definition, body: map(definition.body) }
     : definition;

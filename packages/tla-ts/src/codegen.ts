@@ -3,21 +3,22 @@ import {
   bindValue,
   expectBoolean,
   findGlobalName,
-  getEnumeratedElements,
   getConditionError,
-  getConjunctError,
+  getJunctionError,
   getDomainOperator,
   getSubsetOperator,
   getEvaluator,
-  getFieldError,
-  getNonFunctionError,
-  getNonRecordError,
+  getFieldSelector,
+  getMissingArgumentDescriber,
+  getQuantifierElements,
   isClosedConstant,
   isTlcInteger,
   isValueArgument,
   isWorthCaching,
   keepLazy,
   resolveGlobalOperator,
+  expectFunction,
+  toKeepLazyContext,
   createPrimeOutsideActionError,
   createUnassignedError,
   getSortedFields,
@@ -29,7 +30,7 @@ import {
 import {
   applyFunction,
   createEnumeratedSet,
-  createSortedFunction,
+  createSortedRecord,
   createTuple,
   createWrittenRecord,
   valuesEqual,
@@ -73,17 +74,18 @@ const createRuntime = () => ({
     if (typeof value !== "boolean") throw getConditionError(expression, value);
     return value;
   },
-  conjunct: (value: Value, expression: Expression & { kind: "And" | "Or" }, index: number) => {
-    if (typeof value !== "boolean") throw getConjunctError(expression, index, value);
+  junct: (value: Value, expression: Expression & { kind: "And" | "Or" }, index: number) => {
+    if (typeof value !== "boolean") throw getJunctionError(expression, index, value);
     return value;
   },
   apply: applyFunction,
+  expectFunction,
   tuple: createTuple,
   set: createEnumeratedSet,
-  record: createSortedFunction,
+  record: createSortedRecord,
   writtenRecord: createWrittenRecord,
   equal: valuesEqual,
-  enumerate: getEnumeratedElements,
+  enumerate: getQuantifierElements,
   unassigned: (name: string, expression: Expression): never => {
     throw createUnassignedError(name, expression);
   },
@@ -95,7 +97,9 @@ const createRuntime = () => ({
     scope: context.scope,
     state: context.next,
     next: undefined,
+    isKeepLazy: context.isKeepLazy,
   }),
+  keepLazyContext: toKeepLazyContext,
   extend: (context: Context, names: string[], values: Value[]): Context => ({
     environment: context.environment,
     scope: names.reduce(
@@ -104,6 +108,7 @@ const createRuntime = () => ({
     ),
     state: context.state,
     next: context.next,
+    isKeepLazy: context.isKeepLazy,
   }),
 });
 
@@ -154,7 +159,7 @@ const generateQuantifier = (
   const lists = expression.bounds.map(() => createLocal(generator));
   const declarations = expression.bounds.map(
     (bound, index) =>
-      `const ${lists[index]} = enumerate(${generateExpression(generator, bound.set, inner)}, ${addReference(generator, bound.set)});`,
+      `const ${lists[index]} = enumerate(${generateExpression(generator, bound.set, inner)}, ${addReference(generator, bound.set)}, ${JSON.stringify(generator.environment.runtime.version)});`,
   );
   const elements = expression.bounds.map((bound) => {
     const local = createLocal(generator);
@@ -162,9 +167,13 @@ const generateQuantifier = (
     return local;
   });
   const test = `if (bool(${generateExpression(generator, expression.body, inner)}, ${description}) !== ${isForall}) return ${!isForall};`;
+  // enumerate returns an array, or an interval, which has a low end, to step through.
   const loops = elements.reduce((code, element, index) => {
     const position = createLocal(generator);
-    return `for (let ${position} = 0; ${position} < ${lists[index]}.length; ${position}++) { const ${element} = ${lists[index]}[${position}]; ${code} }`;
+    const low = createLocal(generator);
+    const size = createLocal(generator);
+    const list = lists[index];
+    return `for (let ${position} = 0, ${low} = ${list}.low, ${size} = ${low} === undefined ? ${list}.length : ${list}.high - ${low} + 1; ${position} < ${size}; ${position}++) { const ${element} = ${low} === undefined ? ${list}[${position}] : ${low} + ${position}; ${code} }`;
   }, test);
   const parameters = outer.map((local) => `, ${local}`).join("");
   generator.helpers.push(
@@ -212,6 +221,32 @@ const generateApply = (
   return generateDelegate(generator, expression, frame);
 };
 
+// Whether an expression only reads values, so that it constructs no function whatever the control.
+const isConstructionFree = (
+  expression: Expression,
+  frame: Frame,
+  environment: Environment,
+): boolean => {
+  switch (expression.kind) {
+    case "Identifier": {
+      if (frame.locals.has(expression.name)) return true;
+      if (isLocallyResolved(expression)) return false;
+      const global = findGlobalName(expression.name, environment);
+      return global?.kind === "Variable" || global?.kind === "Value";
+    }
+    case "Prime":
+      return isConstructionFree(expression.expression, frame, environment);
+    case "FieldAccess":
+      return isConstructionFree(expression.record, frame, environment);
+    case "FunctionApplication":
+      return [expression.function, ...expression.args].every((child) =>
+        isConstructionFree(child, frame, environment),
+      );
+    default:
+      return false;
+  }
+};
+
 const generateExpression = (generator: Generator, expression: Expression, frame: Frame): string => {
   const generate = (node: Expression, nodeFrame = frame) =>
     generateExpression(generator, node, nodeFrame);
@@ -241,24 +276,36 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     }
     case "Apply":
       return generateApply(generator, expression, frame);
-    case "And": {
+    case "And":
+    case "Or": {
       const node = addReference(generator, expression);
-      return `(${expression.operands.map((operand, index) => `conjunct(${generate(operand)}, ${node}, ${index})`).join(" && ")})`;
+      const operator = expression.kind === "And" ? " && " : " || ";
+      return `(${expression.operands.map((operand, index) => `junct(${generate(operand)}, ${node}, ${index})`).join(operator)})`;
     }
-    case "Or":
-      return `(${expression.operands.map((operand) => `bool(${generate(operand)}, "a disjunct")`).join(" || ")})`;
     case "If":
       return `(condition(${generate(expression.condition)}, ${addReference(generator, expression)}) ? ${generate(expression.consequent)} : ${generate(expression.alternative)})`;
     case "FunctionApplication": {
       keepLazy(expression.function);
-      const functionCode = generate(expression.function);
-      const describeNonFunction = addReference(generator, getNonFunctionError(expression));
+      // The interpreter evaluates a function that may construct one with EvalControl.KeepLazy.
+      const evaluatedFunction = isConstructionFree(
+        expression.function,
+        frame,
+        generator.environment,
+      )
+        ? generate(expression.function)
+        : generateDelegate(generator, expression.function, {
+            ...frame,
+            context: `keepLazyContext(${frame.context})`,
+          });
+      const functionCode = `expectFunction(${evaluatedFunction}, ${addReference(generator, expression)})`;
+      const describeMissing = getMissingArgumentDescriber(generator.environment.runtime.version);
+      const error = describeMissing ? `, ${addReference(generator, describeMissing)}` : "";
       if (expression.args.length === 1)
-        return `apply(${functionCode}, ${generate(expression.args[0])}, undefined, ${describeNonFunction})`;
-      return `apply(${functionCode}, tuple([${expression.args.map((arg) => generate(arg)).join(", ")}]), undefined, ${describeNonFunction})`;
+        return `apply(${functionCode}, ${generate(expression.args[0])}${error})`;
+      return `apply(${functionCode}, tuple([${expression.args.map((arg) => generate(arg)).join(", ")}])${error})`;
     }
     case "FieldAccess":
-      return `apply(${generate(expression.record)}, ${JSON.stringify(expression.field)}, ${addReference(generator, getFieldError(expression))}, ${addReference(generator, getNonRecordError(expression))})`;
+      return `${addReference(generator, getFieldSelector(expression))}(${generate(expression.record)})`;
     case "Record": {
       const fields = getSortedFields(expression.fields);
       if (hasDuplicateFields(fields)) return generateDelegate(generator, expression, frame);
