@@ -752,7 +752,7 @@ export const createSearch = (
   const possible = getPossiblePredicates(config.possible, environment);
   if (environment.variables.length === 0) return undefined;
   const symmetryGroup =
-    config.symmetry === undefined ? [] : getSymmetryGroup(config.symmetry, environment);
+    config.symmetry === undefined ? undefined : getSymmetryGroup(config.symmetry, environment);
   if (config.view !== undefined) getConfigOperator("view function", config.view, environment);
   const view =
     config.view === undefined
@@ -784,14 +784,12 @@ export const createSearch = (
       .sort((left, right) => getTlcPosition(left) - getTlcPosition(right));
     return tlcOrder.indices;
   };
-  // A representative in TLC's variable order is the one whose fingerprint TLC reports.
-  const order = symmetryGroup.length > 0 ? getTlcOrder() : undefined;
   const getViewValue = (expression: Expression, state: Value[]) =>
     evaluate(expression, getContext(environment, state, undefined));
   const getTlcStateFingerprint = (state: Value[]) => {
     const indices = getTlcOrder();
     const representative =
-      symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup, indices);
+      symmetryGroup === undefined ? state : getRepresentative(state, symmetryGroup, indices);
     return getTlcFingerprint(
       view === undefined
         ? indices.map((index) => representative[index])
@@ -814,7 +812,7 @@ export const createSearch = (
   return {
     properties,
     spec,
-    isSymmetric: symmetryGroup.length > 0,
+    isSymmetric: symmetryGroup !== undefined,
     getTlcOrder,
     getStoredFingerprints: (states, fingerprintStates) => {
       if (view !== undefined || isFingerprintedLikeTlc) {
@@ -830,8 +828,11 @@ export const createSearch = (
     },
     getFingerprintState: (state) => {
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
+      // A representative in TLC's variable order is the one whose fingerprint TLC reports.
       const representative =
-        symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup, order);
+        symmetryGroup === undefined
+          ? state
+          : getRepresentative(state, symmetryGroup, getTlcOrder());
       return view === undefined ? representative : [getViewValue(view.expression, representative)];
     },
     findViolatedInvariant: (state, parent) =>

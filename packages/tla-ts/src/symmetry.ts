@@ -31,6 +31,20 @@ interface Permutation {
   cacheLimit: number;
 }
 
+// The images of one value under every permutation, the identity first, and how each image compares
+// with the image of each permutation the search has held as the smallest.
+interface Orbit {
+  images: Value[];
+  comparisons: (Int8Array | undefined)[];
+}
+
+interface SymmetryGroup {
+  permutations: Permutation[];
+  orbits: WeakMap<ObjectValue, Orbit>;
+  orbitCount: number;
+  orbitLimit: number;
+}
+
 const getPermutationKey = (permutation: Images) =>
   [...permutation]
     .map(([name, image]) => `${name}>${image.name}`)
@@ -68,7 +82,10 @@ const toImages = (value: Value) => {
   return permutation;
 };
 
-export const getSymmetryGroup = (name: string, environment: Environment): Permutation[] => {
+export const getSymmetryGroup = (
+  name: string,
+  environment: Environment,
+): SymmetryGroup | undefined => {
   const definition = environment.definitions.get(name);
   if (definition === undefined && !environment.constants.has(name)) {
     throw new TlaConfigError(
@@ -90,7 +107,7 @@ export const getSymmetryGroup = (name: string, environment: Environment): Permut
   const permutations = toFiniteSet(value).elements.map(toImages);
   const isDisabled =
     definition.body.kind === "Apply" && definition.body.args.length >= permutations.length;
-  if (isDisabled) return [];
+  if (isDisabled) return undefined;
   const group = new Map<string, Images>();
   permutations.forEach((permutation) => {
     if (permutation.size > 0) group.set(getPermutationKey(permutation), permutation);
@@ -109,13 +126,19 @@ export const getSymmetryGroup = (name: string, environment: Environment): Permut
     );
     frontier.start = end;
   }
+  if (group.size === 0) return undefined;
   const cacheLimit = Math.max(256, Math.floor(CACHE_LIMIT / group.size));
-  return [...group.values()].map((images) => ({
-    images,
-    cache: new WeakMap<ObjectValue, Value>(),
-    cacheSize: 0,
-    cacheLimit,
-  }));
+  return {
+    permutations: [...group.values()].map((images) => ({
+      images,
+      cache: new WeakMap<ObjectValue, Value>(),
+      cacheSize: 0,
+      cacheLimit,
+    })),
+    orbits: new WeakMap(),
+    orbitCount: 0,
+    orbitLimit: cacheLimit,
+  };
 };
 
 const permuteElements = (elements: Value[], permutation: Permutation) => {
@@ -218,41 +241,76 @@ const computePermutedValue = (value: ObjectValue, permutation: Permutation) => {
   return elements ? createSet(elements) : set;
 };
 
-const permuteRemaining = (state: Value[], permuted: Value[], permutation: Permutation) => {
-  for (let index = permuted.length; index < state.length; index++) {
-    permuted.push(permuteValue(state[index], permutation));
+const getOrbit = (value: ObjectValue, group: SymmetryGroup) => {
+  const cached = group.orbits.get(value);
+  if (cached !== undefined) return cached;
+  if (group.orbitCount >= group.orbitLimit) {
+    group.orbits = new WeakMap();
+    group.orbitCount = 0;
   }
-  return permuted;
+  const orbit: Orbit = { images: [value], comparisons: [] };
+  group.orbits.set(value, orbit);
+  group.orbitCount++;
+  return orbit;
 };
 
-const getSmallerPermutation = (
-  state: Value[],
-  minimum: Value[],
-  permutation: Permutation,
-  order: number[] | undefined,
+const getImage = (orbit: Orbit, permutation: number, group: SymmetryGroup) =>
+  (orbit.images[permutation] ??= permuteValue(
+    orbit.images[0],
+    group.permutations[permutation - 1],
+  ));
+
+// Two images of a value compare the same way every time, and comparing them again changes nothing,
+// so an orbit compares each pair once.
+const compareImages = (
+  value: ObjectValue,
+  permutation: number,
+  minimum: number,
+  group: SymmetryGroup,
 ) => {
-  const permuted: Value[] = [];
-  for (let position = 0; position < state.length; position++) {
-    const index = order ? order[position] : position;
-    const value = permuteValue(state[index], permutation);
-    const comparison = compareValues(value, minimum[index]);
-    if (comparison > 0) return undefined;
-    if (!order) permuted.push(value);
-    if (comparison < 0) {
-      return order
-        ? state.map((item) => permuteValue(item, permutation))
-        : permuteRemaining(state, permuted, permutation);
-    }
+  const orbit = getOrbit(value, group);
+  const comparisons = (orbit.comparisons[minimum] ??= new Int8Array(group.permutations.length + 1));
+  if (comparisons[permutation] === 0) {
+    const comparison = compareValues(
+      getImage(orbit, permutation, group),
+      getImage(orbit, minimum, group),
+    );
+    comparisons[permutation] = Math.sign(comparison) + 2;
   }
-  return undefined;
+  return comparisons[permutation] - 2;
 };
 
+const isSmallerImage = (
+  state: Value[],
+  permutation: number,
+  minimum: number,
+  group: SymmetryGroup,
+  order: number[],
+) => {
+  for (const index of order) {
+    const value = state[index];
+    const comparison =
+      typeof value === "object" ? compareImages(value, permutation, minimum, group) : 0;
+    if (comparison !== 0) return comparison < 0;
+  }
+  return false;
+};
+
+// TLC keeps the smallest image of the state in its variable order, replacing it only with a
+// strictly smaller one.
 export const getRepresentative = (
   state: Value[],
-  group: Permutation[],
-  order?: number[],
-): Value[] =>
-  group.reduce(
-    (minimum, permutation) => getSmallerPermutation(state, minimum, permutation, order) ?? minimum,
-    state,
+  group: SymmetryGroup,
+  order: number[],
+): Value[] => {
+  const minimum = group.permutations.reduce(
+    (smallest, _, index) =>
+      isSmallerImage(state, index + 1, smallest, group, order) ? index + 1 : smallest,
+    0,
   );
+  return minimum === 0
+    ? state
+    : state.map((value) =>
+        typeof value === "object" ? getImage(getOrbit(value, group), minimum, group) : value,
+      );
+};
