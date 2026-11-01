@@ -380,7 +380,15 @@ export const expectFunction = (value: Value, application: Expression) => {
 };
 
 export const toKeepLazyContext = (context: Context): Context =>
-  context.isKeepLazy ? context : { ...context, isKeepLazy: true };
+  context.isKeepLazy
+    ? context
+    : {
+        environment: context.environment,
+        scope: context.scope,
+        state: context.state,
+        next: context.next,
+        isKeepLazy: true,
+      };
 
 const withScope = (context: Context, scope: Scope | undefined): Context => ({
   environment: context.environment,
