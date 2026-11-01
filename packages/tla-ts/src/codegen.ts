@@ -177,7 +177,7 @@ const generateQuantifier = (
   }, test);
   const parameters = outer.map((local) => `, ${local}`).join("");
   generator.helpers.push(
-    `function ${name}(context, state, next${parameters}) { let primed; ${declarations.join(" ")} ${loops} return ${isForall}; }`,
+    `function ${name}(context, state, next${parameters}) { let primed; let applied; ${declarations.join(" ")} ${loops} return ${isForall}; }`,
   );
   return `${name}(${frame.context}, ${frame.state}, ${frame.isPrimed ? "undefined" : frame.next}${parameters})`;
 };
@@ -314,7 +314,9 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         : isReadOnly(expression.function)
           ? generate(expression.function, keepLazyFrame)
           : generateDelegate(generator, expression.function, keepLazyFrame);
-      const functionCode = `expectFunction(${evaluatedFunction}, ${addReference(generator, expression)})`;
+      // Tool#evalAppl checks that it applies a function before it evaluates the argument. The check
+      // is written out, as calling expectFunction for each application costs more.
+      const functionCode = `(applied = ${evaluatedFunction}, typeof applied === "object" && (applied.kind === "Function" || applied.kind === "LazyFunction") ? applied : expectFunction(applied, ${addReference(generator, expression)}))`;
       const describeMissing = getMissingArgumentDescriber(generator.environment.runtime.version);
       const error = describeMissing ? `, ${addReference(generator, describeMissing)}` : "";
       if (expression.args.length === 1)
@@ -387,7 +389,7 @@ export const generateEvaluator = (
   };
   const body = generateExpression(generator, expression, frame);
   const referenceNames = generator.references.map((_, index) => `reference${index}`);
-  const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed; return ${body}; };`;
+  const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed; let applied; return ${body}; };`;
   runtime.value ??= createRuntime();
   const helpers = runtime.value;
   const helperNames = Object.keys(helpers);
