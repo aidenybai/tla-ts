@@ -1,6 +1,5 @@
 import {
   getChildren,
-  type Bound,
   type Definition,
   type Expression,
   type Instance,
@@ -8,15 +7,19 @@ import {
   type OperatorParam,
   type Selector,
   type SourceLocation,
+  type SourceRange,
 } from "./ast";
-import { TlaSyntaxError } from "./errors";
+import { formatRange, TlaSyntaxError } from "./errors";
 import { getSourceName, mapChildren, mapDefinition } from "./instances";
 import {
   getArity,
-  getBoundNames,
+  getBinder,
+  getNameSelectors,
   getOperandIndex,
-  getPatternNames,
+  getOperands,
   LOCAL_RESOLUTION,
+  selectionErrors,
+  selections,
 } from "./resolve";
 
 type Lookup = (name: string) => Definition | undefined;
@@ -33,107 +36,18 @@ interface Selection {
   location: SourceLocation;
 }
 
+// A name that selects a subexpression, with the range of each part and of the arguments of each
+// part, where SANY reports an error in selecting that part.
+interface SelectingName {
+  location: SourceLocation;
+  selectorRanges?: SourceRange[];
+  argumentRanges?: (SourceRange | undefined)[];
+}
+
 const SELECTION_NAME = "$subexpression";
 
 const createError = (message: string, location: SourceLocation) =>
   new TlaSyntaxError(`${message} at line ${location.line}, column ${location.column}`);
-
-const getBoundSets = (bounds: Bound[]) =>
-  bounds
-    .filter((bound, index) => index === 0 || bounds[index - 1].set !== bound.set)
-    .map((bound) => bound.set);
-
-const getOperands = (expression: Expression): Expression[] | undefined => {
-  switch (expression.kind) {
-    case "Apply":
-      return expression.args;
-    case "And":
-    case "Or":
-      return expression.operands;
-    case "If":
-      return [expression.condition, expression.consequent, expression.alternative];
-    case "Tuple":
-    case "SetEnumeration":
-      return expression.elements;
-    case "Record":
-    case "RecordSet":
-      return expression.fields.map((field) => field.value);
-    case "FunctionApplication":
-      return [
-        expression.function,
-        expression.args.length === 1
-          ? expression.args[0]
-          : { kind: "Tuple", elements: expression.args, location: expression.location },
-      ];
-    case "FieldAccess":
-      return [
-        expression.record,
-        { kind: "String", value: expression.field, location: expression.location },
-      ];
-    case "Prime":
-    case "Unchanged":
-    case "Enabled":
-    case "Always":
-    case "Eventually":
-      return [expression.expression];
-    case "BoxAction":
-    case "AngleAction":
-      return [expression.action, expression.subscript];
-    case "WeakFairness":
-    case "StrongFairness":
-      return [expression.subscript, expression.action];
-    case "FunctionSet":
-      return [expression.domain, expression.range];
-    case "Product":
-      return expression.factors;
-    case "Except":
-      return [expression.function];
-    default:
-      return undefined;
-  }
-};
-
-const getBinder = (
-  expression: Expression,
-): { names: string[]; body: Expression; sets: Expression[] } | undefined => {
-  switch (expression.kind) {
-    case "Forall":
-    case "Exists":
-    case "FunctionConstruction":
-      return {
-        names: getBoundNames(expression.bounds),
-        body: expression.body,
-        sets: getBoundSets(expression.bounds),
-      };
-    case "SetMap":
-      return {
-        names: getBoundNames(expression.bounds),
-        body: expression.expression,
-        sets: getBoundSets(expression.bounds),
-      };
-    case "SetFilter":
-      return {
-        names: getPatternNames(expression.bound.pattern),
-        body: expression.predicate,
-        sets: [expression.bound.set],
-      };
-    case "Choose":
-      return {
-        names: getPatternNames(expression.pattern),
-        body: expression.body,
-        sets: expression.set ? [expression.set] : [],
-      };
-    case "UnboundedQuantifier":
-    case "Lambda":
-      return {
-        names: expression.kind === "Lambda" ? expression.params : expression.names,
-        body: expression.body,
-        sets: [],
-      };
-    default:
-      return undefined;
-  }
-};
 
 const findLabel = (
   expression: Expression,
@@ -152,9 +66,6 @@ const findLabel = (
   }
   return undefined;
 };
-
-const takeArguments = (args: Expression[], count: number, pool: Expression[]) =>
-  args.length === 0 && pool.length > 0 ? pool.splice(0, count) : args;
 
 const wrapLets = (body: Expression, lets: Definition[][], location: SourceLocation) =>
   lets.reduceRight<Expression>(
@@ -235,14 +146,30 @@ const applyDefinition = (definition: Definition, selection: Selection) => {
   return createApplication({ ...selection, params: [...selection.params, ...params] }, reference);
 };
 
+// Generator.selectorToNode reports the first part of a name that selects nothing, after it analyzes
+// the arguments of the parts before, and goes on after the name. An operator or a label must be given
+// all its arguments, except in a name that an operator argument may select whole.
 const selectSubexpression = (
   selectors: Selector[],
   lookup: Lookup,
-  location: SourceLocation,
-  pool: Expression[],
+  reference: Expression & SelectingName,
+  isOperator: boolean,
 ): Expression => {
+  const location = reference.location;
   const selection: Selection = { params: [], args: [], lets: [], location };
-  const state = { index: 0, current: undefined as Expression | undefined };
+  const state = { index: 0, current: undefined as Expression | undefined, isFailed: false };
+
+  const report = (range: SourceRange | undefined, message: string) => {
+    if (!range) throw createError(message, location);
+    selectionErrors.set(reference, {
+      args: selectors
+        .slice(0, state.index)
+        .flatMap((selector) => ("args" in selector ? selector.args : [])),
+      error: { location: formatRange(range), message },
+    });
+    state.isFailed = true;
+    return undefined;
+  };
 
   const findDefinition = (local: Definition[] | undefined) => {
     const names: string[] = [];
@@ -256,9 +183,8 @@ const selectSubexpression = (
       const definition = local
         ? local.find((candidate) => getSourceName(candidate) === name)
         : lookup(name);
-      if (definition) {
-        return { definition, args: takeArguments(args, getArity(definition), pool) };
-      }
+      if (definition)
+        return { definition, name, args, earlier: args.length - selector.args.length };
       state.index++;
     }
     throw createError(`Unknown operator ${names.join("!")}`, location);
@@ -269,8 +195,11 @@ const selectSubexpression = (
     const definition = found.definition;
     const arity = getArity(definition);
     const isLast = state.index === selectors.length - 1;
-    if (found.args.length !== arity && found.args.length !== 0) {
-      throw createError(`The operator ${definition.name} requires ${arity} arguments`, location);
+    if (found.args.length !== arity && (!isOperator || found.args.length !== 0)) {
+      return report(
+        reference.argumentRanges?.[state.index] ?? location.range,
+        `The operator ${found.name} requires ${arity - found.earlier} arguments.`,
+      );
     }
     if (isLast) return { definition, args: found.args };
     if (definition.kind !== "Operator") {
@@ -284,14 +213,19 @@ const selectSubexpression = (
   };
 
   const followLabels = () => {
-    while (state.index < selectors.length) {
+    while (state.index < selectors.length && !state.isFailed) {
       const selector = selectors[state.index];
       if (selector.kind !== "Name") return;
+      const range = reference.selectorRanges?.[state.index];
       const found = state.current && findLabel(state.current, selector.name, []);
-      if (!found) throw createError(`Cannot find label ${selector.name}`, location);
+      if (!found) return report(range, `Cannot find label \`${selector.name}'.`);
+      const params = found.label.params;
+      if (!isOperator && selector.args.length !== params.length) {
+        return report(range, `Label \`${selector.name}' used with wrong number of arguments.`);
+      }
       selection.lets.push(...found.lets);
-      selection.params.push(...found.label.params.map((name) => ({ name, arity: 0 })));
-      selection.args.push(...takeArguments(selector.args, found.label.params.length, pool));
+      selection.params.push(...params.map((name) => ({ name, arity: 0 })));
+      selection.args.push(...selector.args);
       state.current = found.label.body;
       state.index++;
     }
@@ -317,9 +251,7 @@ const selectSubexpression = (
     const binder = getBinder(current);
     if (binder && (selector.kind === "Bound" || selector.kind === "At")) {
       selection.params.push(...binder.names.map((name) => ({ name, arity: 0 })));
-      if (selector.kind === "Bound") {
-        selection.args.push(...takeArguments(selector.args, binder.names.length, pool));
-      }
+      if (selector.kind === "Bound") selection.args.push(...selector.args);
       state.current = binder.body;
       return;
     }
@@ -349,9 +281,10 @@ const selectSubexpression = (
   };
 
   const first = enterDefinition(undefined);
+  if (state.isFailed) return reference;
   if (first) return applyDefinition(first.definition, { ...selection, args: first.args });
   followLabels();
-  while (state.index < selectors.length) {
+  while (state.index < selectors.length && !state.isFailed) {
     const selector = selectors[state.index];
     if (selector.kind === "Name") {
       while (state.current?.kind === "Label") state.current = state.current.body;
@@ -360,6 +293,7 @@ const selectSubexpression = (
       }
       selection.lets.push(state.current.definitions);
       const last = enterDefinition(state.current.definitions);
+      if (state.isFailed) return reference;
       if (last) {
         return applyDefinition(last.definition, {
           ...selection,
@@ -372,19 +306,22 @@ const selectSubexpression = (
     selectOperand(selector);
     state.index++;
   }
+  if (state.isFailed) return reference;
   if (!state.current) throw createError("Subexpression selection failed", location);
   return createApplication(selection, state.current);
 };
 
-const getQualifiedSelectors = (name: string, lookup: Lookup): Selector[] | undefined => {
+// A name such as Op(1)!lab(2) whose first parts name a definition selects part of it.
+const getQualifiedSelectors = (
+  name: string,
+  args: Expression[],
+  counts: number[] | undefined,
+  lookup: Lookup,
+) => {
   if (!name.includes("!") || lookup(name)) return undefined;
   const parts = name.split("!");
-  const prefix = parts.findIndex((_, index) => lookup(parts.slice(0, index + 1).join("!")));
-  if (prefix === -1) return undefined;
-  return [
-    { kind: "Name", name: parts.slice(0, prefix + 1).join("!"), args: [] },
-    ...parts.slice(prefix + 1).map((part): Selector => ({ kind: "Name", name: part, args: [] })),
-  ];
+  if (!parts.some((_, index) => lookup(parts.slice(0, index + 1).join("!")))) return undefined;
+  return getNameSelectors(name, args, counts);
 };
 
 const containsReference = (expression: Expression): boolean =>
@@ -394,10 +331,12 @@ const containsReference = (expression: Expression): boolean =>
   getChildren(expression).some(containsReference);
 
 // A reference into a theorem whose statement is an ASSUME/PROVE stays for name resolution to check.
+// isOperator holds where an operator may be given, as the argument of an operator that may take one.
 const resolveSubexpressions = (
   expression: Expression,
   lookup: Lookup,
   goals: ReadonlySet<string>,
+  isOperator = false,
 ): Expression => {
   if (!containsReference(expression)) return expression;
   if (expression.kind === "Let") {
@@ -405,20 +344,34 @@ const resolveSubexpressions = (
       expression.definitions.find((definition) => definition.name === name) ?? lookup(name);
     return mapChildren(expression, (child) => resolveSubexpressions(child, local, goals));
   }
-  const mapped = mapChildren(expression, (child) => resolveSubexpressions(child, lookup, goals));
-  if (mapped.kind === "Subexpression") {
-    const first = mapped.selectors[0];
-    if (first.kind === "Name" && goals.has(first.name)) return mapped;
-    return selectSubexpression(mapped.selectors, lookup, mapped.location, []);
-  }
-  const name =
-    mapped.kind === "Identifier" ? mapped.name : mapped.kind === "Apply" ? mapped.operator : "";
-  const selectors = getQualifiedSelectors(name, lookup);
-  if (!selectors) return mapped;
-  const pool = mapped.kind === "Apply" ? [...mapped.args] : [];
-  const resolved = selectSubexpression(selectors, lookup, mapped.location, pool);
-  if (pool.length > 0) throw createError(`Too many arguments for ${name}`, mapped.location);
-  return resolved;
+  const callee = expression.kind === "Apply" ? lookup(expression.operator) : undefined;
+  const mapped =
+    expression.kind === "Apply"
+      ? {
+          ...expression,
+          args: expression.args.map((arg, index) =>
+            resolveSubexpressions(
+              arg,
+              lookup,
+              goals,
+              callee?.kind !== "Operator" || callee.params[index]?.arity !== 0,
+            ),
+          ),
+        }
+      : mapChildren(expression, (child) => resolveSubexpressions(child, lookup, goals));
+  const selectors =
+    mapped.kind === "Subexpression"
+      ? mapped.selectors
+      : mapped.kind === "Identifier"
+        ? getQualifiedSelectors(mapped.name, [], undefined, lookup)
+        : mapped.kind === "Apply"
+          ? getQualifiedSelectors(mapped.operator, mapped.args, mapped.argumentCounts, lookup)
+          : undefined;
+  const first = selectors?.[0];
+  if (!selectors || (first?.kind === "Name" && goals.has(first.name))) return mapped;
+  const selected = selectSubexpression(selectors, lookup, mapped, isOperator);
+  if (selected !== mapped) selections.add(selected);
+  return selected;
 };
 
 const createLookup = (definitions: Definition[]): Lookup => {
@@ -432,7 +385,7 @@ export const resolveInstanceSubexpressions = (instance: Instance, module: Module
     ...instance,
     substitutions: instance.substitutions.map((substitution) => ({
       ...substitution,
-      expression: resolveSubexpressions(substitution.expression, lookup, new Set()),
+      expression: resolveSubexpressions(substitution.expression, lookup, new Set(), true),
     })),
   };
 };

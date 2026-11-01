@@ -222,6 +222,70 @@ describe("subexpression references into theorems match SANY", () => {
         ["line 15, col 10 to line 15, col 19", "Label not in definition or proof step."],
       ],
     ],
+    [
+      "names that select labels of definitions with the wrong arguments",
+      "Op(a) == lab :: a\nOp2(a, b) == lab2 :: a\nTHEOREM thm == lt :: TRUE\nA1 == Op(1)!lab /\\ Op!lab(A) /\\ Op!lab /\\ B\nA2 == Op2(1)!lab2(C) /\\ thm!lt /\\ thm!nolab /\\ D\nA3 == LET L(y) == m :: y IN L!m /\\ E\nA4 == Op(F)!nolab /\\ Op(1)!lab(G) /\\ H",
+      [
+        ["line 6, col 20 to line 6, col 28", "The operator Op requires 1 arguments."],
+        ["line 6, col 33 to line 6, col 38", "The operator Op requires 1 arguments."],
+        ["line 6, col 43 to line 6, col 43", "Unknown operator: `B'."],
+        ["line 7, col 10 to line 7, col 12", "The operator Op2 requires 2 arguments."],
+        ["line 7, col 39 to line 7, col 43", "Cannot find label `nolab'."],
+        ["line 7, col 48 to line 7, col 48", "Unknown operator: `D'."],
+        ["line 8, col 29 to line 8, col 31", "The operator L requires 1 arguments."],
+        ["line 8, col 36 to line 8, col 36", "Unknown operator: `E'."],
+        ["line 9, col 10 to line 9, col 10", "Unknown operator: `F'."],
+        ["line 9, col 13 to line 9, col 17", "Cannot find label `nolab'."],
+        ["line 9, col 28 to line 9, col 30", "Label `lab' used with wrong number of arguments."],
+        ["line 9, col 38 to line 9, col 38", "Unknown operator: `H'."],
+      ],
+    ],
+    [
+      "labels whose parameters differ from the names bound around them",
+      "C == 1\nA1 == \\A y \\in {1} : lab(y, y) :: y = 1\nA2 == \\A y, z \\in {1} : lab(y) :: y = z\nA3 == \\A y \\in {1} : lab(C) :: y = 1\nA4 == [x EXCEPT ![1] = lab :: 2]\nA5 == CHOOSE y : lab :: y = 1\nA6 == (lab :: TRUE) /\\ (lab :: FALSE)\nTHEOREM foo == ASSUME NEW v, lab(y) :: y = v PROVE TRUE",
+      [
+        ["line 4, col 22 to line 4, col 39", "Repeated formal parameter y \nin label `lab'."],
+        ["line 5, col 25 to line 5, col 39", "Label lab must contain formal parameter `z'."],
+        ["line 6, col 26 to line 6, col 26", "Illegal parameter C of label `lab'."],
+        ["line 6, col 22 to line 6, col 36", "Label lab must contain formal parameter `y'."],
+        ["line 6, col 22 to line 6, col 36", "Label lab declares extra parameter(s)  C  "],
+        [
+          "line 7, col 24 to line 7, col 31",
+          "Labels inside EXCEPT clauses are not yet implemented.",
+        ],
+        ["line 8, col 18 to line 8, col 29", "Label lab must contain formal parameter `y'."],
+        ["line 9, col 25 to line 9, col 36", "Duplicate label `lab'."],
+        ["line 10, col 40 to line 10, col 40", "Unknown operator: `y'."],
+        ["line 10, col 34 to line 10, col 34", "Illegal parameter y of label `lab'."],
+        ["line 10, col 30 to line 10, col 44", "Label lab declares extra parameter(s)  y  "],
+      ],
+    ],
+    [
+      "labels in an unnamed assumption or an INSTANCE substitution",
+      "---- MODULE Inner ----\nCONSTANT c\n====\nOp(a) == lab :: (in :: a)\nASSUME la :: TRUE\nASSUME named == lb :: TRUE\nASSUME Op(1)!lab = 1 /\\ Op(1)!lab!in = 1\nI == INSTANCE Inner WITH c <- lc :: 1",
+      [
+        ["line 7, col 8 to line 7, col 17", "Label not in definition or proof step."],
+        ["line 10, col 31 to line 10, col 37", "Label not in definition or proof step."],
+      ],
+    ],
+    [
+      "facts naming nothing and step names selecting missing operands or labels",
+      "THEOREM thm == ASSUME NEW a PROVE a = a\nTHEOREM TRUE\n<1>1. TRUE BY D, thm\n<1>2. lab2 :: TRUE\n<1>3. lab3 :: \\A b \\in {1} : in3(b) :: b = 1\n<1>4. <1>2!1 /\\ <1>3!lab3!in3 /\\ <1>3!lab3!2 /\\ <1>3!1!in3 /\\ <1>3!lab3!in3(1)\n<1> USE E\n<1>5. QED",
+      [
+        ["line 5, col 15 to line 5, col 15", "Unknown operator: `D'."],
+        [
+          "line 8, col 12 to line 8, col 12",
+          "Nonexistent operand specified by `argument selector 1'.",
+        ],
+        ["line 8, col 27 to line 8, col 29", "Label `in3' used with wrong number of arguments."],
+        [
+          "line 8, col 44 to line 8, col 44",
+          "Nonexistent operand specified by `argument selector 2'.",
+        ],
+        ["line 8, col 54 to line 8, col 54", "A name selector here must be from a LET clause."],
+        ["line 9, col 9 to line 9, col 9", "Unknown operator: `E'."],
+      ],
+    ],
   ])("reports every error SANY reports for %s", async (_name, definitions, errors) => {
     await expect(checkModule(definitions)).rejects.toThrow(getSanyError(errors, "M"));
   });

@@ -884,13 +884,21 @@ const parse = (source: string, isTlapm: boolean): Module => {
     if (token.kind === "Identifier" || isStep) {
       const name = isStep ? (getStepName(token) ?? token.text) : token.text;
       if (isLabelAhead()) {
-        const params = accept("(") ? parseSeparated(expectIdentifier) : [];
-        if (params.length > 0) expect(")");
+        const params = getNames(accept("(") ? parseSeparated(expectName) : []);
+        if (params.names.length > 0) expect(")");
         expect("::");
-        return { kind: "Label", name, params, body: parseExpression(), location };
+        return {
+          kind: "Label",
+          name,
+          params: params.names,
+          paramRanges: params.ranges,
+          body: parseExpression(),
+          location,
+        };
       }
       const hasArguments = isAt("(");
       const args = hasArguments ? parseArguments() : [];
+      const argumentRanges = [hasArguments ? lastArguments.range : undefined];
       if (!isSelectorAhead()) {
         return hasArguments
           ? { kind: "Apply", operator: name, args, argumentsRange: lastArguments.range, location }
@@ -915,7 +923,9 @@ const parse = (source: string, isTlapm: boolean): Module => {
       while (isSelectorAhead()) {
         advance();
         selectorRanges.push(getRange(cursor.index, cursor.index));
+        lastArguments.range = undefined;
         selectors.push(parseSelector());
+        argumentRanges.push(lastArguments.range);
       }
       const names = selectors.flatMap((selector) =>
         selector.kind === "Name" ? [selector.name] : [],
@@ -927,10 +937,10 @@ const parse = (source: string, isTlapm: boolean): Module => {
       const argumentCounts = selectors.map((selector) =>
         "args" in selector ? selector.args.length : 0,
       );
-      const argumentsRange = lastArguments.range;
+      const argumentsRange = argumentRanges.findLast((range) => range !== undefined);
       const reference: Expression =
         names.length < selectors.length
-          ? { kind: "Subexpression", selectors, selectorRanges, location }
+          ? { kind: "Subexpression", selectors, selectorRanges, argumentRanges, location }
           : qualifiedArgs.length === 0
             ? { kind: "Identifier", name: operator, selectorRanges, location }
             : argumentCounts.slice(0, -1).some((count) => count > 0)
@@ -941,6 +951,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
                   argumentCounts,
                   argumentsRange,
                   selectorRanges,
+                  argumentRanges,
                   location,
                 }
               : {
@@ -949,6 +960,7 @@ const parse = (source: string, isTlapm: boolean): Module => {
                   args: qualifiedArgs,
                   argumentsRange,
                   selectorRanges,
+                  argumentRanges,
                   location,
                 };
       if (isMissingArguments) {
