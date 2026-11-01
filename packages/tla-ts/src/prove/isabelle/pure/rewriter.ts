@@ -296,9 +296,6 @@ class MatchFailure {}
 const transitive1 = (first: Thm | undefined, second: Thm | undefined) =>
   first === undefined ? second : second === undefined ? first : transitive(first, second);
 
-const chainSteps = (steps: readonly Thm[], last: Thm | undefined) =>
-  steps.reduceRight<Thm | undefined>((result, thm) => transitive1(thm, result), last);
-
 const instantiateABC = (rule: Thm, termA: Term, termB: Term, termC: Term) =>
   instantiate(
     [
@@ -322,19 +319,20 @@ interface PremRules {
 
 // bottomc: bottom-up rewriting with the simpset of the context.
 const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
-  // Isabelle's botc recurses after each rewrite at the top and chains the steps on the way back.
-  // This loops and chains them afterwards, so a simpset that rewrites forever runs into the time
-  // limit rather than out of stack.
+  // Isabelle's botc recurses after each rewrite at the top and chains the steps on the way back,
+  // so a simpset that rewrites forever keeps every step until Isabelle runs out of memory. This
+  // loops and chains each step as it goes, which gives the same theorem, so such a simpset runs
+  // into the time limit holding only the latest one.
   const botc = (skel: Term, context: SimpContext, term: Term): Thm | undefined => {
-    const steps: Thm[] = [];
+    let chained: Thm | undefined;
     let currentSkel = skel;
     let current = term;
     for (;;) {
-      if (currentSkel.kind === "Var") return chainSteps(steps, undefined);
+      if (currentSkel.kind === "Var") return chained;
       const sub = subc(currentSkel, context, current);
       const step = rewritec(prover, maxidx, context, sub === undefined ? current : rhsOf(sub));
-      if (step === undefined) return chainSteps(steps, sub);
-      steps.push(sub === undefined ? step.thm : transitive(sub, step.thm));
+      if (step === undefined) return transitive1(chained, sub);
+      chained = transitive1(transitive1(chained, sub), step.thm);
       currentSkel = step.skel;
       current = rhsOf(step.thm);
     }

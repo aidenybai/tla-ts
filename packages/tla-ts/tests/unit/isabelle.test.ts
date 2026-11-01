@@ -32,6 +32,12 @@ describe("decideIsabelle gives Isabelle's verdict on tlapm's theories", () => {
   it("answers unknown for a theory tlapm stopped writing partway", () => {
     expect(decide(readTheory("Level_test-1"))).toBe("unknown");
   });
+
+  // tla-ts's encoder wrote this one, since tlapm proved the obligation with SMT. The simplifier
+  // keeps growing the goal, and Isabelle breaks down after two minutes.
+  it("answers unknown when the simplifier runs out of stack", () => {
+    expect(decide(readTheory("Paxos-109"))).toBe("unknown");
+  });
 });
 
 // Isabelle fails on each of these too.

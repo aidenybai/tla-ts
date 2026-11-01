@@ -13,6 +13,11 @@ import { aconv } from "./pure/term";
 import { getProofContext } from "./tla/context";
 import { loadLogic } from "./tla/logic";
 
+// V8's error when a recursion runs out of stack. Poly/ML grows its stack instead, until the
+// recursion ends or Isabelle breaks down for lack of memory, which tlapm counts as a failure.
+const isStackOverflow = (error: unknown) =>
+  error instanceof RangeError && error.message === "Maximum call stack size exceeded";
+
 export const decideIsabelle = (text: string, options: DecideOptions): Exclude<Verdict, "sat"> => {
   const limits = { deadline: Date.now() + options.timeLimitMs, signal: options.signal };
   try {
@@ -36,7 +41,7 @@ export const decideIsabelle = (text: string, options: DecideOptions): Exclude<Ve
       ? "unsat"
       : "unknown";
   } catch (error) {
-    if (error instanceof TlaIsabelleError) return "unknown";
+    if (error instanceof TlaIsabelleError || isStackOverflow(error)) return "unknown";
     throw error;
   }
 };
