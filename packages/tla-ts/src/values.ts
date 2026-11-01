@@ -1595,6 +1595,38 @@ const getCombinedSets = (value: ObjectValue) =>
         ? [value.range]
         : undefined;
 
+// Whether a value TLC builds alike at each evaluation and that enumerating, comparing or
+// fingerprinting it leaves alike, so that one evaluation can stand for the next. It holds no UNION or
+// \cup, which streams until TLC caches it, no lambda, which fingerprinting turns into a record, and
+// no record a comparison reorders.
+export const isSettledValue = (value: Value): boolean => {
+  if (typeof value !== "object") return true;
+  switch (value.kind) {
+    case "ModelValue":
+    case "Interval":
+      return true;
+    case "Set":
+      return value.elements.every(isSettledValue);
+    case "Function":
+      return (
+        value.functionClass !== "lambda" &&
+        value.writtenKeys === undefined &&
+        value.domain.every(isSettledValue) &&
+        value.range.every(isSettledValue)
+      );
+    case "SetOperation":
+      return (
+        value.operator !== "\\cup" && isSettledValue(value.left) && isSettledValue(value.right)
+      );
+    case "FilteredSet":
+      return isSettledValue(value.base);
+    case "ProductSet":
+      return value.factors.every(isSettledValue);
+    default:
+      return false;
+  }
+};
+
 // Whether a set streams its elements in another order than the normalized set, so that a set of
 // tuples, records, or functions it is a component of has to stream too.
 const isStreamedApart = (value: Value): boolean => {

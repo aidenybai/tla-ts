@@ -54,6 +54,7 @@ import {
   markLambdaFunction,
   isReducibleSet,
   isSetValue,
+  isSettledValue,
   MAXIMUM_INTEGER,
   MINIMUM_INTEGER,
   toFiniteFunction,
@@ -113,6 +114,9 @@ export interface Thunk {
   state: State | undefined;
   next: State | undefined;
   cache: Value | undefined;
+  // Whether the expression may build a set that streams until TLC caches it, so that the thunk
+  // caches only a settled value.
+  isStreamed: boolean;
 }
 
 type Binding = { kind: "Value"; value: Value } | Thunk | { kind: "Operator"; operator: Operator };
@@ -847,7 +851,7 @@ const forceThunk = (thunk: Thunk, context: Context) => {
   const isSameState = thunk.state === context.state && thunk.next === context.next;
   if (isSameState && thunk.cache !== undefined) return thunk.cache;
   const value = evaluate(thunk.expression, withScope(context, thunk.scope));
-  if (isSameState) thunk.cache = value;
+  if (isSameState && (!thunk.isStreamed || isSettledValue(value))) thunk.cache = value;
   return value;
 };
 
@@ -968,6 +972,7 @@ const createThunk = (expression: Expression, context: Context): Thunk => ({
   state: context.state,
   next: context.next,
   cache: undefined,
+  isStreamed: false,
 });
 
 export const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
@@ -1064,10 +1069,16 @@ const callOperator = (operator: Operator, args: Expression[], context: Context) 
   );
 };
 
+// The LET definitions that a reference evaluates again, and those that cache only a settled value.
+interface ReevaluatedDefinitions {
+  impure: ReadonlySet<Definition>;
+  streamed: ReadonlySet<Definition>;
+}
+
 export const bindDefinitions = (
   definitions: Definition[],
   context: Context,
-  reevaluated?: ReadonlySet<Definition>,
+  reevaluated?: ReevaluatedDefinitions,
 ): Scope | undefined =>
   definitions.reduce<Scope | undefined>((scope, definition) => {
     const node: Scope = {
@@ -1089,10 +1100,11 @@ export const bindDefinitions = (
         state: context.state,
         next: context.next,
         cache: undefined,
+        isStreamed: false,
       };
       return node;
     }
-    if (definition.params.length > 0 || reevaluated?.has(definition)) {
+    if (definition.params.length > 0 || reevaluated?.impure.has(definition)) {
       node.binding = {
         kind: "Operator",
         operator: {
@@ -1112,6 +1124,7 @@ export const bindDefinitions = (
       state: context.state,
       next: context.next,
       cache: undefined,
+      isStreamed: reevaluated?.streamed.has(definition) ?? false,
     };
     return node;
   }, context.scope);
@@ -1228,14 +1241,15 @@ const STREAMED_SET: Impurity = {
 // TLC's next-state generator does not bind LET definitions to values, so each reference to one
 // evaluates it again: one that calls an impure builtin repeats its effects, and a set one builds
 // with UNION or \cup starts out uncached.
-export const getReevaluatedDefinitions = (definitions: Definition[], environment: Environment) =>
-  new Set(
-    definitions.filter(
-      (definition) =>
-        isImpureDefinition(definition, environment) ||
-        isImpureDefinition(definition, environment, STREAMED_SET),
-    ),
-  );
+export const getReevaluatedDefinitions = (
+  definitions: Definition[],
+  environment: Environment,
+): ReevaluatedDefinitions => ({
+  impure: new Set(definitions.filter((definition) => isImpureDefinition(definition, environment))),
+  streamed: new Set(
+    definitions.filter((definition) => isImpureDefinition(definition, environment, STREAMED_SET)),
+  ),
+});
 
 export const isImpure = (environment: Environment) =>
   [...environment.definitions.values()].some((definition) =>
