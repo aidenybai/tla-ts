@@ -55,7 +55,7 @@ const jobCount = Number(getOption("--jobs") ?? 1);
 // Node gives the main thread V8's default stack of 984 KB, and keeps 192 KB of a worker's stack in
 // reserve, so this gives decideIsabelle the stack it has on the main thread.
 const spawnWorker = async () => {
-  const worker = new Worker(new URL("./isabelle-conformance-worker.ts", import.meta.url), {
+  const worker = new Worker(new URL("./isabelle-conformance-worker.js", import.meta.url), {
     resourceLimits: { stackSizeMb: 1.15 },
   });
   await once(worker, "online");

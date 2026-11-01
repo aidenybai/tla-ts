@@ -114,11 +114,10 @@ describe("check dumps the state graph like TLC's -dump", () => {
 });
 
 const runCli = (args: string[]) =>
-  spawnSync(
-    process.execPath,
-    ["--import", "tsx", join(import.meta.dirname, "../../src/cli.ts"), "Counter.tla", ...args],
-    { cwd: join(FIXTURES, "counter"), encoding: "utf8" },
-  );
+  spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), "Counter.tla", ...args], {
+    cwd: join(FIXTURES, "counter"),
+    encoding: "utf8",
+  });
 
 describe("the CLI takes TLC's -dump flag", () => {
   it("adds the extension of the format to the file name", () => {

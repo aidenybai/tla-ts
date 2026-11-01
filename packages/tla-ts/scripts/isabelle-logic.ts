@@ -2,7 +2,7 @@
 // It runs scripts/isabelle/export.ML in that heap, checks that every exported net key matches
 // the keys tla-ts computes, and writes the theorems and nets in a compact form.
 //
-// Usage: pnpm tsx scripts/isabelle-logic.ts <tlapm>/lib/tlapm/backends/Isabelle-install
+// Usage: bun scripts/run.ts isabelle-logic <tlapm>/lib/tlapm/backends/Isabelle-install
 
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -73,11 +73,11 @@ interface RawLogic {
 
 const install = process.argv[2];
 if (install === undefined)
-  throw new Error("Usage: pnpm tsx scripts/isabelle-logic.ts <Isabelle-install>");
+  throw new Error("Usage: bun scripts/run.ts isabelle-logic <Isabelle-install>");
 
 const work = mkdtempSync(join(tmpdir(), "isabelle-logic-"));
-copyFileSync(new URL("isabelle/Export.thy", import.meta.url), join(work, "Export.thy"));
-copyFileSync(new URL("isabelle/export.ML", import.meta.url), join(work, "export.ML"));
+copyFileSync(new URL("../scripts/isabelle/Export.thy", import.meta.url), join(work, "Export.thy"));
+copyFileSync(new URL("../scripts/isabelle/export.ML", import.meta.url), join(work, "export.ML"));
 const output = join(work, "logic.json");
 const heaps = ["Pure", "TLA+", "Options"].map((heap) =>
   JSON.stringify(join(install, "heaps", heap)),

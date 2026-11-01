@@ -61,11 +61,9 @@ const runModel = (specPath: string, configPath: string) =>
     const child = spawn(
       process.execPath,
       [
-        "--import",
-        "tsx",
         "--stack-size=8000",
         "--max-old-space-size=6144",
-        join(import.meta.dirname, "check-model.ts"),
+        join(import.meta.dirname, "check-model.js"),
         specPath,
         configPath,
       ],
