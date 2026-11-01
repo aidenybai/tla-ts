@@ -129,26 +129,45 @@ export const replaceFreeVars = (
   return results[0];
 };
 
-// Which variables of a quantifier body occur, indexed by de Bruijn index.
-export const collectUsedVars = (manager: AstManager, expr: number, count: number) => {
-  const used = Array.from({ length: count }, () => false);
-  replaceFreeVars(manager, expr, (variable, index) => {
-    if (index < count) used[index] = true;
-    return variable;
-  });
-  return used;
-};
-
-// The sorts of the free variables, indexed by de Bruijn index, undefined for a variable that does not
-// occur.
+// used_vars::process: the sort of each free variable of expr below count, indexed by de Bruijn
+// index, undefined for a variable that does not occur. Like Z3, it walks the term without rebuilding
+// it, and visits a shared term once for each number of binders above it.
 export const getFreeVarSorts = (manager: AstManager, expr: number, count: number) => {
   const sorts: (number | undefined)[] = Array.from({ length: count }, () => undefined);
-  replaceFreeVars(manager, expr, (variable, index) => {
-    if (index < count) sorts[index] = manager.sorts[variable];
-    return variable;
-  });
+  const exprs = [expr];
+  const deltas = [0];
+  const visited = new Set<number>();
+  for (let current = exprs.pop(); current !== undefined; current = exprs.pop()) {
+    const delta = deltas.pop() ?? 0;
+    if (manager.freeVarBounds[current] <= delta) continue;
+    if (manager.getRefCount(current) > 1) {
+      const key = current * 64 + delta;
+      if (visited.has(key)) continue;
+      visited.add(key);
+    }
+    const kind = manager.kinds[current];
+    if (kind === KIND_VAR) {
+      const index = manager.values[current] - delta;
+      if (index < count && sorts[index] === undefined) sorts[index] = manager.sorts[current];
+    } else if (kind === KIND_APP)
+      for (const arg of manager.args[current]) {
+        exprs.push(arg);
+        deltas.push(delta);
+      }
+    else {
+      const data = manager.getQuantifier(current);
+      for (const child of [data.body, ...data.patterns]) {
+        exprs.push(child);
+        deltas.push(delta + data.sorts.length);
+      }
+    }
+  }
   return sorts;
 };
+
+// Which variables of a quantifier body occur, indexed by de Bruijn index.
+export const collectUsedVars = (manager: AstManager, expr: number, count: number) =>
+  getFreeVarSorts(manager, expr, count).map((sort) => sort !== undefined);
 
 // unused_vars_eliminator: drops the variables that neither the body nor a pattern uses. Its
 // var_subst keeps the cache of its last substitution until the next one.
