@@ -702,15 +702,22 @@ const parse = (source: string, mode: ParseMode): Module => {
       cursor.index++;
       const location = getLocation(token);
       if (POSTFIX_OPERATORS.has(token.text)) {
-        return { kind: "OperatorReference", operator: token.text, location };
+        return withRange(
+          { kind: "OperatorReference", operator: token.text, location },
+          cursor.index - 1,
+        );
       }
       const argument: Expression = { kind: "Identifier", name: "argument", location };
-      return {
-        kind: "Lambda",
-        params: [argument.name],
-        body: getOperatorApplication(token.text, argument, location),
-        location,
-      };
+      return withRange(
+        {
+          kind: "Lambda",
+          params: [argument.name],
+          body: getOperatorApplication(token.text, argument, location),
+          operator: token.text,
+          location: getLocation(token),
+        },
+        cursor.index - 1,
+      );
     }
     if (isAt("LAMBDA")) {
       const start = cursor.index;

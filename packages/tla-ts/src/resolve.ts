@@ -739,7 +739,9 @@ const getSymbolArity = (
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
   const spelling = (expression.kind === "Identifier" ? undefined : expression.spelling) ?? name;
-  const range = formatRange(getNameRange(location, spelling === "-." ? "-" : spelling));
+  const range = formatRange(
+    getNameRange(location, expression.kind === "Apply" && spelling === "-." ? "-" : spelling),
+  );
   if (!isOperatorSymbol(name)) {
     unit.errors.push({ location: range, message: `Unknown operator: \`${name}'.` });
     return undefined;
@@ -934,13 +936,15 @@ const resolveApply = (
   expression.args
     .map((arg, index) => {
       const expected = params[index] ?? 0;
-      // A prefix operator argument such as SUBSET, which tla-ts reads as a LAMBDA, has no range.
       const range = arg.location.range;
       if (expected === 0) {
-        if (arg.kind === "Lambda" && range) {
+        // SANY fails on an operator here with an internal error, so tla-ts words it as it does for
+        // a name.
+        if (arg.kind === "Lambda" && arg.operator !== undefined) {
+          report(range, `The operator ${arg.operator} requires 1 arguments.`);
+        } else if (arg.kind === "Lambda" && range) {
           report(range, "LAMBDA expression used where an expression is required.");
         } else if (arg.kind === "OperatorReference") {
-          // SANY fails here with an internal error, so tla-ts words it as it does for a name.
           const argArity = getSymbolArity(arg, arg.operator, scope, unit);
           if (argArity !== undefined) {
             report(range, `The operator ${arg.operator} requires ${argArity} arguments.`);
@@ -957,7 +961,7 @@ const resolveApply = (
             range,
             `Expected arity ${expected} but found operator of arity ${arg.params.length}.`,
           );
-        } else if (!isMatched && range) {
+        } else if (!isMatched && range && arg.operator === undefined) {
           report(
             expression.selectorRanges?.at(-1) ?? getNameRange(expression.location, operator),
             `Lambda expression with arity ${arg.params.length} used as argument ${index + 1} of operator \`${operator}', \nbut an operator of arity ${expected} is required.`,
