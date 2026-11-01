@@ -25,10 +25,14 @@ export class RelevancyPropagator {
   private relevantExprs: number[] = [];
   // A flag per expression, which grows with the expressions marked.
   private isRelevantFlags = new Uint8Array(1024);
-  private handlers = new Map<number, RelevancyHandler[]>();
-  private watches = [new Map<number, RelevancyHandler[]>(), new Map<number, RelevancyHandler[]>()];
+  // The watches and handlers of each expression, by trail kind, are lists of cons cells like Z3's
+  // relevancy_ehs. A trail entry is the cell it pushed: its handler and the list it extends. heads
+  // holds, at 3 * expr + kind, one past the trail index of the list's first cell, or 0.
+  private heads = new Int32Array(3072);
   private trailKinds: number[] = [];
   private trailExprs: number[] = [];
+  private trailHandlers: RelevancyHandler[] = [];
+  private trailNext: number[] = [];
   private scopes: number[] = [];
   private isPropagating = false;
 
@@ -48,10 +52,7 @@ export class RelevancyPropagator {
       handler();
       return;
     }
-    this.pushTrail(TRAIL_HANDLER, source);
-    const list = this.handlers.get(source);
-    if (list === undefined) this.handlers.set(source, [handler]);
-    else list.push(handler);
+    this.pushTrail(TRAIL_HANDLER, source, handler);
   }
 
   addDependency(source: number, target: number) {
@@ -67,18 +68,32 @@ export class RelevancyPropagator {
       handler();
       return;
     }
-    const index = value ? 1 : 0;
-    const list = this.watches[index].get(expr);
-    if (list === undefined) this.watches[index].set(expr, [handler]);
-    else list.push(handler);
-    this.pushTrail(value ? TRAIL_POS_WATCH : TRAIL_NEG_WATCH, expr);
+    this.pushTrail(value ? TRAIL_POS_WATCH : TRAIL_NEG_WATCH, expr, handler);
   }
 
-  // push_trail: the trail holds its expressions.
-  private pushTrail(kind: number, expr: number) {
+  // push_trail: the trail holds its expressions. The cell goes in front of the expression's list.
+  private pushTrail(kind: number, expr: number, handler: RelevancyHandler) {
     this.context.manager.incRef(expr);
+    const head = 3 * expr + kind;
+    if (head >= this.heads.length) {
+      const grown = new Int32Array(Math.max(2 * this.heads.length, 3 * expr + 3));
+      grown.set(this.heads);
+      this.heads = grown;
+    }
+    this.trailNext.push(this.heads[head]);
+    this.trailHandlers.push(handler);
     this.trailKinds.push(kind);
     this.trailExprs.push(expr);
+    this.heads[head] = this.trailKinds.length;
+  }
+
+  // Runs the list of a kind and expression from its first cell, so the latest handler runs first.
+  // Handlers that a run adds go in front of the cell it started from, so the run skips them.
+  private runList(kind: number, expr: number) {
+    const head = 3 * expr + kind;
+    if (head >= this.heads.length) return;
+    for (let cell = this.heads[head]; cell !== 0; cell = this.trailNext[cell - 1])
+      this.trailHandlers[cell - 1]();
   }
 
   push() {
@@ -97,19 +112,14 @@ export class RelevancyPropagator {
     shrink(this.relevantExprs, relevantLimit);
     this.qhead = relevantLimit;
     for (let index = this.trailKinds.length - 1; index >= trailLimit; index--) {
-      const kind = this.trailKinds[index];
-      const map =
-        kind === TRAIL_HANDLER ? this.handlers : this.watches[kind === TRAIL_POS_WATCH ? 1 : 0];
       const expr = this.trailExprs[index];
-      const list = map.get(expr);
-      if (list !== undefined) {
-        list.pop();
-        if (list.length === 0) map.delete(expr);
-      }
+      this.heads[3 * expr + this.trailKinds[index]] = this.trailNext[index];
       manager.decRef(expr);
     }
     shrink(this.trailKinds, trailLimit);
     shrink(this.trailExprs, trailLimit);
+    shrink(this.trailHandlers, trailLimit);
+    shrink(this.trailNext, trailLimit);
     shrink(this.scopes, offset);
   }
 
@@ -219,8 +229,7 @@ export class RelevancyPropagator {
         else if (op === OP_ITE) this.propagateIte(expr);
         else this.propagateApp(expr);
       }
-      const list = this.handlers.get(expr);
-      if (list !== undefined) for (let index = list.length - 1; index >= 0; index--) list[index]();
+      this.runList(TRAIL_HANDLER, expr);
     }
     this.isPropagating = false;
   }
@@ -232,7 +241,6 @@ export class RelevancyPropagator {
       else if (op === OP_AND) this.propagateAnd(expr);
       else if (op === OP_IMPLIES) this.propagateImplies(expr);
     }
-    const list = this.watches[value ? 1 : 0].get(expr);
-    if (list !== undefined) for (let index = list.length - 1; index >= 0; index--) list[index]();
+    this.runList(value ? TRAIL_POS_WATCH : TRAIL_NEG_WATCH, expr);
   }
 }
