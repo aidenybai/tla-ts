@@ -550,6 +550,10 @@ export const SANY_NODE_NAMES = [
   "N_AssertStep",
 ];
 
+// The standard modules that a spec may ship its own file of, such as CommunityModules' Json.tla,
+// which SANY reads in place of its own.
+export const USER_STANDARD_MODULES = new Set(["Bags", "Json", "Randomization", "TLCExt"]);
+
 export const TLC_MODULE_SOURCES = new Map([
   [
     "Naturals",

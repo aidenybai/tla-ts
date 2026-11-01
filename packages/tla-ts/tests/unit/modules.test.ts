@@ -152,6 +152,29 @@ describe("nested module scoping matches SANY", () => {
     results.forEach((result) => expect(result.status).toBe("success"));
   });
 
+  it("orders the variables of a user's TLCExt module as TLC 1.7.4 does", async () => {
+    const result = await check({
+      source: "---- MODULE Chart ----\nEXTENDS TLCExt\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Few",
+      loadModule: (name) =>
+        name === "TLCExt"
+          ? [
+              "---- MODULE TLCExt ----",
+              "EXTENDS Naturals, TLC, Bags",
+              "VARIABLES f, bag",
+              'Init == f = (1 :> "a") @@ (2 :> "b") /\\ bag = EmptyBag',
+              "Put(i) == BagCardinality(bag) < 2 /\\ bag' = bag (+) SetToBag({f[i]}) /\\ UNCHANGED f",
+              "Next == \\E i \\in 1..2 : Put(i)",
+              'Few == CopiesIn("a", bag) < 2',
+              "====",
+            ].join("\n")
+          : undefined,
+      version: "1.7.4",
+    });
+    expect(result.status).toBe("invariant-violation");
+    expect(Object.keys(result.violation?.trace[0].state ?? {})).toEqual(["bag", "f"]);
+  });
+
   it.each([
     ["an outer definition after the nested module", "---- MODULE Inner ----\nA == B\n====\nB == 1"],
     [

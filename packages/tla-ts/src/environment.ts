@@ -58,6 +58,7 @@ import {
 } from "./resolve";
 import { createRuntime } from "./runtime";
 import { getSanyStandardModules } from "./sany-modules";
+import { USER_STANDARD_MODULES } from "./tlc-modules";
 import { getSanyParseError } from "./sany-parse-error";
 import {
   CORE_OPERATORS,
@@ -295,9 +296,6 @@ const rejectLiterals = (expressions: Expression[]): void =>
         : getChildren(expression),
     );
   });
-
-// The standard modules that a spec may ship its own file of, such as CommunityModules' Json.tla.
-const USER_STANDARD_MODULES = new Set(["Bags", "Json", "Randomization", "TLCExt"]);
 
 export const createEnvironment = (
   config: ModelConfig,
