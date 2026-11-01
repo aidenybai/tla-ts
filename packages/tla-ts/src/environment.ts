@@ -42,6 +42,7 @@ import { overrideDefinitions } from "./java-overrides";
 import { extractModule, parseModule } from "./parser";
 import {
   getArity,
+  getParamArities,
   isBefore,
   isTheoremDefinition,
   KEY_SEPARATOR,
@@ -58,6 +59,7 @@ import {
 import { createRuntime } from "./runtime";
 import { parseModuleFile } from "./sany-parse-error";
 import { CORE_OPERATORS, getStandardModule, STANDARD_DEPENDENCIES } from "./standard-modules";
+import { STANDARD_LEVELS } from "./standard-levels";
 import { getStandardRange } from "./standard-ranges";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
@@ -315,6 +317,7 @@ export const createEnvironment = (
       exported.set(operator.name, {
         key: operator.name,
         arity: operator.arity,
+        params: STANDARD_LEVELS.get(operator.name)?.formals.map((formal) => formal.arity),
         kind: "Definition",
         range: getStandardRange(name, operator.name) ?? exported.get(operator.name)?.range,
       });
@@ -443,7 +446,7 @@ export const createEnvironment = (
       return new Map(
         [...standardSymbols].map(([name, symbol]) => [
           `${instance.name}!${name}`,
-          { key: symbol.key, arity: symbol.arity, kind: symbol.kind },
+          { key: symbol.key, arity: symbol.arity, params: symbol.params, kind: symbol.kind },
         ]),
       );
     }
@@ -493,6 +496,7 @@ export const createEnvironment = (
         symbols.set(name, {
           key,
           arity: symbol.arity,
+          params: symbol.params,
           kind: symbol.kind,
           range: parameterized.get(symbol.key) === true ? instance.location.range : symbol.range,
         });
@@ -506,6 +510,7 @@ export const createEnvironment = (
       symbols.set(`${instance.name}!${name}`, {
         key,
         arity: symbol.arity + instance.params.length,
+        params: symbol.params && [...instance.params.map((param) => param.arity), ...symbol.params],
         kind: symbol.kind,
       });
     });
@@ -770,6 +775,7 @@ export const createEnvironment = (
     const getDefinitionSymbol = (definition: Definition): ModuleSymbol => ({
       key: getKey(definition),
       arity: getArity(definition),
+      params: getParamArities(definition),
       kind: isTheoremDefinition(parsed, definition) ? "Theorem" : "Definition",
       range: definition.location.range,
     });

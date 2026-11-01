@@ -1953,6 +1953,88 @@ describe("name resolution matches SANY", () => {
         ["line 5, col 49 to line 5, col 49", "Non-unique fields in constructor."],
       ],
     ],
+    [
+      "High(Op(_)) == Op(1)\nF(a) == a\nG(a, b) == a\nf == High(A) /\\ High(G) /\\ F(LAMBDA y : y) /\\ High(1) /\\ High(High)",
+      [
+        ["line 5, col 11 to line 5, col 11", "Unknown operator: `A'."],
+        [
+          "line 5, col 6 to line 5, col 12",
+          "Argument number 1 to operator 'High' \nshould be a 1-parameter operator.",
+        ],
+        ["line 5, col 22 to line 5, col 22", "Expected arity 1 but found operator of arity 2."],
+        [
+          "line 5, col 17 to line 5, col 23",
+          "Argument number 1 to operator 'High' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 5, col 30 to line 5, col 41",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 5, col 52 to line 5, col 52",
+          "An expression appears as argument number 1 (counting from 1) to operator 'High', in a position an operator is required.",
+        ],
+        [
+          "line 5, col 47 to line 5, col 53",
+          "Argument number 1 to operator 'High' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 5, col 58 to line 5, col 67",
+          "Argument number 1 to operator 'High' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "EXTENDS Naturals, Sequences\nTwo(a, b) == a\nf == LET G(y) == y IN G(1) + G\nP(Op(_)) == Op(Op) /\\ Op + 1\ng == SelectSeq(<<>>, Two) /\\ SelectSeq(<<>>, LAMBDA a, b : a)",
+      [
+        ["line 4, col 30 to line 4, col 30", "The operator G requires 1 arguments."],
+        ["line 5, col 16 to line 5, col 17", "The operator Op requires 1 arguments."],
+        ["line 5, col 23 to line 5, col 24", "The operator Op requires 1 arguments."],
+        ["line 6, col 22 to line 6, col 24", "Expected arity 1 but found operator of arity 2."],
+        [
+          "line 6, col 6 to line 6, col 25",
+          "Argument number 2 to operator 'SelectSeq' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 6, col 30 to line 6, col 38",
+          "Lambda expression with arity 2 used as argument 2 of operator `SelectSeq', \nbut an operator of arity 1 is required.",
+        ],
+        [
+          "line 6, col 30 to line 6, col 61",
+          "Argument number 2 to operator 'SelectSeq' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "---- MODULE Inner ----\nH(Op(_)) == Op(1)\nOne(a) == a\n====\nI == INSTANCE Inner\nINSTANCE Inner\nf == I!H(I!One) /\\ I!One(I!One) /\\ I!H(LAMBDA a, b : a) /\\ H(I!H) /\\ One(One)",
+      [
+        ["line 8, col 26 to line 8, col 30", "The operator I!One requires 1 arguments."],
+        [
+          "line 8, col 38 to line 8, col 38",
+          "Lambda expression with arity 2 used as argument 1 of operator `I!H', \nbut an operator of arity 1 is required.",
+        ],
+        [
+          "line 8, col 36 to line 8, col 55",
+          "Argument number 1 to operator 'I!H' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 8, col 60 to line 8, col 65",
+          "Argument number 1 to operator 'H' \nshould be a 1-parameter operator.",
+        ],
+        ["line 8, col 74 to line 8, col 76", "The operator One requires 1 arguments."],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nOne(a) == a\nf == One(\\cup) /\\ One(-.) /\\ One(1) + One",
+      [
+        ["line 4, col 10 to line 4, col 13", "The operator \\cup requires 2 arguments."],
+        [
+          "line 4, col 23 to line 4, col 23",
+          "Could not find declaration or definition of symbol '-.'.",
+        ],
+        ["line 4, col 39 to line 4, col 41", "The operator One requires 1 arguments."],
+      ],
+    ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
     await expect(checkSource(source)).rejects.toThrow(
       createSanyError(
