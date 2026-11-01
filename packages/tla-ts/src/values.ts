@@ -489,8 +489,24 @@ export const markStreamedSet = <Streamed extends UnionValue | SetOperationValue>
   return value;
 };
 
+// The sets that stream their elements apart from the normalized set until TLC caches them.
+const STREAMING_KINDS = new Set<ObjectValue["kind"]>([
+  "Union",
+  "SetOperation",
+  "FilteredSet",
+  "ProductSet",
+  "RecordSet",
+  "FunctionSet",
+]);
+
 const cacheSet = (value: Value) => {
-  if (streamedSetPresence.isPresent && typeof value === "object") cachedSets.add(value);
+  if (
+    streamedSetPresence.isPresent &&
+    typeof value === "object" &&
+    STREAMING_KINDS.has(value.kind)
+  ) {
+    cachedSets.add(value);
+  }
 };
 
 // FcnLambdaValue#fingerPrint caches the FcnRcdValue the function enumerates to, which applies it
