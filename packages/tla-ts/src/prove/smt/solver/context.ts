@@ -5,7 +5,7 @@
 import type { AssertedFormulas } from "./asserted-formulas";
 import { AstManager, FAMILY_ARITH, KIND_APP, KIND_QUANTIFIER, KIND_VAR } from "./ast";
 import { getCongruenceJustification } from "./cg-table";
-import { BJustification, Clause, CLS_LEARNED, CLS_TH_LEMMA } from "./clause";
+import { BJustification, type Clause, CLS_LEARNED, CLS_TH_LEMMA, HEADER_SIZE } from "./clause";
 import { ConflictResolution } from "./conflict-resolution";
 import { DynAckManager } from "./dyn-ack";
 import {
@@ -177,28 +177,31 @@ export class Context extends Internalizer {
       }
       const list = this.watches[literal];
       if (list === undefined) continue;
+      // Nothing below makes a clause, so the clause data stays in place.
+      const data = this.clauses.data;
       let kept = 0;
       let index = 0;
       for (; index < list.length; index++) {
         const clause: Clause = list[index];
-        const literals = clause.literals;
-        if (literals[0] === notLiteral) {
-          literals[0] = literals[1];
-          literals[1] = notLiteral;
+        const first = clause + HEADER_SIZE;
+        if (data[first] === notLiteral) {
+          data[first] = data[first + 1];
+          data[first + 1] = notLiteral;
         }
-        const firstLiteral = literals[0];
+        const firstLiteral = data[first] as Literal;
         const firstValue = this.assignment[firstLiteral];
         if (firstValue === L_TRUE) {
           list[kept++] = clause;
           continue;
         }
         let isFound = false;
-        for (let position = 2; position < literals.length; position++) {
-          const candidate = literals[position];
+        const end = first + data[clause];
+        for (let position = first + 2; position < end; position++) {
+          const candidate = data[position] as Literal;
           if (this.assignment[candidate] !== L_FALSE) {
             this.addWatch(negate(candidate), clause);
-            literals[1] = candidate;
-            literals[position] = notLiteral;
+            data[first + 1] = candidate;
+            data[position] = notLiteral;
             isFound = true;
             break;
           }
@@ -743,7 +746,7 @@ export class Context extends Internalizer {
     const limit = Math.min(this.scopeLevel, this.clausesToReinit.length - 1);
     for (let level = newLevel; level <= limit; level++)
       for (const clause of this.clausesToReinit[level])
-        this.cacheGenerationOfLiterals(clause.literals, newLevel, visited);
+        this.cacheGenerationOfLiterals(this.clauses.getLiterals(clause), newLevel, visited);
   }
 
   private unassignVars(oldLimit: number) {
@@ -796,40 +799,45 @@ export class Context extends Internalizer {
 
   private reinitClauses(numScopes: number, numBoolVars: number) {
     if (this.clausesToReinit.length === 0) return;
+    const store = this.clauses;
     const limit = Math.min(this.scopeLevel + numScopes, this.clausesToReinit.length - 1);
     for (let level = this.scopeLevel + 1; level <= limit; level++) {
       const clauses = this.clausesToReinit[level];
       for (const clause of clauses) {
-        if (clause.isDeleted) {
-          clause.isReinit = false;
-          clause.isReinternalizeAtoms = false;
+        store.checkLive(clause);
+        if (store.isDeleted(clause)) {
+          store.setReinit(clause, false);
+          store.setReinternalizeAtoms(clause, false);
+          store.free(clause);
           continue;
         }
         let isKept = false;
-        const atoms = clause.atoms;
-        const atomSigns = clause.atomSigns;
-        if (clause.isReinternalizeAtoms && atoms !== null && atomSigns !== null) {
+        const atoms = store.getAtoms(clause);
+        if (store.isReinternalizeAtoms(clause) && atoms.length > 0) {
           for (let index = 0; index < 2; index++)
-            if (getVar(clause.literals[index]) < numBoolVars)
+            if (getVar(store.getLiteral(clause, index)) < numBoolVars)
               this.removeWatchLiteral(clause, index);
-          for (let index = 0; index < clause.literals.length; index++) {
+          const isThLemma = store.getKind(clause) === CLS_TH_LEMMA;
+          for (let index = 0; index < atoms.length; index++) {
             const atom = atoms[index];
             this.internalize(atom, !this.manager.isNot(atom));
-            clause.literals[index] = mkLiteral(this.getBoolVar(atom), atomSigns[index]);
-            if (clause.kind === CLS_TH_LEMMA) this.markLiteralAsRelevant(clause.literals[index]);
+            const literal = mkLiteral(this.getBoolVar(atom), store.getAtomSign(clause, index));
+            store.setLiteral(clause, index, literal);
+            if (isThLemma) this.markLiteralAsRelevant(literal);
           }
-          this.swapLiterals(clause, 0, this.selectWatchLiteral(clause, 0));
-          this.swapLiterals(clause, 1, this.selectWatchLiteral(clause, 1));
+          store.swapLiterals(clause, 0, this.selectWatchLiteral(clause, 0));
+          store.swapLiterals(clause, 1, this.selectWatchLiteral(clause, 1));
           this.addWatchLiteral(clause, 0);
           this.addWatchLiteral(clause, 1);
-          if (this.assignment[clause.literals[0]] === L_FALSE) this.setConflict(clause, null);
-          else if (this.assignment[clause.literals[1]] === L_FALSE)
-            this.assign(clause.literals[0], clause);
+          const first = store.getLiteral(clause, 0);
+          if (this.assignment[first] === L_FALSE) this.setConflict(clause, null);
+          else if (this.assignment[store.getLiteral(clause, 1)] === L_FALSE)
+            this.assign(first, clause);
           isKept = true;
         } else {
-          const first = clause.literals[0];
-          const second = clause.literals[1];
-          if (clause.kind === CLS_TH_LEMMA) {
+          const first = store.getLiteral(clause, 0);
+          const second = store.getLiteral(clause, 1);
+          if (store.getKind(clause) === CLS_TH_LEMMA) {
             this.markLiteralAsRelevant(first);
             this.markLiteralAsRelevant(second);
           }
@@ -849,9 +857,9 @@ export class Context extends Internalizer {
           while (this.clausesToReinit.length <= this.scopeLevel) this.clausesToReinit.push([]);
           this.clausesToReinit[this.scopeLevel].push(clause);
         } else {
-          if (clause.isReinternalizeAtoms) this.releaseAtoms(clause);
-          clause.isReinit = false;
-          clause.isReinternalizeAtoms = false;
+          if (store.isReinternalizeAtoms(clause)) this.releaseAtoms(clause);
+          store.setReinit(clause, false);
+          store.setReinternalizeAtoms(clause, false);
         }
       }
       this.clausesToReinit[level] = [];
@@ -859,14 +867,18 @@ export class Context extends Internalizer {
   }
 
   private isEmptyClause(clause: Clause) {
-    return clause.literals.every((literal) => this.assignment[literal] === L_FALSE);
+    const store = this.clauses;
+    for (let index = 0; index < store.getNumLiterals(clause); index++)
+      if (this.assignment[store.getLiteral(clause, index)] !== L_FALSE) return false;
+    return true;
   }
 
   // is_unit_clause: exactly one literal is unassigned and the rest are false.
   private isUnitClause(clause: Clause) {
+    const store = this.clauses;
     let isFound = false;
-    for (const literal of clause.literals) {
-      const value = this.assignment[literal];
+    for (let index = 0; index < store.getNumLiterals(clause); index++) {
+      const value = this.assignment[store.getLiteral(clause, index)];
       if (value === L_TRUE) return false;
       if (value === L_UNDEF) {
         if (isFound) return false;
@@ -1135,17 +1147,20 @@ export class Context extends Internalizer {
 
   // can_delete: a lemma that justifies neither of its watched literals.
   private isDeletable(clause: Clause) {
-    if (clause.isReinit) return false;
+    const store = this.clauses;
+    if (store.isReinit(clause)) return false;
     return (
-      this.justifications[getVar(clause.literals[0])] !== clause &&
-      this.justifications[getVar(clause.literals[1])] !== clause
+      this.justifications[getVar(store.getLiteral(clause, 0))] !== clause &&
+      this.justifications[getVar(store.getLiteral(clause, 1))] !== clause
     );
   }
 
   private hasMoreThanKUnassignedLiterals(clause: Clause, limit: number) {
+    const store = this.clauses;
     let remaining = limit;
-    for (const literal of clause.literals)
-      if (this.assignment[literal] === L_UNDEF && --remaining === 0) return true;
+    for (let index = 0; index < store.getNumLiterals(clause); index++)
+      if (this.assignment[store.getLiteral(clause, index)] === L_UNDEF && --remaining === 0)
+        return true;
     return false;
   }
 
@@ -1159,10 +1174,11 @@ export class Context extends Internalizer {
     let kept = startAt;
     for (let index = startAt; index < lemmas.length; index++) {
       const clause = lemmas[index];
+      this.clauses.checkLive(clause);
       if (
         this.isDeletable(clause) &&
-        (clause.isDeleted ||
-          (clause.activity < OLD_CLAUSE_ACTIVITY &&
+        (this.clauses.isDeleted(clause) ||
+          (this.clauses.getActivity(clause) < OLD_CLAUSE_ACTIVITY &&
             this.hasMoreThanKUnassignedLiterals(
               clause,
               index >= newFirstIndex ? NEW_CLAUSE_RELEVANCY : OLD_CLAUSE_RELEVANCY,

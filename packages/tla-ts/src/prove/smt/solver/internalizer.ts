@@ -28,7 +28,8 @@ import {
   CLS_LEARNED,
   CLS_TH_AXIOM,
   CLS_TH_LEMMA,
-  Clause,
+  type Clause,
+  ClauseStore,
 } from "./clause";
 import {
   AXIOM_EQ_JUSTIFICATION,
@@ -124,12 +125,15 @@ export abstract class Internalizer {
   protected isTrueFirstFlags: boolean[] = [];
   // Per literal.
   protected assignment: number[] = [];
+  readonly clauses = new ClauseStore();
   // Like Z3's watch lists, a literal's lists are created when the first clause is added.
   protected watches: (Clause[] | undefined)[] = [];
   // del_clauses' uint_set of the watch lists to filter, by literal, all 0 between calls.
   private watchMarks = new Uint8Array(1024);
   // The false literals that simplify_aux_clause_literals removes from the clause mkClause makes.
   private removedLiterals: Literal[] = [];
+  // The literals of the clause being made, which mkClause simplifies instead of the caller's.
+  private clauseLiterals: Literal[] = [];
   // The binary clauses of the binary clause optimization: the literals each literal propagates when it
   // becomes true, which Z3 visits newest first and before the clauses.
   protected binaryWatches: (Literal[] | undefined)[] = [];
@@ -1083,23 +1087,23 @@ export abstract class Internalizer {
   }
 
   protected selectWatchLiteral(clause: Clause, startingAt: number) {
+    const clauses = this.clauses;
     let minTrue = -1;
     let maxFalse = -1;
     let unknown = -1;
-    const literals = clause.literals;
-    for (let index = startingAt; index < literals.length; index++) {
-      const literal = literals[index];
+    for (let index = startingAt; index < clauses.getNumLiterals(clause); index++) {
+      const literal = clauses.getLiteral(clause, index);
       const value = this.assignment[literal];
       if (value === L_FALSE) {
         if (
           maxFalse === -1 ||
-          this.levels[getVar(literal)] > this.levels[getVar(literals[maxFalse])]
+          this.levels[getVar(literal)] > this.levels[getVar(clauses.getLiteral(clause, maxFalse))]
         )
           maxFalse = index;
       } else if (value === L_UNDEF) unknown = index;
       else if (
         minTrue === -1 ||
-        this.levels[getVar(literal)] < this.levels[getVar(literals[minTrue])]
+        this.levels[getVar(literal)] < this.levels[getVar(clauses.getLiteral(clause, minTrue))]
       )
         minTrue = index;
     }
@@ -1109,11 +1113,11 @@ export abstract class Internalizer {
   }
 
   private selectLearnedWatchLiteral(clause: Clause) {
+    const clauses = this.clauses;
     let maxFalse = -1;
     let maxLevel = 0;
-    const literals = clause.literals;
-    for (let index = 1; index < literals.length; index++) {
-      const literal = literals[index];
+    for (let index = 1; index < clauses.getNumLiterals(clause); index++) {
+      const literal = clauses.getLiteral(clause, index);
       const level =
         this.assignment[literal] === L_FALSE ? this.levels[getVar(literal)] : this.scopeLevel;
       if (maxFalse === -1 || level > maxLevel) {
@@ -1124,15 +1128,8 @@ export abstract class Internalizer {
     return maxFalse;
   }
 
-  protected swapLiterals(clause: Clause, first: number, second: number) {
-    const literals = clause.literals;
-    const saved = literals[first];
-    literals[first] = literals[second];
-    literals[second] = saved;
-  }
-
   protected addWatchLiteral(clause: Clause, index: number) {
-    this.addWatch(negate(clause.literals[index]), clause);
+    this.addWatch(negate(this.clauses.getLiteral(clause, index)), clause);
   }
 
   // A literal's first watch gets a list of its own size, since growing an empty list allocates room
@@ -1144,7 +1141,7 @@ export abstract class Internalizer {
   }
 
   protected removeWatchLiteral(clause: Clause, index: number) {
-    const list = this.watches[negate(clause.literals[index])];
+    const list = this.watches[negate(this.clauses.getLiteral(clause, index))];
     if (list === undefined) return;
     // A clause is deleted when its scope is popped, so it is most often near the end.
     const position = list.lastIndexOf(clause);
@@ -1178,8 +1175,8 @@ export abstract class Internalizer {
   }
 
   private markForReinit(clause: Clause, level: number, isReinternalizingAtoms: boolean) {
-    clause.isReinit = true;
-    clause.isReinternalizeAtoms = isReinternalizingAtoms;
+    this.clauses.setReinit(clause, true);
+    this.clauses.setReinternalizeAtoms(clause, isReinternalizingAtoms);
     while (this.clausesToReinit.length <= level) this.clausesToReinit.push([]);
     this.clausesToReinit[level].push(clause);
   }
@@ -1192,11 +1189,14 @@ export abstract class Internalizer {
   ) {
     let literals = input;
     let justification = inputJustification;
+    if (kind !== CLS_LEARNED) {
+      literals = this.clauseLiterals;
+      shrink(literals, 0);
+      for (const literal of input) literals.push(literal);
+    }
     if (kind === CLS_TH_LEMMA) {
-      literals = input.slice();
       if (!this.simplifyAuxLemmaLiterals(literals)) return null;
     } else if (kind !== CLS_LEARNED) {
-      literals = input.slice();
       const removed = this.removedLiterals;
       shrink(removed, 0);
       if (!this.simplifyAuxClauseLiterals(literals, removed)) return null;
@@ -1229,30 +1229,26 @@ export abstract class Internalizer {
       ? literals.map((literal) => this.boolVar2Expr[getVar(literal)])
       : null;
     for (const atom of atoms ?? []) this.manager.incRef(atom);
-    const clause = new Clause(
-      literals,
-      kind,
-      justification,
-      atoms,
-      isSavingAtoms ? literals.map(isNegated) : null,
-    );
-    clause.delEh = delEh;
+    const clauses = this.clauses;
+    const clause = clauses.mk(literals, kind, justification, delEh, atoms);
     if (isLemma) {
       if (kind === CLS_LEARNED)
-        this.swapLiterals(clause, 1, this.selectLearnedWatchLiteral(clause));
+        clauses.swapLiterals(clause, 1, this.selectLearnedWatchLiteral(clause));
       else {
-        this.swapLiterals(clause, 0, this.selectWatchLiteral(clause, 0));
-        this.swapLiterals(clause, 1, this.selectWatchLiteral(clause, 1));
+        clauses.swapLiterals(clause, 0, this.selectWatchLiteral(clause, 0));
+        clauses.swapLiterals(clause, 1, this.selectWatchLiteral(clause, 1));
       }
       this.lemmas.push(clause);
       this.addWatchLiteral(clause, 0);
       this.addWatchLiteral(clause, 1);
+      const first = clauses.getLiteral(clause, 0);
+      const second = clauses.getLiteral(clause, 1);
       // A theory lemma that conflicts or propagates above the base level is checked again when the
       // level is backtracked.
       const isPropagating =
-        this.assignment[literals[0]] === L_FALSE || this.assignment[literals[1]] === L_FALSE;
-      if (this.assignment[literals[0]] === L_FALSE) this.setConflict(clause, null);
-      else if (this.assignment[literals[1]] === L_FALSE) this.assign(literals[0], clause);
+        this.assignment[first] === L_FALSE || this.assignment[second] === L_FALSE;
+      if (this.assignment[first] === L_FALSE) this.setConflict(clause, null);
+      else if (this.assignment[second] === L_FALSE) this.assign(first, clause);
       const isReinit = kind === CLS_TH_LEMMA && isPropagating && this.scopeLevel > this.baseLevel;
       if (isSavingAtoms || isReinit)
         this.markForReinit(clause, isReinit ? this.scopeLevel : iscopeLevel, isSavingAtoms);
@@ -1266,20 +1262,22 @@ export abstract class Internalizer {
     return clause;
   }
 
+  // del_clause. A clause in the reinit stack is only marked deleted, and reinitClauses frees it.
   protected deleteClause(clause: Clause) {
-    if (clause.isDeleted) return;
+    const clauses = this.clauses;
+    if (clauses.isDeleted(clause)) return;
     this.removeWatchLiteral(clause, 0);
     this.removeWatchLiteral(clause, 1);
-    clause.isDeleted = true;
-    clause.delEh?.();
-    if (clause.isReinternalizeAtoms) this.releaseAtoms(clause);
+    clauses.markAsDeleted(clause);
+    clauses.getDelEh(clause)?.();
+    if (clauses.isReinternalizeAtoms(clause)) this.releaseAtoms(clause);
+    if (!clauses.isReinit(clause)) clauses.free(clause);
   }
 
   // release_atoms: the clause no longer holds its atoms.
   protected releaseAtoms(clause: Clause) {
-    for (const atom of clause.atoms ?? []) this.manager.decRef(atom);
-    clause.atoms = null;
-    clause.atomSigns = null;
+    for (const atom of this.clauses.getAtoms(clause)) this.manager.decRef(atom);
+    this.clauses.clearAtoms(clause);
   }
 
   // del_clauses: past 1,000 clauses, mark each deleted, filter each of their watch lists once, then
@@ -1299,14 +1297,15 @@ export abstract class Internalizer {
       this.watchMarks[literal] = 1;
       watched.push(literal);
     };
+    const store = this.clauses;
     for (let index = clauses.length - 1; index >= oldSize; index--) {
       const clause = clauses[index];
-      if (!clause.isDeleted) {
-        clause.isDeleted = true;
-        clause.delEh?.();
+      if (!store.isDeleted(clause)) {
+        store.markAsDeleted(clause);
+        store.getDelEh(clause)?.();
       }
-      markWatch(negate(clause.literals[0]));
-      markWatch(negate(clause.literals[1]));
+      markWatch(negate(store.getLiteral(clause, 0)));
+      markWatch(negate(store.getLiteral(clause, 1)));
     }
     for (const literal of watched) {
       this.watchMarks[literal] = 0;
@@ -1314,11 +1313,14 @@ export abstract class Internalizer {
       if (list === undefined) continue;
       let kept = 0;
       for (let index = 0; index < list.length; index++)
-        if (!list[index].isDeleted) list[kept++] = list[index];
+        if (!store.isDeleted(list[index])) list[kept++] = list[index];
       shrink(list, kept);
     }
-    for (let index = clauses.length - 1; index >= oldSize; index--)
-      if (clauses[index].isReinternalizeAtoms) this.releaseAtoms(clauses[index]);
+    for (let index = clauses.length - 1; index >= oldSize; index--) {
+      const clause = clauses[index];
+      if (store.isReinternalizeAtoms(clause)) this.releaseAtoms(clause);
+      if (!store.isReinit(clause)) store.free(clause);
+    }
     shrink(clauses, oldSize);
   }
 }

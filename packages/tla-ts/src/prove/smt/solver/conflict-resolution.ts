@@ -155,19 +155,21 @@ export class ConflictResolution {
     if (justification instanceof BinJustification)
       return Math.max(result, context.getAssignLevel(justification.literal));
     if (justification === null || justification === "axiom") return result;
-    const literals = justification.literals;
+    const clauses = context.clauses;
+    const numLiterals = clauses.getNumLiterals(justification);
     let start = 0;
     if (consequent !== context.falseLiteral) {
-      if (literals[0] === consequent) start = 1;
+      if (clauses.getLiteral(justification, 0) === consequent) start = 1;
       else {
-        result = Math.max(result, context.getAssignLevel(literals[0]));
+        result = Math.max(result, context.getAssignLevel(clauses.getLiteral(justification, 0)));
         start = 2;
       }
     }
-    for (let index = start; index < literals.length; index++)
-      result = Math.max(result, context.getAssignLevel(literals[index]));
-    if (justification.justification !== null)
-      result = Math.max(result, this.getJustificationMaxLevel(justification.justification));
+    for (let index = start; index < numLiterals; index++)
+      result = Math.max(result, context.getAssignLevel(clauses.getLiteral(justification, index)));
+    const clauseJustification = clauses.getJustification(justification);
+    if (clauseJustification !== null)
+      result = Math.max(result, this.getJustificationMaxLevel(clauseJustification));
     return result;
   }
 
@@ -213,19 +215,21 @@ export class ConflictResolution {
         this.processAntecedent(justification.literal, marks);
       else if (justification !== null && justification !== "axiom") {
         const clause = justification;
-        if (clause.isLemma()) clause.activity++;
-        const literals = clause.literals;
+        const clauses = context.clauses;
+        if (clauses.isLemma(clause)) clauses.incActivity(clause);
+        const numLiterals = clauses.getNumLiterals(clause);
         let start = 0;
         if (consequent !== context.falseLiteral) {
-          if (literals[0] === consequent) start = 1;
+          if (clauses.getLiteral(clause, 0) === consequent) start = 1;
           else {
-            this.processAntecedent(negate(literals[0]), marks);
+            this.processAntecedent(negate(clauses.getLiteral(clause, 0)), marks);
             start = 2;
           }
         }
-        for (let literalIndex = start; literalIndex < literals.length; literalIndex++)
-          this.processAntecedent(negate(literals[literalIndex]), marks);
-        if (clause.justification !== null) this.processJustification(clause.justification, marks);
+        for (let literalIndex = start; literalIndex < numLiterals; literalIndex++)
+          this.processAntecedent(negate(clauses.getLiteral(clause, literalIndex)), marks);
+        const clauseJustification = clauses.getJustification(clause);
+        if (clauseJustification !== null) this.processJustification(clauseJustification, marks);
       }
       while (!context.marks[getVar(assigned[index])]) index--;
       consequent = assigned[index];
@@ -296,13 +300,17 @@ export class ConflictResolution {
       else if (justification === null || justification === "axiom")
         isImplied = context.levels[boolVar] <= context.baseLevel;
       else {
-        const literals = justification.literals;
-        const position = getVar(literals[1]) === boolVar ? 1 : 0;
-        for (let index = 0; index < literals.length && isImplied; index++)
+        const clauses = context.clauses;
+        const numLiterals = clauses.getNumLiterals(justification);
+        const position = getVar(clauses.getLiteral(justification, 1)) === boolVar ? 1 : 0;
+        for (let index = 0; index < numLiterals && isImplied; index++)
           if (index !== position)
-            isImplied = this.processAntecedentForMinimization(negate(literals[index]));
-        if (isImplied && justification.justification !== null)
-          isImplied = this.processJustificationForMinimization(justification.justification);
+            isImplied = this.processAntecedentForMinimization(
+              negate(clauses.getLiteral(justification, index)),
+            );
+        const clauseJustification = clauses.getJustification(justification);
+        if (isImplied && clauseJustification !== null)
+          isImplied = this.processJustificationForMinimization(clauseJustification);
       }
       if (!isImplied) {
         this.resetUnmark(oldSize, oldHead);
