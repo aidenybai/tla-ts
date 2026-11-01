@@ -114,6 +114,16 @@ describe("check dumps the state graph like TLC's -dump", () => {
     expect(dump.written.get("RandomElementXandY.dot")).toBe(readTlcDump("RandomElementXandY.dot"));
   });
 
+  it("writes the successors again when TLC replays the state an invariant fails to evaluate in", async () => {
+    const dump = await dumpFixture("state-graph", "FailedInvariant", {
+      path: "FailedInvariant.dot",
+      dot: true,
+      actionLabels: true,
+    });
+    expect(dump.result.status).toBe("error");
+    expect(dump.written.get("FailedInvariant.dot")).toBe(readTlcDump("FailedInvariant.dot"));
+  });
+
   it("leaves a snapshot that matches the finished graph", async () => {
     const dump = await dumpFixture("water-jugs", "WaterJugs", {
       path: "WaterJugs.dot",

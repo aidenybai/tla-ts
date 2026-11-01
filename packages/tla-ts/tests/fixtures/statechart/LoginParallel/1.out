@@ -1,0 +1,72 @@
+@!@!@STARTMSG 2220:0 @!@!@
+Starting SANY...
+@!@!@ENDMSG 2220 @!@!@
+Parsing file {spec}/LoginParallel.tla
+Semantic processing of module LoginParallel
+Linting of module LoginParallel
+@!@!@STARTMSG 2219:0 @!@!@
+SANY finished.
+@!@!@ENDMSG 2219 @!@!@
+@!@!@STARTMSG 2185:0 @!@!@
+Starting... (DATE)
+@!@!@ENDMSG 2185 @!@!@
+@!@!@STARTMSG 2189:0 @!@!@
+Computing initial states...
+@!@!@ENDMSG 2189 @!@!@
+@!@!@STARTMSG 2190:0 @!@!@
+Finished computing initial states: 1 distinct state generated at DATE.
+@!@!@ENDMSG 2190 @!@!@
+@!@!@STARTMSG 2110:1 @!@!@
+Invariant SignedInWhileLocked is violated.
+@!@!@ENDMSG 2110 @!@!@
+@!@!@STARTMSG 2121:1 @!@!@
+The behavior up to this point is:
+@!@!@ENDMSG 2121 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+1: <Initial predicate>
+/\ session = "Signed out"
+/\ wrongTries = "No wrong tries"
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+2: <YouSubmitAPassword line 25, col 5 to line 26, col 31 of module LoginParallel>
+/\ session = "Checking the password"
+/\ wrongTries = "No wrong tries"
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+3: <ThePasswordIsRight line 30, col 5 to line 35, col 86 of module LoginParallel>
+/\ session = "Signed in"
+/\ wrongTries = "No wrong tries"
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+4: <ThePasswordIsWrong line 39, col 5 to line 45, col 104 of module LoginParallel>
+/\ session = "Signed in"
+/\ wrongTries = "1 wrong try"
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+5: <ThePasswordIsWrong line 39, col 5 to line 45, col 104 of module LoginParallel>
+/\ session = "Signed in"
+/\ wrongTries = "2 wrong tries"
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+6: <ThePasswordIsWrong line 39, col 5 to line 45, col 104 of module LoginParallel>
+/\ session = "Signed in"
+/\ wrongTries = "Locked out"
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2200:0 @!@!@
+Progress(6) at DATE: 29 states generated (N s/min), 12 distinct states found (N ds/min), 1 states left on queue.
+@!@!@ENDMSG 2200 @!@!@
+@!@!@STARTMSG 2199:0 @!@!@
+29 states generated, 12 distinct states found, 1 states left on queue.
+@!@!@ENDMSG 2199 @!@!@
+@!@!@STARTMSG 2194:0 @!@!@
+The depth of the complete state graph search is 6.
+@!@!@ENDMSG 2194 @!@!@
+@!@!@STARTMSG 2186:0 @!@!@
+Finished in T at (DATE)
+@!@!@ENDMSG 2186 @!@!@

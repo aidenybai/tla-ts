@@ -637,11 +637,11 @@ export const replayInitialStates = (
 
 // TLC's getNextStates for each action TLC splits the next-state relation into. TLC checks the
 // successors of an action once it has computed them all.
-export const replaySuccessors = (
-  actions: ReplayAction[],
+export const replaySuccessors = <Action extends ReplayAction>(
+  actions: Action[],
   state: Value[],
   environment: Environment,
-  onState: (state: Value[]) => void,
+  onState: (state: Value[], action: Action) => void,
 ) => {
   // TLC fails to split a next-state relation that is not an operator application before it checks
   // the spec, so it replays nothing.
@@ -650,6 +650,6 @@ export const replaySuccessors = (
     const successors: Value[][] = [];
     const replay = createReplay(environment, false, state, (next) => successors.push(next));
     visit(replay, action.expression, undefined, action.scope, getEmptyState(environment));
-    successors.forEach(onState);
+    successors.forEach((successor) => onState(successor, action));
   });
 };

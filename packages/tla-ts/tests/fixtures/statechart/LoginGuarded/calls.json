@@ -1,0 +1,65 @@
+[
+  {
+    "args": [
+      "-Djava.io.tmpdir={work}/tmp-sany",
+      "-DTLA-Library={spec}",
+      "-XX:TieredStopAtLevel=1",
+      "-cp",
+      "{jar}",
+      "tla2sany.xml.XMLExporter",
+      "-o",
+      "-I",
+      "{spec}",
+      "{spec}/LoginGuarded.tla"
+    ],
+    "status": 0
+  },
+  {
+    "args": [
+      "-Djava.io.tmpdir={work}/tmp-verdict-1",
+      "-DTLA-Library={spec}",
+      "-cp",
+      "{jar}",
+      "tlc2.TLC",
+      "-tool",
+      "-workers",
+      "1",
+      "-fp",
+      "0",
+      "-lncheck",
+      "final",
+      "-metadir",
+      "{work}/meta-verdict-1",
+      "-config",
+      "{work}/verdict-1.cfg",
+      "LoginGuarded"
+    ],
+    "status": 0
+  },
+  {
+    "args": [
+      "-Djava.io.tmpdir={work}/tmp-ChartRun",
+      "-DTLA-Library={spec}",
+      "-cp",
+      "{jar}",
+      "tlc2.TLC",
+      "-tool",
+      "-workers",
+      "1",
+      "-fp",
+      "0",
+      "-lncheck",
+      "final",
+      "-deadlock",
+      "-metadir",
+      "{work}/meta-ChartRun",
+      "-config",
+      "{work}/ChartRun.cfg",
+      "-dump",
+      "dot,actionlabels",
+      "{work}/graph",
+      "ChartRun"
+    ],
+    "status": 0
+  }
+]

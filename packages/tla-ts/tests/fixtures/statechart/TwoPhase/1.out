@@ -1,0 +1,84 @@
+@!@!@STARTMSG 2220:0 @!@!@
+Starting SANY...
+@!@!@ENDMSG 2220 @!@!@
+Parsing file {spec}/TwoPhase.tla
+Semantic processing of module TwoPhase
+Linting of module TwoPhase
+@!@!@STARTMSG 2219:0 @!@!@
+SANY finished.
+@!@!@ENDMSG 2219 @!@!@
+@!@!@STARTMSG 2185:0 @!@!@
+Starting... (DATE)
+@!@!@ENDMSG 2185 @!@!@
+@!@!@STARTMSG 2189:0 @!@!@
+Computing initial states...
+@!@!@ENDMSG 2189 @!@!@
+@!@!@STARTMSG 2190:0 @!@!@
+Finished computing initial states: 1 distinct state generated at DATE.
+@!@!@ENDMSG 2190 @!@!@
+@!@!@STARTMSG 2110:1 @!@!@
+Invariant TCConsistent is violated.
+@!@!@ENDMSG 2110 @!@!@
+@!@!@STARTMSG 2121:1 @!@!@
+The behavior up to this point is:
+@!@!@ENDMSG 2121 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+1: <Initial predicate>
+/\ msgs = {}
+/\ rmState = (r1 :> "working" @@ r2 :> "working")
+/\ tmState = "init"
+/\ tmPrepared = {}
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+2: <RMPrepare(r1) line 43, col 3 to line 46, col 38 of module TwoPhase>
+/\ msgs = {[type |-> "Prepared", rm |-> r1]}
+/\ rmState = (r1 :> "prepared" @@ r2 :> "working")
+/\ tmState = "init"
+/\ tmPrepared = {}
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+3: <TMRcvPrepared(r1) line 24, col 3 to line 27, col 41 of module TwoPhase>
+/\ msgs = {[type |-> "Prepared", rm |-> r1]}
+/\ rmState = (r1 :> "prepared" @@ r2 :> "working")
+/\ tmState = "init"
+/\ tmPrepared = {r1}
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+4: <TMCommit line 30, col 3 to line 34, col 38 of module TwoPhase>
+/\ msgs = {[type |-> "Commit"], [type |-> "Prepared", rm |-> r1]}
+/\ rmState = (r1 :> "prepared" @@ r2 :> "working")
+/\ tmState = "done"
+/\ tmPrepared = {r1}
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+5: <RMRcvCommitMsg(r1) line 54, col 3 to line 56, col 44 of module TwoPhase>
+/\ msgs = {[type |-> "Commit"], [type |-> "Prepared", rm |-> r1]}
+/\ rmState = (r1 :> "committed" @@ r2 :> "working")
+/\ tmState = "done"
+/\ tmPrepared = {r1}
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+6: <RMChooseToAbort(r2) line 49, col 3 to line 51, col 44 of module TwoPhase>
+/\ msgs = {[type |-> "Commit"], [type |-> "Prepared", rm |-> r1]}
+/\ rmState = (r1 :> "committed" @@ r2 :> "aborted")
+/\ tmState = "done"
+/\ tmPrepared = {r1}
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2200:0 @!@!@
+Progress(6) at DATE: 117 states generated (N s/min), 52 distinct states found (N ds/min), 16 states left on queue.
+@!@!@ENDMSG 2200 @!@!@
+@!@!@STARTMSG 2199:0 @!@!@
+117 states generated, 52 distinct states found, 16 states left on queue.
+@!@!@ENDMSG 2199 @!@!@
+@!@!@STARTMSG 2194:0 @!@!@
+The depth of the complete state graph search is 6.
+@!@!@ENDMSG 2194 @!@!@
+@!@!@STARTMSG 2186:0 @!@!@
+Finished in T at (DATE)
+@!@!@ENDMSG 2186 @!@!@
