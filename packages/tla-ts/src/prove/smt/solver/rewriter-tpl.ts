@@ -345,6 +345,13 @@ class RewriterEngine extends RewriterCore {
   blocked = new Set<number>();
   // Whether the config overrides getSubst. Otherwise nothing is substituted and the call is skipped.
   private isSubstituting: boolean;
+  // The config's hooks, read once. Many configs share the engine, so a call through config at each
+  // site sees all of their classes and goes megamorphic.
+  private preVisitHook: RewriterTpl["preVisit"];
+  private reduceAppHook: RewriterTpl["reduceApp"];
+  private isFlatAssocHook: RewriterTpl["isFlatAssoc"];
+  private getMacroHook: RewriterTpl["getMacro"];
+  private getSubstHook: RewriterTpl["getSubst"];
 
   constructor(
     manager: AstManager,
@@ -352,6 +359,11 @@ class RewriterEngine extends RewriterCore {
   ) {
     super(manager);
     this.isSubstituting = config.getSubst !== RewriterTpl.prototype.getSubst;
+    this.preVisitHook = config.preVisit;
+    this.reduceAppHook = config.reduceApp;
+    this.isFlatAssocHook = config.isFlatAssoc;
+    this.getMacroHook = config.getMacro;
+    this.getSubstHook = config.getSubst;
     this.shifter = new VarShifter(manager);
     this.invShifter = new InvVarShifter(manager);
   }
@@ -471,7 +483,7 @@ class RewriterEngine extends RewriterCore {
   // frame for expr.
   private visit(expr: number, maxDepth: number) {
     const manager = this.manager;
-    const replacement = this.isSubstituting ? this.config.getSubst(expr) : undefined;
+    const replacement = this.isSubstituting ? this.getSubstHook.call(this.config, expr) : undefined;
     if (replacement !== undefined) {
       this.pushResult(replacement);
       this.setNewChildFlag(expr, replacement);
@@ -490,7 +502,7 @@ class RewriterEngine extends RewriterCore {
         return true;
       }
     }
-    if (!this.config.preVisit(expr)) {
+    if (!this.preVisitHook.call(this.config, expr)) {
       this.pushResult(expr);
       return true;
     }
@@ -515,7 +527,12 @@ class RewriterEngine extends RewriterCore {
     let current = expr;
     manager.incRef(current);
     for (let isRetried = false; ; isRetried = true) {
-      const reduced = this.config.reduceApp(manager.decls[current], [], manager.sorts[current]);
+      const reduced = this.reduceAppHook.call(
+        this.config,
+        manager.decls[current],
+        [],
+        manager.sorts[current],
+      );
       if (reduced !== -1) {
         const result = typeof reduced === "number" ? reduced : reduced.expr;
         this.setLastResult(result);
@@ -611,7 +628,11 @@ class RewriterEngine extends RewriterCore {
       if (!this.visit(arg, frame.maxDepth)) return;
     }
     const decl = manager.decls[expr];
-    if (this.config.isFlatAssoc(decl) && manager.getRefCount(expr) <= 1 && this.numFrames > 1) {
+    if (
+      this.isFlatAssocHook.call(this.config, decl) &&
+      manager.getRefCount(expr) <= 1 &&
+      this.numFrames > 1
+    ) {
       const previous = this.frames[this.numFrames - 2];
       if (
         manager.kinds[previous.curr] === KIND_APP &&
@@ -630,7 +651,7 @@ class RewriterEngine extends RewriterCore {
     shrink(newArgs, 0);
     for (let index = frame.spos; index < resultStack.length; index++)
       newArgs.push(resultStack[index]);
-    const reduced = this.config.reduceApp(decl, newArgs, manager.sorts[expr]);
+    const reduced = this.reduceAppHook.call(this.config, decl, newArgs, manager.sorts[expr]);
     if (typeof reduced !== "number") {
       // BR_REWRITE: the result replaces the arguments and is rewritten to the depth it asks for.
       this.setLastResult(reduced.expr);
@@ -643,7 +664,7 @@ class RewriterEngine extends RewriterCore {
       this.setLastResult(-1);
       return;
     }
-    const definition = reduced === -1 ? this.config.getMacro(decl) : -1;
+    const definition = reduced === -1 ? this.getMacroHook.call(this.config, decl) : -1;
     if (definition !== -1 && (!manager.isGroundApp(definition) || this.config.isReducingMacro())) {
       // The definition is rewritten with the arguments bound to its variables.
       frame.state = EXPAND_DEF;
