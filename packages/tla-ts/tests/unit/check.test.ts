@@ -4427,6 +4427,8 @@ describe("parseConfig matches TLC", () => {
     ["CONSTANT N = -1", "CONSTANT S = {1,}"].forEach((source) =>
       expect(() => parseConfig(source)).toThrow(TlaConfigError),
     );
+    // SANY's lexer reads ℕ as a name.
+    expect(parseConfig("INVARIANT ℕ").invariants).toEqual(["ℕ"]);
   });
 
   it("reports a malformed configuration with TLC's messages", () => {
@@ -4437,6 +4439,8 @@ describe("parseConfig matches TLC", () => {
     const cases = [
       ["INIT\n", atLine(1, "The keyword INIT was not followed by an identifier.")],
       ["CONSTANT N = -1\nINIT Init\n", atLine(2, "It was expecting = or <-, but did not find it.")],
+      // TLC reads ← with SANY's lexer, and compares it as written with <-.
+      ["CONSTANT N ← 1\nINIT Init\n", atLine(1, "It was expecting = or <-, but did not find it.")],
       ["CHECK_DEADLOCK 3\n", atLine(1, "It was expecting TRUE or FALSE, but did not find it.")],
       ["CONSTANT N = {1, 2\nINIT Init\n", atLine(2, "It was expecting }, but did not find it.")],
       ["CONSTANT N =\n", atLine(2, "It was expecting a value, but did not find it.")],

@@ -360,6 +360,16 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
   return character === "\\" ? { text: "\\", length: 1 } : undefined;
 };
 
+// TLC's configuration parser reads its tokens with SANY's lexer, so it reads a Unicode operator, or
+// ℕ, ℤ, or ℝ, as one token, which it compares as written with the words it expects.
+const UNICODE_NAMES = new Set(["ℕ", "ℤ", "ℝ"]);
+export const matchUnicodeToken = (source: string, index: number): OperatorMatch | undefined => {
+  const token = [source.slice(index, index + 2), source[index]].find(
+    (candidate) => UNICODE_OPERATORS.has(candidate) || UNICODE_NAMES.has(candidate),
+  );
+  return token === undefined ? undefined : { text: token, length: token.length };
+};
+
 const isDigit = (character: string | undefined) =>
   character !== undefined && character >= "0" && character <= "9";
 
