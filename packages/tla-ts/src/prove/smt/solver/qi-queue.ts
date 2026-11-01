@@ -244,10 +244,12 @@ export class QiQueue {
   private checker: Checker;
   // cached_var_subst: each instance by its quantifier and bindings, which the queue holds with them
   // until the next search. instanceRefs lists the quantifier, the bindings and the instance of each.
-  // instanceStarts holds where each instance starts there, and instanceNext the earlier instance of
-  // the same hash, or -1. instances maps a hash of the key to its last instance.
+  // instanceStarts holds where each instance starts there, and instanceNext the earlier instance in
+  // the same bucket, or -1. instanceBuckets holds the last instance of each bucket of hashes, which
+  // instanceHashes tells apart.
   private subst: VarSubst;
-  private instances = new Map<number, number>();
+  private instanceBuckets = new Int32Array(1024).fill(-1);
+  private instanceHashes: number[] = [];
   private instanceRefs: number[] = [];
   private instanceStarts: number[] = [];
   private instanceNext: number[] = [];
@@ -270,8 +272,10 @@ export class QiQueue {
     const refs = this.instanceRefs;
     let hash = quantifier;
     for (const binding of bindings) hash = (Math.imul(hash, 0x9e3779b1) + binding) | 0;
-    const last = this.instances.get(hash) ?? -1;
+    const bucket = hash & (this.instanceBuckets.length - 1);
+    const last = this.instanceBuckets[bucket];
     for (let entry = last; entry !== -1; entry = this.instanceNext[entry]) {
+      if (this.instanceHashes[entry] !== hash) continue;
       const start = this.instanceStarts[entry];
       let isSame = refs[start] === quantifier;
       for (let index = 0; index < bindings.length && isSame; index++)
@@ -279,9 +283,11 @@ export class QiQueue {
       if (isSame) return refs[start + 1 + bindings.length];
     }
     const instance = this.subst.apply(manager.getQuantifier(quantifier).body, bindings);
-    this.instances.set(hash, this.instanceStarts.length);
+    this.instanceBuckets[bucket] = this.instanceStarts.length;
     this.instanceStarts.push(refs.length);
     this.instanceNext.push(last);
+    this.instanceHashes.push(hash);
+    if (this.instanceHashes.length > this.instanceBuckets.length) this.growInstanceBuckets();
     manager.incRef(quantifier);
     refs.push(quantifier);
     for (const binding of bindings) {
@@ -290,6 +296,17 @@ export class QiQueue {
     }
     refs.push(instance);
     return instance;
+  }
+
+  private growInstanceBuckets() {
+    const buckets = new Int32Array(2 * this.instanceBuckets.length).fill(-1);
+    const mask = buckets.length - 1;
+    for (let entry = 0; entry < this.instanceHashes.length; entry++) {
+      const bucket = this.instanceHashes[entry] & mask;
+      this.instanceNext[entry] = buckets[bucket];
+      buckets[bucket] = entry;
+    }
+    this.instanceBuckets = buckets;
   }
 
   hasWork() {
@@ -416,7 +433,8 @@ export class QiQueue {
     this.instanceRefs = [];
     this.instanceStarts = [];
     this.instanceNext = [];
-    this.instances.clear();
+    this.instanceHashes = [];
+    this.instanceBuckets.fill(-1);
     this.newEntries.shrink(0);
   }
 }
