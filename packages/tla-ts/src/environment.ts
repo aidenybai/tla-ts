@@ -57,6 +57,8 @@ import {
   type Symbols,
 } from "./resolve";
 import { createRuntime } from "./runtime";
+import { getSanyStandardModules } from "./sany-modules";
+import { USER_STANDARD_MODULES } from "./tlc-modules";
 import { getSanyParseError } from "./sany-parse-error";
 import {
   CORE_OPERATORS,
@@ -381,6 +383,9 @@ export const createEnvironment = (
   };
 
   const getStandardSymbols = (name: string) => {
+    // SANY reads a module from the user's directories before its standard modules.
+    if (USER_STANDARD_MODULES.has(name) && options.loadModule?.(name) !== undefined)
+      return undefined;
     const symbols = addStandardModule(name);
     const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
     if (symbols) useModule(name, dependencies);
@@ -472,6 +477,17 @@ export const createEnvironment = (
       return cached;
     }
     const top = linkTopLevel(loadModule(name, importer));
+    // TLC replaces each definition of a module that has a standard module's name with the Java
+    // method of that name, so a user's Bags.tla keeps the definitions that Bags has no method for.
+    const standardModule = getSanyStandardModules(runtime.version).has(name)
+      ? getStandardModule(name, options.print, runtime, options.files, builtins)
+      : undefined;
+    standardModule?.operators.forEach((operator) => {
+      const symbol = top.linked.visible.get(operator.name);
+      if (symbol?.kind !== "Definition" || symbol.arity !== operator.arity) return;
+      builtins.set(symbol.key, operator);
+      definitions.delete(symbol.key);
+    });
     linkedModules.set(name, top.linked);
     dependencies.set(name, top.closure);
     useModule(name, top.closure);

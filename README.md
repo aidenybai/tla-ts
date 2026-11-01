@@ -108,18 +108,18 @@ const result = await check({
 });
 ```
 
-| Option                  | Description                                                                              |
-| ----------------------- | ---------------------------------------------------------------------------------------- |
-| `source`                | The TLA+ module to check                                                                 |
-| `config`                | A TLC configuration, as text or as the result of `parseConfig`                           |
-| `loadModule`            | Returns the source of a module that isn't a standard module                              |
-| `loadClass`             | Returns a compiled Java class that overrides a module's operators with constants         |
-| `onPrint`               | Receives the output of `Print` and `PrintT`. Defaults to `console.log`                   |
-| `onPause`               | Runs when `TLCSet("pause", TRUE)` pauses checking, which resumes when it returns         |
-| `readFile`, `writeFile` | Read and write files for the Json module and `dump`                                      |
-| `seed`                  | A `bigint` seed. Defaults to `0n`, and matches TLC run with the same `-seed` and `-fp 0` |
-| `workers`               | The number of worker threads. Defaults to 1                                              |
-| `dump`                  | Writes the reachable states or the state graph, as TLC's `-dump` does                    |
+| Option                  | Description                                                                                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `source`                | The TLA+ module to check                                                                                                                 |
+| `config`                | A TLC configuration, as text or as the result of `parseConfig`                                                                           |
+| `loadModule`            | Returns the source of a module that isn't a standard module, or of Bags, Json, Randomization, or TLCExt to read in place of tla-ts's own |
+| `loadClass`             | Returns a compiled Java class that overrides a module's operators with constants                                                         |
+| `onPrint`               | Receives the output of `Print` and `PrintT`. Defaults to `console.log`                                                                   |
+| `onPause`               | Runs when `TLCSet("pause", TRUE)` pauses checking, which resumes when it returns                                                         |
+| `readFile`, `writeFile` | Read and write files for the Json module and `dump`                                                                                      |
+| `seed`                  | A `bigint` seed. Defaults to `0n`, and matches TLC run with the same `-seed` and `-fp 0`                                                 |
+| `workers`               | The number of worker threads. Defaults to 1                                                                                              |
+| `dump`                  | Writes the reachable states or the state graph, as TLC's `-dump` does                                                                    |
 
 `dump` takes the `path` that `check` passes to `writeFile` before it returns. Set `dot` to write the state graph in the DOT language of Graphviz, and `colorize`, `actionLabels`, or `snapshot` for TLC's formats of the same names. A dump checks the spec on the calling thread, as one TLC worker does.
 

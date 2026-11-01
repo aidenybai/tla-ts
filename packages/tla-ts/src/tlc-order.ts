@@ -13,6 +13,7 @@ import {
   TLC_MODULE_SOURCES,
   TLC_RUNTIME_STRINGS,
   TLC_STARTUP_STRINGS,
+  USER_STANDARD_MODULES,
 } from "./tlc-modules";
 
 type SymbolKind = "builtin" | "constant" | "variable" | "definition" | "theorem" | "module";
@@ -259,7 +260,10 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
     const text =
       name === undefined
         ? source
-        : (TLC_MODULE_SOURCES.get(name) ?? loadModule?.(name) ?? extractModule(source, name));
+        : ((USER_STANDARD_MODULES.has(name) ? loadModule?.(name) : undefined) ??
+          TLC_MODULE_SOURCES.get(name) ??
+          loadModule?.(name) ??
+          extractModule(source, name));
     const tokens = text === undefined ? [] : tokenize(text);
     const ranges = getRanges(tokens);
     const range = ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
