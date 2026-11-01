@@ -123,6 +123,7 @@ interface LinkedModule {
   exported: Symbols;
   modules: Map<string, LinkedModule>;
   extended: LinkedModule[];
+  facts: Set<string>;
 }
 
 // errors and warnings collect what SANY reports for the module, and levelChecks the level checks of
@@ -451,6 +452,9 @@ export const createEnvironment = (
       );
     }
     const linked = nested ?? getLinkedModule(instance.module, module.name);
+    linked.facts.forEach((name) =>
+      unit.facts.add(instance.name === undefined ? name : `${instance.name}!${name}`),
+    );
     const declarations = getDeclarations(linked);
     const suffix = `#${copyCount.value++}`;
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
@@ -731,6 +735,7 @@ export const createEnvironment = (
         });
       });
     const exported: Symbols = new Map();
+    const facts = new Set<string>();
     const modules = new Map<string, LinkedModule>();
     const extended: LinkedModule[] = [];
     const constants = [...parsed.constants];
@@ -755,6 +760,7 @@ export const createEnvironment = (
         variableLocations.push(linked.variableLocations[index]);
       });
       mergeExtended(linked.exported);
+      linked.facts.forEach((name) => facts.add(name));
       linked.modules.forEach((module, moduleName) => modules.set(moduleName, module));
       extended.push(linked);
     });
@@ -792,6 +798,7 @@ export const createEnvironment = (
       ),
       getKey,
       instanced,
+      facts,
       reports,
       warnings: scope.warnings,
     });
@@ -894,6 +901,10 @@ export const createEnvironment = (
       exported,
       modules,
       extended,
+      facts: new Set([
+        ...facts,
+        ...[...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
+      ]),
     };
     if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
     // SANY checks the instances of a module with its definitions and theorems, so it reports their

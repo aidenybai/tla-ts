@@ -53,6 +53,8 @@ export interface ApplyExpression {
   // The range of the parenthesized arguments of a named operator, where SANY reports their count.
   argumentsRange?: SourceRange;
   selectorRanges?: SourceRange[];
+  // The range of the arguments of each part of a name like F(x)!l(y), for a part that takes some.
+  argumentRanges?: (SourceRange | undefined)[];
   location: SourceLocation;
   resolution?: LocalResolution;
 }
@@ -278,6 +280,7 @@ export interface LabelExpression {
   kind: "Label";
   name: string;
   params: string[];
+  paramRanges?: SourceRange[];
   body: Expression;
   location: SourceLocation;
 }
@@ -293,6 +296,7 @@ export interface SubexpressionExpression {
   kind: "Subexpression";
   selectors: Selector[];
   selectorRanges?: SourceRange[];
+  argumentRanges?: (SourceRange | undefined)[];
   location: SourceLocation;
 }
 

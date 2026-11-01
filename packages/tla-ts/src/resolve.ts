@@ -74,7 +74,10 @@ interface ModuleBinding extends Binding {
 // errors and warnings collect what SANY reports while it goes on analyzing the unit, and bindings
 // holds the names the module binds. A label may appear where hasLabelScope holds, in a definition, a
 // named theorem, or a numbered step, except where isLabelForbidden holds, in the scope of a NEW in a
-// nested ASSUME. isGenerated holds in a definition tla-ts generates for a LET INSTANCE.
+// nested ASSUME, or where isInExcept holds, in the new value of an EXCEPT. labelParams holds the
+// names bound since the innermost definition, label, or step, which a label must take as parameters,
+// and labels the labels there. isGenerated holds in a definition tla-ts generates for a LET INSTANCE,
+// and in a subexpression that a name selects, which SANY analyzes where it is defined.
 interface Unit {
   imported: Symbols;
   definitions: Map<string, Definition>;
@@ -88,7 +91,15 @@ interface Unit {
   warnings: SanyError[];
   hasLabelScope: boolean;
   isLabelForbidden: boolean;
+  isInExcept: boolean;
+  labelParams: string[];
+  labels: Set<string>;
   isGenerated: boolean;
+}
+
+interface SelectionError {
+  args: Expression[];
+  error: SanyError;
 }
 
 interface SelectionState {
@@ -100,6 +111,11 @@ interface SelectionState {
 type Reference = Expression & { kind: "Identifier" | "Apply" | "Subexpression" };
 
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
+
+// The subexpressions that names select, and for a name that selects none, the error SANY reports and
+// the arguments it analyzes before it.
+export const selections = new WeakSet<Expression>();
+export const selectionErrors = new WeakMap<Expression, SelectionError>();
 
 const renamedArities = new WeakMap<Expression, number>();
 
@@ -290,12 +306,128 @@ export const getOperandIndex = (operand: number | "<<" | ">>", count: number) =>
   return count === 2 ? 1 : -1;
 };
 
+// The parts of a name such as F(x)!l(y), each with its own arguments. counts holds the number each
+// part takes, when a part before the last takes some.
+export const getNameSelectors = (
+  name: string,
+  args: Expression[],
+  counts: number[] | undefined,
+): Selector[] => {
+  const parts = name.split("!");
+  const partCounts =
+    counts ?? parts.map((_, index) => (index === parts.length - 1 ? args.length : 0));
+  return parts.map((part, index) => {
+    const start = partCounts.slice(0, index).reduce((sum, count) => sum + count, 0);
+    return { kind: "Name", name: part, args: args.slice(start, start + partCounts[index]) };
+  });
+};
+
 const getSelectors = (reference: Reference): Selector[] =>
   reference.kind === "Subexpression"
     ? reference.selectors
-    : (reference.kind === "Identifier" ? reference.name : reference.operator)
-        .split("!")
-        .map((name) => ({ kind: "Name", name, args: [] }));
+    : reference.kind === "Identifier"
+      ? getNameSelectors(reference.name, [], undefined)
+      : getNameSelectors(reference.operator, reference.args, reference.argumentCounts);
+
+const getBoundSets = (bounds: Bound[]) =>
+  bounds
+    .filter((bound, index) => index === 0 || bounds[index - 1].set !== bound.set)
+    .map((bound) => bound.set);
+
+// The names a binder binds, its body, and the sets it binds them to, which a selector such as !1
+// chooses from.
+export const getBinder = (
+  expression: Expression,
+): { names: string[]; body: Expression; sets: Expression[] } | undefined => {
+  switch (expression.kind) {
+    case "Forall":
+    case "Exists":
+    case "FunctionConstruction":
+      return {
+        names: getBoundNames(expression.bounds),
+        body: expression.body,
+        sets: getBoundSets(expression.bounds),
+      };
+    case "SetMap":
+      return {
+        names: getBoundNames(expression.bounds),
+        body: expression.expression,
+        sets: getBoundSets(expression.bounds),
+      };
+    case "SetFilter":
+      return {
+        names: getPatternNames(expression.bound.pattern),
+        body: expression.predicate,
+        sets: [expression.bound.set],
+      };
+    case "Choose":
+      return {
+        names: getPatternNames(expression.pattern),
+        body: expression.body,
+        sets: expression.set ? [expression.set] : [],
+      };
+    case "UnboundedQuantifier":
+    case "Lambda":
+      return {
+        names: expression.kind === "Lambda" ? expression.params : expression.names,
+        body: expression.body,
+        sets: [],
+      };
+    default:
+      return undefined;
+  }
+};
+
+// The operands that a selector such as !1 chooses from, where they do not depend on bound names.
+export const getOperands = (expression: Expression): Expression[] | undefined => {
+  switch (expression.kind) {
+    case "Apply":
+      return expression.args;
+    case "And":
+    case "Or":
+      return expression.operands;
+    case "If":
+      return [expression.condition, expression.consequent, expression.alternative];
+    case "Tuple":
+    case "SetEnumeration":
+      return expression.elements;
+    case "Record":
+    case "RecordSet":
+      return expression.fields.map((field) => field.value);
+    case "FunctionApplication":
+      return [
+        expression.function,
+        expression.args.length === 1
+          ? expression.args[0]
+          : { kind: "Tuple", elements: expression.args, location: expression.location },
+      ];
+    case "FieldAccess":
+      return [
+        expression.record,
+        { kind: "String", value: expression.field, location: expression.location },
+      ];
+    case "Prime":
+    case "Unchanged":
+    case "Enabled":
+    case "Always":
+    case "Eventually":
+      return [expression.expression];
+    case "BoxAction":
+    case "AngleAction":
+      return [expression.action, expression.subscript];
+    case "WeakFairness":
+    case "StrongFairness":
+      return [expression.subscript, expression.action];
+    case "FunctionSet":
+      return [expression.domain, expression.range];
+    case "Product":
+      return expression.factors;
+    case "Except":
+      return [expression.function];
+    default:
+      return undefined;
+  }
+};
 
 const isReference = (expression: Expression): expression is Reference =>
   expression.kind === "Identifier" ||
@@ -333,6 +465,9 @@ const findClauseLabel = (
   return findLabel(clause, name);
 };
 
+const getLabelBody = (expression: Expression): Expression =>
+  expression.kind === "Label" ? getLabelBody(expression.body) : expression;
+
 const getOperandName = (operand: number | "<<" | ">>") =>
   typeof operand === "number" ? `argument selector ${operand}` : operand;
 
@@ -340,11 +475,13 @@ const SCOPE_MESSAGE = "within the scope of a declaration\n from outside that dec
 
 // Generator.selectorToNode for a name that selects part of a theorem or step. A part in the scope of
 // a NEW in its ASSUME may be selected only within the proof of the theorem, or only after the proof
-// of a SUFFICES step. A fact may select an ASSUME/PROVE or a NEW clause.
+// of a SUFFICES step. A label takes its own arguments, and an operand must exist, unless the part
+// selected depends on bound names. A fact may select an ASSUME/PROVE or a NEW clause.
 const checkSelection = (
   reference: Reference,
   selectors: Selector[],
   goal: Goal,
+  scope: LocalName | undefined,
   unit: Unit,
   isFact: boolean,
 ) => {
@@ -356,34 +493,6 @@ const checkSelection = (
   };
   const isOutOfScope = goal.isSuffices === goal.isInProof;
   const statement = goal.statement;
-  const second = selectors[1];
-  if (second.kind === "Name") {
-    const clauses =
-      statement.kind === "AssumeProve"
-        ? [...statement.assumptions, statement.conclusion]
-        : [statement];
-    const found = clauses
-      .map((clause, index) => ({ index, label: findClauseLabel(clause, second.name, false) }))
-      .find((item) => item.label !== undefined);
-    if (!found) return report(1, `Cannot find label \`${second.name}'.`);
-    if (
-      statement.kind === "AssumeProve" &&
-      isInScopeOfDeclaration(statement, found.index) &&
-      isOutOfScope
-    ) {
-      return report(
-        1,
-        `Accessing subexpression labeled \`${second.name}' of ASSUME/PROVE clause ${SCOPE_MESSAGE}`,
-      );
-    }
-    selectors.slice(2).reduce((label, selector, offset) => {
-      if (!label || selector.kind !== "Name") return undefined;
-      const inner = findLabel(label.body, selector.name);
-      if (!inner) report(offset + 2, `Cannot find label \`${selector.name}'.`);
-      return inner;
-    }, found.label);
-    return;
-  }
   const state: SelectionState = {
     node: statement,
     isGoal: true,
@@ -392,28 +501,100 @@ const checkSelection = (
   for (const [offset, selector] of selectors.slice(1).entries()) {
     const index = offset + 1;
     const node = state.node;
+    if (selector.kind === "Name") {
+      if (selectors[index - 1].kind !== "Name") {
+        const isLet =
+          node.kind !== "NewSymbol" &&
+          node.kind !== "AssumeProve" &&
+          getLabelBody(node).kind === "Let";
+        return isLet
+          ? undefined
+          : report(index - 1, "A name selector here must be from a LET clause.");
+      }
+      const clauses =
+        statement.kind === "AssumeProve"
+          ? [...statement.assumptions, statement.conclusion]
+          : [statement];
+      const found =
+        index === 1
+          ? clauses
+              .map((clause, position) => ({
+                position,
+                label: findClauseLabel(clause, selector.name, false),
+              }))
+              .find((item) => item.label !== undefined)
+          : {
+              position: 0,
+              label: node.kind === "Label" ? findLabel(node.body, selector.name) : undefined,
+            };
+      if (!found?.label) return report(index, `Cannot find label \`${selector.name}'.`);
+      if (
+        index === 1 &&
+        statement.kind === "AssumeProve" &&
+        isInScopeOfDeclaration(statement, found.position) &&
+        isOutOfScope
+      ) {
+        return report(
+          1,
+          `Accessing subexpression labeled \`${selector.name}' of ASSUME/PROVE clause ${SCOPE_MESSAGE}`,
+        );
+      }
+      if (selector.args.length !== found.label.params.length) {
+        return report(index, `Label \`${selector.name}' used with wrong number of arguments.`);
+      }
+      state.node = found.label;
+      state.isGoal = false;
+      state.isSufficesOpen = false;
+      continue;
+    }
     if (selector.kind !== "Operand") return;
+    const operand = getOperandName(selector.operand);
     if (state.isSufficesOpen) {
       if (getOperandIndex(selector.operand, 1) !== 0) {
         return report(
           index,
           node.kind === "AssumeProve"
             ? "Accessing non-existent subexpression of a SUFFICES"
-            : `Nonexistent operand specified by \`${getOperandName(selector.operand)}'.`,
+            : `Nonexistent operand specified by \`${operand}'.`,
         );
       }
       state.isSufficesOpen = false;
       continue;
     }
-    if (node.kind !== "AssumeProve") return;
+    if (node.kind === "NewSymbol") return;
+    if (node.kind !== "AssumeProve") {
+      const expression = getLabelBody(node);
+      if (["Number", "Decimal", "String"].includes(expression.kind)) {
+        return report(index, "Selecting subexpression of expression that has none.");
+      }
+      const kind =
+        expression.kind === "Identifier"
+          ? findBinding(expression.name, scope, unit)?.kind
+          : undefined;
+      if (kind === "Variable" || kind?.startsWith("New")) {
+        return report(index, `Choosing operand \`${operand}' of subexpression with no operands.`);
+      }
+      const sets = getBinder(expression)?.sets;
+      const operands =
+        expression.kind === "Identifier"
+          ? []
+          : sets
+            ? sets.length > 0
+              ? sets
+              : undefined
+            : expression.kind === "Except"
+              ? undefined
+              : getOperands(expression);
+      if (!operands) return;
+      const position = getOperandIndex(selector.operand, operands.length);
+      if (position === -1) return report(index, `Nonexistent operand specified by \`${operand}'.`);
+      state.node = operands[position];
+      state.isGoal = false;
+      continue;
+    }
     const clauses = [...node.assumptions, node.conclusion];
     const position = getOperandIndex(selector.operand, clauses.length);
-    if (position === -1) {
-      return report(
-        index,
-        `Nonexistent operand specified by \`${getOperandName(selector.operand)}'.`,
-      );
-    }
+    if (position === -1) return report(index, `Nonexistent operand specified by \`${operand}'.`);
     if (isInScopeOfDeclaration(node, position) && (!state.isGoal || isOutOfScope)) {
       return report(index, `Accessing ASSUME/PROVE clause ${SCOPE_MESSAGE}`);
     }
@@ -435,14 +616,68 @@ const checkSelection = (
 
 // Generator.generateLabel reports a label where it may not appear, and skips the label's body.
 const isLabelReported = (label: LabelExpression, unit: Unit) => {
-  const message = !unit.hasLabelScope
-    ? "Label not in definition or proof step."
-    : unit.isLabelForbidden
-      ? "Label not allowed within scope of declaration in nested ASSUME/PROVE."
-      : undefined;
+  const message = unit.isGenerated
+    ? undefined
+    : !unit.hasLabelScope
+      ? "Label not in definition or proof step."
+      : unit.isLabelForbidden
+        ? "Label not allowed within scope of declaration in nested ASSUME/PROVE."
+        : unit.isInExcept
+          ? "Labels inside EXCEPT clauses are not yet implemented."
+          : undefined;
   if (message === undefined || !label.location.range) return false;
   unit.errors.push({ location: formatRange(label.location.range), message });
   return true;
+};
+
+// Generator.generateLabel reports, after the label's body, each parameter that names no bound name,
+// then formalParamsEqual each parameter given twice, each name bound since the label scope began
+// that the label leaves out, and the parameters it adds, and then a label of a name already used.
+const checkLabel = (label: LabelExpression, scope: LocalName | undefined, unit: Unit) => {
+  const range = label.location.range;
+  if (!range || unit.isGenerated) return;
+  const location = formatRange(range);
+  const legal = label.params.filter((param, index) => {
+    const isLegal = lookupLocal(scope, param)?.kind === "Parameter";
+    const paramRange = label.paramRanges?.[index];
+    if (!isLegal && paramRange) {
+      unit.errors.push({
+        location: formatRange(paramRange),
+        message: `Illegal parameter ${param} of label \`${label.name}'.`,
+      });
+    }
+    return isLegal;
+  });
+  legal
+    .filter((param, index) => legal.indexOf(param) !== index)
+    .forEach((param) =>
+      unit.errors.push({
+        location,
+        message: `Repeated formal parameter ${param} \nin label \`${label.name}'.`,
+      }),
+    );
+  unit.labelParams
+    .filter((param) => !legal.includes(param))
+    .forEach((param) =>
+      unit.errors.push({
+        location,
+        message: `Label ${label.name} must contain formal parameter \`${param}'.`,
+      }),
+    );
+  const extra = [
+    ...new Set(legal.filter((param) => !unit.labelParams.includes(param))),
+    ...label.params.filter((param) => !legal.includes(param)),
+  ];
+  if (extra.length > 0) {
+    unit.errors.push({
+      location,
+      message: `Label ${label.name} declares extra parameter(s)  ${extra.map((param) => `${param}  `).join("")}`,
+    });
+  }
+  if (unit.labels.has(label.name)) {
+    unit.errors.push({ location, message: `Duplicate label \`${label.name}'.` });
+  }
+  unit.labels.add(label.name);
 };
 
 // Checks a name that selects part of a theorem or step, and tells whether it is one.
@@ -459,12 +694,13 @@ const checkReference = (
     selectors.length > 1 && first.kind === "Name"
       ? (lookupLocal(scope, first.name)?.goal ?? unit.goals.get(first.name))
       : undefined;
-  if (goal) checkSelection(expression, selectors, goal, unit, isFact);
+  if (goal) checkSelection(expression, selectors, goal, scope, unit, isFact);
   return goal !== undefined;
 };
 
 // Generator.selectorToNode reports an unknown operator and goes on without analyzing its arguments,
-// so its arity is undefined. It does the same for an operator given the wrong number of arguments.
+// so its arity is undefined. It does the same for an operator given the wrong number of arguments,
+// and for a name that selects nothing, after the arguments of the parts before.
 const getSymbolArity = (
   expression: Expression & { kind: "Identifier" | "Apply" | "OperatorReference" },
   name: string,
@@ -472,6 +708,7 @@ const getSymbolArity = (
   unit: Unit,
 ) => {
   const location = expression.location;
+  if (isSelectionReported(expression, scope, unit)) return undefined;
   const renamed = renamedArities.get(expression);
   if (renamed !== undefined) return renamed;
   if (isKey(name)) return expression.kind === "Apply" ? expression.args.length : 0;
@@ -548,7 +785,12 @@ const resolveDefinition = (
   outer: Unit,
   recursive: Set<Binding>,
 ) => {
-  const unit = outer.hasLabelScope ? outer : { ...outer, hasLabelScope: true };
+  const unit = {
+    ...outer,
+    hasLabelScope: true,
+    labelParams: definition.kind === "Function" ? getBoundNames(definition.bounds) : [],
+    labels: new Set<string>(),
+  };
   const name = definition.name;
   const range = definition.location.range;
   const report = (message: string) => {
@@ -684,10 +926,16 @@ const resolveApply = (
         } else resolveExpression(arg, scope, unit);
         return true;
       }
+      // A name that selects a subexpression gives an operator of the names it leaves unbound.
       if (arg.kind === "Lambda") {
         resolveExpression(arg, scope, unit);
         const isMatched = arg.params.length === expected;
-        if (!isMatched && range) {
+        if (!isMatched && selections.has(arg)) {
+          report(
+            range,
+            `Expected arity ${expected} but found operator of arity ${arg.params.length}.`,
+          );
+        } else if (!isMatched && range) {
           report(
             expression.selectorRanges?.at(-1) ?? getNameRange(expression.location, operator),
             `Lambda expression with arity ${arg.params.length} used as argument ${index + 1} of operator \`${operator}', \nbut an operator of arity ${expected} is required.`,
@@ -733,13 +981,30 @@ const resolveArgument = (arg: Expression, scope: LocalName | undefined, unit: Un
   else resolveExpression(arg, scope, unit);
 };
 
+// Reports the error of a name that selects nothing, after the arguments SANY analyzes before it.
+const isSelectionReported = (expression: Expression, scope: LocalName | undefined, unit: Unit) => {
+  const failed = selectionErrors.get(expression);
+  if (!failed) return false;
+  failed.args.forEach((arg) => resolveArgument(arg, scope, unit));
+  unit.errors.push(failed.error);
+  return true;
+};
+
 const resolveExpression = (
   expression: Expression,
   scope: LocalName | undefined,
   unit: Unit,
 ): void => {
+  if (selections.has(expression) && !unit.isGenerated) {
+    resolveExpression(expression, scope, { ...unit, isGenerated: true });
+    return;
+  }
   const resolveAll = (expressions: Expression[]) =>
     expressions.forEach((child) => resolveExpression(child, scope, unit));
+  const bindLabelParams = (names: string[]) => ({
+    ...unit,
+    labelParams: [...unit.labelParams, ...names],
+  });
   switch (expression.kind) {
     case "Number":
     case "Decimal":
@@ -767,7 +1032,7 @@ const resolveExpression = (
       resolveExpression(
         expression.body,
         bindNames(scope, expression.params, expression.paramRanges, unit),
-        unit,
+        bindLabelParams(expression.params),
       );
       return;
     case "And":
@@ -798,13 +1063,17 @@ const resolveExpression = (
     case "Forall":
     case "Exists":
     case "FunctionConstruction":
-      resolveExpression(expression.body, resolveBounds(expression.bounds, scope, unit), unit);
+      resolveExpression(
+        expression.body,
+        resolveBounds(expression.bounds, scope, unit),
+        bindLabelParams(getBoundNames(expression.bounds)),
+      );
       return;
     case "UnboundedQuantifier":
       resolveExpression(
         expression.body,
         bindNames(scope, expression.names, expression.nameRanges, unit),
-        unit,
+        bindLabelParams(expression.names),
       );
       return;
     case "Choose":
@@ -812,7 +1081,7 @@ const resolveExpression = (
       resolveExpression(
         expression.body,
         bindNames(scope, getPatternNames(expression.pattern), expression.pattern.ranges, unit),
-        unit,
+        bindLabelParams(getPatternNames(expression.pattern)),
       );
       return;
     case "SetEnumeration":
@@ -820,10 +1089,18 @@ const resolveExpression = (
       resolveAll(expression.elements);
       return;
     case "SetFilter":
-      resolveExpression(expression.predicate, resolveBounds([expression.bound], scope, unit), unit);
+      resolveExpression(
+        expression.predicate,
+        resolveBounds([expression.bound], scope, unit),
+        bindLabelParams(getPatternNames(expression.bound.pattern)),
+      );
       return;
     case "SetMap":
-      resolveExpression(expression.expression, resolveBounds(expression.bounds, scope, unit), unit);
+      resolveExpression(
+        expression.expression,
+        resolveBounds(expression.bounds, scope, unit),
+        bindLabelParams(getBoundNames(expression.bounds)),
+      );
       return;
     case "FunctionSet":
       resolveAll([expression.domain, expression.range]);
@@ -841,13 +1118,11 @@ const resolveExpression = (
       });
       return;
     case "Except":
-      resolveAll([
-        expression.function,
-        ...expression.updates.flatMap((update) => [
-          ...update.path.flatMap((step) => (step.kind === "Index" ? step.args : [])),
-          update.value,
-        ]),
-      ]);
+      resolveExpression(expression.function, scope, unit);
+      expression.updates.forEach((update) => {
+        resolveAll(update.path.flatMap((step) => (step.kind === "Index" ? step.args : [])));
+        resolveExpression(update.value, scope, { ...unit, isInExcept: true });
+      });
       return;
     case "FunctionApplication":
       resolveAll([expression.function, ...expression.args]);
@@ -867,9 +1142,12 @@ const resolveExpression = (
       resolveAll([expression.subscript, expression.action]);
       return;
     case "Label":
-      if (!isLabelReported(expression, unit)) resolveExpression(expression.body, scope, unit);
+      if (isLabelReported(expression, unit)) return;
+      resolveExpression(expression.body, scope, { ...unit, labelParams: [], labels: new Set() });
+      checkLabel(expression, scope, unit);
       return;
     case "Subexpression": {
+      if (isSelectionReported(expression, scope, unit)) return;
       expression.selectors
         .flatMap((selector) => ("args" in selector ? selector.args : []))
         .forEach((arg) => resolveArgument(arg, scope, unit));
@@ -878,25 +1156,16 @@ const resolveExpression = (
   }
 };
 
-// SANY analyzes the facts of a proof apart from their names, which may name theorems and modules.
-const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) => {
-  const check = (expression: Expression, isFact: boolean, inner: Unit): void => {
-    if (expression.kind === "Label" && isLabelReported(expression, inner)) return;
-    checkReference(expression, scope, inner, isFact);
-    getChildren(expression).forEach((child) =>
-      check(
-        child,
-        false,
-        expression.kind === "Let" && child !== expression.body
-          ? { ...inner, hasLabelScope: true }
-          : inner,
-      ),
-    );
-  };
+// Generator.generateUseOrHide looks up a fact that is a name as it looks up a name in an expression,
+// except that the name may select an ASSUME/PROVE or a NEW clause or name a theorem or assumption,
+// and analyzes any other fact as an expression.
+const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) =>
   facts.forEach((fact) => {
-    if (fact.kind !== "ModuleFact") check(fact, true, { ...unit, hasLabelScope: false });
+    if (fact.kind === "ModuleFact" || checkReference(fact, scope, unit, true)) return;
+    const name =
+      fact.kind === "Identifier" ? fact.name : fact.kind === "Apply" ? fact.operator : "";
+    if (!unit.facts.has(name)) resolveExpression(fact, scope, unit);
   });
-};
 
 const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit: Unit) => {
   if (symbol.set) resolveExpression(symbol.set, scope, unit);
@@ -960,7 +1229,10 @@ const resolveStep = (
   unit: Unit,
 ): LocalName | undefined => {
   const body = step.body;
-  const stepUnit = step.name === undefined ? unit : { ...unit, hasLabelScope: true };
+  const stepUnit =
+    step.name === undefined
+      ? unit
+      : { ...unit, hasLabelScope: true, labelParams: [], labels: new Set<string>() };
   switch (body.kind) {
     // The NEW symbols of a SUFFICES ASSUME are in scope after its proof, and those of any other
     // ASSUME in its proof.
@@ -1011,7 +1283,10 @@ const resolveStep = (
         body.nameRanges,
         stepUnit,
       );
-      resolveExpression(body.body, picked, stepUnit);
+      resolveExpression(body.body, picked, {
+        ...stepUnit,
+        labelParams: [...stepUnit.labelParams, ...getBoundNames(body.bounds), ...body.names],
+      });
       resolveProof(step.proof, scope, unit);
       return picked;
     }
@@ -1048,13 +1323,15 @@ export interface ModuleReport {
 
 // bound holds the names in scope where the module starts: the built-in operators, the names of the
 // module that encloses it, and those of the modules it extends. instanced holds the names each
-// INSTANCE adds, and warnings the warnings SANY reports for the spec.
+// INSTANCE adds, facts the theorems and assumptions the modules it extends or instantiates export,
+// and warnings the warnings SANY reports for the spec.
 export interface ModuleUnit {
   imported: Symbols;
   bound: Symbols;
   definitions: Map<string, Definition>;
   getKey: (definition: Definition) => string;
   instanced: Map<Instance, Symbols>;
+  facts: Set<string>;
   reports: ModuleReport[];
   warnings: SanyError[];
 }
@@ -1110,8 +1387,11 @@ export const resolveSubstitutions = (
     ),
     errors: report.errors,
     warnings: report.warnings,
-    hasLabelScope: true,
+    hasLabelScope: false,
     isLabelForbidden: false,
+    isInExcept: false,
+    labelParams: [],
+    labels: new Set(),
     isGenerated: false,
   };
   const resolveSubstitute = (declaration: Declaration, expression: Expression) => {
@@ -1225,9 +1505,10 @@ export const collectSemanticErrors = (
 // that no definition follows at the end. Returns the errors.
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const symbols = createSymbols(module, unit.imported);
-  const facts = new Set(
-    [...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
-  );
+  const facts = new Set([
+    ...unit.facts,
+    ...[...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
+  ]);
   const goals = new Map(
     module.theorems.flatMap((theorem): [string, Goal][] =>
       theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
@@ -1262,6 +1543,9 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     warnings,
     hasLabelScope,
     isLabelForbidden: false,
+    isInExcept: false,
+    labelParams: [],
+    labels: new Set(),
     isGenerated: false,
   });
   const bindDeclarations = (declarations: Declaration[], kind: "Constant" | "Variable") =>
@@ -1343,12 +1627,16 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
           }
         },
       })),
-      // An assumption holds the subexpressions its references select, labels and all, so its own
-      // labels go unchecked.
       ...module.assumptions.map((assumption) => ({
         location: assumption.location,
         check: (errors: SanyError[], warnings: SanyError[]) => {
-          const inner = createUnit(assumption.location, undefined, errors, warnings, true);
+          const inner = createUnit(
+            assumption.location,
+            undefined,
+            errors,
+            warnings,
+            assumption.name !== undefined,
+          );
           resolveExpression(assumption.expression, undefined, inner);
           if (assumption.name !== undefined) {
             bindModuleName(
