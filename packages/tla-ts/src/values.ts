@@ -1025,10 +1025,7 @@ export const markNormalized = (value: Value): void => {
 };
 
 export const isEqualLikeTlc = (left: Value, right: Value) =>
-  computeLikeTlcOnFailure(
-    () => valuesEqual(left, right),
-    () => equalsLikeTlc(left, right),
-  );
+  computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right);
 
 const isStrictlySorted = (elements: Value[]) => {
   for (let index = 1; index < elements.length; index++) {
@@ -1052,9 +1049,11 @@ export const createSet = (elements: Value[]): SetValue => {
 // TLC builds a set enumeration without sorting it, so one whose elements it can't compare still
 // evaluates.
 export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue =>
-  computeLikeTlcOnFailure<SetValue | MixedSetValue>(
-    () => createSet(elements),
-    () => ({ kind: "MixedSet", elements }),
+  computeLikeTlcOnFailure<Value[], undefined, SetValue | MixedSetValue>(
+    createSet,
+    (mixed) => ({ kind: "MixedSet", elements: mixed }),
+    elements,
+    undefined,
   );
 
 export const EMPTY_SET = createSortedSet([]);
@@ -1870,17 +1869,20 @@ export const setTrace: { sets: Value[] | undefined; callStack?: TracedCallStack 
 };
 
 // Takes a fast path, and computes as TLC does where it fails. TLC never takes the fast path, so
-// the failure's leftovers in the replay's trace go first.
-export const computeLikeTlcOnFailure = <Result>(
-  compute: () => Result,
-  computeLikeTlc: (error: TlaEvaluationError) => Result,
+// the failure's leftovers in the replay's trace go first. Both paths take their operands as
+// arguments, so a hot caller passes functions it doesn't allocate.
+export const computeLikeTlcOnFailure = <Left, Right, Result>(
+  compute: (left: Left, right: Right) => Result,
+  computeLikeTlc: (left: Left, right: Right, error: TlaEvaluationError) => Result,
+  left: Left,
+  right: Right,
 ): Result => {
   const sets = setTrace.sets;
   const callStack = setTrace.callStack;
   const depth = sets?.length ?? 0;
   const trace = callStack && { ...callStack, length: callStack.expressions.length };
   try {
-    return compute();
+    return compute(left, right);
   } catch (error) {
     if (!(error instanceof TlaEvaluationError)) throw error;
     if (sets) sets.length = depth;
@@ -1889,7 +1891,7 @@ export const computeLikeTlcOnFailure = <Result>(
       callStack.isFrozen = trace.isFrozen;
       callStack.fingerprint = trace.fingerprint;
     }
-    return computeLikeTlc(error);
+    return computeLikeTlc(left, right, error);
   }
 };
 
@@ -1902,19 +1904,20 @@ export const isElementOf = (element: Value, set: Value): boolean => {
   return isElement;
 };
 
+const isInSortedSet = (element: Value, set: SetValue) => findIndex(set.elements, element) !== -1;
+
+const isInSortedSetLikeTlc = (element: Value, set: SetValue) =>
+  normalizedSets.has(set)
+    ? searchLikeTlc(element, set.elements).isFound
+    : isElementOfLikeTlc(element, set.elements);
+
 const isElementOfSet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":
       // SetEnumValue.member compares the element with the set's.
       cacheSet(element);
-      return computeLikeTlcOnFailure(
-        () => findIndex(set.elements, element) !== -1,
-        () =>
-          normalizedSets.has(set)
-            ? searchLikeTlc(element, set.elements).isFound
-            : isElementOfLikeTlc(element, set.elements),
-      );
+      return computeLikeTlcOnFailure(isInSortedSet, isInSortedSetLikeTlc, element, set);
     case "MixedSet":
       return isElementOfLikeTlc(element, set.elements);
     case "Interval":
@@ -2126,6 +2129,15 @@ export const createNonIntegerKeyError = (argument: Value) =>
 // binary search with compareTo.
 const LINEAR_SEARCH_LIMIT = 32;
 
+const failKeyLikeTlc = (domain: Value[], argument: Value, error: TlaEvaluationError): never => {
+  if (valueVersion.is174 || domain.length < LINEAR_SEARCH_LIMIT) {
+    domain.forEach((key) => equalsLikeTlc(key, argument));
+  } else {
+    findIndex(domain, argument, compareLikeTlc);
+  }
+  throw error;
+};
+
 // TLC looks a key up by the Java class of the function: a tuple or a record rejects a key of the
 // wrong type, and another function rejects a non-integer for a domain it keeps as an interval, which
 // TLC 1.7.4 doesn't. A key of another type than the domain's keys otherwise fails TLC's comparison.
@@ -2148,17 +2160,7 @@ const findKeyIndexLikeTlc = (
   }
   const identical = findIdenticalKey(domain, argument);
   if (identical !== -1) return identical;
-  return computeLikeTlcOnFailure(
-    () => findIndex(domain, argument),
-    (error) => {
-      if (valueVersion.is174 || domain.length < LINEAR_SEARCH_LIMIT) {
-        domain.forEach((key) => equalsLikeTlc(key, argument));
-      } else {
-        findIndex(domain, argument, compareLikeTlc);
-      }
-      throw error;
-    },
-  );
+  return computeLikeTlcOnFailure(findIndex, failKeyLikeTlc, domain, argument);
 };
 
 export const applyFunction = (
