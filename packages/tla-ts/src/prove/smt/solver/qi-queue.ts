@@ -8,7 +8,7 @@ import type { Enode } from "./enode";
 import type { FingerprintSet } from "./fingerprints";
 import { RefVector } from "./ref-vector";
 import { VarSubst } from "./var-subst";
-import { setAt, shrink } from "./array";
+import { shrink } from "./array";
 
 const EAGER_COST_THRESHOLD = 10;
 const LAZY_COST_THRESHOLD = 20;
@@ -62,7 +62,8 @@ class Checker {
   private checkStamps = new Int32Array(1024);
   private checkResults = new Int32Array(1024);
   private enodeStamps = new Int32Array(1024);
-  private enodeResults: (Enode | null | undefined)[] = [];
+  // The owner of the node found, or -1 for none, so that the cache holds no objects.
+  private enodeResults = new Int32Array(1024);
   // The ptr_buffer of each level of get_enode_eq_to_core, which Z3 keeps on the stack.
   private argBuffers: Enode[][] = [];
   private argDepth = 0;
@@ -208,8 +209,14 @@ class Checker {
     const existing = context.getEnode(expr);
     if (existing !== undefined && context.isRelevant(expr)) return existing;
     if (manager.kinds[expr] !== KIND_APP || manager.getNumArgs(expr) === 0) return null;
-    if (expr >= this.enodeStamps.length) this.enodeStamps = grow(this.enodeStamps, expr);
-    if (this.enodeStamps[expr] === this.stamp) return this.enodeResults[expr] ?? null;
+    if (expr >= this.enodeStamps.length) {
+      this.enodeStamps = grow(this.enodeStamps, expr);
+      this.enodeResults = grow(this.enodeResults, expr);
+    }
+    if (this.enodeStamps[expr] === this.stamp) {
+      const owner = this.enodeResults[expr];
+      return owner === -1 ? null : (context.getEnode(owner) ?? null);
+    }
     const depth = this.argDepth;
     if (depth === this.argBuffers.length) this.argBuffers.push([]);
     const argNodes = this.argBuffers[depth];
@@ -221,7 +228,7 @@ class Checker {
       if (node === null) {
         this.argDepth = depth;
         this.enodeStamps[expr] = this.stamp;
-        setAt(this.enodeResults, expr, null);
+        this.enodeResults[expr] = -1;
         return null;
       }
       argNodes.push(node);
@@ -230,7 +237,7 @@ class Checker {
     const found = context.findCongruent(manager.decls[expr], argNodes);
     const result = found !== undefined && context.isRelevant(found.owner) ? found : null;
     this.enodeStamps[expr] = this.stamp;
-    setAt(this.enodeResults, expr, result);
+    this.enodeResults[expr] = result === null ? -1 : result.owner;
     return result;
   }
 }
