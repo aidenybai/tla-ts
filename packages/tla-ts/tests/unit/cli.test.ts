@@ -7,11 +7,10 @@ import { describe, expect, it } from "vite-plus/test";
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
 const runCliWith = (directory: string, args: string[]) =>
-  spawnSync(
-    process.execPath,
-    ["--import", "tsx", join(import.meta.dirname, "../../src/cli.ts"), ...args],
-    { cwd: join(FIXTURES, directory), encoding: "utf8" },
-  );
+  spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), ...args], {
+    cwd: join(FIXTURES, directory),
+    encoding: "utf8",
+  });
 
 const runCli = (directory: string, name: string, args: string[] = []) =>
   runCliWith(directory, [`${name}.tla`, ...args]);
@@ -1289,12 +1288,16 @@ describe("prove prints obligations as tlapm -N does", () => {
 
   it("explains that proving needs tlapm when it isn't on the PATH", () => {
     const result = spawnSync(
-      process.execPath,
-      ["--import", "tsx", join(import.meta.dirname, "../../src/cli.ts"), "prove", "Proofs.tla"],
+      "bun",
+      [join(import.meta.dirname, "../../src/cli.ts"), "prove", "Proofs.tla"],
       {
         cwd: join(FIXTURES, "obligations"),
         encoding: "utf8",
-        env: { PATH: dirname(process.execPath) },
+        env: {
+          PATH: dirname(
+            spawnSync("bun", ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim(),
+          ),
+        },
       },
     );
     expect(result.status).toBe(1);

@@ -42,11 +42,12 @@ import {
   TlaUnsupportedError,
 } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import type { LineRange } from "./obligation-generate";
-import { getAtPrefix, getLocusText } from "./obligation-expression";
+import type { LineRange } from "./obligations/generate";
+import { getAtPrefix, getLocusText } from "./obligations/expression";
 import { formatSummary, getObligations, WHOLE_MODULE, type ModuleObligations } from "./obligations";
 import { check } from "./parallel";
 import { parseModule } from "./parser";
+import { isProveBackend, prove, PROVE_BACKENDS, type ProofStatus } from "./prove/prove";
 import type { StateDump } from "./state-graph";
 import {
   formatProbability,
@@ -54,6 +55,7 @@ import {
   getOptimisticProbability,
   getOutDegreeSummary,
 } from "./tlc-summary";
+import { getTlapmPaths } from "./prove/tlapm/tlapm";
 import type { SanySpecification } from "./sany-generator";
 import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "./sany-modules";
 import { getSanyModuleName, getSanyReport, type SanyModuleOrigin } from "./sany-report";
@@ -111,6 +113,12 @@ const PROVE_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...
   { flag: "-I <directory>", isRepeatable: true },
 ]);
 
+const BACKEND_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...", [
+  { flag: `--backend <${PROVE_BACKENDS.join("|")}>`, isRequired: true },
+  { flag: "-I <directory>", isRepeatable: true },
+  { flag: "-workers <count|auto>" },
+]);
+
 const XML_EXPORT_FLAGS = new Set(["-o", "-t", "-r", "-u"]);
 
 const XML_EXPORT_174_FLAGS = new Set(["-o"]);
@@ -166,6 +174,7 @@ const XML_EXPORT_USAGE = (() => {
 const USAGE = [
   `Usage: ${CHECK_COMMAND.usage}`,
   `       ${PROVE_COMMAND.usage}`,
+  `       ${BACKEND_COMMAND.usage}`,
   "       tla-ts prove [<tlapm option>]... <Module.tla|glob>...",
   "       tla-ts [<JVM option>]... tlc2.TLC <TLC option>... <Spec>",
   "       (-cp tla2tools.jar or -Dtla-ts.tlc=1.7.4 picks the TLC to reproduce)",
@@ -1043,12 +1052,6 @@ const runEach = async (
 
 // tlapm installs its standard library, with modules such as TLAPS, at lib/tlapm/stdlib beside
 // bin/tlapm.
-const getTlapmPaths = () =>
-  (process.env.PATH ?? "")
-    .split(delimiter)
-    .map((directory) => join(directory, "tlapm"))
-    .filter((path) => existsSync(path));
-
 const getTlapmLibrary = () =>
   getTlapmPaths()
     .map((path) => join(dirname(dirname(realpathSync(path))), "lib/tlapm/stdlib"))
@@ -1123,7 +1126,57 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
   }
 };
 
-const prove = (args: string[]) => {
+// tla-ts prove --backend: proves each module with prove, printing each obligation as it ends.
+const proveWithBackend = (args: string[]) => {
+  const parsed = BACKEND_COMMAND.parse(args);
+  const backend = parsed.get("--backend")?.[0];
+  if (parsed.unknown[0] !== undefined || parsed.incomplete || !isProveBackend(backend)) {
+    console.error(`Usage: ${BACKEND_COMMAND.usage}`);
+    return 1;
+  }
+  const modulePaths = expandGlobs(parsed.positionals).map((path) =>
+    path.endsWith(".tla") ? path : `${path}.tla`,
+  );
+  if (modulePaths.length === 0) {
+    console.error(`Usage: ${BACKEND_COMMAND.usage}`);
+    return 1;
+  }
+  const tlapmLibrary = getTlapmLibrary();
+  const includes = parsed.options.flatMap((option) => (option.name === "-I" ? option.values : []));
+  return runEach(
+    modulePaths,
+    async (path) => {
+      const directories = [
+        dirname(path),
+        ".",
+        ...(tlapmLibrary ? [tlapmLibrary] : []),
+        ...includes.toReversed(),
+      ];
+      const result = await prove({
+        source: readFileSync(path, "utf8"),
+        loadModule: (name) =>
+          directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean)
+            ?.source,
+        backend,
+        workers: getWorkerCount(parsed.get("-workers")),
+        onObligation: (obligation) =>
+          console.log(
+            `${path}:${obligation.location}: ${obligation.status}${obligation.status === "proved" ? ` by ${obligation.prover}` : ""}${obligation.status === "failed" || obligation.status === "unsupported" ? ` (${obligation.reason})` : ""}`,
+          ),
+      });
+      const counts = Map.groupBy(result.obligations, (obligation) => obligation.status);
+      const getCount = (status: ProofStatus) => counts.get(status)?.length ?? 0;
+      console.log(
+        `${result.obligations.length} obligations: ${getCount("proved")} proved, ${getCount("trivial")} trivial, ${getCount("failed")} failed, ${getCount("unsupported")} unsupported`,
+      );
+      return getCount("failed") + getCount("unsupported") === 0 ? EXIT_STATUS.success : 1;
+    },
+    () => createMessagePrinter(false),
+  );
+};
+
+const runProve = (args: string[]) => {
+  if (args.includes("--backend")) return proveWithBackend(args);
   if (!args.includes("-N") && !args.includes("--summary")) return proveWithTlapm(args);
   const parsed = PROVE_COMMAND.parse(args);
   const unsupported = parsed.unknown[0];
@@ -1534,7 +1587,7 @@ const runJavaClass = (launch: JavaLaunch) => {
 };
 
 const run = async (args: string[]) => {
-  if (args[0] === "prove") return reportErrors(() => prove(args.slice(1)));
+  if (args[0] === "prove") return reportErrors(() => runProve(args.slice(1)));
   const launch = getJavaLaunch(args);
   if (launch === undefined) return checkSpecs(args, { libraries: [] });
   // The TLC that -Dtla-ts.tlc names, or else the one of the jar on the class path.

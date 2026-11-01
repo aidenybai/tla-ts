@@ -83,13 +83,27 @@ tla-ts searches for modules in the same order as tlapm:
 
 ### Prove with tlapm
 
-tla-ts doesn't include a prover. Without `-N` or `--summary`, `tla-ts prove` runs [tlapm](https://github.com/tlaplus/tlapm) from your `PATH`:
+Without `-N`, `--summary` or `--backend`, `tla-ts prove` runs [tlapm](https://github.com/tlaplus/tlapm) from your `PATH`:
 
 ```shell
 npx tla-ts prove Module.tla
 ```
 
 tla-ts expands the globs and passes every argument to tlapm, so all of tlapm's options work. tlapm sends the obligations to its provers, and tla-ts exits with the exit code of tlapm. If `tlapm` isn't on your `PATH`, tla-ts prints an error and exits with code 1.
+
+### Prove with a backend
+
+`tla-ts prove --backend` proves each module with [`prove`](#prove) and prints each obligation's status as it finishes:
+
+```shell
+npx tla-ts prove --backend tla-ts Module.tla
+```
+
+- `--backend <tla-ts|tlapm>`: prove with tla-ts's own provers, or with tlapm from your `PATH`.
+- `-I <directory>`: search this directory for modules.
+- `-workers <count|auto>`: run tla-ts's provers on this number of worker threads. `auto` uses one thread per core. The default is 1.
+
+tla-ts exits with code 1 if an obligation fails or isn't supported.
 
 ## API reference
 
@@ -145,6 +159,36 @@ After a violation or an error, `check` reruns on the calling thread to return TL
 - **Configuration**: `CONSTANTS`, `INIT`, `NEXT`, `SPECIFICATION`, invariants, properties, constraints, `SYMMETRY`, `VIEW`, `ALIAS`, `POSTCONDITION`, `CHECK_DEADLOCK`, and `_POSSIBLE`.
 - **Properties**: invariants and every temporal formula TLC accepts, checked through TLC's tableau construction.
 - **TLC semantics**: 32-bit integer overflow, `TLCGet` and `TLCSet`, subexpression references such as `Op!2`, and TLC's enumeration order for `CHOOSE` and quantifiers.
+
+### `prove`
+
+Proves the obligations of a TLAPS proof and resolves to their statuses.
+
+```ts
+import { prove } from "tla-ts";
+
+const result = await prove({
+  source: moduleSource,
+  loadModule: (name) => modules[name],
+  onObligation: (obligation) => console.log(obligation.location, obligation.status),
+});
+```
+
+| Option         | Description                                                                               |
+| -------------- | ----------------------------------------------------------------------------------------- |
+| `source`       | The TLA+ module to prove                                                                  |
+| `loadModule`   | Returns the source of a module it extends or instantiates                                 |
+| `backend`      | `"tla-ts"` proves with tla-ts's own provers. `"tlapm"` runs tlapm. Defaults to `"tla-ts"` |
+| `signal`       | An `AbortSignal` that stops proving                                                       |
+| `onObligation` | Receives each obligation as soon as its status is known                                   |
+| `workers`      | The number of worker threads that run tla-ts's provers. Defaults to 1                     |
+
+The `"tla-ts"` backend tries each obligation in tlapm's default order. It checks whether the obligation is trivial, then tries the provers its step cites, or tlapm's defaults: SMT, Zenon, then Isabelle. Each prover receives the same input as tlapm's, and `PTL` decides as LS4 does. `SMTT(n)` gives the solver `n` seconds, and the default is 5 s. With `workers`, the provers run on worker threads. Each obligation gets the result it would get on one thread, and `onObligation` still receives them in tlapm's order. The `"tlapm"` backend runs `tlapm --toolbox 0 0` from your `PATH`, so it works only in Node and Bun. It throws `TlaUnsupportedError` in a browser or when tlapm is missing.
+
+The result has these fields:
+
+- `obligations`: each obligation's `id`, `location`, `text`, and `status`. The status is `"proved"`, `"trivial"`, `"failed"`, or `"unsupported"`. A proved obligation names its `prover`, and a failed or unsupported one has a `reason`.
+- `missingProofCount` and `omittedProofCount`: the numbers of missing and omitted proofs, as `tlapm --summary` counts them.
 
 ### `parseModule`
 

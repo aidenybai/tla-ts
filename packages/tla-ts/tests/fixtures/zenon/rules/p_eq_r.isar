@@ -1,0 +1,30 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Hc:"(Q(b)=>r)" (is "?z_he=>_")
+ using q by blast
+ have z_Ha:"P(a)" (is "?z_ha")
+ using h by blast
+ have z_Hb:"(?z_he=?z_ha)"
+ using e by blast
+ assume z_Hd:"(~r)"
+ show FALSE
+ proof (rule zenon_imply [OF z_Hc])
+  assume z_Hi:"(~?z_he)"
+  show FALSE
+  proof (rule zenon_p_eq_r [of "?z_ha" "?z_he" "?z_ha", OF z_Ha z_Hb])
+   assume z_Hj:"(?z_ha~=?z_ha)"
+   show FALSE
+   by (rule zenon_noteq [OF z_Hj])
+  next
+   assume z_He:"?z_he"
+   show FALSE
+   by (rule notE [OF z_Hi z_He])
+  qed
+ next
+  assume z_Hg:"r"
+  show FALSE
+  by (rule notE [OF z_Hd z_Hg])
+ qed
+qed
+(* END-PROOF *)

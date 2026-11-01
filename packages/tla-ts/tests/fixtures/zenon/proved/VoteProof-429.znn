@@ -1,0 +1,21 @@
+;; obligation #429
+$hyp "v'280" a_STATEunde_VInvunde_a
+$hyp "v'281" a_hac7b4a
+$hyp "v'282" (\/ a_ACTIONunde_Nextunde_a (= h6fbaa
+a_STATEunde_varsunde_a))
+$hyp "a_CONSTANTunde_selfunde_a_in" (TLA.in a_CONSTANTunde_selfunde_a a_CONSTANTunde_Acceptorunde_a)
+$hyp "a_CONSTANTunde_bunde_a_in" (TLA.in a_CONSTANTunde_bunde_a a_CONSTANTunde_Ballotunde_a)
+$hyp "a_CONSTANTunde_vunde_a_in" (TLA.in a_CONSTANTunde_vunde_a a_CONSTANTunde_Valueunde_a)
+$hyp "v'299" (TLA.bAll a_STATEunde_chosenunde_a ((a_CONSTANTunde_wunde_a) (TLA.in a_CONSTANTunde_wunde_a
+a_h813b6a)))
+$hyp "v'300" (TLA.bAll a_STATEunde_chosenunde_a ((a_CONSTANTunde_wunde_a) (=> (TLA.in a_CONSTANTunde_vunde_a
+a_h813b6a) (= a_CONSTANTunde_wunde_a
+a_CONSTANTunde_vunde_a))))
+$hyp "v'301" (A. ((a_CONSTANTunde_wunde_a) (=> (-. (TLA.in a_CONSTANTunde_wunde_a
+a_STATEunde_chosenunde_a)) (=> (TLA.in a_CONSTANTunde_wunde_a
+a_h813b6a) (= a_CONSTANTunde_wunde_a
+a_CONSTANTunde_vunde_a)))))
+$goal (\/ (/\ (= a_STATEunde_chosenunde_a TLA.emptyset)
+(TLA.bEx a_CONSTANTunde_Valueunde_a ((a_CONSTANTunde_vunde_a_1) (= a_h813b6a
+(TLA.set a_CONSTANTunde_vunde_a_1))))) (= a_h813b6a
+a_STATEunde_chosenunde_a))

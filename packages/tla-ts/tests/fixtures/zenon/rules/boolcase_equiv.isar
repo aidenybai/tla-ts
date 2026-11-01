@@ -1,0 +1,36 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Ha:"P((p<=>q))" (is "?z_ha")
+ using h by blast
+ have z_Hc:"q"
+ using m by blast
+ have z_Hb:"p"
+ using n by blast
+ assume z_Hd:"(~P(TRUE))" (is "~?z_hf")
+ show FALSE
+ proof (rule zenon_boolcase_equiv [of "(\<lambda>zenon_Vi. P(zenon_Vi))" "p" "q", OF z_Ha])
+  assume z_Hk:"((p<=>q)=TRUE)" (is "?z_he=?z_hg")
+  assume z_Hf:"?z_hf"
+  show FALSE
+  by (rule notE [OF z_Hd z_Hf])
+ next
+  assume z_Hl:"((p<=>q)=FALSE)" (is "?z_he=?z_hm")
+  assume z_Hn:"P(?z_hm)" (is "?z_hn")
+  have z_Ho: "(~?z_he)"
+  by (rule zenon_eq_x_false_0 [of "?z_he", OF z_Hl])
+  show FALSE
+  proof (rule zenon_notequiv [OF z_Ho])
+   assume z_Hp:"(~p)"
+   assume z_Hc:"q"
+   show FALSE
+   by (rule notE [OF z_Hp z_Hb])
+  next
+   assume z_Hb:"p"
+   assume z_Hq:"(~q)"
+   show FALSE
+   by (rule notE [OF z_Hq z_Hc])
+  qed
+ qed
+qed
+(* END-PROOF *)

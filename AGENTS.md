@@ -50,7 +50,7 @@ Follow these steps for documentation, technical prose, and PR descriptions.
 - Avoid `any`. Avoid `as` unless necessary.
 - Never use star imports or alias imports, such as `import { resolve as pathResolve }`.
 - Omit file extensions in relative imports: `./core`, not `./core.js`.
-- Use pnpm for project scripts, which run with `tsx`. Use Bun only for one-off scripts.
+- Use pnpm for project scripts. They bundle with Bun and run with Node, through `scripts/run.ts`.
 - Use TypeScript interfaces over types. Keep them at module scope.
 - Rely on type inference. Add annotations only for exports.
 - Do not extract single-use helpers or variables. Inline them at the call site unless the helper is reused, hides a complex boundary, or has a name that clarifies the caller.

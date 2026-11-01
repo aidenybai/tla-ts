@@ -1,0 +1,20 @@
+;; obligation #186
+$hyp "v'130" (TLA.in a_CONSTANTunde_Nunde_a (TLA.setminus arith.N
+(TLA.set 0)))
+$hyp "v'149" a_STATEunde_Initunde_a
+$hyp "v'152" (= a_CONSTANTunde_Initiatorunde_a 0)
+$hyp "v'153" (TLA.in 0
+a_CONSTANTunde_Nodeunde_a)
+$hyp "v'161" (= (TLA.bChoice a_CONSTANTunde_Nodeunde_a ((a_CONSTANTunde_iunde_a) (TLA.bEx (TLA.DOMAIN (TLA.fapply a_VARIABLEunde_networkunde_a a_CONSTANTunde_iunde_a)) ((a_CONSTANTunde_munde_a) (= (TLA.fapply a_CONSTANTunde_munde_a "type")
+"tok")))))
+a_CONSTANTunde_Initiatorunde_a)
+$hyp "v'162" (= (TLA.bChoice (TLA.DOMAIN (TLA.fapply a_VARIABLEunde_networkunde_a a_CONSTANTunde_Initiatorunde_a)) ((a_CONSTANTunde_munde_a) (= (TLA.fapply a_CONSTANTunde_munde_a "type")
+"tok")))
+a_CONSTANTunde_InitTokunde_a)
+$goal (= (TLA.record "pos" (TLA.bChoice a_CONSTANTunde_Nodeunde_a ((a_CONSTANTunde_iunde_a) (TLA.bEx (TLA.DOMAIN (TLA.fapply a_VARIABLEunde_networkunde_a a_CONSTANTunde_iunde_a)) ((a_CONSTANTunde_munde_a) (= (TLA.fapply a_CONSTANTunde_munde_a "type")
+"tok"))))) "q" (TLA.fapply (TLA.bChoice (TLA.DOMAIN (TLA.fapply a_VARIABLEunde_networkunde_a (TLA.bChoice a_CONSTANTunde_Nodeunde_a ((a_CONSTANTunde_iunde_a) (TLA.bEx (TLA.DOMAIN (TLA.fapply a_VARIABLEunde_networkunde_a a_CONSTANTunde_iunde_a)) ((a_CONSTANTunde_munde_a) (= (TLA.fapply a_CONSTANTunde_munde_a "type")
+"tok"))))))) ((a_CONSTANTunde_munde_a) (= (TLA.fapply a_CONSTANTunde_munde_a "type")
+"tok"))) "q") "color" (TLA.fapply (TLA.bChoice (TLA.DOMAIN (TLA.fapply a_VARIABLEunde_networkunde_a (TLA.bChoice a_CONSTANTunde_Nodeunde_a ((a_CONSTANTunde_iunde_a) (TLA.bEx (TLA.DOMAIN (TLA.fapply a_VARIABLEunde_networkunde_a a_CONSTANTunde_iunde_a)) ((a_CONSTANTunde_munde_a) (= (TLA.fapply a_CONSTANTunde_munde_a "type")
+"tok"))))))) ((a_CONSTANTunde_munde_a) (= (TLA.fapply a_CONSTANTunde_munde_a "type")
+"tok"))) "color"))
+(TLA.record "pos" a_CONSTANTunde_Initiatorunde_a "q" (TLA.fapply a_CONSTANTunde_InitTokunde_a "q") "color" (TLA.fapply a_CONSTANTunde_InitTokunde_a "color")))

@@ -1,0 +1,1 @@
+not (((sometime (p & q)) -> ((sometime p) & (sometime q))))

@@ -1,0 +1,4 @@
+;; obligation #7
+$goal (/\ (= (TLA.fapply (TLA.record "f" (TLA.fapply TLA.Succ 0) "g" "str") "f")
+(TLA.fapply TLA.Succ 0)) (-. (= "a\\b"
+"a")))

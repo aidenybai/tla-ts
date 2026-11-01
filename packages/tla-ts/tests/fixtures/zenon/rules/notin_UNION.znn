@@ -1,0 +1,3 @@
+$hyp "h1" (TLA.in b s)
+$hyp "h2" (TLA.in a b)
+$goal (TLA.in a (TLA.UNION s))

@@ -1,0 +1,88 @@
+(* PROOF-FOUND *)
+(* BEGIN-PROOF *)
+proof (rule zenon_nnpp)
+ have z_Hc:"((a_CONSTANTunde_Cardinalityunde_a(a_VARIABLEunde_Sunde_a)=1)=>bEx(a_VARIABLEunde_Sunde_a, (\<lambda>a_CONSTANTunde_xunde_a. (a_VARIABLEunde_Sunde_a={a_CONSTANTunde_xunde_a}))))" (is "?z_he=>?z_hi")
+ using v'44 by blast
+ assume z_Hd:"(~(?z_he=>(a_VARIABLEunde_Sunde_a={bChoice(a_VARIABLEunde_Sunde_a, (\<lambda>a_CONSTANTunde_tunde_a. TRUE))})))" (is "~(_=>?z_ho)")
+ have z_He: "?z_he" (is "?z_hf=?z_hh")
+ by (rule zenon_notimply_0 [OF z_Hd])
+ have z_Ht: "(a_VARIABLEunde_Sunde_a~={bChoice(a_VARIABLEunde_Sunde_a, (\<lambda>a_CONSTANTunde_tunde_a. TRUE))})" (is "_~=?z_hp")
+ by (rule zenon_notimply_1 [OF z_Hd])
+ show FALSE
+ proof (rule zenon_imply [OF z_Hc])
+  assume z_Hu:"(?z_hf~=?z_hh)"
+  show FALSE
+  by (rule notE [OF z_Hu z_He])
+ next
+  assume z_Hi:"?z_hi"
+  have z_Hv_z_Hi: "(\\E x:((x \\in a_VARIABLEunde_Sunde_a)&(a_VARIABLEunde_Sunde_a={x}))) == ?z_hi" (is "?z_hv == _")
+  by (unfold bEx_def)
+  have z_Hv: "?z_hv" (is "\\E x : ?z_hbb(x)")
+  by (unfold z_Hv_z_Hi, fact z_Hi)
+  have z_Hbc: "?z_hbb((CHOOSE x:((x \\in a_VARIABLEunde_Sunde_a)&(a_VARIABLEunde_Sunde_a={x}))))" (is "?z_hbe&?z_hbf")
+  by (rule zenon_ex_choose_0 [of "?z_hbb", OF z_Hv])
+  have z_Hbe: "?z_hbe"
+  by (rule zenon_and_0 [OF z_Hbc])
+  have z_Hbf: "?z_hbf" (is "_=?z_hbg")
+  by (rule zenon_and_1 [OF z_Hbc])
+  show FALSE
+  proof (rule zenon_em [of "(\\E x:((x \\in a_VARIABLEunde_Sunde_a)&TRUE))"])
+   assume z_Hbh:"(\\E x:((x \\in a_VARIABLEunde_Sunde_a)&TRUE))" (is "\\E x : ?z_hbj(x)")
+   have z_Hbk: "?z_hbj((CHOOSE x:((x \\in a_VARIABLEunde_Sunde_a)&TRUE)))" (is "?z_hbm&?z_hs")
+   by (rule zenon_ex_choose_0 [of "?z_hbj", OF z_Hbh])
+   have z_Hbm: "?z_hbm"
+   by (rule zenon_and_0 [OF z_Hbk])
+   have z_Hbn: "((CHOOSE x:((x \\in a_VARIABLEunde_Sunde_a)&?z_hs)) \\in ?z_hbg)" (is "?z_hbn")
+   by (rule subst [where P="(\<lambda>zenon_Vqa. ((CHOOSE x:((x \\in a_VARIABLEunde_Sunde_a)&?z_hs)) \\in zenon_Vqa))", OF z_Hbf z_Hbm])
+   show FALSE
+   proof (rule zenon_in_addElt [of "(CHOOSE x:((x \\in a_VARIABLEunde_Sunde_a)&?z_hs))" "(CHOOSE x:((x \\in a_VARIABLEunde_Sunde_a)&(a_VARIABLEunde_Sunde_a={x})))" "{}", OF z_Hbn])
+    assume z_Hbs:"((CHOOSE x:((x \\in a_VARIABLEunde_Sunde_a)&?z_hs))=(CHOOSE x:((x \\in a_VARIABLEunde_Sunde_a)&(a_VARIABLEunde_Sunde_a={x}))))" (is "?z_hbl=?z_hbd")
+    show FALSE
+    proof (rule notE [OF z_Ht])
+     have z_Hbt: "(?z_hbg=?z_hp)"
+     proof (rule zenon_nnpp [of "(?z_hbg=?z_hp)"])
+      assume z_Hbu:"(?z_hbg~=?z_hp)"
+      show FALSE
+      proof (rule zenon_noteq [of "?z_hp"])
+       have z_Hbv: "(?z_hbd=bChoice(a_VARIABLEunde_Sunde_a, (\<lambda>a_CONSTANTunde_tunde_a. ?z_hs)))" (is "_=?z_hq")
+       proof (rule zenon_nnpp [of "(?z_hbd=?z_hq)"])
+        assume z_Hbw:"(?z_hbd~=?z_hq)"
+        have z_Hbx_z_Hbw: "(?z_hbd~=?z_hbl) == (?z_hbd~=?z_hq)" (is "?z_hbx == ?z_hbw")
+        by (unfold bChoose_def)
+        have z_Hbx: "?z_hbx"
+        by (unfold z_Hbx_z_Hbw, fact z_Hbw)
+        show FALSE
+        by (rule zenon_eqsym [OF z_Hbs z_Hbx])
+       qed
+       have z_Hby: "(?z_hp~=?z_hp)"
+       by (rule subst [where P="(\<lambda>zenon_Vfa. ({zenon_Vfa}~=?z_hp))", OF z_Hbv], fact z_Hbu)
+       thus "(?z_hp~=?z_hp)" .
+      qed
+     qed
+     have z_Ho: "?z_ho"
+     by (rule subst [where P="(\<lambda>zenon_Vp. (a_VARIABLEunde_Sunde_a=zenon_Vp))", OF z_Hbt], fact z_Hbf)
+     thus "?z_ho" .
+    qed
+   next
+    assume z_Hcg:"((CHOOSE x:((x \\in a_VARIABLEunde_Sunde_a)&?z_hs)) \\in {})" (is "?z_hcg")
+    show FALSE
+    by (rule zenon_in_emptyset [of "(CHOOSE x:((x \\in a_VARIABLEunde_Sunde_a)&?z_hs))", OF z_Hcg])
+   qed
+  next
+   assume z_Hch:"(~(\\E x:((x \\in a_VARIABLEunde_Sunde_a)&TRUE)))" (is "~(\\E x : ?z_hbj(x))")
+   have z_Hci: "~?z_hbj((CHOOSE x:((x \\in a_VARIABLEunde_Sunde_a)&(a_VARIABLEunde_Sunde_a={x}))))" (is "~(_&?z_hs)")
+   by (rule zenon_notex_0 [of "?z_hbj" "(CHOOSE x:((x \\in a_VARIABLEunde_Sunde_a)&(a_VARIABLEunde_Sunde_a={x})))", OF z_Hch])
+   show FALSE
+   proof (rule zenon_notand [OF z_Hci])
+    assume z_Hcj:"(~?z_hbe)"
+    show FALSE
+    by (rule notE [OF z_Hcj z_Hbe])
+   next
+    assume z_Hck:"(~?z_hs)"
+    show FALSE
+    by (rule zenon_nottrue [OF z_Hck])
+   qed
+  qed
+ qed
+qed
+(* END-PROOF *)

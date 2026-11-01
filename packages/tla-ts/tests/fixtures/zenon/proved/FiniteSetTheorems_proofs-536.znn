@@ -1,0 +1,31 @@
+;; obligation #536
+$hyp "v'191" (a_CONSTANTunde_IsFiniteSetunde_a a_CONSTANTunde_Uunde_a)
+$hyp "v'192" (TLA.subseteq a_CONSTANTunde_Sunde_a
+a_CONSTANTunde_Uunde_a)
+$hyp "v'193" (TLA.subseteq a_CONSTANTunde_Tunde_a
+a_CONSTANTunde_Uunde_a)
+$hyp "v'194" (arith.lt (a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Uunde_a)
+(arith.add (a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Sunde_a)
+(a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Tunde_a)))
+$hyp "v'197" (A. ((a_CONSTANTunde_Sunde_a_1) (=> (a_CONSTANTunde_IsFiniteSetunde_a a_CONSTANTunde_Sunde_a_1) (TLA.bAll (TLA.SUBSET a_CONSTANTunde_Sunde_a_1) ((a_CONSTANTunde_Tunde_a_1) (/\ (a_CONSTANTunde_IsFiniteSetunde_a a_CONSTANTunde_Tunde_a_1)
+(arith.le (a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Tunde_a_1)
+(a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Sunde_a_1))
+(=> (= (a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Sunde_a_1)
+(a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Tunde_a_1))
+(= a_CONSTANTunde_Sunde_a_1
+a_CONSTANTunde_Tunde_a_1))))))))
+$hyp "v'198" (A. ((a_CONSTANTunde_Sunde_a_1) (=> (a_CONSTANTunde_IsFiniteSetunde_a a_CONSTANTunde_Sunde_a_1) (/\ (TLA.in (a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Sunde_a_1)
+arith.N)
+(a_CONSTANTunde_ExistsBijectionunde_a (arith.intrange (TLA.fapply TLA.Succ 0)
+(a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Sunde_a_1))
+a_CONSTANTunde_Sunde_a_1)))))
+$goal (/\ (a_CONSTANTunde_IsFiniteSetunde_a a_CONSTANTunde_Sunde_a)
+(a_CONSTANTunde_IsFiniteSetunde_a a_CONSTANTunde_Tunde_a)
+(TLA.in (a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Sunde_a) arith.N)
+(TLA.in (a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Tunde_a) arith.N)
+(TLA.in (a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Uunde_a) arith.N)
+(TLA.in (a_CONSTANTunde_Cardinalityunde_a (TLA.cap a_CONSTANTunde_Sunde_a
+a_CONSTANTunde_Tunde_a)) arith.N)
+(arith.le (a_CONSTANTunde_Cardinalityunde_a (TLA.cup a_CONSTANTunde_Sunde_a
+a_CONSTANTunde_Tunde_a))
+(a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Uunde_a)))

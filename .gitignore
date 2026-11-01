@@ -13,5 +13,12 @@ packages/tla-ts/tests/conformance/.corpora
 packages/tla-ts/tests/conformance/.library
 packages/tla-ts/tests/conformance/.results.json
 packages/tla-ts/tests/conformance/.sany-results.json
+packages/tla-ts/tests/conformance/.smt-results.json
 packages/tla-ts/tests/conformance/.tlapm.json
 packages/tla-ts/tests/conformance/.tlapm-results.json
+packages/tla-ts/tests/conformance/.proofs
+packages/tla-ts/tests/conformance/.smt-encode-results.json
+packages/tla-ts/tests/conformance/.isabelle-encode-results.json
+packages/tla-ts/tests/conformance/.prove-results.json
+packages/tla-ts/tests/conformance/.prove-benchmark.json
+packages/tla-ts/.scripts

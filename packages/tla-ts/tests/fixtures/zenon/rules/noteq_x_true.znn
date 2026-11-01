@@ -1,0 +1,2 @@
+$hyp "h" p
+$goal (= p T.)

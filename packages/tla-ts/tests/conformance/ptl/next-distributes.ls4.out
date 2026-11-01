@@ -1,0 +1,5 @@
+Loaded spec -- sigsize: 6, #initial: 2, #goal: 0, #universal: 2, #step: 3
+Eliminated 3 variables -- new sigsize: 3.
+Simplified from 7 to 4 clauses.
+UNSAT: unconditional empty clause derived, in fact a (0,*)-clause.
+Solver called 5 times (learned 2 clauses). 0 clauses leaped.

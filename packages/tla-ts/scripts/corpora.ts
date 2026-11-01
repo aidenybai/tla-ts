@@ -8,6 +8,7 @@ import {
   symlinkSync,
 } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
+import { getObligations } from "../src/obligations";
 
 export interface Corpus {
   name: string;
@@ -109,3 +110,20 @@ export const linkLibraryModules = () => {
 };
 
 export const getModuleName = (specPath: string) => basename(specPath, ".tla");
+
+const readModule = (path: string | undefined) =>
+  path !== undefined && existsSync(path)
+    ? { file: path, source: readFileSync(path, "utf8") }
+    : undefined;
+
+// The obligations of a corpus module, found the way tlapm finds modules: in the module's directory,
+// then the -I library, then tlapm's own standard library. A submodule reports its own obligations,
+// before the module that contains it.
+export const getModuleObligations = (path: string, libraryModules: Map<string, string>) =>
+  getObligations(
+    [{ file: path, source: readFileSync(path, "utf8") }],
+    (name) =>
+      readModule(join(dirname(path), `${name}.tla`)) ??
+      readModule(libraryModules.get(name)) ??
+      readModule(join(CORPORA_DIRECTORY, "tlapm/library", `${name}.tla`)),
+  ).flatMap((result) => result.obligations);

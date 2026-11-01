@@ -1,0 +1,88 @@
+;; obligation #414
+$hyp "a_CONSTANTunde_iunde_a_in" (TLA.in a_CONSTANTunde_iunde_a a_CONSTANTunde_Punde_a)
+$hyp "a_CONSTANTunde_selfunde_a_in" (TLA.in a_CONSTANTunde_selfunde_a a_CONSTANTunde_Punde_a)
+$hyp "v'46" (/\ (TLA.in a_VARIABLEunde_numunde_a
+(TLA.FuncSet a_CONSTANTunde_Punde_a arith.N))
+(TLA.in a_VARIABLEunde_flagunde_a
+(TLA.FuncSet a_CONSTANTunde_Punde_a (TLA.set T. F.)))
+(TLA.in a_VARIABLEunde_unreadunde_a
+(TLA.FuncSet a_CONSTANTunde_Punde_a (TLA.SUBSET a_CONSTANTunde_Punde_a)))
+(TLA.bAll a_CONSTANTunde_Punde_a ((a_CONSTANTunde_iunde_a_1) (=> (TLA.in (TLA.fapply a_VARIABLEunde_pcunde_a a_CONSTANTunde_iunde_a_1)
+(TLA.set "p2" "p5" "p6")) (-. (TLA.in a_CONSTANTunde_iunde_a_1
+(TLA.fapply a_VARIABLEunde_unreadunde_a a_CONSTANTunde_iunde_a_1))))))
+(TLA.in a_VARIABLEunde_maxunde_a
+(TLA.FuncSet a_CONSTANTunde_Punde_a arith.N))
+(TLA.in a_VARIABLEunde_nxtunde_a
+(TLA.FuncSet a_CONSTANTunde_Punde_a a_CONSTANTunde_Punde_a))
+(TLA.bAll a_CONSTANTunde_Punde_a ((a_CONSTANTunde_iunde_a_1) (=> (= (TLA.fapply a_VARIABLEunde_pcunde_a a_CONSTANTunde_iunde_a_1)
+"p6") (-. (= (TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_iunde_a_1)
+a_CONSTANTunde_iunde_a_1))))) (TLA.in a_VARIABLEunde_pcunde_a
+(TLA.FuncSet a_CONSTANTunde_Punde_a (TLA.set "p1" "p2" "p3" "p4" "p5" "p6" "p7" "p8"))))
+$hyp "v'47" a_STATEunde_Invunde_a
+$hyp "v'48" (/\ (<=> (= (TLA.fapply a_VARIABLEunde_numunde_a a_CONSTANTunde_iunde_a)
+0) (TLA.in (TLA.fapply a_VARIABLEunde_pcunde_a a_CONSTANTunde_iunde_a)
+(TLA.set "p1" "p2" "p3")))
+(<=> (TLA.fapply a_VARIABLEunde_flagunde_a a_CONSTANTunde_iunde_a)
+(TLA.in (TLA.fapply a_VARIABLEunde_pcunde_a a_CONSTANTunde_iunde_a)
+(TLA.set "p2" "p3" "p4")))
+(=> (TLA.in (TLA.fapply a_VARIABLEunde_pcunde_a a_CONSTANTunde_iunde_a)
+(TLA.set "p5" "p6"))
+(TLA.bAll (TLA.setminus (TLA.setminus a_CONSTANTunde_Punde_a
+(TLA.fapply a_VARIABLEunde_unreadunde_a a_CONSTANTunde_iunde_a))
+(TLA.set a_CONSTANTunde_iunde_a)) ((a_CONSTANTunde_junde_a) (a_STATEunde_Afterunde_a a_CONSTANTunde_junde_a
+a_CONSTANTunde_iunde_a))))
+(=> (/\ (= (TLA.fapply a_VARIABLEunde_pcunde_a a_CONSTANTunde_iunde_a) "p6")
+(\/ (/\ (= (TLA.fapply a_VARIABLEunde_pcunde_a (TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_iunde_a))
+"p2") (-. (TLA.in a_CONSTANTunde_iunde_a
+(TLA.fapply a_VARIABLEunde_unreadunde_a (TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_iunde_a)))))
+(= (TLA.fapply a_VARIABLEunde_pcunde_a (TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_iunde_a))
+"p3")))
+(arith.le (TLA.fapply a_VARIABLEunde_numunde_a a_CONSTANTunde_iunde_a)
+(TLA.fapply a_VARIABLEunde_maxunde_a (TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_iunde_a))))
+(=> (TLA.in (TLA.fapply a_VARIABLEunde_pcunde_a a_CONSTANTunde_iunde_a)
+(TLA.set "p7" "p8")) (TLA.bAll (TLA.setminus a_CONSTANTunde_Punde_a
+(TLA.set a_CONSTANTunde_iunde_a)) ((a_CONSTANTunde_junde_a) (a_STATEunde_Afterunde_a a_CONSTANTunde_junde_a
+a_CONSTANTunde_iunde_a)))))
+$hyp "v'49" (\/ (a_ACTIONunde_punde_a a_CONSTANTunde_selfunde_a) (= h6fbaa
+a_STATEunde_varsunde_a))
+$hyp "v'62" (\/ (= (TLA.fapply a_VARIABLEunde_numunde_a (TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_selfunde_a))
+0)
+(TLA.cond (arith.lt (TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_selfunde_a)
+a_CONSTANTunde_selfunde_a) (arith.lt (TLA.fapply a_VARIABLEunde_numunde_a a_CONSTANTunde_selfunde_a)
+(TLA.fapply a_VARIABLEunde_numunde_a (TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_selfunde_a))) (arith.le (TLA.fapply a_VARIABLEunde_numunde_a a_CONSTANTunde_selfunde_a)
+(TLA.fapply a_VARIABLEunde_numunde_a (TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_selfunde_a)))))
+$hyp "v'63" (= (TLA.fapply a_VARIABLEunde_pcunde_a a_CONSTANTunde_selfunde_a)
+"p6")
+$hyp "v'64" (= a_VARIABLEunde_unreadunde_hash_primea
+(TLA.except a_VARIABLEunde_unreadunde_a a_CONSTANTunde_selfunde_a (TLA.setminus (TLA.fapply a_VARIABLEunde_unreadunde_a a_CONSTANTunde_selfunde_a)
+(TLA.set (TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_selfunde_a)))))
+$hyp "v'65" (= a_VARIABLEunde_pcunde_hash_primea
+(TLA.except a_VARIABLEunde_pcunde_a a_CONSTANTunde_selfunde_a "p5"))
+$hyp "v'66" (= a_VARIABLEunde_numunde_hash_primea
+a_VARIABLEunde_numunde_a)
+$hyp "v'67" (= a_VARIABLEunde_flagunde_hash_primea
+a_VARIABLEunde_flagunde_a)
+$hyp "v'68" (= a_VARIABLEunde_maxunde_hash_primea
+a_VARIABLEunde_maxunde_a)
+$hyp "v'69" (= a_VARIABLEunde_nxtunde_hash_primea
+a_VARIABLEunde_nxtunde_a)
+$hyp "a_CONSTANTunde_junde_a_in" (TLA.in a_CONSTANTunde_junde_a a_CONSTANTunde_Punde_a)
+$hyp "v'73" (\/ (/\ (TLA.in (TLA.fapply a_VARIABLEunde_pcunde_hash_primea a_CONSTANTunde_iunde_a)
+(TLA.set "p5" "p6")) (TLA.in a_CONSTANTunde_junde_a
+(TLA.setminus (TLA.setminus a_CONSTANTunde_Punde_a
+(TLA.fapply a_VARIABLEunde_unreadunde_hash_primea a_CONSTANTunde_iunde_a))
+(TLA.set a_CONSTANTunde_iunde_a))))
+(/\ (TLA.in (TLA.fapply a_VARIABLEunde_pcunde_hash_primea a_CONSTANTunde_iunde_a)
+(TLA.set "p7" "p8")) (TLA.in a_CONSTANTunde_junde_a
+(TLA.setminus a_CONSTANTunde_Punde_a
+(TLA.set a_CONSTANTunde_iunde_a)))))
+$hyp "v'80" (-. (= a_CONSTANTunde_iunde_a
+a_CONSTANTunde_selfunde_a))
+$hyp "v'81" (= a_CONSTANTunde_junde_a
+a_CONSTANTunde_selfunde_a)
+$hyp "v'87" (= a_CONSTANTunde_iunde_a
+(TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_selfunde_a))
+$hyp "v'93" (arith.lt (TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_selfunde_a)
+a_CONSTANTunde_selfunde_a)
+$goal (arith.lt (TLA.fapply a_VARIABLEunde_numunde_a a_CONSTANTunde_selfunde_a)
+(TLA.fapply a_VARIABLEunde_numunde_a (TLA.fapply a_VARIABLEunde_nxtunde_a a_CONSTANTunde_selfunde_a)))

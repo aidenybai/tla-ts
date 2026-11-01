@@ -1,0 +1,4 @@
+$hyp "f" (TLA.isAFcn f)
+$hyp "d" (= (TLA.DOMAIN f) (TLA.set "a"))
+$hyp "v" (= (TLA.fapply f "a") x)
+$goal (= f (TLA.record "a" x))

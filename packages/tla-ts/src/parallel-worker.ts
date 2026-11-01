@@ -7,20 +7,14 @@ import {
   isSharedFingerprintsFull,
   writeStateFingerprint,
 } from "./fingerprints";
-import type {
-  CoordinatorMessage,
-  LevelMessage,
-  Port,
-  StartMessage,
-  WorkerMessage,
-} from "./parallel";
+import type { CoordinatorMessage, LevelMessage, StartMessage, WorkerMessage } from "./parallel";
 import { getSuccessors, type Successor } from "./successors";
 import { getTlcStringOrder, getTlcDeclarationOrder } from "./tlc-order";
 import { OUT_DEGREE_BUCKETS } from "./tlc-summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
 import { getRankedStringCount, setStringOrder, setValueVersion, type Value } from "./values";
+import { getParentPort, type Port } from "./worker";
 
-const WORKER_THREADS_MODULE = "node:worker_threads";
 const LOCKED = -1;
 
 interface Expansion {
@@ -35,16 +29,6 @@ interface Expansion {
   next: Value[][];
   fingerprintStates: Value[][];
 }
-
-const getParentPort = async () => {
-  if (typeof (globalThis as { postMessage?: unknown }).postMessage === "function") {
-    return globalThis as unknown as Port;
-  }
-  const threads: typeof import("node:worker_threads") = await import(
-    /* @vite-ignore */ /* webpackIgnore: true */ WORKER_THREADS_MODULE
-  );
-  return threads.parentPort as unknown as Port;
-};
 
 const run = (start: StartMessage, parent: Port) => {
   const modules = new Map(start.modules);

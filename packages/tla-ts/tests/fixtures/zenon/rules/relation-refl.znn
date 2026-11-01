@@ -1,0 +1,3 @@
+$hyp "refl" (A. ((x) (R x x)))
+$hyp "e" (= (f a) (g b))
+$goal (R (f a) (g b))

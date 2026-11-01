@@ -1,0 +1,50 @@
+;; obligation #720
+$hyp "v'297" a_STATEunde_IndInvunde_Unforgunde_NoBcastunde_a
+$hyp "v'298" (\/ a_ACTIONunde_Nextunde_a (= h6fbaa
+a_STATEunde_varsunde_a))
+$hyp "v'305" a_STATEunde_TypeOKunde_a
+$hyp "v'306" a_STATEunde_FCConstraintsunde_a
+$hyp "v'307" (= a_VARIABLEunde_sentunde_a
+TLA.emptyset)
+$hyp "v'308" (= a_VARIABLEunde_pcunde_a
+(TLA.Fcn a_CONSTANTunde_Procunde_a ((a_CONSTANTunde_iunde_a) "V0")))
+$hyp "v'309" (\/ (TLA.bEx a_VARIABLEunde_Corrunde_a ((a_CONSTANTunde_iunde_a) (a_ACTIONunde_Stepunde_a a_CONSTANTunde_iunde_a)))
+(= h6fbaa
+a_STATEunde_varsunde_a))
+$hyp "v'316" a_STATEunde_TypeOKunde_a
+$hyp "v'317" a_STATEunde_FCConstraintsunde_a
+$hyp "v'318" (= a_VARIABLEunde_sentunde_a
+TLA.emptyset)
+$hyp "v'319" (= a_VARIABLEunde_pcunde_a
+(TLA.Fcn a_CONSTANTunde_Procunde_a ((a_CONSTANTunde_iunde_a) "V0")))
+$hyp "a_CONSTANTunde_iunde_a_in" (TLA.in a_CONSTANTunde_iunde_a a_VARIABLEunde_Corrunde_a)
+$hyp "v'321" (a_ACTIONunde_Stepunde_a a_CONSTANTunde_iunde_a)
+$hyp "v'333" a_STATEunde_IndInvunde_Unforgunde_NoBcastunde_a
+$hyp "v'334" (a_ACTIONunde_ReceiveFromAnySenderunde_a a_CONSTANTunde_iunde_a)
+$goal (-. (= (/\ (TLA.in (TLA.fapply a_VARIABLEunde_pcunde_a a_CONSTANTunde_iunde_a)
+(TLA.set "V0" "V1")) (arith.le (arith.add a_CONSTANTunde_Nunde_a
+(arith.minus (arith.mul (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0))
+a_CONSTANTunde_Tunde_a)))
+(a_CONSTANTunde_Cardinalityunde_a (TLA.fapply a_VARIABLEunde_rcvdunde_hash_primea a_CONSTANTunde_iunde_a)))
+(arith.lt (a_CONSTANTunde_Cardinalityunde_a (TLA.fapply a_VARIABLEunde_rcvdunde_hash_primea a_CONSTANTunde_iunde_a))
+(arith.add a_CONSTANTunde_Nunde_a (arith.minus a_CONSTANTunde_Tunde_a)))
+(= a_VARIABLEunde_pcunde_hash_primea
+(TLA.except a_VARIABLEunde_pcunde_a a_CONSTANTunde_iunde_a "SE"))
+(= a_VARIABLEunde_sentunde_hash_primea (TLA.cup a_VARIABLEunde_sentunde_a
+(TLA.set (TLA.tuple a_CONSTANTunde_iunde_a "ECHO"))))
+(/\ (= a_VARIABLEunde_Corrunde_hash_primea a_VARIABLEunde_Corrunde_a)
+(= a_VARIABLEunde_Faultyunde_hash_primea a_VARIABLEunde_Faultyunde_a)))
+(\/ (-. (TLA.in (TLA.fapply a_VARIABLEunde_pcunde_a a_CONSTANTunde_iunde_a)
+(TLA.set "V0" "V1"))) (-. (arith.le (arith.add a_CONSTANTunde_Nunde_a
+(arith.minus (arith.mul (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0))
+a_CONSTANTunde_Tunde_a)))
+(a_CONSTANTunde_Cardinalityunde_a (TLA.fapply a_VARIABLEunde_rcvdunde_hash_primea a_CONSTANTunde_iunde_a))))
+(-. (arith.lt (a_CONSTANTunde_Cardinalityunde_a (TLA.fapply a_VARIABLEunde_rcvdunde_hash_primea a_CONSTANTunde_iunde_a))
+(arith.add a_CONSTANTunde_Nunde_a (arith.minus a_CONSTANTunde_Tunde_a))))
+(-. (= a_VARIABLEunde_pcunde_hash_primea
+(TLA.except a_VARIABLEunde_pcunde_a a_CONSTANTunde_iunde_a "SE")))
+(-. (= a_VARIABLEunde_sentunde_hash_primea (TLA.cup a_VARIABLEunde_sentunde_a
+(TLA.set (TLA.tuple a_CONSTANTunde_iunde_a "ECHO")))))
+(-. (/\ (= a_VARIABLEunde_Corrunde_hash_primea a_VARIABLEunde_Corrunde_a)
+(= a_VARIABLEunde_Faultyunde_hash_primea
+a_VARIABLEunde_Faultyunde_a))))))

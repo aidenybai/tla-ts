@@ -1,0 +1,11 @@
+;; obligation #467
+$hyp "v'186" (a_CONSTANTunde_IsFiniteSetunde_a a_CONSTANTunde_Sunde_a)
+$hyp "v'187" (TLA.bAll (TLA.SUBSET a_CONSTANTunde_Sunde_a) ((a_CONSTANTunde_Tunde_a) (=> (TLA.bAll (TLA.setminus (TLA.SUBSET a_CONSTANTunde_Tunde_a)
+(TLA.set a_CONSTANTunde_Tunde_a)) ((a_CONSTANTunde_Uunde_a) (a_CONSTANTunde_Punde_a a_CONSTANTunde_Uunde_a))) (a_CONSTANTunde_Punde_a a_CONSTANTunde_Tunde_a))))
+$goal (TLA.bAll (TLA.SUBSET a_CONSTANTunde_Sunde_a) ((a_CONSTANTunde_Tunde_a) (=> (TLA.bAll (TLA.subsetOf (TLA.SUBSET a_CONSTANTunde_Sunde_a) ((a_CONSTANTunde_yunde_a) (TLA.in (TLA.tuple a_CONSTANTunde_yunde_a
+a_CONSTANTunde_Tunde_a)
+(TLA.subsetOf (TLA.prod (TLA.SUBSET a_CONSTANTunde_Sunde_a) (TLA.SUBSET a_CONSTANTunde_Sunde_a)) ((a_CONSTANTunde_ssunde_a) (/\ (TLA.subseteq (TLA.fapply a_CONSTANTunde_ssunde_a (TLA.fapply TLA.Succ 0))
+(TLA.fapply a_CONSTANTunde_ssunde_a (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0))))
+(-. (= (TLA.fapply a_CONSTANTunde_ssunde_a (TLA.fapply TLA.Succ 0))
+(TLA.fapply a_CONSTANTunde_ssunde_a (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0))))))))))) ((a_CONSTANTunde_Uunde_a) (a_CONSTANTunde_Punde_a a_CONSTANTunde_Uunde_a)))
+(a_CONSTANTunde_Punde_a a_CONSTANTunde_Tunde_a))))

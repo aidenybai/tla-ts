@@ -1,0 +1,11 @@
+;; obligation #17
+$hyp "v'25" (TLA.in a_VARIABLEunde_xunde_a
+arith.N)
+$hyp "v'26" (= a_VARIABLEunde_xunde_hash_primea
+(arith.add a_VARIABLEunde_xunde_a
+(TLA.fapply TLA.Succ 0)))
+$hyp "v'27" (= a_VARIABLEunde_yunde_hash_primea
+a_VARIABLEunde_yunde_a)
+$goal (/\ (TLA.in a_VARIABLEunde_xunde_hash_primea arith.N)
+(= a_VARIABLEunde_yunde_hash_primea
+a_VARIABLEunde_yunde_a))
