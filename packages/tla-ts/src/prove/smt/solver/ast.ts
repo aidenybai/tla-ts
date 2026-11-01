@@ -704,22 +704,24 @@ export class AstManager {
     return { name: builtin[0], kind: builtin[1], domain };
   }
 
-  // The hash of a builtin's Z3 declaration. The domain of a builtin other than pattern depends only
-  // on the sort of an argument and the number of arguments, which key the cache with the op and
-  // range.
-  private getBuiltinHash(op: number, args: number[], range: number) {
-    if (op === OP_PATTERN) {
-      const key = `${args.map((arg) => this.sorts[arg]).join(",")}:${range}`;
-      const existing = this.patternHashes.get(key);
-      if (existing !== undefined) return existing;
-      const hash = this.mkBuiltinHash(op, args, range);
-      this.patternHashes.set(key, hash);
-      return hash;
-    }
+  // The hash of a pattern's Z3 declaration.
+  private getPatternHash(args: number[], range: number) {
+    const key = `${args.map((arg) => this.sorts[arg]).join(",")}:${range}`;
+    const existing = this.patternHashes.get(key);
+    if (existing !== undefined) return existing;
+    const hash = this.mkBuiltinHash(OP_PATTERN, args, range);
+    this.patternHashes.set(key, hash);
+    return hash;
+  }
+
+  // The slot in builtinHashes of the hash of a builtin's Z3 declaration, other than a pattern's. The
+  // domain depends only on the sort of an argument and the number of arguments, which key the cache
+  // with the op and range. It returns the slot, a small integer, because V8 boxes a hash it returns.
+  private getBuiltinSlot(op: number, args: number[], range: number) {
     const argSort = args.length === 0 ? 0 : this.sorts[op === OP_ITE ? args[1] : args[0]];
     const count = args.length;
     const slot = this.findBuiltinSlot(op, argSort, range, count);
-    if (this.builtinKeys[4 * slot] !== -1) return this.builtinHashes[slot];
+    if (this.builtinKeys[4 * slot] !== -1) return slot;
     const hash = this.mkBuiltinHash(op, args, range);
     if (2 * (this.numBuiltinHashes + 1) > this.builtinHashes.length) {
       const keys = this.builtinKeys;
@@ -737,8 +739,7 @@ export class AstManager {
             hashes[index / 4],
           );
     }
-    this.insertBuiltinHash(op, argSort, range, count, hash);
-    return hash;
+    return this.insertBuiltinHash(op, argSort, range, count, hash);
   }
 
   // The slot of the builtin hash with these keys, or the free slot where it goes.
@@ -771,6 +772,7 @@ export class AstManager {
     this.builtinKeys.set([op, argSort, range, count], 4 * slot);
     this.builtinHashes[slot] = hash;
     this.numBuiltinHashes++;
+    return slot;
   }
 
   private mkBuiltinHash(op: number, args: number[], range: number) {
@@ -927,10 +929,17 @@ export class AstManager {
       for (let index = start; index < args.length; index++) this.argBuffer.push(args[index]);
     }
     const nodeArgs = start > 0 ? this.argBuffer : args;
+    // The slot comes first, since finding it may replace builtinHashes with one twice the size.
+    const builtinSlot =
+      funcDecl.family === FAMILY_USER || funcDecl.op === OP_PATTERN
+        ? -1
+        : this.getBuiltinSlot(funcDecl.op, nodeArgs, sort);
     const declHash =
       funcDecl.family === FAMILY_USER
         ? this.declHashes[decl]
-        : this.getBuiltinHash(funcDecl.op, nodeArgs, sort);
+        : builtinSlot === -1
+          ? this.getPatternHash(nodeArgs, sort)
+          : this.builtinHashes[builtinSlot];
     const id = this.create(
       KIND_APP,
       decl,
