@@ -601,7 +601,8 @@ export class AstManager {
   // The hash of a func_decl node: its name, range, info and domain.
   private getFuncDeclHash(name: SmtSymbol, domain: number[], range: number, infoHash: number) {
     return astArrayHash(
-      domain.map((sort) => this.sortHashes[sort]),
+      domain,
+      this.sortHashes,
       combineHash(combineHash(getSymbolHash(name), this.sortHashes[range]), infoHash),
     );
   }
@@ -764,10 +765,7 @@ export class AstManager {
       args,
       sort,
       0,
-      astArrayHash(
-        args.map((arg) => this.hashes[arg]),
-        declHash,
-      ),
+      astArrayHash(args, this.hashes, declHash),
     );
     this.insertApp(hash, id);
     this.registerNode(id);
@@ -888,10 +886,7 @@ export class AstManager {
       SORT_BOOL,
       0,
       mkMix(
-        astArrayHash(
-          data.sorts.map((sort) => this.sortHashes[sort]),
-          data.isForall ? 31 : 19,
-        ),
+        astArrayHash(data.sorts, this.sortHashes, data.isForall ? 31 : 19),
         data.patterns.length,
         this.hashes[data.body],
       ),

@@ -137,31 +137,35 @@ export const getCompositeHash = (childHashes: number[], kindHash = 17) => {
   }
 };
 
-// ast_array_hash: the hash of an AST from the hashes of its children.
-export const astArrayHash = (hashes: number[], initValue: number) => {
-  const count = hashes.length;
+// ast_array_hash: the hash of an AST from the hashes of its children, each looked up in hashes like
+// Z3's get_hash.
+export const astArrayHash = (items: number[], hashes: number[], initValue: number) => {
+  const count = items.length;
   switch (count) {
     case 0:
       return initValue;
     case 1:
-      return combineHash(hashes[0], initValue);
+      return combineHash(hashes[items[0]], initValue);
     case 2:
-      return combineHash(combineHash(hashes[0], hashes[1]), initValue);
+      return combineHash(combineHash(hashes[items[0]], hashes[items[1]]), initValue);
     case 3:
-      return combineHash(combineHash(hashes[0], hashes[1]), combineHash(hashes[2], initValue));
+      return combineHash(
+        combineHash(hashes[items[0]], hashes[items[1]]),
+        combineHash(hashes[items[2]], initValue),
+      );
     default: {
       const state = mkState(GOLDEN_RATIO, GOLDEN_RATIO, initValue);
       let rest = count;
       while (rest >= 3) {
-        state[0] += hashes[--rest];
-        state[1] += hashes[--rest];
-        state[2] += hashes[--rest];
+        state[0] += hashes[items[--rest]];
+        state[1] += hashes[items[--rest]];
+        state[2] += hashes[items[--rest]];
         mix(state);
       }
       if (rest === 2) {
-        state[1] += hashes[1];
-        state[2] += hashes[0];
-      } else if (rest === 1) state[2] += hashes[0];
+        state[1] += hashes[items[1]];
+        state[2] += hashes[items[0]];
+      } else if (rest === 1) state[2] += hashes[items[0]];
       mix(state);
       return state[2];
     }
