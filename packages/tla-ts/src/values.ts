@@ -234,7 +234,13 @@ const compareFunctions = (left: FunctionValue, right: FunctionValue) => {
   const rightRange = right.range;
   if (leftRange === rightRange) return 0;
   for (let index = 0; index < leftRange.length; index++) {
-    const valueComparison = compareValues(leftRange[index], rightRange[index]);
+    const leftValue = leftRange[index];
+    const rightValue = rightRange[index];
+    // V8 can't inline the recursive compareValues here, so two numbers skip the call.
+    const valueComparison =
+      typeof leftValue === "number" && typeof rightValue === "number"
+        ? leftValue - rightValue
+        : compareValues(leftValue, rightValue);
     if (valueComparison !== 0) return valueComparison;
   }
   return 0;
