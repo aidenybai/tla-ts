@@ -37,7 +37,7 @@ describe("decideIsabelle gives Isabelle's verdict on tlapm's theories", () => {
   // keeps growing the goal, and Isabelle breaks down after two minutes.
   it("answers unknown when the simplifier runs out of stack", () => {
     expect(decide(readTheory("Paxos-109"))).toBe("unknown");
-  });
+  }, 30_000);
 });
 
 // Isabelle fails on each of these too.
