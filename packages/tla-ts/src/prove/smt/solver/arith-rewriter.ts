@@ -21,6 +21,7 @@ import {
 import { getEuclideanDiv, getEuclideanMod, getGcd, Rational } from "./rational";
 import { type ArithRewriterOptions, PolyRewriter } from "./poly-rewriter";
 import type { Rewrite } from "./rewriter-tpl";
+import { shrink } from "./array";
 
 // The parameters that asserted_formulas gives the kernel's rewriter, which also simplifies instances.
 export const KERNEL_ARITH_OPTIONS: ArithRewriterOptions = {
@@ -62,6 +63,9 @@ const getInverse = (kind: number) =>
   kind === KIND_LE ? KIND_GE : kind === KIND_GE ? KIND_LE : KIND_EQ;
 
 export class ArithRewriter extends PolyRewriter {
+  // The buffer of isNonNegative's factors.
+  private factors: number[] = [];
+
   mkLe(left: number, right: number) {
     return this.mkLeGeEq(left, right, KIND_LE);
   }
@@ -469,35 +473,51 @@ export class ArithRewriter extends PolyRewriter {
     else result.push(expr);
   }
 
-  // is_non_negative, without powers and sequences.
+  // is_non_negative, without powers and sequences. It counts each factor's occurrences by scanning
+  // the factors, which are few, rather than by sorting them.
   private isNonNegative(expr: number) {
     if (!this.isMul(expr)) return false;
-    const args: number[] = [];
-    this.flattenMul(expr, args);
+    const factors = this.factors;
+    shrink(factors, 0);
+    this.flattenMul(expr, factors);
     let isNegative = false;
-    const counts = new Map<number, number>();
-    for (const arg of args) {
-      if (this.manager.isNumeral(arg)) {
-        if (this.getValue(arg).isNegative()) isNegative = !isNegative;
-      } else counts.set(arg, (counts.get(arg) ?? 0) + 1);
+    let numFactors = 0;
+    for (const arg of factors) {
+      if (!this.manager.isNumeral(arg)) factors[numFactors++] = arg;
+      else if (this.getValue(arg).isNegative()) isNegative = !isNegative;
     }
     if (isNegative) return false;
-    const odd = [...counts].filter((entry) => entry[1] % 2 === 1).map((entry) => entry[0]);
-    if (odd.length === 0) return true;
-    if (odd.length !== 2) return false;
-    const isSuccessor = (base: number, sum: number) => {
-      if (!this.isAdd(sum)) return false;
-      let offset = Rational.zero;
-      let numBase = 0;
-      for (let index = 0; index < this.manager.getNumArgs(sum); index++) {
-        const arg = this.manager.getArg(sum, index);
-        if (this.manager.isNumeral(arg)) offset = offset.add(this.getValue(arg));
-        else if (arg === base) numBase++;
-        else return false;
-      }
-      return numBase === 1 && (offset.equals(Rational.one) || offset.equals(Rational.minusOne));
-    };
-    return isSuccessor(odd[0], odd[1]) || isSuccessor(odd[1], odd[0]);
+    let numOdd = 0;
+    let firstOdd = -1;
+    let secondOdd = -1;
+    for (let index = 0; index < numFactors; index++) {
+      const factor = factors[index];
+      if (factors.indexOf(factor) < index) continue;
+      let count = 0;
+      for (let other = index; other < numFactors; other++) if (factors[other] === factor) count++;
+      if (count % 2 === 0) continue;
+      numOdd++;
+      if (numOdd === 1) firstOdd = factor;
+      else if (numOdd === 2) secondOdd = factor;
+      else return false;
+    }
+    if (numOdd === 0) return true;
+    if (numOdd !== 2) return false;
+    return this.isSuccessor(firstOdd, secondOdd) || this.isSuccessor(secondOdd, firstOdd);
+  }
+
+  // Whether sum is base plus or minus one.
+  private isSuccessor(base: number, sum: number) {
+    if (!this.isAdd(sum)) return false;
+    let offset = Rational.zero;
+    let numBase = 0;
+    for (let index = 0; index < this.manager.getNumArgs(sum); index++) {
+      const arg = this.manager.getArg(sum, index);
+      if (this.manager.isNumeral(arg)) offset = offset.add(this.getValue(arg));
+      else if (arg === base) numBase++;
+      else return false;
+    }
+    return numBase === 1 && (offset.equals(Rational.one) || offset.equals(Rational.minusOne));
   }
 
   private negateMonomial(expr: number) {

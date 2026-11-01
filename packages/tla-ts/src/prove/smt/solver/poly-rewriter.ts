@@ -137,11 +137,18 @@ export class PolyRewriter {
     return manager.isNumeral(expr) ? -1 : manager.ids[expr];
   }
 
+  // std::sort with mon_lt, of the monomials from start, in place. Insertion sort is stable, as
+  // Array.prototype.sort is, and allocates nothing for the short sums that are the common case.
   protected sortMonomials(monomials: number[], start: number) {
-    const sorted = monomials
-      .slice(start)
-      .sort((left, right) => this.getOrdinal(left) - this.getOrdinal(right));
-    return [...monomials.slice(0, start), ...sorted];
+    for (let index = start + 1; index < monomials.length; index++) {
+      const monomial = monomials[index];
+      const ordinal = this.getOrdinal(monomial);
+      let position = index;
+      for (; position > start && this.getOrdinal(monomials[position - 1]) > ordinal; position--)
+        monomials[position] = monomials[position - 1];
+      monomials[position] = monomial;
+    }
+    return monomials;
   }
 
   mkAddApp(args: number[]) {
@@ -374,56 +381,71 @@ export class PolyRewriter {
     return this.reduce(this.mkMulAppWith(Rational.minusOne, arg), 1);
   }
 
-  // poly_rewriter::cancel_monomials.
+  // poly_rewriter::cancel_monomials. The stamps stand for its visited, multiple and copied marks.
   protected cancelMonomials(lhs: number, rhs: number, isMoving: boolean) {
-    this.currSort = this.manager.sorts[lhs];
-    const visited = new Set<number>();
-    const multiple = new Set<number>();
+    const manager = this.manager;
+    this.currSort = manager.sorts[lhs];
+    const stamp = ++this.stamp;
     let constant = Rational.zero;
     let numCoeffs = 0;
     for (let index = 0; index < this.getNumMonomials(lhs); index++) {
       const arg = this.getMonomial(lhs, index);
-      if (this.manager.isNumeral(arg)) {
+      if (manager.isNumeral(arg)) {
         constant = constant.add(this.getValue(arg));
         numCoeffs++;
-      } else visited.add(this.getPowerProduct(arg));
+        continue;
+      }
+      const product = this.getPowerProduct(arg);
+      if (product >= this.visitedStamps.length) this.growStamps(product);
+      this.visitedStamps[product] = stamp;
     }
-    if (isMoving && numCoeffs === 0 && this.manager.isNumeral(rhs)) return undefined;
+    if (isMoving && numCoeffs === 0 && manager.isNumeral(rhs)) return undefined;
+    let isMultiple = false;
     for (let index = 0; index < this.getNumMonomials(rhs); index++) {
       const arg = this.getMonomial(rhs, index);
-      if (this.manager.isNumeral(arg)) {
+      if (manager.isNumeral(arg)) {
         constant = constant.sub(this.getValue(arg));
         numCoeffs++;
-      } else if (visited.has(this.getPowerProduct(arg))) multiple.add(this.getPowerProduct(arg));
+        continue;
+      }
+      const product = this.getPowerProduct(arg);
+      if (product < this.visitedStamps.length && this.visitedStamps[product] === stamp) {
+        this.multipleStamps[product] = stamp;
+        isMultiple = true;
+      }
     }
-    if (multiple.size === 0 && numCoeffs <= 1) {
-      if (isMoving ? this.manager.isNumeral(rhs) : numCoeffs === 0 || this.manager.isNumeral(rhs))
+    if (!isMultiple && numCoeffs <= 1) {
+      if (isMoving ? manager.isNumeral(rhs) : numCoeffs === 0 || manager.isNumeral(rhs))
         return undefined;
     }
+    const isMultipleProduct = (product: number) =>
+      product < this.multipleStamps.length && this.multipleStamps[product] === stamp;
     const coeffs = new Map<number, Rational>();
-    for (let index = 0; index < this.getNumMonomials(lhs); index++) {
-      const arg = this.getMonomial(lhs, index);
-      if (this.manager.isNumeral(arg)) continue;
-      const product = this.getPowerProduct(arg);
-      if (multiple.has(product))
-        coeffs.set(product, (coeffs.get(product) ?? Rational.zero).add(this.getCoefficient(arg)));
-    }
-    for (let index = 0; index < this.getNumMonomials(rhs); index++) {
-      const arg = this.getMonomial(rhs, index);
-      if (this.manager.isNumeral(arg)) continue;
-      const product = this.getPowerProduct(arg);
-      if (multiple.has(product))
-        coeffs.set(product, (coeffs.get(product) ?? Rational.zero).sub(this.getCoefficient(arg)));
+    if (isMultiple) {
+      for (let index = 0; index < this.getNumMonomials(lhs); index++) {
+        const arg = this.getMonomial(lhs, index);
+        if (manager.isNumeral(arg)) continue;
+        const product = this.getPowerProduct(arg);
+        if (isMultipleProduct(product))
+          coeffs.set(product, (coeffs.get(product) ?? Rational.zero).add(this.getCoefficient(arg)));
+      }
+      for (let index = 0; index < this.getNumMonomials(rhs); index++) {
+        const arg = this.getMonomial(rhs, index);
+        if (manager.isNumeral(arg)) continue;
+        const product = this.getPowerProduct(arg);
+        if (isMultipleProduct(product))
+          coeffs.set(product, (coeffs.get(product) ?? Rational.zero).sub(this.getCoefficient(arg)));
+      }
     }
     const newLhs: number[] = [];
-    const copied = new Set<number>();
+    const copiedStamp = ++this.stamp;
     for (let index = 0; index < this.getNumMonomials(lhs); index++) {
       const arg = this.getMonomial(lhs, index);
-      if (this.manager.isNumeral(arg)) continue;
+      if (manager.isNumeral(arg)) continue;
       const product = this.getPowerProduct(arg);
-      if (!multiple.has(product)) newLhs.push(arg);
-      else if (!copied.has(product)) {
-        copied.add(product);
+      if (!isMultipleProduct(product)) newLhs.push(arg);
+      else if (this.visitedStamps[product] !== copiedStamp) {
+        this.visitedStamps[product] = copiedStamp;
         const coefficient = coeffs.get(product) ?? Rational.zero;
         if (!coefficient.isZero()) newLhs.push(this.mkMulAppWith(coefficient, product));
       }
@@ -431,9 +453,9 @@ export class PolyRewriter {
     const newRhs: number[] = [];
     for (let index = 0; index < this.getNumMonomials(rhs); index++) {
       const arg = this.getMonomial(rhs, index);
-      if (this.manager.isNumeral(arg)) continue;
+      if (manager.isNumeral(arg)) continue;
       const product = this.getPowerProduct(arg);
-      if (multiple.has(product)) continue;
+      if (isMultipleProduct(product)) continue;
       if (!isMoving) newRhs.push(arg);
       else {
         const coefficient = this.getCoefficient(arg);
@@ -447,10 +469,9 @@ export class PolyRewriter {
     const value = isConstantAtRhs ? constant.neg() : constant;
     const isLhsConstant = !isConstantAtRhs && (sortedLhs.length === 0 || !value.isZero());
     const isRhsConstant = isConstantAtRhs && (newRhs.length === 0 || !value.isZero());
-    // The constants are created first, the right one before the left one.
-    const rhsConstant = isRhsConstant ? [this.mkNumeral(value)] : [];
-    const lhsConstant = isLhsConstant ? [this.mkNumeral(value)] : [];
-    const lhsResult = this.mkAddApp([...lhsConstant, ...sortedLhs]);
-    return { lhs: lhsResult, rhs: this.mkAddApp([...rhsConstant, ...newRhs]) };
+    if (isLhsConstant) sortedLhs.unshift(this.mkNumeral(value));
+    if (isRhsConstant) newRhs.unshift(this.mkNumeral(value));
+    const lhsResult = this.mkAddApp(sortedLhs);
+    return { lhs: lhsResult, rhs: this.mkAddApp(newRhs) };
   }
 }
