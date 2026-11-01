@@ -29,8 +29,9 @@ export const CONGRUENCE_JUSTIFICATIONS: readonly EqJustification[] = [
   { kind: "congruence", isCommutative: true },
 ];
 
-// The arguments of a leaf and the parents of a node without any. Nothing adds to it: addParent gives a
-// node its own list, so that a node with one parent holds one entry instead of V8's sixteen.
+// The parents of a node without any, and the arguments past the second of a node with at most two.
+// Nothing adds to it: addParent gives a node its own list, so that a node with one parent holds one
+// entry instead of V8's sixteen.
 export const NO_ENODES: Enode[] = [];
 
 const IS_EQ = 1;
@@ -40,6 +41,8 @@ const IS_CGC_ENABLED = 8;
 const IS_MARKED = 16;
 const IS_MARKED2 = 32;
 const IS_INTERPRETED = 64;
+// The number of arguments, in the bits of flags above the Boolean fields.
+const NUM_ARGS_SHIFT = 7;
 
 export class Enode {
   root: Enode = this;
@@ -58,13 +61,22 @@ export class Enode {
   plbls = 0;
   plblsHigh = 0;
   lblHash = -1;
-  // The Boolean fields, one bit each, so a node takes 48 bytes less.
+  // The Boolean fields, one bit each, so a node takes 48 bytes less, and the number of arguments.
   private flags: number;
+  // m_args: the first two arguments inline, like Z3's arguments after the node, and the rest in an
+  // array. A missing argument is the node itself.
+  private readonly arg0: Enode;
+  private readonly arg1: Enode;
+  private readonly moreArgs: Enode[];
 
+  // moreArgs are the arguments past the second, and arg0 and arg1 are null when there are fewer.
   constructor(
     readonly owner: number,
     readonly decl: number,
-    readonly args: Enode[],
+    numArgs: number,
+    arg0: Enode | null,
+    arg1: Enode | null,
+    moreArgs: Enode[],
     public generation: number,
     isEq: boolean,
     isBool: boolean,
@@ -72,7 +84,11 @@ export class Enode {
     isCgcEnabled: boolean,
     readonly iscopeLevel: number,
   ) {
+    this.arg0 = arg0 ?? this;
+    this.arg1 = arg1 ?? this;
+    this.moreArgs = moreArgs;
     this.flags =
+      (numArgs << NUM_ARGS_SHIFT) |
       (isEq ? IS_EQ : 0) |
       (isBool ? IS_BOOL : 0) |
       (isMergeTf ? IS_MERGE_TF : 0) |
@@ -81,6 +97,14 @@ export class Enode {
 
   private setFlag(flag: number, value: boolean) {
     this.flags = value ? this.flags | flag : this.flags & ~flag;
+  }
+
+  get numArgs() {
+    return this.flags >>> NUM_ARGS_SHIFT;
+  }
+
+  getArg(index: number) {
+    return index === 0 ? this.arg0 : index === 1 ? this.arg1 : this.moreArgs[index - 2];
   }
 
   get isEq() {
@@ -137,11 +161,11 @@ export class Enode {
   }
 
   isTrueEq() {
-    return this.isEq && this.args[0].root === this.args[1].root;
+    return this.isEq && this.arg0.root === this.arg1.root;
   }
 
   usesCgTable() {
-    return this.args.length > 0 && this.isCgcEnabled && !this.isTrueEq();
+    return this.numArgs > 0 && this.isCgcEnabled && !this.isTrueEq();
   }
 }
 

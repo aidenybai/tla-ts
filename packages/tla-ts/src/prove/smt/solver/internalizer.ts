@@ -20,7 +20,7 @@ import {
   isArithSort,
 } from "./ast";
 import { CaseSplitQueue } from "./case-split-queue";
-import { CgTable, getCongruenceJustification } from "./cg-table";
+import { CgTable, getCongruenceJustification, isCongruent } from "./cg-table";
 import {
   BinJustification,
   BJustification,
@@ -424,7 +424,7 @@ export abstract class Internalizer {
   // get_cg_root: a node's cg can be stale, so a node that is not a congruence root looks the root up.
   private getCgRoot(node: Enode) {
     if (!node.usesCgTable() || node.isCgr()) return node;
-    return this.cgTable.findFor(node.decl, node.args, node.isEq) ?? node;
+    return this.cgTable.findCongruent(node) ?? node;
   }
 
   private setGeneration(node: Enode, generation: number) {
@@ -454,37 +454,23 @@ export abstract class Internalizer {
   ) {
     const group = this.stickyGenerations.getGroup(first.decl);
     if (group === undefined) return;
-    const firstRoot = first.args[0].root;
-    const secondRoot = second !== null && second.decl === first.decl ? second.args[0].root : null;
+    const firstRoot = first.getArg(0).root;
+    const secondRoot = second !== null && second.decl === first.decl ? second.getArg(0).root : null;
     for (let index = 0; index < group.nodes.length; index++) {
       const node = group.nodes[index];
       if (node === null) continue;
       const generation = group.generations[index];
-      const root = node.args[0].root;
-      if (generation < firstGeneration && root === firstRoot && this.isCongruent(node, first))
+      const root = node.getArg(0).root;
+      if (generation < firstGeneration && root === firstRoot && isCongruent(node, first))
         this.setGeneration(first, generation);
       else if (
         second !== null &&
         generation < secondGeneration &&
         root === secondRoot &&
-        this.isCongruent(node, second)
+        isCongruent(node, second)
       )
         this.setGeneration(second, generation);
     }
-  }
-
-  // congruent: only equalities are commutative here.
-  protected isCongruent(first: Enode, second: Enode) {
-    if (first.decl !== second.decl || first.args.length !== second.args.length) return false;
-    let isSame = true;
-    for (let index = 0; index < first.args.length && isSame; index++)
-      isSame = first.args[index].root === second.args[index].root;
-    if (isSame) return true;
-    return (
-      first.isEq &&
-      first.args[0].root === second.args[1].root &&
-      first.args[1].root === second.args[0].root
-    );
   }
 
   // Boolean variables and enodes.
@@ -598,19 +584,16 @@ export abstract class Internalizer {
     const manager = this.manager;
     const generation = this.cachedGeneration.get(expr) ?? this.generation;
     const numArgs = isSuppressingArgs ? 0 : manager.getNumArgs(expr);
-    // An array that push grows from empty takes room for 17 elements, so the common one of two
-    // arguments is made whole, at its size.
-    const args =
-      numArgs === 0
-        ? NO_ENODES
-        : numArgs === 2
-          ? [this.getArgEnode(expr, 0), this.getArgEnode(expr, 1)]
-          : manager.mapArgs(expr, (_, index) => this.getArgEnode(expr, index));
+    const moreArgs: Enode[] = numArgs > 2 ? [] : NO_ENODES;
+    for (let index = 2; index < numArgs; index++) moreArgs.push(this.getArgEnode(expr, index));
     const isEq = !isSuppressingArgs && manager.getOp(expr) === OP_EQ;
     const node = new Enode(
       expr,
       manager.decls[expr],
-      args,
+      numArgs,
+      numArgs > 0 ? this.getArgEnode(expr, 0) : null,
+      numArgs > 1 ? this.getArgEnode(expr, 1) : null,
+      moreArgs,
       generation,
       isEq,
       manager.sorts[expr] === SORT_BOOL,
@@ -618,18 +601,18 @@ export abstract class Internalizer {
       isCgcEnabled,
       this.scopeLevel,
     );
-    for (const arg of args) arg.root.addParent(node);
+    for (let index = 0; index < numArgs; index++) node.getArg(index).root.addParent(node);
     if (manager.isUniqueValue(expr)) node.isInterpreted = true;
     setAt(this.exprToEnode, expr, node);
     // m_e_internalized_stack holds a reference to the expression until the enode is deleted.
     manager.incRef(expr);
     this.trailKinds.push(UNDO_MK_ENODE);
     this.enodes.push(node);
-    if (args.length > 0) {
+    if (numArgs > 0) {
       if (node.isTrueEq()) {
         this.assign(
           mkLiteral(this.getBoolVar(expr)),
-          new EqPropagationJustification(args[0], args[1]),
+          new EqPropagationJustification(node.getArg(0), node.getArg(1)),
         );
         this.pushEq(node, this.trueEnode, AXIOM_EQ_JUSTIFICATION);
       } else if (isCgcEnabled) {
@@ -661,8 +644,8 @@ export abstract class Internalizer {
     if (node === undefined) return;
     this.exprToEnode[node.owner] = undefined;
     if (node.isCgr() && node.usesCgTable()) this.cgTable.erase(node);
-    if (node.args.length > 0 && !node.isEq) this.decl2enodes.get(node.decl)?.pop();
-    for (const arg of node.args) arg.root.parents.pop();
+    if (node.numArgs > 0 && !node.isEq) this.decl2enodes.get(node.decl)?.pop();
+    for (let index = 0; index < node.numArgs; index++) node.getArg(index).root.parents.pop();
     this.manager.decRef(node.owner);
     this.stickyGenerations.delete(node);
   }

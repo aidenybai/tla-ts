@@ -122,7 +122,7 @@ export class QuantifierInfo {
     const context = this.context;
     for (const enode of context.enodesOf(decl))
       if (context.isRelevant(enode.owner)) {
-        const arg = enode.args[argIndex];
+        const arg = enode.getArg(argIndex);
         node.insert(this.manager, arg.owner, context.getGeneration(arg));
       }
   }
@@ -144,7 +144,7 @@ export class QuantifierInfo {
             // There is no finite fixpoint, so the arguments minus the offset join the set.
             for (const enode of context.enodesOf(info.decl))
               if (context.isRelevant(enode.owner)) {
-                const arg = enode.args[info.argIndex];
+                const arg = enode.getArg(info.argIndex);
                 sJ.insert(
                   manager,
                   solver.rewriter.mkSub(arg.owner, info.offset),
@@ -209,7 +209,7 @@ export class QuantifierInfo {
         sets[info.varIndex] = set;
         for (const enode of this.context.enodesOf(info.decl))
           if (this.context.isRelevant(enode.owner)) {
-            const arg = enode.args[info.argIndex];
+            const arg = enode.getArg(info.argIndex);
             set.insert(arg.owner, this.context.getGeneration(arg));
           }
       }

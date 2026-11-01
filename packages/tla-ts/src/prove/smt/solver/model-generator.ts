@@ -80,17 +80,17 @@ export const mkModel = (context: Context): GeneratedModel => {
   for (const node of context.enodes) {
     const expr = node.owner;
     if (!context.isRelevant(expr) || !isIncludedFuncInterp(manager.funcDecls[node.decl])) continue;
-    if (node.args.length === 0) {
+    if (node.numArgs === 0) {
       model.registerConst(node.decl, getValue(node));
       continue;
     }
     if (node.cg !== node) continue;
     let interp = model.funcInterps.get(node.decl);
     if (interp === undefined) {
-      interp = new FuncInterp(manager, node.args.length);
+      interp = new FuncInterp(manager, node.numArgs);
       model.registerFunc(node.decl, interp);
     }
-    const args = node.args.map((arg) => getValue(arg));
+    const args = Array.from({ length: node.numArgs }, (_, index) => getValue(node.getArg(index)));
     if (interp.getEntry(args) === undefined) interp.insertNewEntry(args, getValue(node));
   }
   return { model, root2value };

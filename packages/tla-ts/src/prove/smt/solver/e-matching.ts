@@ -152,8 +152,8 @@ export class Mam implements LabelHasher {
   }
 
   private updateChildrenPlbls(node: Enode, hash: number) {
-    for (const arg of node.args) {
-      const root = arg.root;
+    for (let index = 0; index < node.numArgs; index++) {
+      const root = node.getArg(index).root;
       if (hasHash(root.plbls, root.plblsHigh, hash)) continue;
       const low = root.plbls;
       const high = root.plblsHigh;
@@ -452,7 +452,7 @@ export class Mam implements LabelHasher {
 
   relevantEh(node: Enode, isLazy: boolean) {
     if (node.lblHash !== -1) this.updateLbls(node, node.lblHash);
-    if (node.args.length === 0) return;
+    if (node.numArgs === 0) return;
     const hash = this.getLabelHash(node.decl);
     if (this.clbls.has(node.decl)) this.updateLbls(node, hash);
     if (this.plbls.has(node.decl)) this.updateChildrenPlbls(node, hash);
@@ -503,10 +503,10 @@ export class Mam implements LabelHasher {
           for (let tree: PathTree | null = level; tree !== null; tree = tree.sibling) {
             if (
               tree.label !== label ||
-              tree.argIndex >= parent.args.length ||
-              parent.args[tree.argIndex].root !== child ||
+              tree.argIndex >= parent.numArgs ||
+              parent.getArg(tree.argIndex).root !== child ||
               (tree.groundArg !== null &&
-                !this.isEqModMerge(tree.groundArg, parent.args[tree.groundArgIndex]))
+                !this.isEqModMerge(tree.groundArg, parent.getArg(tree.groundArgIndex)))
             )
               continue;
             if (tree.code !== null) this.addCandidateTo(tree.code, parent);
