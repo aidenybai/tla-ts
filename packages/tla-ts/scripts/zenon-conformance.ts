@@ -49,11 +49,15 @@ const runs = records
   )
   .filter((_, index) => index % shard[1] === shard[0] - 1);
 
-const moduleObligations = new Map<string, Map<number, PrintedObligation> | string>();
+// The runs come module by module, so only the current module's obligations stay parsed.
+const current: { moduleId: string; obligations: Map<number, PrintedObligation> | string } = {
+  moduleId: "",
+  obligations: "",
+};
 const getModule = (moduleId: string) => {
-  const cached = moduleObligations.get(moduleId);
-  if (cached !== undefined) return cached;
-  const obligations = (() => {
+  if (current.moduleId === moduleId) return current.obligations;
+  current.moduleId = moduleId;
+  current.obligations = (() => {
     try {
       const printed = getModuleObligations(join(CORPORA_DIRECTORY, moduleId), libraryModules);
       return new Map(printed.map((obligation) => [obligation.id, obligation]));
@@ -62,8 +66,7 @@ const getModule = (moduleId: string) => {
       throw error;
     }
   })();
-  moduleObligations.set(moduleId, obligations);
-  return obligations;
+  return current.obligations;
 };
 
 const getEncoderOutcome = (moduleId: string, id: number, input: string) => {
