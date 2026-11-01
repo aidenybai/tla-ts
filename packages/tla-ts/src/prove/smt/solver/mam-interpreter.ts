@@ -156,6 +156,15 @@ export class Interpreter {
     return result;
   }
 
+  // SET_VAR's filter: whether the class of each input register has a parent with the label.
+  private hasParentLabels(instr: Instruction) {
+    for (const reg of instr.regs) {
+      const root = (this.registers[reg] as Enode).root;
+      if ((root.plbls & instr.lblLow) === 0 && (root.plblsHigh & instr.lblHigh) === 0) return false;
+    }
+    return true;
+  }
+
   private getJointNode(joint: Joint) {
     if (joint.kind === JOINT_GROUND) return joint.enode;
     if (joint.kind === JOINT_VAR) return this.registers[joint.reg] ?? null;
@@ -351,20 +360,11 @@ export class Interpreter {
           pc = instr.next;
           break;
         case OP_GET_CGR: {
-          const args: Enode[] = [];
-          const isFiltered = instr.numArgs <= MAX_FILTERED_GET_CGR_ARGS;
-          for (const reg of instr.regs) {
-            const arg = registers[reg] as Enode;
-            if (
-              isFiltered &&
-              (arg.root.plbls & instr.lblLow) === 0 &&
-              (arg.root.plblsHigh & instr.lblHigh) === 0
-            )
-              break;
-            args.push(arg);
-          }
-          if (args.length < instr.regs.length) break;
-          const found = context.findCongruent(instr.label, args);
+          if (instr.numArgs <= MAX_FILTERED_GET_CGR_ARGS && !this.hasParentLabels(instr)) break;
+          const found = context.findCongruent(
+            instr.label,
+            instr.regs.map((reg) => registers[reg] as Enode),
+          );
           if (found === undefined || !context.isRelevant(found.owner)) break;
           this.updateMaxGeneration(found);
           registers[instr.oreg] = found;
