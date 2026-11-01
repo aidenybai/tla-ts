@@ -687,7 +687,12 @@ const parse = (source: string, mode: ParseMode): Module => {
     if (isOperatorAlone) {
       cursor.index++;
       return withRange(
-        { kind: "OperatorReference", operator: token.text, location: getLocation(token) },
+        {
+          kind: "OperatorReference",
+          operator: token.text,
+          spelling: token.spelling,
+          location: getLocation(token),
+        },
         cursor.index - 1,
       );
     }
@@ -1311,7 +1316,13 @@ const parse = (source: string, mode: ParseMode): Module => {
             ? { ...left, factors: [...left.factors, right] }
             : { kind: "Product", factors: [left, right], location };
       } else {
-        state.left = { kind: "Apply", operator: token.text, args: [left, right], location };
+        state.left = {
+          kind: "Apply",
+          operator: token.text,
+          spelling: token.spelling,
+          args: [left, right],
+          location,
+        };
       }
       state.left = withRange(state.left, start);
       state.previous = { ...infix, text: token.text };

@@ -3078,6 +3078,26 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "f == 1 (+) 2 /\\ 1 \\circ 2 /\\ 1 (\\X) 2",
+      [
+        [
+          "line 2, col 8 to line 2, col 10",
+          "Could not find declaration or definition of symbol '(+)'.",
+        ],
+        ["line 2, col 6 to line 2, col 12", "Couldn't resolve infix operator symbol `(+)'."],
+        [
+          "line 2, col 19 to line 2, col 23",
+          "Could not find declaration or definition of symbol '\\circ'.",
+        ],
+        ["line 2, col 17 to line 2, col 25", "Couldn't resolve infix operator symbol `\\circ'."],
+        [
+          "line 2, col 32 to line 2, col 35",
+          "Could not find declaration or definition of symbol '(\\X)'.",
+        ],
+        ["line 2, col 30 to line 2, col 37", "Couldn't resolve infix operator symbol `(\\X)'."],
+      ],
+    ],
+    [
       "g == 1^+",
       [
         [

@@ -43,9 +43,12 @@ export interface IdentifierExpression {
   resolution?: LocalResolution;
 }
 
+// spelling holds the text of an operator written as a synonym, such as (+) for \oplus, which SANY
+// reports as written.
 export interface ApplyExpression {
   kind: "Apply";
   operator: string;
+  spelling?: string;
   args: Expression[];
   // The number of args each part of a name like F(x)!l(y) takes, when a part before the last takes
   // some.
@@ -62,6 +65,7 @@ export interface ApplyExpression {
 export interface OperatorReferenceExpression {
   kind: "OperatorReference";
   operator: string;
+  spelling?: string;
   location: SourceLocation;
 }
 
