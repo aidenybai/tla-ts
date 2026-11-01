@@ -80,6 +80,18 @@ const UNDO_MERGE_TF = 6;
 const UNDO_ENODE_FLAG = 7;
 
 const getLiteralKey = (literal: number) => literal;
+// The first word of bool_var_data: the level of the assignment in the low 24 bits, then m_mark,
+// m_phase_available, m_phase, m_eq, m_true_first, m_enode, m_quantifier and whether a theory is
+// notified.
+const LEVEL_MASK = 0xffffff;
+const BV_MARK = 1 << 24;
+export const BV_PHASE_AVAILABLE = 1 << 25;
+export const BV_PHASE = 1 << 26;
+export const BV_EQ = 1 << 27;
+export const BV_TRUE_FIRST = 1 << 28;
+export const BV_ENODE = 1 << 29;
+export const BV_QUANTIFIER = 1 << 30;
+export const BV_THEORY = 1 << 31;
 export const UNDO_ADD_EQ = 8;
 export const UNDO_TH_VAR = 9;
 
@@ -111,18 +123,11 @@ export abstract class Internalizer {
   // first numBoolVars entries are live.
   numBoolVars = 0;
   boolVar2Expr: number[] = [];
-  levels: number[] = [];
-  internLevels: number[] = [];
+  // bool_var_data: two words per variable. The first holds the level of its assignment and the BV_
+  // flags, the second the level of its internalization.
+  private boolVarData = new Int32Array(2048);
   justifications: BJustification[] = [];
-  marks: boolean[] = [];
   activity: number[] = [];
-  protected phaseAvailable: boolean[] = [];
-  protected phases: boolean[] = [];
-  protected isEqFlags: boolean[] = [];
-  protected isEnodeFlags: boolean[] = [];
-  protected isTheoryFlags: boolean[] = [];
-  protected isQuantifierFlags: boolean[] = [];
-  protected isTrueFirstFlags: boolean[] = [];
   // Per literal.
   protected assignment: number[] = [];
   readonly clauses = new ClauseStore();
@@ -259,10 +264,10 @@ export abstract class Internalizer {
         this.undoMkEnode();
         return;
       case UNDO_VAR_THEORY:
-        this.isTheoryFlags[this.popTrailInt()] = false;
+        this.setBoolVarFlag(this.popTrailInt(), BV_THEORY, false);
         return;
       case UNDO_TRUE_FIRST:
-        this.isTrueFirstFlags[this.popTrailInt()] = false;
+        this.setBoolVarFlag(this.popTrailInt(), BV_TRUE_FIRST, false);
         return;
       case UNDO_CGC_GENERATIONS: {
         const second = this.popTrailNode();
@@ -275,7 +280,7 @@ export abstract class Internalizer {
         this.popTrailNode().isMergeTf = false;
         return;
       case UNDO_ENODE_FLAG:
-        this.isEnodeFlags[this.popTrailInt()] = false;
+        this.setBoolVarFlag(this.popTrailInt(), BV_ENODE, false);
         return;
     }
   }
@@ -291,7 +296,7 @@ export abstract class Internalizer {
   }
 
   getAssignLevel(literal: Literal) {
-    return this.levels[getVar(literal)];
+    return this.getLevel(getVar(literal));
   }
 
   isBInternalized(expr: number) {
@@ -488,18 +493,15 @@ export abstract class Internalizer {
     this.manager.incRef(expr);
     this.setExprBoolVar(expr, boolVar);
     this.boolVar2Expr[boolVar] = expr;
-    this.levels[boolVar] = 0;
-    this.internLevels[boolVar] = this.scopeLevel;
+    if (2 * boolVar + 1 >= this.boolVarData.length) {
+      const grown = new Int32Array(2 * this.boolVarData.length);
+      grown.set(this.boolVarData);
+      this.boolVarData = grown;
+    }
+    this.boolVarData[2 * boolVar] = 0;
+    this.boolVarData[2 * boolVar + 1] = this.scopeLevel;
     this.justifications[boolVar] = null;
-    this.marks[boolVar] = false;
     this.activity[boolVar] = this.isSearching ? -((this.getRandomValue() % 1000) / 1000) : 0;
-    this.phaseAvailable[boolVar] = false;
-    this.phases[boolVar] = false;
-    this.isEqFlags[boolVar] = false;
-    this.isEnodeFlags[boolVar] = false;
-    this.isTheoryFlags[boolVar] = false;
-    this.isQuantifierFlags[boolVar] = false;
-    this.isTrueFirstFlags[boolVar] = false;
     this.assignment[literal] = L_UNDEF;
     this.assignment[literal + 1] = L_UNDEF;
     this.watches[literal] = undefined;
@@ -518,7 +520,7 @@ export abstract class Internalizer {
     const literal = mkLiteral(boolVar);
     const expr = this.boolVar2Expr[boolVar];
     this.caseSplitQueue.delVar(boolVar);
-    if (this.isQuantifierFlags[boolVar]) this.qmanager.del(expr);
+    if (this.hasBoolVarFlag(boolVar, BV_QUANTIFIER)) this.qmanager.del(expr);
     this.exprToBoolVar[expr] = -1;
     this.justifications[boolVar] = null;
     this.watches[literal] = undefined;
@@ -530,31 +532,60 @@ export abstract class Internalizer {
     this.manager.decRef(expr);
   }
 
+  // The level of the variable's assignment.
+  getLevel(boolVar: number) {
+    return this.boolVarData[2 * boolVar] & LEVEL_MASK;
+  }
+
+  protected setLevel(boolVar: number, level: number) {
+    const index = 2 * boolVar;
+    this.boolVarData[index] = (this.boolVarData[index] & ~LEVEL_MASK) | level;
+  }
+
+  // The scope level at which the variable was internalized.
+  getInternLevel(boolVar: number) {
+    return this.boolVarData[2 * boolVar + 1];
+  }
+
+  protected hasBoolVarFlag(boolVar: number, flag: number) {
+    return (this.boolVarData[2 * boolVar] & flag) !== 0;
+  }
+
+  protected setBoolVarFlag(boolVar: number, flag: number, value: boolean) {
+    const index = 2 * boolVar;
+    this.boolVarData[index] = value
+      ? this.boolVarData[index] | flag
+      : this.boolVarData[index] & ~flag;
+  }
+
+  isMarked(boolVar: number) {
+    return this.hasBoolVarFlag(boolVar, BV_MARK);
+  }
+
+  setMark(boolVar: number, value: boolean) {
+    this.setBoolVarFlag(boolVar, BV_MARK, value);
+  }
+
   protected isAtom(boolVar: BoolVar) {
-    return (
-      this.isEqFlags[boolVar] ||
-      this.isEnodeFlags[boolVar] ||
-      this.isTheoryFlags[boolVar] ||
-      this.isQuantifierFlags[boolVar]
-    );
+    return this.hasBoolVarFlag(boolVar, BV_EQ | BV_ENODE | BV_THEORY | BV_QUANTIFIER);
   }
 
   setVarTheory(boolVar: BoolVar) {
-    if (this.scopeLevel > this.internLevels[boolVar]) {
+    if (this.scopeLevel > this.getInternLevel(boolVar)) {
       this.trailInts.push(boolVar);
       this.trailKinds.push(UNDO_VAR_THEORY);
     }
-    this.isTheoryFlags[boolVar] = true;
+    this.setBoolVarFlag(boolVar, BV_THEORY, true);
   }
 
   setTrueFirstFlag(boolVar: BoolVar) {
     this.trailInts.push(boolVar);
     this.trailKinds.push(UNDO_TRUE_FIRST);
-    this.isTrueFirstFlags[boolVar] = true;
+    this.setBoolVarFlag(boolVar, BV_TRUE_FIRST, true);
   }
 
   isTrueFirst(boolVar: BoolVar) {
-    return this.isTrueFirstFlags[boolVar];
+    return this.hasBoolVarFlag(boolVar, BV_TRUE_FIRST);
   }
 
   mkEnode(expr: number, isSuppressingArgs: boolean, isMergeTf: boolean, isCgcEnabled: boolean) {
@@ -645,12 +676,12 @@ export abstract class Internalizer {
   }
 
   private setEnodeFlag(boolVar: BoolVar, isNewVar: boolean) {
-    if (this.isEnodeFlags[boolVar]) return;
+    if (this.hasBoolVarFlag(boolVar, BV_ENODE)) return;
     if (!isNewVar) {
       this.trailInts.push(boolVar);
       this.trailKinds.push(UNDO_ENODE_FLAG);
     }
-    this.isEnodeFlags[boolVar] = true;
+    this.setBoolVarFlag(boolVar, BV_ENODE, true);
   }
 
   // update_generation: a node of a congruence class records its lower generation as sticky, so
@@ -835,7 +866,7 @@ export abstract class Internalizer {
   private internalizeEq(expr: number, isGateContext: boolean) {
     this.internalizeFormulaCore(expr, isGateContext);
     const boolVar = this.getBoolVar(expr);
-    this.isEqFlags[boolVar] = true;
+    this.setBoolVarFlag(boolVar, BV_EQ, true);
     if (this.manager.sorts[this.manager.args[expr][0]] !== SORT_BOOL && this.isArithSort(expr))
       this.theory.internalizeEqEh(expr);
   }
@@ -866,7 +897,7 @@ export abstract class Internalizer {
   private internalizeQuantifier(expr: number) {
     const boolVar = this.mkBoolVar(expr);
     const generation = this.cachedGeneration.get(expr) ?? this.generation;
-    this.isQuantifierFlags[boolVar] = true;
+    this.setBoolVarFlag(boolVar, BV_QUANTIFIER, true);
     this.qmanager.add(expr, generation);
   }
 
@@ -1074,7 +1105,7 @@ export abstract class Internalizer {
     let previous: Literal | null = null;
     let kept = 0;
     for (const literal of literals) {
-      if (this.levels[getVar(literal)] <= this.baseLevel && this.assignment[literal] === L_TRUE)
+      if (this.getLevel(getVar(literal)) <= this.baseLevel && this.assignment[literal] === L_TRUE)
         return false;
       if (previous !== null && literal === negate(previous)) return false;
       if (literal !== previous) {
@@ -1097,13 +1128,14 @@ export abstract class Internalizer {
       if (value === L_FALSE) {
         if (
           maxFalse === -1 ||
-          this.levels[getVar(literal)] > this.levels[getVar(clauses.getLiteral(clause, maxFalse))]
+          this.getLevel(getVar(literal)) >
+            this.getLevel(getVar(clauses.getLiteral(clause, maxFalse)))
         )
           maxFalse = index;
       } else if (value === L_UNDEF) unknown = index;
       else if (
         minTrue === -1 ||
-        this.levels[getVar(literal)] < this.levels[getVar(clauses.getLiteral(clause, minTrue))]
+        this.getLevel(getVar(literal)) < this.getLevel(getVar(clauses.getLiteral(clause, minTrue)))
       )
         minTrue = index;
     }
@@ -1119,7 +1151,7 @@ export abstract class Internalizer {
     for (let index = 1; index < clauses.getNumLiterals(clause); index++) {
       const literal = clauses.getLiteral(clause, index);
       const level =
-        this.assignment[literal] === L_FALSE ? this.levels[getVar(literal)] : this.scopeLevel;
+        this.assignment[literal] === L_FALSE ? this.getLevel(getVar(literal)) : this.scopeLevel;
       if (maxFalse === -1 || level > maxLevel) {
         maxFalse = index;
         maxLevel = level;
@@ -1165,12 +1197,12 @@ export abstract class Internalizer {
     if (isLemma && this.relevancy.isEnabled) return false;
     if (this.baseLevel > 0) return false;
     if (!isLemma && this.scopeLevel > 0) return false;
-    return this.internLevels[getVar(first)] === 0 && this.internLevels[getVar(second)] === 0;
+    return this.getInternLevel(getVar(first)) === 0 && this.getInternLevel(getVar(second)) === 0;
   }
 
   private getMaxIscopeLevel(literals: Literal[]) {
     let result = 0;
-    for (const literal of literals) result = Math.max(result, this.internLevels[getVar(literal)]);
+    for (const literal of literals) result = Math.max(result, this.getInternLevel(getVar(literal)));
     return result;
   }
 

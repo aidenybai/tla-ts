@@ -176,9 +176,9 @@ export class ConflictResolution {
   private processAntecedent(antecedent: Literal, marks: { count: number }) {
     const context = this.context;
     const boolVar = getVar(antecedent);
-    const level = context.levels[boolVar];
-    if (context.marks[boolVar] || level <= context.baseLevel) return;
-    context.marks[boolVar] = true;
+    const level = context.getLevel(boolVar);
+    if (context.isMarked(boolVar) || level <= context.baseLevel) return;
+    context.setMark(boolVar, true);
     context.incBvarActivity(boolVar);
     if (level === this.conflictLevel) marks.count++;
     else {
@@ -231,13 +231,13 @@ export class ConflictResolution {
         const clauseJustification = clauses.getJustification(clause);
         if (clauseJustification !== null) this.processJustification(clauseJustification, marks);
       }
-      while (!context.marks[getVar(assigned[index])]) index--;
+      while (!context.isMarked(getVar(assigned[index]))) index--;
       consequent = assigned[index];
       const consequentVar = getVar(consequent);
       justification = context.justifications[consequentVar];
       index--;
       marks.count--;
-      context.marks[consequentVar] = false;
+      context.setMark(consequentVar, false);
     } while (marks.count > 0);
     this.lemma[0] = negate(consequent);
     this.lemmaAtoms.set(0, context.boolVar2Expr[getVar(consequent)]);
@@ -250,22 +250,22 @@ export class ConflictResolution {
     this.unmarkJustifications(0);
     this.minimizeLemma();
     this.newScopeLevel = context.searchLevel;
-    this.lemmaIscopeLevel = context.internLevels[getVar(this.lemma[0])];
+    this.lemmaIscopeLevel = context.getInternLevel(getVar(this.lemma[0]));
     for (let index = 1; index < this.lemma.length; index++) {
       const boolVar = getVar(this.lemma[index]);
-      context.marks[boolVar] = false;
-      this.newScopeLevel = Math.max(this.newScopeLevel, context.levels[boolVar]);
-      this.lemmaIscopeLevel = Math.max(this.lemmaIscopeLevel, context.internLevels[boolVar]);
+      context.setMark(boolVar, false);
+      this.newScopeLevel = Math.max(this.newScopeLevel, context.getLevel(boolVar));
+      this.lemmaIscopeLevel = Math.max(this.lemmaIscopeLevel, context.getInternLevel(boolVar));
     }
   }
 
   private processAntecedentForMinimization(antecedent: Literal) {
     const context = this.context;
     const boolVar = getVar(antecedent);
-    const level = context.levels[boolVar];
-    if (context.marks[boolVar] || level <= context.baseLevel) return true;
+    const level = context.getLevel(boolVar);
+    if (context.isMarked(boolVar) || level <= context.baseLevel) return true;
     if ((this.levelSet & (1 << (level & 31))) === 0) return false;
-    context.marks[boolVar] = true;
+    context.setMark(boolVar, true);
     this.unmark.push(boolVar);
     this.minimizationStack.push(boolVar);
     return true;
@@ -279,7 +279,7 @@ export class ConflictResolution {
 
   private resetUnmark(oldSize: number, oldHead: number) {
     for (let index = oldSize; index < this.unmark.length; index++)
-      this.context.marks[this.unmark[index]] = false;
+      this.context.setMark(this.unmark[index], false);
     shrink(this.unmark, oldSize);
     this.unmarkJustifications(oldHead);
   }
@@ -298,7 +298,7 @@ export class ConflictResolution {
       else if (justification instanceof BinJustification)
         isImplied = this.processAntecedentForMinimization(justification.literal);
       else if (justification === null || justification === "axiom")
-        isImplied = context.levels[boolVar] <= context.baseLevel;
+        isImplied = context.getLevel(boolVar) <= context.baseLevel;
       else {
         const clauses = context.clauses;
         const numLiterals = clauses.getNumLiterals(justification);
@@ -324,7 +324,8 @@ export class ConflictResolution {
     const context = this.context;
     this.unmark = [];
     this.levelSet = 0;
-    for (const literal of this.lemma) this.levelSet |= 1 << (context.levels[getVar(literal)] & 31);
+    for (const literal of this.lemma)
+      this.levelSet |= 1 << (context.getLevel(getVar(literal)) & 31);
     let kept = 1;
     for (let index = 1; index < this.lemma.length; index++) {
       const literal = this.lemma[index];

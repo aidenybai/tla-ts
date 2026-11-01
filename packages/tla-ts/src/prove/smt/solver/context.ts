@@ -16,7 +16,18 @@ import {
   EqRootPropagationJustification,
   MpIffJustification,
 } from "./enode";
-import { Internalizer, UNDO_ADD_EQ, UNDO_TH_VAR } from "./internalizer";
+import {
+  BV_ENODE,
+  BV_EQ,
+  BV_PHASE,
+  BV_PHASE_AVAILABLE,
+  BV_QUANTIFIER,
+  BV_THEORY,
+  BV_TRUE_FIRST,
+  Internalizer,
+  UNDO_ADD_EQ,
+  UNDO_TH_VAR,
+} from "./internalizer";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate } from "./literal";
 import { mkModel } from "./model-generator";
@@ -144,14 +155,15 @@ export class Context extends Internalizer {
     this.assignment[literal] = L_TRUE;
     this.assignment[negate(literal)] = L_FALSE;
     this.justifications[boolVar] = justification;
-    this.levels[boolVar] = this.scopeLevel;
+    this.setLevel(boolVar, this.scopeLevel);
     const isNegative = isNegated(literal);
-    if (this.phaseAvailable[boolVar]) {
+    if (this.hasBoolVarFlag(boolVar, BV_PHASE_AVAILABLE)) {
       this.agility *= AGILITY_FACTOR;
-      if (!isDecision && this.phases[boolVar] === isNegative) this.agility += 1 - AGILITY_FACTOR;
+      if (!isDecision && this.hasBoolVarFlag(boolVar, BV_PHASE) === isNegative)
+        this.agility += 1 - AGILITY_FACTOR;
     }
-    this.phaseAvailable[boolVar] = true;
-    this.phases[boolVar] = !isNegative;
+    this.setBoolVarFlag(boolVar, BV_PHASE_AVAILABLE, true);
+    this.setBoolVarFlag(boolVar, BV_PHASE, !isNegative);
     if (this.isAtom(boolVar) && this.isRelevant(this.boolVar2Expr[boolVar]))
       this.atomPropagationQueue.push(literal);
   }
@@ -240,9 +252,9 @@ export class Context extends Internalizer {
       const literal = queue[index];
       const boolVar = getVar(literal);
       const value = this.assignment[mkLiteral(boolVar)];
-      if (this.isEnodeFlags[boolVar]) this.propagateBoolVarEnode(boolVar);
+      if (this.hasBoolVarFlag(boolVar, BV_ENODE)) this.propagateBoolVarEnode(boolVar);
       if (this.isInconsistent()) return false;
-      if (this.isEqFlags[boolVar]) {
+      if (this.hasBoolVarFlag(boolVar, BV_EQ)) {
         const args = this.manager.args[this.boolVar2Expr[boolVar]];
         if (!this.manager.isBool(args[0])) {
           const lhs = this.exprToEnode[args[0]];
@@ -253,8 +265,9 @@ export class Context extends Internalizer {
               this.setConflict(new EqPropagationJustification(lhs, rhs), mkLiteral(boolVar, true));
           }
         }
-      } else if (this.isTheoryFlags[boolVar]) this.theory.assignEh(boolVar, value === L_TRUE);
-      else if (this.isQuantifierFlags[boolVar] && value === L_TRUE)
+      } else if (this.hasBoolVarFlag(boolVar, BV_THEORY))
+        this.theory.assignEh(boolVar, value === L_TRUE);
+      else if (this.hasBoolVarFlag(boolVar, BV_QUANTIFIER) && value === L_TRUE)
         this.qmanager.assignEh(this.boolVar2Expr[boolVar]);
       if (this.isInconsistent()) return false;
     }
@@ -672,13 +685,13 @@ export class Context extends Internalizer {
     if (!this.isBInternalized(eq)) {
       this.internalizeFormulaCore(eq, true);
       const boolVar = this.getBoolVar(eq);
-      this.isEqFlags[boolVar] = true;
+      this.setBoolVarFlag(boolVar, BV_EQ, true);
       this.setTrueFirstFlag(boolVar);
       this.theory.internalizeEqEh(eq);
       isNew = true;
     }
     const boolVar = this.getBoolVar(eq);
-    if (!this.isTrueFirstFlags[boolVar]) {
+    if (!this.hasBoolVarFlag(boolVar, BV_TRUE_FIRST)) {
       this.setTrueFirstFlag(boolVar);
       isNew = true;
     }
@@ -737,7 +750,7 @@ export class Context extends Internalizer {
   private cacheGenerationOfLiterals(literals: Literal[], newLevel: number, visited: Set<number>) {
     for (const literal of literals) {
       const boolVar = getVar(literal);
-      if (this.internLevels[boolVar] > newLevel)
+      if (this.getInternLevel(boolVar) > newLevel)
         this.cacheGenerationOfExpr(this.boolVar2Expr[boolVar], newLevel, visited);
     }
   }
@@ -891,8 +904,12 @@ export class Context extends Internalizer {
   // guess with PS_CACHING_CONSERVATIVE: the cached phase while phase caching is on, else false.
   private guess(boolVar: BoolVar) {
     if (this.manager.kinds[this.boolVar2Expr[boolVar]] === KIND_QUANTIFIER) return false;
-    if (this.isTrueFirstFlags[boolVar]) return true;
-    return this.isPhaseCacheOn && this.phaseAvailable[boolVar] && this.phases[boolVar];
+    if (this.hasBoolVarFlag(boolVar, BV_TRUE_FIRST)) return true;
+    return (
+      this.isPhaseCacheOn &&
+      this.hasBoolVarFlag(boolVar, BV_PHASE_AVAILABLE) &&
+      this.hasBoolVarFlag(boolVar, BV_PHASE)
+    );
   }
 
   private updatePhaseCacheCounter() {
@@ -921,7 +938,7 @@ export class Context extends Internalizer {
     this.thDiseqQueue = [];
     const head = this.scopeLevel === 0 ? 0 : this.scopeAssignedLimits[this.scopeLevel - 1];
     for (let index = head; index < this.assignedLiterals.length; index++)
-      this.phaseAvailable[getVar(this.assignedLiterals[index])] = false;
+      this.setBoolVarFlag(getVar(this.assignedLiterals[index]), BV_PHASE_AVAILABLE, false);
     const resolution = this.conflictResolution;
     if (
       this.conflict === null ||
