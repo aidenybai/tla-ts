@@ -203,6 +203,7 @@ Spec == Init /\\ [][Next]_x
       "line 6, col 6 to line 6, col 10",
       "Operator with incorrect arity passed as argument. \nOperator '+' of arity 2 is argument number 1 (counting from 1) to operator `line 5, col 1 to line 5, col 22 of module M', \nbut an operator of arity 1 was expected.",
     ],
+    ["F(1)!C", "line 6, col 12 to line 6, col 12", "Selector `F' should not have argument(s)."],
   ])(
     "reports the operator argument %j that doesn't fit as SANY does",
     (argument, range, message) => {
@@ -212,6 +213,29 @@ Spec == Init /\\ [][Next]_x
       expect(report.text).toContain(`*** Errors: 2\n\n${range} of module M\n\n${message}\n`);
     },
   );
+
+  // SANY also reports the nullOpArg it substitutes after each error, at its builtins.
+  it("reports an operator substitution that doesn't fit as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nF(y) == y\nI == INSTANCE R WITH Op <- F(1)!C\nJ == INSTANCE R WITH Op <- F(1)\n====\n",
+      R: "---- MODULE R ----\nCONSTANT Op(_)\n====\n",
+    });
+    expect(report.text).toContain(
+      toText([
+        "*** Errors: 2",
+        "",
+        "line 3, col 28 to line 3, col 28 of module M",
+        "",
+        "Selector `F' should not have argument(s).",
+        "",
+        "",
+        "line 4, col 28 to line 4, col 31 of module M",
+        "",
+        "Arity 1 operator (not an expression) is expected ",
+        "to substitute for CONSTANT 'Op'.",
+      ]),
+    );
+  });
 
   it.each([
     ["VARIABLES x,\n  y", "line 4, col 1 to line 5, col 3", "A VARIABLE declaration"],

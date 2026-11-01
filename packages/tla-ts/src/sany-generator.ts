@@ -342,6 +342,12 @@ const OPERATOR_ARGUMENT_KINDS = new Set<Expression["kind"]>([
   "Lambda",
 ]);
 
+// A name such as K(1)!C, whose last part takes no arguments, is a GeneralId too.
+const isOperatorArgument = (argument: Expression) => {
+  const items = argument.kind === "Apply" ? getSelectorItems(argument) : undefined;
+  return OPERATOR_ARGUMENT_KINDS.has(argument.kind) || (items !== undefined && isGeneralId(items));
+};
+
 // The parts of a DEF clause entry that isn't a name, as Generator.genIdToSelector reads them.
 interface DefEntryParts {
   hasChildlessFirstChild: boolean | undefined;
@@ -1006,27 +1012,31 @@ export const generateSanySpecification = (
           ? argument.body.operator
           : file.tokens[getTokenIndex(file, argument.location)].text;
 
-    const generateOperatorArgument = (argument: Expression, expectedArity: number): OpArgNode => {
+    // Generator.generateOpArg: after an error, SANY gives its nullOpArg.
+    const generateOperatorArgument = (
+      argument: Expression,
+      target: OpDeclNode,
+    ): OpArgNode | OpApplNode => {
       const location = getLocation(argument);
       if (argument.kind === "Lambda") {
         if (argument.location.range !== undefined)
           return createOpArg(generateLambda(argument), location);
         return createOpArg(resolveName(getOperatorArgumentName(argument), location), location);
       }
-      if (argument.kind === "Identifier" || argument.kind === "Subexpression") {
-        const node = generateSelector(argument, expectedArity, false, false);
-        if (node.kind !== "OpArg") {
-          throw new TlaSyntaxError(
-            `Expected an operator argument at line ${location.beginLine}, column ${location.beginColumn}`,
-          );
-        }
-        return node;
+      if (!isOperatorArgument(argument)) {
+        addError(
+          location,
+          `Arity ${target.arity} operator (not an expression) is expected \nto substitute for CONSTANT '${target.name}'.`,
+        );
+        return createNullNode();
       }
       if (argument.kind === "OperatorReference") {
         return createOpArg(resolveName(argument.operator, location), location);
       }
+      const node = generateSelector(argument, target.arity, false, false);
+      if (node.kind === "OpArg" || (node.kind === "OpAppl" && node.isNull === true)) return node;
       throw new TlaSyntaxError(
-        `An expression appears where an operator is required at line ${location.beginLine}`,
+        `Expected an operator argument at line ${location.beginLine}, column ${location.beginColumn}`,
       );
     };
 
@@ -1047,14 +1057,18 @@ export const generateSanySpecification = (
       const location = getSpanLocation(file, span);
       const position = `${index + 1} (counting from 1)`;
       const argumentSpan = getArgumentSpan(file, span);
-      if (argumentSpan !== span || !OPERATOR_ARGUMENT_KINDS.has(argument.kind)) {
+      if (argumentSpan !== span || !isOperatorArgument(argument)) {
         addError(
           getSpanLocation(file, argumentSpan),
           `An expression appears as argument number ${position} to operator '${operator.name}', in a position an operator is required.`,
         );
         return createNullNode();
       }
-      if (argument.kind === "Identifier" || argument.kind === "Subexpression") {
+      if (
+        argument.kind === "Identifier" ||
+        argument.kind === "Subexpression" ||
+        argument.kind === "Apply"
+      ) {
         // The selector names the operator, or reports why not and gives SANY's nullOAN.
         const node = generateSelector(argument, expectedArity, false, false);
         if (node.kind === "OpArg" || node.kind === "OpAppl") return node;
@@ -1969,10 +1983,12 @@ export const generateSanySpecification = (
           },
         ];
       });
-      // Generator.checkSubstitutionForCorrectArity.
+      // Generator.checkSubstitutionForCorrectArity, which SANY locates in its builtins for the
+      // nullOpArg it substitutes after an error.
       const checkArity = (target: OpDeclNode, expr: ExprOrOpArgNode) => {
         const arity = expr.kind === "OpArg" ? getSymbolArity(expr.op) : 0;
-        if (arity !== target.arity) {
+        const isNullOpArg = target.arity > 0 && expr.kind === "OpAppl" && expr.isNull === true;
+        if (arity !== target.arity && !isNullOpArg) {
           addError(
             expr.location,
             `An operator must be substituted for symbol '${target.name}', and it must have arity ${target.arity}.`,
@@ -1999,7 +2015,7 @@ export const generateSanySpecification = (
         const expr =
           target.arity === 0
             ? generateExpression(substitution.expression)
-            : generateOperatorArgument(substitution.expression, target.arity);
+            : generateOperatorArgument(substitution.expression, target);
         checkArity(target, expr);
         const existing = substs.find((subst) => subst.op.name === target.name);
         if (existing && !existing.isImplicit) {

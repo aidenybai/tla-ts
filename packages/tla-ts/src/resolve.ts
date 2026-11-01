@@ -1023,6 +1023,16 @@ const resolveApply = (
         resolveExpression(arg, scope, unit);
         return true;
       }
+      // Generator.selectorToNode: a name such as K(1)!C names an operator, but none of its parts
+      // may take arguments.
+      if (arg.kind === "Apply" && arg.argumentCounts?.at(-1) === 0) {
+        const index = arg.argumentCounts.findIndex((count) => count > 0);
+        report(
+          arg.selectorRanges?.[index],
+          `Selector \`${arg.operator.split("!")[index]}' should not have argument(s).`,
+        );
+        return false;
+      }
       if (arg.kind !== "Identifier" && arg.kind !== "OperatorReference") {
         report(
           range,

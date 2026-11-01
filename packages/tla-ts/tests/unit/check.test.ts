@@ -3369,6 +3369,22 @@ describe("name resolution matches SANY", () => {
         ["line 8, col 6 to line 8, col 10", "Unknown operator: `M!\\oplus'."],
       ],
     ],
+    [
+      "K(a) == LET C(b) == a IN C(1)\nHigh(Op(_)) == Op(1)\nM(a) == INSTANCE Naturals\nA == High(K(1)!C) /\\ U1\nB == High(M(1)!+)",
+      [
+        ["line 5, col 11 to line 5, col 11", "Selector `K' should not have argument(s)."],
+        [
+          "line 5, col 6 to line 5, col 17",
+          "Argument number 1 to operator 'High' \nshould be a 1-parameter operator.",
+        ],
+        ["line 5, col 22 to line 5, col 23", "Unknown operator: `U1'."],
+        ["line 6, col 11 to line 6, col 11", "Selector `M' should not have argument(s)."],
+        [
+          "line 6, col 6 to line 6, col 17",
+          "Argument number 1 to operator 'High' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
     await expect(checkSource(source)).rejects.toThrow(
       createSanyError(
