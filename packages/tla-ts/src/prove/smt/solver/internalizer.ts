@@ -54,7 +54,14 @@ import {
   toBoolVar,
 } from "./literal";
 import type { DefaultQuantifierManager } from "./quantifier-manager";
-import { RelevancyPropagator } from "./relevancy";
+import {
+  mkPropagation,
+  PROPAGATE_AND,
+  PROPAGATE_ITE,
+  PROPAGATE_OR,
+  RelevancyPropagator,
+  type RelevancyHandler,
+} from "./relevancy";
 import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { sortNumbers } from "./sort";
 import type { TheoryLra } from "./theory-lra";
@@ -1060,14 +1067,12 @@ export abstract class Internalizer {
     this.relevancy.addHandler(expr, handler);
   }
 
-  private addRelWatch(literal: Literal, handler: () => void) {
+  private addRelWatch(literal: Literal, handler: RelevancyHandler) {
     this.relevancy.addWatch(this.boolVar2Expr[getVar(literal)], !isNegated(literal), handler);
   }
 
   private addAndRelWatches(expr: number) {
-    const handler = () => {
-      if (this.isRelevant(expr)) this.relevancy.propagateAnd(expr);
-    };
+    const handler = mkPropagation(PROPAGATE_AND, expr);
     for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
       const arg = this.manager.getArg(expr, index);
       const literal = this.getLiteral(arg);
@@ -1076,9 +1081,7 @@ export abstract class Internalizer {
   }
 
   private addOrRelWatches(expr: number) {
-    const handler = () => {
-      if (this.isRelevant(expr)) this.relevancy.propagateOr(expr);
-    };
+    const handler = mkPropagation(PROPAGATE_OR, expr);
     for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
       const arg = this.manager.getArg(expr, index);
       const literal = this.getLiteral(arg);
@@ -1087,9 +1090,7 @@ export abstract class Internalizer {
   }
 
   private addIteRelWatches(expr: number) {
-    const handler = () => {
-      if (this.isRelevant(expr)) this.relevancy.propagateIte(expr);
-    };
+    const handler = mkPropagation(PROPAGATE_ITE, expr);
     const literal = this.getLiteral(this.manager.getArg(expr, 0));
     if (literal <= 1) return;
     this.addRelWatch(literal, handler);
