@@ -10,6 +10,15 @@ const MIN_MAX_UNUSED = 1024;
 const NO_CELL = -1;
 // m_next of a free cell, which Z3 tags.
 const FREE_CELL = -2;
+const MAX_SPARE_CAPACITY = 1024;
+
+interface Cells {
+  keys: Int32Array<ArrayBuffer>;
+  offsets: Int32Array<ArrayBuffer>;
+  values: Int32Array<ArrayBuffer>;
+  isUsed: Uint8Array<ArrayBuffer>;
+  nexts: Int32Array<ArrayBuffer>;
+}
 
 export class ActCache {
   private slots = INIT_SLOTS;
@@ -29,6 +38,10 @@ export class ActCache {
   private qhead = 0;
   private numUnused = 0;
   private maxUnused: number;
+  // The cells of the small tables that reset and expand_table let go, by capacity. Z3 frees them and
+  // takes the next table from its small-object allocator, which is cheap, where V8 allocates each
+  // typed array slowly, so the next table of the same capacity reuses them.
+  private spares = new Map<number, Cells>();
 
   constructor(
     private manager: AstManager,
@@ -41,14 +54,27 @@ export class ActCache {
   private initTable(slots: number, cellar: number) {
     this.slots = slots;
     this.capacity = slots + cellar;
-    this.keys = new Int32Array(this.capacity);
-    this.offsets = new Int32Array(this.capacity);
-    this.values = new Int32Array(this.capacity);
-    this.isUsed = new Uint8Array(this.capacity);
-    this.nexts = new Int32Array(this.capacity).fill(FREE_CELL);
+    const spare = this.spares.get(this.capacity);
+    if (spare !== undefined) this.spares.delete(this.capacity);
+    this.keys = spare?.keys ?? new Int32Array(this.capacity);
+    this.offsets = spare?.offsets ?? new Int32Array(this.capacity);
+    this.values = spare?.values ?? new Int32Array(this.capacity);
+    this.isUsed = spare?.isUsed ?? new Uint8Array(this.capacity);
+    this.nexts = (spare?.nexts ?? new Int32Array(this.capacity)).fill(FREE_CELL);
     this.nextCell = slots;
     this.freeCell = NO_CELL;
     this.size = 0;
+  }
+
+  private retireTable() {
+    if (this.capacity > MAX_SPARE_CAPACITY) return;
+    this.spares.set(this.capacity, {
+      keys: this.keys,
+      offsets: this.offsets,
+      values: this.values,
+      isUsed: this.isUsed,
+      nexts: this.nexts,
+    });
   }
 
   private getHash(key: number, offset: number) {
@@ -94,6 +120,7 @@ export class ActCache {
       nexts: this.nexts,
     };
     const size = this.size;
+    this.retireTable();
     for (let cellar = (this.capacity - this.slots) * 2; ; cellar *= 2) {
       this.initTable(old.slots * 2, cellar);
       let isCopied = true;
@@ -225,7 +252,10 @@ export class ActCache {
         this.manager.decRef(this.values[cell]);
       }
     }
-    if (this.size > 0) this.initTable(INIT_SLOTS, INIT_CELLAR);
+    if (this.size > 0) {
+      this.retireTable();
+      this.initTable(INIT_SLOTS, INIT_CELLAR);
+    }
     this.queueKeys = [];
     this.queueOffsets = [];
     this.qhead = 0;

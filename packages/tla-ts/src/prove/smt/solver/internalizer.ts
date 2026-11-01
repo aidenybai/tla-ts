@@ -143,6 +143,9 @@ export abstract class Internalizer {
   // The binary clauses of the binary clause optimization: the literals each literal propagates when it
   // becomes true, which Z3 visits newest first and before the clauses.
   protected binaryWatches: (Literal[] | undefined)[] = [];
+  // A binary justification holds only its literal, so undoMkBoolVar keeps it for the next variable
+  // with that literal. Clearing it would write past the end of this sparse array, which V8 then
+  // turns into a dictionary.
   private binJustifications: (BinJustification | undefined)[] = [];
   // Per expression.
   // The Boolean variable of each expression, or -1. A typed array keeps the element loads of every
@@ -516,14 +519,11 @@ export abstract class Internalizer {
   // objects are cleared, so the objects can be collected.
   private undoMkBoolVar() {
     const boolVar = toBoolVar(--this.numBoolVars);
-    const literal = mkLiteral(boolVar);
     const expr = this.boolVar2Expr[boolVar];
     this.caseSplitQueue.delVar(boolVar);
     if (this.hasBoolVarFlag(boolVar, BV_QUANTIFIER)) this.qmanager.del(expr);
     this.exprToBoolVar[expr] = -1;
     this.justifications[boolVar] = null;
-    this.binJustifications[literal] = undefined;
-    this.binJustifications[literal + 1] = undefined;
     this.manager.decRef(expr);
   }
 
