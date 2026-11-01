@@ -179,6 +179,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     files: { readFile: options.readFile, writeFile: options.writeFile },
     isTool: options.isTool,
     isTraceRecorded: options.isTraceRecorded,
+    isSanyReported: options.isSanyReported,
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
   });

@@ -661,6 +661,7 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
       ].join("\n"),
     );
   }
+  if (result.failure?.isWithoutStatistics) return;
   if (result.status !== "success") printLivenessEnd(printer, timing);
   if (printer.isTool) printProgress(printer, result, timing.start);
   print(
@@ -898,6 +899,7 @@ const checkSpec = async (
       dump: dumpValues && getDump(dumpValues),
       isTool: printer.isTool,
       isTraceRecorded: isRecorded,
+      isSanyReported: true,
       isWarningEnabled: !args.has("-nowarning"),
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),

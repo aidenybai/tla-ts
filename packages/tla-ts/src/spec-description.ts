@@ -7,13 +7,12 @@ import {
 } from "./ast";
 import type { ModelConfig } from "./config";
 import type { InstanceAction } from "./environment";
-import { TlaError } from "./errors";
+import { formatRange, TlaError } from "./errors";
 import {
   bindDefinitions,
   bindOperatorArguments,
   evaluate,
   forEachBinding,
-  formatRange,
   getDefinition,
   isConstantLevel,
   lookupScope,

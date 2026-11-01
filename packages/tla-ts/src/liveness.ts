@@ -185,7 +185,8 @@ export const expandTemporal = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
-  isUnrollingForall: boolean,
+  // Whether TLC expands the formula as a property, which unrolls each \A over a constant set.
+  isProperty: boolean,
   expanding = new Set<Definition>(),
   // Whether the expansion entered the body of an instance's definition. Like TLC, it then no
   // longer expands an operator applied to arguments.
@@ -203,7 +204,7 @@ export const expandTemporal = (
       child,
       childScope,
       environment,
-      isUnrollingForall,
+      isProperty,
       childExpanding,
       isSubstituted ||
         (definition !== undefined && environment.substitutedDefinitions.has(definition)),
@@ -243,17 +244,23 @@ export const expandTemporal = (
     }
   }
   const context = getConstantContext(environment, scope);
-  // TLC 1.7.4 never expands an operator applied to arguments.
+  // TLC 1.7.4 never expands an operator applied to arguments. A property expands every one it
+  // applies, but a specification only the temporal ones.
   if (
     expression.kind === "Apply" &&
     environment.runtime.version !== "1.7.4" &&
-    getLevel(expression, scope, environment) === TEMPORAL_LEVEL
+    (isProperty || getLevel(expression, scope, environment) === TEMPORAL_LEVEL)
   ) {
     const operator = resolveApplyOperator(expression, context);
     const definition = isLocallyResolved(expression)
       ? undefined
       : getDefinition(expression.operator, environment);
-    if (operator?.kind === "Closure" && !definition?.isRecursive && !isSubstituted) {
+    const isExpandable =
+      operator?.kind === "Closure" &&
+      operator.params.length === expression.args.length &&
+      !definition?.isRecursive &&
+      !isSubstituted;
+    if (isExpandable) {
       return expand(
         operator.body,
         bindOperatorArguments(operator, expression.args, context),
@@ -264,7 +271,7 @@ export const expandTemporal = (
     }
   }
   const isUnrolled =
-    isUnrollingForall &&
+    isProperty &&
     expression.kind === "Forall" &&
     expression.bounds.every((bound) => getLevel(bound.set, scope, environment) === 0);
   const sets = isUnrolled ? getUnrolledElements(expression.bounds, context) : undefined;

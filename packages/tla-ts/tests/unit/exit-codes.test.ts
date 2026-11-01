@@ -51,6 +51,38 @@ describe("CLI exit codes match TLC", () => {
     expect(await getFailureExitCode(definitions)).toBe(code);
   });
 
+  it("exits with 255 for a symmetry that isn't a set of permutations", async () => {
+    const config = "INIT Init\nNEXT Next\nSYMMETRY P";
+    expect(await getFailureExitCode(`${STEP}\nP == 1`, config)).toBe(255);
+    expect(await getFailureExitCode(STEP, config)).toBe(151);
+  });
+
+  it("exits with 255 for a box over a state predicate in the specification", async () => {
+    const config = "SPECIFICATION Spec";
+    expect(
+      await getFailureExitCode(`${STEP}\nSpec == Init /\\ [][Next]_x /\\ [](x < 3)`, config),
+    ).toBe(255);
+  });
+
+  it("exits like TLC on a stack overflow in each phase", async () => {
+    const recursion = "RECURSIVE R(_)\nR(n) == R(n + 1)";
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
+    expect(await getFailureExitCode(`${recursion}\nInit == x = R(0)\nNext == x' = x`)).toBe(75);
+    expect(await getFailureExitCode(`${recursion}\nInit == x = 0\nNext == x' = R(0)`)).toBe(255);
+    expect(await getFailureExitCode(`${recursion}\n${STEP}\nInv == R(0) = 0`, config)).toBe(75);
+    expect(
+      await getFailureExitCode(`${recursion}\n${STEP}\nInv == x = 0 \\/ R(0) = 0`, config),
+    ).toBe(255);
+    expect(await getFailureExitCode(`${recursion}\nASSUME R(0) = 0\n${STEP}`)).toBe(255);
+  });
+
+  it("exits with the status of an error in the liveness check of an initial state", async () => {
+    const config = "SPECIFICATION Spec\nPROPERTY Prop";
+    const spec = `${STEP}\nSpec == Init /\\ [][Next]_x`;
+    expect(await getFailureExitCode(`${spec}\nProp == <>~ENABLED (x' > x)`, config)).toBe(151);
+    expect(await getFailureExitCode(`${spec}\nProp == <>(1 = {})`, config)).toBe(255);
+  });
+
   it("exits with 75 when an invariant fails on an initial state and 76 afterwards", async () => {
     const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
     expect(await getFailureExitCode(`${STEP}\nInv == 1 \\div 0 = x`, config)).toBe(75);
@@ -74,6 +106,26 @@ describe("CLI exit codes match TLC", () => {
   it("exits with 255 for a temporal quantifier over variables in the specification", async () => {
     const definitions = `${STEP}\nSpec == Init /\\ [][Next]_x /\\ \\EE y : y = x`;
     expect(await getFailureExitCode(definitions, "SPECIFICATION Spec")).toBe(255);
+  });
+
+  it("exits with 77 for a property that is a tautology and 76 for an invariant with a prime", async () => {
+    const definitions = `${STEP}\nSpec == Init /\\ [][Next]_x\nProp == <>[]TRUE => TRUE\nInv == x' = x`;
+    expect(await getFailureExitCode(definitions, "SPECIFICATION Spec\nPROPERTY Prop")).toBe(77);
+    expect(await getFailureExitCode(definitions, "SPECIFICATION Spec\nINVARIANT Inv")).toBe(76);
+  });
+
+  it("rejects a formula too large in disjunctive normal form as TLC does", async () => {
+    const definitions = `Init == x = FALSE\nNext == x' \\in BOOLEAN\nSpec == Init /\\ [][Next]_x /\\ \\A i \\in 1..6 : \\A j \\in 1..6 : SF_x(Next)\nProp == <>[](x \\in BOOLEAN)`;
+    const config = "SPECIFICATION Spec\nPROPERTY Prop";
+    await expect(
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\n====`,
+        config,
+      }),
+    ).rejects.toThrow(
+      "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form.",
+    );
+    expect(await getFailureExitCode(definitions, config)).toBe(255);
   });
 
   it("exits with 75 when the configuration has no next-state relation", async () => {

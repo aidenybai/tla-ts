@@ -12,6 +12,7 @@ import {
   createJunction,
   createUnary,
   getSolutions,
+  getTermKey,
   isFulfilling,
   type LiveExpression,
   type Solution,
@@ -112,26 +113,6 @@ const isCycleConstrained = (solution: Solution) =>
       model.infinitelyOftenActions.length > 0,
   );
 
-const liveKeys = new WeakMap<LiveExpression, string>();
-
-const atomCount = { value: 0 };
-
-// Each solution builds its own junctions over shared atoms, so equal checks get equal keys.
-const getLiveKey = (expression: LiveExpression): string => {
-  const cached = liveKeys.get(expression);
-  if (cached !== undefined) return cached;
-  const key =
-    expression.kind === "Boolean"
-      ? String(expression.value)
-      : "body" in expression
-        ? `${expression.kind}(${getLiveKey(expression.body)})`
-        : "operands" in expression
-          ? `${expression.kind}(${expression.operands.map(getLiveKey).join(",")})`
-          : `${expression.kind}#${atomCount.value++}`;
-  liveKeys.set(expression, key);
-  return key;
-};
-
 const isSameState = (left: Value[], right: Value[]) =>
   left.every((value, position) => isSameValue(value, right[position]));
 
@@ -230,7 +211,7 @@ export const createLivenessChecker = (
   const checks = solutions.map((solution): Check => ({
     solution,
     actionIds: Int32Array.from(solution.actionChecks, (predicate) => {
-      const key = getLiveKey(predicate);
+      const key = getTermKey(predicate);
       const id = actionIds.get(key) ?? actionIds.size;
       actionIds.set(key, id);
       return id;

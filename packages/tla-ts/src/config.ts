@@ -97,6 +97,15 @@ const tokenizeConfig = (source: string) => {
       line: cursor.line,
     });
   };
+  // TLC appends a newline to the file. JavaCC reports a token that the end of the input cuts off,
+  // that newline included, at the start of the line after it.
+  const addEndOfInputError = (after: string) => {
+    tokens.push({
+      kind: "Error",
+      text: formatLexicalError(cursor.line + 1, 0, undefined, after),
+      line: cursor.line,
+    });
+  };
   const skip = (text: string) => {
     const lines = text.split("\n");
     if (lines.length > 1) {
@@ -121,7 +130,7 @@ const tokenizeConfig = (source: string) => {
       const end = rest.indexOf("*)");
       if (end === -1) {
         skip(rest);
-        addLexicalError(cursor.index, "");
+        addEndOfInputError("");
         return tokens;
       }
       skip(rest.slice(0, end + 2));
@@ -145,7 +154,8 @@ const tokenizeConfig = (source: string) => {
       const text = string?.[0] ?? '"';
       if (string?.[2] !== '"') {
         skip(text);
-        addLexicalError(cursor.index, text);
+        if (cursor.index === source.length) addEndOfInputError(`${text}\n`);
+        else addLexicalError(cursor.index, text);
         return tokens;
       }
       tokens.push({ kind: "String", text: string[1], line });

@@ -1,3 +1,4 @@
+import type { SourceRange } from "./ast";
 import { EXIT_STATUS, getExitCode } from "./exit-codes";
 import type { PcalNode } from "./pcal-ast";
 import type { Value } from "./values";
@@ -9,6 +10,11 @@ export const getUnexpectedException = (exceptionClass: string) =>
 // How TLC reports a RuntimeException it did not expect, such as one raised while computing next
 // states.
 export const UNEXPECTED_EXCEPTION = getUnexpectedException("java.lang.RuntimeException");
+
+// Whether an error is V8's RangeError for a stack overflow, which TLC raises as a Java
+// StackOverflowError.
+export const isStackOverflow = (error: unknown) =>
+  error instanceof RangeError && error.message === "Maximum call stack size exceeded";
 
 export class TlaError extends Error {
   constructor(message: string, cause?: unknown) {
@@ -24,13 +30,31 @@ export interface SyntaxFailure {
   isEnd: boolean;
 }
 
+// An error SANY reports at a location, such as "In module M" or a range in a module.
+export interface SanyError {
+  location: string;
+  message: string;
+}
+
+// The errors SANY reports for a spec, and the warnings it prints before them. A fatal error stops it
+// before semantic analysis. SANY's parser prints its message for a module it rejects before the
+// report.
+export interface SanyReport {
+  errors: SanyError[];
+  warnings: SanyError[];
+  isFatal: boolean;
+  parseError?: string;
+}
+
 export class TlaSyntaxError extends TlaError {
   failure: SyntaxFailure | undefined;
+  sany: SanyReport | undefined;
 
-  constructor(message: string, cause?: unknown, failure?: SyntaxFailure) {
+  constructor(message: string, cause?: unknown, failure?: SyntaxFailure, sany?: SanyReport) {
     super(message, cause);
     this.name = "TlaSyntaxError";
     this.failure = failure;
+    this.sany = sany;
   }
 }
 
@@ -60,6 +84,50 @@ export class TlaMissingModuleError extends TlaSanyFatalError {
   }
 }
 
+export const createSanyError = (
+  errors: SanyError[],
+  isFatal = false,
+  parseError?: string,
+  warnings: SanyError[] = [],
+) =>
+  new TlaSyntaxError(
+    errors.map((error) => `${error.location}\n\n${error.message}`).join("\n\n"),
+    undefined,
+    undefined,
+    { errors, warnings, isFatal, parseError },
+  );
+
+// SANY reports a module it can't find in the module that imports it.
+export const createMissingModuleError = (name: string, importer: string | undefined) =>
+  createSanyError(
+    [
+      {
+        location: `In module ${importer}`,
+        message: `Cannot find source file for module ${name} imported in module ${importer}.`,
+      },
+    ],
+    true,
+  );
+
+// How SANY prints the warnings it reports, which do not stop TLC.
+export const formatSanyWarnings = (warnings: SanyError[]) =>
+  `*** Warnings: ${warnings.length}\n\n${warnings.map((warning) => `${warning.location}\n\n${warning.message}\n\n\n`).join("\n")}`;
+
+// SANY's message for a module its parser rejects, such as a "***Parse Error***" with the
+// productions it was in.
+export class TlaParseError extends TlaError {
+  constructor(message: string) {
+    super(message);
+    this.name = "TlaParseError";
+  }
+}
+
+export const formatRange = (range: SourceRange) =>
+  `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
+
+export const createSemanticError = (message: string, range: SourceRange) =>
+  createSanyError([{ location: formatRange(range), message }]);
+
 export class TlaConfigError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
@@ -74,6 +142,7 @@ export class TlaEvaluationError extends TlaError {
   }
 }
 
+// How TLC reports a Java StackOverflowError.
 export const STACK_OVERFLOW_MESSAGE =
   "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.";
 
@@ -124,6 +193,35 @@ export class TlaModuleError extends TlaEvaluationError {
     super(message);
     this.name = "TlaEvaluationError";
     this.exitCode = exitCode;
+  }
+}
+
+// TLC reports a successor state that the next-state relation leaves incomplete as an error of its
+// own, not as an exception. It keeps the name TlaEvaluationError, and index.ts doesn't export it.
+export class TlaIncompleteStateError extends TlaEvaluationError {
+  state: (Value | undefined)[];
+  action: string | undefined;
+  missing: string[];
+
+  constructor(state: (Value | undefined)[], action: string | undefined, missing: string[]) {
+    super(
+      `Successor state is not completely specified by the next-state action. The following variable${missing.length > 1 ? "s are" : " is"} not defined: ${missing.join(", ")}.\n`,
+    );
+    this.name = "TlaEvaluationError";
+    this.state = state;
+    this.action = action;
+    this.missing = missing;
+  }
+}
+
+// TLC reports an initial state that the initial predicate leaves incomplete as an illegal state.
+export class TlaIllegalStateError extends TlaEvaluationError {
+  state: (Value | undefined)[];
+
+  constructor(state: (Value | undefined)[]) {
+    super("current state is not a legal state");
+    this.name = "TlaEvaluationError";
+    this.state = state;
   }
 }
 

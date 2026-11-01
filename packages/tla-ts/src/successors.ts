@@ -7,7 +7,7 @@ import {
 } from "./ast";
 import { getKindString } from "./builtins";
 import { getReadVariables } from "./dependencies";
-import { TlaEvaluationError, TlaIncompleteSuccessorError } from "./errors";
+import { TlaEvaluationError, TlaIllegalStateError, TlaIncompleteSuccessorError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
@@ -1052,12 +1052,7 @@ export const forEachInitialState = (
       if (!isComplete(partial)) {
         // TLC reports an initial state that isn't completely specified as an illegal state, not as
         // an evaluation failure.
-        throw setExitCode(
-          new TlaEvaluationError(
-            `The initial predicate does not assign ${getMissingVariables(partial, environment).join(", ")}`,
-          ),
-          EXIT_STATUS.error,
-        );
+        throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
       }
       run.isStopped = onState(partial);
     },

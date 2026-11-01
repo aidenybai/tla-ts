@@ -1216,13 +1216,16 @@ export const isTlcEnumerable = (value: Value) => isSetValue(value) && !isOverrid
 const formatUnion = (value: UnionValue, isStrict = false) =>
   `UNION(${formatValue(value.base, isStrict)})`;
 
-const getUnionSets = (value: UnionValue) => {
+const getUnionSets = (
+  value: UnionValue,
+  getElements = (set: Value) => toFiniteSet(set).elements,
+) => {
   if (!isTlcEnumerable(value.base)) {
     throw new TlaEvaluationError(
       `Attempted to enumerate the nonenumerable set:\n${formatUnion(value)}`,
     );
   }
-  return toFiniteSet(value.base).elements;
+  return getElements(value.base);
 };
 
 const getUnionSet = (set: Value, index: number, union: UnionValue) => {
@@ -1258,7 +1261,7 @@ export const isEnumerable = (value: Value): boolean => {
     case "ProductSet":
       return value.factors.every(isEnumerable) || getEmptiness(value) === true;
     case "Union":
-      return isEnumerable(value.base) && toFiniteSet(value.base).elements.every(isEnumerable);
+      return isEnumerable(value.base) && getStreamedElements(value.base).every(isEnumerable);
     case "SetOperation":
       if (value.operator === "\\cup") return isEnumerable(value.left) && isEnumerable(value.right);
       if (value.operator === "\\cap") return isEnumerable(value.left) || isEnumerable(value.right);
@@ -1329,6 +1332,41 @@ const advanceCombination = (indices: number[], length: number) => {
     }
   }
   return false;
+};
+
+// TLC enumerates SUBSET S lazily, by size and then in the order of S, so a quantifier that finds
+// its witness early never builds the rest. For a power set too large to build, the elements are
+// computed in that order as a loop reads them.
+export const getLazySubsets = (value: Value): Value[] | undefined => {
+  if (typeof value !== "object" || value.kind !== "Subset" || isOverriddenSet(value.base)) {
+    return undefined;
+  }
+  const base = toFiniteSet(value.base).elements;
+  if (base.length <= MAXIMUM_ENUMERATED_SUBSET_BASE) return undefined;
+  const cursor = { index: -1, indices: [0] };
+  const getSubset = (index: number) => {
+    if (index <= cursor.index) cursor.index = -1;
+    while (cursor.index < index) {
+      if (cursor.index === -1) cursor.indices = [];
+      else if (!advanceCombination(cursor.indices, base.length)) {
+        cursor.indices = Array.from({ length: cursor.indices.length + 1 }, (_, item) => item);
+      }
+      cursor.index++;
+    }
+    return createSortedSet(cursor.indices.map((item) => base[item]));
+  };
+  const length = 2 ** base.length;
+  const isIndex = (property: string | symbol) =>
+    typeof property === "string" && /^\d+$/.test(property) && Number(property) < length;
+  return new Proxy<Value[]>([], {
+    get: (target, property, receiver) => {
+      if (property === "length") return length;
+      return isIndex(property)
+        ? getSubset(Number(property))
+        : Reflect.get(target, property, receiver);
+    },
+    has: (target, property) => isIndex(property) || Reflect.has(target, property),
+  });
 };
 
 const getSortedSubsets = (base: Value[]) => {
@@ -1551,8 +1589,10 @@ const isStreamedApart = (value: Value): boolean => {
 };
 
 const streamElements = (value: ObjectValue): Value[] => {
+  // TLC streams the sets of a UNION it hasn't enumerated, so a set that appears twice there yields
+  // its elements twice.
   if (value.kind === "Union") {
-    return getUnionSets(value).flatMap((set, index) =>
+    return getUnionSets(value, getStreamedElements).flatMap((set, index) =>
       getStreamedElements(getUnionSet(set, index, value)),
     );
   }
@@ -2570,8 +2610,11 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       ) {
         return "<< >>";
       }
+      // TLC normalizes a lambda's domain to print it, but evaluates its body afterward.
+      const formatRange = (inner: Value) =>
+        formatValue(inner, isStrict, isNormalized && getFunctionClass(value) !== "lambda");
       if (functionValue.domain.every((key, index) => key === index + 1)) {
-        return `<<${functionValue.range.map(format).join(", ")}>>`;
+        return `<<${functionValue.range.map(formatRange).join(", ")}>>`;
       }
       // A RecordValue prints as a record whatever its fields, and a FcnRcdValue only if each key
       // is a name.
@@ -2584,9 +2627,9 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
         const pairs = isSorted
           ? functionValue.domain.map((key, index) => [key, functionValue.range[index]])
           : getWrittenPairs(functionValue);
-        return `[${pairs.map((pair) => `${String(pair[0])} |-> ${format(pair[1])}`).join(", ")}]`;
+        return `[${pairs.map((pair) => `${String(pair[0])} |-> ${formatRange(pair[1])}`).join(", ")}]`;
       }
-      return `(${functionValue.domain.map((key, index) => `${format(key)} :> ${format(functionValue.range[index])}`).join(" @@ ")})`;
+      return `(${functionValue.domain.map((key, index) => `${format(key)} :> ${formatRange(functionValue.range[index])}`).join(" @@ ")})`;
     }
   }
 };

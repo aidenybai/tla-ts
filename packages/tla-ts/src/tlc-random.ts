@@ -182,8 +182,10 @@ const createShiftTable = (length: number) => {
 
 // Extending a fingerprint by a byte is linear over GF(2), so extending it by a value's bytes
 // XORs the value's own fingerprint from zero into the fingerprint shifted by their length.
-// The fingerprinter caches each distinct variable value for one pass over the stored states.
-export const createTlcFingerprinter = () => {
+// The fingerprinter caches each distinct variable value for one pass over the stored states. It
+// reads a state's variables in `order` and writes each fingerprint's low and high words into
+// `words`, an Int32Array over a little-endian BigInt64Array.
+export const createTlcFingerprinter = (order: number[], words: Int32Array) => {
   const shiftTables = new Map<number, Int32Array>();
   const indices = new Map<Value, number>();
   const contributions: number[] = [];
@@ -205,11 +207,11 @@ export const createTlcFingerprinter = () => {
     shiftTables.set(length, table);
     return table;
   };
-  return (state: Value[]) => {
+  return (state: Value[], position: number) => {
     const outer = { high, low };
     const fingerprint = { high: INITIAL_HIGH, low: INITIAL_LOW };
-    for (const value of state) {
-      const contribution = getContribution(value);
+    for (const index of order) {
+      const contribution = getContribution(state[index]);
       const table = getShiftTable(contributions[contribution]);
       const extended = {
         high: contributions[contribution + 1],
@@ -226,7 +228,8 @@ export const createTlcFingerprinter = () => {
     }
     high = outer.high;
     low = outer.low;
-    return (BigInt(fingerprint.high >>> 0) << 32n) | BigInt(fingerprint.low >>> 0);
+    words[2 * position] = fingerprint.low;
+    words[2 * position + 1] = fingerprint.high;
   };
 };
 

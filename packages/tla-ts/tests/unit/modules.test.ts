@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue, TlaConfigError, TlaSyntaxError } from "../../src";
+import { createSanyError } from "../../src/errors";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/modules");
 
@@ -180,7 +181,15 @@ describe("nested module scoping matches SANY", () => {
       checkSource("E == INSTANCE Shared\n---- MODULE Shared ----\nA == 2\n====", {
         Shared: "---- MODULE Shared ----\nA == 1\n====",
       }),
-    ).rejects.toThrow(/Multiply-defined module 'Shared'/);
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 1 to line 5, col 4 of module M",
+          message:
+            "Multiply-defined module 'Shared': this definition or declaration conflicts \nwith the one at line 1, col 1 to line 3, col 4 of module Shared.",
+        },
+      ]),
+    );
   });
 
   it("rejects modules that extend each other like SANY", async () => {
@@ -200,8 +209,15 @@ describe("nested module scoping matches SANY", () => {
     await expect(
       checkSource("EXTENDS test", { test: "---- MODULE Foo ----\nA == 1\n====" }),
     ).rejects.toThrow(
-      new TlaSyntaxError(
-        "File name 'test' does not match the name 'Foo' of the top level module it contains.",
+      createSanyError(
+        [
+          {
+            location: "Unknown location",
+            message:
+              "File name 'test' does not match the name 'Foo' of the top level module it contains.",
+          },
+        ],
+        true,
       ),
     );
   });
@@ -211,7 +227,15 @@ describe("nested module scoping matches SANY", () => {
       checkSource(
         "---- MODULE Inner ----\nA == TRUE\n====\nTHEOREM LET M == INSTANCE Inner IN M!A",
       ),
-    ).rejects.toThrow(/Multiply-defined module 'Inner'/);
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 2, col 1 to line 4, col 4 of module M",
+          message:
+            "Multiply-defined module 'Inner': this definition or declaration conflicts \nwith the one at line 1, col 1 to line 3, col 4 of module Inner.",
+        },
+      ]),
+    );
   });
 
   it("instantiates a nested module inside LET once a top-level instance follows it", async () => {

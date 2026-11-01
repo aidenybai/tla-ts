@@ -13,7 +13,7 @@ import {
   type SourceRange,
 } from "./ast";
 import { getKindString } from "./builtins";
-import { TlaEvaluationError, TlaUnassignedError } from "./errors";
+import { isStackOverflow, TlaEvaluationError, TlaUnassignedError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import { MESSAGE_CODE } from "./tlc-messages";
@@ -41,6 +41,7 @@ import {
   getDomain,
   getFunctionDomain,
   getIntervalElements,
+  getLazySubsets,
   getStreamedElements,
   getFunctionClass,
   getSequenceElements,
@@ -280,14 +281,23 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
   const field = expression.field;
   const describeMissing = (record: Value) =>
     `Attempted to select nonexistent field "${field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`;
+  const describeNotInDomain = (functionValue: Value) =>
+    `Attempted to apply function:\n${prettyPrint(formatValue(functionValue))}\nto argument "${field}", which is not in the domain of the function.`;
   return (value: Value) => {
     if (!isFunctionValue(value)) {
       throw new TlaEvaluationError(
         `Attempted to select field "${field}" from a non-record value ${prettyPrint(formatValue(value))}\n${describeRange(expression)}`,
       );
     }
-    if (getFunctionClass(value) === "tuple") throw createNonIntegerKeyError(field);
-    return applyFunction(value, field, describeMissing);
+    const functionClass = getFunctionClass(value);
+    if (functionClass === "tuple") throw createNonIntegerKeyError(field);
+    // Only TLC's RecordValue names the field it lacks. Any other function, such as a FcnRcdValue
+    // whose keys are strings, reports an argument outside its domain.
+    return applyFunction(
+      value,
+      field,
+      functionClass === "record" ? describeMissing : describeNotInDomain,
+    );
   };
 };
 
@@ -476,9 +486,8 @@ const checkEnumerable = (set: Value, expression: Expression, version: TlcVersion
 
 const getEnumeratedElements = (set: Value, expression: Expression, version: TlcVersion) => {
   checkEnumerable(set, expression, version);
-  return typeof set === "object" && set.kind === "Interval"
-    ? getIntervalElements(set)
-    : toFiniteSet(set).elements;
+  if (typeof set === "object" && set.kind === "Interval") return getIntervalElements(set);
+  return getLazySubsets(set) ?? toFiniteSet(set).elements;
 };
 
 // The elements Tool.contexts binds to the bound of a quantifier or a set map. TLC 1.7.4 streams a
@@ -486,7 +495,7 @@ const getEnumeratedElements = (set: Value, expression: Expression, version: TlcV
 export const getContextElements = (set: Value, expression: Expression, version: TlcVersion) => {
   if (version !== "1.7.4") return getEnumeratedElements(set, expression, version);
   checkEnumerable(set, expression, version);
-  return getStreamedElements(set);
+  return getLazySubsets(set) ?? getStreamedElements(set);
 };
 
 // Like TLC, a quantifier keeps an interval as an interval, so that it can stop at the first witness
@@ -817,7 +826,8 @@ export const evaluateStartupDefinitions = (definitions: Definition[], environmen
         }),
       );
     } catch (error) {
-      if (!(error instanceof TlaEvaluationError)) throw error;
+      // TLC swallows whatever the definition throws, a stack overflow included.
+      if (!(error instanceof TlaEvaluationError) && !isStackOverflow(error)) throw error;
     }
   });
 

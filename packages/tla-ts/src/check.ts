@@ -11,10 +11,13 @@ import { getReadVariables } from "./dependencies";
 import { createEnvironment } from "./environment";
 import {
   getErrorExitCode,
+  isStackOverflow,
   TlaConfigError,
   TlaEvaluationError,
+  TlaIllegalStateError,
   TlaIncompleteSuccessorError,
   TlaModuleError,
+  TlaStackOverflowError,
   getUnexpectedException,
   UNEXPECTED_EXCEPTION,
 } from "./errors";
@@ -121,6 +124,8 @@ export interface CheckOptions {
   isTool?: boolean;
   // Whether TLC records a binary trace for its trace exploration spec, for which it loads Integers.
   isTraceRecorded?: boolean;
+  // Whether the caller printed SANY's report, its warnings included, before the check.
+  isSanyReported?: boolean;
   // False for TLC's -nowarning, which changes how TLC computes the successors of some actions.
   isWarningEnabled?: boolean;
   // The TLC whose output tla-ts reproduces, which changes how TLC labels an action.
@@ -250,6 +255,8 @@ export interface EvaluationFailure {
   traceFailure?: FailureMessage;
   // A POSTCONDITION that is false or fails after the trace, which TLC checks as it prints one.
   postcondition?: Postcondition;
+  // Whether TLC stops before it prints the statistics, as it does for an illegal initial state.
+  isWithoutStatistics?: boolean;
 }
 
 // Where TLC's replay of a failure fails.
@@ -407,7 +414,8 @@ const getConstantValue = (name: string, definition: Definition, environment: Env
   try {
     return evaluate(createIdentifier(name), getContext(environment, undefined, undefined));
   } catch (error) {
-    if (error instanceof TlaEvaluationError) return undefined;
+    // TLC swallows whatever the definition throws, a stack overflow included.
+    if (error instanceof TlaEvaluationError || isStackOverflow(error)) return undefined;
     throw error;
   }
 };
@@ -677,9 +685,10 @@ const getProperties = (
     if (getLevel(definition.body, undefined, environment) === 1) {
       onProgress?.({ kind: "state-level-property", name });
     }
-    // TLC 1.7.4 doesn't unroll a property that quantifies over a constant set.
-    const isUnrollingForall = environment.runtime.version !== "1.7.4";
-    expandTemporal(definition.body, undefined, environment, isUnrollingForall).forEach((item) => {
+    // TLC 1.7.4 expands a property as it does a specification, so it doesn't unroll one that
+    // quantifies over a constant set.
+    const isProperty = environment.runtime.version !== "1.7.4";
+    expandTemporal(definition.body, undefined, environment, isProperty).forEach((item) => {
       const conjunct = item.expression;
       if (isConstantTrue(item, environment, "property")) return;
       const partName = item.name ?? name;
@@ -997,7 +1006,7 @@ export const createSearch = (
   if (environment.variables.length === 0) return undefined;
   const symmetryGroup =
     config.symmetry === undefined
-      ? []
+      ? undefined
       : getSymmetryGroup(config.symmetry, environment, config.substitutions);
   if (config.view !== undefined) getConfigOperator("view function", config.view, environment);
   const view =
@@ -1030,14 +1039,12 @@ export const createSearch = (
       .sort((left, right) => getTlcPosition(left) - getTlcPosition(right));
     return tlcOrder.indices;
   };
-  // A representative in TLC's variable order is the one whose fingerprint TLC reports.
-  const order = symmetryGroup.length > 0 ? getTlcOrder() : undefined;
   const getViewValue = (expression: Expression, state: Value[]) =>
     evaluate(expression, getContext(environment, state, undefined));
   const getTlcStateFingerprint = (state: Value[]) => {
     const indices = getTlcOrder();
     const representative =
-      symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup, indices);
+      symmetryGroup === undefined ? state : getRepresentative(state, symmetryGroup, indices);
     return getTlcFingerprint(
       view === undefined
         ? indices.map((index) => representative[index])
@@ -1061,23 +1068,28 @@ export const createSearch = (
   return {
     properties,
     spec,
-    isSymmetric: symmetryGroup.length > 0,
+    isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
     getTlcOrder,
     getStoredFingerprints: (states, fingerprintStates) => {
       if (view !== undefined || isFingerprintedLikeTlc) {
         return BigInt64Array.from(states, getTlcStateFingerprint);
       }
-      const indices = getTlcOrder();
-      const getFingerprint = createTlcFingerprinter();
-      return BigInt64Array.from(fingerprintStates, (state) =>
-        getFingerprint(indices.map((index) => state[index])),
+      const fingerprints = new BigInt64Array(fingerprintStates.length);
+      const fingerprint = createTlcFingerprinter(
+        getTlcOrder(),
+        new Int32Array(fingerprints.buffer),
       );
+      fingerprintStates.forEach(fingerprint);
+      return fingerprints;
     },
     getFingerprintState: (state) => {
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
+      // A representative in TLC's variable order is the one whose fingerprint TLC reports.
       const representative =
-        symmetryGroup.length === 0 ? state : getRepresentative(state, symmetryGroup, order);
+        symmetryGroup === undefined
+          ? state
+          : getRepresentative(state, symmetryGroup, getTlcOrder());
       return view === undefined ? representative : [getViewValue(view.expression, representative)];
     },
     findViolatedInvariant: (state, parent) =>
@@ -1383,10 +1395,17 @@ const getFailureMessage = (error: TlaEvaluationError, isNextState: boolean): Fai
 export const checkSequentially = (options: CheckOptions): CheckResult => {
   const stateWriter =
     options.dump && createStateWriter(options.dump, options.writeFile, options.version);
-  const result = searchStates(options, stateWriter);
-  stateWriter?.close();
-  return result;
+  try {
+    return searchStates(options, stateWriter);
+  } catch (error) {
+    // TLC reports a stack overflow outside the search on its own, and exits with 255.
+    throw isStackOverflow(error) ? createStackOverflowError() : error;
+  } finally {
+    stateWriter?.close();
+  }
 };
+
+const createStackOverflowError = () => setExitCode(new TlaStackOverflowError(), EXIT_STATUS.error);
 
 const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefined): CheckResult => {
   const config =
@@ -1422,6 +1441,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     seed: options.seed,
     isTool: options.isTool,
     isTraceRecorded: options.isTraceRecorded,
+    isSanyReported: options.isSanyReported,
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
   });
@@ -1566,6 +1586,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       replay(tracing);
       return undefined;
     } catch (error) {
+      // A replay that overflows the stack again has an empty call stack.
+      if (isStackOverflow(error)) return { callStack: [], fingerprint: undefined };
       if (!(error instanceof TlaEvaluationError) || !callStack) return undefined;
       return { callStack: callStack.expressions, fingerprint: callStack.fingerprint };
     }
@@ -1717,7 +1739,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const parents: number[] = [];
   const actions: (string | undefined)[] = [];
   const depths: number[] = [];
-  const buckets = new Map<number, number | number[]>();
+  // A Map holds at most 2^24 entries, so an open-addressing table keeps each seen state's hash
+  // and its index plus one side by side, probed by the hash.
+  const seen = { slots: new Int32Array(1 << 17), size: 0, shift: 16 };
   const canonicalizeState = createCanonicalizer();
 
   const toRecord = (state: Value[]): Record<string, Value> =>
@@ -1921,7 +1945,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       ? EXIT_STATUS.specEvaluationFailure
       : getReplayExitCode(error);
   };
-  const toFailure = (error: unknown, behavior: Behavior, failureOptions: FailureOptions = {}) => {
+  const toFailure = (failed: unknown, behavior: Behavior, failureOptions: FailureOptions = {}) => {
+    const error = isStackOverflow(failed) ? new TlaStackOverflowError() : failed;
     if (!(error instanceof TlaEvaluationError)) throw error;
     const checked =
       behavior.trace.length > 0 && !failureOptions.traceFailure
@@ -2015,19 +2040,35 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     return true;
   };
+  const getSlot = (hash: number) => (Math.imul(hash, 0x9e3779b1) >>> seen.shift) << 1;
   const findStateIndex = (hash: number, state: Value[]) => {
-    const bucket = buckets.get(hash);
-    if (bucket === undefined) return -1;
-    if (typeof bucket === "number") {
-      return isSameState(fingerprintStates[bucket], state) ? bucket : -1;
+    const mask = seen.slots.length - 1;
+    for (let slot = getSlot(hash); ; slot = (slot + 2) & mask) {
+      const entry = seen.slots[slot + 1];
+      if (entry === 0) return -1;
+      if (seen.slots[slot] === hash && isSameState(fingerprintStates[entry - 1], state)) {
+        return entry - 1;
+      }
     }
-    return bucket.find((index) => isSameState(fingerprintStates[index], state)) ?? -1;
+  };
+  const insertSeen = (hash: number, entry: number) => {
+    const mask = seen.slots.length - 1;
+    let slot = getSlot(hash);
+    while (seen.slots[slot + 1] !== 0) slot = (slot + 2) & mask;
+    seen.slots[slot] = hash;
+    seen.slots[slot + 1] = entry;
   };
   const markSeen = (hash: number, index: number) => {
-    const bucket = buckets.get(hash);
-    if (bucket === undefined) buckets.set(hash, index);
-    else if (typeof bucket === "number") buckets.set(hash, [bucket, index]);
-    else bucket.push(index);
+    seen.size++;
+    if (seen.size * 4 > seen.slots.length) {
+      const slots = seen.slots;
+      seen.slots = new Int32Array(slots.length * 2);
+      seen.shift--;
+      for (let slot = 0; slot < slots.length; slot += 2) {
+        if (slots[slot + 1] !== 0) insertSeen(slots[slot], slots[slot + 1]);
+      }
+    }
+    insertSeen(hash, index + 1);
   };
   // A new successor that TLC has added to its set of states before it checks the successor, which
   // the check stores after.
@@ -2197,6 +2238,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           );
         }
       } catch (error) {
+        if (isStackOverflow(error)) throw error;
         // TLC replays the expansion and skips the invariants of a state it has seen, the failed one
         // included unless the constraints exclude it. When the replay fails, TLC reports where and
         // leaves out the outdegree.
@@ -2256,6 +2298,19 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         spec.scope,
       );
     } catch (error) {
+      // TLC prints an illegal initial state with null for each variable it leaves undefined, and
+      // stops before it prints the statistics.
+      if (error instanceof TlaIllegalStateError) {
+        const illegal = toFailure(
+          error,
+          { trace: [] },
+          { initialState: error.state.map((value) => value ?? createModelValue("null")) },
+        );
+        return {
+          ...illegal,
+          failure: illegal.failure && { ...illegal.failure, isWithoutStatistics: true },
+        };
+      }
       // TLC prints the error before it replays the initial predicate with its call stack.
       const replay = getOutput(replayInit);
       return toFailure(
@@ -2351,12 +2406,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const replay = getOutput(() => replayNext(states[index]));
     return { result: replay.result, lines: [...live.lines, ...replay.lines] };
   };
+  // TLC reports a stack overflow while it computes next states without replaying it, with the
+  // behavior up to the state it expands.
+  const reportNextStateOverflow = (index: number) =>
+    toFailure(createStackOverflowError(), getStateTrace(index));
   // After the trace, TLC replays the next-state relation with its call stack, printing again.
   const reportNextStateFailure = (
     error: unknown,
     index: number,
     liveSuccessors: LiveSuccessor[],
   ) => {
+    if (isStackOverflow(error)) return reportNextStateOverflow(index);
     const replay = replayFailedNext(index, liveSuccessors);
     return toFailure(
       withNextStateExitCode(error),
@@ -2371,6 +2431,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       try {
         outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
       } catch (error) {
+        if (isStackOverflow(error)) {
+          outcome.result = reportNextStateOverflow(index);
+          return true;
+        }
         // TLC 1.7.4 reports the wrapped error without the trace, except for a failed property,
         // which it reports with the trace before it rethrows. The error stops its worker before it
         // adds the state to the behavior graph.

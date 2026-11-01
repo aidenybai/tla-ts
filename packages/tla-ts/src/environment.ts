@@ -13,11 +13,14 @@ import { BUNDLED_MODULES } from "./bundled-modules";
 import type { ConfigValue, ModelConfig } from "./config";
 import type { FileSystem } from "./json";
 import {
+  createSanyError,
+  createMissingModuleError,
+  formatRange,
+  formatSanyWarnings,
   TlaConfigError,
   TlaEvaluationError,
-  TlaMissingModuleError,
-  TlaSanyFatalError,
   TlaSyntaxError,
+  type SanyError,
 } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
@@ -38,27 +41,34 @@ import {
 import { overrideDefinitions, type JavaOverride } from "./java-overrides";
 import { extractModule, parseModule } from "./parser";
 import {
-  checkRedefinitions,
-  getFactNames,
   getArity,
+  getParamArities,
   isBefore,
+  isTheoremDefinition,
   KEY_SEPARATOR,
   LOCAL_RESOLUTION,
+  MODULE_START,
   resolveModule,
   resolveSubstitutions,
+  type ModuleReport,
   type ModuleSymbol,
+  type ModuleUnit,
+  type SymbolKind,
   type Symbols,
 } from "./resolve";
 import { createRuntime } from "./runtime";
+import { getSanyParseError } from "./sany-parse-error";
 import {
   CORE_OPERATORS,
   getStandardModule,
   getTraceSpecArithmetic,
   STANDARD_DEPENDENCIES,
 } from "./standard-modules";
+import { STANDARD_LEVELS } from "./standard-levels";
+import { getStandardRange } from "./standard-ranges";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
-import { checkInstances, type InstanceCheck } from "./substitution-levels";
+import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
 import { isEvalException } from "./tlc-messages";
 import { createTlcDefinitionOrder, getTlcDeclarationOrder } from "./tlc-order";
 import {
@@ -85,6 +95,7 @@ interface EnvironmentOptions {
   // TLC loads Integers for the binary trace of its trace exploration spec, and Integers' Java
   // methods then compute the arithmetic of Naturals.
   isTraceRecorded?: boolean;
+  isSanyReported?: boolean;
   isWarningEnabled?: boolean;
   version?: TlcVersion;
 }
@@ -135,24 +146,72 @@ interface LinkedModule {
   exported: Symbols;
   modules: Map<string, LinkedModule>;
   extended: LinkedModule[];
+  facts: Set<string>;
 }
 
+// errors and warnings collect what SANY reports for the module, and levelChecks the level checks of
+// the modules in its file, which SANY runs only when it reports no error.
 interface ModuleScope {
   id: string;
   symbols: Symbols;
   modules: Map<string, LinkedModule>;
   nested: Module[];
+  errors: SanyError[];
+  warnings: SanyError[];
+  levelChecks: (() => void)[];
 }
 
-const getDeclarations = (linked: LinkedModule) => [
+const getDeclarations = (linked: LinkedModule): Declaration[] => [
   ...linked.constants,
-  ...linked.variables.map((variable) => ({ name: variable, arity: 0 })),
+  ...linked.variables.map((variable, index) => ({
+    name: variable,
+    arity: 0,
+    location: linked.variableLocations[index],
+  })),
 ];
+
+// Parses the module SANY reads from the file name.tla. A module SANY's parser rejects fails as it
+// does in TLC: SANY's message, then a fatal error that names the module.
+const parseModuleFile = (source: string, name: string) => {
+  try {
+    return parseModule(source);
+  } catch (error) {
+    if (!(error instanceof TlaSyntaxError)) throw error;
+    const parseError = getSanyParseError(source);
+    if (parseError === undefined) throw error;
+    throw createSanyError(
+      [
+        {
+          location: `In module ${name}`,
+          message: `Could not parse module ${name} from file ${name}.tla`,
+        },
+      ],
+      true,
+      parseError,
+    );
+  }
+};
 
 const createModuleRedefinedError = (module: Module) =>
   new TlaSyntaxError(
     `Multiply-defined module '${module.name}' at line ${module.location.line}, column ${module.location.column}`,
   );
+
+const getModuleRedefinition = (module: Module, existing: Module): SanyError | undefined =>
+  module.location.range &&
+  existing.location.range && {
+    location: formatRange(module.location.range),
+    message: `Multiply-defined module '${module.name}': this definition or declaration conflicts \nwith the one at ${formatRange(existing.location.range)}.`,
+  };
+
+// Context.kindOfNode names a definition or a parameter a definition, and any other symbol a
+// declaration.
+const getNodeWord = (kind: SymbolKind) =>
+  ["Builtin", "Definition", "Instance", "Parameter"].includes(kind) ? "definition" : "declaration";
+
+// The Java class of the node SANY binds a symbol to.
+const getNodeClass = (kind: SymbolKind) =>
+  kind === "Theorem" ? "ThmOrAssumpDefNode" : getNodeWord(kind);
 
 const createLocalFunction = (definition: Definition, key: string): Definition => ({
   kind: "Operator",
@@ -256,6 +315,8 @@ export const createEnvironment = (
   runtime.version = options.version ?? "master";
   const linkedModules = new Map<string, LinkedModule>();
   const nestedModules = new Map<string, LinkedModule>();
+  // Each module by name, from the time its level checks run.
+  const checkedModules = new Map<string, LinkedModule>();
   const linkedList: LinkedModule[] = [];
   const dependencies = new Map<string, Set<string>>();
   const loading: Set<string>[] = [];
@@ -270,8 +331,26 @@ export const createEnvironment = (
   const copyCount = { value: 0 };
   const createName = (name: string) => `${name}#${copyCount.value++}`;
   const instanceChecks: InstanceCheck[] = [];
+  // The warnings SANY reports for the spec.
+  const warnings: SanyError[] = [];
+  const checkInstance = createInstanceChecker((name) => {
+    const linked = checkedModules.get(name) ?? getLinkedModule(name, name);
+    return {
+      constants: linked.constants,
+      variables: linked.variables,
+      definitions: [
+        ...new Set(
+          [...linked.visible.values()].flatMap((symbol) => definitions.get(symbol.key) ?? []),
+        ),
+      ],
+      assumptions: linked.module.assumptions.map((assumption) => assumption.expression),
+      theorems: linked.module.theorems,
+      getDefinition: (symbol) => definitions.get(linked.visible.get(symbol)?.key ?? symbol),
+    };
+  });
   const instanceActions = new Map<string, InstanceAction>();
   const instanceNames = new Map<string, string>();
+  const qualifiedNames = new Map<string, string>();
 
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
@@ -289,7 +368,13 @@ export const createEnvironment = (
     );
     standardModule.operators.forEach((operator) => {
       builtins.set(operator.name, operator);
-      exported.set(operator.name, { key: operator.name, arity: operator.arity });
+      exported.set(operator.name, {
+        key: operator.name,
+        arity: operator.arity,
+        params: STANDARD_LEVELS.get(operator.name)?.formals.map((formal) => formal.arity),
+        kind: "Definition",
+        range: getStandardRange(name, operator.name) ?? exported.get(operator.name)?.range,
+      });
     });
     standardExports.set(name, exported);
     return exported;
@@ -297,7 +382,11 @@ export const createEnvironment = (
 
   const getStandardSymbols = (name: string) => {
     const symbols = addStandardModule(name);
-    if (symbols) useModule(name, STANDARD_DEPENDENCIES.get(name) ?? []);
+    const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
+    if (symbols) useModule(name, dependencies);
+    // TLC loads the Java class of each module a standard module uses, so one that uses Integers
+    // overrides the arithmetic of Naturals.
+    if (symbols && dependencies.includes("Integers")) addStandardModule("Integers");
     return symbols;
   };
 
@@ -325,12 +414,17 @@ export const createEnvironment = (
       options.loadModule?.(name) ??
       BUNDLED_MODULES.get(name) ??
       extractModule(options.source, name);
-    if (source === undefined) throw new TlaMissingModuleError(name, importer);
-    const module = parseModule(source);
+    if (source === undefined) throw createMissingModuleError(name, importer);
+    const module = parseModuleFile(source, name);
     if (module.name !== name) {
-      throw new TlaSanyFatalError(
-        `File name '${name}' does not match the name '${module.name}' of the top level module it contains.`,
-        undefined,
+      throw createSanyError(
+        [
+          {
+            location: "Unknown location",
+            message: `File name '${name}' does not match the name '${module.name}' of the top level module it contains.`,
+          },
+        ],
+        true,
       );
     }
     return rejectModuleLiterals(module);
@@ -346,6 +440,8 @@ export const createEnvironment = (
     }
     const closure = new Set<string>();
     const nested: Module[] = [];
+    const errors: SanyError[] = [];
+    const levelChecks: (() => void)[] = [];
     linking.push(parsed.name);
     loading.push(closure);
     const linked = linkModule(parsed, {
@@ -353,11 +449,19 @@ export const createEnvironment = (
       symbols: new Map(),
       modules: new Map(),
       nested,
+      errors,
+      warnings,
+      levelChecks,
     });
     loading.pop();
     linking.pop();
+    if (errors.length > 0) throw createSanyError(errors, false, undefined, warnings);
     const duplicate = nested.find((module) => closure.has(module.name));
+    const loaded = duplicate && linkedModules.get(duplicate.name);
+    const redefinition = loaded && getModuleRedefinition(duplicate, loaded.module);
+    if (redefinition) throw createSanyError([redefinition], false, undefined, warnings);
     if (duplicate) throw createModuleRedefinedError(duplicate);
+    levelChecks.forEach((check) => check());
     return { linked, closure };
   };
 
@@ -377,23 +481,16 @@ export const createEnvironment = (
   const instantiate = (
     instance: Instance,
     module: Module,
-    unit: {
-      imported: Symbols;
-      importedAt: Map<string, SourceLocation>;
-      definitions: Map<string, Definition>;
-      getKey: (definition: Definition) => string;
-    },
+    unit: ModuleUnit,
     isParameterFree: boolean,
     nested: LinkedModule | undefined,
   ): Symbols => {
     const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
-    if (standardSymbols) {
-      if (instance.name === undefined) return standardSymbols;
-      return new Map(
-        [...standardSymbols].map(([name, symbol]) => [`${instance.name}!${name}`, symbol]),
-      );
-    }
+    if (standardSymbols) return getStandardInstanceSymbols(instance, standardSymbols);
     const linked = nested ?? getLinkedModule(instance.module, module.name);
+    linked.facts.forEach((name) =>
+      unit.facts.add(instance.name === undefined ? name : `${instance.name}!${name}`),
+    );
     const declarations = getDeclarations(linked);
     const suffix = `#${copyCount.value++}`;
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
@@ -432,27 +529,69 @@ export const createEnvironment = (
       },
       createName,
     });
-    const declared = new Set(declarations.map((declaration) => declaration.name));
-    const symbols: Symbols = new Map();
-    linked.exported.forEach((symbol, name) => {
-      if (declared.has(name)) return;
-      if (instance.name === undefined) {
-        const key = instantiation.getKey(symbol.key);
-        if (declarations.length > 0)
-          instanceActions.set(key, { name, location: instance.location });
-        symbols.set(name, { key, arity: symbol.arity, declaration: symbol.declaration });
-        return;
-      }
-      const key = instantiation.getQualifiedKey(symbol.key);
-      if (declarations.length > 0) {
-        instanceActions.set(key, { name: `${instance.name}!${name}`, location: instance.location });
-      }
-      symbols.set(`${instance.name}!${name}`, {
-        key,
-        arity: symbol.arity + instance.params.length,
-      });
+    return getInstanceSymbols(instance, linked.exported, declarations, (key, name) => {
+      const copy =
+        instance.name === undefined
+          ? instantiation.getKey(key)
+          : instantiation.getQualifiedKey(key);
+      if (declarations.length > 0) instanceActions.set(copy, { name, location: instance.location });
+      if (instance.name !== undefined) qualifiedNames.set(copy, name);
+      return copy;
     });
-    return symbols;
+  };
+
+  const getStandardInstanceSymbols = (instance: Instance, standardSymbols: Symbols): Symbols =>
+    instance.name === undefined
+      ? standardSymbols
+      : new Map(
+          [...standardSymbols].map(([name, symbol]) => [
+            `${instance.name}!${name}`,
+            { key: symbol.key, arity: symbol.arity, params: symbol.params, kind: symbol.kind },
+          ]),
+        );
+
+  // The names an INSTANCE adds for the definitions of the module it instantiates, each with the key
+  // that getKey gives it. SANY binds a copy of a definition that depends on the parameters at the
+  // INSTANCE.
+  const getInstanceSymbols = (
+    instance: Instance,
+    exported: Symbols,
+    declarations: Declaration[],
+    getKey: (key: string, name: string) => string,
+  ): Symbols => {
+    const declared = new Set(declarations.map((declaration) => declaration.name));
+    return new Map(
+      [...exported]
+        .filter(([name]) => !declared.has(name))
+        .map(([name, symbol]): [string, ModuleSymbol] => {
+          if (instance.name === undefined) {
+            return [
+              name,
+              {
+                key: getKey(symbol.key, name),
+                arity: symbol.arity,
+                params: symbol.params,
+                kind: symbol.kind,
+                range:
+                  parameterized.get(symbol.key) === true ? instance.location.range : symbol.range,
+              },
+            ];
+          }
+          const qualified = `${instance.name}!${name}`;
+          return [
+            qualified,
+            {
+              key: getKey(symbol.key, qualified),
+              arity: symbol.arity + instance.params.length,
+              params: symbol.params && [
+                ...instance.params.map((param) => param.arity),
+                ...symbol.params,
+              ],
+              kind: symbol.kind,
+            },
+          ];
+        }),
+    );
   };
 
   const getLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
@@ -634,29 +773,61 @@ export const createEnvironment = (
     );
     javaOverrides.set(unlinked.name, overridden.overrides);
     const parsed = overridden.module;
+    const firstCheck = instanceChecks.length;
     const visible: Symbols = new Map([
       ...CORE_OPERATORS.map((operator): [string, ModuleSymbol] => [
         operator.name,
-        { key: operator.name, arity: operator.arity },
+        { key: operator.name, arity: operator.arity, kind: "Builtin" },
       ]),
       ...scope.symbols,
     ]);
+    // Where an INSTANCE first made each name it adds visible.
+    const importedAt = new Map<string, SourceLocation>();
+    const extendsReport: ModuleReport = { location: MODULE_START, errors: [], warnings: [] };
+    const reports = [extendsReport];
+    // Context.mergeExtendContext keeps the first of the symbols the extended modules share by name,
+    // and warns of two definitions or two declarations but rejects a definition and a declaration.
+    const mergeExtended = (symbols: Symbols) =>
+      symbols.forEach((symbol, name) => {
+        const current = exported.get(name);
+        if (!current) {
+          visible.set(name, symbol);
+          exported.set(name, symbol);
+          return;
+        }
+        if (
+          !current.range ||
+          !symbol.range ||
+          formatRange(current.range) === formatRange(symbol.range)
+        ) {
+          return;
+        }
+        const location = formatRange(symbol.range);
+        const existing = formatRange(current.range);
+        if (getNodeClass(current.kind) === getNodeClass(symbol.kind)) {
+          extendsReport.warnings.push({
+            location,
+            message: `Warning: the ${getNodeWord(current.kind)} of '${name}' conflicts with \nits ${getNodeWord(current.kind)} at ${existing}.`,
+          });
+          return;
+        }
+        extendsReport.errors.push({
+          location,
+          message: `The ${getNodeWord(symbol.kind)} of '${name}' conflicts with \nits ${getNodeWord(current.kind)} at ${existing}.`,
+        });
+      });
     const exported: Symbols = new Map();
+    const facts = new Set<string>();
     const modules = new Map<string, LinkedModule>();
     const extended: LinkedModule[] = [];
     const constants = [...parsed.constants];
     const variables = parsed.variables.map((variable) => variable.name);
     const variableLocations = parsed.variables.map((variable) => variable.location);
-    const addSymbols = (symbols: Symbols, isExported: boolean) =>
-      symbols.forEach((symbol, name) => {
-        visible.set(name, symbol);
-        if (isExported) exported.set(name, symbol);
-      });
     parsed.extends.forEach((name) => {
       const nested = scope.modules.get(name);
       const standardSymbols = nested ? undefined : getStandardSymbols(name);
       if (standardSymbols) {
-        addSymbols(standardSymbols, true);
+        mergeExtended(standardSymbols);
         return;
       }
       const linked = nested ?? getLinkedModule(name, parsed.name);
@@ -670,61 +841,114 @@ export const createEnvironment = (
         variables.push(variable);
         variableLocations.push(linked.variableLocations[index]);
       });
-      addSymbols(linked.exported, true);
+      mergeExtended(linked.exported);
+      linked.facts.forEach((name) => facts.add(name));
       linked.modules.forEach((module, moduleName) => modules.set(moduleName, module));
       extended.push(linked);
     });
-    parsed.constants.forEach((constant) =>
-      exported.set(constant.name, {
-        key: constant.name,
-        arity: constant.arity,
-        declaration: "Constant",
-      }),
+    const bound = new Map(visible);
+    const declarations = [
+      ...parsed.constants.map((constant) => ({ ...constant, kind: "Constant" as const })),
+      ...parsed.variables.map((variable) => ({ ...variable, kind: "Variable" as const })),
+    ];
+    const getDeclarationSymbol = (declaration: (typeof declarations)[number]): ModuleSymbol => ({
+      key: declaration.name,
+      arity: declaration.arity,
+      kind: declaration.kind,
+      range: declaration.location.range,
+    });
+    declarations.forEach((declaration) =>
+      exported.set(declaration.name, getDeclarationSymbol(declaration)),
     );
-    parsed.variables.forEach((variable) =>
-      exported.set(variable.name, { key: variable.name, arity: 0, declaration: "Variable" }),
-    );
+    const getDefinitionSymbol = (definition: Definition): ModuleSymbol => ({
+      key: getKey(definition),
+      arity: getArity(definition),
+      params: getParamArities(definition),
+      kind: isTheoremDefinition(parsed, definition) ? "Theorem" : "Definition",
+      range: definition.location.range,
+    });
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const getKey = (definition: Definition) =>
       parsed === root ? definition.name : `${definition.name}${KEY_SEPARATOR}${scope.id}`;
-    const importedAt = new Map<string, SourceLocation>();
-    const getUnit = (module: Module) => ({
-      imported: visible,
-      importedAt,
-      definitions: new Map(module.definitions.map((definition) => [definition.name, definition])),
-      getKey,
-    });
+    const instanced = new Map<Instance, Symbols>();
     const getVisibleModules = () => new Map([...scope.modules, ...modules]);
+    const isInstancedAfterDefinition = (nested: Module) => {
+      const first = parsed.instances.find((instance) => instance.module === nested.name);
+      return first !== undefined && isBefore(nested.location, first.location);
+    };
+    const getLetModule = (instance: Instance) => {
+      const own = parsed.modules.find((nested) => nested.name === instance.module);
+      if (!own) return getVisibleModules().get(instance.module);
+      return isInstancedAfterDefinition(own) ? modules.get(own.name) : undefined;
+    };
+    const getUnit = (module: Module): ModuleUnit => ({
+      imported: visible,
+      getInstance: (instance) => {
+        const nested = getLetModule(instance);
+        const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
+        if (standardSymbols) {
+          return {
+            declarations: [],
+            symbols: getStandardInstanceSymbols(instance, standardSymbols),
+            instancer: parsed.name,
+          };
+        }
+        const linked = nested ?? getLinkedModule(instance.module, parsed.name);
+        const declarations = getDeclarations(linked);
+        return {
+          declarations,
+          symbols: getInstanceSymbols(instance, linked.exported, declarations, (key) => key),
+          instancer: parsed.name,
+        };
+      },
+      bound,
+      // SANY keeps the first of two definitions of a name.
+      definitions: new Map(
+        module.definitions.toReversed().map((definition) => [definition.name, definition]),
+      ),
+      getKey,
+      instanced,
+      facts,
+      reports,
+      warnings: scope.warnings,
+    });
     const getSymbolsBefore = (location: SourceLocation): Symbols =>
       new Map([
         ...visible,
-        ...[
-          ...parsed.constants.map((constant) => ({ ...constant, kind: "Constant" as const })),
-          ...parsed.variables.map((variable) => ({ ...variable, kind: "Variable" as const })),
-        ]
+        ...declarations
           .filter((declaration) => isBefore(declaration.location, location))
           .map((declaration): [string, ModuleSymbol] => [
             declaration.name,
-            { key: declaration.name, arity: declaration.arity, declaration: declaration.kind },
+            getDeclarationSymbol(declaration),
           ]),
         ...parsed.definitions
           .filter((definition) => isBefore(definition.location, location))
           .map((definition): [string, ModuleSymbol] => [
             definition.name,
-            { key: getKey(definition), arity: getArity(definition) },
+            getDefinitionSymbol(definition),
           ]),
       ]);
+    // Generator.generateModule reports the errors of a nested module and goes on, and then
+    // SymbolTable.addModule reports a module already defined.
     const linkNested = (nested: Module) => {
       const visibleModules = getVisibleModules();
-      if (visibleModules.has(nested.name)) throw createModuleRedefinedError(nested);
+      const existing = visibleModules.get(nested.name);
+      const redefinition = existing && getModuleRedefinition(nested, existing.module);
+      if (existing && !redefinition) throw createModuleRedefinedError(nested);
       scope.nested.push(nested);
+      const report: ModuleReport = { location: nested.location, errors: [], warnings: [] };
+      reports.push(report);
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
         symbols: getSymbolsBefore(nested.location),
         modules: visibleModules,
         nested: scope.nested,
+        errors: report.errors,
+        warnings: report.warnings,
+        levelChecks: scope.levelChecks,
       });
-      modules.set(nested.name, linked);
+      if (redefinition) report.errors.push(redefinition);
+      if (!existing) modules.set(nested.name, linked);
       if (!nestedModules.has(nested.name)) nestedModules.set(nested.name, linked);
     };
     [
@@ -738,10 +962,13 @@ export const createEnvironment = (
             isParameterFree,
             getVisibleModules().get(instance.module),
           );
-          symbols.forEach((_, name) => {
-            if (!visible.has(name)) importedAt.set(name, instance.location);
+          instanced.set(instance, symbols);
+          symbols.forEach((symbol, name) => {
+            if (visible.has(name)) return;
+            importedAt.set(name, instance.location);
+            visible.set(name, symbol);
+            if (!instance.isLocal) exported.set(name, symbol);
           });
-          addSymbols(symbols, !instance.isLocal);
         },
       })),
       ...parsed.modules.map((nested) => ({
@@ -751,50 +978,29 @@ export const createEnvironment = (
     ]
       .sort((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
       .forEach((unit) => unit.link());
-    checkRedefinitions(parsed, getUnit(parsed));
-    const isInstancedAfterDefinition = (nested: Module) => {
-      const first = parsed.instances.find((instance) => instance.module === nested.name);
-      return first !== undefined && isBefore(nested.location, first.location);
-    };
-    const getLetModule = (instance: Instance) => {
-      const own = parsed.modules.find((nested) => nested.name === instance.module);
-      if (!own) return getVisibleModules().get(instance.module);
-      return isInstancedAfterDefinition(own) ? modules.get(own.name) : undefined;
-    };
     const module = resolveModuleSubexpressions(
       withLetInstances(parsed, (instance, lets) =>
         instantiateLocally(instance, lets, parsed.name, getLetModule(instance)),
       ),
       getAvailableDefinitions(visible),
     );
-    resolveModule(module, getUnit(module));
-    const facts = getFactNames(module);
+    scope.errors.push(...resolveModule(module, getUnit(module)));
     module.definitions.forEach((definition) => {
       const key = getKey(definition);
       definitions.set(key, definition);
       parameterized.set(key, !isParameterFree);
-      const isFact = facts.has(definition.name);
+      const symbol = getDefinitionSymbol(definition);
       const importedLocation = importedAt.get(definition.name);
       // SANY binds the name of a fact to a fact the module imports before it.
       if (
-        isFact &&
-        visible.get(definition.name)?.declaration === "Fact" &&
+        symbol.kind === "Theorem" &&
+        visible.get(definition.name)?.kind === "Theorem" &&
         (importedLocation === undefined || isBefore(importedLocation, definition.location))
       ) {
         return;
       }
-      const symbol: ModuleSymbol = {
-        key,
-        arity: getArity(definition),
-        declaration: isFact ? "Fact" : undefined,
-      };
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
-    });
-    checkModuleLevels(module, {
-      constants: new Set(constants.map((constant) => constant.name)),
-      variables: new Set(variables),
-      getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
     });
     const linked = {
       module,
@@ -805,12 +1011,36 @@ export const createEnvironment = (
       exported,
       modules,
       extended,
+      facts: new Set([
+        ...facts,
+        ...[...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
+      ]),
     };
+    if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
+    // SANY checks the instances of a module with its definitions and theorems, so it reports their
+    // errors together.
+    const checks = instanceChecks
+      .splice(firstCheck)
+      .map((check) => ({ location: check.location, check: () => checkInstance(check) }));
+    scope.levelChecks.push(() =>
+      checkModuleLevels(
+        module,
+        {
+          constants: new Set(constants.map((constant) => constant.name)),
+          variables: new Set(variables),
+          getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
+          getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
+        },
+        checks,
+        warnings,
+      ),
+    );
     linkedList.push(linked);
     return linked;
   };
 
   const linkedRoot = linkTopLevel(root).linked;
+  if (warnings.length > 0 && !options.isSanyReported) options.print(formatSanyWarnings(warnings));
   const getRootKey = (name: string) => linkedRoot.visible.get(name)?.key ?? name;
   linkedRoot.visible.forEach((symbol, name) => {
     const definition = definitions.get(symbol.key);
@@ -976,6 +1206,7 @@ export const createEnvironment = (
     (name) => !constants.has(name) && !substitutions.has(name) && !operatorKeys.has(name),
   );
   if (unassigned.length > 0 && !options.isUnconfigured) {
+    // TLC reports the first constant it finds unassigned in SANY's order of declarations.
     const name =
       getTlcDeclarationOrder(options.source, options.loadModule, "constant").find((constant) =>
         unassigned.includes(constant),
@@ -1009,20 +1240,6 @@ export const createEnvironment = (
     substitutedDefinitions,
     evaluators: new WeakMap(),
   };
-  checkInstances(instanceChecks, (name) => {
-    const linked = linkedModules.get(name) ?? nestedModules.get(name) ?? linkedRoot;
-    return {
-      constants: linked.constants,
-      variables: linked.variables,
-      definitions: [
-        ...new Set(
-          [...linked.visible.values()].flatMap((symbol) => definitions.get(symbol.key) ?? []),
-        ),
-      ],
-      assumptions: linked.module.assumptions.map((assumption) => assumption.expression),
-      getDefinition: (symbol) => definitions.get(linked.visible.get(symbol)?.key ?? symbol),
-    };
-  });
   // TLC evaluates a substitute at startup and rejects it only when that fails and the level bound it
   // computes is above constant. The bound counts the operators that TLC's Java code overrides with
   // a minimum level as state-level, so the analyzer takes them for variables.

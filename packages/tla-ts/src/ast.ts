@@ -33,9 +33,12 @@ export interface StringExpression {
   location: SourceLocation;
 }
 
+// selectorRanges holds the range of each part of a name such as foo!lab, where SANY reports an
+// error in selecting that part.
 export interface IdentifierExpression {
   kind: "Identifier";
   name: string;
+  selectorRanges?: SourceRange[];
   location: SourceLocation;
   resolution?: LocalResolution;
 }
@@ -47,6 +50,11 @@ export interface ApplyExpression {
   // The number of args each part of a name like F(x)!l(y) takes, when a part before the last takes
   // some.
   argumentCounts?: number[];
+  // The range of the parenthesized arguments of a named operator, where SANY reports their count.
+  argumentsRange?: SourceRange;
+  selectorRanges?: SourceRange[];
+  // The range of the arguments of each part of a name like F(x)!l(y), for a part that takes some.
+  argumentRanges?: (SourceRange | undefined)[];
   location: SourceLocation;
   resolution?: LocalResolution;
 }
@@ -60,6 +68,7 @@ export interface OperatorReferenceExpression {
 export interface LambdaExpression {
   kind: "Lambda";
   params: string[];
+  paramRanges?: SourceRange[];
   body: Expression;
   location: SourceLocation;
 }
@@ -120,7 +129,10 @@ export interface LetExpression {
   location: SourceLocation;
 }
 
-export type BoundPattern = { kind: "Name"; name: string } | { kind: "Tuple"; names: string[] };
+// ranges holds the range of each name the pattern binds.
+export type BoundPattern =
+  | { kind: "Name"; name: string; ranges?: SourceRange[] }
+  | { kind: "Tuple"; names: string[]; ranges?: SourceRange[] };
 
 export interface Bound {
   pattern: BoundPattern;
@@ -138,6 +150,7 @@ export interface UnboundedQuantifierExpression {
   kind: "UnboundedQuantifier";
   quantifier: "Forall" | "Exists";
   names: string[];
+  nameRanges?: SourceRange[];
   isTemporal?: boolean;
   body: Expression;
   location: SourceLocation;
@@ -195,6 +208,7 @@ export interface FunctionSetExpression {
 export interface RecordField {
   name: string;
   value: Expression;
+  location: SourceLocation;
 }
 
 export interface RecordExpression {
@@ -277,6 +291,7 @@ export interface LabelExpression {
   kind: "Label";
   name: string;
   params: string[];
+  paramRanges?: SourceRange[];
   body: Expression;
   location: SourceLocation;
 }
@@ -291,6 +306,8 @@ export type Selector =
 export interface SubexpressionExpression {
   kind: "Subexpression";
   selectors: Selector[];
+  selectorRanges?: SourceRange[];
+  argumentRanges?: (SourceRange | undefined)[];
   location: SourceLocation;
 }
 
@@ -377,6 +394,7 @@ export interface Assumption {
 
 export interface InstanceSubstitution {
   name: string;
+  nameRange: SourceRange;
   expression: Expression;
 }
 
@@ -398,6 +416,7 @@ export interface NewSymbol {
   arity: number;
   level: "Constant" | "Variable" | "State" | "Action" | "Temporal";
   set: Expression | undefined;
+  nameRange?: SourceRange;
   location: SourceLocation;
 }
 
@@ -449,19 +468,27 @@ export type StepBody =
   | Instance
   | DefineStep
   | { kind: "Have"; expression: Expression }
-  | { kind: "Take"; names: string[]; bounds: Bound[] }
+  | { kind: "Take"; names: string[]; nameRanges?: SourceRange[]; bounds: Bound[] }
   | { kind: "Witness"; expressions: Expression[] }
-  | { kind: "Pick"; names: string[]; bounds: Bound[]; body: Expression }
+  | {
+      kind: "Pick";
+      names: string[];
+      nameRanges?: SourceRange[];
+      bounds: Bound[];
+      body: Expression;
+    }
   | { kind: "Case"; expression: Expression }
   | { kind: "Assert"; isSuffices: boolean; statement: Expression | AssumeProve }
   | { kind: "Qed" };
 
-// head is the range of the step number and its statement, without the proof.
+// head is the range of the step number and its statement, without the proof, and statement is the
+// range of the statement alone.
 export interface ProofStep {
   name: string | undefined;
   token: string;
   body: StepBody;
   head: SourceRange;
+  statement: SourceRange;
   proof: Proof | undefined;
   location: SourceLocation;
 }
