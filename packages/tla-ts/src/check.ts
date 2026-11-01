@@ -641,6 +641,7 @@ const getSpecification = (config: ModelConfig, environment: Environment): Specif
               state: undefined,
               next: undefined,
               cache: undefined,
+              isStreamed: false,
             },
             parent,
           },
