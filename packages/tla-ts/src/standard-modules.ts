@@ -162,8 +162,11 @@ export const CORE_OPERATORS: Builtin[] = [
               : differenceSorted;
         // The merge compares the elements, which TLC tests for membership one by one instead.
         return computeLikeTlcOnFailure(
-          () => merge(toFiniteSet(left), toFiniteSet(right)),
-          () => combineReducible(operator, left, right),
+          (finiteLeft, finiteRight) => merge(toFiniteSet(finiteLeft), toFiniteSet(finiteRight)),
+          (reducibleLeft, reducibleRight) =>
+            combineReducible(operator, reducibleLeft, reducibleRight),
+          left,
+          right,
         );
       }
       if (isReducibleSet(left)) return combineReducible(operator, left, right);
