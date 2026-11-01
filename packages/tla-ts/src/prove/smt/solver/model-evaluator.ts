@@ -66,10 +66,12 @@ export class ModelEvaluator extends RewriterTpl {
   }
 
   reduceApp(decl: number, args: number[], sort: number) {
-    return this.manager.withTemporaries(
-      () => this.reduceAppCore(decl, args, sort),
-      (result) => (result === -1 ? [] : [typeof result === "number" ? result : result.expr]),
-    );
+    const manager = this.manager;
+    const outer = manager.beginTemporaries();
+    const result = this.reduceAppCore(decl, args, sort);
+    if (result !== -1) manager.incRef(typeof result === "number" ? result : result.expr);
+    manager.endTemporaries(outer);
+    return result;
   }
 
   // evaluator_cfg::reduce_app_core. -1 is BR_FAILED.
