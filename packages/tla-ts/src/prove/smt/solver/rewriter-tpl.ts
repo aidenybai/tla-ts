@@ -426,45 +426,45 @@ class RewriterEngine extends SubstCore {
   // operator(): the result comes with a reference, which the caller releases.
   rewrite(expr: number): number {
     const manager = this.manager;
-    return manager.withoutTemporaries(() => {
-      if (this.numFrames > 0 || this.scopes.length > 0) {
-        this.numFrames = 0;
-        this.shrinkResults(0);
-        this.scopes = [];
-        this.caches[0].reset();
-      }
-      this.root = expr;
-      this.numQvars = 0;
-      // main_loop and each step of resume_core count a step of the resource limit, and throw
-      // SmtCanceledError when it cancels the rewrite.
-      manager.limit.checkpoint();
-      if (!this.visit(expr, Infinity))
-        while (this.numFrames > 0) {
-          manager.limit.checkpoint();
-          const frame = this.frames[this.numFrames - 1];
-          const curr = frame.curr;
-          if (frame.childIndex === 0 && frame.state === PROCESS_CHILDREN && frame.isCaching) {
-            const cached = this.cache.find(curr, 0);
-            if (cached !== undefined) {
-              this.pushResult(cached);
-              this.numFrames--;
-              this.setNewChildFlag(curr, cached);
-              continue;
-            }
-          }
-          const kind = manager.kinds[curr];
-          if (kind === KIND_APP) this.processApp(curr, frame);
-          else if (kind === KIND_QUANTIFIER) this.processQuantifier(curr, frame);
-          else {
-            // A definition that is a variable gets a frame of its own.
+    const outer = manager.suspendTemporaries();
+    if (this.numFrames > 0 || this.scopes.length > 0) {
+      this.numFrames = 0;
+      this.shrinkResults(0);
+      this.scopes = [];
+      this.caches[0].reset();
+    }
+    this.root = expr;
+    this.numQvars = 0;
+    // main_loop and each step of resume_core count a step of the resource limit, and throw
+    // SmtCanceledError when it cancels the rewrite.
+    manager.limit.checkpoint();
+    if (!this.visit(expr, Infinity))
+      while (this.numFrames > 0) {
+        manager.limit.checkpoint();
+        const frame = this.frames[this.numFrames - 1];
+        const curr = frame.curr;
+        if (frame.childIndex === 0 && frame.state === PROCESS_CHILDREN && frame.isCaching) {
+          const cached = this.cache.find(curr, 0);
+          if (cached !== undefined) {
+            this.pushResult(cached);
             this.numFrames--;
-            this.processVar(curr);
+            this.setNewChildFlag(curr, cached);
+            continue;
           }
         }
-      const result = this.resultStack[this.resultStack.length - 1];
-      this.resultStack.pop();
-      return result;
-    });
+        const kind = manager.kinds[curr];
+        if (kind === KIND_APP) this.processApp(curr, frame);
+        else if (kind === KIND_QUANTIFIER) this.processQuantifier(curr, frame);
+        else {
+          // A definition that is a variable gets a frame of its own.
+          this.numFrames--;
+          this.processVar(curr);
+        }
+      }
+    const result = this.resultStack[this.resultStack.length - 1];
+    this.resultStack.pop();
+    manager.resumeTemporaries(outer);
+    return result;
   }
 
   // operator() with bindings: resets the rewriter and substitutes bindings[n - 1 - i] for (:var i).
@@ -931,42 +931,42 @@ export class BetaReducer extends SubstCore {
   // operator(): the result comes with a reference, which the caller releases.
   rewrite(expr: number): number {
     const manager = this.manager;
-    return manager.withoutTemporaries(() => {
-      if (this.numFrames > 0 || this.scopes.length > 0) {
-        this.numFrames = 0;
-        this.shrinkResults(0);
-        this.scopes = [];
-        this.caches[0].reset();
-      }
-      this.root = expr;
-      this.numQvars = 0;
-      // main_loop and each step of resume_core count a step of the resource limit, and throw
-      // SmtCanceledError when it cancels the rewrite.
-      manager.limit.checkpoint();
-      if (!this.visit(expr))
-        while (this.numFrames > 0) {
-          manager.limit.checkpoint();
-          const top = this.numFrames - 1;
-          const curr = this.frameExprs[top];
-          if (
-            this.frameChildIndexes[top] === 0 &&
-            (this.frameFlags[top] & (FRAME_CACHING | FRAME_FOLDED)) === FRAME_CACHING
-          ) {
-            const cached = this.cache.find(curr, 0);
-            if (cached !== undefined) {
-              this.pushResult(cached);
-              this.numFrames--;
-              this.markNewChild(curr, cached);
-              continue;
-            }
+    const outer = manager.suspendTemporaries();
+    if (this.numFrames > 0 || this.scopes.length > 0) {
+      this.numFrames = 0;
+      this.shrinkResults(0);
+      this.scopes = [];
+      this.caches[0].reset();
+    }
+    this.root = expr;
+    this.numQvars = 0;
+    // main_loop and each step of resume_core count a step of the resource limit, and throw
+    // SmtCanceledError when it cancels the rewrite.
+    manager.limit.checkpoint();
+    if (!this.visit(expr))
+      while (this.numFrames > 0) {
+        manager.limit.checkpoint();
+        const top = this.numFrames - 1;
+        const curr = this.frameExprs[top];
+        if (
+          this.frameChildIndexes[top] === 0 &&
+          (this.frameFlags[top] & (FRAME_CACHING | FRAME_FOLDED)) === FRAME_CACHING
+        ) {
+          const cached = this.cache.find(curr, 0);
+          if (cached !== undefined) {
+            this.pushResult(cached);
+            this.numFrames--;
+            this.markNewChild(curr, cached);
+            continue;
           }
-          if (manager.kinds[curr] === KIND_APP) this.processApp(curr, top);
-          else this.processQuantifier(curr, top);
         }
-      const result = this.resultStack[this.resultStack.length - 1];
-      this.resultStack.pop();
-      return result;
-    });
+        if (manager.kinds[curr] === KIND_APP) this.processApp(curr, top);
+        else this.processQuantifier(curr, top);
+      }
+    const result = this.resultStack[this.resultStack.length - 1];
+    this.resultStack.pop();
+    manager.resumeTemporaries(outer);
+    return result;
   }
 
   // operator() with bindings: resets the rewriter and substitutes bindings[n - 1 - i] for (:var i).

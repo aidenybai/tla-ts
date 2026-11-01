@@ -5,7 +5,15 @@ import { AstManager, KIND_APP, OP_AND, OP_IMPLIES, OP_ITE, OP_OR } from "./ast";
 import type { Enode } from "./enode";
 import { shrink } from "./array";
 
-export type RelevancyHandler = () => void;
+// A handler is a closure, or the propagation of an or, an and or an ite once it is relevant, as
+// mkPropagation codes it, which needs no closure.
+export type RelevancyHandler = (() => void) | number;
+
+export const PROPAGATE_OR = 1;
+export const PROPAGATE_AND = 2;
+export const PROPAGATE_ITE = 3;
+
+export const mkPropagation = (kind: number, expr: number) => 4 * expr + kind;
 
 export interface RelevancyContext {
   manager: AstManager;
@@ -49,7 +57,7 @@ export class RelevancyPropagator {
   addHandler(source: number, handler: RelevancyHandler) {
     if (!this.isEnabled) return;
     if (this.isRelevant(source)) {
-      handler();
+      this.runHandler(handler);
       return;
     }
     this.pushTrail(TRAIL_HANDLER, source, handler);
@@ -65,7 +73,7 @@ export class RelevancyPropagator {
     const assignment = this.context.findAssignment(expr) * (value ? 1 : -1);
     if (assignment < 0) return;
     if (assignment > 0) {
-      handler();
+      this.runHandler(handler);
       return;
     }
     this.pushTrail(value ? TRAIL_POS_WATCH : TRAIL_NEG_WATCH, expr, handler);
@@ -93,7 +101,20 @@ export class RelevancyPropagator {
     const head = 3 * expr + kind;
     if (head >= this.heads.length) return;
     for (let cell = this.heads[head]; cell !== 0; cell = this.trailNext[cell - 1])
-      this.trailHandlers[cell - 1]();
+      this.runHandler(this.trailHandlers[cell - 1]);
+  }
+
+  private runHandler(handler: RelevancyHandler) {
+    if (typeof handler !== "number") {
+      handler();
+      return;
+    }
+    const expr = handler >>> 2;
+    if (!this.isRelevant(expr)) return;
+    const kind = handler & 3;
+    if (kind === PROPAGATE_OR) this.propagateOr(expr);
+    else if (kind === PROPAGATE_AND) this.propagateAnd(expr);
+    else this.propagateIte(expr);
   }
 
   push() {

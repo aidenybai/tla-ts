@@ -39,7 +39,7 @@ import {
   isArithSort,
 } from "./ast";
 import { getRewriteDepth, type Rewrite, RewriterTpl } from "./rewriter-tpl";
-import { sortByKey } from "./sort";
+import { sortByKeys } from "./sort";
 import { UnusedVarsEliminator } from "./var-subst";
 
 export interface RewriterOptions {
@@ -436,7 +436,8 @@ export class Rewriter extends RewriterTpl {
   // sort_disjunctions, a disjunction that changed or is out of ast_lt's order is stably sorted by id.
   mkOr(args: number[]): number {
     const manager = this.manager;
-    const isNested = args.some((arg) => manager.getOp(arg) === OP_OR);
+    let isNested = false;
+    for (const arg of args) if (manager.getOp(arg) === OP_OR) isNested = true;
     const flatArgs = isNested ? this.flattenArgs(args, OP_OR) : args;
     const literals = manager.flatLiterals;
     literals.clear();
@@ -446,12 +447,12 @@ export class Rewriter extends RewriterTpl {
       if (literals.add(arg)) return manager.trueExpr;
     }
     const result = literals.list;
-    const isOutOfOrder = result.some(
-      (arg, index) => index > 0 && isAstLess(manager, arg, result[index - 1]),
-    );
+    let isOutOfOrder = false;
+    for (let index = 1; index < result.length && !isOutOfOrder; index++)
+      isOutOfOrder = isAstLess(manager, result[index], result[index - 1]);
     // Dropping false or a duplicate disjunct also sets mk_nflat_or_core's s.
     if (isNested || result.length !== flatArgs.length || isOutOfOrder)
-      sortByKey(result, (arg) => manager.ids[arg]);
+      sortByKeys(result, manager.ids);
     return manager.mkOr(result);
   }
 

@@ -253,7 +253,13 @@ export class ActCache {
         this.manager.decRef(this.values[cell]);
       }
     }
-    if (this.size > 0) {
+    if (this.size > 0 && this.slots === INIT_SLOTS && this.capacity === INIT_SLOTS + INIT_CELLAR) {
+      // A table of the initial size empties in place, as a spare of its size would be.
+      this.nexts.fill(FREE_CELL);
+      this.nextCell = INIT_SLOTS;
+      this.freeCell = NO_CELL;
+      this.size = 0;
+    } else if (this.size > 0) {
       this.retireTable();
       this.initTable(INIT_SLOTS, INIT_CELLAR);
     }

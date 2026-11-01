@@ -26,32 +26,28 @@ export class VarSubst {
     }
     if (manager.hasQuantifierFlags[expr]) {
       const replace = new ExprSafeReplace(manager);
-      args.forEach((arg, index) => {
+      for (let index = 0; index < count; index++) {
+        const arg = args[index];
         if (arg !== -1)
           replace.insert(
             manager.mkVar(this.isStdOrder ? count - index - 1 : index, manager.sorts[arg]),
             arg,
           );
-      });
+      }
       const result = replace.apply(expr);
       replace.release();
       return result;
     }
-    if (
-      manager.kinds[expr] === KIND_APP &&
-      manager.everyArg(expr, (arg) => manager.isGroundApp(arg) || manager.kinds[arg] === KIND_VAR)
-    ) {
-      const result = manager.mkApp(
-        manager.decls[expr],
-        manager.mapArgs(expr, (arg) => {
-          if (manager.isGroundApp(arg)) return arg;
-          const index = manager.values[arg];
-          const replaced =
-            index < count ? (this.isStdOrder ? args[count - index - 1] : args[index]) : -1;
-          return replaced === -1 ? arg : replaced;
-        }),
-        manager.sorts[expr],
-      );
+    if (manager.kinds[expr] === KIND_APP && this.hasOnlyGroundOrVarArgs(expr)) {
+      const newArgs: number[] = [];
+      for (let position = 0; position < manager.getNumArgs(expr); position++) {
+        const arg = manager.getArg(expr, position);
+        const index = manager.isGroundApp(arg) ? count : manager.values[arg];
+        const replaced =
+          index < count ? (this.isStdOrder ? args[count - index - 1] : args[index]) : -1;
+        newArgs.push(replaced === -1 ? arg : replaced);
+      }
+      const result = manager.mkApp(manager.decls[expr], newArgs, manager.sorts[expr]);
       manager.incRef(result);
       return result;
     }
@@ -59,6 +55,15 @@ export class VarSubst {
     if (this.isStdOrder) this.reducer.setInvBindings(args);
     else this.reducer.setBindings(args);
     return this.reducer.rewrite(expr);
+  }
+
+  private hasOnlyGroundOrVarArgs(expr: number) {
+    const manager = this.manager;
+    for (let index = 0; index < manager.getNumArgs(expr); index++) {
+      const arg = manager.getArg(expr, index);
+      if (!manager.isGroundApp(arg) && manager.kinds[arg] !== KIND_VAR) return false;
+    }
+    return true;
   }
 
   // ~var_subst.

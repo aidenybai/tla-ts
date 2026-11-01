@@ -54,7 +54,14 @@ import {
   toBoolVar,
 } from "./literal";
 import type { DefaultQuantifierManager } from "./quantifier-manager";
-import { RelevancyPropagator } from "./relevancy";
+import {
+  mkPropagation,
+  PROPAGATE_AND,
+  PROPAGATE_ITE,
+  PROPAGATE_OR,
+  RelevancyPropagator,
+  type RelevancyHandler,
+} from "./relevancy";
 import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { sortNumbers } from "./sort";
 import type { TheoryLra } from "./theory-lra";
@@ -139,6 +146,8 @@ export abstract class Internalizer {
   // The literal_buffer of mk_and_cnstr and mk_or_cnstr, and the array that mk_gate_clause keeps on
   // the stack. mkClause neither keeps them nor makes a gate, so the gates reuse them.
   private gateBuffer: Literal[] = [];
+  private atomBuffer: number[] = [];
+  private watchedLiterals: Literal[] = [];
   private gateLiterals: Literal[] = [];
   // The binary clauses of the binary clause optimization: the literals each literal propagates when it
   // becomes true, which Z3 visits newest first and before the clauses.
@@ -362,7 +371,7 @@ export abstract class Internalizer {
   }
 
   enodesOf(decl: number) {
-    return this.decl2enodes.get(decl) ?? [];
+    return this.decl2enodes.get(decl) ?? NO_ENODES;
   }
 
   getLiteral(expr: number): Literal {
@@ -780,11 +789,11 @@ export abstract class Internalizer {
             const arg = manager.getArg(expr, index);
             this.internalizeRec(arg, true);
           }
-          this.mkClause(
-            manager.mapArgs(expr, (innerArg) => this.getLiteral(innerArg)),
-            null,
-            CLS_AUX,
-          );
+          const literals = this.gateBuffer;
+          shrink(literals, 0);
+          for (let index = 0; index < manager.getNumArgs(expr); index++)
+            literals.push(this.getLiteral(manager.getArg(expr, index)));
+          this.mkClause(literals, null, CLS_AUX);
           this.addOrRelWatches(expr);
           break;
         }
@@ -1060,14 +1069,12 @@ export abstract class Internalizer {
     this.relevancy.addHandler(expr, handler);
   }
 
-  private addRelWatch(literal: Literal, handler: () => void) {
+  private addRelWatch(literal: Literal, handler: RelevancyHandler) {
     this.relevancy.addWatch(this.boolVar2Expr[getVar(literal)], !isNegated(literal), handler);
   }
 
   private addAndRelWatches(expr: number) {
-    const handler = () => {
-      if (this.isRelevant(expr)) this.relevancy.propagateAnd(expr);
-    };
+    const handler = mkPropagation(PROPAGATE_AND, expr);
     for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
       const arg = this.manager.getArg(expr, index);
       const literal = this.getLiteral(arg);
@@ -1076,9 +1083,7 @@ export abstract class Internalizer {
   }
 
   private addOrRelWatches(expr: number) {
-    const handler = () => {
-      if (this.isRelevant(expr)) this.relevancy.propagateOr(expr);
-    };
+    const handler = mkPropagation(PROPAGATE_OR, expr);
     for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
       const arg = this.manager.getArg(expr, index);
       const literal = this.getLiteral(arg);
@@ -1087,9 +1092,7 @@ export abstract class Internalizer {
   }
 
   private addIteRelWatches(expr: number) {
-    const handler = () => {
-      if (this.isRelevant(expr)) this.relevancy.propagateIte(expr);
-    };
+    const handler = mkPropagation(PROPAGATE_ITE, expr);
     const literal = this.getLiteral(this.manager.getArg(expr, 0));
     if (literal <= 1) return;
     this.addRelWatch(literal, handler);
@@ -1280,10 +1283,15 @@ export abstract class Internalizer {
     }
     const iscopeLevel = isLemma ? this.getMaxIscopeLevel(literals) : 0;
     const isSavingAtoms = isLemma && iscopeLevel > this.baseLevel;
-    const atoms = isSavingAtoms
-      ? literals.map((literal) => this.boolVar2Expr[getVar(literal)])
-      : null;
-    for (const atom of atoms ?? []) this.manager.incRef(atom);
+    const atoms = isSavingAtoms ? this.atomBuffer : null;
+    if (atoms !== null) {
+      shrink(atoms, 0);
+      for (const literal of literals) {
+        const atom = this.boolVar2Expr[getVar(literal)];
+        atoms.push(atom);
+        this.manager.incRef(atom);
+      }
+    }
     const clauses = this.clauses;
     const clause = clauses.mk(literals, kind, justification, delEh, atoms);
     if (isLemma) {
@@ -1335,6 +1343,12 @@ export abstract class Internalizer {
     this.clauses.clearAtoms(clause);
   }
 
+  private markWatch(literal: Literal) {
+    if (this.watchMarks[literal] === 1) return;
+    this.watchMarks[literal] = 1;
+    this.watchedLiterals.push(literal);
+  }
+
   // del_clauses: past 1,000 clauses, mark each deleted, filter each of their watch lists once, then
   // release their atoms, instead of searching a watch list per clause.
   protected deleteClauses(clauses: Clause[], oldSize: number) {
@@ -1346,12 +1360,7 @@ export abstract class Internalizer {
     }
     if (this.watchMarks.length < this.watches.length)
       this.watchMarks = new Uint8Array(Math.max(2 * this.watchMarks.length, this.watches.length));
-    const watched: Literal[] = [];
-    const markWatch = (literal: Literal) => {
-      if (this.watchMarks[literal] === 1) return;
-      this.watchMarks[literal] = 1;
-      watched.push(literal);
-    };
+    const watched = this.watchedLiterals;
     const store = this.clauses;
     for (let index = clauses.length - 1; index >= oldSize; index--) {
       const clause = clauses[index];
@@ -1359,8 +1368,8 @@ export abstract class Internalizer {
         store.markAsDeleted(clause);
         store.getDelEh(clause)?.();
       }
-      markWatch(negate(store.getLiteral(clause, 0)));
-      markWatch(negate(store.getLiteral(clause, 1)));
+      this.markWatch(negate(store.getLiteral(clause, 0)));
+      this.markWatch(negate(store.getLiteral(clause, 1)));
     }
     for (const literal of watched) {
       this.watchMarks[literal] = 0;
@@ -1371,6 +1380,7 @@ export abstract class Internalizer {
         if (!store.isDeleted(list[index])) list[kept++] = list[index];
       shrink(list, kept);
     }
+    shrink(watched, 0);
     for (let index = clauses.length - 1; index >= oldSize; index--) {
       const clause = clauses[index];
       if (store.isReinternalizeAtoms(clause)) this.releaseAtoms(clause);

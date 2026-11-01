@@ -5,19 +5,42 @@
 import { KIND_APP, KIND_VAR, OP_AND, OP_EQ, OP_FALSE, OP_ITE, OP_NOT, OP_OR, OP_TRUE } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
+import type { FingerprintSet } from "./fingerprints";
 import { RefVector } from "./ref-vector";
 import { VarSubst } from "./var-subst";
-import { setAt, shrink } from "./array";
+import { shrink } from "./array";
 
 const EAGER_COST_THRESHOLD = 10;
 const LAZY_COST_THRESHOLD = 20;
 
-interface Entry {
-  quantifier: number;
-  bindings: Enode[];
-  cost: number;
-  generation: number;
-  isInstantiated: boolean;
+// The entries of a queue by field, so that an entry takes no object: the quantifier, the
+// fingerprint whose roots are the bindings, the cost, the generation and whether it was instantiated.
+class Entries {
+  quantifiers: number[] = [];
+  fingerprints: number[] = [];
+  costs: number[] = [];
+  generations: number[] = [];
+  isInstantiated: boolean[] = [];
+
+  get size() {
+    return this.quantifiers.length;
+  }
+
+  push(quantifier: number, fingerprint: number, cost: number, generation: number) {
+    this.quantifiers.push(quantifier);
+    this.fingerprints.push(fingerprint);
+    this.costs.push(cost);
+    this.generations.push(generation);
+    this.isInstantiated.push(false);
+  }
+
+  shrink(size: number) {
+    shrink(this.quantifiers, size);
+    shrink(this.fingerprints, size);
+    shrink(this.costs, size);
+    shrink(this.generations, size);
+    shrink(this.isInstantiated, size);
+  }
 }
 
 // A copy of the array with room for the index, at least twice as long.
@@ -29,30 +52,42 @@ const grow = (array: Int32Array, index: number) => {
 
 // smt::checker: evaluates a quantifier body under bindings with the E-graph and the assignment.
 class Checker {
-  private bindings: Enode[] = [];
+  // The bindings are numBindings nodes of roots from bindingStart.
+  private roots: Enode[] = [];
+  private bindingStart = 0;
+  private numBindings = 0;
   // The caches of a run, by expression, which hold an entry for the run whose stamp it has. So a run
   // starts with them empty without clearing them.
   private stamp = 0;
   private checkStamps = new Int32Array(1024);
   private checkResults = new Int32Array(1024);
   private enodeStamps = new Int32Array(1024);
-  private enodeResults: (Enode | null | undefined)[] = [];
+  // The owner of the node found, or -1 for none, so that the cache holds no objects.
+  private enodeResults = new Int32Array(1024);
   // The ptr_buffer of each level of get_enode_eq_to_core, which Z3 keeps on the stack.
   private argBuffers: Enode[][] = [];
   private argDepth = 0;
 
   constructor(private context: Context) {}
 
-  isSat(body: number, bindings: Enode[]) {
-    return this.run(body, bindings, true);
+  isSat(body: number, roots: Enode[], bindingStart: number, numBindings: number) {
+    return this.run(body, roots, bindingStart, numBindings, true);
   }
 
-  isUnsat(body: number, bindings: Enode[]) {
-    return this.run(body, bindings, false);
+  isUnsat(body: number, roots: Enode[], bindingStart: number, numBindings: number) {
+    return this.run(body, roots, bindingStart, numBindings, false);
   }
 
-  private run(body: number, bindings: Enode[], isTrue: boolean) {
-    this.bindings = bindings;
+  private run(
+    body: number,
+    roots: Enode[],
+    bindingStart: number,
+    numBindings: number,
+    isTrue: boolean,
+  ) {
+    this.roots = roots;
+    this.bindingStart = bindingStart;
+    this.numBindings = numBindings;
     this.stamp++;
     return this.check(body, 0, isTrue);
   }
@@ -167,13 +202,21 @@ class Checker {
     const manager = context.manager;
     if (manager.kinds[expr] === KIND_VAR) {
       const index = manager.values[expr];
-      return index < this.bindings.length ? this.bindings[this.bindings.length - index - 1] : null;
+      return index < this.numBindings
+        ? this.roots[this.bindingStart + this.numBindings - index - 1]
+        : null;
     }
     const existing = context.getEnode(expr);
     if (existing !== undefined && context.isRelevant(expr)) return existing;
     if (manager.kinds[expr] !== KIND_APP || manager.getNumArgs(expr) === 0) return null;
-    if (expr >= this.enodeStamps.length) this.enodeStamps = grow(this.enodeStamps, expr);
-    if (this.enodeStamps[expr] === this.stamp) return this.enodeResults[expr] ?? null;
+    if (expr >= this.enodeStamps.length) {
+      this.enodeStamps = grow(this.enodeStamps, expr);
+      this.enodeResults = grow(this.enodeResults, expr);
+    }
+    if (this.enodeStamps[expr] === this.stamp) {
+      const owner = this.enodeResults[expr];
+      return owner === -1 ? null : (context.getEnode(owner) ?? null);
+    }
     const depth = this.argDepth;
     if (depth === this.argBuffers.length) this.argBuffers.push([]);
     const argNodes = this.argBuffers[depth];
@@ -185,7 +228,7 @@ class Checker {
       if (node === null) {
         this.argDepth = depth;
         this.enodeStamps[expr] = this.stamp;
-        setAt(this.enodeResults, expr, null);
+        this.enodeResults[expr] = -1;
         return null;
       }
       argNodes.push(node);
@@ -194,23 +237,26 @@ class Checker {
     const found = context.findCongruent(manager.decls[expr], argNodes);
     const result = found !== undefined && context.isRelevant(found.owner) ? found : null;
     this.enodeStamps[expr] = this.stamp;
-    setAt(this.enodeResults, expr, result);
+    this.enodeResults[expr] = result === null ? -1 : result.owner;
     return result;
   }
 }
 
 export class QiQueue {
-  private newEntries: Entry[] = [];
-  private delayedEntries: Entry[] = [];
+  private newEntries = new Entries();
+  private spareEntries = new Entries();
+  private delayedEntries = new Entries();
   private instantiatedTrail: number[] = [];
   private scopes: number[] = [];
   private checker: Checker;
   // cached_var_subst: each instance by its quantifier and bindings, which the queue holds with them
   // until the next search. instanceRefs lists the quantifier, the bindings and the instance of each.
-  // instanceStarts holds where each instance starts there, and instanceNext the earlier instance of
-  // the same hash, or -1. instances maps a hash of the key to its last instance.
+  // instanceStarts holds where each instance starts there, and instanceNext the earlier instance in
+  // the same bucket, or -1. instanceBuckets holds the last instance of each bucket of hashes, which
+  // instanceHashes tells apart.
   private subst: VarSubst;
-  private instances = new Map<number, number>();
+  private instanceBuckets = new Int32Array(1024).fill(-1);
+  private instanceHashes: number[] = [];
   private instanceRefs: number[] = [];
   private instanceStarts: number[] = [];
   private instanceNext: number[] = [];
@@ -219,7 +265,10 @@ export class QiQueue {
   private lemmas: RefVector;
   numInstances = 0;
 
-  constructor(private context: Context) {
+  constructor(
+    private context: Context,
+    private fingerprints: FingerprintSet,
+  ) {
     this.checker = new Checker(context);
     this.subst = new VarSubst(context.manager, true);
     this.lemmas = new RefVector(context.manager);
@@ -230,8 +279,10 @@ export class QiQueue {
     const refs = this.instanceRefs;
     let hash = quantifier;
     for (const binding of bindings) hash = (Math.imul(hash, 0x9e3779b1) + binding) | 0;
-    const last = this.instances.get(hash) ?? -1;
+    const bucket = hash & (this.instanceBuckets.length - 1);
+    const last = this.instanceBuckets[bucket];
     for (let entry = last; entry !== -1; entry = this.instanceNext[entry]) {
+      if (this.instanceHashes[entry] !== hash) continue;
       const start = this.instanceStarts[entry];
       let isSame = refs[start] === quantifier;
       for (let index = 0; index < bindings.length && isSame; index++)
@@ -239,9 +290,11 @@ export class QiQueue {
       if (isSame) return refs[start + 1 + bindings.length];
     }
     const instance = this.subst.apply(manager.getQuantifier(quantifier).body, bindings);
-    this.instances.set(hash, this.instanceStarts.length);
+    this.instanceBuckets[bucket] = this.instanceStarts.length;
     this.instanceStarts.push(refs.length);
     this.instanceNext.push(last);
+    this.instanceHashes.push(hash);
+    if (this.instanceHashes.length > this.instanceBuckets.length) this.growInstanceBuckets();
     manager.incRef(quantifier);
     refs.push(quantifier);
     for (const binding of bindings) {
@@ -252,58 +305,89 @@ export class QiQueue {
     return instance;
   }
 
+  private growInstanceBuckets() {
+    const buckets = new Int32Array(2 * this.instanceBuckets.length).fill(-1);
+    const mask = buckets.length - 1;
+    for (let entry = 0; entry < this.instanceHashes.length; entry++) {
+      const bucket = this.instanceHashes[entry] & mask;
+      this.instanceNext[entry] = buckets[bucket];
+      buckets[bucket] = entry;
+    }
+    this.instanceBuckets = buckets;
+  }
+
   hasWork() {
-    return this.newEntries.length > 0;
+    return this.newEntries.size > 0;
   }
 
-  insert(quantifier: number, bindings: Enode[], generation: number) {
+  insert(quantifier: number, fingerprint: number, generation: number) {
     const weight = this.context.manager.getQuantifier(quantifier).weight;
-    this.newEntries.push({
-      quantifier,
-      bindings,
-      cost: weight + generation,
-      generation,
-      isInstantiated: false,
-    });
+    this.newEntries.push(quantifier, fingerprint, weight + generation, generation);
   }
 
+  // The entries trade places with the spare list, which the next inserts fill, so that the lists are
+  // reused.
   instantiate() {
     const entries = this.newEntries;
-    this.newEntries = [];
+    this.newEntries = this.spareEntries;
+    this.spareEntries = entries;
+    const manager = this.context.manager;
+    const fingerprints = this.fingerprints;
     let sinceLastCheck = 0;
-    for (const entry of entries) {
-      if (entry.cost <= EAGER_COST_THRESHOLD) this.instantiateEntry(entry);
-      else if (
-        this.checker.isUnsat(
-          this.context.manager.getQuantifier(entry.quantifier).body,
-          entry.bindings,
+    for (let index = 0; index < entries.size; index++) {
+      const quantifier = entries.quantifiers[index];
+      const fingerprint = entries.fingerprints[index];
+      if (entries.costs[index] <= EAGER_COST_THRESHOLD) this.instantiateEntry(entries, index);
+      else {
+        const data = manager.getQuantifier(quantifier);
+        if (
+          this.checker.isUnsat(
+            data.body,
+            fingerprints.roots,
+            fingerprints.getRootStart(fingerprint),
+            data.sorts.length,
+          )
         )
-      )
-        this.instantiateEntry(entry);
-      else this.delayedEntries.push(entry);
+          this.instantiateEntry(entries, index);
+        else
+          this.delayedEntries.push(
+            quantifier,
+            fingerprint,
+            entries.costs[index],
+            entries.generations[index],
+          );
+      }
       if (sinceLastCheck++ > 100) {
         if (this.context.checkCanceled()) break;
         sinceLastCheck = 0;
       }
     }
+    entries.shrink(0);
   }
 
-  private instantiateEntry(entry: Entry) {
+  private instantiateEntry(entries: Entries, index: number) {
     const context = this.context;
     if (context.isInconsistent()) return;
-    entry.isInstantiated = true;
+    entries.isInstantiated[index] = true;
     const manager = context.manager;
-    const data = manager.getQuantifier(entry.quantifier);
-    if (this.checker.isSat(data.body, entry.bindings)) return;
+    const quantifier = entries.quantifiers[index];
+    const cost = entries.costs[index];
+    const data = manager.getQuantifier(quantifier);
+    const fingerprints = this.fingerprints;
+    const roots = fingerprints.roots;
+    const bindingStart = fingerprints.getRootStart(entries.fingerprints[index]);
+    const numBindings = data.sorts.length;
+    if (this.checker.isSat(data.body, roots, bindingStart, numBindings)) return;
     // The bindings' expressions, which Z3 writes into the buffer that m_subst returns.
     const owners = this.bindingOwners;
     shrink(owners, 0);
-    for (const binding of entry.bindings) owners.push(binding.owner);
-    const substituted = this.getInstance(entry.quantifier, owners);
+    for (let offset = 0; offset < numBindings; offset++)
+      owners.push(roots[bindingStart + offset].owner);
+    const substituted = this.getInstance(quantifier, owners);
     manager.incRef(substituted);
     const instance = context.rewriter.rewrite(substituted);
     if (instance !== manager.trueExpr) {
-      const negated = manager.mkNot(entry.quantifier);
+      const negated = manager.mkNot(quantifier);
       const disjuncts = [negated];
       if (manager.getOp(instance) === OP_OR) manager.pushArgs(instance, disjuncts);
       else if (instance !== manager.falseExpr) disjuncts.push(instance);
@@ -311,9 +395,9 @@ export class QiQueue {
       this.lemmas.push(lemma);
       this.numInstances++;
       const newGeneration =
-        data.weight > 0 || entry.cost > 0
-          ? Math.trunc(entry.cost)
-          : Math.max(entry.generation + 1, Math.trunc(entry.cost));
+        data.weight > 0 || cost > 0
+          ? Math.trunc(cost)
+          : Math.max(entries.generations[index] + 1, Math.trunc(cost));
       context.internalizeAssertion(lemma, newGeneration);
     }
     manager.decRef(instance);
@@ -322,19 +406,19 @@ export class QiQueue {
 
   finalCheckEh() {
     let result = true;
-    for (let index = 0; index < this.delayedEntries.length; index++) {
-      const entry = this.delayedEntries[index];
-      if (entry.isInstantiated || entry.cost > LAZY_COST_THRESHOLD) continue;
+    const entries = this.delayedEntries;
+    for (let index = 0; index < entries.size; index++) {
+      if (entries.isInstantiated[index] || entries.costs[index] > LAZY_COST_THRESHOLD) continue;
       result = false;
       this.instantiatedTrail.push(index);
-      this.instantiateEntry(entry);
+      this.instantiateEntry(entries, index);
       if (this.context.checkCanceled()) break;
     }
     return result;
   }
 
   push() {
-    this.scopes.push(this.delayedEntries.length, this.instantiatedTrail.length, this.lemmas.size);
+    this.scopes.push(this.delayedEntries.size, this.instantiatedTrail.length, this.lemmas.size);
   }
 
   pop(numScopes: number) {
@@ -342,11 +426,11 @@ export class QiQueue {
     const delayedLimit = this.scopes[offset];
     const trailLimit = this.scopes[offset + 1];
     for (let index = trailLimit; index < this.instantiatedTrail.length; index++)
-      this.delayedEntries[this.instantiatedTrail[index]].isInstantiated = false;
+      this.delayedEntries.isInstantiated[this.instantiatedTrail[index]] = false;
     shrink(this.instantiatedTrail, trailLimit);
-    shrink(this.delayedEntries, delayedLimit);
+    this.delayedEntries.shrink(delayedLimit);
     this.lemmas.shrink(this.scopes[offset + 2]);
-    this.newEntries = [];
+    this.newEntries.shrink(0);
     shrink(this.scopes, offset);
   }
 
@@ -356,7 +440,8 @@ export class QiQueue {
     this.instanceRefs = [];
     this.instanceStarts = [];
     this.instanceNext = [];
-    this.instances.clear();
-    this.newEntries = [];
+    this.instanceHashes = [];
+    this.instanceBuckets.fill(-1);
+    this.newEntries.shrink(0);
   }
 }

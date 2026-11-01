@@ -120,8 +120,6 @@ export class Context extends Internalizer {
   private isPhaseCacheOn = true;
   private phaseCounter = 0;
   private finalCheckIndex = 0;
-  private r1ParentGenerations = new Map<Enode, number>();
-  private erasedGenerations = new Map<Enode, number>();
   private lastSearchFailure: SearchFailure = FAILURE_OK;
   private modelState: ModelState = { kind: "none" };
 
@@ -517,10 +515,7 @@ export class Context extends Internalizer {
     for (const parent of r1.parents) {
       if (parent.isMarked || !parent.isCgr() || parent.isTrueEq()) continue;
       parent.isMarked = true;
-      if (parent.isCgcEnabled) {
-        if (!parent.isEq) this.r1ParentGenerations.set(parent, parent.generation);
-        this.cgTable.erase(parent);
-      }
+      if (parent.isCgcEnabled) this.cgTable.erase(parent);
     }
   }
 
@@ -556,21 +551,16 @@ export class Context extends Internalizer {
         r2.addParent(parent);
         continue;
       }
-      const parentGeneration = parent.isEq
-        ? 0
-        : (this.r1ParentGenerations.get(parent) ?? this.getGeneration(parent));
       const congruent = this.cgTable.insert(parent);
       if (congruent === parent) {
-        parent.generation = parentGeneration;
         r2.addParent(parent);
         continue;
       }
       parent.cg = congruent;
-      this.mergeCgcGenerations(parent, parentGeneration, congruent);
+      this.mergeCgcGenerations(parent, parent.isEq ? 0 : parent.generation, congruent);
       if (congruent.root !== parent.root)
         this.pushEq(parent, congruent, getCongruenceJustification(parent, congruent));
     }
-    this.r1ParentGenerations.clear();
   }
 
   protected override undoTrailEntry(kind: number) {
@@ -598,12 +588,10 @@ export class Context extends Internalizer {
     const savedNext = r1.next;
     r1.next = r2.next;
     r2.next = savedNext;
-    const erasedGenerations = this.erasedGenerations;
-    erasedGenerations.clear();
     for (let index = r2NumParents; index < r2.parents.length; index++) {
       const parent = r2.parents[index];
       if (parent.isCgcEnabled) {
-        if (!parent.isEq) erasedGenerations.set(parent, parent.generation);
+        parent.isMarked = !parent.isEq;
         this.cgTable.erase(parent);
       }
     }
@@ -615,14 +603,15 @@ export class Context extends Internalizer {
     shrink(r2.parents, r2NumParents);
     for (const parent of r1.parents) {
       if (!parent.isCgcEnabled) continue;
+      const isErased = parent.isMarked;
+      parent.isMarked = false;
       const cg = parent.cg;
       if (parent.isTrueEq() || (parent !== cg && isCongruent(parent, cg))) continue;
       let generation = 100000;
       if (parent.isEq) generation = 0;
       else if (parent === cg) {
-        const cached = erasedGenerations.get(parent);
-        if (cached === undefined) continue;
-        generation = cached;
+        if (!isErased) continue;
+        generation = parent.generation;
       }
       const congruent = this.cgTable.insert(parent);
       parent.cg = congruent;
