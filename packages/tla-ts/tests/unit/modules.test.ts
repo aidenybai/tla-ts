@@ -129,6 +129,29 @@ describe("nested module scoping matches SANY", () => {
     expect(result.status).toBe("assumption-violation");
   });
 
+  it("reads a module loadModule gives in place of a standard module, with Java's methods for its definitions", async () => {
+    const bags = "---- MODULE Bags ----\nEXTENDS Naturals\nEmptyBag == 42\nMine == 5\n====";
+    const results = await Promise.all(
+      ["EXTENDS Bags", "INSTANCE Bags"].map((use) =>
+        checkSource(`${use}\nASSUME DOMAIN EmptyBag = {} /\\ Mine = 5`, { Bags: bags }),
+      ),
+    );
+    results.forEach((result) => expect(result.status).toBe("success"));
+  });
+
+  it("replaces ToJson of a user's Json module on master, but not on TLC 1.7.4, which has no Json class", async () => {
+    const checkJson = (version: "master" | "1.7.4", json: string) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Json\nASSUME ToJson(1) = ${json}\n====`,
+        config: "",
+        loadModule: (name) =>
+          name === "Json" ? '---- MODULE Json ----\nToJson(x) == "mine"\n====' : undefined,
+        version,
+      });
+    const results = await Promise.all([checkJson("master", '"1"'), checkJson("1.7.4", '"mine"')]);
+    results.forEach((result) => expect(result.status).toBe("success"));
+  });
+
   it.each([
     ["an outer definition after the nested module", "---- MODULE Inner ----\nA == B\n====\nB == 1"],
     [
