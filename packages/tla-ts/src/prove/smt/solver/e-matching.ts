@@ -57,6 +57,13 @@ const isEqualPath = (first: Path, second: Path): boolean => {
 };
 
 // A multi-pattern of a quantifier: the terms of one of its patterns.
+// The kinds of the matcher's trail entries: an undo closure, or the label sets of a root to restore,
+// its labels, its parent labels or both.
+const TRAIL_UNDO = 0;
+const TRAIL_LBLS = 1;
+const TRAIL_PLBLS = 2;
+const TRAIL_ALL_LABELS = 3;
+
 interface MultiPattern {
   quantifier: number;
   patterns: number[];
@@ -81,8 +88,13 @@ export class Mam implements LabelHasher {
   private queuedTrees: PathTree[] = [];
   private labelHashes: (number | undefined)[] = [];
   // m_trail_stack: the matcher undoes its changes with a trail of its own, which the quantifier
-  // manager pops before the context pops its trail.
-  private trail: (() => void)[] = [];
+  // manager pops before the context pops its trail. An entry is an undo closure, or the label sets
+  // of a root to restore, which need none: trailRoots holds the root and trailLabels its four words,
+  // of which the kind says which to restore.
+  private trailKinds: number[] = [];
+  private trailUndos: (() => void)[] = [];
+  private trailRoots: Enode[] = [];
+  private trailLabels: number[] = [];
   private trailScopes: number[] = [];
   private compiler: Compiler;
   private interpreter: Interpreter;
@@ -130,7 +142,14 @@ export class Mam implements LabelHasher {
   }
 
   private pushTrail(undo: () => void) {
-    this.trail.push(undo);
+    this.trailKinds.push(TRAIL_UNDO);
+    this.trailUndos.push(undo);
+  }
+
+  private pushLabelTrail(kind: number, root: Enode) {
+    this.trailKinds.push(kind);
+    this.trailRoots.push(root);
+    this.trailLabels.push(root.lbls, root.lblsHigh, root.plbls, root.plblsHigh);
   }
 
   getLblHash(node: Enode) {
@@ -145,12 +164,7 @@ export class Mam implements LabelHasher {
   private updateLbls(node: Enode, hash: number) {
     const root = node.root;
     if (hasHash(root.lbls, root.lblsHigh, hash)) return;
-    const low = root.lbls;
-    const high = root.lblsHigh;
-    this.pushTrail(() => {
-      root.lbls = low;
-      root.lblsHigh = high;
-    });
+    this.pushLabelTrail(TRAIL_LBLS, root);
     if (hash < 32) root.lbls |= 1 << hash;
     else root.lblsHigh |= 1 << hash;
   }
@@ -159,12 +173,7 @@ export class Mam implements LabelHasher {
     for (let index = 0; index < node.numArgs; index++) {
       const root = node.getArg(index).root;
       if (hasHash(root.plbls, root.plblsHigh, hash)) continue;
-      const low = root.plbls;
-      const high = root.plblsHigh;
-      this.pushTrail(() => {
-        root.plbls = low;
-        root.plblsHigh = high;
-      });
+      this.pushLabelTrail(TRAIL_PLBLS, root);
       if (hash < 32) root.plbls |= 1 << hash;
       else root.plblsHigh |= 1 << hash;
     }
@@ -587,16 +596,7 @@ export class Mam implements LabelHasher {
     this.processPp(r1, r2);
     this.r1 = null;
     this.r2 = null;
-    const lbls = r2.lbls;
-    const lblsHigh = r2.lblsHigh;
-    const plbls = r2.plbls;
-    const plblsHigh = r2.plblsHigh;
-    this.pushTrail(() => {
-      r2.lbls = lbls;
-      r2.lblsHigh = lblsHigh;
-      r2.plbls = plbls;
-      r2.plblsHigh = plblsHigh;
-    });
+    this.pushLabelTrail(TRAIL_ALL_LABELS, r2);
     r2.lbls |= r1.lbls;
     r2.lblsHigh |= r1.lblsHigh;
     r2.plbls |= r1.plbls;
@@ -653,7 +653,7 @@ export class Mam implements LabelHasher {
   }
 
   pushScope() {
-    this.trailScopes.push(this.trail.length);
+    this.trailScopes.push(this.trailKinds.length);
   }
 
   popScope(numScopes: number) {
@@ -661,8 +661,33 @@ export class Mam implements LabelHasher {
     this.toMatch = [];
     this.newPatterns = [];
     const limit = this.trailScopes[this.trailScopes.length - numScopes];
-    for (let index = this.trail.length - 1; index >= limit; index--) this.trail[index]();
-    shrink(this.trail, limit);
+    const kinds = this.trailKinds;
+    const labels = this.trailLabels;
+    let numUndos = this.trailUndos.length;
+    let numRoots = this.trailRoots.length;
+    for (let index = kinds.length - 1; index >= limit; index--) {
+      const kind = kinds[index];
+      if (kind === TRAIL_UNDO) {
+        numUndos--;
+        this.trailUndos[numUndos]();
+        continue;
+      }
+      numRoots--;
+      const root = this.trailRoots[numRoots];
+      const offset = 4 * numRoots;
+      if (kind !== TRAIL_PLBLS) {
+        root.lbls = labels[offset];
+        root.lblsHigh = labels[offset + 1];
+      }
+      if (kind !== TRAIL_LBLS) {
+        root.plbls = labels[offset + 2];
+        root.plblsHigh = labels[offset + 3];
+      }
+    }
+    shrink(kinds, limit);
+    shrink(this.trailUndos, numUndos);
+    shrink(this.trailRoots, numRoots);
+    shrink(labels, 4 * numRoots);
     shrink(this.trailScopes, this.trailScopes.length - numScopes);
   }
 }
