@@ -71,12 +71,15 @@ export const getDumpPath = (args: string[]) => {
   return index === -1 ? undefined : `${args[index + 2]}.dot`;
 };
 
-// Copies a spec's folders to a new folder, where each call runs in the work folder.
+// Copies a spec's folders to a new folder, where each call runs in the work folder. The skill writes
+// nothing to the work folder of a spec it stops at before checking, and git keeps no empty folder.
 export const prepareStatechart = (spec: string, jar: string) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "statechart-")));
   const folders = { spec: join(root, "spec"), work: join(root, "work") };
   cpSync(join(STATECHART_DIRECTORY, spec, "spec"), folders.spec, { recursive: true });
-  cpSync(join(STATECHART_DIRECTORY, spec, "work"), folders.work, { recursive: true });
+  mkdirSync(folders.work);
+  const work = join(STATECHART_DIRECTORY, spec, "work");
+  if (existsSync(work)) cpSync(work, folders.work, { recursive: true });
   const placeholders = [
     ["{jar}", jar],
     ["{spec}", folders.spec],
