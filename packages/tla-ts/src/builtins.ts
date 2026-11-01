@@ -2,6 +2,7 @@ import { TlaEvaluationError, TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
 import {
   formatValue,
+  getFunctionClass,
   getSequenceElements,
   isEnumerable,
   isFunctionValue,
@@ -9,6 +10,7 @@ import {
   toFiniteFunction,
   MAXIMUM_INTEGER,
   MINIMUM_INTEGER,
+  setTrace,
   toFiniteSet,
   type Value,
 } from "./values";
@@ -243,17 +245,20 @@ const KIND_STRINGS: Record<string, string> = {
   UnionValue: "a set of the form UNION  S",
 };
 
-// TLC stores a function as a TupleValue or a RecordValue when it has that shape, so the
-// shape stands in for how TLC built the value.
+const FUNCTION_CLASSES = {
+  lambda: "FcnLambdaValue",
+  tuple: "TupleValue",
+  record: "RecordValue",
+};
+
 export const getJavaClassName = (value: Value) => {
   if (typeof value === "number") return "IntValue";
   if (typeof value === "string") return "StringValue";
   if (typeof value === "boolean") return "BoolValue";
   if (value.kind === "SetOperation") return SET_OPERATION_CLASSES[value.operator];
   if (value.kind !== "Function") return JAVA_CLASSES[value.kind];
-  const domain = value.domain;
-  if (domain.every((key, index) => key === index + 1)) return "TupleValue";
-  return domain.every((key) => typeof key === "string") ? "RecordValue" : "FcnRcdValue";
+  const functionClass = getFunctionClass(value);
+  return functionClass === undefined ? "FcnRcdValue" : FUNCTION_CLASSES[functionClass];
 };
 
 export const getKindString = (value: Value) => KIND_STRINGS[getJavaClassName(value)];
@@ -270,13 +275,17 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
   const guard =
     <Arguments extends unknown[]>(compute: (...args: Arguments) => Value) =>
     (...args: Arguments) => {
+      const depth = setTrace.sets?.length ?? 0;
       try {
         return compute(...args);
       } catch (error) {
         const isWrapped =
           error instanceof TlaEvaluationError &&
           (builtin.isLazy === true || !(error instanceof TlaModuleError));
-        throw isWrapped ? createJavaOverrideError(signature, error.message) : error;
+        if (!isWrapped) throw error;
+        // The wrapping error replaces a FingerprintException that a set with a source raised.
+        if (setTrace.sets) setTrace.sets.length = depth;
+        throw createJavaOverrideError(signature, error.message);
       }
     };
   return {
@@ -297,21 +306,16 @@ export const getJavaInteger = (value: Value, signature: string) => {
   return value;
 };
 
-export const getArithmeticSignature = (
-  javaClass: "Naturals" | "Integers",
-  method: string,
-  result: string,
-  arity: number,
-) =>
-  `public static tlc2.value.impl.${result} tlc2.module.${javaClass}.${method}(${Array.from({ length: arity }, () => "tlc2.value.impl.IntValue").join(",")})`;
+export const getJavaSignature = (module: string, method: string, result: string, arity: number) =>
+  `public static tlc2.value.impl.${result} tlc2.module.${module}.${method}(${Array.from({ length: arity }, () => "tlc2.value.impl.IntValue").join(",")})`;
 
 export const defineArithmetic = (
-  javaClass: "Naturals" | "Integers",
+  module: string,
   name: string,
   method: string,
   compute: (left: number, right: number) => number,
 ) => {
-  const signature = getArithmeticSignature(javaClass, method, "IntValue", 2);
+  const signature = getJavaSignature(module, method, "IntValue", 2);
   return defineBinary(name, (left, right) => {
     const leftNumber = getJavaInteger(left, signature);
     const rightNumber = getJavaInteger(right, signature);
@@ -330,9 +334,17 @@ const getIntegerArgument = (value: Value, position: string, name: string) => {
   return value;
 };
 
-export const defineComparison = (name: string, compare: (left: number, right: number) => boolean) =>
+// The error of an argument that isn't an integer names the operator as TLC's method does.
+export const defineComparison = (
+  name: string,
+  compare: (left: number, right: number) => boolean,
+  errorName = name,
+) =>
   defineBinary(name, (left, right) =>
-    compare(getIntegerArgument(left, "first", name), getIntegerArgument(right, "second", name)),
+    compare(
+      getIntegerArgument(left, "first", errorName),
+      getIntegerArgument(right, "second", errorName),
+    ),
   );
 
 export const defineLazyOperator = (

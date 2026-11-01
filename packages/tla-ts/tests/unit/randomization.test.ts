@@ -140,3 +140,19 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     expect(result.status).toBe("success");
   });
 });
+
+// The expected values are what TLC 1.7.4 prints with -fp 0 and -seed 4.
+describe("random choices match TLC 1.7.4", () => {
+  it("draws RandomSubset as TLC 1.7.4 does, and refuses to enumerate a large set of tuples", async () => {
+    const result = await check({
+      source: readFileSync(join(DIRECTORY, "RandomSubsetNext.tla"), "utf8"),
+      config: readFileSync(join(DIRECTORY, "RandomSubsetNext.cfg"), "utf8"),
+      seed: 4n,
+      version: "1.7.4",
+    });
+    expect(result.failure?.trace.map((step) => step.state.x)).toEqual([39]);
+    expect(result.failure?.message).toMatch(
+      /RandomSubset\(tlc2\.value\.impl\.Value,tlc2\.value\.impl\.Value\),\nbut it produced the following error:\nAttempted to construct a set with too many elements \(>1000000\)\.$/,
+    );
+  });
+});

@@ -822,6 +822,7 @@ const resolveDefinition = (
       unit,
     );
     markRecursiveConstructions(definition.body, name);
+    definition.isSelfReferential = isReferenced(definition.body, name);
   } else resolveExpression(definition.body, inner, unit);
   if (current && isDeclared) {
     current.isPending = false;

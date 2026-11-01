@@ -1,5 +1,6 @@
 import { createJavaRandom, getTlcFingerprint, type JavaRandom } from "./tlc-random";
 import { createFunction, createRecord, type Value } from "./values";
+import type { TlcVersion } from "./tlc-version";
 
 export interface CheckerRuntime {
   getLevel: (state: (Value | undefined)[]) => number;
@@ -12,6 +13,17 @@ export interface CheckerRuntime {
   getRandom: () => JavaRandom;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
   pause: () => void;
+  // Prints a warning TLC raises while it evaluates, with its message code. TLC prints each
+  // distinct warning once.
+  warn: (code: number, text: string) => void;
+  // TLC's -nowarning turns the warnings off, and with them the shortcut that evaluates the rest
+  // of an action once it assigns every variable, since that shortcut skips a warning.
+  isWarningEnabled: boolean;
+  // TLC's -tool, under which the message of an error that TLC raises with a code holds the
+  // code's markers, which AssertError compares with.
+  isTool: boolean;
+  // The TLC whose messages tla-ts reproduces.
+  version: TlcVersion;
   seed: bigint;
   isSeen: (state: Value[]) => boolean;
   generatedStates: number;
@@ -65,6 +77,10 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
       }
     },
     pause: () => {},
+    warn: () => {},
+    isWarningEnabled: true,
+    isTool: false,
+    version: "master",
     seed,
     generatedStates: 0,
     distinctStates: 0,

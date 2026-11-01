@@ -65,21 +65,19 @@ describe("operator constants match TLC", () => {
     const cases = [
       [
         "F(0) = 1 G <- Add C = 1",
-        "Attempted to apply operator:\n{ <0, 1>}\nto arguments (1), which is undefined.",
+        `${UNEXPECTED_EXCEPTION}Attempted to apply operator:\n{ <0, 1>}\nto arguments (1), which is undefined.`,
       ],
       [
         "F(a) = 1 F(0) = 1 G <- Add C = 1",
-        "Attempted to apply operator:\n{ <a, 1>, <0, 1>}\nto arguments (1), which is undefined.",
+        `${UNEXPECTED_EXCEPTION}Attempted to apply operator:\n{ <a, 1>, <0, 1>}\nto arguments (1), which is undefined.`,
       ],
       [
         "F(0, 0) = 1 G <- Add C = 1",
-        "Attempted to apply the operator { <0, 0, 1>}\nwith wrong number of arguments.",
+        `${UNEXPECTED_EXCEPTION}Attempted to apply the operator { <0, 0, 1>}\nwith wrong number of arguments.`,
       ],
     ];
     for (const [constants, message] of cases) {
-      expect((await checkConstants(constants)).failure?.message).toBe(
-        `${UNEXPECTED_EXCEPTION}${message}`,
-      );
+      expect((await checkConstants(constants)).failure?.message).toBe(message);
     }
   });
 

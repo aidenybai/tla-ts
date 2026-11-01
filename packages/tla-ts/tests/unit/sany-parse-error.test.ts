@@ -1,255 +1,417 @@
 import { describe, expect, it } from "vite-plus/test";
 import { getSanyParseError } from "../../src/sany-parse-error";
 
-// Each module with the message SANY's parser in tla2tools.jar prints for it.
-const CASES: [string, string, string | undefined][] = [
-  [
-    "a module SANY parses",
-    `---- MODULE U01 ----
+const toText = (lines: string[]) =>
+  `***Parse Error***\n${lines.map((line) => `${line}\n`).join("")}`;
+
+// The modules come from the conformance corpora unless they test one of the checks SANY's parser
+// makes as it builds the syntax tree, and the expected reports are what SANY's parser prints for
+// them.
+describe("getSanyParseError", () => {
+  it("reports where a record constructor has an expression for a field name", () => {
+    const source = `---- MODULE definition_parse_error ----
+EXTENDS Integers
+CONSTANT Limit
 VARIABLE x
+Bad == [a/b |-> 1]
+Derived == Bad.a
 Init == x = 0
+Next == x < Limit /\\ x' = x + 1
+Small == x <= Limit
 ====
-`,
-    undefined,
-  ],
-  [
-    "a token the grammar does not allow",
-    `---- MODULE U02 ----
-Foo == [a |-> 1, b |-> ]
-====
-`,
-    `***Parse Error***
-Encountered "]" at line 2, column 24 and token "|->" 
+`;
+    expect(getSanyParseError(source)).toBe(
+      toText([
+        'Encountered "|->" at line 5, column 13 and token "b" ',
+        "",
+        "Residual stack trace follows:",
+        "Some [] Form starting at line 5, column 8.",
+        "ExtendableExpr starting at line 5, column 8.",
+        "Expression starting at line 5, column 8.",
+        "Definition starting at line 5, column 1.",
+        "Module body starting at line 3, column 1.",
+      ]),
+    );
+  });
 
-Residual stack trace follows:
-ExtendableExpr starting at line 2, column 24.
-Expression starting at line 2, column 24.
-Field Value starting at line 2, column 18.
-Some [] Form starting at line 2, column 8.
-ExtendableExpr starting at line 2, column 8.
-`,
-  ],
-  [
-    "the production SANY expected",
-    `---- MODULE U03 ----
-Foo ==
-====
-`,
-    `***Parse Error***
-Was expecting "==== or more Module body"
-Encountered "Foo" at line 2, column 1 and token "----" 
+  it("reports a LAMBDA outside an operator argument with what the parser expected", () => {
+    const source = `---- MODULE lambda ----
+EXTENDS Naturals
 
-Residual stack trace follows:
-Module definition starting at line 1, column 1.
-`,
-  ],
-  [
-    "several tokens from a lookahead",
-    `---- MODULE U24 ----
-THEOREM ASSUME NEW , x PROVE TRUE
-====
-`,
-    `***Parse Error***
-Was expecting "Identifier, Assume-Prove or Expression"
-Encountered "ASSUME NEW ," at line 2, column 9 and token "THEOREM" 
+VARIABLES x
 
-Residual stack trace follows:
-Theorem starting at line 2, column 1.
-Module body starting at line 2, column 1.
-Module definition starting at line 1, column 1.
-`,
-  ],
-  [
-    "tokens from the module body lookahead",
-    `---- MODULE U25 ----
-Foo == 1
-----
-THEOREM OBVIOUS
-====
-`,
-    `***Parse Error***
-Encountered "THEOREM OBVIOUS" at line 4, column 1 and token "----" 
+Init == x = 0
 
-Residual stack trace follows:
-Module body starting at line 2, column 1.
-Module definition starting at line 1, column 1.
-`,
-  ],
-  [
-    "a precedence conflict",
-    `---- MODULE U04 ----
-Foo == 1 \\land 2 \\lor 3
-====
-`,
-    `***Parse Error***
+double == LAMBDA n : n * 2
 
-  Precedence conflict between ops \\land in block line 2, col 10 to line 2, col 14 of module U04 and \\lor.
+Next == x' = double[x] /\\ x < 5
 
-Residual stack trace follows:
-ExtendableExpr starting at line 2, column 16.
-ExtendableExpr starting at line 2, column 8.
-Expression starting at line 2, column 8.
-Definition starting at line 2, column 1.
-Module body starting at line 2, column 1.
-`,
-  ],
-  [
-    "a label that is not one",
-    `---- MODULE U06 ----
-Foo == x + 1 :: y
-====
-`,
-    `***Parse Error***
-\`::' at line 2, col 14 to line 2, col 15 of module U06 does not follow a label.
+Inv == x <= 10 /\\ x >= 0
 
-Residual stack trace follows:
-ExtendableExpr starting at line 2, column 12.
-ExtendableExpr starting at line 2, column 8.
-Expression starting at line 2, column 8.
-Definition starting at line 2, column 1.
-Module body starting at line 2, column 1.
-`,
-  ],
-  [
-    "a fairness expression without a subscript",
-    `---- MODULE U07 ----
-Spec == WF_x
 ====
-`,
-    `***Parse Error***
-Ill-structured fairness expression at line 2, column 9
+`;
+    expect(getSanyParseError(source)).toBe(
+      toText([
+        'Was expecting "Expression or Instance"',
+        'Encountered "LAMBDA" at line 8, column 11 and token "==" ',
+        "",
+        "Residual stack trace follows:",
+        "Definition starting at line 8, column 1.",
+        "Module body starting at line 4, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ]),
+    );
+  });
 
-Residual stack trace follows:
-ExtendableExpr starting at line 2, column 9.
-Expression starting at line 2, column 9.
-Definition starting at line 2, column 1.
-Module body starting at line 2, column 1.
-Module definition starting at line 1, column 1.
-`,
-  ],
-  [
-    "\\X as an operator argument",
-    `---- MODULE U09 ----
-Foo == F(\\times)
-====
-`,
-    `***Parse Error***
-line 2, col 10 to line 2, col 15 of module U09: \\X may not be used as an infix operator.
+  it("reports an unbounded declaration in a function constructor", () => {
+    const source = `-------------------- MODULE FunctionConstructorOnlyBoundeds --------------------
+(* Test that function constructors allow only bounded declarations. *)
+f == [x \\in TRUE, y |-> TRUE]
+================================================================================
+`;
+    expect(getSanyParseError(source)).toBe(
+      toText([
+        'Encountered "|->" at line 3, column 21 and token "y" ',
+        "",
+        "Residual stack trace follows:",
+        "Quant Bound starting at line 3, column 19.",
+        "Some [] Form starting at line 3, column 6.",
+        "ExtendableExpr starting at line 3, column 6.",
+        "Expression starting at line 3, column 6.",
+        "Definition starting at line 3, column 1.",
+      ]),
+    );
+  });
 
-Residual stack trace follows:
-Optional Arguments starting at line 2, column 9.
-Primitive expression starting at line 2, column 8.
-ExtendableExpr starting at line 2, column 8.
-Expression starting at line 2, column 8.
-Definition starting at line 2, column 1.
-`,
-  ],
-  [
-    "a set of all with a membership element",
-    `---- MODULE U13 ----
-Foo == {(a) \\in S : b \\in T}
-====
-`,
-    `***Parse Error***
-Form {a \\in b : c \\in d }, at line 2, is not allowed
+  it("reports an operator as a BY DEF item in the productions of a proof", () => {
+    const source = `--------------- MODULE Operators_test -------------
+z - y == z
+z + y == z
+THEOREM (z - y) = z
+BY DEF - , +
+=============================================================================
+`;
+    expect(getSanyParseError(source)).toBe(
+      toText([
+        'Encountered "," at line 5, column 10 and token "-" ',
+        "",
+        "Residual stack trace follows:",
+        "ExtendableExpr starting at line 5, column 10.",
+        "Expression starting at line 5, column 8.",
+        "UseOrHideOrBy starting at line 5, column 1.",
+        "Proof starting at line 5, column 1.",
+        "Theorem starting at line 4, column 1.",
+      ]),
+    );
+  });
 
-Residual stack trace follows:
-Some { } form starting at line 2, column 8.
-ExtendableExpr starting at line 2, column 8.
-Expression starting at line 2, column 8.
-Definition starting at line 2, column 1.
-Module body starting at line 2, column 1.
-`,
-  ],
-  [
-    "an item left of its conjunction",
-    `---- MODULE U17 ----
-Foo == /\\ [
-a |->           1]
-====
-`,
-    `***Parse Error***
-Item at line 3, col 1 to line 3, col 17 of module U17 is not properly indented inside conjunction or  disjunction list item at line 2, col 8 to line 3, col 18 of module U17
+  it("shows the tokens a failed two-token lookahead read", () => {
+    const source = "---- MODULE Github1417Local ----\nLOCAL hidden hidden == 42\n====\n";
+    expect(getSanyParseError(source)).toBe(
+      toText([
+        'Was expecting "LOCAL, INSTANCE, PROOF, ASSUMPTION, THEOREM, RECURSIVE, declaration, or definition"',
+        'Encountered "LOCAL hidden" at line 2, column 1 and token "----" ',
+        "",
+        "Residual stack trace follows:",
+        "Module body starting at line 2, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ]),
+    );
+  });
 
-Residual stack trace follows:
-AND-OR Junction starting at line 2, column 8.
-ExtendableExpr starting at line 2, column 8.
-Expression starting at line 2, column 8.
-Definition starting at line 2, column 1.
-Module body starting at line 2, column 1.
-`,
-  ],
-  [
-    "a step number outside a proof",
-    `---- MODULE U20 ----
-Foo == <1>2
-====
-`,
-    `***Parse Error***
-line 2, col 8 to line 2, col 11 of module U20: Step number used outside proof.
+  it("skips text before the module header", () => {
+    const source = `CAUSES the translator to throw an exception
 
-Residual stack trace follows:
-Primitive expression starting at line 2, column 8.
-ExtendableExpr starting at line 2, column 8.
-Expression starting at line 2, column 8.
-Definition starting at line 2, column 1.
-Module body starting at line 2, column 1.
-`,
-  ],
-  [
-    "a decimal structural term",
-    `---- MODULE U22 ----
-Foo == x!1.5
-====
-`,
-    `***Parse Error***
-Illegal structural term at line 2, col 10 to line 2, col 12 of module U22
+last modified on Sun 11 Dec 2005 at  0:30:16 UT by lamport
 
-Residual stack trace follows:
-Bang Extension starting at line 2, column 9.
-Primitive expression starting at line 2, column 8.
-ExtendableExpr starting at line 2, column 8.
-Expression starting at line 2, column 8.
-Definition starting at line 2, column 1.
-`,
-  ],
-  [
-    "an error SANY records and continues past",
-    `---- MODULE U14 ----
-Foo == [x EXCEPT !.@ = 1]
-====
-`,
-    `@ used in !.@`,
-  ],
-  [
-    "a character no token starts with",
-    `---- MODULE U11 ----
-Foo == x ? y
-====
-`,
-    `Lexical error at line 2, column 11.  Encountered: " " (32), after : "?"`,
-  ],
-  [
-    "an unterminated string",
-    `---- MODULE U16 ----
-Foo == "abc
-====
-`,
-    `Lexical error at line 2, column 12.  Encountered: "\\n" (10), after : "\\"abc"`,
-  ],
-  [
-    "a comment open at the end of the file",
-    `---- MODULE U28 ----
-VARIABLE x
-Init == x = 0 (* open
-comment
-`,
-    `Lexical {error: EOF reached, possibly open comment starting around line 3`,
-  ],
-];
+---------------------------- MODULE bug-05-12-10 ----------------------------
+EXTENDS Naturals, Sequences, FiniteSets , TLC
+`;
+    expect(getSanyParseError(source)).toBe(
+      toText([
+        'Was expecting "----"',
+        'Encountered "-" at line 5, column 40 and token "bug" ',
+        "",
+        "Residual stack trace follows:",
+        "Begin module starting at line 5, column 1.",
+        "Module definition starting at line 5, column 1.",
+      ]),
+    );
+  });
 
-describe("getSanyParseError reports a module SANY cannot parse like SANY", () => {
-  it.each(CASES)("reports %s", (_, source, message) => {
-    expect(getSanyParseError(source)).toBe(message);
+  it("reports a file without a module header at its last character", () => {
+    expect(getSanyParseError("CAUSES the translator to throw an exception\n")).toBe(
+      toText([
+        'Was expecting "---- MODULE (beginning of module)"',
+        'Encountered "<EOF>" at line 1, column 44 and token "" ',
+        "",
+        "Residual stack trace follows:",
+        "Begin module starting at line 1, column 44.",
+        "Module definition starting at line 1, column 44.",
+      ]),
+    );
+  });
+
+  it.each([
+    {
+      check: "a precedence conflict",
+      body: "F == a = b = c",
+      report: [
+        "",
+        "  Precedence conflict between ops = in block line 2, col 8 to line 2, col 8 of module Test and =.",
+        "",
+        "Residual stack trace follows:",
+        "ExtendableExpr starting at line 2, column 10.",
+        "ExtendableExpr starting at line 2, column 6.",
+        "Expression starting at line 2, column 6.",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+      ],
+    },
+    {
+      check: "a precedence conflict with a prefix minus",
+      body: "F == x ^ -y",
+      report: [
+        "",
+        "  Precedence conflict between ops ^ in block line 2, col 8 to line 2, col 8 of module Test and -..",
+        "",
+        "Residual stack trace follows:",
+        "ExtendableExpr starting at line 2, column 6.",
+        "Expression starting at line 2, column 6.",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ],
+    },
+    {
+      check: "a precedence conflict with a postfix operator",
+      body: "F == ENABLED x'",
+      report: [
+        "Precedence conflict between ops ENABLED in block line 2, col 15 to line 2, col 15 of module Test and '.",
+        "",
+        "Residual stack trace follows:",
+        "ExtendableExpr starting at line 2, column 14.",
+        "Expression starting at line 2, column 6.",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ],
+    },
+    {
+      check: "expressions without an operator between them",
+      body: "F == f[x \\in S |-> 1]",
+      report: [
+        "Expression at location line 2, col 6 to line 2, col 6 of module Test and expression at location line 2, col 7 to line 2, col 21 of module Test follow each other without any intervening operator.",
+        "",
+        "Residual stack trace follows:",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ],
+    },
+    {
+      check: "an expression after a postfix operator",
+      body: "F == a' [b -> c]",
+      report: [
+        "",
+        " Error following expression at  line 2, col 7 to line 2, col 7 of module Test, missing operator or separator.",
+        "",
+        "Residual stack trace follows:",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ],
+    },
+    {
+      check: "a = that may be a mistyped ==",
+      body: "F == a'\n  [b -> c] = 1",
+      report: [
+        "",
+        "  *** Hint *** You may have mistyped ==",
+        "  Illegal combination of operators ' in block line 2, col 7 to line 2, col 7 of module Test and =.",
+        "",
+        "Residual stack trace follows:",
+        "ExtendableExpr starting at line 2, column 6.",
+        "Expression starting at line 2, column 6.",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ],
+    },
+    {
+      check: "a junction item that is not indented",
+      body: "F == /\\ x = [a |-> 1,\nb |-> 2]\n     /\\ y",
+      report: [
+        "Item at line 3, col 1 to line 3, col 7 of module Test is not properly indented inside conjunction or  disjunction list item at line 2, col 6 to line 3, col 8 of module Test",
+        "",
+        "Residual stack trace follows:",
+        "AND-OR Junction starting at line 2, column 6.",
+        "ExtendableExpr starting at line 2, column 6.",
+        "Expression starting at line 2, column 6.",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+      ],
+    },
+    {
+      check: "a :: after something other than a label",
+      body: "F == x' :: y",
+      report: [
+        "`::' at line 2, col 9 to line 2, col 10 of module Test does not follow a label.",
+        "",
+        "Residual stack trace follows:",
+        "ExtendableExpr starting at line 2, column 6.",
+        "Expression starting at line 2, column 6.",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ],
+    },
+    {
+      check: "a label whose removal would change the parse",
+      body: "F == a * l(u, v) :: b + c",
+      report: [
+        "Removing label at line 2, col 10 to line 2, col 16 of module Test would change expression parsing.",
+        "",
+        "Residual stack trace follows:",
+        "ExtendableExpr starting at line 2, column 10.",
+        "ExtendableExpr starting at line 2, column 6.",
+        "Expression starting at line 2, column 6.",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+      ],
+    },
+    {
+      check: "a declared operator with a domain",
+      body: "THEOREM ASSUME NEW F(_, _) \\in S PROVE TRUE",
+      report: [
+        "declared symbol with arguments before \\in at line 2, col 20 to line 2, col 26 of module Test",
+        "",
+        "Residual stack trace follows:",
+        "NEW symbol declaration starting at line 2, column 16.",
+        "Assume-Prove starting at line 2, column 9.",
+        "Theorem starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ],
+    },
+    {
+      check: "a proof of a step that takes none",
+      body: "THEOREM TRUE\n<1>1. HAVE TRUE\n  OBVIOUS\n<1>2. QED",
+      report: [
+        "line 3, col 7 to line 3, col 15 of module Test: proof of step that does not take a proof.",
+        "",
+        "Residual stack trace follows:",
+        "Step starting at line 3, column 1.",
+        "Proof starting at line 3, column 1.",
+        "Theorem starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ],
+    },
+    {
+      check: "a decimal number as a structural term",
+      body: "F == y!1.5",
+      report: [
+        "Illegal structural term at line 2, col 8 to line 2, col 10 of module Test",
+        "",
+        "Residual stack trace follows:",
+        "Bang Extension starting at line 2, column 7.",
+        "Primitive expression starting at line 2, column 6.",
+        "ExtendableExpr starting at line 2, column 6.",
+        "Expression starting at line 2, column 6.",
+        "Definition starting at line 2, column 1.",
+      ],
+    },
+    {
+      check: "a set of all whose expression is a membership",
+      body: "S == {1 \\in x : x \\in T}",
+      report: [
+        "Form {a \\in b : c \\in d }, at line 2, is not allowed",
+        "",
+        "Residual stack trace follows:",
+        "Some { } form starting at line 2, column 6.",
+        "ExtendableExpr starting at line 2, column 6.",
+        "Expression starting at line 2, column 6.",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+      ],
+    },
+  ])("reports $check", (testCase) => {
+    expect(getSanyParseError(`---- MODULE Test ----\n${testCase.body}\n====\n`)).toBe(
+      toText(testCase.report),
+    );
+  });
+
+  // The modules and messages come from SANY.
+  it.each([
+    [
+      "a character no token starts with",
+      "x == 1 ; 2\n====\n",
+      'Lexical error at line 2, column 8.  Encountered: ";" (59), after : ""',
+    ],
+    [
+      "a token prefix",
+      'x == "a" ?\n====\n',
+      'Lexical error at line 2, column 11.  Encountered: "\\n" (10), after : "?"',
+    ],
+    [
+      "an invalid escape",
+      'x == "a\\qb"\n====\n',
+      'Lexical error at line 2, column 9.  Encountered: "q" (113), after : "\\"a\\\\"',
+    ],
+    [
+      "a string at the end of the file",
+      'x == "abc',
+      'Lexical error at line 2, column 10.  Encountered: <EOF> after : "\\"abc"',
+    ],
+    [
+      "a comment that ends the last line",
+      "(* abc\n",
+      'Lexical error at line 3, column 0.  Encountered: <EOF> after : ""',
+    ],
+    [
+      "an end-of-line comment at the end of the file",
+      "x == 1 \\* abc",
+      'Lexical error at line 2, column 14.  Encountered: <EOF> after : ""',
+    ],
+    [
+      "a comment open over lines",
+      "(* abc\n\n",
+      "Lexical {error: EOF reached, possibly open comment starting around line 2",
+    ],
+    [
+      "a comment open after a nested comment",
+      "(* \n(* \n *) abc\n\n",
+      "Lexical {error: EOF reached, possibly open comment starting around line 4",
+    ],
+  ])("reports the lexical error of %s", (_, body, message) => {
+    expect(getSanyParseError(`---- MODULE M ----\n${body}`)).toBe(message);
+  });
+
+  it("reports a parse error for a comment that ends the file with a bracket", () => {
+    expect(getSanyParseError("---- MODULE M ----\nx == 1\n(* abc (* d *)")).toMatch(
+      /^\*\*\*Parse Error\*\*\*\n/,
+    );
+  });
+
+  it("reports the parse error before a lexical error in a token the parser never reads", () => {
+    expect(getSanyParseError("---- MODULE M ----\nOp == LET a == 1\n====\n\\* abc")).toBe(
+      toText([
+        'Encountered "====" at line 3, column 1 and token "1" ',
+        "",
+        "Residual stack trace follows:",
+        "Case Other Arm starting at line 2, column 7.",
+        "Expression starting at line 2, column 7.",
+        "Definition starting at line 2, column 1.",
+        "Module body starting at line 2, column 1.",
+        "Module definition starting at line 1, column 1.",
+      ]),
+    );
+  });
+
+  it("reports nothing for a module whose error SANY finds after parsing", () => {
+    expect(getSanyParseError("---- MODULE Infix ----\nVARIABLE x\nOp == x @@ x\n====\n")).toBe(
+      undefined,
+    );
   });
 });

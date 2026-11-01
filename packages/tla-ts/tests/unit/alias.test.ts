@@ -84,6 +84,17 @@ describe("ALIAS matches TLC", () => {
     expect(result.violation?.trace[1].state).toEqual({ y: 1 });
   });
 
+  it("marks the message of _ALIASEvalError as TLC does in -tool output", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 1 /\\ x' = x + 1\nArgument(n) == [n |-> n]\n====`,
+      config: "INIT Init\nNEXT Next\nALIAS Argument",
+      isTool: true,
+    });
+    expect(result.violation?.trace[0].state._ALIASEvalError).toBe(
+      "@!@!@STARTMSG 2228:0 @!@!@\nTLC requires alias not to take any argument, but one was given: Argument\n@!@!@ENDMSG 2228 @!@!@",
+    );
+  });
+
   it("keeps the state when the alias is not a record", async () => {
     const result = await checkModule(
       "Next == x < 1 /\\ x' = x + 1\nAlias == x + 100",

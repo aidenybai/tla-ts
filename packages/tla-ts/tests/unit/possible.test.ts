@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, parseConfig, TlaConfigError } from "../../src";
+import { UNEXPECTED_EXCEPTION } from "../../src/errors";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/possible");
 
@@ -75,9 +76,42 @@ describe("_POSSIBLE matches TLC", () => {
       "invariant-violation",
       {
         name: "Unreachable",
+        code: 2780,
         message: `The _POSSIBLE predicate Unreachable at line 6, col 16 to line 6, col 20 of module M ${NEVER_WITNESSED}`,
         counts: "[Unreachable |-> 0]",
       },
+    ]);
+  });
+
+  it("checks a POSTCONDITION after a violation without changing its status", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nNever == TLCGet("level") < 0\nInv == x < 1\n====',
+      config: "INIT Init\nNEXT Next\nPOSTCONDITION Never\nINVARIANT Inv",
+    });
+    expect([result.status, result.violation?.postcondition]).toEqual([
+      "invariant-violation",
+      {
+        name: "Never",
+        code: 2404,
+        message: "Postcondition Never at line 6, col 10 to line 6, col 28 of module M is false.",
+      },
+    ]);
+  });
+
+  it("rejects a constant POSTCONDITION like TLC and skips it after a violation", async () => {
+    const failed = await checkModule("Never == FALSE", "POSTCONDITION Never");
+    expect([failed.status, failed.failure?.message]).toEqual([
+      "error",
+      `${UNEXPECTED_EXCEPTION}The post condition Never cannot be a constant.`,
+    ]);
+    const violated = await checkModule(
+      "Never == FALSE\nInv == x < 2",
+      "POSTCONDITION Never\nINVARIANT Inv",
+    );
+    expect([violated.status, violated.violation?.postcondition]).toEqual([
+      "invariant-violation",
+      undefined,
     ]);
   });
 

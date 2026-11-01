@@ -335,6 +335,10 @@ const matchStep = (source: string, index: number) => {
   );
 };
 
+// SANY's lexer reads @ as an identifier, which stands for the value an EXCEPT changes only alone.
+export const readAtAsIdentifier = (token: Token): Token =>
+  token.kind === "Operator" && token.text === "@" ? { ...token, kind: "Identifier" } : token;
+
 const TAB_SIZE = 8;
 
 const getWidthAfter = (width: number, character: string | undefined) =>
@@ -442,11 +446,14 @@ export const tokenize = (source: string): Token[] => {
       const characters: string[] = [];
       advanceOver(1);
       while (source[cursor.index] !== '"') {
-        if (cursor.index >= source.length || source[cursor.index] === "\n") {
+        if (cursor.index >= source.length || "\n\r".includes(source[cursor.index])) {
           throw createError("Unterminated string");
         }
         if (source[cursor.index] === "\\") {
           const escaped = source[cursor.index + 1];
+          if (escaped === undefined || !'ntrf\\"'.includes(escaped)) {
+            throw createError("Invalid escape in string");
+          }
           characters.push({ n: "\n", t: "\t", r: "\r", f: "\f" }[escaped] ?? escaped);
           advanceOver(2);
           continue;
@@ -477,6 +484,12 @@ export const tokenize = (source: string): Token[] => {
       if (/^\d+$/.test(word)) {
         const number = /^\d+(\.\d+)?/.exec(source.slice(cursor.index))?.[0] ?? word;
         pushToken(number.includes(".") ? "Decimal" : "Number", number, number.length);
+        continue;
+      }
+      // A word needs a letter to be a name, so SANY reads one without as underscores and numbers.
+      const part = /^(_|\d+)/.exec(word)?.[0];
+      if (part !== undefined && !/[A-Za-z]/.test(word)) {
+        pushToken(part === "_" ? "Operator" : "Number", part, part.length);
         continue;
       }
       if (word.startsWith("WF_") || word.startsWith("SF_")) {

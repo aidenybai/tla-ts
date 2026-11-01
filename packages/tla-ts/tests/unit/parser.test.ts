@@ -63,6 +63,15 @@ describe("parseModule records ranges like SANY", () => {
 });
 
 describe("parseModule reads operators like SANY", () => {
+  it.each(["-.(1)", "+(1, 2)", "+ (1, 2)"])(
+    "reads %s as an argument that applies the operator",
+    (argument) => {
+      const module = parseModule(`---- MODULE M ----\nF(a, b) == a\nX == F(${argument}, 2)\n====`);
+      const body = module.definitions.find((definition) => definition.name === "X")?.body;
+      expect(body?.kind === "Apply" && body.args[0].kind).toBe("Apply");
+    },
+  );
+
   it("reads a backslash word as the longest operator it starts with", () => {
     const module = parseModule(
       "---- MODULE M ----\nF(S, used) == S\\used\nG(S) == 1 \\inS\nH(S, T) == S \\capT\n====",
@@ -92,6 +101,140 @@ describe("parseModule reads operators like SANY", () => {
     },
   );
 
+  it.each(["SUBSET a + b", "DOMAIN a \\o b", "- a \\X b", "[]a = b", "<>a \\cdot b", "[]a'"])(
+    "rejects an operator after the operand of a prefix operator it overlaps in %s",
+    (expression) => {
+      expect(() =>
+        parseModule(`---- MODULE M ----\nCONSTANTS a, b\nA == ${expression}\n====`),
+      ).toThrow(TlaSyntaxError);
+    },
+  );
+
+  it.each([
+    ["SUBSET 0..2", ".."],
+    ["UNION a \\cup b", "\\cup"],
+    ["SUBSET a ^ b", "SUBSET"],
+    ["~a = b", "~"],
+  ])("groups %s under %s as SANY does", (expression, operator) => {
+    const definition = parseModule(
+      `---- MODULE M ----\nCONSTANTS a, b\nA == ${expression}\n====`,
+    ).definitions.find((item) => item.name === "A");
+    expect(definition?.body).toMatchObject({ kind: "Apply", operator });
+  });
+
+  it.each(["(2\n   + 3)", "[a |->\n   2].a", "{1,\n2}"])(
+    "ends a conjunct at a token left of its bullet inside %j as SANY does",
+    (operand) => {
+      expect(() => parseModule(`---- MODULE M ----\nE == /\\ 1 = ${operand}\n====`)).toThrow(
+        TlaSyntaxError,
+      );
+    },
+  );
+
+  it.each([
+    ["a \\in L:: b /\\ c", true],
+    ["~ L:: a /\\ b", true],
+    ["a * L:: b + (c * d)", true],
+    ["a /\\ L:: b \\in c", false],
+    ["a = L:: b /\\ (c * d)", false],
+  ])(
+    "rejects a label in %s only if removing it would change the parse, as SANY does",
+    (expression, isRejected) => {
+      const parse = () =>
+        parseModule(`---- MODULE M ----\nCONSTANTS a, b, c, d\nA == ${expression}\n====`);
+      if (isRejected) expect(parse).toThrow(TlaSyntaxError);
+      else expect(parse).not.toThrow();
+    },
+  );
+
+  it.each(["{a \\in b # TRUE}", "{a \\in b = b}"])(
+    "reads the whole expression after the \\in of %s as its set as SANY does",
+    (expression) => {
+      const definition = parseModule(
+        `---- MODULE M ----\nCONSTANTS a, b\nA == ${expression}\n====`,
+      ).definitions.find((item) => item.name === "A");
+      expect(definition?.body).toMatchObject({
+        kind: "SetEnumeration",
+        elements: [{ kind: "Apply", operator: "\\in", args: [{ name: "a" }, { kind: "Apply" }] }],
+      });
+    },
+  );
+
+  it.each(['"a\\qb"', '"a\\ b"', '"a\rb"'])(
+    "rejects the string %j that SANY's lexer stops in",
+    (string) => {
+      expect(() => parseModule(`---- MODULE M ----\nA == ${string}\n====`)).toThrow(TlaSyntaxError);
+    },
+  );
+
+  it.each([
+    ["the root module", "---- MODULE M ----\nA == 1\n"],
+    ["a nested module", `---- MODULE M ----\n---- MODULE Inner ----\nA == 1\n`],
+  ])("rejects %s without ====", (_, source) => {
+    expect(() => parseModule(source)).toThrow(TlaSyntaxError);
+  });
+
+  it.each([
+    ["EXTENDS BY", ["BY"]],
+    ["EXTENDS Naturals, IN", ["Naturals", "IN"]],
+    ["EXTENDS SUBSET\nVARIABLE x", ["SUBSET"]],
+    ["EXTENDS _", ["_"]],
+  ])("names a module with a keyword or an underscore in %j as SANY does", (header, extendees) => {
+    expect(parseModule(`---- MODULE M ----\n${header}\nA == 1\n====`).extends).toEqual(extendees);
+  });
+
+  // SANY's lexer marks the definition A as beginning at SUBSET, and doesn't mark one after THEOREM.
+  it.each(["EXTENDS SUBSET", "EXTENDS THEOREM", "EXTENDS AXIOM"])(
+    "rejects %j before a definition as SANY does",
+    (header) => {
+      expect(() => parseModule(`---- MODULE M ----\n${header}\nA == 1\n====`)).toThrow(
+        TlaSyntaxError,
+      );
+    },
+  );
+
+  it.each(["ASSUME", "WF_", "DEF", "_"])(
+    "takes %s for the first field of a record as SANY does",
+    (name) => {
+      const module = parseModule(`---- MODULE M ----\nA == [${name} |-> 1, b |-> 2]\n====`);
+      expect(module.definitions[0].body).toMatchObject({
+        kind: "Record",
+        fields: [{ name }, { name: "b" }],
+      });
+    },
+  );
+
+  it("selects a field named with an underscore as SANY does", () => {
+    const module = parseModule("---- MODULE M ----\nA(r) == [r EXCEPT !._ = r._]\n====");
+    expect(module.definitions[0].body).toMatchObject({
+      kind: "Except",
+      updates: [
+        { path: [{ kind: "Field", name: "_" }], value: { kind: "FieldAccess", field: "_" } },
+      ],
+    });
+  });
+
+  it("rejects a keyword for a later field of a record as SANY does", () => {
+    expect(() => parseModule("---- MODULE M ----\nA == [a |-> 1, IN |-> 2]\n====")).toThrow(
+      TlaSyntaxError,
+    );
+  });
+
+  it.each(["_ == 1", "VARIABLE _", "A == \\A _ \\in {} : TRUE", "A == __", "A == 1_2"])(
+    "rejects a name without a letter in %j as SANY does",
+    (unit) => {
+      expect(() => parseModule(`---- MODULE M ----\n${unit}\n====`)).toThrow(TlaSyntaxError);
+    },
+  );
+
+  it("reads underscores as the placeholders of operator parameters", () => {
+    const module = parseModule("---- MODULE M ----\nCONSTANT F(_, _), _ + _\nG(H(_)) == 1\n====");
+    expect(module.constants.map((constant) => [constant.name, constant.arity])).toEqual([
+      ["F", 2],
+      ["+", 2],
+    ]);
+  });
+
   it("rejects an operator of a parameterized instance without the instance's arguments", () => {
     expect(() =>
       parseModule(`---- MODULE M ----\n${INNER}\nTHEOREM M!Foo(TRUE) => M!Foo(TRUE)\n====`),
@@ -103,6 +246,14 @@ describe("parseModule reads operators like SANY", () => {
         })),
       ),
     );
+  });
+
+  it("substitutes an operator of a parameterized instance without the instance's arguments", () => {
+    expect(() =>
+      parseModule(
+        `---- MODULE M ----\n${INNER}\n---- MODULE N ----\nCONSTANT Op(_)\n====\nN1 == INSTANCE N WITH Op <- M!Foo\n====`,
+      ),
+    ).not.toThrow();
   });
 
   it("cites an operator of a parameterized instance in a DEF clause without arguments", () => {

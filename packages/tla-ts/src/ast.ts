@@ -77,6 +77,9 @@ export interface JunctionExpression {
   kind: "And" | "Or";
   operands: Expression[];
   isBulleted?: boolean;
+  // SANY parses an infix chain such as A /\ B /\ C as (A /\ B) /\ C, whose node of each prefix of
+  // two or more operands ends after the parentheses of its last operand.
+  prefixEnds?: SourceLocation[];
   location: SourceLocation;
 }
 
@@ -242,6 +245,14 @@ export interface FunctionApplicationExpression {
   location: SourceLocation;
 }
 
+// SANY parses [e1, ..., en] as a function application without the function, and its semantic
+// checker rejects it.
+export interface BracketExpression {
+  kind: "Bracket";
+  args: Expression[];
+  location: SourceLocation;
+}
+
 export interface FieldAccessExpression {
   kind: "FieldAccess";
   record: Expression;
@@ -328,6 +339,7 @@ export type Expression =
   | ExceptExpression
   | ExceptAtExpression
   | FunctionApplicationExpression
+  | BracketExpression
   | FieldAccessExpression
   | ProductExpression
   | TemporalExpression
@@ -360,6 +372,8 @@ export interface FunctionDefinition {
   body: Expression;
   isLocal: boolean;
   isRecursive: boolean;
+  // Whether the body applies the function, which SANY makes a recursive function definition.
+  isSelfReferential?: boolean;
   location: SourceLocation;
 }
 
@@ -488,8 +502,7 @@ export interface Theorem {
 
 // The units of a module in source order, for consumers that need the order across kinds.
 export type ModuleUnit =
-  | { kind: "Constants"; declarations: Declaration[] }
-  | { kind: "Variables"; declarations: Declaration[] }
+  | { kind: "Constants" | "Variables"; declarations: Declaration[]; location: SourceLocation }
   | { kind: "Recursive"; declarations: Declaration[] }
   | { kind: "Definition"; definition: Definition }
   | { kind: "Instance"; instance: Instance }
@@ -583,6 +596,8 @@ export const getChildren = (expression: Expression): Expression[] => {
       ];
     case "FunctionApplication":
       return [expression.function, ...expression.args];
+    case "Bracket":
+      return expression.args;
     case "FieldAccess":
       return [expression.record];
     case "Product":

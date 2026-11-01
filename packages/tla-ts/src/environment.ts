@@ -14,11 +14,11 @@ import type { ConfigValue, ModelConfig } from "./config";
 import type { FileSystem } from "./json";
 import {
   createSanyError,
+  createMissingModuleError,
   formatRange,
   formatSanyWarnings,
   TlaConfigError,
   TlaEvaluationError,
-  TlaModuleError,
   TlaSyntaxError,
   type SanyError,
 } from "./errors";
@@ -38,7 +38,7 @@ import {
   renameLocals,
   withLetInstances,
 } from "./instances";
-import { overrideDefinitions } from "./java-overrides";
+import { overrideDefinitions, type JavaOverride } from "./java-overrides";
 import { extractModule, parseModule } from "./parser";
 import {
   getArity,
@@ -57,14 +57,20 @@ import {
   type Symbols,
 } from "./resolve";
 import { createRuntime } from "./runtime";
-import { parseModuleFile } from "./sany-parse-error";
-import { CORE_OPERATORS, getStandardModule, STANDARD_DEPENDENCIES } from "./standard-modules";
+import { getSanyParseError } from "./sany-parse-error";
+import {
+  CORE_OPERATORS,
+  getStandardModule,
+  getTraceSpecArithmetic,
+  STANDARD_DEPENDENCIES,
+} from "./standard-modules";
 import { STANDARD_LEVELS } from "./standard-levels";
 import { getStandardRange } from "./standard-ranges";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
-import { getTlcDeclarationOrder } from "./tlc-order";
+import { isEvalException } from "./tlc-messages";
+import { createTlcDefinitionOrder, getTlcDeclarationOrder } from "./tlc-order";
 import {
   checkInteger,
   createModelValue,
@@ -72,7 +78,9 @@ import {
   formatValue,
   valuesEqual,
   type Value,
+  markNormalized,
 } from "./values";
+import type { TlcVersion } from "./tlc-version";
 
 interface EnvironmentOptions {
   source: string;
@@ -81,6 +89,15 @@ interface EnvironmentOptions {
   print: (text: string) => void;
   files: FileSystem;
   seed?: bigint;
+  // Links the modules without a model, as SANY does, so a declared constant needs no value.
+  isUnconfigured?: boolean;
+  isTool?: boolean;
+  // TLC loads Integers for the binary trace of its trace exploration spec, and Integers' Java
+  // methods then compute the arithmetic of Naturals.
+  isTraceRecorded?: boolean;
+  isSanyReported?: boolean;
+  isWarningEnabled?: boolean;
+  version?: TlcVersion;
 }
 
 interface Specification {
@@ -88,6 +105,12 @@ interface Specification {
   assumptions: Assumption[];
   variableLocations: SourceLocation[];
   instanceActions: Map<string, InstanceAction>;
+  // The definitions TLC computes when it starts, in the order it computes them.
+  startupDefinitions: Definition[];
+  rootConstants: Declaration[];
+  rootSymbols: Symbols;
+  // The methods of the modules' classes, in the order TLC loads the classes.
+  javaOverrides: JavaOverride[];
 }
 
 export interface InstanceAction {
@@ -146,6 +169,28 @@ const getDeclarations = (linked: LinkedModule): Declaration[] => [
     location: linked.variableLocations[index],
   })),
 ];
+
+// Parses the module SANY reads from the file name.tla. A module SANY's parser rejects fails as it
+// does in TLC: SANY's message, then a fatal error that names the module.
+const parseModuleFile = (source: string, name: string) => {
+  try {
+    return parseModule(source);
+  } catch (error) {
+    if (!(error instanceof TlaSyntaxError)) throw error;
+    const parseError = getSanyParseError(source);
+    if (parseError === undefined) throw error;
+    throw createSanyError(
+      [
+        {
+          location: `In module ${name}`,
+          message: `Could not parse module ${name} from file ${name}.tla`,
+        },
+      ],
+      true,
+      parseError,
+    );
+  }
+};
 
 const createModuleRedefinedError = (module: Module) =>
   new TlaSyntaxError(
@@ -259,11 +304,15 @@ export const createEnvironment = (
   const parameterized = new Map<string, boolean>();
   // The definition each instance copy came from, and the instance parameters the copy adds.
   const copySources = new Map<string, { source: string; prefix: number }>();
+  const substitutedDefinitions = new Set<Definition>();
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
   );
   const standardExports = new Map<string, Symbols>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
+  runtime.isWarningEnabled = options.isWarningEnabled ?? true;
+  runtime.isTool = options.isTool ?? false;
+  runtime.version = options.version ?? "master";
   const linkedModules = new Map<string, LinkedModule>();
   const nestedModules = new Map<string, LinkedModule>();
   // Each module by name, from the time its level checks run.
@@ -300,13 +349,17 @@ export const createEnvironment = (
     };
   });
   const instanceActions = new Map<string, InstanceAction>();
+  const instanceNames = new Map<string, string>();
   const qualifiedNames = new Map<string, string>();
 
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
     if (cached) return cached;
-    const standardModule = getStandardModule(name, options.print, runtime, options.files);
+    const standardModule = getStandardModule(name, options.print, runtime, options.files, builtins);
     if (!standardModule) return undefined;
+    // TLC loads the modules a standard module instantiates too, and the Java methods of each
+    // replace the operators of every module, as those of Integers replace those of Naturals.
+    STANDARD_DEPENDENCIES.get(name)?.forEach(addStandardModule);
     const exported: Symbols = new Map();
     standardModule.extends.forEach((extended) =>
       addStandardModule(extended)?.forEach((symbol, symbolName) =>
@@ -361,16 +414,7 @@ export const createEnvironment = (
       options.loadModule?.(name) ??
       BUNDLED_MODULES.get(name) ??
       extractModule(options.source, name);
-    if (source === undefined)
-      throw createSanyError(
-        [
-          {
-            location: `In module ${importer}`,
-            message: `Cannot find source file for module ${name} imported in module ${importer}.`,
-          },
-        ],
-        true,
-      );
+    if (source === undefined) throw createMissingModuleError(name, importer);
     const module = parseModuleFile(source, name);
     if (module.name !== name) {
       throw createSanyError(
@@ -473,7 +517,12 @@ export const createEnvironment = (
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create) => {
         const key = createName(`${name}@${module.name}`);
-        definitions.set(key, create(key));
+        const definition = create(key);
+        definitions.set(key, definition);
+        if (declarations.length > 0) substitutedDefinitions.add(definition);
+        if (instance.name !== undefined) {
+          instanceNames.set(key, `${instance.name}!${instanceNames.get(source) ?? name}`);
+        }
         parameterized.set(key, !isParameterFree);
         copySources.set(key, { source, prefix: instance.params.length });
         return key;
@@ -715,8 +764,15 @@ export const createEnvironment = (
       return definition ? [{ ...definition, name }] : [];
     });
 
+  const javaOverrides = new Map<string, JavaOverride[]>();
   const linkModule = (unlinked: Module, scope: ModuleScope): LinkedModule => {
-    const parsed = overrideDefinitions(unlinked, options.loadClass?.(unlinked.name));
+    const overridden = overrideDefinitions(
+      unlinked,
+      options.loadClass?.(unlinked.name),
+      unlinked === root,
+    );
+    javaOverrides.set(unlinked.name, overridden.overrides);
+    const parsed = overridden.module;
     const firstCheck = instanceChecks.length;
     const visible: Symbols = new Map([
       ...CORE_OPERATORS.map((operator): [string, ModuleSymbol] => [
@@ -725,6 +781,8 @@ export const createEnvironment = (
       ]),
       ...scope.symbols,
     ]);
+    // Where an INSTANCE first made each name it adds visible.
+    const importedAt = new Map<string, SourceLocation>();
     const extendsReport: ModuleReport = { location: MODULE_START, errors: [], warnings: [] };
     const reports = [extendsReport];
     // Context.mergeExtendContext keeps the first of the symbols the extended modules share by name,
@@ -907,6 +965,7 @@ export const createEnvironment = (
           instanced.set(instance, symbols);
           symbols.forEach((symbol, name) => {
             if (visible.has(name)) return;
+            importedAt.set(name, instance.location);
             visible.set(name, symbol);
             if (!instance.isLocal) exported.set(name, symbol);
           });
@@ -931,6 +990,15 @@ export const createEnvironment = (
       definitions.set(key, definition);
       parameterized.set(key, !isParameterFree);
       const symbol = getDefinitionSymbol(definition);
+      const importedLocation = importedAt.get(definition.name);
+      // SANY binds the name of a fact to a fact the module imports before it.
+      if (
+        symbol.kind === "Theorem" &&
+        visible.get(definition.name)?.kind === "Theorem" &&
+        (importedLocation === undefined || isBefore(importedLocation, definition.location))
+      ) {
+        return;
+      }
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });
@@ -972,7 +1040,7 @@ export const createEnvironment = (
   };
 
   const linkedRoot = linkTopLevel(root).linked;
-  if (warnings.length > 0) options.print(formatSanyWarnings(warnings));
+  if (warnings.length > 0 && !options.isSanyReported) options.print(formatSanyWarnings(warnings));
   const getRootKey = (name: string) => linkedRoot.visible.get(name)?.key ?? name;
   linkedRoot.visible.forEach((symbol, name) => {
     const definition = definitions.get(symbol.key);
@@ -1014,6 +1082,7 @@ export const createEnvironment = (
     .filter((assignment) => assignment.args === undefined)
     .forEach((assignment) => {
       const value = toValue(assignment.value);
+      markNormalized(value);
       getScopedKeys(assignment).forEach((key) => {
         const arity = getKeyArity(key);
         if (arity === 0) constants.set(key, value);
@@ -1136,7 +1205,7 @@ export const createEnvironment = (
   const unassigned = declaredConstants.filter(
     (name) => !constants.has(name) && !substitutions.has(name) && !operatorKeys.has(name),
   );
-  if (unassigned.length > 0) {
+  if (unassigned.length > 0 && !options.isUnconfigured) {
     // TLC reports the first constant it finds unassigned in SANY's order of declarations.
     const name =
       getTlcDeclarationOrder(options.source, options.loadModule, "constant").find((constant) =>
@@ -1147,12 +1216,20 @@ export const createEnvironment = (
     );
   }
 
+  if (options.isTraceRecorded) {
+    builtins.forEach((builtin, name) => {
+      const replacement = getTraceSpecArithmetic(builtin);
+      if (replacement) builtins.set(name, replacement);
+    });
+  }
+
   const environment: Environment = {
     runtime,
     definitions,
     builtins,
     constants,
     substitutions,
+    instanceNames,
     variables,
     variableIndex: getVariableIndex(
       variables,
@@ -1160,6 +1237,7 @@ export const createEnvironment = (
     ),
     definitionValues: new Map(),
     constantLevels: new Map(),
+    substitutedDefinitions,
     evaluators: new WeakMap(),
   };
   // TLC evaluates a substitute at startup and rejects it only when that fails and the level bound it
@@ -1191,18 +1269,41 @@ export const createEnvironment = (
       analyzer.analyzeDefinition(definition, new Map()).level > 0
         ? getEvaluationError(definition.body)
         : undefined;
-    // TLC adds the reason unless a standard module's Java code failed.
     if (error) {
+      // TLC's SpecProcessor adds the message of a TLCRuntimeException, not of an EvalException.
+      const addendum = isEvalException(error) ? "" : ` - specifically: ${error.message}`;
       throw new TlaConfigError(
-        `The configuration file substitutes constant ${name} with non-constant ${target}${error instanceof TlaModuleError ? "" : ` - specifically: ${error.message}`}`,
+        `The configuration file substitutes constant ${name} with non-constant ${target}${addendum}`,
       );
     }
   });
-  runtime.isStarted = true;
+  // TLC 1.7.4 processes the whole spec before it creates its model checker, which TLCGet reads.
+  if (runtime.version !== "1.7.4") runtime.isStarted = true;
+  // TLC computes the constant definitions of each module in the order SANY finishes the modules,
+  // except those of a module that an INSTANCE gives parameters to.
+  const instantiated = new Set(
+    linkedList.flatMap((linked) => linked.module.instances.map((instance) => instance.module)),
+  );
+  const getDefinitionOrder = createTlcDefinitionOrder(options.source, options.loadModule);
   return {
     environment,
     assumptions,
     variableLocations: linkedRoot.variableLocations,
     instanceActions,
+    startupDefinitions: linkedList
+      .filter(
+        (linked) => !instantiated.has(linked.module.name) || getDeclarations(linked).length === 0,
+      )
+      .flatMap((linked) =>
+        getDefinitionOrder(linked === linkedRoot ? undefined : linked.module.name).flatMap(
+          (name) => {
+            const definition = definitions.get(linked.visible.get(name)?.key ?? name);
+            return definition ? [definition] : [];
+          },
+        ),
+      ),
+    rootConstants: linkedRoot.constants,
+    rootSymbols: linkedRoot.visible,
+    javaOverrides: linkedList.flatMap((linked) => javaOverrides.get(linked.module.name) ?? []),
   };
 };

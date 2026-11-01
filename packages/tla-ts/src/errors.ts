@@ -1,16 +1,18 @@
 import type { SourceRange } from "./ast";
 import { EXIT_STATUS, getExitCode } from "./exit-codes";
+import type { PcalNode } from "./pcal-ast";
 import type { Value } from "./values";
+
+// The start of TLC's message for an exception of a Java class it didn't expect.
+export const getUnexpectedException = (exceptionClass: string) =>
+  `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a ${exceptionClass}\n: `;
 
 // How TLC reports a RuntimeException it did not expect, such as one raised while computing next
 // states.
-export const UNEXPECTED_EXCEPTION =
-  "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
+export const UNEXPECTED_EXCEPTION = getUnexpectedException("java.lang.RuntimeException");
 
-// How TLC reports a Java StackOverflowError, which V8 raises as this RangeError.
-export const STACK_OVERFLOW =
-  "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.";
-
+// Whether an error is V8's RangeError for a stack overflow, which TLC raises as a Java
+// StackOverflowError.
 export const isStackOverflow = (error: unknown) =>
   error instanceof RangeError && error.message === "Maximum call stack size exceeded";
 
@@ -56,6 +58,32 @@ export class TlaSyntaxError extends TlaError {
   }
 }
 
+// A fatal error of SANY's parsing phase: a module SANY can't find or parse, a file whose name
+// doesn't match its module's, or a circular dependency. SANY reports it in the module that imports
+// or holds the failed one, or without a location, after its JavaCC parser's report of a module it
+// failed to parse. It keeps the name TlaSyntaxError, and index.ts doesn't export it.
+export class TlaSanyFatalError extends TlaSyntaxError {
+  location: string | undefined;
+  parseError: string | undefined;
+
+  constructor(message: string, location: string | undefined, parseError?: string) {
+    super(message);
+    this.location = location;
+    this.parseError = parseError;
+  }
+}
+
+// A module that another imports and SANY can't find, which SANY reports in the importer, except
+// TLC 1.7.4's SANY, which gives it no location.
+export class TlaMissingModuleError extends TlaSanyFatalError {
+  constructor(name: string, importer: string | undefined, isLocated = true) {
+    super(
+      `Cannot find source file for module ${name} imported in module ${importer}.`,
+      isLocated ? importer : undefined,
+    );
+  }
+}
+
 export const createSanyError = (
   errors: SanyError[],
   isFatal = false,
@@ -67,6 +95,18 @@ export const createSanyError = (
     undefined,
     undefined,
     { errors, warnings, isFatal, parseError },
+  );
+
+// SANY reports a module it can't find in the module that imports it.
+export const createMissingModuleError = (name: string, importer: string | undefined) =>
+  createSanyError(
+    [
+      {
+        location: `In module ${importer}`,
+        message: `Cannot find source file for module ${name} imported in module ${importer}.`,
+      },
+    ],
+    true,
   );
 
 // How SANY prints the warnings it reports, which do not stop TLC.
@@ -102,6 +142,48 @@ export class TlaEvaluationError extends TlaError {
   }
 }
 
+// How TLC reports a Java StackOverflowError.
+export const STACK_OVERFLOW_MESSAGE =
+  "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.";
+
+// A Java StackOverflowError, which TLC catches only at the top, unlike the exceptions of evaluation.
+export class TlaStackOverflowError extends TlaEvaluationError {
+  constructor() {
+    super(STACK_OVERFLOW_MESSAGE);
+  }
+}
+
+// A next-state action left variables of a successor state unassigned. TLC reports the partial
+// state, with null for each unassigned variable.
+export class TlaIncompleteSuccessorError extends TlaEvaluationError {
+  state: (Value | undefined)[];
+  action: string | undefined;
+  variables: string[];
+
+  constructor(
+    message: string,
+    state: (Value | undefined)[],
+    action: string | undefined,
+    variables: string[],
+  ) {
+    super(message);
+    this.state = state;
+    this.action = action;
+    this.variables = variables;
+  }
+}
+
+// An expression read a variable that its state doesn't assign. It keeps the name
+// TlaEvaluationError, and index.ts doesn't export it.
+export class TlaUnassignedError extends TlaEvaluationError {
+  variable: string;
+
+  constructor(message: string, variable: string) {
+    super(message);
+    this.variable = variable;
+  }
+}
+
 // An evaluation error that TLC raises as an EvalException from a standard module's Java code. It
 // keeps the name TlaEvaluationError, and index.ts doesn't export it.
 export class TlaModuleError extends TlaEvaluationError {
@@ -111,17 +193,6 @@ export class TlaModuleError extends TlaEvaluationError {
     super(message);
     this.name = "TlaEvaluationError";
     this.exitCode = exitCode;
-  }
-}
-
-// A variable that a partial state leaves without a value.
-export class TlaUnassignedError extends TlaEvaluationError {
-  variable: string;
-
-  constructor(message: string, variable: string) {
-    super(message);
-    this.name = "TlaEvaluationError";
-    this.variable = variable;
   }
 }
 
@@ -187,6 +258,18 @@ export class TlaUnsupportedError extends TlaError {
   }
 }
 
+// An exception that TLC's Java code throws and nothing catches, with the stack trace it prints, after
+// what the frames that the exception unwinds print about it.
+export class TlaJavaException extends TlaUnsupportedError {
+  unwound: string;
+
+  constructor(message: string, unwound: string) {
+    super(message);
+    this.name = "TlaJavaException";
+    this.unwound = unwound;
+  }
+}
+
 export const getErrorExitCode = (error: TlaError) =>
   getExitCode(error) ??
   (error instanceof TlaSyntaxError
@@ -196,3 +279,35 @@ export const getErrorExitCode = (error: TlaError) =>
       : error instanceof TlaEvaluationError
         ? EXIT_STATUS.specEvaluationFailure
         : EXIT_STATUS.error);
+
+// pcal.UnrecoverableException and its subclasses: an error the PlusCal translator reports as
+// "Unrecoverable error". UnrecoverablePositionedException adds the statement the error is at.
+export class PcalError extends TlaError {
+  node: PcalNode | undefined;
+
+  constructor(message: string, node?: PcalNode) {
+    super(message);
+    this.name = "PcalError";
+    this.node = node;
+  }
+}
+
+// A RuntimeException the translator's Java code throws, such as an index out of bounds, which
+// ParseAlgorithm.getAlgorithm turns into a parsing error.
+export class PcalRuntimeError extends TlaError {
+  constructor(message: string) {
+    super(message);
+    this.name = "PcalRuntimeError";
+  }
+}
+
+// PcalDebug.ReportBug: the translator found itself in a state it considers a bug, and throws a
+// java.lang.Error that nothing in SANY catches.
+export class PcalBugError extends TlaError {
+  constructor(message: string) {
+    super(
+      `You have discovered a bug in pcal.trans.\nSend the following information and the\ninput file to the current maintainer(s).\n\n -- ${message}.`,
+    );
+    this.name = "PcalBugError";
+  }
+}

@@ -1,222 +1,123 @@
-import { TlaParseError } from "./errors";
+import { TlaError } from "./errors";
 
-// The token kinds of SANY's TLA+ grammar, numbered as in its TLAplusParserConstants.
-export const EOF = 0;
-export const BEGIN_PRAGMA = 2;
-export const _BM1 = 3;
-export const NUMBER = 20;
-export const _BM2 = 21;
-export const _BM0 = 35;
-export const SEPARATOR = 36;
-export const END_MODULE = 37;
-export const ACTION = 38;
-export const ASSUME = 39;
-export const BOXASSUME = 40;
-export const ASSUMPTION = 41;
-export const CASE = 42;
-export const CHOOSE = 43;
-export const CONSTANT = 44;
-export const ELSE = 45;
-export const EXCEPT = 46;
-export const EXISTS = 47;
-export const EXTENDS = 48;
-export const FORALL = 49;
-export const IF = 50;
-export const INSTANCE = 51;
-export const LET = 52;
-export const LETIN = 53;
-export const LOCAL = 54;
-export const MODULE = 55;
-export const NEW = 56;
-export const OTHER = 57;
-export const PROPOSITION = 58;
-export const SF = 59;
-export const T_EXISTS = 60;
-export const T_FORALL = 61;
-export const THEN = 62;
-export const BY = 63;
-export const ONLY = 64;
-export const DEFINE = 65;
-export const DF = 66;
-export const THEOREM = 67;
-export const USE = 68;
-export const HIDE = 69;
-export const HAVE = 70;
-export const OBVIOUS = 71;
-export const OMITTED = 72;
-export const LAMBDA = 73;
-export const TAKE = 74;
-export const PROOF = 75;
-export const PROVE = 76;
-export const BOXPROVE = 77;
-export const QED = 78;
-export const RECURSIVE = 79;
-export const STATE = 80;
-export const TEMPORAL = 81;
-export const PICK = 82;
-export const WITNESS = 83;
-export const SUFFICES = 84;
-export const VARIABLE = 85;
-export const WF = 86;
-export const WITH = 87;
-export const COMMA = 88;
-export const COLON = 89;
-export const COLONCOLON = 90;
-export const DOT = 91;
-export const US = 92;
-export const DEF = 93;
-export const LBR = 94;
-export const RBR = 95;
-export const DEFBREAK = 96;
-export const LSB = 97;
-export const ARSB = 98;
-export const RSB = 99;
-export const LBC = 100;
-export const RBC = 101;
-export const LAB = 102;
-export const ARAB = 103;
-export const RAB = 104;
-export const BANG = 105;
-export const ARROW = 106;
-export const SUBSTITUTE = 107;
-export const MAPTO = 108;
-export const NUMBER_LITERAL = 109;
-export const STRING_LITERAL = 110;
-const BAND = 111;
-const BOR = 112;
-export const PRIME = 113;
-export const NEGATIVE = 117;
-export const CASESEP = 121;
-export const AND = 129;
-export const OR = 132;
-export const IN = 147;
-export const EQUALS = 185;
-export const MINUS = 193;
-export const IDENTIFIER = 289;
-export const PROOF_STEP = 290;
-export const PROOF_IMPLICIT_STEP = 291;
-export const PROOF_STEP_DOT = 292;
-export const BARE_LEVEL = 293;
-export const UNNUMBERED_STEP = 294;
+// An emulation of the token manager that JavaCC generates for SANY's grammar, javacc/tla+.jj: the
+// tokens it produces, their kinds in TLAplusParserConstants order, and their positions.
 
 export interface SanyToken {
   kind: number;
   image: string;
   beginLine: number;
   beginColumn: number;
-  endLine: number;
-  endColumn: number;
   next: SanyToken | undefined;
 }
 
-export interface SanyLexer {
-  getNextToken: () => SanyToken;
-}
-
-const enum LexicalState {
-  Default,
-  Pragma,
-  Spec,
-  InComment,
-  Embedded,
-  InEndOfLineComment,
-}
-
-const UNICODE_INFIX_OPERATORS = "≈≔≍◯⩴●∩⋅∘≅∪÷≐‥…≡‼≥≫⇔⇒⫤↝≤≪⊣≠∉⊙⊖⊕⊘⊗⇸≺⪯∝⁇⊨⊢∼≃⊓⊔⊏⊑⊐⊒⋆⊂⊆≻⪰⊃⊇×⊎‖≀";
-
-const LITERALS: [number, string[]][] = [
-  [ACTION, ["ACTION", "ACTIONS"]],
-  [ASSUME, ["ASSUME"]],
-  [BOXASSUME, ["[]ASSUME"]],
-  [ASSUMPTION, ["ASSUMPTION", "AXIOM"]],
-  [CASE, ["CASE"]],
-  [CHOOSE, ["CHOOSE"]],
-  [CONSTANT, ["CONSTANT", "CONSTANTS"]],
-  [ELSE, ["ELSE"]],
-  [EXCEPT, ["EXCEPT"]],
-  [EXISTS, ["\\E", "\\exists", "∃"]],
-  [EXTENDS, ["EXTENDS"]],
-  [FORALL, ["\\A", "\\forall", "∀"]],
-  [IF, ["IF"]],
-  [INSTANCE, ["INSTANCE"]],
-  [LET, ["LET"]],
-  [LETIN, ["IN"]],
-  [LOCAL, ["LOCAL"]],
-  [MODULE, ["MODULE"]],
-  [NEW, ["NEW"]],
-  [OTHER, ["OTHER"]],
-  [PROPOSITION, ["PROPOSITION", "LEMMA", "COROLLARY"]],
-  [SF, ["SF_"]],
-  [T_EXISTS, ["\\EE"]],
-  [T_FORALL, ["\\AA"]],
-  [THEN, ["THEN"]],
-  [BY, ["BY"]],
-  [ONLY, ["ONLY"]],
-  [DEFINE, ["DEFINE"]],
-  [DF, ["DEF", "DEFS"]],
-  [THEOREM, ["THEOREM"]],
-  [USE, ["USE"]],
-  [HIDE, ["HIDE"]],
-  [HAVE, ["HAVE"]],
-  [OBVIOUS, ["OBVIOUS"]],
-  [OMITTED, ["OMITTED"]],
-  [LAMBDA, ["LAMBDA"]],
-  [TAKE, ["TAKE"]],
-  [PROOF, ["PROOF"]],
-  [PROVE, ["PROVE"]],
-  [BOXPROVE, ["[]PROVE"]],
-  [QED, ["QED"]],
-  [RECURSIVE, ["RECURSIVE"]],
-  [STATE, ["STATE"]],
-  [TEMPORAL, ["TEMPORAL", "TEMPORALS"]],
-  [PICK, ["PICK"]],
-  [WITNESS, ["WITNESS"]],
-  [SUFFICES, ["SUFFICES"]],
-  [VARIABLE, ["VARIABLE", "VARIABLES"]],
-  [WF, ["WF_"]],
-  [WITH, ["WITH"]],
-  [COMMA, [","]],
-  [COLON, [":"]],
-  [COLONCOLON, ["::", "∷"]],
-  [DOT, ["."]],
-  [US, ["_"]],
-  [DEF, ["==", "≜"]],
-  [LBR, ["("]],
-  [RBR, [")"]],
-  [DEFBREAK, ["-|-"]],
-  [LSB, ["["]],
-  [ARSB, ["]_"]],
-  [RSB, ["]"]],
-  [LBC, ["{"]],
-  [RBC, ["}"]],
-  [LAB, ["<<", "⟨"]],
-  [ARAB, [">>_", "⟩_"]],
-  [RAB, [">>", "⟩"]],
-  [BANG, ["!"]],
-  [ARROW, ["->", "→"]],
-  [SUBSTITUTE, ["<-", "←"]],
-  [MAPTO, ["|->", "↦"]],
-  [PRIME, ["'"]],
-  [114, ["^+", "⁺"]],
-  [115, ["^*"]],
-  [116, ["^#"]],
-  [NEGATIVE, ["-."]],
-  [118, ["\\lnot", "¬"]],
-  [119, ["\\neg"]],
-  [120, ["~"]],
-  [CASESEP, ["[]", "□"]],
-  [122, ["<>", "◇"]],
-  [123, ["ENABLED"]],
-  [124, ["UNCHANGED"]],
-  [125, ["SUBSET"]],
-  [126, ["UNION"]],
-  [127, ["DOMAIN"]],
+// The token kinds, in the order of TLAplusParserConstants, each with the literal images that
+// produce it. JavaCC breaks a tie between matches of the same length by this order.
+const KINDS: [string, ...string[]][] = [
+  ["EOF"],
+  ["BEGIN_PRAGMA", "--->"],
+  ["_BM1"],
+  ["NUMBER"],
+  ["_BM2"],
+  ["_BM0"],
+  ["SEPARATOR"],
+  ["END_MODULE"],
+  ["ACTION", "ACTION", "ACTIONS"],
+  ["ASSUME", "ASSUME"],
+  ["BOXASSUME", "[]ASSUME"],
+  ["ASSUMPTION", "ASSUMPTION", "AXIOM"],
+  ["CASE", "CASE"],
+  ["CHOOSE", "CHOOSE"],
+  ["CONSTANT", "CONSTANT", "CONSTANTS"],
+  ["ELSE", "ELSE"],
+  ["EXCEPT", "EXCEPT"],
+  ["EXISTS", "\\E", "\\exists", "∃"],
+  ["EXTENDS", "EXTENDS"],
+  ["FORALL", "\\A", "\\forall", "∀"],
+  ["IF", "IF"],
+  ["INSTANCE", "INSTANCE"],
+  ["LET", "LET"],
+  ["LETIN", "IN"],
+  ["LOCAL", "LOCAL"],
+  ["MODULE", "MODULE"],
+  ["NEW", "NEW"],
+  ["OTHER", "OTHER"],
+  ["PROPOSITION", "PROPOSITION", "LEMMA", "COROLLARY"],
+  ["SF", "SF_"],
+  ["T_EXISTS", "\\EE"],
+  ["T_FORALL", "\\AA"],
+  ["THEN", "THEN"],
+  ["BY", "BY"],
+  ["ONLY", "ONLY"],
+  ["DEFINE", "DEFINE"],
+  ["DF", "DEF", "DEFS"],
+  ["THEOREM", "THEOREM"],
+  ["USE", "USE"],
+  ["HIDE", "HIDE"],
+  ["HAVE", "HAVE"],
+  ["OBVIOUS", "OBVIOUS"],
+  ["OMITTED", "OMITTED"],
+  ["LAMBDA", "LAMBDA"],
+  ["TAKE", "TAKE"],
+  ["PROOF", "PROOF"],
+  ["PROVE", "PROVE"],
+  ["BOXPROVE", "[]PROVE"],
+  ["QED", "QED"],
+  ["RECURSIVE", "RECURSIVE"],
+  ["STATE", "STATE"],
+  ["TEMPORAL", "TEMPORAL", "TEMPORALS"],
+  ["PICK", "PICK"],
+  ["WITNESS", "WITNESS"],
+  ["SUFFICES", "SUFFICES"],
+  ["VARIABLE", "VARIABLE", "VARIABLES"],
+  ["WF", "WF_"],
+  ["WITH", "WITH"],
+  ["COMMA", ","],
+  ["COLON", ":"],
+  ["COLONCOLON", "::", "∷"],
+  ["DOT", "."],
+  ["US", "_"],
+  ["DEF", "==", "≜"],
+  ["LBR", "("],
+  ["RBR", ")"],
+  ["DEFBREAK", "-|-"],
+  ["LSB", "["],
+  ["ARSB", "]_"],
+  ["RSB", "]"],
+  ["LBC", "{"],
+  ["RBC", "}"],
+  ["LAB", "<<", "⟨"],
+  ["ARAB", ">>_", "⟩_"],
+  ["RAB", ">>", "⟩"],
+  ["BANG", "!"],
+  ["ARROW", "->", "→"],
+  ["SUBSTITUTE", "<-", "←"],
+  ["MAPTO", "|->", "↦"],
+  ["NUMBER_LITERAL"],
+  ["STRING_LITERAL"],
+  ["BAND"],
+  ["BOR"],
+  ["op_57", "'"],
+  ["op_68", "^+", "⁺"],
+  ["op_69", "^*"],
+  ["op_70", "^#"],
+  ["op_76", "-."],
+  ["op_26", "\\lnot", "¬"],
+  ["op_29", "\\neg"],
+  ["op_58", "~"],
+  ["CASESEP", "[]", "□"],
+  ["op_61", "<>", "◇"],
+  ["op_112", "ENABLED"],
+  ["op_113", "UNCHANGED"],
+  ["op_114", "SUBSET"],
+  ["op_115", "UNION"],
+  ["op_116", "DOMAIN"],
+  ["op_1", "//"],
+  ["AND", "/\\", "∧"],
+  ["op_3", "/="],
+  ["op_4", "/"],
+  ["OR", "\\/", "∨"],
   ...[
-    "//",
-    "/\\",
-    "/=",
-    "/",
-    "\\/",
     "\\approx",
     "\\asymp",
     "\\bigcirc",
@@ -231,7 +132,9 @@ const LITERALS: [number, string[]][] = [
     "\\equiv",
     "\\geq",
     "\\gg",
-    "\\in",
+  ].map((image): [string, string] => ["infix", image]),
+  ["IN", "\\in", "∈"],
+  ...[
     "\\intersect",
     "\\union",
     "\\land",
@@ -269,15 +172,11 @@ const LITERALS: [number, string[]][] = [
     "=>",
     "=<",
     "=|",
-    "=",
-    "##",
-    "#",
-    "^^",
-    "^",
-    "--",
-    "-|",
-    "-+->",
-    "-",
+  ].map((image): [string, string] => ["infix", image]),
+  ["EQUALS", "="],
+  ...["##", "#", "^^", "^", "--", "-|", "-+->"].map((image): [string, string] => ["infix", image]),
+  ["op_77", "-"],
+  ...[
     "**",
     "*",
     "++",
@@ -312,118 +211,279 @@ const LITERALS: [number, string[]][] = [
     "(/)",
     "(\\X)",
     "\\notin",
-    ...UNICODE_INFIX_OPERATORS,
+    ..."≈≔≍◯⩴●∩⋅∘≅∪÷≐‥…≡‼≥≫⇔⇒⫤↝≤≪⊣≠∉⊙⊖⊕⊘⊗⇸≺⪯∝⁇⊨⊢∼≃⊓⊔⊏⊑⊐⊒⋆⊂⊆≻⪰⊃⊇×⊎‖≀",
     "\\times",
-    "\\X",
-  ].map((operator, index): [number, string[]] => [128 + index, [operator]]),
-  [AND, ["∧"]],
-  [OR, ["∨"]],
-  [IN, ["∈"]],
+  ].map((image): [string, string] => ["infix", image]),
+  ["op_119", "\\X"],
+  ["IDENTIFIER"],
+  ["ProofStepLexeme"],
+  ["ProofImplicitStepLexeme"],
+  ["ProofStepDotLexeme"],
+  ["BareLevelLexeme"],
+  ["UnnumberedStepLexeme"],
 ];
 
-const getLiteralsByFirstCharacter = () => {
-  const literals = new Map<string, [number, string][]>();
-  for (const entry of LITERALS) {
-    for (const image of entry[1])
-      literals.set(image[0], [...(literals.get(image[0]) ?? []), [entry[0], image]]);
-  }
-  return literals;
+const KIND_NAMES = KINDS.map((entry) => entry[0]);
+const KIND_INDEXES = new Map(
+  KIND_NAMES.map((name, kind): [string, number] => [name, kind]).reverse(),
+);
+
+// The kind named name. The anonymous infix operators share the name "infix", which no caller
+// looks up.
+export const getKind = (name: string) => {
+  const kind = KIND_INDEXES.get(name);
+  if (kind === undefined) throw new TlaError(`Unknown SANY token kind ${name}`);
+  return kind;
 };
 
-const LITERALS_BY_FIRST_CHARACTER = getLiteralsByFirstCharacter();
+const LITERALS = new Map(
+  KINDS.flatMap((entry, kind) => entry.slice(1).map((image): [string, number] => [image, kind])),
+);
+const LONGEST_LITERAL = Math.max(...[...LITERALS.keys()].map((image) => image.length));
+const LITERAL_LENGTHS = Array.from(
+  { length: LONGEST_LITERAL },
+  (_, index) => LONGEST_LITERAL - index,
+);
 
-const BEGIN_MODULE = /-{4,} *MODULE/y;
-
-const BAND_PATTERNS = [
-  /[0-9][A-Za-z0-9]*\.\/\\/y,
-  /[WS][a-zA-EG-Z0-9][A-Za-z0-9]*\.\/\\/y,
-  /[a-zA-RT-VX-Z][A-Za-z0-9]*\.\/\\/y,
-];
-
-const BOR_PATTERNS = [
-  /[0-9][A-Za-z0-9]*\.\\\//y,
-  /[WS][a-zA-EG-Z0-9][A-Za-z0-9]*\.\\\//y,
-  /[a-zA-RT-VX-Z][A-Za-z0-9]*\.\\\//y,
-];
-
+const BEGIN_MODULE = /----+ *MODULE/y;
 const IDENTIFIER_PATTERNS = [
-  /_[A-Za-z0-9_]*[A-Za-z][A-Za-z0-9_]*/y,
-  /[0-9][A-Za-z0-9_]*[A-Za-z][A-Za-z0-9_]*/y,
-  /[WS](?:[a-zA-EG-Z_0-9][A-Za-z0-9_]*)?/y,
-  /[WS]F(?:[A-Za-z0-9][A-Za-z0-9_]*)?/y,
-  /[a-zA-RT-VX-Z][A-Za-z0-9_]*/y,
-  /[@ℕℤℝ]/y,
+  /_\w*[A-Za-z]\w*/y,
+  /[0-9]\w*[A-Za-z]\w*/y,
+  /[WS](?:[a-zA-EG-Z_0-9]\w*)?/y,
+  /[WS]F(?:[A-Za-z0-9]\w*)?/y,
+  /[a-zA-RT-VX-Z]\w*/y,
+  /@|ℕ|ℤ|ℝ/y,
 ];
-
-const SPEC_PATTERNS: [number, RegExp[]][] = [
-  [_BM0, [BEGIN_MODULE]],
-  [SEPARATOR, [/-{4,}/y]],
-  [END_MODULE, [/={4,}/y]],
-  [NUMBER_LITERAL, [/[0-9]+|\\[oO][0-7]+|\\[bB][01]+|\\[hH][0-9a-fA-F]+/y]],
-  [STRING_LITERAL, [/"(?:[^"\n\r\\]|\\[ntrf\\"])*"/y]],
-  [BAND, BAND_PATTERNS],
-  [BOR, BOR_PATTERNS],
-  [IDENTIFIER, IDENTIFIER_PATTERNS],
-  [PROOF_STEP, [/<[0-9]+>[A-Za-z0-9_]+/y]],
-  [PROOF_IMPLICIT_STEP, [/<[+*]>[A-Za-z0-9]+/y]],
-  [PROOF_STEP_DOT, [/<(?:[0-9]+|\+|\*)>[A-Za-z0-9_]+\.+/y]],
-  [BARE_LEVEL, [/<(?:[0-9]+|\+|\*)>/y]],
-  [UNNUMBERED_STEP, [/<(?:[0-9]+|\+|\*)>(?:\*\.*|-\.*|\.+)/y]],
-];
-
-const PRAGMA_PATTERNS: [number, RegExp[]][] = [
-  [NUMBER, [/[0-9]+/y]],
-  [_BM2, [BEGIN_MODULE]],
-  [BAND, BAND_PATTERNS],
-  [BOR, BOR_PATTERNS],
-  [IDENTIFIER, IDENTIFIER_PATTERNS],
-];
-
-const getPatternLength = (patterns: RegExp[], source: string, index: number) =>
-  Math.max(
-    0,
-    ...patterns.map((pattern) => {
-      pattern.lastIndex = index;
-      return pattern.exec(source)?.[0].length ?? 0;
-    }),
+const getJunctionPatterns = (junction: string) =>
+  [/[0-9][A-Za-z0-9]*/, /[WS][a-zA-EG-Z0-9][A-Za-z0-9]*/, /[a-zA-RT-VX-Z][A-Za-z0-9]*/].map(
+    (prefix) => new RegExp(`${prefix.source}${junction}`, "y"),
   );
+const BAND_PATTERNS = getJunctionPatterns(String.raw`\.\/\\`);
+const BOR_PATTERNS = getJunctionPatterns(String.raw`\.\\\/`);
+const STEP = String.raw`<(?:[0-9]+|\+|\*)>`;
 
-// The longest token at index, the lowest kind winning a tie, as JavaCC's token manager picks it.
-const matchToken = (
-  source: string,
-  index: number,
-  patterns: [number, RegExp[]][],
-  isSpec: boolean,
-) => {
-  const candidates: [number, number][] = patterns.map(([kind, kindPatterns]) => [
-    kind,
-    getPatternLength(kindPatterns, source, index),
-  ]);
-  if (isSpec) {
-    for (const [kind, image] of LITERALS_BY_FIRST_CHARACTER.get(source[index]) ?? []) {
-      if (source.startsWith(image, index)) candidates.push([kind, image.length]);
+// The tokens of the SPEC lexical state that are not literals, with their kinds.
+const SPEC_PATTERNS: [string, RegExp[]][] = [
+  ["_BM0", [BEGIN_MODULE]],
+  ["SEPARATOR", [/----+/y]],
+  ["END_MODULE", [/====+/y]],
+  ["NUMBER_LITERAL", [/[0-9]+|\\[oO][0-7]+|\\[bB][01]+|\\[hH][0-9a-fA-F]+/y]],
+  ["STRING_LITERAL", [/"(?:[^"\n\r\\]|\\[ntrf\\"])*"/y]],
+  ["BAND", BAND_PATTERNS],
+  ["BOR", BOR_PATTERNS],
+  ["IDENTIFIER", IDENTIFIER_PATTERNS],
+  ["ProofStepLexeme", [/<[0-9]+>\w+/y]],
+  ["ProofImplicitStepLexeme", [/<[+*]>[A-Za-z0-9]+/y]],
+  ["ProofStepDotLexeme", [new RegExp(String.raw`${STEP}\w+\.+`, "y")]],
+  ["BareLevelLexeme", [new RegExp(STEP, "y")]],
+  ["UnnumberedStepLexeme", [new RegExp(String.raw`${STEP}(?:\*\.*|-\.*|\.+)`, "y")]],
+];
+
+// The tokens of the DEFAULT and PRAGMA lexical states, which skip every other character.
+const DEFAULT_PATTERNS: [string, RegExp[]][] = [
+  ["BEGIN_PRAGMA", [/--->/y]],
+  ["_BM1", [BEGIN_MODULE]],
+];
+const PRAGMA_PATTERNS: [string, RegExp[]][] = [
+  ["NUMBER", [/[0-9]+/y]],
+  ["_BM2", [BEGIN_MODULE]],
+  ["BAND", BAND_PATTERNS],
+  ["BOR", BOR_PATTERNS],
+  ["IDENTIFIER", IDENTIFIER_PATTERNS],
+];
+
+const getMatchLength = (pattern: RegExp, source: string, offset: number) => {
+  pattern.lastIndex = offset;
+  return pattern.exec(source)?.[0].length ?? 0;
+};
+
+// The longest match at offset, the earliest kind among matches of that length.
+const matchPatterns = (patterns: [string, RegExp[]][], source: string, offset: number) =>
+  patterns
+    .map(([name, regexes]) => ({
+      kind: getKind(name),
+      length: Math.max(...regexes.map((regex) => getMatchLength(regex, source, offset))),
+    }))
+    .reduce(
+      (best, match) =>
+        match.length > best.length || (match.length === best.length && match.kind < best.kind)
+          ? match
+          : best,
+      { kind: -1, length: 0 },
+    );
+
+const matchSpecToken = (source: string, offset: number) => {
+  const literalLength = LITERAL_LENGTHS.find((length) =>
+    LITERALS.has(source.slice(offset, offset + length)),
+  );
+  const pattern = matchPatterns(SPEC_PATTERNS, source, offset);
+  if (literalLength === undefined) return pattern;
+  const literal = {
+    kind: LITERALS.get(source.slice(offset, offset + literalLength)) ?? -1,
+    length: literalLength,
+  };
+  return literal.length > pattern.length ||
+    (literal.length === pattern.length && literal.kind < pattern.kind)
+    ? literal
+    : pattern;
+};
+
+export const getTabStop = (column: number) => column + 8 - (column % 8);
+
+// SimpleCharStream.UpdateLineColumn: the line and column of each character, with tabs stopping
+// at multiples of 8.
+const getPositions = (source: string) => {
+  const lines: number[] = [];
+  const columns: number[] = [];
+  const state = { line: 1, column: 0, isAfterCr: false, isAfterLf: false };
+  for (const character of source) {
+    for (let unit = 0; unit < character.length; unit++) {
+      state.column++;
+      if (state.isAfterLf) {
+        state.isAfterLf = false;
+        state.line++;
+        state.column = 1;
+      } else if (state.isAfterCr) {
+        state.isAfterCr = false;
+        if (character === "\n") state.isAfterLf = true;
+        else {
+          state.line++;
+          state.column = 1;
+        }
+      }
+      if (character === "\r") state.isAfterCr = true;
+      else if (character === "\n") state.isAfterLf = true;
+      else if (character === "\t") state.column = getTabStop(state.column - 1);
+      lines.push(state.line);
+      columns.push(state.column);
     }
   }
-  return candidates.reduce<[number, number]>(
-    (best, candidate) =>
-      candidate[1] > best[1] ||
-      (candidate[1] === best[1] && candidate[1] > 0 && candidate[0] < best[0])
-        ? candidate
-        : best,
-    [EOF, 0],
+  return { lines, columns };
+};
+
+// The characters of a string literal that a string literal could still continue.
+const STRING_PREFIX = /"(?:[^"\n\r\\]|\\[ntrf\\"])*\\?/y;
+const LITERAL_PREFIXES = new Set(
+  [...LITERALS.keys()].flatMap((image) =>
+    Array.from({ length: image.length - 1 }, (_, index) => image.slice(0, index + 1)),
+  ),
+);
+
+// The characters JavaCC's token manager reads at offset while some token could still continue.
+const getTokenPrefix = (source: string, offset: number) => {
+  let length = 0;
+  while (LITERAL_PREFIXES.has(source.slice(offset, offset + length + 1))) length++;
+  return source.slice(
+    offset,
+    offset + Math.max(length, getMatchLength(STRING_PREFIX, source, offset)),
   );
 };
 
-// The length of input at index that some token could still begin with, when no token matches it.
-const getViablePrefixLength = (source: string, index: number) => {
-  if (source[index] === "?") return 1;
-  if (source[index] !== '"') return 0;
-  const stringPrefix = /"(?:[^"\n\r\\]|\\[ntrf\\"])*\\?/y;
-  stringPrefix.lastIndex = index;
-  return stringPrefix.exec(source)?.[0].length ?? 0;
+// A lazy token stream over source, which returns SANY's message for the TokenMgrError JavaCC's
+// token manager throws at a character no token continues with, or at the end of the file in a
+// comment.
+export const createSanyLexer = (source: string) => {
+  const positions = getPositions(source);
+  const state = { offset: 0, mode: "DEFAULT" };
+  const createToken = (kind: number, start: number, length: number): SanyToken => ({
+    kind,
+    image: source.slice(start, start + length),
+    beginLine: positions.lines[start] ?? 0,
+    beginColumn: positions.columns[start] ?? 0,
+    next: undefined,
+  });
+  // JavaCC places the end of the file at the file's last character.
+  const getEndOfFile = () => createToken(getKind("EOF"), source.length - 1, 0);
+  // The lexer read the characters from start to end, and TLAplusParser.parse reports the end of
+  // the file in a token that starts on an earlier line as an open comment.
+  const getLexicalError = (start: number, end: number, after: string) => {
+    const index = end - 1;
+    const line = positions.lines[index];
+    const column = positions.columns[index];
+    if (end < source.length) return formatLexicalError(line, column, source[index], after);
+    if (positions.lines[start] !== line) {
+      return `Lexical {error: EOF reached, possibly open comment starting around line ${positions.lines[start]}`;
+    }
+    return source[index] === "\n" || source[index] === "\r"
+      ? formatLexicalError(line + 1, 0, undefined, after)
+      : formatLexicalError(line, column + 1, undefined, after);
+  };
+  // A comment is a chain of MORE matches, which restarts after each nested comment bracket, and the
+  // end of the file right after a bracket ends the token stream.
+  const skipComment = () => {
+    const start = state.offset;
+    if (source.startsWith("\\*", start)) {
+      const end = source.slice(start).search(/[\n\r]/);
+      if (end === -1) return getLexicalError(start, source.length, "");
+      state.offset += end + 1;
+      return undefined;
+    }
+    let depth = 0;
+    let chainStart = start;
+    let offset = start;
+    while (offset < source.length) {
+      if (source.startsWith("(*", offset)) {
+        depth++;
+        offset += 2;
+        if (depth > 1) chainStart = offset;
+      } else if (source.startsWith("*)", offset)) {
+        depth--;
+        offset += 2;
+        chainStart = offset;
+        if (depth === 0) {
+          state.offset = offset;
+          return undefined;
+        }
+      } else offset++;
+    }
+    state.offset = offset;
+    return chainStart === source.length ? undefined : getLexicalError(chainStart, offset, "");
+  };
+  const getSkippingToken = (patterns: [string, RegExp[]][]): SanyToken => {
+    while (state.offset < source.length) {
+      const match = matchPatterns(patterns, source, state.offset);
+      if (match.length > 0) {
+        const token = createToken(match.kind, state.offset, match.length);
+        state.offset += match.length;
+        if (KIND_NAMES[match.kind].startsWith("_BM")) state.mode = "SPEC";
+        if (KIND_NAMES[match.kind] === "BEGIN_PRAGMA") state.mode = "PRAGMA";
+        return token;
+      }
+      state.offset++;
+    }
+    return getEndOfFile();
+  };
+  const getNextToken = (): SanyToken | string => {
+    if (state.mode === "DEFAULT") return getSkippingToken(DEFAULT_PATTERNS);
+    if (state.mode === "PRAGMA") return getSkippingToken(PRAGMA_PATTERNS);
+    while (state.offset < source.length) {
+      const offset = state.offset;
+      if (" \t\n\r".includes(source[offset])) state.offset++;
+      else if (source.startsWith("(*", offset) || source.startsWith("\\*", offset)) {
+        const error = skipComment();
+        if (error !== undefined) return error;
+      } else {
+        const match = matchSpecToken(source, offset);
+        if (match.length === 0) {
+          // JavaCC reads on while a token could continue, and one more character.
+          const prefix = getTokenPrefix(source, offset);
+          const end = Math.min(offset + prefix.length + 1, source.length);
+          const read = source.slice(offset, end);
+          const after = end < source.length ? prefix : read.length > 1 ? read : "";
+          return getLexicalError(offset, end, after);
+        }
+        const token = createToken(match.kind, offset, match.length);
+        state.offset += match.length;
+        return token;
+      }
+    }
+    return getEndOfFile();
+  };
+  return getNextToken;
 };
 
-const ESCAPES = new Map([
+// JavaCC's TokenMgrError.addEscapes, which escapes the characters of a lexical error's message.
+const LEXEME_ESCAPES = new Map([
   ["\b", "\\b"],
   ["\t", "\\t"],
   ["\n", "\\n"],
@@ -432,184 +492,54 @@ const ESCAPES = new Map([
   ['"', '\\"'],
   ["'", "\\'"],
   ["\\", "\\\\"],
-  ["\0", ""],
 ]);
 
-// Escapes text as JavaCC's error messages print it.
-export const escapeImage = (text: string) =>
-  text
-    .split("")
-    .map((unit) => {
-      const code = unit.charCodeAt(0);
-      return (
-        ESCAPES.get(unit) ??
-        (code < 0x20 || code > 0x7e ? `\\u${code.toString(16).padStart(4, "0")}` : unit)
-      );
-    })
-    .join("");
+export const escapeLexeme = (text: string) =>
+  text.replace(
+    // eslint-disable-next-line no-control-regex
+    /[\0-\x1f"'\\\x7f-\uffff]/g,
+    (character) =>
+      LEXEME_ESCAPES.get(character) ??
+      (character === "\0" ? "" : `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`),
+  );
 
-// Reads SANY tokens one at a time, so a lexical error surfaces only when the parser reaches it.
-export const createSanyLexer = (source: string): SanyLexer => {
-  const lines: number[] = [];
-  const columns: number[] = [];
-  const position = { line: 1, column: 0, isAfterCarriageReturn: false, isAfterLineFeed: false };
-  for (const character of source.split("")) {
-    position.column++;
-    if (position.isAfterLineFeed) {
-      position.isAfterLineFeed = false;
-      position.line++;
-      position.column = 1;
-    } else if (position.isAfterCarriageReturn) {
-      position.isAfterCarriageReturn = false;
-      if (character === "\n") position.isAfterLineFeed = true;
-      else {
-        position.line++;
-        position.column = 1;
-      }
-    }
-    if (character === "\r") position.isAfterCarriageReturn = true;
-    if (character === "\n") position.isAfterLineFeed = true;
-    if (character === "\t")
-      position.column = position.column - 1 + (8 - ((position.column - 1) % 8));
-    lines.push(position.line);
-    columns.push(position.column);
-  }
-  const cursor = { state: LexicalState.Default, index: 0, commentDepth: 0 };
-  const createToken = (kind: number, begin: number, end: number): SanyToken => ({
-    kind,
-    image: source.slice(begin, end),
-    beginLine: lines[begin],
-    beginColumn: columns[begin],
-    endLine: lines[end - 1],
-    endColumn: columns[end - 1],
-    next: undefined,
-  });
-  const throwLexicalError = (begin: number, after: string, killer: number | undefined) => {
-    if (killer !== undefined && killer + 1 < source.length) {
-      throw new TlaParseError(
-        `Lexical error at line ${lines[killer]}, column ${columns[killer]}.  Encountered: "${escapeImage(source[killer])}" (${source.charCodeAt(killer)}), after : "${escapeImage(after)}"`,
+// TokenMgrError.LexicalError: the character the lexer stopped at, or the end of the file, and the
+// characters of the token it had read.
+export const formatLexicalError = (
+  line: number,
+  column: number,
+  character: string | undefined,
+  after: string,
+) =>
+  `Lexical error at line ${line}, column ${column}.  Encountered: ${character === undefined ? "<EOF> " : `"${escapeLexeme(character)}" (${character.charCodeAt(0)}), `}after : "${escapeLexeme(after)}"`;
+
+// TLC 1.7.4's lexer, which JavaCC generated without UNICODE_INPUT, reads a character past U+00FF
+// outside a comment by its low byte, and stops at one whose low byte is below 0x80.
+export const getSany174LexicalError = (source: string) => {
+  const readToken = createSanyLexer(source);
+  for (
+    let token = readToken();
+    typeof token !== "string" && token.kind !== getKind("EOF");
+    token = readToken()
+  ) {
+    const index = token.image.split("").findIndex((character) => {
+      const code = character.charCodeAt(0);
+      return code > 0xff && (code & 0xff) < 0x80;
+    });
+    if (index === -1) continue;
+    const column = token.image
+      .slice(1, index + 1)
+      .split("")
+      .reduce(
+        (previous, character) => (character === "\t" ? getTabStop(previous) : previous + 1),
+        token.beginColumn,
       );
-    }
-    const last = source.length - 1;
-    const isLineEnd = source[last] === "\n" || source[last] === "\r";
-    const message = `Lexical error at line ${isLineEnd ? lines[last] + 1 : lines[last]}, column ${isLineEnd ? 0 : columns[last] + 1}.  Encountered: <EOF> after : "${escapeImage(after)}"`;
-    throw new TlaParseError(
-      lines[begin] === lines[last]
-        ? message
-        : `Lexical {error: EOF reached, possibly open comment starting around line ${lines[begin]}`,
+    return formatLexicalError(
+      token.beginLine,
+      column,
+      token.image[index],
+      token.image.slice(0, index),
     );
-  };
-  const readComment = (begin: number): SanyToken | undefined => {
-    for (;;) {
-      if (cursor.index >= source.length) return throwLexicalError(begin, "", undefined);
-      const opening = source.startsWith("(*.", cursor.index)
-        ? 3
-        : source.startsWith("(*", cursor.index)
-          ? 2
-          : 0;
-      if (cursor.state === LexicalState.InEndOfLineComment) {
-        const lineEnd = source.startsWith("\r\n", cursor.index)
-          ? 2
-          : source[cursor.index] === "\n" || source[cursor.index] === "\r"
-            ? 1
-            : 0;
-        if (lineEnd > 0) {
-          cursor.index += lineEnd;
-          cursor.state = LexicalState.Spec;
-          return undefined;
-        }
-      } else if (opening > 0) {
-        cursor.index += opening;
-        cursor.commentDepth++;
-        cursor.state = LexicalState.Embedded;
-        return undefined;
-      } else if (source.startsWith("*)", cursor.index)) {
-        cursor.index += 2;
-        if (cursor.state === LexicalState.InComment) cursor.state = LexicalState.Spec;
-        else {
-          cursor.commentDepth--;
-          if (cursor.commentDepth === 0) cursor.state = LexicalState.InComment;
-        }
-        return undefined;
-      }
-      cursor.index++;
-    }
-  };
-  const getNextToken = (): SanyToken => {
-    for (;;) {
-      if (cursor.index >= source.length) {
-        const last = source.length - 1;
-        return {
-          kind: EOF,
-          image: "",
-          beginLine: lines[last] ?? 0,
-          beginColumn: columns[last] ?? 0,
-          endLine: lines[last] ?? 0,
-          endColumn: columns[last] ?? 0,
-          next: undefined,
-        };
-      }
-      const begin = cursor.index;
-      if (cursor.state === LexicalState.Default) {
-        const pragma = source.startsWith("--->", cursor.index) ? 4 : 0;
-        BEGIN_MODULE.lastIndex = cursor.index;
-        const module = BEGIN_MODULE.exec(source)?.[0].length ?? 0;
-        if (module > 0 && module >= pragma) {
-          cursor.index += module;
-          cursor.state = LexicalState.Spec;
-          return createToken(_BM1, begin, cursor.index);
-        }
-        if (pragma > 0) {
-          cursor.index += pragma;
-          cursor.state = LexicalState.Pragma;
-          return createToken(BEGIN_PRAGMA, begin, cursor.index);
-        }
-        cursor.index++;
-        continue;
-      }
-      if (cursor.state === LexicalState.Pragma) {
-        const [kind, length] = matchToken(source, cursor.index, PRAGMA_PATTERNS, false);
-        if (length === 0) {
-          cursor.index++;
-          continue;
-        }
-        cursor.index += length;
-        if (kind === _BM2) cursor.state = LexicalState.Spec;
-        return createToken(kind, begin, cursor.index);
-      }
-      if (cursor.state !== LexicalState.Spec) {
-        readComment(begin);
-        continue;
-      }
-      if (" \t\n\r".includes(source[cursor.index])) {
-        cursor.index++;
-        continue;
-      }
-      if (source.startsWith("(*", cursor.index) || source.startsWith("\\*", cursor.index)) {
-        cursor.state =
-          source[cursor.index] === "(" ? LexicalState.InComment : LexicalState.InEndOfLineComment;
-        cursor.index += source.startsWith("(*.", cursor.index) ? 3 : 2;
-        readComment(begin);
-        continue;
-      }
-      const [kind, length] = matchToken(source, cursor.index, SPEC_PATTERNS, true);
-      if (length === 0) {
-        const viable = getViablePrefixLength(source, cursor.index);
-        const killer = cursor.index + viable;
-        if (killer < source.length) {
-          return throwLexicalError(
-            begin,
-            killer + 1 < source.length || viable === 0
-              ? source.slice(begin, killer)
-              : source.slice(begin, killer + 1),
-            killer,
-          );
-        }
-        return throwLexicalError(begin, viable <= 1 ? "" : source.slice(begin), undefined);
-      }
-      cursor.index += length;
-      return createToken(kind, begin, cursor.index);
-    }
-  };
-  return { getNextToken };
+  }
+  return undefined;
 };
