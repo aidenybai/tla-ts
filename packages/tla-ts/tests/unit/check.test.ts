@@ -244,6 +244,16 @@ describe("check matches TLC", () => {
     expect([result.generatedStates, result.distinctStates]).toEqual([13, 3]);
   });
 
+  it("applies an operator to each value @ takes in the same state", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE f\nInc(n) == n + 1\nBump(g, k) == [g EXCEPT ![k] = Inc(@)]\nInit == f = <<1, 2>>\nNext == f[1] < 3 /\\ f' = Bump(Bump(f, 1), 2)\nInv == f[2] = f[1] + 1\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    });
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates]).toEqual([3, 3]);
+  });
+
   it("reports a depth of 1 when the constraint excludes every initial state", async () => {
     const results = await Promise.all(
       [1, 2].map((workers) =>
