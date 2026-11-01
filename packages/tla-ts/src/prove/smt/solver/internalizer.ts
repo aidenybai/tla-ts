@@ -1280,9 +1280,35 @@ export abstract class Internalizer {
     clause.atomSigns = null;
   }
 
+  // del_clauses: past 1,000 clauses, mark each deleted, filter each of their watch lists once, then
+  // release their atoms, instead of searching a watch list per clause.
   protected deleteClauses(clauses: Clause[], oldSize: number) {
+    if (clauses.length - oldSize <= 1000) {
+      for (let index = clauses.length - 1; index >= oldSize; index--)
+        this.deleteClause(clauses[index]);
+      shrink(clauses, oldSize);
+      return;
+    }
+    const watched = new Set<Literal>();
+    for (let index = clauses.length - 1; index >= oldSize; index--) {
+      const clause = clauses[index];
+      if (!clause.isDeleted) {
+        clause.isDeleted = true;
+        clause.delEh?.();
+      }
+      watched.add(negate(clause.literals[0]));
+      watched.add(negate(clause.literals[1]));
+    }
+    for (const literal of watched) {
+      const list = this.watches[literal];
+      if (list === undefined) continue;
+      let kept = 0;
+      for (let index = 0; index < list.length; index++)
+        if (!list[index].isDeleted) list[kept++] = list[index];
+      shrink(list, kept);
+    }
     for (let index = clauses.length - 1; index >= oldSize; index--)
-      this.deleteClause(clauses[index]);
+      if (clauses[index].isReinternalizeAtoms) this.releaseAtoms(clauses[index]);
     shrink(clauses, oldSize);
   }
 }
