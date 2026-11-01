@@ -2617,6 +2617,64 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "substitutions of an INSTANCE in a LET or a proof",
+      "---- MODULE Inner ----\nCONSTANT a, b\nB == a\n====\nI == INSTANCE Inner WITH a <- 1, b <- 2\nF == LET J == INSTANCE Inner WITH a <- A, c <- 1, a <- 2 IN J!B /\\ U\nTHEOREM TRUE\n<1> DEFINE K == INSTANCE Inner WITH b <- lab :: 1\n<1> INSTANCE Inner WITH a <- 1, d <- 2\n<1>1. B = V /\\ K!B = 1\n<1> INSTANCE Inner WITH a <- 1, b <- 2\n<1> QED",
+      [
+        {
+          location: "line 7, col 40 to line 7, col 40 of module M",
+          message: "Unknown operator: `A'.",
+        },
+        {
+          location: "line 7, col 43 to line 7, col 43 of module M",
+          message:
+            "Identifier 'c' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)",
+        },
+        {
+          location: "line 7, col 56 to line 7, col 56 of module M",
+          message: "Multiple substitutions for symbol 'a' in substitution.",
+        },
+        {
+          location: "line 7, col 10 to line 7, col 56 of module M",
+          message:
+            "Substitution missing for symbol b declared at line 3, col 13 to line 3, col 13 of module M \nand instantiated in module M.",
+        },
+        {
+          location: "line 7, col 68 to line 7, col 68 of module M",
+          message: "Unknown operator: `U'.",
+        },
+        {
+          location: "line 9, col 42 to line 9, col 49 of module M",
+          message: "Label not in definition or proof step.",
+        },
+        {
+          location: "line 9, col 12 to line 9, col 49 of module M",
+          message:
+            "Substitution missing for symbol a declared at line 3, col 10 to line 3, col 10 of module M \nand instantiated in module M.",
+        },
+        {
+          location: "line 10, col 33 to line 10, col 33 of module M",
+          message:
+            "Identifier 'd' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)",
+        },
+        {
+          location: "line 10, col 5 to line 10, col 38 of module M",
+          message:
+            "Substitution missing for symbol b declared at line 3, col 13 to line 3, col 13 of module M \nand instantiated in module M.",
+        },
+        {
+          location: "line 11, col 11 to line 11, col 11 of module M",
+          message: "Unknown operator: `V'.",
+        },
+      ],
+      [
+        {
+          location: "line 12, col 5 to line 12, col 38 of module M",
+          message:
+            "Multiple declarations or definitions for symbol B.  \nThis duplicates the one at line 10, col 5 to line 10, col 38 of module M.",
+        },
+      ],
+    ],
+    [
       "errors in modules nested in nested modules",
       "Foo == U\n---- MODULE Middle ----\nA == V\n---- MODULE Inner ----\nRECURSIVE R(_)\nB == W\n====\nC == X\n====\nBar == Y",
       [

@@ -705,7 +705,7 @@ const expandLetInstances = (
     const index = position === -1 ? current.length : position;
     return [...current.slice(0, index), ...instantiate(instance, inner), ...current.slice(index)];
   }, mapped.definitions);
-  return { kind: "Let", definitions, body: mapped.body, location: mapped.location };
+  return { ...mapped, definitions };
 };
 
 // A named theorem's statement is linked as its definition.

@@ -1615,7 +1615,8 @@ const parse = (source: string, isTlapm: boolean): Module => {
     const token = peek();
     if (isAt("USE") || isAt("HIDE")) return parseUseOrHide();
     if (isAt("INSTANCE")) {
-      return withRange(parseInstance(undefined, [], false, getLocation(token)), cursor.index);
+      const start = cursor.index;
+      return withRange(parseInstance(undefined, [], false, getLocation(token)), start);
     }
     if (isAt("DEFINE") || isDefinitionStart()) {
       const start = cursor.index;

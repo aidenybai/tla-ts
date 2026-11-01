@@ -78,8 +78,10 @@ interface ModuleBinding extends Binding {
 // names bound since the innermost definition, label, or step, which a label must take as parameters,
 // and labels the labels there. isGenerated holds in a definition tla-ts generates for a LET INSTANCE,
 // and in a subexpression that a name selects, which SANY analyzes where it is defined.
+// getInstance gives what an INSTANCE in a LET or a proof instantiates.
 interface Unit {
   imported: Symbols;
+  getInstance: (instance: Instance) => InstancedModule;
   definitions: Map<string, Definition>;
   getKey: (definition: Definition) => string;
   location: SourceLocation;
@@ -836,10 +838,13 @@ const resolveDefinition = (
       );
 };
 
+// SANY analyzes an INSTANCE in a LET where it appears, before the definitions that follow it, which
+// tla-ts generates at its location and analyzes without reporting.
 const resolveDefinitions = (
   definitions: Definition[],
   scope: LocalName | undefined,
   unit: Unit,
+  instances: Instance[] = [],
 ) => {
   const recursive = new Set<Binding>();
   const declared = definitions
@@ -857,7 +862,20 @@ const resolveDefinitions = (
       recursive.add(local);
       return local;
     }, scope);
-  return definitions.reduce<LocalName | undefined>((current, definition) => {
+  const pending = unit.isGenerated ? [] : [...instances];
+  const resolveInstances = (
+    current: LocalName | undefined,
+    isDue: (instance: Instance) => boolean,
+  ) => {
+    const count = pending.findIndex((instance) => !isDue(instance));
+    return pending
+      .splice(0, count === -1 ? pending.length : count)
+      .reduce((parent, instance) => resolveInstance(instance, parent, unit), current);
+  };
+  const resolved = definitions.reduce<LocalName | undefined>((previous, definition) => {
+    const current = isKey(definition.name)
+      ? previous
+      : resolveInstances(previous, (instance) => !isBefore(definition.location, instance.location));
     const local: LocalName = {
       name: definition.name,
       arity: getArity(definition),
@@ -866,16 +884,18 @@ const resolveDefinitions = (
       parent: current,
     };
     if (isInstantiated(definition)) return local;
+    const isInstanced = instances.some((instance) => instance.location === definition.location);
     const isGenerated = unit.isGenerated || definition.isLocal || isKey(definition.name);
-    return resolveDefinition(
-      definition,
-      current,
-      isGenerated ? { ...unit, isGenerated } : unit,
-      recursive,
-    )
+    const inner = isInstanced
+      ? { ...unit, isGenerated: true, errors: [], warnings: [] }
+      : isGenerated
+        ? { ...unit, isGenerated }
+        : unit;
+    return resolveDefinition(definition, current, inner, recursive)
       ? { ...local, params: getParamArities(definition) }
       : current;
   }, declared);
+  return resolveInstances(resolved, () => true);
 };
 
 // Generator.generateExprOrOpArg analyzes an argument as an expression, unless a defined operator
@@ -1056,7 +1076,7 @@ const resolveExpression = (
     case "Let":
       resolveExpression(
         expression.body,
-        resolveDefinitions(expression.definitions, scope, unit),
+        resolveDefinitions(expression.definitions, scope, unit, expression.instances),
         unit,
       );
       return;
@@ -1223,6 +1243,19 @@ const resolveProof = (proof: Proof | undefined, scope: LocalName | undefined, ou
   proof.steps.reduce((current, step) => resolveStep(step, current, unit), scope);
 };
 
+// A step binds the name of the INSTANCE after the names it adds.
+const resolveStepInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
+  const instanced = resolveInstance(instance, scope, unit);
+  return instance.name === undefined
+    ? instanced
+    : bindName(
+        instanced,
+        instance.name,
+        { kind: "Instance", arity: instance.params.length, range: instance.location.range },
+        unit,
+      );
+};
+
 const resolveStep = (
   step: ProofStep,
   scope: LocalName | undefined,
@@ -1253,13 +1286,15 @@ const resolveStep = (
     case "Hide":
       checkFacts(body.facts, scope, unit);
       return scope;
+    case "Instance":
+      return resolveStepInstance(body, scope, stepUnit);
     case "Define":
-      return resolveDefinitions(
-        body.definitions.flatMap((definition) =>
-          definition.kind === "Instance" ? [] : [definition],
-        ),
+      return body.definitions.reduce(
+        (current, definition) =>
+          definition.kind === "Instance"
+            ? resolveStepInstance(definition, current, stepUnit)
+            : resolveDefinitions([definition], current, unit),
         scope,
-        unit,
       );
     case "Have":
     case "Case":
@@ -1313,6 +1348,14 @@ const resolveTheorem = (theorem: Theorem, unit: Unit) => {
   if (goal) goal.isInProof = false;
 };
 
+// The declarations of the module an INSTANCE instantiates, the names the INSTANCE adds, and the
+// module that instantiates it.
+export interface InstancedModule {
+  declarations: Declaration[];
+  symbols: Symbols;
+  instancer: string;
+}
+
 // What SANY reports at a location as it links a module, such as a conflict between the modules it
 // extends.
 export interface ModuleReport {
@@ -1323,10 +1366,12 @@ export interface ModuleReport {
 
 // bound holds the names in scope where the module starts: the built-in operators, the names of the
 // module that encloses it, and those of the modules it extends. instanced holds the names each
-// INSTANCE adds, facts the theorems and assumptions the modules it extends or instantiates export,
-// and warnings the warnings SANY reports for the spec.
+// INSTANCE adds, getInstance what an INSTANCE in a LET or a proof instantiates, facts the theorems
+// and assumptions the modules it extends or instantiates export, and warnings the warnings SANY
+// reports for the spec.
 export interface ModuleUnit {
   imported: Symbols;
+  getInstance: (instance: Instance) => InstancedModule;
   bound: Symbols;
   definitions: Map<string, Definition>;
   getKey: (definition: Definition) => string;
@@ -1359,23 +1404,104 @@ const createSymbols = (module: Module, imported: Symbols) => {
 };
 
 // Generator.processSubst analyzes the explicit substitutions in the order they appear, then the
-// implicit ones, and then reports each declaration left without one. tla-ts reports what SANY goes on
-// after with the INSTANCE.
+// implicit ones, and then reports each declaration left without one. The parameters of the INSTANCE
+// are in scope.
+const checkSubstitutions = (
+  instance: Instance,
+  declarations: Declaration[],
+  instancer: string,
+  outer: LocalName | undefined,
+  unit: Unit,
+) => {
+  const scope = instance.params.reduce<LocalName | undefined>(
+    (parent, param) => ({ name: param.name, arity: param.arity, kind: "Parameter", parent }),
+    outer,
+  );
+  const resolveSubstitute = (declaration: Declaration, expression: Expression) => {
+    if (declaration.arity === 0 || expression.kind !== "Identifier") {
+      resolveExpression(expression, scope, unit);
+      return;
+    }
+    const arity = getSymbolArity(expression, expression.name, scope, unit);
+    if (arity !== undefined && arity !== declaration.arity) {
+      throw new TlaSyntaxError(
+        `An operator must be substituted for symbol '${declaration.name}', and it must have arity ${declaration.arity} in the instance of ${instance.module} at line ${instance.location.line}, column ${instance.location.column}`,
+      );
+    }
+  };
+  const substitutions = new Map<string, Expression>();
+  instance.substitutions.forEach((substitution) => {
+    const name = substitution.name;
+    const declaration = declarations.find((item) => item.name === name);
+    if (!declaration) {
+      unit.errors.push({
+        location: formatRange(substitution.nameRange),
+        message: `Identifier '${name}' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)`,
+      });
+      return;
+    }
+    const expression = substitution.expression;
+    resolveSubstitute(declaration, expression);
+    const range = expression.location.range;
+    if (!substitutions.has(name)) substitutions.set(name, expression);
+    else if (range) {
+      unit.errors.push({
+        location: formatRange(range),
+        message: `Multiple substitutions for symbol '${name}' in substitution.`,
+      });
+    }
+  });
+  const implicit = declarations.filter((declaration) => !substitutions.has(declaration.name));
+  const isMissing = (declaration: Declaration) =>
+    !lookupLocal(scope, declaration.name) && !findSymbol(declaration.name, unit);
+  implicit
+    .filter((declaration) => !isMissing(declaration))
+    .forEach((declaration) => {
+      const expression: Expression = {
+        kind: "Identifier",
+        name: declaration.name,
+        location: instance.location,
+      };
+      resolveSubstitute(declaration, expression);
+      substitutions.set(declaration.name, expression);
+    });
+  implicit.filter(isMissing).forEach((declaration) => {
+    const range = instance.location.range;
+    const declared = declaration.location.range;
+    if (range && declared) {
+      unit.errors.push({
+        location: formatRange(range),
+        message: `Substitution missing for symbol ${declaration.name} declared at ${formatRange(declared)} \nand instantiated in module ${instancer}.`,
+      });
+    }
+  });
+  return substitutions;
+};
+
+// Generator.processSubst analyzes an INSTANCE in a LET or a proof, which then binds the names the
+// INSTANCE adds.
+const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
+  const instanced = unit.getInstance(instance);
+  checkSubstitutions(instance, instanced.declarations, instanced.instancer, scope, unit);
+  return [...instanced.symbols].reduce(
+    (parent, [name, symbol]) => bindName(parent, name, symbol, unit),
+    scope,
+  );
+};
+
+// tla-ts reports what SANY goes on after with an INSTANCE of the module.
 export const resolveSubstitutions = (
   instance: Instance,
   declarations: Declaration[],
   module: Module,
   unit: ModuleUnit,
 ) => {
-  const scope = instance.params.reduce<LocalName | undefined>(
-    (parent, param) => ({ name: param.name, arity: param.arity, kind: "Parameter", parent }),
-    undefined,
-  );
   const imported = createSymbols(module, unit.imported);
   const report: ModuleReport = { location: instance.location, errors: [], warnings: [] };
   unit.reports.push(report);
-  const context: Unit = {
+  return checkSubstitutions(instance, declarations, module.name, undefined, {
     imported,
+    getInstance: unit.getInstance,
     definitions: unit.definitions,
     getKey: unit.getKey,
     location: instance.location,
@@ -1393,66 +1519,7 @@ export const resolveSubstitutions = (
     labelParams: [],
     labels: new Set(),
     isGenerated: false,
-  };
-  const resolveSubstitute = (declaration: Declaration, expression: Expression) => {
-    if (declaration.arity === 0 || expression.kind !== "Identifier") {
-      resolveExpression(expression, scope, context);
-      return;
-    }
-    const arity = getSymbolArity(expression, expression.name, scope, context);
-    if (arity !== undefined && arity !== declaration.arity) {
-      throw new TlaSyntaxError(
-        `An operator must be substituted for symbol '${declaration.name}', and it must have arity ${declaration.arity} in the instance of ${instance.module} at line ${instance.location.line}, column ${instance.location.column}`,
-      );
-    }
-  };
-  const substitutions = new Map<string, Expression>();
-  instance.substitutions.forEach((substitution) => {
-    const name = substitution.name;
-    const declaration = declarations.find((item) => item.name === name);
-    if (!declaration) {
-      report.errors.push({
-        location: formatRange(substitution.nameRange),
-        message: `Identifier '${name}' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)`,
-      });
-      return;
-    }
-    const expression = substitution.expression;
-    resolveSubstitute(declaration, expression);
-    const range = expression.location.range;
-    if (!substitutions.has(name)) substitutions.set(name, expression);
-    else if (range) {
-      report.errors.push({
-        location: formatRange(range),
-        message: `Multiple substitutions for symbol '${name}' in substitution.`,
-      });
-    }
   });
-  const implicit = declarations.filter((declaration) => !substitutions.has(declaration.name));
-  const isMissing = (declaration: Declaration) =>
-    !lookupLocal(scope, declaration.name) && !findSymbol(declaration.name, context);
-  implicit
-    .filter((declaration) => !isMissing(declaration))
-    .forEach((declaration) => {
-      const expression: Expression = {
-        kind: "Identifier",
-        name: declaration.name,
-        location: instance.location,
-      };
-      resolveSubstitute(declaration, expression);
-      substitutions.set(declaration.name, expression);
-    });
-  implicit.filter(isMissing).forEach((declaration) => {
-    const range = instance.location.range;
-    const declared = declaration.location.range;
-    if (range && declared) {
-      report.errors.push({
-        location: formatRange(range),
-        message: `Substitution missing for symbol ${declaration.name} declared at ${formatRange(declared)} \nand instantiated in module ${module.name}.`,
-      });
-    }
-  });
-  return substitutions;
 };
 
 // SANY reports the errors of every unit it checks, in the order of the units in the module, after
@@ -1532,6 +1599,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     hasLabelScope: boolean,
   ): Unit => ({
     imported: symbols,
+    getInstance: unit.getInstance,
     definitions: unit.definitions,
     getKey: unit.getKey,
     location,
