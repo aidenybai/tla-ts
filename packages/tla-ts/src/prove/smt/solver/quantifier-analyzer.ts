@@ -260,8 +260,8 @@ export class QuantifierAnalyzer {
     for (let isStopped = false; !isStopped;) {
       let arg: number;
       if (manager.getOp(current) === OP_ADD) {
-        arg = manager.args[current][0];
-        current = manager.args[current][1];
+        arg = manager.getArg(current, 0);
+        current = manager.getArg(current, 1);
       } else {
         arg = current;
         isStopped = true;
@@ -315,8 +315,8 @@ export class QuantifierAnalyzer {
   private isVarMinusVar(expr: number) {
     const manager = this.manager;
     if (manager.getOp(expr) !== OP_ADD) return undefined;
-    let first = manager.args[expr][0];
-    let second = manager.args[expr][1];
+    let first = manager.getArg(expr, 0);
+    let second = manager.getArg(expr, 1);
     if (!this.isVar(first)) [first, second] = [second, first];
     if (!this.isVar(first)) return undefined;
     const negated = this.manager.getTimesMinusOneArg(second);
@@ -345,8 +345,7 @@ export class QuantifierAnalyzer {
   private isXGleTAtom(atom: number, isNegated: boolean) {
     const manager = this.manager;
     if (manager.kinds[atom] !== KIND_APP || !this.isLeGe(atom)) return undefined;
-    const args = manager.args[atom];
-    const found = this.isVarAndGround(args[0], args[1]);
+    const found = this.isVarAndGround(manager.getArg(atom, 0), manager.getArg(atom, 1));
     if (found === undefined) return undefined;
     if (isNegated) return { variable: found.variable, term: found.term };
     const isLe = (manager.getOp(atom) === OP_LE) !== found.isInverted;
@@ -375,10 +374,11 @@ export class QuantifierAnalyzer {
     const manager = this.manager;
     const info = this.info;
     const decl = manager.decls[expr];
-    manager.args[expr].forEach((arg, index) => {
+    for (let index = 0; index < manager.getNumArgs(expr); index++) {
+      const arg = manager.getArg(expr, index);
       if (this.isVar(arg)) {
         info.insertQInfo({ kind: "f_var", decl, argIndex: index, varIndex: manager.values[arg] });
-        return;
+        continue;
       }
       const found = this.isVarPlusGround(arg);
       if (found !== undefined && !found.isInverted) {
@@ -389,10 +389,10 @@ export class QuantifierAnalyzer {
           varIndex: manager.values[found.variable],
           offset: found.term,
         });
-        return;
+        continue;
       }
       this.visitTerm(arg);
-    });
+    }
   }
 
   private processApp(expr: number) {
@@ -400,7 +400,9 @@ export class QuantifierAnalyzer {
     const decl = manager.decls[expr];
     if (manager.funcDecls[decl].family !== FAMILY_BASIC) this.info.ngDecls.add(decl);
     if (manager.funcDecls[decl].family === FAMILY_USER) this.processUApp(expr);
-    else for (const arg of manager.args[expr]) this.visitTerm(arg);
+    else
+      for (let index = 0; index < manager.getNumArgs(expr); index++)
+        this.visitTerm(manager.getArg(expr, index));
   }
 
   private processTermsOnStack() {
@@ -428,9 +430,10 @@ export class QuantifierAnalyzer {
       return;
     }
     if (manager.kinds[atom] !== KIND_APP) return;
-    const args = manager.args[atom];
     const isEq = manager.getOp(atom) === OP_EQ;
-    const xEqT = isEq ? this.isVarAndGround(args[0], args[1]) : undefined;
+    const xEqT = isEq
+      ? this.isVarAndGround(manager.getArg(atom, 0), manager.getArg(atom, 1))
+      : undefined;
     if (xEqT !== undefined) {
       info.insertQInfo({
         kind: isNegated ? "x_neq_t" : "x_eq_t",
@@ -439,7 +442,9 @@ export class QuantifierAnalyzer {
       });
       return;
     }
-    const xEqY = isEq ? this.isVarAndVar(args[0], args[1]) : undefined;
+    const xEqY = isEq
+      ? this.isVarAndVar(manager.getArg(atom, 0), manager.getArg(atom, 1))
+      : undefined;
     if (xEqY !== undefined) {
       if (isNegated)
         info.insertQInfo(mkVarPair("x_neq_y", manager.values[xEqY[0]], manager.values[xEqY[1]]));
@@ -449,7 +454,10 @@ export class QuantifierAnalyzer {
       }
       return;
     }
-    const xLeY = isNegated && this.isLeGe(atom) ? this.isVarAndVar(args[0], args[1]) : undefined;
+    const xLeY =
+      isNegated && this.isLeGe(atom)
+        ? this.isVarAndVar(manager.getArg(atom, 0), manager.getArg(atom, 1))
+        : undefined;
     if (xLeY !== undefined) {
       info.insertQInfo(mkVarPair("x_leq_y", manager.values[xLeY[0]], manager.values[xLeY[1]]));
       return;
@@ -477,38 +485,42 @@ export class QuantifierAnalyzer {
         continue;
       }
       if (manager.kinds[current] !== KIND_APP) continue;
-      const args = manager.args[current];
       if (manager.getFamily(current) !== FAMILY_BASIC || !manager.isBool(current)) {
         this.processLiteral(current, polarity === "neg");
         continue;
       }
       switch (manager.getOp(current)) {
         case OP_IMPLIES:
-          this.processLiteral(args[0], negated === "neg");
-          this.processLiteral(args[1], polarity === "neg");
+          this.processLiteral(manager.getArg(current, 0), negated === "neg");
+          this.processLiteral(manager.getArg(current, 1), polarity === "neg");
           break;
         case OP_XOR:
-          for (const arg of args) {
+          for (let index = 0; index < manager.getNumArgs(current); index++) {
+            const arg = manager.getArg(current, index);
             this.visitFormula(arg, polarity);
             this.visitFormula(arg, negated);
           }
           break;
         case OP_OR:
         case OP_AND:
-          for (const arg of args) this.visitFormula(arg, polarity);
+          for (let index = 0; index < manager.getNumArgs(current); index++) {
+            const arg = manager.getArg(current, index);
+            this.visitFormula(arg, polarity);
+          }
           break;
         case OP_NOT:
-          this.visitFormula(args[0], negated);
+          this.visitFormula(manager.getArg(current, 0), negated);
           break;
         case OP_ITE:
-          this.visitFormula(args[0], polarity);
-          this.visitFormula(args[0], negated);
-          this.visitFormula(args[1], polarity);
-          this.visitFormula(args[2], polarity);
+          this.visitFormula(manager.getArg(current, 0), polarity);
+          this.visitFormula(manager.getArg(current, 0), negated);
+          this.visitFormula(manager.getArg(current, 1), polarity);
+          this.visitFormula(manager.getArg(current, 2), polarity);
           break;
         case OP_EQ:
-          if (manager.isBool(args[0]))
-            for (const arg of args) {
+          if (manager.isBool(manager.getArg(current, 0)))
+            for (let index = 0; index < manager.getNumArgs(current); index++) {
+              const arg = manager.getArg(current, index);
               this.visitFormula(arg, "pos");
               this.visitFormula(arg, "neg");
             }
@@ -523,22 +535,22 @@ export class QuantifierAnalyzer {
   // is_clause: a disjunction of literals.
   private isLiteral(expr: number) {
     const manager = this.manager;
-    const atom = manager.isNot(expr) ? manager.args[expr][0] : expr;
+    const atom = manager.isNot(expr) ? manager.getArg(expr, 0) : expr;
     if (manager.kinds[atom] !== KIND_APP) return manager.kinds[atom] === KIND_VAR;
     if (manager.getFamily(atom) !== FAMILY_BASIC) return true;
     const op = manager.getOp(atom);
-    if (op === OP_EQ) return !manager.isBool(manager.args[atom][0]);
-    return manager.args[atom].length === 0;
+    if (op === OP_EQ) return !manager.isBool(manager.getArg(atom, 0));
+    return manager.getNumArgs(atom) === 0;
   }
 
   analyze() {
     const manager = this.manager;
     const body = manager.getQuantifier(this.info.flatQ).body;
-    const literals = manager.getOp(body) === OP_OR ? manager.args[body] : [body];
+    const literals = manager.getOp(body) === OP_OR ? manager.getArgs(body) : [body];
     if (literals.every((literal) => this.isLiteral(literal))) {
       for (const literal of literals) {
         const isNegated = manager.isNot(literal);
-        const atom = isNegated ? manager.args[literal][0] : literal;
+        const atom = isNegated ? manager.getArg(literal, 0) : literal;
         if (!this.isGround(atom)) this.processLiteral(atom, isNegated);
       }
     } else this.visitFormula(body, "pos");

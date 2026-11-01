@@ -42,6 +42,8 @@ export class ModelEvaluator extends RewriterTpl {
   // m_b_rw and m_a_rw, whose reductions evaluator_cfg applies.
   private rewriter: Rewriter;
   private isModelCompletion = false;
+  // The arguments of a reduced arithmetic term, reused across evaluations.
+  private reducedArgs: number[] = [];
 
   constructor(
     manager: AstManager,
@@ -108,7 +110,10 @@ export class ModelEvaluator extends RewriterTpl {
       manager.kinds[reduced] !== KIND_APP
     )
       return reduced;
-    const result = this.evaluate(manager.decls[reduced], manager.args[reduced]);
+    const reducedArgs = this.reducedArgs;
+    reducedArgs.length = 0;
+    manager.pushArgs(reduced, reducedArgs);
+    const result = this.evaluate(manager.decls[reduced], reducedArgs);
     return result === undefined ? reduced : { expr: result, depth: 1 };
   }
 
@@ -168,7 +173,7 @@ export class ModelEvaluator extends RewriterTpl {
   // contains_redex: whether a constant's value has an equality to evaluate.
   private containsRedex(expr: number) {
     const manager = this.manager;
-    if (manager.kinds[expr] !== KIND_APP || manager.args[expr].length === 0) return false;
+    if (manager.kinds[expr] !== KIND_APP || manager.getNumArgs(expr) === 0) return false;
     const visited = new Set<number>();
     const todo = [expr];
     while (todo.length > 0) {
@@ -176,7 +181,7 @@ export class ModelEvaluator extends RewriterTpl {
       if (visited.has(current)) continue;
       visited.add(current);
       if (manager.getOp(current) === OP_EQ) return true;
-      if (manager.kinds[current] === KIND_APP) todo.push(...manager.args[current]);
+      if (manager.kinds[current] === KIND_APP) manager.pushArgs(current, todo);
       else if (manager.kinds[current] === KIND_QUANTIFIER) {
         const data = manager.getQuantifier(current);
         todo.push(data.body, ...data.patterns);
@@ -192,20 +197,21 @@ export class ModelEvaluator extends RewriterTpl {
   private mkArithAndCore(args: number[]): Rewrite | undefined {
     const manager = this.manager;
     if (args.length <= 1 || manager.getOp(args[0]) !== OP_LE) return undefined;
-    const [lower, term] = manager.args[args[0]];
+    const lower = manager.getArg(args[0], 0);
+    const term = manager.getArg(args[0], 1);
     if (!manager.isNumeral(lower)) return undefined;
     let bound = args[0];
     const rest: number[] = [];
     for (const arg of args.slice(1)) {
       const isBound =
         manager.getOp(arg) === OP_LE &&
-        manager.args[arg][1] === term &&
-        manager.isNumeral(manager.args[arg][0]);
+        manager.getArg(arg, 1) === term &&
+        manager.isNumeral(manager.getArg(arg, 0));
       if (!isBound) rest.push(arg);
       else if (
         manager
-          .getRationalValue(manager.args[arg][0])
-          .compare(manager.getRationalValue(manager.args[bound][0])) > 0
+          .getRationalValue(manager.getArg(arg, 0))
+          .compare(manager.getRationalValue(manager.getArg(bound, 0))) > 0
       )
         bound = arg;
     }

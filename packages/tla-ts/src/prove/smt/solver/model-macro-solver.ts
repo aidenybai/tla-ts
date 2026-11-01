@@ -55,22 +55,23 @@ const isAtom = (manager: AstManager, expr: number) => {
   )
     return true;
   return (
-    (manager.getOp(expr) === OP_EQ && !manager.isBool(manager.args[expr][0])) ||
+    (manager.getOp(expr) === OP_EQ && !manager.isBool(manager.getArg(expr, 0))) ||
     manager.isTrue(expr) ||
     manager.isFalse(expr)
   );
 };
 
 const isLiteral = (manager: AstManager, expr: number) =>
-  isAtom(manager, expr) || (manager.isNot(expr) && isAtom(manager, manager.args[expr][0]));
+  isAtom(manager, expr) || (manager.isNot(expr) && isAtom(manager, manager.getArg(expr, 0)));
 
 const getPolyArgs = (manager: AstManager, expr: number) =>
-  manager.getOp(expr) === OP_ADD ? manager.args[expr] : [expr];
+  manager.getOp(expr) === OP_ADD ? manager.getArgs(expr) : [expr];
 
 const isMacroHead = (manager: AstManager, expr: number, numDecls: number) => {
-  if (!isUserApp(manager, expr) || manager.args[expr].length !== numDecls) return false;
+  if (!isUserApp(manager, expr) || manager.getNumArgs(expr) !== numDecls) return false;
   const seen = new Set<number>();
-  for (const arg of manager.args[expr]) {
+  for (let argIndex = 0; argIndex < manager.getNumArgs(expr); argIndex++) {
+    const arg = manager.getArg(expr, argIndex);
     if (manager.kinds[arg] !== KIND_VAR) return false;
     const index = manager.values[arg];
     if (index >= numDecls || seen.has(index)) return false;
@@ -80,9 +81,10 @@ const isMacroHead = (manager: AstManager, expr: number, numDecls: number) => {
 };
 
 const isQuasiMacroHead = (manager: AstManager, expr: number, numDecls: number) => {
-  if (!isUserApp(manager, expr) || manager.args[expr].length < numDecls) return false;
+  if (!isUserApp(manager, expr) || manager.getNumArgs(expr) < numDecls) return false;
   const found = new Set<number>();
-  for (const arg of manager.args[expr]) {
+  for (let argIndex = 0; argIndex < manager.getNumArgs(expr); argIndex++) {
+    const arg = manager.getArg(expr, argIndex);
     if (manager.kinds[arg] === KIND_VAR) {
       const index = manager.values[arg];
       if (index >= numDecls) return false;
@@ -92,10 +94,15 @@ const isQuasiMacroHead = (manager: AstManager, expr: number, numDecls: number) =
   return found.size === numDecls;
 };
 
-const getHintHeadVars = (manager: AstManager, expr: number) =>
-  isUserApp(manager, expr)
-    ? manager.args[expr].filter((arg) => manager.kinds[arg] === KIND_VAR)
-    : [];
+const getHintHeadVars = (manager: AstManager, expr: number) => {
+  const vars: number[] = [];
+  if (!isUserApp(manager, expr)) return vars;
+  for (let index = 0; index < manager.getNumArgs(expr); index++) {
+    const arg = manager.getArg(expr, index);
+    if (manager.kinds[arg] === KIND_VAR) vars.push(arg);
+  }
+  return vars;
+};
 
 const isVarsOfSubset = (manager: AstManager, expr: number, vars: number[]) => {
   const visited = new Set<number>();
@@ -105,7 +112,7 @@ const isVarsOfSubset = (manager: AstManager, expr: number, vars: number[]) => {
     const kind = manager.kinds[current];
     if (kind === KIND_VAR) return vars.includes(current);
     if (kind === KIND_QUANTIFIER) return false;
-    return manager.args[current].every((arg) => visit(arg));
+    return manager.everyArg(current, (arg) => visit(arg));
   };
   return visit(expr);
 };
@@ -184,8 +191,8 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
         : manager.mkApp(OP_ADD, args, sort);
   const isClause =
     isLiteral(manager, body) ||
-    (manager.getOp(body) === OP_OR && manager.args[body].every((arg) => isLiteral(manager, arg)));
-  const clause = isClause ? (manager.getOp(body) === OP_OR ? manager.args[body] : [body]) : null;
+    (manager.getOp(body) === OP_OR && manager.everyArg(body, (arg) => isLiteral(manager, arg)));
+  const clause = isClause ? (manager.getOp(body) === OP_OR ? manager.getArgs(body) : [body]) : null;
 
   const isRestContainingDecl = (decl: number, exceptLiteral: number) =>
     clause !== null &&
@@ -215,7 +222,8 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
   // normalize_expr: the variables of the head become (:var 0) ... (:var n-1) in order.
   const normalize = (head: number, expr: number) => {
     const mapping = new Map<number, number>();
-    manager.args[head].forEach((arg, index) => mapping.set(manager.values[arg], index));
+    for (let index = 0; index < manager.getNumArgs(head); index++)
+      mapping.set(manager.values[manager.getArg(head, index)], index);
     return [...mapping].every((entry) => entry[0] === entry[1])
       ? expr
       : replaceFreeVars(manager, expr, (variable, index, shift) => {
@@ -262,7 +270,7 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
     isIneq: boolean,
     isHint: boolean,
   ) => {
-    if (isMacroHead(manager, head, manager.args[head].length)) {
+    if (isMacroHead(manager, head, manager.getNumArgs(head))) {
       insertMacro(head, def, cond, isIneq, isHint);
       return;
     }
@@ -273,7 +281,8 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
         const newArgs: number[] = [];
         const newConds: number[] = [];
         let nextVarIndex = numDecls;
-        for (const arg of manager.args[head]) {
+        for (let index = 0; index < manager.getNumArgs(head); index++) {
+          const arg = manager.getArg(head, index);
           if (manager.kinds[arg] === KIND_VAR && !seen.has(manager.values[arg])) {
             seen.add(manager.values[arg]);
             newArgs.push(arg);
@@ -368,17 +377,17 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
     };
     const op = manager.getOp(atom);
     if (op === OP_EQ) {
-      const lhs = manager.args[atom][0];
-      const rhs = manager.args[atom][1];
+      const lhs = manager.getArg(atom, 0);
+      const rhs = manager.getArg(atom, 1);
       if (!insertQuasi(lhs, rhs)) insertHint(lhs, rhs);
       if (!insertQuasi(rhs, lhs)) insertHint(rhs, lhs);
     }
     if (op === OP_NOT) {
-      const inner = manager.args[atom][0];
-      if (manager.getOp(inner) === OP_EQ && manager.isBool(manager.args[inner][0]))
+      const inner = manager.getArg(atom, 0);
+      if (manager.getOp(inner) === OP_EQ && manager.isBool(manager.getArg(inner, 0)))
         scope(() => {
-          const lhs = manager.args[inner][0];
-          const rhs = manager.args[inner][1];
+          const lhs = manager.getArg(inner, 0);
+          const rhs = manager.getArg(inner, 1);
           const negatedLhs = manager.mkNot(lhs);
           const negatedRhs = manager.mkNot(rhs);
           if (!insertQuasi(lhs, negatedRhs)) insertHint(lhs, negatedRhs);
@@ -386,8 +395,8 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
         });
     }
     if (op === OP_EQ || op === OP_LE || op === OP_GE) {
-      const lhs = manager.args[atom][0];
-      const rhs = manager.args[atom][1];
+      const lhs = manager.getArg(atom, 0);
+      const rhs = manager.getArg(atom, 1);
       collectArith(lhs, rhs, atom, numDecls, op !== OP_EQ);
       collectArith(rhs, lhs, atom, numDecls, op !== OP_EQ);
     }
@@ -509,7 +518,7 @@ const hintMacroSolver =
           if (kind === KIND_QUANTIFIER) return visit(manager.getQuantifier(current).body);
           const decl = manager.decls[current];
           if (fs.has(decl) && !acyclic.has(decl)) return false;
-          return manager.args[current].every((arg) => visit(arg));
+          return manager.everyArg(current, (arg) => visit(arg));
         };
         return visit(def);
       };
@@ -584,9 +593,12 @@ const collectNgFuncDecls = (manager: AstManager, expr: number) => {
     const kind = manager.kinds[current];
     if (kind === KIND_VAR) return;
     if (kind === KIND_QUANTIFIER) return;
-    for (const arg of manager.args[current]) visit(arg);
+    for (let index = 0; index < manager.getNumArgs(current); index++) {
+      const arg = manager.getArg(current, index);
+      visit(arg);
+    }
     if (
-      manager.args[current].length > 0 &&
+      manager.getNumArgs(current) > 0 &&
       !manager.isGround(current) &&
       isUserApp(manager, current)
     )

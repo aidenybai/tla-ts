@@ -92,20 +92,20 @@ export class FuncInterp {
   private getEntryArgs(expr: number) {
     const manager = this.manager;
     if (manager.getOp(expr) !== OP_ITE) return undefined;
-    const condition = manager.args[expr][0];
-    if (!manager.isGround(manager.args[expr][1]) || this.arity === 0) return undefined;
+    const condition = manager.getArg(expr, 0);
+    if (!manager.isGround(manager.getArg(expr, 1)) || this.arity === 0) return undefined;
     if (this.arity === 1 && manager.getOp(condition) !== OP_EQ) return undefined;
     if (
       this.arity > 1 &&
-      (manager.getOp(condition) !== OP_AND || manager.args[condition].length !== this.arity)
+      (manager.getOp(condition) !== OP_AND || manager.getNumArgs(condition) !== this.arity)
     )
       return undefined;
     const args: number[] = [];
     for (let index = 0; index < this.arity; index++) {
-      const eq = this.arity === 1 ? condition : manager.args[condition][index];
+      const eq = this.arity === 1 ? condition : manager.getArg(condition, index);
       if (manager.getOp(eq) !== OP_EQ) return undefined;
-      const left = manager.args[eq][0];
-      const right = manager.args[eq][1];
+      const left = manager.getArg(eq, 0);
+      const right = manager.getArg(eq, 1);
       if (manager.kinds[left] === KIND_VAR && manager.values[left] === index) args.push(right);
       else if (manager.kinds[right] === KIND_VAR && manager.values[right] === index)
         args.push(left);
@@ -119,8 +119,9 @@ export class FuncInterp {
     this.resetInterpCache();
     let current = expr;
     for (let args = this.getEntryArgs(current); args !== undefined;) {
-      if (this.getEntry(args) === undefined) this.insertEntry(args, this.manager.args[current][1]);
-      current = this.manager.args[current][2];
+      if (this.getEntry(args) === undefined)
+        this.insertEntry(args, this.manager.getArg(current, 1));
+      current = this.manager.getArg(current, 2);
       args = this.getEntryArgs(current);
     }
     this.manager.incRef(current);
@@ -419,24 +420,24 @@ export class ProtoModel {
         cache.set(current, value);
         continue;
       }
-      const args = manager.args[current];
-      if (manager.kinds[current] !== KIND_APP || args.length === 0) {
+      if (manager.kinds[current] !== KIND_APP || manager.getNumArgs(current) === 0) {
         todo.pop();
         cache.set(current, current);
         continue;
       }
-      const pendingArgs = args.filter((arg) => !cache.has(arg));
-      if (pendingArgs.length > 0) {
-        todo.push(...pendingArgs);
-        continue;
+      const numTodo = todo.length;
+      for (let index = 0; index < manager.getNumArgs(current); index++) {
+        const arg = manager.getArg(current, index);
+        if (!cache.has(arg)) todo.push(arg);
       }
+      if (todo.length > numTodo) continue;
       todo.pop();
       const decl = manager.decls[current];
       if (this.auxDecls.has(decl)) foundAuxDecls.add(decl);
       const rewritten = manager.withTemporaries(() =>
         this.rewriter.mkApp(
           decl,
-          args.map((arg) => cache.get(arg) ?? arg),
+          manager.mapArgs(current, (arg) => cache.get(arg) ?? arg),
           manager.sorts[current],
         ),
       );
