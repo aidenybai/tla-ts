@@ -338,6 +338,7 @@ class RewriterEngine extends RewriterCore {
   // the number of bindings when it was bound.
   private bindings: number[] = [];
   private shifts: number[] = [];
+  private newArgs: number[] = [];
   private shifter: VarShifter;
   private invShifter: InvVarShifter;
   // m_blocked: the constants that a nested rewriter does not expand.
@@ -613,7 +614,13 @@ class RewriterEngine extends RewriterCore {
         return;
       }
     }
-    const newArgs = this.resultStack.slice(frame.spos);
+    // new_args: Z3 passes the results on the stack itself. Nothing rewrites with this engine before
+    // the arguments are used, so one buffer holds them.
+    const newArgs = this.newArgs;
+    const resultStack = this.resultStack;
+    shrink(newArgs, 0);
+    for (let index = frame.spos; index < resultStack.length; index++)
+      newArgs.push(resultStack[index]);
     const reduced = this.config.reduceApp(decl, newArgs, manager.sorts[expr]);
     if (typeof reduced !== "number") {
       // BR_REWRITE: the result replaces the arguments and is rewritten to the depth it asks for.
