@@ -282,7 +282,7 @@ const NO_NAMES: ReadonlySet<string> = new Set();
 
 // The local names an expression reads from enclosing scopes, or undefined when it applies a local
 // operator, whose body may assign variables.
-const getReadLocals = (
+export const getReadLocals = (
   expression: Expression,
   bound: ReadonlySet<string>,
 ): string[] | undefined => {
