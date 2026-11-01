@@ -14,6 +14,7 @@ export interface SetValue {
   elements: Value[];
   hash: number;
   fingerprint: number;
+  isFingerprinted: boolean;
 }
 
 // A set enumeration whose elements TLC can't sort, such as {1, "a"}. TLC sorts a set enumeration
@@ -31,6 +32,7 @@ export interface FunctionValue {
   fingerprint: number;
   writtenKeys: Value[] | undefined;
   functionClass: FunctionClass | undefined;
+  isFingerprinted: boolean;
 }
 
 export interface IntervalValue {
@@ -433,6 +435,7 @@ export const createSortedSet = (elements: Value[]): SetValue => ({
   elements,
   hash: 0,
   fingerprint: 0,
+  isFingerprinted: false,
 });
 
 export const createSortedFunction = (domain: Value[], range: Value[]): FunctionValue => ({
@@ -443,6 +446,7 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   fingerprint: 0,
   writtenKeys: undefined,
   functionClass: undefined,
+  isFingerprinted: false,
 });
 
 // TLC words a failed function application by the Java class of the function: FcnLambdaValue for
@@ -512,14 +516,16 @@ const cacheSet = (value: Value) => {
 // FcnLambdaValue#fingerPrint caches the FcnRcdValue the function enumerates to, which applies it
 // from then on, so a function TLC has fingerprinted is no longer a lambda.
 export const markFingerprinted = (value: Value): void => {
-  if (
-    (!lambdaPresence.isPresent && !streamedSetPresence.isPresent) ||
-    typeof value !== "object" ||
-    fingerprintedValues.has(value)
-  ) {
+  if ((!lambdaPresence.isPresent && !streamedSetPresence.isPresent) || typeof value !== "object") {
     return;
   }
-  fingerprintedValues.add(value);
+  if (value.kind === "Function" || value.kind === "Set") {
+    if (value.isFingerprinted) return;
+    value.isFingerprinted = true;
+  } else {
+    if (fingerprintedValues.has(value)) return;
+    fingerprintedValues.add(value);
+  }
   if (value.kind === "Function") {
     if (value.functionClass === "lambda") value.functionClass = undefined;
     value.domain.forEach(markFingerprinted);
