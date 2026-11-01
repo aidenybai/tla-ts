@@ -83,6 +83,7 @@ interface Check {
   firstNodes: Pool<Int32Array>;
   lastNodes: Pool<Int32Array>;
   nextSiblings: number[];
+  nodeIds: NodeTable;
   isDone: boolean[];
   errorNode: number | undefined;
 }
@@ -139,6 +140,26 @@ const writeToPool = <Data extends Int32Array | Uint8Array>(
 };
 
 const NO_NODE = -1;
+
+// A Map holds at most 2^24 entries, so each tableau node of a state finds its node in an
+// open-addressing table of (state plus one, tableau node, node) triples.
+interface NodeTable {
+  slots: Int32Array;
+  size: number;
+  shift: number;
+}
+
+const getNodeSlot = (table: NodeTable, state: number, tableauNode: number) => {
+  const mask = table.slots.length / 3 - 1;
+  const hash = Math.imul(Math.imul(state, 0x9e3779b1) ^ tableauNode, 0x85ebca6b) >>> table.shift;
+  for (let index = hash; ; index = (index + 1) & mask) {
+    const slot = index * 3;
+    const stored = table.slots[slot];
+    if (stored === 0 || (stored === state + 1 && table.slots[slot + 1] === tableauNode)) {
+      return slot;
+    }
+  }
+};
 
 const createNodes = (length: number) => new Int32Array(length).fill(NO_NODE);
 
@@ -227,6 +248,7 @@ export const createLivenessChecker = (
     firstNodes: createPool(createNodes),
     lastNodes: createPool(createNodes),
     nextSiblings: [],
+    nodeIds: { slots: new Int32Array(3 << 10), size: 0, shift: 22 },
     isDone: [],
     errorNode: undefined,
   }));
@@ -322,12 +344,29 @@ export const createLivenessChecker = (
         model.infinitelyOftenActions.length === 0,
     );
 
-  const getNodeId = (check: Check, state: number, tableauNode: number) =>
-    check.solution.tableau
-      ? getStateNodes(check, state).find((node) => check.nodeTableaux[node] === tableauNode)
-      : state;
+  const getNodeId = (check: Check, state: number, tableauNode: number) => {
+    if (!check.solution.tableau) return state;
+    const slots = check.nodeIds.slots;
+    const slot = getNodeSlot(check.nodeIds, state, tableauNode);
+    return slots[slot] === 0 ? undefined : slots[slot + 2];
+  };
   const recordNode = (check: Check, state: number, tableauNode: number) => {
     const node = pushNode(check, state, tableauNode);
+    const table = check.nodeIds;
+    if (++table.size * 2 > table.slots.length / 3) {
+      const old = table.slots;
+      table.slots = new Int32Array(old.length * 2);
+      table.shift--;
+      for (let slot = 0; slot < old.length; slot += 3) {
+        if (old[slot] !== 0) {
+          table.slots.set(
+            old.subarray(slot, slot + 3),
+            getNodeSlot(table, old[slot] - 1, old[slot + 1]),
+          );
+        }
+      }
+    }
+    table.slots.set([state + 1, tableauNode, node], getNodeSlot(table, state, tableauNode));
     const last = check.lastNodes.data[state] ?? NO_NODE;
     if (last === NO_NODE) writeToPool(check.firstNodes, state, [node]);
     else check.nextSiblings[last] = node;
