@@ -371,11 +371,12 @@ class RewriterEngine extends SubstCore {
   private invShifter: InvVarShifter;
   // m_blocked: the constants that a nested rewriter does not expand.
   blocked = new Set<number>();
-  // Whether the config overrides getSubst. Otherwise nothing is substituted and the call is skipped.
+  // Whether the config overrides getSubst and getMacro. Otherwise nothing is substituted or expanded
+  // and the call is skipped.
   private isSubstituting: boolean;
+  private isExpandingMacros: boolean;
   // The config's hooks, read once. Many configs share the engine, so a call through config at each
   // site sees all of their classes and goes megamorphic.
-  private preVisitHook: RewriterTpl["preVisit"];
   private reduceAppHook: RewriterTpl["reduceApp"];
   private isFlatAssocHook: RewriterTpl["isFlatAssoc"];
   private getMacroHook: RewriterTpl["getMacro"];
@@ -387,7 +388,7 @@ class RewriterEngine extends SubstCore {
   ) {
     super(manager);
     this.isSubstituting = config.getSubst !== RewriterTpl.prototype.getSubst;
-    this.preVisitHook = config.preVisit;
+    this.isExpandingMacros = config.getMacro !== RewriterTpl.prototype.getMacro;
     this.reduceAppHook = config.reduceApp;
     this.isFlatAssocHook = config.isFlatAssoc;
     this.getMacroHook = config.getMacro;
@@ -505,10 +506,6 @@ class RewriterEngine extends SubstCore {
         this.setNewChildFlag(expr, cached);
         return true;
       }
-    }
-    if (!this.preVisitHook.call(this.config, expr)) {
-      this.pushResult(expr);
-      return true;
     }
     const kind = manager.kinds[expr];
     if (kind === KIND_VAR) {
@@ -668,7 +665,8 @@ class RewriterEngine extends SubstCore {
       this.setLastResult(-1);
       return;
     }
-    const definition = reduced === -1 ? this.getMacroHook.call(this.config, decl) : -1;
+    const definition =
+      reduced === -1 && this.isExpandingMacros ? this.getMacroHook.call(this.config, decl) : -1;
     if (definition !== -1 && (!manager.isGroundApp(definition) || this.config.isReducingMacro())) {
       // The definition is rewritten with the arguments bound to its variables.
       frame.state = EXPAND_DEF;
@@ -820,10 +818,6 @@ export class RewriterTpl {
   }
 
   isRewritingPatterns() {
-    return true;
-  }
-
-  preVisit(_expr: number) {
     return true;
   }
 

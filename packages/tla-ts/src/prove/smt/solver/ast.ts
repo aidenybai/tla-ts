@@ -222,6 +222,13 @@ const getIntegerHash = (value: bigint) => {
 const getInfoHash = (family: number, kind: number, parameterHashes: number[]) =>
   mkMix(family, kind, parameterHashes.length === 0 ? 0 : getCompositeHash(parameterHashes));
 
+// The kinds of an integer signature, in its low three bits.
+const SIGNATURE_EQ = 0;
+const SIGNATURE_ITE = 1;
+const SIGNATURE_DIV0 = 2;
+const SIGNATURE_MODEL_VALUE = 3;
+const SIGNATURE_NUMERAL = 4;
+
 // A builtin declaration that Z3 makes once per signature: its small id, and the references that
 // applications and model values hold to it.
 interface SignatureDecl {
@@ -287,7 +294,7 @@ export class AstManager {
   private numDecls = FIRST_DECLARED_SMALL_ID;
   // The small id and the number of live applications of each builtin declaration that Z3 makes
   // per signature, by its signature.
-  private signatureDecls = new Map<string, SignatureDecl>();
+  private signatureDecls = new Map<number | string, SignatureDecl>();
   // The references to each user declaration: the script holds the declared ones, and applications
   // and models hold the fresh ones. A deleted declaration keeps its small id here, in case an
   // application of it is created again.
@@ -347,7 +354,7 @@ export class AstManager {
   }
 
   // The declaration that a held signature names.
-  private getSignatureDecl(key: string) {
+  private getSignatureDecl(key: number | string) {
     const signatureDecl = this.signatureDecls.get(key);
     if (signatureDecl === undefined)
       throw new SmtInvariantError(`the signature ${key} is not held`);
@@ -395,18 +402,19 @@ export class AstManager {
     this.macros.set(decl, expr);
   }
 
-  // The signature of a builtin declaration that Z3 makes on first use, and whether Z3 keeps it once
-  // made, or null for a declaration that is not one.
-  private getSignature(expr: number): [string, boolean] | null {
+  // The signature of a builtin declaration that Z3 makes on first use, or null for a declaration
+  // that is not one. The low three bits of an integer signature tell its kind: an equality or ite
+  // by sort, a division by zero or model value by declaration, or a numeral by its value, which a
+  // numeral expression has alone. A distinct or pattern is keyed by its domain.
+  private getSignature(expr: number) {
     const decl = this.decls[expr];
-    // The hash of a numeral tells an Int from a Real one.
-    if (decl === OP_NUM) return [`n${this.values[expr]}:${this.hashes[expr]}`, false];
-    if (decl === OP_EQ) return [`e${this.sorts[this.getArg(expr, 0)]}`, true];
-    if (decl === OP_ITE) return [`i${this.sorts[expr]}`, true];
-    if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return [`z${decl}`, false];
+    if (decl === OP_NUM) return 8 * this.values[expr] + SIGNATURE_NUMERAL;
+    if (decl === OP_EQ) return 8 * this.sorts[this.getArg(expr, 0)] + SIGNATURE_EQ;
+    if (decl === OP_ITE) return 8 * this.sorts[expr] + SIGNATURE_ITE;
+    if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return 8 * decl + SIGNATURE_DIV0;
     if (decl === OP_DISTINCT || decl === OP_PATTERN)
-      return [`${decl}:${this.mapArgs(expr, (arg) => this.sorts[arg]).join(",")}`, false];
-    if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) return [`m${decl}`, false];
+      return `${decl}:${this.mapArgs(expr, (arg) => this.sorts[arg]).join(",")}`;
+    if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) return 8 * decl + SIGNATURE_MODEL_VALUE;
     return null;
   }
 
@@ -415,7 +423,7 @@ export class AstManager {
     const signature = this.getSignature(expr);
     return signature === null
       ? this.funcDecls[this.decls[expr]].smallId
-      : this.getSignatureDecl(signature[0]).smallId;
+      : this.getSignatureDecl(signature).smallId;
   }
 
   // An application holds its declaration, which Z3 makes with its first application.
@@ -425,16 +433,16 @@ export class AstManager {
       this.incDeclRef(decl);
       return;
     }
-    const signature = this.getSignature(expr);
-    if (signature === null) return;
-    const key = signature[0];
+    const key = this.getSignature(expr);
+    if (key === null) return;
     const signatureDecl = this.signatureDecls.get(key);
     if (signatureDecl !== undefined) {
       signatureDecl.refCount++;
       return;
     }
     const smallId = this.mkSmallId();
-    this.signatureDecls.set(key, { smallId, refCount: signature[1] ? 2 : 1 });
+    // Z3 keeps the equality and ite declarations once it makes them.
+    this.signatureDecls.set(key, { smallId, refCount: decl === OP_EQ || decl === OP_ITE ? 2 : 1 });
     if (decl !== OP_NUM && this.funcDecls[decl].family === FAMILY_MODEL_VALUE)
       this.funcDecls[decl].smallId = smallId;
   }
@@ -449,9 +457,8 @@ export class AstManager {
       this.deletedDecls.add(decl);
       return this.funcDecls[decl].smallId;
     }
-    const signature = this.getSignature(expr);
-    if (signature === null) return -1;
-    const key = signature[0];
+    const key = this.getSignature(expr);
+    if (key === null) return -1;
     const signatureDecl = this.getSignatureDecl(key);
     signatureDecl.refCount--;
     if (signatureDecl.refCount > 0) return -1;
@@ -466,7 +473,7 @@ export class AstManager {
   // A model value's declaration is counted under its signature, like the applications that hold it.
   incDeclRef(decl: number) {
     if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) {
-      const key = `m${decl}`;
+      const key = 8 * decl + SIGNATURE_MODEL_VALUE;
       const signatureDecl = this.signatureDecls.get(key);
       if (signatureDecl !== undefined) {
         signatureDecl.refCount++;
@@ -483,7 +490,7 @@ export class AstManager {
 
   decDeclRef(decl: number) {
     if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) {
-      const key = `m${decl}`;
+      const key = 8 * decl + SIGNATURE_MODEL_VALUE;
       const signatureDecl = this.getSignatureDecl(key);
       signatureDecl.refCount--;
       if (signatureDecl.refCount > 0) return;
@@ -566,13 +573,13 @@ export class AstManager {
       }
       // The children: the arguments of an application, and the body and then the patterns of a
       // quantifier.
-      const data = this.quantifiers.get(node);
-      if (data === undefined) {
+      if (this.kinds[node] !== KIND_QUANTIFIER) {
         const end = this.argStarts[node + 1];
         for (let index = this.argStarts[node]; index < end; index++)
           this.releaseChild(this.argPool[index], worklist);
         continue;
       }
+      const data = this.getQuantifier(node);
       this.releaseChild(data.body, worklist);
       for (const pattern of data.patterns) this.releaseChild(pattern, worklist);
     }
@@ -596,12 +603,12 @@ export class AstManager {
     this.refCounts[expr] = 0;
     // The children: the arguments of an application, and the body and then the patterns of a
     // quantifier.
-    const data = this.quantifiers.get(expr);
-    if (data === undefined) {
+    if (this.kinds[expr] !== KIND_QUANTIFIER) {
       const end = this.argStarts[expr + 1];
       for (let index = this.argStarts[expr]; index < end; index++)
         this.incRef(this.revive(this.argPool[index]));
     } else {
+      const data = this.getQuantifier(expr);
       this.incRef(this.revive(data.body));
       for (const pattern of data.patterns) this.incRef(this.revive(pattern));
     }
@@ -697,22 +704,24 @@ export class AstManager {
     return { name: builtin[0], kind: builtin[1], domain };
   }
 
-  // The hash of a builtin's Z3 declaration. The domain of a builtin other than pattern depends only
-  // on the sort of an argument and the number of arguments, which key the cache with the op and
-  // range.
-  private getBuiltinHash(op: number, args: number[], range: number) {
-    if (op === OP_PATTERN) {
-      const key = `${args.map((arg) => this.sorts[arg]).join(",")}:${range}`;
-      const existing = this.patternHashes.get(key);
-      if (existing !== undefined) return existing;
-      const hash = this.mkBuiltinHash(op, args, range);
-      this.patternHashes.set(key, hash);
-      return hash;
-    }
+  // The hash of a pattern's Z3 declaration.
+  private getPatternHash(args: number[], range: number) {
+    const key = `${args.map((arg) => this.sorts[arg]).join(",")}:${range}`;
+    const existing = this.patternHashes.get(key);
+    if (existing !== undefined) return existing;
+    const hash = this.mkBuiltinHash(OP_PATTERN, args, range);
+    this.patternHashes.set(key, hash);
+    return hash;
+  }
+
+  // The slot in builtinHashes of the hash of a builtin's Z3 declaration, other than a pattern's. The
+  // domain depends only on the sort of an argument and the number of arguments, which key the cache
+  // with the op and range. It returns the slot, a small integer, because V8 boxes a hash it returns.
+  private getBuiltinSlot(op: number, args: number[], range: number) {
     const argSort = args.length === 0 ? 0 : this.sorts[op === OP_ITE ? args[1] : args[0]];
     const count = args.length;
     const slot = this.findBuiltinSlot(op, argSort, range, count);
-    if (this.builtinKeys[4 * slot] !== -1) return this.builtinHashes[slot];
+    if (this.builtinKeys[4 * slot] !== -1) return slot;
     const hash = this.mkBuiltinHash(op, args, range);
     if (2 * (this.numBuiltinHashes + 1) > this.builtinHashes.length) {
       const keys = this.builtinKeys;
@@ -730,8 +739,7 @@ export class AstManager {
             hashes[index / 4],
           );
     }
-    this.insertBuiltinHash(op, argSort, range, count, hash);
-    return hash;
+    return this.insertBuiltinHash(op, argSort, range, count, hash);
   }
 
   // The slot of the builtin hash with these keys, or the free slot where it goes.
@@ -764,6 +772,7 @@ export class AstManager {
     this.builtinKeys.set([op, argSort, range, count], 4 * slot);
     this.builtinHashes[slot] = hash;
     this.numBuiltinHashes++;
+    return slot;
   }
 
   private mkBuiltinHash(op: number, args: number[], range: number) {
@@ -920,10 +929,17 @@ export class AstManager {
       for (let index = start; index < args.length; index++) this.argBuffer.push(args[index]);
     }
     const nodeArgs = start > 0 ? this.argBuffer : args;
+    // The slot comes first, since finding it may replace builtinHashes with one twice the size.
+    const builtinSlot =
+      funcDecl.family === FAMILY_USER || funcDecl.op === OP_PATTERN
+        ? -1
+        : this.getBuiltinSlot(funcDecl.op, nodeArgs, sort);
     const declHash =
       funcDecl.family === FAMILY_USER
         ? this.declHashes[decl]
-        : this.getBuiltinHash(funcDecl.op, nodeArgs, sort);
+        : builtinSlot === -1
+          ? this.getPatternHash(nodeArgs, sort)
+          : this.builtinHashes[builtinSlot];
     const id = this.create(
       KIND_APP,
       decl,
