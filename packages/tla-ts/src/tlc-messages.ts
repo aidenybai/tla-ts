@@ -1,4 +1,4 @@
-import { TlaModuleError, type TlaEvaluationError } from "./errors";
+import { STACK_OVERFLOW_MESSAGE, TlaModuleError, type TlaEvaluationError } from "./errors";
 import type { TlcVersion } from "./tlc-version";
 
 // TLC's codes for the messages it prints, from tlc2.output.EC.
@@ -117,11 +117,7 @@ export const MISSING_INIT_174 =
 // template, with whether TLC throws them as an EvalException rather than a TLCRuntimeException.
 // TLC's -tool output wraps such a message in its own markers even inside another message.
 const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean][] = [
-  [
-    1005,
-    "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.",
-    false,
-  ],
+  [1005, STACK_OVERFLOW_MESSAGE, false],
   [2117, "Failed to recover the next state from its fingerprint.", true],
   [2123, "Failed to recover the initial state from its fingerprint.", true],
   [2132, "The first argument of Assert evaluated to FALSE; the second argument was:\n%1%", true],

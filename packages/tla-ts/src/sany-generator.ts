@@ -12,7 +12,6 @@ import type {
   Instance,
   Module,
   OperatorDefinition,
-  OperatorParam,
   NewSymbol,
   Proof,
   ProofStep,
@@ -193,6 +192,14 @@ interface OpApplBinding {
   bounded?: FormalParamNode[][];
   tupleOrs?: boolean[];
   ranges?: ExprNode[];
+}
+
+// A module name that SpecObj.loadSpec has yet to resolve, with the module that imports it and the
+// module of that file whose EXTENDS or INSTANCE names it.
+interface UnresolvedName {
+  name: string;
+  importer: string;
+  namingModule: string;
 }
 
 const getTopContext = (table: SymbolTable) => table.contexts[table.contexts.length - 1];
@@ -390,8 +397,6 @@ const NESTED_FIRST_CHILD_KINDS = new Set([
   "N_RecordComponent",
 ]);
 
-// Builds the semantic graph SANY builds for a specification and its modules, in the order SANY
-// analyzes them: a module after the modules it extends and instantiates.
 const POSTFIX_OPERATOR_TEXTS = new Set(["'", "^+", "^*", "^#"]);
 
 // SANY's syntax node for an operator that appears where an expression is required. The parser reads
@@ -406,6 +411,8 @@ const getOperatorNodeKind = (
     : "N_GenInfixOp";
 };
 
+// Builds the semantic graph SANY builds for a specification and its modules, in the order SANY
+// analyzes them: a module after the modules it extends and instantiates.
 export const generateSanySpecification = (
   rootSource: string,
   loadModule: (name: string) => string | undefined,
@@ -540,7 +547,7 @@ export const generateSanySpecification = (
     name: string,
     kind: "extendees" | "instancees",
     visited: Set<string>,
-  ): { name: string; importer: string; namingModule: string } | undefined => {
+  ): UnresolvedName | undefined => {
     const entry = sources.get(name);
     if (!entry || visited.has(name)) return undefined;
     visited.add(name);
@@ -1564,15 +1571,15 @@ export const generateSanySpecification = (
           };
         }
         case "FunctionApplication": {
-          const fn = generateExpression(expression.function);
+          const functionNode = generateExpression(expression.function);
           // SANY leaves the whole application null, without generating its arguments.
-          if (isAbsent(fn)) return fn;
-          checkRecursion(fn);
+          if (isAbsent(functionNode)) return functionNode;
+          checkRecursion(functionNode);
           const argument =
             expression.args.length === 1
               ? generateExpression(expression.args[0])
               : applyBuiltin("$Tuple", expression.args.map(generateExpression), location);
-          return applyBuiltin("$FcnApply", [fn, argument], location);
+          return applyBuiltin("$FcnApply", [functionNode, argument], location);
         }
         case "FieldAccess": {
           const record = generateExpression(expression.record);
@@ -1713,16 +1720,16 @@ export const generateSanySpecification = (
       isAdded: boolean,
     ) => {
       const cursor = { value: span.start };
-      return definition.params.map((param: OperatorParam) => {
+      return definition.params.map((param) => {
         const index = param.location
           ? getTokenIndex(file, param.location)
           : findNameOrKeyword(cursor.value, param.name);
-        const span = getOperatorSpan(index, param.arity);
-        cursor.value = span.end + 1;
+        const paramSpan = getOperatorSpan(index, param.arity);
+        cursor.value = paramSpan.end + 1;
         return createFormalParam(
           resolveSynonym(param.name),
           param.arity,
-          getSpanLocation(file, span),
+          getSpanLocation(file, paramSpan),
           isAdded,
         );
       });
@@ -2160,7 +2167,7 @@ export const generateSanySpecification = (
     const generateInstance = (
       instance: Instance,
       isTopLevel = true,
-      stepLocation: SanyLocation | undefined = undefined,
+      stepLocation?: SanyLocation,
     ) => {
       const span = getDefinitionSpan(instance);
       const location = stepLocation ?? getSpanLocation(file, span);

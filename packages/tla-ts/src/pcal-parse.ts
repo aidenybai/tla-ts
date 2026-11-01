@@ -154,7 +154,7 @@ export const parsePcalAlgorithm = (
   };
 
   // ParseAlgorithm.ParsingError.
-  const parsingError = (message: string): never => {
+  const throwParsingError = (message: string): never => {
     throw new PcalError(`${message}\n    line ${lastToken.line}, column ${lastToken.column}`);
   };
 
@@ -237,20 +237,20 @@ export const parsePcalAlgorithm = (
     }
     const token = getAlgToken();
     if (token !== expected && token !== alternate) {
-      parsingError(`Expected "${expected}" but found "${token}"`);
+      throwParsingError(`Expected "${expected}" but found "${token}"`);
     }
   };
 
   const mustGobbleThis = (expected: string) => {
     const token = getAlgToken();
-    if (token !== expected) parsingError(`Expected "${expected}" but found "${token}"`);
+    if (token !== expected) throwParsingError(`Expected "${expected}" but found "${token}"`);
   };
 
   const gobbleEqualOrIf = () => {
     const token = getAlgToken();
     if (token === "=") return true;
     if (token === "\\in" || token === "∈") return false;
-    return parsingError(`Expected "=" or "\\in"  but found "${token}"`);
+    return throwParsingError(`Expected "=" or "\\in"  but found "${token}"`);
   };
 
   const gobbleCommaOrSemicolon = () => gobbleThis(peekAtAlgToken(1) === "," ? "," : ";");
@@ -271,16 +271,16 @@ export const parsePcalAlgorithm = (
     else gobbleThis("variable");
   };
 
-  const getVarDecl = (): PcalVarDecl => {
+  const getVarDecl = () => {
     const decl: PcalVarDecl = {
       ...createPcalBase(),
       kind: "VarDecl",
       var: getAlgToken(),
+      col: lastToken.column,
+      line: lastToken.line,
       isEq: true,
       val: createDefaultVarInit(),
     };
-    decl.col = lastToken.column;
-    decl.line = lastToken.line;
     if (!["=", "\\in", "∈"].includes(peekAtAlgToken(1))) {
       state.hasDefaultInitialization = true;
       return decl;
@@ -304,15 +304,15 @@ export const parsePcalAlgorithm = (
     return result;
   };
 
-  const getPVarDecl = (): PcalPVarDecl => {
+  const getPVarDecl = () => {
     const decl: PcalPVarDecl = {
       ...createPcalBase(),
       kind: "PVarDecl",
       var: getAlgToken(),
+      col: lastToken.column,
+      line: lastToken.line,
       val: createDefaultVarInit(),
     };
-    decl.col = lastToken.column;
-    decl.line = lastToken.line;
     if (peekAtAlgToken(1) !== "=") {
       state.hasDefaultInitialization = true;
       return decl;
@@ -345,9 +345,9 @@ export const parsePcalAlgorithm = (
   const getLabel = () => {
     if (!isLabelNext()) return "";
     const label = getAlgToken();
-    if (session.isInMacro) parsingError("A label may not appear in a macro.");
-    if (label === "Done") parsingError("Cannot use `Done' as a label.");
-    if (label === "Error") parsingError("Cannot use `Error' as a label.");
+    if (session.isInMacro) throwParsingError("A label may not appear in a macro.");
+    if (label === "Done") throwParsingError("Cannot use `Done' as a label.");
+    if (label === "Error") throwParsingError("Cannot use `Error' as a label.");
     gobbleThis(":");
     state.hasLabel = true;
     state.allLabels.add(label);
@@ -365,7 +365,7 @@ export const parsePcalAlgorithm = (
       (state.pSyntax && ["end", "else", "elsif", "or"].includes(token)) ||
       (state.cSyntax && token === "}");
     while (!isEnd(peekAtAlgToken(1))) result.push(...getCStmt());
-    if (state.cSyntax && result.length === 0) parsingError("Empty statement list");
+    if (state.cSyntax && result.length === 0) throwParsingError("Empty statement list");
     return result;
   };
 
@@ -410,7 +410,7 @@ export const parsePcalAlgorithm = (
       const col = lastToken.column;
       const line = lastToken.line;
       const exp = getExpr();
-      if (exp.tokens.length === 0) parsingError(`Empty expression in ${next} statement at `);
+      if (exp.tokens.length === 0) throwParsingError(`Empty expression in ${next} statement at `);
       gobbleThis(";");
       return {
         ...createPcalBase(),
@@ -466,7 +466,7 @@ export const parsePcalAlgorithm = (
     if (state.cSyntax) gobbleThis("(");
     const test = getExpr();
     if (state.cSyntax) gobbleThis(")");
-    if (test.tokens.length === 0) parsingError("Empty while test at ");
+    if (test.tokens.length === 0) throwParsingError("Empty while test at ");
     if (state.pSyntax) gobbleThis("do");
     const unlabDo = state.pSyntax ? getStmtSeq() : getCStmt();
     if (state.pSyntax) {
@@ -474,7 +474,7 @@ export const parsePcalAlgorithm = (
       gobbleThis("while");
       gobbleThis(";");
     }
-    if (unlabDo.length === 0) parsingError("Missing body of while statement at");
+    if (unlabDo.length === 0) throwParsingError("Missing body of while statement at");
     return { ...createPcalBase(), kind: "While", col, line, test, unlabDo, labDo: [] };
   };
 
@@ -494,7 +494,7 @@ export const parsePcalAlgorithm = (
     if (state.cSyntax) gobbleThis("(");
     result.test = getExpr();
     if (state.cSyntax) gobbleThis(")");
-    if (result.test.tokens.length === 0) parsingError("Empty if test at ");
+    if (result.test.tokens.length === 0) throwParsingError("Empty if test at ");
     if (state.pSyntax) gobbleThis("then");
     result.unlabThen = state.pSyntax ? getStmtSeq() : getCStmt();
     const next = peekAtAlgToken(1);
@@ -504,7 +504,7 @@ export const parsePcalAlgorithm = (
     }
     if (state.pSyntax && next === "elsif") result.unlabElse = [getIf(depth + 1)];
     if (state.pSyntax && !["else", "elsif", "end"].includes(next)) {
-      parsingError('Expecting "else", "elsif", or "end"');
+      throwParsingError('Expecting "else", "elsif", or "end"');
     }
     if (state.pSyntax && depth === 0) {
       gobbleThis("end");
@@ -519,7 +519,7 @@ export const parsePcalAlgorithm = (
     return result;
   };
 
-  const getEither = (): PcalLabelEither => {
+  const getEither = () => {
     mustGobbleThis("either");
     const result: PcalLabelEither = {
       ...createPcalBase(),
@@ -570,7 +570,7 @@ export const parsePcalAlgorithm = (
     result.isEq = gobbleEqualOrIf();
     result.exp = getExpr();
     if (state.pSyntax || peekAtAlgToken(1) !== ")") gobbleCommaOrSemicolon();
-    if (result.exp.tokens.length === 0) parsingError("Empty with expression at ");
+    if (result.exp.tokens.length === 0) throwParsingError("Empty with expression at ");
     const isBlockBody = state.pSyntax && peekAtAlgToken(1) === "do";
     const isBraceBody = state.cSyntax && peekAtAlgToken(1) === ")";
     if (isBlockBody) gobbleThis("do");
@@ -598,11 +598,11 @@ export const parsePcalAlgorithm = (
     };
     gobbleThis(":=", "≔");
     const rhs = getExpr();
-    if (rhs.tokens.length === 0) parsingError("Empty right-hand side of assignment at ");
+    if (rhs.tokens.length === 0) throwParsingError("Empty right-hand side of assignment at ");
     return { ...createPcalBase(), kind: "SingleAssign", col, line, lhs, rhs };
   };
 
-  const getAssign = (): PcalAssign => {
+  const getAssign = () => {
     const result: PcalAssign = {
       ...createPcalBase(),
       kind: "Assign",
@@ -618,7 +618,7 @@ export const parsePcalAlgorithm = (
         result.ass.push(getSingleAssign());
       } catch (error) {
         if (!(error instanceof PcalError)) throw error;
-        parsingError("Bad assignment statement at ");
+        throwParsingError("Bad assignment statement at ");
       }
     }
     gobbleThis(";");
@@ -632,7 +632,7 @@ export const parsePcalAlgorithm = (
       for (;;) {
         const arg = getExpr();
         args.push(arg);
-        if (arg.tokens.length === 0) parsingError("Empty argument in call statement at ");
+        if (arg.tokens.length === 0) throwParsingError("Empty argument in call statement at ");
         if (peekAtAlgToken(1) === ")") break;
         gobbleThis(",");
       }
@@ -642,7 +642,7 @@ export const parsePcalAlgorithm = (
     return args;
   };
 
-  const getCall = (): PcalCall => {
+  const getCall = () => {
     mustGobbleThis("call");
     const result: PcalCall = {
       ...createPcalBase(),
@@ -691,21 +691,21 @@ export const parsePcalAlgorithm = (
     return result;
   };
 
-  const getMacroCall = (): PcalMacroCall => {
+  const getMacroCall = () => {
     const result: PcalMacroCall = {
       ...createPcalBase(),
       kind: "MacroCall",
       name: getAlgToken(),
+      col: lastToken.column,
+      line: lastToken.line,
       args: [],
     };
-    result.col = lastToken.column;
-    result.line = lastToken.line;
     mustGobbleThis("(");
     result.args = getCallArgs();
     return result;
   };
 
-  const getMacro = (macros: PcalMacro[]): PcalMacro => {
+  const getMacro = (macros: PcalMacro[]) => {
     session.isInMacro = true;
     mustGobbleThis("macro");
     const result: PcalMacro = {
@@ -732,7 +732,7 @@ export const parsePcalAlgorithm = (
     return result;
   };
 
-  const getProcedure = (): PcalProcedure => {
+  const getProcedure = () => {
     gobbleThis("procedure");
     const result: PcalProcedure = {
       ...createPcalBase(),
@@ -783,7 +783,7 @@ export const parsePcalAlgorithm = (
     state.minusLabels = [];
     state.proceduresCalled = [];
     if (state.cSyntax) gobbleThis(")");
-    if (id.tokens.length === 0) parsingError("Empty process id at ");
+    if (id.tokens.length === 0) throwParsingError("Empty process id at ");
     const decls = peekAtAlgToken(1) === "begin" || peekAtAlgToken(1) === "{" ? [] : getVarDecls();
     gobbleBeginOrLeftBrace();
     const body = getStmtSeq();
@@ -1241,7 +1241,7 @@ export const parsePcalAlgorithm = (
     names: string[],
     macroLine: number,
     macroCol: number,
-  ): PcalSingleAssign => {
+  ) => {
     const rhs = getSubstitutedPcalExpr(assign.rhs, args, names);
     const lhs: PcalLhs = {
       ...createPcalBase(),
@@ -1390,7 +1390,7 @@ export const parsePcalAlgorithm = (
 
   const parse = (): PcalAlgorithm => {
     if (isFairAlgorithm) {
-      if (getAlgToken() !== "algorithm") parsingError("`--fair' not followed by `algorithm'");
+      if (getAlgToken() !== "algorithm") throwParsingError("`--fair' not followed by `algorithm'");
       params.fairAlgorithm = true;
     }
     const name = getAlgToken();
@@ -1518,6 +1518,6 @@ export const parsePcalAlgorithm = (
     };
   } catch (error) {
     if (!(error instanceof PcalRuntimeError)) throw error;
-    return parsingError("Unknown error at or before");
+    return throwParsingError("Unknown error at or before");
   }
 };

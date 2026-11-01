@@ -613,11 +613,11 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
         }
       })();
     // TLC prints an error on an initial state and the state as one message.
-    if (initialState) {
-      print(MESSAGE_CODE.initialState, MESSAGE_LEVEL.error, `${message}\n${initialState}`);
-    } else {
-      print(failure.code, MESSAGE_LEVEL.error, message);
-    }
+    print(
+      initialState ? MESSAGE_CODE.initialState : failure.code,
+      MESSAGE_LEVEL.error,
+      initialState ? `${message}\n${initialState}` : message,
+    );
     printTraceOutput(printer, failure.trace[0]?.output);
     printTrace(printer, failure.trace);
     const traceFailure = failure.traceFailure;

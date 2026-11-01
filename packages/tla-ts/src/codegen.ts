@@ -9,7 +9,7 @@ import {
   getSubsetOperator,
   getEvaluator,
   getFieldSelector,
-  getMissingArgumentError,
+  getMissingArgumentDescriber,
   getQuantifierElements,
   isClosedConstant,
   isTlcInteger,
@@ -298,7 +298,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
             context: `keepLazyContext(${frame.context})`,
           });
       const functionCode = `expectFunction(${evaluatedFunction}, ${addReference(generator, expression)})`;
-      const describeMissing = getMissingArgumentError(generator.environment.runtime.version);
+      const describeMissing = getMissingArgumentDescriber(generator.environment.runtime.version);
       const error = describeMissing ? `, ${addReference(generator, describeMissing)}` : "";
       if (expression.args.length === 1)
         return `apply(${functionCode}, ${generate(expression.args[0])}${error})`;

@@ -669,8 +669,8 @@ describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path
     const result = check174("CyclePrint");
     expect(result.status).toBe(13);
     const states = [0, 1, 2, 3].map(
-      (x) =>
-        `@!@!@STARTMSG 2217:4 @!@!@\n${x === 0 ? "1: <Initial predicate>" : `${x + 1}: <Next line 5, col 9 to line 5, col 63 of module CyclePrint>`}\nx = ${x}\n\n@!@!@ENDMSG 2217 @!@!@\n`,
+      (value) =>
+        `@!@!@STARTMSG 2217:4 @!@!@\n${value === 0 ? "1: <Initial predicate>" : `${value + 1}: <Next line 5, col 9 to line 5, col 63 of module CyclePrint>`}\nx = ${value}\n\n@!@!@ENDMSG 2217 @!@!@\n`,
     );
     expect(result.stdout).toContain(
       [
@@ -1011,7 +1011,7 @@ describe("the CLI prints messages for a program to read like TLC", () => {
   it("prints again what the spec prints as it rebuilds a safety trace", () => {
     const result = runTool("Steps");
     expect(result.status).toBe(12);
-    const step = (n: number) => `<<"step", ${n}>>`;
+    const step = (count: number) => `<<"step", ${count}>>`;
     expect(getToolSequence(result.stdout)).toEqual([
       "2262",
       "2187",
@@ -1062,7 +1062,7 @@ describe("the CLI prints messages for a program to read like TLC", () => {
     const result = runTool("Loop");
     expect(result.status).toBe(13);
     const [init, up, reset] = ["init", "up", "reset"].map(
-      (name) => (n: number) => `<<"${name}", ${n}>>`,
+      (name) => (count: number) => `<<"${name}", ${count}>>`,
     );
     expect(getToolSequence(result.stdout)).toEqual([
       "2262",

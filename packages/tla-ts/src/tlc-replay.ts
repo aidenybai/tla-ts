@@ -152,8 +152,8 @@ const isTrue = (value: Value) => {
 // Once every variable has a value, TLC's getInitStates and getNextStatesAllAssigned evaluate the
 // conjuncts left instead of walking them, so a disjunction among them takes one step. Its enabled
 // doesn't, and Tool#getNextStates0 takes this shortcut only with warnings on.
-export const isAssignedShortcut = (run: Pick<Replay, "environment" | "isInit" | "isEnabled">) =>
-  !run.isEnabled && (run.isInit || run.environment.runtime.isWarningEnabled);
+export const isAssignedShortcut = (replay: Pick<Replay, "environment" | "isInit" | "isEnabled">) =>
+  !replay.isEnabled && (replay.isInit || replay.environment.runtime.isWarningEnabled);
 
 // TLC's getInitStates(ActionItemList) and getNextStates(ActionItemList): processes the conjuncts
 // left once a conjunct holds.
@@ -168,11 +168,13 @@ const proceed = (replay: Replay, items: Item | undefined, partial: State): void 
   }
   if (items.kind === "Predicate") {
     visit(replay, items.expression, items.rest, items.scope, partial);
-  } else if (items.kind === "Unchanged") {
-    visitUnchanged(replay, items.expression, items.rest, items.scope, partial);
-  } else if (isChanged(replay, items, partial)) {
-    proceed(replay, items.rest, partial);
+    return;
   }
+  if (items.kind === "Unchanged") {
+    visitUnchanged(replay, items.expression, items.rest, items.scope, partial);
+    return;
+  }
+  if (isChanged(replay, items, partial)) proceed(replay, items.rest, partial);
 };
 
 const isChanged = (replay: Replay, item: Item, partial: State) => {
@@ -305,6 +307,22 @@ const visitDefined = (
   visitValue(replay, evaluate(expression, context), items, partial);
 };
 
+// A variable takes the value when it has none yet, and otherwise must already have it.
+const proceedWithValue = (
+  replay: Replay,
+  items: Item | undefined,
+  partial: State,
+  index: number,
+  value: Value,
+) => {
+  const assigned = partial[index];
+  if (assigned === undefined) {
+    proceed(replay, items, assign(partial, index, value));
+    return;
+  }
+  if (valuesEqual(assigned, value)) proceed(replay, items, partial);
+};
+
 const cons = (
   kind: Item["kind"],
   expression: Expression,
@@ -331,8 +349,7 @@ const visitAssignment = (
   const value = evaluate(source, context);
   const assigned = partial[index];
   if (expression.operator === "=") {
-    if (assigned === undefined) proceed(replay, items, assign(partial, index, value));
-    else if (valuesEqual(assigned, value)) proceed(replay, items, partial);
+    proceedWithValue(replay, items, partial, index, value);
     return;
   }
   const set: Value = expression.operator === "\\subseteq" ? { kind: "Subset", base: value } : value;
@@ -371,9 +388,9 @@ const visitApplication = (
       if (expression.operator === "=>" && expression.args.length === 2) {
         if (isTrue(evaluate(expression.args[0], context))) {
           visit(replay, expression.args[1], items, scope, partial);
-        } else {
-          proceed(replay, items, partial);
+          return;
         }
+        proceed(replay, items, partial);
         return;
       }
       visitDefined(replay, expression, items, scope, partial);
@@ -510,10 +527,7 @@ const visitUnchanged = (
     const index = getVariable(replay, expression, scope);
     if (index !== undefined) {
       const value = replay.current?.[index];
-      const assigned = partial[index];
-      if (value === undefined) return;
-      if (assigned === undefined) proceed(replay, items, assign(partial, index, value));
-      else if (valuesEqual(assigned, value)) proceed(replay, items, partial);
+      if (value !== undefined) proceedWithValue(replay, items, partial, index, value);
       return;
     }
     if (expression.kind === "Tuple") {

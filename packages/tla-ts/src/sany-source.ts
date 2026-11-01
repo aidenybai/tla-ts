@@ -1,4 +1,4 @@
-import type { Expression, SourceRange } from "./ast";
+import type { Expression, SourceLocation, SourceRange } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import { readAtAsIdentifier, tokenize, type Token } from "./lexer";
 import { getTabStop } from "./sany-lexer";
@@ -49,11 +49,7 @@ export const isToken = (file: SourceFile, index: number, text: string) =>
   file.tokens[index].kind !== "String";
 
 // The number of tokens, in source order, before a position, or at or before it when isAtCounted.
-const countTokensBefore = (
-  file: SourceFile,
-  position: { line: number; column: number },
-  isAtCounted: boolean,
-) => {
+const countTokensBefore = (file: SourceFile, position: SourceLocation, isAtCounted: boolean) => {
   let low = 0;
   let high = file.tokens.length;
   while (low < high) {
@@ -70,14 +66,12 @@ const countTokensBefore = (
 };
 
 // The index of the first token at or after a position.
-export const getTokenIndex = (file: SourceFile, position: { line: number; column: number }) => {
-  const exact = file.tokenIndexes.get(getPositionKey(position.line, position.column));
-  if (exact !== undefined) return exact;
-  return Math.min(countTokensBefore(file, position, false), file.tokens.length - 1);
-};
+export const getTokenIndex = (file: SourceFile, position: SourceLocation) =>
+  file.tokenIndexes.get(getPositionKey(position.line, position.column)) ??
+  Math.min(countTokensBefore(file, position, false), file.tokens.length - 1);
 
 // The index of the last token at or before a position.
-const getEndTokenIndex = (file: SourceFile, position: { line: number; column: number }) =>
+const getEndTokenIndex = (file: SourceFile, position: SourceLocation) =>
   Math.max(countTokensBefore(file, position, true) - 1, 0);
 
 export const getMatchingIndex = (file: SourceFile, openIndex: number) => {
@@ -153,9 +147,8 @@ export const getTokenLocation = (file: SourceFile, index: number) =>
   getSpanLocation(file, { start: index, end: index });
 
 const getOffset = (file: SourceFile, line: number, column: number) => {
-  const lineStart = file.lineOffsets[line];
   let width = 0;
-  let offset = lineStart;
+  let offset = file.lineOffsets[line];
   while (offset < file.source.length) {
     width = file.source[offset] === "\t" ? getTabStop(width) : width + 1;
     if (width >= column) return offset;

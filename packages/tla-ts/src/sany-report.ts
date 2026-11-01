@@ -45,6 +45,16 @@ export interface SanyReportOptions {
   onPrintError?: (text: string) => void;
 }
 
+interface LoadedModule {
+  text: string;
+  module: Module;
+}
+
+interface Validation {
+  text: string;
+  isError: boolean;
+}
+
 // ErrorDetails.toString.
 const formatMessage = (message: SanyMessage) =>
   `${formatSanyLocation(message.location)}\n\n${message.text}`;
@@ -141,10 +151,10 @@ export const getSanyReport = (
   const parseMessages: SanyMessage[] = [];
   const parsePhase = { isReported: false, isAborted: false };
   const session = createPcalSession(createPcalParams(), log);
-  const loadedModules = new Map<string, { text: string; module: Module }>();
+  const loadedModules = new Map<string, LoadedModule>();
   // TLC 1.7.4's SpecObj.validateParseUnit prints what it finds, which follows the file SANY parses
   // next, as SANY validates a module once it parses the module or one that extends it.
-  const validations: { text: string; isError: boolean }[] = [];
+  const validations: Validation[] = [];
   const printValidations = () =>
     validations
       .splice(0)

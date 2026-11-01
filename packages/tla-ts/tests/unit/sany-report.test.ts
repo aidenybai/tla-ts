@@ -15,13 +15,12 @@ const getReport = (modules: Record<string, string>, options?: SanyReportOptions)
   Object.entries(modules).forEach(([name, source]) =>
     writeFileSync(join(directory, `${name}.tla`), source),
   );
-  const [root] = Object.keys(modules);
-  const { text, isFailed } = getSanyReport(
-    join(directory, `${root}.tla`),
+  const report = getSanyReport(
+    join(directory, `${Object.keys(modules)[0]}.tla`),
     (name) => (name in modules ? readFileSync(join(directory, `${name}.tla`), "utf8") : undefined),
     options,
   );
-  return { text, isFailed };
+  return { text: report.text, isFailed: report.isFailed };
 };
 
 const toText = (lines: string[]) => lines.map((line) => `${line}\n`).join("");

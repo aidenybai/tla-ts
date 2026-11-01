@@ -187,9 +187,9 @@ const getSubstitutedArgLevelParams = (source: Map<string, ArgLevelParam>, substs
       return;
     }
     if (expr.kind !== "OpArg" || !isParam(expr.op)) return;
-    const op = expr.op;
+    const operator = expr.op;
     getSubstitutedParams(argLevelParam.param, substs, false).forEach((param) =>
-      addArgLevelParam(result, op, argLevelParam.index, param),
+      addArgLevelParam(result, operator, argLevelParam.index, param),
     );
   });
   return result;
@@ -255,11 +255,11 @@ const getSubstitutedArgLevelConstraints = (
     const paramExpr = getSubstitute(argLevelParam.param, substs);
     if (paramExpr === undefined) return;
     const opExpr = getSubstitute(argLevelParam.op, substs);
-    const op =
+    const operator =
       opExpr === undefined ? argLevelParam.op : opExpr.kind === "OpArg" ? opExpr.op : undefined;
-    if (op === undefined || !isParam(op)) return;
+    if (operator === undefined || !isParam(operator)) return;
     checkLevel(paramExpr, iteration, check);
-    putArgLevelConstraint(result, op, argLevelParam.index, paramExpr.level);
+    putArgLevelConstraint(result, operator, argLevelParam.index, paramExpr.level);
   });
   return result;
 };
@@ -928,12 +928,12 @@ const checkInstance = (node: InstanceNode, iteration: number, check: LevelCheck)
       node.substs.forEach((paramSubst) => {
         if (argLevelParam.op !== opSubst.op || argLevelParam.param !== paramSubst.op) return;
         if (opSubst.expr.kind !== "OpArg") return;
-        const op = opSubst.expr.op;
-        const isOpCorrect = checkLevel(op, iteration, check);
-        if (op.kind !== "OpDef") return;
-        const maximum = getMaxLevel(op, argLevelParam.index);
+        const operator = opSubst.expr.op;
+        const isOperatorCorrect = checkLevel(operator, iteration, check);
+        if (operator.kind !== "OpDef") return;
+        const maximum = getMaxLevel(operator, argLevelParam.index);
         if (paramSubst.expr.level <= maximum) return;
-        if (isOpCorrect && checkLevel(paramSubst.expr, iteration, check)) {
+        if (isOperatorCorrect && checkLevel(paramSubst.expr, iteration, check)) {
           addError(
             check,
             node.location,
@@ -1003,11 +1003,11 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
     case "OpArg": {
       if (node.levelChecked >= iteration) return node.levelCorrect;
       node.levelChecked = iteration;
-      const op = node.op;
-      node.levelCorrect = checkLevel(op, iteration, check);
-      if (op.kind === "Module") return node.levelCorrect;
-      node.level = op.level;
-      shareLevels(node, op);
+      const operator = node.op;
+      node.levelCorrect = checkLevel(operator, iteration, check);
+      if (operator.kind === "Module") return node.levelCorrect;
+      node.level = operator.level;
+      shareLevels(node, operator);
       return node.levelCorrect;
     }
     case "LetIn": {

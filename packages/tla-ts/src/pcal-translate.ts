@@ -711,7 +711,7 @@ const createCallStmts = (
   assign: PcalAssign,
   entry: PcalProcedureEntry,
   call: PcalCall | PcalCallReturn,
-): PcalStmt[] => {
+) => {
   if (entry.params.length !== call.args.length) {
     throw new PcalError(`Procedure ${call.to} called with wrong number of arguments`, call);
   }
@@ -895,8 +895,8 @@ const explodePcalAlgorithm = (
         break;
       }
       case "Either": {
-        const explodedOrs = last.ors.map((or, index) => {
-          const exploded = copyAndExplodeLastStmt(or, next);
+        const explodedOrs = last.ors.map((orStmts, index) => {
+          const exploded = copyAndExplodeLastStmt(orStmts, next);
           last.ors[index] = exploded.stmts;
           result.labeledStmts.push(...exploded.labeledStmts);
           return exploded;
@@ -1106,16 +1106,16 @@ const explodePcalAlgorithm = (
 // there are variables, and GenAssign's sorting of multiple assignments and its checks that each
 // variable is declared and assigned at most once per step. Changed counts the assignments to each
 // variable along the paths through a labeled statement.
-const checkPcalTlaGen = (xast: PcalAlgorithm, omitPC: boolean) => {
-  const vars: string[] = omitPC ? [] : ["pc"];
-  vars.push(...xast.decls.map((decl) => decl.var));
-  if (xast.prcds.length > 0) vars.push("stack");
-  xast.prcds.forEach((procedure) => {
+const checkPcalTlaGen = (explodedAst: PcalAlgorithm, omitPC: boolean) => {
+  const vars = omitPC ? [] : ["pc"];
+  vars.push(...explodedAst.decls.map((decl) => decl.var));
+  if (explodedAst.prcds.length > 0) vars.push("stack");
+  explodedAst.prcds.forEach((procedure) => {
     vars.push(...procedure.params.map((param) => param.var));
     vars.push(...procedure.decls.map((decl) => decl.var));
   });
-  if (xast.kind === "Multiprocess") {
-    xast.procs.forEach((process) => vars.push(...process.decls.map((decl) => decl.var)));
+  if (explodedAst.kind === "Multiprocess") {
+    explodedAst.procs.forEach((process) => vars.push(...process.decls.map((decl) => decl.var)));
   }
   if (vars.length === 0) throw new PcalError("The algorithm has no variables.");
 
@@ -1178,9 +1178,9 @@ const checkPcalTlaGen = (xast: PcalAlgorithm, omitPC: boolean) => {
       }
       case "Either": {
         const allChanged = [...changed];
-        stmt.ors.forEach((or) => {
+        stmt.ors.forEach((orStmts) => {
           const orChanged = [...changed];
-          or.forEach((innerStmt) => genStmt(innerStmt, orChanged));
+          orStmts.forEach((innerStmt) => genStmt(innerStmt, orChanged));
           mergeChanged(allChanged, orChanged);
         });
         mergeChanged(changed, allChanged);
@@ -1205,10 +1205,11 @@ const checkPcalTlaGen = (xast: PcalAlgorithm, omitPC: boolean) => {
       toLabeledStmt(stmt).stmts.forEach((innerStmt) => genStmt(innerStmt, changed));
     });
 
-  xast.prcds.forEach((procedure) => genBody(procedure.body));
-  (xast.kind === "Uniprocess" ? [xast.body] : xast.procs.map((process) => process.body)).forEach(
-    genBody,
-  );
+  explodedAst.prcds.forEach((procedure) => genBody(procedure.body));
+  (explodedAst.kind === "Uniprocess"
+    ? [explodedAst.body]
+    : explodedAst.procs.map((process) => process.body)
+  ).forEach(genBody);
 };
 
 // PCalTLAGenerator.removeNameConflicts followed by translate, for what they do to the AST and the

@@ -367,11 +367,17 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
       }
       config[singleKey] = name.text;
       current.token = advance();
-    } else if (listKey !== undefined) {
+      continue;
+    }
+    if (listKey !== undefined) {
       current.token = parseNames(config[listKey]);
-    } else if (keyword === "CONSTANT" || keyword === "CONSTANTS") {
+      continue;
+    }
+    if (keyword === "CONSTANT" || keyword === "CONSTANTS") {
       current.token = parseConstants(line);
-    } else if (keyword === "CHECK_DEADLOCK") {
+      continue;
+    }
+    if (keyword === "CHECK_DEADLOCK") {
       const value = advanceToArgument();
       if (value.text !== "TRUE" && value.text !== "FALSE") {
         throw createSyntaxError(value.line, "It was expecting TRUE or FALSE, but did not find it.");
@@ -380,14 +386,15 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
       deadlock.isSet = true;
       config.checkDeadlock = value.text === "TRUE";
       current.token = advance();
-    } else if (keywords.has(keyword) && TYPE_KEYWORDS.includes(keyword)) {
-      advanceToArgument();
-      if (types.has(keyword)) throw createDuplicateKeywordError(line, keyword);
-      types.add(keyword);
-      current.token = advance();
-    } else {
+      continue;
+    }
+    if (!keywords.has(keyword) || !TYPE_KEYWORDS.includes(keyword)) {
       throw createSyntaxError(line, "It was expecting a keyword, but did not find it.");
     }
+    advanceToArgument();
+    if (types.has(keyword)) throw createDuplicateKeywordError(line, keyword);
+    types.add(keyword);
+    current.token = advance();
   }
   return config;
 };

@@ -55,8 +55,9 @@ const isBuiltFromDeclarations = (node: SemanticNode | undefined) => {
       if (operator.kind === "OpDecl" || operator.kind === "FormalParam") return true;
       if (operator.kind === "OpDef") {
         if (operator.name === "BOOLEAN") return true;
-        const module = operator.module?.name;
-        if (module !== undefined && SET_OPERATORS.get(module) === operator.name) return true;
+        const moduleName = operator.module?.name;
+        if (moduleName !== undefined && SET_OPERATORS.get(moduleName) === operator.name)
+          return true;
         if (visit(operator)) return true;
       }
     }

@@ -224,7 +224,7 @@ THEOREM TRUE
       isUncommented: false,
       isTerse: false,
     });
-  const at = (frames: string[]) => frames.map((frame) => `\tat tla2sany.${frame}`);
+  const formatFrames = (frames: string[]) => frames.map((frame) => `\tat tla2sany.${frame}`);
   const DEFINITION_FRAMES = [
     "semantic.OpDefNode.getSymbolElement(OpDefNode.java:1392)",
     "semantic.SymbolNode.exportDefinition(SymbolNode.java:138)",
@@ -249,7 +249,7 @@ THEOREM TRUE
   it("fails as TLC 1.7.4's XMLExporter does on the node SANY puts in place of an error", () => {
     const stackTrace = [
       "java.lang.IllegalArgumentException: unsupported kind: 0 in xml export",
-      ...at([
+      ...formatFrames([
         "semantic.OpDefNode.getSymbolElement(OpDefNode.java:1424)",
         "semantic.SymbolNode.exportDefinition(SymbolNode.java:138)",
         "xml.SymbolContext.put(SymbolContext.java:60)",
@@ -278,7 +278,7 @@ THEOREM TRUE
   it("fails as TLC 1.7.4's XMLExporter does on the null SANY leaves for an operator it can't resolve", () => {
     const stackTrace = [
       'java.lang.NullPointerException: Cannot invoke "tla2sany.semantic.ExprOrOpArgNode.export(org.w3c.dom.Document, tla2sany.xml.SymbolContext)" because "this.operands[i]" is null',
-      ...at([...OPERAND_FRAMES, ...OPERAND_FRAMES, ...DEFINITION_FRAMES]),
+      ...formatFrames([...OPERAND_FRAMES, ...OPERAND_FRAMES, ...DEFINITION_FRAMES]),
     ].join("\n");
     expect(export174("---- MODULE Nested ----\nOp == <<{1 + 2}>>\n====")).toThrow(
       expect.objectContaining({
@@ -296,7 +296,7 @@ THEOREM TRUE
   it("fails as TLC 1.7.4's XMLExporter does on the null body of an operator RECURSIVE declares but nothing defines", () => {
     const stackTrace = [
       'java.lang.NullPointerException: Cannot invoke "tla2sany.semantic.ExprNode.export(org.w3c.dom.Document, tla2sany.xml.SymbolContext)" because "this.body" is null',
-      ...at(DEFINITION_FRAMES),
+      ...formatFrames(DEFINITION_FRAMES),
     ].join("\n");
     expect(export174("---- MODULE Undefined ----\nRECURSIVE Op(_)\nNext == Op(1)\n====")).toThrow(
       expect.objectContaining({

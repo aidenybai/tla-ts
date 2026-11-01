@@ -1348,11 +1348,12 @@ const getSortedSubsets = (base: Value[]) => {
 const getComponentElements = (
   sets: Value[],
   getElements: (set: Value) => Value[],
-  fail: (set: Value, index: number) => never,
+  describeUnenumerable: (set: Value, index: number) => string,
 ) => {
   const lists: Value[][] = [];
-  for (const [index, set] of sets.entries()) {
-    if (isOverriddenSet(set)) fail(set, index);
+  for (let index = 0; index < sets.length; index++) {
+    const set = sets[index];
+    if (isOverriddenSet(set)) throw new TlaEvaluationError(describeUnenumerable(set, index));
     const elements = getElements(set);
     if (elements.length === 0) return [[]];
     lists.push(elements);
@@ -1413,22 +1414,24 @@ const enumerateSet = (
     }
     case "RecordSet": {
       if (!valueVersion.is174 && isEmptySet(value)) return [];
-      const fields = getComponentElements(value.sets, getElements, (set, index) => {
-        throw new TlaEvaluationError(
+      const fields = getComponentElements(
+        value.sets,
+        getElements,
+        (set, index) =>
           `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${formatValue(set)}`,
-        );
-      });
+      );
       return getCartesianProduct(fields).map((combination) =>
         createRecord(value.names.map((name, index): [string, Value] => [name, combination[index]])),
       );
     }
     case "ProductSet": {
       if (!valueVersion.is174 && isEmptySet(value)) return [];
-      const factors = getComponentElements(value.factors, getElements, (factor, index) => {
-        throw new TlaEvaluationError(
+      const factors = getComponentElements(
+        value.factors,
+        getElements,
+        (factor, index) =>
           `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${formatValue(factor)}`,
-        );
-      });
+      );
       return getCartesianProduct(factors).map(createTuple);
     }
     case "FilteredSet":

@@ -453,7 +453,7 @@ export const isOneTokenPcalExpr = (expr: PcalExpr) =>
 export const getPcalTokenAt = (expr: PcalExpr, coord: PcalCoord) =>
   getElement(getElement(expr.tokens, coord.line), coord.item);
 
-// TLAExpr.stepCoord: the coordinates incr tokens after coord, or undefined past the end.
+// TLAExpr.stepCoord: the coordinates steps tokens after coord, or undefined past the end.
 export const stepPcalCoord = (expr: PcalExpr, coord: PcalCoord, steps: number) => {
   if (expr.tokens.length <= coord.line) {
     throw new PcalBugError("TLAExpr.StepCoord called with line too big");

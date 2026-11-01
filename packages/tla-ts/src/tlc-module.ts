@@ -53,10 +53,10 @@ const getRuntimeValue = (
   key: string,
   state: (Value | undefined)[] | undefined,
 ) => {
-  const is174 = runtime.version === "1.7.4";
-  const isUndefined = is174
-    ? !TLC_174_KEYS.has(key) || (!runtime.isStarted && CHECKER_KEYS_174.has(key))
-    : !runtime.isStarted && CHECKER_KEYS.has(key);
+  const isUndefined =
+    runtime.version === "1.7.4"
+      ? !TLC_174_KEYS.has(key) || (!runtime.isStarted && CHECKER_KEYS_174.has(key))
+      : !runtime.isStarted && CHECKER_KEYS.has(key);
   if (isUndefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
   const duration = Math.floor((Date.now() - runtime.startedAt) / 1000);
   switch (key) {

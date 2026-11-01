@@ -744,9 +744,8 @@ const parse = (source: string, mode: ParseMode): Module => {
           expect(isRecord ? "|->" : ":");
           return { name, value: parseExpression() };
         };
-        const first = parseField(isIdentifier ? expectIdentifier() : advance().text);
         const fields = [
-          first,
+          parseField(isIdentifier ? expectIdentifier() : advance().text),
           ...(accept(",") ? parseSeparated(() => parseField(expectIdentifier())) : []),
         ];
         expect("]");
@@ -1088,7 +1087,7 @@ const parse = (source: string, mode: ParseMode): Module => {
     const next = peek();
     const nextHigh =
       next.text === "'" || POSTFIX_OPERATORS.has(next.text)
-        ? 15
+        ? POSTFIX_PRECEDENCE.high
         : INFIX_OPERATORS.get(next.text)?.high;
     if (!isTlapm && next.kind === "Operator" && nextHigh !== undefined && nextHigh >= low) {
       throw createError(`Precedence conflict between ${operator.text} and ${next.text}`, next);
@@ -1892,11 +1891,11 @@ const parse = (source: string, mode: ParseMode): Module => {
       switch (token.text) {
         case "CONSTANT":
         case "CONSTANTS": {
-          const location = getLocation(advance());
+          const unitLocation = getLocation(advance());
           const declarations = parseDeclarations();
           module.constants.push(...declarations);
-          location.range = getRange(tokenIndex);
-          module.units.push({ kind: "Constants", declarations, location });
+          unitLocation.range = getRange(tokenIndex);
+          module.units.push({ kind: "Constants", declarations, location: unitLocation });
           continue;
         }
         case "VARIABLE":

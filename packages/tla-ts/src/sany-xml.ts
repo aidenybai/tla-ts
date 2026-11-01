@@ -72,11 +72,14 @@ const escapeXml = (text: string) =>
 // A character outside XML 1.0's Char production.
 const UNREPRESENTABLE_CHARACTER = /[^\t\n\r\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u;
 
+interface UnrepresentableCharacter {
+  tag: string;
+  character: string;
+}
+
 // XMLExporter.findUnrepresentableCharacterData: the first element, in document order, whose
 // character data XML 1.0 cannot represent, with the character.
-const findUnrepresentable = (
-  element: XmlElement,
-): { tag: string; character: string } | undefined => {
+const findUnrepresentable = (element: XmlElement): UnrepresentableCharacter | undefined => {
   const character = (element.cdata ?? element.text)?.match(UNREPRESENTABLE_CHARACTER)?.[0];
   if (character !== undefined) return { tag: element.tag, character };
   for (const child of element.children) {

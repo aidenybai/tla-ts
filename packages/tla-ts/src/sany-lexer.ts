@@ -254,12 +254,12 @@ const IDENTIFIER_PATTERNS = [
   /[a-zA-RT-VX-Z]\w*/y,
   /@|ℕ|ℤ|ℝ/y,
 ];
-const junctionPatterns = (junction: string) =>
+const getJunctionPatterns = (junction: string) =>
   [/[0-9][A-Za-z0-9]*/, /[WS][a-zA-EG-Z0-9][A-Za-z0-9]*/, /[a-zA-RT-VX-Z][A-Za-z0-9]*/].map(
     (prefix) => new RegExp(`${prefix.source}${junction}`, "y"),
   );
-const BAND_PATTERNS = junctionPatterns(String.raw`\.\/\\`);
-const BOR_PATTERNS = junctionPatterns(String.raw`\.\\\/`);
+const BAND_PATTERNS = getJunctionPatterns(String.raw`\.\/\\`);
+const BOR_PATTERNS = getJunctionPatterns(String.raw`\.\\\/`);
 const STEP = String.raw`<(?:[0-9]+|\+|\*)>`;
 
 // The tokens of the SPEC lexical state that are not literals, with their kinds.
@@ -353,7 +353,7 @@ const getPositions = (source: string) => {
       }
       if (character === "\r") state.isAfterCr = true;
       else if (character === "\n") state.isAfterLf = true;
-      else if (character === "\t") state.column = state.column - 1 + (8 - ((state.column - 1) % 8));
+      else if (character === "\t") state.column = getTabStop(state.column - 1);
       lines.push(state.line);
       columns.push(state.column);
     }

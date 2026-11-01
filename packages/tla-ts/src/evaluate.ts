@@ -292,7 +292,7 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
 };
 
 // TLC 1.7.4 words what a tuple or a record lacks differently.
-export const getMissingArgumentError = (version: TlcVersion | undefined) =>
+export const getMissingArgumentDescriber = (version: TlcVersion | undefined) =>
   version === "1.7.4"
     ? (functionValue: Value, argument: Value) =>
         describeMissingArgument(functionValue, argument, version)
@@ -589,17 +589,14 @@ export const bindLazyArguments = (
   const value = lambda.value;
   const args = expression.args.map((arg) => evaluate(arg, context));
   const argument = args.length === 1 ? args[0] : createTuple(args);
-  const fail = (message: string): never => {
-    throw new TlaEvaluationError(`${message}\n${describeRange(expression.function)}`);
-  };
-  const failFor = (ordinal: string, element: Value, problem: string) =>
-    fail(
-      `In applying the function\n${prettyPrint(formatValue(value))},\nthe ${ordinal} is:\n${prettyPrint(formatValue(element))}${problem}.`,
-    );
+  const describeArgument = (ordinal: string, element: Value, problem: string) =>
+    `In applying the function\n${prettyPrint(formatValue(value))},\nthe ${ordinal} is:\n${prettyPrint(formatValue(element))}${problem}.\n${describeRange(expression.function)}`;
   const bounds = lambda.bounds;
   if (bounds.length === 1) {
     if (!isElementOf(argument, value.domain)) {
-      failFor("first argument", argument, "which is not in its domain");
+      throw new TlaEvaluationError(
+        describeArgument("first argument", argument, "which is not in its domain"),
+      );
     }
     return bindArgument(bounds, lambda.scope, argument);
   }
@@ -609,23 +606,29 @@ export const bindLazyArguments = (
       ? value.domain.factors
       : [];
   if (elements === undefined || elements.length < bounds.length) {
-    return fail("Attempted to apply a function to an argument not in its domain.");
+    throw new TlaEvaluationError(
+      `Attempted to apply a function to an argument not in its domain.\n${describeRange(expression.function)}`,
+    );
   }
   bounds.forEach((bound, index) => {
     const element = elements[index];
     const ordinal = `argument number ${index + 1}`;
     if (!isElementOf(element, domains[index])) {
-      failFor(
-        ordinal,
-        element,
-        `${bound.pattern.kind === "Name" ? "" : "\n"}which is not in its domain`,
+      throw new TlaEvaluationError(
+        describeArgument(
+          ordinal,
+          element,
+          `${bound.pattern.kind === "Name" ? "" : "\n"}which is not in its domain`,
+        ),
       );
     }
     if (
       bound.pattern.kind === "Tuple" &&
       getSequenceElements(element)?.length !== bound.pattern.names.length
     ) {
-      failFor(ordinal, element, "which does not match its formal parameter");
+      throw new TlaEvaluationError(
+        describeArgument(ordinal, element, "which does not match its formal parameter"),
+      );
     }
   });
   return bindArgument(bounds, lambda.scope, createTuple(elements.slice(0, bounds.length)));
@@ -2351,7 +2354,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const evaluateFunction = (context: Context) =>
         expectFunction(evaluated(toKeepLazyContext(context)), expression);
       const args = expression.args.map(child);
-      const describeMissing = getMissingArgumentError(environment.runtime.version);
+      const describeMissing = getMissingArgumentDescriber(environment.runtime.version);
       if (args.length === 1) {
         const argument = args[0];
         return (context) =>

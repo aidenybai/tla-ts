@@ -114,6 +114,22 @@ interface LookaheadCall {
   amount: number;
 }
 
+interface StackMessage {
+  name: string;
+  token: SanyToken;
+}
+
+interface Junction {
+  kind: number;
+  column: number;
+}
+
+interface LookaheadOptions {
+  amount?: number;
+  expansion?: Part[];
+  semantic?: Predicate;
+}
+
 interface ParserState {
   readToken: () => SanyToken;
   lexicalError: string | undefined;
@@ -129,9 +145,9 @@ interface ParserState {
   farthestRescan: number;
   calls: Map<SequenceUnit, LookaheadCall[]>;
   expecting: string;
-  messages: { name: string; token: SanyToken }[];
+  messages: StackMessage[];
   moduleName: string | undefined;
-  junctions: { kind: number; column: number }[];
+  junctions: Junction[];
   frames: Frame[];
   // OperatorStack's stack of stacks, one for each Expression being parsed.
   operatorStacks: StackElement[][];
@@ -313,15 +329,12 @@ const choice = (...alternatives: Part[]): ChoiceUnit => ({
       : sequence(alternative),
   ),
 });
-const zeroOrMore = (...parts: Part[]): RepeatUnit => ({
-  type: "zeroOrMore",
-  body: sequence(...parts),
-});
-const oneOrMore = (...parts: Part[]): RepeatUnit => ({
-  type: "oneOrMore",
-  body: sequence(...parts),
-});
-const optional = (...parts: Part[]): RepeatUnit => ({ type: "optional", body: sequence(...parts) });
+const repeat =
+  (type: RepeatUnit["type"]) =>
+  (...parts: Part[]): RepeatUnit => ({ type, body: sequence(...parts) });
+const zeroOrMore = repeat("zeroOrMore");
+const oneOrMore = repeat("oneOrMore");
+const optional = repeat("optional");
 const action = (run: (state: ParserState) => string | undefined | void): ActionUnit => ({
   type: "action",
   run: (state) => run(state) ?? undefined,
@@ -330,11 +343,7 @@ const expect = (expecting: string) =>
   action((state) => {
     state.expecting = expecting;
   });
-const lookahead = (options: {
-  amount?: number;
-  expansion?: Part[];
-  semantic?: Predicate;
-}): LookaheadUnit => ({
+const lookahead = (options: LookaheadOptions): LookaheadUnit => ({
   type: "lookahead",
   amount: options.amount ?? (options.expansion ? UNBOUNDED_AMOUNT : 0),
   expansion: options.expansion && sequence(...options.expansion),

@@ -1330,9 +1330,10 @@ describe("evaluation errors match TLC", () => {
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = {n \\in SUBSET {1} : 1 \\div 0 = 1} /\\ x' = {}\n====",
       config: "INIT Init\nNEXT Next",
     });
-    const ranges = result.failure?.callStack?.map(({ location: { range } }) =>
-      range ? `${range.start.column}-${range.end.column}` : "",
-    );
+    const ranges = result.failure?.callStack?.map((expression) => {
+      const range = expression.location.range;
+      return range ? `${range.start.column}-${range.end.column}` : "";
+    });
     expect(new Set(ranges)).toEqual(new Set(["9-57", "9-46", "51-57", "34-45", "34-41"]));
     expect(ranges?.at(-1)).toBe("34-41");
   });
@@ -3068,6 +3069,7 @@ describe("check matches TLC 1.7.4", () => {
       ),
     );
   });
+
   it("doesn't rebuild the trace, so it prints nothing of the states again", async () => {
     const getTraceOutput = async (version: TlcVersion) => {
       const result = await check({
@@ -3127,17 +3129,17 @@ describe("check matches TLC 1.7.4", () => {
   });
 
   it("evaluates the arguments of a recursive temporal operator it expands", async () => {
-    const checkProperty = (property: string, version: TlcVersion) =>
+    const getPropertyStatus = (property: string, version: TlcVersion) =>
       check({
         source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nRECURSIVE R(_)\nR(n) == IF n = 0 THEN <>(x = 1) ELSE R(n - 1)\nP == ${property}\n====`,
         config: "SPECIFICATION Spec\nPROPERTY P",
         version,
       }).then((result) => result.status);
     const stackOverflow = new TlaStackOverflowError();
-    expect(await checkProperty("R(2)", "master")).toBe("liveness-violation");
-    await expect(checkProperty("R(2)", "1.7.4")).rejects.toThrow(stackOverflow);
-    await expect(checkProperty("R(x)", "master")).rejects.toThrow(stackOverflow);
-    await expect(checkProperty("R(x)", "1.7.4")).rejects.toThrow(
+    expect(await getPropertyStatus("R(2)", "master")).toBe("liveness-violation");
+    await expect(getPropertyStatus("R(2)", "1.7.4")).rejects.toThrow(stackOverflow);
+    await expect(getPropertyStatus("R(x)", "master")).rejects.toThrow(stackOverflow);
+    await expect(getPropertyStatus("R(x)", "1.7.4")).rejects.toThrow(
       "TLC cannot handle the temporal formula line 9, col 6 to line 9, col 9 of module M",
     );
   });

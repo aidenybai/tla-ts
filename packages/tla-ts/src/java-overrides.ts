@@ -138,8 +138,8 @@ const readMethods = (bytes: Uint8Array) => {
     const access = reader.readUint16();
     const name = pool[reader.readUint16()].text;
     const descriptor = pool[reader.readUint16()].text;
-    const close = descriptor.indexOf(")");
-    const parameters = getTypeNames(descriptor.slice(1, close));
+    const parametersEnd = descriptor.indexOf(")");
+    const parameters = getTypeNames(descriptor.slice(1, parametersEnd));
     const attributes = Array.from({ length: reader.readUint16() }, () => ({
       name: pool[reader.readUint16()].text,
       reader: createReader(reader.readBytes(reader.readUint32())),
@@ -158,7 +158,7 @@ const readMethods = (bytes: Uint8Array) => {
     const modifiers = METHOD_MODIFIERS.filter(([flag]) => (access & flag) !== 0).map(
       ([, modifier]) => modifier,
     );
-    const returnType = getTypeNames(descriptor.slice(close + 1))[0];
+    const returnType = getTypeNames(descriptor.slice(parametersEnd + 1))[0];
     const throwsClause = exceptions.length === 0 ? "" : ` throws ${exceptions.join(",")}`;
     methods.push({
       name,

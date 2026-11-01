@@ -53,7 +53,7 @@ interface SelectorGenerator {
     operands: ExprOrOpArgNode[],
     location: SanyLocation,
   ) => OpApplNode;
-  createOpArg: (op: SymbolNode, location: SanyLocation) => OpArgNode;
+  createOpArg: (operator: SymbolNode, location: SanyLocation) => OpArgNode;
   createFormalParam: (
     name: string,
     arity: number,
@@ -146,15 +146,13 @@ const getArgNumber = (op: SelectorOp, arity: number) => {
   return -1;
 };
 
-type CurrentNode = LevelNode | SymbolNode | undefined;
-
 type Mode = "FindingOpName" | "FollowingLabels" | "FindingSubExpr";
 
 // The state of Generator.selectorToNode as it walks the items.
 interface SelectorWalk {
   name: string | undefined;
   nameLocation: SanyLocation | undefined;
-  node: CurrentNode;
+  node: LevelNode | SymbolNode | undefined;
   index: number;
   mode: Mode;
   previousMode: Mode | undefined;
@@ -184,11 +182,12 @@ const getQuantifierSymbols = (node: OpApplNode) =>
 const extendLocation = (name: SanyLocation | undefined, part: SanyLocation): SanyLocation =>
   name === undefined ? part : { ...name, endLine: part.endLine, endColumn: part.endColumn };
 
-export const createSelectorResolver = (generator: SelectorGenerator) => {
-  // selectorToNode: with expectedArity 0 the expression a selector names, with a positive one the
-  // operator argument, and with -1 the definition a DEF clause names. A fact can also be an
-  // ASSUME/PROVE, a NEW clause or a module instance.
-  return (
+// selectorToNode: with expectedArity 0 the expression a selector names, with a positive one the
+// operator argument, and with -1 the definition a DEF clause names. A fact can also be an
+// ASSUME/PROVE, a NEW clause or a module instance.
+export const createSelectorResolver =
+  (generator: SelectorGenerator) =>
+  (
     items: SelectorItem[],
     expectedArity: number,
     isFact: boolean,
@@ -393,7 +392,7 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
         }
         case "FindingSubExpr": {
           const node = walk.node;
-          const nonexistent = () =>
+          const addNonexistentError = () =>
             generator.addError(
               getItemLocation(walk.index),
               `Nonexistent operand specified by \`${getSelectorItemName(item)}'.`,
@@ -428,7 +427,7 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
               operator.kind === "FormalParam" ||
               (operator.kind === "OpDecl" && operator.declKind === CONSTANT_DECL_KIND) ||
               (operator.kind === "OpDef" && operator.defKind === "UserDefined");
-            const notPair = () =>
+            const addNotPairError = () =>
               generator.addError(
                 getItemLocation(walk.index),
                 "Internal error: Expecting $Pair and didn't find it.",
@@ -438,13 +437,13 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
             const operandNumber = getArgNumber(item.op, operands.length);
             if (isUserOperator) {
               const number = getArgNumber(item.op, operator.arity);
-              if (number === -1) return nonexistent();
+              if (number === -1) return addNonexistentError();
               walk.node = operands[number - 1];
             } else if (operator.kind === "OpDef" && operator.defKind === "BuiltIn") {
               if (operator.name === "$RcdConstructor" || operator.name === "$SetOfRcds") {
-                if (operandNumber === -1) return nonexistent();
+                if (operandNumber === -1) return addNonexistentError();
                 const pair = operands[operandNumber - 1];
-                if (!isPair(pair)) return notPair();
+                if (!isPair(pair)) return addNotPairError();
                 walk.node = pair.operands[1];
               } else if (operator.name === "$Case") {
                 if (walk.index === items.length - 1) {
@@ -453,9 +452,9 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
                     "Subexpression of CASE must have form !i!j.",
                   );
                 }
-                if (operandNumber === -1) return nonexistent();
+                if (operandNumber === -1) return addNonexistentError();
                 const pair = operands[operandNumber - 1];
-                if (!isPair(pair)) return notPair();
+                if (!isPair(pair)) return addNotPairError();
                 walk.index++;
                 const number = getArgNumber(items[walk.index].op, 2);
                 if (number === -1) {
@@ -477,10 +476,10 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
                     "Selecting subexpression of an EXCEPT not yet implemented.",
                   );
                 }
-                if (operandNumber === -1) return nonexistent();
+                if (operandNumber === -1) return addNonexistentError();
                 walk.node = operands[operandNumber - 1];
               } else if ((node.bounded?.length ?? 0) === 0 && (node.unbounded?.length ?? 0) === 0) {
-                if (operandNumber === -1) return nonexistent();
+                if (operandNumber === -1) return addNonexistentError();
                 walk.node = operands[operandNumber - 1];
               } else if (item.op === "Null" || item.op === "@") {
                 const symbols = getQuantifierSymbols(node);
@@ -497,7 +496,7 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
                 walk.node = operands[0];
               } else {
                 const number = getArgNumber(item.op, node.ranges.length);
-                if (number === -1) return nonexistent();
+                if (number === -1) return addNonexistentError();
                 walk.node = node.ranges[number - 1];
               }
             } else {
@@ -518,7 +517,7 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
             } else {
               walk.isInSuffices = false;
               const number = getArgNumber(item.op, 1 + node.assumptions.length);
-              if (number === -1) return nonexistent();
+              if (number === -1) return addNonexistentError();
               if (generator.isOutOfClauseScope(node, number)) {
                 return generator.addError(
                   getItemLocation(walk.index),
@@ -675,13 +674,13 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
       if (expectedArity === 0)
         return generator.addError(location, "Selected operator argument when expression expected.");
       if (params.length + substInPrefix.length > 0) {
-        const op = current.op;
+        const operator = current.op;
         params.push(
-          ...Array.from({ length: getSymbolArity(op) }, (_, paramIndex) =>
+          ...Array.from({ length: getSymbolArity(operator) }, (_, paramIndex) =>
             generator.createFormalParam(`NewParam${paramIndex}`, 0, undefined),
           ),
         );
-        current = generator.createOpAppl(op, walk.definitionArgs, location);
+        current = generator.createOpAppl(operator, walk.definitionArgs, location);
       }
     }
     if (!isFact) {
@@ -737,4 +736,3 @@ export const createSelectorResolver = (generator: SelectorGenerator) => {
       ? generator.createOpAppl(generator.getBuiltin("$Nop"), [expression], location)
       : generator.createOpAppl(lambda, allArgs, location);
   };
-};
