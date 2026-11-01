@@ -34,10 +34,12 @@ export type SymbolKind =
   | "Parameter"
   | `New${NewSymbol["level"]}`;
 
-// range is where SANY reports the symbol, and two symbols at one range are one node to SANY.
+// range is where SANY reports the symbol, and two symbols at one range are one node to SANY. params
+// holds the arity of each parameter of a defined operator.
 export interface Binding {
   kind: SymbolKind;
   arity: number;
+  params?: number[];
   range?: SourceRange;
 }
 
@@ -118,6 +120,9 @@ export const isBefore = (left: SourceLocation, right: SourceLocation) =>
 
 export const getArity = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params.length : 0;
+
+export const getParamArities = (definition: Definition) =>
+  definition.kind === "Operator" ? definition.params.map((param) => param.arity) : [];
 
 const isInstantiated = (definition: Definition) => definition.name.includes("!");
 
@@ -243,9 +248,17 @@ const getVisibleDefinition = (name: string, unit: Unit) => {
 const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
   const definition = getVisibleDefinition(name, unit);
   return definition
-    ? { key: unit.getKey(definition), arity: getArity(definition), kind: "Definition" }
+    ? {
+        key: unit.getKey(definition),
+        arity: getArity(definition),
+        params: getParamArities(definition),
+        kind: "Definition",
+      }
     : unit.imported.get(name);
 };
+
+const findBinding = (name: string, scope: LocalName | undefined, unit: Unit): Binding | undefined =>
+  lookupLocal(scope, name) ?? findSymbol(name, unit);
 
 // SANY reports a name at the range of its text.
 const getNameRange = (location: SourceLocation, name: string): SourceRange => ({
@@ -594,6 +607,7 @@ const resolveDefinitions = (
       const local: LocalName = {
         name: definition.name,
         arity: getArity(definition),
+        params: getParamArities(definition),
         kind: "Definition",
         parent,
         isPending: true,
@@ -617,50 +631,23 @@ const resolveDefinitions = (
       isGenerated ? { ...unit, isGenerated } : unit,
       recursive,
     )
-      ? local
+      ? { ...local, params: getParamArities(definition) }
       : current;
   }, declared);
 };
 
-// OpDefNode#match: a parameter of arity 0 takes an expression, and a parameter of arity n takes an
-// operator of arity n whose own parameters take expressions.
-const checkArgument = (
-  definition: Definition,
-  index: number,
-  arg: Expression,
-  argArity: number,
-  argDefinition: Definition | undefined,
-) => {
-  const param = definition.kind === "Operator" ? definition.params[index] : undefined;
-  const location = arg.location;
-  if (param?.arity === 0 && argArity > 0) {
-    throw new TlaSyntaxError(
-      `Operator used in argument number ${index + 1} has incorrect number of arguments at line ${location.line}, column ${location.column}`,
-    );
-  }
-  const isHigherOrder =
-    argDefinition?.kind === "Operator" && argDefinition.params.some((inner) => inner.arity > 0);
-  if (param !== undefined && param.arity > 0 && (argArity !== param.arity || isHigherOrder)) {
-    throw new TlaSyntaxError(
-      `Argument number ${index + 1} to operator '${definition.name}' should be a ${param.arity}-parameter operator at line ${location.line}, column ${location.column}`,
-    );
-  }
-};
-
-const getArgumentName = (arg: Expression) =>
-  arg.kind === "Identifier"
-    ? arg.name
-    : arg.kind === "OperatorReference"
-      ? arg.operator
-      : undefined;
-
+// Generator.generateExprOrOpArg analyzes an argument as an expression, unless a defined operator
+// takes an operator in its place, which a name, a built-in operator, or a LAMBDA of the parameter's
+// arity must give. OpDefNode#match then reports each argument that gives no such operator, or one
+// whose own parameters take operators. tla-ts lets an operator whose parameters it does not know
+// take any argument.
 const resolveApply = (
   expression: Expression & { kind: "Apply" },
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
   const operator = expression.operator;
-  const callee = lookupLocal(scope, operator) ? undefined : getVisibleDefinition(operator, unit);
+  const callee = findBinding(operator, scope, unit);
   const arity = getSymbolArity(expression, operator, scope, unit);
   if (arity === undefined) return;
   if (arity !== expression.args.length) {
@@ -672,33 +659,78 @@ const resolveApply = (
     });
     return;
   }
-  // Generator.generateExprOrOpArg analyzes a name in a position that takes an expression as an
-  // expression.
-  expression.args.forEach((arg, index) => {
-    if (
-      arg.kind === "Identifier" &&
-      callee?.kind === "Operator" &&
-      callee.params[index].arity === 0
-    ) {
-      resolveExpression(arg, scope, unit);
-      return;
-    }
-    const name = getArgumentName(arg);
-    const argDefinition =
-      name === undefined || lookupLocal(scope, name) ? undefined : getVisibleDefinition(name, unit);
-    const argArity = resolveArgument(arg, scope, unit);
-    if (callee && argArity !== undefined) {
-      checkArgument(callee, index, arg, argArity, argDefinition);
-    }
-  });
+  const params = callee && (callee.kind === "Definition" ? callee.params : []);
+  if (params === undefined) {
+    expression.args.forEach((arg) => resolveArgument(arg, scope, unit));
+    return;
+  }
+  const report = (range: SourceRange | undefined, message: string) => {
+    if (range) unit.errors.push({ location: formatRange(range), message });
+  };
+  expression.args
+    .map((arg, index) => {
+      const expected = params[index] ?? 0;
+      // A prefix operator argument such as SUBSET, which tla-ts reads as a LAMBDA, has no range.
+      const range = arg.location.range;
+      if (expected === 0) {
+        if (arg.kind === "Lambda" && range) {
+          report(range, "LAMBDA expression used where an expression is required.");
+        } else if (arg.kind === "OperatorReference") {
+          // SANY fails here with an internal error, so tla-ts words it as it does for a name.
+          const argArity = getSymbolArity(arg, arg.operator, scope, unit);
+          if (argArity !== undefined) {
+            report(range, `The operator ${arg.operator} requires ${argArity} arguments.`);
+          }
+        } else resolveExpression(arg, scope, unit);
+        return true;
+      }
+      if (arg.kind === "Lambda") {
+        resolveExpression(arg, scope, unit);
+        const isMatched = arg.params.length === expected;
+        if (!isMatched && range) {
+          report(
+            expression.selectorRanges?.at(-1) ?? getNameRange(expression.location, operator),
+            `Lambda expression with arity ${arg.params.length} used as argument ${index + 1} of operator \`${operator}', \nbut an operator of arity ${expected} is required.`,
+          );
+        }
+        return isMatched;
+      }
+      if (arg.kind === "Subexpression") {
+        resolveExpression(arg, scope, unit);
+        return true;
+      }
+      if (arg.kind !== "Identifier" && arg.kind !== "OperatorReference") {
+        report(
+          range,
+          `An expression appears as argument number ${index + 1} (counting from 1) to operator '${operator}', in a position an operator is required.`,
+        );
+        return false;
+      }
+      const name = arg.kind === "Identifier" ? arg.name : arg.operator;
+      const argParams = findBinding(name, scope, unit)?.params ?? [];
+      const argArity = getSymbolArity(arg, name, scope, unit);
+      if (arg.kind === "Identifier" && argArity !== undefined && argArity !== expected) {
+        report(
+          getNameRange(arg.location, name),
+          `Expected arity ${expected} but found operator of arity ${argArity}.`,
+        );
+      }
+      return argArity === expected && argParams.every((param) => param === 0);
+    })
+    .forEach((isMatched, index) => {
+      if (!isMatched) {
+        report(
+          expression.location.range,
+          `Argument number ${index + 1} to operator '${operator}' \nshould be a ${params[index]}-parameter operator.`,
+        );
+      }
+    });
 };
 
 // An argument may name an operator that takes arguments of its own.
 const resolveArgument = (arg: Expression, scope: LocalName | undefined, unit: Unit) => {
-  if (arg.kind === "Identifier") return getSymbolArity(arg, arg.name, scope, unit);
-  if (arg.kind === "OperatorReference") return getSymbolArity(arg, arg.operator, scope, unit);
-  resolveExpression(arg, scope, unit);
-  return arg.kind === "Lambda" ? arg.params.length : 0;
+  if (arg.kind === "Identifier") getSymbolArity(arg, arg.name, scope, unit);
+  else resolveExpression(arg, scope, unit);
 };
 
 const resolveExpression = (
