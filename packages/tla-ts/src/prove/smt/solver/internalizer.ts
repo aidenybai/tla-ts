@@ -126,6 +126,8 @@ export abstract class Internalizer {
   protected assignment: number[] = [];
   // Like Z3's watch lists, a literal's lists are created when the first clause is added.
   protected watches: (Clause[] | undefined)[] = [];
+  // del_clauses' uint_set of the watch lists to filter, by literal, all 0 between calls.
+  private watchMarks = new Uint8Array(1024);
   // The false literals that simplify_aux_clause_literals removes from the clause mkClause makes.
   private removedLiterals: Literal[] = [];
   // The binary clauses of the binary clause optimization: the literals each literal propagates when it
@@ -1289,17 +1291,25 @@ export abstract class Internalizer {
       shrink(clauses, oldSize);
       return;
     }
-    const watched = new Set<Literal>();
+    if (this.watchMarks.length < this.watches.length)
+      this.watchMarks = new Uint8Array(Math.max(2 * this.watchMarks.length, this.watches.length));
+    const watched: Literal[] = [];
+    const markWatch = (literal: Literal) => {
+      if (this.watchMarks[literal] === 1) return;
+      this.watchMarks[literal] = 1;
+      watched.push(literal);
+    };
     for (let index = clauses.length - 1; index >= oldSize; index--) {
       const clause = clauses[index];
       if (!clause.isDeleted) {
         clause.isDeleted = true;
         clause.delEh?.();
       }
-      watched.add(negate(clause.literals[0]));
-      watched.add(negate(clause.literals[1]));
+      markWatch(negate(clause.literals[0]));
+      markWatch(negate(clause.literals[1]));
     }
     for (const literal of watched) {
+      this.watchMarks[literal] = 0;
       const list = this.watches[literal];
       if (list === undefined) continue;
       let kept = 0;
