@@ -4525,6 +4525,19 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect(result.violation?.name).toBe(name);
   });
 
+  it("names the invariant a property asserts by the operator an extended module defines", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Base\nSpec == x = 0 /\\ [][x' = x + 1 /\\ x < 3]_x\nProperty == []Small\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Property\nCHECK_DEADLOCK FALSE",
+      loadModule: (name) =>
+        name === "Base"
+          ? "---- MODULE Base ----\nEXTENDS Integers\nVARIABLE x\nSmall == x < 2\n===="
+          : undefined,
+    });
+    expect(result.violation?.name).toBe("Small");
+  });
+
   it("rejects a property that quantifies over no elements as a tautology", async () => {
     await expect(
       checkSource(

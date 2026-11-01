@@ -707,10 +707,15 @@ const getProperties = (
         getLevel(conjunct.expression, item.scope, environment) <= 1
       ) {
         // TLC names the invariant by the operator the property asserts always holds, when it
-        // applies the operator to no arguments.
+        // applies the operator to no arguments. The name of an operator another module defines
+        // resolves to its key, so the name comes from its definition.
         const body = conjunct.expression;
+        const operator =
+          body.kind === "Identifier" && !isLocallyResolved(body)
+            ? getDefinition(body.name, environment)
+            : undefined;
         properties.invariants.push({
-          name: body.kind === "Identifier" ? body.name : partName,
+          name: operator?.name ?? (body.kind === "Identifier" ? body.name : partName),
           expression: body,
           scope: item.scope,
         });
