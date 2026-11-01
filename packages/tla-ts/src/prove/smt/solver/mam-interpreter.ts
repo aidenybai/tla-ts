@@ -26,6 +26,7 @@ import {
   OP_YIELD,
 } from "./mam-compiler";
 import { OP_ITE } from "./ast";
+import { shrink } from "./array";
 
 export type OnMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) => void;
 
@@ -45,6 +46,8 @@ const MAX_FILTERED_GET_CGR_ARGS = 6;
 
 export class Interpreter {
   private registers: (Enode | null)[] = [];
+  // m_bindings: the terms a YIELD reports, which the match callback does not keep.
+  private bindings: Enode[] = [];
   private backtrackStack: BacktrackPoint[] = [];
   private top = 0;
   // m_max_generation: the largest generation of a term the match went through.
@@ -333,7 +336,8 @@ export class Interpreter {
         }
         case OP_YIELD: {
           const numBindings = instr.regs.length;
-          const bindings: Enode[] = [];
+          const bindings = this.bindings;
+          shrink(bindings, 0);
           for (let index = 0; index < numBindings; index++) {
             const binding = registers[instr.regs[numBindings - index - 1]] as Enode;
             bindings.push(binding);

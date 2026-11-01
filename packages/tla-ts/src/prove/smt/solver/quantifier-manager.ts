@@ -138,12 +138,8 @@ export class DefaultQuantifierManager {
 
   addInstance(quantifier: number, bindings: Enode[], maxGeneration: number) {
     const generation = Math.max(maxGeneration, this.getGeneration(quantifier));
-    if (!this.fingerprints.insert(quantifier, bindings)) return;
-    this.qiQueue.insert(
-      quantifier,
-      bindings.map((binding) => binding.root),
-      generation,
-    );
+    const roots = this.fingerprints.insert(quantifier, bindings);
+    if (roots !== null) this.qiQueue.insert(quantifier, roots, generation);
   }
 
   finalCheckEh(isFull: boolean) {
