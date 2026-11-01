@@ -49,7 +49,6 @@ const compareNames = (first: SmtSymbol, second: SmtSymbol) => {
 
 const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
   const decl = manager.funcDecls[manager.decls[expr]];
-  const args = manager.args[expr];
   const range = manager.sorts[expr];
   if (decl.family === FAMILY_USER)
     return { name: decl.name, parameters: [], domain: decl.domain, range };
@@ -65,7 +64,7 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
   }
   if (decl.family === FAMILY_MODEL_VALUE)
     return { name: decl.name, parameters: [PARAM_INT, manager.values[expr]], domain: [], range };
-  const builtin = manager.getBuiltinSignature(decl.op, args);
+  const builtin = manager.getBuiltinSignature(decl.op, manager.getArgs(expr));
   return { name: builtin.name, parameters: [], domain: builtin.domain, range };
 };
 
@@ -83,7 +82,7 @@ const isSameDeclKey = (manager: AstManager, first: number, second: number) => {
   const index = decl.op === OP_ITE ? 1 : 0;
   return (
     manager.sorts[first] === manager.sorts[second] &&
-    manager.sorts[manager.args[first][index]] === manager.sorts[manager.args[second][index]]
+    manager.sorts[manager.getArg(first, index)] === manager.sorts[manager.getArg(second, index)]
   );
 };
 
@@ -141,15 +140,13 @@ const compareAsts = (manager: AstManager, first: number, second: number): number
     return compareAsts(manager, firstData.body, secondData.body);
   }
   if (manager.kinds[first] !== KIND_APP) return 0;
-  const firstArgs = manager.args[first];
-  const secondArgs = manager.args[second];
   const byHeader =
-    compareValues(firstArgs.length, secondArgs.length) ||
+    compareValues(manager.getNumArgs(first), manager.getNumArgs(second)) ||
     compareValues(manager.depths[first], manager.depths[second]) ||
     compareDecls(manager, first, second);
   if (byHeader !== 0) return byHeader;
-  for (let index = 0; index < firstArgs.length; index++) {
-    const byArg = compareAsts(manager, firstArgs[index], secondArgs[index]);
+  for (let index = 0; index < manager.getNumArgs(first); index++) {
+    const byArg = compareAsts(manager, manager.getArg(first, index), manager.getArg(second, index));
     if (byArg !== 0) return byArg;
   }
   return 0;

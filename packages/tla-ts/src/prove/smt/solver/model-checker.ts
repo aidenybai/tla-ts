@@ -144,10 +144,10 @@ export class ModelChecker {
   private getTypeCompatibleTerm(value: number): number {
     const manager = this.manager;
     let freshTerm: number;
-    if (manager.kinds[value] === KIND_APP && manager.args[value].length > 0)
+    if (manager.kinds[value] === KIND_APP && manager.getNumArgs(value) > 0)
       freshTerm = manager.mkApp(
         manager.decls[value],
-        manager.args[value].map((arg) => this.getTypeCompatibleTerm(arg)),
+        manager.mapArgs(value, (arg) => this.getTypeCompatibleTerm(arg)),
         manager.sorts[value],
       );
     else {

@@ -33,7 +33,10 @@ export class Goal {
   private quickProcess(form: number, isSavingFirst: boolean) {
     const manager = this.manager;
     const op = manager.getOp(form);
-    if (op !== OP_AND && !(manager.isNot(form) && manager.getOp(manager.args[form][0]) === OP_OR)) {
+    if (
+      op !== OP_AND &&
+      !(manager.isNot(form) && manager.getOp(manager.getArg(form, 0)) === OP_OR)
+    ) {
       if (!isSavingFirst) this.pushBack(form);
       return form;
     }
@@ -43,11 +46,11 @@ export class Goal {
     const todo: Polarized[] = [{ expr: form, isPositive: true }];
     for (let item = todo.pop(); item !== undefined && !this.isInconsistent; item = todo.pop()) {
       const itemOp = manager.getOp(item.expr);
-      const args = manager.args[item.expr];
       if ((item.isPositive && itemOp === OP_AND) || (!item.isPositive && itemOp === OP_OR))
-        for (let index = args.length - 1; index >= 0; index--)
-          todo.push({ expr: args[index], isPositive: item.isPositive });
-      else if (manager.isNot(item.expr)) todo.push({ expr: args[0], isPositive: !item.isPositive });
+        for (let index = manager.getNumArgs(item.expr) - 1; index >= 0; index--)
+          todo.push({ expr: manager.getArg(item.expr, index), isPositive: item.isPositive });
+      else if (manager.isNot(item.expr))
+        todo.push({ expr: manager.getArg(item.expr, 0), isPositive: !item.isPositive });
       else {
         const leaf = item.isPositive ? item.expr : manager.mkApp(OP_NOT, [item.expr], SORT_BOOL);
         if (!item.isPositive) created.push(leaf);
@@ -117,7 +120,7 @@ export class Goal {
     for (const [index, form] of [...this.forms.items].entries()) {
       if (manager.isTrue(form)) continue;
       const isNegated = manager.isNot(form);
-      const atom = isNegated ? manager.args[form][0] : form;
+      const atom = isNegated ? manager.getArg(form, 0) : form;
       const same = isNegated ? negatives : positives;
       if (same.items.includes(atom)) continue;
       if ((isNegated ? positives : negatives).items.includes(atom)) {

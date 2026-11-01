@@ -68,7 +68,7 @@ class RewriterCore {
       manager.getRefCount(expr) > 1 &&
       expr !== this.root &&
       (manager.kinds[expr] === KIND_QUANTIFIER ||
-        (manager.kinds[expr] === KIND_APP && manager.args[expr].length > 0))
+        (manager.kinds[expr] === KIND_APP && manager.getNumArgs(expr) > 0))
     );
   }
 
@@ -186,9 +186,9 @@ abstract class VarShifterCore extends RewriterCore {
 
   private processApp(expr: number, frame: Frame) {
     const manager = this.manager;
-    const args = manager.args[expr];
-    while (frame.childIndex < args.length) {
-      const arg = args[frame.childIndex];
+    const numArgs = manager.getNumArgs(expr);
+    while (frame.childIndex < numArgs) {
+      const arg = manager.getArg(expr, frame.childIndex);
       frame.childIndex++;
       if (!this.visit(arg)) return;
     }
@@ -499,7 +499,7 @@ class RewriterEngine extends RewriterCore {
       this.processVar(expr);
       return true;
     }
-    if (kind === KIND_APP && manager.args[expr].length === 0) {
+    if (kind === KIND_APP && manager.getNumArgs(expr) === 0) {
       if (!this.processConst(expr)) this.rewriteConstResult(expr);
       return true;
     }
@@ -535,7 +535,7 @@ class RewriterEngine extends RewriterCore {
         return true;
       }
       const result = reduced.expr;
-      if (manager.kinds[result] !== KIND_APP || manager.args[result].length > 0) {
+      if (manager.kinds[result] !== KIND_APP || manager.getNumArgs(result) > 0) {
         manager.decRef(current);
         return false;
       }
@@ -599,14 +599,14 @@ class RewriterEngine extends RewriterCore {
       this.finishExpandDef(expr, frame);
       return;
     }
-    const args = manager.args[expr];
+    const numArgs = manager.getNumArgs(expr);
     // visit pushes a child at depth 0 as it is when the config substitutes nothing.
     if (frame.maxDepth === 0 && !this.isSubstituting && manager.getOp(expr) !== OP_ITE)
-      for (; frame.childIndex < args.length; frame.childIndex++)
-        this.pushResult(args[frame.childIndex]);
-    while (frame.childIndex < args.length) {
+      for (; frame.childIndex < numArgs; frame.childIndex++)
+        this.pushResult(manager.getArg(expr, frame.childIndex));
+    while (frame.childIndex < numArgs) {
       if (this.isConstantFolded(expr, frame)) return;
-      const arg = args[frame.childIndex];
+      const arg = manager.getArg(expr, frame.childIndex);
       frame.childIndex++;
       if (!this.visit(arg, frame.maxDepth)) return;
     }
@@ -693,7 +693,7 @@ class RewriterEngine extends RewriterCore {
   // m_r keeps it until the next result.
   private finishExpandDef(expr: number, frame: Frame) {
     const manager = this.manager;
-    const numArgs = manager.args[expr].length;
+    const numArgs = manager.getNumArgs(expr);
     shrink(this.bindings, this.bindings.length - numArgs);
     shrink(this.shifts, this.shifts.length - numArgs);
     this.numQvars -= numArgs;
@@ -719,9 +719,9 @@ class RewriterEngine extends RewriterCore {
     if (frame.childIndex !== 1 || manager.getOp(expr) !== OP_ITE) return false;
     const condition = this.resultStack[frame.spos];
     const arg = manager.isTrue(condition)
-      ? manager.args[expr][1]
+      ? manager.getArg(expr, 1)
       : manager.isFalse(condition)
-        ? manager.args[expr][2]
+        ? manager.getArg(expr, 2)
         : -1;
     if (arg === -1) return false;
     this.shrinkResults(frame.spos);

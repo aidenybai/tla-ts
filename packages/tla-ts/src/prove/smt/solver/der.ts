@@ -20,39 +20,40 @@ const getVarDefinition = (
 ): VarDefinition | undefined => {
   const isBoundVar = (term: number) =>
     manager.kinds[term] === KIND_VAR && manager.values[term] < count;
-  const isNegatedVar = (term: number) => manager.isNot(term) && isBoundVar(manager.args[term][0]);
+  const isNegatedVar = (term: number) => manager.isNot(term) && isBoundVar(manager.getArg(term, 0));
   const fromEq = (eq: number, isNegated: boolean): VarDefinition | undefined => {
-    const sides = manager.args[eq];
-    const isSwapped = !isBoundVar(sides[0]);
-    const lhs = isSwapped ? sides[1] : sides[0];
-    const rhs = isSwapped ? sides[0] : sides[1];
+    const isSwapped = !isBoundVar(manager.getArg(eq, 0));
+    const lhs = isSwapped ? manager.getArg(eq, 1) : manager.getArg(eq, 0);
+    const rhs = isSwapped ? manager.getArg(eq, 0) : manager.getArg(eq, 1);
     if (!isBoundVar(lhs)) return undefined;
     return { index: manager.values[lhs], definition: isNegated ? manager.mkNot(rhs) : rhs };
   };
   if (isForall) {
-    if (manager.isNot(literal) && manager.getOp(manager.args[literal][0]) === OP_EQ)
-      return fromEq(manager.args[literal][0], false);
-    if (manager.getOp(literal) === OP_EQ && manager.sorts[manager.args[literal][0]] === SORT_BOOL) {
+    if (manager.isNot(literal) && manager.getOp(manager.getArg(literal, 0)) === OP_EQ)
+      return fromEq(manager.getArg(literal, 0), false);
+    if (
+      manager.getOp(literal) === OP_EQ &&
+      manager.sorts[manager.getArg(literal, 0)] === SORT_BOOL
+    ) {
       const found = fromEq(literal, true);
       if (found !== undefined) return found;
-      const sides = manager.args[literal];
-      const isSwapped = !isNegatedVar(sides[0]);
-      const lhs = isSwapped ? sides[1] : sides[0];
-      const rhs = isSwapped ? sides[0] : sides[1];
+      const isSwapped = !isNegatedVar(manager.getArg(literal, 0));
+      const lhs = isSwapped ? manager.getArg(literal, 1) : manager.getArg(literal, 0);
+      const rhs = isSwapped ? manager.getArg(literal, 0) : manager.getArg(literal, 1);
       return isNegatedVar(lhs)
-        ? { index: manager.values[manager.args[lhs][0]], definition: rhs }
+        ? { index: manager.values[manager.getArg(lhs, 0)], definition: rhs }
         : undefined;
     }
     if (isBoundVar(literal))
       return { index: manager.values[literal], definition: manager.falseExpr };
     if (isNegatedVar(literal))
-      return { index: manager.values[manager.args[literal][0]], definition: manager.trueExpr };
+      return { index: manager.values[manager.getArg(literal, 0)], definition: manager.trueExpr };
     return undefined;
   }
   if (manager.getOp(literal) === OP_EQ) return fromEq(literal, false);
   if (isBoundVar(literal)) return { index: manager.values[literal], definition: manager.trueExpr };
   if (isNegatedVar(literal))
-    return { index: manager.values[manager.args[literal][0]], definition: manager.falseExpr };
+    return { index: manager.values[manager.getArg(literal, 0)], definition: manager.falseExpr };
   return undefined;
 };
 
@@ -92,7 +93,10 @@ const getEliminationOrder = (manager: AstManager, definitions: (number | undefin
       done.add(expr);
       return;
     }
-    for (const arg of manager.args[expr]) visit(arg);
+    for (let index = 0; index < manager.getNumArgs(expr); index++) {
+      const arg = manager.getArg(expr, index);
+      visit(arg);
+    }
     done.add(expr);
   };
   definitions.forEach((definition, index) => {

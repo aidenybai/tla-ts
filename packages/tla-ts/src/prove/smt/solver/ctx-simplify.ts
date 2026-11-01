@@ -94,8 +94,8 @@ class CtxSimplifier {
       while (stack.length > 0) {
         const expr = stack.pop() as number;
         if (manager.kinds[expr] !== KIND_APP) continue;
-        const args = manager.args[expr];
-        for (let index = args.length - 1; index >= 0; index--) visit(args[index]);
+        for (let index = manager.getNumArgs(expr) - 1; index >= 0; index--)
+          visit(manager.getArg(expr, index));
       }
     }
   }
@@ -111,7 +111,7 @@ class CtxSimplifier {
     let atom = expr;
     let isFalse = isNegated;
     while (manager.isNot(atom)) {
-      atom = manager.args[atom][0];
+      atom = manager.getArg(atom, 0);
       isFalse = !isFalse;
     }
     let isMakingScope = true;
@@ -121,7 +121,8 @@ class CtxSimplifier {
       this.assertEqCore(atom, isFalse ? manager.falseExpr : manager.trueExpr);
     }
     if (isFalse || manager.getOp(atom) !== OP_EQ) return;
-    const [lhs, rhs] = manager.args[atom];
+    const lhs = manager.getArg(atom, 0);
+    const rhs = manager.getArg(atom, 1);
     const isRhsValue = manager.isUniqueValue(rhs);
     if (!isRhsValue && !manager.isUniqueValue(lhs)) return;
     const term = isRhsValue ? lhs : rhs;
@@ -227,7 +228,7 @@ class CtxSimplifier {
       passes[0].reset();
     };
     for (const [pass, newArgs] of passes.entries()) {
-      const args = pass === 0 ? manager.args[expr] : [...passes[0].items].reverse();
+      const args = pass === 0 ? manager.getArgs(expr) : [...passes[0].items].reverse();
       for (const [index, arg] of args.entries()) {
         const newArg = this.simplify(arg);
         if (newArg !== arg) isModified = true;
@@ -271,7 +272,9 @@ class CtxSimplifier {
   // simplify_ite: the branches are simplified in the context of the condition and its negation.
   private simplifyIte(expr: number) {
     const manager = this.manager;
-    const [condition, thenBranch, elseBranch] = manager.args[expr];
+    const condition = manager.getArg(expr, 0);
+    const thenBranch = manager.getArg(expr, 1);
+    const elseBranch = manager.getArg(expr, 2);
     const level = this.scopes.length;
     const newCondition = this.simplify(condition);
     let result: number;
@@ -306,10 +309,10 @@ class CtxSimplifier {
 
   private simplifyApp(expr: number) {
     const manager = this.manager;
-    const args = manager.args[expr];
     const newArgs = new RefVector(manager);
     let isModified = false;
-    for (const arg of args) {
+    for (let index = 0; index < manager.getNumArgs(expr); index++) {
+      const arg = manager.getArg(expr, index);
       const newArg = this.simplify(arg);
       if (newArg !== arg) isModified = true;
       newArgs.pushOwned(newArg);

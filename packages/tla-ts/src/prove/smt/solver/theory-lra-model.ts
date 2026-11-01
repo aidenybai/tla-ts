@@ -223,7 +223,7 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     if (count === 0) return false;
     if (root.parents.length > 2 * count)
       return this.underspecifiedTerms.some((term) =>
-        manager.args[term].some((arg) => this.context.getEnode(arg)?.root === root),
+        manager.someArg(term, (arg) => this.context.getEnode(arg)?.root === root),
       );
     return root.parents.some((parent) => this.isUnderspecified(parent.owner));
   }

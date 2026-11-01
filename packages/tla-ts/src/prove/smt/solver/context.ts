@@ -255,10 +255,10 @@ export class Context extends Internalizer {
       if (this.hasBoolVarFlag(boolVar, BV_ENODE)) this.propagateBoolVarEnode(boolVar);
       if (this.isInconsistent()) return false;
       if (this.hasBoolVarFlag(boolVar, BV_EQ)) {
-        const args = this.manager.args[this.boolVar2Expr[boolVar]];
-        if (!this.manager.isBool(args[0])) {
-          const lhs = this.exprToEnode[args[0]];
-          const rhs = this.exprToEnode[args[1]];
+        const eq = this.boolVar2Expr[boolVar];
+        if (!this.manager.isBool(this.manager.getArg(eq, 0))) {
+          const lhs = this.exprToEnode[this.manager.getArg(eq, 0)];
+          const rhs = this.exprToEnode[this.manager.getArg(eq, 1)];
           if (lhs !== undefined && rhs !== undefined) {
             if (value === L_TRUE) this.addEq(lhs, rhs, { kind: "equation", literal: literal });
             else if (!this.addDiseq(lhs, rhs) && !this.isInconsistent())
@@ -738,8 +738,10 @@ export class Context extends Internalizer {
           if (node.iscopeLevel <= newLevel) continue;
           this.cachedGeneration.set(current, this.getGeneration(node));
         }
-        for (const arg of manager.args[current])
+        for (let index = 0; index < manager.getNumArgs(current); index++) {
+          const arg = manager.getArg(current, index);
           if (manager.kinds[arg] !== KIND_VAR) todo.push(arg);
+        }
       } else if (manager.kinds[current] === KIND_QUANTIFIER && this.isBInternalized(current)) {
         this.cachedGeneration.set(current, this.qmanager.getGeneration(current));
         todo.push(manager.getQuantifier(current).body);

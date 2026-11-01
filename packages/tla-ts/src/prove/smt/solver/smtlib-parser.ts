@@ -326,9 +326,9 @@ export const parseSmtlib = (
         funcDecl.op !== OP_FALSE
       )
         return false;
-      return manager.args[expr].every(isValid);
+      return manager.everyArg(expr, isValid);
     };
-    return manager.args[pattern].every(isValid) && found.size === numDecls;
+    return manager.everyArg(pattern, isValid) && found.size === numDecls;
   };
 
   const parseQuantifier = (list: SExpr[], isForall: boolean) => {

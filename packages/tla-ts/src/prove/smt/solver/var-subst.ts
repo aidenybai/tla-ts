@@ -39,11 +39,11 @@ export class VarSubst {
     }
     if (
       manager.kinds[expr] === KIND_APP &&
-      manager.args[expr].every((arg) => manager.isGroundApp(arg) || manager.kinds[arg] === KIND_VAR)
+      manager.everyArg(expr, (arg) => manager.isGroundApp(arg) || manager.kinds[arg] === KIND_VAR)
     ) {
       const result = manager.mkApp(
         manager.decls[expr],
-        manager.args[expr].map((arg) => {
+        manager.mapArgs(expr, (arg) => {
           if (manager.isGroundApp(arg)) return arg;
           const index = manager.values[arg];
           const replaced =
@@ -109,10 +109,10 @@ export const replaceFreeVars = (
     const current = frame.expr;
     const data = manager.kinds[current] === KIND_QUANTIFIER ? manager.getQuantifier(current) : null;
     // A quantifier's children are its body and its patterns, under its binders.
-    const numChildren = data === null ? manager.args[current].length : 1 + data.patterns.length;
+    const numChildren = data === null ? manager.getNumArgs(current) : 1 + data.patterns.length;
     if (frame.next < numChildren) {
       const index = frame.next++;
-      if (data === null) visit(manager.args[current][index], frame.shift);
+      if (data === null) visit(manager.getArg(current, index), frame.shift);
       else
         visit(index === 0 ? data.body : data.patterns[index - 1], frame.shift + data.sorts.length);
       continue;
@@ -150,7 +150,8 @@ export const getFreeVarSorts = (manager: AstManager, expr: number, count: number
       const index = manager.values[current] - delta;
       if (index < count && sorts[index] === undefined) sorts[index] = manager.sorts[current];
     } else if (kind === KIND_APP)
-      for (const arg of manager.args[current]) {
+      for (let index = 0; index < manager.getNumArgs(current); index++) {
+        const arg = manager.getArg(current, index);
         exprs.push(arg);
         deltas.push(delta);
       }

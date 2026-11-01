@@ -131,16 +131,16 @@ export class Fm {
     const manager = this.manager;
     return (
       manager.isUninterpretedConst(expr) ||
-      (manager.isNot(expr) && manager.isUninterpretedConst(manager.args[expr][0]))
+      (manager.isNot(expr) && manager.isUninterpretedConst(manager.getArg(expr, 0)))
     );
   }
 
   // is_linear_mon_core: the variable of x or c*x.
   private getMonomialVar(expr: number) {
     const manager = this.manager;
-    if (manager.getOp(expr) === OP_MUL && manager.args[expr].length === 2) {
-      const coefficient = manager.args[expr][0];
-      const variable = manager.args[expr][1];
+    if (manager.getOp(expr) === OP_MUL && manager.getNumArgs(expr) === 2) {
+      const coefficient = manager.getArg(expr, 0);
+      const variable = manager.getArg(expr, 1);
       if (manager.isNumeral(coefficient) && this.isVariable(variable)) return variable;
     }
     return this.isVariable(expr) ? expr : -1;
@@ -148,10 +148,12 @@ export class Fm {
 
   private isLinearPol(expr: number) {
     const manager = this.manager;
-    const monomials = manager.getOp(expr) === OP_ADD ? manager.args[expr] : [expr];
+    const isSum = manager.getOp(expr) === OP_ADD;
+    const numMonomials = isSum ? manager.getNumArgs(expr) : 1;
     const visited = new Set<number>();
     let isAllForbidden = true;
-    for (const monomial of monomials) {
+    for (let index = 0; index < numMonomials; index++) {
+      const monomial = isSum ? manager.getArg(expr, index) : expr;
       const variable = this.getMonomialVar(monomial);
       if (variable === -1 || visited.has(variable)) return false;
       visited.add(variable);
@@ -162,11 +164,11 @@ export class Fm {
 
   private isLinearIneq(expr: number) {
     const manager = this.manager;
-    const atom = manager.isNot(expr) ? manager.args[expr][0] : expr;
+    const atom = manager.isNot(expr) ? manager.getArg(expr, 0) : expr;
     const op = manager.getOp(atom);
-    if ((op !== OP_LE && op !== OP_GE) || manager.args[atom].length !== 2) return false;
-    const lhs = manager.args[atom][0];
-    const rhs = manager.args[atom][1];
+    if ((op !== OP_LE && op !== OP_GE) || manager.getNumArgs(atom) !== 2) return false;
+    const lhs = manager.getArg(atom, 0);
+    const rhs = manager.getArg(atom, 1);
     // Z3's fm also eliminates Real variables, whose rational coefficients the port does not keep.
     return manager.isInt(lhs) && manager.isNumeral(rhs) && this.isLinearPol(lhs);
   }
@@ -176,7 +178,8 @@ export class Fm {
     const manager = this.manager;
     if (manager.getOp(expr) !== OP_OR) return this.isLinearIneq(expr);
     let isFound = false;
-    for (const arg of manager.args[expr]) {
+    for (let index = 0; index < manager.getNumArgs(expr); index++) {
+      const arg = manager.getArg(expr, index);
       if (this.isLiteral(arg)) continue;
       if (!this.isLinearIneq(arg) || isFound) return false;
       isFound = true;
@@ -202,7 +205,7 @@ export class Fm {
         } else if (kind === KIND_QUANTIFIER) {
           const data = manager.getQuantifier(expr);
           todo.push(data.body, ...data.patterns);
-        } else todo.push(...manager.args[expr]);
+        } else manager.pushArgs(expr, todo);
       }
     }
   }
@@ -233,7 +236,7 @@ export class Fm {
   private toLiteral(expr: number) {
     const manager = this.manager;
     const isNegated = manager.isNot(expr);
-    const atom = isNegated ? manager.args[expr][0] : expr;
+    const atom = isNegated ? manager.getArg(expr, 0) : expr;
     let bvar = this.expr2bvar.get(atom);
     if (bvar === undefined) {
       bvar = this.bvar2expr.size;
@@ -246,30 +249,34 @@ export class Fm {
 
   private addConstraint(fml: number) {
     const manager = this.manager;
-    const args = manager.getOp(fml) === OP_OR ? manager.args[fml] : [fml];
+    const isClause = manager.getOp(fml) === OP_OR;
+    const numArgs = isClause ? manager.getNumArgs(fml) : 1;
     const lits: number[] = [];
     const xs: number[] = [];
     const as: bigint[] = [];
     let c = 0n;
     let isStrict = false;
-    for (const arg of args) {
+    for (let argIndex = 0; argIndex < numArgs; argIndex++) {
+      const arg = isClause ? manager.getArg(fml, argIndex) : fml;
       if (this.isLiteral(arg)) {
         lits.push(this.toLiteral(arg));
         continue;
       }
       const isNegated = manager.isNot(arg);
-      const atom = isNegated ? manager.args[arg][0] : arg;
+      const atom = isNegated ? manager.getArg(arg, 0) : arg;
       isStrict = isNegated;
       const isFlipped = manager.getOp(atom) === OP_GE ? !isNegated : isNegated;
-      const lhs = manager.args[atom][0];
-      const rhs = manager.args[atom][1];
+      const lhs = manager.getArg(atom, 0);
+      const rhs = manager.getArg(atom, 1);
       c = isFlipped ? -manager.getNumeralValue(rhs) : manager.getNumeralValue(rhs);
-      const monomials = manager.getOp(lhs) === OP_ADD ? manager.args[lhs] : [lhs];
+      const isSum = manager.getOp(lhs) === OP_ADD;
+      const numMonomials = isSum ? manager.getNumArgs(lhs) : 1;
       let isAllInt = true;
-      for (const monomial of monomials) {
-        const isScaled = manager.getOp(monomial) === OP_MUL && manager.args[monomial].length === 2;
-        const coefficient = isScaled ? manager.getNumeralValue(manager.args[monomial][0]) : 1n;
-        const variable = this.toVar(isScaled ? manager.args[monomial][1] : monomial);
+      for (let index = 0; index < numMonomials; index++) {
+        const monomial = isSum ? manager.getArg(lhs, index) : lhs;
+        const isScaled = manager.getOp(monomial) === OP_MUL && manager.getNumArgs(monomial) === 2;
+        const coefficient = isScaled ? manager.getNumeralValue(manager.getArg(monomial, 0)) : 1n;
+        const variable = this.toVar(isScaled ? manager.getArg(monomial, 1) : monomial);
         xs.push(variable);
         as.push(isFlipped ? -coefficient : coefficient);
         if (!this.isInt[variable]) isAllInt = false;

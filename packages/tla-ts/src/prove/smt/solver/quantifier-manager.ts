@@ -83,7 +83,7 @@ export class DefaultQuantifierManager {
     const manager = this.context.manager;
     const patterns = manager
       .getQuantifier(quantifier)
-      .patterns.map((pattern) => manager.args[pattern]);
+      .patterns.map((pattern) => manager.getArgs(pattern));
     const hasUnaryPattern = patterns.some((pattern) => pattern.length === 1);
     const numEagerMultiPatterns = QI_MAX_EAGER_MULTIPATTERNS + (hasUnaryPattern ? 0 : 1);
     let multiPatternIndex = 0;

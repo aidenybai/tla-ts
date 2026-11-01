@@ -89,7 +89,7 @@ export class PullQuant extends RewriterTpl {
     const manager = this.manager;
     const op = manager.funcDecls[decl].op;
     if (op === OP_NOT && manager.isNot(args[0])) {
-      const expr = manager.args[args[0]][0];
+      const expr = manager.getArg(args[0], 0);
       manager.incRef(expr);
       return { expr, depth: 1 };
     }

@@ -21,7 +21,7 @@ const getSharedOccs = (manager: AstManager, forms: number[]) => {
       continue;
     }
     visited.add(expr);
-    if (manager.kinds[expr] === KIND_APP) todo.push(...manager.args[expr]);
+    if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, todo);
     else if (manager.kinds[expr] === KIND_QUANTIFIER) todo.push(manager.getQuantifier(expr).body);
   }
   return shared;
@@ -43,13 +43,19 @@ export const propagateValues = (manager: AstManager, goal: Goal) => {
     goal.update(index, rewritten);
     if (isRewriting) manager.decRef(rewritten);
     if (occs.has(rewritten)) substitution.set(rewritten, manager.trueExpr);
-    if (manager.isNot(rewritten) && occs.has(manager.args[rewritten][0]))
-      substitution.set(manager.args[rewritten][0], manager.falseExpr);
+    if (manager.isNot(rewritten) && occs.has(manager.getArg(rewritten, 0)))
+      substitution.set(manager.getArg(rewritten, 0), manager.falseExpr);
     if (manager.getOp(rewritten) !== OP_EQ) return;
-    const sides = manager.args[rewritten];
-    if (manager.isUniqueValue(sides[0]) && occs.has(sides[1])) substitution.set(sides[1], sides[0]);
-    else if (manager.isUniqueValue(sides[1]) && occs.has(sides[0]))
-      substitution.set(sides[0], sides[1]);
+    if (
+      manager.isUniqueValue(manager.getArg(rewritten, 0)) &&
+      occs.has(manager.getArg(rewritten, 1))
+    )
+      substitution.set(manager.getArg(rewritten, 1), manager.getArg(rewritten, 0));
+    else if (
+      manager.isUniqueValue(manager.getArg(rewritten, 1)) &&
+      occs.has(manager.getArg(rewritten, 0))
+    )
+      substitution.set(manager.getArg(rewritten, 0), manager.getArg(rewritten, 1));
   };
   // Each pass is a round: a forward pass, which stops when it found nothing, then a backward pass,
   // which stops when it changed nothing.

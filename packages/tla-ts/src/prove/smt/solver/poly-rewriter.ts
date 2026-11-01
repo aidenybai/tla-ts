@@ -98,22 +98,29 @@ export class PolyRewriter {
     return this.manager.kinds[expr] === KIND_APP && ARITH_OPS.has(this.manager.getOp(expr));
   }
 
-  protected getMonomials(expr: number) {
-    return this.isAdd(expr) ? this.manager.args[expr] : [expr];
+  // get_monomials: the summands of a sum, and otherwise the term itself.
+  protected getNumMonomials(expr: number) {
+    return this.isAdd(expr) ? this.manager.getNumArgs(expr) : 1;
+  }
+
+  protected getMonomial(expr: number, index: number) {
+    return this.isAdd(expr) ? this.manager.getArg(expr, index) : expr;
   }
 
   // get_power_product: the monomial without its coefficient.
   protected getPowerProduct(expr: number) {
-    const args = this.manager.args[expr];
-    return this.isMul(expr) && args.length === 2 && this.manager.isNumeral(args[0])
-      ? args[1]
+    return this.isMul(expr) &&
+      this.manager.getNumArgs(expr) === 2 &&
+      this.manager.isNumeral(this.manager.getArg(expr, 0))
+      ? this.manager.getArg(expr, 1)
       : expr;
   }
 
   protected getCoefficient(expr: number) {
-    const args = this.manager.args[expr];
-    return this.isMul(expr) && args.length === 2 && this.manager.isNumeral(args[0])
-      ? this.getValue(args[0])
+    return this.isMul(expr) &&
+      this.manager.getNumArgs(expr) === 2 &&
+      this.manager.isNumeral(this.manager.getArg(expr, 0))
+      ? this.getValue(this.manager.getArg(expr, 0))
       : Rational.one;
   }
 
@@ -123,8 +130,9 @@ export class PolyRewriter {
     if (manager.kinds[expr] !== KIND_APP || !ARITH_OPS.has(manager.getOp(expr)))
       return manager.ids[expr];
     if (this.isMul(expr)) {
-      const args = manager.args[expr];
-      return manager.ids[manager.isNumeral(args[0]) ? args[1] : expr];
+      return manager.ids[
+        manager.isNumeral(manager.getArg(expr, 0)) ? manager.getArg(expr, 1) : expr
+      ];
     }
     return manager.isNumeral(expr) ? -1 : manager.ids[expr];
   }
@@ -162,7 +170,7 @@ export class PolyRewriter {
     if (!args.some((arg) => this.isAdd(arg))) return this.mkNflatAdd(args);
     const flat: number[] = [];
     for (const arg of args) {
-      if (this.isAdd(arg)) flat.push(...this.manager.args[arg]);
+      if (this.isAdd(arg)) this.manager.pushArgs(arg, flat);
       else flat.push(arg);
     }
     return this.mkNflatAdd(flat) ?? this.mkAddApp(flat);
@@ -247,11 +255,13 @@ export class PolyRewriter {
     const isFlatMonomial =
       args.length === 2 &&
       this.manager.isNumeral(args[0]) &&
-      !(this.isMul(args[1]) && this.manager.isNumeral(this.manager.args[args[1]][0]));
+      !(this.isMul(args[1]) && this.manager.isNumeral(this.manager.getArg(args[1], 0)));
     if (isFlatMonomial || !args.some((arg) => this.isMul(arg))) return this.mkNflatMul(args);
     const flat: number[] = [];
     const collect = (arg: number) => {
-      if (this.isMul(arg)) for (const innerArg of this.manager.args[arg]) collect(innerArg);
+      if (this.isMul(arg))
+        for (let index = 0; index < this.manager.getNumArgs(arg); index++)
+          collect(this.manager.getArg(arg, index));
       else flat.push(arg);
     };
     for (const arg of args) collect(arg);
@@ -285,10 +295,13 @@ export class PolyRewriter {
     if (numCoeffs === args.length - 1) {
       if (coefficient.equals(Rational.one)) return factor;
       if (this.isMul(factor)) {
-        const factorArgs = manager.args[factor];
-        if (factorArgs.length !== 2 || !this.manager.isNumeral(factorArgs[0])) return undefined;
+        if (manager.getNumArgs(factor) !== 2 || !this.manager.isNumeral(manager.getArg(factor, 0)))
+          return undefined;
         return this.reduce(
-          this.mkMulAppWith(coefficient.mul(this.getValue(factorArgs[0])), factorArgs[1]),
+          this.mkMulAppWith(
+            coefficient.mul(this.getValue(manager.getArg(factor, 0))),
+            manager.getArg(factor, 1),
+          ),
           1,
         );
       }
@@ -298,7 +311,7 @@ export class PolyRewriter {
       }
       return this.reduce(
         this.mkAddApp(
-          manager.args[factor].map((innerArg) => this.mkMulAppWith(coefficient, innerArg)),
+          manager.mapArgs(factor, (innerArg) => this.mkMulAppWith(coefficient, innerArg)),
         ),
         2,
       );
@@ -320,7 +333,7 @@ export class PolyRewriter {
       const ordered = isOrdered ? factors : this.sortMonomials(factors, 0);
       return this.mkMulAppWith(coefficient, this.mkMulApp(ordered));
     }
-    const sums = args.map((arg) => (this.isAdd(arg) ? manager.args[arg] : [arg]));
+    const sums = args.map((arg) => (this.isAdd(arg) ? manager.getArgs(arg) : [arg]));
     const positions = sums.map(() => 0);
     // Like som's expr_ref_buffer, the products are released in order when it returns.
     const products: number[] = [];
@@ -364,20 +377,20 @@ export class PolyRewriter {
   // poly_rewriter::cancel_monomials.
   protected cancelMonomials(lhs: number, rhs: number, isMoving: boolean) {
     this.currSort = this.manager.sorts[lhs];
-    const lhsMonomials = this.getMonomials(lhs);
-    const rhsMonomials = this.getMonomials(rhs);
     const visited = new Set<number>();
     const multiple = new Set<number>();
     let constant = Rational.zero;
     let numCoeffs = 0;
-    for (const arg of lhsMonomials) {
+    for (let index = 0; index < this.getNumMonomials(lhs); index++) {
+      const arg = this.getMonomial(lhs, index);
       if (this.manager.isNumeral(arg)) {
         constant = constant.add(this.getValue(arg));
         numCoeffs++;
       } else visited.add(this.getPowerProduct(arg));
     }
     if (isMoving && numCoeffs === 0 && this.manager.isNumeral(rhs)) return undefined;
-    for (const arg of rhsMonomials) {
+    for (let index = 0; index < this.getNumMonomials(rhs); index++) {
+      const arg = this.getMonomial(rhs, index);
       if (this.manager.isNumeral(arg)) {
         constant = constant.sub(this.getValue(arg));
         numCoeffs++;
@@ -388,13 +401,15 @@ export class PolyRewriter {
         return undefined;
     }
     const coeffs = new Map<number, Rational>();
-    for (const arg of lhsMonomials) {
+    for (let index = 0; index < this.getNumMonomials(lhs); index++) {
+      const arg = this.getMonomial(lhs, index);
       if (this.manager.isNumeral(arg)) continue;
       const product = this.getPowerProduct(arg);
       if (multiple.has(product))
         coeffs.set(product, (coeffs.get(product) ?? Rational.zero).add(this.getCoefficient(arg)));
     }
-    for (const arg of rhsMonomials) {
+    for (let index = 0; index < this.getNumMonomials(rhs); index++) {
+      const arg = this.getMonomial(rhs, index);
       if (this.manager.isNumeral(arg)) continue;
       const product = this.getPowerProduct(arg);
       if (multiple.has(product))
@@ -402,7 +417,8 @@ export class PolyRewriter {
     }
     const newLhs: number[] = [];
     const copied = new Set<number>();
-    for (const arg of lhsMonomials) {
+    for (let index = 0; index < this.getNumMonomials(lhs); index++) {
+      const arg = this.getMonomial(lhs, index);
       if (this.manager.isNumeral(arg)) continue;
       const product = this.getPowerProduct(arg);
       if (!multiple.has(product)) newLhs.push(arg);
@@ -413,7 +429,8 @@ export class PolyRewriter {
       }
     }
     const newRhs: number[] = [];
-    for (const arg of rhsMonomials) {
+    for (let index = 0; index < this.getNumMonomials(rhs); index++) {
+      const arg = this.getMonomial(rhs, index);
       if (this.manager.isNumeral(arg)) continue;
       const product = this.getPowerProduct(arg);
       if (multiple.has(product)) continue;

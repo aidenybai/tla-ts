@@ -125,12 +125,12 @@ export class DynAckManager {
   private instantiate(pair: AppPair) {
     const context = this.context;
     const manager = context.manager;
-    const firstArgs = manager.args[pair.first];
-    const secondArgs = manager.args[pair.second];
     const literals: Literal[] = [];
-    for (let index = 0; index < firstArgs.length; index++)
-      if (firstArgs[index] !== secondArgs[index])
-        literals.push(negate(this.mkEq(firstArgs[index], secondArgs[index])));
+    for (let index = 0; index < manager.getNumArgs(pair.first); index++)
+      if (manager.getArg(pair.first, index) !== manager.getArg(pair.second, index))
+        literals.push(
+          negate(this.mkEq(manager.getArg(pair.first, index), manager.getArg(pair.second, index))),
+        );
     this.appPair2NumOccs.delete(pair.key);
     // The pair stays in appPairs, which still holds its references.
     this.instantiated.add(pair.key);

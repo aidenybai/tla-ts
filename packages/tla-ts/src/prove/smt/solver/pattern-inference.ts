@@ -79,10 +79,10 @@ export class PatternInference {
         else if (index < delta) boundVars.add(index);
         info = { freeVars, boundVars, size: 1 };
       } else if (kind === KIND_APP) {
-        const args = manager.args[expr];
-        const childInfos = args.map((innerArg) => visit(innerArg, delta));
+        const childInfos = manager.mapArgs(expr, (innerArg) => visit(innerArg, delta));
         if (this.isForbidden(expr)) info = null;
-        else if (args.length === 0) info = { freeVars: new Set(), boundVars: new Set(), size: 1 };
+        else if (manager.getNumArgs(expr) === 0)
+          info = { freeVars: new Set(), boundVars: new Set(), size: 1 };
         else if (childInfos.every((childInfo) => childInfo !== null)) {
           const freeVars = new Set<number>();
           const boundVars = new Set<number>();
@@ -149,13 +149,12 @@ export class PatternInference {
         if (
           manager.kinds[right] !== KIND_APP ||
           manager.decls[left] !== manager.decls[right] ||
-          manager.args[left].length !== manager.args[right].length ||
+          manager.getNumArgs(left) !== manager.getNumArgs(right) ||
           manager.values[left] !== manager.values[right]
         )
           return false;
-        manager.args[left].forEach((innerArg, index) =>
-          todo.push([innerArg, manager.args[right][index]]),
-        );
+        for (let index = 0; index < manager.getNumArgs(left); index++)
+          todo.push([manager.getArg(left, index), manager.getArg(right, index)]);
       } else if (kind === KIND_VAR && manager.values[left] < this.numBindings) {
         const index = manager.values[left];
         if (bindings[index] === -1) bindings[index] = right;
@@ -203,11 +202,13 @@ export class PatternInference {
         if (currentInfo !== undefined && isSameSet(currentInfo.freeVars, info.freeVars))
           return true;
       }
-      for (const arg of manager.args[current])
+      for (let index = 0; index < manager.getNumArgs(current); index++) {
+        const arg = manager.getArg(current, index);
         if (!visited.has(arg)) {
           visited.add(arg);
           todo.push(arg);
         }
+      }
     }
     return false;
   }
@@ -216,10 +217,11 @@ export class PatternInference {
     const manager = this.manager;
     const hasVarArg = (expr: number) =>
       manager.kinds[expr] === KIND_APP &&
-      manager.args[expr].some((innerArg) => manager.isVar(innerArg));
+      manager.someArg(expr, (innerArg) => manager.isVar(innerArg));
     if (hasVarArg(candidate)) return manager.mkPattern([candidate]);
     const args: number[] = [];
-    for (const arg of manager.args[candidate]) {
+    for (let index = 0; index < manager.getNumArgs(candidate); index++) {
+      const arg = manager.getArg(candidate, index);
       if (manager.kinds[arg] !== KIND_APP) return manager.mkPattern([candidate]);
       args.push(arg);
     }
@@ -230,7 +232,8 @@ export class PatternInference {
       index--;
       args.pop();
       if (manager.isGround(arg)) continue;
-      for (const innerArg of manager.args[arg]) {
+      for (let argIndex = 0; argIndex < manager.getNumArgs(arg); argIndex++) {
+        const innerArg = manager.getArg(arg, argIndex);
         if (manager.kinds[innerArg] !== KIND_APP) return manager.mkPattern([candidate]);
         args.push(innerArg);
       }

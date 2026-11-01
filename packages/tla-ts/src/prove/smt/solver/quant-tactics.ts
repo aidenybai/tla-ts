@@ -44,7 +44,7 @@ const hasUnconstrainedConst = (manager: AstManager, goal: Goal) => {
     }
     visited.add(expr);
     if (isConst) consts.push(expr);
-    else if (manager.kinds[expr] === KIND_APP) todo.push(...manager.args[expr]);
+    else if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, todo);
     else if (manager.kinds[expr] === KIND_QUANTIFIER) todo.push(manager.getQuantifier(expr).body);
   }
   return consts.some((expr) => !repeated.has(expr));
@@ -78,7 +78,7 @@ const pinQuantifierBodies = (manager: AstManager, goal: Goal) => {
       const expr = todo.pop() as number;
       if (disabled.has(expr)) continue;
       disabled.add(expr);
-      if (manager.kinds[expr] === KIND_APP) todo.push(...manager.args[expr]);
+      if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, todo);
     }
   };
   const todo = [...goal.forms.items];
@@ -90,7 +90,7 @@ const pinQuantifierBodies = (manager: AstManager, goal: Goal) => {
       const body = manager.getQuantifier(expr).body;
       disable(body);
       todo.push(body);
-    } else if (manager.kinds[expr] === KIND_APP) todo.push(...manager.args[expr]);
+    } else if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, todo);
   }
 };
 

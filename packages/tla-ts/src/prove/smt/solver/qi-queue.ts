@@ -78,13 +78,19 @@ class Checker {
     return value !== 0 && isTrue === value > 0;
   }
 
-  private checkAny(args: number[], depth: number, isTrue: boolean) {
-    for (const arg of args) if (this.check(arg, depth, isTrue)) return true;
+  private checkAny(expr: number, depth: number, isTrue: boolean) {
+    const manager = this.context.manager;
+    const numArgs = manager.getNumArgs(expr);
+    for (let index = 0; index < numArgs; index++)
+      if (this.check(manager.getArg(expr, index), depth, isTrue)) return true;
     return false;
   }
 
-  private checkAll(args: number[], depth: number, isTrue: boolean) {
-    for (const arg of args) if (!this.check(arg, depth, isTrue)) return false;
+  private checkAll(expr: number, depth: number, isTrue: boolean) {
+    const manager = this.context.manager;
+    const numArgs = manager.getNumArgs(expr);
+    for (let index = 0; index < numArgs; index++)
+      if (!this.check(manager.getArg(expr, index), depth, isTrue)) return false;
     return true;
   }
 
@@ -95,7 +101,6 @@ class Checker {
     if (context.isBInternalized(expr) && context.isRelevant(expr))
       return this.isAssigned(expr, isTrue);
     if (manager.kinds[expr] !== KIND_APP) return false;
-    const args = manager.args[expr];
     const next = depth + 1;
     switch (manager.getOp(expr)) {
       case OP_TRUE:
@@ -103,15 +108,15 @@ class Checker {
       case OP_FALSE:
         return !isTrue;
       case OP_NOT:
-        return this.check(args[0], next, !isTrue);
+        return this.check(manager.getArg(expr, 0), next, !isTrue);
       case OP_OR:
-        return isTrue ? this.checkAny(args, next, true) : this.checkAll(args, next, false);
+        return isTrue ? this.checkAny(expr, next, true) : this.checkAll(expr, next, false);
       case OP_AND:
-        return isTrue ? this.checkAll(args, next, true) : this.checkAny(args, next, false);
+        return isTrue ? this.checkAll(expr, next, true) : this.checkAny(expr, next, false);
       case OP_EQ: {
-        if (!manager.isBool(args[0])) {
-          const lhs = this.getEnodeEqTo(args[0]);
-          const rhs = this.getEnodeEqTo(args[1]);
+        if (!manager.isBool(manager.getArg(expr, 0))) {
+          const lhs = this.getEnodeEqTo(manager.getArg(expr, 0));
+          const rhs = this.getEnodeEqTo(manager.getArg(expr, 1));
           if (
             lhs === null ||
             rhs === null ||
@@ -122,21 +127,30 @@ class Checker {
           return isTrue ? lhs.root === rhs.root : context.isDiseq(lhs, rhs);
         }
         return (
-          (this.check(args[0], next, true) && this.check(args[1], next, isTrue)) ||
-          (this.check(args[0], next, false) && this.check(args[1], next, !isTrue))
+          (this.check(manager.getArg(expr, 0), next, true) &&
+            this.check(manager.getArg(expr, 1), next, isTrue)) ||
+          (this.check(manager.getArg(expr, 0), next, false) &&
+            this.check(manager.getArg(expr, 1), next, !isTrue))
         );
       }
       case OP_ITE: {
-        const condition = args[0];
-        const atom = manager.isNot(condition) ? manager.args[condition][0] : condition;
+        const condition = manager.getArg(expr, 0);
+        const atom = manager.isNot(condition) ? manager.getArg(condition, 0) : condition;
         if (
           condition !== manager.falseExpr &&
           (!context.isBInternalized(atom) || !context.isRelevant(condition))
         )
-          return this.check(args[1], next, isTrue) && this.check(args[2], next, isTrue);
+          return (
+            this.check(manager.getArg(expr, 1), next, isTrue) &&
+            this.check(manager.getArg(expr, 2), next, isTrue)
+          );
         const value = context.getAssignment(context.getLiteral(condition));
         if (value === 0) return false;
-        return this.check(value > 0 ? args[1] : args[2], next, isTrue);
+        return this.check(
+          value > 0 ? manager.getArg(expr, 1) : manager.getArg(expr, 2),
+          next,
+          isTrue,
+        );
       }
       default:
         break;
@@ -157,7 +171,7 @@ class Checker {
     }
     const existing = context.getEnode(expr);
     if (existing !== undefined && context.isRelevant(expr)) return existing;
-    if (manager.kinds[expr] !== KIND_APP || manager.args[expr].length === 0) return null;
+    if (manager.kinds[expr] !== KIND_APP || manager.getNumArgs(expr) === 0) return null;
     if (expr >= this.enodeStamps.length) this.enodeStamps = grow(this.enodeStamps, expr);
     if (this.enodeStamps[expr] === this.stamp) return this.enodeResults[expr] ?? null;
     const depth = this.argDepth;
@@ -165,7 +179,8 @@ class Checker {
     const argNodes = this.argBuffers[depth];
     shrink(argNodes, 0);
     this.argDepth = depth + 1;
-    for (const arg of manager.args[expr]) {
+    for (let index = 0; index < manager.getNumArgs(expr); index++) {
+      const arg = manager.getArg(expr, index);
       const node = this.getEnodeEqTo(arg);
       if (node === null) {
         this.argDepth = depth;
@@ -280,12 +295,10 @@ export class QiQueue {
     const instance = context.rewriter.rewrite(substituted);
     if (instance !== manager.trueExpr) {
       const negated = manager.mkNot(entry.quantifier);
-      const lemma =
-        manager.getOp(instance) === OP_OR
-          ? manager.mkOr([negated, ...manager.args[instance]])
-          : instance === manager.falseExpr
-            ? negated
-            : manager.mkOr([negated, instance]);
+      const disjuncts = [negated];
+      if (manager.getOp(instance) === OP_OR) manager.pushArgs(instance, disjuncts);
+      else if (instance !== manager.falseExpr) disjuncts.push(instance);
+      const lemma = manager.mkOr(disjuncts);
       this.lemmas.push(lemma);
       this.numInstances++;
       const newGeneration =
