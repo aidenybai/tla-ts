@@ -912,9 +912,9 @@ export const createEnvironment = (
       reports,
       warnings: scope.warnings,
     });
+    // SANY keeps the first of two symbols of a name.
     const getSymbolsBefore = (location: SourceLocation): Symbols =>
-      new Map([
-        ...visible,
+      [
         ...declarations
           .filter((declaration) => isBefore(declaration.location, location))
           .map((declaration): [string, ModuleSymbol] => [
@@ -927,7 +927,10 @@ export const createEnvironment = (
             definition.name,
             getDefinitionSymbol(definition),
           ]),
-      ]);
+      ].reduce(
+        (symbols, [name, symbol]) => (symbols.has(name) ? symbols : symbols.set(name, symbol)),
+        new Map(visible),
+      );
     // Generator.generateModule reports the errors of a nested module and goes on, and then
     // SymbolTable.addModule reports a module already defined.
     const linkNested = (nested: Module) => {

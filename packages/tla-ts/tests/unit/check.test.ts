@@ -4033,6 +4033,21 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "a nested module's declaration of a name the enclosing module declares twice",
+      "CONSTANT c\nCONSTANT c\n---- MODULE Inner ----\nCONSTANT c\n====\nBar == U",
+      [
+        {
+          location: "line 7, col 8 to line 7, col 8 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [3, 5].map((line) => ({
+        location: `line ${line}, col 10 to line ${line}, col 10 of module M`,
+        message:
+          "Multiple declarations or definitions for symbol c.  \nThis duplicates the one at line 2, col 10 to line 2, col 10 of module M.",
+      })),
+    ],
+    [
       "a semantic error after a nested module with a level error",
       "---- MODULE Inner ----\nVARIABLE y\nB == ENABLED (y' = y)\nC == []B\nD == C'\n====\nE == U",
       [
