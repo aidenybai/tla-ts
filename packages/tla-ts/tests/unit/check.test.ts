@@ -3301,14 +3301,26 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
-      "EXTENDS Naturals\nOne(a) == a\nf == One(\\cup) /\\ One(-.) /\\ One(1) + One",
+      "EXTENDS Naturals\nOne(a) == a\nf == One(\\cup) /\\ One(-.) /\\ One(SUBSET) /\\ One(1) + One",
       [
         ["line 4, col 10 to line 4, col 13", "The operator \\cup requires 2 arguments."],
         [
-          "line 4, col 23 to line 4, col 23",
+          "line 4, col 23 to line 4, col 24",
           "Could not find declaration or definition of symbol '-.'.",
         ],
-        ["line 4, col 39 to line 4, col 41", "The operator One requires 1 arguments."],
+        ["line 4, col 34 to line 4, col 39", "The operator SUBSET requires 1 arguments."],
+        ["line 4, col 54 to line 4, col 56", "The operator One requires 1 arguments."],
+      ],
+    ],
+    [
+      "One(a) == a\nf == One(UNCHANGED) /\\ One(') /\\ One(^+)",
+      [
+        ["line 3, col 10 to line 3, col 18", "The operator UNCHANGED requires 1 arguments."],
+        ["line 3, col 28 to line 3, col 28", "The operator ' requires 1 arguments."],
+        [
+          "line 3, col 38 to line 3, col 39",
+          "Could not find declaration or definition of symbol '^+'.",
+        ],
       ],
     ],
   ])("reports %j at the range SANY reports", async (source, errors) => {

@@ -69,11 +69,14 @@ export interface OperatorReferenceExpression {
   location: SourceLocation;
 }
 
+// operator holds the operator, such as SUBSET, that an argument names, which tla-ts reads as a
+// LAMBDA.
 export interface LambdaExpression {
   kind: "Lambda";
   params: string[];
   paramRanges?: SourceRange[];
   body: Expression;
+  operator?: string;
   location: SourceLocation;
 }
 
