@@ -164,16 +164,18 @@ export class Rewriter extends RewriterTpl {
   }
 
   reduceApp(decl: number, args: number[], sort: number) {
+    const manager = this.manager;
     // An uninterpreted application only reduces by pull_ite, which needs two arguments.
     if (
-      this.manager.funcDecls[decl].op === OP_UNINTERPRETED &&
+      manager.funcDecls[decl].op === OP_UNINTERPRETED &&
       (args.length !== 2 || this.options.isPullingCheapIte !== true)
     )
       return -1;
-    return this.manager.withTemporaries(
-      () => this.reduceAppTop(decl, args, sort),
-      (result) => (result === -1 ? [] : [typeof result === "number" ? result : result.expr]),
-    );
+    const outer = manager.beginTemporaries();
+    const result = this.reduceAppTop(decl, args, sort);
+    if (result !== -1) manager.incRef(typeof result === "number" ? result : result.expr);
+    manager.endTemporaries(outer);
+    return result;
   }
 
   reduceQuantifier(expr: number, body: number, patterns: number[]) {

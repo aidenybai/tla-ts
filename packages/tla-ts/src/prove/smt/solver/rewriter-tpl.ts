@@ -43,7 +43,10 @@ interface Scope {
 
 // rewriter_core: the frames, the result stack and one cache per quantifier scope.
 class RewriterCore {
+  // m_frame_stack: the first numFrames frames are open. Like the svector, the stack keeps the frames
+  // past them, which pushFrame writes over.
   protected frames: Frame[] = [];
+  protected numFrames = 0;
   protected resultStack: number[] = [];
   protected caches: ActCache[];
   protected scopes: Scope[] = [];
@@ -82,20 +85,32 @@ class RewriterCore {
   }
 
   protected setNewChildFlag(oldExpr: number, newExpr: number) {
-    if (oldExpr !== newExpr && this.frames.length > 0)
-      this.frames[this.frames.length - 1].hasNewChild = true;
+    if (oldExpr !== newExpr && this.numFrames > 0)
+      this.frames[this.numFrames - 1].hasNewChild = true;
   }
 
   protected pushFrame(expr: number, isCaching: boolean, maxDepth: number) {
-    this.frames.push({
-      curr: expr,
-      state: PROCESS_CHILDREN,
-      childIndex: 0,
-      maxDepth,
-      spos: this.resultStack.length,
-      isCaching,
-      hasNewChild: false,
-    });
+    if (this.numFrames === this.frames.length)
+      this.frames.push({
+        curr: expr,
+        state: PROCESS_CHILDREN,
+        childIndex: 0,
+        maxDepth,
+        spos: this.resultStack.length,
+        isCaching,
+        hasNewChild: false,
+      });
+    else {
+      const frame = this.frames[this.numFrames];
+      frame.curr = expr;
+      frame.state = PROCESS_CHILDREN;
+      frame.childIndex = 0;
+      frame.maxDepth = maxDepth;
+      frame.spos = this.resultStack.length;
+      frame.isCaching = isCaching;
+      frame.hasNewChild = false;
+    }
+    this.numFrames++;
   }
 
   // begin_scope: each quantifier level gets its own cache, which starts empty.
@@ -117,7 +132,7 @@ class RewriterCore {
   // rewriter_core::reset: releases the outermost cache and the result stack.
   protected resetCore() {
     this.caches[0].reset();
-    this.frames = [];
+    this.numFrames = 0;
     this.shrinkResults(0);
     this.root = -1;
     this.numQvars = 0;
@@ -135,6 +150,7 @@ class RewriterCore {
     this.shrinkResults(0);
     this.caches = [new ActCache(this.manager, this.manager.getNumAsts())];
     this.frames = [];
+    this.numFrames = 0;
     this.scopes = [];
     this.root = -1;
     this.numQvars = 0;
@@ -212,7 +228,7 @@ abstract class VarShifterCore extends RewriterCore {
   private finish(expr: number, frame: Frame, result: number) {
     this.shrinkResults(frame.spos);
     this.pushResult(result);
-    this.frames.pop();
+    this.numFrames--;
     this.setNewChildFlag(expr, result);
   }
 
@@ -220,14 +236,14 @@ abstract class VarShifterCore extends RewriterCore {
   protected mainLoop(expr: number) {
     this.root = expr;
     if (!this.visit(expr))
-      while (this.frames.length > 0) {
-        const frame = this.frames[this.frames.length - 1];
+      while (this.numFrames > 0) {
+        const frame = this.frames[this.numFrames - 1];
         const curr = frame.curr;
         if (frame.childIndex === 0 && frame.isCaching) {
           const cached = this.cache.find(curr, 0);
           if (cached !== undefined) {
             this.pushResult(cached);
-            this.frames.pop();
+            this.numFrames--;
             this.setNewChildFlag(curr, cached);
             continue;
           }
@@ -322,6 +338,7 @@ class RewriterEngine extends RewriterCore {
   // the number of bindings when it was bound.
   private bindings: number[] = [];
   private shifts: number[] = [];
+  private newArgs: number[] = [];
   private shifter: VarShifter;
   private invShifter: InvVarShifter;
   // m_blocked: the constants that a nested rewriter does not expand.
@@ -384,8 +401,8 @@ class RewriterEngine extends RewriterCore {
   rewrite(expr: number): number {
     const manager = this.manager;
     return manager.withoutTemporaries(() => {
-      if (this.frames.length > 0 || this.scopes.length > 0) {
-        this.frames = [];
+      if (this.numFrames > 0 || this.scopes.length > 0) {
+        this.numFrames = 0;
         this.shrinkResults(0);
         this.scopes = [];
         this.caches[0].reset();
@@ -396,15 +413,15 @@ class RewriterEngine extends RewriterCore {
       // SmtCanceledError when it cancels the rewrite.
       manager.limit.checkpoint();
       if (!this.visit(expr, Infinity))
-        while (this.frames.length > 0) {
+        while (this.numFrames > 0) {
           manager.limit.checkpoint();
-          const frame = this.frames[this.frames.length - 1];
+          const frame = this.frames[this.numFrames - 1];
           const curr = frame.curr;
           if (frame.childIndex === 0 && frame.state === PROCESS_CHILDREN && frame.isCaching) {
             const cached = this.cache.find(curr, 0);
             if (cached !== undefined) {
               this.pushResult(cached);
-              this.frames.pop();
+              this.numFrames--;
               this.setNewChildFlag(curr, cached);
               continue;
             }
@@ -414,7 +431,7 @@ class RewriterEngine extends RewriterCore {
           else if (kind === KIND_QUANTIFIER) this.processQuantifier(curr, frame);
           else {
             // A definition that is a variable gets a frame of its own.
-            this.frames.pop();
+            this.numFrames--;
             this.processVar(curr);
           }
         }
@@ -585,19 +602,25 @@ class RewriterEngine extends RewriterCore {
       if (!this.visit(arg, frame.maxDepth)) return;
     }
     const decl = manager.decls[expr];
-    if (this.config.isFlatAssoc(decl) && manager.getRefCount(expr) <= 1 && this.frames.length > 1) {
-      const previous = this.frames[this.frames.length - 2];
+    if (this.config.isFlatAssoc(decl) && manager.getRefCount(expr) <= 1 && this.numFrames > 1) {
+      const previous = this.frames[this.numFrames - 2];
       if (
         manager.kinds[previous.curr] === KIND_APP &&
         manager.decls[previous.curr] === decl &&
         previous.state === PROCESS_CHILDREN
       ) {
-        this.frames.pop();
+        this.numFrames--;
         this.setNewChildFlag(expr, -1);
         return;
       }
     }
-    const newArgs = this.resultStack.slice(frame.spos);
+    // new_args: Z3 passes the results on the stack itself. Nothing rewrites with this engine before
+    // the arguments are used, so one buffer holds them.
+    const newArgs = this.newArgs;
+    const resultStack = this.resultStack;
+    shrink(newArgs, 0);
+    for (let index = frame.spos; index < resultStack.length; index++)
+      newArgs.push(resultStack[index]);
     const reduced = this.config.reduceApp(decl, newArgs, manager.sorts[expr]);
     if (typeof reduced !== "number") {
       // BR_REWRITE: the result replaces the arguments and is rewritten to the depth it asks for.
@@ -640,7 +663,7 @@ class RewriterEngine extends RewriterCore {
     this.shrinkResults(frame.spos);
     this.pushResult(result);
     this.cacheResult(expr, result, frame.isCaching);
-    this.frames.pop();
+    this.numFrames--;
     this.setNewChildFlag(expr, result);
     this.setLastResult(-1);
   }
@@ -653,7 +676,7 @@ class RewriterEngine extends RewriterCore {
     this.shrinkResults(this.resultStack.length - 1);
     this.pushResult(result);
     this.cacheResult(expr, result, frame.isCaching);
-    this.frames.pop();
+    this.numFrames--;
     this.setNewChildFlag(expr, -1);
   }
 
@@ -677,7 +700,7 @@ class RewriterEngine extends RewriterCore {
     this.shrinkResults(frame.spos);
     this.pushResult(result);
     this.cacheResult(expr, result, frame.isCaching);
-    this.frames.pop();
+    this.numFrames--;
     this.setNewChildFlag(expr, -1);
   }
 
@@ -742,7 +765,7 @@ class RewriterEngine extends RewriterCore {
     this.endScope();
     this.cacheResult(expr, result, frame.isCaching);
     this.setLastResult(-1);
-    this.frames.pop();
+    this.numFrames--;
     this.setNewChildFlag(expr, result);
     for (const pattern of patterns) manager.decRef(pattern);
   }

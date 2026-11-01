@@ -136,6 +136,10 @@ export abstract class Internalizer {
   private watchMarks = new Uint8Array(1024);
   // The false literals that simplify_aux_clause_literals removes from the clause mkClause makes.
   private removedLiterals: Literal[] = [];
+  // The literal_buffer of mk_and_cnstr and mk_or_cnstr, and the array that mk_gate_clause keeps on
+  // the stack. mkClause neither keeps them nor makes a gate, so the gates reuse them.
+  private gateBuffer: Literal[] = [];
+  private gateLiterals: Literal[] = [];
   // The binary clauses of the binary clause optimization: the literals each literal propagates when it
   // becomes true, which Z3 visits newest first and before the clauses.
   protected binaryWatches: (Literal[] | undefined)[] = [];
@@ -921,15 +925,17 @@ export abstract class Internalizer {
     switch (op) {
       case OP_NOT: {
         const child = this.getLiteral(args[0]);
-        this.mkClause([negate(literal), negate(child)], null, CLS_AUX);
-        this.mkClause([literal, child], null, CLS_AUX);
+        this.mkGateClause(negate(literal), negate(child));
+        this.mkGateClause(literal, child);
         break;
       }
       case OP_AND: {
-        const buffer = [literal];
+        const buffer = this.gateBuffer;
+        shrink(buffer, 0);
+        buffer.push(literal);
         for (const arg of args) {
           const argLiteral = this.getLiteral(arg);
-          this.mkClause([negate(literal), argLiteral], null, CLS_AUX);
+          this.mkGateClause(negate(literal), argLiteral);
           buffer.push(negate(argLiteral));
         }
         this.mkClause(buffer, null, CLS_AUX);
@@ -937,10 +943,12 @@ export abstract class Internalizer {
         break;
       }
       case OP_OR: {
-        const buffer = [negate(literal)];
+        const buffer = this.gateBuffer;
+        shrink(buffer, 0);
+        buffer.push(negate(literal));
         for (const arg of args) {
           const argLiteral = this.getLiteral(arg);
-          this.mkClause([literal, negate(argLiteral)], null, CLS_AUX);
+          this.mkGateClause(literal, negate(argLiteral));
           buffer.push(argLiteral);
         }
         this.mkClause(buffer, null, CLS_AUX);
@@ -950,9 +958,9 @@ export abstract class Internalizer {
       case OP_IMPLIES: {
         const first = this.getLiteral(args[0]);
         const second = this.getLiteral(args[1]);
-        this.mkClause([literal, first], null, CLS_AUX);
-        this.mkClause([literal, negate(second)], null, CLS_AUX);
-        this.mkClause([negate(literal), negate(first), second], null, CLS_AUX);
+        this.mkGateClause(literal, first);
+        this.mkGateClause(literal, negate(second));
+        this.mkGateClause(negate(literal), negate(first), second);
         break;
       }
       case OP_EQ:
@@ -961,26 +969,35 @@ export abstract class Internalizer {
         const gate = op === OP_XOR ? negate(literal) : literal;
         const first = this.getLiteral(args[0]);
         const second = this.getLiteral(args[1]);
-        this.mkClause([negate(gate), first, negate(second)], null, CLS_AUX);
-        this.mkClause([negate(gate), negate(first), second], null, CLS_AUX);
-        this.mkClause([gate, first, second], null, CLS_AUX);
-        this.mkClause([gate, negate(first), negate(second)], null, CLS_AUX);
+        this.mkGateClause(negate(gate), first, negate(second));
+        this.mkGateClause(negate(gate), negate(first), second);
+        this.mkGateClause(gate, first, second);
+        this.mkGateClause(gate, negate(first), negate(second));
         break;
       }
       case OP_ITE: {
         const condition = this.getLiteral(args[0]);
         const thenLiteral = this.getLiteral(args[1]);
         const elseLiteral = this.getLiteral(args[2]);
-        this.mkClause([negate(literal), negate(condition), thenLiteral], null, CLS_AUX);
-        this.mkClause([negate(literal), condition, elseLiteral], null, CLS_AUX);
-        this.mkClause([literal, negate(condition), negate(thenLiteral)], null, CLS_AUX);
-        this.mkClause([literal, condition, negate(elseLiteral)], null, CLS_AUX);
+        this.mkGateClause(negate(literal), negate(condition), thenLiteral);
+        this.mkGateClause(negate(literal), condition, elseLiteral);
+        this.mkGateClause(literal, negate(condition), negate(thenLiteral));
+        this.mkGateClause(literal, condition, negate(elseLiteral));
         this.addIteRelWatches(expr);
         break;
       }
       default:
         break;
     }
+  }
+
+  // mk_gate_clause with two or three literals.
+  private mkGateClause(first: Literal, second: Literal, third?: Literal) {
+    const literals = this.gateLiterals;
+    shrink(literals, 0);
+    literals.push(first, second);
+    if (third !== undefined) literals.push(third);
+    this.mkClause(literals, null, CLS_AUX);
   }
 
   internalizeTerm(expr: number) {

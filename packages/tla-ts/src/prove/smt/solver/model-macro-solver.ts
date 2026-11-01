@@ -21,7 +21,7 @@ import {
 } from "./ast";
 import { FuncInterp, type ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
-import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
+import type { Rewriter } from "./rewriter";
 import { replaceFreeVars } from "./var-subst";
 
 // cond_macro: f(x_0, ..., x_n) = def whenever cond holds. A hint has no condition.
@@ -131,8 +131,13 @@ const isPolyHint = (manager: AstManager, poly: number, head: number, exception: 
 
 // quantifier_macro_info::collect_macro_candidates, with an empty forbidden set. Each candidate holds
 // a reference to its definition and condition, which releaseCondMacros releases. Like macro_util,
-// the expressions of each step live until the step returns.
-export const collectMacroCandidates = (manager: AstManager, quantifier: number) => {
+// the expressions of each step live until the step returns. The rewriter does macro_util's Boolean
+// and arithmetic rewriting, which keeps nothing between calls.
+export const collectMacroCandidates = (
+  manager: AstManager,
+  rewriter: Rewriter,
+  quantifier: number,
+) => {
   const data = manager.getQuantifier(quantifier);
   // qa: an existential quantifier becomes a universal one of the negated body until the candidates
   // are collected.
@@ -143,7 +148,7 @@ export const collectMacroCandidates = (manager: AstManager, quantifier: number) 
       );
   const candidates = manager.hasQuantifierFlags[manager.getQuantifier(qa).body]
     ? []
-    : collectCandidates(manager, qa);
+    : collectCandidates(manager, rewriter, qa);
   if (qa !== quantifier) manager.decRef(qa);
   return candidates;
 };
@@ -157,13 +162,12 @@ export const releaseCondMacros = (manager: AstManager, candidates: CondMacro[]) 
 };
 
 // macro_util::collect_macro_candidates.
-const collectCandidates = (manager: AstManager, quantifier: number) => {
+const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: number) => {
   const data = manager.getQuantifier(quantifier);
   const body = data.body;
   const candidates: CondMacro[] = [];
   // The expressions of a step without a reference live until the step returns.
   const scope = (step: () => void) => manager.withTemporaries(step, () => []);
-  const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   const mkNot = (expr: number) => rewriter.mkAppCore(OP_NOT, [expr], SORT_BOOL);
   const mkAnd = (args: number[]) =>
     args.length === 0

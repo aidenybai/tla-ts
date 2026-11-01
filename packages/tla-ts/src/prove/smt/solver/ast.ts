@@ -5,6 +5,7 @@ import { FlatLiterals } from "./flat-literals";
 import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
+import { shrink } from "./array";
 import type { ResourceLimit } from "./rlimit";
 
 export const KIND_APP = 0;
@@ -289,9 +290,11 @@ export class AstManager {
   private freeIds: number[] = [];
   private nextId = 1;
   private numLive = 0;
-  // The expressions created since the innermost withTemporaries began, which it holds like the
-  // expr_ref temporaries of a Z3 function.
-  private temporaries: number[] | null = null;
+  // The expressions that the open withTemporaries hold, like the expr_ref temporaries of Z3
+  // functions on the C++ stack: the innermost holds those from temporariesMark on, and -1 marks that
+  // no temporaries are held.
+  private temporaries: number[] = [];
+  private temporariesMark = -1;
   // m_small_ints and m_small_reals: the numerals below MAX_SMALL_NUM_TO_CACHE, which are held.
   private smallInts: number[] = [];
   private smallReals: number[] = [];
@@ -487,28 +490,42 @@ export class AstManager {
     body: () => T,
     getKept: (result: T) => number[] = (result) => [result as number],
   ) {
-    const outer = this.temporaries;
-    const temporaries: number[] = [];
-    this.temporaries = temporaries;
+    const outer = this.beginTemporaries();
     const result = body();
-    this.temporaries = outer;
     for (const kept of getKept(result)) this.incRef(kept);
-    for (let index = temporaries.length - 1; index >= 0; index--) this.decRef(temporaries[index]);
+    this.endTemporaries(outer);
     return result;
+  }
+
+  // withTemporaries without closures, for the hot paths: the caller passes what beginTemporaries
+  // returns to endTemporaries, and takes its references before it.
+  beginTemporaries() {
+    const outer = this.temporariesMark;
+    this.temporariesMark = this.temporaries.length;
+    return outer;
+  }
+
+  endTemporaries(outer: number) {
+    const temporaries = this.temporaries;
+    const mark = this.temporariesMark;
+    this.temporariesMark = outer;
+    for (let index = temporaries.length - 1; index >= mark; index--)
+      this.decRef(temporaries[index]);
+    shrink(temporaries, mark);
   }
 
   // Runs body without temporaries, for code whose references are counted explicitly.
   withoutTemporaries<T>(body: () => T) {
-    const outer = this.temporaries;
-    this.temporaries = null;
+    const outer = this.temporariesMark;
+    this.temporariesMark = -1;
     const result = body();
-    this.temporaries = outer;
+    this.temporariesMark = outer;
     return result;
   }
 
   // Hands a reference the caller owns to the innermost withTemporaries, or releases it now.
   releaseLater(expr: number) {
-    if (this.temporaries === null) this.decRef(expr);
+    if (this.temporariesMark === -1) this.decRef(expr);
     else this.temporaries.push(expr);
   }
 
@@ -551,7 +568,7 @@ export class AstManager {
     this.refCounts[expr] = 0;
     for (const child of this.getChildren(expr)) this.incRef(this.revive(child));
     if (this.kinds[expr] === KIND_APP) this.holdDecl(expr);
-    if (this.temporaries === null) return;
+    if (this.temporariesMark === -1) return;
     this.incRef(expr);
     this.temporaries.push(expr);
   }
@@ -584,7 +601,8 @@ export class AstManager {
   // The hash of a func_decl node: its name, range, info and domain.
   private getFuncDeclHash(name: SmtSymbol, domain: number[], range: number, infoHash: number) {
     return astArrayHash(
-      domain.map((sort) => this.sortHashes[sort]),
+      domain,
+      this.sortHashes,
       combineHash(combineHash(getSymbolHash(name), this.sortHashes[range]), infoHash),
     );
   }
@@ -747,10 +765,7 @@ export class AstManager {
       args,
       sort,
       0,
-      astArrayHash(
-        args.map((arg) => this.hashes[arg]),
-        declHash,
-      ),
+      astArrayHash(args, this.hashes, declHash),
     );
     this.insertApp(hash, id);
     this.registerNode(id);
@@ -871,10 +886,7 @@ export class AstManager {
       SORT_BOOL,
       0,
       mkMix(
-        astArrayHash(
-          data.sorts.map((sort) => this.sortHashes[sort]),
-          data.isForall ? 31 : 19,
-        ),
+        astArrayHash(data.sorts, this.sortHashes, data.isForall ? 31 : 19),
         data.patterns.length,
         this.hashes[data.body],
       ),

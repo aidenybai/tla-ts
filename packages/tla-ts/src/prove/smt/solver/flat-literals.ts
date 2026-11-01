@@ -3,11 +3,12 @@
 // and expr_fast_mark2 of mk_nflat_and_core, it marks the literals and the negated atoms it holds,
 // here with a stamp for each use, so it finds a complementary pair without creating each negation.
 // Its manager owns the one instance that its rewriters share: a list is filled and read before any
-// other starts.
+// other starts, so like Z3's ptr_buffer it reuses one array.
+import { shrink } from "./array";
 import type { AstManager } from "./ast";
 
 export class FlatLiterals {
-  list: number[] = [];
+  readonly list: number[] = [];
   private stamp = 0;
   private literalStamps = new Int32Array(1024);
   private negatedAtomStamps = new Int32Array(1024);
@@ -16,7 +17,7 @@ export class FlatLiterals {
 
   // Starts a new, empty list.
   clear() {
-    this.list = [];
+    shrink(this.list, 0);
     this.stamp++;
   }
 
