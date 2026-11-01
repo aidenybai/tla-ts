@@ -25,6 +25,7 @@ import {
   toKeepLazyContext,
   getDefinition,
   getContextElements,
+  getEntryEvaluator,
   getReevaluatedDefinitions,
   lookupScope,
   resolveApplyOperator,
@@ -32,6 +33,7 @@ import {
   toUnspecifiedSubscriptError,
   type Context,
   type Environment,
+  type Evaluator,
   type Scope,
   type State,
 } from "./evaluate";
@@ -129,11 +131,23 @@ const getIfConditionMessage = (run: Run, value: Value, expression: Expression) =
   return `In computing ${getComputation(run)}, a non-boolean expression (${kind}) was used as the condition of an IF.${run.isInit ? "\n" : ""}${range}`;
 };
 
-const holds = (run: Run, expression: Expression, context: Context, isWalked = true) => {
-  const value = evaluate(expression, context);
+const holds = (run: Run, expression: Expression, context: Context, isWalked = true) =>
+  holdsValue(run, expression, evaluate(expression, context), isWalked);
+
+const holdsValue = (run: Run, expression: Expression, value: Value, isWalked = true) => {
   if (typeof value === "boolean") return value;
   throw createRunError(run, getNonBooleanMessage(run, value, expression, isWalked));
 };
+
+const evaluateCached = (
+  evaluators: (Evaluator | undefined)[],
+  index: number,
+  expression: Expression,
+  context: Context,
+) =>
+  context.environment.callStack
+    ? evaluate(expression, context)
+    : (evaluators[index] ??= getEntryEvaluator(expression, context.environment))(context);
 
 const isAssignmentOperator = (operator: string) =>
   operator === "=" || operator === "\\in" || operator === "\\subseteq";
@@ -357,6 +371,8 @@ const compileConjunction = (
   isInit: boolean,
 ): Runner => {
   const conjuncts = operands.map((operand) => toConjunct(operand, environment, isInit));
+  const evaluators: (Evaluator | undefined)[] = [];
+  const restEvaluators: (Evaluator | undefined)[] = [];
   const runFrom = (
     start: number,
     run: Run,
@@ -372,7 +388,9 @@ const compileConjunction = (
       if (index > 0 && isShortcut && isComplete(current)) {
         context ??= getContext(run, scope, current);
         for (let rest = index; rest < conjuncts.length; rest++) {
-          if (!holds(run, conjuncts[rest].expression, context, false)) return;
+          const expression = conjuncts[rest].expression;
+          const value = evaluateCached(restEvaluators, rest, expression, context);
+          if (!holdsValue(run, expression, value, false)) return;
         }
         onComplete(current, action);
         return;
@@ -380,12 +398,13 @@ const compileConjunction = (
       const conjunct = conjuncts[index];
       if (conjunct.kind === "Guard") {
         context ??= getContext(run, scope, current);
-        if (!holds(run, conjunct.expression, context)) return;
+        const value = evaluateCached(evaluators, index, conjunct.expression, context);
+        if (!holdsValue(run, conjunct.expression, value)) return;
         continue;
       }
       if (conjunct.kind === "Assign") {
         context ??= getContext(run, scope, current);
-        const value = evaluate(conjunct.value, context);
+        const value = evaluateCached(evaluators, index, conjunct.value, context);
         const assigned = current[conjunct.index];
         if (assigned === undefined) {
           current = assign(current, conjunct.index, value);

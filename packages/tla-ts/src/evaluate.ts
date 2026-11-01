@@ -54,6 +54,7 @@ import {
   markLambdaFunction,
   isReducibleSet,
   isSetValue,
+  isSettledValue,
   MAXIMUM_INTEGER,
   MINIMUM_INTEGER,
   toFiniteFunction,
@@ -113,6 +114,9 @@ export interface Thunk {
   state: State | undefined;
   next: State | undefined;
   cache: Value | undefined;
+  // Whether the expression may build a set that streams until TLC caches it, so that the thunk
+  // caches only a settled value.
+  isStreamed: boolean;
 }
 
 type Binding = { kind: "Value"; value: Value } | Thunk | { kind: "Operator"; operator: Operator };
@@ -847,7 +851,7 @@ const forceThunk = (thunk: Thunk, context: Context) => {
   const isSameState = thunk.state === context.state && thunk.next === context.next;
   if (isSameState && thunk.cache !== undefined) return thunk.cache;
   const value = evaluate(thunk.expression, withScope(context, thunk.scope));
-  if (isSameState) thunk.cache = value;
+  if (isSameState && (!thunk.isStreamed || isSettledValue(value))) thunk.cache = value;
   return value;
 };
 
@@ -968,6 +972,7 @@ const createThunk = (expression: Expression, context: Context): Thunk => ({
   state: context.state,
   next: context.next,
   cache: undefined,
+  isStreamed: false,
 });
 
 export const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
@@ -1027,6 +1032,7 @@ export const bindOperatorArguments = (
   closure: Closure,
   args: Expression[],
   context: Context,
+  binders?: ArgumentBinder[],
 ): Scope | undefined => {
   if (args.length !== closure.params.length) {
     throw new TlaEvaluationError(
@@ -1039,18 +1045,36 @@ export const bindOperatorArguments = (
     const binding: Binding =
       param.arity > 0
         ? { kind: "Operator", operator: evaluateOperatorArgument(args[index], context) }
-        : getArgumentBinder(args[index], context.environment)(context);
+        : (binders?.[index] ?? getArgumentBinder(args[index], context.environment))(context);
     scope = { name: param.name, binding, parent: scope };
   }
   return scope;
 };
 
-const callOperator = (operator: Operator, args: Expression[], context: Context) => {
+// The body a call site last called and its evaluator, as a site mostly calls one closure.
+interface CalledBody {
+  body: Expression;
+  evaluator: Evaluator;
+}
+
+const callOperator = (
+  operator: Operator,
+  args: Expression[],
+  context: Context,
+  called: { entry: CalledBody | undefined },
+  binders: ArgumentBinder[],
+) => {
   if (operator.kind === "Closure") {
-    return evaluate(
-      operator.body,
-      withScope(context, bindOperatorArguments(operator, args, context)),
-    );
+    const bodyContext = withScope(context, bindOperatorArguments(operator, args, context, binders));
+    if (context.environment.callStack) return evaluate(operator.body, bodyContext);
+    const entry =
+      called.entry?.body === operator.body
+        ? called.entry
+        : (called.entry = {
+            body: operator.body,
+            evaluator: getEntryEvaluator(operator.body, context.environment),
+          });
+    return entry.evaluator(bodyContext);
   }
   if (operator.kind === "Operator") return operator.call(args.map((arg) => evaluate(arg, context)));
   if (operator.isLazy) return operator.evaluate(getLazyArguments(args, context), context);
@@ -1064,10 +1088,16 @@ const callOperator = (operator: Operator, args: Expression[], context: Context) 
   );
 };
 
+// The LET definitions that a reference evaluates again, and those that cache only a settled value.
+interface ReevaluatedDefinitions {
+  impure: ReadonlySet<Definition>;
+  streamed: ReadonlySet<Definition>;
+}
+
 export const bindDefinitions = (
   definitions: Definition[],
   context: Context,
-  reevaluated?: ReadonlySet<Definition>,
+  reevaluated?: ReevaluatedDefinitions,
 ): Scope | undefined =>
   definitions.reduce<Scope | undefined>((scope, definition) => {
     const node: Scope = {
@@ -1089,10 +1119,11 @@ export const bindDefinitions = (
         state: context.state,
         next: context.next,
         cache: undefined,
+        isStreamed: false,
       };
       return node;
     }
-    if (definition.params.length > 0 || reevaluated?.has(definition)) {
+    if (definition.params.length > 0 || reevaluated?.impure.has(definition)) {
       node.binding = {
         kind: "Operator",
         operator: {
@@ -1112,6 +1143,7 @@ export const bindDefinitions = (
       state: context.state,
       next: context.next,
       cache: undefined,
+      isStreamed: reevaluated?.streamed.has(definition) ?? false,
     };
     return node;
   }, context.scope);
@@ -1228,14 +1260,15 @@ const STREAMED_SET: Impurity = {
 // TLC's next-state generator does not bind LET definitions to values, so each reference to one
 // evaluates it again: one that calls an impure builtin repeats its effects, and a set one builds
 // with UNION or \cup starts out uncached.
-export const getReevaluatedDefinitions = (definitions: Definition[], environment: Environment) =>
-  new Set(
-    definitions.filter(
-      (definition) =>
-        isImpureDefinition(definition, environment) ||
-        isImpureDefinition(definition, environment, STREAMED_SET),
-    ),
-  );
+export const getReevaluatedDefinitions = (
+  definitions: Definition[],
+  environment: Environment,
+): ReevaluatedDefinitions => ({
+  impure: new Set(definitions.filter((definition) => isImpureDefinition(definition, environment))),
+  streamed: new Set(
+    definitions.filter((definition) => isImpureDefinition(definition, environment, STREAMED_SET)),
+  ),
+});
 
 export const isImpure = (environment: Environment) =>
   [...environment.definitions.values()].some((definition) =>
@@ -1519,7 +1552,7 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
 
 const entryEvaluators = new WeakMap<Expression, Evaluator>();
 
-const getEntryEvaluator = (expression: Expression, environment: Environment) => {
+export const getEntryEvaluator = (expression: Expression, environment: Environment) => {
   if (environment.callStack) return getEvaluator(expression, environment);
   const cached = entryEvaluators.get(expression);
   if (cached) return cached;
@@ -1986,9 +2019,11 @@ const compileApply = (
       );
     };
   }
+  const called = { entry: undefined as CalledBody | undefined };
+  const binders = args.map((arg) => getArgumentBinder(arg, environment));
   return (context) => {
     const operator = resolveOperator(expression.operator, context);
-    if (operator) return callOperator(operator, args, context);
+    if (operator) return callOperator(operator, args, context, called, binders);
     const definition = environment.definitions.get(expression.operator);
     if (definition?.kind === "Function") {
       throw new TlaEvaluationError(`${expression.operator} is a function; apply it with brackets`);

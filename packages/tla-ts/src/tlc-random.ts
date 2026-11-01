@@ -182,24 +182,14 @@ const createShiftTable = (length: number) => {
 
 // Extending a fingerprint by a byte is linear over GF(2), so extending it by a value's bytes
 // XORs the value's own fingerprint from zero into the fingerprint shifted by their length.
-// The fingerprinter caches each distinct variable value for one pass over the stored states. It
-// reads a state's variables in `order` and writes each fingerprint's low and high words into
-// `words`, an Int32Array over a little-endian BigInt64Array.
+// The fingerprinter caches each distinct function or set it meets, nested ones included, for one
+// pass over the stored states, as states share most of their values. It reads a state's variables
+// in `order` and writes each fingerprint's low and high words into `words`, an Int32Array over a
+// little-endian BigInt64Array.
 export const createTlcFingerprinter = (order: number[], words: Int32Array) => {
   const shiftTables = new Map<number, Int32Array>();
   const indices = new Map<Value, number>();
   const contributions: number[] = [];
-  const getContribution = (value: Value) => {
-    const cached = indices.get(value);
-    if (cached !== undefined) return cached;
-    const length = getFingerprintLength(value);
-    high = 0;
-    low = 0;
-    extendValue(value);
-    indices.set(value, contributions.length);
-    contributions.push(length, high, low);
-    return contributions.length - 3;
-  };
   const getShiftTable = (length: number) => {
     const cached = shiftTables.get(length);
     if (cached) return cached;
@@ -207,29 +197,62 @@ export const createTlcFingerprinter = (order: number[], words: Int32Array) => {
     shiftTables.set(length, table);
     return table;
   };
-  return (state: Value[], position: number) => {
-    const outer = { high, low };
-    const fingerprint = { high: INITIAL_HIGH, low: INITIAL_LOW };
-    for (const index of order) {
-      const contribution = getContribution(state[index]);
-      const table = getShiftTable(contributions[contribution]);
-      const extended = {
-        high: contributions[contribution + 1],
-        low: contributions[contribution + 2],
-      };
-      for (let position = 0; position < 8; position++) {
-        const word = position < 4 ? fingerprint.low : fingerprint.high;
-        const entry = (position * 256 + ((word >>> ((position & 3) * 8)) & 0xff)) * 2;
-        extended.high ^= table[entry];
-        extended.low ^= table[entry + 1];
-      }
-      fingerprint.high = extended.high;
-      fingerprint.low = extended.low;
+  // Extends the fingerprint by a value's bytes and returns how many there are.
+  const extendElement = (value: Value): number => {
+    if (typeof value !== "object" || isModelValue(value)) {
+      extendValue(value);
+      return getFingerprintLength(value);
     }
+    const contribution = getContribution(value);
+    const shifted = { high, low };
+    const table = getShiftTable(contributions[contribution]);
+    high = contributions[contribution + 1];
+    low = contributions[contribution + 2];
+    for (let position = 0; position < 8; position++) {
+      const word = position < 4 ? shifted.low : shifted.high;
+      const entry = (position * 256 + ((word >>> ((position & 3) * 8)) & 0xff)) * 2;
+      high ^= table[entry];
+      low ^= table[entry + 1];
+    }
+    return contributions[contribution];
+  };
+  const getContribution = (value: Value) => {
+    const cached = indices.get(value);
+    if (cached !== undefined) return cached;
+    const outer = { high, low };
+    high = 0;
+    low = 0;
+    const length = { value: 5 };
+    if (isFunctionValue(value)) {
+      const functionValue = toFiniteFunction(value);
+      extendByte(FCN_RCD_VALUE);
+      extendInt(functionValue.domain.length);
+      for (let index = 0; index < functionValue.domain.length; index++) {
+        length.value += extendElement(functionValue.domain[index]);
+        length.value += extendElement(functionValue.range[index]);
+      }
+    } else {
+      const elements = toFiniteSet(value).elements;
+      extendByte(SET_ENUM_VALUE);
+      extendInt(elements.length);
+      for (const element of elements) length.value += extendElement(element);
+    }
+    const contribution = contributions.length;
+    indices.set(value, contribution);
+    contributions.push(length.value, high, low);
     high = outer.high;
     low = outer.low;
-    words[2 * position] = fingerprint.low;
-    words[2 * position + 1] = fingerprint.high;
+    return contribution;
+  };
+  return (state: Value[], position: number) => {
+    const outer = { high, low };
+    high = INITIAL_HIGH;
+    low = INITIAL_LOW;
+    for (const index of order) extendElement(state[index]);
+    words[2 * position] = low;
+    words[2 * position + 1] = high;
+    high = outer.high;
+    low = outer.low;
   };
 };
 

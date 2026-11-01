@@ -177,7 +177,7 @@ const generateQuantifier = (
   }, test);
   const parameters = outer.map((local) => `, ${local}`).join("");
   generator.helpers.push(
-    `function ${name}(context, state, next${parameters}) { let primed; ${declarations.join(" ")} ${loops} return ${isForall}; }`,
+    `function ${name}(context, state, next${parameters}) { let primed; let applied; ${declarations.join(" ")} ${loops} return ${isForall}; }`,
   );
   return `${name}(${frame.context}, ${frame.state}, ${frame.isPrimed ? "undefined" : frame.next}${parameters})`;
 };
@@ -247,6 +247,23 @@ const isConstructionFree = (
   }
 };
 
+// Whether the generated code evaluates an expression only in the context its frame names. A primed
+// expression doesn't, since it shares the generated function's primed context.
+const isReadOnly = (expression: Expression): boolean => {
+  switch (expression.kind) {
+    case "Identifier":
+    case "Number":
+    case "String":
+      return true;
+    case "FieldAccess":
+      return isReadOnly(expression.record);
+    case "FunctionApplication":
+      return [expression.function, ...expression.args].every(isReadOnly);
+    default:
+      return false;
+  }
+};
+
 const generateExpression = (generator: Generator, expression: Expression, frame: Frame): string => {
   const generate = (node: Expression, nodeFrame = frame) =>
     generateExpression(generator, node, nodeFrame);
@@ -287,17 +304,19 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "FunctionApplication": {
       keepLazy(expression.function);
       // The interpreter evaluates a function that may construct one with EvalControl.KeepLazy.
+      const keepLazyFrame = { ...frame, context: `keepLazyContext(${frame.context})` };
       const evaluatedFunction = isConstructionFree(
         expression.function,
         frame,
         generator.environment,
       )
         ? generate(expression.function)
-        : generateDelegate(generator, expression.function, {
-            ...frame,
-            context: `keepLazyContext(${frame.context})`,
-          });
-      const functionCode = `expectFunction(${evaluatedFunction}, ${addReference(generator, expression)})`;
+        : isReadOnly(expression.function)
+          ? generate(expression.function, keepLazyFrame)
+          : generateDelegate(generator, expression.function, keepLazyFrame);
+      // Tool#evalAppl checks that it applies a function before it evaluates the argument. The check
+      // is written out, as calling expectFunction for each application costs more.
+      const functionCode = `(applied = ${evaluatedFunction}, typeof applied === "object" && (applied.kind === "Function" || applied.kind === "LazyFunction") ? applied : expectFunction(applied, ${addReference(generator, expression)}))`;
       const describeMissing = getMissingArgumentDescriber(generator.environment.runtime.version);
       const error = describeMissing ? `, ${addReference(generator, describeMissing)}` : "";
       if (expression.args.length === 1)
@@ -370,7 +389,7 @@ export const generateEvaluator = (
   };
   const body = generateExpression(generator, expression, frame);
   const referenceNames = generator.references.map((_, index) => `reference${index}`);
-  const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed; return ${body}; };`;
+  const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed; let applied; return ${body}; };`;
   runtime.value ??= createRuntime();
   const helpers = runtime.value;
   const helperNames = Object.keys(helpers);
