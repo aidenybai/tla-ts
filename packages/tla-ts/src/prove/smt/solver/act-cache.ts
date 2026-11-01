@@ -3,6 +3,7 @@
 // key and value, and keeps at most maxUnused entries that were never looked up. Z3 releases the
 // entries in the order of its chained hash table, so the table is ported cell for cell.
 import type { AstManager } from "./ast";
+import { shrink } from "./array";
 
 const INIT_SLOTS = 8;
 const INIT_CELLAR = 2;
@@ -164,8 +165,8 @@ export class ActCache {
       }
     }
     if (this.qhead === this.queueKeys.length) {
-      this.queueKeys = [];
-      this.queueOffsets = [];
+      shrink(this.queueKeys, 0);
+      shrink(this.queueOffsets, 0);
       this.qhead = 0;
     } else if (this.qhead > this.maxUnused) {
       this.queueKeys = this.queueKeys.slice(this.qhead);
@@ -256,8 +257,8 @@ export class ActCache {
       this.retireTable();
       this.initTable(INIT_SLOTS, INIT_CELLAR);
     }
-    this.queueKeys = [];
-    this.queueOffsets = [];
+    shrink(this.queueKeys, 0);
+    shrink(this.queueOffsets, 0);
     this.qhead = 0;
     this.numUnused = 0;
   }
