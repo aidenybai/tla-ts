@@ -31,7 +31,9 @@ import { shrink } from "./array";
 export type OnMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) => void;
 
 // backtrack_point: the instruction to resume, the generation to restore, the term a BIND is at,
-// and the terms a CONTINUE goes through.
+// and the terms a CONTINUE goes through, the first end of candidates. depthVector holds a
+// CONTINUE's terms when they are the parents of a joint, and is reused by the next point at the same
+// depth, like Z3's vector pool.
 interface BacktrackPoint {
   instr: Instruction;
   oldMaxGeneration: number;
@@ -39,6 +41,7 @@ interface BacktrackPoint {
   candidates: Enode[];
   index: number;
   end: number;
+  depthVector: Enode[];
 }
 
 // GET_CGR1 to GET_CGR6 filter their arguments by the parent labels, GET_CGRN does not.
@@ -49,6 +52,7 @@ export class Interpreter {
   // m_bindings: the terms a YIELD reports, which the match callback does not keep.
   private bindings: Enode[] = [];
   private backtrackStack: BacktrackPoint[] = [];
+  private spareVector: Enode[] = [];
   private top = 0;
   // m_max_generation: the largest generation of a term the match went through.
   private maxGeneration = 0;
@@ -62,12 +66,25 @@ export class Interpreter {
     this.maxGeneration = Math.max(this.maxGeneration, this.context.getGeneration(node));
   }
 
+  // The point above the top, which pushPoint pushes next.
+  private getNextPoint(instr: Instruction, oldMaxGeneration: number) {
+    const point = this.backtrackStack[this.top];
+    if (point !== undefined) return point;
+    const created: BacktrackPoint = {
+      instr,
+      oldMaxGeneration,
+      curr: null,
+      candidates: [],
+      index: 0,
+      end: 0,
+      depthVector: [],
+    };
+    this.backtrackStack.push(created);
+    return created;
+  }
+
   private pushPoint(instr: Instruction, oldMaxGeneration: number) {
-    let point = this.backtrackStack[this.top];
-    if (point === undefined) {
-      point = { instr, oldMaxGeneration, curr: null, candidates: [], index: 0, end: 0 };
-      this.backtrackStack.push(point);
-    }
+    const point = this.getNextPoint(instr, oldMaxGeneration);
     point.instr = instr;
     point.oldMaxGeneration = oldMaxGeneration;
     this.top++;
@@ -124,36 +141,53 @@ export class Interpreter {
     );
   }
 
-  // mk_depth1_vector: the relevant decl-parents of the class of node where it is argument argIndex.
-  // init_continue drops a vector of limit terms or more, so this stops at limit and returns null.
-  private getDepth1Vector(node: Enode, decl: number, argIndex: number, limit: number) {
+  // mk_depth1_vector: the relevant decl-parents of the class of node where it is argument argIndex,
+  // written to the start of vector, and their number. init_continue drops a vector of limit terms or
+  // more, so this stops at limit and returns -1.
+  private collectDepth1(
+    node: Enode,
+    decl: number,
+    argIndex: number,
+    limit: number,
+    vector: Enode[],
+  ) {
     const root = node.root;
-    const result: Enode[] = [];
+    let count = 0;
     for (const parent of root.parents) {
       if (!this.isRelevantParent(parent, decl, argIndex, root)) continue;
-      if (result.length + 1 >= limit) return null;
-      result.push(parent);
+      if (count + 1 >= limit) return -1;
+      if (count < vector.length) vector[count] = parent;
+      else vector.push(parent);
+      count++;
     }
-    return result;
+    return count;
   }
 
-  // mk_depth2_vector, which stops at limit like getDepth1Vector.
-  private getDepth2Vector(joint: Joint, decl: number, argIndex: number, limit: number) {
+  // mk_depth2_vector, which stops at limit like collectDepth1.
+  private collectDepth2(
+    joint: Joint,
+    decl: number,
+    argIndex: number,
+    limit: number,
+    vector: Enode[],
+  ) {
     const node = this.registers[joint.reg];
-    if (node === null || node === undefined) return null;
+    if (node === null || node === undefined) return -1;
     const root = node.root;
-    if (root.parents.length === 0) return null;
-    const result: Enode[] = [];
+    if (root.parents.length === 0) return -1;
+    let count = 0;
     for (const parent of root.parents) {
       if (!this.isRelevantParent(parent, joint.decl, joint.argPos, root)) continue;
       const parentRoot = parent.root;
       for (const grandparent of parentRoot.parents) {
         if (!this.isRelevantParent(grandparent, decl, argIndex, parentRoot)) continue;
-        if (result.length + 1 >= limit) return null;
-        result.push(grandparent);
+        if (count + 1 >= limit) return -1;
+        if (count < vector.length) vector[count] = grandparent;
+        else vector.push(grandparent);
+        count++;
       }
     }
-    return result;
+    return count;
   }
 
   // SET_VAR's filter: whether the class of each input register has a parent with the label.
@@ -183,28 +217,29 @@ export class Interpreter {
       if ((root.plbls & instr.lblLow) === 0 && (root.plblsHigh & instr.lblHigh) === 0) return null;
       if (root.parents.length === 0) return null;
     }
-    let best: Enode[] | null = null;
+    // Each joint's vector goes into the spare vector, which trades places with the next point's
+    // vector when it is the smallest so far.
+    const nextPoint = this.getNextPoint(instr, this.maxGeneration);
+    let bestCount = -1;
     for (let argIndex = 0; argIndex < instr.joints.length; argIndex++) {
       const joint = instr.joints[argIndex];
       const node = this.getJointNode(joint);
-      const limit: number = best === null ? all.length : Math.min(all.length, best.length);
-      const current =
+      const limit = bestCount === -1 ? all.length : Math.min(all.length, bestCount);
+      const spare = this.spareVector;
+      const count =
         node !== null
-          ? this.getDepth1Vector(node, label, argIndex, limit)
+          ? this.collectDepth1(node, label, argIndex, limit, spare)
           : joint.kind === JOINT_NESTED
-            ? this.getDepth2Vector(joint, label, argIndex, limit)
-            : null;
-      if (
-        current === null ||
-        current.length >= all.length ||
-        (best !== null && current.length >= best.length)
-      )
-        continue;
-      if (current.length === 0) return null;
-      best = current;
+            ? this.collectDepth2(joint, label, argIndex, limit, spare)
+            : -1;
+      if (count === -1 || count >= all.length || (bestCount !== -1 && count >= bestCount)) continue;
+      if (count === 0) return null;
+      this.spareVector = nextPoint.depthVector;
+      nextPoint.depthVector = spare;
+      bestCount = count;
     }
-    const candidates = best ?? all;
-    const end = candidates.length;
+    const candidates = bestCount === -1 ? all : nextPoint.depthVector;
+    const end = bestCount === -1 ? all.length : bestCount;
     let index = 0;
     while (index < end) {
       const node = candidates[index];
@@ -386,15 +421,21 @@ export class Interpreter {
   }
 
   // execute: runs the tree against its candidates. A tree that filters its candidates runs each
-  // term once.
+  // term once, marking the terms it ran.
   execute(tree: CodeTree) {
     const context = this.context;
-    const seen = tree.isFilteringCandidates ? new Set<Enode>() : null;
-    for (const node of tree.candidates) {
-      if (seen?.has(node) || !node.isCgr()) continue;
-      if (context.checkCanceled() || !this.executeCore(tree, node)) return false;
-      seen?.add(node);
+    const candidates = tree.candidates;
+    const isFiltering = tree.isFilteringCandidates;
+    let isComplete = true;
+    for (const node of candidates) {
+      if ((isFiltering && node.isMarked) || !node.isCgr()) continue;
+      if (context.checkCanceled() || !this.executeCore(tree, node)) {
+        isComplete = false;
+        break;
+      }
+      if (isFiltering) node.isMarked = true;
     }
-    return true;
+    if (isFiltering) for (const node of candidates) node.isMarked = false;
+    return isComplete;
   }
 }
