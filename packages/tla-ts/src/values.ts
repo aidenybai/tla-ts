@@ -625,9 +625,14 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
 // TLC prints and words errors about an equal function by its Java class, so a value can stand for
 // another in a state only if each function in it has the same class.
 const createSameValueCheck = (isClassSensitive: boolean) => {
-  const areSameValues = (left: Value[], right: Value[]) =>
-    left === right ||
-    (left.length === right.length && left.every((element, index) => isSame(element, right[index])));
+  const areSameValues = (left: Value[], right: Value[]) => {
+    if (left === right) return true;
+    if (left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index++) {
+      if (!isSame(left[index], right[index])) return false;
+    }
+    return true;
+  };
   const isSame = (left: Value, right: Value): boolean => {
     if (left === right) return true;
     if (typeof left !== "object" || typeof right !== "object") return false;
