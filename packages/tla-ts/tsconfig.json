@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "target": "ESNext",
+    "useDefineForClassFields": false,
     "module": "Preserve",
     "moduleResolution": "Bundler",
     "esModuleInterop": true,
