@@ -113,14 +113,11 @@ const PROVE_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...
   { flag: "-I <directory>", isRepeatable: true },
 ]);
 
-const BACKEND_COMMAND = defineCommand(
-  `tla-ts prove --backend <${PROVE_BACKENDS.join("|")}> {options} <Module.tla|glob>...`,
-  [
-    { flag: `--backend <${PROVE_BACKENDS.join("|")}>`, isRequired: true },
-    { flag: "-I <directory>", isRepeatable: true },
-    { flag: "-workers <count|auto>" },
-  ],
-);
+const BACKEND_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...", [
+  { flag: `--backend <${PROVE_BACKENDS.join("|")}>`, isRequired: true },
+  { flag: "-I <directory>", isRepeatable: true },
+  { flag: "-workers <count|auto>" },
+]);
 
 const XML_EXPORT_FLAGS = new Set(["-o", "-t", "-r", "-u"]);
 
