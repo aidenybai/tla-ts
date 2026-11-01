@@ -53,6 +53,8 @@ export class Interpreter {
   private bindings: Enode[] = [];
   private backtrackStack: BacktrackPoint[] = [];
   private spareVector: Enode[] = [];
+  // The arguments of IS_CGR and GET_CGR.
+  private argBuffer: Enode[] = [];
   private top = 0;
   // m_max_generation: the largest generation of a term the match went through.
   private maxGeneration = 0;
@@ -108,7 +110,8 @@ export class Interpreter {
   // exec_is_cgr: whether the class has a term with the label and the arguments of the registers.
   private isCgr(instr: Instruction) {
     const registers = this.registers;
-    const args: Enode[] = [];
+    const args = this.argBuffer;
+    shrink(args, 0);
     for (const reg of instr.regs) {
       const node = registers[reg];
       if (node === null || node === undefined) return false;
@@ -118,11 +121,10 @@ export class Interpreter {
     if (first === null || first === undefined) return false;
     let node = first;
     do {
-      if (
-        node.decl === instr.label &&
-        node.numArgs === instr.numArgs &&
-        args.every((arg, index) => node.getArg(index).root === arg)
-      ) {
+      let isMatch = node.decl === instr.label && node.numArgs === instr.numArgs;
+      for (let index = 0; index < args.length && isMatch; index++)
+        isMatch = node.getArg(index).root === args[index];
+      if (isMatch) {
         this.updateMaxGeneration(node);
         return true;
       }
@@ -396,10 +398,10 @@ export class Interpreter {
           break;
         case OP_GET_CGR: {
           if (instr.numArgs <= MAX_FILTERED_GET_CGR_ARGS && !this.hasParentLabels(instr)) break;
-          const found = context.findCongruent(
-            instr.label,
-            instr.regs.map((reg) => registers[reg] as Enode),
-          );
+          const args = this.argBuffer;
+          shrink(args, 0);
+          for (const reg of instr.regs) args.push(registers[reg] as Enode);
+          const found = context.findCongruent(instr.label, args);
           if (found === undefined || !context.isRelevant(found.owner)) break;
           this.updateMaxGeneration(found);
           registers[instr.oreg] = found;

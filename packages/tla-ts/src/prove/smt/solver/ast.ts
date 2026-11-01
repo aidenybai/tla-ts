@@ -539,6 +539,18 @@ export class AstManager {
     shrink(temporaries, mark);
   }
 
+  // withoutTemporaries without a closure, for the hot paths: the caller passes what
+  // suspendTemporaries returns to resumeTemporaries.
+  suspendTemporaries() {
+    const outer = this.temporariesMark;
+    this.temporariesMark = -1;
+    return outer;
+  }
+
+  resumeTemporaries(outer: number) {
+    this.temporariesMark = outer;
+  }
+
   // Runs body without temporaries, for code whose references are counted explicitly.
   withoutTemporaries<T>(body: () => T) {
     const outer = this.temporariesMark;
