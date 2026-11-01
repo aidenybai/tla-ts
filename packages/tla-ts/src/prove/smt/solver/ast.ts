@@ -229,25 +229,40 @@ interface SignatureDecl {
   refCount: number;
 }
 
+// A typed array of twice the length with the same contents.
+const grow = <
+  T extends Uint8Array<ArrayBuffer> | Int32Array<ArrayBuffer> | Uint32Array<ArrayBuffer>,
+>(
+  array: T,
+): T => {
+  const grown = new (array.constructor as new (length: number) => T)(2 * array.length);
+  grown.set(array);
+  return grown;
+};
+
 export class AstManager {
-  kinds: number[] = [];
+  // The tables of the expressions are typed arrays indexed by expression, which the collector does
+  // not scan. They have room for more expressions than numNodes and double when full, which
+  // replaces them, so a caller does not keep one across the creation of an expression.
+  private numNodes = 0;
+  kinds = new Uint8Array(1024);
   // The declaration of an application.
-  decls: number[] = [];
+  decls = new Int32Array(1024);
   // The arguments of every expression end to end: those of expr are argPool[argStarts[expr]] up to
   // argPool[argStarts[expr + 1]]. Variables and constants take an empty range and a quantifier
   // takes its body. Both grow by doubling, which replaces the arrays.
   private argPool = new Int32Array(1024);
   private argStarts = new Int32Array(1024);
-  sorts: number[] = [];
+  sorts = new Int32Array(1024);
   // The index of a variable or model value, or of a numeral's value in numeralValues.
-  values: number[] = [];
+  values = new Int32Array(1024);
   private numeralValues: Rational[] = [];
   // One more than the largest free de Bruijn index, so 0 means the expression is ground.
-  freeVarBounds: number[] = [];
-  hasQuantifierFlags: boolean[] = [];
-  depths: number[] = [];
+  freeVarBounds = new Int32Array(1024);
+  hasQuantifierFlags = new Uint8Array(1024);
+  depths = new Int32Array(1024);
   // Z3's hash of each expression, which orders Z3's hash tables.
-  hashes: number[] = [];
+  hashes = new Uint32Array(1024);
   quantifiers = new Map<number, QuantifierData>();
   // The marks that the rewriters of this manager share to flatten conjunctions and disjunctions.
   readonly flatLiterals = new FlatLiterals(this);
@@ -289,8 +304,8 @@ export class AstManager {
   // Z3's id of each expression, which orders Z3's sorts. Like Z3, the manager counts references and
   // gives the id of a deleted expression to the next expression it creates, so its ids follow
   // Z3's. A deleted expression stays in the tables with the id -1 until it is created again.
-  ids: number[] = [];
-  private refCounts: number[] = [];
+  ids = new Int32Array(1024);
+  private refCounts = new Int32Array(1024);
   private freeIds: number[] = [];
   private nextId = 1;
   private numLive = 0;
@@ -773,10 +788,22 @@ export class AstManager {
     value: number,
     hash: number,
   ) {
-    const id = this.kinds.length;
-    this.hashes.push(hash);
-    this.kinds.push(kind);
-    this.decls.push(decl);
+    const id = this.numNodes++;
+    if (id === this.kinds.length) {
+      this.kinds = grow(this.kinds);
+      this.decls = grow(this.decls);
+      this.sorts = grow(this.sorts);
+      this.values = grow(this.values);
+      this.freeVarBounds = grow(this.freeVarBounds);
+      this.hasQuantifierFlags = grow(this.hasQuantifierFlags);
+      this.depths = grow(this.depths);
+      this.hashes = grow(this.hashes);
+      this.ids = grow(this.ids);
+      this.refCounts = grow(this.refCounts);
+    }
+    this.hashes[id] = hash;
+    this.kinds[id] = kind;
+    this.decls[id] = decl;
     // Like Z3, a node keeps its own copy of the arguments, so callers may reuse their arrays.
     const start = this.argStarts[id];
     const end = start + args.length;
@@ -792,8 +819,8 @@ export class AstManager {
       this.argStarts = starts;
     }
     this.argStarts[id + 1] = end;
-    this.sorts.push(sort);
-    this.values.push(value);
+    this.sorts[id] = sort;
+    this.values[id] = value;
     let freeVarBound = kind === KIND_VAR ? value + 1 : 0;
     let hasQuantifier = kind === KIND_QUANTIFIER;
     let depth = 1;
@@ -803,9 +830,9 @@ export class AstManager {
       if (this.hasQuantifierFlags[arg]) hasQuantifier = true;
       if (this.depths[arg] + 1 > depth) depth = this.depths[arg] + 1;
     }
-    this.freeVarBounds.push(freeVarBound);
-    this.hasQuantifierFlags.push(hasQuantifier);
-    this.depths.push(depth);
+    this.freeVarBounds[id] = freeVarBound;
+    this.hasQuantifierFlags[id] = hasQuantifier ? 1 : 0;
+    this.depths[id] = depth;
     return id;
   }
 

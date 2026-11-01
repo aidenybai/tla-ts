@@ -139,7 +139,7 @@ export const getCompositeHash = (childHashes: number[], kindHash = 17) => {
 
 // ast_array_hash: the hash of an AST from the hashes of its children, each looked up in hashes like
 // Z3's get_hash.
-export const astArrayHash = (items: number[], hashes: number[], initValue: number) => {
+export const astArrayHash = (items: number[], hashes: ArrayLike<number>, initValue: number) => {
   const count = items.length;
   switch (count) {
     case 0:
