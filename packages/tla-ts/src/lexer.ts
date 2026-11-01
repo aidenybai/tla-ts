@@ -12,9 +12,11 @@ type TokenKind =
   | "ModuleEnd"
   | "End";
 
+// spelling holds the text of an operator written as a synonym, such as (+) for \oplus.
 export interface Token {
   kind: TokenKind;
   text: string;
+  spelling?: string;
   line: number;
   column: number;
   endColumn: number;
@@ -371,9 +373,16 @@ export const tokenize = (source: string): Token[] => {
     }
     return getWidthAfter(scan.width, source[cursor.index]);
   };
-  const pushToken = (kind: TokenKind, text: string, length: number) => {
+  const pushToken = (kind: TokenKind, text: string, length: number, spelling?: string) => {
     const column = getColumn();
-    tokens.push({ kind, text, line: cursor.line, column, endColumn: column + length - 1 });
+    tokens.push({
+      kind,
+      text,
+      spelling,
+      line: cursor.line,
+      column,
+      endColumn: column + length - 1,
+    });
     cursor.index += length;
   };
   const advanceOver = (length: number) => {
@@ -508,7 +517,13 @@ export const tokenize = (source: string): Token[] => {
     }
     const operator = matchOperator(source, cursor.index);
     if (operator) {
-      pushToken("Operator", operator.text, operator.length);
+      const spelling = source.slice(cursor.index, cursor.index + operator.length);
+      pushToken(
+        "Operator",
+        operator.text,
+        operator.length,
+        spelling === operator.text ? undefined : spelling,
+      );
       continue;
     }
     throw createError(`Unexpected character ${JSON.stringify(character)}`);

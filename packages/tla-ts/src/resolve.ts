@@ -738,20 +738,21 @@ const getSymbolArity = (
   if (isSelected) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
-  const range = formatRange(getNameRange(location, name === "-." ? "-" : name));
+  const spelling = (expression.kind === "Identifier" ? undefined : expression.spelling) ?? name;
+  const range = formatRange(getNameRange(location, spelling === "-." ? "-" : spelling));
   if (!isOperatorSymbol(name)) {
     unit.errors.push({ location: range, message: `Unknown operator: \`${name}'.` });
     return undefined;
   }
   unit.errors.push({
     location: range,
-    message: `Could not find declaration or definition of symbol '${name}'.`,
+    message: `Could not find declaration or definition of symbol '${spelling}'.`,
   });
   const fixity = getFixity(expression);
   if (fixity && location.range) {
     unit.errors.push({
       location: formatRange(location.range),
-      message: `Couldn't resolve ${fixity} operator symbol \`${name}'.`,
+      message: `Couldn't resolve ${fixity} operator symbol \`${spelling}'.`,
     });
   }
   return undefined;
