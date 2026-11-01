@@ -358,13 +358,22 @@ class RewriterEngine extends RewriterCore {
 
   // set_inv_bindings: (:var i) becomes bindings[n - 1 - i], and -1 keeps it.
   setInvBindings(bindings: number[]) {
-    this.bindings = [...bindings];
-    this.shifts = bindings.map(() => bindings.length);
+    shrink(this.bindings, 0);
+    shrink(this.shifts, 0);
+    for (const binding of bindings) {
+      this.bindings.push(binding);
+      this.shifts.push(bindings.length);
+    }
   }
 
   // set_bindings: (:var i) becomes bindings[i].
   setBindings(bindings: number[]) {
-    this.setInvBindings([...bindings].reverse());
+    shrink(this.bindings, 0);
+    shrink(this.shifts, 0);
+    for (let index = bindings.length - 1; index >= 0; index--) {
+      this.bindings.push(bindings[index]);
+      this.shifts.push(bindings.length);
+    }
   }
 
   updateInvBindingAt(index: number, binding: number) {
@@ -374,8 +383,8 @@ class RewriterEngine extends RewriterCore {
   // reset: releases the outermost cache and the bindings.
   reset() {
     this.resetCore();
-    this.bindings = [];
-    this.shifts = [];
+    shrink(this.bindings, 0);
+    shrink(this.shifts, 0);
     this.shifter.reset();
     this.invShifter.reset();
   }

@@ -196,6 +196,7 @@ export class QiQueue {
   private subst: VarSubst;
   private instances = new Map<number, number[]>();
   private instanceRefs: number[] = [];
+  private bindingOwners: number[] = [];
   // m_instances: the lemmas, which the queue holds until their scope is popped.
   private lemmas: RefVector;
   numInstances = 0;
@@ -270,10 +271,11 @@ export class QiQueue {
     const manager = context.manager;
     const data = manager.getQuantifier(entry.quantifier);
     if (this.checker.isSat(data.body, entry.bindings)) return;
-    const substituted = this.getInstance(
-      entry.quantifier,
-      entry.bindings.map((binding) => binding.owner),
-    );
+    // The bindings' expressions, which Z3 writes into the buffer that m_subst returns.
+    const owners = this.bindingOwners;
+    shrink(owners, 0);
+    for (const binding of entry.bindings) owners.push(binding.owner);
+    const substituted = this.getInstance(entry.quantifier, owners);
     manager.incRef(substituted);
     const instance = context.rewriter.rewrite(substituted);
     if (instance !== manager.trueExpr) {
