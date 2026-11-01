@@ -58,6 +58,11 @@ const ARITH_OPS: ReadonlySet<number> = new Set([
 export class PolyRewriter {
   // m_curr_sort: the sort of the numerals and terms that the current rewrite makes.
   protected currSort = SORT_INT;
+  // The expr_fast_mark1 and expr_fast_mark2 of mk_nflat_add_core: Z3 marks the power products in
+  // their nodes, and a stamp per expression marks them here for one call.
+  private visitedStamps = new Int32Array(0);
+  private multipleStamps = new Int32Array(0);
+  private stamp = 0;
 
   constructor(
     protected manager: AstManager,
@@ -164,15 +169,17 @@ export class PolyRewriter {
   }
 
   private mkNflatAdd(args: number[]) {
+    const manager = this.manager;
     const isSortSums = this.options.isSortSums;
     let constant = Rational.zero;
     let numCoeffs = 0;
     let isOrdered = true;
     let previous = -1;
-    const visited = new Set<number>();
-    const multiple = new Set<number>();
-    args.forEach((arg, index) => {
-      if (this.manager.isNumeral(arg)) {
+    let isMultiple = false;
+    const stamp = ++this.stamp;
+    for (let index = 0; index < args.length; index++) {
+      const arg = args[index];
+      if (manager.isNumeral(arg)) {
         numCoeffs++;
         constant = constant.add(this.getValue(arg));
         isOrdered = !isSortSums || index === 0;
@@ -181,25 +188,29 @@ export class PolyRewriter {
         previous = arg;
       }
       const product = this.getPowerProduct(arg);
-      if (visited.has(product)) multiple.add(product);
-      else visited.add(product);
-    });
-    if (multiple.size > 0) {
+      if (product >= this.visitedStamps.length) this.growStamps(product);
+      if (this.visitedStamps[product] === stamp) {
+        this.multipleStamps[product] = stamp;
+        isMultiple = true;
+      } else this.visitedStamps[product] = stamp;
+    }
+    if (isMultiple) {
       const coeffs = new Map<number, Rational>();
       for (const arg of args) {
-        if (this.manager.isNumeral(arg)) continue;
+        if (manager.isNumeral(arg)) continue;
         const product = this.getPowerProduct(arg);
-        if (multiple.has(product))
+        if (this.multipleStamps[product] === stamp)
           coeffs.set(product, (coeffs.get(product) ?? Rational.zero).add(this.getCoefficient(arg)));
       }
       const newArgs: number[] = constant.isZero() ? [] : [this.mkNumeral(constant)];
-      const copied = new Set<number>();
+      // visited.reset(): a new stamp marks the power products already copied.
+      const copiedStamp = ++this.stamp;
       for (const arg of args) {
-        if (this.manager.isNumeral(arg)) continue;
+        if (manager.isNumeral(arg)) continue;
         const product = this.getPowerProduct(arg);
-        if (!multiple.has(product)) newArgs.push(arg);
-        else if (!copied.has(product)) {
-          copied.add(product);
+        if (this.multipleStamps[product] !== stamp) newArgs.push(arg);
+        else if (this.visitedStamps[product] !== copiedStamp) {
+          this.visitedStamps[product] = copiedStamp;
           const coefficient = coeffs.get(product) ?? Rational.zero;
           if (!coefficient.isZero()) newArgs.push(this.mkMulAppWith(coefficient, product));
         }
@@ -210,14 +221,24 @@ export class PolyRewriter {
     }
     if (isOrdered) {
       if (numCoeffs === 0) return undefined;
-      if (numCoeffs === 1 && this.manager.isNumeral(args[0]) && !this.getValue(args[0]).isZero())
+      if (numCoeffs === 1 && manager.isNumeral(args[0]) && !this.getValue(args[0]).isZero())
         return undefined;
     }
     const newArgs: number[] = constant.isZero() ? [] : [this.mkNumeral(constant)];
-    for (const arg of args) if (!this.manager.isNumeral(arg)) newArgs.push(arg);
+    for (const arg of args) if (!manager.isNumeral(arg)) newArgs.push(arg);
     return this.mkAddApp(
       isOrdered ? newArgs : this.sortMonomials(newArgs, constant.isZero() ? 0 : 1),
     );
+  }
+
+  private growStamps(expr: number) {
+    const size = Math.max(2 * this.visitedStamps.length, expr + 1, 1024);
+    const visitedStamps = new Int32Array(size);
+    visitedStamps.set(this.visitedStamps);
+    this.visitedStamps = visitedStamps;
+    const multipleStamps = new Int32Array(size);
+    multipleStamps.set(this.multipleStamps);
+    this.multipleStamps = multipleStamps;
   }
 
   mkMul(args: number[]): number | Rewrite | undefined {
