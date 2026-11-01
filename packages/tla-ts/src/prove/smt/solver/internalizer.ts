@@ -369,7 +369,7 @@ export abstract class Internalizer {
   }
 
   enodesOf(decl: number) {
-    return this.decl2enodes.get(decl) ?? [];
+    return this.decl2enodes.get(decl) ?? NO_ENODES;
   }
 
   getLiteral(expr: number): Literal {
@@ -1284,7 +1284,7 @@ export abstract class Internalizer {
     const atoms = isSavingAtoms
       ? literals.map((literal) => this.boolVar2Expr[getVar(literal)])
       : null;
-    for (const atom of atoms ?? []) this.manager.incRef(atom);
+    if (atoms !== null) for (const atom of atoms) this.manager.incRef(atom);
     const clauses = this.clauses;
     const clause = clauses.mk(literals, kind, justification, delEh, atoms);
     if (isLemma) {

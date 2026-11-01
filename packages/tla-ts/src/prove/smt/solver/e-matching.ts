@@ -33,8 +33,10 @@ interface PathTree {
   code: CodeTree | null;
   firstChild: PathTree | null;
   sibling: PathTree | null;
-  // The roots that collect_parents visits at this node, while it walks the tree.
-  todo: Enode[] | null;
+  // The roots that collect_parents visits at this node while it walks the tree, and whether the walk
+  // has queued the node. The list is kept for the next walk.
+  todo: Enode[];
+  isQueued: boolean;
 }
 
 const isEqualPath = (first: Path, second: Path): boolean => {
@@ -75,6 +77,8 @@ export class Mam implements LabelHasher {
   // The nodes that collect_parents marks, to unmark at the end of each level.
   private visitedParents: Enode[] = [];
   private queuedRoots: Enode[] = [];
+  // The path tree nodes that collect_parents queued, level by level.
+  private queuedTrees: PathTree[] = [];
   private labelHashes: (number | undefined)[] = [];
   // m_trail_stack: the matcher undoes its changes with a trail of its own, which the quantifier
   // manager pops before the context pops its trail.
@@ -201,7 +205,8 @@ export class Mam implements LabelHasher {
       code: null,
       firstChild: null,
       sibling: null,
-      todo: null,
+      todo: [],
+      isQueued: false,
     };
     const hash = this.getLabelHash(path.label);
     if (hash < 32) tree.filter = 1 << hash;
@@ -476,14 +481,16 @@ export class Mam implements LabelHasher {
   private collectParents(start: Enode, head: PathTree | null | undefined) {
     if (head === null || head === undefined) return;
     const context = this.context;
-    const levels: PathTree[] = [head];
+    const levels = this.queuedTrees;
     const visitedParents = this.visitedParents;
     const queuedRoots = this.queuedRoots;
-    head.todo = [start];
+    levels.push(head);
+    head.todo.push(start);
+    head.isQueued = true;
     for (let index = 0; index < levels.length; index++) {
       const level = levels[index];
-      const nodes = level.todo ?? [];
-      level.todo = null;
+      const nodes = level.todo;
+      level.isQueued = false;
       const filter = level.filter;
       const filterHigh = level.filterHigh;
       for (const node of nodes) {
@@ -512,8 +519,8 @@ export class Mam implements LabelHasher {
             if (tree.code !== null) this.addCandidateTo(tree.code, parent);
             const next = tree.firstChild;
             if (next === null) continue;
-            if (next.todo === null) {
-              next.todo = [];
+            if (!next.isQueued) {
+              next.isQueued = true;
               levels.push(next);
             }
             if (!parentRoot.isMarked2) next.todo.push(parentRoot);
@@ -526,11 +533,13 @@ export class Mam implements LabelHasher {
           }
         }
       }
+      shrink(nodes, 0);
       for (const parent of visitedParents) parent.isMarked = false;
       for (const root of queuedRoots) root.isMarked2 = false;
-      visitedParents.length = 0;
-      queuedRoots.length = 0;
+      shrink(visitedParents, 0);
+      shrink(queuedRoots, 0);
     }
+    shrink(levels, 0);
   }
 
   private processPc(r1: Enode, r2: Enode) {
