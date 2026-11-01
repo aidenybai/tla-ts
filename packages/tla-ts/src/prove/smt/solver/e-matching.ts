@@ -326,13 +326,17 @@ export class Mam implements LabelHasher {
     mp: MultiPattern,
   ) {
     const manager = this.manager;
-    const args = manager.args[pattern];
-    const groundArgIndex = args.findIndex((arg) => manager.isGround(arg));
+    const numArgs = manager.getNumArgs(pattern);
+    let groundArgIndex = -1;
+    for (let index = 0; index < numArgs && groundArgIndex === -1; index++)
+      if (manager.isGround(manager.getArg(pattern, index))) groundArgIndex = index;
     const groundArg =
-      groundArgIndex === -1 ? null : this.getGroundEnode(args[groundArgIndex], mp.quantifier);
+      groundArgIndex === -1
+        ? null
+        : this.getGroundEnode(manager.getArg(pattern, groundArgIndex), mp.quantifier);
     const label = manager.decls[pattern];
-    for (let index = 0; index < args.length; index++) {
-      const child = args[index];
+    for (let index = 0; index < numArgs; index++) {
+      const child = manager.getArg(pattern, index);
       const path: Path = {
         label,
         argIndex: index,
@@ -390,7 +394,7 @@ export class Mam implements LabelHasher {
       const label = manager.decls[pattern];
       const tree = this.trees.get(label);
       if (tree !== undefined) {
-        if (tree.numArgs === manager.args[pattern].length)
+        if (tree.numArgs === manager.getNumArgs(pattern))
           this.compiler.insert(tree, quantifier, patterns, firstIndex, false);
         return;
       }
@@ -419,7 +423,10 @@ export class Mam implements LabelHasher {
         const node = this.getGroundEnode(term, quantifier);
         if (node !== null) this.addSharedEnode(node);
       } else
-        for (const arg of manager.args[term]) if (manager.kinds[arg] !== KIND_VAR) todo.push(arg);
+        for (let index = 0; index < manager.getNumArgs(term); index++) {
+          const arg = manager.getArg(term, index);
+          if (manager.kinds[arg] !== KIND_VAR) todo.push(arg);
+        }
     }
   }
 

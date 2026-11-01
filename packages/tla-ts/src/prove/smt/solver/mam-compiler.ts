@@ -219,10 +219,11 @@ export class Compiler {
     this.numChoices = 0;
     this.todo = [];
     this.registers.fill(-1);
-    manager.args[patterns[firstIndex]].forEach((arg, index) => {
-      this.registers[index + 1] = arg;
+    const first = patterns[firstIndex];
+    for (let index = 0; index < manager.getNumArgs(first); index++) {
+      this.registers[index + 1] = manager.getArg(first, index);
       this.todo.push(index + 1);
-    });
+    }
     const numDecls = manager.getQuantifier(quantifier).sorts.length;
     while (this.vars.length < numDecls) this.vars.push(-1);
     this.vars.fill(-1, 0, numDecls);
@@ -231,7 +232,8 @@ export class Compiler {
   // all_args_are_bound_vars.
   private isAllArgsBoundVars(expr: number) {
     const manager = this.manager;
-    return manager.args[expr].every(
+    return manager.everyArg(
+      expr,
       (arg) => manager.kinds[arg] === KIND_VAR && this.vars[manager.values[arg]] !== -1,
     );
   }
@@ -244,7 +246,8 @@ export class Compiler {
     const visit = (term: number) => {
       size++;
       if (manager.isGround(term)) return;
-      for (const arg of manager.args[term]) {
+      for (let index = 0; index < manager.getNumArgs(term); index++) {
+        const arg = manager.getArg(term, index);
         if (manager.kinds[arg] === KIND_VAR) {
           size++;
           if (this.vars[manager.values[arg]] === -1) numUnboundVars++;
@@ -315,24 +318,24 @@ export class Compiler {
     }
     if (firstApp !== -1) {
       const label = manager.decls[firstApp];
-      const args = manager.args[firstApp];
+      const numArgs = manager.getNumArgs(firstApp);
       if (this.isAllArgsBoundVars(firstApp)) {
         const instr = mkInstruction(OP_IS_CGR);
         instr.label = label;
         instr.reg = firstAppReg;
-        instr.numArgs = args.length;
-        instr.regs = args.map((arg) => this.vars[manager.values[arg]]);
+        instr.numArgs = numArgs;
+        instr.regs = manager.mapArgs(firstApp, (arg) => this.vars[manager.values[arg]]);
         this.seq.push(instr);
       } else {
         const oreg = this.tree.numRegs;
-        this.tree.numRegs += args.length;
-        args.forEach((arg, index) => {
-          this.registers[oreg + index] = arg;
+        this.tree.numRegs += numArgs;
+        for (let index = 0; index < numArgs; index++) {
+          this.registers[oreg + index] = manager.getArg(firstApp, index);
           this.aux.push(oreg + index);
-        });
+        }
         const instr = mkInstruction(OP_BIND);
         instr.label = label;
-        instr.numArgs = args.length;
+        instr.numArgs = numArgs;
         instr.reg = firstAppReg;
         instr.oreg = oreg;
         this.seq.push(instr);
@@ -352,7 +355,8 @@ export class Compiler {
     let hasUnboundVars = false;
     const visit = (term: number) => {
       if (manager.isGround(term)) return;
-      for (const arg of manager.args[term]) {
+      for (let index = 0; index < manager.getNumArgs(term); index++) {
+        const arg = manager.getArg(term, index);
         if (manager.kinds[arg] !== KIND_VAR) visit(arg);
         else if (this.vars[manager.values[arg]] !== -1) count++;
         else hasUnboundVars = true;
@@ -375,7 +379,7 @@ export class Compiler {
       this.seq.push(instr);
       return oreg;
     }
-    const iregs = manager.args[expr].map((arg) =>
+    const iregs = manager.mapArgs(expr, (arg) =>
       manager.kinds[arg] === KIND_VAR ? this.vars[manager.values[arg]] : this.genMpFilter(arg),
     );
     const oreg = this.tree.numRegs;
@@ -422,11 +426,11 @@ export class Compiler {
         this.genMpFilter(best);
         continue;
       }
-      const args = manager.args[best];
       const oreg = this.tree.numRegs;
-      this.tree.numRegs += args.length;
+      this.tree.numRegs += manager.getNumArgs(best);
       let hasDepth1Joint = false;
-      args.forEach((arg, index) => {
+      for (let index = 0; index < manager.getNumArgs(best); index++) {
+        const arg = manager.getArg(best, index);
         this.registers[oreg + index] = arg;
         this.todo.push(oreg + index);
         if (
@@ -434,7 +438,7 @@ export class Compiler {
           (manager.kinds[arg] !== KIND_VAR && manager.isGround(arg))
         )
           hasDepth1Joint = true;
-      });
+      }
       const nullJoint = (): Joint => ({
         kind: JOINT_NULL,
         enode: null,
@@ -442,7 +446,7 @@ export class Compiler {
         decl: -1,
         argPos: 0,
       });
-      const joints = args.map((arg): Joint => {
+      const joints = manager.mapArgs(best, (arg): Joint => {
         if (hasDepth1Joint) {
           if (manager.kinds[arg] === KIND_VAR) {
             const reg = this.vars[manager.values[arg]];
@@ -457,22 +461,24 @@ export class Compiler {
           return nullJoint();
         }
         if (manager.kinds[arg] === KIND_VAR) return nullJoint();
-        const argPos = manager.args[arg].findIndex(
-          (innerArg) =>
-            manager.kinds[innerArg] === KIND_VAR && this.vars[manager.values[innerArg]] >= 0,
-        );
+        let argPos = -1;
+        for (let index = 0; index < manager.getNumArgs(arg) && argPos === -1; index++) {
+          const innerArg = manager.getArg(arg, index);
+          if (manager.kinds[innerArg] === KIND_VAR && this.vars[manager.values[innerArg]] >= 0)
+            argPos = index;
+        }
         if (argPos === -1) return nullJoint();
         return {
           kind: JOINT_NESTED,
           enode: null,
-          reg: this.vars[manager.values[manager.args[arg][argPos]]],
+          reg: this.vars[manager.values[manager.getArg(arg, argPos)]],
           decl: manager.decls[arg],
           argPos,
         };
       });
       const instr = mkInstruction(OP_CONTINUE);
       instr.label = manager.decls[best];
-      instr.numArgs = args.length;
+      instr.numArgs = manager.getNumArgs(best);
       instr.oreg = oreg;
       instr.joints = joints;
       setHash(instr, this.hasher.getLabelHash(instr.label));
@@ -540,7 +546,7 @@ export class Compiler {
       this.isApp(expr) &&
       !manager.isGround(expr) &&
       manager.decls[expr] === instr.label &&
-      manager.args[expr].length === instr.numArgs
+      manager.getNumArgs(expr) === instr.numArgs
     );
   }
 
@@ -619,7 +625,7 @@ export class Compiler {
             weight += 4;
             const expr = this.registers[curr.reg];
             for (let index = 0; index < curr.numArgs; index++) {
-              this.registers[curr.oreg + index] = manager.args[expr][index];
+              this.registers[curr.oreg + index] = manager.getArg(expr, index);
               this.toReset.push(curr.oreg + index);
             }
           }
@@ -675,7 +681,7 @@ export class Compiler {
               compatible.push(curr);
               const expr = this.registers[curr.reg];
               for (let index = 0; index < curr.numArgs; index++) {
-                this.registers[curr.oreg + index] = manager.args[expr][index];
+                this.registers[curr.oreg + index] = manager.getArg(expr, index);
                 this.todo.push(curr.oreg + index);
               }
             } else incompatible.push(curr);
@@ -793,7 +799,7 @@ export class Compiler {
     isFilteringCandidates: boolean,
   ) {
     const pattern = patterns[firstIndex];
-    const numArgs = this.manager.args[pattern].length;
+    const numArgs = this.manager.getNumArgs(pattern);
     const tree: CodeTree = {
       rootLabel: this.manager.decls[pattern],
       numArgs,
@@ -818,7 +824,7 @@ export class Compiler {
     firstIndex: number,
     isTmpTree: boolean,
   ) {
-    if (tree.numArgs !== this.manager.args[patterns[firstIndex]].length) return;
+    if (tree.numArgs !== this.manager.getNumArgs(patterns[firstIndex])) return;
     this.isTmpTree = isTmpTree;
     if (!isTmpTree) {
       const numRegs = tree.numRegs;
