@@ -8,7 +8,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { arch, availableParallelism, release, tmpdir, type } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -59,6 +58,7 @@ import type { SanySpecification } from "./sany-generator";
 import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "./sany-modules";
 import { getSanyModuleName, getSanyReport, type SanyModuleOrigin } from "./sany-report";
 import { exportSanyXml, XML_EXPORT_EXIT_CODE, type XmlExportOptions } from "./sany-xml";
+import { getTlcFingerprint } from "./tlc-random";
 import { getTlcVersion, type TlcVersion } from "./tlc-version";
 import {
   createMessagePrinter,
@@ -705,9 +705,9 @@ const getStandardModulesUrl = (jar: string) =>
   `jar:file:${pathToFileURL(resolve(jar)).pathname}!/tla2sany/StandardModules/`;
 
 // Java's Files.createTempDirectory names a directory by a random unsigned long. tla-ts derives it
-// from what the directory holds, so that each run of a spec prints the same files.
-const getTemporaryName = (contents: string) =>
-  createHash("sha256").update(contents).digest().readBigUInt64BE().toString();
+// from TLC's fingerprint of what the directory holds, so that each run of a spec prints the same
+// files.
+const getTemporaryName = (contents: string) => getTlcFingerprint([contents]).toString();
 
 // The file TLC's SANY says it parses each module from: the real path of a module's own file, or a
 // copy in a temporary directory of a module from the root module's file or from the jar on the
@@ -1247,7 +1247,7 @@ const checkSpecs = async (args: string[], java: JavaProperties) => {
       ? path
       : (java.libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
   const paths = [...new Set(specPaths.map(findSpec))];
-  const tlcVersion = getJavaTlcVersion(java);
+  const tlcVersion = java.tlcVersion ?? "master";
   return runEach(
     paths,
     (path, printer) => {
@@ -1488,9 +1488,6 @@ interface JavaProperties {
 const getJar = (java: JavaProperties) =>
   java.classPath?.split(delimiter).find((entry) => entry.endsWith(".jar"));
 
-// The TLC that -Dtla-ts.tlc names, or else the one of the jar on the class path.
-const getJavaTlcVersion = (java: JavaProperties) => java.tlcVersion ?? getTlcVersion(getJar(java));
-
 interface JavaLaunch {
   mainClass: string;
   args: string[];
@@ -1525,7 +1522,7 @@ const runJavaClass = (launch: JavaLaunch) => {
   if (launch.mainClass === "tlc2.TLC") return checkSpecs(launch.args, launch.java);
   if (launch.mainClass === "tla2sany.xml.XMLExporter") {
     return reportErrors(() =>
-      getJavaTlcVersion(launch.java) === "1.7.4"
+      launch.java.tlcVersion === "1.7.4"
         ? exportXml174(launch.args, getJar(launch.java))
         : exportXml(launch.args),
     );
@@ -1539,7 +1536,10 @@ const runJavaClass = (launch: JavaLaunch) => {
 const run = async (args: string[]) => {
   if (args[0] === "prove") return reportErrors(() => prove(args.slice(1)));
   const launch = getJavaLaunch(args);
-  return launch ? runJavaClass(launch) : checkSpecs(args, { libraries: [] });
+  if (launch === undefined) return checkSpecs(args, { libraries: [] });
+  // The TLC that -Dtla-ts.tlc names, or else the one of the jar on the class path.
+  launch.java.tlcVersion ??= await getTlcVersion(getJar(launch.java));
+  return runJavaClass(launch);
 };
 
 export const runCli = async () => {
