@@ -14,8 +14,8 @@ import type {
   SourceLocation,
   SourceRange,
   UseOrHide,
-} from "./ast";
-import { TlaProofError, TlaUnsupportedError } from "./errors";
+} from "../ast";
+import { TlaProofError, TlaUnsupportedError } from "../errors";
 import {
   at,
   type Bound,
@@ -27,9 +27,9 @@ import {
   type Locus,
   type Selector,
   type Sequent,
-} from "./obligation-expression";
-import type { ModuleUnit, Mule } from "./obligation-module";
-import { readNewMethod, readOldMethod } from "./obligation-pragma";
+} from "./expression";
+import type { ModuleUnit, Mule } from "./module";
+import { readNewMethod, readOldMethod } from "./pragma";
 import {
   expandChoose,
   expandFcn,
@@ -38,8 +38,8 @@ import {
   expandSetSt,
   getUnbounded,
   type TuplyBound,
-} from "./obligation-tuples";
-import { lookupOperator, type Fixity, type Operator } from "./obligation-printer";
+} from "./tuples";
+import { lookupOperator, type Fixity, type Operator } from "./printer";
 import {
   getUnique,
   type Counter,
@@ -48,7 +48,7 @@ import {
   type StepNumber,
   type UseDef,
   type Usable,
-} from "./obligation-proof";
+} from "./proof";
 
 const BUILTINS: Record<string, Builtin> = {
   "=>": "Implies",

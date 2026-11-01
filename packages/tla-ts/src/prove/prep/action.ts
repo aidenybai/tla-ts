@@ -3,7 +3,7 @@
 // down to the variables (Symbol_commute), and what remains modal becomes opaque (Coalesce).
 
 import { TlapmBugError } from "../../errors";
-import { rewriteUnchanged } from "../../obligation-action";
+import { rewriteUnchanged } from "../../obligations/action";
 import {
   adjoin,
   applyBuiltin,
@@ -23,10 +23,10 @@ import {
   type Level,
   type Scope,
   type Sequent,
-} from "../../obligation-expression";
-import { renderDoc } from "../../obligation-format";
-import { getLevelInfo } from "../../obligation-levels";
-import { printExpression } from "../../obligation-printer";
+} from "../../obligations/expression";
+import { renderDoc } from "../../obligations/format";
+import { getLevelInfo } from "../../obligations/levels";
+import { printExpression } from "../../obligations/printer";
 import { getMd5 } from "./md5";
 
 type Map = (scope: Scope | undefined, expression: Expr) => Expr;

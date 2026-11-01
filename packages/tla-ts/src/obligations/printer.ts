@@ -1,7 +1,7 @@
 // A port of tlapm's obligation printer: E_fmt with Fmtutil's minimal parenthesization, the
 // operator table in Optable, and the identifier renaming in Ctx.
 
-import { TlaProofError } from "./errors";
+import { TlaProofError } from "../errors";
 import {
   getHypName,
   type Bound,
@@ -13,9 +13,9 @@ import {
   type Selector,
   type Sequent,
   type Shape,
-} from "./obligation-expression";
-import { createContext, getBoundName, popNames, pushName, withNames } from "./obligation-ctx";
-import { format, formatDelimited, renderDoc, text, type Doc } from "./obligation-format";
+} from "./expression";
+import { createContext, getBoundName, popNames, pushName, withNames } from "./ctx";
+import { format, formatDelimited, renderDoc, text, type Doc } from "./format";
 
 export type Fixity = "Nonfix" | "Prefix" | "Postfix" | "InfixLeft" | "InfixNon" | "InfixRight";
 

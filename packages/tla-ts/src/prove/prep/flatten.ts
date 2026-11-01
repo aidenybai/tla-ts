@@ -10,7 +10,7 @@ import {
   type Hyp,
   type Sequent,
   type Substitution,
-} from "../../obligation-expression";
+} from "../../obligations/expression";
 
 const isUnbounded = (bound: Bound) => bound.domain.kind === "NoDomain";
 

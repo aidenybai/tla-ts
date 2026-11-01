@@ -1,9 +1,9 @@
 // A port of tlapm's module pipeline: flattening EXTENDS (Module.Flatten), normalization
 // (Module.Elab.normalize) and obligation generation (Module.Gen).
 
-import { TlaProofError, TlapmBugError } from "./errors";
-import { lambdify } from "./obligation-action";
-import type { Anonymizer } from "./obligation-anon";
+import { TlaProofError, TlapmBugError } from "../errors";
+import { lambdify } from "./action";
+import type { Anonymizer } from "./anon";
 import {
   adjoinAll,
   at,
@@ -38,22 +38,16 @@ import {
   type Substitution,
   type Visibility,
   type WhereDefined,
-} from "./obligation-expression";
+} from "./expression";
 import {
   EMPTY_SUMMARY,
   getProofSummary,
   joinSummaries,
   type Generator,
   type ProofSummary,
-} from "./obligation-generate";
-import {
-  getUnique,
-  type Counter,
-  type Obligation,
-  type Proof,
-  type Usable,
-} from "./obligation-proof";
-import { getScopeTime } from "./obligation-temporal";
+} from "./generate";
+import { getUnique, type Counter, type Obligation, type Proof, type Usable } from "./proof";
+import { getScopeTime } from "./temporal";
 
 export type ModuleUnit = ModuleUnitCore & { location?: Locus };
 

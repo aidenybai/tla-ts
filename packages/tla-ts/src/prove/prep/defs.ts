@@ -6,7 +6,7 @@ import {
   substituteExpr,
   substituteHyp,
   type Sequent,
-} from "../../obligation-expression";
+} from "../../obligations/expression";
 
 const expandContext = createContextMap(shift(0), (current, hyp) => {
   if (

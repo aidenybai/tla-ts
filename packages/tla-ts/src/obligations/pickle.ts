@@ -2,7 +2,7 @@
 // with a character other than a letter or digit, one that starts or ends with a non-letter, or one
 // that a prover reserves becomes a_, the name with each special character spelled out, and a.
 
-import { TlapmBugError } from "./errors";
+import { TlapmBugError } from "../errors";
 
 const CHARACTER_NAMES: Record<string, string> = {
   "!": "excl_",

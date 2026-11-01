@@ -11,8 +11,8 @@ import {
   type Hyp,
   type Scope,
   type Sequent,
-} from "../../obligation-expression";
-import { isConstant } from "../../obligation-temporal";
+} from "../../obligations/expression";
+import { isConstant } from "../../obligations/temporal";
 import { getMd5 } from "./md5";
 
 // builtin_to_int, whose numbers skip [], which fp_bin prints by name.

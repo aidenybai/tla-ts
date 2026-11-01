@@ -13,8 +13,8 @@ import {
   type Expr,
   type Scope,
   type Sequent,
-} from "../../obligation-expression";
-import { getLevelInfo } from "../../obligation-levels";
+} from "../../obligations/expression";
+import { getLevelInfo } from "../../obligations/levels";
 
 interface Rule {
   name: string;

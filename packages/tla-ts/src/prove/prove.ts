@@ -1,7 +1,7 @@
 // Proves a module's obligations with tla-ts's own backends, in tlapm's order, or with tlapm.
 
 import { TlaProverError, TlaUnsupportedError } from "../errors";
-import { getChildren, mapHyp, type Expr, type Hyp, type Sequent } from "../obligation-expression";
+import { getChildren, mapHyp, type Expr, type Hyp, type Sequent } from "../obligations/expression";
 import { getObligations, type PrintedObligation } from "../obligations";
 import { isWorkerSupported } from "../worker";
 import { DECIDERS } from "./deciders";

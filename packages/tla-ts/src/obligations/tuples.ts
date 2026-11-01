@@ -1,6 +1,6 @@
 // tlapm's E_tuply_declarations: declarations such as <<x, y>> \in S become declarations of names.
 
-import type { Bound, BoundDomain, Defn, Expr } from "./obligation-expression";
+import type { Bound, BoundDomain, Defn, Expr } from "./expression";
 
 export type TuplyBound =
   | { kind: "Name"; name: string; domain: BoundDomain }

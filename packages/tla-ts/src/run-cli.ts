@@ -21,8 +21,8 @@ import {
   TlaProofError,
 } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
-import type { LineRange } from "./obligation-generate";
-import { getAtPrefix, getLocusText } from "./obligation-expression";
+import type { LineRange } from "./obligations/generate";
+import { getAtPrefix, getLocusText } from "./obligations/expression";
 import { formatSummary, getObligations, WHOLE_MODULE, type ModuleObligations } from "./obligations";
 import { check } from "./parallel";
 import { prettyPrint } from "./pretty-print";
