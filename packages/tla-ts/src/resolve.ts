@@ -874,7 +874,7 @@ const resolveDefinitions = (
     const count = pending.findIndex((instance) => !isDue(instance));
     return pending
       .splice(0, count === -1 ? pending.length : count)
-      .reduce((parent, instance) => resolveInstance(instance, parent, unit), current);
+      .reduce((parent, instance) => resolveLocalInstance(instance, parent, unit), current);
   };
   const resolved = definitions.reduce<LocalName | undefined>((previous, definition) => {
     const current = isKey(definition.name)
@@ -902,6 +902,43 @@ const resolveDefinitions = (
   return resolveInstances(resolved, () => true);
 };
 
+// The INSTANCE that a name such as K!C starts with, whose arguments SANY requires at its name.
+const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) => {
+  const prefix = name.split("!")[0];
+  const binding =
+    prefix === name
+      ? undefined
+      : (lookupLocal(scope, prefix) ?? getModuleBinding(prefix, unit, undefined));
+  return binding?.kind === "Instance" ? { name: prefix, arity: binding.arity } : undefined;
+};
+
+// Generator.selectorToNode reports an INSTANCE given the wrong number of arguments at its name,
+// as in K!C or K(1, 2)!C, and goes on without analyzing them. Tells whether it reports one.
+const isInstanceArityReported = (
+  expression: Expression,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  if (expression.kind !== "Identifier" && expression.kind !== "Apply") return false;
+  const instance = findInstance(
+    expression.kind === "Identifier" ? expression.name : expression.operator,
+    scope,
+    unit,
+  );
+  const count = expression.kind === "Apply" ? (expression.argumentCounts?.[0] ?? 0) : 0;
+  if (!instance || count === instance.arity) return false;
+  const range =
+    (expression.kind === "Apply" ? expression.argumentRanges?.[0] : undefined) ??
+    expression.location.range;
+  if (range) {
+    unit.errors.push({
+      location: formatRange(range),
+      message: `The operator ${instance.name} requires ${instance.arity} arguments.`,
+    });
+  }
+  return true;
+};
+
 // Generator.generateExprOrOpArg analyzes an argument as an expression, unless a defined operator
 // takes an operator in its place, which a name, a built-in operator, or a LAMBDA of the parameter's
 // arity must give. OpDefNode#match then reports each argument that gives no such operator, or one
@@ -912,6 +949,7 @@ const resolveApply = (
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
+  if (isInstanceArityReported(expression, scope, unit)) return;
   const operator = expression.operator;
   const callee = findBinding(operator, scope, unit);
   const arity = getSymbolArity(expression, operator, scope, unit);
@@ -921,7 +959,7 @@ const resolveApply = (
       location: formatRange(
         expression.argumentsRange ?? getNameRange(expression.location, operator),
       ),
-      message: `The operator ${operator} requires ${arity} arguments.`,
+      message: `The operator ${operator} requires ${arity - (findInstance(operator, scope, unit)?.arity ?? 0)} arguments.`,
     });
     return;
   }
@@ -1038,6 +1076,7 @@ const resolveExpression = (
     case "ExceptAt":
       return;
     case "Identifier": {
+      if (isInstanceArityReported(expression, scope, unit)) return;
       const name = expression.name;
       const arity = getSymbolArity(expression, name, scope, unit);
       if (arity !== undefined && arity > 0) {
@@ -1187,7 +1226,13 @@ const resolveExpression = (
 // and analyzes any other fact as an expression.
 const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) =>
   facts.forEach((fact) => {
-    if (fact.kind === "ModuleFact" || checkReference(fact, scope, unit, true)) return;
+    if (
+      fact.kind === "ModuleFact" ||
+      isInstanceArityReported(fact, scope, unit) ||
+      checkReference(fact, scope, unit, true)
+    ) {
+      return;
+    }
     const name =
       fact.kind === "Identifier" ? fact.name : fact.kind === "Apply" ? fact.operator : "";
     if (!unit.facts.has(name)) resolveExpression(fact, scope, unit);
@@ -1249,8 +1294,8 @@ const resolveProof = (proof: Proof | undefined, scope: LocalName | undefined, ou
   proof.steps.reduce((current, step) => resolveStep(step, current, unit), scope);
 };
 
-// A step binds the name of the INSTANCE after the names it adds.
-const resolveStepInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
+// A LET or a step binds the name of the INSTANCE after the names it adds.
+const resolveLocalInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
   const instanced = resolveInstance(instance, scope, unit);
   return instance.name === undefined
     ? instanced
@@ -1293,12 +1338,12 @@ const resolveStep = (
       checkFacts(body.facts, scope, unit);
       return scope;
     case "Instance":
-      return resolveStepInstance(body, scope, stepUnit);
+      return resolveLocalInstance(body, scope, stepUnit);
     case "Define":
       return body.definitions.reduce(
         (current, definition) =>
           definition.kind === "Instance"
-            ? resolveStepInstance(definition, current, stepUnit)
+            ? resolveLocalInstance(definition, current, stepUnit)
             : resolveDefinitions([definition], current, unit),
         scope,
       );

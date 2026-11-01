@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
 import { parseModule, TlaSyntaxError, type Module } from "../../src";
-import { createSanyError } from "../../src/errors";
 
 const SOURCE = `---- MODULE Ranges ----
 EXTENDS Naturals, TLC
@@ -233,19 +232,6 @@ describe("parseModule reads operators like SANY", () => {
       ["F", 2],
       ["+", 2],
     ]);
-  });
-
-  it("rejects an operator of a parameterized instance without the instance's arguments", () => {
-    expect(() =>
-      parseModule(`---- MODULE M ----\n${INNER}\nTHEOREM M!Foo(TRUE) => M!Foo(TRUE)\n====`),
-    ).toThrow(
-      createSanyError(
-        ["line 7, col 9 to line 7, col 19", "line 7, col 24 to line 7, col 34"].map((range) => ({
-          location: `${range} of module M`,
-          message: "The operator M requires 1 arguments.",
-        })),
-      ),
-    );
   });
 
   it("substitutes an operator of a parameterized instance without the instance's arguments", () => {

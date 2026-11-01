@@ -3323,6 +3323,25 @@ describe("name resolution matches SANY", () => {
         ],
       ],
     ],
+    [
+      "---- MODULE Inner ----\nCONSTANT a\nB == a\nC(p) == a\nTHEOREM T == TRUE\n====\nK(q) == INSTANCE Inner WITH a <- q\nF == K!B = U1 /\\ K(1)!C = U2 /\\ K(1, 2)!B = U3 /\\ K!C(1, 2) = U4\nG == LET L(q) == INSTANCE Inner WITH a <- q IN L!B = U5 /\\ L(1)!C(2, 3) = U6\nUSE K!T, K(1)!T, U7",
+      [
+        ["line 9, col 6 to line 9, col 8", "The operator K requires 1 arguments."],
+        ["line 9, col 12 to line 9, col 13", "Unknown operator: `U1'."],
+        ["line 9, col 18 to line 9, col 23", "The operator K!C requires 1 arguments."],
+        ["line 9, col 27 to line 9, col 28", "Unknown operator: `U2'."],
+        ["line 9, col 34 to line 9, col 39", "The operator K requires 1 arguments."],
+        ["line 9, col 45 to line 9, col 46", "Unknown operator: `U3'."],
+        ["line 9, col 51 to line 9, col 59", "The operator K requires 1 arguments."],
+        ["line 9, col 63 to line 9, col 64", "Unknown operator: `U4'."],
+        ["line 10, col 48 to line 10, col 50", "The operator L requires 1 arguments."],
+        ["line 10, col 54 to line 10, col 55", "Unknown operator: `U5'."],
+        ["line 10, col 66 to line 10, col 71", "The operator L!C requires 1 arguments."],
+        ["line 10, col 75 to line 10, col 76", "Unknown operator: `U6'."],
+        ["line 11, col 5 to line 11, col 7", "The operator K requires 1 arguments."],
+        ["line 11, col 18 to line 11, col 19", "Unknown operator: `U7'."],
+      ],
+    ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
     await expect(checkSource(source)).rejects.toThrow(
       createSanyError(

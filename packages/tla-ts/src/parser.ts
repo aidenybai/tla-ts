@@ -356,9 +356,6 @@ const parse = (source: string, mode: ParseMode): Module => {
   const factNames = new Set<string>();
   // The NEW, TAKE, and PICK names in scope, which a DEF clause cannot cite.
   const proofScopes: Set<string>[] = [];
-  // A fact or an operator argument may cite an operator of a parameterized instance without the
-  // instance's arguments, as with Op <- I!Op in a substitution.
-  const factStart = { index: -1 };
   // SANY reports a location in a nested module as one in the module of its file.
   const openModules: Module[] = [];
 
@@ -736,14 +733,8 @@ const parse = (source: string, mode: ParseMode): Module => {
         start,
       );
     }
-    const argument = parseExpression();
-    // SANY reads an argument that only names an operator of a parameterized instance, such as
-    // I!Op, as that operator, which takes the arguments of the instance too.
-    if (argument.kind === "Identifier") missingArguments.delete(argument);
-    return argument;
+    return parseExpression();
   };
-
-  const missingArguments = new Map<Expression, { location: string; message: string }>();
 
   const lastArguments: { range: SourceRange | undefined } = { range: undefined };
 
@@ -966,7 +957,6 @@ const parse = (source: string, mode: ParseMode): Module => {
 
   const parsePrimary = (preceding?: Precedence): Expression => {
     const start = cursor.index;
-    const isFactStart = start === factStart.index;
     const token = advance();
     const location = getLocation(token);
     if (isTlapm && token.kind === "Keyword" && token.text === "LAMBDA") {
@@ -1023,20 +1013,6 @@ const parse = (source: string, mode: ParseMode): Module => {
           ? { kind: "Apply", operator: name, args, argumentsRange: lastArguments.range, location }
           : { kind: "Identifier", name, location };
       }
-      const instance = openModules
-        .flatMap((module) => module.instances)
-        .find((candidate) => candidate.name === name);
-      const isMissingArguments =
-        instance !== undefined &&
-        mode === "tlc" &&
-        !isFactStart &&
-        instance.params.length !== args.length;
-      if (isMissingArguments && args.length > 0) {
-        throw createError(
-          `The operator ${name} requires ${instance.params.length} arguments`,
-          token,
-        );
-      }
       const selectors: Selector[] = [{ kind: "Name", name, args }];
       const selectorRanges = [getRange(start, start)];
       while (isSelectorAhead()) {
@@ -1056,39 +1032,31 @@ const parse = (source: string, mode: ParseMode): Module => {
       const argumentCounts = selectors.map((selector) =>
         "args" in selector ? selector.args.length : 0,
       );
-      const argumentsRange = argumentRanges.findLast((range) => range !== undefined);
-      const reference: Expression =
-        names.length < selectors.length
-          ? { kind: "Subexpression", selectors, selectorRanges, argumentRanges, location }
-          : qualifiedArgs.length === 0
-            ? { kind: "Identifier", name: operator, selectorRanges, location }
-            : argumentCounts.slice(0, -1).some((count) => count > 0)
-              ? {
-                  kind: "Apply",
-                  operator,
-                  args: qualifiedArgs,
-                  argumentCounts,
-                  argumentsRange,
-                  selectorRanges,
-                  argumentRanges,
-                  location,
-                }
-              : {
-                  kind: "Apply",
-                  operator,
-                  args: qualifiedArgs,
-                  argumentsRange,
-                  selectorRanges,
-                  argumentRanges,
-                  location,
-                };
-      if (isMissingArguments) {
-        missingArguments.set(reference, {
-          location: formatRange(getRange(start)),
-          message: `The operator ${name} requires ${instance.params.length} arguments.`,
-        });
-      }
-      return reference;
+      const argumentsRange = argumentRanges.at(-1) ?? getRange(start);
+      return names.length < selectors.length
+        ? { kind: "Subexpression", selectors, selectorRanges, argumentRanges, location }
+        : qualifiedArgs.length === 0
+          ? { kind: "Identifier", name: operator, selectorRanges, location }
+          : argumentCounts.slice(0, -1).some((count) => count > 0)
+            ? {
+                kind: "Apply",
+                operator,
+                args: qualifiedArgs,
+                argumentCounts,
+                argumentsRange,
+                selectorRanges,
+                argumentRanges,
+                location,
+              }
+            : {
+                kind: "Apply",
+                operator,
+                args: qualifiedArgs,
+                argumentsRange,
+                selectorRanges,
+                argumentRanges,
+                location,
+              };
     }
     // SANY reads an infix or postfix operator as a primary expression, with or without arguments.
     if (token.kind === "Operator" && isOperatorName(token.text) && isAt("(")) {
@@ -1607,7 +1575,6 @@ const parse = (source: string, mode: ParseMode): Module => {
   // start of an expression.
   const parseFact = (): Fact => {
     const start = cursor.index;
-    factStart.index = start;
     const token = peek();
     if (
       token.kind === "Operator" &&
@@ -2006,7 +1973,6 @@ const parse = (source: string, mode: ParseMode): Module => {
           start: { line: location.line, column: location.column },
           end: { line: token.line, column: token.endColumn },
         };
-        if (missingArguments.size > 0) throw createSanyError([...missingArguments.values()]);
         openModules.pop();
         recursiveScopes.pop();
         return module;
