@@ -1,5 +1,5 @@
 import { TlaConfigError } from "./errors";
-import { matchOperator } from "./lexer";
+import { matchOperator, matchUnicodeToken } from "./lexer";
 import { formatLexicalError } from "./sany-lexer";
 import type { TlcVersion } from "./tlc-version";
 
@@ -168,7 +168,7 @@ const tokenizeConfig = (source: string) => {
       skip(symbol);
       continue;
     }
-    const operator = matchOperator(source, cursor.index);
+    const operator = matchUnicodeToken(source, cursor.index) ?? matchOperator(source, cursor.index);
     if (!operator) {
       addLexicalError(cursor.index, "");
       return tokens;

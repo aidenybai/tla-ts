@@ -265,6 +265,8 @@ export const getSanyReport = (
       loadValidatedModule(rootName, source);
       return generateSanySpecification(source, loadSource, {
         rootFileName: rootName,
+        // XMLExporter gives SANY the file it is asked for, and TLC the name of the module.
+        rootFilePath: options.isXmlExport ? `${name.replace(/\.tla$/, "")}.tla` : undefined,
         version: options.version,
         rootExtendees: options.rootExtendees,
         onParse: (moduleName) => {

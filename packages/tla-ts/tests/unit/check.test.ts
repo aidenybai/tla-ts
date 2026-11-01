@@ -180,6 +180,24 @@ describe("check matches TLC", () => {
     );
   });
 
+  // TLC checks this module without an error.
+  it("reads each of SANY's Unicode operators as its ASCII spelling, and ℕ as a name", async () => {
+    const result = await checkModule(
+      [
+        "a \\approx b == <<a, b>>",
+        "a \\sqcup b == {a, b}",
+        "a (+) b == a + b",
+        "a ^+ == a + 1",
+        "ℕ ≜ Nat",
+        "ASSUME (1 ≈ 2) = ⟨1, 2⟩ ∧ (1 ⊔ 2) = {1, 2} ∧ (1 ⊕ 2) = 3 ∧ 3⁺ = 4",
+        "ASSUME 0‥2 = {0, 1, 2} ∧ 7 ÷ 2 = 3 ∧ ⟨1⟩ ∘ ⟨2⟩ = ⟨1, 2⟩ ∧ 3 ∈ ℕ ∧ [n ∈ {1} ↦ n] = ⟨1⟩",
+        "Prop ≜ □[x' = x]_x ∧ □(x ∈ ℕ) ∧ (□◇⟨x' ≠ x⟩_x ∨ x = 0)",
+      ].join("\n"),
+      "PROPERTY Prop",
+    );
+    expect(result.status).toBe("success");
+  });
+
   it("reports a module that cannot be found as a syntax error", async () => {
     await expect(
       check({
@@ -4427,6 +4445,8 @@ describe("parseConfig matches TLC", () => {
     ["CONSTANT N = -1", "CONSTANT S = {1,}"].forEach((source) =>
       expect(() => parseConfig(source)).toThrow(TlaConfigError),
     );
+    // SANY's lexer reads ℕ as a name.
+    expect(parseConfig("INVARIANT ℕ").invariants).toEqual(["ℕ"]);
   });
 
   it("reports a malformed configuration with TLC's messages", () => {
@@ -4437,6 +4457,8 @@ describe("parseConfig matches TLC", () => {
     const cases = [
       ["INIT\n", atLine(1, "The keyword INIT was not followed by an identifier.")],
       ["CONSTANT N = -1\nINIT Init\n", atLine(2, "It was expecting = or <-, but did not find it.")],
+      // TLC reads ← with SANY's lexer, and compares it as written with <-.
+      ["CONSTANT N ← 1\nINIT Init\n", atLine(1, "It was expecting = or <-, but did not find it.")],
       ["CHECK_DEADLOCK 3\n", atLine(1, "It was expecting TRUE or FALSE, but did not find it.")],
       ["CONSTANT N = {1, 2\nINIT Init\n", atLine(2, "It was expecting }, but did not find it.")],
       ["CONSTANT N =\n", atLine(2, "It was expecting a value, but did not find it.")],
