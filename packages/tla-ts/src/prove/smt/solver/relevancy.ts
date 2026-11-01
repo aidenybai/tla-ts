@@ -151,8 +151,8 @@ export class RelevancyPropagator {
   }
 
   private propagateApp(expr: number) {
-    const args = this.context.manager.args[expr];
-    for (let index = args.length - 1; index >= 0; index--) this.markAsRelevant(args[index]);
+    for (let index = this.context.manager.getNumArgs(expr) - 1; index >= 0; index--)
+      this.markAsRelevant(this.context.manager.getArg(expr, index));
   }
 
   propagateImplies(expr: number) {
@@ -162,12 +162,12 @@ export class RelevancyPropagator {
       this.propagateApp(expr);
       return;
     }
-    const args = context.manager.args[expr];
-    if (context.findAssignment(args[0]) < 0) {
-      this.markAsRelevant(args[0]);
+    if (context.findAssignment(context.manager.getArg(expr, 0)) < 0) {
+      this.markAsRelevant(context.manager.getArg(expr, 0));
       return;
     }
-    if (context.findAssignment(args[1]) > 0) this.markAsRelevant(args[1]);
+    if (context.findAssignment(context.manager.getArg(expr, 1)) > 0)
+      this.markAsRelevant(context.manager.getArg(expr, 1));
   }
 
   propagateOr(expr: number) {
@@ -177,7 +177,8 @@ export class RelevancyPropagator {
       return;
     }
     let trueArg = -1;
-    for (const arg of context.manager.args[expr]) {
+    for (let index = 0; index < context.manager.getNumArgs(expr); index++) {
+      const arg = context.manager.getArg(expr, index);
       if (context.findAssignment(arg) <= 0) continue;
       if (this.isRelevant(arg)) return;
       if (trueArg === -1) trueArg = arg;
@@ -194,7 +195,8 @@ export class RelevancyPropagator {
     }
     if (value === 0) return;
     let falseArg = -1;
-    for (const arg of context.manager.args[expr]) {
+    for (let index = 0; index < context.manager.getNumArgs(expr); index++) {
+      const arg = context.manager.getArg(expr, index);
       if (context.findAssignment(arg) >= 0) continue;
       if (this.isRelevant(arg)) return;
       if (falseArg === -1) falseArg = arg;
@@ -203,11 +205,10 @@ export class RelevancyPropagator {
   }
 
   propagateIte(expr: number) {
-    const args = this.context.manager.args[expr];
-    this.markAsRelevant(args[0]);
-    const value = this.context.findAssignment(args[0]);
-    if (value < 0) this.markAsRelevant(args[2]);
-    else if (value > 0) this.markAsRelevant(args[1]);
+    this.markAsRelevant(this.context.manager.getArg(expr, 0));
+    const value = this.context.findAssignment(this.context.manager.getArg(expr, 0));
+    if (value < 0) this.markAsRelevant(this.context.manager.getArg(expr, 2));
+    else if (value > 0) this.markAsRelevant(this.context.manager.getArg(expr, 1));
   }
 
   canPropagate() {

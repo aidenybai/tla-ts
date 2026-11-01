@@ -110,9 +110,8 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
 
   internalizeEqEh(expr: number) {
     const context = this.context;
-    const args = this.manager.args[expr];
-    const first = context.getEnode(args[0]);
-    const second = context.getEnode(args[1]);
+    const first = context.getEnode(this.manager.getArg(expr, 0));
+    const second = context.getEnode(this.manager.getArg(expr, 1));
     if (first === undefined || second === undefined) return;
     if (first.thVar >= 0 && second.thVar >= 0 && first !== second) this.mkEqAxioms(first, second);
   }
@@ -128,11 +127,10 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
   relevantEh(expr: number) {
     const manager = this.manager;
     const op = manager.getOp(expr);
-    const args = manager.args[expr];
-    if (op === OP_DIV) this.mkDivAxiom(args[0], args[1]);
+    if (op === OP_DIV) this.mkDivAxiom(manager.getArg(expr, 0), manager.getArg(expr, 1));
     else if (op === OP_TO_INT) this.mkToIntAxiom(expr);
     else if (op === OP_IS_INT) this.mkIsIntAxiom(expr);
-    else if (op === OP_MOD) this.mkIdivModAxioms(args[0], args[1]);
+    else if (op === OP_MOD) this.mkIdivModAxioms(manager.getArg(expr, 0), manager.getArg(expr, 1));
   }
 
   // mk_literal.
@@ -190,9 +188,9 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
   // mk_to_int_axiom: to_int (to_real x) = x, and to_real (to_int x) <= x < to_real (to_int x) + 1.
   private mkToIntAxiom(term: number) {
     const manager = this.manager;
-    const arg = manager.args[term][0];
+    const arg = manager.getArg(term, 0);
     if (manager.getOp(arg) === OP_TO_REAL) {
-      this.mkAxiom([this.mkEq(manager.args[arg][0], term)]);
+      this.mkAxiom([this.mkEq(manager.getArg(arg, 0), term)]);
       return;
     }
     const toReal = manager.mkApp(OP_TO_REAL, [term], SORT_REAL);
@@ -215,7 +213,7 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
   // mk_is_int_axiom: is_int x if and only if to_real (to_int x) = x.
   protected mkIsIntAxiom(atom: number) {
     const manager = this.manager;
-    const arg = manager.args[atom][0];
+    const arg = manager.getArg(atom, 0);
     const eq = this.mkEq(
       manager.mkApp(OP_TO_REAL, [manager.mkApp(OP_TO_INT, [arg], SORT_INT)], SORT_REAL),
       arg,

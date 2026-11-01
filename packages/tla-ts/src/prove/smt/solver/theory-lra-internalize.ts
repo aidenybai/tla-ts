@@ -129,7 +129,8 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
   // mk_enode: the arguments, which become relevant, then the term.
   protected mkEnode(expr: number) {
     const context = this.context;
-    for (const arg of this.manager.args[expr]) {
+    for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
+      const arg = this.manager.getArg(expr, index);
       if (context.isEInternalized(arg)) continue;
       context.internalize(arg, false);
       context.markAsRelevant(arg);
@@ -142,8 +143,10 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
 
   private internalizeArgs(expr: number) {
     const context = this.context;
-    for (const arg of this.manager.args[expr])
+    for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
+      const arg = this.manager.getArg(expr, index);
       if (!context.isEInternalized(arg)) context.internalize(arg, false);
+    }
   }
 
   // found_unsupported: the list of unsupported terms is on the trail.
@@ -160,15 +163,15 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     this.underspecifiedTerms.push(expr);
     context.pushTrail(() => this.underspecifiedTerms.pop());
     const op = manager.getOp(expr);
-    const args = manager.args[expr];
     const zero = manager.mkNumeral(0n);
-    const dividend = op === OP_MOD ? manager.mkApp(OP_MOD, [args[0], zero], SORT_INT) : expr;
+    const dividend =
+      op === OP_MOD ? manager.mkApp(OP_MOD, [manager.getArg(expr, 0), zero], SORT_INT) : expr;
     const byZero =
       op === OP_DIV
-        ? manager.mkApp(OP_DIV0, args, SORT_REAL)
+        ? manager.mkApp(OP_DIV0, manager.getArgs(expr), SORT_REAL)
         : op === OP_IDIV
-          ? manager.mkApp(OP_IDIV0, args, SORT_INT)
-          : manager.mkApp(OP_MOD0, [args[0], zero], SORT_INT);
+          ? manager.mkApp(OP_IDIV0, manager.getArgs(expr), SORT_INT)
+          : manager.mkApp(OP_MOD0, [manager.getArg(expr, 0), zero], SORT_INT);
     const literal = this.mkEq(byZero, dividend);
     if (context.relevancy.isEnabled)
       context.relevancy.addDependency(dividend, context.boolVar2Expr[getVar(literal)]);
@@ -201,7 +204,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     this.mkEnode(expr);
     const thVar = this.mkVar(expr);
     if (!hasVar) {
-      const vars = this.manager.args[expr].map((arg) => {
+      const vars = this.manager.mapArgs(expr, (arg) => {
         this.internalizeTermCore(arg);
         return this.registerVar(this.mkVar(arg));
       });
@@ -225,15 +228,14 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
   // The columns of a quotient, its dividend and divisor, and the remainder, internalized in that
   // order.
   private registerDivision(quotient: number, remainder: number): Division {
-    const args = this.manager.args[quotient];
     const register = (expr: number) => {
       this.internalizeTermCore(expr);
       return this.registerVar(this.mkVar(expr));
     };
     return {
       quotient: register(quotient),
-      dividend: register(args[0]),
-      divisor: register(args[1]),
+      dividend: register(this.manager.getArg(quotient, 0)),
+      divisor: register(this.manager.getArg(quotient, 1)),
       remainder: register(remainder),
     };
   }
@@ -246,9 +248,9 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
   private isBounded(expr: number): boolean {
     const manager = this.manager;
     const op = manager.getOp(expr);
-    const args = manager.args[expr];
-    if (op === OP_IDIV && manager.isNumeral(args[1])) return this.isBounded(args[0]);
-    return (op === OP_MOD && manager.isNumeral(args[1])) || manager.isNumeral(expr);
+    if (op === OP_IDIV && manager.isNumeral(manager.getArg(expr, 1)))
+      return this.isBounded(manager.getArg(expr, 0));
+    return (op === OP_MOD && manager.isNumeral(manager.getArg(expr, 1))) || manager.isNumeral(expr);
   }
 
   private isAttachedExpr(expr: number) {
@@ -284,9 +286,11 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
       const term = terms.items[index];
       toEnsureEnode.push(term);
       const op = manager.getOp(term);
-      const args = manager.args[term];
       if (op === OP_ADD) {
-        for (const arg of args) push(arg, coeffs[index]);
+        for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
+          const arg = manager.getArg(term, argIndex);
+          push(arg, coeffs[index]);
+        }
         if (terms.size !== index + 1) {
           terms.set(index, terms.items[terms.size - 1]);
           coeffs[index] = coeffs[coeffs.length - 1];
@@ -294,17 +298,25 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
           coeffs.pop();
         }
       } else if (op === OP_SUB) {
-        terms.set(index, args[0]);
-        for (let position = 1; position < args.length; position++)
-          push(args[position], coeffs[index].neg());
-      } else if (op === OP_MUL && args.length === 2 && manager.isNumeral(args[0])) {
-        coeffs[index] = coeffs[index].mul(manager.getRationalValue(args[0]));
-        terms.set(index, args[1]);
-        toEnsureEnode.push(args[0]);
-      } else if (op === OP_MUL && args.length === 2 && manager.isNumeral(args[1])) {
-        coeffs[index] = coeffs[index].mul(manager.getRationalValue(args[1]));
-        terms.set(index, args[0]);
-        toEnsureEnode.push(args[1]);
+        terms.set(index, manager.getArg(term, 0));
+        for (let position = 1; position < manager.getNumArgs(term); position++)
+          push(manager.getArg(term, position), coeffs[index].neg());
+      } else if (
+        op === OP_MUL &&
+        manager.getNumArgs(term) === 2 &&
+        manager.isNumeral(manager.getArg(term, 0))
+      ) {
+        coeffs[index] = coeffs[index].mul(manager.getRationalValue(manager.getArg(term, 0)));
+        terms.set(index, manager.getArg(term, 1));
+        toEnsureEnode.push(manager.getArg(term, 0));
+      } else if (
+        op === OP_MUL &&
+        manager.getNumArgs(term) === 2 &&
+        manager.isNumeral(manager.getArg(term, 1))
+      ) {
+        coeffs[index] = coeffs[index].mul(manager.getRationalValue(manager.getArg(term, 1)));
+        terms.set(index, manager.getArg(term, 0));
+        toEnsureEnode.push(manager.getArg(term, 1));
       } else if (op === OP_MUL) {
         addVar(index, this.internalizeMul(term));
         index++;
@@ -313,14 +325,14 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
         index++;
       } else if (op === OP_UMINUS) {
         coeffs[index] = coeffs[index].neg();
-        terms.set(index, args[0]);
+        terms.set(index, manager.getArg(term, 0));
       } else if (op === OP_TO_REAL) {
-        terms.set(index, args[0]);
+        terms.set(index, manager.getArg(term, 0));
         if (!context.isEInternalized(term)) {
-          this.internalizeTermCore(args[0]);
+          this.internalizeTermCore(manager.getArg(term, 0));
           this.mkEnode(term);
           const column = this.registerVar(this.mkVar(term));
-          const argColumn = this.registerVar(this.mkVar(args[0]));
+          const argColumn = this.registerVar(this.mkVar(manager.getArg(term, 0)));
           for (const constraint of this.solver.addEquality(column, argColumn))
             this.constraintSources[constraint] = null;
         }
@@ -332,41 +344,57 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
         index++;
         if (isFirst) {
           if (op === OP_DIV) {
-            const divisor = context.rewriter.rewrite(args[1]);
+            const divisor = context.rewriter.rewrite(manager.getArg(term, 1));
             if (!this.isNonzeroNumeral(divisor)) this.foundUnderspecified(term);
-            for (const arg of args) toEnsureVar.push(arg);
+            for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
+              const arg = manager.getArg(term, argIndex);
+              toEnsureVar.push(arg);
+            }
           } else if (op === OP_IDIV) {
-            if (!this.isNonzeroNumeral(args[1])) this.foundUnderspecified(term);
-            const remainder = manager.mkApp(OP_MOD, args, SORT_INT);
+            if (!this.isNonzeroNumeral(manager.getArg(term, 1))) this.foundUnderspecified(term);
+            const remainder = manager.mkApp(OP_MOD, manager.getArgs(term), SORT_INT);
             context.internalize(remainder, false);
             if (context.relevancy.isEnabled) context.relevancy.addDependency(term, remainder);
-            if (this.nla !== undefined && !manager.isNumeral(args[1]))
+            if (this.nla !== undefined && !manager.isNumeral(manager.getArg(term, 1)))
               this.nla.divisions.addIdivision(this.registerDivision(term, remainder));
-            if (manager.isNumeral(args[1]) && this.isBounded(args[0])) {
+            if (
+              manager.isNumeral(manager.getArg(term, 1)) &&
+              this.isBounded(manager.getArg(term, 0))
+            ) {
               const nla = this.ensureNla();
               nla.divisions.addBoundedDivision(this.registerDivision(term, remainder));
             }
           } else if (op === OP_MOD) {
-            const isNonzeroDivisor = this.isNonzeroNumeral(args[1]);
+            const isNonzeroDivisor = this.isNonzeroNumeral(manager.getArg(term, 1));
             if (!isNonzeroDivisor) this.foundUnderspecified(term);
             // Without relevancy, Z3 makes the axioms before it registers the division with nla.
-            if (!context.relevancy.isEnabled) this.mkIdivModAxioms(args[0], args[1]);
+            if (!context.relevancy.isEnabled)
+              this.mkIdivModAxioms(manager.getArg(term, 0), manager.getArg(term, 1));
             if (this.nla !== undefined && isNonzeroDivisor) {
-              const quotient = manager.mkApp(OP_IDIV, args, SORT_INT);
+              const quotient = manager.mkApp(OP_IDIV, manager.getArgs(term), SORT_INT);
               context.internalize(quotient, false);
               this.nla.divisions.addBoundedDivision(this.registerDivision(quotient, term));
             }
-            if (!manager.isNumeral(args[1]) && !this.isZeroNumeral(args[0])) {
+            if (
+              !manager.isNumeral(manager.getArg(term, 1)) &&
+              !this.isZeroNumeral(manager.getArg(term, 0))
+            ) {
               const nla = this.ensureNla();
-              const quotient = manager.mkApp(OP_IDIV, args, SORT_INT);
+              const quotient = manager.mkApp(OP_IDIV, manager.getArgs(term), SORT_INT);
               context.internalize(quotient, false);
               nla.divisions.addDivisibility(this.registerDivision(quotient, term));
             }
           } else if (op === OP_IDIV0 || op === OP_MOD0) {
-            for (const arg of args) toEnsureVar.push(arg);
+            for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
+              const arg = manager.getArg(term, argIndex);
+              toEnsureVar.push(arg);
+            }
           } else if (op !== OP_TO_INT && op !== OP_DIV0) {
             this.foundUnsupported(term);
-            for (const arg of args) toEnsureVar.push(arg);
+            for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
+              const arg = manager.getArg(term, argIndex);
+              toEnsureVar.push(arg);
+            }
           }
           if (!context.relevancy.isEnabled && op !== OP_MOD) this.relevantEh(term);
         }

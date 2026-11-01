@@ -348,7 +348,7 @@ export abstract class Internalizer {
     const manager = this.manager;
     if (manager.areDistinct(first.root.owner, second.root.owner)) return true;
     const tmp = this.isDiseqTmp;
-    if (tmp === -1 || manager.sorts[manager.args[tmp][0]] !== manager.sorts[first.owner]) {
+    if (tmp === -1 || manager.sorts[manager.getArg(tmp, 0)] !== manager.sorts[first.owner]) {
       if (tmp !== -1) manager.decRef(tmp);
       this.isDiseqTmp = manager.mkEq(first.owner, second.owner);
       manager.incRef(this.isDiseqTmp);
@@ -367,7 +367,7 @@ export abstract class Internalizer {
 
   getLiteral(expr: number): Literal {
     const manager = this.manager;
-    if (manager.isNot(expr)) return negate(this.getLiteral(manager.args[expr][0]));
+    if (manager.isNot(expr)) return negate(this.getLiteral(manager.getArg(expr, 0)));
     if (expr === manager.trueExpr) return this.trueLiteral;
     if (expr === manager.falseExpr) return this.falseLiteral;
     return mkLiteral(this.getBoolVar(expr));
@@ -380,7 +380,7 @@ export abstract class Internalizer {
   findAssignment(expr: number) {
     const manager = this.manager;
     if (manager.isNot(expr)) {
-      const arg = manager.args[expr][0];
+      const arg = manager.getArg(expr, 0);
       if (this.isBInternalized(arg)) return -this.getAssignmentOfExpr(arg);
       if (arg === manager.falseExpr) return L_TRUE;
       if (arg === manager.trueExpr) return L_FALSE;
@@ -598,9 +598,9 @@ export abstract class Internalizer {
     const manager = this.manager;
     const generation = this.cachedGeneration.get(expr) ?? this.generation;
     const args =
-      isSuppressingArgs || manager.args[expr].length === 0
+      isSuppressingArgs || manager.getNumArgs(expr) === 0
         ? NO_ENODES
-        : manager.args[expr].map((arg) => {
+        : manager.mapArgs(expr, (arg) => {
             const argNode = this.exprToEnode[arg];
             if (argNode === undefined)
               throw new SmtInvariantError("an argument was not internalized");
@@ -705,7 +705,7 @@ export abstract class Internalizer {
   private isGate(expr: number) {
     const op = this.manager.getOp(expr);
     if (op === OP_AND || op === OP_OR || op === OP_ITE) return true;
-    return op === OP_EQ && this.manager.isBool(this.manager.args[expr][0]);
+    return op === OP_EQ && this.manager.isBool(this.manager.getArg(expr, 0));
   }
 
   // should_internalize_rec: a term, or a Boolean application of the basic family or an
@@ -744,16 +744,16 @@ export abstract class Internalizer {
       if (node !== undefined) this.updateGeneration(node);
       if (manager.sorts[current] === SORT_BOOL ? this.isBInternalized(current) : node !== undefined)
         return;
-      const args = manager.args[current];
       if (manager.getOp(current) === OP_ITE && manager.sorts[current] !== SORT_BOOL) {
-        visitChild(args[0], true);
-        visitChild(args[1], false);
-        visitChild(args[2], false);
+        visitChild(manager.getArg(current, 0), true);
+        visitChild(manager.getArg(current, 1), false);
+        visitChild(manager.getArg(current, 2), false);
         return;
       }
       const isNewGate =
         manager.sorts[current] === SORT_BOOL && (this.isGate(current) || manager.isNot(current));
-      for (let index = args.length - 1; index >= 0; index--) visitChild(args[index], isNewGate);
+      for (let index = manager.getNumArgs(current) - 1; index >= 0; index--)
+        visitChild(manager.getArg(current, index), isNewGate);
     };
     while (todo.length > 0) {
       const top = todo[todo.length - 1];
@@ -777,18 +777,21 @@ export abstract class Internalizer {
     this.internalizeDeep(expr);
     const manager = this.manager;
     if (this.isGate(expr)) {
-      const args = manager.args[expr];
       switch (manager.getOp(expr)) {
         case OP_AND:
-          for (const arg of args) {
+          for (let index = 0; index < manager.getNumArgs(expr); index++) {
+            const arg = manager.getArg(expr, index);
             this.internalizeRec(arg, true);
             this.mkClause([this.getLiteral(arg)], null, CLS_AUX);
           }
           break;
         case OP_OR: {
-          for (const arg of args) this.internalizeRec(arg, true);
+          for (let index = 0; index < manager.getNumArgs(expr); index++) {
+            const arg = manager.getArg(expr, index);
+            this.internalizeRec(arg, true);
+          }
           this.mkClause(
-            args.map((innerArg) => this.getLiteral(innerArg)),
+            manager.mapArgs(expr, (innerArg) => this.getLiteral(innerArg)),
             null,
             CLS_AUX,
           );
@@ -796,19 +799,26 @@ export abstract class Internalizer {
           break;
         }
         case OP_EQ: {
-          this.internalizeRec(args[0], true);
-          this.internalizeRec(args[1], true);
-          const first = this.getLiteral(args[0]);
-          const second = this.getLiteral(args[1]);
+          this.internalizeRec(manager.getArg(expr, 0), true);
+          this.internalizeRec(manager.getArg(expr, 1), true);
+          const first = this.getLiteral(manager.getArg(expr, 0));
+          const second = this.getLiteral(manager.getArg(expr, 1));
           this.mkClause([first, negate(second)], null, CLS_AUX);
           this.mkClause([negate(first), second], null, CLS_AUX);
           break;
         }
         default: {
-          for (const arg of args) this.internalizeRec(arg, true);
-          const condition = this.getLiteral(args[0]);
-          this.mkClause([negate(condition), this.getLiteral(args[1])], null, CLS_AUX);
-          this.mkClause([condition, this.getLiteral(args[2])], null, CLS_AUX);
+          for (let index = 0; index < manager.getNumArgs(expr); index++) {
+            const arg = manager.getArg(expr, index);
+            this.internalizeRec(arg, true);
+          }
+          const condition = this.getLiteral(manager.getArg(expr, 0));
+          this.mkClause(
+            [negate(condition), this.getLiteral(manager.getArg(expr, 1))],
+            null,
+            CLS_AUX,
+          );
+          this.mkClause([condition, this.getLiteral(manager.getArg(expr, 2))], null, CLS_AUX);
           this.addIteRelWatches(expr);
         }
       }
@@ -843,7 +853,7 @@ export abstract class Internalizer {
     const manager = this.manager;
     if (expr === manager.trueExpr || expr === manager.falseExpr) return;
     if (manager.isNot(expr) && isGateContext) {
-      this.internalizeRec(manager.args[expr][0], true);
+      this.internalizeRec(manager.getArg(expr, 0), true);
       return;
     }
     if (this.isBInternalized(expr)) {
@@ -861,7 +871,7 @@ export abstract class Internalizer {
       return;
     }
     const op = manager.getOp(expr);
-    if (op === OP_EQ && !manager.isBool(manager.args[expr][0]))
+    if (op === OP_EQ && !manager.isBool(manager.getArg(expr, 0)))
       this.internalizeEq(expr, isGateContext);
     else if (manager.kinds[expr] === KIND_APP && this.internalizeTheoryAtom(expr, isGateContext))
       return;
@@ -873,12 +883,12 @@ export abstract class Internalizer {
     this.internalizeFormulaCore(expr, isGateContext);
     const boolVar = this.getBoolVar(expr);
     this.setBoolVarFlag(boolVar, BV_EQ, true);
-    if (this.manager.sorts[this.manager.args[expr][0]] !== SORT_BOOL && this.isArithSort(expr))
+    if (this.manager.sorts[this.manager.getArg(expr, 0)] !== SORT_BOOL && this.isArithSort(expr))
       this.theory.internalizeEqEh(expr);
   }
 
   private isArithSort(eq: number) {
-    return isArithSort(this.manager.sorts[this.manager.args[eq][0]]);
+    return isArithSort(this.manager.sorts[this.manager.getArg(eq, 0)]);
   }
 
   private internalizeTheoryAtom(expr: number, isGateContext: boolean) {
@@ -911,20 +921,22 @@ export abstract class Internalizer {
     const manager = this.manager;
     const op = manager.getOp(expr);
     const isGateNode = this.isGate(expr) || op === OP_NOT;
-    for (const arg of manager.args[expr]) this.internalizeRec(arg, isGateNode);
+    for (let index = 0; index < manager.getNumArgs(expr); index++) {
+      const arg = manager.getArg(expr, index);
+      this.internalizeRec(arg, isGateNode);
+    }
     const isNewVar = !this.isBInternalized(expr);
     const boolVar = isNewVar ? this.mkBoolVar(expr) : this.getBoolVar(expr);
     const node = this.exprToEnode[expr];
-    if (node === undefined && (!isGateContext || (!isGateNode && manager.args[expr].length > 0))) {
+    if (node === undefined && (!isGateContext || (!isGateNode && manager.getNumArgs(expr) > 0))) {
       this.mkEnode(expr, isGateNode, !isGateContext, true);
       this.setEnodeFlag(boolVar, isNewVar);
     } else if (!isGateContext && node !== undefined) this.setMergeTf(node, boolVar, isNewVar);
     if (!isNewVar || manager.getFamily(expr) !== FAMILY_BASIC) return;
     const literal = mkLiteral(boolVar);
-    const args = manager.args[expr];
     switch (op) {
       case OP_NOT: {
-        const child = this.getLiteral(args[0]);
+        const child = this.getLiteral(manager.getArg(expr, 0));
         this.mkGateClause(negate(literal), negate(child));
         this.mkGateClause(literal, child);
         break;
@@ -933,7 +945,8 @@ export abstract class Internalizer {
         const buffer = this.gateBuffer;
         shrink(buffer, 0);
         buffer.push(literal);
-        for (const arg of args) {
+        for (let index = 0; index < manager.getNumArgs(expr); index++) {
+          const arg = manager.getArg(expr, index);
           const argLiteral = this.getLiteral(arg);
           this.mkGateClause(negate(literal), argLiteral);
           buffer.push(negate(argLiteral));
@@ -946,7 +959,8 @@ export abstract class Internalizer {
         const buffer = this.gateBuffer;
         shrink(buffer, 0);
         buffer.push(negate(literal));
-        for (const arg of args) {
+        for (let index = 0; index < manager.getNumArgs(expr); index++) {
+          const arg = manager.getArg(expr, index);
           const argLiteral = this.getLiteral(arg);
           this.mkGateClause(literal, negate(argLiteral));
           buffer.push(argLiteral);
@@ -956,8 +970,8 @@ export abstract class Internalizer {
         break;
       }
       case OP_IMPLIES: {
-        const first = this.getLiteral(args[0]);
-        const second = this.getLiteral(args[1]);
+        const first = this.getLiteral(manager.getArg(expr, 0));
+        const second = this.getLiteral(manager.getArg(expr, 1));
         this.mkGateClause(literal, first);
         this.mkGateClause(literal, negate(second));
         this.mkGateClause(negate(literal), negate(first), second);
@@ -965,10 +979,10 @@ export abstract class Internalizer {
       }
       case OP_EQ:
       case OP_XOR: {
-        if (op === OP_EQ && !manager.isBool(args[0])) break;
+        if (op === OP_EQ && !manager.isBool(manager.getArg(expr, 0))) break;
         const gate = op === OP_XOR ? negate(literal) : literal;
-        const first = this.getLiteral(args[0]);
-        const second = this.getLiteral(args[1]);
+        const first = this.getLiteral(manager.getArg(expr, 0));
+        const second = this.getLiteral(manager.getArg(expr, 1));
         this.mkGateClause(negate(gate), first, negate(second));
         this.mkGateClause(negate(gate), negate(first), second);
         this.mkGateClause(gate, first, second);
@@ -976,9 +990,9 @@ export abstract class Internalizer {
         break;
       }
       case OP_ITE: {
-        const condition = this.getLiteral(args[0]);
-        const thenLiteral = this.getLiteral(args[1]);
-        const elseLiteral = this.getLiteral(args[2]);
+        const condition = this.getLiteral(manager.getArg(expr, 0));
+        const thenLiteral = this.getLiteral(manager.getArg(expr, 1));
+        const elseLiteral = this.getLiteral(manager.getArg(expr, 2));
         this.mkGateClause(negate(literal), negate(condition), thenLiteral);
         this.mkGateClause(negate(literal), condition, elseLiteral);
         this.mkGateClause(literal, negate(condition), negate(thenLiteral));
@@ -1017,7 +1031,10 @@ export abstract class Internalizer {
       return;
     }
     if (manager.getFamily(expr) === FAMILY_ARITH && this.theory.internalizeTerm(expr)) return;
-    for (const arg of manager.args[expr]) this.internalizeRec(arg, false);
+    for (let index = 0; index < manager.getNumArgs(expr); index++) {
+      const arg = manager.getArg(expr, index);
+      this.internalizeRec(arg, false);
+    }
     if (this.exprToEnode[expr] !== undefined) return;
     this.mkEnode(expr, false, false, true);
   }
@@ -1029,23 +1046,22 @@ export abstract class Internalizer {
   }
 
   private internalizeIteTerm(expr: number) {
-    const args = this.manager.args[expr];
-    const thenEq = this.mkEqAtom(expr, args[1]);
-    const elseEq = this.mkEqAtom(expr, args[2]);
+    const thenEq = this.mkEqAtom(expr, this.manager.getArg(expr, 1));
+    const elseEq = this.mkEqAtom(expr, this.manager.getArg(expr, 2));
     this.mkEnode(expr, true, false, false);
-    this.internalizeRec(args[0], true);
-    this.internalizeRec(args[1], false);
-    this.internalizeRec(args[2], false);
+    this.internalizeRec(this.manager.getArg(expr, 0), true);
+    this.internalizeRec(this.manager.getArg(expr, 1), false);
+    this.internalizeRec(this.manager.getArg(expr, 2), false);
     this.internalizeRec(thenEq, true);
     this.internalizeRec(elseEq, true);
-    const condition = this.getLiteral(args[0]);
+    const condition = this.getLiteral(this.manager.getArg(expr, 0));
     this.mkClause([negate(condition), this.getLiteral(thenEq)], null, CLS_AUX);
     this.mkClause([condition, this.getLiteral(elseEq)], null, CLS_AUX);
     // ite_term_relevancy_eh: it marks the terms for the propagator, which propagates them later.
     const handler = () => {
       if (!this.isRelevant(expr)) return;
-      this.relevancy.markAsRelevant(args[0]);
-      const value = this.findAssignment(args[0]);
+      this.relevancy.markAsRelevant(this.manager.getArg(expr, 0));
+      const value = this.findAssignment(this.manager.getArg(expr, 0));
       if (value < 0) this.relevancy.markAsRelevant(elseEq);
       else if (value > 0) this.relevancy.markAsRelevant(thenEq);
     };
@@ -1062,7 +1078,8 @@ export abstract class Internalizer {
     const handler = () => {
       if (this.isRelevant(expr)) this.relevancy.propagateAnd(expr);
     };
-    for (const arg of this.manager.args[expr]) {
+    for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
+      const arg = this.manager.getArg(expr, index);
       const literal = this.getLiteral(arg);
       if (literal > 1) this.addRelWatch(negate(literal), handler);
     }
@@ -1072,7 +1089,8 @@ export abstract class Internalizer {
     const handler = () => {
       if (this.isRelevant(expr)) this.relevancy.propagateOr(expr);
     };
-    for (const arg of this.manager.args[expr]) {
+    for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
+      const arg = this.manager.getArg(expr, index);
       const literal = this.getLiteral(arg);
       if (literal > 1) this.addRelWatch(literal, handler);
     }
@@ -1082,7 +1100,7 @@ export abstract class Internalizer {
     const handler = () => {
       if (this.isRelevant(expr)) this.relevancy.propagateIte(expr);
     };
-    const literal = this.getLiteral(this.manager.args[expr][0]);
+    const literal = this.getLiteral(this.manager.getArg(expr, 0));
     if (literal <= 1) return;
     this.addRelWatch(literal, handler);
     this.addRelWatch(negate(literal), handler);

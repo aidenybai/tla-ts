@@ -75,10 +75,13 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
         this.delayIneqsQhead = saved;
       });
       const atom = this.delayIneqs[this.delayIneqsQhead];
-      const args = manager.args[atom];
-      const sort = manager.sorts[args[0]];
+      const sort = manager.sorts[manager.getArg(atom, 0)];
       const zero = manager.mkNumeralOfSort(Rational.zero, sort);
-      const difference = manager.mkApp(OP_SUB, [args[0], args[1]], sort);
+      const difference = manager.mkApp(
+        OP_SUB,
+        [manager.getArg(atom, 0), manager.getArg(atom, 1)],
+        sort,
+      );
       const normalized = manager.mkApp(manager.getOp(atom), [difference, zero], SORT_BOOL);
       const first = this.mkLiteral(atom);
       const second = this.mkLiteral(normalized);

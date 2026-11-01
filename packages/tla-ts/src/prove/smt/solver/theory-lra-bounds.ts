@@ -28,7 +28,6 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     const boolVar = context.mkBoolVar(expr);
     this.boolVarToBound[boolVar] = undefined;
     context.setVarTheory(boolVar);
-    const args = manager.args[expr];
     if (op === OP_IS_INT) {
       this.mkEnode(expr);
       if (!context.relevancy.isEnabled) this.mkIsIntAxiom(expr);
@@ -38,14 +37,16 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
       this.foundUnsupported(expr);
       return true;
     }
-    const isRightNumeral = manager.isNumeral(args[1]);
-    if (!isRightNumeral && !manager.isNumeral(args[0])) {
+    const isRightNumeral = manager.isNumeral(manager.getArg(expr, 1));
+    if (!isRightNumeral && !manager.isNumeral(manager.getArg(expr, 0))) {
       this.delayIneqs.push(expr);
       context.pushTrail(() => this.delayIneqs.pop());
       return true;
     }
-    const term = isRightNumeral ? args[0] : args[1];
-    const bound = manager.getRationalValue(isRightNumeral ? args[1] : args[0]);
+    const term = isRightNumeral ? manager.getArg(expr, 0) : manager.getArg(expr, 1);
+    const bound = manager.getRationalValue(
+      isRightNumeral ? manager.getArg(expr, 1) : manager.getArg(expr, 0),
+    );
     const isLower = (op === OP_GE) === isRightNumeral;
     const thVar = this.internalizeDef(term);
     const value =
