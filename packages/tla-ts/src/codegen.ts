@@ -247,6 +247,23 @@ const isConstructionFree = (
   }
 };
 
+// Whether the generated code evaluates an expression only in the context its frame names. A primed
+// expression doesn't, since it shares the generated function's primed context.
+const isReadOnly = (expression: Expression): boolean => {
+  switch (expression.kind) {
+    case "Identifier":
+    case "Number":
+    case "String":
+      return true;
+    case "FieldAccess":
+      return isReadOnly(expression.record);
+    case "FunctionApplication":
+      return [expression.function, ...expression.args].every(isReadOnly);
+    default:
+      return false;
+  }
+};
+
 const generateExpression = (generator: Generator, expression: Expression, frame: Frame): string => {
   const generate = (node: Expression, nodeFrame = frame) =>
     generateExpression(generator, node, nodeFrame);
@@ -287,16 +304,16 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "FunctionApplication": {
       keepLazy(expression.function);
       // The interpreter evaluates a function that may construct one with EvalControl.KeepLazy.
+      const keepLazyFrame = { ...frame, context: `keepLazyContext(${frame.context})` };
       const evaluatedFunction = isConstructionFree(
         expression.function,
         frame,
         generator.environment,
       )
         ? generate(expression.function)
-        : generateDelegate(generator, expression.function, {
-            ...frame,
-            context: `keepLazyContext(${frame.context})`,
-          });
+        : isReadOnly(expression.function)
+          ? generate(expression.function, keepLazyFrame)
+          : generateDelegate(generator, expression.function, keepLazyFrame);
       const functionCode = `expectFunction(${evaluatedFunction}, ${addReference(generator, expression)})`;
       const describeMissing = getMissingArgumentDescriber(generator.environment.runtime.version);
       const error = describeMissing ? `, ${addReference(generator, describeMissing)}` : "";
