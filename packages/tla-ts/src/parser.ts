@@ -700,7 +700,7 @@ const parse = (source: string, mode: ParseMode): Module => {
       const location = getLocation(token);
       if (POSTFIX_OPERATORS.has(token.text)) {
         return withRange(
-          { kind: "OperatorReference", operator: token.text, location },
+          { kind: "OperatorReference", operator: token.text, spelling: token.spelling, location },
           cursor.index - 1,
         );
       }
@@ -1060,10 +1060,16 @@ const parse = (source: string, mode: ParseMode): Module => {
     }
     // SANY reads an infix or postfix operator as a primary expression, with or without arguments.
     if (token.kind === "Operator" && isOperatorName(token.text) && isAt("(")) {
-      return { kind: "Apply", operator: token.text, args: parseArguments(), location };
+      return {
+        kind: "Apply",
+        operator: token.text,
+        spelling: token.spelling,
+        args: parseArguments(),
+        location,
+      };
     }
     if (token.kind === "Operator" && isOperatorName(token.text) && !isTlapm) {
-      return { kind: "Identifier", name: token.text, location };
+      return { kind: "Identifier", name: token.text, spelling: token.spelling, location };
     }
     switch (token.text) {
       case "(": {
@@ -1231,7 +1237,13 @@ const parse = (source: string, mode: ParseMode): Module => {
         advance();
         operators.last = POSTFIX_PRECEDENCE;
         state.left = withRange(
-          { kind: "Apply", operator: token.text, args: [state.left], location },
+          {
+            kind: "Apply",
+            operator: token.text,
+            spelling: token.spelling,
+            args: [state.left],
+            location,
+          },
           start,
         );
         continue;
@@ -1583,7 +1595,12 @@ const parse = (source: string, mode: ParseMode): Module => {
     ) {
       cursor.index++;
       return withRange(
-        { kind: "OperatorReference", operator: token.text, location: getLocation(token) },
+        {
+          kind: "OperatorReference",
+          operator: token.text,
+          spelling: token.spelling,
+          location: getLocation(token),
+        },
         start,
       );
     }

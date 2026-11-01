@@ -166,6 +166,15 @@ describe("parseModule reads operators like SANY", () => {
     },
   );
 
+  it.each(["TRUE ⟹ FALSE", "x′"])(
+    "rejects %j, which SANY's lexer has no token for",
+    (expression) => {
+      expect(() => parseModule(`---- MODULE M ----\nA == ${expression}\n====`)).toThrow(
+        TlaSyntaxError,
+      );
+    },
+  );
+
   it.each([
     ["the root module", "---- MODULE M ----\nA == 1\n"],
     ["a nested module", `---- MODULE M ----\n---- MODULE Inner ----\nA == 1\n`],

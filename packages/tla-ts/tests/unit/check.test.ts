@@ -3351,6 +3351,24 @@ describe("name resolution matches SANY", () => {
         ["line 7, col 32 to line 7, col 35", "Unknown operator: `<1>9'."],
       ],
     ],
+    [
+      "EXTENDS Naturals\na ⊕ b == a + b\nA == ⟨1, 2⟩ ∘ U1\nB == ∀ y ∈ ℕ : y ≥ 0 ⇒ y ⁺\nC == ⊕ ∪ {1 ‥ 2, 1 ⊕ 2}\nM == INSTANCE Naturals\nD == M ! ⊕(1, 2)",
+      [
+        [
+          "line 4, col 13 to line 4, col 13",
+          "Could not find declaration or definition of symbol '∘'.",
+        ],
+        ["line 4, col 6 to line 4, col 16", "Couldn't resolve infix operator symbol `∘'."],
+        ["line 5, col 12 to line 5, col 12", "Unknown operator: `ℕ'."],
+        [
+          "line 5, col 26 to line 5, col 26",
+          "Could not find declaration or definition of symbol '⁺'.",
+        ],
+        ["line 5, col 24 to line 5, col 26", "Couldn't resolve postfix operator symbol `⁺'."],
+        ["line 6, col 6 to line 6, col 6", "The operator \\oplus requires 2 arguments."],
+        ["line 8, col 6 to line 8, col 10", "Unknown operator: `M!\\oplus'."],
+      ],
+    ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
     await expect(checkSource(source)).rejects.toThrow(
       createSanyError(

@@ -234,38 +234,84 @@ const SYMBOL_OPERATORS = [
   "?",
 ];
 
+// The Unicode forms of the operators SANY's grammar, javacc/tla+.jj, reads, as their ASCII forms.
 const UNICODE_OPERATORS = new Map([
-  ["∧", "/\\"],
-  ["∨", "\\/"],
-  ["¬", "~"],
-  ["⇒", "=>"],
-  ["⟹", "=>"],
-  ["≡", "<=>"],
-  ["⇔", "<=>"],
-  ["∈", "\\in"],
-  ["∉", "\\notin"],
-  ["⊆", "\\subseteq"],
-  ["⊂", "\\subset"],
-  ["⊇", "\\supseteq"],
-  ["⊃", "\\supset"],
-  ["∪", "\\cup"],
-  ["∩", "\\cap"],
-  ["×", "\\X"],
-  ["∀", "\\A"],
   ["∃", "\\E"],
-  ["≠", "#"],
-  ["≤", "<="],
-  ["≥", ">="],
-  ["↦", "|->"],
-  ["→", "->"],
+  ["∀", "\\A"],
+  ["∷", "::"],
+  ["≜", "=="],
   ["⟨", "<<"],
+  ["⟩_", ">>_"],
   ["⟩", ">>"],
+  ["→", "->"],
+  ["←", "<-"],
+  ["↦", "|->"],
+  ["⁺", "^+"],
+  ["¬", "~"],
   ["□", "[]"],
   ["◇", "<>"],
-  ["≜", "=="],
-  ["′", "'"],
-  ["∘", "\\o"],
+  ["∧", "/\\"],
+  ["∨", "\\/"],
+  ["∈", "\\in"],
+  ["≈", "\\approx"],
+  ["≔", ":="],
+  ["≍", "\\asymp"],
+  ["◯", "\\bigcirc"],
+  ["⩴", "::="],
+  ["●", "\\bullet"],
+  ["∩", "\\cap"],
   ["⋅", "\\cdot"],
+  ["∘", "\\o"],
+  ["≅", "\\cong"],
+  ["∪", "\\cup"],
+  ["÷", "\\div"],
+  ["≐", "\\doteq"],
+  ["‥", ".."],
+  ["…", "..."],
+  ["≡", "<=>"],
+  ["‼", "!!"],
+  ["≥", ">="],
+  ["≫", "\\gg"],
+  ["⇔", "<=>"],
+  ["⇒", "=>"],
+  ["⫤", "=|"],
+  ["↝", "~>"],
+  ["≤", "<="],
+  ["≪", "\\ll"],
+  ["⊣", "-|"],
+  ["≠", "#"],
+  ["∉", "\\notin"],
+  ["⊙", "\\odot"],
+  ["⊖", "\\ominus"],
+  ["⊕", "\\oplus"],
+  ["⊘", "\\oslash"],
+  ["⊗", "\\otimes"],
+  ["⇸", "-+->"],
+  ["≺", "\\prec"],
+  ["⪯", "\\preceq"],
+  ["∝", "\\propto"],
+  ["⁇", "??"],
+  ["⊨", "|="],
+  ["⊢", "|-"],
+  ["∼", "\\sim"],
+  ["≃", "\\simeq"],
+  ["⊓", "\\sqcap"],
+  ["⊔", "\\sqcup"],
+  ["⊏", "\\sqsubset"],
+  ["⊑", "\\sqsubseteq"],
+  ["⊐", "\\sqsupset"],
+  ["⊒", "\\sqsupseteq"],
+  ["⋆", "\\star"],
+  ["⊂", "\\subset"],
+  ["⊆", "\\subseteq"],
+  ["≻", "\\succ"],
+  ["⪰", "\\succeq"],
+  ["⊃", "\\supset"],
+  ["⊇", "\\supseteq"],
+  ["×", "\\X"],
+  ["⊎", "\\uplus"],
+  ["‖", "||"],
+  ["≀", "\\wr"],
 ]);
 
 const BASED_NUMBER = /^\\([bB][01]+|[oO][0-7]+|[hH][0-9a-fA-F]+)/;
@@ -303,8 +349,12 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
     const operator = BACKSLASH_OPERATORS.get(word.slice(0, length.value));
     return { text: operator ?? "\\", length: operator === undefined ? 1 : length.value + 1 };
   }
-  const unicodeOperator = UNICODE_OPERATORS.get(character);
-  if (unicodeOperator) return { text: unicodeOperator, length: character.length };
+  const unicodeSymbol = [source.slice(index, index + 2), character].find((candidate) =>
+    UNICODE_OPERATORS.has(candidate),
+  );
+  if (unicodeSymbol !== undefined) {
+    return { text: UNICODE_OPERATORS.get(unicodeSymbol) ?? "", length: unicodeSymbol.length };
+  }
   const symbol = SYMBOL_OPERATORS.find((candidate) => source.startsWith(candidate, index));
   if (symbol) return { text: SYMBOL_ALIASES.get(symbol) ?? symbol, length: symbol.length };
   return character === "\\" ? { text: "\\", length: 1 } : undefined;
@@ -508,6 +558,11 @@ export const tokenize = (source: string): Token[] => {
       const name = names.get(word) ?? word;
       names.set(name, name);
       pushToken(KEYWORDS.has(word) ? "Keyword" : "Identifier", name, word.length);
+      continue;
+    }
+    if ("ℕℤℝ".includes(character)) {
+      pushToken("Identifier", names.get(character) ?? character, 1);
+      names.set(character, character);
       continue;
     }
     const stepLength = matchStep(source, cursor.index);
