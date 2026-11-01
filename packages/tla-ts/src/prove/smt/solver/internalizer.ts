@@ -56,7 +56,7 @@ import {
 import type { DefaultQuantifierManager } from "./quantifier-manager";
 import { RelevancyPropagator } from "./relevancy";
 import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
-import { sortByKey } from "./sort";
+import { sortNumbers } from "./sort";
 import type { TheoryLra } from "./theory-lra";
 import { setAt, shrink } from "./array";
 import { StickyGenerations } from "./sticky-generations";
@@ -79,7 +79,6 @@ const UNDO_CGC_GENERATIONS = 5;
 const UNDO_MERGE_TF = 6;
 const UNDO_ENODE_FLAG = 7;
 
-const getLiteralKey = (literal: number) => literal;
 // The first word of bool_var_data: the level of the assignment in the low 24 bits, then m_mark,
 // m_phase_available, m_phase, m_eq, m_true_first, m_enode, m_quantifier and whether a theory is
 // notified.
@@ -137,8 +136,6 @@ export abstract class Internalizer {
   private watchMarks = new Uint8Array(1024);
   // The false literals that simplify_aux_clause_literals removes from the clause mkClause makes.
   private removedLiterals: Literal[] = [];
-  // The literals of the clause being made, which mkClause simplifies instead of the caller's.
-  private clauseLiterals: Literal[] = [];
   // The binary clauses of the binary clause optimization: the literals each literal propagates when it
   // becomes true, which Z3 visits newest first and before the clauses.
   protected binaryWatches: (Literal[] | undefined)[] = [];
@@ -1081,7 +1078,7 @@ export abstract class Internalizer {
   }
 
   private simplifyAuxClauseLiterals(literals: Literal[], removed: Literal[]) {
-    sortByKey(literals, getLiteralKey);
+    sortNumbers(literals);
     let previous: Literal | null = null;
     let kept = 0;
     for (const literal of literals) {
@@ -1106,7 +1103,7 @@ export abstract class Internalizer {
   // simplify_aux_lemma_literals: unlike an aux clause, a theory lemma keeps its false literals, so it
   // needs no unit resolution justification.
   private simplifyAuxLemmaLiterals(literals: Literal[]) {
-    sortByKey(literals, getLiteralKey);
+    sortNumbers(literals);
     let previous: Literal | null = null;
     let kept = 0;
     for (const literal of literals) {
@@ -1218,19 +1215,15 @@ export abstract class Internalizer {
     this.clausesToReinit[level].push(clause);
   }
 
+  // mk_clause: like Z3's, it simplifies the literals in the array it is given.
   mkClause(
     input: Literal[],
     inputJustification: Justification | null,
     kind: number,
     delEh: (() => void) | null = null,
   ) {
-    let literals = input;
+    const literals = input;
     let justification = inputJustification;
-    if (kind !== CLS_LEARNED) {
-      literals = this.clauseLiterals;
-      shrink(literals, 0);
-      for (const literal of input) literals.push(literal);
-    }
     if (kind === CLS_TH_LEMMA) {
       if (!this.simplifyAuxLemmaLiterals(literals)) return null;
     } else if (kind !== CLS_LEARNED) {

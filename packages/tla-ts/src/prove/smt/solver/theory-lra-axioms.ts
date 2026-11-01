@@ -155,7 +155,10 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
   // minimization can see through, rather than by an axiom.
   protected mkAxiom(literals: Literal[]) {
     const context = this.context;
-    context.mkThAxiom(literals.length === 1 ? [context.falseLiteral, literals[0]] : literals);
+    // mkThAxiom simplifies the literals it is given, which this reads after.
+    context.mkThAxiom(
+      literals.length === 1 ? [context.falseLiteral, literals[0]] : literals.slice(),
+    );
     if (!context.relevancy.isEnabled) return;
     if (literals.length !== 2) {
       for (const literal of literals) context.markLiteralAsRelevant(literal);
