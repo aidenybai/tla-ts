@@ -1032,6 +1032,7 @@ export const bindOperatorArguments = (
   closure: Closure,
   args: Expression[],
   context: Context,
+  binders?: ArgumentBinder[],
 ): Scope | undefined => {
   if (args.length !== closure.params.length) {
     throw new TlaEvaluationError(
@@ -1044,18 +1045,36 @@ export const bindOperatorArguments = (
     const binding: Binding =
       param.arity > 0
         ? { kind: "Operator", operator: evaluateOperatorArgument(args[index], context) }
-        : getArgumentBinder(args[index], context.environment)(context);
+        : (binders?.[index] ?? getArgumentBinder(args[index], context.environment))(context);
     scope = { name: param.name, binding, parent: scope };
   }
   return scope;
 };
 
-const callOperator = (operator: Operator, args: Expression[], context: Context) => {
+// The body a call site last called and its evaluator, as a site mostly calls one closure.
+interface CalledBody {
+  body: Expression;
+  evaluator: Evaluator;
+}
+
+const callOperator = (
+  operator: Operator,
+  args: Expression[],
+  context: Context,
+  called: { entry: CalledBody | undefined },
+  binders: ArgumentBinder[],
+) => {
   if (operator.kind === "Closure") {
-    return evaluate(
-      operator.body,
-      withScope(context, bindOperatorArguments(operator, args, context)),
-    );
+    const bodyContext = withScope(context, bindOperatorArguments(operator, args, context, binders));
+    if (context.environment.callStack) return evaluate(operator.body, bodyContext);
+    const entry =
+      called.entry?.body === operator.body
+        ? called.entry
+        : (called.entry = {
+            body: operator.body,
+            evaluator: getEntryEvaluator(operator.body, context.environment),
+          });
+    return entry.evaluator(bodyContext);
   }
   if (operator.kind === "Operator") return operator.call(args.map((arg) => evaluate(arg, context)));
   if (operator.isLazy) return operator.evaluate(getLazyArguments(args, context), context);
@@ -2000,9 +2019,11 @@ const compileApply = (
       );
     };
   }
+  const called = { entry: undefined as CalledBody | undefined };
+  const binders = args.map((arg) => getArgumentBinder(arg, environment));
   return (context) => {
     const operator = resolveOperator(expression.operator, context);
-    if (operator) return callOperator(operator, args, context);
+    if (operator) return callOperator(operator, args, context, called, binders);
     const definition = environment.definitions.get(expression.operator);
     if (definition?.kind === "Function") {
       throw new TlaEvaluationError(`${expression.operator} is a function; apply it with brackets`);
