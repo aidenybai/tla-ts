@@ -44,8 +44,8 @@ export class DefaultQuantifierManager {
     private context: Context,
     isMbqi: boolean,
   ) {
-    this.qiQueue = new QiQueue(context);
     this.fingerprints = new FingerprintSet(context.manager);
+    this.qiQueue = new QiQueue(context, this.fingerprints);
     const onMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) =>
       this.addInstance(quantifier, bindings, maxGeneration);
     this.mam = new Mam(context, onMatch);
@@ -138,8 +138,8 @@ export class DefaultQuantifierManager {
 
   addInstance(quantifier: number, bindings: Enode[], maxGeneration: number) {
     const generation = Math.max(maxGeneration, this.getGeneration(quantifier));
-    const roots = this.fingerprints.insert(quantifier, bindings);
-    if (roots !== null) this.qiQueue.insert(quantifier, roots, generation);
+    const fingerprint = this.fingerprints.insert(quantifier, bindings);
+    if (fingerprint !== -1) this.qiQueue.insert(quantifier, fingerprint, generation);
   }
 
   finalCheckEh(isFull: boolean) {
