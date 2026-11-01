@@ -79,7 +79,7 @@ export class Interpreter {
     let curr = start === null ? first : start.next;
     if (start !== null && curr === first) return null;
     do {
-      if (curr.decl === label && curr.isCgr() && curr.args.length === numArgs) {
+      if (curr.decl === label && curr.isCgr() && curr.numArgs === numArgs) {
         this.updateMaxGeneration(curr);
         return curr;
       }
@@ -103,8 +103,8 @@ export class Interpreter {
     do {
       if (
         node.decl === instr.label &&
-        node.args.length === instr.numArgs &&
-        node.args.every((arg, index) => arg.root === args[index])
+        node.numArgs === instr.numArgs &&
+        args.every((arg, index) => node.getArg(index).root === arg)
       ) {
         this.updateMaxGeneration(node);
         return true;
@@ -117,10 +117,10 @@ export class Interpreter {
   private isRelevantParent(parent: Enode, decl: number, argIndex: number, child: Enode) {
     return (
       parent.decl === decl &&
-      argIndex < parent.args.length &&
+      argIndex < parent.numArgs &&
       this.context.isRelevant(parent.owner) &&
       parent.isCgr() &&
-      parent.args[argIndex].root === child
+      parent.getArg(argIndex).root === child
     );
   }
 
@@ -199,7 +199,7 @@ export class Interpreter {
     let index = 0;
     while (index < end) {
       const node = candidates[index];
-      if (node.args.length === instr.numArgs && context.isRelevant(node.owner)) break;
+      if (node.numArgs === instr.numArgs && context.isRelevant(node.owner)) break;
       index++;
     }
     if (index === end) return null;
@@ -212,7 +212,7 @@ export class Interpreter {
   }
 
   private setArgs(oreg: number, node: Enode, numArgs: number) {
-    for (let index = 0; index < numArgs; index++) this.registers[oreg + index] = node.args[index];
+    for (let index = 0; index < numArgs; index++) this.registers[oreg + index] = node.getArg(index);
   }
 
   // The backtracking step of execute_core: the instruction to resume at, or null when the top choice
@@ -241,7 +241,7 @@ export class Interpreter {
     const context = this.context;
     for (point.index++; point.index < point.end; point.index++) {
       const node = point.candidates[point.index];
-      if (node.args.length === instr.numArgs && context.isRelevant(node.owner)) {
+      if (node.numArgs === instr.numArgs && context.isRelevant(node.owner)) {
         this.updateMaxGeneration(node);
         this.setArgs(instr.oreg, node, instr.numArgs);
         return instr.next;
@@ -281,7 +281,7 @@ export class Interpreter {
       switch (instr.op) {
         case OP_INIT: {
           const first = registers[0] as Enode;
-          if (first.args.length !== instr.numArgs) break;
+          if (first.numArgs !== instr.numArgs) break;
           this.setArgs(1, first, instr.numArgs);
           pc = instr.next;
           break;

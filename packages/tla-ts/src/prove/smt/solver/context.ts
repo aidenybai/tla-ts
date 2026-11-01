@@ -4,7 +4,7 @@
 // parameters for UFNIA.
 import type { AssertedFormulas } from "./asserted-formulas";
 import { AstManager, FAMILY_ARITH, KIND_APP, KIND_QUANTIFIER, KIND_VAR } from "./ast";
-import { getCongruenceJustification } from "./cg-table";
+import { getCongruenceJustification, isCongruent } from "./cg-table";
 import { BJustification, type Clause, CLS_LEARNED, CLS_TH_LEMMA, HEADER_SIZE } from "./clause";
 import { ConflictResolution } from "./conflict-resolution";
 import { DynAckManager } from "./dyn-ack";
@@ -417,8 +417,8 @@ export class Context extends Internalizer {
     for (const parent of root.parents) {
       if (!parent.isEq) continue;
       if (this.assignment[mkLiteral(this.getBoolVar(parent.owner))] !== L_FALSE) continue;
-      let lhs = parent.args[0];
-      let rhs = parent.args[1];
+      let lhs = parent.getArg(0);
+      let rhs = parent.getArg(1);
       if (rhs.root === root.root) {
         const saved = lhs;
         lhs = rhs;
@@ -539,8 +539,8 @@ export class Context extends Internalizer {
       if (!parent.isMarked) continue;
       parent.isMarked = false;
       if (parent.isEq) {
-        const lhs = parent.args[0];
-        const rhs = parent.args[1];
+        const lhs = parent.getArg(0);
+        const rhs = parent.getArg(1);
         if (lhs.root === rhs.root) {
           const literal = mkLiteral(this.getBoolVar(parent.owner));
           const value = this.assignment[literal];
@@ -616,7 +616,7 @@ export class Context extends Internalizer {
     for (const parent of r1.parents) {
       if (!parent.isCgcEnabled) continue;
       const cg = parent.cg;
-      if (parent.isTrueEq() || (parent !== cg && this.isCongruent(parent, cg))) continue;
+      if (parent.isTrueEq() || (parent !== cg && isCongruent(parent, cg))) continue;
       let generation = 100000;
       if (parent.isEq) generation = 0;
       else if (parent === cg) {
@@ -659,7 +659,7 @@ export class Context extends Internalizer {
       const boolVar = this.getBoolVar(target.owner);
       const targetValue = this.assignment[mkLiteral(boolVar)];
       if (targetValue !== value) {
-        if (targetValue !== L_UNDEF && this.isCongruent(source, target) && source.args.length > 0)
+        if (targetValue !== L_UNDEF && isCongruent(source, target) && source.numArgs > 0)
           this.dynAck.cgConflictEh(source.owner, target.owner);
         this.assign(mkLiteral(boolVar, value === L_FALSE), this.mkMpIff(source, target));
       }

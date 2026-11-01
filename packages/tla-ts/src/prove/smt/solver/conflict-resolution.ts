@@ -78,11 +78,11 @@ export class ConflictResolution {
       this.markJustification(justification.justification);
     else if (justification.kind === "congruence") {
       if (justification.isCommutative) {
-        this.markEq(lhs.args[0], rhs.args[1]);
-        this.markEq(lhs.args[1], rhs.args[0]);
+        this.markEq(lhs.getArg(0), rhs.getArg(1));
+        this.markEq(lhs.getArg(1), rhs.getArg(0));
       } else
-        for (let index = 0; index < lhs.args.length; index++)
-          this.markEq(lhs.args[index], rhs.args[index]);
+        for (let index = 0; index < lhs.numArgs; index++)
+          this.markEq(lhs.getArg(index), rhs.getArg(index));
     }
   }
 
