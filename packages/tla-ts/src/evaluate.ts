@@ -1065,10 +1065,7 @@ const callOperator = (
   binders: ArgumentBinder[],
 ) => {
   if (operator.kind === "Closure") {
-    const bodyContext = withScope(
-      context,
-      bindOperatorArguments(operator, args, context, binders),
-    );
+    const bodyContext = withScope(context, bindOperatorArguments(operator, args, context, binders));
     if (context.environment.callStack) return evaluate(operator.body, bodyContext);
     const entry =
       called.entry?.body === operator.body
