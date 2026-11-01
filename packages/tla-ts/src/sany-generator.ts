@@ -164,6 +164,9 @@ export interface SanySpecification {
 export interface SanyGenerationOptions {
   // The name of the root module's file, which SANY requires to match the module's name.
   rootFileName?: string;
+  // The path of the root module's file as SANY's caller gives it, which SANY names when it cannot
+  // parse the file, rather than the file name it gives the other modules.
+  rootFilePath?: string;
   // Called before SANY parses the file of each module, and before it analyzes each external
   // module, in its order.
   onParse?: (name: string) => void;
@@ -482,12 +485,9 @@ export const generateSanySpecification = (
   const sources = new Map<string, { file: SourceFile; module: Module }>();
 
   const parseSource = (name: string, text: string) => {
+    const file = (name === options.rootFileName && options.rootFilePath) || `${name}.tla`;
     const getParseFailure = (parseError: string) =>
-      new TlaSanyFatalError(
-        `Could not parse module ${name} from file ${name}.tla`,
-        name,
-        parseError,
-      );
+      new TlaSanyFatalError(`Could not parse module ${name} from file ${file}`, name, parseError);
     const lexicalError = options.version === "1.7.4" ? getSany174LexicalError(text) : undefined;
     if (lexicalError !== undefined) throw getParseFailure(lexicalError);
     // HACK: the parser's errors are not SANY's, so a module that fails to parse gets the report
