@@ -37,6 +37,9 @@ class Checker {
   private checkResults = new Int32Array(1024);
   private enodeStamps = new Int32Array(1024);
   private enodeResults: (Enode | null | undefined)[] = [];
+  // The ptr_buffer of each level of get_enode_eq_to_core, which Z3 keeps on the stack.
+  private argBuffers: Enode[][] = [];
+  private argDepth = 0;
 
   constructor(private context: Context) {}
 
@@ -157,16 +160,22 @@ class Checker {
     if (manager.kinds[expr] !== KIND_APP || manager.args[expr].length === 0) return null;
     if (expr >= this.enodeStamps.length) this.enodeStamps = grow(this.enodeStamps, expr);
     if (this.enodeStamps[expr] === this.stamp) return this.enodeResults[expr] ?? null;
-    const argNodes: Enode[] = [];
+    const depth = this.argDepth;
+    if (depth === this.argBuffers.length) this.argBuffers.push([]);
+    const argNodes = this.argBuffers[depth];
+    shrink(argNodes, 0);
+    this.argDepth = depth + 1;
     for (const arg of manager.args[expr]) {
       const node = this.getEnodeEqTo(arg);
       if (node === null) {
+        this.argDepth = depth;
         this.enodeStamps[expr] = this.stamp;
         setAt(this.enodeResults, expr, null);
         return null;
       }
       argNodes.push(node);
     }
+    this.argDepth = depth;
     const found = context.findCongruent(manager.decls[expr], argNodes);
     const result = found !== undefined && context.isRelevant(found.owner) ? found : null;
     this.enodeStamps[expr] = this.stamp;
