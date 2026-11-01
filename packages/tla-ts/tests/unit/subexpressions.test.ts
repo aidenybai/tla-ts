@@ -241,6 +241,25 @@ describe("subexpression references into theorems match SANY", () => {
       ],
     ],
     [
+      "names that select labels of definitions in theorems, proofs, and facts",
+      "Op(a) == lab :: a = 1\nOp3(a) == \\E y \\in {a} : lab3(y) :: y = a\nTHEOREM Op!lab(A) /\\ B\nTHEOREM ASSUME Op(1)!nolab PROVE Op3(1)!lab3 /\\ C\nUSE Op!lab, D\nTHEOREM TRUE\n<1>1. Op(1)!nolab /\\ E\n<1>2. PICK y \\in {Op!lab} : Op(y)!nolab\n<1> QED BY Op(1)!lab, Op(2)!nolab, F",
+      [
+        ["line 5, col 9 to line 5, col 17", "The operator Op requires 1 arguments."],
+        ["line 5, col 22 to line 5, col 22", "Unknown operator: `B'."],
+        ["line 6, col 22 to line 6, col 26", "Cannot find label `nolab'."],
+        ["line 6, col 41 to line 6, col 44", "Label `lab3' used with wrong number of arguments."],
+        ["line 6, col 49 to line 6, col 49", "Unknown operator: `C'."],
+        ["line 7, col 5 to line 7, col 10", "The operator Op requires 1 arguments."],
+        ["line 7, col 13 to line 7, col 13", "Unknown operator: `D'."],
+        ["line 9, col 13 to line 9, col 17", "Cannot find label `nolab'."],
+        ["line 9, col 22 to line 9, col 22", "Unknown operator: `E'."],
+        ["line 10, col 19 to line 10, col 24", "The operator Op requires 1 arguments."],
+        ["line 10, col 35 to line 10, col 39", "Cannot find label `nolab'."],
+        ["line 11, col 29 to line 11, col 33", "Cannot find label `nolab'."],
+        ["line 11, col 36 to line 11, col 36", "Unknown operator: `F'."],
+      ],
+    ],
+    [
       "labels whose parameters differ from the names bound around them",
       "C == 1\nA1 == \\A y \\in {1} : lab(y, y) :: y = 1\nA2 == \\A y, z \\in {1} : lab(y) :: y = z\nA3 == \\A y \\in {1} : lab(C) :: y = 1\nA4 == [x EXCEPT ![1] = lab :: 2]\nA5 == CHOOSE y : lab :: y = 1\nA6 == (lab :: TRUE) /\\ (lab :: FALSE)\nTHEOREM foo == ASSUME NEW v, lab(y) :: y = v PROVE TRUE",
       [

@@ -442,15 +442,7 @@ export const createEnvironment = (
     nested: LinkedModule | undefined,
   ): Symbols => {
     const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
-    if (standardSymbols) {
-      if (instance.name === undefined) return standardSymbols;
-      return new Map(
-        [...standardSymbols].map(([name, symbol]) => [
-          `${instance.name}!${name}`,
-          { key: symbol.key, arity: symbol.arity, params: symbol.params, kind: symbol.kind },
-        ]),
-      );
-    }
+    if (standardSymbols) return getStandardInstanceSymbols(instance, standardSymbols);
     const linked = nested ?? getLinkedModule(instance.module, module.name);
     linked.facts.forEach((name) =>
       unit.facts.add(instance.name === undefined ? name : `${instance.name}!${name}`),
@@ -488,37 +480,69 @@ export const createEnvironment = (
       },
       createName,
     });
-    const declared = new Set(declarations.map((declaration) => declaration.name));
-    const symbols: Symbols = new Map();
-    linked.exported.forEach((symbol, name) => {
-      if (declared.has(name)) return;
-      if (instance.name === undefined) {
-        const key = instantiation.getKey(symbol.key);
-        if (declarations.length > 0)
-          instanceActions.set(key, { name, location: instance.location });
-        // SANY binds a copy of a definition that depends on the parameters at the INSTANCE.
-        symbols.set(name, {
-          key,
-          arity: symbol.arity,
-          params: symbol.params,
-          kind: symbol.kind,
-          range: parameterized.get(symbol.key) === true ? instance.location.range : symbol.range,
-        });
-        return;
-      }
-      const key = instantiation.getQualifiedKey(symbol.key);
-      if (declarations.length > 0) {
-        instanceActions.set(key, { name: `${instance.name}!${name}`, location: instance.location });
-      }
-      qualifiedNames.set(key, `${instance.name}!${name}`);
-      symbols.set(`${instance.name}!${name}`, {
-        key,
-        arity: symbol.arity + instance.params.length,
-        params: symbol.params && [...instance.params.map((param) => param.arity), ...symbol.params],
-        kind: symbol.kind,
-      });
+    return getInstanceSymbols(instance, linked.exported, declarations, (key, name) => {
+      const copy =
+        instance.name === undefined
+          ? instantiation.getKey(key)
+          : instantiation.getQualifiedKey(key);
+      if (declarations.length > 0) instanceActions.set(copy, { name, location: instance.location });
+      if (instance.name !== undefined) qualifiedNames.set(copy, name);
+      return copy;
     });
-    return symbols;
+  };
+
+  const getStandardInstanceSymbols = (instance: Instance, standardSymbols: Symbols): Symbols =>
+    instance.name === undefined
+      ? standardSymbols
+      : new Map(
+          [...standardSymbols].map(([name, symbol]) => [
+            `${instance.name}!${name}`,
+            { key: symbol.key, arity: symbol.arity, params: symbol.params, kind: symbol.kind },
+          ]),
+        );
+
+  // The names an INSTANCE adds for the definitions of the module it instantiates, each with the key
+  // that getKey gives it. SANY binds a copy of a definition that depends on the parameters at the
+  // INSTANCE.
+  const getInstanceSymbols = (
+    instance: Instance,
+    exported: Symbols,
+    declarations: Declaration[],
+    getKey: (key: string, name: string) => string,
+  ): Symbols => {
+    const declared = new Set(declarations.map((declaration) => declaration.name));
+    return new Map(
+      [...exported]
+        .filter(([name]) => !declared.has(name))
+        .map(([name, symbol]): [string, ModuleSymbol] => {
+          if (instance.name === undefined) {
+            return [
+              name,
+              {
+                key: getKey(symbol.key, name),
+                arity: symbol.arity,
+                params: symbol.params,
+                kind: symbol.kind,
+                range:
+                  parameterized.get(symbol.key) === true ? instance.location.range : symbol.range,
+              },
+            ];
+          }
+          const qualified = `${instance.name}!${name}`;
+          return [
+            qualified,
+            {
+              key: getKey(symbol.key, qualified),
+              arity: symbol.arity + instance.params.length,
+              params: symbol.params && [
+                ...instance.params.map((param) => param.arity),
+                ...symbol.params,
+              ],
+              kind: symbol.kind,
+            },
+          ];
+        }),
+    );
   };
 
   const getLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
@@ -789,8 +813,36 @@ export const createEnvironment = (
     const getKey = (definition: Definition) =>
       parsed === root ? definition.name : `${definition.name}${KEY_SEPARATOR}${scope.id}`;
     const instanced = new Map<Instance, Symbols>();
+    const getVisibleModules = () => new Map([...scope.modules, ...modules]);
+    const isInstancedAfterDefinition = (nested: Module) => {
+      const first = parsed.instances.find((instance) => instance.module === nested.name);
+      return first !== undefined && isBefore(nested.location, first.location);
+    };
+    const getLetModule = (instance: Instance) => {
+      const own = parsed.modules.find((nested) => nested.name === instance.module);
+      if (!own) return getVisibleModules().get(instance.module);
+      return isInstancedAfterDefinition(own) ? modules.get(own.name) : undefined;
+    };
     const getUnit = (module: Module): ModuleUnit => ({
       imported: visible,
+      getInstance: (instance) => {
+        const nested = getLetModule(instance);
+        const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
+        if (standardSymbols) {
+          return {
+            declarations: [],
+            symbols: getStandardInstanceSymbols(instance, standardSymbols),
+            instancer: parsed.name,
+          };
+        }
+        const linked = nested ?? getLinkedModule(instance.module, parsed.name);
+        const declarations = getDeclarations(linked);
+        return {
+          declarations,
+          symbols: getInstanceSymbols(instance, linked.exported, declarations, (key) => key),
+          instancer: parsed.name,
+        };
+      },
       bound,
       // SANY keeps the first of two definitions of a name.
       definitions: new Map(
@@ -802,7 +854,6 @@ export const createEnvironment = (
       reports,
       warnings: scope.warnings,
     });
-    const getVisibleModules = () => new Map([...scope.modules, ...modules]);
     const getSymbolsBefore = (location: SourceLocation): Symbols =>
       new Map([
         ...visible,
@@ -868,15 +919,6 @@ export const createEnvironment = (
     ]
       .sort((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
       .forEach((unit) => unit.link());
-    const isInstancedAfterDefinition = (nested: Module) => {
-      const first = parsed.instances.find((instance) => instance.module === nested.name);
-      return first !== undefined && isBefore(nested.location, first.location);
-    };
-    const getLetModule = (instance: Instance) => {
-      const own = parsed.modules.find((nested) => nested.name === instance.module);
-      if (!own) return getVisibleModules().get(instance.module);
-      return isInstancedAfterDefinition(own) ? modules.get(own.name) : undefined;
-    };
     const module = resolveModuleSubexpressions(
       withLetInstances(parsed, (instance, lets) =>
         instantiateLocally(instance, lets, parsed.name, getLetModule(instance)),

@@ -1,13 +1,18 @@
 import {
   getChildren,
+  type AssumeProve,
+  type Bound,
   type Definition,
   type Expression,
+  type Fact,
   type Instance,
   type Module,
   type OperatorParam,
+  type Proof,
   type Selector,
   type SourceLocation,
   type SourceRange,
+  type StepBody,
 } from "./ast";
 import { formatRange, TlaSyntaxError } from "./errors";
 import { getSourceName, mapChildren, mapDefinition } from "./instances";
@@ -330,19 +335,26 @@ const containsReference = (expression: Expression): boolean =>
   (expression.kind === "Apply" && expression.operator.includes("!")) ||
   getChildren(expression).some(containsReference);
 
-// A reference into a theorem whose statement is an ASSUME/PROVE stays for name resolution to check.
-// isOperator holds where an operator may be given, as the argument of an operator that may take one.
+// A reference that starts with a name isGoal holds for, such as a theorem whose statement is an
+// ASSUME/PROVE, stays for name resolution to check. isOperator holds where an operator may be given,
+// as the argument of an operator that may take one.
 const resolveSubexpressions = (
   expression: Expression,
   lookup: Lookup,
-  goals: ReadonlySet<string>,
+  isGoal: (name: string) => boolean,
   isOperator = false,
 ): Expression => {
   if (!containsReference(expression)) return expression;
   if (expression.kind === "Let") {
     const local: Lookup = (name) =>
       expression.definitions.find((definition) => definition.name === name) ?? lookup(name);
-    return mapChildren(expression, (child) => resolveSubexpressions(child, local, goals));
+    const mapped = mapChildren(expression, (child) => resolveSubexpressions(child, local, isGoal));
+    return mapped.kind === "Let" && mapped.instances
+      ? {
+          ...mapped,
+          instances: mapped.instances.map((instance) => resolveInstance(instance, local, isGoal)),
+        }
+      : mapped;
   }
   const callee = expression.kind === "Apply" ? lookup(expression.operator) : undefined;
   const mapped =
@@ -353,12 +365,12 @@ const resolveSubexpressions = (
             resolveSubexpressions(
               arg,
               lookup,
-              goals,
+              isGoal,
               callee?.kind !== "Operator" || callee.params[index]?.arity !== 0,
             ),
           ),
         }
-      : mapChildren(expression, (child) => resolveSubexpressions(child, lookup, goals));
+      : mapChildren(expression, (child) => resolveSubexpressions(child, lookup, isGoal));
   const selectors =
     mapped.kind === "Subexpression"
       ? mapped.selectors
@@ -368,47 +380,130 @@ const resolveSubexpressions = (
           ? getQualifiedSelectors(mapped.operator, mapped.args, mapped.argumentCounts, lookup)
           : undefined;
   const first = selectors?.[0];
-  if (!selectors || (first?.kind === "Name" && goals.has(first.name))) return mapped;
+  if (!selectors || (first?.kind === "Name" && isGoal(first.name))) return mapped;
   const selected = selectSubexpression(selectors, lookup, mapped, isOperator);
   if (selected !== mapped) selections.add(selected);
   return selected;
 };
+
+const resolveInstance = (
+  instance: Instance,
+  lookup: Lookup,
+  isGoal: (name: string) => boolean,
+): Instance => ({
+  ...instance,
+  substitutions: instance.substitutions.map((substitution) => ({
+    ...substitution,
+    expression: resolveSubexpressions(substitution.expression, lookup, isGoal, true),
+  })),
+});
 
 const createLookup = (definitions: Definition[]): Lookup => {
   const byName = new Map(definitions.map((definition) => [definition.name, definition]));
   return (name) => byName.get(name);
 };
 
-export const resolveInstanceSubexpressions = (instance: Instance, module: Module): Instance => {
-  const lookup = createLookup(module.definitions);
-  return {
-    ...instance,
-    substitutions: instance.substitutions.map((substitution) => ({
-      ...substitution,
-      expression: resolveSubexpressions(substitution.expression, lookup, new Set(), true),
-    })),
-  };
-};
+export const resolveInstanceSubexpressions = (instance: Instance, module: Module): Instance =>
+  resolveInstance(instance, createLookup(module.definitions), () => false);
 
+// Generator.selectorToNode resolves a name in a theorem, a proof, or a fact as it does in a definition.
 export const resolveModuleSubexpressions = (module: Module, available: Definition[]): Module => {
   const lookup = createLookup([...available, ...module.definitions]);
-  const hasReferences =
-    module.definitions.some((definition) => containsReference(definition.body)) ||
-    module.assumptions.some((assumption) => containsReference(assumption.expression));
-  if (!hasReferences) return module;
   const goals = new Set(
     module.theorems.flatMap((theorem) =>
       theorem.name !== undefined && theorem.statement.kind === "AssumeProve" ? [theorem.name] : [],
     ),
   );
-  return {
+  const isGoal = (name: string) => goals.has(name);
+  const resolve = (expression: Expression) => resolveSubexpressions(expression, lookup, isGoal);
+  // A name in a theorem, a proof, or a fact may also start with a step, a theorem, or a symbol that
+  // no definition names.
+  const isProofGoal = (name: string) => isGoal(name) || !lookup(name);
+  const resolveInProof = (expression: Expression) =>
+    resolveSubexpressions(expression, lookup, isProofGoal);
+  const resolveFacts = (facts: Fact[]) =>
+    facts.map((fact) => (fact.kind === "ModuleFact" ? fact : resolveInProof(fact)));
+  const resolveBounds = (bounds: Bound[]) =>
+    bounds.map((bound) => ({ ...bound, set: resolveInProof(bound.set) }));
+  const resolveStatement = (statement: Expression | AssumeProve): Expression | AssumeProve =>
+    statement.kind === "AssumeProve"
+      ? {
+          ...statement,
+          assumptions: statement.assumptions.map((assumption) =>
+            assumption.kind === "NewSymbol"
+              ? { ...assumption, set: assumption.set && resolveInProof(assumption.set) }
+              : resolveStatement(assumption),
+          ),
+          conclusion: resolveInProof(statement.conclusion),
+        }
+      : resolveInProof(statement);
+  const resolveStep = (body: StepBody): StepBody => {
+    switch (body.kind) {
+      case "Use":
+      case "Hide":
+        return { ...body, facts: resolveFacts(body.facts) };
+      case "Instance":
+        return resolveInstance(body, lookup, isProofGoal);
+      case "Define":
+        return {
+          ...body,
+          definitions: body.definitions.map((definition) =>
+            definition.kind === "Instance"
+              ? resolveInstance(definition, lookup, isProofGoal)
+              : mapDefinition(definition, resolveInProof),
+          ),
+        };
+      case "Have":
+      case "Case":
+        return { ...body, expression: resolveInProof(body.expression) };
+      case "Witness":
+        return { ...body, expressions: body.expressions.map(resolveInProof) };
+      case "Take":
+        return { ...body, bounds: resolveBounds(body.bounds) };
+      case "Pick":
+        return { ...body, bounds: resolveBounds(body.bounds), body: resolveInProof(body.body) };
+      case "Assert":
+        return { ...body, statement: resolveStatement(body.statement) };
+      default:
+        return body;
+    }
+  };
+  const resolveProof = (proof: Proof | undefined): Proof | undefined =>
+    proof?.kind === "By"
+      ? { ...proof, facts: resolveFacts(proof.facts) }
+      : proof?.kind === "Steps"
+        ? {
+            ...proof,
+            steps: proof.steps.map((step) => ({
+              ...step,
+              body: resolveStep(step.body),
+              proof: resolveProof(step.proof),
+            })),
+          }
+        : proof;
+  const resolved = {
     ...module,
-    definitions: module.definitions.map((definition) =>
-      mapDefinition(definition, (child) => resolveSubexpressions(child, lookup, goals)),
-    ),
+    // A named theorem's statement is resolved as its definition.
+    theorems: module.theorems.map((theorem) => ({
+      ...theorem,
+      statement:
+        theorem.name !== undefined && theorem.statement.kind !== "AssumeProve"
+          ? theorem.statement
+          : resolveStatement(theorem.statement),
+      proof: resolveProof(theorem.proof),
+    })),
+    uses: module.uses.map((use) => ({ ...use, facts: resolveFacts(use.facts) })),
+  };
+  const hasReferences =
+    module.definitions.some((definition) => containsReference(definition.body)) ||
+    module.assumptions.some((assumption) => containsReference(assumption.expression));
+  if (!hasReferences) return resolved;
+  return {
+    ...resolved,
+    definitions: module.definitions.map((definition) => mapDefinition(definition, resolve)),
     assumptions: module.assumptions.map((assumption) => ({
       ...assumption,
-      expression: resolveSubexpressions(assumption.expression, lookup, goals),
+      expression: resolve(assumption.expression),
     })),
   };
 };
