@@ -233,7 +233,11 @@ export class AstManager {
   kinds: number[] = [];
   // The declaration of an application.
   decls: number[] = [];
-  private args: number[][] = [];
+  // The arguments of every expression end to end: those of expr are argPool[argStarts[expr]] up to
+  // argPool[argStarts[expr + 1]]. Variables and constants take an empty range and a quantifier
+  // takes its body. Both grow by doubling, which replaces the arrays.
+  private argPool = new Int32Array(1024);
+  private argStarts = new Int32Array(1024);
   sorts: number[] = [];
   // The index of a variable or model value, or of a numeral's value in numeralValues.
   values: number[] = [];
@@ -382,14 +386,13 @@ export class AstManager {
   // made, or null for a declaration that is not one.
   private getSignature(expr: number): [string, boolean] | null {
     const decl = this.decls[expr];
-    const args = this.args[expr];
     // The hash of a numeral tells an Int from a Real one.
     if (decl === OP_NUM) return [`n${this.values[expr]}:${this.hashes[expr]}`, false];
-    if (decl === OP_EQ) return [`e${this.sorts[args[0]]}`, true];
+    if (decl === OP_EQ) return [`e${this.sorts[this.getArg(expr, 0)]}`, true];
     if (decl === OP_ITE) return [`i${this.sorts[expr]}`, true];
     if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return [`z${decl}`, false];
     if (decl === OP_DISTINCT || decl === OP_PATTERN)
-      return [`${decl}:${args.map((arg) => this.sorts[arg]).join(",")}`, false];
+      return [`${decl}:${this.mapArgs(expr, (arg) => this.sorts[arg]).join(",")}`, false];
     if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) return [`m${decl}`, false];
     return null;
   }
@@ -548,11 +551,23 @@ export class AstManager {
         const smallId = this.releaseDecl(node);
         if (smallId !== -1) worklist.push(-1 - smallId);
       }
-      for (const child of this.getChildren(node)) {
-        this.refCounts[child]--;
-        if (this.refCounts[child] === 0) worklist.push(child);
+      // The children: the arguments of an application, and the body and then the patterns of a
+      // quantifier.
+      const data = this.quantifiers.get(node);
+      if (data === undefined) {
+        const end = this.argStarts[node + 1];
+        for (let index = this.argStarts[node]; index < end; index++)
+          this.releaseChild(this.argPool[index], worklist);
+        continue;
       }
+      this.releaseChild(data.body, worklist);
+      for (const pattern of data.patterns) this.releaseChild(pattern, worklist);
     }
+  }
+
+  private releaseChild(child: number, worklist: number[]) {
+    this.refCounts[child]--;
+    if (this.refCounts[child] === 0) worklist.push(child);
   }
 
   private deleteNode(expr: number) {
@@ -566,50 +581,63 @@ export class AstManager {
     this.ids[expr] = this.freeIds.pop() ?? this.nextId++;
     this.numLive++;
     this.refCounts[expr] = 0;
-    for (const child of this.getChildren(expr)) this.incRef(this.revive(child));
+    // The children: the arguments of an application, and the body and then the patterns of a
+    // quantifier.
+    const data = this.quantifiers.get(expr);
+    if (data === undefined) {
+      const end = this.argStarts[expr + 1];
+      for (let index = this.argStarts[expr]; index < end; index++)
+        this.incRef(this.revive(this.argPool[index]));
+    } else {
+      this.incRef(this.revive(data.body));
+      for (const pattern of data.patterns) this.incRef(this.revive(pattern));
+    }
     if (this.kinds[expr] === KIND_APP) this.holdDecl(expr);
     if (this.temporariesMark === -1) return;
     this.incRef(expr);
     this.temporaries.push(expr);
   }
 
-  // The children whose references an expression holds: the arguments of an application, and the
-  // body and then the patterns of a quantifier.
-  private getChildren(expr: number) {
-    const data = this.quantifiers.get(expr);
-    return data === undefined ? this.args[expr] : [data.body, ...data.patterns];
-  }
-
-  // The arguments of an application; quantifiers, variables and constants have none.
+  // The arguments of an application, and the body of a quantifier as its one argument.
   getNumArgs(expr: number) {
-    return this.args[expr].length;
+    return this.argStarts[expr + 1] - this.argStarts[expr];
   }
 
   getArg(expr: number, index: number) {
-    return this.args[expr][index];
+    return this.argPool[this.argStarts[expr] + index];
   }
 
   // Appends the arguments to target, for a caller that needs them as an array.
   pushArgs(expr: number, target: number[]) {
-    const args = this.args[expr];
-    for (let index = 0; index < args.length; index++) target.push(args[index]);
+    const end = this.argStarts[expr + 1];
+    for (let index = this.argStarts[expr]; index < end; index++) target.push(this.argPool[index]);
   }
 
   // A new array of the arguments.
   getArgs(expr: number) {
-    return [...this.args[expr]];
+    const args: number[] = [];
+    this.pushArgs(expr, args);
+    return args;
   }
 
+  // The callbacks may create expressions, which can replace argPool, so each argument is read anew.
   mapArgs<T>(expr: number, map: (arg: number, index: number) => T) {
-    return this.args[expr].map(map);
+    const result: T[] = [];
+    for (let index = 0; index < this.getNumArgs(expr); index++)
+      result.push(map(this.getArg(expr, index), index));
+    return result;
   }
 
   someArg(expr: number, predicate: (arg: number, index: number) => boolean) {
-    return this.args[expr].some(predicate);
+    for (let index = 0; index < this.getNumArgs(expr); index++)
+      if (predicate(this.getArg(expr, index), index)) return true;
+    return false;
   }
 
   everyArg(expr: number, predicate: (arg: number, index: number) => boolean) {
-    return this.args[expr].every(predicate);
+    for (let index = 0; index < this.getNumArgs(expr); index++)
+      if (!predicate(this.getArg(expr, index), index)) return false;
+    return true;
   }
 
   // A lookup that finds a deleted expression creates it again.
@@ -750,7 +778,20 @@ export class AstManager {
     this.kinds.push(kind);
     this.decls.push(decl);
     // Like Z3, a node keeps its own copy of the arguments, so callers may reuse their arrays.
-    this.args.push([...args]);
+    const start = this.argStarts[id];
+    const end = start + args.length;
+    if (end > this.argPool.length) {
+      const pool = new Int32Array(Math.max(2 * this.argPool.length, end));
+      pool.set(this.argPool);
+      this.argPool = pool;
+    }
+    for (let index = 0; index < args.length; index++) this.argPool[start + index] = args[index];
+    if (id + 2 > this.argStarts.length) {
+      const starts = new Int32Array(2 * this.argStarts.length);
+      starts.set(this.argStarts);
+      this.argStarts = starts;
+    }
+    this.argStarts[id + 1] = end;
     this.sorts.push(sort);
     this.values.push(value);
     let freeVarBound = kind === KIND_VAR ? value + 1 : 0;
@@ -780,11 +821,11 @@ export class AstManager {
     for (let slot = hash & mask; this.appHandles[slot] !== -1; slot = (slot + 1) & mask) {
       const candidate = this.appHandles[slot];
       if (this.appHashes[slot] !== hash || this.decls[candidate] !== decl) continue;
-      const candidateArgs = this.args[candidate];
-      if (candidateArgs.length !== args.length) continue;
+      const start = this.argStarts[candidate];
+      if (this.argStarts[candidate + 1] - start !== args.length) continue;
       let isSame = true;
       for (let index = 0; index < args.length && isSame; index++)
-        isSame = candidateArgs[index] === args[index];
+        isSame = this.argPool[start + index] === args[index];
       if (isSame) return this.revive(candidate);
     }
     const declHash =
@@ -1002,8 +1043,8 @@ export class AstManager {
 
   isComplement(first: number, second: number) {
     return (
-      (this.isNot(first) && this.args[first][0] === second) ||
-      (this.isNot(second) && this.args[second][0] === first) ||
+      (this.isNot(first) && this.getArg(first, 0) === second) ||
+      (this.isNot(second) && this.getArg(second, 0) === first) ||
       (first === this.trueExpr && second === this.falseExpr) ||
       (first === this.falseExpr && second === this.trueExpr)
     );
@@ -1048,11 +1089,12 @@ export class AstManager {
     )
       return false;
     const isOffsetOf = (sum: number, term: number) => {
-      if (this.getOp(sum) !== OP_ADD || this.args[sum].length !== 2) return false;
-      const args = this.args[sum];
+      if (this.getOp(sum) !== OP_ADD || this.getNumArgs(sum) !== 2) return false;
+      const first = this.getArg(sum, 0);
+      const second = this.getArg(sum, 1);
       const isNonZero = (expr: number) =>
         this.isNumeral(expr) && !this.getRationalValue(expr).isZero();
-      return (args[0] === term && isNonZero(args[1])) || (args[1] === term && isNonZero(args[0]));
+      return (first === term && isNonZero(second)) || (second === term && isNonZero(first));
     };
     return isOffsetOf(first, second) || isOffsetOf(second, first);
   }
@@ -1067,7 +1109,7 @@ export class AstManager {
 
   // An uninterpreted constant, such as a declared constant or a Skolem constant.
   isUninterpretedConst(expr: number) {
-    return this.isUninterpreted(expr) && this.args[expr].length === 0;
+    return this.isUninterpreted(expr) && this.getNumArgs(expr) === 0;
   }
 
   isUninterpreted(expr: number) {
@@ -1076,11 +1118,11 @@ export class AstManager {
 
   // arith_util::is_times_minus_one: the t of (* -1 t).
   getTimesMinusOneArg(expr: number) {
-    if (this.getOp(expr) !== OP_MUL || this.args[expr].length !== 2) return undefined;
-    const coefficient = this.args[expr][0];
+    if (this.getOp(expr) !== OP_MUL || this.getNumArgs(expr) !== 2) return undefined;
+    const coefficient = this.getArg(expr, 0);
     return this.isNumeral(coefficient) &&
       this.getRationalValue(coefficient).equals(Rational.minusOne)
-      ? this.args[expr][1]
+      ? this.getArg(expr, 1)
       : undefined;
   }
 
@@ -1105,7 +1147,7 @@ export class AstManager {
       if (kind === KIND_QUANTIFIER) todo.push(this.getQuantifier(current).body);
       else if (kind !== KIND_VAR) {
         if (predicate(current)) return true;
-        todo.push(...this.args[current]);
+        this.pushArgs(current, todo);
       }
     }
     return false;
@@ -1150,9 +1192,8 @@ export class AstManager {
       return value.isInt() ? `${value.num}.0` : `(/ ${value.num}.0 ${value.den}.0)`;
     }
     const name = this.getDeclName(expr);
-    const args = this.args[expr];
-    return args.length === 0
+    return this.getNumArgs(expr) === 0
       ? name
-      : `(${name} ${args.map((innerArg) => this.toString(innerArg)).join(" ")})`;
+      : `(${name} ${this.mapArgs(expr, (innerArg) => this.toString(innerArg)).join(" ")})`;
   }
 }
