@@ -58,11 +58,14 @@ interface Goal {
 }
 
 // isPending holds for an operator a RECURSIVE declaration names until its definition.
+// isNonFact holds for the name of a USE, HIDE, DEFINE or INSTANCE step, which SANY takes neither as
+// a fact nor as an expression.
 interface LocalName extends Binding {
   name: string;
   parent: LocalName | undefined;
   goal?: Goal;
   isPending?: boolean;
+  isNonFact?: boolean;
 }
 
 // A name the module binds, from position on.
@@ -723,13 +726,17 @@ const getSymbolArity = (
   const renamed = renamedArities.get(expression);
   if (renamed !== undefined) return renamed;
   if (isKey(name)) return expression.kind === "Apply" ? expression.args.length : 0;
-  if (
-    checkReference(expression, scope, unit, false) ||
-    (isStepName(name) && lookupLocal(scope, name))
-  ) {
+  const local = lookupLocal(scope, name);
+  if (local?.isNonFact) {
+    unit.errors.push({
+      location: formatRange(getSpelledNameRange(expression, name)),
+      message: "Step number of non-expression step used as an expression.",
+    });
+    return undefined;
+  }
+  if (checkReference(expression, scope, unit, false) || (isStepName(name) && local)) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
-  const local = lookupLocal(scope, name);
   if (local && expression.kind !== "OperatorReference") expression.resolution = LOCAL_RESOLUTION;
   if (local) return local.arity;
   const symbol = findSymbol(name, unit);
@@ -1257,7 +1264,12 @@ const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) =>
     }
     const name =
       fact.kind === "Identifier" ? fact.name : fact.kind === "Apply" ? fact.operator : "";
-    if (!unit.facts.has(name)) resolveExpression(fact, scope, unit);
+    if (fact.kind === "Identifier" && lookupLocal(scope, name)?.isNonFact) {
+      unit.errors.push({
+        location: formatRange(getSpelledNameRange(fact, name)),
+        message: "Step number of non-fact used as a fact",
+      });
+    } else if (!unit.facts.has(name)) resolveExpression(fact, scope, unit);
   });
 
 const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit: Unit) => {
@@ -1343,6 +1355,10 @@ const resolveStep = (
       : { ...unit, hasLabelScope: true, labelParams: [], labels: new Set<string>() };
   const bindStep = (parent: LocalName | undefined): LocalName | undefined =>
     step.name === undefined ? parent : { name: step.name, arity: 0, kind: "Theorem", parent };
+  const bindNonFactStep = (parent: LocalName | undefined): LocalName | undefined =>
+    step.name === undefined
+      ? parent
+      : { name: step.name, arity: 0, kind: "Theorem", parent, isNonFact: true };
   switch (body.kind) {
     // The NEW symbols of a SUFFICES ASSUME are in scope after its proof, and those of any other
     // ASSUME in its proof.
@@ -1362,11 +1378,11 @@ const resolveStep = (
     case "Use":
     case "Hide":
       checkFacts(body.facts, scope, unit);
-      return bindStep(scope);
+      return bindNonFactStep(scope);
     case "Instance":
-      return bindStep(resolveLocalInstance(body, scope, stepUnit));
+      return bindNonFactStep(resolveLocalInstance(body, scope, stepUnit));
     case "Define":
-      return bindStep(
+      return bindNonFactStep(
         body.definitions.reduce(
           (current, definition) =>
             definition.kind === "Instance"

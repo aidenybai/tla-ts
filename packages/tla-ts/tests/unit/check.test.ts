@@ -3385,6 +3385,19 @@ describe("name resolution matches SANY", () => {
         ],
       ],
     ],
+    [
+      "THEOREM TRUE\n<1>1. USE TRUE\n<1>2. DEFINE G == 1\n<1>3. TRUE BY <1>1, <1>2, U1\n<1>4. <1>1\n  OBVIOUS\n<1>5. HIDE <1>4\n<1> QED BY <1>5",
+      [
+        ["line 5, col 15 to line 5, col 18", "Step number of non-fact used as a fact"],
+        ["line 5, col 21 to line 5, col 24", "Step number of non-fact used as a fact"],
+        ["line 5, col 27 to line 5, col 28", "Unknown operator: `U1'."],
+        [
+          "line 6, col 7 to line 6, col 10",
+          "Step number of non-expression step used as an expression.",
+        ],
+        ["line 9, col 12 to line 9, col 15", "Step number of non-fact used as a fact"],
+      ],
+    ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
     await expect(checkSource(source)).rejects.toThrow(
       createSanyError(
