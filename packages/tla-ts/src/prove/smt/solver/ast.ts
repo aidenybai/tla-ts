@@ -233,7 +233,7 @@ export class AstManager {
   kinds: number[] = [];
   // The declaration of an application.
   decls: number[] = [];
-  args: number[][] = [];
+  private args: number[][] = [];
   sorts: number[] = [];
   // The index of a variable or model value, or of a numeral's value in numeralValues.
   values: number[] = [];
