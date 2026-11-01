@@ -251,7 +251,7 @@ console.log("by wall-clock time:");
 printResults(
   results,
   VERDICTS,
-  ["deviation", "late", "unsound", "extra", "trivial", "absent", "prover"],
+  ["deviation", "late", "unsound", "missed", "extra", "trivial", "absent", "prover"],
   (result) =>
     `${result.verdict} ${result.module} #${result.id}: tlapm ${result.expected}, tla-ts ${result.actual ?? "none"}${result.reason ? ` (${result.reason})` : ""}${result.cpuProof ? ` (${result.cpuProof.prover} proves it in ${result.cpuProof.cpuMilliseconds} ms of CPU time)` : ""}`,
 );
