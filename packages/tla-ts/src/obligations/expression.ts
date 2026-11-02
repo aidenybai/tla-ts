@@ -413,6 +413,13 @@ export const getBoundedFresh = (name: string, domain: Expr): Hyp => ({
   domainVisibility: "Visible",
 });
 
+export const getFact = (
+  expression: Expr,
+  visibility: Visibility,
+  time: Time,
+  location: Locus | undefined,
+) => ({ kind: "Fact", expression, visibility, time, location }) satisfies Hyp;
+
 // What a LAMBDA binds each parameter as, and a LET each definition, as Visit.map does.
 export const getParamFresh = (param: Param) => getFresh(param.name, "Unknown", param.shape);
 

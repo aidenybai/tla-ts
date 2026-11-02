@@ -13,6 +13,7 @@ import {
   exprifySequent,
   findNamed,
   getAtPrefix,
+  getFact,
   getLocationText,
   getLocusPrefix,
   getScopeHyps,
@@ -250,18 +251,14 @@ const getUnitHyps = (unit: ModuleUnit): Hyp[] => {
               unit,
             );
       return unit.name === undefined
-        ? [{ kind: "Fact", expression, visibility: "Hidden", time: "Always", location }]
+        ? [getFact(expression, "Hidden", "Always", location)]
         : getNamedFact(unit.name, expression, location);
     }
     case "Mutate":
       return unit.mode === "Use"
-        ? unit.usable.facts.map((fact, index) => ({
-            kind: "Fact",
-            expression: shiftExpr(index, fact),
-            visibility: "Visible",
-            time: "Always",
-            location,
-          }))
+        ? unit.usable.facts.map((fact, index) =>
+            getFact(shiftExpr(index, fact), "Visible", "Always", location),
+          )
         : [];
     case "Submod":
     case "Anoninst":
@@ -285,13 +282,7 @@ const getNamedFact = (name: string, expression: Expr, location: Locus | undefine
     isLocal: false,
     location,
   },
-  {
-    kind: "Fact",
-    expression: { kind: "Ix", index: 1, location },
-    visibility: "Hidden",
-    time: "Always",
-    location,
-  },
+  getFact({ kind: "Ix", index: 1, location }, "Hidden", "Always", location),
 ];
 
 // Module.Flatten.exports: what an extending module sees, with local definitions inlined like
@@ -694,16 +685,12 @@ const localizeAxioms = (units: ModuleUnit[]) => {
         location,
       });
     }
-    const hyp: Hyp = {
-      kind: "Fact",
-      expression:
-        unit.name === undefined
-          ? shiftExpr(1, unit.expression)
-          : at({ kind: "Ix", index: 2 }, unit),
-      visibility: "Visible",
-      time: "Always",
+    const hyp = getFact(
+      unit.name === undefined ? shiftExpr(1, unit.expression) : at({ kind: "Ix", index: 2 }, unit),
+      "Visible",
+      "Always",
       location,
-    };
+    );
     let distance = 0;
     const inserted = tail.map((next): ModuleUnit => {
       const size = distance;
@@ -1028,16 +1015,7 @@ export const generate = (
           unit.name === undefined
             ? at(exprifySequent(unit.sequent), unit)
             : { kind: "Ix", index: 1, location: unit.location };
-        current = [
-          ...named,
-          {
-            kind: "Fact",
-            expression: fact,
-            visibility: "Hidden",
-            time: "Always",
-            location: unit.location,
-          },
-        ];
+        current = [...named, getFact(fact, "Hidden", "Always", unit.location)];
         continue;
       }
       case "Submod": {

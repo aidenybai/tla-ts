@@ -8,6 +8,7 @@ import {
   consSubstitution,
   exprifySequent,
   getErrorNote,
+  getFact,
   isEqualExpr,
   mapAccumulate,
   mapChildren,
@@ -129,22 +130,10 @@ const proveAssertion = (context: Hyp[], sequent: Sequent, step: Step, time: Time
     context: [
       ...context,
       ...hyps,
-      {
-        kind: "Fact",
-        expression: getTrue(step),
-        visibility: "Hidden",
-        time,
-        location: step.location,
-      },
+      getFact(getTrue(step), "Hidden", time, step.location),
       getStepDefinition(step, body, scopeTime),
-      {
-        kind: "Fact",
-        expression: at({ kind: "Ix", index: 1 }, step),
-        visibility: "Hidden",
-        time: scopeTime,
-        location: step.location,
-      },
-    ] satisfies Hyp[],
+      getFact(at({ kind: "Ix", index: 1 }, step), "Hidden", scopeTime, step.location),
+    ],
     active: shiftExpr(3, sequent.active),
     time: scopeTime,
   };
@@ -163,14 +152,8 @@ const useAssertion = (
     context: [
       ...context,
       getStepDefinition(step, at(exprifySequent(sequent), step), time),
-      {
-        kind: "Fact",
-        expression: at({ kind: "Ix", index: 1 }, step),
-        visibility,
-        time,
-        location: step.location,
-      },
-    ] satisfies Hyp[],
+      getFact(at({ kind: "Ix", index: 1 }, step), visibility, time, step.location),
+    ],
     active: shiftExpr(2, goal),
   };
 };
@@ -407,11 +390,12 @@ export const createGenerator = (
               context: [
                 ...sequent.context,
                 {
-                  kind: "Fact",
-                  expression: fact,
-                  visibility: "Visible",
-                  time: getFactTime(sequent.context, fact, time),
-                  location: fact.location,
+                  ...getFact(
+                    fact,
+                    "Visible",
+                    getFactTime(sequent.context, fact, time),
+                    fact.location,
+                  ),
                   useLocation: step.useLocation,
                 },
               ],
@@ -766,13 +750,9 @@ export const createGenerator = (
         const simplified = simplify(context, goal, byProof, time);
         if (simplified.kind !== "Steps")
           throw new TlaProofError("simplifying BY does not produce a non-leaf proof!");
-        const assumed = step.usable.facts.map((): Hyp => ({
-          kind: "Fact",
-          expression: AT_NOWHERE,
-          visibility: "Visible",
-          time,
-          location: step.location,
-        }));
+        const assumed = step.usable.facts.map(() =>
+          getFact(AT_NOWHERE, "Visible", time, step.location),
+        );
         return [
           [...context, ...assumed],
           shiftExpr(step.usable.facts.length, goal),
@@ -818,16 +798,9 @@ export const createGenerator = (
         ];
       case "Have": {
         const connective = exposeConnective(context, goal);
-        const fact: Hyp = {
-          kind: "Fact",
-          expression: step.expression,
-          visibility: "Visible",
-          time,
-          location: step.location,
-        };
         const isImplication = isBinary(connective, "Implies");
         const sequent: Sequent = {
-          context: [fact],
+          context: [getFact(step.expression, "Visible", time, step.location)],
           active: isImplication ? shiftExpr(1, connective.args[1]) : connective,
         };
         const proof: Proof = isImplication
@@ -874,15 +847,7 @@ export const createGenerator = (
         const assertion: Step = {
           kind: "Assert",
           sequent: {
-            context: [
-              {
-                kind: "Fact",
-                expression: step.expression,
-                visibility: "Visible",
-                time,
-                location: step.location,
-              },
-            ],
+            context: [getFact(step.expression, "Visible", time, step.location)],
             active: shiftExpr(1, goal),
           },
           proof: step.proof,
@@ -912,13 +877,7 @@ export const createGenerator = (
         if (shifted.kind !== "Quant") throw new TlaProofError("Proof.Simplify.simplify_step/PICK");
         const hyps = [
           ...getBoundHyps(shifted.bounds),
-          {
-            kind: "Fact",
-            expression: shifted.body,
-            visibility: "Visible",
-            time: assertTime,
-            location: shifted.body.location,
-          } satisfies Hyp,
+          getFact(shifted.body, "Visible", assertTime, shifted.body.location),
         ];
         const [nextContext, nextGoal, sufficed, nextTime] = simplifyStep(
           assertContext,
@@ -1023,15 +982,7 @@ export const createGenerator = (
       return {
         kind: "Suffices",
         sequent: {
-          context: [
-            {
-              kind: "Fact",
-              expression: getTrue(goal),
-              visibility: "Visible",
-              time: "Now",
-              location: step.location,
-            },
-          ],
+          context: [getFact(getTrue(goal), "Visible", "Now", step.location)],
           active: goal,
         },
         proof: { kind: "Error", message: stripped, ...getProps(step) },

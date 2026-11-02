@@ -18,6 +18,7 @@ import type {
 import { TlaProofError, TlaUnsupportedError } from "../errors";
 import {
   at,
+  getFact,
   type Bound,
   type Builtin,
   type Defn,
@@ -851,13 +852,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
                 { location: getLocus(assumption.location) },
               )
             : convertFactLabel(assumption);
-        return {
-          kind: "Fact",
-          expression,
-          visibility: "Visible",
-          time: "Now",
-          location: expression.location,
-        };
+        return getFact(expression, "Visible", "Now", expression.location);
       }),
       active: convertExpression(statement.conclusion, false),
     };
