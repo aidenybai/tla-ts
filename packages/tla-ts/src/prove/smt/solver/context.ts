@@ -379,22 +379,25 @@ export class Context extends Internalizer {
 
   // Equalities.
 
-  private getClosestVar(start: Enode) {
-    for (let node: Enode | null = start; node !== null; node = node.transTarget)
-      if (node.thVar >= 0) return node.thVar;
+  private getClosestVar(start: number) {
+    const store = this.enodeStore;
+    for (let node = start; node !== -1; node = store.transTarget[node])
+      if (store.thVar[node] >= 0) return store.thVar[node];
     return -1;
   }
 
-  private invertTrans(start: Enode) {
-    let current = start.transTarget;
-    let justification = start.transJustification;
+  private invertTrans(start: number) {
+    const targets = this.enodeStore.transTarget;
+    const justifications = this.enodeStore.transJustification;
+    let current = targets[start];
+    let justification = justifications[start];
     let previous = start;
-    start.transTarget = null;
-    while (current !== null) {
-      const next = current.transTarget;
-      const nextJustification = current.transJustification;
-      current.transTarget = previous;
-      current.transJustification = justification;
+    targets[start] = -1;
+    while (current !== -1) {
+      const next = targets[current];
+      const nextJustification = justifications[current];
+      targets[current] = previous;
+      justifications[current] = justification;
       previous = current;
       current = next;
       justification = nextJustification;
@@ -423,8 +426,8 @@ export class Context extends Internalizer {
         lhs = rhs;
         rhs = saved;
       }
-      const rhsVar = this.getClosestVar(rhs);
-      const lhsVar = this.getClosestVar(lhs);
+      const rhsVar = this.getClosestVar(rhs.id);
+      const lhsVar = this.getClosestVar(lhs.id);
       const finalVar = lhsVar >= 0 ? lhsVar : thVar;
       if (rhsVar >= 0 && finalVar !== rhsVar) this.pushNewThDiseq(finalVar, rhsVar);
     }
@@ -435,8 +438,8 @@ export class Context extends Internalizer {
     const r1 = n1.root;
     if (r1.thVar < 0 && r2.thVar < 0) return;
     const isFromTheory = justification.kind === "justification";
-    const v2 = this.getClosestVar(n2);
-    const v1 = this.getClosestVar(n1);
+    const v2 = this.getClosestVar(n2.id);
+    const v1 = this.getClosestVar(n1.id);
     if (v2 >= 0 && v1 >= 0) {
       if (!isFromTheory) this.pushNewThEq(v2, v1);
     } else if (v1 < 0 && v2 >= 0) this.pushNewThDiseqs(r1, v2);
@@ -492,10 +495,10 @@ export class Context extends Internalizer {
     const r2NumParents = r2.numParents;
     this.qmanager.addEqEh(r1, r2);
     this.mergeTheoryVars(n2, n1, justification);
-    this.invertTrans(n1);
-    n1.transTarget = n2;
-    n1.transJustification = justification;
     const store = this.enodeStore;
+    this.invertTrans(n1.id);
+    store.transTarget[n1.id] = n2.id;
+    store.transJustification[n1.id] = justification;
     this.removeParentsFromCgTable(r1.id);
     const root = store.root;
     const next = store.next;
@@ -648,8 +651,8 @@ export class Context extends Internalizer {
     }
     if (store.thVar[r2] >= 0 && this.theory.getEnode(store.thVar[r2]).root.id !== r2)
       store.thVar[r2] = -1;
-    n1.transTarget = null;
-    this.invertTrans(r1Node);
+    store.transTarget[n1.id] = -1;
+    this.invertTrans(r1);
   }
 
   private propagateBoolEnodeAssignment(r1: Enode, r2: Enode, n1: Enode, n2: Enode) {
@@ -694,8 +697,8 @@ export class Context extends Internalizer {
     const r1 = n1.root;
     const r2 = n2.root;
     if (r1 === r2) return r1.thVar >= 0;
-    const v1 = this.getClosestVar(n1);
-    const v2 = this.getClosestVar(n2);
+    const v1 = this.getClosestVar(n1.id);
+    const v2 = this.getClosestVar(n2.id);
     if (v1 >= 0 && v2 >= 0) this.pushNewThDiseq(v1, v2);
     return true;
   }

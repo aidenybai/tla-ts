@@ -57,6 +57,8 @@ export class EnodeStore {
   // m_trans: the next node on each node's transitivity branch toward the root of the proof tree, or
   // -1.
   transTarget = new Int32Array(1024);
+  // Why each node equals its transitivity target.
+  readonly transJustification: EqJustification[] = [];
   // The Boolean fields of each node, one bit each, and its number of arguments in the bits above.
   flags = new Int32Array(1024);
   generation = new Int32Array(1024);
@@ -112,6 +114,7 @@ export class EnodeStore {
     this.classSize[id] = 1;
     this.cg[id] = id;
     this.transTarget[id] = -1;
+    this.transJustification[id] = AXIOM_EQ_JUSTIFICATION;
     this.thVar[id] = -1;
     this.labels.fill(0, 4 * id, 4 * id + 4);
     this.lblHash[id] = -1;
@@ -215,8 +218,6 @@ const growColumn = (column: Int32Array) => {
 
 export class Enode {
   readonly id: number;
-  // Why the node equals its transitivity target.
-  transJustification: EqJustification = AXIOM_EQ_JUSTIFICATION;
 
   // moreArgs are the arguments past the second, and arg0 and arg1 are null when there are fewer.
   constructor(
@@ -279,8 +280,8 @@ export class Enode {
     return target === -1 ? null : this.store.nodes[target];
   }
 
-  set transTarget(value: Enode | null) {
-    this.store.transTarget[this.id] = value === null ? -1 : value.id;
+  get transJustification() {
+    return this.store.transJustification[this.id];
   }
 
   get cg() {
