@@ -8,7 +8,7 @@ import {
   getLocusPosition,
   getLocusPrefix,
   type Locus,
-  type ObligationWarning,
+  type Warn,
   type Sequent,
 } from "./expression";
 import { createGenerator, type LineRange } from "./generate";
@@ -59,7 +59,7 @@ export const WHOLE_MODULE: LineRange = { start: 0, end: Infinity };
 
 interface ObligationOptions {
   lines?: LineRange;
-  onWarning?: (warning: ObligationWarning) => void;
+  onWarning?: Warn;
 }
 
 const MODULE_HEADER = /-{4,} *MODULE/;
@@ -128,7 +128,7 @@ const loadMule = (
   input: ObligationSource,
   counter: Counter,
   isMain: boolean,
-  onWarning: (warning: ObligationWarning) => void,
+  onWarning: Warn,
   citation: string,
 ): Mule => {
   if (!MODULE_HEADER.test(input.source)) throw new TlaProofError("No tokens in file");

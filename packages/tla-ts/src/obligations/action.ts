@@ -22,7 +22,7 @@ import {
   stripProps,
   substituteExpr,
   type Expr,
-  type ObligationWarning,
+  type Warn,
   type Param,
   type Scope,
   type Substitution,
@@ -42,8 +42,6 @@ interface FreshNames {
   names: string[];
   depth: number;
 }
-
-type Warn = (warning: ObligationWarning) => void;
 
 const ENABLED_WRAPPER = "EnabledWrapper";
 const CDOT_WRAPPER = "CdotWrapper";

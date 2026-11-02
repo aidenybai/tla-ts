@@ -17,6 +17,8 @@ export interface ObligationWarning {
   channel: "toolbox" | "toolboxOnly" | "stderr" | "stdout";
 }
 
+export type Warn = (warning: ObligationWarning) => void;
+
 export const getLocusPosition = (locus: Locus) => {
   const end = locus.endColumn - 1;
   if (locus.startLine !== locus.endLine)

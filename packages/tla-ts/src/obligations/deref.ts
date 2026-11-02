@@ -18,7 +18,7 @@ import {
   type Defn,
   type Expr,
   type Hyp,
-  type ObligationWarning,
+  type Warn,
   type Param,
   type Selector,
 } from "./expression";
@@ -142,11 +142,7 @@ const getReversal = (count: number, paramCount: number) =>
 const getIndices = (count: number) =>
   Array.from({ length: count }, (_item, index): Expr => ({ kind: "Ix", index: count - index }));
 
-const instantiate = (
-  onWarning: (warning: ObligationWarning) => void,
-  expression: Expr,
-  args: Expr[],
-): Expr => {
+const instantiate = (onWarning: Warn, expression: Expr, args: Expr[]): Expr => {
   switch (expression.kind) {
     case "Quant":
     case "Fcn":
@@ -212,11 +208,7 @@ const instantiate = (
   }
 };
 
-const abstract = (
-  onWarning: (warning: ObligationWarning) => void,
-  definitionCount: number,
-  expression: Expr,
-): [Param[], Expr] => {
+const abstract = (onWarning: Warn, definitionCount: number, expression: Expr): [Param[], Expr] => {
   const params = ((): Param[] => {
     switch (expression.kind) {
       case "Quant":
@@ -242,7 +234,7 @@ const abstract = (
 };
 
 const getNumbered = (
-  onWarning: (warning: ObligationWarning) => void,
+  onWarning: Warn,
   expression: Expr,
   position: number,
   origin: Expr,
@@ -373,7 +365,7 @@ const permute = (indices: number[], args: Expr[]) => {
 };
 
 const resolveLabel = (
-  onWarning: (warning: ObligationWarning) => void,
+  onWarning: Warn,
   definitionCount: number,
   expression: Expr,
   label: string,
@@ -436,7 +428,7 @@ const resolveLabel = (
 };
 
 const resolveLetOperator = (
-  onWarning: (warning: ObligationWarning) => void,
+  onWarning: Warn,
   definitionCount: number,
   expression: Expr,
   label: string,
@@ -492,12 +484,7 @@ const resolveLetOperator = (
   );
 };
 
-const deref = (
-  onWarning: (warning: ObligationWarning) => void,
-  isLabel: boolean,
-  state: Deref,
-  selectors: Selector[],
-): Expr => {
+const deref = (onWarning: Warn, isLabel: boolean, state: Deref, selectors: Selector[]): Expr => {
   const [selector, ...rest] = selectors;
   if (!selector) {
     const withDefinitions =
@@ -583,11 +570,7 @@ const deref = (
   );
 };
 
-const getInitialDeref = (
-  onWarning: (warning: ObligationWarning) => void,
-  operator: Expr,
-  args: Expr[],
-): Deref => {
+const getInitialDeref = (onWarning: Warn, operator: Expr, args: Expr[]): Deref => {
   if (args.length > 0) {
     return { params: [], definitions: [], expression: instantiate(onWarning, operator, args) };
   }
@@ -597,7 +580,7 @@ const getInitialDeref = (
 };
 
 export const resolveSubexpression = (
-  onWarning: (warning: ObligationWarning) => void,
+  onWarning: Warn,
   operator: Expr,
   args: Expr[],
   selectors: Selector[],

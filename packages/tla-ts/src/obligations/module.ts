@@ -33,7 +33,7 @@ import {
   type Hyp,
   type InstanceDefinition,
   type Locus,
-  type ObligationWarning,
+  type Warn,
   type Scope,
   type Sequent,
   type Substitution,
@@ -379,7 +379,7 @@ export interface Pipeline {
   generator: Generator;
   salts: Counter;
   latestModules: Map<string, Mule>;
-  onWarning: (warning: ObligationWarning) => void;
+  onWarning: Warn;
 }
 
 const substituteUsable = (substitution: Substitution, usable: Usable): Usable => ({

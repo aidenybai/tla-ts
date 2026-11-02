@@ -30,7 +30,7 @@ import {
   type Expr,
   type ExprCore,
   type Hyp,
-  type ObligationWarning,
+  type Warn,
   type ParenForm,
   type Scope,
   type Selector,
@@ -79,7 +79,7 @@ export const createAnonymizer = (
     scope: Scope | undefined,
     definition: Extract<Defn, { kind: "Instance" }>,
   ) => Defn[],
-  onWarning: (warning: ObligationWarning) => void,
+  onWarning: Warn,
 ) => {
   // Elab.desugar's current_at: the value @ stands for inside an EXCEPT, and the context size there.
   let currentAt: { expression: Expr; size: number } | undefined;

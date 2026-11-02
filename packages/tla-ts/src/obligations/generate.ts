@@ -24,7 +24,7 @@ import {
   type Expr,
   type Hyp,
   type Locus,
-  type ObligationWarning,
+  type Warn,
   type Sequent,
   type Time,
   type Visibility,
@@ -183,7 +183,7 @@ const isDomainMatch = (fact: Expr, domain: Expr) =>
   isEqualExpr(domain, fact.args[1]);
 
 const setExpression = (
-  onWarning: (warning: ObligationWarning) => void,
+  onWarning: Warn,
   visibility: Visibility,
   fact: Expr,
   context: Hyp[],
@@ -319,7 +319,7 @@ export const createGenerator = (
   counter: Counter,
   inputFiles: Set<string>,
   lines: LineRange,
-  onWarning: (warning: ObligationWarning) => void,
+  onWarning: Warn,
 ) => {
   const generate = (sequent: Sequent, proof: Proof, time: Time): Proof => {
     const location = proof.location;
