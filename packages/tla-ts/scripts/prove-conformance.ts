@@ -51,7 +51,6 @@ const VERDICTS = [
 
 type Verdict = (typeof VERDICTS)[number];
 
-// Whether a verdict is a difference in tla-ts.
 const isDifference = (verdict: Verdict) =>
   verdict !== "agree" && verdict !== "deviation" && verdict !== "late";
 
