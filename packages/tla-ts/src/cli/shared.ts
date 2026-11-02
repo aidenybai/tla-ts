@@ -44,15 +44,13 @@ export const printMissingFile = (userDirectory: string, fileName: string, direct
     `File does not exist: ${userDirectory}/${fileName} while looking in these directories: ${userDirectory}, ${directories.join(", ")}, classpath:/tla2sany/StandardModules, classpath:/`,
   );
 
-// The URL of the directory of SANY's standard modules in a tla2tools.jar.
 export const getStandardModulesUrl = (jar: string) =>
   `jar:file:${pathToFileURL(resolve(jar)).pathname}!/tla2sany/StandardModules/`;
 
-// TLC prints the errors it raises itself. tla-ts names the others, such as a module SANY rejects.
+// TLC prints an error it raises with that error's message code. tla-ts names the others, such as a
+// module SANY rejects.
 export const printError = (error: TlaError, printer: MessagePrinter) => {
   if (error instanceof TlaConfigError || error instanceof TlaEvaluationError) {
-    // TLC prints an error it raises with a message code, such as a configuration error, with
-    // that code.
     const coded = getCodedMessage(error.message);
     const code = coded && !coded.isEvalException ? coded.code : MESSAGE_CODE.general;
     return printer.print(
@@ -64,7 +62,6 @@ export const printError = (error: TlaError, printer: MessagePrinter) => {
   console.error(`${error.name}: ${error.message}`);
 };
 
-// Prints a TlaError and returns its exit code.
 export const reportErrors = async (
   run: () => number | Promise<number>,
   printer = createMessagePrinter(false),
@@ -78,9 +75,8 @@ export const reportErrors = async (
   }
 };
 
-// TLC 1.7.4's FileUtil.createNamedInputStream names the last file that SimpleFilenameToStream
-// looked for a module in, and the directories it looks in, the standard modules in the jar last,
-// which tla-ts leaves out without a jar.
+// TLC 1.7.4's FileUtil.createNamedInputStream names the last file SimpleFilenameToStream looked
+// for, and the directories it looked in, the jar's standard modules last.
 export const printMissingFile174 = (path: string, libraries: string[], jar: string | undefined) =>
   console.error(
     `File does not exist: ${isAbsolute(path) ? path : `${process.cwd()}/${path}`} while looking in these directories: ${[...libraries, ...(jar === undefined ? [] : [getStandardModulesUrl(jar)])].join(", ")}`,
@@ -99,8 +95,6 @@ export const reportMissingModules174 =
     return text;
   };
 
-// What the java command sets for TLC: the TLA-Library directories it searches for modules, the
-// class path it finds its standard modules on, and java.io.tmpdir, where it copies them.
 export interface JavaProperties {
   libraries: string[];
   classPath?: string;

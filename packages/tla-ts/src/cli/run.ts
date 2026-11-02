@@ -5,12 +5,8 @@ import { runTlapm } from "./tlapm";
 import { checkSpecs } from "./tlc";
 import { exportXml, exportXml174 } from "./xml-exporter";
 
-// Tools that run TLC with Java, such as the statechart skill of pstack, can run tla-ts in place of
-// java, as in `tla-ts -DTLA-Library=lib -cp tla2tools.jar tlc2.TLC Spec`. tla-ts searches the
-// TLA-Library directories for modules as TLC does, though not as XMLExporter, which ignores them,
-// names the files in java.io.tmpdir and the jar on the class path that TLC would copy and read
-// modules from, and ignores the other options. It reproduces the TLC of that jar, or the one that
-// -Dtla-ts.tlc names without a jar, as in `tla-ts -Dtla-ts.tlc=1.7.4 tlc2.TLC Spec`.
+// Tools that run TLC with Java, such as pstack's statechart skill, can run tla-ts in place of java,
+// as in `tla-ts -DTLA-Library=lib -cp tla2tools.jar tlc2.TLC Spec`. Other JVM options are ignored.
 const JAVA_MAIN_CLASSES = ["tlc2.TLC", "tla2sany.xml.XMLExporter"];
 
 const TLA_LIBRARY_PROPERTY = "-DTLA-Library=";
@@ -68,7 +64,6 @@ const run = async (args: string[]) => {
   if (args[0] === "tlapm") return reportErrors(() => runTlapm(args.slice(1)));
   const launch = getJavaLaunch(args);
   if (launch === undefined) return checkSpecs(args, { libraries: [] });
-  // The TLC that -Dtla-ts.tlc names, or else the one of the jar on the class path.
   launch.java.tlcVersion ??= await getTlcVersion(getJar(launch.java));
   return runJavaClass(launch);
 };

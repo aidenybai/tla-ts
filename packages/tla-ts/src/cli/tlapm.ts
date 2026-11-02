@@ -277,8 +277,7 @@ export const runTlapm = async (args: string[]) => {
       modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
       (name) => {
         moduleNames.add(name);
-        // tlapm names each file it reads by joining a search directory and the name, as in
-        // ./Module.tla.
+        // tlapm names a file by joining its search directory and the name, as in ./Module.tla.
         const file = directories
           .map((directory) => `${directory}/${name}.tla`)
           .find((path) => existsSync(path));

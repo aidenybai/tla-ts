@@ -115,7 +115,6 @@ const getDump = (values: string[]): StateDump => {
   };
 };
 
-// What the spec prints as TLC rebuilds a trace, before it prints the states or after.
 const printInitialStatesProgress = (printer: MessagePrinter, count: number) =>
   printer.print(
     MESSAGE_CODE.computingInitProgress,
@@ -137,6 +136,7 @@ const getInitialViolationHeadline = (
         text: `Property ${name} is violated by the initial state:`,
       };
 
+// What the spec prints as TLC rebuilds a trace, before it prints the states or after.
 const printTraceOutput = (printer: MessagePrinter, lines: OutputLine[] | undefined) =>
   lines?.forEach((line) => {
     if (typeof line === "string") return console.log(line);
@@ -235,9 +235,8 @@ interface Timing {
   liveness: number | undefined;
 }
 
-// TLC reports how far the search got when it prints messages for a program to read, at level 1 or
-// deeper even before it finds a state. As the search goes and when it ends, it adds how many
-// states it generated and found a minute.
+// TLC reports a depth of at least 1, even before it finds a state, and rates a minute only once the
+// search has started.
 const printProgress = (
   printer: MessagePrinter,
   statistics: SearchStatistics,
@@ -256,7 +255,6 @@ const printProgress = (
 
 const getClassPath = (directory: string, module: string) => join(directory, `${module}.class`);
 
-// The messages TLC prints as the search goes.
 const printCheckProgress = (
   printer: MessagePrinter,
   progress: CheckProgress,
@@ -688,7 +686,6 @@ const checkSpec = async (
     console.error(`Error: tla-ts does not support the -dump format ${unsupportedFormat}.`);
     return 1;
   }
-  // tla-ts fingerprints states as TLC does with -fp 0.
   const fingerprint = args.get("-fp")?.[0];
   if (fingerprint !== undefined && Number(fingerprint) !== 0) {
     console.error(

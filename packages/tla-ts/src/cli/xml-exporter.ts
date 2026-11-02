@@ -66,13 +66,12 @@ const XML_EXPORT_USAGE = (() => {
   ].join("\n");
 })();
 
-// XMLExporter.run prints why it cannot parse its arguments, and its usage.
 const printXmlExportUsageError = (message: string) => {
   process.stderr.write(`ERROR: ${message}\n${XML_EXPORT_USAGE}`);
   return XML_EXPORT_EXIT_CODE.argsParsingFailure;
 };
 
-// XMLExporter.run writes the XML of a specification, and why it can't when it can't.
+// XMLExporter.run.
 const writeXml = (specification: SanySpecification, options: XmlExportOptions) => {
   try {
     process.stdout.write(exportSanyXml(specification, options));
@@ -140,7 +139,6 @@ export const exportXml = (args: string[]) => {
   if (path === undefined && !SANY_STANDARD_MODULES.has(fileName.slice(0, -".tla".length))) {
     printMissingFile(process.cwd(), `./${fileName}`, parsed.includes);
   }
-  // XMLExporter.parseSpec prints SANY's errors, and XMLExporter.run why it fails.
   const sany = getSanyReport(path ?? fileName, createModuleLoader(directories), {
     fileName: name,
     isXmlExport: true,
