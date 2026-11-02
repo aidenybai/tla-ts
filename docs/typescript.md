@@ -54,8 +54,25 @@ A file's top-level declarations become the spec:
 | `const N = 3;`, or a function you don't export | A definition                                      |
 | An exported function that changes state        | An action, which `Next` chooses from              |
 | An exported function that returns a boolean    | An invariant                                      |
+| Any other exported function that returns       | A check that calls it with every argument         |
 | A parameter, such as `(proc: Proc)`            | `\E proc \in Proc`, every value of its type       |
 | `if (busy) return;` before any change          | A condition that disables the action              |
+
+A file doesn't need state or invariants. tla-ts calls each exported function that returns a value with every argument its parameter types allow, and TLC reports a `throw`, a `!` on a missing value, or an index out of range. A boolean function with parameters is called the same way, since it can't hold in a state by itself. A check that reads no state becomes an `ASSUME`, which TLC evaluates once. A check that reads state becomes an invariant.
+
+```ts
+// clamp.ts
+export const clamp = (value: number, low: number, high: number) => {
+  if (low > high) throw new Error("low is above high");
+  return Math.min(Math.max(value, low), high);
+};
+```
+
+```
+Error: Evaluating assumption line 25, col 8 to line 25, col 12 of module Clamp failed.
+The first argument of Assert evaluated to FALSE; the second argument was:
+"low is above high"
+```
 
 An action runs its statements in order, as TypeScript does. A read after an assignment sees the new value. Each path through the action that changes state is one possible step, and a path that changes nothing disables the action.
 
@@ -86,7 +103,7 @@ export const isExclusive = () => owner === null || !waiting.has(owner);
 
 ### Finite types
 
-TLC tries every value of a parameter's type, so a parameter needs a finite type:
+TLC tries every value of a parameter's type, so tla-ts gives each type a finite set of values:
 
 | TypeScript type                | Values                                  |
 | ------------------------------ | --------------------------------------- |
@@ -96,8 +113,11 @@ TLC tries every value of a parameter's type, so a parameter needs a finite type:
 | `[0 \| 1, boolean]`            | Every tuple of those elements           |
 | `Set<T>`                       | Every subset of `T`'s values            |
 | `Map<K, V>`                    | Every partial function from `K` to `V`  |
+| `number`                       | The integers from -3 to 3               |
+| `string`                       | `""`, `"a"`, and `"b"`                  |
+| `T[]`                          | Every array of `T`s up to 3 long        |
 
-`number`, `string`, and arrays have no end, so tla-ts rejects them as parameter types. A parameter of any type works when the action starts with a guard such as `if (!pending.has(message)) return;`. tla-ts then chooses the parameter from that set. A later guard's set may use a parameter an earlier guard chose, as in `if (!getMoves(from).has(to)) return;`.
+The bounds on `number`, `string`, and arrays keep the search finite, so a check covers only those values. Use a union of literals, such as `0 | 1 | 2`, to check other values. tla-ts rejects a parameter of any other type that has no end, such as a function. A parameter of any type works when the action starts with a guard such as `if (!pending.has(message)) return;`. tla-ts then chooses the parameter from that set. A later guard's set may use a parameter an earlier guard chose, as in `if (!getMoves(from).has(to)) return;`.
 
 ### Values
 
@@ -128,7 +148,34 @@ TLC tries every value of a parameter's type, so a parameter needs a finite type:
 
 A function you don't export becomes a TLA+ operator, and it may call itself. An action may call a helper that changes state, and tla-ts inlines that helper. Pass a helper by name where a callback goes, as in `procs.values().some(isWaiting)`.
 
-Import types from anywhere, and constants and functions from other TypeScript files. tla-ts compiles what you import into the spec. A file can't import values from packages that ship only compiled JavaScript.
+Import types from anywhere, and constants and functions from other TypeScript files. tla-ts compiles what you import into the spec.
+
+### Calls tla-ts can't compile
+
+A call that tla-ts can't compile returns any value of its type. Examples are a function from a package that ships only compiled JavaScript, `Math.random()`, and `new Date().getTime()`. An action runs once for each value, and a check must pass for each value. A check that passes then holds whatever the call returns. A failure may come from a value that the real call never returns.
+
+```ts
+import { fetchPrice } from "./prices"; // declared in prices.d.ts
+
+let total = 0;
+
+export const add = (item: "apple" | "pear") => {
+  if (total > 4) return;
+  total += fetchPrice(item);
+};
+```
+
+The generated spec names each such call in a comment:
+
+```tla
+\* cart.ts:7:12 fetchPrice(item) isn't compiled, so fetchPrice is any value of its type
+add(item) ==
+  \E fetchPrice \in -3..3 :
+    /\ ~(total > 4)
+    /\ total' = total + fetchPrice
+```
+
+The call must be directly in an exported function. tla-ts chooses one value each time the function runs, so a call in a callback or a helper, which can run more than once, is still an error.
 
 ### Properties, fairness, and options
 
@@ -168,7 +215,7 @@ export const isWaiting = (proc: Proc) => waiting.has(proc);
 tla-ts stops with a `TlaTypeScriptError` at the file, line, and column of the problem:
 
 - **Type errors**: the file doesn't type check.
-- **No TLA+ equivalent**: the file uses TypeScript that tla-ts can't compile, such as a loop, `/`, or `Math.random()`.
+- **No TLA+ equivalent**: the file uses TypeScript that tla-ts can't compile, such as a loop, `/`, or `typeof`.
 - **Existing file**: a `.tla` or `.cfg` file of the module's name exists, and tla-ts didn't write it.
 
 ```

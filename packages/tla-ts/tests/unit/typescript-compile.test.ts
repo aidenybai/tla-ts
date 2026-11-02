@@ -305,6 +305,142 @@ describe("values", () => {
   });
 });
 
+describe("bounds", () => {
+  it("chooses a number from -3 to 3", async () => {
+    const result = await checkModel(`
+      let total = 0;
+      export const add = (amount: number) => {
+        if (total !== 0) return;
+        total = amount;
+      };
+      /** @noDeadlock */
+      export const isAboveMinimum = () => total > -3;
+    `);
+    expect(getTrace(result)).toEqual([{ total: "0" }, { total: "-3" }]);
+  });
+
+  it("chooses a string from three", async () => {
+    const result = await checkModel(`
+      let names = new Set<string>();
+      export const add = (name: string) => {
+        names.add(name);
+      };
+      /** @noDeadlock */
+      export const isSmall = () => names.size < 3;
+    `);
+    expect(result.status).toBe("invariant-violation");
+    expect(result.distinctStates).toBe(8);
+  });
+
+  it("starts an array at every length up to 3", async () => {
+    const result = await checkModel(`
+      let bits!: (0 | 1)[];
+      /** @noDeadlock */
+      export const isShort = () => bits.length <= 3;
+    `);
+    expect(result.status).toBe("success");
+    expect(result.distinctStates).toBe(1 + 2 + 4 + 8);
+  });
+});
+
+describe("calls", () => {
+  it("reports a throw for some argument of a function that reads no state", async () => {
+    const result = await checkModel(`
+      export const clamp = (value: number, low: number, high: number) => {
+        if (low > high) throw new Error("low is above high");
+        return Math.min(Math.max(value, low), high);
+      };
+    `);
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.message).toContain('"low is above high"');
+  });
+
+  it("passes a function that returns for every argument", async () => {
+    const result = await checkModel(`
+      export const clamp = (value: number, low: 0 | 1, high: 2 | 3) => {
+        if (low > high) throw new Error("low is above high");
+        return Math.min(Math.max(value, low), high);
+      };
+    `);
+    expect(result.status).toBe("success");
+  });
+
+  it("calls a boolean function with parameters without asserting it", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      export const step = () => {
+        count = 1 - count;
+      };
+      export const isBelow = (limit: 1 | 2) => count < limit;
+    `);
+    expect(result.status).toBe("success");
+  });
+
+  it("reports an index out of range in a function that reads state", async () => {
+    const result = await checkModel(`
+      let queue: number[] = [];
+      export const push = (value: 1 | 2) => {
+        if (queue.length > 0) return;
+        queue.push(value);
+      };
+      export const getFirst = () => queue[0]!;
+    `);
+    expect(result.status).toBe("error");
+    expect(result.failure?.message).toContain("out of bounds");
+  });
+});
+
+describe("calls tla-ts can't compile", () => {
+  it("chooses any value of the call's type in an action", async () => {
+    const result = await checkModel(`
+      let roll = 0;
+      export const reroll = () => {
+        if (roll !== 0) return;
+        roll = Math.random();
+      };
+      /** @noDeadlock */
+      export const isAboveMinimum = () => roll > -3;
+    `);
+    expect(getTrace(result)).toEqual([{ roll: "0" }, { roll: "-3" }]);
+  });
+
+  it("chooses any value of a method call on a value it can't compile", async () => {
+    const result = await checkModel(`
+      let time = 0;
+      export const tick = () => {
+        if (time !== 0) return;
+        time = new Date().getTime();
+      };
+      /** @noDeadlock */
+      export const isAboveMinimum = () => time > -3;
+    `);
+    expect(result.status).toBe("invariant-violation");
+  });
+
+  it("calls a check with every value of the call's type", async () => {
+    const result = await checkModel(`
+      export const getShare = (total: 0 | 6) => {
+        const people = Math.round(total);
+        if (people === 0) throw new Error("no people");
+        return Math.floor(total / people);
+      };
+    `);
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.message).toContain('"no people"');
+  });
+
+  it("chooses any value of a function that only a declaration file declares", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/unknowns/cart.ts");
+    const spec = compile(readFileSync(path, "utf8"), path);
+    expect(spec.source).toContain(
+      "\\* cart.ts:9:17 fetchPrice(item) isn't compiled, so fetchPrice is any value of its type",
+    );
+    const result = await check(spec);
+    expect(result.status).toBe("invariant-violation");
+    expect(getTrace(result)).toEqual([{ total: "0" }, { total: "-3" }]);
+  });
+});
+
 describe("definitions", () => {
   it("compiles recursive helpers", async () => {
     const result = await checkModel(`
@@ -466,8 +602,8 @@ describe("errors", () => {
 
   it("rejects a parameter without a finite type", () => {
     expect(() =>
-      compile(`let count = 0;\nexport const add = (amount: number) => { count += amount; };`),
-    ).toThrow("spec.ts:2:21 number isn't finite");
+      compile(`let count = 0;\nexport const run = (step: () => number) => { count += step(); };`),
+    ).toThrow("spec.ts:2:21 () => number isn't finite");
   });
 
   it("rejects division without rounding", () => {
@@ -488,11 +624,5 @@ describe("errors", () => {
     expect(() =>
       compile(`let count = 0;\n/** @fiar */\nexport const step = () => { count++; };`),
     ).toThrow("Unknown tag: @fiar");
-  });
-
-  it("rejects an invariant with parameters", () => {
-    expect(() =>
-      compile(`let count = 0;\nexport const isBelow = (limit: 1 | 2) => count < limit;`),
-    ).toThrow("spec.ts:2:25 Invariants can't take parameters");
   });
 });

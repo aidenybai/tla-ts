@@ -3,10 +3,10 @@ import { translateAction } from "./actions";
 import { type Context, getSymbol, isMethodCall } from "./context";
 import type { Sections } from "./emit";
 import { translateExpression } from "./expressions";
-import { indent, render, wrap } from "./formula";
+import { render, wrap } from "./formula";
 import type { Exported } from "./model";
 import { bindNames, createStateScope, declareParameters, type Parameter } from "./scope";
-import { findDomain, getDomain, isSet } from "./types";
+import { collectUnknowns, defineWithUnknowns, findDomain, getDomain, isSet } from "./types";
 
 interface Guard {
   parameter: Parameter;
@@ -116,16 +116,14 @@ export const translateStep = (definition: Exported, sections: Sections, context:
     new Map(),
     context,
   );
-  const formula = translateAction(
-    guards.remaining,
-    bindNames(createStateScope(context), parameters),
-    context,
+  const action = collectUnknowns(definition.node, context, () =>
+    translateAction(guards.remaining, bindNames(createStateScope(context), parameters), context),
   );
   const head =
     parameters.length === 0
       ? name
       : `${name}(${parameters.map((parameter) => parameter.name).join(", ")})`;
-  sections.actions.push(`${head} ==\n  ${indent(render(formula), "  ")}`);
+  sections.actions.push(defineWithUnknowns(head, "\\E", render(action.value), action.unknowns));
   const fairness = definition.tags.has("strongFair")
     ? "SF_vars"
     : definition.tags.has("fair")

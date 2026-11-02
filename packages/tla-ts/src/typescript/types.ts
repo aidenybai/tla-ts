@@ -1,9 +1,18 @@
+import { basename } from "node:path";
 import ts from "@typescript/typescript6";
-import { type Context, translateString } from "./context";
+import { type Context, translateString, type Unknown } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { wrap } from "./formula";
+import { indent, wrap } from "./formula";
 
 export type Kind = "sequence" | "set" | "map" | "string" | "other";
+
+// TLC needs a finite set of values for every type, so number, string, and arrays take these small
+// bounds.
+const INTEGERS = "-3..3";
+
+const STRINGS = '{"", "a", "b"}';
+
+const MAX_ARRAY_LENGTH = 3;
 
 // Why a type has no finite set of values.
 interface Infinite {
@@ -103,6 +112,8 @@ export const findDomain = (type: ts.Type, context: Context): string | Infinite =
   }
   const literal = getLiteral(type, context);
   if (literal !== undefined) return `{${literal}}`;
+  if (type.flags & ts.TypeFlags.Number) return INTEGERS;
+  if (type.flags & ts.TypeFlags.String) return STRINGS;
   if (isSetType(type) || isMapType(type) || checker.isTupleType(type)) {
     const elements = findDomains(
       isTypeReference(type) ? checker.getTypeArguments(type) : [],
@@ -131,8 +142,11 @@ export const findDomain = (type: ts.Type, context: Context): string | Infinite =
     const element = context.names.getFresh("element");
     return `{<<${element}>> : ${element} \\in ${elements[0]}}`;
   }
-  if (checker.isArrayType(type)) {
-    return getInfinite(type, "arrays can have any length, so use a tuple", context);
+  if (checker.isArrayType(type) && isTypeReference(type)) {
+    const element = findDomain(checker.getTypeArguments(type)[0], context);
+    if (typeof element !== "string") return element;
+    const length = context.names.getFresh("length");
+    return `UNION {[1..${length} -> ${element}] : ${length} \\in 0..${MAX_ARRAY_LENGTH}}`;
   }
   const properties = type.getProperties();
   const isRecord =
@@ -175,4 +189,58 @@ export const getDomain = (type: ts.Type, node: ts.Node, context: Context) => {
   const domain = findDomain(type, context);
   if (typeof domain !== "string") throw new TlaTypeScriptError(domain.message, node);
   return domain;
+};
+
+// A call that tla-ts can't compile, such as to a package or Math.random(), as any value of its type.
+// The exported function that makes the call chooses the value, so a call that may run more than
+// once per step, as in a callback or a helper, stays an error.
+export const translateUnknown = (
+  node: ts.CallExpression | ts.NewExpression,
+  message: string,
+  context: Context,
+) => {
+  const unknowns = context.unknowns;
+  const domain = findDomain(context.checker.getTypeAtLocation(node), context);
+  if (
+    unknowns === undefined ||
+    ts.findAncestor(node.parent, ts.isFunctionLike) !== unknowns.owner ||
+    typeof domain !== "string"
+  ) {
+    throw new TlaTypeScriptError(message, node);
+  }
+  const callee = ts.isPropertyAccessExpression(node.expression)
+    ? node.expression.name.text
+    : node.expression.getText();
+  const name = context.names.getFresh(callee);
+  unknowns.values.push({ name, domain, node });
+  return name;
+};
+
+// Compiles an exported function, and returns the calls in it that tla-ts can't compile.
+export const collectUnknowns = <T>(owner: ts.Node, context: Context, translate: () => T) => {
+  const values: Unknown[] = [];
+  context.unknowns = { owner, values };
+  const value = translate();
+  context.unknowns = undefined;
+  return { value, unknowns: values };
+};
+
+// A definition whose body holds for each value, \E in an action and \A in a check, of the calls it
+// makes that tla-ts can't compile. A comment above it names each call.
+export const defineWithUnknowns = (
+  head: string,
+  quantifier: "\\E" | "\\A",
+  body: string,
+  unknowns: Unknown[],
+) => {
+  const comments = unknowns.map((unknown) => {
+    const sourceFile = unknown.node.getSourceFile();
+    const position = sourceFile.getLineAndCharacterOfPosition(unknown.node.getStart());
+    return `\\* ${basename(sourceFile.fileName)}:${position.line + 1}:${position.character + 1} ${unknown.node.getText()} isn't compiled, so ${unknown.name} is any value of its type`;
+  });
+  const bound =
+    unknowns.length === 0
+      ? body
+      : `${quantifier} ${unknowns.map((unknown) => `${unknown.name} \\in ${unknown.domain}`).join(", ")} :\n  ${indent(body, "  ")}`;
+  return [...comments, `${head} ==\n  ${indent(bound, "  ")}`].join("\n");
 };

@@ -20,7 +20,7 @@ import { TlaTypeScriptError } from "../errors";
 import { wrap, wrapEquated } from "./formula";
 import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
 import type { Scope } from "./scope";
-import { getKind, isBooleanLike, isNumericKey } from "./types";
+import { getKind, isBooleanLike, isNumericKey, translateUnknown } from "./types";
 
 interface Field {
   key: string;
@@ -226,7 +226,7 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
         ),
       );
   }
-  throw new TlaTypeScriptError(`Unsupported call: Math.${method}`, node);
+  return translateUnknown(node, `Unsupported call: Math.${method}`, context);
 };
 
 const translateCall = (
@@ -237,6 +237,9 @@ const translateCall = (
 ) => {
   const symbol = getSymbol(node.expression, context.checker);
   const helper = getTopLevelDeclaration(symbol);
+  if (helper?.getSourceFile().isDeclarationFile) {
+    return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
+  }
   if (helper !== undefined) return translateHelperCall(helper, node, scope, context);
   if (!isMethodCall(node)) {
     const operator = symbol === undefined ? undefined : scope.bindings.get(symbol);

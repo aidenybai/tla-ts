@@ -21,12 +21,17 @@ import {
   declareParameters,
   type Scope,
 } from "./scope";
+import { translateUnknown } from "./types";
 
 // Whether a step has changed a state variable, so that helpers reading state must see the change.
 const isStateModified = (scope: Scope, context: Context) =>
   [...context.variables].some((entry) => scope.bindings.get(entry[0]) !== entry[1]);
 
-const readsState = (node: ts.Node, context: Context, visited: Set<ts.Declaration>): boolean => {
+export const readsState = (
+  node: ts.Node,
+  context: Context,
+  visited: Set<ts.Declaration>,
+): boolean => {
   if (ts.isIdentifier(node)) {
     const symbol = getSymbol(node, context.checker);
     if (symbol !== undefined && context.variables.has(symbol)) return true;
@@ -143,7 +148,7 @@ export const translateHelperCall = (
 export const translateLocalCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
   const callee = getCallee(node.expression, context);
   if (callee === undefined) {
-    throw new TlaTypeScriptError(`Unsupported call: ${node.expression.getText()}`, node);
+    return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }
   if (context.inProgress.has(callee)) {
     throw new TlaTypeScriptError(
