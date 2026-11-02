@@ -22,17 +22,15 @@ const CASES: [string, string][] = [
   ["try", "try { count++; } catch { count--; }"],
   ["labels", "outer: { count++; }"],
   ["comma expressions", "count = (count++, count);"],
-  ["Math.random", "count = Math.random();"],
   ["sort", "values.sort();"],
   ["reverse", "values.reverse();"],
   ["splice", "values.splice(0, 1);"],
   ["array length assignment", "values.length = 0;"],
   ["string comparison", "if (label < 'b') count++;"],
-  ["string methods", "label = label.toUpperCase();"],
-  ["Date", "count = new Date().getTime();"],
   ["returning a value from an action", "count++; return count;"],
   ["assigning a constant", "LIMIT = 3;"],
   ["calling an action from an action", "step();"],
+  ["an unknown call in a callback", "values = values.map(() => Math.random());"],
 ];
 
 it.each(CASES)("rejects %s", (_, statements) => {

@@ -148,7 +148,34 @@ The bounds on `number`, `string`, and arrays keep the search finite, so a check 
 
 A function you don't export becomes a TLA+ operator, and it may call itself. An action may call a helper that changes state, and tla-ts inlines that helper. Pass a helper by name where a callback goes, as in `procs.values().some(isWaiting)`.
 
-Import types from anywhere, and constants and functions from other TypeScript files. tla-ts compiles what you import into the spec. A file can't import values from packages that ship only compiled JavaScript.
+Import types from anywhere, and constants and functions from other TypeScript files. tla-ts compiles what you import into the spec.
+
+### Calls tla-ts can't compile
+
+A call that tla-ts can't compile returns any value of its type. Examples are a function from a package that ships only compiled JavaScript, `Math.random()`, and `new Date().getTime()`. An action runs once for each value, and a check must pass for each value. A check that passes then holds whatever the call returns. A failure may come from a value that the real call never returns.
+
+```ts
+import { fetchPrice } from "./prices"; // declared in prices.d.ts
+
+let total = 0;
+
+export const add = (item: "apple" | "pear") => {
+  if (total > 4) return;
+  total += fetchPrice(item);
+};
+```
+
+The generated spec names each such call in a comment:
+
+```tla
+\* cart.ts:7:12 fetchPrice(item) isn't compiled, so fetchPrice is any value of its type
+add(item) ==
+  \E fetchPrice \in -3..3 :
+    /\ ~(total > 4)
+    /\ total' = total + fetchPrice
+```
+
+The call must be directly in an exported function. tla-ts chooses one value each time the function runs, so a call in a callback or a helper, which can run more than once, is still an error.
 
 ### Properties, fairness, and options
 
@@ -188,7 +215,7 @@ export const isWaiting = (proc: Proc) => waiting.has(proc);
 tla-ts stops with a `TlaTypeScriptError` at the file, line, and column of the problem:
 
 - **Type errors**: the file doesn't type check.
-- **No TLA+ equivalent**: the file uses TypeScript that tla-ts can't compile, such as a loop, `/`, or `Math.random()`.
+- **No TLA+ equivalent**: the file uses TypeScript that tla-ts can't compile, such as a loop, `/`, or `typeof`.
 - **Existing file**: a `.tla` or `.cfg` file of the module's name exists, and tla-ts didn't write it.
 
 ```

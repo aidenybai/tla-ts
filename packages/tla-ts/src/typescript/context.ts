@@ -23,6 +23,19 @@ export interface Context {
   modelValues: Map<string, string>;
   // Model values and helper operators that the spec uses.
   prelude: Set<"Null" | "Undefined" | "Rem" | "Quot">;
+  // The calls that the exported function being compiled makes and tla-ts can't compile.
+  unknowns: Unknowns | undefined;
+}
+
+export interface Unknown {
+  name: string;
+  domain: string;
+  node: ts.Node;
+}
+
+interface Unknowns {
+  owner: ts.Node;
+  values: Unknown[];
 }
 
 export interface MethodCall extends ts.CallExpression {
@@ -43,6 +56,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   output: [],
   modelValues: new Map(),
   prelude: new Set(),
+  unknowns: undefined,
 });
 
 export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {

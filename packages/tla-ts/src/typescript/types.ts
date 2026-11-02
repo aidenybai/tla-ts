@@ -1,7 +1,8 @@
+import { basename } from "node:path";
 import ts from "@typescript/typescript6";
-import { type Context, translateString } from "./context";
+import { type Context, translateString, type Unknown } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { wrap } from "./formula";
+import { indent, wrap } from "./formula";
 
 export type Kind = "sequence" | "set" | "map" | "string" | "other";
 
@@ -188,4 +189,58 @@ export const getDomain = (type: ts.Type, node: ts.Node, context: Context) => {
   const domain = findDomain(type, context);
   if (typeof domain !== "string") throw new TlaTypeScriptError(domain.message, node);
   return domain;
+};
+
+// A call that tla-ts can't compile, such as to a package or Math.random(), as any value of its type.
+// The exported function that makes the call chooses the value, so a call that may run more than
+// once per step, as in a callback or a helper, stays an error.
+export const translateUnknown = (
+  node: ts.CallExpression | ts.NewExpression,
+  message: string,
+  context: Context,
+) => {
+  const unknowns = context.unknowns;
+  const domain = findDomain(context.checker.getTypeAtLocation(node), context);
+  if (
+    unknowns === undefined ||
+    ts.findAncestor(node.parent, ts.isFunctionLike) !== unknowns.owner ||
+    typeof domain !== "string"
+  ) {
+    throw new TlaTypeScriptError(message, node);
+  }
+  const callee = ts.isPropertyAccessExpression(node.expression)
+    ? node.expression.name.text
+    : node.expression.getText();
+  const name = context.names.getFresh(callee);
+  unknowns.values.push({ name, domain, node });
+  return name;
+};
+
+// Compiles an exported function, and returns the calls in it that tla-ts can't compile.
+export const collectUnknowns = <T>(owner: ts.Node, context: Context, translate: () => T) => {
+  const values: Unknown[] = [];
+  context.unknowns = { owner, values };
+  const value = translate();
+  context.unknowns = undefined;
+  return { value, unknowns: values };
+};
+
+// A definition whose body holds for each value, \E in an action and \A in a check, of the calls it
+// makes that tla-ts can't compile. A comment above it names each call.
+export const defineWithUnknowns = (
+  head: string,
+  quantifier: "\\E" | "\\A",
+  body: string,
+  unknowns: Unknown[],
+) => {
+  const comments = unknowns.map((unknown) => {
+    const sourceFile = unknown.node.getSourceFile();
+    const position = sourceFile.getLineAndCharacterOfPosition(unknown.node.getStart());
+    return `\\* ${basename(sourceFile.fileName)}:${position.line + 1}:${position.character + 1} ${unknown.node.getText()} isn't compiled, so ${unknown.name} is any value of its type`;
+  });
+  const bound =
+    unknowns.length === 0
+      ? body
+      : `${quantifier} ${unknowns.map((unknown) => `${unknown.name} \\in ${unknown.domain}`).join(", ")} :\n  ${indent(body, "  ")}`;
+  return [...comments, `${head} ==\n  ${indent(bound, "  ")}`].join("\n");
 };

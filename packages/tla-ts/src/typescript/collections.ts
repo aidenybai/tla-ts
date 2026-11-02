@@ -12,7 +12,7 @@ import { translateExpression } from "./expressions";
 import { wrap, wrapEquated } from "./formula";
 import { translateBody } from "./functions";
 import { bindNames, bindPatternInline, type Scope } from "./scope";
-import { getKind, type Kind } from "./types";
+import { getKind, type Kind, translateUnknown } from "./types";
 
 interface Unordered {
   set: string;
@@ -578,7 +578,7 @@ export const translateMethod = (
   }
   if (kind === "set") return translateSetMethod(node, scope, context);
   if (kind === "map") return translateMapMethod(node, scope, context, isDefined);
-  throw new TlaTypeScriptError(`Unsupported call: ${node.expression.getText()}`, node);
+  return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
 };
 
 export const translateNew = (node: ts.NewExpression, scope: Scope, context: Context) => {
@@ -592,7 +592,7 @@ export const translateNew = (node: ts.NewExpression, scope: Scope, context: Cont
     return translateSet(argument, scope, context);
   }
   if (constructor !== "Map") {
-    throw new TlaTypeScriptError(`Unsupported constructor: new ${constructor}`, node);
+    return translateUnknown(node, `Unsupported constructor: new ${constructor}`, context);
   }
   if (argument === undefined) return "<<>>";
   if (ts.isArrayLiteralExpression(argument)) {

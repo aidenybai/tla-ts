@@ -390,6 +390,57 @@ describe("calls", () => {
   });
 });
 
+describe("calls tla-ts can't compile", () => {
+  it("chooses any value of the call's type in an action", async () => {
+    const result = await checkModel(`
+      let roll = 0;
+      export const reroll = () => {
+        if (roll !== 0) return;
+        roll = Math.random();
+      };
+      /** @noDeadlock */
+      export const isAboveMinimum = () => roll > -3;
+    `);
+    expect(getTrace(result)).toEqual([{ roll: "0" }, { roll: "-3" }]);
+  });
+
+  it("chooses any value of a method call on a value it can't compile", async () => {
+    const result = await checkModel(`
+      let time = 0;
+      export const tick = () => {
+        if (time !== 0) return;
+        time = new Date().getTime();
+      };
+      /** @noDeadlock */
+      export const isAboveMinimum = () => time > -3;
+    `);
+    expect(result.status).toBe("invariant-violation");
+  });
+
+  it("calls a check with every value of the call's type", async () => {
+    const result = await checkModel(`
+      export const getShare = (total: 0 | 6) => {
+        const people = Math.round(total);
+        if (people === 0) throw new Error("no people");
+        return Math.floor(total / people);
+      };
+    `);
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.message).toContain('"no people"');
+  });
+
+  it("chooses any value of a function that only a declaration file declares", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/unknowns/cart.ts");
+    const spec = compile(readFileSync(path, "utf8"), path);
+    expect(spec.source).toContain(
+      "\\* cart.ts:9:17 fetchPrice(item) isn't compiled, so fetchPrice is any value of its type",
+    );
+    const result = await check(spec);
+    expect(result.status).toBe("invariant-violation");
+    expect(getTrace(result)).toEqual([{ total: "0" }, { total: "-3" }]);
+  });
+});
+
 describe("definitions", () => {
   it("compiles recursive helpers", async () => {
     const result = await checkModel(`
