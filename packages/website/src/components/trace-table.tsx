@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import type { TraceStepSummary } from "../check-worker";
+import type { TraceStepSummary } from "../run-worker";
 
 interface TraceTableProps {
   trace: TraceStepSummary[];
@@ -11,7 +11,7 @@ interface TraceTableProps {
 
 const CELL_CLASS_NAME = "border-b border-gray-300 px-3 py-1.5 align-top";
 const HEADER_CLASS_NAME =
-  "sticky top-0 z-10 border-b bg-white px-3 py-2 text-left font-sans text-xs font-medium text-gray-1000";
+  "sticky top-0 z-10 border-b bg-white px-3 py-2 text-left font-sans text-sm font-normal text-gray-1000";
 
 // Lists a trace as TLC's Toolbox does: one row per state, one column per variable, with each
 // value that changed from the row above marked.
@@ -19,7 +19,7 @@ export const TraceTable = (props: TraceTableProps) => {
   const loopStart = props.loopStart ?? props.trace.length;
   const lastIndex = props.trace.length - 1;
   return (
-    <table className="w-full border-separate border-spacing-0 font-mono text-[13px]/5 select-text">
+    <table className="w-full border-separate border-spacing-0 font-mono text-sm select-text">
       <thead>
         <tr>
           <th className={cn(HEADER_CLASS_NAME, "left-0 z-20 w-0 pl-5")}>Step</th>
@@ -66,7 +66,7 @@ export const TraceTable = (props: TraceTableProps) => {
                 )}
                 <span
                   className={cn(
-                    "mr-3 font-mono text-[13px] tabular-nums",
+                    "mr-3 font-mono text-sm tabular-nums",
                     isFailing ? "text-red-500" : "text-gray-900",
                   )}
                 >
@@ -86,7 +86,7 @@ export const TraceTable = (props: TraceTableProps) => {
                       pane.scrollBy({ top: top - pane.clientHeight / 3, behavior: "smooth" });
                   }}
                   className={cn(
-                    "text-left font-medium hover:underline",
+                    "text-left hover:underline",
                     isFailing ? "text-red-600" : "text-gray-1200",
                   )}
                 >

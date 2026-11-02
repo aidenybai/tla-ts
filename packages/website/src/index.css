@@ -58,7 +58,7 @@
     @apply bg-blue-500/20;
   }
   button {
-    @apply cursor-pointer;
+    @apply cursor-pointer transition-[scale,background-color,color] duration-150 ease-out enabled:active:scale-[0.98];
     touch-action: manipulation;
   }
   code {
