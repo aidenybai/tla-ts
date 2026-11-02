@@ -1,7 +1,7 @@
 import { getChildren, isLocallyResolved, type Definition, type Expression } from "./ast";
 import { isImpureBuiltin, type Environment } from "./evaluate";
 
-const STATE_INDEPENDENT_KINDS = new Set([
+const ACTION_AND_TEMPORAL_KINDS = new Set([
   "Prime",
   "Unchanged",
   "Enabled",
@@ -27,7 +27,7 @@ export const getReadVariables = (
   const variables = new Set<number>();
   const visited = new Set<Definition>();
   const visit = (node: Expression): boolean => {
-    if (STATE_INDEPENDENT_KINDS.has(node.kind)) return false;
+    if (ACTION_AND_TEMPORAL_KINDS.has(node.kind)) return false;
     const name = getReferencedName(node);
     if (name !== undefined && !isLocallyResolved(node) && !environment.constants.has(name)) {
       const target = environment.substitutions.get(name) ?? name;

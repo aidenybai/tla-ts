@@ -68,9 +68,10 @@ const getStringHash = (text: string) =>
     0,
   );
 
-const escape = (text: string) => text.replaceAll("\\", "\\\\").replaceAll('"', '\\"').trim();
+const escapeDotString = (text: string) =>
+  text.replaceAll("\\", "\\\\").replaceAll('"', '\\"').trim();
 
-const toDot = (text: string) => escape(text).replaceAll("\n", "\\n");
+const toDotLabel = (text: string) => escapeDotString(text).replaceAll("\n", "\\n");
 
 const createPlainWriter = (dump: StateDump, writeFile: WriteFile): StateWriter => {
   const states: string[] = [];
@@ -144,21 +145,21 @@ const createDotWriter = (
   };
   return {
     writeInitialState: (state) => {
-      lines.push(`${state.fingerprint} [label="${toDot(state.getLabel())}",style = filled]\n`);
+      lines.push(`${state.fingerprint} [label="${toDotLabel(state.getLabel())}",style = filled]\n`);
       addRank(state);
       writeSnapshot();
     },
     writeSuccessor: (state, successor, isSeen, action) => {
       const color = dump.colorize ? String(getColor(action)) : "black";
       const label =
-        dump.actionLabels && action ? escape(is174 ? action.name : action.signature) : "";
+        dump.actionLabels && action ? escapeDotString(is174 ? action.name : action.signature) : "";
       lines.push(
         `${state.fingerprint} -> ${successor.fingerprint} [label="${label}",color="${color}",fontcolor="${color}"];\n`,
       );
       if (!isSeen) {
-        const tooltip = is174 ? "" : `,tooltip="${toDot(successor.getText())}"`;
+        const tooltip = is174 ? "" : `,tooltip="${toDotLabel(successor.getText())}"`;
         lines.push(
-          `${successor.fingerprint} [label="${toDot(successor.getLabel())}"${tooltip}];\n`,
+          `${successor.fingerprint} [label="${toDotLabel(successor.getLabel())}"${tooltip}];\n`,
         );
       }
       addRank(state);

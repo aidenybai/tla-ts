@@ -758,14 +758,14 @@ const compileAction = (
   environment: Environment,
   isInit: boolean,
 ): Runner => {
-  const child = (node: Expression) => getRunner(node, environment, isInit);
+  const getChildRunner = (node: Expression) => getRunner(node, environment, isInit);
   switch (expression.kind) {
     case "And":
       return compileConjunction(expression.operands, environment, isInit);
     case "Or":
       return compileDisjunction(expression.operands, environment, isInit);
     case "Exists": {
-      const body = child(expression.body);
+      const body = getChildRunner(expression.body);
       const bound = expression.bounds[0];
       if (expression.bounds.length === 1 && bound.pattern.kind === "Name") {
         const name = bound.pattern.name;
@@ -826,7 +826,7 @@ const compileAction = (
       };
     }
     case "Forall": {
-      const body = child(expression.body);
+      const body = getChildRunner(expression.body);
       const readLocals =
         !isInit &&
         getReadVariables(expression, environment) !== undefined &&
@@ -872,8 +872,8 @@ const compileAction = (
       };
     }
     case "If": {
-      const consequent = child(expression.consequent);
-      const alternative = child(expression.alternative);
+      const consequent = getChildRunner(expression.consequent);
+      const alternative = getChildRunner(expression.alternative);
       return (run, scope, partial, action, isFixed, onComplete) => {
         const condition = evaluate(expression.condition, getContext(run, scope, partial));
         if (typeof condition !== "boolean") {
@@ -887,9 +887,9 @@ const compileAction = (
       const arms = expression.arms.map((arm) => ({
         condition: arm.condition,
         source: arm.body,
-        body: child(arm.body),
+        body: getChildRunner(arm.body),
       }));
-      const other = expression.other ? child(expression.other) : undefined;
+      const other = expression.other ? getChildRunner(expression.other) : undefined;
       return (run, scope, partial, action, isFixed, onComplete) => {
         const context = getContext(run, scope, partial);
         const arm = arms.find((candidate) => {
@@ -912,7 +912,7 @@ const compileAction = (
       };
     }
     case "Let": {
-      const body = child(expression.body);
+      const body = getChildRunner(expression.body);
       const reevaluated = getReevaluatedDefinitions(expression.definitions, environment);
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(
@@ -934,7 +934,7 @@ const compileAction = (
       }
       return compileUnchanged(expression.expression, environment);
     case "AngleAction": {
-      const body = child(expression.action);
+      const body = getChildRunner(expression.action);
       const unchanged = getUnchangedWrapper(expression.subscript);
       const isUnchanged = (run: Run, scope: Scope | undefined, nextPartial: State) => {
         try {
@@ -951,13 +951,13 @@ const compileAction = (
         });
     }
     case "BoxAction":
-      return child({
+      return getChildRunner({
         kind: "Or",
         operands: [expression.action, getUnchangedWrapper(expression.subscript)],
         location: expression.location,
       });
     case "Label":
-      return child(expression.body);
+      return getChildRunner(expression.body);
     case "Identifier":
       return compileIdentifier(expression, environment, isInit);
     case "FunctionApplication":
@@ -975,7 +975,7 @@ const compileAction = (
         }
       }
       if (expression.operator === "=>") {
-        const right = child(args[1]);
+        const right = getChildRunner(args[1]);
         return (run, scope, partial, action, isFixed, onComplete) => {
           const condition = evaluate(args[0], getContext(run, scope, partial));
           const isTrue =

@@ -26,7 +26,7 @@ import {
   type Thunk,
 } from "./evaluate";
 import { mapChildren } from "./instances";
-import { ACTION_LEVEL, TEMPORAL_LEVEL } from "./levels";
+import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { isEnabled } from "./successors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { isEvalException } from "./tlc/messages";
@@ -92,26 +92,31 @@ export const getLevel = (
   const getBindingLevel = (name: string) => {
     const binding = lookupScope(scope, name);
     if (!binding) return undefined;
-    if (binding.kind === "Value") return 0;
+    if (binding.kind === "Value") return CONSTANT_LEVEL;
     if (binding.kind === "Thunk") return getLevel(binding.expression, binding.scope, environment);
     const operator = binding.operator;
-    return operator.kind === "Closure" ? getLevel(operator.body, operator.scope, environment) : 0;
+    return operator.kind === "Closure"
+      ? getLevel(operator.body, operator.scope, environment)
+      : CONSTANT_LEVEL;
   };
   const getGlobalLevel = (name: string) => {
-    if (environment.variableIndex.has(name)) return 1;
-    if (environment.constants.has(name)) return 0;
+    if (environment.variableIndex.has(name)) return VARIABLE_LEVEL;
+    if (environment.constants.has(name)) return CONSTANT_LEVEL;
     const definition = getDefinition(name, environment);
     if (definition) return getDefinitionLevel(definition, environment);
     const builtin = environment.builtins.get(environment.substitutions.get(name) ?? name);
-    return builtin ? (builtin.isStateLevel && !builtin.isLevelConstant ? 1 : 0) : undefined;
+    if (!builtin) return undefined;
+    return builtin.isStateLevel && !builtin.isLevelConstant ? VARIABLE_LEVEL : CONSTANT_LEVEL;
   };
   const getNameLevel = (name: string, node: Expression) => {
-    if (shadowed.has(name)) return 0;
-    if (isLocallyResolved(node)) return getBindingLevel(name) ?? getGlobalLevel(name) ?? 0;
-    return getGlobalLevel(name) ?? getBindingLevel(name) ?? 0;
+    if (shadowed.has(name)) return CONSTANT_LEVEL;
+    if (isLocallyResolved(node)) {
+      return getBindingLevel(name) ?? getGlobalLevel(name) ?? CONSTANT_LEVEL;
+    }
+    return getGlobalLevel(name) ?? getBindingLevel(name) ?? CONSTANT_LEVEL;
   };
   const getChildrenLevel = (node: Expression) => {
-    const level = { value: 0 };
+    const level = { value: CONSTANT_LEVEL };
     mapChildren(node, (child, bound) => {
       level.value = Math.max(
         level.value,
@@ -133,7 +138,7 @@ export const getLevel = (
     case "AngleAction":
       return ACTION_LEVEL;
     case "Enabled":
-      return 1;
+      return VARIABLE_LEVEL;
     case "Always":
     case "Eventually":
     case "WeakFairness":
@@ -229,7 +234,7 @@ export const expandTemporal = (
       !binding &&
       definition?.kind === "Operator" &&
       definition.params.length === 0 &&
-      getDefinitionLevel(definition, environment) > 0
+      getDefinitionLevel(definition, environment) > CONSTANT_LEVEL
     ) {
       if (expanding.has(definition)) {
         throw createStackOverflowError();
@@ -273,7 +278,7 @@ export const expandTemporal = (
   const isUnrolled =
     isProperty &&
     expression.kind === "Forall" &&
-    expression.bounds.every((bound) => getLevel(bound.set, scope, environment) === 0);
+    expression.bounds.every((bound) => getLevel(bound.set, scope, environment) === CONSTANT_LEVEL);
   const sets = isUnrolled ? getUnrolledElements(expression.bounds, context) : undefined;
   if (isUnrolled && sets) {
     const expanded: ExpandedExpression[] = [];
@@ -311,8 +316,9 @@ export const toLiveExpression = (
     level: number,
   ): LiveExpression => {
     // TLC after 1.7.4 bounds the level of a formula whose parts are constant by the formula's own.
-    const atomLevel = level === 0 && !is174 ? getLevel(expression, scope, environment) : level;
-    if (atomLevel === 0) {
+    const atomLevel =
+      level === CONSTANT_LEVEL && !is174 ? getLevel(expression, scope, environment) : level;
+    if (atomLevel === CONSTANT_LEVEL) {
       const value = evaluate(expression, getConstantContext(environment, scope));
       if (typeof value !== "boolean") {
         throw new TlaEvaluationError(
@@ -321,7 +327,7 @@ export const toLiveExpression = (
       }
       return createBoolean(value);
     }
-    if (atomLevel === 1) return { kind: "State", expression, scope };
+    if (atomLevel === VARIABLE_LEVEL) return { kind: "State", expression, scope };
     return { kind: "Action", expression, unchanged: undefined, scope };
   };
 
@@ -412,7 +418,7 @@ export const toLiveExpression = (
   ) => {
     const level = getLevel(expression, scope, environment);
     const isConstant = expression.bounds.every(
-      (bound) => getLevel(bound.set, scope, environment) === 0,
+      (bound) => getLevel(bound.set, scope, environment) === CONSTANT_LEVEL,
     );
     if (!isConstant) {
       if (level <= ACTION_LEVEL) return toAtom(expression, scope, level);
@@ -512,7 +518,7 @@ export const toLiveExpression = (
         return convertQuantifier(expression, scope);
       case "If": {
         // TLC 1.7.4 translates both branches whatever the guard.
-        if (!is174 && getLevel(expression.condition, scope, environment) === 0) {
+        if (!is174 && getLevel(expression.condition, scope, environment) === CONSTANT_LEVEL) {
           const condition = evaluate(expression.condition, getConstantContext(environment, scope));
           if (typeof condition === "boolean") {
             return convert(condition ? expression.consequent : expression.alternative, scope);

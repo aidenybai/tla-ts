@@ -35,7 +35,7 @@ interface Expansion {
   fingerprintStates: Value[][];
 }
 
-const run = (start: StartMessage, parent: Port) => {
+const runWorker = (start: StartMessage, parent: Port) => {
   const modules = new Map(start.modules);
   const loadModule = (name: string) => modules.get(name);
   const classes = new Map(start.classes);
@@ -60,7 +60,7 @@ const run = (start: StartMessage, parent: Port) => {
   const nextAction = search?.spec.next;
   if (!search || nextAction === undefined)
     return parent.postMessage({ type: "abort" } satisfies WorkerMessage);
-  const self = start.index;
+  const workerIndex = start.index;
   const canonicalize = createCanonicalizer();
   const decode = createStateDecoder(environment.variables.length);
   const shared = { fingerprints: start.fingerprints };
@@ -80,8 +80,8 @@ const run = (start: StartMessage, parent: Port) => {
   // A worker that runs out of states asks a peer for some by writing its index + 1 to the peer's
   // request word. The peer sends half of the states it hasn't started, keeps expanding, and wakes
   // the workers waiting to ask it next.
-  const answer = (expansion: Expansion, request: number) => {
-    const thief = Atomics.load(requests, self) - 1;
+  const answerRequest = (expansion: Expansion, request: number) => {
+    const thief = Atomics.load(requests, workerIndex) - 1;
     const given = Math.floor((expansion.end - expansion.origin - 1) / 2);
     const encoder = createStateEncoder();
     const states = expansion.states.slice(expansion.end - given, expansion.end);
@@ -89,21 +89,21 @@ const run = (start: StartMessage, parent: Port) => {
     if (isEncoded) expansion.end -= given;
     const loot = isEncoded ? encoder.finish() : createStateEncoder().finish();
     start.ports[thief]?.postMessage(loot, [loot.words.buffer]);
-    Atomics.store(requests, self, request);
-    Atomics.notify(requests, self);
+    Atomics.store(requests, workerIndex, request);
+    Atomics.notify(requests, workerIndex);
   };
 
   // A worker answers any request before it pauses or runs out of states, and takes no more until
   // it resumes.
-  const lock = (expansion: Expansion) => {
-    Atomics.store(remaining, self, 0);
-    if (Atomics.compareExchange(requests, self, 0, LOCKED) === 0) return;
-    answer(expansion, LOCKED);
+  const lockRequests = (expansion: Expansion) => {
+    Atomics.store(remaining, workerIndex, 0);
+    if (Atomics.compareExchange(requests, workerIndex, 0, LOCKED) === 0) return;
+    answerRequest(expansion, LOCKED);
   };
 
-  const unlock = (expansion: Expansion) => {
-    Atomics.store(remaining, self, expansion.end - expansion.origin);
-    Atomics.store(requests, self, 0);
+  const unlockRequests = (expansion: Expansion) => {
+    Atomics.store(remaining, workerIndex, expansion.end - expansion.origin);
+    Atomics.store(requests, workerIndex, 0);
   };
 
   // The worker pauses before a successor when the shared table needs to grow, and resumes there.
@@ -111,8 +111,8 @@ const run = (start: StartMessage, parent: Port) => {
     for (; expansion.origin < expansion.end; expansion.origin++) {
       const state = expansion.states[expansion.origin];
       if (!expansion.successors) {
-        if (Atomics.load(requests, self) > 0) answer(expansion, 0);
-        Atomics.store(remaining, self, expansion.end - expansion.origin - 1);
+        if (Atomics.load(requests, workerIndex) > 0) answerRequest(expansion, 0);
+        Atomics.store(remaining, workerIndex, expansion.end - expansion.origin - 1);
         expansion.successors = getSuccessors(nextAction, state, environment, search.spec.scope);
         expansion.generated += expansion.successors.length;
         if (expansion.successors.length === 0 && start.config.checkDeadlock) return undefined;
@@ -162,7 +162,7 @@ const run = (start: StartMessage, parent: Port) => {
           : best;
       }, undefined);
       if (victim === undefined) return false;
-      const request = Atomics.compareExchange(requests, victim, 0, self + 1);
+      const request = Atomics.compareExchange(requests, victim, 0, workerIndex + 1);
       if (request === LOCKED) skipped.add(victim);
       if (request > 0) Atomics.wait(requests, victim, request);
       if (request !== 0) continue;
@@ -174,7 +174,7 @@ const run = (start: StartMessage, parent: Port) => {
       expansion.states = decode(loot).map(canonicalize);
       expansion.origin = 0;
       expansion.end = expansion.states.length;
-      unlock(expansion);
+      unlockRequests(expansion);
       return true;
     }
   };
@@ -198,19 +198,19 @@ const run = (start: StartMessage, parent: Port) => {
     for (;;) {
       const status = expand(expansion);
       if (status === undefined) return undefined;
-      lock(expansion);
+      lockRequests(expansion);
       if (status === "paused") {
         const resumed = new Promise<void>((resolve) => (waiters.resume = resolve));
         report({ type: "paused" });
         await resumed;
-        unlock(expansion);
+        unlockRequests(expansion);
         continue;
       }
       if (!(await steal(expansion))) break;
     }
     if (getRankedStringCount() !== startupStrings) return undefined;
     frontier.states = expansion.next;
-    Atomics.store(remaining, self, frontier.states.length);
+    Atomics.store(remaining, workerIndex, frontier.states.length);
     return {
       type: "level",
       generated: expansion.generated,
@@ -220,7 +220,7 @@ const run = (start: StartMessage, parent: Port) => {
     };
   };
 
-  const step = () => {
+  const startLevel = () => {
     runLevel().then(
       (message) => report(message ?? { type: "abort" }),
       () => report({ type: "abort" }),
@@ -228,13 +228,13 @@ const run = (start: StartMessage, parent: Port) => {
   };
   parent.addEventListener("message", (event) => {
     const message = event.data as CoordinatorMessage;
-    if (message.type === "level") step();
+    if (message.type === "level") startLevel();
     if (message.type === "resize") {
       shared.fingerprints = message.fingerprints;
       waiters.resume();
     }
   });
-  Atomics.store(remaining, self, frontier.states.length);
+  Atomics.store(remaining, workerIndex, frontier.states.length);
   report({ type: "ready" });
 };
 
@@ -244,7 +244,7 @@ void getParentPort().then((parent) => {
     if (message.type !== "start") return;
     parent.removeEventListener?.("message", onStart);
     try {
-      run(message, parent);
+      runWorker(message, parent);
     } catch {
       parent.postMessage({ type: "abort" } satisfies WorkerMessage);
     }

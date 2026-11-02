@@ -105,11 +105,11 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       },
     });
   };
-  const count = options.workers ?? 1;
+  const workerCount = options.workers ?? 1;
   // TLC's workers write the -dump state graph in whichever order they find it, so one worker
   // writes the graph a single TLC worker does.
   const isSequential =
-    count < 2 ||
+    workerCount < 2 ||
     typeof SharedArrayBuffer !== "function" ||
     options.dump !== undefined ||
     config.view !== undefined ||
@@ -168,7 +168,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const canonicalize = createCanonicalizer();
   const shared = { fingerprints: createSharedFingerprints() };
   const fingerprint = new Int32Array(2);
-  const seeds = Array.from({ length: count }, createStateEncoder);
+  const seeds = Array.from({ length: workerCount }, createStateEncoder);
   const statistics = {
     generatedStates: 0,
     distinctStates: 0,
@@ -211,7 +211,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
         return false;
       }
       if (!search.satisfiesConstraints(state)) continue;
-      if (!seeds[seeded.length % count].encode(state)) return false;
+      if (!seeds[seeded.length % workerCount].encode(state)) return false;
       seeded.push(state);
       statistics.distinctStates++;
     }
@@ -238,7 +238,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   if (statistics.distinctStates === 0) return createSuccess();
 
   const reports: WorkerMessage[] = [];
-  const pending = { count, resolve: (_reports: WorkerMessage[]) => {} };
+  const pending = { count: workerCount, resolve: (_reports: WorkerMessage[]) => {} };
   const onMessage = (message: WorkerMessage) => {
     reports.push(message);
     if (message.type === "abort" || reports.length === pending.count) {
@@ -250,11 +250,11 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       pending.count = expected;
       pending.resolve = resolve;
     });
-  const ready = waitForReports(count);
-  const requests = new Int32Array(new SharedArrayBuffer(count * 4));
-  const remaining = new Int32Array(new SharedArrayBuffer(count * 4));
+  const ready = waitForReports(workerCount);
+  const requests = new Int32Array(new SharedArrayBuffer(workerCount * 4));
+  const remaining = new Int32Array(new SharedArrayBuffer(workerCount * 4));
   const workers = await Promise.all(
-    Array.from({ length: count }, () =>
+    Array.from({ length: workerCount }, () =>
       spawnWorker(
         new URL("./parallel-worker.js", import.meta.url),
         (message) => onMessage(message as WorkerMessage),
@@ -271,7 +271,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     return (from < to ? channel.port1 : channel.port2) as unknown as Port;
   };
   workers.forEach((worker, index) => {
-    const ports = Array.from({ length: count }, (_, peer) =>
+    const ports = Array.from({ length: workerCount }, (_, peer) =>
       peer === index ? undefined : getPort(index, peer),
     );
     const seed = seeds[index].finish();
@@ -313,7 +313,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     return fallBack();
   }
   for (;;) {
-    const reported = waitForReports(count);
+    const reported = waitForReports(workerCount);
     // Every worker is idle, so peers can ask any of them for states once the level starts.
     requests.forEach((_, index) => Atomics.store(requests, index, 0));
     send({ type: "level" });

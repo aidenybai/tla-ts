@@ -7,7 +7,7 @@ interface FingerprintTable {
   insert: (first: number, second: number) => boolean;
 }
 
-const mix = (hash: number) => {
+const mixHash = (hash: number) => {
   const first = Math.imul(hash ^ (hash >>> 16), 0x7feb352d);
   const second = Math.imul(first ^ (first >>> 15), 0x846ca68b);
   return second ^ (second >>> 16);
@@ -20,8 +20,8 @@ export const writeStateFingerprint = (state: Value[], fingerprint: Int32Array) =
     first = Math.imul(first ^ getValueHash(state[index]), 0x01000193);
     second = Math.imul(second ^ getValueFingerprint(state[index]), 0x5bd1e995);
   }
-  fingerprint[0] = mix(first) || 1;
-  fingerprint[1] = mix(second);
+  fingerprint[0] = mixHash(first) || 1;
+  fingerprint[1] = mixHash(second);
 };
 
 export const createFingerprintTable = (): FingerprintTable => {

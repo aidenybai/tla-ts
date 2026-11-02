@@ -34,11 +34,11 @@ interface ReplayAction {
 }
 
 // TLC's ActionItemList: the conjuncts left to process, the first at the head.
-interface Item {
+interface ActionItem {
   kind: "Predicate" | "Unchanged" | "Changed";
   expression: Expression;
   scope: Scope | undefined;
-  rest: Item | undefined;
+  rest: ActionItem | undefined;
 }
 
 interface Replay {
@@ -98,7 +98,7 @@ const getPrefix = (expression: Expression & { kind: "And" | "Or" }, count: numbe
   return { ...expression, operands: expression.operands.slice(0, count), location };
 };
 
-const getOperatorName = (expression: Expression) =>
+const getIdentifierName = (expression: Expression) =>
   expression.kind === "Identifier" ? expression.name : undefined;
 
 // The state variable an expression names, as TLC's getVar finds it through definitions and
@@ -109,7 +109,7 @@ const getVariable = (
   scope: Scope | undefined,
 ): number | undefined => {
   if (expression.kind === "Label") return getVariable(replay, expression.body, scope);
-  const name = getOperatorName(expression);
+  const name = getIdentifierName(expression);
   if (name === undefined) return undefined;
   const binding = lookupScope(scope, name);
   if (binding?.kind === "Thunk") return getVariable(replay, binding.expression, binding.scope);
@@ -130,7 +130,7 @@ const getPrimedVariable = (
 ): number | undefined => {
   if (expression.kind === "Prime") return getVariable(replay, expression.expression, scope);
   if (expression.kind === "Label") return getPrimedVariable(replay, expression.body, scope);
-  const name = getOperatorName(expression);
+  const name = getIdentifierName(expression);
   if (name === undefined) return undefined;
   const binding = lookupScope(scope, name);
   if (binding?.kind === "Thunk") {
@@ -157,7 +157,7 @@ export const isAssignedShortcut = (replay: Pick<Replay, "environment" | "isInit"
 
 // TLC's getInitStates(ActionItemList) and getNextStates(ActionItemList): processes the conjuncts
 // left once a conjunct holds.
-const proceed = (replay: Replay, items: Item | undefined, partial: State): void => {
+const proceed = (replay: Replay, items: ActionItem | undefined, partial: State): void => {
   if (items === undefined) {
     if (isComplete(partial)) replay.onState(partial);
     return;
@@ -177,7 +177,7 @@ const proceed = (replay: Replay, items: Item | undefined, partial: State): void 
   if (isChanged(replay, items, partial)) proceed(replay, items.rest, partial);
 };
 
-const isChanged = (replay: Replay, item: Item, partial: State) => {
+const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
   const environment = replay.environment;
   const before = evaluate(item.expression, {
     environment,
@@ -202,7 +202,7 @@ const isChanged = (replay: Replay, item: Item, partial: State) => {
   return !valuesEqual(before, after);
 };
 
-const proceedAssigned = (replay: Replay, items: Item | undefined, partial: Value[]): void => {
+const proceedAssigned = (replay: Replay, items: ActionItem | undefined, partial: Value[]): void => {
   for (let item = items; item !== undefined; item = item.rest) {
     if (item.kind === "Unchanged") {
       visitUnchanged(replay, item.expression, item.rest, item.scope, partial);
@@ -222,7 +222,7 @@ const proceedAssigned = (replay: Replay, items: Item | undefined, partial: Value
 const visit = (
   replay: Replay,
   expression: Expression,
-  items: Item | undefined,
+  items: ActionItem | undefined,
   scope: Scope | undefined,
   partial: State,
 ): void =>
@@ -250,14 +250,19 @@ const visit = (
   });
 
 // The value of a user-defined operator TLC evaluates instead of walking its body.
-const visitValue = (replay: Replay, value: Value, items: Item | undefined, partial: State) => {
+const visitValue = (
+  replay: Replay,
+  value: Value,
+  items: ActionItem | undefined,
+  partial: State,
+) => {
   if (isTrue(value)) proceed(replay, items, partial);
 };
 
 const visitDefined = (
   replay: Replay,
   expression: Expression & { kind: "Identifier" | "Apply" },
-  items: Item | undefined,
+  items: ActionItem | undefined,
   scope: Scope | undefined,
   partial: State,
 ) => {
@@ -309,7 +314,7 @@ const visitDefined = (
 // A variable takes the value when it has none yet, and otherwise must already have it.
 const proceedWithValue = (
   replay: Replay,
-  items: Item | undefined,
+  items: ActionItem | undefined,
   partial: State,
   index: number,
   value: Value,
@@ -322,17 +327,17 @@ const proceedWithValue = (
   if (valuesEqual(assigned, value)) proceed(replay, items, partial);
 };
 
-const cons = (
-  kind: Item["kind"],
+const createItem = (
+  kind: ActionItem["kind"],
   expression: Expression,
   scope: Scope | undefined,
-  rest: Item | undefined,
-): Item => ({ kind, expression, scope, rest });
+  rest: ActionItem | undefined,
+): ActionItem => ({ kind, expression, scope, rest });
 
 const visitAssignment = (
   replay: Replay,
   expression: Expression & { kind: "Apply" },
-  items: Item | undefined,
+  items: ActionItem | undefined,
   scope: Scope | undefined,
   partial: State,
 ) => {
@@ -370,7 +375,7 @@ export const LITERAL_KINDS = new Set<Expression["kind"]>(["Number", "Decimal", "
 const visitApplication = (
   replay: Replay,
   expression: Expression,
-  items: Item | undefined,
+  items: ActionItem | undefined,
   scope: Scope | undefined,
   partial: State,
 ): void => {
@@ -400,8 +405,8 @@ const visitApplication = (
       if (expression.isBulleted || operands.length === 2) {
         const rest = operands
           .slice(1)
-          .reduceRight<Item | undefined>(
-            (tail, operand) => cons("Predicate", operand, scope, tail),
+          .reduceRight<ActionItem | undefined>(
+            (tail, operand) => createItem("Predicate", operand, scope, tail),
             items,
           );
         visit(replay, operands[0], rest, scope, partial);
@@ -411,7 +416,7 @@ const visitApplication = (
       visit(
         replay,
         getPrefix(expression, operands.length - 1),
-        cons("Predicate", last, scope, items),
+        createItem("Predicate", last, scope, items),
         scope,
         partial,
       );
@@ -446,8 +451,8 @@ const visitApplication = (
       // TLC adds each binding after the first to the front of the conjuncts left.
       const rest = bounds
         .slice(1)
-        .reduce<Item | undefined>(
-          (tail, bound) => cons("Predicate", expression.body, bound, tail),
+        .reduce<ActionItem | undefined>(
+          (tail, bound) => createItem("Predicate", expression.body, bound, tail),
           items,
         );
       visit(replay, expression.body, rest, bounds[0], partial);
@@ -503,7 +508,7 @@ const visitApplication = (
         visit(
           replay,
           expression.action,
-          cons("Changed", expression.subscript, scope, items),
+          createItem("Changed", expression.subscript, scope, items),
           scope,
           partial,
         );
@@ -518,7 +523,7 @@ const visitApplication = (
 const visitUnchanged = (
   replay: Replay,
   expression: Expression,
-  items: Item | undefined,
+  items: ActionItem | undefined,
   scope: Scope | undefined,
   partial: State,
 ): void =>
@@ -535,8 +540,8 @@ const visitUnchanged = (
         proceed(replay, items, partial);
         return;
       }
-      const rest = others.reduceRight<Item | undefined>(
-        (tail, element) => cons("Unchanged", element, scope, tail),
+      const rest = others.reduceRight<ActionItem | undefined>(
+        (tail, element) => createItem("Unchanged", element, scope, tail),
         items,
       );
       visitUnchanged(replay, first, rest, scope, partial);
@@ -603,7 +608,7 @@ export const replayEnabled = (
     // The ENABLED of a fairness condition WF_v(A) passes A to TLC's enabled with v to change, where
     // liveness.ts builds <<A>>_v at the location of A.
     if (expression.kind === "AngleAction" && expression.location === expression.action.location) {
-      const changed = cons("Changed", expression.subscript, scope, undefined);
+      const changed = createItem("Changed", expression.subscript, scope, undefined);
       visit(replay, expression.action, changed, scope, getEmptyState(environment));
     } else {
       visit(replay, expression, undefined, scope, getEmptyState(environment));
@@ -627,8 +632,8 @@ export const replayInitialStates = (
   const [first, ...others] = inits;
   if (first === undefined) return;
   const replay = createReplay(environment, true, undefined, onState);
-  const rest = others.reduceRight<Item | undefined>(
-    (tail, init) => cons("Predicate", init.expression, init.scope, tail),
+  const rest = others.reduceRight<ActionItem | undefined>(
+    (tail, init) => createItem("Predicate", init.expression, init.scope, tail),
     undefined,
   );
   visit(replay, first.expression, rest, first.scope, getEmptyState(environment));

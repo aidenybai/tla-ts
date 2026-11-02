@@ -312,18 +312,20 @@ export const formatNestedMessage = (text: string, isTool: boolean): string => {
     : `@!@!@STARTMSG ${code}:${MESSAGE_LEVEL.none} @!@!@\n${formatInnerMessage(code, text, isTool)}\n@!@!@ENDMSG ${code} @!@!@`;
 };
 
-const pad = (value: number) => String(value).padStart(2, "0");
+const zeroPad = (value: number) => String(value).padStart(2, "0");
 
 // TLC's convertRuntimeToHumanReadable: a duration in its two largest units.
 export const formatTlcDuration = (milliseconds: number) => {
   const seconds = Math.floor(milliseconds / 1000) % 60;
   const minutes = Math.floor(milliseconds / 60_000) % 60;
   const hours = Math.floor(milliseconds / 3_600_000);
-  if (milliseconds > 86_400_000) return `${Math.floor(hours / 24)}d ${pad(hours % 24)}h`;
-  if (milliseconds > 3_600_000) return `${pad(hours % 24)}h ${pad(minutes)}min`;
-  return milliseconds > 60_000 ? `${pad(minutes)}min ${pad(seconds)}s` : `${pad(seconds)}s`;
+  if (milliseconds > 86_400_000) return `${Math.floor(hours / 24)}d ${zeroPad(hours % 24)}h`;
+  if (milliseconds > 3_600_000) return `${zeroPad(hours % 24)}h ${zeroPad(minutes)}min`;
+  return milliseconds > 60_000
+    ? `${zeroPad(minutes)}min ${zeroPad(seconds)}s`
+    : `${zeroPad(seconds)}s`;
 };
 
 // TLC's SimpleDateFormat("yyyy-MM-dd HH:mm:ss") in the local time zone.
 export const formatTlcDate = (date: Date) =>
-  `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  `${date.getFullYear()}-${zeroPad(date.getMonth() + 1)}-${zeroPad(date.getDate())} ${zeroPad(date.getHours())}:${zeroPad(date.getMinutes())}:${zeroPad(date.getSeconds())}`;

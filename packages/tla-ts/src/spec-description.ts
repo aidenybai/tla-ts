@@ -21,7 +21,7 @@ import {
   type Environment,
   type Scope,
 } from "./evaluate";
-import { TEMPORAL_LEVEL } from "./levels";
+import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { getLevel } from "./liveness";
 import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
 import type { TlcVersion } from "./tlc/version";
@@ -178,7 +178,9 @@ const getInstanceActions = (
   if (!called || args.length === 0) {
     return [{ ...instanceAction, parameters: [], expression, scope }];
   }
-  if (args.some((arg) => getLevel(arg, scope, environment) !== 0)) return callAction();
+  if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
+    return callAction();
+  }
   return tryCollect(
     () => [
       {
@@ -259,7 +261,9 @@ const getActions = (
     { name: calledName, location: expression.location, parameters: [], expression, scope },
   ];
   if (isConstantDefinition(called, environment)) return callAction();
-  if (args.some((arg) => getLevel(arg, scope, environment) !== 0)) return callAction();
+  if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
+    return callAction();
+  }
   return tryCollect(() => {
     const boundScope = args.reduce<Scope | undefined>(
       (current, arg, index) => ({
@@ -306,7 +310,7 @@ const describeSpecification = (
   const called = resolveClosure(expression, scope, environment);
   if (called && isConstantDefinition(called, environment)) return;
   if (called && called.params.length === 0) {
-    if (getLevel(called.body, called.scope, environment) === 1) {
+    if (getLevel(called.body, called.scope, environment) === VARIABLE_LEVEL) {
       description.inits.push(createAction(called.name, called.body));
       return;
     }
@@ -333,7 +337,7 @@ const describeSpecification = (
     return;
   }
   const level = getLevel(expression, scope, environment);
-  if (level <= 1) description.inits.push(createAction(UNNAMED_ACTION, expression));
+  if (level <= VARIABLE_LEVEL) description.inits.push(createAction(UNNAMED_ACTION, expression));
   else if (level === TEMPORAL_LEVEL) {
     description.temporals.push(createAction(UNNAMED_ACTION, expression));
   }
@@ -392,7 +396,7 @@ const describeProperty = (
     const inner = expression.expression;
     if (inner.kind === "BoxAction") {
       description.impliedActions.push(createAction(configName, inner));
-    } else if (getLevel(inner, scope, environment) < 2) {
+    } else if (getLevel(inner, scope, environment) < ACTION_LEVEL) {
       description.invariants.push(createAction(configName, inner));
     } else {
       description.impliedTemporals.push(createAction(configName, expression));
@@ -400,8 +404,9 @@ const describeProperty = (
     return;
   }
   const level = getLevel(expression, scope, environment);
-  if (level <= 1) description.impliedInits.push(createAction(configName, expression));
-  else if (level === TEMPORAL_LEVEL) {
+  if (level <= VARIABLE_LEVEL) {
+    description.impliedInits.push(createAction(configName, expression));
+  } else if (level === TEMPORAL_LEVEL) {
     description.impliedTemporals.push(createAction(configName, expression));
   }
 };
@@ -413,7 +418,7 @@ const getOperatorDefinition = (name: string, environment: Environment) => {
     : undefined;
 };
 
-const describe = (
+const getSpecDescription = (
   config: ModelConfig,
   environment: Environment,
   instanceActions: Map<string, InstanceAction>,
@@ -472,14 +477,14 @@ export const getInitActions = (
   config: ModelConfig,
   environment: Environment,
   instanceActions: Map<string, InstanceAction>,
-) => describe(config, environment, instanceActions).inits;
+) => getSpecDescription(config, environment, instanceActions).inits;
 
 // TLC's split of the next-state relation into the actions it names in a behavior.
 export const getNextActions = (
   config: ModelConfig,
   environment: Environment,
   instanceActions: Map<string, InstanceAction>,
-) => describe(config, environment, instanceActions).actions;
+) => getSpecDescription(config, environment, instanceActions).actions;
 
 const formatParameters = (action: SpecAction) =>
   action.parameters.length === 0
@@ -500,7 +505,7 @@ export const getSpecificationValue = (
   variableLocations: SourceLocation[],
   instanceActions: Map<string, InstanceAction>,
 ): Value => {
-  const description = describe(config, environment, instanceActions);
+  const description = getSpecDescription(config, environment, instanceActions);
   const toSet = (actions: SpecAction[]) => createSet(actions.map(toActionValue));
   const toDefinitionSet = (names: string[]) =>
     createSet(

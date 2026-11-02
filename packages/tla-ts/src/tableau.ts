@@ -1,7 +1,7 @@
 import type { Expression } from "./ast";
 import { TlaEvaluationError } from "./errors";
 import type { Scope } from "./evaluate";
-import { ACTION_LEVEL, TEMPORAL_LEVEL } from "./levels";
+import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 
 interface LiveBoolean {
   kind: "Boolean";
@@ -84,7 +84,6 @@ interface Triple {
   second: LiveExpression;
 }
 
-const STATE_LEVEL = 1;
 const MAXIMUM_DISJUNCTS = 2147483647;
 
 const TRUE: LiveBoolean = { kind: "Boolean", value: true };
@@ -122,10 +121,10 @@ export const createJunction = (
 export const getLiveLevel = (expression: LiveExpression): number => {
   switch (expression.kind) {
     case "Boolean":
-      return 0;
+      return CONSTANT_LEVEL;
     case "State":
     case "Enabled":
-      return STATE_LEVEL;
+      return VARIABLE_LEVEL;
     case "Action":
     case "Next":
       return ACTION_LEVEL;
@@ -138,7 +137,7 @@ export const getLiveLevel = (expression: LiveExpression): number => {
     case "Or":
       return expression.operands.reduce(
         (level, operand) => Math.max(level, getLiveLevel(operand)),
-        0,
+        CONSTANT_LEVEL,
       );
   }
 };
@@ -530,7 +529,7 @@ const createTableauNode = (particle: LiveExpression[]): TableauNode => ({
   successors: [],
   // Constant terms count, as after TLC 1.7.4. That version checks only state atoms, so a node with a
   // FALSE term stays in the graph and yields a bogus counterexample (tlaplus#604).
-  statePredicates: particle.filter((term) => getLiveLevel(term) <= STATE_LEVEL),
+  statePredicates: particle.filter((term) => getLiveLevel(term) <= VARIABLE_LEVEL),
 });
 
 const createTableau = (formula: LiveExpression) => {
@@ -573,7 +572,7 @@ const classify = (expression: LiveExpression, classification: Classification) =>
   const infinitelyOften = getInfinitelyOftenBody(expression);
   if (infinitelyOften) {
     const level = getLiveLevel(infinitelyOften);
-    if (level <= STATE_LEVEL) {
+    if (level <= VARIABLE_LEVEL) {
       classification.infinitelyOftenStates.push(infinitelyOften);
       return;
     }

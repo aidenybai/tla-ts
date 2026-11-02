@@ -243,7 +243,7 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
     rlReward: undefined,
   };
   const deadlock = { isSet: false };
-  const types = new Set<string>();
+  const typeKeywords = new Set<string>();
   const advance = () => {
     const token = tokens[Math.min(cursor.index++, tokens.length - 1)];
     if (token.kind === "Error") {
@@ -402,8 +402,8 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
       throw createSyntaxError(line, "It was expecting a keyword, but did not find it.");
     }
     advanceToArgument();
-    if (types.has(keyword)) throw createDuplicateKeywordError(line, keyword);
-    types.add(keyword);
+    if (typeKeywords.has(keyword)) throw createDuplicateKeywordError(line, keyword);
+    typeKeywords.add(keyword);
     current.token = advance();
   }
   return config;
