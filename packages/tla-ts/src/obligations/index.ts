@@ -11,23 +11,18 @@ import {
   type Warn,
   type Sequent,
 } from "./expression";
-import { createGenerator, type LineRange } from "./generate";
 import {
-  compareNames,
-  expandInstance,
-  flatten,
-  generate,
-  getDependencies,
-  normalize,
-  STANDARD_MODULES,
+  createGenerator,
+  type LineRange,
   type ModuleSummary,
-  type Mule,
   type TheoremSummary,
-  type Pipeline,
-} from "./module";
+} from "./generate";
+import { compareNames, flatten, getDependencies, STANDARD_MODULES, type Mule } from "./module";
+import { expandInstance, normalize, type Pipeline } from "./normalize";
 import { formatObligation } from "./printer";
 import type { Counter, ObligationKind } from "./proof";
 import type { OldMethod } from "./pragma";
+import { createSimplifier } from "./simplify";
 import { createSource } from "./source";
 import { tokenize } from "../lexer";
 import { parseTlapmModule } from "../parser";
@@ -286,7 +281,7 @@ export const getObligations = (
       (scope, definition) => expandInstance(pipeline, scope, definition),
       onWarning,
     ),
-    generator: createGenerator(counter, new Set(mains.map((main) => main.file)), lines, onWarning),
+    simplify: createSimplifier(counter),
     salts: { value: 0 },
     latestModules: new Map(),
     onWarning,
@@ -294,13 +289,14 @@ export const getObligations = (
   const order = schedule(modules).map((module) =>
     module.isStandard ? module : flatten(modules, module, new Set()),
   );
+  const generateModule = createGenerator(new Set(mains.map((main) => main.file)), lines, onWarning);
   // Instances see each module as flattened, and as normalized once its turn has come.
   const normalized = new Map(order.map((module) => [module.name, module]));
   return order.flatMap((module): ModuleObligations[] => {
     if (module.isStandard) return [];
     const result = normalize(pipeline, normalized, undefined, module);
     if (!module.isImportant) return [];
-    const generated = generate(pipeline, [], result);
+    const generated = generateModule([], result);
     // tlapm numbers the obligations, then drops the omitted ones and those outside the lines.
     const obligations = generated.obligations.flatMap((obligation, index): PrintedObligation[] => {
       const location = obligation.location;
