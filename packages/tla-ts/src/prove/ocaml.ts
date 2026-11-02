@@ -1,6 +1,6 @@
 // The parts of OCaml's standard library whose exact order steers what tlapm prints.
 
-export type OcamlValue = number | string | OcamlValue[];
+type OcamlValue = number | string | OcamlValue[];
 
 // String.compare: byte by byte, on the UTF-8 bytes. Code units order the same way for the ASCII
 // names tlapm compares.
