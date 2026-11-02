@@ -63,42 +63,31 @@ export const expandQuant = (
     else groups.push([bound]);
   });
   return groups.reduceRight((inner: Expr, group): Expr => {
+    const quantify = (quantified: Bound[], quantifiedBody = inner): Expr => ({
+      kind: "Quant",
+      quantifier,
+      bounds: quantified,
+      body: quantifiedBody,
+      location: inner.location,
+    });
     const first = group[0];
     if (first.kind === "Name") {
-      return {
-        kind: "Quant",
-        quantifier,
-        bounds: group.flatMap((bound) => (bound.kind === "Name" ? [getNamedBound(bound)] : [])),
-        body: inner,
-        location: inner.location,
-      };
+      return quantify(
+        group.flatMap((bound) => (bound.kind === "Name" ? [getNamedBound(bound)] : [])),
+      );
     }
     const factors = getFactors(first.domain, first.names);
-    if (factors) {
-      return {
-        kind: "Quant",
-        quantifier,
-        bounds: getFactorBounds(first.names, factors),
-        body: inner,
-        location: inner.location,
-      };
-    }
+    if (factors) return quantify(getFactorBounds(first.names, factors));
     const membership: Expr = {
       kind: "Apply",
       operator: { kind: "Internal", builtin: quantifier === "Exists" ? "Mem" : "Notmem" },
       args: [getNamesTuple(first.names), first.domain],
     };
-    return {
-      kind: "Quant",
-      quantifier,
-      bounds: getUnbounded(first.names),
-      body: {
-        kind: "List",
-        bullet: quantifier === "Exists" ? "And" : "Or",
-        items: [membership, inner],
-      },
-      location: inner.location,
-    };
+    return quantify(getUnbounded(first.names), {
+      kind: "List",
+      bullet: quantifier === "Exists" ? "And" : "Or",
+      items: [membership, inner],
+    });
   }, body);
 };
 
