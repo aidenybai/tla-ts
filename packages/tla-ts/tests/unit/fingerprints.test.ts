@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { createTlcFingerprinter, getTlcFingerprint } from "../../src/tlc-random";
+import { createTlcFingerprinter, getTlcFingerprint } from "../../src/tlc/random";
 import {
   createModelValue,
   createRecord,

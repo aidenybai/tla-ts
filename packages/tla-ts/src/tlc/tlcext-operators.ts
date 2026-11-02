@@ -7,18 +7,24 @@ import {
   getOperator,
   getThunk,
   getValue,
-} from "./builtins";
-import { TlaEvaluationError, TlaModuleError, TlaUnsupportedError } from "./errors";
-import { getTlcFingerprint } from "./tlc-random";
-import { formatNestedMessage } from "./tlc-messages";
-import { evaluate, expectBoolean, getDefinition, type Builtin, type Environment } from "./evaluate";
-import { getChildren, isLocallyResolved, type Definition, type Expression } from "./ast";
+} from "../builtins";
+import { TlaEvaluationError, TlaModuleError, TlaUnsupportedError } from "../errors";
+import { getTlcFingerprint } from "./random";
+import { formatNestedMessage } from "./messages";
+import {
+  evaluate,
+  expectBoolean,
+  getDefinition,
+  type Builtin,
+  type Environment,
+} from "../evaluate";
+import { getChildren, isLocallyResolved, type Definition, type Expression } from "../ast";
 import {
   getNamedRegisters,
   getPossibleCounts,
   NAMED_REGISTER_PREFIX,
   type CheckerRuntime,
-} from "./runtime";
+} from "../runtime";
 import {
   applyFunction,
   createModelValue,
@@ -33,7 +39,7 @@ import {
   toFiniteSet,
   valuesEqual,
   type Value,
-} from "./values";
+} from "../values";
 
 const OVERRIDE_PARAMETERS =
   "tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel";

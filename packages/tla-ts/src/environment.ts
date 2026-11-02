@@ -57,22 +57,22 @@ import {
   type Symbols,
 } from "./resolve";
 import { createRuntime } from "./runtime";
-import { getSanyStandardModules } from "./sany-modules";
-import { USER_STANDARD_MODULES } from "./tlc-modules";
-import { getSanyParseError } from "./sany-parse-error";
+import { getSanyStandardModules } from "./sany/modules";
+import { USER_STANDARD_MODULES } from "./tlc/jar-data";
+import { getSanyParseError } from "./sany/parse-error";
 import {
   CORE_OPERATORS,
   getStandardModule,
   getTraceSpecArithmetic,
   STANDARD_DEPENDENCIES,
-} from "./standard-modules";
-import { STANDARD_LEVELS } from "./standard-levels";
-import { getStandardRange } from "./standard-ranges";
+} from "./standard/modules";
+import { STANDARD_LEVELS } from "./standard/levels";
+import { getStandardRange } from "./standard/ranges";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
-import { isEvalException } from "./tlc-messages";
-import { createTlcDefinitionOrder, getTlcDeclarationOrder } from "./tlc-order";
+import { isEvalException } from "./tlc/messages";
+import { createTlcDefinitionOrder, getTlcDeclarationOrder } from "./tlc/order";
 import {
   checkInteger,
   createModelValue,
@@ -82,7 +82,7 @@ import {
   type Value,
   markNormalized,
 } from "./values";
-import type { TlcVersion } from "./tlc-version";
+import type { TlcVersion } from "./tlc/version";
 
 interface EnvironmentOptions {
   source: string;

@@ -72,21 +72,21 @@ import {
   type StateWriter,
 } from "./state-graph";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
-import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
+import { getTlcStringOrder, getTlcVariableOrder } from "./tlc/order";
 import {
   formatNestedMessage,
   getCodedMessage,
   isEvalException,
   MESSAGE_CODE,
   MISSING_INIT_174,
-} from "./tlc-messages";
-import { replayInitialStates, replaySuccessors } from "./tlc-replay";
-import { createTlcFingerprinter, getTlcFingerprint } from "./tlc-random";
+} from "./tlc/messages";
+import { replayInitialStates, replaySuccessors } from "./tlc/replay";
+import { createTlcFingerprinter, getTlcFingerprint } from "./tlc/random";
 import { createCanonicalizer } from "./canonical";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
-import { createActionRecord, createCounterExample } from "./tlc-ext";
-import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
-import type { TlcVersion } from "./tlc-version";
+import { createActionRecord, createCounterExample } from "./tlc/tlcext-operators";
+import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
+import type { TlcVersion } from "./tlc/version";
 import {
   combineHash,
   createModelValue,

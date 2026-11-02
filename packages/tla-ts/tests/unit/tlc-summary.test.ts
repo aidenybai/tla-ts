@@ -5,7 +5,7 @@ import {
   getFingerprintDistance,
   getOutDegreeSummary,
   OUT_DEGREE_BUCKETS,
-} from "../../src/tlc-summary";
+} from "../../src/tlc/summary";
 
 // Each pair is a value and what TLC's AbstractChecker.ProbabilityToString(value, 2) prints for it.
 const PROBABILITIES: [number, string][] = [

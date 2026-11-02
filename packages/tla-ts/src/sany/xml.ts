@@ -1,7 +1,7 @@
-import { TlaJavaException, TlaUnsupportedError } from "./errors";
-import { setExitCode } from "./exit-codes";
-import type { TlcVersion } from "./tlc-version";
-import type { SanySpecification } from "./sany-generator";
+import { TlaJavaException, TlaUnsupportedError } from "../errors";
+import { setExitCode } from "../exit-codes";
+import type { TlcVersion } from "../tlc/version";
+import type { SanySpecification } from "./generator";
 import {
   CONSTANT_DECL_KIND,
   VARIABLE_DECL_KIND,
@@ -23,7 +23,7 @@ import {
   type ProofPartNode,
   type InstanceNode,
   type UseOrHideNode,
-} from "./sany-nodes";
+} from "./nodes";
 
 // XMLExporterExitCode, and the status Java exits with on an exception that nothing catches.
 export const XML_EXPORT_EXIT_CODE = {

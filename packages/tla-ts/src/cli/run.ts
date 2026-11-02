@@ -12,9 +12,9 @@ import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:pa
 import { arch, availableParallelism, release, tmpdir, type } from "node:os";
 import { pathToFileURL } from "node:url";
 import { getHeapStatistics } from "node:v8";
-import { version } from "../package.json";
-import type { Expression } from "./ast";
-import { describeRange } from "./evaluate";
+import { version } from "../../package.json";
+import type { Expression } from "../ast";
+import { describeRange } from "../evaluate";
 import type {
   CheckProgress,
   InitialStateViolation,
@@ -25,9 +25,9 @@ import type {
   SearchStatistics,
   TraceStep,
   Violation,
-} from "./check";
-import { defineCommand, type ParsedArgs } from "./cli-options";
-import { parseConfig } from "./config";
+} from "../check";
+import { defineCommand, type ParsedArgs } from "./options";
+import { parseConfig } from "../config";
 import {
   getErrorExitCode,
   TlaConfigError,
@@ -40,48 +40,48 @@ import {
   UNEXPECTED_EXCEPTION,
   TlaSanyFatalError,
   TlaUnsupportedError,
-} from "./errors";
-import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import type { LineRange } from "./obligations/generate";
-import { getAtPrefix, getLocusText } from "./obligations/expression";
+} from "../errors";
+import { EXIT_STATUS, setExitCode } from "../exit-codes";
+import type { LineRange } from "../obligations/generate";
+import { getAtPrefix, getLocusText } from "../obligations/expression";
 import {
   formatSummary,
   getObligations,
   WHOLE_MODULE,
   type ModuleObligations,
   type PrintedObligation,
-} from "./obligations";
-import { format, renderDoc } from "./obligations/format";
-import { printSequent } from "./obligations/printer";
-import { check } from "./parallel";
-import { parseModule } from "./parser";
+} from "../obligations";
+import { format, renderDoc } from "../obligations/format";
+import { printSequent } from "../obligations/printer";
+import { check } from "../parallel";
+import { parseModule } from "../parser";
 import {
   encodeProofTheory,
   formatNormalized,
   proveObligations,
   type ProofAttempt,
-} from "./prove/prove";
-import { TLAPS_MODULE } from "./prove/tlaps-module";
-import type { StateDump } from "./state-graph";
+} from "../prove/prove";
+import { TLAPS_MODULE } from "../prove/tlaps-module";
+import type { StateDump } from "../state-graph";
 import {
   formatProbability,
   getActualProbability,
   getOptimisticProbability,
   getOutDegreeSummary,
-} from "./tlc-summary";
-import { getTlapmPaths } from "./prove/tlapm/tlapm";
+} from "../tlc/summary";
+import { getTlapmPaths } from "../prove/tlapm/tlapm";
 import {
   getKnownResults,
   loadFingerprints,
   saveHistory,
   type FingerprintTable,
-} from "./tlapm-cache";
-import type { SanySpecification } from "./sany-generator";
-import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "./sany-modules";
-import { getSanyModuleName, getSanyReport, type SanyModuleOrigin } from "./sany-report";
-import { exportSanyXml, XML_EXPORT_EXIT_CODE, type XmlExportOptions } from "./sany-xml";
-import { getTlcFingerprint } from "./tlc-random";
-import { getTlcVersion, type TlcVersion } from "./tlc-version";
+} from "../prove/tlapm/cache";
+import type { SanySpecification } from "../sany/generator";
+import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "../sany/modules";
+import { getSanyModuleName, getSanyReport, type SanyModuleOrigin } from "../sany/report";
+import { exportSanyXml, XML_EXPORT_EXIT_CODE, type XmlExportOptions } from "../sany/xml";
+import { getTlcFingerprint } from "../tlc/random";
+import { getTlcVersion, type TlcVersion } from "../tlc/version";
 import {
   createMessagePrinter,
   formatTlcDate,
@@ -92,8 +92,8 @@ import {
   MESSAGE_CODE,
   MESSAGE_LEVEL,
   type MessagePrinter,
-} from "./tlc-messages";
-import { formatState } from "./values";
+} from "../tlc/messages";
+import { formatState } from "../values";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: EXIT_STATUS.success,

@@ -1,4 +1,4 @@
-import type { FormalParamNode, LevelFields, OpDefNode, SanyLocation } from "./sany-nodes";
+import type { FormalParamNode, LevelFields, OpDefNode, SanyLocation } from "./nodes";
 
 // tla2sany.semantic.BuiltInOperators: name, arity, level, maximum argument levels and argument
 // weights. SANY leaves the levels of "." and \neg unset.

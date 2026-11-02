@@ -1,4 +1,4 @@
-import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
+import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "../levels";
 import {
   addSanyMessage,
   CONSTANT_DECL_KIND,
@@ -25,7 +25,7 @@ import {
   type Subst,
   type SymbolNode,
   type ThmOrAssumpDefNode,
-} from "./sany-nodes";
+} from "./nodes";
 
 // A port of the levelCheck methods of SANY's semantic nodes: the levels, weights and Leibniz flags
 // its XMLExporter writes, and the level errors it reports. Each check returns what SANY's returns,

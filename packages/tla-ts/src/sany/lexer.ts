@@ -1,4 +1,4 @@
-import { TlaError } from "./errors";
+import { TlaError } from "../errors";
 
 // An emulation of the token manager that JavaCC generates for SANY's grammar, javacc/tla+.jj: the
 // tokens it produces, their kinds in TLAplusParserConstants order, and their positions.

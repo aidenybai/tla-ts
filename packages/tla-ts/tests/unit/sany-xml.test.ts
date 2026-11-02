@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import { TlaSyntaxError, TlaUnsupportedError } from "../../src/errors";
-import { generateSanySpecification } from "../../src/sany-generator";
-import { checkModuleLevels } from "../../src/sany-levels";
-import { SANY_STANDARD_MODULES } from "../../src/sany-modules";
-import { getDeclarations, getOpDefs, type ModuleNode } from "../../src/sany-nodes";
-import { exportSanyXml } from "../../src/sany-xml";
+import { generateSanySpecification } from "../../src/sany/generator";
+import { checkModuleLevels } from "../../src/sany/levels";
+import { SANY_STANDARD_MODULES } from "../../src/sany/modules";
+import { getDeclarations, getOpDefs, type ModuleNode } from "../../src/sany/nodes";
+import { exportSanyXml } from "../../src/sany/xml";
 
 const COUNTER_STEPS = `---- MODULE CounterSteps ----
 EXTENDS Naturals

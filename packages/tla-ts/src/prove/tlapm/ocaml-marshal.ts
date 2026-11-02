@@ -1,7 +1,7 @@
 // OCaml's Marshal format, ported from runtime/intern.c and runtime/extern.c, for the values in
 // tlapm's fingerprints file. It writes no sharing, which OCaml reads the same.
 
-import { TlaProofError } from "./errors";
+import { TlaProofError } from "../../errors";
 
 interface OcamlBlock {
   tag: number;

@@ -1,7 +1,7 @@
-import { TlaModuleError } from "./errors";
-import { EXIT_STATUS } from "./exit-codes";
-import type { Builtin, Context } from "./evaluate";
-import { prettyPrint } from "./pretty-print";
+import { TlaModuleError } from "../errors";
+import { EXIT_STATUS } from "../exit-codes";
+import type { Builtin, Context } from "../evaluate";
+import { prettyPrint } from "../pretty-print";
 import {
   defineConstant,
   defineHigherOrderOperator,
@@ -16,10 +16,10 @@ import {
   getThunk,
   getValue,
   overrideWithJava,
-} from "./builtins";
-import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "./runtime";
-import { createActionRecord, setTlcValue } from "./tlc-ext";
-import { getRandomElement } from "./tlc-random";
+} from "../builtins";
+import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "../runtime";
+import { createActionRecord, setTlcValue } from "./tlcext-operators";
+import { getRandomElement } from "./random";
 import {
   ANY_SET,
   createFunction,
@@ -32,7 +32,7 @@ import {
   toFiniteSet,
   type Value,
   rankString,
-} from "./values";
+} from "../values";
 
 const padTime = (value: number) => String(value).padStart(2, "0");
 

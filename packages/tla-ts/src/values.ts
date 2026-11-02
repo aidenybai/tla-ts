@@ -1,6 +1,6 @@
 import { TlaEvaluationError, TlaModuleError } from "./errors";
 import { prettyPrint } from "./pretty-print";
-import type { TlcVersion } from "./tlc-version";
+import type { TlcVersion } from "./tlc/version";
 
 export interface ModelValue {
   kind: "ModelValue";

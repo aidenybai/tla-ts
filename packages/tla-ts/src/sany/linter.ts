@@ -5,7 +5,7 @@ import {
   type OpApplNode,
   type SanyMessage,
   type SemanticNode,
-} from "./sany-nodes";
+} from "./nodes";
 
 // A port of SANY's tla2sany.linter.Linter, which warns about a record field named like a
 // definition or declaration of the module.

@@ -1,5 +1,5 @@
-import { STACK_OVERFLOW_MESSAGE, TlaModuleError, type TlaEvaluationError } from "./errors";
-import type { TlcVersion } from "./tlc-version";
+import { STACK_OVERFLOW_MESSAGE, TlaModuleError, type TlaEvaluationError } from "../errors";
+import type { TlcVersion } from "./version";
 
 // TLC's codes for the messages it prints, from tlc2.output.EC.
 export const MESSAGE_CODE = {

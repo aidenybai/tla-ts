@@ -21,7 +21,7 @@ import {
   UNEXPECTED_EXCEPTION,
 } from "../../src/errors";
 import { getExitCode } from "../../src/exit-codes";
-import type { TlcVersion } from "../../src/tlc-version";
+import type { TlcVersion } from "../../src/tlc/version";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 

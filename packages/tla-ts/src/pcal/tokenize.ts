@@ -1,5 +1,5 @@
-import { PcalError, PcalBugError } from "./errors";
-import { createNormalizedPcalExpr, createPcalToken, PCAL_TOKEN, type PcalToken } from "./pcal-ast";
+import { PcalError, PcalBugError } from "../errors";
+import { createNormalizedPcalExpr, createPcalToken, PCAL_TOKEN, type PcalToken } from "./ast";
 
 // PcalCharReader: reads the algorithm's characters from the lines between a start and an end
 // position, returning "\n" at the end of each line and "\t" at the end of the input. Columns count

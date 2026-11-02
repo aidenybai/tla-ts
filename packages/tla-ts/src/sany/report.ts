@@ -1,19 +1,19 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
-import type { Module } from "./ast";
-import { TlaSyntaxError, PcalRuntimeError, TlaSanyFatalError } from "./errors";
-import { extractModule, parseSanyModule } from "./parser";
-import { createPcalParams } from "./pcal-ast";
-import { createPcalSession } from "./pcal-parse";
-import { validatePcalModule } from "./pcal-validate";
-import { generateSanySpecification, type SanySpecification } from "./sany-generator";
-import { checkModuleLevels } from "./sany-levels";
-import { getSany174LexicalError } from "./sany-lexer";
-import { lintSanyModule } from "./sany-linter";
-import { getSanyStandardModules } from "./sany-modules";
-import { formatSanyLocation, type SanyMessage } from "./sany-nodes";
-import { getUnboxedSource } from "./sany-source";
-import type { TlcVersion } from "./tlc-version";
+import type { Module } from "../ast";
+import { TlaSyntaxError, PcalRuntimeError, TlaSanyFatalError } from "../errors";
+import { extractModule, parseSanyModule } from "../parser";
+import { createPcalParams } from "../pcal/ast";
+import { createPcalSession } from "../pcal/parse";
+import { validatePcalModule } from "../pcal/validate";
+import { generateSanySpecification, type SanySpecification } from "./generator";
+import { checkModuleLevels } from "./levels";
+import { getSany174LexicalError } from "./lexer";
+import { lintSanyModule } from "./linter";
+import { getSanyStandardModules } from "./modules";
+import { formatSanyLocation, type SanyMessage } from "./nodes";
+import { getUnboxedSource } from "./source";
+import type { TlcVersion } from "../tlc/version";
 
 interface SanyReport {
   text: string;

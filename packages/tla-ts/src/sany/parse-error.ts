@@ -1,5 +1,5 @@
-import { createSanyLexer, escapeLexeme, getKind, type SanyToken } from "./sany-lexer";
-import { SANY_OPERATOR_SYNONYMS } from "./tlc-modules";
+import { createSanyLexer, escapeLexeme, getKind, type SanyToken } from "./lexer";
+import { SANY_OPERATOR_SYNONYMS } from "../tlc/jar-data";
 
 // The report SANY's parser, TLAplusParser, gives for a module it fails to parse. This interprets
 // the grammar of javacc/tla+.jj the way the code JavaCC generates from it runs: the productions,

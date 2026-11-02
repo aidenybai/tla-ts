@@ -2,7 +2,7 @@ import { createJavaOverrideError, defineStateOperator, getValue } from "./builti
 import { TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
-import { getEnumeratedFactors, getRandomSubset, type JavaRandom } from "./tlc-random";
+import { getEnumeratedFactors, getRandomSubset, type JavaRandom } from "./tlc/random";
 import {
   createSet,
   createTuple,

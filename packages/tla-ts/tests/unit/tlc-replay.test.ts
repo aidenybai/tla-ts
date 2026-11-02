@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
 import type { Expression } from "../../src/ast";
-import type { TlcVersion } from "../../src/tlc-version";
+import type { TlcVersion } from "../../src/tlc/version";
 
 const HEADER = [
   "EXTENDS Naturals, Sequences, TLC, FiniteSets",

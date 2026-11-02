@@ -16,7 +16,7 @@ import { getKindString } from "./builtins";
 import { isStackOverflow, TlaEvaluationError, TlaUnassignedError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
-import { MESSAGE_CODE } from "./tlc-messages";
+import { MESSAGE_CODE } from "./tlc/messages";
 import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
 import { contextualApplications, mapChildren, substitutedExpressions } from "./instances";
@@ -69,7 +69,7 @@ import {
   markNormalized,
   setTrace,
 } from "./values";
-import type { TlcVersion } from "./tlc-version";
+import type { TlcVersion } from "./tlc/version";
 
 export type State = (Value | undefined)[];
 

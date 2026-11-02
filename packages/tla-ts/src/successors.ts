@@ -38,7 +38,7 @@ import {
   type State,
 } from "./evaluate";
 import { mapChildren } from "./instances";
-import { isAssignedShortcut, LITERAL_KINDS, replayEnabled } from "./tlc-replay";
+import { isAssignedShortcut, LITERAL_KINDS, replayEnabled } from "./tlc/replay";
 import {
   formatValue,
   getStreamedElements,

@@ -2,7 +2,7 @@ import type { Expression } from "./ast";
 import type { Substitution } from "./config";
 import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import { MESSAGE_CODE } from "./tlc-messages";
+import { MESSAGE_CODE } from "./tlc/messages";
 import { evaluate, type Environment } from "./evaluate";
 import {
   compareValues,

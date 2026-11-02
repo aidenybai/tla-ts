@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
-import { getSanyModuleName, getSanyReport, type SanyReportOptions } from "../../src/sany-report";
+import { getSanyModuleName, getSanyReport, type SanyReportOptions } from "../../src/sany/report";
 
 const directories: string[] = [];
 

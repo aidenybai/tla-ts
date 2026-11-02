@@ -1,4 +1,4 @@
-import { PcalError, PcalRuntimeError, PcalBugError } from "./errors";
+import { PcalError, PcalRuntimeError, PcalBugError } from "../errors";
 import {
   clonePcalExpr,
   createNormalizedPcalExpr,
@@ -34,7 +34,7 @@ import {
   type PcalWith,
   createPcalExpr,
   createPcalToken,
-} from "./pcal-ast";
+} from "./ast";
 import {
   createPcalTokenizerState,
   getPcalAlgorithmToken,
@@ -42,7 +42,7 @@ import {
   tokenizePcalExpr,
   type PcalCharReader,
   type PcalTokenizerState,
-} from "./pcal-tokenize";
+} from "./tokenize";
 
 // The translator's state that its Java code keeps in static fields, which SANY never resets
 // between the modules it validates: the options, the tokenizer's state, ParseAlgorithm's

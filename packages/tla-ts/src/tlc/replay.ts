@@ -1,5 +1,5 @@
-import type { Expression, SourceLocation } from "./ast";
-import { TlaEvaluationError } from "./errors";
+import type { Expression, SourceLocation } from "../ast";
+import { TlaEvaluationError } from "../errors";
 import {
   bindDefinitions,
   bindLazyArguments,
@@ -19,8 +19,8 @@ import {
   type Scope,
   type State,
   toUnspecifiedSubscriptError,
-} from "./evaluate";
-import { getStreamedElements, isTlcEnumerable, setTrace, valuesEqual, type Value } from "./values";
+} from "../evaluate";
+import { getStreamedElements, isTlcEnumerable, setTrace, valuesEqual, type Value } from "../values";
 
 // When TLC fails to compute the initial states or the successors of a state, it computes them
 // again with its CallStackTool, which records each node it visits, and prints where the failure

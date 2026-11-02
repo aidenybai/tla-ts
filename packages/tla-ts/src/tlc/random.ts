@@ -1,5 +1,5 @@
-import { TlaEvaluationError } from "./errors";
-import type { TlcVersion } from "./tlc-version";
+import { TlaEvaluationError } from "../errors";
+import type { TlcVersion } from "./version";
 import {
   createRecord,
   createSortedFunction,
@@ -12,7 +12,7 @@ import {
   toFiniteFunction,
   toFiniteSet,
   type Value,
-} from "./values";
+} from "../values";
 
 export interface JavaRandom {
   setSeed: (seed: bigint) => void;

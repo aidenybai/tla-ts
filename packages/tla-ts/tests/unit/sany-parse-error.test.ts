@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { getSanyParseError } from "../../src/sany-parse-error";
+import { getSanyParseError } from "../../src/sany/parse-error";
 
 const toText = (lines: string[]) =>
   `***Parse Error***\n${lines.map((line) => `${line}\n`).join("")}`;

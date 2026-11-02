@@ -1,5 +1,5 @@
-import type { TlcVersion } from "./tlc-version";
-import { REAL_TIME, REALS, TOOLBOX } from "./bundled-modules";
+import type { TlcVersion } from "../tlc/version";
+import { REAL_TIME, REALS, TOOLBOX } from "../bundled-modules";
 
 const BAGS = `----------------------------- MODULE Bags --------------------------------
 (**************************************************************************)

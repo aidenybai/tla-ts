@@ -1,6 +1,6 @@
 // A port of TLC's -dump writers, tlc2.util.StateWriter and tlc2.util.DotStateWriter.
 
-import type { TlcVersion } from "./tlc-version";
+import type { TlcVersion } from "./tlc/version";
 
 export interface StateDump {
   path: string;

@@ -12,10 +12,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-import { version } from "../package.json";
-import { TlaProofError } from "./errors";
+import { version } from "../../../package.json";
+import { TlaProofError } from "../../errors";
 import { block, isBlock, readMarshaled, writeMarshaled, type OcamlValue } from "./ocaml-marshal";
-import type { ProofAttempt } from "./prove/prove";
+import type { ProofAttempt } from "../prove";
 
 // One optional result per prover, in V13.str's order.
 export type FingerprintTable = Map<string, OcamlValue[]>;

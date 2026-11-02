@@ -9,8 +9,8 @@ import {
 } from "./fingerprints";
 import type { CoordinatorMessage, LevelMessage, StartMessage, WorkerMessage } from "./parallel";
 import { getSuccessors, type Successor } from "./successors";
-import { getTlcStringOrder, getTlcDeclarationOrder } from "./tlc-order";
-import { OUT_DEGREE_BUCKETS } from "./tlc-summary";
+import { getTlcStringOrder, getTlcDeclarationOrder } from "./tlc/order";
+import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
 import { getRankedStringCount, setStringOrder, setValueVersion, type Value } from "./values";
 import { getParentPort, type Port } from "./worker";

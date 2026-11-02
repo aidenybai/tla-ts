@@ -1,6 +1,6 @@
 import type { SourceRange } from "./ast";
 import { EXIT_STATUS, getExitCode } from "./exit-codes";
-import type { PcalNode } from "./pcal-ast";
+import type { PcalNode } from "./pcal/ast";
 import type { Value } from "./values";
 
 // The start of TLC's message for an exception of a Java class it didn't expect.

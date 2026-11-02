@@ -1,11 +1,11 @@
 // TLC orders strings and model values by when it first interned their text, and compares a
 // state's variables in the order of SANY's symbol table. This reproduces both orders.
-import type { Module, SourceLocation } from "./ast";
-import type { ConfigValue, ModelConfig } from "./config";
-import { createMissingModuleError } from "./errors";
-import { tokenize, type Token } from "./lexer";
-import { extractModule, parseModule } from "./parser";
-import { isBefore } from "./resolve";
+import type { Module, SourceLocation } from "../ast";
+import type { ConfigValue, ModelConfig } from "../config";
+import { createMissingModuleError } from "../errors";
+import { tokenize, type Token } from "../lexer";
+import { extractModule, parseModule } from "../parser";
+import { isBefore } from "../resolve";
 import {
   SANY_BUILTINS,
   SANY_NODE_NAMES,
@@ -14,7 +14,7 @@ import {
   TLC_RUNTIME_STRINGS,
   TLC_STARTUP_STRINGS,
   USER_STANDARD_MODULES,
-} from "./tlc-modules";
+} from "./jar-data";
 
 type SymbolKind = "builtin" | "constant" | "variable" | "definition" | "theorem" | "module";
 

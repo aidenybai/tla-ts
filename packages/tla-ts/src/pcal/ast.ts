@@ -1,5 +1,5 @@
-import { PcalBugError, PcalError, PcalRuntimeError } from "./errors";
-import type { TlcVersion } from "./tlc-version";
+import { PcalBugError, PcalError, PcalRuntimeError } from "../errors";
+import type { TlcVersion } from "../tlc/version";
 
 // TLAToken's types.
 export const PCAL_TOKEN = { builtin: 1, number: 2, string: 3, ident: 4, added: 5 } as const;

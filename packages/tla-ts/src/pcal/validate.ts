@@ -1,15 +1,15 @@
-import { PcalError, PcalRuntimeError } from "./errors";
+import { PcalError, PcalRuntimeError } from "../errors";
 import {
   formatPcalNode,
   getPcalLocation,
   getPcalVersionNumber,
   PCAL_VERSION_WEIGHT,
   type PcalAlgorithm,
-} from "./pcal-ast";
-import { parsePcalAlgorithm, type PcalSession } from "./pcal-parse";
-import { createPcalCharReader } from "./pcal-tokenize";
-import { translatePcalAlgorithm } from "./pcal-translate";
-import type { TlcVersion } from "./tlc-version";
+} from "./ast";
+import { parsePcalAlgorithm, type PcalSession } from "./parse";
+import { createPcalCharReader } from "./tokenize";
+import { translatePcalAlgorithm } from "./translate";
+import type { TlcVersion } from "../tlc/version";
 
 // Validator.ValidationResult.
 type PcalValidationResult =

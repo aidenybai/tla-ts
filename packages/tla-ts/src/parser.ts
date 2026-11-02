@@ -24,7 +24,7 @@ import type {
 } from "./ast";
 import { createSanyError, formatRange, TlaSyntaxError } from "./errors";
 import { getNumeralValue, readAtAsIdentifier, tokenize, type Token } from "./lexer";
-import { getSanyParseError } from "./sany-parse-error";
+import { getSanyParseError } from "./sany/parse-error";
 
 interface Precedence {
   low: number;

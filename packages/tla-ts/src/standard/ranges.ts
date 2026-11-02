@@ -1,4 +1,4 @@
-import type { SourceRange } from "./ast";
+import type { SourceRange } from "../ast";
 
 // Where the modules in TLC's tla2sany/StandardModules define the operators that tla-ts implements
 // natively, which SANY reports when a spec defines one of them again.

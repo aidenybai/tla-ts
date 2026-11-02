@@ -1,9 +1,9 @@
-import type { Expression, SourceLocation, SourceRange } from "./ast";
-import { TlaSyntaxError } from "./errors";
-import { readAtAsIdentifier, tokenize, type Token } from "./lexer";
-import { getTabStop } from "./sany-lexer";
-import { getSanyParseError } from "./sany-parse-error";
-import type { SanyLocation } from "./sany-nodes";
+import type { Expression, SourceLocation, SourceRange } from "../ast";
+import { TlaSyntaxError } from "../errors";
+import { readAtAsIdentifier, tokenize, type Token } from "../lexer";
+import { getTabStop } from "./lexer";
+import { getSanyParseError } from "./parse-error";
+import type { SanyLocation } from "./nodes";
 
 // The tokens of one file, to find the locations SANY gives to names, brackets and parentheses that
 // the syntax tree of tla-ts leaves out, and the comments SANY attaches to definitions.

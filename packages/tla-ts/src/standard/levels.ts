@@ -1,4 +1,4 @@
-import type { OperatorLevels } from "./levels";
+import type { OperatorLevels } from "../levels";
 
 type Signature =
   | [string, number, number[], number[], number[]]

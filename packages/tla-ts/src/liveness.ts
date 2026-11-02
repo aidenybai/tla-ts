@@ -24,7 +24,7 @@ import { mapChildren } from "./instances";
 import { ACTION_LEVEL, TEMPORAL_LEVEL } from "./levels";
 import { isEnabled } from "./successors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import { isEvalException } from "./tlc-messages";
+import { isEvalException } from "./tlc/messages";
 import {
   createBoolean,
   createJunction,

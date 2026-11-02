@@ -1,5 +1,5 @@
-import { TEMPORAL_LEVEL } from "./levels";
-import type { TlcVersion } from "./tlc-version";
+import { TEMPORAL_LEVEL } from "../levels";
+import type { TlcVersion } from "../tlc/version";
 import type {
   AssumeProve,
   Assumption,
@@ -18,18 +18,18 @@ import type {
   SourceLocation,
   Theorem,
   UseOrHide,
-} from "./ast";
-import { getChildren } from "./ast";
+} from "../ast";
+import { getChildren } from "../ast";
 import {
   TlaMissingModuleError,
   TlaSanyFatalError,
   TlaSyntaxError,
   TlaUnsupportedError,
-} from "./errors";
-import { parseSanyModule } from "./parser";
-import { BUILTIN_LOCATION, createBuiltins, createLevelFields } from "./sany-builtins";
-import { getSany174LexicalError } from "./sany-lexer";
-import { getSanyParseError } from "./sany-parse-error";
+} from "../errors";
+import { parseSanyModule } from "../parser";
+import { BUILTIN_LOCATION, createBuiltins, createLevelFields } from "./builtins";
+import { getSany174LexicalError } from "./lexer";
+import { getSanyParseError } from "./parse-error";
 import {
   addSanyMessage,
   CONSTANT_DECL_KIND,
@@ -73,13 +73,13 @@ import {
   type TheoremNode,
   type ThmOrAssumpDefNode,
   type UseOrHideNode,
-} from "./sany-nodes";
+} from "./nodes";
 import {
   createSelectorResolver,
   getSelectorItems,
   isGeneralId,
   type SelectorItem,
-} from "./sany-selectors";
+} from "./selectors";
 import {
   createSourceFile,
   findNameTokens,
@@ -99,8 +99,8 @@ import {
   isToken,
   type SourceFile,
   type TokenSpan,
-} from "./sany-source";
-import { SANY_OPERATOR_SYNONYMS } from "./tlc-modules";
+} from "./source";
+import { SANY_OPERATOR_SYNONYMS } from "../tlc/jar-data";
 
 const SYNONYMS = new Map(
   SANY_OPERATOR_SYNONYMS.flatMap(([canonical, ...synonyms]) =>

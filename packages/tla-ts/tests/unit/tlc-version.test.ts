@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { getTlcVersion } from "../../src/tlc-version";
+import { getTlcVersion } from "../../src/tlc/version";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 

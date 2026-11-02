@@ -1,4 +1,4 @@
-import { PcalError, PcalBugError } from "./errors";
+import { PcalError, PcalBugError } from "../errors";
 import {
   createNormalizedPcalExpr,
   createPcalBase,
@@ -29,7 +29,7 @@ import {
   type PcalVarDecl,
   type PcalWhen,
   type PcalWhile,
-} from "./pcal-ast";
+} from "./ast";
 
 // PcalSymTab's symbol types, which index PCAL_SYMBOL_TYPE_NAMES.
 const PCAL_SYMBOL = {

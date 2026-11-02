@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { defineCommand } from "../../src/cli-options";
+import { defineCommand } from "../../src/cli/options";
 
 const command = defineCommand("tool {options} <file>...", [
   { flag: "-N", isRequired: true },

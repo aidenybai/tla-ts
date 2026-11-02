@@ -1,6 +1,6 @@
-import { createJavaRandom, getTlcFingerprint, type JavaRandom } from "./tlc-random";
+import { createJavaRandom, getTlcFingerprint, type JavaRandom } from "./tlc/random";
 import { createFunction, createRecord, type Value } from "./values";
-import type { TlcVersion } from "./tlc-version";
+import type { TlcVersion } from "./tlc/version";
 
 export interface CheckerRuntime {
   getLevel: (state: (Value | undefined)[]) => number;

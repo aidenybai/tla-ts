@@ -18,7 +18,7 @@ import {
 } from "./errors";
 import { mapChildren } from "./instances";
 import { collectSemanticErrors, getBoundNames, getPatternNames } from "./resolve";
-import { STANDARD_LEVELS } from "./standard-levels";
+import { STANDARD_LEVELS } from "./standard/levels";
 
 interface LevelData {
   level: number;

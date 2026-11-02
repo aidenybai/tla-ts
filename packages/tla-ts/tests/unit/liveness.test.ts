@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
 import { getUnexpectedException } from "../../src/errors";
-import type { TlcVersion } from "../../src/tlc-version";
+import type { TlcVersion } from "../../src/tlc/version";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/liveness");
 

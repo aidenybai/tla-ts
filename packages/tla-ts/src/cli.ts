@@ -10,4 +10,4 @@ const javaTmpdir = process.argv
 
 enableCompileCache?.(javaTmpdir && join(javaTmpdir, "node-compile-cache"));
 
-void import("./run-cli").then((module) => module.runCli());
+void import("./cli/run").then((module) => module.runCli());

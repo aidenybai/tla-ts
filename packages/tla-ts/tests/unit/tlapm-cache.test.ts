@@ -2,8 +2,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
-import { readMarshaled } from "../../src/ocaml-marshal";
-import { getKnownResults, loadFingerprints } from "../../src/tlapm-cache";
+import { readMarshaled } from "../../src/prove/tlapm/ocaml-marshal";
+import { getKnownResults, loadFingerprints } from "../../src/prove/tlapm/cache";
 
 // The fingerprints tlapm 9ed0376 wrote for tlapm-cli/Failures.tla.
 const FINGERPRINTS = join(import.meta.dirname, "../fixtures/tlapm-cli/Failures.fingerprints");

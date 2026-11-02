@@ -1,7 +1,7 @@
 import { TlaConfigError } from "./errors";
 import { matchOperator, matchUnicodeToken } from "./lexer";
-import { formatLexicalError } from "./sany-lexer";
-import type { TlcVersion } from "./tlc-version";
+import { formatLexicalError } from "./sany/lexer";
+import type { TlcVersion } from "./tlc/version";
 
 export type ConfigValue =
   | { kind: "Number"; value: number }

@@ -1,5 +1,5 @@
-import type { Expression } from "./ast";
-import type { TlcVersion } from "./tlc-version";
+import type { Expression } from "../ast";
+import type { TlcVersion } from "../tlc/version";
 import {
   CONSTANT_DECL_KIND,
   getContextSymbol,
@@ -19,7 +19,7 @@ import {
   type SubstInNode,
   type SymbolNode,
   type ThmOrAssumpDefNode,
-} from "./sany-nodes";
+} from "./nodes";
 
 // A port of SANY's Generator.selectorToNode, which turns a name such as Op(a)!lab(b)!:!2 into the
 // semantic node it names, following the Subexpression algorithm of SANY's Subexpression.tla.

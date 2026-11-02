@@ -24,10 +24,10 @@ import {
   type SharedFingerprints,
 } from "./fingerprints";
 import { getInitialStates } from "./successors";
-import { getTlcStringOrder, getTlcVariableOrder } from "./tlc-order";
-import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc-summary";
+import { getTlcStringOrder, getTlcVariableOrder } from "./tlc/order";
+import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
-import type { TlcVersion } from "./tlc-version";
+import type { TlcVersion } from "./tlc/version";
 import { getRankedStringCount, setStringOrder, setValueVersion, type Value } from "./values";
 import { spawnWorker, type Port } from "./worker";
 
