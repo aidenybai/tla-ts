@@ -347,6 +347,27 @@ export const createBigNumberError = (expression: NumberExpression) =>
     EXIT_STATUS.error,
   );
 
+// TLC's Tool#evalAppl fails to look up a variable the state doesn't assign.
+export const createUnassignedError = (name: string, expression: Expression) =>
+  new TlaUnassignedError(
+    `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
+    name,
+  );
+
+// TLC's Tool#enabled reads the subscript of <<A>>_v in the successor as a state of its own, and
+// names the fairness condition when A leaves a variable of v unassigned, unlike TLC 1.7.4's.
+export const toUnspecifiedSubscriptError = (error: unknown, version: TlcVersion | undefined) =>
+  error instanceof TlaUnassignedError && version !== "1.7.4"
+    ? new TlaEvaluationError(
+        `The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable ${error.variable} occurring in the state formula v.\n`,
+      )
+    : error;
+
+export const createPrimeOutsideActionError = (expression: Expression) =>
+  new TlaEvaluationError(
+    `A primed expression appears outside an action at ${describeLocation(expression)}`,
+  );
+
 export const lookupScope = (scope: Scope | undefined, name: string): Binding | undefined => {
   for (let current = scope; current; current = current.parent) {
     if (current.name === name) return current.binding;
@@ -2323,27 +2344,6 @@ export const getSortedFields = (fields: RecordField[]) =>
 
 export const hasDuplicateFields = (sortedFields: RecordField[]) =>
   sortedFields.some((field, index) => index > 0 && sortedFields[index - 1].name === field.name);
-
-// TLC's Tool#evalAppl fails to look up a variable the state doesn't assign.
-export const createUnassignedError = (name: string, expression: Expression) =>
-  new TlaUnassignedError(
-    `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
-    name,
-  );
-
-// TLC's Tool#enabled reads the subscript of <<A>>_v in the successor as a state of its own, and
-// names the fairness condition when A leaves a variable of v unassigned, unlike TLC 1.7.4's.
-export const toUnspecifiedSubscriptError = (error: unknown, version: TlcVersion | undefined) =>
-  error instanceof TlaUnassignedError && version !== "1.7.4"
-    ? new TlaEvaluationError(
-        `The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable ${error.variable} occurring in the state formula v.\n`,
-      )
-    : error;
-
-export const createPrimeOutsideActionError = (expression: Expression) =>
-  new TlaEvaluationError(
-    `A primed expression appears outside an action at ${describeLocation(expression)}`,
-  );
 
 const compileRecord = (recordFields: RecordField[], environment: Environment): Evaluator => {
   const fields = getSortedFields(recordFields);

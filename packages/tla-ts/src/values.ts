@@ -161,6 +161,9 @@ export const isFunctionValue = (value: Value): value is FunctionValue | LazyFunc
 export const isModelValue = (value: Value): value is ModelValue =>
   typeof value === "object" && value.kind === "ModelValue";
 
+export const isEnumeratedSet = (value: Value): value is SetValue | MixedSetValue =>
+  typeof value === "object" && (value.kind === "Set" || value.kind === "MixedSet");
+
 export const describeKind = (value: Value) => {
   if (typeof value === "boolean") return "boolean";
   if (typeof value === "number") return "integer";
@@ -540,9 +543,6 @@ export const markFingerprinted = (value: Value): void => {
   }
 };
 
-export const createSortedRecord = (names: Value[], range: Value[]) =>
-  setFunctionClass(createSortedFunction(names, range), "record");
-
 export const valuesEqual = (left: Value, right: Value): boolean => {
   cacheSet(left);
   if (left === right) {
@@ -797,9 +797,6 @@ const compareFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: 
     right,
   );
 };
-
-export const isEnumeratedSet = (value: Value): value is SetValue | MixedSetValue =>
-  typeof value === "object" && (value.kind === "Set" || value.kind === "MixedSet");
 
 // TLC compares a lazy set, or a set it overrides in Java, through its own class before it compares
 // elements. The comparisons above already fail as those classes do.
@@ -1206,6 +1203,9 @@ export const createTuple = (elements: Value[]): FunctionValue =>
 
 export const createRecord = (fields: [string, Value][]): FunctionValue =>
   setFunctionClass(createFunction(fields), "record");
+
+export const createSortedRecord = (names: Value[], range: Value[]) =>
+  setFunctionClass(createSortedFunction(names, range), "record");
 
 // TLC's Enumerable classes: every set except the ones it implements in Java.
 export const isTlcEnumerable = (value: Value) => isSetValue(value) && !isOverriddenSet(value);
