@@ -1,12 +1,11 @@
 interface OptionSpec {
   flag: string;
-  isRequired?: boolean;
   isRepeatable?: boolean;
   // How many of the arguments after the flag the option takes, when that depends on them.
   getArity?: (rest: string[]) => number;
 }
 
-export interface ParsedOption {
+interface ParsedOption {
   name: string;
   values: string[];
 }
@@ -19,11 +18,6 @@ export interface ParsedArgs {
   has: (name: string) => boolean;
   get: (name: string) => string[] | undefined;
 }
-
-const formatOption = (spec: OptionSpec) => {
-  const text = spec.isRequired ? spec.flag : `[${spec.flag}]`;
-  return spec.isRepeatable ? `${text}...` : text;
-};
 
 // Each <name> in a flag such as "--toolbox <start> <end>" is one value the option takes, and
 // {options} in the usage stands for the options.
@@ -60,7 +54,13 @@ export const defineCommand = (usage: string, specs: OptionSpec[]) => {
       get: (name) => options.findLast((option) => option.name === name)?.values,
     };
   };
-  return { usage: usage.replace("{options}", specs.map(formatOption).join(" ")), parse };
+  return {
+    usage: usage.replace(
+      "{options}",
+      specs.map((spec) => `[${spec.flag}]${spec.isRepeatable ? "..." : ""}`).join(" "),
+    ),
+    parse,
+  };
 };
 
 export const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {options}", [

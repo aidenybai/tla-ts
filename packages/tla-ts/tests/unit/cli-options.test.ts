@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { defineCommand } from "../../src/cli/options";
 
 const command = defineCommand("tool {options} <file>...", [
-  { flag: "-N", isRequired: true },
+  { flag: "-N" },
   { flag: "-seed <num>" },
   { flag: "--toolbox <start> <end>" },
   { flag: "-I <directory>", isRepeatable: true },
@@ -11,7 +11,7 @@ const command = defineCommand("tool {options} <file>...", [
 describe("defineCommand", () => {
   it("formats the usage from the options", () => {
     expect(command.usage).toBe(
-      "tool -N [-seed <num>] [--toolbox <start> <end>] [-I <directory>]... <file>...",
+      "tool [-N] [-seed <num>] [--toolbox <start> <end>] [-I <directory>]... <file>...",
     );
   });
 

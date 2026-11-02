@@ -63,11 +63,6 @@ const TLAPM_VERSION = "9ed0376";
 const quoteShellArgument = (arg: string) =>
   /^[+,\-./0-9:=@A-Z_a-z]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
 
-const printToolboxHeader = (args: string[]) =>
-  console.log(
-    `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${formatTlcDate(new Date())} with command line:\n\\* ${["tla-ts", "tlapm", ...args].map(quoteShellArgument).join(" ")}\n`,
-  );
-
 // The most severe first.
 const STRICT_EXIT_STATUS = { failed: 10, incomplete: 11, emptyTarget: 12 };
 
@@ -252,7 +247,11 @@ export const runTlapm = async (args: string[]) => {
     return 1;
   }
   const isToolbox = parsed.has("--toolbox") || parsed.has("--line");
-  if (isToolbox) printToolboxHeader(args);
+  if (isToolbox) {
+    console.log(
+      `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${formatTlcDate(new Date())} with command line:\n\\* ${["tla-ts", "tlapm", ...args].map(quoteShellArgument).join(" ")}\n`,
+    );
+  }
   // Like tlapm, the last of --toolbox and --line wins, and a 0 means the whole module.
   const lines = parsed.options.reduce<LineRange>((range, option) => {
     const [start, end] = option.values.map(Number);

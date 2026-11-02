@@ -15,13 +15,7 @@ const TEMPORARY_DIRECTORY_PROPERTY = "-Djava.io.tmpdir=";
 
 const TLC_VERSION_PROPERTY = "-Dtla-ts.tlc=";
 
-interface JavaLaunch {
-  mainClass: string;
-  args: string[];
-  java: JavaProperties;
-}
-
-const getJavaLaunch = (args: string[]): JavaLaunch | undefined => {
+const getJavaLaunch = (args: string[]) => {
   const java: JavaProperties = { libraries: [] };
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
@@ -45,7 +39,11 @@ const getJavaLaunch = (args: string[]): JavaLaunch | undefined => {
   return undefined;
 };
 
-const runJavaClass = (launch: JavaLaunch) => {
+const run = async (args: string[]) => {
+  if (args[0] === "tlapm") return reportErrors(() => runTlapm(args.slice(1)));
+  const launch = getJavaLaunch(args);
+  if (launch === undefined) return checkSpecs(args, { libraries: [] });
+  launch.java.tlcVersion ??= await getTlcVersion(getToolsJar(launch.java));
   if (launch.mainClass === "tlc2.TLC") return checkSpecs(launch.args, launch.java);
   if (launch.mainClass === "tla2sany.xml.XMLExporter") {
     return reportErrors(() =>
@@ -58,14 +56,6 @@ const runJavaClass = (launch: JavaLaunch) => {
     `Error: tla-ts runs the Java classes ${JAVA_MAIN_CLASSES.join(" and ")}, not ${launch.mainClass}.`,
   );
   return 1;
-};
-
-const run = async (args: string[]) => {
-  if (args[0] === "tlapm") return reportErrors(() => runTlapm(args.slice(1)));
-  const launch = getJavaLaunch(args);
-  if (launch === undefined) return checkSpecs(args, { libraries: [] });
-  launch.java.tlcVersion ??= await getTlcVersion(getToolsJar(launch.java));
-  return runJavaClass(launch);
 };
 
 export const runCli = async () => {

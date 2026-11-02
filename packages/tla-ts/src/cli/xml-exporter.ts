@@ -14,10 +14,6 @@ import {
   toLibraryPath,
 } from "./shared";
 
-const XML_EXPORT_FLAGS = new Set(["-o", "-t", "-r", "-u"]);
-
-const XML_EXPORT_174_FLAGS = new Set(["-o"]);
-
 // The usage that XMLExporter.printUsage prints with UsageGenerator.
 const XML_EXPORT_USAGE = (() => {
   const bold = (text: string) => `\x1b[1m${text}\x1b[0m`;
@@ -117,7 +113,7 @@ const parseXmlExportArgs = (args: string[], flagNames: Set<string>): XmlExportAr
 
 export const exportXml = (args: string[]) => {
   if (args.length === 0) return printXmlExportUsageError("at least one .tla file must be given");
-  const parsed = parseXmlExportArgs(args, XML_EXPORT_FLAGS);
+  const parsed = parseXmlExportArgs(args, new Set(["-o", "-t", "-r", "-u"]));
   if (parsed.error === "missing-include") {
     return printXmlExportUsageError(
       "the -I flag must be followed by a directory and at least one .tla file",
@@ -174,7 +170,7 @@ export const exportXml174 = (args: string[], jar: string | undefined) => {
       59,
     );
   }
-  const parsed = parseXmlExportArgs(args, XML_EXPORT_174_FLAGS);
+  const parsed = parseXmlExportArgs(args, new Set(["-o"]));
   if (parsed.error === "missing-include") {
     return printXmlExporterException(
       "java.lang.IllegalArgumentException: the -I flag must be followed by a directory and at least one .tla file",

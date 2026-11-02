@@ -760,44 +760,6 @@ const checkSpec = async (
   const directories = [directory, ...java.libraries];
   const loadModule = createModuleLoader(directories);
   const isRecorded = isTraceRecorded(args, version);
-  const run = async () => {
-    const source = readFileSync(specPath, "utf8");
-    const moduleName = parseModule(source).name;
-    if (moduleName !== fileName) {
-      throw new TlaSanyFatalError(
-        `File name '${fileName}' does not match the name '${moduleName}' of the top level module it contains.`,
-        undefined,
-      );
-    }
-    const result = await check({
-      workers,
-      livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
-      seed: BigInt(seed),
-      dump: dumpValues && getStateDump(dumpValues),
-      isTool: printer.isTool,
-      isTraceRecorded: isRecorded,
-      isSanyReported: true,
-      isWarningEnabled: !args.has("-nowarning"),
-      version,
-      onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
-      source,
-      config,
-      onPause: () => readSync(0, Buffer.alloc(1)),
-      loadModule,
-      loadClass: (name) => {
-        const classPath = getClassPath(directory, name);
-        return existsSync(classPath) ? readFileSync(classPath) : undefined;
-      },
-      readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
-      writeFile: (path, content) => {
-        mkdirSync(dirname(resolve(path)), { recursive: true });
-        writeFileSync(path, content);
-      },
-    });
-    printResult(result, printer, timing);
-    printFinished();
-    return result.failure?.exitCode ?? EXIT_CODES[result.status];
-  };
   if (printer.isTool) {
     printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");
   }
@@ -847,7 +809,42 @@ const checkSpec = async (
     return EXIT_STATUS.specParseError;
   }
   try {
-    return await run();
+    const source = readFileSync(specPath, "utf8");
+    const moduleName = parseModule(source).name;
+    if (moduleName !== fileName) {
+      throw new TlaSanyFatalError(
+        `File name '${fileName}' does not match the name '${moduleName}' of the top level module it contains.`,
+        undefined,
+      );
+    }
+    const result = await check({
+      workers,
+      livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
+      seed: BigInt(seed),
+      dump: dumpValues && getStateDump(dumpValues),
+      isTool: printer.isTool,
+      isTraceRecorded: isRecorded,
+      isSanyReported: true,
+      isWarningEnabled: !args.has("-nowarning"),
+      version,
+      onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
+      source,
+      config,
+      onPause: () => readSync(0, Buffer.alloc(1)),
+      loadModule,
+      loadClass: (name) => {
+        const classPath = getClassPath(directory, name);
+        return existsSync(classPath) ? readFileSync(classPath) : undefined;
+      },
+      readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
+      writeFile: (path, content) => {
+        mkdirSync(dirname(resolve(path)), { recursive: true });
+        writeFileSync(path, content);
+      },
+    });
+    printResult(result, printer, timing);
+    printFinished();
+    return result.failure?.exitCode ?? EXIT_CODES[result.status];
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     if (error instanceof TlaSyntaxError) console.log(formatSanyErrors(error, fileName));
@@ -869,22 +866,6 @@ const formatSanyErrors = (error: TlaSyntaxError, specName: string) => {
       : `In module ${error.location}\n\n${error.message}`;
   const parseError = error.failure ? `***Parse Error***\n${error.message}\n\n` : "";
   return `${parseError}\nFatal errors while parsing TLA+ spec in file ${specName}\n\n${report}\n*** Errors: 1\n\n${report}\n\n\n`;
-};
-
-// Runs each path in turn, as TLC runs in a process of its own, so an error in one leaves the others
-// to report. The exit code is the first that is not success.
-const runEach = async (
-  paths: string[],
-  runPath: (path: string, printer: MessagePrinter) => number | Promise<number>,
-  createPrinter: () => MessagePrinter,
-) => {
-  const exitCodes: number[] = [];
-  for (const [index, path] of paths.entries()) {
-    if (index > 0) console.log("");
-    const printer = createPrinter();
-    exitCodes.push(await reportErrors(() => runPath(path, printer), printer));
-  }
-  return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
 };
 
 export const checkSpecs = async (args: string[], java: JavaProperties) => {
@@ -921,17 +902,22 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
       ? path
       : (java.libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
   const paths = [...new Set(specPaths.map(findSpec))];
-  const tlcVersion = java.tlcVersion ?? "master";
-  return runEach(
-    paths,
-    (path, printer) => {
-      // TLC checks one spec, so tla-ts names each of several it checks.
-      if (paths.length > 1)
-        console.log(`Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`);
-      return checkSpec(path, parsed, java, printer);
-    },
-    () => createMessagePrinter(parsed.has("-tool"), !parsed.has("-nowarning"), tlcVersion),
-  );
+  // Each spec is checked as TLC would in a process of its own, so an error in one leaves the others
+  // to report. The exit code is the first that is not success.
+  const exitCodes: number[] = [];
+  for (const [index, path] of paths.entries()) {
+    if (index > 0) console.log("");
+    // TLC checks one spec, so tla-ts names each of several it checks.
+    if (paths.length > 1)
+      console.log(`Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`);
+    const printer = createMessagePrinter(
+      parsed.has("-tool"),
+      !parsed.has("-nowarning"),
+      java.tlcVersion ?? "master",
+    );
+    exitCodes.push(await reportErrors(() => checkSpec(path, parsed, java, printer), printer));
+  }
+  return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
 };
 
 // TLC 1.7.4's SimpleFilenameToStream looks for a module in the directory of a spec that TLC is
