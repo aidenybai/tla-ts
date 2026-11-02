@@ -343,6 +343,53 @@ describe("bounds", () => {
   });
 });
 
+describe("calls", () => {
+  it("reports a throw for some argument of a function that reads no state", async () => {
+    const result = await checkModel(`
+      export const clamp = (value: number, low: number, high: number) => {
+        if (low > high) throw new Error("low is above high");
+        return Math.min(Math.max(value, low), high);
+      };
+    `);
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.message).toContain('"low is above high"');
+  });
+
+  it("passes a function that returns for every argument", async () => {
+    const result = await checkModel(`
+      export const clamp = (value: number, low: 0 | 1, high: 2 | 3) => {
+        if (low > high) throw new Error("low is above high");
+        return Math.min(Math.max(value, low), high);
+      };
+    `);
+    expect(result.status).toBe("success");
+  });
+
+  it("calls a boolean function with parameters without asserting it", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      export const step = () => {
+        count = 1 - count;
+      };
+      export const isBelow = (limit: 1 | 2) => count < limit;
+    `);
+    expect(result.status).toBe("success");
+  });
+
+  it("reports an index out of range in a function that reads state", async () => {
+    const result = await checkModel(`
+      let queue: number[] = [];
+      export const push = (value: 1 | 2) => {
+        if (queue.length > 0) return;
+        queue.push(value);
+      };
+      export const getFirst = () => queue[0]!;
+    `);
+    expect(result.status).toBe("error");
+    expect(result.failure?.message).toContain("out of bounds");
+  });
+});
+
 describe("definitions", () => {
   it("compiles recursive helpers", async () => {
     const result = await checkModel(`
@@ -526,11 +573,5 @@ describe("errors", () => {
     expect(() =>
       compile(`let count = 0;\n/** @fiar */\nexport const step = () => { count++; };`),
     ).toThrow("Unknown tag: @fiar");
-  });
-
-  it("rejects an invariant with parameters", () => {
-    expect(() =>
-      compile(`let count = 0;\nexport const isBelow = (limit: 1 | 2) => count < limit;`),
-    ).toThrow("spec.ts:2:25 Invariants can't take parameters");
   });
 });

@@ -3,8 +3,8 @@ import { type Context, getSymbol } from "./context";
 import type { Sections } from "./emit";
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition } from "./expressions";
-import { indent } from "./formula";
-import { getDefinition, translateBody } from "./functions";
+import { indent, letIn, render, text } from "./formula";
+import { getDefinition, readsState, translateBody } from "./functions";
 import type { Exported, Model } from "./model";
 import { bindNames, createStateScope, declareParameter, type Scope } from "./scope";
 import { getDomain } from "./types";
@@ -125,11 +125,42 @@ export const translateProperty = (
   }
 };
 
-// An exported function that returns a boolean, which holds in every state.
+// An exported function that returns a value without asserting it, which TLC calls with every
+// argument, in every state when it reads state and once before the search otherwise. TLC reports a
+// throw, a failed lookup, or an index out of range in it.
+export const translateCall = (definition: Exported, sections: Sections, context: Context) => {
+  const quantified = definition.node.parameters.map((parameter) => ({
+    ...declareParameter(parameter, context),
+    domain: getDomain(context.checker.getTypeAtLocation(parameter.name), parameter, context),
+  }));
+  const result = context.names.getFresh("result");
+  const value = translateBody(
+    definition.body,
+    bindNames(createStateScope(context), quantified),
+    context,
+  );
+  // TLC evaluates a LET definition only when something uses it.
+  const call = render(
+    letIn([`${result} ==\n  ${indent(value, "  ")}`], text(`${result} = ${result}`)),
+  );
+  const checked =
+    quantified.length === 0
+      ? call
+      : `\\A ${quantified.map((parameter) => `${parameter.name} \\in ${parameter.domain}`).join(", ")} :\n  ${indent(call, "  ")}`;
+  sections.predicates.push(`${definition.name} ==\n  ${indent(checked, "  ")}`);
+  const isStateLevel = readsState(
+    definition.declaration,
+    context,
+    new Set([definition.declaration]),
+  );
+  (isStateLevel ? sections.invariants : sections.assumptions).push(definition.name);
+};
+
+// An exported function that returns a boolean, which holds in every state. With parameters, it says
+// nothing about the state, so TLC only calls it.
 export const translateInvariant = (definition: Exported, sections: Sections, context: Context) => {
-  const parameters = definition.node.parameters;
-  if (parameters.length > 0) {
-    throw new TlaTypeScriptError("Invariants can't take parameters", parameters[0]);
+  if (definition.node.parameters.length > 0) {
+    return translateCall(definition, sections, context);
   }
   const body = definition.body;
   const scope = createStateScope(context);

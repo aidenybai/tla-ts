@@ -26,7 +26,11 @@ import {
 const isStateModified = (scope: Scope, context: Context) =>
   [...context.variables].some((entry) => scope.bindings.get(entry[0]) !== entry[1]);
 
-const readsState = (node: ts.Node, context: Context, visited: Set<ts.Declaration>): boolean => {
+export const readsState = (
+  node: ts.Node,
+  context: Context,
+  visited: Set<ts.Declaration>,
+): boolean => {
   if (ts.isIdentifier(node)) {
     const symbol = getSymbol(node, context.checker);
     if (symbol !== undefined && context.variables.has(symbol)) return true;

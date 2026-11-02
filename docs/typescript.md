@@ -54,8 +54,25 @@ A file's top-level declarations become the spec:
 | `const N = 3;`, or a function you don't export | A definition                                      |
 | An exported function that changes state        | An action, which `Next` chooses from              |
 | An exported function that returns a boolean    | An invariant                                      |
+| Any other exported function that returns       | A check that calls it with every argument         |
 | A parameter, such as `(proc: Proc)`            | `\E proc \in Proc`, every value of its type       |
 | `if (busy) return;` before any change          | A condition that disables the action              |
+
+A file doesn't need state or invariants. tla-ts calls each exported function that returns a value with every argument its parameter types allow, and TLC reports a `throw`, a `!` on a missing value, or an index out of range. A boolean function with parameters is called the same way, since it can't hold in a state by itself. A check that reads no state becomes an `ASSUME`, which TLC evaluates once. A check that reads state becomes an invariant.
+
+```ts
+// clamp.ts
+export const clamp = (value: number, low: number, high: number) => {
+  if (low > high) throw new Error("low is above high");
+  return Math.min(Math.max(value, low), high);
+};
+```
+
+```
+Error: Evaluating assumption line 25, col 8 to line 25, col 12 of module Clamp failed.
+The first argument of Assert evaluated to FALSE; the second argument was:
+"low is above high"
+```
 
 An action runs its statements in order, as TypeScript does. A read after an assignment sees the new value. Each path through the action that changes state is one possible step, and a path that changes nothing disables the action.
 

@@ -3,12 +3,11 @@ import ts from "@typescript/typescript6";
 import { writesState } from "./actions";
 import { type Context, createContext } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
-import { TlaTypeScriptError } from "../errors";
 import { indent, wrapEquated } from "./formula";
 import { translateBody } from "./functions";
 import { type Exported, type Model, readModel, type Variable } from "./model";
 import { createProgram } from "./program";
-import { translateInvariant, translateProperty, VALUE_TAGS } from "./properties";
+import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from "./properties";
 import { createStateScope } from "./scope";
 import { translateStep } from "./steps";
 import { getDomain } from "./types";
@@ -44,13 +43,9 @@ const translateExported = (
   ) {
     return translateStep(definition, sections, context);
   }
-  if (!(returnType.flags & ts.TypeFlags.BooleanLike)) {
-    throw new TlaTypeScriptError(
-      "An exported function that returns a value must return a boolean, or be tagged, such as @view",
-      definition.node,
-    );
-  }
-  return translateInvariant(definition, sections, context);
+  return returnType.flags & ts.TypeFlags.BooleanLike
+    ? translateInvariant(definition, sections, context)
+    : translateCall(definition, sections, context);
 };
 
 // Compiles a TypeScript file into a TLA+ spec and the config that checks it. Imports resolve
