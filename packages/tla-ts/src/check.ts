@@ -151,11 +151,7 @@ export interface InitialStateViolation {
 // A line the spec prints, or what TLC reports as it replays the initial states.
 export type OutputLine = string | InitialStatesProgress | InitialStateViolation;
 
-// The spec is parsed, TLC warns about each invariant that is a true constant formula and each
-// property that is a state formula, finds the branches of the temporal properties, computes the
-// initial states, reporting each time their count reaches a power of two, reports how far the
-// search got 3 seconds after it starts and every minute after, and checks the temporal properties
-// on the state graph so far at those times and on the complete state graph at the end.
+// The points of the search at which TLC prints a message.
 export type CheckProgress =
   | { kind: "parsed" }
   | { kind: "constant-level-invariant"; name: string }
@@ -443,7 +439,6 @@ const getConfigPredicate = (kind: string, name: string, environment: Environment
   return value === undefined ? definition : undefined;
 };
 
-// TLC reports how many initial states it has computed each time the count is a power of two.
 export const reportInitialStatesProgress = (
   count: number,
   onProgress: ((progress: InitialStatesProgress) => void) | undefined,
@@ -453,9 +448,8 @@ export const reportInitialStatesProgress = (
   }
 };
 
-// What TLC does once SANY is done: it computes the constant definitions, then warns about each
-// invariant that is a true constant formula, which it doesn't check. TLC prints each distinct
-// warning once.
+// After SANY, TLC computes the constant definitions and warns once about each invariant that is a
+// true constant formula, which it doesn't check.
 export const reportStartup = (
   specification: {
     environment: Environment;
@@ -1344,7 +1338,6 @@ const withUnexpectedException = <Result>(compute: () => Result) => {
   }
 };
 
-// The starts of TLC's messages for the exceptions it didn't expect.
 const UNEXPECTED_EXCEPTIONS = [
   WRAPPED_EVAL_EXCEPTION,
   WRAPPED_RUNTIME_EXCEPTION,
@@ -1584,7 +1577,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const nextActions = { value: undefined as SpecAction[] | undefined };
   const getSpecNextActions = () =>
     (nextActions.value ??= getNextActions(config, environment, specification.instanceActions));
-  // Where TLC's replay of a failed computation fails, or undefined when the replay completes.
   const getReplayFailure = (replay: (tracing: Environment) => void): ReplayFailure | undefined => {
     const tracing = createTracingEnvironment(environment);
     const callStack = tracing.callStack;
@@ -1801,9 +1793,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
   };
   // TLC finds the action of a step as the first action that takes it, evaluated as when the search
-  // expanded the previous state.
-  // TLC finds the action of a successor it holds by the successor's values, and of any other state
-  // by its fingerprint.
+  // expanded the previous state, by the values of a successor it holds and otherwise by fingerprint.
   const findStepAction = (index: number, previous: Value[], state: Value[], isHeld: boolean) => {
     const actions = getSpecNextActions();
     const expanding = { ...current };
@@ -1925,9 +1915,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       : last.action;
     return toTrace([...steps, { state: last.state, action }], path, { known: 2 });
   };
-  // TLC prints an initial state on its own without evaluating the alias.
-  // TLCTrace#getTrace recovers even a lone initial state from the initial predicate, printing
-  // again, though TLC 1.7.4 doesn't.
+  // TLC prints a lone initial state without the alias. TLCTrace#getTrace still recovers it from the
+  // initial predicate, printing again, though TLC 1.7.4 doesn't.
   const getStateTrace = (index: number): Behavior =>
     parents[index] === -1
       ? {

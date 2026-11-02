@@ -202,7 +202,6 @@ const isChanged = (replay: Replay, item: Item, partial: State) => {
   return !valuesEqual(before, after);
 };
 
-// Once every variable has a value, TLC evaluates the conjuncts left instead of walking them.
 const proceedAssigned = (replay: Replay, items: Item | undefined, partial: Value[]): void => {
   for (let item = items; item !== undefined; item = item.rest) {
     if (item.kind === "Unchanged") {

@@ -22,13 +22,11 @@ interface WebWorker {
 
 declare const Worker: new (url: URL, options: { type: "module" }) => WebWorker;
 
-// Whether this runtime runs workers: Web Workers, or Node's.
 export const isWorkerSupported = () =>
   typeof Worker === "function" ||
   (typeof process !== "undefined" && process.versions?.node !== undefined);
 
-// Starts the worker at url, which the caller writes as new URL("./name.js", import.meta.url) for
-// bundlers to find. onError receives what the worker threw.
+// The caller writes url as new URL("./name.js", import.meta.url) for bundlers to find.
 export const spawnWorker = async (
   url: URL,
   onMessage: (message: unknown) => void,
@@ -53,7 +51,6 @@ export const spawnWorker = async (
   };
 };
 
-// The port a worker receives its messages on and posts its own to.
 export const getParentPort = async () => {
   if (typeof (globalThis as { postMessage?: unknown }).postMessage === "function") {
     return globalThis as unknown as Port;

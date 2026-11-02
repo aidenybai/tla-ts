@@ -11,8 +11,7 @@ export const getUnexpectedException = (exceptionClass: string) =>
 // states.
 export const UNEXPECTED_EXCEPTION = getUnexpectedException("java.lang.RuntimeException");
 
-// Whether an error is V8's RangeError for a stack overflow, which TLC raises as a Java
-// StackOverflowError.
+// V8's RangeError for a stack overflow, which TLC raises as a Java StackOverflowError.
 export const isStackOverflow = (error: unknown) =>
   error instanceof RangeError && error.message === "Maximum call stack size exceeded";
 
@@ -97,7 +96,6 @@ export const createSanyError = (
     { errors, warnings, isFatal, parseError },
   );
 
-// SANY reports a module it can't find in the module that imports it.
 export const createMissingModuleError = (name: string, importer: string | undefined) =>
   createSanyError(
     [
@@ -133,7 +131,6 @@ export class TlaEvaluationError extends TlaError {
   }
 }
 
-// How TLC reports a Java StackOverflowError.
 export const STACK_OVERFLOW_MESSAGE =
   "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.";
 

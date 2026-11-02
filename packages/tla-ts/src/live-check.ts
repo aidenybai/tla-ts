@@ -187,7 +187,6 @@ const pushNode = (check: Check, state: number, tableauNode: number) => {
   return check.nodeStates.length - 1;
 };
 
-// The nodes of the state, in the order the check recorded them.
 const getStateNodes = (check: Check, state: number) => {
   const nodes: number[] = [];
   for (
