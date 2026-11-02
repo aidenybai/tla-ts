@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
-import { KIND_EQ, KIND_GE, KIND_LE } from "../../src/prove/smt/solver/lp/constraints";
-import { mkLeaf, linearize } from "../../src/prove/smt/solver/lp/dependency";
-import { LarSolver } from "../../src/prove/smt/solver/lp/lar-solver";
-import { NlaCore } from "../../src/prove/smt/solver/lp/nla-core";
-import { isConflictLemma } from "../../src/prove/smt/solver/lp/nla-types";
+import { KIND_EQ, KIND_GE, KIND_LE } from "../../src/prover/smt/solver/lp/constraints";
+import { mkLeaf, linearize } from "../../src/prover/smt/solver/lp/dependency";
+import { LarSolver } from "../../src/prover/smt/solver/lp/lar-solver";
+import { NlaCore } from "../../src/prover/smt/solver/lp/nla-core";
+import { isConflictLemma } from "../../src/prover/smt/solver/lp/nla-types";
 import { PddMemoryOutError } from "../../src/errors";
-import { evaluatePdd, Pdd, PddManager } from "../../src/prove/smt/solver/lp/pdd";
-import { PddSimplifier } from "../../src/prove/smt/solver/lp/pdd-simplifier";
-import { PddSolver, SOLVED } from "../../src/prove/smt/solver/lp/pdd-solver";
-import { Rational } from "../../src/prove/smt/solver/rational";
-import { ResourceLimit } from "../../src/prove/smt/solver/rlimit";
+import { evaluatePdd, Pdd, PddManager } from "../../src/prover/smt/solver/lp/pdd";
+import { PddSimplifier } from "../../src/prover/smt/solver/lp/pdd-simplifier";
+import { PddSolver, SOLVED } from "../../src/prover/smt/solver/lp/pdd-solver";
+import { Rational } from "../../src/prover/smt/solver/rational";
+import { ResourceLimit } from "../../src/prover/smt/solver/rlimit";
 
 const rational = (value: number) => Rational.fromNumber(value);
 

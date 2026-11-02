@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { TlaProverError } from "../../src/errors";
 import { getObligations } from "../../src/obligations";
-import { encodeForBackend } from "../../src/prove/prove";
-import { TLAPS_MODULE } from "../../src/prove/tlaps-module";
+import { encodeForBackend } from "../../src/prover/prove";
+import { TLAPS_MODULE } from "../../src/prover/tlaps-module";
 
 // Modules from tlapm's tests and library, and the theory tlapm wrote for each of their obligations
 // that it sent to Isabelle, as <module>-<obligation>.thy.

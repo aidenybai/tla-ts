@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { prove, type ProofObligation, type ProveOptions, TlaUnsupportedError } from "../../src";
 import { getObligations } from "../../src/obligations";
-import { encodeForBackend } from "../../src/prove/prove";
-import { TLAPS_MODULE } from "../../src/prove/tlaps-module";
+import { encodeForBackend } from "../../src/prover/prove";
+import { TLAPS_MODULE } from "../../src/prover/tlaps-module";
 
 // HourClock and Simple come from tlaplus/Examples. Each .smt file is the input tlapm sent to its
 // SMT solver for that obligation.

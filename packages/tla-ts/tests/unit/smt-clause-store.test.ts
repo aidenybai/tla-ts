@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import { SmtInvariantError } from "../../src/errors";
-import { CLS_AUX, CLS_LEARNED, CLS_TH_LEMMA, ClauseStore } from "../../src/prove/smt/solver/clause";
-import { mkLiteral, toBoolVar } from "../../src/prove/smt/solver/literal";
+import {
+  CLS_AUX,
+  CLS_LEARNED,
+  CLS_TH_LEMMA,
+  ClauseStore,
+} from "../../src/prover/smt/solver/clause";
+import { mkLiteral, toBoolVar } from "../../src/prover/smt/solver/literal";
 
 const first = mkLiteral(toBoolVar(5));
 const second = mkLiteral(toBoolVar(6), true);

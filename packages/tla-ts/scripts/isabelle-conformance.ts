@@ -12,7 +12,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
-import type { Verdict } from "../src/prove/verdict";
+import type { Verdict } from "../src/prover/verdict";
 import { getOption } from "./corpora";
 import { getIsabelleDigest, PROOF_INPUTS_DIRECTORY, readProofRecords } from "./proof-records";
 

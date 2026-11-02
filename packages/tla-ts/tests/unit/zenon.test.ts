@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { TlaZenonError } from "../../src/errors";
-import { checkProof } from "../../src/prove/zenon/check/check";
-import { createExpressions, UNIVERSE, type Expr } from "../../src/prove/zenon/expr";
-import { makeRelationRule, makeRule, type Proof } from "../../src/prove/zenon/proof";
-import { decideZenon, runZenon } from "../../src/prove/zenon/decide";
+import { checkProof } from "../../src/prover/zenon/check/check";
+import { createExpressions, UNIVERSE, type Expr } from "../../src/prover/zenon/expr";
+import { makeRelationRule, makeRule, type Proof } from "../../src/prover/zenon/proof";
+import { decideZenon, runZenon } from "../../src/prover/zenon/decide";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/zenon");
 

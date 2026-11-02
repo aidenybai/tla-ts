@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { encodeForBackend } from "../src/prove/prove";
+import { encodeForBackend } from "../src/prover/prove";
 import type { PrintedObligation } from "../src/obligations";
-import { runZenon } from "../src/prove/zenon/decide";
+import { runZenon } from "../src/prover/zenon/decide";
 import { CORPORA_DIRECTORY, getOption } from "./corpora";
 import {
   getInputDigest,

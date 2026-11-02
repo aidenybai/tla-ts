@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { SmtParseError } from "../../src/errors";
-import { checkSmt, decideSmt } from "../../src/prove/smt/solver/solver";
+import { checkSmt, decideSmt } from "../../src/prover/smt/solver/solver";
 
 interface RecordedVerdict {
   z3: string;

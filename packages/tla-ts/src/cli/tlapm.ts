@@ -19,15 +19,15 @@ import {
   formatNormalized,
   proveObligations,
   type ProofAttempt,
-} from "../prove/prove";
-import { TLAPS_MODULE } from "../prove/tlaps-module";
-import { getTlapmPaths } from "../prove/tlapm/tlapm";
+} from "../prover/prove";
+import { TLAPS_MODULE } from "../prover/tlaps-module";
+import { getTlapmPaths } from "../prover/tlapm/tlapm";
 import {
   getKnownResults,
   loadFingerprints,
   saveHistory,
   type FingerprintTable,
-} from "../prove/tlapm/cache";
+} from "../prover/tlapm/cache";
 import { formatTlcDate } from "../tlc/messages";
 import { TLAPM_COMMAND, USAGE, type ParsedArgs } from "./options";
 import { getInputPaths } from "./shared";

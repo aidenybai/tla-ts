@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { decideIsabelle } from "../../src/prove/isabelle/decide";
+import { decideIsabelle } from "../../src/prover/isabelle/decide";
 
 // Theories tlapm wrote for Isabelle, named after their module and obligation, with Isabelle's verdict
 // on each from the conformance recording.

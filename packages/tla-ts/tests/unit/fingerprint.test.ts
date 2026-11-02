@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { getObligations } from "../../src/obligations";
-import { getFingerprint } from "../../src/prove/prep/fingerprint";
+import { getFingerprint } from "../../src/prover/prep/fingerprint";
 
 const getFingerprints = (theorems: string[]) =>
   getObligations(

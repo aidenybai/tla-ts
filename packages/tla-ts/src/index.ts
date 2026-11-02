@@ -18,7 +18,7 @@ export {
 } from "./errors";
 export { check } from "./parallel";
 export { parseModule } from "./parser";
-export { prove } from "./prove/prove";
+export { prove } from "./prover/prove";
 export type {
   ProofObligation,
   ProofStatus,
@@ -27,7 +27,7 @@ export type {
   ProvedObligation,
   TrivialObligation,
   UnprovedObligation,
-} from "./prove/prove";
+} from "./prover/prove";
 export type { Module } from "./ast";
 export { formatValue } from "./values";
 export type { Value } from "./values";

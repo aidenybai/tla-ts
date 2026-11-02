@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Rational } from "../../src/prove/smt/solver/rational";
-import { CrossNested } from "../../src/prove/smt/solver/lp/cross-nested";
+import { Rational } from "../../src/prover/smt/solver/rational";
+import { CrossNested } from "../../src/prover/smt/solver/lp/cross-nested";
 import {
   type DepInterval,
   add,
@@ -16,10 +16,10 @@ import {
   separatedFromZero,
   setValue,
   setZeroIntervalDepsForMult,
-} from "../../src/prove/smt/solver/lp/dep-intervals";
-import { linearize, mkLeaf } from "../../src/prove/smt/solver/lp/dependency";
-import { type Nex, getNexVal, printNex } from "../../src/prove/smt/solver/lp/nex";
-import { NexCreator } from "../../src/prove/smt/solver/lp/nex-creator";
+} from "../../src/prover/smt/solver/lp/dep-intervals";
+import { linearize, mkLeaf } from "../../src/prover/smt/solver/lp/dependency";
+import { type Nex, getNexVal, printNex } from "../../src/prover/smt/solver/lp/nex";
+import { NexCreator } from "../../src/prover/smt/solver/lp/nex-creator";
 
 const mkClosed = (lower: Rational, upper: Rational, lowerLeaf: number, upperLeaf: number) => {
   const interval = mkDepInterval();

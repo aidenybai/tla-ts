@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import { TlaProverError, TlaSyntaxError } from "../../src/errors";
 import { getObligations } from "../../src/obligations";
-import { decidePtl } from "../../src/prove/ptl/decide";
-import { encodeForBackend } from "../../src/prove/prove";
+import { decidePtl } from "../../src/prover/ptl/decide";
+import { encodeForBackend } from "../../src/prover/prove";
 
 const OPTIONS = { timeLimitMs: 10_000 };
 

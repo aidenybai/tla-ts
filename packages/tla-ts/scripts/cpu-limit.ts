@@ -8,8 +8,8 @@ import { once } from "node:events";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
-import type { DecideResponse } from "../src/prove/decide-pool";
-import type { Verdict } from "../src/prove/verdict";
+import type { DecideResponse } from "../src/prover/decide-pool";
+import type { Verdict } from "../src/prover/verdict";
 import { DIST_DIRECTORY } from "./dist";
 
 interface CpuLimitedRun {

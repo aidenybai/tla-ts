@@ -6,7 +6,7 @@
 
 import { join } from "node:path";
 import { TlaError } from "../src";
-import { getFingerprint } from "../src/prove/prep/fingerprint";
+import { getFingerprint } from "../src/prover/prep/fingerprint";
 import { CORPORA_DIRECTORY } from "./corpora";
 import { getModuleObligations, readProofRecords } from "./proof-records";
 

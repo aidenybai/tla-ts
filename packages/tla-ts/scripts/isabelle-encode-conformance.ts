@@ -4,7 +4,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TlaProverError, TlaUnsupportedError } from "../src/errors";
-import { encodeForBackend } from "../src/prove/prove";
+import { encodeForBackend } from "../src/prover/prove";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, writeResults } from "./corpora";
 import {
   getIsabelleDigest,

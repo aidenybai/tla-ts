@@ -1,5 +1,5 @@
 import { parentPort } from "node:worker_threads";
-import { decideIsabelle } from "../src/prove/isabelle/decide";
+import { decideIsabelle } from "../src/prover/isabelle/decide";
 
 // Decides each theory isabelle-conformance.ts sends, timing it by this thread's own CPU time.
 // The main thread enforces the time limit: it terminates this worker once the limit has passed.

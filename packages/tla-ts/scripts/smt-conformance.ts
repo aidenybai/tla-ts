@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { SmtParseError } from "../src/errors";
-import { decideSmt } from "../src/prove/smt/solver/solver";
+import { decideSmt } from "../src/prover/smt/solver/solver";
 import { CONFORMANCE_DIRECTORY, getOption, writeResults } from "./corpora";
 import { getSmtVerdict, PROOF_INPUTS_DIRECTORY, type BackendVerdict } from "./proof-records";
 

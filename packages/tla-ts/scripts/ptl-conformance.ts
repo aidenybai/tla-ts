@@ -1,8 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TlaUnsupportedError } from "../src/errors";
-import { decidePtl } from "../src/prove/ptl/decide";
-import { encodeForBackend } from "../src/prove/prove";
+import { decidePtl } from "../src/prover/ptl/decide";
+import { encodeForBackend } from "../src/prover/prove";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption } from "./corpora";
 import {
   getLs4Digest,

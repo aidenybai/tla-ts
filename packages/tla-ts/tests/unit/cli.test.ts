@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vite-plus/test";
-import { readMarshaled } from "../../src/prove/tlapm/ocaml-marshal";
+import { readMarshaled } from "../../src/prover/tlapm/ocaml-marshal";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 

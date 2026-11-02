@@ -2,44 +2,44 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { NlsatUnsupportedError, SmtCanceledError } from "../../src/errors";
-import { L_FALSE, L_TRUE } from "../../src/prove/smt/solver/lbool";
+import { L_FALSE, L_TRUE } from "../../src/prover/smt/solver/lbool";
 import {
   type ConstraintKind,
   KIND_EQ,
   KIND_GE,
   KIND_LE,
   KIND_LT,
-} from "../../src/prove/smt/solver/lp/constraints";
-import { LarSolver } from "../../src/prove/smt/solver/lp/lar-solver";
-import { NlaCore } from "../../src/prove/smt/solver/lp/nla-core";
-import { NraSolver } from "../../src/prove/smt/solver/lp/nra-solver";
-import { AlgebraicManager, Anum } from "../../src/prove/smt/solver/nlsat/algebraic";
-import { AtomTable, ScopedLiterals } from "../../src/prove/smt/solver/nlsat/atoms";
-import { Evaluator } from "../../src/prove/smt/solver/nlsat/evaluator";
-import { Explain } from "../../src/prove/smt/solver/nlsat/explain";
-import type { IntervalSet } from "../../src/prove/smt/solver/nlsat/interval-set";
-import { getSingleCell } from "../../src/prove/smt/solver/nlsat/levelwise";
-import { Mpbq } from "../../src/prove/smt/solver/nlsat/mpbq";
+} from "../../src/prover/smt/solver/lp/constraints";
+import { LarSolver } from "../../src/prover/smt/solver/lp/lar-solver";
+import { NlaCore } from "../../src/prover/smt/solver/lp/nla-core";
+import { NraSolver } from "../../src/prover/smt/solver/lp/nra-solver";
+import { AlgebraicManager, Anum } from "../../src/prover/smt/solver/nlsat/algebraic";
+import { AtomTable, ScopedLiterals } from "../../src/prover/smt/solver/nlsat/atoms";
+import { Evaluator } from "../../src/prover/smt/solver/nlsat/evaluator";
+import { Explain } from "../../src/prover/smt/solver/nlsat/explain";
+import type { IntervalSet } from "../../src/prover/smt/solver/nlsat/interval-set";
+import { getSingleCell } from "../../src/prover/smt/solver/nlsat/levelwise";
+import { Mpbq } from "../../src/prover/smt/solver/nlsat/mpbq";
 import {
   type Atom,
   type IneqAtom,
   type IneqKind,
   isIneqAtom,
   type RootKind,
-} from "../../src/prove/smt/solver/nlsat/types";
-import { NlsatSolver } from "../../src/prove/smt/solver/nlsat/solver";
-import { UpolynomialManager } from "../../src/prove/smt/solver/nlsat/upolynomial";
+} from "../../src/prover/smt/solver/nlsat/types";
+import { NlsatSolver } from "../../src/prover/smt/solver/nlsat/solver";
+import { UpolynomialManager } from "../../src/prover/smt/solver/nlsat/upolynomial";
 import {
   DEFAULT_FACTOR_PARAMS,
   factorUpolynomial,
-} from "../../src/prove/smt/solver/nlsat/upolynomial-factorization";
-import { Rational } from "../../src/prove/smt/solver/rational";
-import { ResourceLimit } from "../../src/prove/smt/solver/rlimit";
+} from "../../src/prover/smt/solver/nlsat/upolynomial-factorization";
+import { Rational } from "../../src/prover/smt/solver/rational";
+import { ResourceLimit } from "../../src/prover/smt/solver/rlimit";
 import {
   type Polynomial,
   PolynomialCache,
   PolynomialManager,
-} from "../../src/prove/smt/solver/nlsat/polynomial";
+} from "../../src/prover/smt/solver/nlsat/polynomial";
 
 const FIXTURES = join(__dirname, "../fixtures/nlsat");
 
