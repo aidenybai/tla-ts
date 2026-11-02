@@ -22,7 +22,7 @@ interface PendingDecision {
   reject: (error: unknown) => void;
 }
 
-interface DecidePool {
+export interface DecidePool {
   decide: (
     prover: string,
     text: string,

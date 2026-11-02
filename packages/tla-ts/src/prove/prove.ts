@@ -6,7 +6,7 @@ import { getObligations, type PrintedObligation } from "../obligations";
 import { formatObligation } from "../obligations/printer";
 import { isWorkerSupported } from "../worker";
 import { decide } from "./deciders";
-import { createDecidePool } from "./decide-pool";
+import { createDecidePool, type DecidePool } from "./decide-pool";
 import { encodeIsabelle, encodeIsabelleTheory } from "./isabelle/encode";
 import { processObligation } from "./prep/action";
 import { expandDefs } from "./prep/defs";
@@ -22,7 +22,7 @@ import type { EncodingSession } from "./smt/rewrite";
 import { encodeZenon } from "./zenon/encode";
 import type { TlapmResult } from "./tlapm/tlapm";
 import { TLAPS_MODULE } from "./tlaps-module";
-import type { DecideOptions, Decision, Verdict } from "./verdict";
+import type { Verdict } from "./verdict";
 
 interface ObligationBase {
   id: number;
@@ -100,12 +100,7 @@ interface ProveRun {
   isFingerprinted: (obligation: PrintedObligation) => boolean;
   isProving: boolean;
   lastByFingerprint: Map<string, Promise<void>>;
-  decide: (
-    prover: string,
-    text: string,
-    options: DecideOptions,
-    priority: number,
-  ) => Promise<Decision>;
+  decide: DecidePool["decide"];
 }
 
 interface Backend {
@@ -138,8 +133,8 @@ const BACKENDS: Record<string, Backend> = {
   ls4: { encode: (_id, sequent) => encodePtl(sequent) },
 };
 
-// Whether an expression has a CASE with no OTHER. The frontends and Prep.flatten add none, so the
-// SMT encoder standardizes one only in an obligation that has one after Prep.normalize_expand.
+// The frontends and Prep.flatten add no CASE without OTHER, so the SMT encoder standardizes one
+// only in an obligation that has one after Prep.normalize_expand.
 const hasIncompleteCase = (expression: Expr): boolean =>
   (expression.kind === "Case" && expression.other === undefined) ||
   getChildren(expression).some(hasIncompleteCase);
