@@ -407,15 +407,10 @@ const printLemma = (sequent: Sequent) => {
 };
 
 // thy_temp: the theory tlapm writes for Isabelle to prove obligation id.
-export const encodeIsabelle = (
-  id: number,
-  sequent: Sequent,
-  tactic: string,
-  theoryName: string,
-): string => {
+export const encodeIsabelle = (id: number, sequent: Sequent, tactic: string): string => {
   const lemma = printLemma(sequent);
   return [
-    ...getTheoryHeader(theoryName, false),
+    ...getTheoryHeader(`tlapm_${id}`, false),
     `lemma ob'${id}:`,
     `${lemma.text}(is "PROP ?ob'${id}")`,
     "proof -",

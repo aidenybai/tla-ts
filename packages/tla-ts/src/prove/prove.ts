@@ -126,7 +126,7 @@ const BACKENDS: Record<string, Backend> = {
   // tlapm names the theory after its temporary file, and tla-ts after the obligation.
   isabelle: {
     encode: (id, sequent, method) =>
-      encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto", `tlapm_${id}`),
+      encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto"),
   },
   // Pltl.process_obligation is LS4's frontend.
   ls4: { encode: (_id, sequent) => encodePtl(sequent) },
