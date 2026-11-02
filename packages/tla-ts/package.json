@@ -1,6 +1,6 @@
 {
   "name": "tla-ts",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "A TLA+ interpreter and model checker in TypeScript, 2× faster than TLC",
   "keywords": [
     "formal verification",

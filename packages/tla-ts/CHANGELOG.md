@@ -1,5 +1,11 @@
 # tla-ts
 
+## 0.0.6
+
+### Patch Changes
+
+- Fix `prove` never returning under Node on `\A n \in Nat : n + n = 3 * n BY SMT`. Factoring a polynomial with a large discriminant no longer loops, so the SMT solver answers unknown at its time limit (#334). Fix `prove` under Bun, which spent most of its time reading heap statistics. A module that took 45.4 s and failed a proof now proves in 241 ms (#335).
+
 ## 0.0.5
 
 ### Patch Changes
