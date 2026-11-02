@@ -60,6 +60,11 @@ export class EnodeStore {
   thVar = new Int32Array(1024);
   // The scope level at which each node was made.
   iscopeLevel = new Int32Array(1024);
+  // The approximate label sets of each class, 64 bits each in two words, four words a node from
+  // 4 * id: the labels' low and high words, then the parent labels'.
+  labels = new Int32Array(4 * 1024);
+  // The hash of each node's label, or -1 before the matcher sets it.
+  lblHash = new Int32Array(1024);
 
   // The id of a new node, which goes on the stack, with columns of room for it.
   allocate(node: Enode) {
@@ -74,12 +79,16 @@ export class EnodeStore {
       this.generation = growColumn(this.generation);
       this.thVar = growColumn(this.thVar);
       this.iscopeLevel = growColumn(this.iscopeLevel);
+      this.labels = growColumn(this.labels);
+      this.lblHash = growColumn(this.lblHash);
     }
     this.root[id] = id;
     this.next[id] = id;
     this.classSize[id] = 1;
     this.cg[id] = id;
     this.thVar[id] = -1;
+    this.labels.fill(0, 4 * id, 4 * id + 4);
+    this.lblHash[id] = -1;
     return id;
   }
 }
@@ -97,12 +106,6 @@ export class Enode {
   // two are equal.
   transTarget: Enode | null = null;
   transJustification: EqJustification = AXIOM_EQ_JUSTIFICATION;
-  // The approximate label sets of the class, 64 bits in two words: the low 32 bits, then the high.
-  lbls = 0;
-  lblsHigh = 0;
-  plbls = 0;
-  plblsHigh = 0;
-  lblHash = -1;
   // m_args: the first two arguments inline, like Z3's arguments after the node, and the rest in an
   // array. A missing argument is the node itself.
   private readonly arg0: Enode;
@@ -185,6 +188,46 @@ export class Enode {
 
   set thVar(value: number) {
     this.store.thVar[this.id] = value;
+  }
+
+  get lbls() {
+    return this.store.labels[4 * this.id];
+  }
+
+  set lbls(value: number) {
+    this.store.labels[4 * this.id] = value;
+  }
+
+  get lblsHigh() {
+    return this.store.labels[4 * this.id + 1];
+  }
+
+  set lblsHigh(value: number) {
+    this.store.labels[4 * this.id + 1] = value;
+  }
+
+  get plbls() {
+    return this.store.labels[4 * this.id + 2];
+  }
+
+  set plbls(value: number) {
+    this.store.labels[4 * this.id + 2] = value;
+  }
+
+  get plblsHigh() {
+    return this.store.labels[4 * this.id + 3];
+  }
+
+  set plblsHigh(value: number) {
+    this.store.labels[4 * this.id + 3] = value;
+  }
+
+  get lblHash() {
+    return this.store.lblHash[this.id];
+  }
+
+  set lblHash(value: number) {
+    this.store.lblHash[this.id] = value;
   }
 
   get iscopeLevel() {
