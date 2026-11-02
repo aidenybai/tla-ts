@@ -283,8 +283,8 @@ export abstract class Internalizer {
         this.setBoolVarFlag(this.popTrailInt(), BV_TRUE_FIRST, false);
         return;
       case UNDO_CGC_GENERATIONS: {
-        const second = this.popTrailNode();
-        const first = this.popTrailNode();
+        const second = this.popTrailInt();
+        const first = this.popTrailInt();
         const secondGeneration = this.popTrailInt();
         this.undoMergeCgcGenerations(first, this.popTrailInt(), second, secondGeneration);
         return;
@@ -436,14 +436,14 @@ export abstract class Internalizer {
     return found === -1 ? node : found;
   }
 
-  private setGeneration(node: Enode, generation: number) {
-    if (!node.isEq) this.enodeStore.generation[this.getCgRoot(node.id)] = generation;
+  private setGeneration(node: number, generation: number) {
+    if (!this.enodeStore.isEq(node)) this.enodeStore.generation[this.getCgRoot(node)] = generation;
   }
 
   private undoMergeCgcGenerations(
-    first: Enode,
+    first: number,
     firstGeneration: number,
-    second: Enode,
+    second: number,
     secondGeneration: number,
   ) {
     this.setGeneration(first, firstGeneration);
@@ -452,35 +452,38 @@ export abstract class Internalizer {
     // updates of the two nodes' declarations can be congruent to them, and a node with an update
     // uses the congruence table, so it has arguments and is no equality.
     this.applyStickyUpdates(first, firstGeneration, second, secondGeneration);
-    if (second.decl !== first.decl) this.applyStickyUpdates(second, secondGeneration, null, 0);
+    if (this.enodeStore.decl[second] !== this.enodeStore.decl[first])
+      this.applyStickyUpdates(second, secondGeneration, -1, 0);
   }
 
+  // second is -1 for none.
   private applyStickyUpdates(
-    first: Enode,
+    first: number,
     firstGeneration: number,
-    second: Enode | null,
+    second: number,
     secondGeneration: number,
   ) {
-    const group = this.stickyGenerations.getGroup(first.decl);
+    const store = this.enodeStore;
+    const group = this.stickyGenerations.getGroup(store.decl[first]);
     if (group === undefined) return;
-    const firstRoot = first.getArg(0).root;
-    const secondRoot = second !== null && second.decl === first.decl ? second.getArg(0).root : null;
+    const root = store.root;
+    const firstRoot = root[store.getArg(first, 0)];
+    const secondRoot =
+      second !== -1 && store.decl[second] === store.decl[first]
+        ? root[store.getArg(second, 0)]
+        : -1;
     for (let index = 0; index < group.nodes.length; index++) {
       const node = group.nodes[index];
-      if (node === null) continue;
+      if (node === -1) continue;
       const generation = group.generations[index];
-      const root = node.getArg(0).root;
-      if (
-        generation < firstGeneration &&
-        root === firstRoot &&
-        isCongruent(this.enodeStore, node.id, first.id)
-      )
+      const nodeRoot = root[store.getArg(node, 0)];
+      if (generation < firstGeneration && nodeRoot === firstRoot && isCongruent(store, node, first))
         this.setGeneration(first, generation);
       else if (
-        second !== null &&
+        second !== -1 &&
         generation < secondGeneration &&
-        root === secondRoot &&
-        isCongruent(this.enodeStore, node.id, second.id)
+        nodeRoot === secondRoot &&
+        isCongruent(store, node, second)
       )
         this.setGeneration(second, generation);
     }
@@ -632,7 +635,7 @@ export abstract class Internalizer {
         const congruent = this.enodeStore.nodes[this.cgTable.insert(node.id)];
         if (congruent !== node) {
           node.cg = congruent;
-          if (!isEq) this.mergeCgcGenerations(node, generation, congruent);
+          if (!isEq) this.mergeCgcGenerations(node.id, generation, congruent.id);
           this.pushEq(
             node,
             congruent,
@@ -661,16 +664,16 @@ export abstract class Internalizer {
     if (node.numArgs > 0 && !node.isEq) this.enodeStore.declCount[node.decl]--;
     for (let index = 0; index < node.numArgs; index++) node.getArg(index).root.popParent();
     this.manager.decRef(node.owner);
-    this.stickyGenerations.delete(node);
+    this.stickyGenerations.delete(node.id, node.decl);
     // The node leaves the stack last, since its data are found through its place there.
     this.enodeStore.pop();
   }
 
-  protected mergeCgcGenerations(first: Enode, firstGeneration: number, second: Enode) {
-    this.trailInts.push(firstGeneration, second.generation);
-    this.trailNodes.push(first, second);
+  protected mergeCgcGenerations(first: number, firstGeneration: number, second: number) {
+    const generations = this.enodeStore.generation;
+    this.trailInts.push(firstGeneration, generations[second], first, second);
     this.trailKinds.push(UNDO_CGC_GENERATIONS);
-    if (firstGeneration < second.generation) second.generation = firstGeneration;
+    if (firstGeneration < generations[second]) generations[second] = firstGeneration;
   }
 
   private setMergeTf(node: Enode, boolVar: BoolVar, isNewVar: boolean) {
@@ -701,8 +704,8 @@ export abstract class Internalizer {
   private updateGeneration(node: Enode) {
     if (node.isEq) return;
     if (this.generation > 0 && this.generation < this.getGeneration(node.id)) {
-      this.setGeneration(node, this.generation);
-      if (node.usesCgTable()) this.stickyGenerations.set(node, this.generation);
+      this.setGeneration(node.id, this.generation);
+      if (node.usesCgTable()) this.stickyGenerations.set(node.id, node.decl, this.generation);
     }
   }
 

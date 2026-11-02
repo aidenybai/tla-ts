@@ -4,66 +4,68 @@
 // Each group keeps its updates in the order of insertion, as a Map does, in arrays that iterate
 // without allocating. A deleted update leaves a hole until holes are half of its group.
 import { shrink } from "./array";
-import type { Enode } from "./enode";
 
+// A group's updates, where a deleted node is -1.
 interface Group {
-  nodes: (Enode | null)[];
+  nodes: number[];
   generations: number[];
-  indices: Map<Enode, number>;
   numHoles: number;
 }
 
+// Nodes are ids, and indices holds each node's place in its group, or -1.
 export class StickyGenerations {
-  private groups = new Map<number, Group>();
+  private groups: (Group | undefined)[] = [];
+  private indices = new Int32Array(1024).fill(-1);
 
-  set(node: Enode, generation: number) {
-    const group = this.groups.get(node.decl);
+  set(node: number, decl: number, generation: number) {
+    if (node >= this.indices.length) {
+      const grown = new Int32Array(Math.max(2 * this.indices.length, node + 1)).fill(-1);
+      grown.set(this.indices);
+      this.indices = grown;
+    }
+    const group = this.groups[decl];
     if (group === undefined) {
-      this.groups.set(node.decl, {
-        nodes: [node],
-        generations: [generation],
-        indices: new Map([[node, 0]]),
-        numHoles: 0,
-      });
+      this.groups[decl] = { nodes: [node], generations: [generation], numHoles: 0 };
+      this.indices[node] = 0;
       return;
     }
-    const index = group.indices.get(node);
-    if (index !== undefined) {
+    const index = this.indices[node];
+    if (index !== -1) {
       group.generations[index] = generation;
       return;
     }
-    group.indices.set(node, group.nodes.length);
+    this.indices[node] = group.nodes.length;
     group.nodes.push(node);
     group.generations.push(generation);
   }
 
-  delete(node: Enode) {
-    const group = this.groups.get(node.decl);
-    const index = group?.indices.get(node);
-    if (group === undefined || index === undefined) return;
-    group.indices.delete(node);
-    group.nodes[index] = null;
+  delete(node: number, decl: number) {
+    const group = this.groups[decl];
+    const index = node < this.indices.length ? this.indices[node] : -1;
+    if (group === undefined || index === -1) return;
+    this.indices[node] = -1;
+    group.nodes[index] = -1;
     group.numHoles++;
-    if (2 * group.numHoles > group.nodes.length) compact(group);
+    if (2 * group.numHoles > group.nodes.length) this.compact(group);
   }
 
-  // The updates of the declaration in the order of insertion, where a deleted one is null.
+  // The updates of the declaration in the order of insertion.
   getGroup(decl: number): Readonly<Pick<Group, "nodes" | "generations">> | undefined {
-    return this.groups.get(decl);
+    return this.groups[decl];
+  }
+
+  private compact(group: Group) {
+    let size = 0;
+    for (let index = 0; index < group.nodes.length; index++) {
+      const node = group.nodes[index];
+      if (node === -1) continue;
+      group.nodes[size] = node;
+      group.generations[size] = group.generations[index];
+      this.indices[node] = size;
+      size++;
+    }
+    shrink(group.nodes, size);
+    shrink(group.generations, size);
+    group.numHoles = 0;
   }
 }
-
-const compact = (group: Group) => {
-  let size = 0;
-  for (let index = 0; index < group.nodes.length; index++) {
-    const node = group.nodes[index];
-    if (node === null) continue;
-    group.nodes[size] = node;
-    group.generations[size] = group.generations[index];
-    group.indices.set(node, size);
-    size++;
-  }
-  shrink(group.nodes, size);
-  shrink(group.generations, size);
-  group.numHoles = 0;
-};

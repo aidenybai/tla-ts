@@ -571,17 +571,15 @@ export class Context extends Internalizer {
         continue;
       }
       store.cg[parent] = congruent;
-      const parentNode = store.nodes[parent];
-      const congruentNode = store.nodes[congruent];
       this.mergeCgcGenerations(
-        parentNode,
+        parent,
         store.isEq(parent) ? 0 : store.generation[parent],
-        congruentNode,
+        congruent,
       );
       if (store.root[congruent] !== store.root[parent])
         this.pushEq(
-          parentNode,
-          congruentNode,
+          store.nodes[parent],
+          store.nodes[congruent],
           getCongruenceJustification(store, parent, congruent),
         );
     }
