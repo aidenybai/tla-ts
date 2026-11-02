@@ -35,7 +35,6 @@ import {
   expandFcn,
   expandQuant,
   expandSetOf,
-  expandSetSt,
   getUnbounded,
   type TuplyBound,
 } from "./tuples";
@@ -516,8 +515,8 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         if (expression.pattern.kind === "Tuple") {
           return expandTuples(
             expandChoose(
+              { kind: "Choose", domain: expression.set && recurse(expression.set) },
               expression.pattern.names,
-              expression.set && recurse(expression.set),
               recurse(expression.body),
             ),
             location,
@@ -537,9 +536,9 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
       case "SetFilter":
         if (expression.bound.pattern.kind === "Tuple") {
           return expandTuples(
-            expandSetSt(
+            expandChoose(
+              { kind: "SetSt", domain: recurse(expression.bound.set) },
               expression.bound.pattern.names,
-              recurse(expression.bound.set),
               recurse(expression.predicate),
             ),
             location,

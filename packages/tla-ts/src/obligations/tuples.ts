@@ -103,34 +103,29 @@ export const expandQuant = (
 };
 
 // CHOOSE <<x, y>> \in A \X B: P binds t \in A \X B with x == t[1], y == t[2], and any other
-// domain binds t with \E x, y: t = <<x, y>> /\ P.
-const getChooseBody = (
-  name: string,
+// domain binds t with \E x, y: t = <<x, y>> /\ P. {<<x, y>> \in S: P} binds t the same way.
+export const expandChoose = (
+  binder: { kind: "Choose"; domain: Expr | undefined } | { kind: "SetSt"; domain: Expr },
   names: string[],
-  domain: Expr | undefined,
   body: Expr,
-): Expr =>
-  getFactors(domain, names)
-    ? { kind: "Let", definitions: getItemDefinitions(name, names), body }
-    : {
-        kind: "Quant",
-        quantifier: "Exists",
-        bounds: getUnbounded(names),
-        body: {
-          kind: "List",
-          bullet: "And",
-          items: [getEquality(getOpaque(name), getNamesTuple(names)), body],
+): Expr => {
+  const name = `${binder.kind.toLowerCase()}#${names[0]}`;
+  return {
+    ...binder,
+    name,
+    body: getFactors(binder.domain, names)
+      ? { kind: "Let", definitions: getItemDefinitions(name, names), body }
+      : {
+          kind: "Quant",
+          quantifier: "Exists",
+          bounds: getUnbounded(names),
+          body: {
+            kind: "List",
+            bullet: "And",
+            items: [getEquality(getOpaque(name), getNamesTuple(names)), body],
+          },
         },
-      };
-
-export const expandChoose = (names: string[], domain: Expr | undefined, body: Expr): Expr => {
-  const name = `choose#${names[0]}`;
-  return { kind: "Choose", name, domain, body: getChooseBody(name, names, domain, body) };
-};
-
-export const expandSetSt = (names: string[], domain: Expr, body: Expr): Expr => {
-  const name = `setst#${names[0]}`;
-  return { kind: "SetSt", name, domain, body: getChooseBody(name, names, domain, body) };
+  };
 };
 
 // A set or function constructor binds each tuple as fcn#x, with its names defined in a LET around
@@ -157,8 +152,8 @@ const expandConstructorBounds = (bounds: TuplyBound[], value: Expr, isSetOf: boo
           kind: "Operator",
           name: choice,
           body: expandChoose(
+            { kind: "Choose", domain: undefined },
             bound.names,
-            undefined,
             getEquality(getOpaque(name), getNamesTuple(bound.names)),
           ),
         },
