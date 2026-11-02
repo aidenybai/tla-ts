@@ -341,7 +341,6 @@ export const getScopeAt = (scope: Scope | undefined, depth: number) => {
   return current;
 };
 
-// Maps the items in order, threading a state from each item to the next.
 export const mapAccumulate = <State, Item, Result>(
   state: State,
   items: Item[],
@@ -546,6 +545,8 @@ export const substituteExpr = (substitution: Substitution, expression: Expr): Ex
     case "Sequent":
       return { ...expression, sequent: substituteSequent(substitution, expression.sequent) };
     case "With":
+    case "Dot":
+    case "Parens":
       return { ...expression, expression: recurse(expression.expression) };
     case "If":
       return {
@@ -556,7 +557,8 @@ export const substituteExpr = (substitution: Substitution, expression: Expr): Ex
       };
     case "List":
       return { ...expression, items: substituteExprs(substitution, expression.items) };
-    case "Quant": {
+    case "Quant":
+    case "Fcn": {
       const [inner, bounds] = substituteBounds(substitution, expression.bounds);
       return { ...expression, bounds, body: substituteExpr(inner, expression.body) };
     }
@@ -582,6 +584,7 @@ export const substituteExpr = (substitution: Substitution, expression: Expr): Ex
       return { ...expression, bounds, element: substituteExpr(inner, expression.element) };
     }
     case "SetEnum":
+    case "Tuple":
       return { ...expression, elements: substituteExprs(substitution, expression.elements) };
     case "Arrow":
       return {
@@ -589,10 +592,6 @@ export const substituteExpr = (substitution: Substitution, expression: Expr): Ex
         domain: recurse(expression.domain),
         range: recurse(expression.range),
       };
-    case "Fcn": {
-      const [inner, bounds] = substituteBounds(substitution, expression.bounds);
-      return { ...expression, bounds, body: substituteExpr(inner, expression.body) };
-    }
     case "FcnApp":
       return {
         ...expression,
@@ -601,8 +600,6 @@ export const substituteExpr = (substitution: Substitution, expression: Expr): Ex
       };
     case "Product":
       return { ...expression, factors: substituteExprs(substitution, expression.factors) };
-    case "Tuple":
-      return { ...expression, elements: substituteExprs(substitution, expression.elements) };
     case "Rect":
     case "Record":
       return {
@@ -618,20 +615,13 @@ export const substituteExpr = (substitution: Substitution, expression: Expr): Ex
         function: recurse(expression.function),
         specs: mapExceptSpecs(expression.specs, recurse),
       };
-    case "Dot":
-      return { ...expression, expression: recurse(expression.expression) };
     case "Sub":
     case "Tsub":
-      return {
-        ...expression,
-        action: recurse(expression.action),
-        subscript: recurse(expression.subscript),
-      };
     case "Fair":
       return {
         ...expression,
-        subscript: recurse(expression.subscript),
         action: recurse(expression.action),
+        subscript: recurse(expression.subscript),
       };
     case "Case":
       return {
@@ -642,8 +632,6 @@ export const substituteExpr = (substitution: Substitution, expression: Expr): Ex
         })),
         other: expression.other && recurse(expression.other),
       };
-    case "Parens":
-      return { ...expression, expression: recurse(expression.expression) };
   }
 };
 
@@ -655,6 +643,9 @@ const isEqualList = <Item>(
   right: Item[],
   isEqual: (left: Item, right: Item) => boolean,
 ) => left.length === right.length && left.every((item, index) => isEqual(item, right[index]));
+
+const isEqualOptional = (left: Expr | undefined, right: Expr | undefined) =>
+  left && right ? isEqualExpr(left, right) : !left && !right;
 
 const isEqualFields = (left: Field[], right: Field[]) => {
   const leftMap = new Map(left.map((field) => [field.name, field.value]));
@@ -693,9 +684,7 @@ const isEqualSelector = (left: Selector, right: Selector) => {
 };
 
 const isEqualDefn = (left: Defn, right: Defn): boolean => {
-  if (left.kind === "Operator" && right.kind === "Operator")
-    return isEqualExpr(left.body, right.body);
-  if (left.kind === "Bpragma" && right.kind === "Bpragma")
+  if ((left.kind === "Operator" || left.kind === "Bpragma") && right.kind === left.kind)
     return isEqualExpr(left.body, right.body);
   if (left.kind === "Instance" && right.kind === "Instance") {
     const leftSubstitutions = left.instance.substitutions.map((entry): Field => ({
@@ -721,9 +710,11 @@ const isEqualDefn = (left: Defn, right: Defn): boolean => {
 
 export const isEqualHyp = (left: Hyp, right: Hyp): boolean => {
   if (left.kind === "Fresh" && right.kind === "Fresh") {
-    if (left.level !== right.level || left.shape !== right.shape) return false;
-    if (!left.domain || !right.domain) return !left.domain && !right.domain;
-    return isEqualExpr(left.domain, right.domain);
+    return (
+      left.level === right.level &&
+      left.shape === right.shape &&
+      isEqualOptional(left.domain, right.domain)
+    );
   }
   if (left.kind === "Flex" && right.kind === "Flex") return true;
   if (left.kind === "Defn" && right.kind === "Defn") {
@@ -805,11 +796,11 @@ export const isEqualExpr = (left: Expr, right: Expr): boolean => {
         isEqualExpr(left.body, right.body)
       );
     case "Choose":
-      if (right.kind !== "Choose") return false;
-      if (left.domain && right.domain) {
-        return isEqualExpr(left.domain, right.domain) && isEqualExpr(left.body, right.body);
-      }
-      return !left.domain && !right.domain && isEqualExpr(left.body, right.body);
+      return (
+        right.kind === "Choose" &&
+        isEqualOptional(left.domain, right.domain) &&
+        isEqualExpr(left.body, right.body)
+      );
     case "SetSt":
       return (
         right.kind === "SetSt" &&
@@ -823,7 +814,8 @@ export const isEqualExpr = (left: Expr, right: Expr): boolean => {
         isEqualList(left.bounds, right.bounds, isEqualBound)
       );
     case "SetEnum":
-      return right.kind === "SetEnum" && isEqualList(left.elements, right.elements, isEqualExpr);
+    case "Tuple":
+      return right.kind === left.kind && isEqualList(left.elements, right.elements, isEqualExpr);
     case "Arrow":
       return (
         right.kind === "Arrow" &&
@@ -841,14 +833,11 @@ export const isEqualExpr = (left: Expr, right: Expr): boolean => {
         right.kind === "FcnApp" &&
         isEqualList([left.function, ...left.args], [right.function, ...right.args], isEqualExpr)
       );
-    case "Tuple":
-      return right.kind === "Tuple" && isEqualList(left.elements, right.elements, isEqualExpr);
     case "Product":
       return right.kind === "Product" && isEqualList(left.factors, right.factors, isEqualExpr);
     case "Rect":
-      return right.kind === "Rect" && isEqualFields(left.fields, right.fields);
     case "Record":
-      return right.kind === "Record" && isEqualFields(left.fields, right.fields);
+      return right.kind === left.kind && isEqualFields(left.fields, right.fields);
     case "Except":
       return (
         right.kind === "Except" &&
@@ -893,9 +882,7 @@ export const isEqualExpr = (left: Expr, right: Expr): boolean => {
           ? left.arms.length === right.arms.length
           : isEqualExpr(left.arms[0].condition, right.arms[0].condition) &&
             isEqualExpr(left.arms[0].body, right.arms[0].body);
-      if (!isArmsEqual) return false;
-      if (left.other && right.other) return isEqualExpr(left.other, right.other);
-      return !left.other && !right.other;
+      return isArmsEqual && isEqualOptional(left.other, right.other);
     }
     case "String":
       return right.kind === "String" && left.value === right.value;

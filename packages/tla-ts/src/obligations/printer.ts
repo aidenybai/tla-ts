@@ -478,8 +478,9 @@ const createPrinter = (hyps: Hyp[] = []) => {
           ),
         );
       case "List": {
-        if (expression.bullet === "Refs" && expression.items.length === 0)
+        if (expression.bullet === "Refs" && expression.items.length === 0) {
           return atom(format("TRUE"));
+        }
         if (expression.bullet === "Refs" && expression.items.length === 1) {
           return formatExpr(expression.items[0]);
         }
@@ -603,23 +604,17 @@ const createPrinter = (hyps: Hyp[] = []) => {
       case "Tuple":
         return atom(format("@[<b2><<%a>>@]", formatDelimited(expression.elements, printExpr)));
       case "Rect":
+      case "Record": {
+        const separator = expression.kind === "Rect" ? ":" : "|->";
         return atom(
           format(
             "@[<b1>[%a]@]",
             formatDelimited(expression.fields, (field) =>
-              format("@[<h>%s : %a@]", field.name, printExpr(field.value)),
+              format(`@[<h>%s ${separator} %a@]`, field.name, printExpr(field.value)),
             ),
           ),
         );
-      case "Record":
-        return atom(
-          format(
-            "@[<b1>[%a]@]",
-            formatDelimited(expression.fields, (field) =>
-              format("@[<h>%s |-> %a@]", field.name, printExpr(field.value)),
-            ),
-          ),
-        );
+      }
       case "Except":
         return atom(
           format(
@@ -718,12 +713,13 @@ const createPrinter = (hyps: Hyp[] = []) => {
           return atom(format(pattern, form.label, printMinimal(inner)));
         }
         const namesDoc = formatDelimited(names, text);
-        if (inner.kind === "Atm")
-          return atom(format("%s(%a)::%a", form.label, namesDoc, printMinimal(inner)));
-        if (inner.kind === "Big") {
-          return atom(format("%s(%a)::(%a)", form.label, namesDoc, printMinimal(inner)));
-        }
-        return atom(format("(%s(%a):: %a)", form.label, namesDoc, printMinimal(inner)));
+        const pattern =
+          inner.kind === "Atm"
+            ? "%s(%a)::%a"
+            : inner.kind === "Big"
+              ? "%s(%a)::(%a)"
+              : "(%s(%a):: %a)";
+        return atom(format(pattern, form.label, namesDoc, printMinimal(inner)));
       }
     }
   };
