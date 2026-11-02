@@ -73,7 +73,12 @@ export class ResourceLimit {
 // the obligation as failed. The solver shares its caller's process instead, which running out of
 // heap would end, so it stops before the heap fills, like Z3's max_memory in memory::allocate. The
 // heap statistics come from node:v8. In V8, which Node and Deno use, the used and the available
-// size add up to the heap limit. Bun reports the memory of the machine and no full collections.
+// size add up to the heap limit. Bun reports the memory of the machine and no full collections,
+// and its getHeapStatistics walks every live object, which made a proof 100 times slower, so the
+// check is off there.
 const HEAP_FRACTION = 0.8;
 const CLOCK_CHECK_MASK = 255;
-const v8 = typeof process === "undefined" ? undefined : process.getBuiltinModule?.("node:v8");
+const v8 =
+  typeof process === "undefined" || process.versions.bun !== undefined
+    ? undefined
+    : process.getBuiltinModule?.("node:v8");
