@@ -1334,16 +1334,16 @@ export const parsePcalAlgorithm = (
   // lets the translation omit pc.
   const checkBody = (body: PcalStmt[]) => {
     if (body.length === 0) return;
-    const clear = () => {
+    const keepPC = () => {
       state.omitPC = false;
     };
     const labeled = body[0];
-    if (body.length > 1 || labeled.kind !== "LabeledStmt") return clear();
+    if (body.length > 1 || labeled.kind !== "LabeledStmt") return keepPC();
     if (labeled.stmts.length === 0) return;
     const whileStmt = labeled.stmts[0];
-    if (labeled.stmts.length > 1 || whileStmt.kind !== "While") return clear();
+    if (labeled.stmts.length > 1 || whileStmt.kind !== "While") return keepPC();
     if (!isOneTokenPcalExpr(whileStmt.test) || whileStmt.test.tokens[0][0].string !== "TRUE") {
-      return clear();
+      return keepPC();
     }
     if (whileStmt.labDo.length > 0) state.omitPC = false;
     const hasLabeled = whileStmt.unlabDo.some((stmt) =>
