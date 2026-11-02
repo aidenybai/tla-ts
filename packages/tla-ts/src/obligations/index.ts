@@ -33,7 +33,7 @@ import { tokenize } from "../lexer";
 import { parseTlapmModule } from "../parser";
 import type { Module } from "../ast";
 
-export interface ObligationSource {
+interface ObligationSource {
   file: string;
   source: string;
 }

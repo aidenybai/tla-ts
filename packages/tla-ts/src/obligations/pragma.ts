@@ -1,7 +1,7 @@
 // tlapm's method pragmas: the new (*{ by (prover:"zenon"; timeout:@) }*) after a definition, which
 // E_parser.read_new_method reads into a Bpragma, and the old (*{ by (zenon) }*) of Method_prs.
 
-export type PragmaValue =
+type PragmaValue =
   | { kind: "Default" }
   | { kind: "String"; value: string }
   | { kind: "Float"; value: number };

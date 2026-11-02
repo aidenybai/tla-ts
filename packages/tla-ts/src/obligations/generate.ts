@@ -187,7 +187,7 @@ const getFactTime = (context: Hyp[], fact: Expr, time: Time): Time => {
     : "Always";
 };
 
-export const setDefinition = (visibility: Visibility, context: Hyp[], def: UseDef): Hyp[] => {
+const setDefinition = (visibility: Visibility, context: Hyp[], def: UseDef): Hyp[] => {
   if (def.kind !== "Dx") throw new TlaProofError(`Unknown definition ${def.name}`);
   const index = context.length - def.index;
   const hyp = context[index];
@@ -204,7 +204,7 @@ const isDomainMatch = (fact: Expr, domain: Expr) =>
   fact.args[0].index === 0 &&
   isEqualExpr(domain, fact.args[1]);
 
-export const setExpression = (
+const setExpression = (
   onWarning: (warning: ObligationWarning) => void,
   visibility: Visibility,
   fact: Expr,
