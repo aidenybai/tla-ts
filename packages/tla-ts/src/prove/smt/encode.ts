@@ -2,13 +2,7 @@
 // backend/smtlib.ml): TLA+ values share one sort Idv, set membership is the predicate TLA__Mem,
 // and each symbol the obligation uses brings the symbols and axioms encode/n_data.ml lists for it.
 
-import {
-  adjoin,
-  type Expr,
-  type Hyp,
-  type Scope,
-  type Sequent,
-} from "../../obligations/expression";
+import type { Expr, Hyp, Sequent } from "../../obligations/expression";
 import { compareStrings } from "../ocaml";
 import { collectSymbols } from "./axiomatize";
 import { createPrinter } from "./context";
@@ -32,13 +26,17 @@ const isSecondOrder = (expression: Expr) =>
   expression.kind === "Sequent" &&
   expression.sequent.context.some((hyp) => hyp.kind === "Fresh" && hyp.shape > 0);
 
+interface EncodedContext {
+  env: Env | undefined;
+  entries: Entry[];
+}
+
 // Declares each hypothesis's names and asserts its facts, in order, as Smtlib.pp_print_obligation.
 const encodeContext = (context: Hyp[], encoder: Encoder) =>
-  context.reduce<{ env: Env | undefined; scope: Scope | undefined; entries: Entry[] }>(
+  context.reduce<EncodedContext>(
     (state, hyp) => {
       const next = (binding: Binding, entries: Entry[] = []) => ({
         env: encoder.push(state.env, binding),
-        scope: adjoin(state.scope, hyp),
         entries: [...state.entries, ...entries],
       });
       switch (hyp.kind) {
@@ -106,7 +104,7 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
         }
       }
     },
-    { env: undefined, scope: undefined, entries: [] },
+    { env: undefined, entries: [] },
   );
 
 // Smtlib.pp_print_obligation: the logic, the sort, the builtin symbols by name, their axioms,
