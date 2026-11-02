@@ -1624,7 +1624,7 @@ export const collectSemanticErrors = (
   warnings: SanyError[],
 ) => {
   const errors: SanyError[] = [];
-  const add = (list: SanyError[], item: SanyError) => {
+  const addUnique = (list: SanyError[], item: SanyError) => {
     if (
       list.every(
         (existing) => existing.location !== item.location || existing.message !== item.message,
@@ -1652,8 +1652,8 @@ export const collectSemanticErrors = (
         }
         reported.push(...(error.sany?.errors ?? []));
       }
-      reported.forEach((item) => add(errors, item));
-      warned.forEach((item) => add(warnings, item));
+      reported.forEach((item) => addUnique(errors, item));
+      warned.forEach((item) => addUnique(warnings, item));
     });
   return errors;
 };

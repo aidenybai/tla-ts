@@ -1981,12 +1981,13 @@ export const generateSanySpecification = (
       });
       // Generator.checkSubstitutionForCorrectArity, which SANY locates in its builtins for the
       // nullOpArg it substitutes after an error.
-      const checkArity = (target: OpDeclNode, expr: ExprOrOpArgNode) => {
-        const arity = expr.kind === "OpArg" ? getSymbolArity(expr.op) : 0;
-        const isNullOpArg = target.arity > 0 && expr.kind === "OpAppl" && expr.isNull === true;
+      const checkArity = (target: OpDeclNode, substitute: ExprOrOpArgNode) => {
+        const arity = substitute.kind === "OpArg" ? getSymbolArity(substitute.op) : 0;
+        const isNullOpArg =
+          target.arity > 0 && substitute.kind === "OpAppl" && substitute.isNull === true;
         if (arity !== target.arity && !isNullOpArg) {
           addError(
-            expr.location,
+            substitute.location,
             `An operator must be substituted for symbol '${target.name}', and it must have arity ${target.arity}.`,
           );
         }
@@ -2008,11 +2009,11 @@ export const generateSanySpecification = (
           );
           return;
         }
-        const expr =
+        const substitute =
           target.arity === 0
             ? generateExpression(substitution.expression)
             : generateOperatorArgument(substitution.expression, target);
-        checkArity(target, expr);
+        checkArity(target, substitute);
         const existing = substs.find((subst) => subst.op.name === target.name);
         if (existing && !existing.isImplicit) {
           addError(
@@ -2020,9 +2021,9 @@ export const generateSanySpecification = (
             `Multiple substitutions for symbol '${target.name}' in substitution.`,
           );
         } else if (existing) {
-          existing.expr = expr;
+          existing.expr = substitute;
           existing.isImplicit = false;
-        } else substs.push({ op: target, expr, isImplicit: false });
+        } else substs.push({ op: target, expr: substitute, isImplicit: false });
       });
       // TLC 1.7.4's SANY checks the arity of only the substitutions that the INSTANCE writes.
       substs

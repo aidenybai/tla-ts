@@ -50,16 +50,16 @@ const addAll = <Item>(target: Set<Item>, source: Iterable<Item>) => {
   for (const item of source) target.add(item);
 };
 
-const getArgLevelKey = (op: SymbolNode, index: number, param: SymbolNode) =>
-  `${op.id}:${index}:${param.id}`;
+const getArgLevelKey = (operator: SymbolNode, index: number, param: SymbolNode) =>
+  `${operator.id}:${index}:${param.id}`;
 
 const addArgLevelParam = (
   target: Map<string, ArgLevelParam>,
-  op: SymbolNode,
+  operator: SymbolNode,
   index: number,
   param: SymbolNode,
 ) => {
-  target.set(getArgLevelKey(op, index, param), { op, index, param });
+  target.set(getArgLevelKey(operator, index, param), { op: operator, index, param });
 };
 
 const addArgLevelParams = (
@@ -172,22 +172,22 @@ const getSubstitute = (symbol: SymbolNode, substs: Subst[]) =>
 
 // Subst.paramSet and Subst.allParamSet.
 const getSubstitutedParams = (param: SymbolNode, substs: Subst[], isAll: boolean) => {
-  const expr = getSubstitute(param, substs);
-  if (expr === undefined) return new Set([param]);
-  return isAll ? expr.allParams : expr.levelParams;
+  const substitute = getSubstitute(param, substs);
+  if (substitute === undefined) return new Set([param]);
+  return isAll ? substitute.allParams : substitute.levelParams;
 };
 
 // Subst.getSubALPSet.
 const getSubstitutedArgLevelParams = (source: Map<string, ArgLevelParam>, substs: Subst[]) => {
   const result = new Map<string, ArgLevelParam>();
   source.forEach((argLevelParam, key) => {
-    const expr = getSubstitute(argLevelParam.op, substs);
-    if (expr === undefined) {
+    const substitute = getSubstitute(argLevelParam.op, substs);
+    if (substitute === undefined) {
       result.set(key, argLevelParam);
       return;
     }
-    if (expr.kind !== "OpArg" || !isParam(expr.op)) return;
-    const operator = expr.op;
+    if (substitute.kind !== "OpArg" || !isParam(substitute.op)) return;
+    const operator = substitute.op;
     getSubstitutedParams(argLevelParam.param, substs, false).forEach((param) =>
       addArgLevelParam(result, operator, argLevelParam.index, param),
     );
@@ -224,10 +224,10 @@ const getSubstitutedLevelConstraints = (
     );
   });
   body.argLevelParams.forEach((argLevelParam) => {
-    const expr = getSubstitute(argLevelParam.op, substs);
-    if (expr?.kind !== "OpArg" || expr.op.kind !== "OpDef") return;
-    checkLevel(expr.op, iteration, check);
-    const level = getMaxLevel(expr.op, argLevelParam.index);
+    const substitute = getSubstitute(argLevelParam.op, substs);
+    if (substitute?.kind !== "OpArg" || substitute.op.kind !== "OpDef") return;
+    checkLevel(substitute.op, iteration, check);
+    const level = getMaxLevel(substitute.op, argLevelParam.index);
     getSubstitutedParams(argLevelParam.param, substs, false).forEach((substituted) =>
       putLevelConstraint(result, substituted, level),
     );
@@ -244,22 +244,26 @@ const getSubstitutedArgLevelConstraints = (
 ) => {
   const result = new Map<string, ArgLevelConstraint>();
   body.argLevelConstraints.forEach((constraint) => {
-    const expr = getSubstitute(constraint.param, substs);
-    if (expr === undefined) {
+    const substitute = getSubstitute(constraint.param, substs);
+    if (substitute === undefined) {
       putArgLevelConstraint(result, constraint.param, constraint.position, constraint.level);
-    } else if (expr.kind === "OpArg" && isParam(expr.op)) {
-      putArgLevelConstraint(result, expr.op, constraint.position, constraint.level);
+    } else if (substitute.kind === "OpArg" && isParam(substitute.op)) {
+      putArgLevelConstraint(result, substitute.op, constraint.position, constraint.level);
     }
   });
   body.argLevelParams.forEach((argLevelParam) => {
-    const paramExpr = getSubstitute(argLevelParam.param, substs);
-    if (paramExpr === undefined) return;
-    const opExpr = getSubstitute(argLevelParam.op, substs);
+    const paramSubstitute = getSubstitute(argLevelParam.param, substs);
+    if (paramSubstitute === undefined) return;
+    const operatorSubstitute = getSubstitute(argLevelParam.op, substs);
     const operator =
-      opExpr === undefined ? argLevelParam.op : opExpr.kind === "OpArg" ? opExpr.op : undefined;
+      operatorSubstitute === undefined
+        ? argLevelParam.op
+        : operatorSubstitute.kind === "OpArg"
+          ? operatorSubstitute.op
+          : undefined;
     if (operator === undefined || !isParam(operator)) return;
-    checkLevel(paramExpr, iteration, check);
-    putArgLevelConstraint(result, operator, argLevelParam.index, paramExpr.level);
+    checkLevel(paramSubstitute, iteration, check);
+    putArgLevelConstraint(result, operator, argLevelParam.index, paramSubstitute.level);
   });
   return result;
 };

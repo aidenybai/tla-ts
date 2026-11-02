@@ -403,7 +403,7 @@ const parse = (source: string, mode: ParseMode): Module => {
     return token.column <= offsideColumn ? { ...token, kind: "End" as const, text: "" } : token;
   };
 
-  const describe = (token: Token) =>
+  const describeToken = (token: Token) =>
     token.kind === "End" ? "end of input" : JSON.stringify(token.text);
 
   const unitStart = { index: 0 };
@@ -503,14 +503,14 @@ const parse = (source: string, mode: ParseMode): Module => {
 
   const expect = (text: string) => {
     if (!isAt(text))
-      throw createUnexpected(`Expected ${JSON.stringify(text)} but found ${describe(peek())}`);
+      throw createUnexpected(`Expected ${JSON.stringify(text)} but found ${describeToken(peek())}`);
     return advance();
   };
 
   const expectIdentifier = () => {
     const token = peek();
     if (token.kind !== "Identifier") {
-      throw createUnexpected(`Expected an identifier but found ${describe(token)}`);
+      throw createUnexpected(`Expected an identifier but found ${describeToken(token)}`);
     }
     if (isTlapmKeyword(token)) throw createUnexpected(`Unexpected keyword ${token.text}`);
     cursor.index++;
@@ -626,7 +626,7 @@ const parse = (source: string, mode: ParseMode): Module => {
       );
     }
     if (isAt("<<") || isAt("(")) return parsePrimary();
-    throw createUnexpected(`Expected a subscript but found ${describe(token)}`);
+    throw createUnexpected(`Expected a subscript but found ${describeToken(token)}`);
   };
 
   const isDefinitionAhead = (operator: Token) => {
@@ -808,7 +808,7 @@ const parse = (source: string, mode: ParseMode): Module => {
           while (isAt(".") || isAt("[")) {
             if (accept(".")) {
               if (!isFieldName(peek()))
-                throw createUnexpected(`Expected a field name but found ${describe(peek())}`);
+                throw createUnexpected(`Expected a field name but found ${describeToken(peek())}`);
               path.push({ kind: "Field", name: advance().text });
               continue;
             }
@@ -1143,7 +1143,7 @@ const parse = (source: string, mode: ParseMode): Module => {
         };
       }
     }
-    throw createUnexpected(`Unexpected ${describe(token)}`, token);
+    throw createUnexpected(`Unexpected ${describeToken(token)}`, token);
   };
 
   // SANY rejects the operator after a prefix operator's operand unless it binds looser than the
@@ -1636,7 +1636,7 @@ const parse = (source: string, mode: ParseMode): Module => {
       const part = peek();
       const isName = part.kind === "Identifier" && !isTlapmKeyword(part);
       if (!isName && part.kind !== "Operator") {
-        throw createUnexpected(`Expected a definition name but found ${describe(part)}`, part);
+        throw createUnexpected(`Expected a definition name but found ${describeToken(part)}`, part);
       }
       cursor.index++;
       return part.text;
@@ -1700,7 +1700,7 @@ const parse = (source: string, mode: ParseMode): Module => {
     const isNew = accept("NEW");
     const level = peek().kind === "Keyword" ? NEW_SYMBOL_LEVELS.get(peek().text) : undefined;
     if (!isNew && level === undefined) {
-      throw createUnexpected(`Expected a declaration but found ${describe(peek())}`);
+      throw createUnexpected(`Expected a declaration but found ${describeToken(peek())}`);
     }
     if (level !== undefined) advance();
     if (level === "Variable") {
@@ -1823,7 +1823,7 @@ const parse = (source: string, mode: ParseMode): Module => {
   const parseStepStart = (isQed: boolean) => {
     const step = peek();
     if (step.kind !== "Step") {
-      throw createUnexpected(`Expected a step number but found ${describe(step)}`, step);
+      throw createUnexpected(`Expected a step number but found ${describeToken(step)}`, step);
     }
     if (!isCorrectLevel(step)) {
       throw createError(`${isQed ? "QED step" : "step"}'s number has bad level`, step);
@@ -2051,7 +2051,7 @@ const parse = (source: string, mode: ParseMode): Module => {
         case "HIDE": {
           // SANY's module body takes a USE only when ONLY doesn't follow it.
           if (isAt("USE") && isAt("ONLY", 1)) {
-            throw createUnexpected(`Expected a module unit but found ${describe(token)}`);
+            throw createUnexpected(`Expected a module unit but found ${describeToken(token)}`);
           }
           const use = parseUseOrHide();
           module.uses.push(use);
