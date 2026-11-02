@@ -129,7 +129,6 @@ const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {options
   { flag: "-workers <count|auto>" },
 ]);
 
-// -k changes nothing, as in tlapm.
 const TLAPM_COMMAND = defineCommand("tla-ts tlapm {options} <Module.tla|glob>...", [
   { flag: "-N" },
   { flag: "--summary" },
@@ -1124,7 +1123,7 @@ const printToolboxHeader = (args: string[]) =>
     `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${formatTlcDate(new Date())} with command line:\n\\* ${["tla-ts", "tlapm", ...args].map(quoteArgument).join(" ")}\n`,
   );
 
-// The most severe first, as tlapm exits with the most severe status --strict noted.
+// The most severe first.
 const STRICT_EXIT_STATUS = { failed: 10, incomplete: 11, emptyTarget: 12 };
 
 const checkStrictly = (result: ModuleObligations, isTargeted: boolean, isSummary: boolean) => {
@@ -1153,8 +1152,6 @@ const checkStrictly = (result: ModuleObligations, isTargeted: boolean, isSummary
 
 const TLAPM_FAILURE_STATUS = 3;
 
-// What tlapm prints when a module has unproved obligations outside toolbox mode, OCaml's backtrace
-// included.
 const UNPROVED_ENDING = [
   ' tlapm ending abnormally with Failure("backend errors: there are unproved obligations")',
   'Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33',
@@ -1229,8 +1226,7 @@ const proveModules = (args: string[]) => {
   );
 };
 
-// Toolbox.print_res_aux: what one method concluded, with the obligation it failed on, as Prep
-// normalized it. Only a new SMT failure notes the solver's answer.
+// Toolbox.print_res_aux.
 const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
   const limit = attempt.method.timeLimitMs;
   const used =
@@ -1260,7 +1256,7 @@ const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
   ]);
 };
 
-// tlapm fails with Method.Fail an obligation that is an error, and one no method was tried on.
+// Method.Fail, for an error obligation or one no method was tried on.
 const printFailure = (obligation: PrintedObligation, reason: string) =>
   printObligationMessage(obligation, "failed", [
     "prover:fail",
@@ -1278,9 +1274,7 @@ interface ProvingSettings {
   fingerprints: FingerprintTable;
 }
 
-// Tlapm_lib.process_obs: proves a module's obligations, printing each result in toolbox mode, and
-// writes the theory of their proofs and the fingerprints. Unless --noproving, it then prints those
-// tlapm couldn't prove, the last first. Returns whether some obligation failed.
+// Tlapm_lib.process_obs. Returns whether some obligation failed.
 const proveModule = async (
   result: ModuleObligations,
   theoryPath: string,
@@ -1335,8 +1329,6 @@ const proveModule = async (
   return unproved.length > 0;
 };
 
-// tla-ts tlapm: tlapm's command line, proving with tla-ts's backends. -N and --summary only
-// generate the obligations.
 const runTlapm = async (args: string[]) => {
   const parsed = TLAPM_COMMAND.parse(args);
   const isProcessing = !parsed.has("-N") && !parsed.has("--summary");
@@ -1380,7 +1372,7 @@ const runTlapm = async (args: string[]) => {
     return range;
   }, WHOLE_MODULE);
   // tlapm searches the current directory and each module's, then its library, then each -I
-  // directory, the last given first. Without tlapm, TLAPS is the copy tla-ts bundles.
+  // directory, the last given first. Without tlapm, TLAPS is tla-ts's copy.
   const tlapmLibrary = getTlapmLibrary();
   const includes = parsed.options.flatMap((option) => (option.name === "-I" ? option.values : []));
   const directories = modulePaths.reduce(
@@ -1437,8 +1429,7 @@ const runTlapm = async (args: string[]) => {
   };
   const statuses: number[] = [];
   for (const [index, result] of results.entries()) {
-    // Tlapm_lib.mkdir_tlaps, then --cleanfp removes the fingerprints file or tlapm loads the one
-    // --usefp names, the module's own by default.
+    // Tlapm_lib.mkdir_tlaps.
     const directory = `${cacheDirectory}/${result.name}.tlaps`;
     const fingerprintsPath = `${directory}/fingerprints`;
     const loadedPath = parsed.get("--usefp")?.[0] ?? fingerprintsPath;
@@ -1472,8 +1463,7 @@ const runTlapm = async (args: string[]) => {
         ...checkStrictly(result, lines.start > 0 || lines.end < Infinity, parsed.has("--summary")),
       );
     if (!isProcessing) continue;
-    // tlapm copies into the history the source in the current directory of each module it has
-    // read so far.
+    // tlapm's history holds the source of each module read so far.
     const sources = [
       ...moduleNames,
       ...results.slice(0, index + 1).map((innerResult) => innerResult.name),

@@ -71,10 +71,7 @@ export interface ProveOptions {
   workers?: number;
 }
 
-// What one method concluded about an obligation, as tlapm's toolbox messages report it. tlapm's
-// reason for a failure is false when the backend answered, timeout when it ran out of time, or why
-// tla-ts couldn't run it. A result reused from an earlier obligation with the same fingerprint, as
-// Fpfile keeps it, has no time used.
+// What one method concluded about an obligation, as tlapm's toolbox messages report it.
 export interface ProofAttempt {
   method: Method;
   isProved: boolean;
@@ -84,7 +81,7 @@ export interface ProofAttempt {
   timeUsedMs?: number;
 }
 
-export interface ProofReport {
+interface ProofReport {
   obligation: ProofObligation;
   attempts: ProofAttempt[];
 }
@@ -99,8 +96,7 @@ interface ObligationTask {
 
 // What tlapm keeps across the obligations of one run: the SMT encoder's counter, and what each
 // prover concluded for each fingerprint. An obligation waits for the last earlier one with its
-// fingerprint, so obligations prove concurrently as they would in turn. Fpfile keeps one Isabelle
-// result, which only a method with the same tactic reuses.
+// fingerprint, so obligations prove concurrently as they would in turn.
 interface ProveRun {
   tasks: ObligationTask[];
   results: Map<string, Map<string, ProofAttempt>>;
@@ -190,13 +186,12 @@ const getUnproved = (
 const normalizeExpand = (sequent: Sequent, frontends: Set<string>) =>
   expandEnabledCdot(normalizeSequent(expandDefs(sequent)), frontends);
 
-// The obligation as tlapm prints it in a toolbox message about a failure: Prep.normalize_expand
-// for a new one, and Toolbox.normalize, which keeps pragmas, for one it reused.
+// A failed obligation as tlapm prints it: Prep.normalize_expand for a new failure, and
+// Toolbox.normalize, which keeps pragmas, for a reused one.
 export const formatNormalized = (obligation: PrintedObligation, isReused: boolean) =>
   `${formatObligation(isReused ? normalizeSequent(expandDefs(obligation.sequent, false)) : normalizeExpand(obligation.sequent, findMethods(obligation).frontends))}\n`;
 
-// The theory tlapm writes of the proofs Isabelle found for a module's obligations, in the order
-// it found them. tlapm also writes there each proof Zenon found, which tla-ts leaves out.
+// The theory of the proofs Isabelle found. tlapm also writes Zenon's proofs there.
 export const encodeProofTheory = (
   name: string,
   reports: ProofReport[],
@@ -280,13 +275,13 @@ const proveWithBackends = async (
     obligation: { ...getBase(obligation), status: "proved", prover },
     attempts,
   });
-  // Prep.already_processed: --nofp forgets the fingerprint's results before each method.
+  // Prep.already_processed.
   const getPrior = (method: Method) => {
     if (!run.isFingerprinted(obligation)) run.results.delete(fingerprint);
     const prior = run.results.get(fingerprint)?.get(method.prover);
     return prior?.method.tactic === method.tactic ? prior : undefined;
   };
-  // Fpfile.get_timeout: a method with an rlimit stores it in place of its time limit.
+  // Fpfile.get_timeout.
   const getBudget = (method: Method) => method.rlimit ?? method.timeLimitMs / 1000;
   const reuse = (prior: ProofAttempt) =>
     attempts.push({ ...prior, isReused: true, timeUsedMs: undefined });
@@ -323,7 +318,6 @@ const proveWithBackends = async (
       reasons.push(`${method.prover} failed on an obligation with the same fingerprint`);
       continue;
     }
-    // Prep.really_ship: --noproving sends nothing to a backend.
     if (!run.isProving) continue;
     // Prep.prove_with: the Trivial method proves anything.
     if (method.prover === "trivial") return getProved(method.prover);
@@ -402,17 +396,13 @@ interface ObligationsOptions {
   workers?: number;
   signal?: AbortSignal;
   onReport?: (report: ProofReport, obligation: PrintedObligation) => void;
-  // What each prover concluded for each fingerprint, which tla-ts tlapm loads from tlapm's
-  // fingerprints file and saves back, as the run updates it.
   results?: Map<string, Map<string, ProofAttempt>>;
-  // tlapm's --nofp and --nofpl: whether to reuse what was concluded for an obligation.
+  // --nofp and --nofpl.
   isFingerprinted?: (obligation: PrintedObligation) => boolean;
-  // tlapm's --noproving: reuse what was concluded, and run no backend.
+  // --noproving.
   isProving?: boolean;
 }
 
-// Proves obligations generated elsewhere, as tla-ts tlapm generates them like tlapm, reporting each
-// with what each method concluded.
 export const proveObligations = async (
   obligations: PrintedObligation[],
   options: ObligationsOptions,

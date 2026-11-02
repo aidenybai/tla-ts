@@ -2,7 +2,6 @@
 // proves it.
 export type Verdict = "unsat" | "sat" | "unknown";
 
-// A verdict, and how long the backend took, which tlapm reports as the time used.
 export interface Decision {
   verdict: Verdict;
   timeUsedMs: number;

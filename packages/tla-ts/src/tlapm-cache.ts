@@ -1,5 +1,4 @@
-// tlapm's fingerprints file, ported from src/backend/fpfile.ml: a Marshal'd FP13 table from each
-// obligation's fingerprint to the result each prover last concluded, which tla-ts and tlapm share.
+// tlapm's fingerprints file, ported from src/backend/fpfile.ml.
 
 import {
   cpSync,
@@ -18,14 +17,14 @@ import { TlaProofError } from "./errors";
 import { block, isBlock, readMarshaled, writeMarshaled, type OcamlValue } from "./ocaml-marshal";
 import type { ProofAttempt } from "./prove/prove";
 
-// Each fingerprint's record of results: one optional result per prover, in V13.str's order.
+// One optional result per prover, in V13.str's order.
 export type FingerprintTable = Map<string, OcamlValue[]>;
 
 const MAGIC_NUMBER = 20210223;
 
 const RECORD_SIZE = 23;
 
-// The record's field and the V13.meth constructor of each of tla-ts's provers.
+// Each prover's field in V13.str and constructor in V13.meth.
 const PROVERS: Record<string, { field: number; tag: number }> = {
   zenon: { field: 1, tag: 1 },
   isabelle: { field: 2, tag: 0 },
@@ -38,11 +37,9 @@ const FAIL_METHOD = 5;
 
 const REASONS = ["false", "timeout"];
 
-// tlapm stores its own version and those of Zenon and Isabelle with each result, and --safefp
-// trusts a Zenon or Isabelle result only from the same versions. tla-ts's provers are its own.
+// Stored as the tlapm, Zenon and Isabelle versions, which --safefp compares.
 const VERSION = `tla-ts ${version}`;
 
-// The index in a result of the version --safefp checks, by the record's field.
 const CHECKED_VERSIONS = new Map([
   [PROVERS.zenon.field, 3],
   [PROVERS.isabelle.field, 4],
@@ -56,7 +53,7 @@ const getField = (value: OcamlValue | undefined, index: number) =>
 const getFloat = (value: OcamlValue | undefined) =>
   value !== undefined && typeof value === "object" && "float" in value ? value.float : Infinity;
 
-// Hashtbl.hash on a string with the seed 0: caml_hash's MurmurHash3 mixing of the bytes.
+// Hashtbl.hash on a string.
 const hashKey = (key: string) => {
   const bytes = new TextEncoder().encode(key);
   const rotate = (value: number, shift: number) => (value << shift) | (value >>> (32 - shift));
@@ -76,8 +73,8 @@ const hashKey = (key: string) => {
   return (second ^ (second >>> 16)) & 0x3fffffff;
 };
 
-// The stored result each loaded result came from, which keeps its date and versions, and the
-// record each loaded fingerprint's results came from, which keeps its other provers' results.
+// What each loaded result and record was in the file, so saving keeps their dates, versions and
+// other provers' results.
 const storedResults = new WeakMap<ProofAttempt, OcamlValue>();
 const storedRecords = new WeakMap<Map<string, ProofAttempt>, OcamlValue[]>();
 
@@ -86,8 +83,7 @@ const readBucket = (entry: OcamlValue | undefined): [OcamlValue, OcamlValue][] =
     ? [[entry.fields[0], entry.fields[1]], ...readBucket(entry.fields[2])]
     : [];
 
-// Fpfile.load_fingerprints: replaces the table with the file's. Each bucket lists the latest
-// fingerprint first.
+// Fpfile.load_fingerprints. Each bucket lists the latest fingerprint first.
 export const loadFingerprints = (table: FingerprintTable, path: string, isSafe: boolean) => {
   const bytes = readFileSync(path);
   const magic = readMarshaled(bytes, 0);
@@ -134,7 +130,7 @@ const decodeResult = (prover: string, sti: OcamlValue | undefined): ProofAttempt
   };
 };
 
-// Fpfile.query: what each of tla-ts's provers concluded for each fingerprint.
+// Fpfile.query.
 export const getKnownResults = (table: FingerprintTable) =>
   new Map(
     [...table].map(([fingerprint, record]) => {
@@ -151,7 +147,7 @@ export const getKnownResults = (table: FingerprintTable) =>
     }),
   );
 
-// Fpfile.fp_writes: a result with the local date, in tlapm's month-1 form, and the versions.
+// Fpfile.fp_writes, whose date counts months from 0.
 const encodeResult = (attempt: ProofAttempt) => {
   const now = new Date();
   const method = attempt.method;
@@ -192,8 +188,7 @@ const encodeResult = (attempt: ProofAttempt) => {
   );
 };
 
-// Fpfile.fp_writes and add_to_table: the table of what the run concluded. A fingerprint loaded
-// from the file keeps what other provers concluded, unless --nofp removed it.
+// Fpfile.fp_writes and add_to_table.
 export const updateFingerprints = (
   table: FingerprintTable,
   results: Map<string, Map<string, ProofAttempt>>,
@@ -220,8 +215,7 @@ const encodeTable = (table: FingerprintTable) => {
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
-// Fpfile.fp_init: copies the fingerprints file and the modules' sources in the current directory
-// into a dated directory of its history, keeping the 10 latest.
+// Fpfile.fp_init.
 export const saveHistory = (path: string, sources: string[]) => {
   const now = new Date();
   const history = `${path}.history`;
@@ -240,7 +234,7 @@ export const saveHistory = (path: string, sources: string[]) => {
     .forEach((old) => rmSync(old, { recursive: true, force: true }));
 };
 
-// Fpfile.fp_close_and_consolidate: writes the table beside the file, then over it.
+// Fpfile.fp_close_and_consolidate.
 export const saveFingerprints = (table: FingerprintTable, path: string) => {
   writeFileSync(
     `${path}.tmp`,

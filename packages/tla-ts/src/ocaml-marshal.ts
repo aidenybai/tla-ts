@@ -1,15 +1,14 @@
-// OCaml's Marshal format, ported from runtime/intern.c and runtime/extern.c, for the values tlapm
-// keeps in its fingerprints file: integers, strings, floats and blocks. It writes no sharing, which
-// OCaml reads the same.
+// OCaml's Marshal format, ported from runtime/intern.c and runtime/extern.c, for the values in
+// tlapm's fingerprints file. It writes no sharing, which OCaml reads the same.
 
 import { TlaProofError } from "./errors";
 
-export interface OcamlBlock {
+interface OcamlBlock {
   tag: number;
   fields: OcamlValue[];
 }
 
-export interface OcamlFloat {
+interface OcamlFloat {
   float: number;
 }
 
@@ -21,14 +20,12 @@ const CODE = {
   int8: 0x0,
   int16: 0x1,
   int32: 0x2,
-  int64: 0x3,
   shared8: 0x4,
   shared16: 0x5,
   shared32: 0x6,
   block32: 0x8,
   string8: 0x9,
   string32: 0xa,
-  doubleBig: 0xb,
   doubleLittle: 0xc,
 };
 
@@ -41,7 +38,7 @@ export const block = (tag: number, ...fields: OcamlValue[]): OcamlBlock => ({ ta
 export const isBlock = (value: OcamlValue): value is OcamlBlock =>
   typeof value === "object" && "tag" in value;
 
-// Reads the value marshaled at offset, and returns where the next one starts.
+// Returns the value marshaled at offset, and where the next one starts.
 export const readMarshaled = (bytes: Uint8Array, offset: number) => {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes.length < offset + HEADER_SIZE || view.getUint32(offset) !== MAGIC_NUMBER_SMALL)
@@ -81,8 +78,6 @@ export const readMarshaled = (bytes: Uint8Array, offset: number) => {
         return view.getInt16(take(2));
       case CODE.int32:
         return view.getInt32(take(4));
-      case CODE.int64:
-        return Number(view.getBigInt64(take(8)));
       case CODE.shared8:
         return readShared(view.getUint8(take(1)));
       case CODE.shared16:
@@ -97,9 +92,8 @@ export const readMarshaled = (bytes: Uint8Array, offset: number) => {
         return readString(view.getUint8(take(1)));
       case CODE.string32:
         return readString(view.getUint32(take(4)));
-      case CODE.doubleBig:
       case CODE.doubleLittle: {
-        const value = { float: view.getFloat64(take(8), code === CODE.doubleLittle) };
+        const value = { float: view.getFloat64(take(8), true) };
         objects.push(value);
         return value;
       }

@@ -399,7 +399,7 @@ const renderInto = (formatter: Formatter, doc: Doc) => {
   }
 };
 
-// OCaml's formatters indent at most 68 columns, and tlapm's stderr at most 35.
+// tlapm's stderr indents at most 35 columns.
 export const renderDoc = (doc: Doc, maxIndent = 68) => {
   const formatter = createFormatter(maxIndent);
   renderInto(formatter, doc);

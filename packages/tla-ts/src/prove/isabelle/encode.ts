@@ -128,8 +128,7 @@ const getSuccessors = (integer: string) => {
   return `${"succ[".repeat(count)}0${"]".repeat(count)}`;
 };
 
-// thy_header: the theory's first lines, which in the theory of a module's proofs include one for
-// Isabelle to print once it parses the theory.
+// thy_header.
 const getTheoryHeader = (name: string, isVerbose: boolean) => [
   "(* automatically generated -- do not edit manually *)",
   `theory ${name} imports Constant Zenon begin`,
@@ -137,8 +136,7 @@ const getTheoryHeader = (name: string, isVerbose: boolean) => [
   HEADER,
 ];
 
-// pp_print_expr on an obligation, after Backend.Prep has shipped it: the lemma, and whether it
-// assumes anything.
+// pp_print_expr on an obligation after Backend.Prep has shipped it.
 const printLemma = (sequent: Sequent) => {
   const context = createContext();
   const adjoin = (name: string) => pushName(context, pickle(name));
@@ -465,8 +463,7 @@ const printLemma = (sequent: Sequent) => {
   }
 };
 
-// thy_temp: the theory tlapm writes for Isabelle to prove obligation id, with the tactic of the
-// method that selects Isabelle.
+// thy_temp: the theory tlapm writes for Isabelle to prove obligation id.
 export const encodeIsabelle = (
   id: number,
   sequent: Sequent,
@@ -493,8 +490,7 @@ interface IsabelleProof {
   tactic: string;
 }
 
-// Isabelle.thy_init, thy_write and thy_close: the theory of the proofs Isabelle found for a
-// module's obligations, which tlapm writes beside its fingerprints for -C to check.
+// Isabelle.thy_init, thy_write and thy_close.
 export const encodeIsabelleTheory = (name: string, proofs: IsabelleProof[]) =>
   [
     ...getTheoryHeader(name, true),
