@@ -2,15 +2,136 @@
 // backend/smtlib.ml): TLA+ values share one sort Idv, set membership is the predicate TLA__Mem,
 // and each symbol the obligation uses brings the symbols and axioms encode/n_data.ml lists for it.
 
-import type { Expr, Hyp, Sequent } from "../../obligations/expression";
+import {
+  applyBuiltin,
+  at,
+  mapChildren,
+  type Expr,
+  type Hyp,
+  type Sequent,
+} from "../../obligations/expression";
 import { compareStrings } from "../ocaml";
-import { collectSymbols } from "./axiomatize";
 import { createPrinter } from "./context";
-import type { Entry } from "./flatten";
-import { declare, MEM } from "./format";
-import { simplifyRecordEqualities, sortRecordFields } from "./simplify";
+import { getSymbolSpec, type CollectState, type SymbolSpec } from "./data";
+import type { Entry, Flattened } from "./flatten";
+import { declare, getTlaName, MEM } from "./format";
 import { createEncoder, type Binding, type EncodingSession, type Env, type Mode } from "./rewrite";
-import { compareAxioms } from "./table";
+import { compareAxioms, getAxiomKey, type Axiom } from "./table";
+
+type RecordExpr = Extract<Expr, { kind: "Record" }>;
+
+const isSameFieldSet = (left: RecordExpr, right: RecordExpr) =>
+  left.fields.length === right.fields.length &&
+  left.fields.every((field) => right.fields.some((other) => other.name === field.name)) &&
+  right.fields.every((field) => left.fields.some((other) => other.name === field.name));
+
+// mk_conj: e1 /\ (e2 /\ ...).
+const conjoinRight = (items: Expr[]): Expr =>
+  items.length === 1
+    ? items[0]
+    : applyBuiltin("Conj", [items[0], conjoinRight(items.slice(1))], items[0]);
+
+const decompose = (left: Expr, right: Expr, from: Expr): Expr => {
+  if (left.kind !== "Record" || right.kind !== "Record" || !isSameFieldSet(left, right))
+    return applyBuiltin("Eq", [left, right], from);
+  return conjoinRight(
+    left.fields.map((field) =>
+      decompose(
+        field.value,
+        right.fields.find((other) => other.name === field.name)?.value ?? field.value,
+        from,
+      ),
+    ),
+  );
+};
+
+// N_rewrite.simpl_receq, before Type.Synthesize: an equality of two record constructors with the same fields is the conjunction of
+// the equalities of their fields, paired by name.
+const simplifyRecordEqualities = (expression: Expr): Expr => {
+  const inner = mapChildren(expression, simplifyRecordEqualities);
+  if (
+    inner.kind !== "Apply" ||
+    inner.operator.kind !== "Internal" ||
+    inner.operator.builtin !== "Eq" ||
+    inner.args.length !== 2 ||
+    inner.args[0].kind !== "Record" ||
+    inner.args[1].kind !== "Record"
+  )
+    return inner;
+  return at(decompose(inner.args[0], inner.args[1], inner), inner);
+};
+
+// N_rewrite.sort_recfields: a record's or a record set's fields in order. Like tlapm, it doesn't visit the
+// field values, so a record inside a record keeps the order it's written in.
+const sortRecordFields = (expression: Expr): Expr =>
+  expression.kind === "Record" || expression.kind === "Rect"
+    ? {
+        ...expression,
+        fields: expression.fields.toSorted((left, right) => compareStrings(left.name, right.name)),
+      }
+    : mapChildren(expression, sortRecordFields);
+
+// N_axiomatize.collect: each symbol the obligation uses, in the order tlapm visits them, brings
+// the symbols and axioms it depends on, smallest name first.
+const collectSymbols = (
+  entries: Entry[],
+  flattened: Map<string, Flattened>,
+  anonymous: Map<string, number>,
+  recordFields: Map<string, string[]>,
+) => {
+  const state: CollectState = {
+    recordFields,
+    strings: [],
+    isFunConstr: false,
+    isFunSet: false,
+    isExcept: false,
+    tuples: [],
+    records: [],
+    anonymous,
+  };
+  const symbols = new Map<string, SymbolSpec>();
+  const axioms = new Map<string, Axiom>();
+  const add = (name: string) => {
+    const work = new Set([name]);
+    while (work.size > 0) {
+      const next = [...work].toSorted(compareStrings)[0];
+      work.delete(next);
+      if (symbols.has(next)) continue;
+      const spec = getSymbolSpec(next, state);
+      symbols.set(next, spec);
+      spec.deps.forEach((dep) => work.add(dep));
+      spec.axioms.forEach((entry) => axioms.set(getAxiomKey(entry), entry));
+    }
+  };
+  // A flattened symbol stands for a builtin applied to its first-order arguments and then its
+  // higher-order ones, so its higher-order text is visited after its arguments.
+  const visit = (text: string) => {
+    const tokens = text.match(/[()]|[^\s()]+/g) ?? [];
+    const pending: { depth: number; text: string }[] = [];
+    tokens.reduce((depth, token, index) => {
+      if (token === "(") return depth + 1;
+      if (token === ")") {
+        if (pending.at(-1)?.depth === depth) visit(pending.pop()?.text ?? "");
+        return depth - 1;
+      }
+      const flat = flattened.get(token);
+      if (!flat) {
+        const builtin = getTlaName(token);
+        if (builtin !== undefined) add(builtin);
+        return depth;
+      }
+      if (flat.kind !== "") add(flat.kind);
+      if (tokens[index - 1] === "(") pending.push({ depth, text: flat.visit });
+      else visit(flat.visit);
+      return depth;
+    }, 0);
+  };
+  entries.forEach((entry) => {
+    if (typeof entry === "string") visit(entry);
+    else if ("omitted" in entry) visit(entry.omitted);
+  });
+  return { symbols, axioms };
+};
 
 type Encoder = ReturnType<typeof createEncoder>;
 
