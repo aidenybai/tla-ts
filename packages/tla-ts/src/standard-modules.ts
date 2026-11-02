@@ -1,4 +1,4 @@
-import { TlaEvaluationError, TlaModuleError } from "../errors";
+import { TlaEvaluationError, TlaModuleError } from "./errors";
 import {
   createOverflowError,
   defineArithmetic,
@@ -16,15 +16,15 @@ import {
   getValue,
   isOutOfRange,
   overrideWithJava,
-} from "../builtins";
-import type { Builtin, BuiltinArgument } from "../evaluate";
-import type { CheckerRuntime } from "../runtime";
-import { createBagsOperators } from "../bags";
-import { createJsonOperators, type FileSystem } from "../json";
-import { createRandomizationOperators } from "../randomization";
-import { createPossibleOperators, createTlcExtOperators } from "../tlc/tlcext-operators";
-import { createTlcOperators } from "../tlc/tlc-operators";
-import { TLC_JAVA_METHODS } from "../tlc/jar-data";
+} from "./builtins";
+import type { Builtin, BuiltinArgument } from "./evaluate";
+import type { CheckerRuntime } from "./runtime";
+import { createBagsOperators } from "./bags";
+import { createJsonOperators, type FileSystem } from "./json";
+import { createRandomizationOperators } from "./randomization";
+import { createPossibleOperators, createTlcExtOperators } from "./tlc/tlcext-operators";
+import { createTlcOperators } from "./tlc/tlc-operators";
+import { TLC_JAVA_METHODS } from "./tlc/jar-data";
 import {
   createSet,
   describeKind,
@@ -56,8 +56,8 @@ import {
   type SetValue,
   type Value,
   rankString,
-} from "../values";
-import type { TlcVersion } from "../tlc/version";
+} from "./values";
+import type { TlcVersion } from "./tlc/version";
 
 interface StandardModule {
   extends: string[];

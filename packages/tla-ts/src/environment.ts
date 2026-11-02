@@ -65,9 +65,8 @@ import {
   getStandardModule,
   getTraceSpecArithmetic,
   STANDARD_DEPENDENCIES,
-} from "./standard/modules";
-import { STANDARD_LEVELS } from "./standard/levels";
-import { getStandardRange } from "./standard/ranges";
+} from "./standard-modules";
+import { getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
