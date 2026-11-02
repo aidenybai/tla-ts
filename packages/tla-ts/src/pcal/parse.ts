@@ -84,7 +84,6 @@ interface PcalParserState {
   hasDefaultInitialization: boolean;
   currentProcedure: string | undefined;
   procedures: PcalProcedure[];
-  pSyntax: boolean;
   cSyntax: boolean;
   plusLabels: string[];
   minusLabels: string[];
@@ -140,7 +139,6 @@ export const parsePcalAlgorithm = (
     hasDefaultInitialization: false,
     currentProcedure: undefined,
     procedures: [],
-    pSyntax: false,
     cSyntax: false,
     plusLabels: [],
     minusLabels: [],
@@ -252,7 +250,7 @@ export const parsePcalAlgorithm = (
 
   const gobbleCommaOrSemicolon = () => gobbleThis(peekAtAlgToken(1) === "," ? "," : ";");
 
-  const gobbleBeginOrLeftBrace = () => gobbleThis(state.pSyntax ? "begin" : "{");
+  const gobbleBeginOrLeftBrace = () => gobbleThis(state.cSyntax ? "{" : "begin");
 
   const gobbleEndOrRightBrace = (name: string) => {
     if (state.cSyntax) {
@@ -359,7 +357,7 @@ export const parsePcalAlgorithm = (
   const getStmtSeq = (): PcalStmt[] => {
     const result: PcalStmt[] = [];
     const isEnd = (token: string) =>
-      (state.pSyntax && ["end", "else", "elsif", "or"].includes(token)) ||
+      (!state.cSyntax && ["end", "else", "elsif", "or"].includes(token)) ||
       (state.cSyntax && token === "}");
     while (!isEnd(peekAtAlgToken(1))) result.push(...getCStmt());
     if (state.cSyntax && result.length === 0) throwParsingError("Empty statement list");
@@ -464,9 +462,9 @@ export const parsePcalAlgorithm = (
     const test = getExpr();
     if (state.cSyntax) gobbleThis(")");
     if (test.tokens.length === 0) throwParsingError("Empty while test at ");
-    if (state.pSyntax) gobbleThis("do");
-    const unlabDo = state.pSyntax ? getStmtSeq() : getCStmt();
-    if (state.pSyntax) {
+    if (!state.cSyntax) gobbleThis("do");
+    const unlabDo = state.cSyntax ? getCStmt() : getStmtSeq();
+    if (!state.cSyntax) {
       gobbleThis("end");
       gobbleThis("while");
       gobbleThis(";");
@@ -492,18 +490,18 @@ export const parsePcalAlgorithm = (
     result.test = getExpr();
     if (state.cSyntax) gobbleThis(")");
     if (result.test.tokens.length === 0) throwParsingError("Empty if test at ");
-    if (state.pSyntax) gobbleThis("then");
-    result.unlabThen = state.pSyntax ? getStmtSeq() : getCStmt();
+    if (!state.cSyntax) gobbleThis("then");
+    result.unlabThen = state.cSyntax ? getCStmt() : getStmtSeq();
     const next = peekAtAlgToken(1);
     if (next === "else") {
       mustGobbleThis("else");
-      result.unlabElse = state.pSyntax ? getStmtSeq() : getCStmt();
+      result.unlabElse = state.cSyntax ? getCStmt() : getStmtSeq();
     }
-    if (state.pSyntax && next === "elsif") result.unlabElse = [getIf(depth + 1)];
-    if (state.pSyntax && !["else", "elsif", "end"].includes(next)) {
+    if (!state.cSyntax && next === "elsif") result.unlabElse = [getIf(depth + 1)];
+    if (!state.cSyntax && !["else", "elsif", "end"].includes(next)) {
       throwParsingError('Expecting "else", "elsif", or "end"');
     }
-    if (state.pSyntax && depth === 0) {
+    if (!state.cSyntax && depth === 0) {
       gobbleThis("end");
       gobbleThis("if");
       gobbleThis(";");
@@ -529,7 +527,7 @@ export const parsePcalAlgorithm = (
       const clause: PcalClause = {
         ...createPcalBase(),
         kind: "Clause",
-        unlabOr: state.pSyntax ? getStmtSeq() : getCStmt(),
+        unlabOr: state.cSyntax ? getCStmt() : getStmtSeq(),
         labOr: [],
       };
       if (clause.unlabOr.length === 0) {
@@ -539,7 +537,7 @@ export const parsePcalAlgorithm = (
       if (peekAtAlgToken(1) !== "or") break;
       mustGobbleThis("or");
     }
-    if (state.pSyntax) {
+    if (!state.cSyntax) {
       mustGobbleThis("end");
       gobbleThis("either");
       gobbleThis(";");
@@ -566,9 +564,9 @@ export const parsePcalAlgorithm = (
     };
     result.isEq = gobbleEqualOrIf();
     result.exp = getExpr();
-    if (state.pSyntax || peekAtAlgToken(1) !== ")") gobbleCommaOrSemicolon();
+    if (!state.cSyntax || peekAtAlgToken(1) !== ")") gobbleCommaOrSemicolon();
     if (result.exp.tokens.length === 0) throwParsingError("Empty with expression at ");
-    const isBlockBody = state.pSyntax && peekAtAlgToken(1) === "do";
+    const isBlockBody = !state.cSyntax && peekAtAlgToken(1) === "do";
     const isBraceBody = state.cSyntax && peekAtAlgToken(1) === ")";
     if (isBlockBody) gobbleThis("do");
     if (isBraceBody) mustGobbleThis(")");
@@ -1374,7 +1372,6 @@ export const parsePcalAlgorithm = (
     }
     const name = getAlgToken();
     state.cSyntax = peekAtAlgToken(1) === "{";
-    state.pSyntax = !state.cSyntax;
     if (state.cSyntax) mustGobbleThis("{");
     const decls =
       peekAtAlgToken(1) === "variable" || peekAtAlgToken(1) === "variables" ? getVarDecls() : [];
