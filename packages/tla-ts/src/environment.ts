@@ -332,7 +332,6 @@ export const createEnvironment = (
   const copyCount = { value: 0 };
   const createName = (name: string) => `${name}#${copyCount.value++}`;
   const instanceChecks: InstanceCheck[] = [];
-  // The warnings SANY reports for the spec.
   const warnings: SanyError[] = [];
   const checkInstance = createInstanceChecker((name) => {
     const linked = checkedModules.get(name) ?? getLinkedModule(name, name);

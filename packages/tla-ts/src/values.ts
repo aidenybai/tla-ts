@@ -422,7 +422,7 @@ export const compareValues = (left: Value, right: Value): number => {
 
 const modelValues = new Map<string, ModelValue>();
 
-// A check ranks every model value's name when it creates the value, and creates its own values.
+// setStringOrder clears the model values, so each check ranks and creates its own.
 export const createModelValue = (name: string): ModelValue => {
   const known = modelValues.get(name);
   if (known) return known;
