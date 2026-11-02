@@ -245,7 +245,6 @@ const abstract = (
 
 const getNumbered = (
   onWarning: (warning: ObligationWarning) => void,
-  definitions: Defn[],
   expression: Expr,
   position: number,
   origin: Expr,
@@ -260,7 +259,10 @@ const getNumbered = (
     checkAtMost(items.length);
     return items[position - 1];
   };
-  const result = ((): [Defn[], Expr] => {
+  if (expression.kind === "With") {
+    return getNumbered(onWarning, expression.expression, position, origin, message);
+  }
+  const result = ((): Expr => {
     switch (expression.kind) {
       case "Sequent": {
         const sequent = expression.sequent;
@@ -287,102 +289,78 @@ const getNumbered = (
             { failure: "Expr.Deref.deref_num" },
           );
         }
-        return [definitions, shifted];
+        return shifted;
       }
       case "Apply":
-        return [definitions, pick(expression.args)];
-      case "With":
-        return getNumbered(
-          onWarning,
-          definitions,
-          expression.expression,
-          position,
-          origin,
-          message,
-        );
+        return pick(expression.args);
       case "If":
-        return [
-          definitions,
-          pick([expression.condition, expression.consequent, expression.alternative]),
-        ];
+        return pick([expression.condition, expression.consequent, expression.alternative]);
       case "List":
-        return [definitions, pick(expression.items)];
+        return pick(expression.items);
       case "SetEnum":
       case "Tuple":
-        return [definitions, pick(expression.elements)];
+        return pick(expression.elements);
       case "Product":
-        return [definitions, pick(expression.factors)];
+        return pick(expression.factors);
       case "Let":
         checkAtMost(1);
-        return [[...definitions, ...expression.definitions], expression.body];
+        return expression.body;
       case "Quant":
       case "SetOf":
       case "Fcn":
-        return [
-          definitions,
-          pick(
-            expression.bounds.flatMap((bound) =>
-              bound.domain.kind === "Domain" ? [bound.domain.expression] : [],
-            ),
+        return pick(
+          expression.bounds.flatMap((bound) =>
+            bound.domain.kind === "Domain" ? [bound.domain.expression] : [],
           ),
-        ];
+        );
       case "Choose":
       case "SetSt":
         if (!expression.domain) break;
-        return [definitions, pick([expression.domain])];
+        return pick([expression.domain]);
       case "Arrow":
-        return [definitions, pick([expression.domain, expression.range])];
+        return pick([expression.domain, expression.range]);
       case "FcnApp": {
         const argument =
           expression.args.length === 1
             ? expression.args[0]
             : at({ kind: "Tuple", elements: expression.args }, expression);
-        return [definitions, pick([expression.function, argument])];
+        return pick([expression.function, argument]);
       }
       case "Rect":
       case "Record":
-        return [definitions, pick(expression.fields.map((field) => field.value))];
+        return pick(expression.fields.map((field) => field.value));
       case "Dot":
-        return [
-          definitions,
-          pick([
-            expression.expression,
-            at({ kind: "String", value: expression.field }, expression),
-          ]),
-        ];
+        return pick([
+          expression.expression,
+          at({ kind: "String", value: expression.field }, expression),
+        ]);
       case "Except":
-        return [
-          definitions,
-          pick([expression.function, ...expression.specs.map((spec) => spec.value)]),
-        ];
+        return pick([expression.function, ...expression.specs.map((spec) => spec.value)]);
       case "Sub":
       case "Tsub":
-        return [definitions, pick([expression.action, expression.subscript])];
+        return pick([expression.action, expression.subscript]);
       case "Fair":
-        return [definitions, pick([expression.subscript, expression.action])];
+        return pick([expression.subscript, expression.action]);
       case "Case":
-        return [
-          definitions,
-          pick([
-            ...expression.arms.map((arm) =>
-              at({ kind: "Tuple", elements: [arm.condition, arm.body] }, arm.body),
-            ),
-            ...(expression.other
-              ? [at({ kind: "Tuple", elements: [BAD, expression.other] }, expression.other)]
-              : []),
-          ]),
-        ];
+        return pick([
+          ...expression.arms.map((arm) =>
+            at({ kind: "Tuple", elements: [arm.condition, arm.body] }, arm.body),
+          ),
+          ...(expression.other
+            ? [at({ kind: "Tuple", elements: [BAD, expression.other] }, expression.other)]
+            : []),
+        ]);
     }
     const emptyMessage = "Expression has no subexpressions";
     onWarning(getErrorNote(expression.location, emptyMessage));
     throw new TlaProofError(emptyMessage, { failure: "Expr.Deref.deref_num" });
   })();
-  if (isBad(result[1])) {
+  if (isBad(result)) {
     const badMessage = `Cannot resolve subexpression reference !${position}`;
     onWarning(getErrorNote(expression.location, badMessage));
     throw new TlaProofError(badMessage, { failure: "Expr.Deref.deref_num" });
   }
-  return result;
+  return [expression.kind === "Let" ? expression.definitions : [], result];
 };
 
 // Reorders label arguments given in source order to the order of the label's de Bruijn indices.
@@ -547,7 +525,6 @@ const deref = (
     const numbered = (position: number, message: string) => {
       const [definitions, inner] = getNumbered(
         onWarning,
-        [],
         expression,
         position,
         state.expression,
