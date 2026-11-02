@@ -305,6 +305,44 @@ describe("values", () => {
   });
 });
 
+describe("bounds", () => {
+  it("chooses a number from -3 to 3", async () => {
+    const result = await checkModel(`
+      let total = 0;
+      export const add = (amount: number) => {
+        if (total !== 0) return;
+        total = amount;
+      };
+      /** @noDeadlock */
+      export const isAboveMinimum = () => total > -3;
+    `);
+    expect(getTrace(result)).toEqual([{ total: "0" }, { total: "-3" }]);
+  });
+
+  it("chooses a string from three", async () => {
+    const result = await checkModel(`
+      let names = new Set<string>();
+      export const add = (name: string) => {
+        names.add(name);
+      };
+      /** @noDeadlock */
+      export const isSmall = () => names.size < 3;
+    `);
+    expect(result.status).toBe("invariant-violation");
+    expect(result.distinctStates).toBe(8);
+  });
+
+  it("starts an array at every length up to 3", async () => {
+    const result = await checkModel(`
+      let bits!: (0 | 1)[];
+      /** @noDeadlock */
+      export const isShort = () => bits.length <= 3;
+    `);
+    expect(result.status).toBe("success");
+    expect(result.distinctStates).toBe(1 + 2 + 4 + 8);
+  });
+});
+
 describe("definitions", () => {
   it("compiles recursive helpers", async () => {
     const result = await checkModel(`
@@ -466,8 +504,8 @@ describe("errors", () => {
 
   it("rejects a parameter without a finite type", () => {
     expect(() =>
-      compile(`let count = 0;\nexport const add = (amount: number) => { count += amount; };`),
-    ).toThrow("spec.ts:2:21 number isn't finite");
+      compile(`let count = 0;\nexport const run = (step: () => number) => { count += step(); };`),
+    ).toThrow("spec.ts:2:21 () => number isn't finite");
   });
 
   it("rejects division without rounding", () => {

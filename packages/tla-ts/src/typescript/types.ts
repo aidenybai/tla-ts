@@ -5,6 +5,14 @@ import { wrap } from "./formula";
 
 export type Kind = "sequence" | "set" | "map" | "string" | "other";
 
+// TLC needs a finite set of values for every type, so number, string, and arrays take these small
+// bounds.
+const INTEGERS = "-3..3";
+
+const STRINGS = '{"", "a", "b"}';
+
+const MAX_ARRAY_LENGTH = 3;
+
 // Why a type has no finite set of values.
 interface Infinite {
   message: string;
@@ -103,6 +111,8 @@ export const findDomain = (type: ts.Type, context: Context): string | Infinite =
   }
   const literal = getLiteral(type, context);
   if (literal !== undefined) return `{${literal}}`;
+  if (type.flags & ts.TypeFlags.Number) return INTEGERS;
+  if (type.flags & ts.TypeFlags.String) return STRINGS;
   if (isSetType(type) || isMapType(type) || checker.isTupleType(type)) {
     const elements = findDomains(
       isTypeReference(type) ? checker.getTypeArguments(type) : [],
@@ -131,8 +141,11 @@ export const findDomain = (type: ts.Type, context: Context): string | Infinite =
     const element = context.names.getFresh("element");
     return `{<<${element}>> : ${element} \\in ${elements[0]}}`;
   }
-  if (checker.isArrayType(type)) {
-    return getInfinite(type, "arrays can have any length, so use a tuple", context);
+  if (checker.isArrayType(type) && isTypeReference(type)) {
+    const element = findDomain(checker.getTypeArguments(type)[0], context);
+    if (typeof element !== "string") return element;
+    const length = context.names.getFresh("length");
+    return `UNION {[1..${length} -> ${element}] : ${length} \\in 0..${MAX_ARRAY_LENGTH}}`;
   }
   const properties = type.getProperties();
   const isRecord =

@@ -86,7 +86,7 @@ export const isExclusive = () => owner === null || !waiting.has(owner);
 
 ### Finite types
 
-TLC tries every value of a parameter's type, so a parameter needs a finite type:
+TLC tries every value of a parameter's type, so tla-ts gives each type a finite set of values:
 
 | TypeScript type                | Values                                  |
 | ------------------------------ | --------------------------------------- |
@@ -96,8 +96,11 @@ TLC tries every value of a parameter's type, so a parameter needs a finite type:
 | `[0 \| 1, boolean]`            | Every tuple of those elements           |
 | `Set<T>`                       | Every subset of `T`'s values            |
 | `Map<K, V>`                    | Every partial function from `K` to `V`  |
+| `number`                       | The integers from -3 to 3               |
+| `string`                       | `""`, `"a"`, and `"b"`                  |
+| `T[]`                          | Every array of `T`s up to 3 long        |
 
-`number`, `string`, and arrays have no end, so tla-ts rejects them as parameter types. A parameter of any type works when the action starts with a guard such as `if (!pending.has(message)) return;`. tla-ts then chooses the parameter from that set. A later guard's set may use a parameter an earlier guard chose, as in `if (!getMoves(from).has(to)) return;`.
+The bounds on `number`, `string`, and arrays keep the search finite, so a check covers only those values. Use a union of literals, such as `0 | 1 | 2`, to check other values. tla-ts rejects a parameter of any other type that has no end, such as a function. A parameter of any type works when the action starts with a guard such as `if (!pending.has(message)) return;`. tla-ts then chooses the parameter from that set. A later guard's set may use a parameter an earlier guard chose, as in `if (!getMoves(from).has(to)) return;`.
 
 ### Values
 
