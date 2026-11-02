@@ -412,7 +412,8 @@ export class Context extends Internalizer {
   }
 
   private pushNewThDiseqs(root: Enode, thVar: number) {
-    for (const parent of root.parents) {
+    for (let parentIndex = 0; parentIndex < root.numParents; parentIndex++) {
+      const parent = root.getParent(parentIndex);
       if (!parent.isEq) continue;
       if (this.assignment[mkLiteral(this.getBoolVar(parent.owner))] !== L_FALSE) continue;
       let lhs = parent.getArg(0);
@@ -488,7 +489,7 @@ export class Context extends Internalizer {
     }
     if (this.isRelevant(r1.owner)) this.markAsRelevant(r2.owner);
     else if (this.isRelevant(r2.owner)) this.markAsRelevant(r1.owner);
-    const r2NumParents = r2.parents.length;
+    const r2NumParents = r2.numParents;
     this.qmanager.addEqEh(r1, r2);
     this.mergeTheoryVars(n2, n1, justification);
     this.invertTrans(n1);
@@ -512,7 +513,8 @@ export class Context extends Internalizer {
   }
 
   private removeParentsFromCgTable(r1: Enode) {
-    for (const parent of r1.parents) {
+    for (let index = 0; index < r1.numParents; index++) {
+      const parent = r1.getParent(index);
       if (parent.isMarked || !parent.isCgr() || parent.isTrueEq()) continue;
       parent.isMarked = true;
       if (parent.isCgcEnabled) this.cgTable.erase(parent);
@@ -528,9 +530,8 @@ export class Context extends Internalizer {
     n2: Enode,
     justification: EqJustification,
   ) {
-    const r1Parents = r1.parents;
-    for (let index = 0; index < r1Parents.length; index++) {
-      const parent = r1Parents[index];
+    for (let index = 0; index < r1.numParents; index++) {
+      const parent = r1.getParent(index);
       if (!parent.isMarked) continue;
       parent.isMarked = false;
       if (parent.isEq) {
@@ -588,8 +589,8 @@ export class Context extends Internalizer {
     const savedNext = r1.next;
     r1.next = r2.next;
     r2.next = savedNext;
-    for (let index = r2NumParents; index < r2.parents.length; index++) {
-      const parent = r2.parents[index];
+    for (let index = r2NumParents; index < r2.numParents; index++) {
+      const parent = r2.getParent(index);
       if (parent.isCgcEnabled) {
         parent.isMarked = !parent.isEq;
         this.cgTable.erase(parent);
@@ -600,8 +601,9 @@ export class Context extends Internalizer {
       current.root = r1;
       current = current.next;
     } while (current !== r1);
-    shrink(r2.parents, r2NumParents);
-    for (const parent of r1.parents) {
+    r2.shrinkParents(r2NumParents);
+    for (let index = 0; index < r1.numParents; index++) {
+      const parent = r1.getParent(index);
       if (!parent.isCgcEnabled) continue;
       const isErased = parent.isMarked;
       parent.isMarked = false;

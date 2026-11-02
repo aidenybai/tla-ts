@@ -155,7 +155,8 @@ export class Interpreter {
   ) {
     const root = node.root;
     let count = 0;
-    for (const parent of root.parents) {
+    for (let parentIndex = 0; parentIndex < root.numParents; parentIndex++) {
+      const parent = root.getParent(parentIndex);
       if (!this.isRelevantParent(parent, decl, argIndex, root)) continue;
       if (count + 1 >= limit) return -1;
       if (count < vector.length) vector[count] = parent;
@@ -176,12 +177,14 @@ export class Interpreter {
     const node = this.registers[joint.reg];
     if (node === null || node === undefined) return -1;
     const root = node.root;
-    if (root.parents.length === 0) return -1;
+    if (root.numParents === 0) return -1;
     let count = 0;
-    for (const parent of root.parents) {
+    for (let parentIndex = 0; parentIndex < root.numParents; parentIndex++) {
+      const parent = root.getParent(parentIndex);
       if (!this.isRelevantParent(parent, joint.decl, joint.argPos, root)) continue;
       const parentRoot = parent.root;
-      for (const grandparent of parentRoot.parents) {
+      for (let index = 0; index < parentRoot.numParents; index++) {
+        const grandparent = parentRoot.getParent(index);
         if (!this.isRelevantParent(grandparent, decl, argIndex, parentRoot)) continue;
         if (count + 1 >= limit) return -1;
         if (count < vector.length) vector[count] = grandparent;
@@ -217,7 +220,7 @@ export class Interpreter {
       if (node === null) continue;
       const root = node.root;
       if ((root.plbls & instr.lblLow) === 0 && (root.plblsHigh & instr.lblHigh) === 0) return null;
-      if (root.parents.length === 0) return null;
+      if (root.numParents === 0) return null;
     }
     // Each joint's vector goes into the spare vector, which trades places with the next point's
     // vector when it is the smallest so far.

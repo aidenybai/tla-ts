@@ -209,8 +209,8 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     if (this.manager.getOp(root.owner) === OP_ITE) return true;
     if (root.thVar < 0) return false;
     if (this.context.qmanager.isShared(root)) return true;
-    for (const parent of root.parents) {
-      const family = this.manager.getFamily(parent.owner);
+    for (let index = 0; index < root.numParents; index++) {
+      const family = this.manager.getFamily(root.getParent(index).owner);
       if (family !== FAMILY_ARITH && family !== FAMILY_BASIC) return true;
     }
     return this.isSharedWithUnderspecified(root);
@@ -221,11 +221,13 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     const manager = this.manager;
     const count = this.underspecifiedTerms.length;
     if (count === 0) return false;
-    if (root.parents.length > 2 * count)
+    if (root.numParents > 2 * count)
       return this.underspecifiedTerms.some((term) =>
         manager.someArg(term, (arg) => this.context.getEnode(arg)?.root === root),
       );
-    return root.parents.some((parent) => this.isUnderspecified(parent.owner));
+    for (let index = 0; index < root.numParents; index++)
+      if (this.isUnderspecified(root.getParent(index).owner)) return true;
+    return false;
   }
 
   // arith_util::is_underspecified.

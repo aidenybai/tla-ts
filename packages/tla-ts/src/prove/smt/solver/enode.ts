@@ -29,9 +29,7 @@ export const CONGRUENCE_JUSTIFICATIONS: readonly EqJustification[] = [
   { kind: "congruence", isCommutative: true },
 ];
 
-// The parents of a node without any, and the arguments past the second of a node with at most two.
-// Nothing adds to it: addParent gives a node its own list, so that a node with one parent holds one
-// entry instead of V8's sixteen.
+// An empty list of nodes, which nothing adds to.
 export const NO_ENODES: Enode[] = [];
 
 const IS_EQ = 1;
@@ -72,6 +70,14 @@ export class EnodeStore {
   argStart = new Int32Array(1024);
   argPool = new Int32Array(1024);
   private argTop = 0;
+  // The parents of each node, parentCount of them from parentStart in one pool, where the node's
+  // block has room for parentCapacity. A full block moves to the top of the pool with twice the
+  // room, and the pool packs its blocks when it fills. An id keeps its block when it is reused.
+  parentStart = new Int32Array(1024);
+  parentCount = new Int32Array(1024);
+  parentCapacity = new Int32Array(1024);
+  parentPool = new Int32Array(4096);
+  private parentTop = 0;
 
   // The id of a new node, which goes on the stack, with columns of room for it.
   allocate(node: Enode) {
@@ -91,8 +97,12 @@ export class EnodeStore {
       this.labels = growColumn(this.labels);
       this.lblHash = growColumn(this.lblHash);
       this.argStart = growColumn(this.argStart);
+      this.parentStart = growColumn(this.parentStart);
+      this.parentCount = growColumn(this.parentCount);
+      this.parentCapacity = growColumn(this.parentCapacity);
     }
     this.argStart[id] = this.argTop;
+    this.parentCount[id] = 0;
     this.root[id] = id;
     this.next[id] = id;
     this.classSize[id] = 1;
@@ -107,6 +117,51 @@ export class EnodeStore {
   pushArg(arg: number) {
     if (this.argTop === this.argPool.length) this.argPool = growColumn(this.argPool);
     this.argPool[this.argTop++] = arg;
+  }
+
+  addParent(id: number, parent: number) {
+    const count = this.parentCount[id];
+    if (count === this.parentCapacity[id]) this.moveParents(id, Math.max(2, 2 * count));
+    this.parentPool[this.parentStart[id] + count] = parent;
+    this.parentCount[id] = count + 1;
+  }
+
+  // Gives the node's parents a block with room for capacity at the top of the pool.
+  private moveParents(id: number, capacity: number) {
+    if (this.parentTop + capacity > this.parentPool.length) this.packParents(capacity);
+    const start = this.parentTop;
+    this.parentPool.copyWithin(
+      start,
+      this.parentStart[id],
+      this.parentStart[id] + this.parentCount[id],
+    );
+    this.parentStart[id] = start;
+    this.parentCapacity[id] = capacity;
+    this.parentTop = start + capacity;
+  }
+
+  // Copies the blocks of the ids that have one to the start of a pool with room for need more,
+  // which is twice as long when they fill more than half of it.
+  private packParents(need: number) {
+    const numIds = this.parentStart.length;
+    let used = need;
+    for (let id = 0; id < numIds; id++) used += this.parentCapacity[id];
+    const pool = new Int32Array(
+      2 * used > this.parentPool.length
+        ? 2 * Math.max(used, this.parentPool.length)
+        : this.parentPool.length,
+    );
+    let top = 0;
+    for (let id = 0; id < numIds; id++) {
+      const capacity = this.parentCapacity[id];
+      if (capacity === 0) continue;
+      const start = this.parentStart[id];
+      pool.set(this.parentPool.subarray(start, start + this.parentCount[id]), top);
+      this.parentStart[id] = top;
+      top += capacity;
+    }
+    this.parentPool = pool;
+    this.parentTop = top;
   }
 
   // Pops the node on top of the stack, and releases its arguments.
@@ -125,7 +180,6 @@ const growColumn = (column: Int32Array) => {
 
 export class Enode {
   readonly id: number;
-  parents: Enode[] = NO_ENODES;
   // m_trans: the next node on the transitivity branch toward the root of the proof tree, and why the
   // two are equal.
   transTarget: Enode | null = null;
@@ -327,9 +381,25 @@ export class Enode {
     this.setFlag(IS_INTERPRETED, value);
   }
 
+  get numParents() {
+    return this.store.parentCount[this.id];
+  }
+
+  getParent(index: number) {
+    const store = this.store;
+    return store.nodes[store.parentPool[store.parentStart[this.id] + index]];
+  }
+
   addParent(parent: Enode) {
-    if (this.parents.length === 0) this.parents = [parent];
-    else this.parents.push(parent);
+    this.store.addParent(this.id, parent.id);
+  }
+
+  popParent() {
+    this.store.parentCount[this.id]--;
+  }
+
+  shrinkParents(count: number) {
+    this.store.parentCount[this.id] = count;
   }
 
   isCgr() {

@@ -505,7 +505,8 @@ export class Mam implements LabelHasher {
       for (const node of nodes) {
         const child = node.root;
         if ((child.plbls & filter) === 0 && (child.plblsHigh & filterHigh) === 0) continue;
-        for (const parent of child.parents) {
+        for (let parentIndex = 0; parentIndex < child.numParents; parentIndex++) {
+          const parent = child.getParent(parentIndex);
           if (parent.isEq) continue;
           const label = parent.decl;
           const parentRoot = parent.root;
@@ -577,10 +578,9 @@ export class Mam implements LabelHasher {
         const entry = this.pp.get(lowHash * 64 + highHash);
         if (entry === undefined) continue;
         if (lowHash === highHash) {
-          if (lowRoot.parents.length <= highRoot.parents.length)
-            this.collectParents(lowRoot, entry[0]);
+          if (lowRoot.numParents <= highRoot.numParents) this.collectParents(lowRoot, entry[0]);
           else this.collectParents(highRoot, entry[0]);
-        } else if (lowRoot.parents.length <= highRoot.parents.length)
+        } else if (lowRoot.numParents <= highRoot.numParents)
           this.collectParents(lowRoot, entry[0]);
         else this.collectParents(highRoot, entry[1]);
       }

@@ -656,7 +656,7 @@ export abstract class Internalizer {
     this.exprToEnode[node.owner] = undefined;
     if (node.isCgr() && node.usesCgTable()) this.cgTable.erase(node);
     if (node.numArgs > 0 && !node.isEq) this.decl2enodes.get(node.decl)?.pop();
-    for (let index = 0; index < node.numArgs; index++) node.getArg(index).root.parents.pop();
+    for (let index = 0; index < node.numArgs; index++) node.getArg(index).root.popParent();
     this.manager.decRef(node.owner);
     this.stickyGenerations.delete(node);
     // The node leaves the stack last, since its data are found through its place there.
