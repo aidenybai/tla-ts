@@ -74,7 +74,11 @@ result.obligations; // each with a status: "proved", "trivial", "failed", or "un
 - `parseModule(source)`: the module's syntax tree.
 - `parseConfig(source)`: a TLC configuration you can change before passing it to `check`.
 - `formatValue(value)`: a value in TLA+ syntax.
-- `TlaError` and its subclasses `TlaSyntaxError`, `TlaConfigError`, `TlaEvaluationError` and `TlaUnsupportedError`.
+- `TlaError`: the base class of every error below.
+- `TlaSyntaxError`: the module doesn't parse.
+- `TlaConfigError`: the configuration is invalid.
+- `TlaEvaluationError`: evaluating the spec failed.
+- `TlaUnsupportedError`: tla-ts doesn't support something the spec or call uses.
 
 ## Benchmarks
 
