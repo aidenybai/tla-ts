@@ -184,8 +184,11 @@ export class Mam implements LabelHasher {
     this.plbls.add(decl);
     this.pushTrail(() => this.plbls.delete(decl));
     const hash = this.getLabelHash(decl);
-    for (const node of this.context.enodesOf(decl))
-      if (this.context.isRelevant(node.owner)) this.updateChildrenPlbls(node, hash);
+    const store = this.context.enodeStore;
+    const list = store.declNodes[decl];
+    for (let index = 0; index < store.declCount[decl]; index++)
+      if (this.context.isRelevant(store.owner[list[index]]))
+        this.updateChildrenPlbls(store.nodes[list[index]], hash);
   }
 
   private updateClbls(decl: number) {
@@ -193,8 +196,11 @@ export class Mam implements LabelHasher {
     this.clbls.add(decl);
     this.pushTrail(() => this.clbls.delete(decl));
     const hash = this.getLabelHash(decl);
-    for (const node of this.context.enodesOf(decl))
-      if (this.context.isRelevant(node.owner)) this.updateLbls(node, hash);
+    const store = this.context.enodeStore;
+    const list = store.declNodes[decl];
+    for (let index = 0; index < store.declCount[decl]; index++)
+      if (this.context.isRelevant(store.owner[list[index]]))
+        this.updateLbls(store.nodes[list[index]], hash);
   }
 
   // mk_code: the code tree of a path, which runs each candidate once.
@@ -621,17 +627,18 @@ export class Mam implements LabelHasher {
     for (const mp of this.newPatterns) {
       if (context.checkCanceled()) break;
       const label = manager.decls[mp.patterns[0]];
-      if (context.enodesOf(label).length === 0) continue;
+      if (context.enodeStore.declCount[label] === 0) continue;
       const tree = tmpTrees.get(label);
       if (tree === undefined)
         tmpTrees.set(label, this.compiler.mkTree(mp.quantifier, mp.patterns, 0, false));
       else this.compiler.insert(tree, mp.quantifier, mp.patterns, 0, true);
     }
+    const store = context.enodeStore;
     for (const entry of tmpTrees) {
-      const nodes = context.enodesOf(entry[0]);
-      for (let index = 0; index < nodes.length; index++)
-        if (context.isRelevant(nodes[index].owner))
-          this.interpreter.executeCore(entry[1], nodes[index]);
+      const list = store.declNodes[entry[0]];
+      for (let index = 0; index < store.declCount[entry[0]]; index++)
+        if (context.isRelevant(store.owner[list[index]]))
+          this.interpreter.executeCore(entry[1], list[index]);
     }
     this.newPatterns = [];
   }
@@ -643,12 +650,12 @@ export class Mam implements LabelHasher {
     const entries = [...this.trees].sort(
       (left, right) => funcDecls[left[0]].smallId - funcDecls[right[0]].smallId,
     );
+    const store = context.enodeStore;
     for (const entry of entries) {
-      const tree = entry[1];
-      const nodes = context.enodesOf(entry[0]);
-      for (let index = 0; index < nodes.length; index++)
-        if (context.isRelevant(nodes[index].owner))
-          this.interpreter.executeCore(tree, nodes[index]);
+      const list = store.declNodes[entry[0]];
+      for (let index = 0; index < store.declCount[entry[0]]; index++)
+        if (context.isRelevant(store.owner[list[index]]))
+          this.interpreter.executeCore(entry[1], list[index]);
     }
   }
 

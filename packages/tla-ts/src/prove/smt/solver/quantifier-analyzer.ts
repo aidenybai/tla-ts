@@ -120,10 +120,12 @@ export class QuantifierInfo {
 
   private populateFVar(node: Node, decl: number, argIndex: number) {
     const context = this.context;
-    for (const enode of context.enodesOf(decl))
-      if (context.isRelevant(enode.owner)) {
-        const arg = enode.getArg(argIndex);
-        node.insert(this.manager, arg.owner, context.getGeneration(arg.id));
+    const store = context.enodeStore;
+    const list = store.declNodes[decl];
+    for (let index = 0; index < store.declCount[decl]; index++)
+      if (context.isRelevant(store.owner[list[index]])) {
+        const arg = store.getArg(list[index], argIndex);
+        node.insert(this.manager, store.owner[arg], context.getGeneration(arg));
       }
   }
 
@@ -142,13 +144,15 @@ export class QuantifierInfo {
           const sJ = solver.getUvar(flatQ, info.varIndex).getRoot();
           if (aFI === sJ) {
             // There is no finite fixpoint, so the arguments minus the offset join the set.
-            for (const enode of context.enodesOf(info.decl))
-              if (context.isRelevant(enode.owner)) {
-                const arg = enode.getArg(info.argIndex);
+            const store = context.enodeStore;
+            const list = store.declNodes[info.decl];
+            for (let index = 0; index < store.declCount[info.decl]; index++)
+              if (context.isRelevant(store.owner[list[index]])) {
+                const arg = store.getArg(list[index], info.argIndex);
                 sJ.insert(
                   manager,
-                  solver.rewriter.mkSub(arg.owner, info.offset),
-                  context.getGeneration(arg.id),
+                  solver.rewriter.mkSub(store.owner[arg], info.offset),
+                  context.getGeneration(arg),
                 );
               }
           } else {
@@ -207,10 +211,12 @@ export class QuantifierInfo {
         if (info.kind !== "f_var" || info.decl !== theOne) continue;
         const set = sets[info.varIndex] ?? new InstantiationSet(this.manager);
         sets[info.varIndex] = set;
-        for (const enode of this.context.enodesOf(info.decl))
-          if (this.context.isRelevant(enode.owner)) {
-            const arg = enode.getArg(info.argIndex);
-            set.insert(arg.owner, this.context.getGeneration(arg.id));
+        const store = this.context.enodeStore;
+        const list = store.declNodes[info.decl];
+        for (let index = 0; index < store.declCount[info.decl]; index++)
+          if (this.context.isRelevant(store.owner[list[index]])) {
+            const arg = store.getArg(list[index], info.argIndex);
+            set.insert(store.owner[arg], this.context.getGeneration(arg));
           }
       }
       for (const set of sets) set?.mkInverse(evaluate);

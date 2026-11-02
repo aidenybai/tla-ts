@@ -83,6 +83,10 @@ export class EnodeStore {
   parentCapacity = new Int32Array(1024);
   parentPool = new Int32Array(4096);
   private parentTop = 0;
+  // decl2enodes: the nodes of each declaration, in the order they were made, the first
+  // declCount[decl] of declNodes[decl]. Equalities and constants are left out.
+  readonly declNodes: Int32Array[] = [];
+  declCount = new Int32Array(64);
 
   // The id of a new node, which goes on the stack, with columns of room for it.
   allocate(node: Enode) {
@@ -204,6 +208,15 @@ export class EnodeStore {
     }
     this.parentPool = pool;
     this.parentTop = top;
+  }
+
+  addDeclNode(decl: number, id: number) {
+    while (decl >= this.declCount.length) this.declCount = growColumn(this.declCount);
+    const count = this.declCount[decl];
+    const list = this.declNodes[decl] ?? new Int32Array(4);
+    this.declNodes[decl] = count === list.length ? growColumn(list) : list;
+    this.declNodes[decl][count] = id;
+    this.declCount[decl] = count + 1;
   }
 
   // Pops the node on top of the stack, and releases its arguments.

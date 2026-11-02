@@ -235,7 +235,10 @@ class Checker {
     }
     this.argDepth = depth;
     const found = context.findCongruent(manager.decls[expr], argNodes);
-    const result = found !== undefined && context.isRelevant(found.owner) ? found : null;
+    const result =
+      found !== -1 && context.isRelevant(context.enodeStore.owner[found])
+        ? context.enodeStore.nodes[found]
+        : null;
     this.enodeStamps[expr] = this.stamp;
     this.enodeResults[expr] = result === null ? -1 : result.owner;
     return result;

@@ -177,7 +177,6 @@ export abstract class Internalizer {
   protected eqPropagationQueue: NewEq[] = [];
   readonly enodeStore = new EnodeStore();
   readonly cgTable = new CgTable(this.enodeStore);
-  protected decl2enodes = new Map<number, Enode[]>();
   trueEnode: Enode;
   private isDiseqTmp = -1;
   falseEnode: Enode;
@@ -348,8 +347,7 @@ export abstract class Internalizer {
   }
 
   findCongruent(decl: number, args: number[]) {
-    const found = this.cgTable.findFor(decl, args, decl === OP_EQ);
-    return found === -1 ? undefined : this.enodeStore.nodes[found];
+    return this.cgTable.findFor(decl, args, decl === OP_EQ);
   }
 
   // is_diseq_core: the roots are distinct values, or an equality between the two classes is false.
@@ -372,10 +370,6 @@ export abstract class Internalizer {
       root === this.falseEnode ||
       (this.isRelevant(root.owner) && this.getAssignmentOfExpr(root.owner) === L_FALSE)
     );
-  }
-
-  enodesOf(decl: number) {
-    return this.decl2enodes.get(decl) ?? NO_ENODES;
   }
 
   getLiteral(expr: number): Literal {
@@ -646,11 +640,7 @@ export abstract class Internalizer {
           );
         }
       }
-      if (!isEq) {
-        const list = this.decl2enodes.get(node.decl);
-        if (list === undefined) this.decl2enodes.set(node.decl, [node]);
-        else list.push(node);
-      }
+      if (!isEq) this.enodeStore.addDeclNode(node.decl, node.id);
     }
     return node;
   }
@@ -668,7 +658,7 @@ export abstract class Internalizer {
     if (node === undefined) return;
     this.exprToEnode[node.owner] = undefined;
     if (node.isCgr() && node.usesCgTable()) this.cgTable.erase(node.id);
-    if (node.numArgs > 0 && !node.isEq) this.decl2enodes.get(node.decl)?.pop();
+    if (node.numArgs > 0 && !node.isEq) this.enodeStore.declCount[node.decl]--;
     for (let index = 0; index < node.numArgs; index++) node.getArg(index).root.popParent();
     this.manager.decRef(node.owner);
     this.stickyGenerations.delete(node);
