@@ -60,19 +60,19 @@ const printObligationMessage = (obligation: PrintedObligation, status: string, f
 
 const TLAPM_VERSION = "9ed0376";
 
-const quoteArgument = (arg: string) =>
+const quoteShellArgument = (arg: string) =>
   /^[+,\-./0-9:=@A-Z_a-z]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
 
 const printToolboxHeader = (args: string[]) =>
   console.log(
-    `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${formatTlcDate(new Date())} with command line:\n\\* ${["tla-ts", "tlapm", ...args].map(quoteArgument).join(" ")}\n`,
+    `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${formatTlcDate(new Date())} with command line:\n\\* ${["tla-ts", "tlapm", ...args].map(quoteShellArgument).join(" ")}\n`,
   );
 
 // The most severe first.
 const STRICT_EXIT_STATUS = { failed: 10, incomplete: 11, emptyTarget: 12 };
 
-const checkStrictly = (result: ModuleObligations, isTargeted: boolean, isSummary: boolean) => {
-  const summary = result.summary;
+const checkStrictly = (module: ModuleObligations, isTargeted: boolean, isSummary: boolean) => {
+  const summary = module.summary;
   if (!isSummary) {
     summary.absent.forEach((locus) => console.error(`Missing proof at ${getLocusText(locus)}`));
     summary.omitted.forEach((locus) => console.error(`Omitted proof at ${getLocusText(locus)}`));
@@ -80,13 +80,13 @@ const checkStrictly = (result: ModuleObligations, isTargeted: boolean, isSummary
   const isIncomplete = summary.absent.length + summary.omitted.length > 0;
   if (isIncomplete) {
     console.error(
-      `${getAtPrefix(result.location)}[ERROR]: Proof incomplete in module ${JSON.stringify(result.name)}: ${summary.absent.length} missing, ${summary.omitted.length} omitted proof step(s).`,
+      `${getAtPrefix(module.location)}[ERROR]: Proof incomplete in module ${JSON.stringify(module.name)}: ${summary.absent.length} missing, ${summary.omitted.length} omitted proof step(s).`,
     );
   }
-  const isEmpty = isTargeted && result.obligations.length === 0;
+  const isEmpty = isTargeted && module.obligations.length === 0;
   if (isEmpty) {
     console.error(
-      `${getAtPrefix(result.location)}[ERROR]: No proof obligation found for the selected target.`,
+      `${getAtPrefix(module.location)}[ERROR]: No proof obligation found for the selected target.`,
     );
   }
   return [
@@ -120,15 +120,15 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
 
 // Toolbox.print_res_aux.
 const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
-  const limit = attempt.method.timeLimitMs;
+  const timeLimitMs = attempt.method.timeLimitMs;
   const used =
     attempt.timeUsedMs === undefined
       ? ""
-      : `; time-used: ${(attempt.timeUsedMs / 1000).toFixed(1)} (${Math.round((100 * attempt.timeUsedMs) / limit)}%)`;
+      : `; time-used: ${(attempt.timeUsedMs / 1000).toFixed(1)} (${Math.round((100 * attempt.timeUsedMs) / timeLimitMs)}%)`;
   const times =
-    limit === 0
+    timeLimitMs === 0
       ? ""
-      : `time-limit: ${limit === Infinity ? "inf" : Number((limit / 1000).toPrecision(6))}${used}`;
+      : `time-limit: ${timeLimitMs === Infinity ? "inf" : Number((timeLimitMs / 1000).toPrecision(6))}${used}`;
   const method = [attempt.method.tactic, times].filter(Boolean).join("; ");
   const isSmt = attempt.method.prover === "smt" || attempt.method.prover === "z3";
   const note =
@@ -149,7 +149,7 @@ const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
 };
 
 // Method.Fail, for an error obligation or one no method was tried on.
-const printFailure = (obligation: PrintedObligation, reason: string) =>
+const printFailedObligation = (obligation: PrintedObligation, reason: string) =>
   printObligationMessage(obligation, "failed", [
     "prover:fail",
     "meth:time-limit: inf",
@@ -168,39 +168,39 @@ interface ProvingSettings {
 
 // Tlapm_lib.process_obs. Returns whether some obligation failed.
 const proveModule = async (
-  result: ModuleObligations,
+  module: ModuleObligations,
   theoryPath: string,
   fingerprintsPath: string,
   settings: ProvingSettings,
 ) => {
-  const known = getKnownResults(settings.fingerprints);
-  const reports = await proveObligations(result.obligations, {
+  const knownResults = getKnownResults(settings.fingerprints);
+  const reports = await proveObligations(module.obligations, {
     workers: settings.workers,
-    results: known.results,
+    results: knownResults.results,
     isFingerprinted: settings.isFingerprinted,
     isProving: settings.isProving,
     onReport: (report, obligation) => {
       if (!settings.isToolbox) return;
       if (report.obligation.status === "trivial")
         return printObligationMessage(obligation, "trivial", ["prover:tlapm", "already:false"]);
-      if (obligation.kind.kind === "Error") return printFailure(obligation, "user error");
+      if (obligation.kind.kind === "Error") return printFailedObligation(obligation, "user error");
       report.attempts.forEach((attempt) => printAttempt(obligation, attempt));
     },
   });
-  writeFileSync(theoryPath, encodeProofTheory(result.name, reports, result.obligations));
+  writeFileSync(theoryPath, encodeProofTheory(module.name, reports, module.obligations));
   console.log(`(* created new ${JSON.stringify(theoryPath)} *)`);
-  known.save(fingerprintsPath);
+  knownResults.save(fingerprintsPath);
   console.log(`(* fingerprints written in ${JSON.stringify(fingerprintsPath)} *)`);
   if (!settings.isProving) return false;
   const unproved = reports.flatMap((report, index) =>
-    "reason" in report.obligation ? [{ report, obligation: result.obligations[index] }] : [],
+    "reason" in report.obligation ? [{ report, obligation: module.obligations[index] }] : [],
   );
   if (settings.isToolbox) {
     unproved
       .filter(
         (entry) => entry.report.attempts.length === 0 && entry.obligation.kind.kind !== "Error",
       )
-      .forEach((entry) => printFailure(entry.obligation, "unexpected error"));
+      .forEach((entry) => printFailedObligation(entry.obligation, "unexpected error"));
   }
   unproved
     .toReversed()
@@ -209,11 +209,11 @@ const proveModule = async (
         `${getAtPrefix(entry.obligation.locus)}${renderDoc(format("[ERROR]: @[<v2>Could not prove or check:@,%a@]", printSequent(entry.obligation.sequent)), 35)}`,
       ),
     );
-  const total = `${result.obligations.length} obligation${result.obligations.length > 1 ? "s" : ""}`;
+  const total = `${module.obligations.length} obligation${module.obligations.length > 1 ? "s" : ""}`;
   console.error(
     unproved.length === 0
-      ? `${getAtPrefix(result.location)}[INFO]: All ${total} proved.`
-      : `${getAtPrefix(result.location)}[ERROR]: ${unproved.length}/${total} failed.\nThere were backend errors processing module \`${JSON.stringify(result.name)}\`.`,
+      ? `${getAtPrefix(module.location)}[INFO]: All ${total} proved.`
+      : `${getAtPrefix(module.location)}[ERROR]: ${unproved.length}/${total} failed.\nThere were backend errors processing module \`${JSON.stringify(module.name)}\`.`,
   );
   return unproved.length > 0;
 };
@@ -266,7 +266,7 @@ export const runTlapm = async (args: string[]) => {
     getLibraryDirectories(parsed),
   );
   const moduleNames = new Set<string>();
-  const results = generateObligations(() => {
+  const modules = generateObligations(() => {
     const missingIndex = modulePaths.findIndex((path) => !existsSync(path));
     if (missingIndex !== -1) {
       const missing = files[missingIndex];
@@ -297,7 +297,7 @@ export const runTlapm = async (args: string[]) => {
       },
     );
   });
-  if (!results) return TLAPM_FAILURE_STATUS;
+  if (!modules) return TLAPM_FAILURE_STATUS;
   const cacheDirectory =
     parsed.get("--cache-dir")?.[0] ?? process.env.TLAPM_CACHE_DIR ?? ".tlacache";
   const forgottenLines = parsed.get("--nofpl")?.map(Number) ?? [0, 0];
@@ -315,9 +315,9 @@ export const runTlapm = async (args: string[]) => {
     fingerprints: new Map(),
   };
   const statuses: number[] = [];
-  for (const [index, result] of results.entries()) {
+  for (const [index, module] of modules.entries()) {
     // Tlapm_lib.mkdir_tlaps.
-    const directory = `${cacheDirectory}/${result.name}.tlaps`;
+    const directory = `${cacheDirectory}/${module.name}.tlaps`;
     const fingerprintsPath = `${directory}/fingerprints`;
     const loadedPath = parsed.get("--usefp")?.[0] ?? fingerprintsPath;
     mkdirSync(directory, { recursive: true });
@@ -325,7 +325,7 @@ export const runTlapm = async (args: string[]) => {
       rmSync(fingerprintsPath);
       console.log(`(* fingerprints file ${JSON.stringify(fingerprintsPath)} removed *)`);
     }
-    if (!parsed.has("--cleanfp") && existsSync(loadedPath) && result.summary.total !== 0) {
+    if (!parsed.has("--cleanfp") && existsSync(loadedPath) && module.summary.total !== 0) {
       console.log(
         parsed.has("--nofp")
           ? `(* will not use fingerprints (because of option \`--nofp\`), but will now load fingerprints from the file \`${loadedPath}\`, in order to overwrite with the new fingerprints, and then save the results at the end. *)`
@@ -333,32 +333,32 @@ export const runTlapm = async (args: string[]) => {
       );
       loadFingerprints(settings.fingerprints, loadedPath, parsed.has("--safefp"));
     }
-    if (parsed.has("--summary")) console.log(formatSummary(result));
+    if (parsed.has("--summary")) console.log(formatSummary(module));
     if (isToolbox) {
-      result.obligations.forEach((obligation) =>
+      module.obligations.forEach((obligation) =>
         printObligationMessage(
           obligation,
           "to be proved",
           parsed.has("--printallobs") ? [`obl:${obligation.text}`] : [],
         ),
       );
-      printToolboxMessage(["type:obligationsnumber", `count:${result.obligations.length}`]);
+      printToolboxMessage(["type:obligationsnumber", `count:${module.obligations.length}`]);
     }
     if (parsed.has("--strict"))
       statuses.push(
-        ...checkStrictly(result, lines.start > 0 || lines.end < Infinity, parsed.has("--summary")),
+        ...checkStrictly(module, lines.start > 0 || lines.end < Infinity, parsed.has("--summary")),
       );
     if (!isProcessing) continue;
     // tlapm's history holds the source of each module read so far.
     saveHistory(
       fingerprintsPath,
-      [...moduleNames, ...results.slice(0, index + 1).map((innerResult) => innerResult.name)].map(
+      [...moduleNames, ...modules.slice(0, index + 1).map((innerModule) => innerModule.name)].map(
         (name) => `${name}.tla`,
       ),
     );
     const isFailed = await proveModule(
-      result,
-      `${directory}/${result.name}.thy`,
+      module,
+      `${directory}/${module.name}.thy`,
       fingerprintsPath,
       settings,
     );

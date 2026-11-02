@@ -1,6 +1,6 @@
 import { delimiter } from "node:path";
 import { getTlcVersion } from "../tlc/version";
-import { getJar, reportErrors, type JavaProperties } from "./shared";
+import { getToolsJar, reportErrors, type JavaProperties } from "./shared";
 import { runTlapm } from "./tlapm";
 import { checkSpecs } from "./tlc";
 import { exportXml, exportXml174 } from "./xml-exporter";
@@ -50,7 +50,7 @@ const runJavaClass = (launch: JavaLaunch) => {
   if (launch.mainClass === "tla2sany.xml.XMLExporter") {
     return reportErrors(() =>
       launch.java.tlcVersion === "1.7.4"
-        ? exportXml174(launch.args, getJar(launch.java))
+        ? exportXml174(launch.args, getToolsJar(launch.java))
         : exportXml(launch.args),
     );
   }
@@ -64,7 +64,7 @@ const run = async (args: string[]) => {
   if (args[0] === "tlapm") return reportErrors(() => runTlapm(args.slice(1)));
   const launch = getJavaLaunch(args);
   if (launch === undefined) return checkSpecs(args, { libraries: [] });
-  launch.java.tlcVersion ??= await getTlcVersion(getJar(launch.java));
+  launch.java.tlcVersion ??= await getTlcVersion(getToolsJar(launch.java));
   return runJavaClass(launch);
 };
 

@@ -65,7 +65,7 @@ import {
   createModuleLoader,
   findModuleFile,
   getInputPaths,
-  getJar,
+  getToolsJar,
   getStandardModulesUrl,
   printError,
   printMissingFile,
@@ -103,7 +103,7 @@ const UNSUPPORTED_DUMP_FORMATS = ["constrained", "stuttering", "strict"];
 const getDumpPath = (path: string, extension: string) =>
   path.endsWith(extension) ? path : `${path}${extension}`;
 
-const getDump = (values: string[]): StateDump => {
+const getStateDump = (values: string[]): StateDump => {
   if (values.length === 1) return { path: getDumpPath(values[0], ".dump") };
   const format = values[0].toLowerCase();
   return {
@@ -228,11 +228,10 @@ const printInitialStates = (printer: MessagePrinter, initialStates: InitialState
 };
 
 interface Timing {
-  start: number;
+  startTime: number;
   // Whether TLC has printed that SANY finished.
   isParsed: boolean;
-  // When TLC started to check the temporal properties on the complete state graph.
-  liveness: number | undefined;
+  livenessStartTime: number | undefined;
 }
 
 // TLC reports a depth of at least 1, even before it finds a state, and rates a minute only once the
@@ -243,13 +242,13 @@ const printProgress = (
   startTime?: number,
 ) => {
   const minutes = Math.max(Date.now() - (startTime ?? 0), 1) / 60_000;
-  const format = (count: number) => count.toLocaleString("en-US");
+  const formatCount = (count: number) => count.toLocaleString("en-US");
   const getRate = (count: number, unit: string) =>
-    startTime === undefined ? "" : ` (${format(Math.floor(count / minutes))} ${unit}/min)`;
+    startTime === undefined ? "" : ` (${formatCount(Math.floor(count / minutes))} ${unit}/min)`;
   printer.print(
     MESSAGE_CODE.progress,
     MESSAGE_LEVEL.none,
-    `Progress(${Math.max(statistics.depth, 1)}) at ${formatTlcDate(new Date())}: ${format(statistics.generatedStates)} states generated${getRate(statistics.generatedStates, "s")}, ${format(statistics.distinctStates)} distinct states found${getRate(statistics.distinctStates, "ds")}, ${format(statistics.queuedStates)} states left on queue.`,
+    `Progress(${Math.max(statistics.depth, 1)}) at ${formatTlcDate(new Date())}: ${formatCount(statistics.generatedStates)} states generated${getRate(statistics.generatedStates, "s")}, ${formatCount(statistics.distinctStates)} distinct states found${getRate(statistics.distinctStates, "ds")}, ${formatCount(statistics.queuedStates)} states left on queue.`,
   );
 };
 
@@ -333,10 +332,10 @@ const printCheckProgress = (
       printInitialStates(printer, progress.initialStates);
       return;
     case "progress":
-      printProgress(printer, progress.statistics, timing.start);
+      printProgress(printer, progress.statistics, timing.startTime);
       return;
     case "liveness-started": {
-      timing.liveness = Date.now();
+      timing.livenessStartTime = Date.now();
       // TLC reports how far the search got before it checks the complete state graph.
       if (progress.isComplete) printProgress(printer, progress.statistics);
       const branches = progress.branches > 1 ? `${progress.branches} branches of ` : "";
@@ -358,13 +357,13 @@ const printCheckProgress = (
 };
 
 const printLivenessEnd = (printer: MessagePrinter, timing: Timing) => {
-  if (timing.liveness === undefined) return;
+  if (timing.livenessStartTime === undefined) return;
   printer.print(
     MESSAGE_CODE.checkingTemporalEnd,
     MESSAGE_LEVEL.none,
-    `Finished checking temporal properties in ${formatTlcDuration(Date.now() - timing.liveness)} at ${formatTlcDate(new Date())}`,
+    `Finished checking temporal properties in ${formatTlcDuration(Date.now() - timing.livenessStartTime)} at ${formatTlcDate(new Date())}`,
   );
-  timing.liveness = undefined;
+  timing.livenessStartTime = undefined;
 };
 
 // Prints a violation, and returns whether TLC goes on to print the statistics of the search.
@@ -535,8 +534,8 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     if (!printViolation(result.status, result.violation, printer)) return;
     // TLC adds a deadlocked state to the behavior graph after it reports the deadlock, which can
     // violate a temporal property too.
-    const additional = result.additionalViolation;
-    if (additional) printViolation("property-violation", additional, printer);
+    const additionalViolation = result.additionalViolation;
+    if (additionalViolation) printViolation("property-violation", additionalViolation, printer);
     if (result.liveCallStack) printNestedExpressions(printer, result.liveCallStack);
   } else {
     printLivenessEnd(printer, timing);
@@ -561,7 +560,7 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
   }
   if (result.failure?.isWithoutStatistics) return;
   if (result.status !== "success") printLivenessEnd(printer, timing);
-  if (printer.isTool) printProgress(printer, result, timing.start);
+  if (printer.isTool) printProgress(printer, result, timing.startTime);
   print(
     MESSAGE_CODE.stats,
     MESSAGE_LEVEL.none,
@@ -600,7 +599,7 @@ const createFileDescriber = (
   const temporary = java.temporaryDirectory ?? tmpdir();
   const temporaryDirectory = existsSync(temporary) ? realpathSync(temporary) : resolve(temporary);
   const libraryDirectory = join(temporaryDirectory, `tlc-${getTemporaryName(resolve(specPath))}`);
-  const jar = getJar(java);
+  const jar = getToolsJar(java);
   return (name: string, origin: SanyModuleOrigin) => {
     const fileName = `${name}.tla`;
     if (origin === "file") return realpathSync(findModuleFile(directories, name) ?? specPath);
@@ -645,12 +644,12 @@ const printStartupBanner = (printer: MessagePrinter, seed: string, workers: numb
 // -noGenerateSpecTEBin and -noTEBin turn off the binary trace. TLC 1.7.4 records no such trace.
 const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) => {
   const flags = [...args.unknown, ...args.options.map((option) => option.name)];
-  const has = (name: string, alias = name) =>
+  const hasFlag = (name: string, alias = name) =>
     flags.some((flag) => flag === name || flag.toLowerCase() === alias.toLowerCase());
   const isSpecGenerated =
-    has("-generateSpecTE") ||
-    (!has("-noGenerateSpecTE", "-noTE") && !has("-tool") && !has("-continue"));
-  return version !== "1.7.4" && isSpecGenerated && !has("-noGenerateSpecTEBin", "-noTEBin");
+    hasFlag("-generateSpecTE") ||
+    (!hasFlag("-noGenerateSpecTE", "-noTE") && !hasFlag("-tool") && !hasFlag("-continue"));
+  return version !== "1.7.4" && isSpecGenerated && !hasFlag("-noGenerateSpecTEBin", "-noTEBin");
 };
 
 const checkSpec = async (
@@ -686,10 +685,10 @@ const checkSpec = async (
     console.error(`Error: tla-ts does not support the -dump format ${unsupportedFormat}.`);
     return 1;
   }
-  const fingerprint = args.get("-fp")?.[0];
-  if (fingerprint !== undefined && Number(fingerprint) !== 0) {
+  const fingerprintIndex = args.get("-fp")?.[0];
+  if (fingerprintIndex !== undefined && Number(fingerprintIndex) !== 0) {
     console.error(
-      `Error: tla-ts fingerprints states as TLC does with -fp 0, not -fp ${fingerprint}.`,
+      `Error: tla-ts fingerprints states as TLC does with -fp 0, not -fp ${fingerprintIndex}.`,
     );
     return 1;
   }
@@ -709,10 +708,10 @@ const checkSpec = async (
     return EXIT_STATUS.configParseError;
   }
   const fileName = basename(specPath, ".tla");
-  const timing: Timing = { start: Date.now(), liveness: undefined, isParsed: false };
+  const timing: Timing = { startTime: Date.now(), livenessStartTime: undefined, isParsed: false };
   // Without -tool, TLC prints how long it ran for a person to read.
   const printFinished = () => {
-    const runtime = Date.now() - timing.start;
+    const runtime = Date.now() - timing.startTime;
     printer.print(
       MESSAGE_CODE.finished,
       MESSAGE_LEVEL.none,
@@ -774,7 +773,7 @@ const checkSpec = async (
       workers,
       livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
       seed: BigInt(seed),
-      dump: dumpValues && getDump(dumpValues),
+      dump: dumpValues && getStateDump(dumpValues),
       isTool: printer.isTool,
       isTraceRecorded: isRecorded,
       isSanyReported: true,
@@ -807,7 +806,7 @@ const checkSpec = async (
   // the spec's modules in the spec's directory and the TLA-Library directories.
   const isAbsoluteSpec = isAbsolute(specPath);
   const specName = isAbsoluteSpec ? fileName : specPath.replace(/\.tla$/, "");
-  const jar = getJar(java);
+  const jar = getToolsJar(java);
   const reportMissingFile =
     version === "1.7.4" ? createMissingFilePrinter174(specPath, java, jar) : undefined;
   if (reportMissingFile) {

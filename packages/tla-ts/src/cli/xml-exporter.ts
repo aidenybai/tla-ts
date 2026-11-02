@@ -99,20 +99,20 @@ interface XmlExportArgs {
 // argument it does not know, which then counts as another module.
 const parseXmlExportArgs = (args: string[], flagNames: Set<string>): XmlExportArgs => {
   const parsed: XmlExportArgs = { flags: new Set(), includes: [], error: undefined };
-  const last = { flag: -1 };
+  const lastFlag = { index: -1 };
   for (let index = 0; index < args.length - 1; index++) {
     if (flagNames.has(args[index])) {
       parsed.flags.add(args[index]);
-      last.flag = index;
+      lastFlag.index = index;
       continue;
     }
     if (args[index] !== "-I") continue;
     index++;
     if (index > args.length - 2) return { ...parsed, error: "missing-include" };
     parsed.includes.push(args[index]);
-    last.flag = index;
+    lastFlag.index = index;
   }
-  return last.flag === args.length - 2 ? parsed : { ...parsed, error: "several-files" };
+  return lastFlag.index === args.length - 2 ? parsed : { ...parsed, error: "several-files" };
 };
 
 export const exportXml = (args: string[]) => {

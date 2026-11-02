@@ -102,6 +102,5 @@ export interface JavaProperties {
   tlcVersion?: TlcVersion;
 }
 
-// The tla2tools.jar on the class path.
-export const getJar = (java: JavaProperties) =>
+export const getToolsJar = (java: JavaProperties) =>
   java.classPath?.split(delimiter).find((entry) => entry.endsWith(".jar"));
