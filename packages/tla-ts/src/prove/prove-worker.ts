@@ -2,14 +2,12 @@
 
 import { TlaProverError, TlaUnsupportedError } from "../errors";
 import { getParentPort } from "../worker";
-import { DECIDERS } from "./deciders";
+import { decide } from "./deciders";
 import type { DecideRequest, DecideResponse } from "./decide-pool";
 
 const getResponse = (request: DecideRequest): DecideResponse => {
   try {
-    return {
-      verdict: DECIDERS[request.prover](request.text, { timeLimitMs: request.timeLimitMs }),
-    };
+    return decide(request.prover, request.text, { timeLimitMs: request.timeLimitMs });
   } catch (error) {
     if (error instanceof TlaProverError) {
       return { error: { name: "TlaProverError", message: error.message } };

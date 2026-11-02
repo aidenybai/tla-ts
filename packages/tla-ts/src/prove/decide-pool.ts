@@ -2,7 +2,7 @@
 
 import { TlaProverError, TlaUnsupportedError } from "../errors";
 import { spawnWorker, type WorkerHandle } from "../worker";
-import type { DecideOptions, Verdict } from "./verdict";
+import type { DecideOptions, Decision } from "./verdict";
 
 export interface DecideRequest {
   prover: string;
@@ -10,15 +10,15 @@ export interface DecideRequest {
   timeLimitMs: number;
 }
 
-// A backend's verdict, or the error that prove turns into a result.
+// A backend's decision, or the error that prove turns into a result.
 export type DecideResponse =
-  | { verdict: Verdict }
+  | Decision
   | { error: { name: "TlaProverError" | "TlaUnsupportedError"; message: string } };
 
-interface Decision {
+interface PendingDecision {
   request: DecideRequest;
   priority: number;
-  resolve: (verdict: Verdict) => void;
+  resolve: (decision: Decision) => void;
   reject: (error: unknown) => void;
 }
 
@@ -28,15 +28,15 @@ export interface DecidePool {
     text: string,
     options: DecideOptions,
     priority: number,
-  ) => Promise<Verdict>;
+  ) => Promise<Decision>;
   // Rejects every decision not yet made with reason, and stops the workers.
   terminate: (reason: unknown) => void;
 }
 
 export const createDecidePool = async (count: number): Promise<DecidePool> => {
   const workers: WorkerHandle[] = [];
-  const queue: Decision[] = [];
-  const running = new Map<number, Decision>();
+  const queue: PendingDecision[] = [];
+  const running = new Map<number, PendingDecision>();
   const idle: number[] = [];
   const state: { failure: { reason: unknown } | undefined } = { failure: undefined };
   const dispatch = () => {
@@ -56,7 +56,7 @@ export const createDecidePool = async (count: number): Promise<DecidePool> => {
     const decision = running.get(index);
     running.delete(index);
     idle.push(index);
-    if ("verdict" in response) decision?.resolve(response.verdict);
+    if ("verdict" in response) decision?.resolve(response);
     else {
       const ErrorClass =
         response.error.name === "TlaProverError" ? TlaProverError : TlaUnsupportedError;
