@@ -315,7 +315,6 @@ export type PcalNode =
   | PcalClause
   | PcalMacro;
 
-// The fields every AST object starts with.
 export const createPcalBase = (): PcalBase => ({
   col: 0,
   line: 0,
