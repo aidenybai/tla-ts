@@ -104,34 +104,28 @@ interface ProveRun {
   decide: DecidePool["decide"];
 }
 
-interface Backend {
-  // The text Prep.ship sends the backend after Prep.normalize_expand. It throws a
-  // TlaUnsupportedError for what tla-ts can't encode.
-  encode: (id: number, sequent: Sequent, method: Method, session: EncodingSession) => string;
-}
+// The text Prep.ship sends a backend after Prep.normalize_expand. It throws a TlaUnsupportedError
+// for what tla-ts can't encode.
+type Encoder = (id: number, sequent: Sequent, method: Method, session: EncodingSession) => string;
 
 // Action.process_obligation, the frontend for every backend but LS4, Isabelle included, then
 // Prep.flatten.
 const shipFirstOrder = (sequent: Sequent) => flatten(processObligation(sequent));
 
-const SMT: Backend = {
-  // Prep.gen_smt_solve writes the resource budget before the encoding.
-  encode: (_id, sequent, method, session) =>
-    (method.rlimit === undefined ? "" : `(set-option :rlimit ${method.rlimit})\n`) +
-    encodeSmt(shipFirstOrder(sequent), session),
-};
+// Prep.gen_smt_solve writes the resource budget before the encoding.
+const encodeSmtProblem: Encoder = (_id, sequent, method, session) =>
+  (method.rlimit === undefined ? "" : `(set-option :rlimit ${method.rlimit})\n`) +
+  encodeSmt(shipFirstOrder(sequent), session);
 
-const BACKENDS: Record<string, Backend> = {
-  smt: SMT,
-  z3: SMT,
-  zenon: { encode: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)) },
+const ENCODERS: Record<string, Encoder> = {
+  smt: encodeSmtProblem,
+  z3: encodeSmtProblem,
+  zenon: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)),
   // tlapm names the theory after its temporary file, and tla-ts after the obligation.
-  isabelle: {
-    encode: (id, sequent, method) =>
-      encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto"),
-  },
+  isabelle: (id, sequent, method) =>
+    encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto"),
   // Pltl.process_obligation is LS4's frontend.
-  ls4: { encode: (_id, sequent) => encodePtl(sequent) },
+  ls4: (_id, sequent) => encodePtl(sequent),
 };
 
 // The frontends and Prep.flatten add no CASE without OTHER, so the SMT encoder standardizes one
@@ -161,18 +155,18 @@ const isIncompleteCaseHyp = (hyp: Hyp) => {
 
 const getModuleName = (source: string) => /-{4,}\s*MODULE\s+(\w+)/.exec(source)?.[1] ?? "Main";
 
-const getBase = (obligation: PrintedObligation): ObligationBase => ({
+const getObligationBase = (obligation: PrintedObligation): ObligationBase => ({
   id: obligation.id,
   location: obligation.location,
   text: obligation.text,
 });
 
-const getUnproved = (
+const getUnprovedReport = (
   obligation: PrintedObligation,
   status: "failed" | "unsupported",
   reason: string,
   attempts: ProofAttempt[] = [],
-): ProofReport => ({ obligation: { ...getBase(obligation), status, reason }, attempts });
+): ProofReport => ({ obligation: { ...getObligationBase(obligation), status, reason }, attempts });
 
 // A failed obligation as tlapm prints it: Prep.normalize_expand for a new failure, and
 // Toolbox.normalize, which keeps pragmas, for a reused one.
@@ -211,14 +205,14 @@ export const encodeForBackend = (
   prover: string,
   session: EncodingSession,
 ) => {
-  const backend = BACKENDS[prover];
-  if (!backend) throw new TlaUnsupportedError(`the ${prover} backend`);
+  const encode = ENCODERS[prover];
+  if (!encode) throw new TlaUnsupportedError(`the ${prover} backend`);
   const methods = findMethods(obligation);
   const method = methods.provers.find((candidate) => candidate.prover === prover) ?? {
     prover,
     timeLimitMs: Infinity,
   };
-  return backend.encode(obligation.id, normalizeExpand(obligation, methods), method, session);
+  return encode(obligation.id, normalizeExpand(obligation, methods), method, session);
 };
 
 // The SMT encoder's session for an obligation, from the count of CASE errors every earlier
@@ -249,7 +243,7 @@ const proveWithBackends = async (
   signal: AbortSignal | undefined,
 ): Promise<ProofReport> => {
   if (obligation.kind.kind === "Error")
-    return getUnproved(obligation, "failed", obligation.kind.message);
+    return getUnprovedReport(obligation, "failed", obligation.kind.message);
   const methods = findMethods(obligation);
   const fingerprint = getFingerprint(obligation.sequent);
   const earlier = run.lastByFingerprint.get(fingerprint);
@@ -257,8 +251,8 @@ const proveWithBackends = async (
   await earlier;
   const attempts: ProofAttempt[] = [];
   const failures: MethodFailure[] = [];
-  const getProved = (prover: string): ProofReport => ({
-    obligation: { ...getBase(obligation), status: "proved", prover },
+  const getProvedReport = (prover: string): ProofReport => ({
+    obligation: { ...getObligationBase(obligation), status: "proved", prover },
     attempts,
   });
   // Prep.already_processed, which forgets the fingerprint's results on each call under --nofp.
@@ -285,19 +279,19 @@ const proveWithBackends = async (
   const firstPrior = getPrior(methods.provers[0]);
   if (firstPrior?.isProved) {
     reuse(firstPrior);
-    return getProved(firstPrior.method.prover);
+    return getProvedReport(firstPrior.method.prover);
   }
   const sequent = normalizeExpand(obligation, methods);
   // Fpfile.fp_writes keeps no trivial result, but adds the fingerprint.
   if (obligation.kind.kind === "Support" && isTrivial(sequent)) {
     run.results.set(fingerprint, run.results.get(fingerprint) ?? new Map());
-    return { obligation: { ...getBase(obligation), status: "trivial" }, attempts };
+    return { obligation: { ...getObligationBase(obligation), status: "trivial" }, attempts };
   }
   for (const method of methods.provers) {
     const prior = getPrior(method);
     if (prior?.isProved) {
       reuse(prior);
-      return getProved(method.prover);
+      return getProvedReport(method.prover);
     }
     if (prior && getBudget(prior.method) >= getBudget(method)) {
       reuse(prior);
@@ -309,18 +303,18 @@ const proveWithBackends = async (
     }
     if (!run.isProving) continue;
     // Prep.prove_with: the Trivial method proves anything.
-    if (method.prover === "trivial") return getProved(method.prover);
-    const backend = BACKENDS[method.prover];
-    if (!backend) {
+    if (method.prover === "trivial") return getProvedReport(method.prover);
+    const encode = ENCODERS[method.prover];
+    if (!encode) {
       skip(method, `tla-ts has no ${method.prover} backend`);
       continue;
     }
     try {
       const isCaseNumbered =
-        backend === SMT &&
+        encode === encodeSmtProblem &&
         (sequent.context.some(isIncompleteCaseHyp) || hasIncompleteCase(sequent.active));
       const session = isCaseNumbered ? await getSession(run, index) : { caseErrors: 0 };
-      const text = backend.encode(obligation.id, sequent, method, session);
+      const text = encode(obligation.id, sequent, method, session);
       const decision = await run.decide(
         method.prover,
         text,
@@ -338,7 +332,7 @@ const proveWithBackends = async (
         verdict: decision.verdict,
         timeUsedMs: decision.timeUsedMs,
       });
-      if (isProved) return getProved(method.prover);
+      if (isProved) return getProvedReport(method.prover);
       failures.push({ reason: `${method.prover} answered ${decision.verdict}`, isDecided: true });
     } catch (error) {
       if (error instanceof TlaProverError) {
@@ -350,7 +344,7 @@ const proveWithBackends = async (
       skip(method, `${method.prover} can't encode ${error.message}`);
     }
   }
-  return getUnproved(
+  return getUnprovedReport(
     obligation,
     failures.some((failure) => failure.isDecided) ? "failed" : "unsupported",
     failures.map((failure) => failure.reason).join(", "),
@@ -362,8 +356,9 @@ const proveWithBackends = async (
 // refuses, as a frontend's soundness check, fails.
 const getErrorReport = (obligation: PrintedObligation, error: unknown) => {
   if (error instanceof TlaUnsupportedError)
-    return getUnproved(obligation, "unsupported", error.message);
-  if (error instanceof TlaProverError) return getUnproved(obligation, "failed", error.message);
+    return getUnprovedReport(obligation, "unsupported", error.message);
+  if (error instanceof TlaProverError)
+    return getUnprovedReport(obligation, "failed", error.message);
   throw error;
 };
 
@@ -382,8 +377,9 @@ export const proveObligations = async (
   obligations: PrintedObligation[],
   options: ObligationsOptions,
 ) => {
-  const count = options.workers ?? 1;
-  const pool = count > 1 && isWorkerSupported() ? await createDecidePool(count) : undefined;
+  const workerCount = options.workers ?? 1;
+  const pool =
+    workerCount > 1 && isWorkerSupported() ? await createDecidePool(workerCount) : undefined;
   const onAbort = () => pool?.terminate(options.signal?.reason);
   options.signal?.addEventListener("abort", onAbort);
   const run: ProveRun = {
@@ -396,7 +392,7 @@ export const proveObligations = async (
       pool?.decide ?? (async (prover, text, decideOptions) => decide(prover, text, decideOptions)),
   };
   // A few obligations per worker prove at once, and each reports once every earlier one has.
-  const limit = pool ? count * 4 : 1;
+  const limit = pool ? workerCount * 4 : 1;
   const pending: Promise<ProofReport>[] = [];
   const isSettled: boolean[] = [];
   const running = new Set<Promise<void>>();
@@ -439,13 +435,13 @@ export const proveObligations = async (
   return reports;
 };
 
-const getFromTlapm = (
+const getTlapmObligation = (
   obligation: PrintedObligation,
   result: TlapmResult | undefined,
-): ProofObligation =>
-  result
-    ? { ...getBase(obligation), ...result }
-    : { ...getBase(obligation), status: "unsupported", reason: "tlapm reported no result" };
+): ProofObligation => ({
+  ...getObligationBase(obligation),
+  ...(result ?? { status: "unsupported", reason: "tlapm reported no result" }),
+});
 
 export const prove = async (options: ProveOptions): Promise<ProveResult> => {
   const name = getModuleName(options.source);
@@ -476,13 +472,13 @@ export const prove = async (options: ProveOptions): Promise<ProveResult> => {
         signal: options.signal,
         onResult: (id, result) => {
           const obligation = byId.get(id);
-          if (obligation) options.onObligation?.(getFromTlapm(obligation, result));
+          if (obligation) options.onObligation?.(getTlapmObligation(obligation, result));
         },
       },
     );
     return {
       obligations: obligations.map((obligation) =>
-        getFromTlapm(obligation, reported.get(obligation.id)),
+        getTlapmObligation(obligation, reported.get(obligation.id)),
       ),
       ...counts,
     };
