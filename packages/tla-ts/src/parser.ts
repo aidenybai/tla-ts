@@ -197,39 +197,6 @@ const OPERATOR_ARGUMENTS = new Set([
   ...POSTFIX_OPERATORS,
 ]);
 
-// A SANY InfixExpr or PostfixExpr.
-const isOperatorExpression = (expression: Expression) =>
-  expression.kind === "Prime" ||
-  expression.kind === "Product" ||
-  ((expression.kind === "And" || expression.kind === "Or") && !expression.isBulleted) ||
-  (expression.kind === "Apply" &&
-    (expression.args.length === 2
-      ? INFIX_OPERATORS.has(expression.operator)
-      : POSTFIX_OPERATORS.has(expression.operator)));
-
-const isOperatorName = (text: string) =>
-  INFIX_OPERATORS.has(text) || POSTFIX_OPERATORS.has(text) || text === "-.";
-
-const getOperatorApplication = (
-  operator: string,
-  argument: Expression,
-  location: SourceLocation,
-): Expression => {
-  switch (operator) {
-    case "ENABLED":
-      return { kind: "Enabled", expression: argument, location };
-    case "UNCHANGED":
-      return { kind: "Unchanged", expression: argument, location };
-    case "[]":
-      return { kind: "Always", expression: argument, location };
-    case "<>":
-      return { kind: "Eventually", expression: argument, location };
-    case "'":
-      return { kind: "Prime", expression: argument, location };
-    default:
-      return { kind: "Apply", operator, args: [argument], location };
-  }
-};
 const SELECTOR_SYMBOLS = new Set(["<<", ">>", ":", "@", "("]);
 
 const UNIT_KEYWORDS = new Set([
@@ -329,6 +296,40 @@ const CLOSING_BRACKETS = new Set([")", "]", "}", ">>", "]_", ">>_"]);
 const BUILTIN_CONSTANTS = new Set(["TRUE", "FALSE", "BOOLEAN", "STRING"]);
 
 const NO_OFFSIDE = -1;
+
+// A SANY InfixExpr or PostfixExpr.
+const isOperatorExpression = (expression: Expression) =>
+  expression.kind === "Prime" ||
+  expression.kind === "Product" ||
+  ((expression.kind === "And" || expression.kind === "Or") && !expression.isBulleted) ||
+  (expression.kind === "Apply" &&
+    (expression.args.length === 2
+      ? INFIX_OPERATORS.has(expression.operator)
+      : POSTFIX_OPERATORS.has(expression.operator)));
+
+const isOperatorName = (text: string) =>
+  INFIX_OPERATORS.has(text) || POSTFIX_OPERATORS.has(text) || text === "-.";
+
+const getOperatorApplication = (
+  operator: string,
+  argument: Expression,
+  location: SourceLocation,
+): Expression => {
+  switch (operator) {
+    case "ENABLED":
+      return { kind: "Enabled", expression: argument, location };
+    case "UNCHANGED":
+      return { kind: "Unchanged", expression: argument, location };
+    case "[]":
+      return { kind: "Always", expression: argument, location };
+    case "<>":
+      return { kind: "Eventually", expression: argument, location };
+    case "'":
+      return { kind: "Prime", expression: argument, location };
+    default:
+      return { kind: "Apply", operator, args: [argument], location };
+  }
+};
 
 // MonolithSpecExtractor.module: a module that no file defines can follow the root module in the
 // root module's file, from its ---- MODULE line to the next ==== line.
