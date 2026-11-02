@@ -12,20 +12,21 @@
 // as prove saw it here, and by CPU time, where a proof within the limit on that second run agrees.
 // Both runs use the built package, as users do, and conformance:prove builds it first.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { type ProofObligation, TlaError } from "../src";
-import { getObligations, type PrintedObligation } from "../src/obligations";
+import type { PrintedObligation } from "../src/obligations";
 import { DECIDERS } from "../src/prove/deciders";
 import { findMethods, type Method } from "../src/prove/prep/pragma";
 import { encodeForBackend } from "../src/prove/prove";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY } from "./corpora";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, writeResults } from "./corpora";
 import { runWithCpuLimit } from "./cpu-limit";
 import { tlaTs } from "./dist";
 import { runModuleWorkers } from "./module-workers";
 import {
   getModuleLoader,
+  getModuleObligations,
   printResults,
   readProofRecords,
   type ModuleProofRecord,
@@ -164,16 +165,16 @@ const getBackend = (
 
 const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
   const path = join(CORPORA_DIRECTORY, record.id);
-  const source = readFileSync(path, "utf8");
-  const loadModule = getModuleLoader(path);
   // A module tla-ts can't load leaves each of its obligations absent, with the error as reason.
-  const proved = await tlaTs.prove({ source, loadModule }).then(
-    (result) => result.obligations,
-    (error: unknown) => {
-      if (!(error instanceof tlaTs.TlaError)) throw error;
-      return error;
-    },
-  );
+  const proved = await tlaTs
+    .prove({ source: readFileSync(path, "utf8"), loadModule: getModuleLoader(path) })
+    .then(
+      (result) => result.obligations,
+      (error: unknown) => {
+        if (!(error instanceof tlaTs.TlaError)) throw error;
+        return error;
+      },
+    );
   const byId = new Map(
     proved instanceof tlaTs.TlaError ? [] : proved.map((obligation) => [obligation.id, obligation]),
   );
@@ -199,12 +200,7 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
   });
   if (!results.some((result) => isDifference(result.verdict))) return results;
   const printed = new Map(
-    getObligations([{ file: path, source }], (name) => {
-      const loaded = loadModule(name);
-      return loaded === undefined ? undefined : { file: `${name}.tla`, source: loaded };
-    })
-      .flatMap((result) => result.obligations)
-      .map((obligation) => [obligation.id, obligation]),
+    getModuleObligations(path).map((obligation) => [obligation.id, obligation]),
   );
   // The second runs go one at a time, so they don't share the core they are timed on.
   const withBackends: Result[] = [];
@@ -246,7 +242,7 @@ const results = records.flatMap(
       reason: "the worker exited",
     })),
 );
-writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
+writeResults(RESULTS_PATH, results);
 console.log("by wall-clock time:");
 printResults(
   results,

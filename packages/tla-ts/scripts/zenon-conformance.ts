@@ -4,30 +4,24 @@ import { join } from "node:path";
 import { encodeForBackend } from "../src/prove/prove";
 import type { PrintedObligation } from "../src/obligations";
 import { runZenon } from "../src/prove/zenon/decide";
-import { CORPORA_DIRECTORY, getLibraryModules, getModuleObligations } from "./corpora";
+import { CORPORA_DIRECTORY, getOption } from "./corpora";
 import {
   getInputDigest,
+  getModuleObligations,
   getZenonVerdict,
   PROOF_INPUTS_DIRECTORY,
-  PROOFS_PATH,
-  type ModuleProofRecord,
+  readProofRecords,
 } from "./proof-records";
 
 // tlapm gives Zenon 10 s per obligation unless a proof says otherwise.
 const TIME_LIMIT_MS = 10_000;
 
-const getOption = (name: string) =>
-  process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined;
-
-const filter = getOption("--filter");
 // --shard 2/4 checks every fourth obligation, starting with the second, to split a run across
 // processes.
 const shard = (getOption("--shard") ?? "1/1").split("/").map(Number);
 // With ZENON set to tlapm's Zenon binary, it runs on the same files, to compare verdicts, node
 // counts and times.
 const zenonPath = process.env.ZENON;
-
-const libraryModules = getLibraryModules();
 
 const getMedian = (values: number[]) => {
   const sorted = values.toSorted((left, right) => left - right);
@@ -36,9 +30,7 @@ const getMedian = (values: number[]) => {
 
 const formatSeconds = (milliseconds: number) => `${(milliseconds / 1000).toFixed(3)} s`;
 
-const records: ModuleProofRecord[] = JSON.parse(readFileSync(PROOFS_PATH, "utf8"));
-const runs = records
-  .filter((module) => filter === undefined || module.id.includes(filter))
+const runs = readProofRecords()
   .flatMap((module) =>
     module.obligations.flatMap((obligation) =>
       (obligation.status !== "proved" && obligation.status !== "failed") ||
@@ -59,7 +51,7 @@ const getModule = (moduleId: string) => {
   current.moduleId = moduleId;
   current.obligations = (() => {
     try {
-      const printed = getModuleObligations(join(CORPORA_DIRECTORY, moduleId), libraryModules);
+      const printed = getModuleObligations(join(CORPORA_DIRECTORY, moduleId));
       return new Map(printed.map((obligation) => [obligation.id, obligation]));
     } catch (error) {
       if (error instanceof Error) return `${error.name}: ${error.message}`;

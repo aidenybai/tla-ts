@@ -7,7 +7,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY } from "./corpora";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption } from "./corpora";
 import { tlaTs } from "./dist";
 import { runModuleWorkers } from "./module-workers";
 import { getModuleLoader, readProofRecords, type ModuleProofRecord } from "./proof-records";
@@ -25,8 +25,7 @@ interface Timing extends ModuleTime {
 
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".prove-benchmark.json");
 
-const workersIndex = process.argv.indexOf("--workers");
-const workers = workersIndex === -1 ? 1 : Number(process.argv[workersIndex + 1]);
+const workers = Number(getOption("--workers") ?? 1);
 
 const formatSeconds = (milliseconds: number) => `${(milliseconds / 1000).toFixed(2)} s`;
 

@@ -1,42 +1,23 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { TlaUnsupportedError } from "../src/errors";
-import { getObligations } from "../src/obligations";
 import { decidePtl } from "../src/prove/ptl/decide";
 import { encodeForBackend } from "../src/prove/prove";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getLibraryModules } from "./corpora";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption } from "./corpora";
 import {
   getLs4Digest,
   getLs4Verdict,
+  getModuleObligations,
   PROOF_INPUTS_DIRECTORY,
-  PROOFS_PATH,
-  type ModuleProofRecord,
+  readProofRecords,
 } from "./proof-records";
 
 // Formulas that LS4 finds satisfiable, which the corpora never send it, with the reference LS4's
 // output next to each.
 const FIXTURES_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ptl");
 
-const TLAPM_LIBRARY = join(CORPORA_DIRECTORY, "tlapm/library");
-
 // tlapm gives LS4 ten seconds.
 const TIME_LIMIT_MS = 10_000;
-
-const libraryModules = getLibraryModules();
-
-const readModule = (path: string | undefined) =>
-  path !== undefined && existsSync(path)
-    ? { file: path, source: readFileSync(path, "utf8") }
-    : undefined;
-
-const getPrintedObligations = (path: string) =>
-  getObligations(
-    [{ file: path, source: readFileSync(path, "utf8") }],
-    (name) =>
-      readModule(join(dirname(path), `${name}.tla`)) ??
-      readModule(libraryModules.get(name)) ??
-      readModule(join(TLAPM_LIBRARY, `${name}.tla`)),
-  ).flatMap((result) => result.obligations);
 
 const listLs4Files = (directory: string): string[] =>
   existsSync(directory)
@@ -47,17 +28,14 @@ const listLs4Files = (directory: string): string[] =>
     : [];
 
 const isVerbose = process.argv.includes("--verbose");
-const filter = process.argv.includes("--filter")
-  ? process.argv[process.argv.indexOf("--filter") + 1]
-  : undefined;
-const records: ModuleProofRecord[] = JSON.parse(readFileSync(PROOFS_PATH, "utf8"));
+const filter = getOption("--filter");
 
 // The abstraction: the LS4 inputs tla-ts prints for each module's LS4 obligations are the ones
 // tlapm sent. Where .proofs holds the inputs they must match byte for byte, and elsewhere as a
 // multiset of digests, which rename atoms.
 const abstraction = { match: 0, mismatch: 0, unsupported: 0, reused: 0, error: 0 };
-records
-  .filter((record) => record.ls4.length > 0 && (filter === undefined || record.id.includes(filter)))
+readProofRecords()
+  .filter((record) => record.ls4.length > 0)
   .forEach((record) => {
     const ids = new Set(
       record.obligations
@@ -66,7 +44,7 @@ records
     );
     const outcome = (() => {
       try {
-        return getPrintedObligations(join(CORPORA_DIRECTORY, record.id));
+        return getModuleObligations(join(CORPORA_DIRECTORY, record.id));
       } catch (error) {
         return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
       }

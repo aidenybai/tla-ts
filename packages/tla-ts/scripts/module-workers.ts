@@ -3,6 +3,7 @@
 // does the work on each module the parent sends it, by index.
 
 import { fork } from "node:child_process";
+import { getOption } from "./corpora";
 import type { ModuleProofRecord } from "./proof-records";
 
 // The results by module index. A module whose worker exits mid-module has none. In a worker, it
@@ -22,8 +23,7 @@ export const runModuleWorkers = async <Result>(
     process.once("disconnect", () => process.exit(0));
     return new Promise(() => {});
   }
-  const jobsIndex = process.argv.indexOf("--jobs");
-  const jobs = jobsIndex === -1 ? defaultJobs : Number(process.argv[jobsIndex + 1]);
+  const jobs = Number(getOption("--jobs") ?? defaultJobs);
   const queue = records
     .map((record, index) => ({ index, size: record.obligations.length }))
     .toSorted((left, right) => right.size - left.size)

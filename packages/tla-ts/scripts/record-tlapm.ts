@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
-  CONFORMANCE_DIRECTORY,
   CORPORA_DIRECTORY,
   findModules,
-  getLibraryModules,
+  LIBRARY_PATH,
+  linkLibraryModules,
   type CorpusModule,
 } from "./corpora";
 import {
@@ -17,8 +17,6 @@ import {
   type TlapmDigest,
   type TlapmResult,
 } from "./tlapm-digest";
-
-const LIBRARY_PATH = join(CONFORMANCE_DIRECTORY, ".library");
 
 const CONCURRENCY = 3;
 
@@ -56,36 +54,32 @@ const runTlapm = (path: string) =>
     });
   });
 
-interface Message {
-  fields: Map<string, string>;
-}
-
 // The toolbox protocol frames each message in @!!BEGIN and @!!END, one @!!key:value per line. A
 // value runs until the next field, so an obligation spans several lines.
-const parseMessages = (output: string): Message[] =>
+const parseMessages = (output: string) =>
   output
     .split("@!!BEGIN\n")
     .slice(1)
     .map((block) => {
       const fields = new Map<string, string>();
-      const body = block.slice(0, block.indexOf("@!!END"));
-      body
+      block
+        .slice(0, block.indexOf("@!!END"))
         .split("\n@!!")
         .map((field, index) => (index === 0 ? field.replace(/^@!!/, "") : field))
         .forEach((field) => {
           const separator = field.indexOf(":");
           fields.set(field.slice(0, separator), field.slice(separator + 1));
         });
-      return { fields };
+      return fields;
     });
 
 // tlapm reports what failed in toolbox warnings and names the failure in its last line. Paths
 // differ between machines, so they are made relative.
-const getError = (output: string, messages: Message[]) =>
+const getError = (output: string, messages: Map<string, string>[]) =>
   [
     ...messages
-      .filter((message) => ["warning", "error"].includes(message.fields.get("type") ?? ""))
-      .map((message) => (message.fields.get("msg") ?? "").trim()),
+      .filter((fields) => ["warning", "error"].includes(fields.get("type") ?? ""))
+      .map((fields) => (fields.get("msg") ?? "").trim()),
     output
       .split("\n")
       .find((line) => line.includes("tlapm ending abnormally"))
@@ -104,22 +98,13 @@ const recordModule = async (module: CorpusModule): Promise<TlapmResult> => {
   }
   const obligations = messages
     .filter(
-      (message) =>
-        message.fields.get("type") === "obligation" &&
-        message.fields.get("status") === "to be proved",
+      (fields) => fields.get("type") === "obligation" && fields.get("status") === "to be proved",
     )
-    .map((message) => {
-      return {
-        loc: message.fields.get("loc") ?? "",
-        text: (message.fields.get("obl") ?? "").trimEnd(),
-      };
-    });
+    .map((fields) => ({ loc: fields.get("loc") ?? "", text: (fields.get("obl") ?? "").trimEnd() }));
   return { id: module.id, status: "ok", ...(obligations.length > 0 ? { obligations } : {}) };
 };
 
-rmSync(LIBRARY_PATH, { recursive: true, force: true });
-mkdirSync(LIBRARY_PATH);
-getLibraryModules().forEach((path, name) => symlinkSync(path, join(LIBRARY_PATH, `${name}.tla`)));
+linkLibraryModules();
 const modules = findModules();
 const results: TlapmResult[] = [];
 const queue = [...modules];

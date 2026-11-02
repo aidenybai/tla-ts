@@ -1,27 +1,22 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { TlaUnsupportedError } from "../src/errors";
 import type { PrintedObligation } from "../src/obligations";
-import {
-  CONFORMANCE_DIRECTORY,
-  CORPORA_DIRECTORY,
-  getLibraryModules,
-  getModuleObligations,
-} from "./corpora";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption, writeResults } from "./corpora";
+import { getModuleObligations } from "./proof-records";
 import {
   collapseWhitespace,
   getDigest,
   TLAPM_PATH,
   TLAPM_TEXT_PATH,
   type TlapmDigest,
+  type TlapmObligation,
   type TlapmResult,
 } from "./tlapm-digest";
 
 type Verdict = "match" | "layout" | "mismatch" | "accepted" | "rejected" | "unsupported";
 
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".tlapm-results.json");
-
-const libraryModules = getLibraryModules();
 
 interface Outcome {
   status: "ok" | "error" | "unsupported";
@@ -31,7 +26,7 @@ interface Outcome {
 
 const analyze = (path: string): Outcome => {
   try {
-    return { status: "ok", obligations: getModuleObligations(path, libraryModules) };
+    return { status: "ok", obligations: getModuleObligations(path) };
   } catch (error) {
     if (error instanceof TlaUnsupportedError)
       return { status: "unsupported", error: error.message, obligations: [] };
@@ -43,6 +38,13 @@ const analyze = (path: string): Outcome => {
   }
 };
 
+// Whether tla-ts prints the recorded obligation at its location, up to whitespace.
+const isSameText = (expected: TlapmObligation | undefined, actual: PrintedObligation | undefined) =>
+  expected !== undefined &&
+  actual !== undefined &&
+  expected.loc === actual.location &&
+  expected.text === getDigest(collapseWhitespace(actual.text));
+
 // The first obligation whose location or text differs, with both texts when the full recording is
 // available.
 const findDifference = (expected: TlapmDigest, actual: Outcome, texts: TlapmResult | undefined) => {
@@ -51,12 +53,7 @@ const findDifference = (expected: TlapmDigest, actual: Outcome, texts: TlapmResu
   for (let index = 0; index < count; index++) {
     const left = expectedObligations[index];
     const right = actual.obligations[index];
-    const isSame =
-      left !== undefined &&
-      right !== undefined &&
-      left.loc === right.location &&
-      left.text === getDigest(collapseWhitespace(right.text));
-    if (isSame) continue;
+    if (isSameText(left, right)) continue;
     return {
       index,
       expected: left && { loc: left.loc, text: texts?.obligations?.[index]?.text },
@@ -70,13 +67,13 @@ const getVerdict = (expected: TlapmDigest, actual: Outcome): Verdict => {
   if (actual.status === "unsupported") return "unsupported";
   if (actual.status !== expected.status) return actual.status === "ok" ? "accepted" : "rejected";
   const expectedObligations = expected.obligations ?? [];
-  if (expectedObligations.length !== actual.obligations.length) return "mismatch";
-  const isTextSame = expectedObligations.every(
-    (obligation, index) =>
-      obligation.loc === actual.obligations[index].location &&
-      obligation.text === getDigest(collapseWhitespace(actual.obligations[index].text)),
-  );
-  if (!isTextSame) return "mismatch";
+  if (
+    expectedObligations.length !== actual.obligations.length ||
+    !expectedObligations.every((obligation, index) =>
+      isSameText(obligation, actual.obligations[index]),
+    )
+  )
+    return "mismatch";
   // The recording trims the end of each obligation.
   const isLayoutSame = expectedObligations.every(
     (obligation, index) =>
@@ -85,19 +82,13 @@ const getVerdict = (expected: TlapmDigest, actual: Outcome): Verdict => {
   return isLayoutSame ? "match" : "layout";
 };
 
-const filter = process.argv.includes("--filter")
-  ? process.argv[process.argv.indexOf("--filter") + 1]
-  : undefined;
+const filter = getOption("--filter");
 const isVerbose = process.argv.includes("--verbose");
 const expected: TlapmDigest[] = JSON.parse(readFileSync(TLAPM_PATH, "utf8"));
-const texts = new Map<string, TlapmResult>(
-  existsSync(TLAPM_TEXT_PATH)
-    ? (JSON.parse(readFileSync(TLAPM_TEXT_PATH, "utf8")) as TlapmResult[]).map((result) => [
-        result.id,
-        result,
-      ])
-    : [],
-);
+const recorded: TlapmResult[] = existsSync(TLAPM_TEXT_PATH)
+  ? JSON.parse(readFileSync(TLAPM_TEXT_PATH, "utf8"))
+  : [];
+const texts = new Map(recorded.map((result) => [result.id, result]));
 const results = expected
   .filter((result) => filter === undefined || result.id.includes(filter))
   .map((result) => {
@@ -125,9 +116,9 @@ const results = expected
     }
     return { id: result.id, verdict, error: actual.error, difference };
   });
-writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
-const counts = new Map<Verdict, number>();
-results.forEach((result) => counts.set(result.verdict, (counts.get(result.verdict) ?? 0) + 1));
+writeResults(RESULTS_PATH, results);
 console.log("");
-counts.forEach((count, verdict) => console.log(`${verdict}: ${count}`));
+Map.groupBy(results, (result) => result.verdict).forEach((group, verdict) =>
+  console.log(`${verdict}: ${group.length}`),
+);
 console.log(`modules: ${results.length} (${basename(RESULTS_PATH)} has the details)`);

@@ -3,15 +3,14 @@
 // bound variables and fresh symbols counts as "names", when the recorded input is available. A
 // difference where tlapm is wrong counts as a deviation.
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TlaUnsupportedError } from "../src";
-import { getObligations } from "../src/obligations";
 import { encodeForBackend } from "../src/prove/prove";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY } from "./corpora";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, writeResults } from "./corpora";
 import {
   getInputDigest,
-  getModuleLoader,
+  getModuleObligations,
   printResults,
   PROOF_INPUTS_DIRECTORY,
   readProofRecords,
@@ -152,15 +151,11 @@ const results = readProofRecords()
     record.obligations.some((obligation) => obligation.status !== "trivial" && "smt" in obligation),
   )
   .flatMap((record): Result[] => {
-    const path = join(CORPORA_DIRECTORY, record.id);
-    const loadModule = getModuleLoader(path);
     const obligations = new Map(
-      getObligations([{ file: path, source: readFileSync(path, "utf8") }], (name) => {
-        const source = loadModule(name);
-        return source === undefined ? undefined : { file: name, source };
-      })
-        .flatMap((result) => result.obligations)
-        .map((obligation) => [obligation.id, obligation]),
+      getModuleObligations(join(CORPORA_DIRECTORY, record.id)).map((obligation) => [
+        obligation.id,
+        obligation,
+      ]),
     );
     // tlapm counts some names across the obligations it encodes, in order.
     const session = { caseErrors: 0 };
@@ -188,7 +183,7 @@ const results = readProofRecords()
     });
   });
 
-writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
+writeResults(RESULTS_PATH, results);
 printResults(
   results,
   ["match", "names", "deviation", "mismatch", "unsupported"],

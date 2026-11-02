@@ -7,15 +7,14 @@
 import { join } from "node:path";
 import { TlaError } from "../src";
 import { getFingerprint } from "../src/prove/prep/fingerprint";
-import { CORPORA_DIRECTORY, getLibraryModules, getModuleObligations } from "./corpora";
-import { readProofRecords } from "./proof-records";
+import { CORPORA_DIRECTORY } from "./corpora";
+import { getModuleObligations, readProofRecords } from "./proof-records";
 
-const libraryModules = getLibraryModules();
 const counts = { reused: 0, unmatched: 0, shared: 0, unloaded: 0 };
 for (const record of readProofRecords()) {
   const obligations = (() => {
     try {
-      return getModuleObligations(join(CORPORA_DIRECTORY, record.id), libraryModules);
+      return getModuleObligations(join(CORPORA_DIRECTORY, record.id));
     } catch (error) {
       if (!(error instanceof TlaError)) throw error;
       return undefined;

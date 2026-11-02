@@ -1,20 +1,12 @@
 import { spawn } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
-  CONFORMANCE_DIRECTORY,
   findModules,
-  getLibraryModules,
+  LIBRARY_PATH,
+  linkLibraryModules,
+  listFiles,
   type CorpusModule,
 } from "./corpora";
 import {
@@ -32,8 +24,6 @@ import {
   type ObligationRecord,
   type ObligationStatus,
 } from "./proof-records";
-
-const LIBRARY_PATH = join(CONFORMANCE_DIRECTORY, ".library");
 
 // Each tlapm runs its backends on one thread, so a busy machine doesn't push proofs past their
 // time limits.
@@ -94,11 +84,6 @@ const parseMessages = (output: string) =>
         });
       return fields;
     });
-
-const listFiles = (directory: string): string[] =>
-  readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
-    entry.isDirectory() ? listFiles(join(directory, entry.name)) : [join(directory, entry.name)],
-  );
 
 const OBLIGATION_STATUSES = new Set<string>([
   "trivial",
@@ -225,9 +210,7 @@ const recordModule = async (module: CorpusModule): Promise<ModuleProofRecord> =>
   };
 };
 
-rmSync(LIBRARY_PATH, { recursive: true, force: true });
-mkdirSync(LIBRARY_PATH);
-getLibraryModules().forEach((path, name) => symlinkSync(path, join(LIBRARY_PATH, `${name}.tla`)));
+linkLibraryModules();
 // Module ids on the command line rerecord just those modules into the existing proofs.json.
 const moduleIds = new Set(process.argv.slice(2));
 const modules = findModules().filter((module) =>

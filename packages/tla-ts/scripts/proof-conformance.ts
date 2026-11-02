@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
   type Module,
@@ -10,7 +10,13 @@ import {
 } from "../src";
 import { parseConfig } from "../src/config";
 import { createEnvironment } from "../src/environment";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getLibraryModules } from "./corpora";
+import {
+  CONFORMANCE_DIRECTORY,
+  CORPORA_DIRECTORY,
+  getLibraryModules,
+  getOption,
+  writeResults,
+} from "./corpora";
 import { digestParsed, type ModuleDigest } from "./proof-digest";
 import type { SanyResult } from "./record-sany";
 
@@ -88,20 +94,18 @@ const analyze = (path: string): ParseOutcome => {
       print: () => {},
       files: { readFile: undefined, writeFile: undefined },
     });
-    return { status: "ok", error: undefined, module: getDigest(parseModule(source)) };
   } catch (error) {
-    // TLC rejects a configuration or a value while it loads a module, which SANY never checks.
-    if (error instanceof TlaConfigError || error instanceof TlaEvaluationError) {
-      return { status: "ok", error: undefined, module: getDigest(parseModule(source)) };
-    }
     if (error instanceof TlaUnsupportedError)
       return { status: "unsupported", error: error.message };
     if (error instanceof TlaSyntaxError) return { status: "error", error: error.message };
-    return {
-      status: "error",
-      error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
-    };
+    // TLC rejects a configuration or a value while it loads a module, which SANY never checks.
+    if (!(error instanceof TlaConfigError) && !(error instanceof TlaEvaluationError))
+      return {
+        status: "error",
+        error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      };
   }
+  return { status: "ok", error: undefined, module: getDigest(parseModule(source)) };
 };
 
 const getVerdict = (expected: SanyResult, actual: ParseOutcome): Verdict => {
@@ -113,12 +117,12 @@ const getVerdict = (expected: SanyResult, actual: ParseOutcome): Verdict => {
   return actual.status === "ok" ? "accepted" : "rejected";
 };
 
-const filter = process.argv[process.argv.indexOf("--filter") + 1];
+const filter = getOption("--filter");
 const expected: SanyResult[] = JSON.parse(
   readFileSync(join(CONFORMANCE_DIRECTORY, "sany.json"), "utf8"),
 );
 const results = expected
-  .filter((result) => !process.argv.includes("--filter") || result.id.includes(filter))
+  .filter((result) => filter === undefined || result.id.includes(filter))
   .map((result) => {
     const actual = analyze(join(CORPORA_DIRECTORY, result.id));
     const verdict = getVerdict(result, actual);
@@ -133,9 +137,9 @@ const results = expected
     }
     return { id: result.id, verdict, expected: result.error, actual: actual.error, difference };
   });
-writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
-const counts = new Map<Verdict, number>();
-results.forEach((result) => counts.set(result.verdict, (counts.get(result.verdict) ?? 0) + 1));
+writeResults(RESULTS_PATH, results);
 console.log("");
-counts.forEach((count, verdict) => console.log(`${verdict}: ${count}`));
+Map.groupBy(results, (result) => result.verdict).forEach((group, verdict) =>
+  console.log(`${verdict}: ${group.length}`),
+);
 console.log(`modules: ${results.length} (${basename(RESULTS_PATH)} has the details)`);

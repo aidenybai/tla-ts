@@ -1,15 +1,14 @@
 // Compares tla-ts's Isabelle theory for each obligation with the theory tlapm wrote, as
 // conformance:record-proofs recorded it, up to comments and the theory's name.
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TlaProverError, TlaUnsupportedError } from "../src/errors";
-import { getObligations } from "../src/obligations";
 import { encodeForBackend } from "../src/prove/prove";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY } from "./corpora";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, writeResults } from "./corpora";
 import {
   getIsabelleDigest,
-  getModuleLoader,
+  getModuleObligations,
   normalizeTheory,
   printResults,
   PROOF_INPUTS_DIRECTORY,
@@ -63,15 +62,11 @@ const results = readProofRecords()
     ),
   )
   .flatMap((record): Result[] => {
-    const path = join(CORPORA_DIRECTORY, record.id);
-    const loadModule = getModuleLoader(path);
     const obligations = new Map(
-      getObligations([{ file: path, source: readFileSync(path, "utf8") }], (name) => {
-        const source = loadModule(name);
-        return source === undefined ? undefined : { file: name, source };
-      })
-        .flatMap((result) => result.obligations)
-        .map((obligation) => [obligation.id, obligation]),
+      getModuleObligations(join(CORPORA_DIRECTORY, record.id)).map((obligation) => [
+        obligation.id,
+        obligation,
+      ]),
     );
     return record.obligations.flatMap((expected): Result[] => {
       if (expected.status === "trivial" || !("isabelle" in expected) || !expected.isabelle)
@@ -106,7 +101,7 @@ const results = readProofRecords()
     });
   });
 
-writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
+writeResults(RESULTS_PATH, results);
 printResults(
   results,
   ["match", "mismatch", "unsupported", "failed"],

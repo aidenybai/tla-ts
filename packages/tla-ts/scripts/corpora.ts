@@ -6,9 +6,9 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
-import { getObligations } from "../src/obligations";
 
 export interface Corpus {
   name: string;
@@ -35,7 +35,7 @@ export const TLC_SEED = 4n;
 export const getCorpora = (): Corpus[] =>
   JSON.parse(readFileSync(join(CONFORMANCE_DIRECTORY, "corpora.json"), "utf8"));
 
-const listFiles = (directory: string): string[] =>
+export const listFiles = (directory: string): string[] =>
   readdirSync(directory).flatMap((entry) => {
     const path = join(directory, entry);
     return statSync(path).isDirectory() ? listFiles(path) : [path];
@@ -109,21 +109,8 @@ export const linkLibraryModules = () => {
   getLibraryModules().forEach((path, name) => symlinkSync(path, join(LIBRARY_PATH, `${name}.tla`)));
 };
 
-export const getModuleName = (specPath: string) => basename(specPath, ".tla");
+export const getOption = (name: string) =>
+  process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined;
 
-const readModule = (path: string | undefined) =>
-  path !== undefined && existsSync(path)
-    ? { file: path, source: readFileSync(path, "utf8") }
-    : undefined;
-
-// The obligations of a corpus module, found the way tlapm finds modules: in the module's directory,
-// then the -I library, then tlapm's own standard library. A submodule reports its own obligations,
-// before the module that contains it.
-export const getModuleObligations = (path: string, libraryModules: Map<string, string>) =>
-  getObligations(
-    [{ file: path, source: readFileSync(path, "utf8") }],
-    (name) =>
-      readModule(join(dirname(path), `${name}.tla`)) ??
-      readModule(libraryModules.get(name)) ??
-      readModule(join(CORPORA_DIRECTORY, "tlapm/library", `${name}.tla`)),
-  ).flatMap((result) => result.obligations);
+export const writeResults = (path: string, results: unknown[]) =>
+  writeFileSync(path, `${JSON.stringify(results, null, 2)}\n`);

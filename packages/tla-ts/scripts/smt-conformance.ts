@@ -1,8 +1,8 @@
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { SmtParseError } from "../src/errors";
 import { decideSmt } from "../src/prove/smt/solver/solver";
-import { CONFORMANCE_DIRECTORY } from "./corpora";
+import { CONFORMANCE_DIRECTORY, getOption, writeResults } from "./corpora";
 import { getSmtVerdict, PROOF_INPUTS_DIRECTORY, type BackendVerdict } from "./proof-records";
 
 // "unsound" is an answer Z3 contradicts, "extra" a proof of an obligation Z3 gave up on.
@@ -44,9 +44,7 @@ const getOutcome = (z3: BackendVerdict, ours: BackendVerdict, isInTime: boolean)
   return z3 === "unsat" ? "missed" : "unproved";
 };
 
-const filter = process.argv.includes("--filter")
-  ? process.argv[process.argv.indexOf("--filter") + 1]
-  : undefined;
+const filter = getOption("--filter");
 const inputs = existsSync(PROOF_INPUTS_DIRECTORY)
   ? listInputs(PROOF_INPUTS_DIRECTORY).filter(
       (path) => existsSync(`${path}.out`) && (filter === undefined || path.includes(filter)),
@@ -72,7 +70,7 @@ const results = inputs.map((path) => {
     );
   return { id, z3, ours, outcome, wallOutcome, cpuMs, timeMs };
 });
-writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
+writeResults(RESULTS_PATH, results);
 
 const report = (title: string, outcomes: Outcome[], times: number[]) => {
   const counts = new Map<Outcome, number>();

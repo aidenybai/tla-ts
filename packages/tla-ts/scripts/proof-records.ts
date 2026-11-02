@@ -1,13 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getLibraryModules } from "./corpora";
+import { getObligations } from "../src/obligations";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getLibraryModules, getOption } from "./corpora";
 import { collapseWhitespace, getDigest } from "./tlapm-digest";
 
 export type BackendVerdict = "unsat" | "sat" | "unknown";
 
 // One backend run: a digest of the input tlapm sent and what the backend answered. tlapm frames an
 // obligation as unsat when the backend proves it. Zenon and Isabelle only ever find a proof or give up.
-export interface BackendRecord<Verdict extends BackendVerdict = BackendVerdict> {
+interface BackendRecord<Verdict extends BackendVerdict = BackendVerdict> {
   input: string;
   verdict: Verdict;
 }
@@ -125,8 +126,6 @@ export const readProofRecords = (): ModuleProofRecord[] => {
     console.error("Run conformance:record-proofs first");
     process.exit(1);
   }
-  const getOption = (name: string) =>
-    process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined;
   const filter = getOption("--filter");
   const skip = getOption("--skip");
   const records: ModuleProofRecord[] = JSON.parse(readFileSync(PROOFS_PATH, "utf8"));
@@ -139,15 +138,25 @@ export const readProofRecords = (): ModuleProofRecord[] => {
 
 const libraryModules = getLibraryModules();
 
-const readSource = (path: string | undefined) =>
-  path !== undefined && existsSync(path) ? readFileSync(path, "utf8") : undefined;
-
-// Loads a module the corpus module at path uses, where tlapm finds it: in the module's directory,
+// Reads a module the corpus module at path uses, where tlapm finds it: in the module's directory,
 // then the -I library, then tlapm's own standard library.
-export const getModuleLoader = (path: string) => (name: string) =>
-  readSource(join(dirname(path), `${name}.tla`)) ??
-  readSource(libraryModules.get(name)) ??
-  readSource(join(CORPORA_DIRECTORY, "tlapm/library", `${name}.tla`));
+const readModule = (path: string, name: string) => {
+  const file = [
+    join(dirname(path), `${name}.tla`),
+    libraryModules.get(name),
+    join(CORPORA_DIRECTORY, "tlapm/library", `${name}.tla`),
+  ].find((candidate) => candidate !== undefined && existsSync(candidate));
+  return file === undefined ? undefined : { file, source: readFileSync(file, "utf8") };
+};
+
+export const getModuleLoader = (path: string) => (name: string) => readModule(path, name)?.source;
+
+// The obligations of a corpus module. A submodule reports its own obligations, before the module
+// that contains it.
+export const getModuleObligations = (path: string) =>
+  getObligations([{ file: path, source: readFileSync(path, "utf8") }], (name) =>
+    readModule(path, name),
+  ).flatMap((result) => result.obligations);
 
 // Prints how many results have each verdict, then the ones worth a look, all of them with
 // --verbose and otherwise the first 20.

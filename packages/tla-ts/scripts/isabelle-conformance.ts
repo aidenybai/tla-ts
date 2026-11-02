@@ -1,16 +1,3 @@
-import { once } from "node:events";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { scheduler } from "node:timers/promises";
-import { Worker } from "node:worker_threads";
-import type { Verdict } from "../src/prove/verdict";
-import {
-  getIsabelleDigest,
-  type ModuleProofRecord,
-  PROOF_INPUTS_DIRECTORY,
-  PROOFS_PATH,
-} from "./proof-records";
-
 // Runs each Isabelle theory tlapm wrote through decideIsabelle and compares the verdict with
 // Isabelle's. An unsound answer proves what Isabelle couldn't.
 //
@@ -19,6 +6,16 @@ import {
 // wall-clock time, and its result counts twice: within the limit by wall-clock time, as tlapm
 // would see it here, and within the limit by CPU time, an estimate of a run on an idle core.
 // --jobs runs that many workers at once, which stretches only the wall-clock times.
+
+import { once } from "node:events";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { scheduler } from "node:timers/promises";
+import { Worker } from "node:worker_threads";
+import type { Verdict } from "../src/prove/verdict";
+import { getOption } from "./corpora";
+import { getIsabelleDigest, PROOF_INPUTS_DIRECTORY, readProofRecords } from "./proof-records";
+
 type Outcome = "match" | "unsound" | "missed" | "missing" | "stale";
 
 interface Decision {
@@ -47,9 +44,6 @@ interface Result {
 const TIME_LIMIT_MS = 30_000;
 const POLL_MS = 100;
 
-const getOption = (name: string) =>
-  process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined;
-const filter = getOption("--filter");
 const jobCount = Number(getOption("--jobs") ?? 1);
 
 // Node gives the main thread V8's default stack of 984 KB, and keeps 192 KB of a worker's stack in
@@ -114,9 +108,7 @@ const report = (result: Result) => {
 
 const results: Result[] = [];
 const jobs: Job[] = [];
-const modules: ModuleProofRecord[] = JSON.parse(readFileSync(PROOFS_PATH, "utf8"));
-for (const module of modules) {
-  if (filter !== undefined && !module.id.includes(filter)) continue;
+for (const module of readProofRecords()) {
   for (const obligation of module.obligations) {
     if (!("isabelle" in obligation) || obligation.isabelle === undefined) continue;
     const name = `${module.id}/${obligation.id}`;
