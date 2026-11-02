@@ -2,12 +2,13 @@
 // indices into the context, builtin definitions are inlined, and anonymous steps get names.
 
 import { TlapmBugError, TlaProofError } from "../errors";
+import { consSubstitution, normalizeApply, shift, shiftExpr, substituteExpr } from "./substitution";
+import { isEqualExpr } from "./equality";
 import {
   adjoin,
   adjoinAll,
   applyBuiltin,
   at,
-  consSubstitution,
   exprifySequent,
   findNamed,
   getBoundFresh,
@@ -16,15 +17,10 @@ import {
   getLocalDefn,
   getLocusPrefix,
   getScopeAt,
-  isEqualExpr,
   mapAccumulate,
   mapBoundDomains,
   mapScoped,
   mapSelectorArgs,
-  normalizeApply,
-  shift,
-  shiftExpr,
-  substituteExpr,
   type Bound,
   type Defn,
   type ExceptPoint,

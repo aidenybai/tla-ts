@@ -4,22 +4,24 @@
 // The text is the negated obligation.
 
 import {
-  adjoin,
-  applyBuiltin,
-  at,
   bumpBy,
-  mapAccumulate,
-  mapScoped,
   shift,
   shiftExpr,
   substituteExpr,
   substituteHyp,
+  type Substitution,
+} from "../../obligations/substitution";
+import {
+  adjoin,
+  applyBuiltin,
+  at,
+  mapAccumulate,
+  mapScoped,
   type Builtin,
   type Expr,
   type Hyp,
   type Scope,
   type Sequent,
-  type Substitution,
 } from "../../obligations/expression";
 import { getLevelInfo } from "../../obligations/levels";
 import { expandAction, expandFairness, expandLeadsto, getTime } from "../../obligations/temporal";

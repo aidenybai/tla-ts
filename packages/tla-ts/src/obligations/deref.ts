@@ -2,10 +2,9 @@
 // subexpression it names, abstracted over the bound names it uses.
 
 import { TlaProofError, TlapmBugError } from "../errors";
+import { consAll, consSubstitution, shift, substituteExpr } from "./substitution";
 import {
   at,
-  consAll,
-  consSubstitution,
   getErrorNote,
   getBoundFresh,
   getChildren,
@@ -13,8 +12,6 @@ import {
   getParamFresh,
   mapChildren,
   mapSelectorArgs,
-  shift,
-  substituteExpr,
   type Bound,
   type Defn,
   type Expr,

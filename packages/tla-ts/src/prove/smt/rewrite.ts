@@ -3,14 +3,8 @@
 // flattened symbol brings are in instances.ts.
 
 import { TlaUnsupportedError } from "../../errors";
-import {
-  normalizeApply,
-  shiftExpr,
-  type Bound,
-  type Builtin,
-  type Expr,
-  type Sequent,
-} from "../../obligations/expression";
+import { normalizeApply, shiftExpr } from "../../obligations/substitution";
+import { type Bound, type Builtin, type Expr, type Sequent } from "../../obligations/expression";
 import { createContext, type Identifier } from "./context";
 import {
   createFlattener,

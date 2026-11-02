@@ -3,21 +3,23 @@
 
 import { TlapmBugError, TlaProofError } from "../errors";
 import {
-  applyBuiltin,
-  at,
   consSubstitution,
-  exprifySequent,
-  getErrorNote,
-  getFact,
-  isBuiltinApply,
-  isEqualExpr,
-  mapAccumulate,
-  mapChildren,
   normalizeApply,
   shift,
   shiftExpr,
   substituteBounds,
   substituteExpr,
+} from "./substitution";
+import { isEqualExpr } from "./equality";
+import {
+  applyBuiltin,
+  at,
+  exprifySequent,
+  getErrorNote,
+  getFact,
+  isBuiltinApply,
+  mapAccumulate,
+  mapChildren,
   stripProps,
   type Bound,
   type Builtin,

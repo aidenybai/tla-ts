@@ -5,28 +5,30 @@
 import { TlapmBugError, TlaProofError } from "../../errors";
 import { expandActionOperators, lambdify } from "../../obligations/action";
 import { createAnonymizer } from "../../obligations/anon";
+import { isEqualExpr } from "../../obligations/equality";
 import {
   applyBuiltin,
   at,
-  bumpBy,
-  consSubstitution,
   createContextMap,
   getChildren,
-  isEqualExpr,
   mapChildren,
   mapExceptSpecs,
   mapHyp,
-  shift,
-  shiftExpr,
-  substituteExpr,
-  substituteHyp,
   type Bound,
   type ExceptPoint,
   type Expr,
   type Hyp,
   type Sequent,
-  type Substitution,
 } from "../../obligations/expression";
+import {
+  bumpBy,
+  consSubstitution,
+  shift,
+  shiftExpr,
+  substituteExpr,
+  substituteHyp,
+  type Substitution,
+} from "../../obligations/substitution";
 import type { OldMethod } from "../../obligations/pragma";
 import { implicationToEnabled } from "./enabled-axioms";
 import { checkLevelChange } from "./level-comparison";

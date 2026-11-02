@@ -5,11 +5,22 @@ import { TlaProofError, TlapmBugError } from "../errors";
 import { lambdify } from "./action";
 import type { Anonymizer } from "./anon";
 import {
-  adjoinAll,
-  at,
   bumpBy,
   consAll,
   consSubstitution,
+  shiftExpr,
+  substituteDefn,
+  substituteExpr,
+  substituteExprs,
+  substituteHyp,
+  substituteSequent,
+  shift,
+  type Substitution,
+} from "./substitution";
+import { isEqualHyp } from "./equality";
+import {
+  adjoinAll,
+  at,
   exprifySequent,
   findNamed,
   getAtPrefix,
@@ -19,14 +30,6 @@ import {
   getScopeHyps,
   mapAccumulate,
   getFresh,
-  isEqualHyp,
-  shiftExpr,
-  substituteDefn,
-  substituteExpr,
-  substituteExprs,
-  substituteHyp,
-  substituteSequent,
-  shift,
   type Builtin,
   type Defn,
   type Expr,
@@ -36,7 +39,6 @@ import {
   type Warn,
   type Scope,
   type Sequent,
-  type Substitution,
   type Visibility,
   type WhereDefined,
 } from "./expression";

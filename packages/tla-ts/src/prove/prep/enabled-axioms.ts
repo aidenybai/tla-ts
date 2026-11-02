@@ -2,13 +2,13 @@
 // from facts of the form the rule needs.
 
 import { TlapmBugError, TlaProverError } from "../../errors";
+import { shiftExpr } from "../../obligations/substitution";
+import { isEqualExpr } from "../../obligations/equality";
 import {
   adjoin,
   adjoinAll,
   getScopeAt,
-  isEqualExpr,
   mapScoped,
-  shiftExpr,
   type Builtin,
   type Expr,
   type Scope,

@@ -4,12 +4,12 @@
 
 import { TlaProofError, TlapmBugError, TlaProverError } from "../errors";
 import type { Anonymizer } from "./anon";
+import { bumpBy, normalizeApply, shift, substituteExpr, type Substitution } from "./substitution";
 import {
   adjoin,
   adjoinAll,
   applyBuiltin,
   at,
-  bumpBy,
   getAtPrefix,
   getErrorNote,
   getLocationText,
@@ -17,15 +17,11 @@ import {
   getScopeAt,
   isBuiltinApply,
   mapScoped,
-  normalizeApply,
-  shift,
   stripProps,
-  substituteExpr,
   type Expr,
   type Warn,
   type Param,
   type Scope,
-  type Substitution,
 } from "./expression";
 import { getLevelInfo, LEVEL_NUMBERS } from "./levels";
 import { rewriteUnchanged } from "./temporal";
