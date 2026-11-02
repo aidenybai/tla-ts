@@ -15,6 +15,7 @@ import {
   getLocationText,
   getParamFresh,
   getScopeAt,
+  isBuiltinApply,
   mapScoped,
   normalizeApply,
   shift,
@@ -86,14 +87,6 @@ const isLambdified = (expression: Expr) =>
   expression.args.length === 1 &&
   expression.args[0].kind === "Lambda" &&
   (isActionOperator(expression.operator) || isWrapper(expression.operator));
-
-const isBuiltinApply = (
-  expression: Expr,
-  builtin: "ENABLED" | "Cdot",
-): expression is Expr & { kind: "Apply" } =>
-  expression.kind === "Apply" &&
-  expression.operator.kind === "Internal" &&
-  expression.operator.builtin === builtin;
 
 const getInitialLevel = (level: number | undefined) =>
   level === undefined ? 2 : Math.min(2, level);
@@ -544,11 +537,7 @@ const commuteExistsDisjunction = (expression: Expr): Expr => {
         items: body.items.map((item) => ({ ...expression, body: item })),
       });
     }
-    if (
-      body.kind === "Apply" &&
-      body.operator.kind === "Internal" &&
-      body.operator.builtin === "Disj"
-    ) {
+    if (isBuiltinApply(body, "Disj")) {
       if (body.args.length !== 2) throw new TlapmBugError();
       return commuteExistsDisjunction({
         ...body,

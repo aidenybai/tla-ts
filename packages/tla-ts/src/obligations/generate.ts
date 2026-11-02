@@ -9,6 +9,7 @@ import {
   exprifySequent,
   getErrorNote,
   getFact,
+  isBuiltinApply,
   isEqualExpr,
   mapAccumulate,
   mapChildren,
@@ -64,10 +65,7 @@ const isBinary = (
   expression: Expr,
   builtin: Builtin,
 ): expression is Extract<Expr, { kind: "Apply" }> =>
-  expression.kind === "Apply" &&
-  expression.operator.kind === "Internal" &&
-  expression.operator.builtin === builtin &&
-  expression.args.length === 2;
+  isBuiltinApply(expression, builtin) && expression.args.length === 2;
 
 const getMessage = (pattern: string, ...args: (string | Doc)[]) =>
   renderDoc(format(pattern, ...args));
@@ -179,9 +177,7 @@ const setDefinition = (visibility: Visibility, context: Hyp[], def: UseDef): Hyp
 };
 
 const isDomainMatch = (fact: Expr, domain: Expr) =>
-  fact.kind === "Apply" &&
-  fact.operator.kind === "Internal" &&
-  fact.operator.builtin === "Mem" &&
+  isBuiltinApply(fact, "Mem") &&
   fact.args[0]?.kind === "Ix" &&
   fact.args[0].index === 0 &&
   isEqualExpr(domain, fact.args[1]);
@@ -577,11 +573,7 @@ export const createGenerator = (
       const operator: Expr = { ...body, location: goal.location };
       return exposeConnective(context, at(normalizeApply(operator, goal.args), operator));
     }
-    if (
-      goal.kind === "Apply" &&
-      goal.operator.kind === "Internal" &&
-      goal.operator.builtin === "Prime"
-    ) {
+    if (isBuiltinApply(goal, "Prime")) {
       const inner = exposeConnective(context, goal.args[0]);
       const prime = (expression: Expr) => applyBuiltin("Prime", [expression], expression);
       if (inner.kind === "Quant") {

@@ -300,6 +300,14 @@ export const getHypName = (hyp: Hyp) => {
   }
 };
 
+export const isBuiltinApply = (
+  expression: Expr,
+  builtin: Builtin,
+): expression is Extract<Expr, { kind: "Apply" }> =>
+  expression.kind === "Apply" &&
+  expression.operator.kind === "Internal" &&
+  expression.operator.builtin === builtin;
+
 export const applyBuiltin = (builtin: Builtin, args: Expr[], from: ExprProps): Expr =>
   at({ kind: "Apply", operator: at({ kind: "Internal", builtin }, from), args }, from);
 
