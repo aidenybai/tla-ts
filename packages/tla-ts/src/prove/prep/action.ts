@@ -85,7 +85,7 @@ const expandUnchanged: Rewrite = (scope, expression) =>
     ? rewriteUnchanged(expression.args[0])
     : mapScoped(scope, expression, expandUnchanged, adjoin, "all");
 
-const getModal = (builtin: Builtin, expression: Expr) =>
+const applyModal = (builtin: Builtin, expression: Expr) =>
   applyBuiltin(builtin, [expression], expression);
 
 // prime_commuter: a prime distributes down to the declarations that are not constant.
@@ -99,7 +99,7 @@ const commutePrime: Rewrite = (scope, expression) => {
       getLevel(getScopeAt(scope, expression.index), hyp.definition.body) === 0
     )
       return expression;
-    return getModal("Prime", expression);
+    return applyModal("Prime", expression);
   }
   if (
     isBuiltin(expression, ["ENABLED"]) ||
@@ -107,7 +107,7 @@ const commutePrime: Rewrite = (scope, expression) => {
     expression.kind === "Sequent" ||
     expression.kind === "Let"
   )
-    return getModal("Prime", expression);
+    return applyModal("Prime", expression);
   if (
     isBuiltin(expression, [
       "UNCHANGED",
@@ -140,7 +140,7 @@ const getModalCommuter = (builtin: "BoxTrue" | "Diamond"): Rewrite => {
         expression.quantifier === quantifier);
     return isDistributed
       ? mapScoped(scope, expression, commute, adjoin)
-      : getModal(builtin, expression);
+      : applyModal(builtin, expression);
   };
   return commute;
 };

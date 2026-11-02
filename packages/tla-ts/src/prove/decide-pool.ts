@@ -32,7 +32,7 @@ export interface DecidePool {
   terminate: (reason: unknown) => void;
 }
 
-export const createDecidePool = async (count: number): Promise<DecidePool> => {
+export const createDecidePool = async (workerCount: number): Promise<DecidePool> => {
   const workers: WorkerHandle[] = [];
   const queue: PendingDecision[] = [];
   const running = new Map<number, PendingDecision>();
@@ -68,7 +68,7 @@ export const createDecidePool = async (count: number): Promise<DecidePool> => {
   };
   workers.push(
     ...(await Promise.all(
-      Array.from({ length: count }, (_, index) =>
+      Array.from({ length: workerCount }, (_, index) =>
         spawnWorker(
           new URL("./prove-worker.js", import.meta.url),
           (message) => onResponse(index, message),

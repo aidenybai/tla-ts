@@ -266,10 +266,10 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
           text(")"),
         ];
       case "FcnApp": {
-        const fcn = printExpr(expression.function);
+        const printedFunction = printExpr(expression.function);
         return expression.args.length === 1
-          ? format("(TLA.fapply %a %a)", fcn, printExpr(expression.args[0]))
-          : format("(TLA.fapply %a (TLA.tuple %a))", fcn, delimited(expression.args));
+          ? format("(TLA.fapply %a %a)", printedFunction, printExpr(expression.args[0]))
+          : format("(TLA.fapply %a (TLA.tuple %a))", printedFunction, delimited(expression.args));
       }
       case "Arrow":
         return format(

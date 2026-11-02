@@ -82,13 +82,13 @@ const readBucket = (entry: OcamlValue | undefined): [OcamlValue, OcamlValue][] =
 export const loadFingerprints = (table: FingerprintTable, path: string, isSafe: boolean) => {
   const bytes = readFileSync(path);
   const magic = readMarshaled(bytes, 0);
-  const fp = readMarshaled(bytes, magic.next).value;
-  if (magic.value !== MAGIC_NUMBER || !isBlock(fp) || fp.tag !== 0)
+  const contents = readMarshaled(bytes, magic.next).value;
+  if (magic.value !== MAGIC_NUMBER || !isBlock(contents) || contents.tag !== 0)
     throw new TlaProofError("corrupted fingerprint file");
-  const buckets = getField(getField(fp, 0), 1);
-  const isTrusted = (sti: OcamlValue, field: number) => {
+  const buckets = getField(getField(contents, 0), 1);
+  const isTrusted = (result: OcamlValue, field: number) => {
     const index = CHECKED_VERSIONS.get(field);
-    return !isSafe || index === undefined || getField(getField(sti, 0), index) === VERSION;
+    return !isSafe || index === undefined || getField(getField(result, 0), index) === VERSION;
   };
   table.clear();
   (buckets !== undefined && isBlock(buckets) ? buckets.fields : [])
@@ -98,13 +98,13 @@ export const loadFingerprints = (table: FingerprintTable, path: string, isSafe: 
         throw new TlaProofError("corrupted fingerprint file");
       table.set(
         key,
-        record.fields.map((sti, field) => (isTrusted(sti, field) ? sti : 0)),
+        record.fields.map((result, field) => (isTrusted(result, field) ? result : 0)),
       );
     });
 };
 
-const decodeResult = (prover: string, sti: OcamlValue | undefined): ProofAttempt | undefined => {
-  const status = getField(sti, 0);
+const decodeResult = (prover: string, result: OcamlValue | undefined): ProofAttempt | undefined => {
+  const status = getField(result, 0);
   const outcome = getField(status, 0);
   const argument = getField(getField(status, 1), 0);
   if (outcome === undefined || outcome === 1) return undefined;

@@ -22,7 +22,7 @@ export const getMd5 = (text: string): string => {
     const words = Array.from({ length: 16 }, (_value, index) =>
       view.getUint32(offset + index * 4, true),
     );
-    const [a, b, c, d] = Array.from({ length: 64 }).reduce<number[]>(
+    const mixedState = Array.from({ length: 64 }).reduce<number[]>(
       ([innerA, innerB, innerC, innerD], _value, index) => {
         const round = Math.floor(index / 16);
         const mixed =
@@ -51,14 +51,7 @@ export const getMd5 = (text: string): string => {
       },
       state,
     );
-    state.splice(
-      0,
-      4,
-      (state[0] + a) | 0,
-      (state[1] + b) | 0,
-      (state[2] + c) | 0,
-      (state[3] + d) | 0,
-    );
+    state.splice(0, 4, ...state.map((word, index) => (word + mixedState[index]) | 0));
   }
   return state
     .flatMap((word) => [word, word >>> 8, word >>> 16, word >>> 24])

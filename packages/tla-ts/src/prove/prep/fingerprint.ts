@@ -150,7 +150,7 @@ const getFreshLabel = (hyp: Extract<Hyp, { kind: "Fresh" }>) =>
 // fp_sequent's text for an obligation, before its digest.
 const getFingerprintText = (sequent: Sequent) => {
   const stack: Entry[] = [];
-  const get = (index: number) => {
+  const getEntry = (index: number) => {
     const entry = stack[stack.length - index];
     if (!entry) throw new TlapmBugError();
     return entry;
@@ -197,7 +197,7 @@ const getFingerprintText = (sequent: Sequent) => {
       entries.map((entry) => `${getVariableNumber(entry)}.`).join("");
     switch (expression.kind) {
       case "Ix": {
-        const entry = get(expression.index);
+        const entry = getEntry(expression.index);
         entry.isUsed = true;
         const ident = entry.ident;
         switch (ident.kind) {
@@ -234,7 +234,7 @@ const getFingerprintText = (sequent: Sequent) => {
         return printSequent(expression.sequent);
       case "Apply": {
         const operator = expression.operator;
-        if (operator.kind === "Ix" && get(operator.index).ident.kind === "Pragma") return "";
+        if (operator.kind === "Ix" && getEntry(operator.index).ident.kind === "Pragma") return "";
         return `$OpApp(${print(operator)};${printList(expression.args)})`;
       }
       case "With":

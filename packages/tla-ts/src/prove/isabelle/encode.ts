@@ -122,9 +122,9 @@ const printLemma = (sequent: Sequent) => {
 
   // A binder's name binds in what prints inside it.
   const withBound = (name: string, print: (bound: string) => string) => {
-    const doc = print(adjoin(name));
+    const printed = print(adjoin(name));
     popNames(context, 1);
-    return doc;
+    return printed;
   };
 
   // pp_print_expr: every expression, apart from the obligation's sequent, prints in parentheses.
@@ -164,9 +164,9 @@ const printLemma = (sequent: Sequent) => {
       // tlapm prints a lambda without the arguments it's applied to.
       case "Lambda": {
         const names = operator.params.map((param) => `${adjoin(param.name)} `).join("");
-        const doc = `\\<lambda> ${names}. ${printExpr(operator.body)}`;
+        const printed = `\\<lambda> ${names}. ${printExpr(operator.body)}`;
         popNames(context, operator.params.length);
-        return doc;
+        return printed;
       }
       default:
         throw new TlapmBugError();
@@ -211,9 +211,9 @@ const printLemma = (sequent: Sequent) => {
       case "Fact": {
         const fact = hyp.visibility === "Visible" ? printExpr(hyp.expression) : undefined;
         bump();
-        const doc = fact ? `(${fact} \\<Longrightarrow> ${printRest()})` : printRest();
+        const printed = fact ? `(${fact} \\<Longrightarrow> ${printRest()})` : printRest();
         popNames(context, 1);
-        return doc;
+        return printed;
       }
       case "Defn":
         throw new TlaUnsupportedError("Inner definition");
@@ -294,10 +294,10 @@ const printLemma = (sequent: Sequent) => {
         });
       }
       case "FcnApp": {
-        const fcn = printExpr(expression.function);
+        const printedFunction = printExpr(expression.function);
         return expression.args.length === 1
-          ? `fapply (${fcn}, ${printExpr(expression.args[0])})`
-          : `fapply (${fcn}, <<${delimited(expression.args)}>>)`;
+          ? `fapply (${printedFunction}, ${printExpr(expression.args[0])})`
+          : `fapply (${printedFunction}, <<${delimited(expression.args)}>>)`;
       }
       case "Arrow":
         return `[${printExpr(expression.domain)} \\<rightarrow> ${printExpr(expression.range)}]`;

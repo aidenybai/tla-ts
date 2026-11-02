@@ -698,10 +698,10 @@ export const createEncoder = (session: EncodingSession) => {
         return encodeFunction(expression, env, mode);
       // Rewrite.elim_multiarg: f[a, b] applies f to the tuple <<a, b>>.
       case "FcnApp": {
-        const fn = encodeIdv(expression.function, env, mode);
+        const encodedFunction = encodeIdv(expression.function, env, mode);
         const args = expression.args.map((arg) => encodeIdv(arg, env, mode));
         const argument = args.length === 1 ? args[0] : call(tla(`Tuple_${args.length}`), args);
-        return idv(`(${FUN_APP} ${fn} ${argument})`);
+        return idv(`(${FUN_APP} ${encodedFunction} ${argument})`);
       }
       case "Arrow":
         return idv(
