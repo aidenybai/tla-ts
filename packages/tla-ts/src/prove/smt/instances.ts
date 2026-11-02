@@ -53,6 +53,7 @@ export const getSetOfAxioms = (name: string, free: string[], element: string, bo
   const guards = variables.map((variable, index) => `(${MEM} ${variable} ${sets[index]})`);
   // N_axioms.assert_issetof names its one set a.
   const single = count === 1 ? ["a"] : sets;
+  const asserted = call(name, [...single, ...free]);
   return [
     axiom(
       "SetOfIntro",
@@ -74,9 +75,7 @@ export const getSetOfAxioms = (name: string, free: string[], element: string, bo
     axiom(
       "AssertIsSetOf",
       [count],
-      forall([...free, ...single], `(${IS_SET_OF} ${call(name, [...single, ...free])})`, [
-        [call(name, [...single, ...free])],
-      ]),
+      forall([...free, ...single], `(${IS_SET_OF} ${asserted})`, [[asserted]]),
     ),
   ];
 };

@@ -34,16 +34,16 @@ const decompose = (left: Expr, right: Expr, from: Expr): Expr => {
 // the equalities of their fields, paired by name.
 export const simplifyRecordEqualities = (expression: Expr): Expr => {
   const inner = mapChildren(expression, simplifyRecordEqualities);
-  const isRecordEquality =
-    inner.kind === "Apply" &&
-    inner.operator.kind === "Internal" &&
-    inner.operator.builtin === "Eq" &&
-    inner.args.length === 2 &&
-    inner.args[0].kind === "Record" &&
-    inner.args[1].kind === "Record";
-  return isRecordEquality && inner.kind === "Apply"
-    ? at(decompose(inner.args[0], inner.args[1], inner), inner)
-    : inner;
+  if (
+    inner.kind !== "Apply" ||
+    inner.operator.kind !== "Internal" ||
+    inner.operator.builtin !== "Eq" ||
+    inner.args.length !== 2 ||
+    inner.args[0].kind !== "Record" ||
+    inner.args[1].kind !== "Record"
+  )
+    return inner;
+  return at(decompose(inner.args[0], inner.args[1], inner), inner);
 };
 
 // sort_recfields: a record's or a record set's fields in order. Like tlapm, it doesn't visit the
