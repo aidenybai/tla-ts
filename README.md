@@ -37,50 +37,6 @@ npx tla-ts Spec.tla          # check a spec with TLC's options
 npx tla-ts tlapm Module.tla  # tlapm's command line, with tla-ts's provers
 ```
 
-## Examples
-
-The [playground](https://tla-ts.aidenybai.com) runs each example in your browser. On each one, tla-ts prints the same output as TLC or tlapm.
-
-| Example                                                        | What it shows                                                      |
-| -------------------------------------------------------------- | ------------------------------------------------------------------ |
-| [Counter](packages/website/src/examples/Counter.tla)           | An invariant that breaks after 3 steps                             |
-| [DieHard](packages/website/src/examples/DieHard.tla)           | The water jug puzzle from Die Hard 3, solved as a broken invariant |
-| [Locks](packages/website/src/examples/Locks.tla)               | A deadlock between two processes that take two locks               |
-| [TrafficLight](packages/website/src/examples/TrafficLight.tla) | A temporal property that fails because nothing forces a step       |
-| [Arithmetic](packages/website/src/examples/Arithmetic.tla)     | A theorem about natural numbers, proved with SMT                   |
-| [Sets](packages/website/src/examples/Sets.tla)                 | A theorem about sets, proved with Zenon                            |
-| [Invariant](packages/website/src/examples/Invariant.tla)       | An invariant of a spec, proved by induction                        |
-| [Mistake](packages/website/src/examples/Mistake.tla)           | A false theorem, which fails to prove                              |
-
-To prove that `count` is always a natural number:
-
-```tla
----- MODULE Invariant ----
-EXTENDS Naturals, TLAPS
-VARIABLE count
-
-Init == count = 0
-Next == count' = count + 1
-Spec == Init /\ [][Next]_count
-
-TypeOK == count \in Nat
-
-THEOREM Spec => []TypeOK
-<1>1. Init => TypeOK
-  BY DEF Init, TypeOK
-<1>2. TypeOK /\ [Next]_count => TypeOK'
-  BY DEF TypeOK, Next
-<1>3. QED
-  BY <1>1, <1>2, PTL DEF Spec
-====
-```
-
-```ts
-const result = await prove({ source });
-result.obligations.map((obligation) => obligation.status);
-// ["proved", "trivial", "trivial", "trivial", "proved", "proved"]
-```
-
 ## API
 
 ### `check`
