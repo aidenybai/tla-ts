@@ -121,13 +121,11 @@ const toLine = (result: TlapmResult | TlapmDigest) => JSON.stringify(result);
 writeFileSync(TLAPM_TEXT_PATH, `[\n${results.map(toLine).join(",\n")}\n]\n`);
 const digests = results.map((result): TlapmDigest => ({
   ...result,
-  ...(result.obligations && {
-    obligations: result.obligations.map((obligation) => ({
-      loc: obligation.loc,
-      text: getDigest(collapseWhitespace(obligation.text)),
-      layout: getDigest(obligation.text),
-    })),
-  }),
+  obligations: result.obligations?.map((obligation) => ({
+    loc: obligation.loc,
+    text: getDigest(collapseWhitespace(obligation.text)),
+    layout: getDigest(obligation.text),
+  })),
 }));
 writeFileSync(TLAPM_PATH, `[\n${digests.map(toLine).join(",\n")}\n]\n`);
 const errors = results.filter((result) => result.status === "error").length;

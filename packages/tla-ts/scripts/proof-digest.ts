@@ -156,7 +156,7 @@ export const digestSany = (document: XmlElement, moduleName: string): ModuleDige
     const filename = getFilename(module);
     return {
       name: getText(getChild(module, "uniquename")),
-      units: module.children.flatMap((child) => {
+      units: module.children.flatMap((child): (TheoremDigest | UseDigest)[] => {
         const node = child.name === "TheoremNodeRef" ? resolve(child) : child;
         if (getFilename(node) !== filename) return [];
         if (node.name === "TheoremNode") return [digestTheorem(node, false)];
@@ -210,9 +210,6 @@ const digestParsedUse = (use: UseOrHide, location: SourceLocation): UseDigest =>
 const digestParsedProof = (proof: Proof | undefined): ProofDigest | undefined => {
   if (proof === undefined) return undefined;
   const range = formatRange(proof.location);
-  if (proof.kind === "Obvious" || proof.kind === "Omitted") {
-    return { kind: proof.kind === "Obvious" ? "obvious" : "omitted", range };
-  }
   if (proof.kind === "By") {
     return {
       kind: "by",
@@ -222,7 +219,10 @@ const digestParsedProof = (proof: Proof | undefined): ProofDigest | undefined =>
       defs: proof.defs.map(getDefName),
     };
   }
-  return { kind: "steps", range, level: proof.level, steps: proof.steps.map(digestParsedStep) };
+  if (proof.kind === "Steps") {
+    return { kind: "steps", range, level: proof.level, steps: proof.steps.map(digestParsedStep) };
+  }
+  return { kind: proof.kind === "Obvious" ? "obvious" : "omitted", range };
 };
 
 const digestParsedStep = (step: ProofStep): StepDigest => {
