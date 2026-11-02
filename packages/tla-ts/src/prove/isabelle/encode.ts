@@ -119,7 +119,6 @@ const printLemma = (sequent: Sequent) => {
   const context = createContext();
   const adjoin = (name: string) => pushName(context, pickle(name));
   const bump = () => pushName(context, "");
-  const state = { isAssumed: false };
 
   // A binder's name binds in what prints inside it.
   const withBound = (name: string, print: (bound: string) => string) => {
@@ -350,8 +349,8 @@ const printLemma = (sequent: Sequent) => {
     }
   };
 
-  // pp_print_sequent_outer: the obligation's sequent as the fixes, assumes and shows of a lemma. A
-  // pragma's definition ends it, without the goal.
+  // pp_print_sequent_outer: the obligation's sequent as the lines of a lemma's fixes, assumes and
+  // shows. A pragma's definition ends it with an empty line in place of the goal.
   const printSequent = (sequent: Sequent) => {
     const lines: string[] = [];
     for (const hyp of sequent.context) {
@@ -367,7 +366,6 @@ const printLemma = (sequent: Sequent) => {
           const name = adjoin(hyp.name);
           lines.push(`fixes ${name}`);
           if (domain === undefined) break;
-          state.isAssumed = true;
           lines.push(`assumes ${name}_in : "(${name} \\<in> ${domain})"`);
           break;
         }
@@ -383,22 +381,25 @@ const printLemma = (sequent: Sequent) => {
             break;
           }
           if (fact === undefined) break;
-          state.isAssumed = true;
           lines.push(`assumes v'${count}: "${fact}"`);
           break;
         }
         case "Defn":
-          if (hyp.definition.kind === "Bpragma") return lines.map((line) => `${line}\n`).join("");
+          if (hyp.definition.kind === "Bpragma") return [...lines, ""];
           lines.push(`(* usable definition ${hyp.definition.name} suppressed *)`);
           adjoin(hyp.definition.name);
           break;
       }
     }
-    return [...lines, `shows "${printExpr(sequent.active)}"`].join("\n");
+    return [...lines, `shows "${printExpr(sequent.active)}"`];
   };
 
   try {
-    return { text: printSequent(sequent), isAssumed: state.isAssumed };
+    const lines = printSequent(sequent);
+    return {
+      text: lines.join("\n"),
+      isAssumed: lines.some((line) => line.startsWith("assumes ")),
+    };
   } catch (error) {
     if (!(error instanceof TlaUnsupportedError)) throw error;
     throw new TlaProverError(`isabelle : unsupported operator ${error.message}`);
