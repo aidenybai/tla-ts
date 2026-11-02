@@ -291,17 +291,8 @@ export const joinSummaries = (left: ProofSummary, right: ProofSummary): ProofSum
 });
 
 const getStepSummary = (step: Step): ProofSummary => {
-  switch (step.kind) {
-    case "Use":
-      return { ...EMPTY_SUMMARY, total: step.obligations?.length ?? 0 };
-    case "Assert":
-    case "Suffices":
-    case "Pcase":
-    case "Pick":
-      return getProofSummary(step.proof);
-    default:
-      return EMPTY_SUMMARY;
-  }
+  if (step.kind === "Use") return { ...EMPTY_SUMMARY, total: step.obligations?.length ?? 0 };
+  return "proof" in step ? getProofSummary(step.proof) : EMPTY_SUMMARY;
 };
 
 export const getProofSummary = (proof: Proof): ProofSummary => {
@@ -515,14 +506,7 @@ export const createGenerator = (
     };
     const visitStep = (step: Step) => {
       if (step.kind === "Use" && step.obligations) obligations.push(...step.obligations);
-      if (
-        step.kind === "Assert" ||
-        step.kind === "Suffices" ||
-        step.kind === "Pcase" ||
-        step.kind === "Pick"
-      ) {
-        visitProof(step.proof);
-      }
+      if ("proof" in step) visitProof(step.proof);
     };
     visitProof(proof);
     return obligations;
@@ -551,15 +535,9 @@ export const createGenerator = (
 
   const renumberStep = (level: number, step: Step): Step => {
     const renumbered: Step = { ...step, step: renumberNumber(level, step.step) };
-    switch (renumbered.kind) {
-      case "Assert":
-      case "Suffices":
-      case "Pcase":
-      case "Pick":
-        return { ...renumbered, proof: renumber(level + 1, renumbered.proof) };
-      default:
-        return renumbered;
-    }
+    return "proof" in renumbered
+      ? { ...renumbered, proof: renumber(level + 1, renumbered.proof) }
+      : renumbered;
   };
 
   const exposeConnective = (context: Hyp[], goal: Expr): Expr => {
