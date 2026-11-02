@@ -660,7 +660,7 @@ export abstract class Internalizer {
     this.manager.decRef(node.owner);
     this.stickyGenerations.delete(node);
     // The node leaves the stack last, since its data are found through its place there.
-    nodes.pop();
+    this.enodeStore.pop();
   }
 
   protected mergeCgcGenerations(first: Enode, firstGeneration: number, second: Enode) {

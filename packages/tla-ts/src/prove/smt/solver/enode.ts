@@ -68,6 +68,10 @@ export class EnodeStore {
   labels = new Int32Array(4 * 1024);
   // The hash of each node's label, or -1 before the matcher sets it.
   lblHash = new Int32Array(1024);
+  // The arguments of each node from argStart, in one stack that a popped node releases.
+  argStart = new Int32Array(1024);
+  argPool = new Int32Array(1024);
+  private argTop = 0;
 
   // The id of a new node, which goes on the stack, with columns of room for it.
   allocate(node: Enode) {
@@ -86,7 +90,9 @@ export class EnodeStore {
       this.iscopeLevel = growColumn(this.iscopeLevel);
       this.labels = growColumn(this.labels);
       this.lblHash = growColumn(this.lblHash);
+      this.argStart = growColumn(this.argStart);
     }
+    this.argStart[id] = this.argTop;
     this.root[id] = id;
     this.next[id] = id;
     this.classSize[id] = 1;
@@ -95,6 +101,19 @@ export class EnodeStore {
     this.labels.fill(0, 4 * id, 4 * id + 4);
     this.lblHash[id] = -1;
     return id;
+  }
+
+  // Appends an argument to the node allocated last.
+  pushArg(arg: number) {
+    if (this.argTop === this.argPool.length) this.argPool = growColumn(this.argPool);
+    this.argPool[this.argTop++] = arg;
+  }
+
+  // Pops the node on top of the stack, and releases its arguments.
+  pop() {
+    const id = this.nodes.length - 1;
+    this.argTop = this.argStart[id];
+    this.nodes.pop();
   }
 }
 
@@ -111,11 +130,6 @@ export class Enode {
   // two are equal.
   transTarget: Enode | null = null;
   transJustification: EqJustification = AXIOM_EQ_JUSTIFICATION;
-  // m_args: the first two arguments inline, like Z3's arguments after the node, and the rest in an
-  // array. A missing argument is the node itself.
-  private readonly arg0: Enode;
-  private readonly arg1: Enode;
-  private readonly moreArgs: Enode[];
 
   // moreArgs are the arguments past the second, and arg0 and arg1 are null when there are fewer.
   constructor(
@@ -138,9 +152,9 @@ export class Enode {
     store.decl[this.id] = decl;
     store.generation[this.id] = generation;
     store.iscopeLevel[this.id] = iscopeLevel;
-    this.arg0 = arg0 ?? this;
-    this.arg1 = arg1 ?? this;
-    this.moreArgs = moreArgs;
+    if (arg0 !== null) store.pushArg(arg0.id);
+    if (arg1 !== null) store.pushArg(arg1.id);
+    for (const arg of moreArgs) store.pushArg(arg.id);
     store.flags[this.id] =
       (numArgs << NUM_ARGS_SHIFT) |
       (isEq ? IS_EQ : 0) |
@@ -262,8 +276,11 @@ export class Enode {
     return this.flags >>> NUM_ARGS_SHIFT;
   }
 
+  // The argument, and for a missing first or second argument the node itself, like Z3's m_args.
   getArg(index: number) {
-    return index === 0 ? this.arg0 : index === 1 ? this.arg1 : this.moreArgs[index - 2];
+    const store = this.store;
+    if (index < this.numArgs) return store.nodes[store.argPool[store.argStart[this.id] + index]];
+    return this;
   }
 
   get isEq() {
@@ -320,7 +337,7 @@ export class Enode {
   }
 
   isTrueEq() {
-    return this.isEq && this.arg0.root === this.arg1.root;
+    return this.isEq && this.getArg(0).root === this.getArg(1).root;
   }
 
   usesCgTable() {
