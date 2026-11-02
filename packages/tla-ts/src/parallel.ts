@@ -1,5 +1,4 @@
 import type { Expression } from "./ast";
-import { createCanonicalizer } from "./canonical";
 import {
   checkSequentially,
   createSearch,
@@ -28,7 +27,13 @@ import { getTlcStringOrder, getTlcVariableOrder } from "./tlc/order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
 import type { TlcVersion } from "./tlc/version";
-import { getRankedStringCount, setStringOrder, setValueVersion, type Value } from "./values";
+import {
+  createCanonicalizer,
+  getRankedStringCount,
+  setStringOrder,
+  setValueVersion,
+  type Value,
+} from "./values";
 import { spawnWorker, type Port } from "./worker";
 
 export interface StartMessage {

@@ -1,4 +1,3 @@
-import { createCanonicalizer } from "./canonical";
 import { createSearch } from "./check";
 import { createEnvironment } from "./environment";
 import {
@@ -12,7 +11,13 @@ import { getSuccessors, type Successor } from "./successors";
 import { getTlcStringOrder, getTlcDeclarationOrder } from "./tlc/order";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
-import { getRankedStringCount, setStringOrder, setValueVersion, type Value } from "./values";
+import {
+  createCanonicalizer,
+  getRankedStringCount,
+  setStringOrder,
+  setValueVersion,
+  type Value,
+} from "./values";
 import { getParentPort, type Port } from "./worker";
 
 const LOCKED = -1;

@@ -82,13 +82,13 @@ import {
 } from "./tlc/messages";
 import { replayInitialStates, replaySuccessors } from "./tlc/replay";
 import { createTlcFingerprinter, getTlcFingerprint } from "./tlc/random";
-import { createCanonicalizer } from "./canonical";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createActionRecord, createCounterExample } from "./tlc/tlcext-operators";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import type { TlcVersion } from "./tlc/version";
 import {
   combineHash,
+  createCanonicalizer,
   createModelValue,
   formatState,
   formatValue,
