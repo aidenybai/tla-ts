@@ -473,49 +473,51 @@ export class Context extends Internalizer {
   }
 
   addEq(inputN1: Enode, inputN2: Enode, justification: EqJustification) {
-    let n1 = inputN1;
-    let n2 = inputN2;
-    let r1 = n1.root;
-    let r2 = n2.root;
+    const store = this.enodeStore;
+    const nodes = store.nodes;
+    let n1 = inputN1.id;
+    let n2 = inputN2.id;
+    let r1 = store.root[n1];
+    let r2 = store.root[n2];
     if (r1 === r2) return;
-    if (r1.isInterpreted && r2.isInterpreted) {
-      this.setConflict(new EqConflictJustification(n1, n2, justification), null);
+    if (store.isInterpreted(r1) && store.isInterpreted(r2)) {
+      this.setConflict(new EqConflictJustification(inputN1, inputN2, justification), null);
       return;
     }
-    if ((r1.classSize > r2.classSize && !r2.isInterpreted) || r1.isInterpreted) {
-      const savedNode = n1;
-      n1 = n2;
-      n2 = savedNode;
-      const savedRoot = r1;
-      r1 = r2;
-      r2 = savedRoot;
+    if (
+      (store.classSize[r1] > store.classSize[r2] && !store.isInterpreted(r2)) ||
+      store.isInterpreted(r1)
+    ) {
+      n1 = inputN2.id;
+      n2 = inputN1.id;
+      r1 = store.root[n1];
+      r2 = store.root[n2];
     }
-    if (this.isRelevant(r1.owner)) this.markAsRelevant(r2.owner);
-    else if (this.isRelevant(r2.owner)) this.markAsRelevant(r1.owner);
-    const r2NumParents = r2.numParents;
-    this.qmanager.addEqEh(r1, r2);
-    this.mergeTheoryVars(n2, n1, justification);
-    const store = this.enodeStore;
-    this.invertTrans(n1.id);
-    store.transTarget[n1.id] = n2.id;
-    store.transJustification[n1.id] = justification;
-    this.removeParentsFromCgTable(r1.id);
+    if (this.isRelevant(store.owner[r1])) this.markAsRelevant(store.owner[r2]);
+    else if (this.isRelevant(store.owner[r2])) this.markAsRelevant(store.owner[r1]);
+    const r2NumParents = store.parentCount[r2];
+    this.qmanager.addEqEh(nodes[r1], nodes[r2]);
+    this.mergeTheoryVars(nodes[n2], nodes[n1], justification);
+    this.invertTrans(n1);
+    store.transTarget[n1] = n2;
+    store.transJustification[n1] = justification;
+    this.removeParentsFromCgTable(r1);
     const root = store.root;
     const next = store.next;
-    let current = r1.id;
+    let current = r1;
     do {
-      root[current] = r2.id;
+      root[current] = r2;
       current = next[current];
-    } while (current !== r1.id);
-    this.reinsertParentsIntoCgTable(r1.id, r2.id, n1, n2, justification);
-    this.trailInts.push(r2NumParents);
-    this.trailNodes.push(r1, n1);
+    } while (current !== r1);
+    this.reinsertParentsIntoCgTable(r1, r2, nodes[n1], nodes[n2], justification);
+    this.trailInts.push(r2NumParents, r1, n1);
     this.trailKinds.push(UNDO_ADD_EQ);
-    if (n2.isBool) this.propagateBoolEnodeAssignment(r1, r2, n1, n2);
-    const savedNext = next[r1.id];
-    next[r1.id] = next[r2.id];
-    next[r2.id] = savedNext;
-    store.classSize[r2.id] += store.classSize[r1.id];
+    if (store.isBool(n2))
+      this.propagateBoolEnodeAssignment(nodes[r1], nodes[r2], nodes[n1], nodes[n2]);
+    const savedNext = store.next[r1];
+    store.next[r1] = store.next[r2];
+    store.next[r2] = savedNext;
+    store.classSize[r2] += store.classSize[r1];
   }
 
   private removeParentsFromCgTable(r1: number) {
@@ -588,8 +590,9 @@ export class Context extends Internalizer {
   protected override undoTrailEntry(kind: number) {
     switch (kind) {
       case UNDO_ADD_EQ: {
-        const n1 = this.popTrailNode();
-        this.undoAddEq(this.popTrailNode(), n1, this.popTrailInt());
+        const n1 = this.popTrailInt();
+        const r1 = this.popTrailInt();
+        this.undoAddEq(r1, n1, this.popTrailInt());
         return;
       }
       case UNDO_TH_VAR: {
@@ -604,12 +607,11 @@ export class Context extends Internalizer {
     }
   }
 
-  private undoAddEq(r1Node: Enode, n1: Enode, r2NumParents: number) {
+  private undoAddEq(r1: number, n1: number, r2NumParents: number) {
     const store = this.enodeStore;
     const root = store.root;
     const next = store.next;
     const parentPool = store.parentPool;
-    const r1 = r1Node.id;
     const r2 = root[r1];
     store.classSize[r2] -= store.classSize[r1];
     const savedNext = next[r1];
@@ -649,7 +651,7 @@ export class Context extends Internalizer {
     }
     if (store.thVar[r2] >= 0 && this.theory.getEnode(store.thVar[r2]).root.id !== r2)
       store.thVar[r2] = -1;
-    store.transTarget[n1.id] = -1;
+    store.transTarget[n1] = -1;
     this.invertTrans(r1);
   }
 

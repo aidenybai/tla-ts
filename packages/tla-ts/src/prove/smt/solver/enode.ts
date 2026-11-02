@@ -133,6 +133,14 @@ export class EnodeStore {
     return (this.flags[id] & IS_EQ) !== 0;
   }
 
+  isBool(id: number) {
+    return (this.flags[id] & IS_BOOL) !== 0;
+  }
+
+  isInterpreted(id: number) {
+    return (this.flags[id] & IS_INTERPRETED) !== 0;
+  }
+
   isCgcEnabled(id: number) {
     return (this.flags[id] & IS_CGC_ENABLED) !== 0;
   }
@@ -402,7 +410,7 @@ export class Enode {
   }
 
   get isBool() {
-    return (this.flags & IS_BOOL) !== 0;
+    return this.store.isBool(this.id);
   }
 
   get isCgcEnabled() {
@@ -434,7 +442,7 @@ export class Enode {
   }
 
   get isInterpreted() {
-    return (this.flags & IS_INTERPRETED) !== 0;
+    return this.store.isInterpreted(this.id);
   }
 
   set isInterpreted(value: boolean) {
