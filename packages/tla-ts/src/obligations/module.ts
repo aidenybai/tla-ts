@@ -67,7 +67,7 @@ export interface Mule {
   location?: Locus;
 }
 
-const getBuiltin = (arity: number, name: string, builtin: Builtin): ModuleUnit => ({
+const defineBuiltin = (arity: number, name: string, builtin: Builtin): ModuleUnit => ({
   kind: "Definition",
   definition: {
     kind: "Operator",
@@ -97,58 +97,58 @@ const getBuiltin = (arity: number, name: string, builtin: Builtin): ModuleUnit =
 });
 
 const NATURALS: ModuleUnit[] = [
-  getBuiltin(0, "Nat", "Nat"),
-  getBuiltin(2, "+", "Plus"),
-  getBuiltin(2, "-", "Minus"),
-  getBuiltin(2, "*", "Times"),
-  getBuiltin(2, "^", "Exp"),
-  getBuiltin(2, "<", "Lt"),
-  getBuiltin(2, ">", "Gt"),
-  getBuiltin(2, "=<", "Lteq"),
-  getBuiltin(2, ">=", "Gteq"),
-  getBuiltin(2, "%", "Remainder"),
-  getBuiltin(2, "\\div", "Quotient"),
-  getBuiltin(2, "..", "Range"),
+  defineBuiltin(0, "Nat", "Nat"),
+  defineBuiltin(2, "+", "Plus"),
+  defineBuiltin(2, "-", "Minus"),
+  defineBuiltin(2, "*", "Times"),
+  defineBuiltin(2, "^", "Exp"),
+  defineBuiltin(2, "<", "Lt"),
+  defineBuiltin(2, ">", "Gt"),
+  defineBuiltin(2, "=<", "Lteq"),
+  defineBuiltin(2, ">=", "Gteq"),
+  defineBuiltin(2, "%", "Remainder"),
+  defineBuiltin(2, "\\div", "Quotient"),
+  defineBuiltin(2, "..", "Range"),
 ];
 
-const INTEGERS = [...NATURALS, getBuiltin(0, "Int", "Int"), getBuiltin(1, "-.", "Uminus")];
+const INTEGERS = [...NATURALS, defineBuiltin(0, "Int", "Int"), defineBuiltin(1, "-.", "Uminus")];
 
 const REALS = [
   ...INTEGERS,
-  getBuiltin(0, "Real", "Real"),
-  getBuiltin(2, "/", "Ratio"),
-  getBuiltin(0, "Infinity", "Infinity"),
+  defineBuiltin(0, "Real", "Real"),
+  defineBuiltin(2, "/", "Ratio"),
+  defineBuiltin(0, "Infinity", "Infinity"),
 ];
 
 const SEQUENCES = [
-  getBuiltin(1, "Seq", "Seq"),
-  getBuiltin(1, "Len", "Len"),
-  getBuiltin(2, "BSeq", "BSeq"),
-  getBuiltin(2, "\\o", "Cat"),
-  getBuiltin(2, "Append", "Append"),
-  getBuiltin(1, "Head", "Head"),
-  getBuiltin(1, "Tail", "Tail"),
-  getBuiltin(3, "SubSeq", "SubSeq"),
-  getBuiltin(2, "SelectSeq", "SelectSeq"),
+  defineBuiltin(1, "Seq", "Seq"),
+  defineBuiltin(1, "Len", "Len"),
+  defineBuiltin(2, "BSeq", "BSeq"),
+  defineBuiltin(2, "\\o", "Cat"),
+  defineBuiltin(2, "Append", "Append"),
+  defineBuiltin(1, "Head", "Head"),
+  defineBuiltin(1, "Tail", "Tail"),
+  defineBuiltin(3, "SubSeq", "SubSeq"),
+  defineBuiltin(2, "SelectSeq", "SelectSeq"),
 ];
 
 const TLC = [
-  getBuiltin(2, "Print", "Print"),
-  getBuiltin(1, "PrintT", "PrintT"),
-  getBuiltin(2, "Assert", "Assert"),
-  getBuiltin(0, "JavaTime", "JavaTime"),
-  getBuiltin(1, "TLCGet", "TLCGet"),
-  getBuiltin(2, "TLCSet", "TLCSet"),
-  getBuiltin(2, ":>", "OneArg"),
-  getBuiltin(2, "@@", "Extend"),
-  getBuiltin(1, "Permutations", "Permutations"),
-  getBuiltin(2, "SortSeq", "SortSeq"),
-  getBuiltin(1, "RandomElement", "RandomElement"),
-  getBuiltin(0, "Any", "Any"),
-  getBuiltin(1, "ToString", "ToString"),
+  defineBuiltin(2, "Print", "Print"),
+  defineBuiltin(1, "PrintT", "PrintT"),
+  defineBuiltin(2, "Assert", "Assert"),
+  defineBuiltin(0, "JavaTime", "JavaTime"),
+  defineBuiltin(1, "TLCGet", "TLCGet"),
+  defineBuiltin(2, "TLCSet", "TLCSet"),
+  defineBuiltin(2, ":>", "OneArg"),
+  defineBuiltin(2, "@@", "Extend"),
+  defineBuiltin(1, "Permutations", "Permutations"),
+  defineBuiltin(2, "SortSeq", "SortSeq"),
+  defineBuiltin(1, "RandomElement", "RandomElement"),
+  defineBuiltin(0, "Any", "Any"),
+  defineBuiltin(1, "ToString", "ToString"),
 ];
 
-const getStandard = (name: string, body: ModuleUnit[]): Mule => ({
+const getStandardModule = (name: string, body: ModuleUnit[]): Mule => ({
   name,
   extendees: [],
   body,
@@ -159,11 +159,11 @@ const getStandard = (name: string, body: ModuleUnit[]): Mule => ({
 // Module.Standard.initctx, apart from $TLAPM, whose Builtins! names no module of the corpora uses.
 export const STANDARD_MODULES = new Map(
   [
-    getStandard("Naturals", NATURALS),
-    getStandard("Integers", INTEGERS),
-    getStandard("Reals", REALS),
-    getStandard("Sequences", SEQUENCES),
-    getStandard("TLC", TLC),
+    getStandardModule("Naturals", NATURALS),
+    getStandardModule("Integers", INTEGERS),
+    getStandardModule("Reals", REALS),
+    getStandardModule("Sequences", SEQUENCES),
+    getStandardModule("TLC", TLC),
   ].map((module) => [module.name, module]),
 );
 

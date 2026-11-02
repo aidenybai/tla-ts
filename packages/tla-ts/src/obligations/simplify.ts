@@ -91,9 +91,9 @@ const getRemainingBounds = (first: Bound, rest: Bound[]): Bound[] => {
 };
 
 // A WITNESS proves each membership and subset it relies on, then the goal from them.
-const getWitnessProof = (step: Step, aux: Expr[]): Proof => {
-  if (aux.length === 0) return { kind: "Obvious", ...getProps(step) };
-  const steps = aux.map((item, index): Step => {
+const getWitnessProof = (step: Step, sideFacts: Expr[]): Proof => {
+  if (sideFacts.length === 0) return { kind: "Obvious", ...getProps(step) };
+  const steps = sideFacts.map((item, index): Step => {
     const active = shiftExpr(2 * index + 2, item);
     return {
       kind: "Assert",
@@ -109,8 +109,10 @@ const getWitnessProof = (step: Step, aux: Expr[]): Proof => {
     };
   });
   const facts = [
-    at({ kind: "Ix", index: 2 * aux.length + 2 }, step),
-    ...aux.map((_item, index) => at({ kind: "Ix", index: 2 * (aux.length - index) }, step)),
+    at({ kind: "Ix", index: 2 * sideFacts.length + 2 }, step),
+    ...sideFacts.map((_item, index) =>
+      at({ kind: "Ix", index: 2 * (sideFacts.length - index) }, step),
+    ),
   ];
   // tlapm removes the method from the QED.
   const qedProof: Proof = {
@@ -491,12 +493,12 @@ export const createSimplifier = (counter: Counter) => {
     const bounds = expandDittoes(step.bounds);
     const stripBounds = (
       amount: number,
-      aux: Expr[],
+      sideFacts: Expr[],
       current: Expr,
       rest: Bound[],
-    ): { aux: Expr[]; goal: Expr } | string => {
+    ): { sideFacts: Expr[]; goal: Expr } | string => {
       const bound = rest[0];
-      if (!bound) return { aux, goal: current };
+      if (!bound) return { sideFacts, goal: current };
       const exposed = exposeConnective(context, current);
       if (
         exposed.kind !== "Quant" ||
@@ -534,7 +536,7 @@ export const createSimplifier = (counter: Counter) => {
           goalBound.name,
         );
       }
-      const nextAux =
+      const nextSideFacts =
         domain.kind === "Domain" &&
         goalDomain.kind === "Domain" &&
         !isEqualExpr(domain.expression, goalDomain.expression)
@@ -544,17 +546,18 @@ export const createSimplifier = (counter: Counter) => {
                 operator: { kind: "Internal", builtin: "Subseteq" },
                 args: [goalDomain.expression, domain.expression],
               } satisfies Expr,
-              ...aux,
+              ...sideFacts,
             ]
-          : aux;
-      if (goalBounds.length === 0) return stripBounds(1, nextAux, exposed.body, rest.slice(1));
+          : sideFacts;
+      if (goalBounds.length === 0)
+        return stripBounds(1, nextSideFacts, exposed.body, rest.slice(1));
       const shiftedBounds =
         rest.length === 1
           ? goalBounds.map((item) => substituteBounds(shift(amount), [item])[1][0])
           : goalBounds;
       return stripBounds(
         amount + 1,
-        nextAux,
+        nextSideFacts,
         at(
           { kind: "Quant", quantifier: "Forall", bounds: shiftedBounds, body: exposed.body },
           exposed,
@@ -574,8 +577,8 @@ export const createSimplifier = (counter: Counter) => {
         ...getProps(step),
       };
     }
-    const unique = stripped.aux.filter(
-      (item, index) => stripped.aux.findIndex((other) => isEqualExpr(item, other)) === index,
+    const unique = stripped.sideFacts.filter(
+      (item, index) => stripped.sideFacts.findIndex((other) => isEqualExpr(item, other)) === index,
     );
     const facts = [at({ kind: "Ix", index: 2 }, step), ...unique.map((item) => shiftExpr(2, item))];
     return {
@@ -591,7 +594,7 @@ export const createSimplifier = (counter: Counter) => {
     goal: Expr,
     step: Step & { kind: "Witness" },
   ): Step => {
-    const aux: Expr[] = [];
+    const sideFacts: Expr[] = [];
     let error = "";
     let current = goal;
     for (const witness of step.expressions) {
@@ -632,7 +635,7 @@ export const createSimplifier = (counter: Counter) => {
           const subset = isEqualExpr(termDomain, domain)
             ? []
             : [applyBuiltin("Subseteq", [termDomain, domain], termDomain)];
-          aux.push(...subset, membership);
+          sideFacts.push(...subset, membership);
           value = term;
         } else {
           error ||= getMessage(
@@ -651,7 +654,7 @@ export const createSimplifier = (counter: Counter) => {
     }
     const proof: Proof =
       error === ""
-        ? getWitnessProof(step, aux)
+        ? getWitnessProof(step, sideFacts)
         : { kind: "Error", message: error, ...getProps(step) };
     return {
       kind: "Suffices",

@@ -22,7 +22,7 @@ const isApplied = (expression: Expr, builtins: Builtin[]) =>
   expression.operator.kind === "Internal" &&
   builtins.includes(expression.operator.builtin);
 
-const unchanged = (expression: Expr) => applyBuiltin("UNCHANGED", [expression], expression);
+const applyUnchanged = (expression: Expr) => applyBuiltin("UNCHANGED", [expression], expression);
 
 const getEquality = (expression: Expr) =>
   applyBuiltin("Eq", [applyBuiltin("Prime", [expression], expression), expression], expression);
@@ -95,10 +95,10 @@ export const expandAction = rewrite((expression, recurse) => {
   const subscript = recurse(expression.subscript);
   const step =
     expression.modal === "Box"
-      ? applyBuiltin("Disj", [action, unchanged(subscript)], expression)
+      ? applyBuiltin("Disj", [action, applyUnchanged(subscript)], expression)
       : applyBuiltin(
           "Conj",
-          [action, applyBuiltin("Neg", [unchanged(subscript)], expression)],
+          [action, applyBuiltin("Neg", [applyUnchanged(subscript)], expression)],
           expression,
         );
   if (expression.kind === "Sub") return step;

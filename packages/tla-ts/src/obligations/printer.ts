@@ -69,7 +69,7 @@ export const popNames = (context: Context, count: number) => {
   }
 };
 
-export const withNames = <Result>(
+const withNames = <Result>(
   context: Context,
   names: string[],
   body: (idents: string[]) => Result,
@@ -294,7 +294,7 @@ const createPrinter = (hyps: Hyp[] = []) => {
         return atom(format("@[<h>@<1>%s%a@<1>%s@]", "<[", printExpr(args[0]), "]>"));
       }
     }
-    const top = (() => {
+    const form = (() => {
       switch (operator.kind) {
         case "Ix":
           return lookupOperator(getIndexName(operator.index));
@@ -308,38 +308,41 @@ const createPrinter = (hyps: Hyp[] = []) => {
           throw new TlaProofError("Cannot print this operator");
       }
     })();
-    const getOp = (doc: Doc, skeleton: Skeleton): Minimal => ({
+    const getOperation = (doc: Doc, skeleton: Skeleton): Minimal => ({
       kind: "Op",
-      name: top.name,
+      name: form.name,
       doc,
-      low: top.low,
-      high: top.high,
+      low: form.low,
+      high: form.high,
       skeleton,
     });
-    if (args.length === 0) return atom(text(top.name));
-    if (top.fixity === "Nonfix") {
-      return atom(format("@[<b2>%s@[<b1>(%a)@]@]", top.name, formatDelimited(args, printExpr)));
+    if (args.length === 0) return atom(text(form.name));
+    if (form.fixity === "Nonfix") {
+      return atom(format("@[<b2>%s@[<b1>(%a)@]@]", form.name, formatDelimited(args, printExpr)));
     }
-    if (top.fixity === "Prefix" && args.length === 1) {
-      return getOp(/[A-Za-z]$/.test(top.name) ? format("%s@ ", top.name) : text(top.name), {
-        kind: "Prefix",
-        operand: formatExpr(args[0]),
-      });
+    if (form.fixity === "Prefix" && args.length === 1) {
+      return getOperation(
+        /[A-Za-z]$/.test(form.name) ? format("%s@ ", form.name) : text(form.name),
+        {
+          kind: "Prefix",
+          operand: formatExpr(args[0]),
+        },
+      );
     }
-    if (top.fixity === "Postfix" && args.length === 1) {
-      return getOp(text(top.name), { kind: "Postfix", operand: formatExpr(args[0]) });
+    if (form.fixity === "Postfix" && args.length === 1) {
+      return getOperation(text(form.name), { kind: "Postfix", operand: formatExpr(args[0]) });
     }
-    if (top.fixity.startsWith("Infix") && args.length === 2) {
+    if (form.fixity.startsWith("Infix") && args.length === 2) {
       const assoc: Assoc =
-        top.fixity === "InfixLeft" ? "Left" : top.fixity === "InfixRight" ? "Right" : "Non";
-      return getOp(top.name === ".." ? text(top.name) : format("@ %s ", top.name), {
+        form.fixity === "InfixLeft" ? "Left" : form.fixity === "InfixRight" ? "Right" : "Non";
+      return getOperation(form.name === ".." ? text(form.name) : format("@ %s ", form.name), {
         kind: "Infix",
         assoc,
         left: formatExpr(args[0]),
         right: formatExpr(args[1]),
       });
     }
-    throw new TlaProofError(`Arity mismatch for operator ${top.name}`);
+    throw new TlaProofError(`Arity mismatch for operator ${form.name}`);
   };
 
   const formatExpr = (expression: Expr): Minimal => {

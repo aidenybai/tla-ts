@@ -169,15 +169,15 @@ const obligate = (
   kind: ObligationKind,
 ): Obligation => ({ sequent, location: from.location, kind, method: from.method });
 
-export interface ProofSummary {
+interface ProofSummary {
   total: number;
   absent: Locus[];
   omitted: Locus[];
 }
 
-export const EMPTY_SUMMARY: ProofSummary = { total: 0, absent: [], omitted: [] };
+const EMPTY_SUMMARY: ProofSummary = { total: 0, absent: [], omitted: [] };
 
-export const joinSummaries = (left: ProofSummary, right: ProofSummary): ProofSummary => ({
+const joinSummaries = (left: ProofSummary, right: ProofSummary): ProofSummary => ({
   total: left.total + right.total,
   absent: [...left.absent, ...right.absent],
   omitted: [...left.omitted, ...right.omitted],
@@ -188,7 +188,7 @@ const getStepSummary = (step: Step): ProofSummary => {
   return "proof" in step ? getProofSummary(step.proof) : EMPTY_SUMMARY;
 };
 
-export const getProofSummary = (proof: Proof): ProofSummary => {
+const getProofSummary = (proof: Proof): ProofSummary => {
   if (proof.kind === "Steps") {
     return [...proof.steps.map(getStepSummary), getProofSummary(proof.qed.proof)].reduce(
       joinSummaries,

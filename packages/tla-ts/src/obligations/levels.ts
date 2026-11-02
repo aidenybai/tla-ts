@@ -116,7 +116,7 @@ export const LEVEL_NUMBERS: Record<Level, number> = {
 
 const union = (sets: Set<string>[]) => new Set(sets.flatMap((set) => [...set]));
 
-const combine = (infos: LevelInfo[]): LevelInfo => ({
+const combineLevels = (infos: LevelInfo[]): LevelInfo => ({
   level: Math.max(0, ...infos.map((info) => info.level)),
   weights: [],
   params: union(infos.map((info) => info.params)),
@@ -156,7 +156,10 @@ const getBoundsLevel = (scope: Scope | undefined, bounds: Bound[], body: Expr) =
   const domains = bounds.flatMap((bound) =>
     bound.domain.kind === "Domain" ? [getLevelInfo(scope, bound.domain.expression)] : [],
   );
-  return combine([getLevelInfo(adjoinAll(scope, bounds.map(getBoundFresh)), body), ...domains]);
+  return combineLevels([
+    getLevelInfo(adjoinAll(scope, bounds.map(getBoundFresh)), body),
+    ...domains,
+  ]);
 };
 
 const applyOperator = (operator: LevelInfo, args: LevelInfo[]): LevelInfo => {
@@ -256,11 +259,11 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
         expression.body,
       );
     case "If":
-      return combine(
+      return combineLevels(
         [expression.condition, expression.consequent, expression.alternative].map(recurse),
       );
     case "List":
-      return combine(expression.items.map(recurse));
+      return combineLevels(expression.items.map(recurse));
     case "Quant":
     case "Fcn":
       return getBoundsLevel(scope, expression.bounds, expression.body);
@@ -281,25 +284,25 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
       const hyp = expression.domain
         ? getBoundedFresh(expression.name, expression.domain)
         : getFresh(expression.name, "Constant");
-      return combine([
+      return combineLevels([
         getLevelInfo(adjoin(scope, hyp), expression.body),
         ...(domainLevel ? [domainLevel] : []),
       ]);
     }
     case "SetEnum":
     case "Tuple":
-      return combine(expression.elements.map(recurse));
+      return combineLevels(expression.elements.map(recurse));
     case "Product":
-      return combine(expression.factors.map(recurse));
+      return combineLevels(expression.factors.map(recurse));
     case "FcnApp":
-      return combine([expression.function, ...expression.args].map(recurse));
+      return combineLevels([expression.function, ...expression.args].map(recurse));
     case "Arrow":
-      return combine([recurse(expression.domain), recurse(expression.range)]);
+      return combineLevels([recurse(expression.domain), recurse(expression.range)]);
     case "Rect":
     case "Record":
-      return combine(expression.fields.map((field) => recurse(field.value)));
+      return combineLevels(expression.fields.map((field) => recurse(field.value)));
     case "Except":
-      return combine([
+      return combineLevels([
         recurse(expression.function),
         ...expression.specs.flatMap((spec) => [
           ...spec.trail.flatMap((point) =>
@@ -309,14 +312,17 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
         ]),
       ]);
     case "Sub":
-      return { ...combine([recurse(expression.action), recurse(expression.subscript)]), level: 2 };
+      return {
+        ...combineLevels([recurse(expression.action), recurse(expression.subscript)]),
+        level: 2,
+      };
     case "Tsub":
     case "Fair":
       recurse(expression.action);
       recurse(expression.subscript);
       return getInfo(3);
     case "Case":
-      return combine([
+      return combineLevels([
         ...expression.arms.flatMap((arm) => [recurse(arm.condition), recurse(arm.body)]),
         ...(expression.other ? [recurse(expression.other)] : []),
       ]);

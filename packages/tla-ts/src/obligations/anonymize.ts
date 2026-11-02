@@ -65,6 +65,10 @@ const ANON_SELECTOR_FAILURES = {
 
 const BAD_EXPRESSION: Expr = { kind: "Opaque", name: "$badexp" };
 
+// Util.set_locus: the node keeps its properties and takes the location of from.
+const withLocus = (expression: Expr, from: Expr) =>
+  from.location ? { ...expression, location: from.location } : expression;
+
 interface AnonContext {
   warnedSteps: string[];
   scope: Scope | undefined;
@@ -565,9 +569,5 @@ export const createAnonymizer = (
     proof: (scope: Scope | undefined, item: Proof) => proof(getContext(scope), item),
   };
 };
-
-// Util.set_locus: the node keeps its properties and takes the location of from.
-const withLocus = (expression: Expr, from: Expr) =>
-  from.location ? { ...expression, location: from.location } : expression;
 
 export type Anonymizer = ReturnType<typeof createAnonymizer>;

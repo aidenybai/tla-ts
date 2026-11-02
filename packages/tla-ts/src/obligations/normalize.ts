@@ -171,7 +171,8 @@ const addParameters = (expression: Expr, args: string[]): Expr => {
     : at({ kind: "Lambda", params, body: expression }, expression);
 };
 
-// localize: renames the instancee's units under the instance name, salts its local definitions
+// localize: names the instancee's units under the instance name, salting its local definitions, and
+// abstracts each over the instance arguments.
 const localize = (
   pipeline: Pipeline,
   units: ModuleUnit[],
@@ -180,7 +181,7 @@ const localize = (
   isLocal: boolean,
   location: Locus | undefined,
 ) => {
-  const getName = (name: string) => (prefix === "" ? name : `${prefix}!${name}`);
+  const getLocalizedName = (name: string) => (prefix === "" ? name : `${prefix}!${name}`);
   const argumentCount = instance.args.length;
   const body: ModuleUnit[] = [];
   let size = 0;
@@ -210,7 +211,11 @@ const localize = (
           : definition.name;
         body.push({
           ...unit,
-          definition: { ...definition, name: getName(name), body: localized(definition.body) },
+          definition: {
+            ...definition,
+            name: getLocalizedName(name),
+            body: localized(definition.body),
+          },
           whereDefined: unit.isLocal ? "Builtin" : unit.whereDefined,
           isLocal: unit.isLocal || isLocal,
         });
@@ -223,7 +228,7 @@ const localize = (
         );
         const axiom: ModuleUnit = {
           ...unit,
-          name: unit.name === undefined ? undefined : getName(unit.name),
+          name: unit.name === undefined ? undefined : getLocalizedName(unit.name),
           expression: localized(unit.expression),
         };
         body.push(axiom);
@@ -237,7 +242,7 @@ const localize = (
         const expression = localized(at(exprifySequent(unit.sequent), unit));
         body.push({
           ...unit,
-          name: unit.name === undefined ? undefined : getName(unit.name),
+          name: unit.name === undefined ? undefined : getLocalizedName(unit.name),
           sequent:
             expression.kind === "Sequent"
               ? expression.sequent

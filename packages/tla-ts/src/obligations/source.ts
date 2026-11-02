@@ -108,7 +108,12 @@ const TUPLY_FAILURE = "use instead the class`E_visit.iter_concrete`";
 const isDitto = (bounds: QuantifierExpression["bounds"], index: number) =>
   index > 0 && bounds[index - 1].set === bounds[index].set;
 
-export const createSource = (file: string, text: string, counter: Counter, isExpanded: boolean) => {
+export const createSource = (
+  file: string,
+  text: string,
+  counter: Counter,
+  isExpandingTuples: boolean,
+) => {
   const lines = text.split("\n");
 
   const getRangeLocus = (range: SourceRange): Locus => ({
@@ -156,7 +161,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
   const getLocus = (location: SourceLocation): Locus =>
     location.range ? getRangeLocus(location.range) : getPointLocus(location, 1);
 
-  const getOperator = (name: string, location: Locus | undefined): Expr => {
+  const convertOperator = (name: string, location: Locus | undefined): Expr => {
     const canonical = getCanonicalName(name);
     const builtin = BUILTINS[canonical];
     return at(builtin ? { kind: "Internal", builtin } : { kind: "Opaque", name: canonical }, {
@@ -165,7 +170,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
   };
 
   // A name with ! selects through instances, which anonymization resolves by joining the names.
-  const getName = (
+  const convertName = (
     name: string,
     args: Expr[],
     location: Locus,
@@ -235,7 +240,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     });
 
   const expandTuples = (expanded: Expr, location: Locus) => {
-    if (!isExpanded)
+    if (!isExpandingTuples)
       throw new TlaProofError("Unexpected tuple declaration", { failure: TUPLY_FAILURE });
     return at(expanded, { location });
   };
@@ -289,7 +294,7 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         return at({ kind: "String", value: written?.[1] ?? expression.value }, { location });
       }
       case "Identifier":
-        return getName(expression.name, [], location);
+        return convertName(expression.name, [], location);
       case "Apply": {
         if (expression.args.length === 2) {
           const regrouped = regroup(expression);
@@ -299,14 +304,14 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         const operator = lookupOperator(expression.operator);
         if (operator.fixity !== "Nonfix") {
           return at(
-            { kind: "Apply", operator: getOperator(expression.operator, undefined), args },
+            { kind: "Apply", operator: convertOperator(expression.operator, undefined), args },
             { location: getOperatorLocus(args, operator.fixity) },
           );
         }
-        return getName(expression.operator, args, location, expression.argumentCounts);
+        return convertName(expression.operator, args, location, expression.argumentCounts);
       }
       case "OperatorReference":
-        return getOperator(expression.operator, location);
+        return convertOperator(expression.operator, location);
       case "Lambda":
         return at(
           {

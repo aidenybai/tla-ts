@@ -21,40 +21,43 @@ import {
   type Selector,
 } from "./expression";
 
-interface Deref {
+interface Resolution {
   params: Param[];
   definitions: Defn[];
   expression: Expr;
 }
 
-interface Label {
+interface LabelMatch {
   context: Hyp[];
   expression: Expr;
   indices: { name: string; index: number }[];
 }
 
-const BAD = { kind: "Opaque", name: "$Bad" } satisfies Expr;
+const UNRESOLVED = { kind: "Opaque", name: "$Bad" } satisfies Expr;
 
-const isBad = (expression: Expr) => expression.kind === "Opaque" && expression.name === BAD.name;
+const isUnresolved = (expression: Expr) =>
+  expression.kind === "Opaque" && expression.name === UNRESOLVED.name;
 
-const clean = (expression: Expr): Expr => {
+const stripParensAndAtomic = (expression: Expr): Expr => {
   const mapped =
-    expression.kind === "Parens" ? clean(expression.expression) : mapChildren(expression, clean);
+    expression.kind === "Parens"
+      ? stripParensAndAtomic(expression.expression)
+      : mapChildren(expression, stripParensAndAtomic);
   if (!mapped.isAtomic) return mapped;
   const { isAtomic: _isAtomic, ...rest } = mapped;
   return rest;
 };
 
 // Parentheses go everywhere but in the definitions of a LET.
-const cleanParens = (expression: Expr): Expr => {
+const stripParens = (expression: Expr): Expr => {
   if (expression.kind === "Let") {
     return at(
-      { kind: "Let", definitions: expression.definitions, body: cleanParens(expression.body) },
+      { kind: "Let", definitions: expression.definitions, body: stripParens(expression.body) },
       expression.body,
     );
   }
-  if (expression.kind === "Parens") return cleanParens(expression.expression);
-  return mapChildren(expression, cleanParens);
+  if (expression.kind === "Parens") return stripParens(expression.expression);
+  return mapChildren(expression, stripParens);
 };
 
 const hasNegativeIndex = (expression: Expr): boolean =>
@@ -62,10 +65,10 @@ const hasNegativeIndex = (expression: Expr): boolean =>
 
 // Visit.iter's context for each binder, stopping at labels with other names and at declarations
 // in an ASSUME.
-const findLabel = (expression: Expr, label: string, context: Hyp[]): Label | undefined => {
+const findLabel = (expression: Expr, label: string, context: Hyp[]): LabelMatch | undefined => {
   const search = (inner: Expr, innerContext = context) => findLabel(inner, label, innerContext);
   const searchBounds = (bounds: Bound[], body: Expr) =>
-    bounds.reduce<Label | undefined>(
+    bounds.reduce<LabelMatch | undefined>(
       (found, bound) =>
         found ?? (bound.domain.kind === "Domain" ? search(bound.domain.expression) : undefined),
       undefined,
@@ -335,7 +338,7 @@ const getNumbered = (
             at({ kind: "Tuple", elements: [arm.condition, arm.body] }, arm.body),
           ),
           ...(expression.other
-            ? [at({ kind: "Tuple", elements: [BAD, expression.other] }, expression.other)]
+            ? [at({ kind: "Tuple", elements: [UNRESOLVED, expression.other] }, expression.other)]
             : []),
         ]);
     }
@@ -343,7 +346,7 @@ const getNumbered = (
     onWarning(getErrorNote(expression.location, emptyMessage));
     throw new TlaProofError(emptyMessage, { failure: "Expr.Deref.deref_num" });
   })();
-  if (isBad(result)) {
+  if (isUnresolved(result)) {
     const badMessage = `Cannot resolve subexpression reference !${position}`;
     onWarning(getErrorNote(expression.location, badMessage));
     throw new TlaProofError(badMessage, { failure: "Expr.Deref.deref_num" });
@@ -368,11 +371,11 @@ const resolveLabel = (
   expression: Expr,
   label: string,
   labelArgs: Expr[],
-): Deref => {
+): Resolution => {
   const found = findLabel(expression, label, []);
   if (!found) {
     onWarning(getErrorNote(expression.location, `Could not find label ${label}`));
-    return { params: [], definitions: [], expression: BAD };
+    return { params: [], definitions: [], expression: UNRESOLVED };
   }
   const indices = found.indices;
   if (indices.length !== labelArgs.length && labelArgs.length > 0) {
@@ -431,7 +434,7 @@ const resolveLetOperator = (
   expression: Expr,
   label: string,
   args: Expr[],
-): Deref => {
+): Resolution => {
   if (expression.kind !== "Let") {
     onWarning(getErrorNote(expression.location, `not a LET expression`));
     throw new TlaProofError("not a LET expression", { failure: "Expr.Deref.deref_letop" });
@@ -482,7 +485,12 @@ const resolveLetOperator = (
   );
 };
 
-const deref = (onWarning: Warn, isLabel: boolean, state: Deref, selectors: Selector[]): Expr => {
+const resolveSelectors = (
+  onWarning: Warn,
+  isLabel: boolean,
+  state: Resolution,
+  selectors: Selector[],
+): Expr => {
   const [selector, ...rest] = selectors;
   if (!selector) {
     const withDefinitions =
@@ -496,15 +504,15 @@ const deref = (onWarning: Warn, isLabel: boolean, state: Deref, selectors: Selec
       state.params.length === 0
         ? withDefinitions
         : at({ kind: "Lambda", params: state.params, body: withDefinitions }, withDefinitions);
-    return { ...clean(abstracted), isAtomic: true };
+    return { ...stripParensAndAtomic(abstracted), isAtomic: true };
   }
   if (state.expression.isAtomic) {
     onWarning(getErrorNote(state.expression.location, `Expression has no subexpressions`));
-    return BAD;
+    return UNRESOLVED;
   }
-  const expression = isLabel ? state.expression : cleanParens(state.expression);
+  const expression = isLabel ? state.expression : stripParens(state.expression);
   const count = state.definitions.length;
-  const next = ((): Deref & { rest: Selector[]; isLabel: boolean } => {
+  const next = ((): Resolution & { rest: Selector[]; isLabel: boolean } => {
     const numbered = (position: number, message: string) => {
       const [definitions, inner] = getNumbered(
         onWarning,
@@ -554,7 +562,7 @@ const deref = (onWarning: Warn, isLabel: boolean, state: Deref, selectors: Selec
       }
     }
   })();
-  return deref(
+  return resolveSelectors(
     onWarning,
     next.isLabel,
     {
@@ -568,7 +576,7 @@ const deref = (onWarning: Warn, isLabel: boolean, state: Deref, selectors: Selec
   );
 };
 
-const getInitialDeref = (onWarning: Warn, operator: Expr, args: Expr[]): Deref => {
+const getInitialResolution = (onWarning: Warn, operator: Expr, args: Expr[]): Resolution => {
   if (args.length > 0) {
     return { params: [], definitions: [], expression: instantiate(onWarning, operator, args) };
   }
@@ -583,8 +591,13 @@ export const resolveSubexpression = (
   args: Expr[],
   selectors: Selector[],
 ) => {
-  const result = deref(onWarning, true, getInitialDeref(onWarning, operator, args), selectors);
-  if (isBad(result)) {
+  const result = resolveSelectors(
+    onWarning,
+    true,
+    getInitialResolution(onWarning, operator, args),
+    selectors,
+  );
+  if (isUnresolved(result)) {
     const message = "Could not resolve subexpression reference";
     onWarning(getErrorNote(operator.location, message));
     throw new TlaProofError(message, { failure: "Expr.Anon: 2" });

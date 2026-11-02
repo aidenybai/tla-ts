@@ -49,11 +49,7 @@ const tokenizePragma = (lines: string[], start: Position) => {
   if (!open) return undefined;
   const position = { line: open.line, column: open.column + 3 };
   const tokens: Token[] = [];
-  for (
-    skipBlanks(lines, position);
-    position.line < lines.length;
-    skipBlanks(lines, position)
-  ) {
+  for (skipBlanks(lines, position); position.line < lines.length; skipBlanks(lines, position)) {
     const rest = lines[position.line].slice(position.column);
     if (rest.startsWith("}*)")) return tokens;
     const match =

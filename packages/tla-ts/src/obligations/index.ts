@@ -88,7 +88,7 @@ const findTab = (source: string) => {
   return { offset, line, column, end };
 };
 
-const readModule = <Value>(read: () => Value): Value | SyntaxFailure => {
+const catchSyntaxFailure = <Value>(read: () => Value): Value | SyntaxFailure => {
   try {
     return read();
   } catch (error) {
@@ -101,9 +101,11 @@ const isSyntaxFailure = (value: unknown): value is SyntaxFailure =>
   typeof value === "object" && value !== null && "reason" in value;
 
 const parseSource = (source: string): Module | SyntaxFailure[] => {
-  const tab = readModule(() => findTab(source));
+  const tab = catchSyntaxFailure(() => findTab(source));
   if (isSyntaxFailure(tab)) return [tab];
-  const parsed = readModule(() => parseTlapmModule(tab ? source.slice(0, tab.offset) : source));
+  const parsed = catchSyntaxFailure(() =>
+    parseTlapmModule(tab ? source.slice(0, tab.offset) : source),
+  );
   if (tab && (!isSyntaxFailure(parsed) || parsed.isEnd)) {
     return [
       {
@@ -124,7 +126,7 @@ const loadMule = (
   counter: Counter,
   isMain: boolean,
   onWarning: Warn,
-  citation: string,
+  errorPrefix: string,
 ): Mule => {
   if (!MODULE_HEADER.test(input.source)) throw new TlaProofError("No tokens in file");
   const parsed = parseSource(input.source);
@@ -135,7 +137,7 @@ const loadMule = (
       onWarning({ text: `${text}\n`, channel: "toolboxOnly" });
     });
     const message = `Could not parse ${JSON.stringify(input.file)} successfully.`;
-    onWarning({ text: `${citation}Error: ${message}`, channel: "stderr" });
+    onWarning({ text: `${errorPrefix}Error: ${message}`, channel: "stderr" });
     throw new TlaProofError(message, { failure: "Module.Parser.parse_file" });
   }
   const mule = createSource(input.file, input.source, counter, isMain).convertModule(parsed);
