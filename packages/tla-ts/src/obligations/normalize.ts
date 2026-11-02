@@ -3,7 +3,7 @@
 
 import { TlaProofError, TlapmBugError } from "../errors";
 import { lambdify } from "./action";
-import type { Anonymizer } from "./anon";
+import type { Anonymizer } from "./anonymize";
 import { isEqualHyp } from "./equality";
 import {
   adjoinAll,

@@ -34,7 +34,7 @@ import {
   type Sequent,
   type WhereDefined,
 } from "./expression";
-import { resolveSubexpression } from "./deref";
+import { resolveSubexpression } from "./subexpression";
 import { getTime } from "./temporal";
 import {
   getStepName,

@@ -3,7 +3,7 @@
 // and ExpandCdot frontends then replace each LAMBDA with an existential quantifier.
 
 import { TlaProofError, TlapmBugError, TlaProverError } from "../errors";
-import type { Anonymizer } from "./anon";
+import type { Anonymizer } from "./anonymize";
 import { bumpBy, normalizeApply, shift, substituteExpr, type Substitution } from "./substitution";
 import {
   adjoin,

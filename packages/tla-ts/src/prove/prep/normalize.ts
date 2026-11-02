@@ -4,7 +4,7 @@
 
 import { TlapmBugError, TlaProofError } from "../../errors";
 import { expandActionOperators, lambdify } from "../../obligations/action";
-import { createAnonymizer } from "../../obligations/anon";
+import { createAnonymizer } from "../../obligations/anonymize";
 import { isEqualExpr } from "../../obligations/equality";
 import {
   applyBuiltin,
